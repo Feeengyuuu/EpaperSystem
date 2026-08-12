@@ -106,6 +106,8 @@ from runtime.refresh_policy import (
     evaluate_presentation_due,
 )
 from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
+from runtime.bounded_parallel_stage import BoundedParallelStageRunner
+from runtime.resource_governor import RuntimeResourceGovernor
 from runtime.render_arbiter import RenderArbiter
 from runtime.sports_isolated_renderer import (
     SportsIsolatedCheckpointPending,
@@ -493,11 +495,23 @@ class RefreshTask:
         ian_resource_sampler=None,
         ian_request_adapter=None,
         ian_retained_limit=None,
+        resource_governor=None,
+        parallel_image_runner=None,
     ):
         self.device_config = device_config
         self.display_manager = display_manager
         self._clock = clock
         self._wall_clock = wall_clock
+        self._resource_governor = (
+            resource_governor
+            if resource_governor is not None
+            else RuntimeResourceGovernor()
+        )
+        self._parallel_image_runner = (
+            parallel_image_runner
+            if parallel_image_runner is not None
+            else BoundedParallelStageRunner(governor=self._resource_governor)
+        )
 
         if lifecycle is not None:
             if stop_event is not None and lifecycle.stop_event is not stop_event:
@@ -1031,6 +1045,98 @@ class RefreshTask:
 
         return self._active_operation
 
+    def _parallel_runtime_health_snapshot(self):
+        """Return bounded aggregate metrics without child or instance identity."""
+
+        try:
+            sample = dict(self._resource_governor.last_snapshot)
+        except Exception:
+            sample = {}
+        try:
+            run = dict(self._parallel_image_runner.last_run_snapshot)
+        except Exception:
+            run = {}
+        try:
+            active_child_count = len(self._parallel_image_runner.active_processes)
+        except Exception:
+            active_child_count = 0
+        try:
+            throttling = dict(self._resource_governor.cpu_throttling_snapshot())
+        except Exception:
+            throttling = {}
+
+        def optional_number(value):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            converted = float(value)
+            return converted if math.isfinite(converted) and converted >= 0 else None
+
+        def nonnegative_int(value, default=0, maximum=None):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                return default
+            return value if maximum is None else min(value, maximum)
+
+        known_reasons = {
+            "not_run",
+            "resource_snapshot_unavailable",
+            "serial_requested",
+            "cpu_quota_below_parallel_threshold",
+            "memory_below_parallel_threshold",
+            "swap_above_parallel_threshold",
+            "parallel_threshold_not_met",
+            "parallel_batch_busy",
+        }
+        reason = run.get("reason")
+        degrade_reason = reason if reason in known_reasons else None
+        status = run.get("status")
+        if status not in {"not_run", "succeeded", "failed", "canceled"}:
+            status = "unknown"
+
+        worker_count = nonnegative_int(run.get("worker_count"), default=1, maximum=3)
+        if worker_count < 1:
+            worker_count = 1
+        selected_tier = {
+            1: "serial",
+            2: "2_worker",
+            3: "3_worker",
+        }[worker_count]
+        return {
+            "resource_sample": {
+                "available_mb": optional_number(sample.get("available_mb")),
+                "swap_percent": optional_number(sample.get("swap_percent")),
+                "cpu_quota_cores": optional_number(sample.get("cpu_quota_cores")),
+            },
+            "selected_tier": selected_tier,
+            "worker_count": worker_count,
+            "degrade_reason": degrade_reason,
+            "status": status,
+            "batch_duration_ms": optional_number(run.get("batch_duration_ms")) or 0.0,
+            "worker_thread_count": nonnegative_int(
+                run.get("worker_thread_count"),
+                maximum=3,
+            ),
+            "child_peak_rss_bytes": nonnegative_int(
+                run.get("child_peak_rss_bytes"),
+                default=None,
+            ),
+            "cancellation_count": nonnegative_int(run.get("cancellation_count")),
+            "active_child_count": nonnegative_int(active_child_count, maximum=1),
+            "cpu_throttling": {
+                "nr_periods": nonnegative_int(
+                    throttling.get("nr_periods"),
+                    default=None,
+                ),
+                "nr_throttled": nonnegative_int(
+                    throttling.get("nr_throttled"),
+                    default=None,
+                ),
+                "throttled_usec": nonnegative_int(
+                    throttling.get("throttled_usec"),
+                    default=None,
+                ),
+            },
+        }
+
     def refresh_health_snapshot(self):
         """Return aggregate refresh diagnostics without instance-owned details."""
         tier = getattr(self._resource_tier, "value", self._resource_tier)
@@ -1043,6 +1149,7 @@ class RefreshTask:
             "ian_retained": len(self._ian_retained_entries),
             "ian_retained_limit": self._ian_retained_limit,
             "ian_retry_not_before_monotonic": self._ian_retry_not_before,
+            "parallel_runtime": self._parallel_runtime_health_snapshot(),
         }
 
     @property
@@ -3790,6 +3897,7 @@ class RefreshTask:
                     context,
                     identity,
                     identity_validator=identity_validator,
+                    parallel_image_runner=self._parallel_image_runner,
                 ):
                     self._execute_command(command)
             except SportsIsolatedCheckpointPending as pending:
@@ -6396,20 +6504,14 @@ class RefreshTask:
                 if thawed_theme_context:
                     self._persist_active_theme(thawed_theme_context, current_dt)
                 self._write_playlist_display_commit(command)
-                if (
-                    command.payload.get("automatic_rotation") is True
-                    and _display_triggered_refresh_enabled(self.device_config)
-                ):
+                if command.payload.get("automatic_rotation") is True:
                     self._request_next_presentation_after_display(
                         current_dt,
                         commit_id,
                         committed_at,
                         displayed_instance_uuid=instance.instance_uuid,
                     )
-                elif (
-                    command.allow_prepared_presentation
-                    and _display_triggered_refresh_enabled(self.device_config)
-                ):
+                elif command.allow_prepared_presentation:
                     self._request_presentation_after_display(
                         instance,
                         commit_id,
@@ -6616,6 +6718,19 @@ class RefreshTask:
                 instance.instance_uuid,
                 prepared_selection.request.request_id,
             )
+        if command.payload.get("automatic_rotation") is True:
+            self._request_next_presentation_after_display(
+                current_dt,
+                commit_id,
+                committed_at,
+                displayed_instance_uuid=instance.instance_uuid,
+            )
+        elif command.allow_prepared_presentation:
+            self._request_presentation_after_display(
+                instance,
+                commit_id,
+                committed_at,
+            )
         return image
 
     def _display_commit_evidence(
@@ -6680,31 +6795,10 @@ class RefreshTask:
         committed_at,
     ):
         """Record one coalesced request using metadata-only trigger resolution."""
-        if not _display_triggered_refresh_enabled(self.device_config):
+        target = self._presentation_request_target(instance)
+        if target is None:
             return False
-        plugin_config, _theme_context, theme_mode = self._latest_presentation_theme(instance)
-        if not plugin_supports_presentation_refresh(plugin_config):
-            return False
-        try:
-            requested = resolve_refresh_on_display_for_config(
-                thaw_payload(instance.settings),
-                plugin_config,
-            )
-        except PluginSettingError as error:
-            logger.warning(
-                "Ignoring invalid refresh-on-display setting during presentation request. | plugin_id: %s | error: %s",
-                instance.plugin_id,
-                error,
-            )
-            return False
-        except Exception:
-            logger.exception(
-                "Presentation trigger resolution failed closed. | plugin_id: %s",
-                instance.plugin_id,
-            )
-            return False
-        if not requested:
-            return False
+        _plugin_config, theme_mode = target
         request = PresentationRequestState(
             request_id=uuid4().hex,
             requested_at=committed_at,
@@ -6718,6 +6812,39 @@ class RefreshTask:
             request,
         )
 
+    def _presentation_request_target(self, instance):
+        """Resolve a provider-safe presentation target without importing plugin code."""
+
+        plugin_config, _theme_context, theme_mode = self._latest_presentation_theme(
+            instance
+        )
+        if (
+            not _presentation_refresh_enabled(self.device_config, plugin_config)
+            or not plugin_supports_presentation_refresh(plugin_config)
+        ):
+            return None
+        try:
+            requested = resolve_refresh_on_display_for_config(
+                thaw_payload(instance.settings),
+                plugin_config,
+            )
+        except PluginSettingError as error:
+            logger.warning(
+                "Ignoring invalid refresh-on-display setting during presentation request. | plugin_id: %s | error: %s",
+                instance.plugin_id,
+                error,
+            )
+            return None
+        except Exception:
+            logger.exception(
+                "Presentation trigger resolution failed closed. | plugin_id: %s",
+                instance.plugin_id,
+            )
+            return None
+        if not requested:
+            return None
+        return plugin_config, theme_mode
+
     def _request_next_presentation_after_display(
         self,
         current_dt,
@@ -6727,21 +6854,18 @@ class RefreshTask:
         displayed_instance_uuid=None,
     ):
         """Reserve and start preparing the next rotation member immediately."""
-        if not _display_triggered_refresh_enabled(self.device_config):
-            return False
         manager = self.device_config.get_playlist_manager()
-        eligible_instance_uuids = None
-        if displayed_instance_uuid is not None:
-            active = manager.snapshot_active_playlist(current_dt)
-            if active is None:
-                return False
-            eligible_instance_uuids = {
-                instance.instance_uuid
-                for instance in active.plugins
-                if instance.instance_uuid != displayed_instance_uuid
-            }
-            if not eligible_instance_uuids:
-                return False
+        active = manager.snapshot_active_playlist(current_dt)
+        if active is None:
+            return False
+        eligible_instance_uuids = {
+            instance.instance_uuid
+            for instance in active.plugins
+            if instance.instance_uuid != displayed_instance_uuid
+            and self._presentation_request_target(instance) is not None
+        }
+        if not eligible_instance_uuids:
+            return False
         selection = manager.reserve_next_active_instance(
             current_dt,
             latest_refresh=None,
@@ -6756,6 +6880,11 @@ class RefreshTask:
             display_commit_id,
             committed_at,
         )
+        if not requested:
+            manager.release_rotation_reservation(
+                selection.instance.instance_uuid,
+                expected_playlist_name=selection.playlist_name,
+            )
         if requested:
             logger.info(
                 "Reserved next rotation member for immediate presentation preparation. | "

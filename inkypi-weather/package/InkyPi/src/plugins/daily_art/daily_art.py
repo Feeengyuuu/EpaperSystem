@@ -16,6 +16,7 @@ from urllib.parse import urlencode, urljoin
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.parallel_image_stage import prepare_local_bank_images
 from plugins.base_plugin.presentation import (
     PresentationMode,
     PresentationPreparation,
@@ -474,7 +475,15 @@ class DailyArt(BasePlugin):
             )
         else:
             selection = pending
-        image = self._render_bank_selection(bank, profile, selection, dimensions, settings)
+        image = self._render_bank_selection(
+            bank,
+            profile,
+            selection,
+            dimensions,
+            settings,
+            use_bound_image_stage=True,
+            expected_instance_uuid=get_presentation_instance_uuid(settings),
+        )
         if resolved_theme_context is not None:
             image = apply_media_theme_chrome(
                 image,
@@ -560,13 +569,67 @@ class DailyArt(BasePlugin):
             )
         return None
 
-    def _render_bank_selection(self, bank, profile, selection, dimensions, settings):
-        selected = bank.selection_records(profile, selection, load_media=True)
+    def _render_bank_selection(
+        self,
+        bank,
+        profile,
+        selection,
+        dimensions,
+        settings,
+        *,
+        use_bound_image_stage=False,
+        expected_instance_uuid=None,
+    ):
+        selected = bank.selection_records(
+            profile,
+            selection,
+            load_media=not use_bound_image_stage,
+        )
+        staged = None
+        if (
+            use_bound_image_stage
+            and expected_instance_uuid
+            and len(selected) > 1
+        ):
+            staged = prepare_local_bank_images(
+                plugin_id=PLUGIN_ID,
+                media_root=bank.media.root,
+                source_paths=tuple(
+                    bank.media.path(record["media_key"], suffix=".png")
+                    for record, _image in selected
+                ),
+                target_sizes=tuple(None for _record, _image in selected),
+                expected_instance_uuid=expected_instance_uuid,
+            )
+        if staged is None and use_bound_image_stage:
+            selected = bank.selection_records(profile, selection, load_media=True)
+        images = (
+            staged
+            if staged is not None
+            else tuple(image for _record, image in selected)
+        )
         pairs = [
-            (ArtworkCandidate(**{key: record.get(key, "") for key in ArtworkCandidate.__dataclass_fields__}), image)
-            for record, image in selected
+            (
+                ArtworkCandidate(
+                    **{
+                        key: record.get(key, "")
+                        for key in ArtworkCandidate.__dataclass_fields__
+                    }
+                ),
+                image,
+            )
+            for (record, _image), image in zip(selected, images)
         ]
-        return self._render_selected_artworks(pairs, selection["layout"], dimensions, settings)
+        try:
+            return self._render_selected_artworks(
+                pairs,
+                selection["layout"],
+                dimensions,
+                settings,
+            )
+        finally:
+            for staged_image in staged or ():
+                staged_image.close()
 
     def _render_selected_artworks(self, selected, layout, dimensions, settings):
         candidates = [candidate for candidate, _image in selected]

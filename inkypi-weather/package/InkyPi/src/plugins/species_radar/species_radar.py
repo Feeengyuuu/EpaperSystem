@@ -58,6 +58,13 @@ from utils.theme_utils import normalize_palette_colors
 logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "species_radar"
+# Species pages tolerate independently corrupt optional related photos.  The
+# shared image stage is intentionally all-or-nothing, so batching those files
+# would turn a skippable decoration failure into a failed presentation.
+PARALLEL_IMAGE_STAGE_ELIGIBLE = False
+PARALLEL_IMAGE_STAGE_RATIONALE = (
+    "optional related photos must remain independently skippable"
+)
 PLUGIN_DIR = Path(__file__).resolve().parent
 SRC_DIR = PLUGIN_DIR.parent.parent
 STATIC_FONT_DIR = SRC_DIR / "static" / "fonts"

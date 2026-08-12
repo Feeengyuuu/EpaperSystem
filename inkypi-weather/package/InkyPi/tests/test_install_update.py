@@ -174,6 +174,12 @@ def _journal_at_phase(layout, release_id, target, phase):
             UpdatePhase.SWITCHED,
             UpdatePhase.STARTING,
         ),
+        UpdatePhase.APPLYING_HOST_MIGRATION: (
+            UpdatePhase.DOWNLOADED,
+            UpdatePhase.PREFLIGHTED,
+            UpdatePhase.SWITCHED,
+            UpdatePhase.APPLYING_HOST_MIGRATION,
+        ),
         UpdatePhase.HEALTHY: (
             UpdatePhase.DOWNLOADED,
             UpdatePhase.PREFLIGHTED,
@@ -194,6 +200,13 @@ def _journal_at_phase(layout, release_id, target, phase):
             UpdatePhase.PREFLIGHTED,
             UpdatePhase.SWITCHED,
             UpdatePhase.ROLLING_BACK,
+        ),
+        UpdatePhase.ROLLBACK_PENDING_SERVICES: (
+            UpdatePhase.DOWNLOADED,
+            UpdatePhase.PREFLIGHTED,
+            UpdatePhase.SWITCHED,
+            UpdatePhase.ROLLING_BACK,
+            UpdatePhase.ROLLBACK_PENDING_SERVICES,
         ),
         UpdatePhase.ROLLED_BACK: (
             UpdatePhase.DOWNLOADED,

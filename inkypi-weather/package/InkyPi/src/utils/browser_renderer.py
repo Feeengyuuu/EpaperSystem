@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from enum import Enum
+import errno
 import hashlib
 import logging
 import math
@@ -37,13 +38,17 @@ except ImportError:  # pragma: no cover - production imports modules from src/
     )
 from runtime.refresh_contracts import TaskCancelled, TaskContext
 from runtime.resource_deferral import ResourcePressureDeferred
-from runtime.long_task_executor import current_task_context
+from runtime.long_task_executor import (
+    current_task_context,
+    long_task_child_process_group_active,
+)
 from runtime.refresh_policy import (
     ResourceSample,
     ResourceThresholds,
     ResourceTier,
     classify_resource_tier,
 )
+from runtime.resource_governor import CHROMIUM, RuntimeResourceGovernor
 from security.egress_proxy import EgressProxy
 from security.ssrf import ApprovedTarget, UnsafeTarget, get_ssrf_policy
 from utils.safe_image import safe_open_image
@@ -55,6 +60,8 @@ RENDERER_VERSION = "browser-renderer-v2-ssrf-proxy"
 DEFAULT_TIMEOUT_SECONDS = 60.0
 DEFAULT_VIRTUAL_TIME_BUDGET_MS = 2_000
 RESOURCE_PRESSURE_POLL_SECONDS = 1.0
+PROCESS_GROUP_REAP_SECONDS = 2.0
+PROCESS_GROUP_REAP_POLL_SECONDS = 0.01
 BROWSER_PRESSURE_ABORT_MAX_AVAILABLE_MB = 115.0
 BROWSER_RESOURCE_PRESSURE_REASON = "browser_resource_pressure"
 NEGATIVE_CACHE_TTL_SECONDS = 600.0
@@ -67,10 +74,47 @@ _GLOBAL_RENDERER = None
 _GLOBAL_RENDERER_LOCK = threading.Lock()
 
 
+def _is_posix_platform():
+    return os.name == "posix"
+
+
+def _browser_process_owns_session():
+    """Return whether Chromium must own the group BrowserRenderer signals."""
+
+    return bool(
+        _is_posix_platform()
+        and not long_task_child_process_group_active()
+    )
+
+
 class _ProcessStopState(Enum):
     NOT_SIGNALLED = "not_signalled"
     SIGNALLED_RUNNING = "signalled_running"
     SIGNALLED_EXITED = "signalled_exited"
+
+
+class BrowserProcessLeakError(RuntimeError):
+    """Chromium survived the complete terminate/kill/reap sequence."""
+
+    def __init__(self, pid):
+        self.pid = int(pid)
+        super().__init__(f"Chromium process could not be reaped: {self.pid}")
+
+
+class _BrowserAdmission:
+    """The process-local and governor permits owned by one Chromium job."""
+
+    def __init__(self, local_slot, central_lease):
+        self.local_slot = local_slot
+        self.central_lease = central_lease
+        self.quarantined = False
+
+    def quarantine(self):
+        self.quarantined = True
+
+    def release(self):
+        self.central_lease.release()
+        self.local_slot.release()
 
 
 def _lifecycle_allowance(*, budget, allowance, aggregate, clock):
@@ -192,6 +236,7 @@ class BrowserRenderer:
         egress_proxy=None,
         resource_sampler=None,
         resource_thresholds=None,
+        resource_governor=None,
     ):
         self.binary = binary or find_browser_binary()
         configured_root = os.getenv("INKYPI_BROWSER_TEMP_DIR", "").strip()
@@ -215,6 +260,8 @@ class BrowserRenderer:
         self._html_system_circuit_until = 0.0
         self._html_circuit_lock = threading.Lock()
         self._processes = {}
+        self._process_groups = {}
+        self._process_quarantines = {}
         self._process_lock = threading.Lock()
         self.ssrf_policy = ssrf_policy or get_ssrf_policy()
         self.egress_proxy = egress_proxy or EgressProxy(policy=self.ssrf_policy)
@@ -223,6 +270,11 @@ class BrowserRenderer:
             ResourceThresholds()
             if resource_thresholds is None
             else resource_thresholds
+        )
+        self._resource_governor = (
+            resource_governor
+            if resource_governor is not None
+            else RuntimeResourceGovernor()
         )
         self._proxy_finalizer = weakref.finalize(self, self.egress_proxy.close)
         self._closed = False
@@ -235,6 +287,11 @@ class BrowserRenderer:
     def active_processes(self):
         with self._process_lock:
             return tuple(sorted(self._processes))
+
+    @property
+    def quarantined_processes(self):
+        with self._process_lock:
+            return tuple(sorted(self._process_quarantines))
 
     @property
     def negative_cache_size(self):
@@ -614,11 +671,15 @@ class BrowserRenderer:
         if self._closed or not self.binary:
             self._remember_negative(key)
             return None
+        quarantined = self.quarantined_processes
+        if quarantined:
+            raise BrowserProcessLeakError(quarantined[0])
         width, height = self._viewport(viewport)
         job_dir = None
         process = None
+        admission = None
         try:
-            with self._browser_slot(context):
+            with self._browser_slot(context) as admission:
                 context.raise_if_cancelled()
                 if abort_on_hard_pressure:
                     resource_sample = self._resource_sample()
@@ -674,10 +735,16 @@ class BrowserRenderer:
                     "stdout": subprocess.DEVNULL,
                     "stderr": subprocess.DEVNULL,
                 }
-                if os.name != "nt":
+                owns_process_group = _browser_process_owns_session()
+                if owns_process_group:
                     popen_kwargs["start_new_session"] = True
                 process = self._popen(command, **popen_kwargs)
-                self._register_process(process)
+                process_group = (
+                    self._capture_process_group(process)
+                    if owns_process_group
+                    else None
+                )
+                self._register_process(process, process_group=process_group)
                 try:
                     wait_timeout = min(
                         self._timeout(timeout_seconds),
@@ -714,6 +781,12 @@ class BrowserRenderer:
                         self._remember_html_failure(failure_domain)
                     return None
                 finally:
+                    # A standalone Chromium leader can exit while renderer
+                    # descendants remain in its captured session. Always
+                    # validate/reap that group, even after leader.poll().
+                    self._stop_process(process)
+                    if process.poll() is None:
+                        raise BrowserProcessLeakError(process.pid)
                     self._unregister_process(process)
                 context.raise_if_cancelled()
                 if process.returncode != 0 or not output_path.is_file():
@@ -726,6 +799,15 @@ class BrowserRenderer:
                 if failure_scope == "html":
                     self._forget_html_failure(failure_domain)
                 return image
+        except BrowserProcessLeakError:
+            if process is not None and admission is not None:
+                self._quarantine_process(process, admission, job_dir)
+                job_dir = None
+            logger.critical(
+                "Chromium capacity quarantined because process could not be reaped: %s",
+                None if process is None else process.pid,
+            )
+            raise
         except ResourcePressureDeferred:
             raise
         except TaskCancelled:
@@ -741,7 +823,7 @@ class BrowserRenderer:
                 self._remember_html_failure(failure_domain)
             return None
         finally:
-            if process is not None:
+            if process is not None and process.poll() is not None:
                 self._unregister_process(process)
             if job_dir is not None:
                 shutil.rmtree(job_dir, ignore_errors=True)
@@ -837,6 +919,7 @@ class BrowserRenderer:
     @contextmanager
     def _browser_slot(self, context):
         acquired = False
+        admission = None
         try:
             while not acquired:
                 context.raise_if_cancelled()
@@ -844,9 +927,23 @@ class BrowserRenderer:
                 acquired = _GLOBAL_BROWSER_SLOT.acquire(
                     timeout=max(0.001, min(0.05, remaining))
                 )
-            yield
+            central_lease = self._resource_governor.acquire(
+                CHROMIUM,
+                {"component": "browser_renderer"},
+                context,
+            )
+            admission = _BrowserAdmission(_GLOBAL_BROWSER_SLOT, central_lease)
+            context.raise_if_cancelled()
+            try:
+                yield admission
+            except BrowserProcessLeakError:
+                admission.quarantine()
+                raise
         finally:
-            if acquired:
+            if admission is not None:
+                if not admission.quarantined:
+                    admission.release()
+            elif acquired:
                 _GLOBAL_BROWSER_SLOT.release()
 
     def _command(
@@ -907,20 +1004,69 @@ class BrowserRenderer:
         command.append(str(target))
         return command
 
-    def _register_process(self, process):
+    def _register_process(self, process, *, process_group=None):
         with self._process_lock:
-            self._processes[int(process.pid)] = process
+            pid = int(process.pid)
+            self._processes[pid] = process
+            self._process_groups[pid] = process_group
 
     def _unregister_process(self, process):
         with self._process_lock:
-            self._processes.pop(int(process.pid), None)
+            pid = int(process.pid)
+            if pid in self._process_quarantines:
+                return
+            self._processes.pop(pid, None)
+            self._process_groups.pop(pid, None)
+
+    def _quarantine_process(self, process, admission, job_dir):
+        admission.quarantine()
+        with self._process_lock:
+            pid = int(process.pid)
+            self._processes[pid] = process
+            self._process_quarantines[pid] = (
+                admission,
+                None if job_dir is None else Path(job_dir),
+            )
+
+    @staticmethod
+    def _capture_process_group(process):
+        """Capture the standalone session created by ``start_new_session``."""
+
+        try:
+            pid = int(process.pid)
+            parent_group = int(os.getpgrp())
+        except (AttributeError, OSError, TypeError, ValueError) as error:
+            raise BrowserProcessLeakError(getattr(process, "pid", -1)) from error
+        if pid <= 1 or pid == parent_group:
+            raise BrowserProcessLeakError(pid)
+        try:
+            process_group = int(os.getpgid(pid))
+        except ProcessLookupError:
+            # Popen(start_new_session=True) establishes PGID=PID before exec.
+            # The leader may already have exited, but its descendants retain
+            # that captured group and still require cleanup.
+            return pid
+        except OSError as error:
+            if error.errno == errno.ESRCH:
+                return pid
+            raise BrowserProcessLeakError(pid) from error
+        if process_group != pid or process_group == parent_group:
+            raise BrowserProcessLeakError(pid)
+        return process_group
+
+    def _registered_process_group(self, process):
+        with self._process_lock:
+            return self._process_groups.get(int(process.pid))
 
     def _stop_process(self, process):
+        process_group = self._registered_process_group(process)
+        if process_group is not None:
+            return self._stop_process_group(process, process_group)
         if process.poll() is not None:
             return _ProcessStopState.NOT_SIGNALLED
         signaled = False
         try:
-            if os.name != "nt":
+            if _browser_process_owns_session():
                 os.killpg(process.pid, signal.SIGTERM)
             else:
                 process.terminate()
@@ -931,7 +1077,7 @@ class BrowserRenderer:
         except (OSError, subprocess.TimeoutExpired):
             pass
         try:
-            if os.name != "nt":
+            if _browser_process_owns_session():
                 os.killpg(process.pid, signal.SIGKILL)
             else:
                 process.kill()
@@ -946,6 +1092,65 @@ class BrowserRenderer:
         if signaled:
             return _ProcessStopState.SIGNALLED_RUNNING
         return _ProcessStopState.NOT_SIGNALLED
+
+    def _stop_process_group(self, process, process_group):
+        signaled = False
+        group_existed = self._process_group_exists(process_group)
+        if group_existed:
+            try:
+                os.killpg(process_group, signal.SIGTERM)
+                signaled = True
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=PROCESS_GROUP_REAP_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+        # Always follow an attempted group TERM with group KILL. The session
+        # leader may have exited while a Chromium renderer remains alive.
+        if group_existed:
+            try:
+                os.killpg(process_group, signal.SIGKILL)
+                signaled = True
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=PROCESS_GROUP_REAP_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+        group_reaped = self._wait_for_process_group_exit(process_group)
+        if not group_reaped or process.poll() is None:
+            logger.warning(
+                "Chromium process group did not exit cleanly: %s",
+                process_group,
+            )
+            raise BrowserProcessLeakError(process.pid)
+        if signaled:
+            return _ProcessStopState.SIGNALLED_EXITED
+        return _ProcessStopState.NOT_SIGNALLED
+
+    @staticmethod
+    def _process_group_exists(process_group):
+        try:
+            os.killpg(process_group, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError as error:
+            return error.errno != errno.ESRCH
+        return True
+
+    def _wait_for_process_group_exit(self, process_group):
+        deadline = time.monotonic() + PROCESS_GROUP_REAP_SECONDS
+        while self._process_group_exists(process_group):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(PROCESS_GROUP_REAP_POLL_SECONDS, remaining))
+        return True
 
     def _negative_hit(self, key):
         now = self._clock()

@@ -5,6 +5,7 @@ from copy import deepcopy
 import os
 import random
 import sys
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,6 +28,13 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
     read_source_provenance,
 )
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
+from runtime.bounded_parallel_stage import BoundedParallelStageRunner  # noqa: E402
+from runtime.long_task_executor import (  # noqa: E402
+    InstanceIdentity,
+    bind_long_task_runtime,
+)
+from runtime.refresh_contracts import TaskContext  # noqa: E402
+from runtime.resource_governor import RuntimeResourceGovernor  # noqa: E402
 from plugins.pixiv_r18_ranking.presentation_bank import PixivPresentationBankCold  # noqa: E402
 
 
@@ -951,6 +959,60 @@ def test_warm_prepare_is_zero_provider_and_pending_is_not_seen(tmp_path, monkeyp
         if record["record_key"] in pending["record_keys"]
     }
     assert not pending_ids.intersection(seen)
+
+
+def test_pixiv_prepared_strip_uses_bound_image_stage_with_identical_pixels(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings()
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc),
+    )
+    warm_bank(tmp_path)
+    request = presentation_request("9" * 32)
+
+    serial = plugin.prepare_presentation(
+        settings,
+        DummyDeviceConfig(),
+        request=request,
+        resolved_theme_context=None,
+    )
+    expected_hash = hashlib.sha256(serial.image.tobytes()).hexdigest()
+    runner = BoundedParallelStageRunner(
+        governor=RuntimeResourceGovernor(
+            snapshot_provider=lambda: {
+                "available_mb": 200,
+                "swap_percent": 0,
+                "cpu_quota_cores": 1,
+            }
+        )
+    )
+    context = TaskContext.never_cancelled(
+        deadline_monotonic=time.monotonic() + 10,
+    )
+    identity = InstanceIdentity("pixiv-instance", 1, 1)
+
+    with bind_long_task_runtime(
+        context,
+        identity,
+        identity_validator=lambda candidate: candidate == identity,
+        parallel_image_runner=runner,
+    ):
+        staged = plugin.prepare_presentation(
+            settings,
+            DummyDeviceConfig(),
+            request=request,
+            resolved_theme_context=None,
+        )
+
+    assert hashlib.sha256(staged.image.tobytes()).hexdigest() == expected_hash
+    assert runner.last_run_snapshot["reason"] == "cpu_quota_below_parallel_threshold"
+    assert not list(tmp_path.glob(".parallel-image-stage-*"))
 
 
 def test_cold_prepare_is_safe_no_change_while_data_refresh_is_pending(monkeypatch):

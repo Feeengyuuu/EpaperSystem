@@ -34,9 +34,11 @@ class UpdatePhase(str, Enum):
     PREFLIGHTED = "preflighted"
     SWITCHED = "switched"
     STARTING = "starting"
+    APPLYING_HOST_MIGRATION = "applying_host_migration"
     HEALTHY = "healthy"
     COMMITTED = "committed"
     ROLLING_BACK = "rolling_back"
+    ROLLBACK_PENDING_SERVICES = "rollback_pending_services"
     ROLLED_BACK = "rolled_back"
     ROLLBACK_FAILED = "rollback_failed"
 
@@ -54,14 +56,30 @@ _TRANSITIONS = {
     UpdatePhase.DOWNLOADED: frozenset({UpdatePhase.PREFLIGHTED}),
     UpdatePhase.PREFLIGHTED: frozenset({UpdatePhase.SWITCHED}),
     UpdatePhase.SWITCHED: frozenset(
-        {UpdatePhase.STARTING, UpdatePhase.ROLLING_BACK}
+        {
+            UpdatePhase.APPLYING_HOST_MIGRATION,
+            UpdatePhase.STARTING,
+            UpdatePhase.ROLLING_BACK,
+        }
     ),
     UpdatePhase.STARTING: frozenset(
         {UpdatePhase.HEALTHY, UpdatePhase.ROLLING_BACK}
     ),
-    UpdatePhase.HEALTHY: frozenset({UpdatePhase.COMMITTED}),
+    UpdatePhase.APPLYING_HOST_MIGRATION: frozenset(
+        {UpdatePhase.STARTING, UpdatePhase.ROLLING_BACK}
+    ),
+    UpdatePhase.HEALTHY: frozenset(
+        {UpdatePhase.COMMITTED, UpdatePhase.ROLLING_BACK}
+    ),
     UpdatePhase.ROLLING_BACK: frozenset(
-        {UpdatePhase.ROLLED_BACK, UpdatePhase.ROLLBACK_FAILED}
+        {
+            UpdatePhase.ROLLBACK_PENDING_SERVICES,
+            UpdatePhase.ROLLED_BACK,
+            UpdatePhase.ROLLBACK_FAILED,
+        }
+    ),
+    UpdatePhase.ROLLBACK_PENDING_SERVICES: frozenset(
+        {UpdatePhase.ROLLED_BACK, UpdatePhase.ROLLING_BACK}
     ),
     UpdatePhase.COMMITTED: frozenset(),
     UpdatePhase.ROLLED_BACK: frozenset(),
@@ -278,7 +296,9 @@ class UpdateJournal:
         if phase in {
             UpdatePhase.SWITCHED,
             UpdatePhase.STARTING,
+            UpdatePhase.APPLYING_HOST_MIGRATION,
             UpdatePhase.ROLLING_BACK,
+            UpdatePhase.ROLLBACK_PENDING_SERVICES,
         }:
             return RecoveryAction.ROLL_BACK
         if phase is UpdatePhase.HEALTHY:

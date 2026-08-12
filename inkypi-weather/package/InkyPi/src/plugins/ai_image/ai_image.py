@@ -2,9 +2,12 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from openai import OpenAI
 from utils.http_client import get_http_session
 from utils.safe_image import safe_open_base64_image, safe_open_image_response
+from runtime.long_task_executor import task_context_or_default
+from runtime.resource_governor import AI_GENERATION, RuntimeResourceGovernor
 import logging
 
 logger = logging.getLogger(__name__)
+_AI_GENERATION_GOVERNOR = RuntimeResourceGovernor()
 
 IMAGE_MODELS = ["dall-e-3", "dall-e-2", "gpt-image-1"]
 DEFAULT_IMAGE_MODEL = "dall-e-3"
@@ -21,6 +24,15 @@ class AIImage(BasePlugin):
         return template_params
 
     def generate_image(self, settings, device_config):
+        context = task_context_or_default()
+        with _AI_GENERATION_GOVERNOR.acquire(
+            AI_GENERATION,
+            {"plugin_id": "ai_image"},
+            context,
+        ):
+            return self._generate_image_admitted(settings, device_config)
+
+    def _generate_image_admitted(self, settings, device_config):
         logger.info("=== AI Image Plugin: Starting image generation ===")
 
         api_key = device_config.load_env_key("OPEN_AI_SECRET")

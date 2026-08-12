@@ -25,6 +25,7 @@ from urllib.request import ProxyHandler, build_opener
 import zipfile
 
 from release_archive import is_device_owned_yahei_font
+from host_migration import TrustedHostMigrator
 from release_state import (
     RecoveryAction,
     ReleaseLayout,
@@ -41,6 +42,7 @@ MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_ARCHIVE_FILE_BYTES = 512 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 1000
 DEFAULT_DISK_RESERVE_BYTES = 256 * 1024 * 1024
+BOOT_RECOVERY_UNIT_NAME = "inkypi-update-recover.service"
 
 
 class ArtifactError(RuntimeError):
@@ -130,6 +132,7 @@ class UpdateCoordinator:
         managed_files=(),
         copy_file=None,
         fallback_release=None,
+        host_migrator=None,
     ):
         self.layout = layout
         self.service = service
@@ -139,6 +142,7 @@ class UpdateCoordinator:
         self.fallback_release = (
             Path(fallback_release) if fallback_release is not None else None
         )
+        self.host_migrator = host_migrator or TrustedHostMigrator()
 
     def activate(self, journal, release_path) -> None:
         if journal.phase is not UpdatePhase.PREFLIGHTED:
@@ -149,6 +153,15 @@ class UpdateCoordinator:
         releases_root = self.layout.releases_dir.resolve()
         if target.parent != releases_root:
             raise UpdateFailed("prepared release is outside the managed release directory")
+        host_migration = self.host_migrator.requested_migration(
+            target,
+            journal.release_id,
+        )
+        host_migration_snapshot = (
+            self.host_migrator.capture_snapshot(host_migration)
+            if host_migration is not None
+            else None
+        )
 
         previous = self.links.read(self.layout.current_link)
         if (
@@ -171,7 +184,7 @@ class UpdateCoordinator:
         service_was_enabled = bool(
             getattr(self.service, "is_enabled", lambda: True)()
         )
-        journal.update_metadata(
+        activation_metadata = dict(
             previous_target=str(previous) if previous is not None else None,
             target_path=str(target),
             legacy_source=str(legacy_source) if legacy_source else None,
@@ -179,11 +192,23 @@ class UpdateCoordinator:
             service_was_enabled=service_was_enabled,
             managed_backups=backups,
         )
+        if host_migration is not None:
+            activation_metadata["host_migration"] = {
+                "migration": host_migration,
+                "snapshot": host_migration_snapshot,
+            }
+        journal.update_metadata(**activation_metadata)
         journal.transition(UpdatePhase.SWITCHED)
 
         try:
             if service_was_active:
                 self.service.stop()
+            if host_migration is not None:
+                journal.transition(UpdatePhase.APPLYING_HOST_MIGRATION)
+                self.host_migrator.apply(
+                    host_migration,
+                    host_migration_snapshot,
+                )
             if legacy_source is not None:
                 self.links.migrate_legacy_directory(legacy_source, previous)
             if previous is not None:
@@ -219,8 +244,15 @@ class UpdateCoordinator:
             ) from error
         self.cleanup_backups(journal)
 
-    def rollback(self, journal) -> None:
-        if journal.phase in {UpdatePhase.SWITCHED, UpdatePhase.STARTING}:
+    def rollback(self, journal, *, defer_service_starts=False) -> None:
+        if journal.phase in {
+            UpdatePhase.SWITCHED,
+            UpdatePhase.STARTING,
+            UpdatePhase.APPLYING_HOST_MIGRATION,
+            UpdatePhase.HEALTHY,
+        }:
+            journal.transition(UpdatePhase.ROLLING_BACK)
+        elif journal.phase is UpdatePhase.ROLLBACK_PENDING_SERVICES:
             journal.transition(UpdatePhase.ROLLING_BACK)
         elif journal.phase is not UpdatePhase.ROLLING_BACK:
             raise UpdateFailed(
@@ -228,9 +260,29 @@ class UpdateCoordinator:
             )
 
         try:
-            if self.service.is_active():
-                self.service.stop()
             metadata = journal.metadata
+            # A candidate may already be running when readiness or commit work
+            # fails.  Stop it before restoring the desktop so the constrained
+            # host never runs both memory-heavy stacks during rollback.
+            if defer_service_starts or self.service.is_active():
+                self.service.stop()
+            host_migration = metadata.get("host_migration")
+            if host_migration is not None:
+                if not isinstance(host_migration, dict) or set(host_migration) != {
+                    "migration",
+                    "snapshot",
+                }:
+                    raise UpdateFailed("host migration rollback metadata is invalid")
+                if defer_service_starts:
+                    self.host_migrator.restore_for_boot(
+                        host_migration["migration"],
+                        host_migration["snapshot"],
+                    )
+                else:
+                    self.host_migrator.restore(
+                        host_migration["migration"],
+                        host_migration["snapshot"],
+                    )
             previous_raw = metadata.get("previous_target")
             previous = Path(previous_raw) if previous_raw else None
             legacy_source = metadata.get("legacy_source")
@@ -254,26 +306,86 @@ class UpdateCoordinator:
                 if callable(enable):
                     enable()
             if metadata.get("service_was_active"):
-                self.service.start()
-            journal.transition(UpdatePhase.ROLLED_BACK)
-            self.cleanup_backups(journal)
-        except BaseException:
+                if defer_service_starts:
+                    self.service.start_deferred()
+                else:
+                    self.service.start()
+            if defer_service_starts:
+                journal.transition(UpdatePhase.ROLLBACK_PENDING_SERVICES)
+            else:
+                journal.transition(UpdatePhase.ROLLED_BACK)
+                self.cleanup_backups(journal)
+        except BaseException as error:
             if journal.phase is UpdatePhase.ROLLING_BACK:
+                # Host restoration is idempotent.  A transient systemd or I/O
+                # failure must remain boot-retryable instead of freezing a
+                # partially restored host in manual-intervention state.
                 try:
-                    journal.transition(UpdatePhase.ROLLBACK_FAILED)
+                    metadata = journal.metadata
+                    journal.update_metadata(
+                        rollback_failure_count=(
+                            int(metadata.get("rollback_failure_count", 0)) + 1
+                        ),
+                        rollback_failure_type=type(error).__name__[:128],
+                        rollback_failure_message=str(error)[:512],
+                    )
                 except BaseException:
                     pass
             raise
 
-    def recover(self, journal):
+    def recover(self, journal, *, defer_service_starts=False):
+        # Readiness alone is not the commit point for a host mutation.  If the
+        # power fails after HEALTHY was persisted but before COMMITTED, boot
+        # must restore the recorded graphical/LightDM snapshot exactly.
+        if (
+            journal.phase is UpdatePhase.HEALTHY
+            and journal.metadata.get("host_migration") is not None
+        ):
+            self.rollback(
+                journal,
+                defer_service_starts=defer_service_starts,
+            )
+            return RecoveryAction.ROLL_BACK
         return recover_incomplete_update(
             journal,
             clean_staging=self._clean_staging,
-            roll_back=self.rollback,
+            roll_back=lambda candidate: self.rollback(
+                candidate,
+                defer_service_starts=defer_service_starts,
+            ),
             finish_commit=lambda candidate: candidate.transition(
                 UpdatePhase.COMMITTED
             ),
         )
+
+    def finalize_boot_recovery(self, journal) -> None:
+        """Commit rollback only after all deferred service states are exact."""
+
+        if journal.phase is not UpdatePhase.ROLLBACK_PENDING_SERVICES:
+            raise UpdateFailed("boot recovery is not awaiting service finalization")
+        metadata = journal.metadata
+        host_migration = metadata.get("host_migration")
+        if host_migration is not None:
+            if not isinstance(host_migration, dict) or set(host_migration) != {
+                "migration",
+                "snapshot",
+            }:
+                raise UpdateFailed("host migration rollback metadata is invalid")
+            if not self.host_migrator.snapshot_matches(
+                host_migration["migration"],
+                host_migration["snapshot"],
+            ):
+                raise UpdateFailed("restored host state does not match its snapshot")
+        if bool(self.service.is_enabled()) != bool(
+            metadata.get("service_was_enabled", True)
+        ):
+            raise UpdateFailed("restored InkyPi enabled state does not match")
+        if bool(self.service.is_active()) != bool(
+            metadata.get("service_was_active", False)
+        ):
+            raise UpdateFailed("restored InkyPi active state does not match")
+        journal.transition(UpdatePhase.ROLLED_BACK)
+        self.cleanup_backups(journal)
 
     def _capture_managed_file_backups(self, journal):
         backup_root = self.layout.backup_dir / journal.release_id
@@ -324,7 +436,42 @@ class UpdateCoordinator:
             self.copy_file(source, managed.destination, managed.mode)
 
     def _restore_managed_files(self, records):
-        for record in reversed(tuple(records or ())):
+        records = tuple(records or ())
+        allowed_destinations = {
+            _absolute_without_resolving(managed.destination)
+            for managed in self.managed_files
+        }
+        observed_destinations = set()
+        backup_root = _absolute_without_resolving(self.layout.backup_dir)
+        for record in records:
+            if not isinstance(record, dict):
+                raise UpdateFailed("managed file backup record is invalid")
+            if type(record.get("existed")) is not bool:
+                raise UpdateFailed("managed file backup existence flag is invalid")
+            try:
+                mode = int(record.get("mode"))
+            except (TypeError, ValueError) as error:
+                raise UpdateFailed("managed file backup mode is invalid") from error
+            if not 0 <= mode <= 0o777:
+                raise UpdateFailed("managed file backup mode is invalid")
+            destination = _absolute_without_resolving(record.get("destination", ""))
+            if (
+                destination not in allowed_destinations
+                or destination in observed_destinations
+            ):
+                raise UpdateFailed("managed file backup destination is not allowlisted")
+            observed_destinations.add(destination)
+            if record.get("existed"):
+                backup = _absolute_without_resolving(record.get("backup", ""))
+                try:
+                    backup.relative_to(backup_root)
+                except ValueError as error:
+                    raise UpdateFailed(
+                        "managed file backup is outside the update state root"
+                    ) from error
+                if backup == backup_root:
+                    raise UpdateFailed("managed file backup path is invalid")
+        for record in reversed(records):
             destination = Path(record["destination"])
             if record.get("existed"):
                 backup = Path(record["backup"])
@@ -369,6 +516,7 @@ class ArtifactPreparer:
         run_command=None,
         disk_checker=None,
         links=None,
+        updater_capabilities=(),
     ):
         self.layout = layout
         self.config_path = Path(config_path)
@@ -376,6 +524,11 @@ class ArtifactPreparer:
         self.run_command = run_command or _run_checked
         self.disk_checker = disk_checker
         self.links = links or FilesystemLinks()
+        self.updater_capabilities = tuple(
+            capability
+            for capability in updater_capabilities
+            if capability == "headless_mode_v1"
+        )
 
     def _try_clone_current_venv(
         self,
@@ -679,8 +832,7 @@ class ArtifactPreparer:
         config_source = self.config_path
         if not config_source.is_file():
             config_source = candidate / "install" / "config_base" / "device.json"
-        self.run_command(
-            [
+        preflight_command = [
                 str(venv_python),
                 str(candidate / "install" / "preflight.py"),
                 "--release-root",
@@ -689,7 +841,11 @@ class ArtifactPreparer:
                 str(config_source),
                 "--release-id",
                 release_id,
-            ],
+            ]
+        for capability in self.updater_capabilities:
+            preflight_command.extend(("--updater-capability", capability))
+        self.run_command(
+            preflight_command,
             cwd=candidate,
             timeout=600,
         )
@@ -761,6 +917,9 @@ class SystemdService:
     def start(self) -> None:
         self._systemctl("start", self.service_name)
 
+    def start_deferred(self) -> None:
+        self._systemctl("--no-block", "start", self.service_name)
+
     def enable(self) -> None:
         self._systemctl("enable", self.service_name)
 
@@ -802,9 +961,117 @@ class SystemdService:
         )
 
 
+class BootRecoveryUnitInstaller:
+    """Atomically install and enable the fixed boot recovery oneshot."""
+
+    def __init__(
+        self,
+        *,
+        unit_target="/etc/systemd/system/inkypi-update-recover.service",
+        systemctl="/usr/bin/systemctl",
+        runner=None,
+        copy_file=None,
+    ):
+        self.unit_target = Path(unit_target)
+        self.systemctl = str(systemctl)
+        self._runner = runner or subprocess.run
+        self._copy_file = copy_file or atomic_copy_file
+
+    def install(self, source) -> None:
+        self._copy_file(source, self.unit_target, 0o644)
+        self._systemctl("daemon-reload")
+        # `enable` is intentionally unconditional: it is idempotent and makes
+        # a partially completed bootstrap converge on every update attempt.
+        self._systemctl("enable", BOOT_RECOVERY_UNIT_NAME)
+        self._systemctl("--no-block", "start", BOOT_RECOVERY_UNIT_NAME)
+
+    def install_capability(self, release_root) -> None:
+        """Install every fixed recovery file before any host migration."""
+
+        root = Path(release_root)
+        mappings = (
+            (
+                "install/inkypi-update-recover.service",
+                self.unit_target,
+                0o644,
+            ),
+            (
+                "install/inkypi-update-finalize.service",
+                Path("/etc/systemd/system/inkypi-update-finalize.service"),
+                0o644,
+            ),
+            (
+                "install/systemd/inkypi.service.d/10-update-recovery.conf",
+                Path(
+                    "/etc/systemd/system/inkypi.service.d/"
+                    "10-update-recovery.conf"
+                ),
+                0o644,
+            ),
+            (
+                "install/systemd/lightdm.service.d/"
+                "10-inkypi-update-recovery.conf",
+                Path(
+                    "/etc/systemd/system/lightdm.service.d/"
+                    "10-inkypi-update-recovery.conf"
+                ),
+                0o644,
+            ),
+            (
+                "install/lib/release_state.py",
+                Path("/usr/local/lib/inkypi-update/release_state.py"),
+                0o644,
+            ),
+            (
+                "install/lib/release_archive.py",
+                Path("/usr/local/lib/inkypi-update/release_archive.py"),
+                0o644,
+            ),
+            (
+                "install/lib/host_migration.py",
+                Path("/usr/local/lib/inkypi-update/host_migration.py"),
+                0o644,
+            ),
+            (
+                "install/lib/update_engine.py",
+                Path("/usr/local/lib/inkypi-update/update_engine.py"),
+                0o644,
+            ),
+        )
+        for relative, destination, mode in mappings:
+            source = root.joinpath(*PurePosixPath(relative).parts)
+            if not source.is_file() or source.is_symlink():
+                raise UpdateFailed(f"boot recovery capability file is missing: {source}")
+            self._copy_file(source, destination, mode)
+        self._systemctl("daemon-reload")
+        self._systemctl("enable", BOOT_RECOVERY_UNIT_NAME)
+        # Queue recovery while the updater still owns the shared lock.  The
+        # oneshot itself waits for that lock, and the caller releases it before
+        # joining the systemd job with wait_ready().
+        self._systemctl("--no-block", "start", BOOT_RECOVERY_UNIT_NAME)
+        self._systemctl("enable", "inkypi-update-finalize.service")
+
+    def wait_ready(self) -> None:
+        """Join the queued oneshot and propagate a fail-closed unit failure."""
+
+        self._systemctl("start", BOOT_RECOVERY_UNIT_NAME)
+
+    def _systemctl(self, *arguments) -> None:
+        self._runner(
+            [self.systemctl, *arguments],
+            check=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=300,
+        )
+
+
 class UpdateLock:
-    def __init__(self, path):
+    def __init__(self, path, *, blocking=False):
         self.path = Path(path)
+        self.blocking = bool(blocking)
         self._descriptor = None
 
     def __enter__(self):
@@ -816,11 +1083,15 @@ class UpdateLock:
 
                 os.ftruncate(descriptor, 1)
                 os.lseek(descriptor, 0, os.SEEK_SET)
-                msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                operation = msvcrt.LK_LOCK if self.blocking else msvcrt.LK_NBLCK
+                msvcrt.locking(descriptor, operation, 1)
             else:
                 import fcntl
 
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                operation = fcntl.LOCK_EX
+                if not self.blocking:
+                    operation |= fcntl.LOCK_NB
+                fcntl.flock(descriptor, operation)
             os.ftruncate(descriptor, 0)
             os.write(descriptor, f"{os.getpid()}\n".encode("ascii"))
             os.fsync(descriptor)

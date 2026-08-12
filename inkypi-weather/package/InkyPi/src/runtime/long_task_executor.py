@@ -6,10 +6,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import importlib
+import errno
 import logging
 import math
 import multiprocessing
+import os
 import queue
+import signal
 import threading
 import time
 from typing import Any, Callable, Mapping
@@ -20,6 +23,12 @@ from runtime.refresh_contracts import (
     TaskCancelled,
     TaskContext,
     TaskDeadlineExceeded,
+)
+from runtime.resource_governor import (
+    CHROMIUM,
+    HEAVY_CHILD,
+    PROVIDER_IO_EXCLUSIVE,
+    RuntimeResourceGovernor,
 )
 
 
@@ -47,9 +56,15 @@ _CURRENT_INSTANCE_IDENTITY_VALIDATOR: ContextVar[
     "inkypi_long_task_identity_validator",
     default=None,
 )
+_CURRENT_PARALLEL_IMAGE_RUNNER: ContextVar[Any | None] = ContextVar(
+    "inkypi_parallel_image_runner",
+    default=None,
+)
 _GLOBAL_EXECUTORS: weakref.WeakSet[LongTaskExecutor] = weakref.WeakSet()
 _GLOBAL_EXECUTORS_LOCK = threading.Lock()
 _STOP = object()
+_ADDITIONAL_CHILD_RESOURCE_KINDS = frozenset({CHROMIUM})
+_LONG_TASK_CHILD_PROCESS_GROUP_ACTIVE = False
 
 
 class LongTaskQueueFull(RuntimeError):
@@ -58,6 +73,14 @@ class LongTaskQueueFull(RuntimeError):
 
 class LongTaskExecutorClosed(RuntimeError):
     """Raised when work is submitted after shutdown begins."""
+
+
+class LongTaskProcessLeakError(RuntimeError):
+    """A child survived the complete terminate/kill/reap sequence."""
+
+    def __init__(self, pid: int | None):
+        self.pid = pid
+        super().__init__("isolated task child could not be reaped")
 
 
 class LongTaskFailure(RuntimeError):
@@ -147,8 +170,22 @@ class _Job:
     context: TaskContext
     identity: InstanceIdentity
     identity_validator: Callable[[InstanceIdentity], bool] | None
+    resource_kinds: tuple[str, ...]
     handle: LongTaskHandle
     termination_lock: threading.Lock = field(default_factory=threading.Lock)
+
+
+class _JobCancellationEvent:
+    """Expose scheduler or handle cancellation through one TaskContext event."""
+
+    def __init__(self, job: _Job):
+        self._job = job
+
+    def is_set(self) -> bool:
+        return bool(
+            self._job.handle.cancel_requested
+            or self._job.context.cancel_event.is_set()
+        )
 
 
 @dataclass
@@ -218,6 +255,24 @@ def _sanitize_message(value: Any) -> str:
     return text[:512] or "isolated task failed"
 
 
+def _is_posix_platform() -> bool:
+    return os.name == "posix"
+
+
+def long_task_child_process_group_active() -> bool:
+    """Return whether this process owns the LongTask POSIX process group."""
+
+    return bool(_LONG_TASK_CHILD_PROCESS_GROUP_ACTIVE)
+
+
+def _enter_long_task_child_process_group() -> None:
+    global _LONG_TASK_CHILD_PROCESS_GROUP_ACTIVE
+    if not _is_posix_platform():
+        return
+    os.setsid()
+    _LONG_TASK_CHILD_PROCESS_GROUP_ACTIVE = True
+
+
 def _resolve_task(value: Any) -> Callable[[Any, Any], Any]:
     if callable(value):
         return value
@@ -229,32 +284,53 @@ def _resolve_task(value: Any) -> Callable[[Any, Any], Any]:
     raise TypeError("isolated tasks must be callables or 'module:callable' strings")
 
 
-def _child_main(task, payload, cancel_event, sender) -> None:
+def _child_main(
+    task,
+    payload,
+    cancel_event,
+    process_group_ready_event,
+    terminal_hold_event,
+    sender,
+) -> None:
     try:
+        _enter_long_task_child_process_group()
+        if long_task_child_process_group_active():
+            process_group_ready_event.set()
         value = task(payload, cancel_event)
         value = _copy_primitive(value, max_bytes=MAX_RESULT_BYTES)
-        sender.send(("succeeded", value, None, None))
+        message = ("succeeded", value, None, None)
     except LongTaskFailure as error:
-        sender.send(("failed", None, error.code, error.public_message))
+        message = ("failed", None, error.code, error.public_message)
     except TaskDeadlineExceeded as error:
-        sender.send(("abandoned", None, "deadline_expired", _sanitize_message(error)))
+        message = (
+            "abandoned",
+            None,
+            "deadline_expired",
+            _sanitize_message(error),
+        )
     except TaskCancelled as error:
-        sender.send(("canceled", None, "task_canceled", _sanitize_message(error)))
+        message = ("canceled", None, "task_canceled", _sanitize_message(error))
     except BaseException as error:
         # Exception text may contain prompts, credentials, or remote response data.
-        sender.send(
-            (
-                "failed",
-                None,
-                type(error).__name__[:64],
-                "isolated task failed",
-            )
+        message = (
+            "failed",
+            None,
+            type(error).__name__[:64],
+            "isolated task failed",
         )
     finally:
         try:
-            sender.close()
-        except Exception:
-            pass
+            sender.send(message)
+        finally:
+            # Keep the session leader alive after publishing every terminal
+            # message. The parent can now reap the exact PGID without a PID
+            # reuse window between result delivery and group cleanup.
+            if long_task_child_process_group_active():
+                terminal_hold_event.wait()
+            try:
+                sender.close()
+            except Exception:
+                pass
 
 
 @contextmanager
@@ -262,6 +338,8 @@ def bind_long_task_runtime(
     context: TaskContext,
     instance_identity: InstanceIdentity,
     identity_validator: Callable[[InstanceIdentity], bool] | None = None,
+    *,
+    parallel_image_runner: Any | None = None,
 ):
     """Bind refresh identity and its optional parent-only validator."""
 
@@ -277,9 +355,13 @@ def bind_long_task_runtime(
     validator_token = _CURRENT_INSTANCE_IDENTITY_VALIDATOR.set(
         identity_validator
     )
+    parallel_runner_token = _CURRENT_PARALLEL_IMAGE_RUNNER.set(
+        parallel_image_runner
+    )
     try:
         yield
     finally:
+        _CURRENT_PARALLEL_IMAGE_RUNNER.reset(parallel_runner_token)
         _CURRENT_INSTANCE_IDENTITY_VALIDATOR.reset(validator_token)
         _CURRENT_INSTANCE_IDENTITY.reset(identity_token)
         _CURRENT_TASK_CONTEXT.reset(context_token)
@@ -297,6 +379,12 @@ def current_instance_identity_validator() -> Callable[[InstanceIdentity], bool] 
     """Return the parent-only stale-result validator bound to this refresh."""
 
     return _CURRENT_INSTANCE_IDENTITY_VALIDATOR.get()
+
+
+def current_parallel_image_runner() -> Any | None:
+    """Return the parent-owned image-stage runner bound to this refresh."""
+
+    return _CURRENT_PARALLEL_IMAGE_RUNNER.get()
 
 
 def task_context_or_default(
@@ -324,6 +412,8 @@ class LongTaskExecutor:
         terminate_grace_seconds: float = DEFAULT_TERMINATE_GRACE_SECONDS,
         start_method: str = "spawn",
         register_global: bool = False,
+        resource_governor=None,
+        multiprocessing_context=None,
     ):
         if int(max_workers) != 1:
             raise ValueError("LongTaskExecutor currently requires exactly one worker")
@@ -338,12 +428,22 @@ class LongTaskExecutor:
         self._max_queue = int(max_queue)
         self._poll_interval = max(0.005, float(poll_interval_seconds))
         self._terminate_grace = max(0.01, float(terminate_grace_seconds))
-        self._mp = multiprocessing.get_context(start_method)
+        self._resource_governor = (
+            resource_governor
+            if resource_governor is not None
+            else RuntimeResourceGovernor()
+        )
+        self._mp = (
+            multiprocessing_context
+            if multiprocessing_context is not None
+            else multiprocessing.get_context(start_method)
+        )
         self._slots = threading.BoundedSemaphore(1 + self._max_queue)
         self._queue: queue.Queue[_Job | object] = queue.Queue()
         self._lock = threading.Lock()
         self._jobs: dict[str, _Job] = {}
         self._active: dict[str, Any] = {}
+        self._quarantined_leases: dict[str, tuple[Any, ...]] = {}
         self._closed = False
         self._coordinator = threading.Thread(
             target=self._coordinate,
@@ -379,6 +479,7 @@ class LongTaskExecutor:
         context: TaskContext,
         instance_identity: InstanceIdentity,
         identity_validator: Callable[[InstanceIdentity], bool] | None = None,
+        resource_kinds=(),
     ) -> LongTaskHandle:
         task_name = str(task_name)
         task = self._tasks.get(task_name)
@@ -388,6 +489,7 @@ class LongTaskExecutor:
             raise TypeError("instance_identity must be an InstanceIdentity")
         if identity_validator is not None and not callable(identity_validator):
             raise TypeError("identity_validator must be callable")
+        resource_kinds = self._normalize_resource_kinds(resource_kinds)
         payload = _copy_primitive(payload, max_bytes=MAX_PAYLOAD_BYTES)
         with self._lock:
             if self._closed:
@@ -403,6 +505,7 @@ class LongTaskExecutor:
                 context,
                 instance_identity,
                 identity_validator,
+                resource_kinds,
                 handle,
             )
             self._jobs[task_id] = job
@@ -481,11 +584,67 @@ class LongTaskExecutor:
         if aborted is not None:
             return aborted
 
+        admission_context = TaskContext(
+            _JobCancellationEvent(job),
+            job.context.deadline_monotonic,
+            job.context.clock,
+        )
+        leases = []
+        try:
+            for kind in (
+                HEAVY_CHILD,
+                PROVIDER_IO_EXCLUSIVE,
+                *job.resource_kinds,
+            ):
+                leases.append(
+                    self._resource_governor.acquire(kind, {}, admission_context)
+                )
+            aborted = self._abort_result(job)
+            if aborted is not None:
+                return aborted
+            return self._run_job_admitted(job)
+        except LongTaskProcessLeakError:
+            # A live child still owns every resource admitted for this job.
+            # Transfer those leases into a sticky quarantine instead of
+            # publishing success or allowing another heavy child to start.
+            with self._lock:
+                self._quarantined_leases[job.handle.id] = tuple(leases)
+            leases = []
+            return LongTaskResult(
+                "failed",
+                error_code="child_process_leaked",
+                error="isolated task child could not be reaped",
+            )
+        except (TaskCancelled, TaskDeadlineExceeded):
+            aborted = self._abort_result(job)
+            if aborted is not None:
+                return aborted
+            return LongTaskResult(
+                "canceled",
+                error_code="task_canceled",
+                error="isolated task was canceled during resource admission",
+            )
+        finally:
+            for lease in reversed(leases):
+                lease.release()
+
+    def _run_job_admitted(self, job: _Job) -> LongTaskResult:
+        """Start and reap one child after all parent-owned permits are held."""
+
         receiver, sender = self._mp.Pipe(duplex=False)
         cancel_event = self._mp.Event()
+        process_group_ready_event = self._mp.Event()
+        terminal_hold_event = self._mp.Event()
         process = self._mp.Process(
             target=_child_main,
-            args=(job.task, job.payload, cancel_event, sender),
+            args=(
+                job.task,
+                job.payload,
+                cancel_event,
+                process_group_ready_event,
+                terminal_hold_event,
+                sender,
+            ),
             name=f"inkypi-long-task-{job.task_name}",
         )
         try:
@@ -507,7 +666,11 @@ class LongTaskExecutor:
                 aborted = self._abort_result(job)
                 if aborted is not None:
                     cancel_event.set()
-                    self._terminate_process(job, process)
+                    self._terminate_process(
+                        job,
+                        process,
+                        process_group_ready_event,
+                    )
                     return aborted
 
                 if receiver.poll(self._poll_interval):
@@ -516,7 +679,6 @@ class LongTaskExecutor:
                     except EOFError:
                         message = None
                     result = self._decode_message(message)
-                    self._reap_completed_process(job, process, cancel_event)
                     return self._validate_identity(job, result)
 
                 if not process.is_alive():
@@ -537,16 +699,46 @@ class LongTaskExecutor:
                     )
         finally:
             receiver.close()
-            if process.is_alive():
-                self._terminate_process(job, process)
+            reaped = self._reap_process_tree(
+                job,
+                process,
+                process_group_ready_event,
+            )
+            if reaped:
+                with self._lock:
+                    self._active.pop(job.handle.id, None)
+                try:
+                    process.close()
+                except (OSError, ValueError):
+                    pass
             else:
-                process.join(timeout=0)
-            with self._lock:
-                self._active.pop(job.handle.id, None)
-            try:
-                process.close()
-            except (OSError, ValueError):
-                pass
+                raise LongTaskProcessLeakError(getattr(process, "pid", None))
+
+    @staticmethod
+    def _normalize_resource_kinds(resource_kinds) -> tuple[str, ...]:
+        if resource_kinds is None:
+            return ()
+        if isinstance(resource_kinds, (str, bytes)):
+            raise TypeError("resource_kinds must be an iterable of resource names")
+        try:
+            values = tuple(str(kind or "").strip() for kind in resource_kinds)
+        except TypeError:
+            raise TypeError(
+                "resource_kinds must be an iterable of resource names"
+            ) from None
+        if any(not kind for kind in values):
+            raise ValueError("resource kinds must be non-empty")
+        if len(set(values)) != len(values):
+            raise ValueError("resource kinds must be unique")
+        unsupported = set(values) - _ADDITIONAL_CHILD_RESOURCE_KINDS
+        if unsupported:
+            raise ValueError(
+                "unsupported child resource kinds: "
+                + ", ".join(sorted(unsupported))
+            )
+        # Keep this fail-closed even though the current allowlist has one item;
+        # adding another resource requires an explicit lock-order review.
+        return tuple(sorted(values))
 
     @staticmethod
     def _decode_message(message) -> LongTaskResult:
@@ -610,21 +802,50 @@ class LongTaskExecutor:
             )
         return None
 
-    def _reap_completed_process(self, job, process, cancel_event) -> None:
-        process.join(timeout=self._terminate_grace)
-        if process.is_alive():
-            cancel_event.set()
-            self._terminate_process(job, process)
+    def _reap_process_tree(
+        self,
+        job: _Job,
+        process,
+        process_group_ready_event,
+    ) -> bool:
+        process_group = self._claimed_child_process_group(
+            process,
+            process_group_ready_event,
+        )
+        if process_group is None:
+            process.join(timeout=self._terminate_grace)
+            try:
+                if not process.is_alive():
+                    process.join(timeout=0)
+                    return True
+            except (AssertionError, ValueError):
+                return False
+        return self._terminate_process(
+            job,
+            process,
+            process_group_ready_event,
+        )
 
-    def _terminate_process(self, job: _Job, process) -> None:
+    def _terminate_process(
+        self,
+        job: _Job,
+        process,
+        process_group_ready_event=None,
+    ) -> bool:
         with job.termination_lock:
+            process_group = self._claimed_child_process_group(
+                process,
+                process_group_ready_event,
+            )
+            if process_group is not None:
+                return self._terminate_process_group(process, process_group)
             try:
                 alive = process.is_alive()
             except (AssertionError, ValueError):
-                return
+                return False
             if not alive:
                 process.join(timeout=0)
-                return
+                return True
             try:
                 process.terminate()
             except (OSError, AttributeError):
@@ -636,6 +857,93 @@ class LongTaskExecutor:
                 except (OSError, AttributeError):
                     pass
                 process.join(timeout=self._terminate_grace)
+            try:
+                return not process.is_alive()
+            except (AssertionError, ValueError):
+                return False
+
+    @staticmethod
+    def _claimed_child_process_group(
+        process,
+        process_group_ready_event=None,
+    ) -> int | None:
+        if not _is_posix_platform():
+            return None
+        ready = False
+        if process_group_ready_event is not None:
+            try:
+                ready = bool(process_group_ready_event.is_set())
+            except (AttributeError, OSError, ValueError):
+                ready = False
+        if not ready:
+            return LongTaskExecutor._verified_child_process_group(process)
+        try:
+            process_group = int(process.pid)
+            parent_group = int(os.getpgrp())
+        except (AttributeError, OSError, TypeError, ValueError):
+            return None
+        if process_group <= 1 or process_group == parent_group:
+            return None
+        return process_group
+
+    @staticmethod
+    def _verified_child_process_group(process) -> int | None:
+        if not _is_posix_platform():
+            return None
+        try:
+            pid = int(process.pid)
+            process_group = int(os.getpgid(pid))
+            parent_group = int(os.getpgrp())
+        except (AttributeError, OSError, TypeError, ValueError):
+            return None
+        if pid <= 1 or process_group != pid or process_group == parent_group:
+            return None
+        return process_group
+
+    def _terminate_process_group(self, process, process_group: int) -> bool:
+        try:
+            os.killpg(process_group, signal.SIGTERM)
+        except OSError:
+            pass
+        process.join(timeout=self._terminate_grace)
+
+        # Always follow with a group SIGKILL. The direct child may honor TERM
+        # before a Chromium grandchild does; checking only Process.is_alive()
+        # would otherwise strand that descendant outside parent accounting.
+        try:
+            os.killpg(process_group, signal.SIGKILL)
+        except OSError:
+            pass
+        process.join(timeout=self._terminate_grace)
+        try:
+            direct_child_reaped = not process.is_alive()
+        except (AssertionError, ValueError):
+            return False
+        return bool(
+            direct_child_reaped
+            and self._wait_for_process_group_exit(process_group)
+        )
+
+    def _wait_for_process_group_exit(self, process_group: int) -> bool:
+        deadline = time.monotonic() + self._terminate_grace
+        while self._process_group_exists(process_group):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(0.005, remaining))
+        return True
+
+    @staticmethod
+    def _process_group_exists(process_group: int) -> bool:
+        try:
+            os.killpg(process_group, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError as error:
+            return error.errno != errno.ESRCH
+        return True
 
 
 def shutdown_long_task_executors(*, deadline_monotonic: float) -> None:

@@ -39,6 +39,12 @@ def _journal_at(tmp_path, phase):
         journal.transition(UpdatePhase.SWITCHED)
         journal.transition(UpdatePhase.ROLLING_BACK)
         return journal
+    if phase == UpdatePhase.APPLYING_HOST_MIGRATION:
+        journal.transition(UpdatePhase.DOWNLOADED)
+        journal.transition(UpdatePhase.PREFLIGHTED)
+        journal.transition(UpdatePhase.SWITCHED)
+        journal.transition(UpdatePhase.APPLYING_HOST_MIGRATION)
+        return journal
     if phase in {UpdatePhase.ROLLED_BACK, UpdatePhase.ROLLBACK_FAILED}:
         journal.transition(UpdatePhase.DOWNLOADED)
         journal.transition(UpdatePhase.PREFLIGHTED)
@@ -81,6 +87,7 @@ def test_update_phase_transitions_are_strict_and_durable(tmp_path):
         (UpdatePhase.PREFLIGHTED, RecoveryAction.CLEAN_STAGING),
         (UpdatePhase.SWITCHED, RecoveryAction.ROLL_BACK),
         (UpdatePhase.STARTING, RecoveryAction.ROLL_BACK),
+        (UpdatePhase.APPLYING_HOST_MIGRATION, RecoveryAction.ROLL_BACK),
         (UpdatePhase.ROLLING_BACK, RecoveryAction.ROLL_BACK),
         (UpdatePhase.HEALTHY, RecoveryAction.FINISH_COMMIT),
         (UpdatePhase.COMMITTED, RecoveryAction.NONE),

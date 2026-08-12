@@ -11,6 +11,7 @@ SCRIPT_DIR=$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)
 PROJECT_DIR=$(cd -P "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)
 
 RELEASE_ID=""
+MIGRATIONS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --release-id)
@@ -18,8 +19,21 @@ while [[ $# -gt 0 ]]; do
       RELEASE_ID="$2"
       shift 2
       ;;
+    --migration)
+      [[ $# -ge 2 ]] || { echo "--migration requires a value" >&2; exit 1; }
+      case "$2" in
+        headless_mode_v1|nasapics_space_weather_v1)
+          MIGRATIONS+=("$2")
+          ;;
+        *)
+          echo "Unsupported migration: $2" >&2
+          exit 1
+          ;;
+      esac
+      shift 2
+      ;;
     -h|--help)
-      echo "Usage: sudo bash install/update.sh [--release-id SAFE_ID]"
+      echo "Usage: sudo bash install/update.sh [--release-id SAFE_ID] [--migration headless_mode_v1]"
       exit 0
       ;;
     *)
@@ -42,7 +56,11 @@ cleanup() {
 trap cleanup EXIT
 ARTIFACT="$TEMP_ROOT/inkypi-release.zip"
 
-python3 "$SCRIPT_DIR/lib/release_archive.py" "$PROJECT_DIR" "$ARTIFACT"
+ARCHIVE_ARGS=()
+for migration in "${MIGRATIONS[@]}"; do
+  ARCHIVE_ARGS+=(--migration "$migration")
+done
+python3 "$SCRIPT_DIR/lib/release_archive.py" "${ARCHIVE_ARGS[@]}" "$PROJECT_DIR" "$ARTIFACT"
 
 SHA256=$(sha256sum "$ARTIFACT" | awk '{print $1}')
 if [[ -z "$RELEASE_ID" ]]; then
@@ -51,6 +69,10 @@ fi
 
 UPDATER="/usr/local/sbin/inkypi-update"
 if [[ ! -x "$UPDATER" ]]; then
+  if [[ " ${MIGRATIONS[*]} " == *" headless_mode_v1 "* ]]; then
+    echo "headless_mode_v1 requires the committed installed capability updater" >&2
+    exit 1
+  fi
   UPDATER="$SCRIPT_DIR/inkypi-update"
 fi
 python3 "$UPDATER" \

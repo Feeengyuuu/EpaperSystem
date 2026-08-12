@@ -24,7 +24,7 @@ def _parse_unit(path):
 def _release_archive_builder(entrypoint, artifact_variable):
     source = (INSTALL_ROOT / entrypoint).read_text(encoding="utf-8")
     match = re.search(
-        rf'python3 "\$SCRIPT_DIR/(?P<helper>[^\"]+)" '
+        rf'python3 "\$SCRIPT_DIR/(?P<helper>[^\"]+)"[^\r\n]*'
         rf'"\$PROJECT_DIR" "{re.escape(artifact_variable)}"',
         source,
     )
@@ -68,6 +68,38 @@ def test_main_unit_does_not_reintroduce_an_unproven_hard_memory_cap():
     unit = _parse_unit(INSTALL_ROOT / "inkypi.service")
 
     assert "MemoryMax" not in unit["Service"]
+
+
+def test_boot_recovery_units_and_dropins_are_release_managed_and_fail_closed():
+    recovery = _parse_unit(INSTALL_ROOT / "inkypi-update-recover.service")
+    finalizer = _parse_unit(INSTALL_ROOT / "inkypi-update-finalize.service")
+    inkypi_dropin = _parse_unit(
+        INSTALL_ROOT
+        / "systemd"
+        / "inkypi.service.d"
+        / "10-update-recovery.conf"
+    )
+    lightdm_dropin = _parse_unit(
+        INSTALL_ROOT
+        / "systemd"
+        / "lightdm.service.d"
+        / "10-inkypi-update-recovery.conf"
+    )
+
+    assert set(recovery["Unit"]["Before"].split()) == {
+        "display-manager.service",
+        "lightdm.service",
+        "inkypi.service",
+    }
+    assert recovery["Service"]["ExecStart"] == (
+        "/usr/local/sbin/inkypi-update --recover-only"
+    )
+    assert finalizer["Service"]["ExecStart"] == (
+        "/usr/local/sbin/inkypi-update --finalize-recovery"
+    )
+    for dropin in (inkypi_dropin, lightdm_dropin):
+        assert dropin["Unit"]["Requires"] == "inkypi-update-recover.service"
+        assert dropin["Unit"]["After"] == "inkypi-update-recover.service"
 
 
 def test_updates_repair_runtime_env_without_persistent_root_service_hook():

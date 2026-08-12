@@ -26,6 +26,7 @@ from plugins.base_plugin.presentation import (
 )
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
+from plugins.base_plugin.parallel_image_stage import prepare_local_bank_images
 from plugins.context_cache import write_context
 from plugins.magazine_covers.presentation_bank import (
     COVER_FRESH_SECONDS,
@@ -43,6 +44,7 @@ from utils.http_client import get_http_client
 
 logger = logging.getLogger(__name__)
 
+PLUGIN_ID = "magazine_covers"
 REQUEST_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (compatible; InkyPi MagazineCovers/1.0; "
@@ -633,8 +635,15 @@ class MagazineCovers(BasePlugin):
             self._fit_mode(settings),
             settings.get("rotationMode") or "random",
         )
-        selected = bank.selection_records(profile, selection, load_media=True, now=self._now_utc())
-        image = self._render_bank_records(selected, selection, dimensions, settings)
+        selected = bank.selection_records(profile, selection, load_media=False, now=self._now_utc())
+        image = self._render_bank_records(
+            selected,
+            selection,
+            dimensions,
+            settings,
+            bank=bank,
+            expected_instance_uuid=get_presentation_instance_uuid(settings),
+        )
         if resolved_theme_context is not None:
             image = apply_media_theme_chrome(
                 image,
@@ -707,21 +716,120 @@ class MagazineCovers(BasePlugin):
             )
         return None
 
-    def _render_bank_records(self, selected, selection, dimensions, settings):
-        source_covers = []
-        for record, image in selected:
-            source = {"name": record["source_name"], "url": record["source_url"]}
-            cover = {
-                "image": image,
-                "image_url": record["image_url"],
-                "page_url": record["page_url"],
-                "title": record["title"],
-            }
-            source_covers.append((source, cover))
-        if selection.get("layout") == "triptych" and len(source_covers) >= 2:
-            return self._fit_cover_triptych(source_covers, dimensions, settings)
-        source, cover = source_covers[0]
-        return self._fit_cover(cover["image"], dimensions, settings, source)
+    def _render_bank_records(
+        self,
+        selected,
+        selection,
+        dimensions,
+        settings,
+        *,
+        bank=None,
+        expected_instance_uuid=None,
+    ):
+        staged_images = None
+        if any(image is None for _record, image in selected):
+            staged = self._stage_bank_selection(
+                bank,
+                selected,
+                selection,
+                dimensions,
+                expected_instance_uuid,
+            )
+            if staged is not None:
+                staged_images = staged
+                if selection.get("layout") == "triptych" and len(selected) >= 2:
+                    fitted = staged[:-1]
+                    backdrop = staged[-1]
+                    try:
+                        return self._compose_staged_triptych(
+                            fitted,
+                            backdrop,
+                            dimensions,
+                            settings,
+                        )
+                    finally:
+                        for staged_image in staged_images:
+                            staged_image.close()
+                selected = ((selected[0][0], staged[0]),)
+            elif bank is not None:
+                selected = tuple(
+                    (record, bank.load_media(record, now=self._now_utc()))
+                    for record, _image in selected
+                )
+        try:
+            source_covers = []
+            for record, image in selected:
+                source = {"name": record["source_name"], "url": record["source_url"]}
+                cover = {
+                    "image": image,
+                    "image_url": record["image_url"],
+                    "page_url": record["page_url"],
+                    "title": record["title"],
+                }
+                source_covers.append((source, cover))
+            if selection.get("layout") == "triptych" and len(source_covers) >= 2:
+                return self._fit_cover_triptych(source_covers, dimensions, settings)
+            source, cover = source_covers[0]
+            return self._fit_cover(cover["image"], dimensions, settings, source)
+        finally:
+            for staged_image in staged_images or ():
+                staged_image.close()
+
+    def _stage_bank_selection(
+        self,
+        bank,
+        selected,
+        selection,
+        dimensions,
+        expected_instance_uuid,
+    ):
+        if bank is None or not expected_instance_uuid:
+            return None
+        records = [record for record, _image in selected]
+        paths = [
+            bank.media.path(record["media_key"], suffix=".png")
+            for record in records
+        ]
+        if selection.get("layout") == "triptych" and len(records) >= 2:
+            width, height = dimensions
+            column_width = width // TRIPTYCH_COVER_COUNT
+            targets = []
+            for index in range(len(records)):
+                x0 = index * column_width
+                target_width = (
+                    column_width
+                    if index < TRIPTYCH_COVER_COUNT - 1
+                    else width - x0
+                )
+                targets.append((target_width, height))
+            paths.append(paths[0])
+            targets.append(None)
+        else:
+            targets = [None]
+            paths = paths[:1]
+        return prepare_local_bank_images(
+            plugin_id=PLUGIN_ID,
+            media_root=bank.media.root,
+            source_paths=tuple(paths),
+            target_sizes=tuple(targets),
+            expected_instance_uuid=expected_instance_uuid,
+        )
+
+    def _compose_staged_triptych(self, fitted_images, backdrop, dimensions, settings):
+        canvas = self._triptych_background([backdrop], dimensions, settings)
+        width, height = dimensions
+        column_width = width // TRIPTYCH_COVER_COUNT
+        for index, fitted in enumerate(fitted_images):
+            x0 = index * column_width
+            target_width = (
+                column_width
+                if index < TRIPTYCH_COVER_COUNT - 1
+                else width - x0
+            )
+            x = x0 + (target_width - fitted.width) // 2
+            y = (height - fitted.height) // 2
+            canvas.paste(fitted, (x, y))
+        return canvas
 
     def _write_records_context(self, records):
         records = list(records or [])

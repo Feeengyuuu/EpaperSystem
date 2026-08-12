@@ -24,6 +24,13 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
     read_source_provenance,
 )
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
+from runtime.bounded_parallel_stage import BoundedParallelStageRunner  # noqa: E402
+from runtime.long_task_executor import (  # noqa: E402
+    InstanceIdentity,
+    bind_long_task_runtime,
+)
+from runtime.refresh_contracts import TaskContext  # noqa: E402
+from runtime.resource_governor import RuntimeResourceGovernor  # noqa: E402
 from plugins.species_radar.species_radar import (  # noqa: E402
     CATEGORY_STYLES,
     COMIC_BLUE,
@@ -3334,3 +3341,73 @@ def test_live_payload_enriches_only_the_records_one_data_pass_can_ingest(
     )
 
     assert len(captured) == species_mod.MAX_COMMON_NAME_ENRICHMENTS_PER_DATA_PASS
+
+
+def test_species_parallel_stage_is_explicitly_fail_closed():
+    from runtime.execution_policy import ExecutionClass, plugin_execution_class
+
+    assert species_mod.PARALLEL_IMAGE_STAGE_ELIGIBLE is False
+    assert "independently skippable" in species_mod.PARALLEL_IMAGE_STAGE_RATIONALE
+    assert plugin_execution_class("species_radar") is ExecutionClass.INLINE
+
+
+def test_species_corrupt_optional_related_photo_does_not_fail_prepared_page(
+    tmp_path,
+    monkeypatch,
+):
+    settings = bound_species_settings()
+    bank, _document, _profile, _current = _warm_species_bank(tmp_path, count=3)
+    plugin = make_plugin(tmp_path)
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 12, 9, 0, tzinfo=timezone.utc),
+    )
+    req = species_request("d" * 32)
+    plugin.prepare_presentation(
+        settings,
+        DummyDeviceConfig(),
+        request=req,
+        resolved_theme_context=species_theme("day"),
+    )
+    document, profile = bank.load_warm()
+    selected_key = profile["pending_selection"]["record_key"]
+    related = next(
+        candidate
+        for candidate in profile["records"]
+        if candidate["record_key"] != selected_key
+    )
+    related_path = bank.photo_path(related)
+    related_payload = related_path.read_bytes()
+    related_path.write_bytes(related_payload[: len(related_payload) // 2])
+    bank.save(document)
+    runner = BoundedParallelStageRunner(
+        governor=RuntimeResourceGovernor(
+            snapshot_provider=lambda: {
+                "available_mb": 200,
+                "swap_percent": 0,
+                "cpu_quota_cores": 2,
+            }
+        )
+    )
+    context = TaskContext.never_cancelled(
+        deadline_monotonic=time.monotonic() + 20,
+    )
+    identity = InstanceIdentity("species-instance", 1, 1)
+
+    with bind_long_task_runtime(
+        context,
+        identity,
+        identity_validator=lambda candidate: candidate == identity,
+        parallel_image_runner=runner,
+    ):
+        prepared = plugin.prepare_presentation(
+            settings,
+            DummyDeviceConfig(),
+            request=req,
+            resolved_theme_context=species_theme("day"),
+        )
+
+    assert prepared.changed is True
+    assert prepared.image.size == (800, 480)
+    assert runner.last_run_snapshot["reason"] == "not_run"

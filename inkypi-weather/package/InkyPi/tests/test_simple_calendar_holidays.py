@@ -565,6 +565,14 @@ def test_simple_calendar_declares_receipt_free_prepared_bank():
     assert plugin.reconcile_presentation_receipt({}, None) is None
 
 
+def test_simple_calendar_parallel_stage_is_explicitly_fail_closed():
+    from runtime.execution_policy import ExecutionClass, plugin_execution_class
+
+    assert calendar_module.PARALLEL_IMAGE_STAGE_ELIGIBLE is False
+    assert "independent roots" in calendar_module.PARALLEL_IMAGE_STAGE_RATIONALE
+    assert plugin_execution_class("simple_calendar") is ExecutionClass.INLINE
+
+
 def test_data_refresh_writes_current_and_next_month_snapshots(tmp_path, monkeypatch):
     monkeypatch.setenv("INKYPI_DATA_DIR", os.fspath(tmp_path / "data"))
     plugin = SimpleCalendar({"id": "simple_calendar"})

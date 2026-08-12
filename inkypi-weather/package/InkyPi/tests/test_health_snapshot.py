@@ -486,6 +486,31 @@ def _independent_refresh_health_collector(tmp_path):
             "ian_last_queue_status": "running",
             "ian_retained": 1,
             "ian_retained_limit": 16,
+            "parallel_runtime": {
+                "resource_sample": {
+                    "available_mb": 176.5,
+                    "swap_percent": 42.0,
+                    "cpu_quota_cores": 2.0,
+                },
+                "worker_count": 2,
+                "degrade_reason": None,
+                "status": "succeeded",
+                "batch_duration_ms": 81.25,
+                "worker_thread_count": 2,
+                "child_peak_rss_bytes": 62 * 1024 * 1024,
+                "cancellation_count": 3,
+                "active_child_count": 0,
+                "cpu_throttling": {
+                    "nr_periods": 900,
+                    "nr_throttled": 12,
+                    "throttled_usec": 34567,
+                    "cgroup_path": "/system.slice/inkypi.service",
+                },
+                "child_pid": 12345,
+                "instance_uuid": "sensitive-instance-uuid",
+                "settings": {"api_key": "secret"},
+                "error": "provider exploded with secret text",
+            },
         },
         _scheduler_poll_seconds=lambda: 30.0,
     )
@@ -546,3 +571,46 @@ def test_health_never_exposes_instance_uuid_name_settings_or_error_text(tmp_path
     assert "secret-plugin-name" not in rendered
     assert "api_key" not in rendered
     assert "provider exploded with secret text" not in rendered
+
+
+def test_health_exposes_only_whitelisted_parallel_runtime_aggregates(tmp_path):
+    collector, publisher = _independent_refresh_health_collector(tmp_path)
+
+    collector.collect_once()
+    components = publisher.snapshot().components
+    parallel = components["parallel_runtime"]
+
+    assert set(parallel) == {
+        "resource_sample",
+        "selected_tier",
+        "worker_count",
+        "degrade_reason",
+        "status",
+        "batch_duration_ms",
+        "worker_thread_count",
+        "child_peak_rss_bytes",
+        "cancellation_count",
+        "active_child_count",
+        "cpu_throttling",
+    }
+    assert parallel["resource_sample"] == {
+        "available_mb": 176.5,
+        "swap_percent": 42.0,
+        "cpu_quota_cores": 2.0,
+    }
+    assert parallel["worker_count"] == 2
+    assert parallel["selected_tier"] == "2_worker"
+    assert parallel["child_peak_rss_bytes"] == 62 * 1024 * 1024
+    assert parallel["cancellation_count"] == 3
+    assert parallel["cpu_throttling"] == {
+        "nr_periods": 900,
+        "nr_throttled": 12,
+        "throttled_usec": 34567,
+    }
+    assert "parallel_runtime" not in components["scheduler"]
+    rendered = repr(parallel)
+    assert "12345" not in rendered
+    assert "sensitive-instance-uuid" not in rendered
+    assert "api_key" not in rendered
+    assert "provider exploded" not in rendered
+    assert "/system.slice" not in rendered

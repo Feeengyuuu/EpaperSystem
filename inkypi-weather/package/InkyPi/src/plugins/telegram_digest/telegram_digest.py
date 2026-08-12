@@ -17,8 +17,9 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
+from runtime.long_task_executor import current_task_context
 from utils.app_utils import bounded_int, coerce_bool, get_base_ui_font
-from utils.http_client import get_http_session
+from utils.http_client import get_http_session, provider_io_lease
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ PLUGIN_ID = "telegram_digest"
 STATE_VERSION = "telegram-digest-v1"
 TELEGRAM_API_BASE = "https://api.telegram.org/bot{token}/{method}"
 TELEGRAM_FILE_BASE = "https://api.telegram.org/file/bot{token}/{file_path}"
+TELEGRAM_PROVIDER_ORIGIN = "https://api.telegram.org"
 DEFAULT_CHANNEL_LABEL = "@daily_signal"
 DEFAULT_MAX_MESSAGES = 18
 DEFAULT_UPDATE_LIMIT = 50
@@ -242,11 +244,16 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         if last_update_id is not None and not self._enabled(settings.get("forceRefresh"), default=False):
             params["offset"] = last_update_id + 1
 
-        response = get_http_session().get(
-            self._api_url(token, "getUpdates"),
-            params=params,
+        with provider_io_lease(
+            TELEGRAM_PROVIDER_ORIGIN,
+            context=current_task_context(),
             timeout=REQUEST_TIMEOUT,
-        )
+        ):
+            response = get_http_session().get(
+                self._api_url(token, "getUpdates"),
+                params=params,
+                timeout=REQUEST_TIMEOUT,
+            )
         response.raise_for_status()
         data = response.json()
         if not isinstance(data, dict) or not data.get("ok"):
@@ -300,15 +307,20 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
             candidate["session_path"] = str(session_path)
             candidate["session_file"] = str(session_file)
             try:
-                return asyncio.run(
-                    self._fetch_account_payload_async(
-                        settings,
-                        cache,
-                        now,
-                        max_messages,
-                        candidate,
+                with provider_io_lease(
+                    TELEGRAM_PROVIDER_ORIGIN,
+                    context=current_task_context(),
+                    timeout=REQUEST_TIMEOUT,
+                ):
+                    return asyncio.run(
+                        self._fetch_account_payload_async(
+                            settings,
+                            cache,
+                            now,
+                            max_messages,
+                            candidate,
+                        )
                     )
-                )
             except Exception as exc:
                 errors.append(str(exc))
         detail = errors[-1] if errors else "no usable session file"
@@ -821,11 +833,16 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         if target.is_file():
             return target
 
-        file_response = get_http_session().get(
-            self._api_url(token, "getFile"),
-            params={"file_id": file_id},
+        with provider_io_lease(
+            TELEGRAM_PROVIDER_ORIGIN,
+            context=current_task_context(),
             timeout=REQUEST_TIMEOUT,
-        )
+        ):
+            file_response = get_http_session().get(
+                self._api_url(token, "getFile"),
+                params={"file_id": file_id},
+                timeout=REQUEST_TIMEOUT,
+            )
         file_response.raise_for_status()
         file_payload = file_response.json()
         if not isinstance(file_payload, dict) or not file_payload.get("ok"):
@@ -835,12 +852,20 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         if not file_path:
             raise RuntimeError("Telegram getFile did not return file_path")
 
-        response = get_http_session().get(
-            self._file_url(token, file_path),
+        with provider_io_lease(
+            TELEGRAM_PROVIDER_ORIGIN,
+            context=current_task_context(),
             timeout=REQUEST_TIMEOUT,
-            stream=True,
-        )
-        image = safe_open_image_response(response, limits=TELEGRAM_MEDIA_IMAGE_LIMITS).convert("RGB")
+        ):
+            response = get_http_session().get(
+                self._file_url(token, file_path),
+                timeout=REQUEST_TIMEOUT,
+                stream=True,
+            )
+            image = safe_open_image_response(
+                response,
+                limits=TELEGRAM_MEDIA_IMAGE_LIMITS,
+            ).convert("RGB")
         image.thumbnail(self._media_thumbnail_size(image.size), RESAMPLE)
         image.save(target, format="JPEG", quality=88)
         return target

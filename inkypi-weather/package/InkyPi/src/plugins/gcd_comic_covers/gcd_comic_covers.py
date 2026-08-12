@@ -24,6 +24,7 @@ from plugins.base_plugin.presentation import (
 )
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
+from plugins.base_plugin.parallel_image_stage import prepare_local_bank_images
 from plugins.context_cache import write_context
 from plugins.gcd_comic_covers.presentation_bank import (
     READY_TARGET,
@@ -47,6 +48,7 @@ except Exception:  # pragma: no cover - pytz is present in the app runtime.
 
 logger = logging.getLogger(__name__)
 
+PLUGIN_ID = "gcd_comic_covers"
 GCD_BASE_URL = "https://www.comics.org"
 COMIC_VINE_BASE_URL = "https://comicvine.gamespot.com/api"
 STATE_VERSION = "gcd-comic-covers-state-v1"
@@ -428,6 +430,8 @@ class GcdComicCovers(BasePlugin):
             selection,
             dimensions,
             settings,
+            use_bound_image_stage=True,
+            expected_instance_uuid=get_presentation_instance_uuid(settings),
         )
         if resolved_theme_context is not None:
             image = apply_media_theme_chrome(
@@ -463,23 +467,120 @@ class GcdComicCovers(BasePlugin):
             self._write_cover_context(committed)
         return None
 
-    def _render_bank_selection(self, bank, profile, selection, dimensions, settings):
-        selected = bank.selection_records(profile, selection, load_media=True)
-        covers = []
-        for record, image in selected:
-            cover = dict(record)
-            if record.get("render_kind") == "metadata":
-                image = self._metadata_cover_image(dimensions, settings, cover)
-                cover["image"] = image
-            else:
-                cover["image"] = image
-            covers.append(cover)
-        if len(covers) > 1:
-            return self._compose_triptych_display_image(covers, dimensions, settings)
-        cover = covers[0]
-        if cover.get("render_kind") == "metadata":
-            return cover["image"]
-        return self._fit_cover(cover["image"], dimensions, settings, cover)
+    def _render_bank_selection(
+        self,
+        bank,
+        profile,
+        selection,
+        dimensions,
+        settings,
+        *,
+        use_bound_image_stage=False,
+        expected_instance_uuid=None,
+    ):
+        selected = bank.selection_records(
+            profile,
+            selection,
+            load_media=not use_bound_image_stage,
+        )
+        staged = None
+        if use_bound_image_stage:
+            staged = self._stage_bank_selection(
+                bank,
+                selected,
+                dimensions,
+                expected_instance_uuid,
+            )
+            if staged is None:
+                selected = bank.selection_records(
+                    profile,
+                    selection,
+                    load_media=True,
+                )
+        try:
+            covers = []
+            for index, (record, image) in enumerate(selected):
+                cover = dict(record)
+                if record.get("render_kind") == "metadata":
+                    image = self._metadata_cover_image(dimensions, settings, cover)
+                    cover["image"] = image
+                elif staged is not None:
+                    cover["image"] = staged[index]
+                else:
+                    cover["image"] = image
+                covers.append(cover)
+            if len(covers) > 1:
+                if staged is not None:
+                    return self._compose_staged_triptych(
+                        staged[:-1],
+                        staged[-1],
+                        dimensions,
+                        settings,
+                    )
+                return self._compose_triptych_display_image(covers, dimensions, settings)
+            cover = covers[0]
+            if cover.get("render_kind") == "metadata":
+                return cover["image"]
+            return self._fit_cover(cover["image"], dimensions, settings, cover)
+        finally:
+            for staged_image in staged or ():
+                staged_image.close()
+
+    def _stage_bank_selection(
+        self,
+        bank,
+        selected,
+        dimensions,
+        expected_instance_uuid,
+    ):
+        if (
+            not expected_instance_uuid
+            or not selected
+            or any(record.get("render_kind") != "media" for record, _image in selected)
+        ):
+            return None
+        records = [record for record, _image in selected]
+        paths = [
+            bank.media.path(record["media_key"], suffix=".png")
+            for record in records
+        ]
+        if len(records) > 1:
+            width, height = dimensions
+            visible_count = min(len(records), TRIPTYCH_COVER_COUNT)
+            column_width = width // visible_count
+            targets = []
+            for index in range(len(records)):
+                x0 = index * column_width
+                target_width = (
+                    column_width if index < visible_count - 1 else width - x0
+                )
+                targets.append((target_width, height))
+            paths.append(paths[0])
+            targets.append(None)
+        else:
+            targets = [None]
+        return prepare_local_bank_images(
+            plugin_id=PLUGIN_ID,
+            media_root=bank.media.root,
+            source_paths=tuple(paths),
+            target_sizes=tuple(targets),
+            expected_instance_uuid=expected_instance_uuid,
+        )
+
+    def _compose_staged_triptych(self, fitted_images, backdrop, dimensions, settings):
+        width, height = dimensions
+        canvas = self._triptych_backdrop([backdrop], dimensions, settings)
+        visible_count = min(len(fitted_images), TRIPTYCH_COVER_COUNT)
+        column_width = width // visible_count
+        for index, fitted in enumerate(fitted_images):
+            x0 = index * column_width
+            target_width = (
+                column_width if index < visible_count - 1 else width - x0
+            )
+            x = x0 + (target_width - fitted.width) // 2
+            y = (height - fitted.height) // 2
+            canvas.paste(fitted, (x, y))
+        return canvas
 
     def _presentation_bank(self, settings, dimensions, today=None):
         instance_uuid = get_presentation_instance_uuid(settings)

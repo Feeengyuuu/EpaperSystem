@@ -16,6 +16,7 @@ from src.runtime.cache_lifecycle import (
 from runtime.refresh_contracts import TaskContext
 from runtime.refresh_policy import ResourceSample
 from runtime.resource_deferral import ResourcePressureDeferred
+from runtime.resource_governor import CHROMIUM, RuntimeResourceGovernor
 from runtime.long_task_executor import (
     InstanceIdentity,
     bind_long_task_runtime,
@@ -48,6 +49,8 @@ def _route_fake_process_group_signals(monkeypatch, processes):
         )
         if process is None:
             raise ProcessLookupError(pid)
+        if signal_number == 0:
+            return
         if signal_number == browser_renderer_module.signal.SIGTERM:
             process.terminate()
             return
@@ -103,6 +106,31 @@ class CleanupSlot:
         self.release_calls += 1
 
 
+class TrackingBrowserLease:
+    def __init__(self):
+        self.release_calls = 0
+
+    def release(self):
+        self.release_calls += 1
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        self.release()
+
+
+class TrackingBrowserGovernor:
+    def __init__(self):
+        self.leases = []
+
+    def acquire(self, _kind, _claim, context):
+        context.raise_if_cancelled()
+        lease = TrackingBrowserLease()
+        self.leases.append(lease)
+        return lease
+
+
 class TimeoutProcess:
     returncode = None
     pid = 1234
@@ -154,6 +182,395 @@ def test_timeout_terminates_kills_waits_and_removes_all_temp_paths(
     assert process.wait_calls == 3
     assert renderer.active_processes == ()
     assert list(tmp_path.iterdir()) == []
+
+
+def test_nested_long_task_browser_stays_in_parent_process_group(
+    tmp_path,
+    monkeypatch,
+):
+    launches = []
+    in_long_task_group = {"value": False}
+
+    class CompletingProcess:
+        returncode = 0
+
+        def __init__(self, command, pid):
+            self.pid = pid
+            output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            Image.new("RGB", (80, 48), "white").save(output)
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    def popen(command, **kwargs):
+        launches.append(kwargs)
+        return CompletingProcess(command, 8100 + len(launches))
+
+    monkeypatch.setattr(
+        browser_renderer_module,
+        "_is_posix_platform",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        browser_renderer_module,
+        "long_task_child_process_group_active",
+        lambda: in_long_task_group["value"],
+        raising=False,
+    )
+    monkeypatch.setattr(
+        browser_renderer_module.os,
+        "getpgrp",
+        lambda: 9000,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        browser_renderer_module.os,
+        "getpgid",
+        lambda pid: pid,
+        raising=False,
+    )
+
+    def no_remaining_group(_pgid, signal_number):
+        if signal_number == 0:
+            raise ProcessLookupError
+        pytest.fail("completed standalone group was signaled")
+
+    monkeypatch.setattr(
+        browser_renderer_module.os,
+        "killpg",
+        no_remaining_group,
+        raising=False,
+    )
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        run_as_root=False,
+    )
+
+    assert renderer.render_html(
+        "<p>standalone</p>",
+        viewport=(80, 48),
+        context=_context(),
+    ) is not None
+    in_long_task_group["value"] = True
+    assert renderer.render_html(
+        "<p>nested</p>",
+        viewport=(80, 48),
+        context=_context(),
+    ) is not None
+
+    assert launches[0]["start_new_session"] is True
+    assert "start_new_session" not in launches[1]
+
+
+def test_nested_long_task_browser_uses_direct_stop_not_its_parent_group(
+    tmp_path,
+    monkeypatch,
+):
+    class StubbornProcess:
+        pid = 8201
+        returncode = None
+
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+
+        def poll(self):
+            return self.returncode
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+        def wait(self, timeout=None):
+            if self.returncode is None:
+                raise subprocess.TimeoutExpired("chromium", timeout)
+            return self.returncode
+
+    process = StubbornProcess()
+    monkeypatch.setattr(
+        browser_renderer_module,
+        "_is_posix_platform",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        browser_renderer_module,
+        "long_task_child_process_group_active",
+        lambda: True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        browser_renderer_module.os,
+        "killpg",
+        lambda *_args: pytest.fail("nested browser signaled its parent group"),
+        raising=False,
+    )
+    renderer = BrowserRenderer(binary="chromium", temp_root=tmp_path)
+
+    state = renderer._stop_process(process)
+
+    assert state is browser_renderer_module._ProcessStopState.SIGNALLED_EXITED
+    assert process.terminated
+    assert process.killed
+
+
+def test_completed_browser_result_is_rejected_when_process_cannot_be_reaped(
+    tmp_path,
+    monkeypatch,
+):
+    slot = CleanupSlot()
+    governor = TrackingBrowserGovernor()
+
+    class SuccessThenNeverExit:
+        returncode = None
+        pid = 4123
+
+        def __init__(self, command):
+            self.wait_calls = 0
+            self.terminated = False
+            self.killed = False
+            output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            Image.new("RGB", (80, 48), "white").save(output)
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                return 0
+            raise subprocess.TimeoutExpired("chromium", timeout)
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+    process = None
+
+    def popen(command, **_kwargs):
+        nonlocal process
+        process = SuccessThenNeverExit(command)
+        return process
+
+    monkeypatch.setattr(browser_renderer_module, "_GLOBAL_BROWSER_SLOT", slot)
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        resource_governor=governor,
+    )
+    _route_fake_process_group_signals(monkeypatch, lambda: (process,))
+
+    with pytest.raises(browser_renderer_module.BrowserProcessLeakError):
+        renderer.render_html(
+            "<p>completed-but-live</p>",
+            viewport=(80, 48),
+            context=_context(),
+        )
+
+    assert renderer.active_processes == (4123,)
+    assert renderer.quarantined_processes == (4123,)
+    assert process.terminated
+    assert process.killed
+    assert slot.release_calls == 0
+    assert [lease.release_calls for lease in governor.leases] == [0]
+    assert any(tmp_path.iterdir())
+
+
+def test_standalone_leader_exit_with_live_descendant_quarantines_capacity(
+    tmp_path,
+    monkeypatch,
+):
+    slot = threading.BoundedSemaphore(1)
+    governor = TrackingBrowserGovernor()
+    launches = []
+    group_signals = []
+    sigterm = 15
+    sigkill = 9
+
+    class ExitedLeader:
+        pid = 4190
+        returncode = 0
+
+        def __init__(self, command):
+            output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            Image.new("RGB", (80, 48), "white").save(output)
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    process = None
+
+    def popen(command, **_kwargs):
+        nonlocal process
+        launches.append(command)
+        process = ExitedLeader(command)
+        return process
+
+    monkeypatch.setattr(browser_renderer_module, "_GLOBAL_BROWSER_SLOT", slot)
+    monkeypatch.setattr(browser_renderer_module, "_is_posix_platform", lambda: True)
+    monkeypatch.setattr(
+        browser_renderer_module,
+        "long_task_child_process_group_active",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        browser_renderer_module.signal, "SIGTERM", sigterm, raising=False
+    )
+    monkeypatch.setattr(
+        browser_renderer_module.signal, "SIGKILL", sigkill, raising=False
+    )
+    monkeypatch.setattr(
+        browser_renderer_module.os,
+        "getpgid",
+        lambda pid: pid,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        browser_renderer_module.os,
+        "getpgrp",
+        lambda: 9000,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        browser_renderer_module,
+        "PROCESS_GROUP_REAP_SECONDS",
+        0.02,
+        raising=False,
+    )
+
+    def killpg(pgid, signal_number):
+        assert pgid == process.pid
+        group_signals.append(signal_number)
+        # Signal 0 deliberately keeps reporting a stubborn descendant after
+        # both group termination signals and after the leader has exited.
+
+    monkeypatch.setattr(
+        browser_renderer_module.os,
+        "killpg",
+        killpg,
+        raising=False,
+    )
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=popen,
+        resource_governor=governor,
+        run_as_root=False,
+    )
+
+    with pytest.raises(browser_renderer_module.BrowserProcessLeakError):
+        renderer.render_html(
+            "<p>leader-exited-descendant-live</p>",
+            viewport=(80, 48),
+            context=_context(),
+        )
+
+    assert sigterm in group_signals
+    assert sigkill in group_signals
+    assert 0 in group_signals
+    assert renderer.active_processes == (process.pid,)
+    assert renderer.quarantined_processes == (process.pid,)
+    assert [lease.release_calls for lease in governor.leases] == [0]
+    assert not slot.acquire(blocking=False)
+
+    second_launches = []
+    second = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path / "second",
+        popen=lambda *_args, **_kwargs: second_launches.append(True),
+        resource_governor=governor,
+        run_as_root=False,
+    )
+    assert second.render_html(
+        "<p>must-not-launch</p>",
+        viewport=(80, 48),
+        context=_context(0.05),
+    ) is None
+    assert second_launches == []
+    assert [lease.release_calls for lease in governor.leases] == [0]
+
+
+def test_cancelled_unreapable_browser_is_quarantined_without_reusing_permit(
+    tmp_path,
+    monkeypatch,
+):
+    slot = CleanupSlot()
+    governor = TrackingBrowserGovernor()
+    cancel_event = threading.Event()
+
+    class CancelThenNeverExit:
+        returncode = None
+        pid = 4124
+
+        def __init__(self):
+            self.terminated = False
+            self.killed = False
+
+        def wait(self, timeout=None):
+            cancel_event.set()
+            raise subprocess.TimeoutExpired("chromium", timeout)
+
+        def poll(self):
+            return None
+
+        def terminate(self):
+            self.terminated = True
+
+        def kill(self):
+            self.killed = True
+
+    process = CancelThenNeverExit()
+    monkeypatch.setattr(browser_renderer_module, "_GLOBAL_BROWSER_SLOT", slot)
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=lambda *_args, **_kwargs: process,
+        resource_governor=governor,
+    )
+    _route_fake_process_group_signals(monkeypatch, lambda: (process,))
+    context = TaskContext(cancel_event, time.monotonic() + 2)
+
+    with pytest.raises(browser_renderer_module.BrowserProcessLeakError):
+        renderer.render_html(
+            "<p>cancelled-but-live</p>",
+            viewport=(80, 48),
+            context=context,
+        )
+
+    assert renderer.active_processes == (4124,)
+    assert renderer.quarantined_processes == (4124,)
+    assert process.terminated
+    assert process.killed
+    assert slot.release_calls == 0
+    assert [lease.release_calls for lease in governor.leases] == [0]
+    assert any(tmp_path.iterdir())
 
 
 def test_html_render_inherits_bound_task_context_without_leaking_it(
@@ -779,7 +1196,7 @@ def test_delayed_pressure_kill_does_not_poison_next_request(
     assert renderer.html_circuit_size == 0
 
 
-def test_pressure_stop_pending_at_timeout_does_not_poison_cache_or_circuit(
+def test_pressure_stop_pending_at_timeout_quarantines_browser_capacity(
     tmp_path,
     monkeypatch,
 ):
@@ -806,6 +1223,8 @@ def test_pressure_stop_pending_at_timeout_does_not_poison_cache_or_circuit(
             self.killed = True
 
     process = NeverExitProcess()
+    slot = CleanupSlot()
+    governor = TrackingBrowserGovernor()
     samples = iter(
         (
             ResourceSample(available_mb=512, swap_percent=0),
@@ -817,10 +1236,12 @@ def test_pressure_stop_pending_at_timeout_does_not_poison_cache_or_circuit(
         temp_root=tmp_path,
         popen=lambda *_args, **_kwargs: process,
         resource_sampler=lambda: next(samples),
+        resource_governor=governor,
     )
+    monkeypatch.setattr(browser_renderer_module, "_GLOBAL_BROWSER_SLOT", slot)
     _route_fake_process_group_signals(monkeypatch, lambda: (process,))
 
-    with pytest.raises(ResourcePressureDeferred) as deferred:
+    with pytest.raises(browser_renderer_module.BrowserProcessLeakError):
         renderer.render_html(
             "<p>weather</p>",
             viewport=(80, 48),
@@ -830,9 +1251,12 @@ def test_pressure_stop_pending_at_timeout_does_not_poison_cache_or_circuit(
             abort_on_hard_pressure=True,
         )
 
-    assert deferred.value.phase == "in_flight"
     assert process.terminated
     assert process.killed
+    assert renderer.active_processes == (2477,)
+    assert renderer.quarantined_processes == (2477,)
+    assert slot.release_calls == 0
+    assert [lease.release_calls for lease in governor.leases] == [0]
     assert renderer.negative_cache_size == 0
     assert renderer.html_circuit_size == 0
 
@@ -1536,6 +1960,55 @@ def test_two_renderer_instances_never_overlap(tmp_path):
 
     assert len(results) == 2
     assert maximum == 1
+
+
+def test_chromium_admission_honors_central_permit_and_deadline(tmp_path):
+    launches = []
+
+    class SuccessProcess:
+        returncode = 0
+        pid = 3999
+
+        def __init__(self, command):
+            output = next(
+                item.split("=", 1)[1]
+                for item in command
+                if item.startswith("--screenshot=")
+            )
+            Image.new("RGB", (80, 48), "white").save(output)
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    governor = RuntimeResourceGovernor()
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=lambda command, **_kwargs: launches.append(command)
+        or SuccessProcess(command),
+        resource_governor=RuntimeResourceGovernor(),
+    )
+    held = governor.acquire(CHROMIUM, {}, _context())
+    try:
+        assert renderer.render_html(
+            "<p>blocked</p>",
+            viewport=(80, 48),
+            context=_context(0.1),
+        ) is None
+        assert launches == []
+    finally:
+        held.release()
+
+    image = renderer.render_html(
+        "<p>released</p>",
+        viewport=(80, 48),
+        context=_context(),
+    )
+    assert image.size == (80, 48)
+    assert len(launches) == 1
 
 
 def test_remote_url_requires_validator_and_negative_cache_is_bounded(tmp_path):

@@ -1032,7 +1032,7 @@ def _default_output_dir() -> Path:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Prove one real 26-instance automatic shuffle round plus the next "
+            "Prove one real 27-instance automatic shuffle round plus the next "
             "round's first physical display"
         ),
     )

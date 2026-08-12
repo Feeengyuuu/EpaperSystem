@@ -29,6 +29,7 @@ from runtime.long_task_executor import (
 from runtime.presentation_cache import prepared_presentation_path
 from runtime.refresh_contracts import TaskCancelled, TaskContext
 from runtime.resource_deferral import ResourcePressureDeferred
+from runtime.resource_governor import CHROMIUM
 from utils.theme_utils import EFFECTIVE_THEME_CONTEXT_INFO_KEY
 
 
@@ -336,6 +337,7 @@ def test_isolated_weather_validates_staging_before_publishing_context(tmp_path):
         )
     ]
     assert executor.submissions[0][2]["instance_identity"] == identity
+    assert executor.submissions[0][2]["resource_kinds"] == (CHROMIUM,)
     assert not list((tmp_path / "cache" / "plugins" / "weather").glob("**/*.png"))
 
 

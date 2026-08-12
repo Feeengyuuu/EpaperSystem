@@ -2453,3 +2453,35 @@ Reuse the verified portable-install sequence and leave `gh auth login` as an exp
 - **Notes**: Installed GitHub CLI 2.96.0 from the official portable release, verified its checksum and signer, added it to the user PATH, and removed the installer staging directory.
 
 ---
+
+## [LRN-20260811-001] best_practice
+
+**Logged**: 2026-08-11T20:12:42-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+A target release preflight must require an explicit capability handshake from the already-installed updater before requesting a new host migration.
+
+### Details
+The transactional updater executes the candidate release's preflight code. That candidate can understand a new migration even when the currently installed updater does not. Without a handshake, the old updater could accept and activate the candidate while silently ignoring the requested host mutation. Require the installed updater to pass a fixed capability token, persist a release-bound expectation, and revalidate the request in the activation coordinator before switching pointers.
+
+### Suggested Action
+For every future host migration, add a two-stage capability release, an explicit installed-updater handshake, a strict allowlisted request, and coordinator-side fail-closed validation.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/install/preflight.py, inkypi-weather/package/InkyPi/install/lib/update_engine.py
+- Tags: updater, migration, preflight, compatibility, fail-closed
+- Pattern-Key: updater.host_migration_capability_handshake
+- Recurrence-Count: 1
+- First-Seen: 2026-08-11
+- Last-Seen: 2026-08-11
+
+### Resolution
+- **Resolved**: 2026-08-11T20:12:42-07:00
+- **Commit/PR**: local branch
+- **Notes**: Implemented and covered by headless_mode_v1 handshake, activation, failure, and power-loss tests.
+
+---

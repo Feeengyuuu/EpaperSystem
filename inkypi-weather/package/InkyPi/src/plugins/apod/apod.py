@@ -18,10 +18,10 @@ from plugins.apod.apod_page import (
 )
 from plugins.apod.space_weather import SpaceWeatherRepository, refresh_space_weather
 from runtime.long_task_executor import current_instance_identity, current_task_context
-from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
+from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 from utils.atomic_file import atomic_write_json
 from PIL import Image
-from utils.http_client import HttpClient, get_http_client
+from utils.http_client import HttpClient, get_http_client, provider_io_lease
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -892,6 +892,36 @@ def _download_apod_media_to_file(
     """Download through one DNS-approved numeric peer while preserving TLS identity."""
 
     budget = _media_deadline(context, timeout)
+    provider_context = context
+    if isinstance(provider_context, _MediaDeadline):
+        provider_context = provider_context._context
+    if not isinstance(provider_context, TaskContext):
+        provider_context = current_task_context()
+    if not isinstance(provider_context, TaskContext):
+        provider_context = TaskContext.never_cancelled(
+            deadline_monotonic=time.monotonic() + max(0.001, float(timeout)),
+        )
+    with provider_io_lease(
+        media_url,
+        context=provider_context,
+    ):
+        return _download_apod_media_to_file_admitted(
+            media_url,
+            path,
+            budget=budget,
+            max_bytes=max_bytes,
+            mode=mode,
+        )
+
+
+def _download_apod_media_to_file_admitted(
+    media_url: str,
+    path: Path,
+    *,
+    budget: _MediaDeadline,
+    max_bytes: int,
+    mode: int,
+) -> None:
     approved = _resolve_apod_media_target(media_url, context=budget)
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)

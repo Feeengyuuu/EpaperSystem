@@ -345,6 +345,7 @@ class HealthCollector:
             "display": self._display_component(),
             "queue": self._queue_component(now),
             "scheduler": self._scheduler_component(),
+            "parallel_runtime": self._parallel_runtime_component(),
             "startup": self._startup_component(),
             "cache_lifecycle": cache_lifecycle,
             "disk": self._disk_component(cache_lifecycle),
@@ -499,6 +500,107 @@ class HealthCollector:
                 "active_deadline_monotonic": None,
                 "error_code": type(error).__name__,
             }
+
+    def _parallel_runtime_component(self):
+        """Publish only bounded, identity-free image-stage aggregates."""
+
+        try:
+            aggregate = self.refresh_task.refresh_health_snapshot()
+            value = aggregate.get("parallel_runtime", {})
+            if not isinstance(value, Mapping):
+                value = {}
+        except Exception:
+            value = {}
+
+        def optional_float(item):
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                return None
+            converted = float(item)
+            return converted if math.isfinite(converted) and converted >= 0 else None
+
+        def nonnegative_int(item, *, default=0, maximum=None):
+            if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+                return default
+            return item if maximum is None else min(item, maximum)
+
+        sample = value.get("resource_sample", {})
+        if not isinstance(sample, Mapping):
+            sample = {}
+        known_reasons = {
+            "not_run",
+            "resource_snapshot_unavailable",
+            "serial_requested",
+            "cpu_quota_below_parallel_threshold",
+            "memory_below_parallel_threshold",
+            "swap_above_parallel_threshold",
+            "parallel_threshold_not_met",
+            "parallel_batch_busy",
+        }
+        reason = value.get("degrade_reason")
+        if reason not in known_reasons:
+            reason = None
+        status = value.get("status")
+        if status not in {"not_run", "succeeded", "failed", "canceled"}:
+            status = "unknown"
+        worker_count = nonnegative_int(
+            value.get("worker_count"),
+            default=1,
+            maximum=3,
+        )
+        if worker_count < 1:
+            worker_count = 1
+        selected_tier = {
+            1: "serial",
+            2: "2_worker",
+            3: "3_worker",
+        }[worker_count]
+        child_peak_rss = value.get("child_peak_rss_bytes")
+        if (
+            isinstance(child_peak_rss, bool)
+            or not isinstance(child_peak_rss, int)
+            or child_peak_rss < 0
+        ):
+            child_peak_rss = None
+        throttling = value.get("cpu_throttling", {})
+        if not isinstance(throttling, Mapping):
+            throttling = {}
+
+        def optional_int(item):
+            if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+                return None
+            return item
+
+        return {
+            "resource_sample": {
+                "available_mb": optional_float(sample.get("available_mb")),
+                "swap_percent": optional_float(sample.get("swap_percent")),
+                "cpu_quota_cores": optional_float(sample.get("cpu_quota_cores")),
+            },
+            "selected_tier": selected_tier,
+            "worker_count": worker_count,
+            "degrade_reason": reason,
+            "status": status,
+            "batch_duration_ms": optional_float(
+                value.get("batch_duration_ms")
+            ) or 0.0,
+            "worker_thread_count": nonnegative_int(
+                value.get("worker_thread_count"),
+                maximum=3,
+            ),
+            "child_peak_rss_bytes": child_peak_rss,
+            "cancellation_count": nonnegative_int(
+                value.get("cancellation_count")
+            ),
+            "active_child_count": nonnegative_int(
+                value.get("active_child_count"),
+                maximum=1,
+            ),
+            "cpu_throttling": {
+                "nr_periods": optional_int(throttling.get("nr_periods")),
+                "nr_throttled": optional_int(throttling.get("nr_throttled")),
+                "throttled_usec": optional_int(throttling.get("throttled_usec")),
+            },
+        }
 
     def _startup_component(self):
         try:

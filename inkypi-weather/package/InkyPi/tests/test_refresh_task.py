@@ -73,8 +73,14 @@ from runtime.long_task_executor import (
     InstanceIdentity,
     current_instance_identity,
     current_instance_identity_validator,
+    current_parallel_image_runner,
     current_task_context,
 )
+from runtime.bounded_parallel_stage import (
+    BoundedParallelStageRunner,
+    ImmutableImageWorkset,
+)
+from runtime.resource_governor import RuntimeResourceGovernor
 from runtime.scheduler_state import LifecycleController, RetryRegistry, SchedulerState
 from utils.image_utils import compute_image_hash
 from utils.theme_utils import EFFECTIVE_THEME_CONTEXT_INFO_KEY
@@ -6691,6 +6697,176 @@ def test_constructor_adopts_falsey_injected_collaborators_by_identity():
     assert task.lifecycle is lifecycle
     assert task.retry_registry is retries
     assert task.scheduler_state is scheduler
+
+
+def test_refresh_worker_binds_one_injected_parallel_image_runner_for_plugin_work(
+    monkeypatch,
+):
+    tmp_path = make_test_dir("runtime-parallel-runner-binding")
+    observed_runners = []
+
+    class RunnerAwarePlugin(CapturePlugin):
+        def generate_image(self, settings, device_config):
+            observed_runners.append(current_parallel_image_runner())
+            return super().generate_image(settings, device_config)
+
+    governor = RuntimeResourceGovernor(
+        snapshot_provider=lambda: {
+            "available_mb": 180,
+            "swap_percent": 10,
+            "cpu_quota_cores": 3,
+        }
+    )
+    runner = BoundedParallelStageRunner(governor=governor)
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        resource_governor=governor,
+        parallel_image_runner=runner,
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: RunnerAwarePlugin([]),
+    )
+
+    task.start()
+    try:
+        job = task.submit_manual_update(ManualRefresh("manual", {"id": "manual"}))
+        result = task.wait_for_job(job["id"], timeout=1.0)
+
+        assert result["status"] == "completed"
+        assert observed_runners == [runner]
+    finally:
+        task.stop(join_timeout=1.0)
+
+
+def test_refresh_health_snapshot_reports_only_parallel_runtime_aggregates():
+    tmp_path = make_test_dir("runtime-parallel-health")
+    source_path = tmp_path / "source.png"
+    Image.new("RGB", (8, 12), "purple").save(source_path, format="PNG")
+    proc_root = tmp_path / "proc"
+    cgroup_root = tmp_path / "cgroup"
+    service_group = cgroup_root / "inkypi"
+    (proc_root / "self").mkdir(parents=True)
+    service_group.mkdir(parents=True)
+    (proc_root / "self" / "cgroup").write_text(
+        "0::/inkypi\n",
+        encoding="utf-8",
+    )
+    (service_group / "cpu.stat").write_text(
+        "nr_periods 100\n"
+        "nr_throttled 8\n"
+        "throttled_usec 4321\n",
+        encoding="utf-8",
+    )
+    governor = RuntimeResourceGovernor(
+        proc_root=proc_root,
+        cgroup_root=cgroup_root,
+        snapshot_provider=lambda: {
+            "available_mb": 149,
+            "swap_percent": 12,
+            "cpu_quota_cores": 3,
+        }
+    )
+    runner = BoundedParallelStageRunner(governor=governor)
+    identity = InstanceIdentity("sensitive-instance-uuid", 7, 11)
+    runner.run(
+        ImmutableImageWorkset(
+            descriptors=(
+                {
+                    "ordinal": 0,
+                    "source_path": str(source_path.resolve()),
+                    "source_sha256": hashlib.sha256(source_path.read_bytes()).hexdigest(),
+                },
+            ),
+            staging_dir=str(tmp_path.resolve()),
+            source_roots=(str(tmp_path.resolve()),),
+            instance_identity=identity,
+        ),
+        TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 5),
+        lambda candidate: candidate == identity,
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        resource_governor=governor,
+        parallel_image_runner=runner,
+    )
+
+    parallel = task.refresh_health_snapshot()["parallel_runtime"]
+
+    assert set(parallel) == {
+        "resource_sample",
+        "selected_tier",
+        "worker_count",
+        "degrade_reason",
+        "status",
+        "batch_duration_ms",
+        "worker_thread_count",
+        "child_peak_rss_bytes",
+        "cancellation_count",
+        "active_child_count",
+        "cpu_throttling",
+    }
+    assert parallel["resource_sample"] == {
+        "available_mb": 149.0,
+        "swap_percent": 12.0,
+        "cpu_quota_cores": 3.0,
+    }
+    assert parallel["worker_count"] == 1
+    assert parallel["selected_tier"] == "serial"
+    assert parallel["degrade_reason"] == "memory_below_parallel_threshold"
+    assert parallel["status"] == "succeeded"
+    assert parallel["batch_duration_ms"] >= 0
+    assert parallel["worker_thread_count"] == 0
+    assert parallel["child_peak_rss_bytes"] is None
+    assert parallel["cancellation_count"] == 0
+    assert parallel["active_child_count"] == 0
+    assert parallel["cpu_throttling"] == {
+        "nr_periods": 100,
+        "nr_throttled": 8,
+        "throttled_usec": 4321,
+    }
+    assert "sensitive-instance-uuid" not in repr(parallel)
+
+
+def test_refresh_health_snapshot_preserves_child_peak_rss_as_an_integer():
+    tmp_path = make_test_dir("runtime-parallel-health-rss")
+
+    class SnapshotRunner:
+        active_processes = ()
+        last_run_snapshot = {
+            "worker_count": 2,
+            "reason": None,
+            "parallel": True,
+            "batch_duration_ms": 10.5,
+            "child_pid": 999,
+            "worker_thread_count": 2,
+            "canceled": False,
+            "status": "succeeded",
+            "cancellation_count": 0,
+            "child_peak_rss_bytes": 63 * 1024 * 1024,
+        }
+
+    governor = RuntimeResourceGovernor(
+        snapshot_provider=lambda: {
+            "available_mb": 180,
+            "swap_percent": 10,
+            "cpu_quota_cores": 2,
+        }
+    )
+    governor.sample()
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        resource_governor=governor,
+        parallel_image_runner=SnapshotRunner(),
+    )
+
+    parallel = task.refresh_health_snapshot()["parallel_runtime"]
+
+    assert parallel["child_peak_rss_bytes"] == 63 * 1024 * 1024
+    assert type(parallel["child_peak_rss_bytes"]) is int
 
 
 def test_constructor_rejects_lifecycle_with_different_queue_or_event():
@@ -14157,6 +14333,43 @@ def test_successful_rotation_immediately_requests_the_next_presentation():
     assert playlist.is_rotation_reservation_current(second.instance_uuid) is True
 
 
+def test_provider_free_automatic_display_requests_next_when_global_provider_policy_is_off(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "provider-free-automatic-display-prefetches-next",
+        plugin_count=2,
+        provider_free=True,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    device_config.config["display_triggered_refresh_enabled"] = False
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    _write_runtime_cache(task, first, Image.new("RGB", (32, 16), "black"))
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    command = task._playlist_command(
+        playlist.name,
+        first,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=50,
+        current_dt=PRESENTATION_NOW,
+        cache_theme_mode=None,
+        automatic_rotation=True,
+        allow_prepared_presentation=False,
+    )
+
+    task._execute_command(command)
+
+    states = task.runtime_state.snapshot().instances
+    assert states[second.instance_uuid].presentation_request is not None
+    assert playlist.is_rotation_reservation_current(second.instance_uuid) is True
+
+
 def test_automatic_display_does_not_request_next_presentation_when_policy_is_off(
     monkeypatch,
 ):
@@ -14191,6 +14404,66 @@ def test_automatic_display_does_not_request_next_presentation_when_policy_is_off
     states = task.runtime_state.snapshot().instances
     assert second.instance_uuid not in states
     assert playlist.is_rotation_reservation_current(second.instance_uuid) is False
+
+
+def test_next_presentation_reservation_skips_ineligible_members():
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "next-presentation-skips-ineligible-member",
+        plugin_count=3,
+    )
+    first, ineligible, eligible = [
+        plugin.snapshot() for plugin in playlist.plugins
+    ]
+    playlist.plugins[1].settings["refreshOnDisplay"] = "sometimes"
+    ineligible = playlist.plugins[1].snapshot()
+    device_config.config["display_triggered_refresh_enabled"] = False
+    manifests = {
+        first.plugin_id: _presentation_manifest(first.plugin_id),
+        ineligible.plugin_id: _presentation_manifest(
+            ineligible.plugin_id,
+            provider_free=True,
+        ),
+        eligible.plugin_id: _presentation_manifest(
+            eligible.plugin_id,
+            provider_free=True,
+        ),
+    }
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "refresh_on_display": True,
+        "_manifest": manifests[plugin_id],
+    }
+    playlist.plugin_rotation_pool = [
+        first.instance_uuid,
+        ineligible.instance_uuid,
+        eligible.instance_uuid,
+    ]
+    playlist.plugin_rotation_queue = [
+        first.instance_uuid,
+        ineligible.instance_uuid,
+        eligible.instance_uuid,
+    ]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    acknowledgement = task.device_config.playlist_manager.acknowledge_rotation_display(
+        first.instance_uuid,
+        expected_playlist_name=playlist.name,
+    )
+    assert acknowledgement is not None
+
+    requested = task._request_next_presentation_after_display(
+        PRESENTATION_NOW,
+        "current-display-commit",
+        PRESENTATION_NOW.isoformat(),
+        displayed_instance_uuid=first.instance_uuid,
+    )
+
+    states = task.runtime_state.snapshot().instances
+    assert requested is True
+    assert ineligible.instance_uuid not in states
+    assert states[eligible.instance_uuid].presentation_request is not None
+    assert playlist.is_rotation_reservation_current(ineligible.instance_uuid) is False
+    assert playlist.is_rotation_reservation_current(eligible.instance_uuid) is True
 
 
 def test_reserved_next_presentation_refreshes_matching_due_data_first(monkeypatch):
@@ -14639,6 +14912,29 @@ def test_rotation_displays_cached_presentation_plugin_without_request_when_polic
     assert state is None or state.presentation_request is None
 
 
+def test_unattested_presentation_fails_closed_when_global_policy_is_off(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "unattested-policy-off-cached-display",
+    )
+    device_config.config["display_triggered_refresh_enabled"] = False
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=2)
+    ).isoformat()
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+
+    command = task._select_cached_display_command(PRESENTATION_NOW)
+
+    assert command is not None
+    assert command.intent is RefreshIntent.DISPLAY_CACHE
+    assert command.allow_prepared_presentation is False
+    state = task.runtime_state.snapshot().instances.get(instance.instance_uuid)
+    assert state is None or state.presentation_request is None
+
+
 def test_provider_free_presentation_prepares_under_cache_only_and_waits_for_next_display(
     monkeypatch,
 ):
@@ -14720,21 +15016,55 @@ def test_provider_free_presentation_prepares_under_cache_only_and_waits_for_next
     assert task.refresh_queue.take(timeout=0) is None
 
 
-def test_provider_refresh_opt_in_prepares_fresh_image_on_every_cached_rotation(
+def test_provider_free_prepared_display_requests_its_next_presentation_when_policy_is_off(
     monkeypatch,
 ):
     task, device_config, _clock, playlist, display = _make_presentation_task(
-        "provider-refresh-opt-in-policy-off",
-        latest_refresh_time=PRESENTATION_NOW.isoformat(),
-        interval=60,
-        provider_refresh=True,
+        "provider-free-prepared-display-requests-next",
+        provider_free=True,
     )
     device_config.config["display_triggered_refresh_enabled"] = False
     instance = playlist.plugins[0].snapshot()
     _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    request = _seed_presentation_request(task, instance)
+    _seed_prepared_presentation(task, instance, request)
+    task.runtime_state.set_display_state(
+        "committed",
+        request.origin_display_commit_id,
+        instance_uuid=instance.instance_uuid,
+        changed_at=request.requested_at,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    result = _queue_and_process(
+        task,
+        _presentation_followup_command(task, playlist, instance, request),
+    )
+
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert state.presentation_receipt.request_id == request.request_id
+    assert state.presentation_request is not None
+    assert state.presentation_request.request_id != request.request_id
+    assert len(display.calls) == 1
+
+
+def test_provider_refresh_prepares_fresh_image_when_global_policy_is_on(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, display = _make_presentation_task(
+        "provider-refresh-global-policy-on",
+        latest_refresh_time=PRESENTATION_NOW.isoformat(),
+        interval=60,
+        provider_refresh=True,
+    )
+    device_config.config["display_triggered_refresh_enabled"] = True
+    instance = playlist.plugins[0].snapshot()
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
     task.runtime_state.record_success(
         instance.instance_uuid,
-        (PRESENTATION_NOW - timedelta(seconds=61)).isoformat(),
+        PRESENTATION_NOW.isoformat(),
         lane=RefreshLane.DATA,
     )
     device_config.refresh_info.refresh_time = (
@@ -14808,6 +15138,11 @@ def test_provider_refresh_opt_in_prepares_fresh_image_on_every_cached_rotation(
     )
 
     now[0] += timedelta(seconds=61)
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        now[0].isoformat(),
+        lane=RefreshLane.DATA,
+    )
     monkeypatch.setattr(
         refresh_task_module,
         "get_plugin_instance",
@@ -14827,18 +15162,15 @@ def test_provider_refresh_opt_in_prepares_fresh_image_on_every_cached_rotation(
 
     assert second_prepared.job.status is JobStatus.SUCCEEDED
     assert len(provider_calls) == 2
+    followup = task.refresh_queue.take(timeout=0)
+    assert followup is not None
+    assert followup.command.intent is RefreshIntent.DISPLAY_CACHE
+    task._process_queue_entry(followup)
     monkeypatch.setattr(
         refresh_task_module,
         "get_plugin_instance",
         lambda _config: pytest.fail("DISPLAY_CACHE instantiated a plugin"),
     )
-    second_display = task._select_cached_display_command(now[0])
-    assert second_display is not None
-    assert second_display.intent is RefreshIntent.DISPLAY_CACHE
-
-    second_display_result = _queue_and_process(task, second_display)
-
-    assert second_display_result.job.status is JobStatus.SUCCEEDED
     assert len(provider_calls) == 2
     assert len(display.calls) == 2
     assert display.calls[-1]["image"].getpixel((0, 0)) == (255, 255, 255)
@@ -15110,18 +15442,20 @@ def test_rotation_preflight_timeout_keeps_only_eligible_member_reserved(
 
 
 @pytest.mark.parametrize(
-    ("display_policy", "provider_refresh"),
-    [(True, False), (False, True)],
+    ("display_policy", "provider_refresh", "provider_free"),
+    [(True, False, False), (False, True, False), (False, False, True)],
 )
 def test_failed_rotation_presentation_releases_member_during_retry_backoff(
     monkeypatch,
     display_policy,
     provider_refresh,
+    provider_free,
 ):
     task, device_config, _clock, playlist, _display = _make_presentation_task(
         "failed-rotation-presentation-yields-during-backoff",
         plugin_count=2,
         provider_refresh=provider_refresh,
+        provider_free=provider_free,
     )
     device_config.config["display_triggered_refresh_enabled"] = display_policy
     first, second = [plugin.snapshot() for plugin in playlist.plugins]
@@ -15385,12 +15719,15 @@ def test_refresh_on_display_rerender_prepares_latest_then_commits_without_loop(
     task._process_queue_entry(followup)
 
     final_state = task.runtime_state.snapshot().instances[instance.instance_uuid]
-    assert final_state.presentation_request is None
+    assert final_state.presentation_request is not None
+    assert final_state.presentation_request.request_id != request.request_id
     assert final_state.presentation_receipt.request_id == request.request_id
     assert len(display.calls) == 2
     assert display.calls[-1]["image"].getpixel((0, 0)) == (255, 255, 255)
     assert task.refresh_queue.take(timeout=0) is None
-    assert task._select_independent_refresh_command(PRESENTATION_NOW) is None
+    next_refresh = task._select_independent_refresh_command(PRESENTATION_NOW)
+    assert next_refresh is not None
+    assert next_refresh.intent is RefreshIntent.PRESENTATION_REFRESH
 
 
 def test_display_cache_never_instantiates_plugin_with_pending_presentation(
@@ -15933,7 +16270,8 @@ def test_prepared_followup_commit_records_receipt_success_and_preserves_anchor(
 
     assert result.job.status is JobStatus.SUCCEEDED
     assert len(display.calls) == 1
-    assert state.presentation_request is None
+    assert state.presentation_request is not None
+    assert state.presentation_request.request_id != request.request_id
     assert state.presentation_receipt == PresentationCommitReceipt(
         request_id=request.request_id,
         committed_at=display.calls[0]["committed_at"],
@@ -16008,7 +16346,7 @@ def test_changed_target_keeps_prepared_item_for_next_normal_selection(monkeypatc
     assert device_config.refresh_info is original_refresh
 
 
-def test_normal_display_consuming_prepared_item_does_not_request_a_second_item(
+def test_normal_display_consuming_prepared_item_requests_the_next_item(
     monkeypatch,
 ):
     task, _config, _clock, playlist, display = _make_presentation_task("presentation-normal-consume")
@@ -16030,7 +16368,8 @@ def test_normal_display_consuming_prepared_item_does_not_request_a_second_item(
 
     assert result.job.status is JobStatus.SUCCEEDED
     assert len(display.calls) == 1
-    assert state.presentation_request is None
+    assert state.presentation_request is not None
+    assert state.presentation_request.request_id != request.request_id
     assert state.presentation_receipt.request_id == request.request_id
     assert state.presentation.last_success_at == display.calls[0]["committed_at"]
     assert not Path(candidate.cache_path).exists()
@@ -16198,7 +16537,8 @@ def test_restart_replays_requested_or_prepared_presentation_without_duplicate_se
     )
     state = second_restart.runtime_state.snapshot().instances[instance.instance_uuid]
 
-    assert state.presentation_request is None
+    assert state.presentation_request is not None
+    assert state.presentation_request.request_id != request.request_id
     assert state.presentation_receipt.request_id == request.request_id
     assert len(second_display.calls) == 1
     assert [event[0] for event in plugin.events].count("prepare") == (1 if restart_state == "requested" else 0)
@@ -16663,14 +17003,15 @@ def test_presentation_commit_cas_false_retains_prepared_candidate(monkeypatch):
 
 @pytest.mark.parametrize("failure_point", ["display", "commit"])
 @pytest.mark.parametrize(
-    ("display_policy", "provider_refresh"),
-    [(True, False), (False, True)],
+    ("display_policy", "provider_refresh", "provider_free"),
+    [(True, False, False), (False, True, False), (False, False, True)],
 )
 def test_prepared_display_exception_cools_only_presentation_and_schedules_exact_retry(
     monkeypatch,
     failure_point,
     display_policy,
     provider_refresh,
+    provider_free,
 ):
     def fail_after_display(_manager, _call):
         if failure_point == "display":
@@ -16681,6 +17022,7 @@ def test_prepared_display_exception_cools_only_presentation_and_schedules_exact_
         f"presentation-{failure_point}-exception",
         display_manager=display,
         provider_refresh=provider_refresh,
+        provider_free=provider_free,
     )
     device_config.config["display_triggered_refresh_enabled"] = display_policy
     instance = playlist.plugins[0].snapshot()
@@ -16776,7 +17118,8 @@ def test_presentation_commit_published_then_raised_finishes_as_committed(
 
     assert result.job.status is JobStatus.SUCCEEDED
     assert len(display.calls) == 1
-    assert state.presentation_request is None
+    assert state.presentation_request is not None
+    assert state.presentation_request.request_id != request.request_id
     assert state.presentation_receipt.request_id == request.request_id
     assert state.presentation.last_failure_at is None
     assert not Path(candidate.cache_path).exists()
@@ -16849,7 +17192,8 @@ def test_prepared_display_commits_theme_only_after_hardware_write(monkeypatch):
     assert result.job.status is JobStatus.SUCCEEDED
     assert len(display.calls) == 1
     assert device_config.config["active_theme"] == "night"
-    assert state.presentation_request is None
+    assert state.presentation_request is not None
+    assert state.presentation_request.request_id != request.request_id
     assert state.presentation_receipt.theme_mode == "night"
     assert not Path(candidate.cache_path).exists()
 

@@ -1,7 +1,9 @@
+import hashlib
 import json
 import os
 import socket
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
@@ -23,6 +25,13 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
     read_source_provenance,
 )
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
+from runtime.bounded_parallel_stage import BoundedParallelStageRunner  # noqa: E402
+from runtime.long_task_executor import (  # noqa: E402
+    InstanceIdentity,
+    bind_long_task_runtime,
+)
+from runtime.refresh_contracts import TaskContext  # noqa: E402
+from runtime.resource_governor import RuntimeResourceGovernor  # noqa: E402
 
 
 class FakeDeviceConfig:
@@ -175,6 +184,18 @@ def png_bytes(color="red"):
     output = BytesIO()
     Image.new("RGB", (32, 48), color).save(output, format="PNG")
     return output.getvalue()
+
+
+def two_worker_image_runner():
+    return BoundedParallelStageRunner(
+        governor=RuntimeResourceGovernor(
+            snapshot_provider=lambda: {
+                "available_mb": 200,
+                "swap_percent": 0,
+                "cpu_quota_cores": 2,
+            }
+        )
+    )
 
 
 class FakeHttpResponse:
@@ -1952,3 +1973,45 @@ def test_legacy_date_buckets_are_deterministically_pruned_to_366(tmp_path):
 
     assert len(document["date_buckets"]) == MAX_DATE_BUCKETS
     assert set(document["date_buckets"]) == set(sorted(buckets)[-MAX_DATE_BUCKETS:])
+
+
+def test_daily_art_prepared_gallery_parallel_stage_is_pixel_equivalent(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    settings = bound_settings(layoutMode="gallery", galleryCount=3)
+    monkeypatch.setattr(daily_art_module, "write_context", lambda *_args, **_kwargs: None)
+    hydrate_bank(plugin, monkeypatch, settings, count=24, portrait=True)
+    req = request("a" * 32)
+
+    serial = plugin.prepare_presentation(
+        settings,
+        FakeDeviceConfig(),
+        request=req,
+        resolved_theme_context=None,
+    )
+    expected_hash = hashlib.sha256(serial.image.tobytes()).hexdigest()
+    runner = two_worker_image_runner()
+    context = TaskContext.never_cancelled(
+        deadline_monotonic=time.monotonic() + 20,
+    )
+    identity = InstanceIdentity("daily-art-test-instance", 1, 1)
+
+    with bind_long_task_runtime(
+        context,
+        identity,
+        identity_validator=lambda candidate: candidate == identity,
+        parallel_image_runner=runner,
+    ):
+        staged = plugin.prepare_presentation(
+            settings,
+            FakeDeviceConfig(),
+            request=req,
+            resolved_theme_context=None,
+        )
+
+    assert hashlib.sha256(staged.image.tobytes()).hexdigest() == expected_hash
+    assert runner.last_run_snapshot["parallel"] is True
+    assert runner.last_run_snapshot["worker_count"] == 2
+    assert not list(tmp_path.glob(".parallel-image-stage-*"))

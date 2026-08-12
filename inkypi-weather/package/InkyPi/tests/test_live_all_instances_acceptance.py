@@ -26,7 +26,7 @@ def acceptance():
     return module
 
 
-def _config(count=26, *, duplicate_uuid=False):
+def _config(count=27, *, duplicate_uuid=False):
     plugins = []
     for index in range(count):
         instance_uuid = f"{index + 1:032x}"
@@ -158,11 +158,11 @@ def _manifest(instance, pixel_hash, timestamp, *, commit_id="a" * 32, hardware=T
 @pytest.mark.parametrize(
     ("config", "expected_code"),
     [
-        (_config(25), "config_instance_count"),
-        (_config(26, duplicate_uuid=True), "config_duplicate_uuid"),
+        (_config(26), "config_instance_count"),
+        (_config(27, duplicate_uuid=True), "config_duplicate_uuid"),
     ],
 )
-def test_plan_has_strict_26_instance_and_unique_uuid_gate(
+def test_plan_has_strict_27_instance_and_unique_uuid_gate(
     acceptance,
     config,
     expected_code,
@@ -194,7 +194,7 @@ def test_plan_selects_current_priority_winner_and_keeps_private_name_internal(ac
         now=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
     )
 
-    assert len(plan) == 26
+    assert len(plan) == 27
     assert plan[0].playlist_name == "Factory"
     assert plan[0].instance_name == "Private instance 0"
     assert plan[0].expects_presentation_refresh is False

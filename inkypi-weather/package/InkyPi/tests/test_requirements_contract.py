@@ -132,6 +132,12 @@ def test_release_scripts_and_services_are_forced_to_lf():
     ):
         assert b"\r" not in (REPO_ROOT / relative).read_bytes()
     assert b"\r" not in (PROJECT_ROOT / "install/inkypi.service").read_bytes()
+    assert b"\r" not in (
+        PROJECT_ROOT / "install/inkypi-update-recover.service"
+    ).read_bytes()
+    assert b"\r" not in (
+        PROJECT_ROOT / "install/inkypi-update-finalize.service"
+    ).read_bytes()
 
 
 def test_operations_docs_use_the_supported_launcher_interface():

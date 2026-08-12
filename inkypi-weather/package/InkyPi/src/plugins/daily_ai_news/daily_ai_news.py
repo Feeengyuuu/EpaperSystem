@@ -39,6 +39,8 @@ from utils.theme_utils import get_theme_palette
 
 logger = logging.getLogger(__name__)
 
+MAX_PROVIDER_IO_WORKERS = 4
+
 DEFAULT_MODEL = "gpt-5-nano"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_TITLE = "整点新闻"
@@ -1435,7 +1437,13 @@ class DailyAINews(BasePlugin):
         rows_by_group: dict[str, list[dict[str, Any]]] = {
             group: [] for group in MARKET_GROUPS
         }
-        worker_count = max(1, min(6, len(quote_tasks) + int(massive_client is not None)))
+        worker_count = max(
+            1,
+            min(
+                MAX_PROVIDER_IO_WORKERS,
+                len(quote_tasks) + int(massive_client is not None),
+            ),
+        )
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             macro_future = (
                 executor.submit(self._fetch_massive_macro, massive_client)

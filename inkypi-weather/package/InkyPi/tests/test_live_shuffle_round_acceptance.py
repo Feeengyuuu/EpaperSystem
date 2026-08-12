@@ -28,7 +28,7 @@ def acceptance():
     return module
 
 
-def _config(count=26):
+def _config(count=27):
     plugins = []
     for index in range(count):
         plugins.append({
@@ -112,9 +112,9 @@ def test_prepare_rotation_config_builds_full_uuid_bag_and_future_gate(acceptance
     expected_uuids = {
         item["instance_uuid"] for item in playlist["plugins"]
     }
-    assert len(prepared.plan) == 26
-    assert len(playlist["plugin_rotation_queue"]) == 26
-    assert len(set(playlist["plugin_rotation_queue"])) == 26
+    assert len(prepared.plan) == 27
+    assert len(playlist["plugin_rotation_queue"]) == 27
+    assert len(set(playlist["plugin_rotation_queue"])) == 27
     assert set(playlist["plugin_rotation_queue"]) == expected_uuids
     assert playlist["plugin_rotation_pool"] == [
         item["instance_uuid"] for item in playlist["plugins"]
@@ -136,10 +136,10 @@ def test_prepare_rotation_config_builds_full_uuid_bag_and_future_gate(acceptance
     assert config == original, "preparation must not mutate the caller's document"
 
 
-def test_prepare_rotation_config_requires_exactly_26_unique_instances(acceptance):
+def test_prepare_rotation_config_requires_exactly_27_unique_instances(acceptance):
     with pytest.raises(acceptance.AuditAbort) as captured:
         acceptance.prepare_rotation_config(
-            _config(25),
+            _config(26),
             current_manifest=None,
             now=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
             test_interval_seconds=1,
@@ -151,7 +151,7 @@ def test_prepare_rotation_config_requires_exactly_26_unique_instances(acceptance
 
 
 def test_tracker_counts_only_one_member_removal_and_ignores_followup(acceptance):
-    configured = tuple(f"{index + 1:032x}" for index in range(26))
+    configured = tuple(f"{index + 1:032x}" for index in range(27))
     tracker = acceptance.ShuffleRoundTracker(
         configured_uuids=configured,
         initial_queue=configured,
@@ -178,14 +178,14 @@ def test_tracker_counts_only_one_member_removal_and_ignores_followup(acceptance)
     assert first.round_index == 1
     assert first.slot == 1
     assert first.instance_uuid == configured[0]
-    assert first.queue_remaining == 25
+    assert first.queue_remaining == 26
     assert followup is None
     assert tracker.first_round_count == 1
     assert tracker.ignored_same_uuid_followups == 1
 
 
 def test_tracker_proves_full_first_round_and_next_round_boundary(acceptance):
-    configured = tuple(f"{index + 1:032x}" for index in range(26))
+    configured = tuple(f"{index + 1:032x}" for index in range(27))
     tracker = acceptance.ShuffleRoundTracker(
         configured_uuids=configured,
         initial_queue=configured,
@@ -215,13 +215,13 @@ def test_tracker_proves_full_first_round_and_next_round_boundary(acceptance):
     )
 
     assert all(event is not None for event in events)
-    assert len({event.instance_uuid for event in events}) == 26
+    assert len({event.instance_uuid for event in events}) == 27
     assert events[-1].instance_uuid == configured[-1]
     assert events[-1].queue_remaining == 0
     assert boundary is not None
     assert boundary.round_number == 2
     assert boundary.round_index == 1
-    assert boundary.slot == 27
+    assert boundary.slot == 28
     assert boundary.instance_uuid != events[-1].instance_uuid
     assert tracker.complete is True
 
@@ -239,7 +239,7 @@ def test_tracker_rejects_non_atomic_or_mismatched_ack(
     manifest_uuid,
     expected_code,
 ):
-    configured = tuple(f"{index + 1:032x}" for index in range(26))
+    configured = tuple(f"{index + 1:032x}" for index in range(27))
     tracker = acceptance.ShuffleRoundTracker(
         configured_uuids=configured,
         initial_queue=configured,
@@ -260,7 +260,7 @@ def test_tracker_rejects_non_atomic_or_mismatched_ack(
 
 
 def test_tracker_rejects_cross_round_boundary_repeat(acceptance):
-    configured = tuple(f"{index + 1:032x}" for index in range(26))
+    configured = tuple(f"{index + 1:032x}" for index in range(27))
     tracker = acceptance.ShuffleRoundTracker(
         configured_uuids=configured,
         initial_queue=configured,
@@ -485,7 +485,7 @@ def test_runner_finally_restores_service_interval_and_ready_on_failure(
     assert restored["refresh_info"] == original["refresh_info"]
     assert len(
         restored["playlist_config"]["playlists"][0]["plugin_rotation_queue"]
-    ) == 26
+    ) == 27
     persisted_summary = json.loads(
         (output_dir / "summary.json").read_text(encoding="utf-8")
     )
@@ -666,14 +666,14 @@ def test_monitor_correlates_manifest_before_ack_when_followup_overwrites_it(
             return
 
         slot = state["next_slot"]
-        if slot <= 26:
+        if slot <= 27:
             instance_uuid = prepared.initial_queue[slot - 1]
             remove_from_first_round(instance_uuid)
             publish(instance_uuid, slot, hardware=True)
             state["last_uuid"] = instance_uuid
             state["next_slot"] += 1
             return
-        if slot == 27:
+        if slot == 28:
             next_uuid = next(
                 value
                 for value in prepared.configured_uuids
@@ -685,7 +685,7 @@ def test_monitor_correlates_manifest_before_ack_when_followup_overwrites_it(
                 if value != next_uuid
             ]
             config_path.write_text(json.dumps(config), encoding="utf-8")
-            publish(next_uuid, 27, hardware=True)
+            publish(next_uuid, 28, hardware=True)
             state["next_slot"] += 1
 
     runner = acceptance.ShuffleRoundAcceptance(
@@ -705,12 +705,12 @@ def test_monitor_correlates_manifest_before_ack_when_followup_overwrites_it(
 
     result = runner._monitor_round(prepared, baseline, now)
 
-    assert result["accepted_slots"] == 27
-    assert result["first_round_unique"] == 26
+    assert result["accepted_slots"] == 28
+    assert result["first_round_unique"] == 27
     assert result["boundary_no_repeat"] is True
-    assert len(result["events"]) == 27
+    assert len(result["events"]) == 28
     assert all(event["hardware_written"] is True for event in result["events"])
-    assert len(list(output_dir.glob("slot-*.png"))) == 27
+    assert len(list(output_dir.glob("slot-*.png"))) == 28
     rendered = json.dumps(result)
     assert "Private instance" not in rendered
     assert "plugin_settings" not in rendered

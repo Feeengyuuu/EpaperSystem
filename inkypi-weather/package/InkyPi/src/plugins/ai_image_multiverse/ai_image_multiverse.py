@@ -39,6 +39,7 @@ from runtime.long_task_executor import (
     task_context_or_default,
 )
 from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
+from runtime.resource_governor import AI_GENERATION, RuntimeResourceGovernor
 from utils.http_client import HttpClientError, HttpStatusError, get_http_client
 from utils.image_utils import pad_image_blur
 from utils.safe_image import safe_open_base64_image, safe_open_image
@@ -47,6 +48,7 @@ from .e_ink_prompt import e_ink_prompt
 from .randomizer import randomizer
 
 logger = logging.getLogger(__name__)
+_AI_GENERATION_GOVERNOR = RuntimeResourceGovernor()
 
 MODEL_PIPELINE = {
     # OpenAI (image + LLM both OpenAI)
@@ -956,19 +958,30 @@ class AIImageMultiverse(BasePlugin):
         return template_params
 
     def generate_image(self, settings, device_config):
+        context = task_context_or_default()
+        with _AI_GENERATION_GOVERNOR.acquire(
+            AI_GENERATION,
+            {"plugin_id": "ai_image_multiverse"},
+            context,
+        ):
+            final_prompt = build_final_prompt(settings, device_config)
 
-        final_prompt = build_final_prompt(settings, device_config)
+            model_id, entry = _get_pipeline_entry(settings)
+            provider = (
+                ((entry.get("image") or {}).get("provider") or "")
+                .strip()
+                .lower()
+            )
 
-        model_id, entry = _get_pipeline_entry(settings)
-        provider = ((entry.get("image") or {}).get("provider") or "").strip().lower()
+            if provider == "openai":
+                return generate_openai_image(settings, device_config, final_prompt)
 
-        if provider == "openai":
-            return generate_openai_image(settings, device_config, final_prompt)
-        
-        if provider == "gemini":
-            return generate_gemini_image(settings, device_config, final_prompt)
+            if provider == "gemini":
+                return generate_gemini_image(settings, device_config, final_prompt)
 
-        if provider == "horde":
-            return generate_horde_image(settings, device_config, final_prompt)
+            if provider == "horde":
+                return generate_horde_image(settings, device_config, final_prompt)
 
-        raise RuntimeError(f"Provider '{provider}' not supported yet in this module.")
+            raise RuntimeError(
+                f"Provider '{provider}' not supported yet in this module."
+            )

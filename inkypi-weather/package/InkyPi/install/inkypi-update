@@ -1,23 +1,48 @@
 #!/usr/bin/env python3
-"""Install a verified InkyPi ZIP release and roll back unless readyz commits it."""
+"""Install a verified release, or recover one interrupted update at boot."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
+import json
 import os
 from pathlib import Path
+import re
 import sys
+import tempfile
+import zipfile
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+INSTALLED_UPDATER = Path("/usr/local/sbin/inkypi-update")
+HEADLESS_CAPABILITY_ID = "headless_mode_v1"
+HEADLESS_CAPABILITY_ATTESTATION = "headless-mode-v1-capability.json"
 LIB_CANDIDATES = (
     SCRIPT_DIR / "lib",
+    Path("/usr/local/lib/inkypi-update"),
     Path(os.getenv("INKYPI_INSTALL_ROOT", "/opt/inkypi"))
     / "current"
     / "install"
     / "lib",
 )
-LIB_DIR = next((candidate for candidate in LIB_CANDIDATES if candidate.is_dir()), None)
+LIB_DIR = next(
+    (
+        candidate
+        for candidate in LIB_CANDIDATES
+        if candidate.is_dir()
+        and all(
+            (candidate / name).is_file()
+            for name in (
+                "release_state.py",
+                "release_archive.py",
+                "update_engine.py",
+            )
+        )
+    ),
+    None,
+)
 if LIB_DIR is None:
     raise SystemExit("InkyPi updater library is unavailable")
 if str(LIB_DIR) not in sys.path:
@@ -41,8 +66,8 @@ from update_engine import (  # noqa: E402
 )
 
 
-def _managed_files(args):
-    return (
+def _managed_files(args, *, include_boot_recovery=True):
+    base = (
         ManagedFile(
             "install/inkypi.service",
             Path(args.unit_target),
@@ -59,22 +84,396 @@ def _managed_files(args):
             0o755,
         ),
     )
+    if not include_boot_recovery:
+        return base
+    return (
+        base[0],
+        ManagedFile(
+            "install/inkypi-update-recover.service",
+            Path(
+                getattr(
+                    args,
+                    "recovery_unit_target",
+                    "/etc/systemd/system/inkypi-update-recover.service",
+                )
+            ),
+            0o644,
+        ),
+        *_default_managed_files()[2:9],
+        *base[1:],
+    )
 
 
-def _recover_existing(layout, coordinator):
+def _default_managed_files():
+    """Fixed recovery targets; never sourced from a journal or release manifest."""
+
+    return (
+        ManagedFile(
+            "install/inkypi.service",
+            Path("/etc/systemd/system/inkypi.service"),
+            0o644,
+        ),
+        ManagedFile(
+            "install/inkypi-update-recover.service",
+            Path("/etc/systemd/system/inkypi-update-recover.service"),
+            0o644,
+        ),
+        ManagedFile(
+            "install/inkypi-update-finalize.service",
+            Path("/etc/systemd/system/inkypi-update-finalize.service"),
+            0o644,
+        ),
+        ManagedFile(
+            "install/systemd/inkypi.service.d/10-update-recovery.conf",
+            Path(
+                "/etc/systemd/system/inkypi.service.d/"
+                "10-update-recovery.conf"
+            ),
+            0o644,
+        ),
+        ManagedFile(
+            "install/systemd/lightdm.service.d/10-inkypi-update-recovery.conf",
+            Path(
+                "/etc/systemd/system/lightdm.service.d/"
+                "10-inkypi-update-recovery.conf"
+            ),
+            0o644,
+        ),
+        ManagedFile(
+            "install/lib/release_state.py",
+            Path("/usr/local/lib/inkypi-update/release_state.py"),
+            0o644,
+        ),
+        ManagedFile(
+            "install/lib/release_archive.py",
+            Path("/usr/local/lib/inkypi-update/release_archive.py"),
+            0o644,
+        ),
+        ManagedFile(
+            "install/lib/host_migration.py",
+            Path("/usr/local/lib/inkypi-update/host_migration.py"),
+            0o644,
+        ),
+        ManagedFile(
+            "install/lib/update_engine.py",
+            Path("/usr/local/lib/inkypi-update/update_engine.py"),
+            0o644,
+        ),
+        ManagedFile(
+            "install/inkypi",
+            Path("/usr/local/bin/inkypi"),
+            0o755,
+        ),
+        ManagedFile(
+            "install/inkypi-update",
+            Path("/usr/local/sbin/inkypi-update"),
+            0o755,
+        ),
+    )
+
+
+def _boot_recovery_capability_root(layout):
+    candidates = (layout.current_link, SCRIPT_DIR.parent)
+    for candidate in candidates:
+        unit = candidate / "install" / "inkypi-update-recover.service"
+        if unit.is_file() and not unit.is_symlink():
+            return candidate
+    raise RuntimeError("boot recovery capability is unavailable")
+
+
+def _ensure_boot_recovery_capability(layout, args):
+    # Lazy import lets a newly installed updater first recover an N-1 journal
+    # with the N-1 library before it bootstraps the capability files.
+    from update_engine import BootRecoveryUnitInstaller
+
+    installer = BootRecoveryUnitInstaller(
+        unit_target=args.recovery_unit_target,
+        systemctl=args.systemctl,
+    )
+    installer.install_capability(_boot_recovery_capability_root(layout))
+    return installer
+
+
+def _wait_boot_recovery_capability(args):
+    """Wait outside the update lock for the queued recover-only oneshot."""
+
+    from update_engine import BootRecoveryUnitInstaller
+
+    BootRecoveryUnitInstaller(
+        unit_target=args.recovery_unit_target,
+        systemctl=args.systemctl,
+    ).wait_ready()
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _committed_current_release(layout):
+    identity_path = layout.current_link / ".release-id"
+    if identity_path.is_symlink() or not identity_path.is_file():
+        return None
+    try:
+        release_id = identity_path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", release_id):
+        return None
+    try:
+        if layout.current_link.resolve().name != release_id:
+            return None
+    except OSError:
+        return None
+    for history in layout.history_dir.glob("*.json"):
+        try:
+            if history.is_symlink() or history.stat().st_size > 1024 * 1024:
+                continue
+            document = json.loads(history.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(document, dict)
+            and document.get("release_id") == release_id
+            and document.get("phase") == "committed"
+        ):
+            return release_id
+    return None
+
+
+def _headless_capability_attested(layout):
+    try:
+        if Path(__file__).resolve() != INSTALLED_UPDATER.resolve(strict=True):
+            return None
+        if (
+            INSTALLED_UPDATER.is_symlink()
+            or not INSTALLED_UPDATER.is_file()
+            or not os.access(INSTALLED_UPDATER, os.X_OK)
+        ):
+            return None
+        current_updater = layout.current_link / "install" / "inkypi-update"
+        if current_updater.is_symlink() or not current_updater.is_file():
+            return None
+        if not hmac.compare_digest(
+            _sha256_file(INSTALLED_UPDATER),
+            _sha256_file(current_updater),
+        ):
+            return None
+        release_id = _committed_current_release(layout)
+        if release_id is None:
+            return None
+        return {
+            "schema_version": 1,
+            "capability": HEADLESS_CAPABILITY_ID,
+            "release_id": release_id,
+            "updater_sha256": _sha256_file(INSTALLED_UPDATER),
+        }
+    except OSError:
+        return None
+
+
+def _persist_capability_attestation(layout, document):
+    target = layout.state_root / HEADLESS_CAPABILITY_ATTESTATION
+    payload = (
+        json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    descriptor, name = tempfile.mkstemp(
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(name)
+    try:
+        if os.name != "nt":
+            os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+        if os.name != "nt":
+            directory = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
+def _read_capability_attestation(layout):
+    target = layout.state_root / HEADLESS_CAPABILITY_ATTESTATION
+    try:
+        if target.is_symlink() or not target.is_file() or target.stat().st_size > 4096:
+            return None
+        document = json.loads(
+            target.read_text(encoding="utf-8"),
+            object_pairs_hook=lambda pairs: _strict_object(pairs),
+        )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+        return None
+    return document if isinstance(document, dict) else None
+
+
+def _bootstrap_attested_headless_capability(layout, args):
+    attestation = _headless_capability_attested(layout)
+    if attestation is None:
+        return ()
+    _ensure_boot_recovery_capability(layout, args)
+    _persist_capability_attestation(layout, attestation)
+    if _read_capability_attestation(layout) != attestation:
+        raise RuntimeError("headless updater capability attestation is not durable")
+    return (HEADLESS_CAPABILITY_ID,)
+
+
+def _artifact_requests_headless(path):
+    """Detect the fixed migration request before an N-1 library can preflight."""
+
+    if not Path(path).is_file():
+        return False
+    try:
+        with zipfile.ZipFile(path) as archive:
+            matches = [
+                info
+                for info in archive.infolist()
+                if info.filename == "install/.release-migrations.json"
+                or info.filename.endswith("/install/.release-migrations.json")
+            ]
+            if not matches:
+                return False
+            if len(matches) != 1 or matches[0].file_size > 64 * 1024:
+                raise RuntimeError("release migration request is ambiguous or oversized")
+            document = json.loads(
+                archive.read(matches[0]).decode("utf-8", errors="strict"),
+                object_pairs_hook=lambda pairs: _strict_object(pairs),
+            )
+    except RuntimeError:
+        raise
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError, zipfile.BadZipFile) as error:
+        raise RuntimeError("release migration request cannot be inspected") from error
+    return (
+        isinstance(document, dict)
+        and isinstance(document.get("migrations"), list)
+        and HEADLESS_CAPABILITY_ID in document["migrations"]
+    )
+
+
+def _strict_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _recover_existing(layout, coordinator, *, defer_service_starts=False):
     if not layout.journal_path.exists():
-        return
+        return None
     journal = UpdateJournal.load(layout.journal_path)
-    action = coordinator.recover(journal)
+    if defer_service_starts and hasattr(coordinator, "finalize_boot_recovery"):
+        action = coordinator.recover(journal, defer_service_starts=True)
+    else:
+        action = coordinator.recover(journal)
     if action is RecoveryAction.MANUAL_INTERVENTION:
         raise RuntimeError("previous rollback requires manual intervention")
-    coordinator.cleanup_candidate(journal)
-    coordinator.cleanup_backups(journal)
-    archive_journal(layout, journal)
+    pending_phase = getattr(UpdatePhase, "ROLLBACK_PENDING_SERVICES", None)
+    if pending_phase is None or journal.phase is not pending_phase:
+        coordinator.cleanup_candidate(journal)
+        coordinator.cleanup_backups(journal)
+        archive_journal(layout, journal)
     print(
         f"Recovered prior update {journal.release_id}: {action.value}",
         file=sys.stderr,
     )
+    return journal
+
+
+def _recovery_update_lock(path):
+    """Use blocking lock handoff, with an N-1 constructor compatibility seam."""
+
+    try:
+        return UpdateLock(path, blocking=True)
+    except TypeError:
+        return UpdateLock(path)
+
+
+def run_recovery(*, layout=None, coordinator=None) -> int:
+    """Recover the durable journal only; never inspect or activate an artifact."""
+
+    recovery_layout = layout or ReleaseLayout(
+        Path("/opt/inkypi"),
+        Path("/var/lib/inkypi/update"),
+    )
+    recovery_layout.ensure()
+    if coordinator is None:
+        service = SystemdService(
+            service_name="inkypi.service",
+            systemctl="/usr/bin/systemctl",
+            health_url="http://127.0.0.1/readyz",
+            health_timeout_seconds=120,
+        )
+        coordinator = UpdateCoordinator(
+            recovery_layout,
+            service,
+            managed_files=_default_managed_files(),
+            fallback_release=Path("/usr/local/inkypi"),
+        )
+    try:
+        with _recovery_update_lock(recovery_layout.lock_path):
+            _recover_existing(
+                recovery_layout,
+                coordinator,
+                defer_service_starts=True,
+            )
+    except Exception as error:
+        print(f"InkyPi boot recovery failed: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def run_finalize_recovery(*, layout=None, coordinator=None) -> int:
+    """Verify deferred service restoration and archive the rollback journal."""
+
+    recovery_layout = layout or ReleaseLayout(
+        Path("/opt/inkypi"),
+        Path("/var/lib/inkypi/update"),
+    )
+    recovery_layout.ensure()
+    if coordinator is None:
+        service = SystemdService(
+            service_name="inkypi.service",
+            systemctl="/usr/bin/systemctl",
+            health_url="http://127.0.0.1/readyz",
+            health_timeout_seconds=120,
+        )
+        coordinator = UpdateCoordinator(
+            recovery_layout,
+            service,
+            managed_files=_default_managed_files(),
+            fallback_release=Path("/usr/local/inkypi"),
+        )
+    try:
+        with _recovery_update_lock(recovery_layout.lock_path):
+            if not recovery_layout.journal_path.exists():
+                return 0
+            journal = UpdateJournal.load(recovery_layout.journal_path)
+            if journal.phase is not UpdatePhase.ROLLBACK_PENDING_SERVICES:
+                raise RuntimeError("boot recovery is not ready to finalize")
+            coordinator.finalize_boot_recovery(journal)
+            coordinator.cleanup_candidate(journal)
+            coordinator.cleanup_backups(journal)
+            archive_journal(recovery_layout, journal)
+    except Exception as error:
+        print(f"InkyPi boot recovery finalization failed: {error}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def _record_pre_switch_failure(layout, coordinator, journal, error):
@@ -115,7 +514,10 @@ def run_update(args) -> int:
     coordinator = UpdateCoordinator(
         layout,
         service,
-        managed_files=_managed_files(args),
+        # Recovery must recognize both N-1's three host files and the new
+        # fixed recovery capability files before this invocation decides what
+        # the candidate itself is allowed to manage.
+        managed_files=_managed_files(args, include_boot_recovery=True),
         fallback_release=args.legacy_root,
     )
     preparer = ArtifactPreparer(
@@ -124,8 +526,42 @@ def run_update(args) -> int:
         python_executable=args.python,
     )
     journal = None
+    updater_capabilities = ()
+    durable_attestation = None
+    # Consume an older durable journal and install/enable every recovery file
+    # under the same lock.  Starting the oneshot is nonblocking here: its
+    # recover-only process waits for this lock after we leave the context.
     with UpdateLock(layout.lock_path):
         _recover_existing(layout, coordinator)
+        updater_capabilities = _bootstrap_attested_headless_capability(layout, args)
+        durable_attestation = (
+            _read_capability_attestation(layout) if updater_capabilities else None
+        )
+
+    if updater_capabilities:
+        _wait_boot_recovery_capability(args)
+
+    with UpdateLock(layout.lock_path):
+        if layout.journal_path.exists():
+            raise RuntimeError("update state changed during capability bootstrap; retry")
+        if updater_capabilities and (
+            durable_attestation is None
+            or _headless_capability_attested(layout) != durable_attestation
+        ):
+            raise RuntimeError("installed updater capability changed during bootstrap")
+        coordinator.managed_files = _managed_files(
+            args,
+            include_boot_recovery=bool(updater_capabilities),
+        )
+        if (
+            _artifact_requests_headless(args.artifact)
+            and HEADLESS_CAPABILITY_ID not in updater_capabilities
+        ):
+            raise RuntimeError(
+                "headless_mode_v1 requires a committed installed updater capability"
+            )
+        if hasattr(preparer, "updater_capabilities"):
+            preparer.updater_capabilities = updater_capabilities
         inspection = inspect_artifact(args.artifact, args.sha256)
         target = layout.release_path(args.release_id)
         journal = UpdateJournal.create(
@@ -171,6 +607,16 @@ def run_update(args) -> int:
 
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--recover-only",
+        action="store_true",
+        help="recover the existing journal without accepting update inputs",
+    )
+    parser.add_argument(
+        "--finalize-recovery",
+        action="store_true",
+        help="verify and archive a deferred boot recovery",
+    )
     parser.add_argument("--artifact", type=Path, required=True)
     parser.add_argument("--sha256", required=True)
     parser.add_argument("--release-id", required=True)
@@ -195,6 +641,10 @@ def build_parser():
     parser.add_argument("--health-timeout", type=float, default=120.0)
     parser.add_argument("--python", default="/usr/bin/python3")
     parser.add_argument("--unit-target", default="/etc/systemd/system/inkypi.service")
+    parser.add_argument(
+        "--recovery-unit-target",
+        default="/etc/systemd/system/inkypi-update-recover.service",
+    )
     parser.add_argument("--launcher-target", default="/usr/local/bin/inkypi")
     parser.add_argument("--updater-target", default="/usr/local/sbin/inkypi-update")
     parser.add_argument(
@@ -207,7 +657,20 @@ def build_parser():
 
 def main(argv=None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    raw_arguments = tuple(sys.argv[1:] if argv is None else argv)
+    if "--recover-only" in raw_arguments:
+        if raw_arguments != ("--recover-only",):
+            parser.error("--recover-only cannot be combined with update inputs")
+        if os.name != "nt" and os.geteuid() != 0:
+            parser.error("inkypi-update must run as root")
+        return run_recovery()
+    if "--finalize-recovery" in raw_arguments:
+        if raw_arguments != ("--finalize-recovery",):
+            parser.error("--finalize-recovery cannot be combined with update inputs")
+        if os.name != "nt" and os.geteuid() != 0:
+            parser.error("inkypi-update must run as root")
+        return run_finalize_recovery()
+    args = parser.parse_args(raw_arguments)
     if os.name != "nt" and os.geteuid() != 0:
         parser.error("inkypi-update must run as root")
     try:

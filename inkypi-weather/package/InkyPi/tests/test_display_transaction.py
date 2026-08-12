@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -196,6 +197,62 @@ def test_forced_commit_writes_hardware_even_when_pixels_are_unchanged(
 
     assert len(manager.calls) == 2
     assert forced.hardware_written is True
+
+
+def test_display_transaction_never_overlaps_hardware_writes(tmp_path):
+    state_lock = threading.Lock()
+    state = {"active": 0, "maximum": 0}
+
+    class SlowManager(FakeManager):
+        def write_hardware_path(
+            self,
+            image_path,
+            *,
+            image_settings=(),
+            task_context,
+        ):
+            task_context.raise_if_cancelled()
+            with state_lock:
+                state["active"] += 1
+                state["maximum"] = max(state["maximum"], state["active"])
+            try:
+                time.sleep(0.1)
+                self.calls.append((Path(image_path), tuple(image_settings)))
+            finally:
+                with state_lock:
+                    state["active"] -= 1
+
+    display_dir = tmp_path / "display"
+    manager = SlowManager()
+    transaction = DisplayTransaction(
+        manager,
+        display_dir=display_dir,
+        compatibility_image_path=display_dir / "current_image.png",
+        runtime_state_store=RuntimeStateStore(tmp_path / "runtime.json"),
+    )
+    prepared = [
+        transaction.prepare(_image("red"), logical_target={"id": "red"}),
+        transaction.prepare(_image("blue"), logical_target={"id": "blue"}),
+    ]
+    commits = []
+    errors = []
+
+    def commit(candidate):
+        try:
+            commits.append(transaction.commit(candidate, task_context=_context()))
+        except Exception as error:  # pragma: no cover - asserted below
+            errors.append(error)
+
+    threads = [threading.Thread(target=commit, args=(candidate,)) for candidate in prepared]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert not errors
+    assert len(commits) == 2
+    assert len(manager.calls) == 2
+    assert state["maximum"] == 1
 
 
 def test_manifest_failure_after_hardware_marks_display_unknown(

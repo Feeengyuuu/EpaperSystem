@@ -5,6 +5,7 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse, urlunparse
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
+from plugins.base_plugin.parallel_image_stage import prepare_local_bank_images
 from plugins.base_plugin.presentation import (
     PresentationMode,
     PresentationPreparation,
@@ -62,6 +63,7 @@ THEME_PAGE_SAMPLE_LIMIT = 4
 DEFAULT_FIT_MODE = "triptych"
 TRIPTYCH_POSTER_COUNT = 3
 STATELESS_PREVIEW_SETTING = "_inkypiStatelessPreview"
+PLUGIN_ID = "backtothedate"
 
 
 class _PosterLinkParser(HTMLParser):
@@ -322,6 +324,9 @@ class BacktotheDate(BasePlugin):
             selection,
             dimensions,
             settings,
+            use_bound_image_stage=True,
+            expected_instance_uuid=get_presentation_instance_uuid(settings),
+            parallel_ready_media_keys={record["media_key"] for record in ready},
         )
         if resolved_theme_context is not None:
             image = apply_media_theme_chrome(
@@ -362,21 +367,65 @@ class BacktotheDate(BasePlugin):
             self._write_state(document)
         return None
 
-    def _render_bank_selection(self, bank, profile, selection, dimensions, settings):
-        poster_images = bank.selection_media(profile, selection)
-        if len(poster_images) == TRIPTYCH_POSTER_COUNT:
-            return self._compose_triptych_display_image(
-                poster_images,
+    def _render_bank_selection(
+        self,
+        bank,
+        profile,
+        selection,
+        dimensions,
+        settings,
+        *,
+        use_bound_image_stage=False,
+        expected_instance_uuid=None,
+        parallel_ready_media_keys=None,
+    ):
+        poster_images = None
+        staged = None
+        media_keys = tuple((selection or {}).get("media_keys") or ())
+        ready_keys = set(parallel_ready_media_keys or ())
+        records = {
+            record.get("media_key"): record
+            for record in profile.get("records") or []
+        }
+        selected_records = tuple(records.get(key) for key in media_keys)
+        if (
+            use_bound_image_stage
+            and expected_instance_uuid
+            and len(media_keys) > 1
+            and all(key in ready_keys for key in media_keys)
+            and all(record is not None for record in selected_records)
+        ):
+            staged = prepare_local_bank_images(
+                plugin_id=PLUGIN_ID,
+                media_root=bank.media.root,
+                source_paths=tuple(
+                    bank.media.path(record["media_key"], suffix=".png")
+                    for record in selected_records
+                ),
+                target_sizes=tuple(None for _record in selected_records),
+                expected_instance_uuid=expected_instance_uuid,
+            )
+            if staged is not None:
+                poster_images = list(zip(selected_records, staged))
+        if poster_images is None:
+            poster_images = bank.selection_media(profile, selection)
+        try:
+            if len(poster_images) == TRIPTYCH_POSTER_COUNT:
+                return self._compose_triptych_display_image(
+                    poster_images,
+                    dimensions,
+                    settings,
+                )
+            poster, image = poster_images[0]
+            return self._compose_single_display_image(
+                poster,
+                image,
                 dimensions,
                 settings,
             )
-        poster, image = poster_images[0]
-        return self._compose_single_display_image(
-            poster,
-            image,
-            dimensions,
-            settings,
-        )
+        finally:
+            for staged_image in staged or ():
+                staged_image.close()
 
     def _presentation_bank(self, settings, dimensions):
         instance_uuid = get_presentation_instance_uuid(settings)

@@ -35,6 +35,7 @@ from runtime.presentation_cache import (
 )
 from runtime.refresh_contracts import TaskCancelled
 from runtime.resource_deferral import ResourcePressureDeferred
+from runtime.resource_governor import CHROMIUM
 from utils.app_utils import resolve_dimensions
 from utils.theme_utils import (
     EFFECTIVE_THEME_CONTEXT_INFO_KEY,
@@ -525,6 +526,7 @@ def render_weather_isolated(
             context=context,
             instance_identity=instance_identity,
             identity_validator=identity_validator,
+            resource_kinds=(CHROMIUM,),
         )
         result = handle.result(timeout=max(0.01, context.remaining_seconds()))
         if result.status == "stale" and result.error_code == "stale_instance":

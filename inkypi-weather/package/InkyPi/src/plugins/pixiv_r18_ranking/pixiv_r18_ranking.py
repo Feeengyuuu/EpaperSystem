@@ -27,6 +27,7 @@ from plugins.base_plugin.presentation import (
 )
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
+from plugins.base_plugin.parallel_image_stage import prepare_local_bank_images
 from plugins.pixiv_r18_ranking.presentation_bank import (
     READY_TARGET,
     REFILL_THRESHOLD,
@@ -647,7 +648,15 @@ class PixivR18Ranking(BasePlugin):
             )
         else:
             selection = pending
-        image = self._render_bank_selection(bank, profile, selection, dimensions, settings)
+        image = self._render_bank_selection(
+            bank,
+            profile,
+            selection,
+            dimensions,
+            settings,
+            use_bound_image_stage=True,
+            expected_instance_uuid=instance_uuid,
+        )
         if resolved_theme_context is not None:
             image = apply_media_theme_chrome(
                 image,
@@ -770,13 +779,47 @@ class PixivR18Ranking(BasePlugin):
                 return recovered
         return None
 
-    def _render_bank_selection(self, bank, profile, selection, dimensions, settings):
-        selected = bank.selection_records(profile, selection, load_media=True)
+    def _render_bank_selection(
+        self,
+        bank,
+        profile,
+        selection,
+        dimensions,
+        settings,
+        *,
+        use_bound_image_stage=False,
+        expected_instance_uuid=None,
+    ):
+        selected = bank.selection_records(
+            profile,
+            selection,
+            load_media=not use_bound_image_stage,
+        )
+        staged = None
+        if use_bound_image_stage and expected_instance_uuid:
+            staged = prepare_local_bank_images(
+                plugin_id=PLUGIN_ID,
+                media_root=bank.media.root,
+                source_paths=tuple(
+                    bank.media.path(record["media_key"], suffix=".png")
+                    for record, _image in selected
+                ),
+                target_sizes=tuple(None for _record, _image in selected),
+                expected_instance_uuid=expected_instance_uuid,
+            )
+        if staged is None and use_bound_image_stage:
+            selected = bank.selection_records(profile, selection, load_media=True)
         images = [image for _record, image in selected]
+        if staged is not None:
+            images = list(staged)
         records = [record for record, _image in selected]
-        if len(images) > 1:
-            return self._compose_strip(images, dimensions, settings)
-        return self._fit_image(images[0], dimensions, settings, records[0])
+        try:
+            if len(images) > 1:
+                return self._compose_strip(images, dimensions, settings)
+            return self._fit_image(images[0], dimensions, settings, records[0])
+        finally:
+            for staged_image in staged or ():
+                staged_image.close()
 
     def _presentation_state_path(self):
         return self._presentation_root_dir() / "presentation-state.json"

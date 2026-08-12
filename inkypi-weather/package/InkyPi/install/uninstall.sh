@@ -9,7 +9,12 @@ STATE_ROOT="/var/lib/inkypi"
 CACHE_ROOT="/var/cache/inkypi"
 LAUNCHER="/usr/local/bin/inkypi"
 UPDATE_BIN="/usr/local/sbin/inkypi-update"
+UPDATE_LIB_ROOT="/usr/local/lib/inkypi-update"
 MAIN_UNIT="/etc/systemd/system/inkypi.service"
+RECOVERY_UNIT="/etc/systemd/system/inkypi-update-recover.service"
+FINALIZER_UNIT="/etc/systemd/system/inkypi-update-finalize.service"
+INKYPI_RECOVERY_DROPIN="/etc/systemd/system/inkypi.service.d/10-update-recovery.conf"
+LIGHTDM_RECOVERY_DROPIN="/etc/systemd/system/lightdm.service.d/10-inkypi-update-recovery.conf"
 PRIVILEGED_SOCKET_FILE="/etc/systemd/system/inkypi-privileged.socket"
 PRIVILEGED_SERVICE_FILE="/etc/systemd/system/inkypi-privileged.service"
 PRIVILEGED_BROKER="/usr/local/libexec/inkypi-privileged"
@@ -68,6 +73,12 @@ fi
 if systemctl is-enabled --quiet inkypi.service; then
   systemctl disable inkypi.service
 fi
+if systemctl is-enabled --quiet inkypi-update-recover.service; then
+  systemctl disable inkypi-update-recover.service
+fi
+if systemctl is-enabled --quiet inkypi-update-finalize.service; then
+  systemctl disable inkypi-update-finalize.service
+fi
 if systemctl is-active --quiet inkypi-privileged.service; then
   systemctl stop inkypi-privileged.service
 fi
@@ -80,12 +91,16 @@ fi
 
 rm -f \
   "$MAIN_UNIT" \
+  "$RECOVERY_UNIT" \
+  "$FINALIZER_UNIT" \
+  "$INKYPI_RECOVERY_DROPIN" \
+  "$LIGHTDM_RECOVERY_DROPIN" \
   "$PRIVILEGED_SOCKET_FILE" \
   "$PRIVILEGED_SERVICE_FILE" \
   "$PRIVILEGED_BROKER" \
   "$LAUNCHER" \
   "$UPDATE_BIN"
-rm -rf "$INSTALL_ROOT" "$LEGACY_INSTALL_ROOT"
+rm -rf "$INSTALL_ROOT" "$LEGACY_INSTALL_ROOT" "$UPDATE_LIB_ROOT"
 systemctl daemon-reload
 
 if [[ "$PURGE" == "true" ]]; then

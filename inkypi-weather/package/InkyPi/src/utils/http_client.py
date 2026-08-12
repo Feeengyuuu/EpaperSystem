@@ -21,6 +21,7 @@ import requests
 from urllib3.util.retry import Retry
 
 from runtime.refresh_contracts import TaskContext, TaskDeadlineExceeded
+from runtime.resource_governor import RuntimeResourceGovernor
 from utils.atomic_file import fsync_directory
 
 
@@ -123,6 +124,7 @@ def _retry_policy():
 
 _HTTP_SESSION: Optional[requests.Session] = None
 _HTTP_CLIENT = None
+_HTTP_RESOURCE_GOVERNOR = RuntimeResourceGovernor()
 _SESSION_LOCK = threading.RLock()
 _PROXY_ENV_NAMES = (
     "HTTP_PROXY",
@@ -212,9 +214,22 @@ def get_http_session() -> requests.Session:
 class HttpClient:
     """Consume, size-check, and close every response inside one adapter."""
 
-    def __init__(self, *, session=None, owns_session=False):
+    def __init__(
+        self,
+        *,
+        session=None,
+        owns_session=False,
+        resource_governor=None,
+    ):
         self.session = session if session is not None else get_http_session()
         self.owns_session = bool(owns_session)
+        self.resource_governor = (
+            _HTTP_RESOURCE_GOVERNOR
+            if resource_governor is None
+            else resource_governor
+        )
+        if not callable(getattr(self.resource_governor, "acquire", None)):
+            raise TypeError("resource_governor must provide acquire")
         self._closed = False
 
     def request_json(
@@ -337,6 +352,35 @@ class HttpClient:
         limit = _positive_bytes(max_bytes)
         context = _request_context(context, timeout)
         method = str(method).upper()
+        with self.resource_governor.acquire(
+            "provider_io",
+            {"host": str(url)},
+            context,
+        ):
+            return self._request_owned_admitted(
+                method,
+                url,
+                context=context,
+                max_bytes=limit,
+                timeout=timeout,
+                consumer=consumer,
+                **kwargs,
+            )
+
+    def _request_owned_admitted(
+        self,
+        method,
+        url,
+        *,
+        context,
+        max_bytes,
+        timeout,
+        consumer,
+        **kwargs,
+    ):
+        """Own one response while a central provider capacity token is held."""
+
+        limit = max_bytes
         managed_retries = bool(
             getattr(self.session, "_inkypi_adapter_retries", False)
         )
@@ -391,6 +435,33 @@ class HttpClient:
 
     def __exit__(self, *_args):
         self.close()
+
+
+@contextmanager
+def provider_io_lease(
+    url,
+    *,
+    context=None,
+    timeout=None,
+    resource_governor=None,
+):
+    """Bound direct third-party transports to the central provider capacity."""
+
+    active_context = _request_context(context, timeout)
+    governor = (
+        _HTTP_RESOURCE_GOVERNOR
+        if resource_governor is None
+        else resource_governor
+    )
+    acquire = getattr(governor, "acquire", None)
+    if not callable(acquire):
+        raise TypeError("resource_governor must provide acquire")
+    with acquire(
+        "provider_io",
+        {"host": str(url)},
+        active_context,
+    ):
+        yield active_context
 
 
 def _positive_bytes(value):

@@ -1,7 +1,9 @@
+import hashlib
 import json
 import os
 import struct
 import sys
+import time
 import uuid
 import zlib
 from datetime import datetime, timedelta, timezone
@@ -23,9 +25,14 @@ from plugins.base_plugin.presentation import (
     PresentationMode,
     PresentationRequestContext,
     bind_presentation_instance_identity,
+    get_presentation_instance_uuid,
 )
 from plugins.base_plugin.render_provenance import SourceProvenance, read_source_provenance
 from runtime.runtime_state import PresentationCommitReceipt
+from runtime.bounded_parallel_stage import BoundedParallelStageRunner
+from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
+from runtime.refresh_contracts import TaskContext
+from runtime.resource_governor import RuntimeResourceGovernor
 
 
 TEST_STATE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "backtothedate_tests"
@@ -2211,3 +2218,60 @@ def test_select_random_poster_can_fallback_when_only_seen_posters_exist(monkeypa
 
     assert poster["page_url"] == "https://chineseposters.net/posters/seen"
     assert poster["image_url"] == "https://chineseposters.net/sites/default/files/images/seen.jpg"
+
+
+def test_backtothedate_prepared_triptych_parallel_stage_is_pixel_equivalent(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin("parallel-triptych", base=tmp_path)
+    settings, _posters, _loader, _image = _hydrate_bank(
+        plugin,
+        monkeypatch,
+        fit_mode="triptych",
+        image_size=(200, 400),
+        instance_uuid="backtothedate-parallel-instance",
+    )
+    req = _request("b" * 32)
+    serial = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=req,
+        resolved_theme_context=None,
+    )
+    expected_hash = hashlib.sha256(serial.image.tobytes()).hexdigest()
+    runner = BoundedParallelStageRunner(
+        governor=RuntimeResourceGovernor(
+            snapshot_provider=lambda: {
+                "available_mb": 200,
+                "swap_percent": 0,
+                "cpu_quota_cores": 2,
+            }
+        )
+    )
+    context = TaskContext.never_cancelled(
+        deadline_monotonic=time.monotonic() + 20,
+    )
+    identity = InstanceIdentity(
+        get_presentation_instance_uuid(settings),
+        1,
+        1,
+    )
+
+    with bind_long_task_runtime(
+        context,
+        identity,
+        identity_validator=lambda candidate: candidate == identity,
+        parallel_image_runner=runner,
+    ):
+        staged = plugin.prepare_presentation(
+            settings,
+            DeviceConfig(),
+            request=req,
+            resolved_theme_context=None,
+        )
+
+    assert hashlib.sha256(staged.image.tobytes()).hexdigest() == expected_hash
+    assert runner.last_run_snapshot["parallel"] is True
+    assert runner.last_run_snapshot["worker_count"] == 2
+    assert not list(tmp_path.glob(".parallel-image-stage-*"))

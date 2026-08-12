@@ -10,13 +10,21 @@ import zipfile
 
 
 NASAPICS_MIGRATION_ID = "nasapics_space_weather_v1"
-SUPPORTED_MIGRATIONS = frozenset({NASAPICS_MIGRATION_ID})
+HEADLESS_MODE_MIGRATION_ID = "headless_mode_v1"
+SUPPORTED_MIGRATIONS = frozenset(
+    {NASAPICS_MIGRATION_ID, HEADLESS_MODE_MIGRATION_ID}
+)
 MIGRATION_REQUEST_MEMBER = "install/.release-migrations.json"
 NASAPICS_EXPECTATION_MEMBER = (
     "install/.nasapics-space-weather-v1.expectation.json"
 )
+HEADLESS_MODE_EXPECTATION_MEMBER = "install/.headless-mode-v1.expectation.json"
 MIGRATION_CONTROL_MEMBERS = frozenset(
-    {MIGRATION_REQUEST_MEMBER, NASAPICS_EXPECTATION_MEMBER}
+    {
+        MIGRATION_REQUEST_MEMBER,
+        NASAPICS_EXPECTATION_MEMBER,
+        HEADLESS_MODE_EXPECTATION_MEMBER,
+    }
 )
 MIGRATION_CONTROL_NAMES = frozenset(
     PurePath(member).name for member in MIGRATION_CONTROL_MEMBERS

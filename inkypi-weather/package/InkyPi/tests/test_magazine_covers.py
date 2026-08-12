@@ -1,14 +1,17 @@
 import sys
+import hashlib
 import json
 import os
 import random
 import socket
 import stat
 import uuid
+import time
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import urlparse
 
 import pytest
 from PIL import Image, ImageDraw
@@ -39,9 +42,33 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
     read_source_provenance,
 )
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
+from runtime.bounded_parallel_stage import BoundedParallelStageRunner  # noqa: E402
+from runtime.long_task_executor import (  # noqa: E402
+    InstanceIdentity,
+    bind_long_task_runtime,
+)
+from runtime.refresh_contracts import TaskContext  # noqa: E402
+from runtime.resource_governor import RuntimeResourceGovernor  # noqa: E402
 
 
 TEST_TMP_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "magazine_covers_tests"
+
+
+def test_magazine_manifest_attests_provider_free_prepared_presentations():
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "magazine_covers"
+        / "plugin-info.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["capabilities"]["supports_presentation_refresh"] is True
+    assert (
+        manifest["capabilities"]["presentation_refresh_is_provider_free"]
+        is True
+    )
 
 
 def make_test_tmp_dir(name):
@@ -317,6 +344,104 @@ class MagazineFakeRedirectClient:
         self.session = session
 
 
+class PublicMagazineProviderSession:
+    def __init__(self):
+        self.calls = []
+        self.blocked = False
+
+    def request(self, method, url, **kwargs):
+        if self.blocked:
+            pytest.fail("prepare_presentation reached the magazine provider boundary")
+        assert method == "GET"
+        self.calls.append((method, url, kwargs))
+        parsed = urlparse(url)
+        if parsed.hostname == "magazineshop.us":
+            slug = Path(parsed.path).name
+            image_url = f"https://cdn.shopify.com/{slug}-cover.png"
+            payload = (
+                "<html><head>"
+                f'<meta property="og:image" content="{image_url}">'
+                f"<title>{slug}</title></head></html>"
+            ).encode("utf-8")
+            return MagazineFakeHttpResponse(
+                200,
+                url=url,
+                headers={"Content-Length": str(len(payload))},
+                payload=payload,
+            )
+        if parsed.hostname == "cdn.shopify.com":
+            index = int(parsed.path.split("magazine-")[1].split("-")[0])
+            buffer = BytesIO()
+            Image.new(
+                "RGB",
+                (240, 420),
+                ((index * 37) % 255, (index * 67) % 255, (index * 97) % 255),
+            ).save(buffer, format="PNG")
+            payload = buffer.getvalue()
+            return MagazineFakeHttpResponse(
+                200,
+                url=url,
+                headers={"Content-Length": str(len(payload))},
+                payload=payload,
+            )
+        raise AssertionError(f"unexpected provider URL: {url}")
+
+
+class PublicMagazineSsrfPolicy:
+    def resolve_and_validate(self, url):
+        parsed = urlparse(url)
+        return SimpleNamespace(
+            scheme=parsed.scheme,
+            port=parsed.port or 443,
+            hostname=parsed.hostname,
+            addresses=("93.184.216.34",),
+            normalized_url=url,
+        )
+
+
+def test_magazine_prepare_presentation_uses_only_the_warm_public_bank(
+    tmp_path,
+    monkeypatch,
+):
+    session = PublicMagazineProviderSession()
+    monkeypatch.setenv("INKYPI_MAGAZINE_COVERS_CACHE", str(tmp_path))
+    monkeypatch.setattr(
+        magazine_module,
+        "get_http_client",
+        lambda: MagazineFakeRedirectClient(session),
+    )
+    monkeypatch.setattr(
+        magazine_module,
+        "get_ssrf_policy",
+        lambda: PublicMagazineSsrfPolicy(),
+    )
+    monkeypatch.setattr(magazine_module, "write_context", lambda *_args, **_kwargs: None)
+    plugin = MagazineCovers({"id": "magazine_covers"})
+    settings = bound_magazine_settings(
+        instance_uuid="magazine-public-provider-free",
+        count=4,
+        fitMode="contain",
+        rotationMode="rotate",
+    )
+
+    assert plugin.presentation_mode(settings) is PresentationMode.PREPARED_BANK
+    plugin.generate_image(settings, DummyDeviceConfig())
+    provider_calls = tuple(session.calls)
+    assert provider_calls
+
+    session.blocked = True
+    preparation = plugin.prepare_presentation(
+        settings,
+        DummyDeviceConfig(),
+        request=magazine_request("b" * 32),
+        resolved_theme_context=None,
+    )
+
+    assert preparation.changed is True
+    assert preparation.image is not None
+    assert tuple(session.calls) == provider_calls
+
+
 def magazine_resolver_for(mapping):
     def resolve(hostname, port, **_kwargs):
         address = mapping[hostname]
@@ -365,6 +490,27 @@ def test_default_source_pool_has_fresh_collection_sources():
     assert "Playboy Magazine|https://www.playboy.com/magazine" in source_ids
     assert "Penthouse Magazine|https://penthousemagazine.com/" in source_ids
     assert "Hustler Magazine|https://hustlermagazine.com/" in source_ids
+
+
+def test_default_source_pool_matches_the_deployed_full_pool_contract():
+    normalized = "\n".join(
+        line.strip()
+        for line in DEFAULT_SOURCES.splitlines()
+        if line.strip()
+    )
+    mature = [
+        line.strip()
+        for line in MATURE_DEFAULT_SOURCES.splitlines()
+        if line.strip()
+    ]
+
+    assert len(normalized.splitlines()) == 136
+    assert len(set(normalized.splitlines())) == 136
+    assert hashlib.sha256(normalized.encode("utf-8")).hexdigest() == (
+        "5eefbe0386c5cc1676c4e1df4456d5f1e0701d34c7bcb926be94e3679e74a611"
+    )
+    assert len(mature) == 6
+    assert set(mature).issubset(set(normalized.splitlines()))
 
 
 def test_legacy_saved_default_sources_are_expanded_with_new_pool():
@@ -1457,6 +1603,275 @@ def test_magazine_warm_presentation_is_provider_free_and_receipt_commits_once(
     assert profile["pending_selection"] is None
     assert magazine_selection_ids(committed_state, profile["current_selection"]) == pending_ids
     assert profile["date_buckets"]["2026-07-12"]["seen_source_ids"][-3:] == pending_ids
+
+
+def test_magazine_prepared_triptych_uses_bound_image_stage_with_identical_pixels(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_banked_plugin(tmp_path)
+    settings = bound_magazine_settings(fitMode="triptych")
+    hydrate_magazine_bank(plugin, monkeypatch, settings, runs=3)
+    request = magazine_request("9" * 32)
+
+    serial = plugin.prepare_presentation(
+        settings,
+        DummyDeviceConfig(),
+        request=request,
+        resolved_theme_context=None,
+    )
+    expected_hash = hashlib.sha256(serial.image.tobytes()).hexdigest()
+    delegate = BoundedParallelStageRunner(
+        governor=RuntimeResourceGovernor(
+            snapshot_provider=lambda: {
+                "available_mb": 200,
+                "swap_percent": 0,
+                "cpu_quota_cores": 2,
+            }
+        )
+    )
+    captured = {}
+
+    class CapturingRunner:
+        @staticmethod
+        def acquire_parallel_lease(context):
+            return delegate.acquire_parallel_lease(context)
+
+        @staticmethod
+        def run_parallel_only(workset, context, identity_validator, *, lease):
+            captured["source_roots"] = workset.source_roots
+            captured["staging_dir"] = Path(workset.staging_dir)
+            assert captured["staging_dir"].is_dir()
+            return delegate.run_parallel_only(
+                workset,
+                context,
+                identity_validator,
+                lease=lease,
+            )
+
+    runner = CapturingRunner()
+    context = TaskContext.never_cancelled(
+        deadline_monotonic=time.monotonic() + 10,
+    )
+    identity = InstanceIdentity("magazine-test-instance", 1, 1)
+
+    with bind_long_task_runtime(
+        context,
+        identity,
+        identity_validator=lambda candidate: candidate == identity,
+        parallel_image_runner=runner,
+    ):
+        staged = plugin.prepare_presentation(
+            settings,
+            DummyDeviceConfig(),
+            request=request,
+            resolved_theme_context=None,
+        )
+
+    assert hashlib.sha256(staged.image.tobytes()).hexdigest() == expected_hash
+    assert delegate.last_run_snapshot["parallel"] is True
+    assert delegate.last_run_snapshot["worker_count"] == 2
+    assert captured["source_roots"] == (str(tmp_path / "presentation-media"),)
+    assert captured["staging_dir"].parent == tmp_path
+    assert captured["staging_dir"].name.startswith(".parallel-image-stage-")
+    assert not list(tmp_path.glob(".parallel-image-stage-*"))
+
+
+def test_magazine_legacy_media_above_parallel_budget_uses_original_bank_loader(
+    tmp_path,
+    monkeypatch,
+):
+    from plugins.magazine_covers.presentation_bank import MagazinePresentationBank
+
+    plugin = make_banked_plugin(tmp_path)
+    settings = bound_magazine_settings(fitMode="contain")
+    hydrate_magazine_bank(plugin, monkeypatch, settings, runs=3)
+    request = magazine_request("6" * 32)
+    with Image.new("RGB", (4001, 2000), "teal") as legacy:
+        for path in (tmp_path / "presentation-media").glob("*.png"):
+            legacy.save(path, format="PNG")
+
+    expected = plugin.prepare_presentation(
+        settings,
+        DummyDeviceConfig(),
+        request=request,
+        resolved_theme_context=None,
+    )
+    expected_hash = hashlib.sha256(expected.image.tobytes()).hexdigest()
+    load_calls = []
+    original_load_media = MagazinePresentationBank.load_media
+
+    def recording_load_media(bank, record, *, now=None):
+        load_calls.append(record["media_key"])
+        return original_load_media(bank, record, now=now)
+
+    monkeypatch.setattr(MagazinePresentationBank, "load_media", recording_load_media)
+    runner = BoundedParallelStageRunner(
+        governor=RuntimeResourceGovernor(
+            snapshot_provider=lambda: {
+                "available_mb": 200,
+                "swap_percent": 0,
+                "cpu_quota_cores": 2,
+            }
+        )
+    )
+    context = TaskContext.never_cancelled(
+        deadline_monotonic=time.monotonic() + 10,
+    )
+    identity = InstanceIdentity("magazine-test-instance", 1, 1)
+
+    with bind_long_task_runtime(
+        context,
+        identity,
+        identity_validator=lambda candidate: candidate == identity,
+        parallel_image_runner=runner,
+    ):
+        prepared = plugin.prepare_presentation(
+            settings,
+            DummyDeviceConfig(),
+            request=request,
+            resolved_theme_context=None,
+        )
+
+    assert load_calls
+    assert hashlib.sha256(prepared.image.tobytes()).hexdigest() == expected_hash
+    assert runner.active_processes == ()
+    assert not list(tmp_path.glob(".parallel-image-stage-*"))
+
+
+def test_magazine_corrupt_bank_media_falls_back_and_is_rejected_by_original_loader(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_banked_plugin(tmp_path)
+    settings = bound_magazine_settings(fitMode="contain")
+    hydrate_magazine_bank(plugin, monkeypatch, settings, runs=3)
+    for path in (tmp_path / "presentation-media").glob("*.png"):
+        path.write_bytes(b"not-a-png")
+    runner = BoundedParallelStageRunner(
+        governor=RuntimeResourceGovernor(
+            snapshot_provider=lambda: {
+                "available_mb": 200,
+                "swap_percent": 0,
+                "cpu_quota_cores": 2,
+            }
+        )
+    )
+    context = TaskContext.never_cancelled(
+        deadline_monotonic=time.monotonic() + 10,
+    )
+    identity = InstanceIdentity("magazine-test-instance", 1, 1)
+
+    with bind_long_task_runtime(
+        context,
+        identity,
+        identity_validator=lambda candidate: candidate == identity,
+        parallel_image_runner=runner,
+    ):
+        with pytest.raises(RuntimeError, match="decode|media"):
+            plugin.prepare_presentation(
+                settings,
+                DummyDeviceConfig(),
+                request=magazine_request("5" * 32),
+                resolved_theme_context=None,
+            )
+
+    assert runner.active_processes == ()
+    assert not list(tmp_path.glob(".parallel-image-stage-*"))
+
+
+def test_magazine_prepared_triptych_requires_complete_image_stage_binding(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_banked_plugin(tmp_path)
+    settings = bound_magazine_settings(fitMode="triptych")
+    hydrate_magazine_bank(plugin, monkeypatch, settings, runs=3)
+    request = magazine_request("8" * 32)
+
+    class ExplodingRunner:
+        @staticmethod
+        def run_parallel_only(*_args, **_kwargs):
+            pytest.fail("incomplete runtime binding used the parallel image stage")
+
+    context = TaskContext.never_cancelled(
+        deadline_monotonic=time.monotonic() + 10,
+    )
+    identity = InstanceIdentity("magazine-test-instance", 1, 1)
+    with bind_long_task_runtime(
+        context,
+        identity,
+        parallel_image_runner=ExplodingRunner(),
+    ):
+        prepared = plugin.prepare_presentation(
+            settings,
+            DummyDeviceConfig(),
+            request=request,
+            resolved_theme_context=None,
+        )
+
+    assert prepared.changed is True
+    assert prepared.image.size == (800, 480)
+
+    wrong_identity = InstanceIdentity("different-instance", 1, 1)
+    with bind_long_task_runtime(
+        context,
+        wrong_identity,
+        identity_validator=lambda _candidate: True,
+        parallel_image_runner=ExplodingRunner(),
+    ):
+        mismatched = plugin.prepare_presentation(
+            settings,
+            DummyDeviceConfig(),
+            request=request,
+            resolved_theme_context=None,
+        )
+
+    assert mismatched.changed is True
+    assert mismatched.image.size == (800, 480)
+
+
+def test_magazine_image_stage_failure_cleans_plugin_staging_directory(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_banked_plugin(tmp_path)
+    settings = bound_magazine_settings(fitMode="triptych")
+    hydrate_magazine_bank(plugin, monkeypatch, settings, runs=3)
+    context = TaskContext.never_cancelled(
+        deadline_monotonic=time.monotonic() + 10,
+    )
+    identity = InstanceIdentity("magazine-test-instance", 1, 1)
+
+    class FailingRunner:
+        class Admission:
+            @staticmethod
+            def release():
+                return None
+
+        @classmethod
+        def acquire_parallel_lease(cls, _context):
+            return cls.Admission()
+
+        @staticmethod
+        def run_parallel_only(*_args, **_kwargs):
+            raise RuntimeError("stage failed")
+
+    with pytest.raises(RuntimeError, match="stage failed"):
+        with bind_long_task_runtime(
+            context,
+            identity,
+            identity_validator=lambda candidate: candidate == identity,
+            parallel_image_runner=FailingRunner(),
+        ):
+            plugin.prepare_presentation(
+                settings,
+                DummyDeviceConfig(),
+                request=magazine_request("7" * 32),
+                resolved_theme_context=None,
+            )
+
+    assert not list(tmp_path.glob(".parallel-image-stage-*"))
 
 
 def test_magazine_restart_after_date_rollover_continues_unfinished_shuffle_round(

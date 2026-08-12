@@ -14,8 +14,11 @@ from uuid import UUID
 
 
 NASAPICS_MIGRATION_ID = "nasapics_space_weather_v1"
+HEADLESS_MODE_MIGRATION_ID = "headless_mode_v1"
+HEADLESS_MODE_UPDATER_CAPABILITY = "headless_mode_v1"
 MIGRATION_REQUEST_NAME = ".release-migrations.json"
 NASAPICS_EXPECTATION_NAME = ".nasapics-space-weather-v1.expectation.json"
+HEADLESS_MODE_EXPECTATION_NAME = ".headless-mode-v1.expectation.json"
 MAX_MIGRATION_CONTROL_BYTES = 64 * 1024
 MAX_DEVICE_CONFIG_BYTES = 16 * 1024 * 1024
 REQUIRED_RELEASE_PATHS = (
@@ -33,8 +36,16 @@ REQUIRED_RELEASE_PATHS = (
     "src/static/scripts/chart.js",
     "src/static/scripts/calendar.min.js",
     "install/inkypi.service",
+    "install/inkypi-update-recover.service",
+    "install/inkypi-update-finalize.service",
+    "install/systemd/inkypi.service.d/10-update-recovery.conf",
+    "install/systemd/lightdm.service.d/10-inkypi-update-recovery.conf",
     "install/inkypi",
     "install/inkypi-update",
+    "install/lib/release_state.py",
+    "install/lib/release_archive.py",
+    "install/lib/host_migration.py",
+    "install/lib/update_engine.py",
     "install/repair_env_permissions.py",
     "install/bootstrap_admin.py",
     "install/requirements.txt",
@@ -135,7 +146,10 @@ def _load_requested_migrations(release_root: Path) -> tuple[str, ...]:
         or len(set(migrations)) != len(migrations)
     ):
         raise PreflightError("release migration request has invalid migrations")
-    unsupported = set(migrations) - {NASAPICS_MIGRATION_ID}
+    unsupported = set(migrations) - {
+        NASAPICS_MIGRATION_ID,
+        HEADLESS_MODE_MIGRATION_ID,
+    }
     if unsupported:
         raise PreflightError("release migration request names an unsupported migration")
     return tuple(migrations)
@@ -259,10 +273,13 @@ def capture_release_migration_expectations(
     release_root,
     config_source,
     release_id,
+    *,
+    updater_capabilities=(),
 ) -> tuple[Path, ...]:
     root = Path(release_root)
     expectation_path = root / "install" / NASAPICS_EXPECTATION_NAME
-    if os.path.lexists(expectation_path):
+    headless_expectation_path = root / "install" / HEADLESS_MODE_EXPECTATION_NAME
+    if os.path.lexists(expectation_path) or os.path.lexists(headless_expectation_path):
         raise PreflightError("migration expectation was preseeded")
     if _read_release_id(root) != release_id:
         raise PreflightError("release identity does not match the requested release")
@@ -282,6 +299,21 @@ def capture_release_migration_expectations(
             },
         )
         captured.append(expectation_path)
+    if HEADLESS_MODE_MIGRATION_ID in migrations:
+        if HEADLESS_MODE_UPDATER_CAPABILITY not in set(updater_capabilities):
+            raise PreflightError(
+                "headless_mode_v1 requires an explicit updater capability handshake"
+            )
+        _write_exclusive_read_only_json(
+            headless_expectation_path,
+            {
+                "schema_version": 1,
+                "migration": HEADLESS_MODE_MIGRATION_ID,
+                "release_id": release_id,
+                "updater_capability": HEADLESS_MODE_UPDATER_CAPABILITY,
+            },
+        )
+        captured.append(headless_expectation_path)
     return tuple(captured)
 
 
@@ -354,6 +386,11 @@ def main(argv=None) -> int:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--release-id", required=True)
     parser.add_argument(
+        "--updater-capability",
+        action="append",
+        default=[],
+    )
+    parser.add_argument(
         "--skip-app-probe",
         action="store_true",
         help="validate files and config only (intended for packaging diagnostics)",
@@ -368,6 +405,7 @@ def main(argv=None) -> int:
             args.release_root,
             args.config,
             args.release_id,
+            updater_capabilities=args.updater_capability,
         )
         if args.skip_app_probe:
             with tempfile.TemporaryDirectory(prefix="inkypi-config-preflight-") as temp:

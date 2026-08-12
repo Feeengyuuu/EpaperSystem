@@ -35,7 +35,7 @@ from PIL import Image, UnidentifiedImageError
 import requests
 
 
-EXPECTED_INSTANCE_COUNT = 26
+EXPECTED_INSTANCE_COUNT = 27
 EXPECTED_IMAGE_SIZE = (800, 480)
 ORDINARY_TIMEOUT_SECONDS = 240
 HEAVY_TIMEOUT_SECONDS = 600
@@ -2203,7 +2203,7 @@ def _default_output_dir() -> Path:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run exact 26-instance live internet/display acceptance on InkyPi",
+        description="Run exact 27-instance live internet/display acceptance on InkyPi",
     )
     parser.add_argument("--base-url", default="http://127.0.0.1")
     parser.add_argument("--config", default="/var/lib/inkypi/config/device.json")

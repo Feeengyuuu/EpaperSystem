@@ -1,8 +1,12 @@
 import json
 import os
+import hashlib
 import sys
+import time
 from datetime import date, datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -24,6 +28,7 @@ from plugins.gcd_comic_covers.gcd_comic_covers import (  # noqa: E402
     _canonical_provider_url,
     _GcdMonthlyParser,
 )
+from plugins.gcd_comic_covers import gcd_comic_covers as gcd_module  # noqa: E402
 from plugins.gcd_comic_covers.presentation_bank import (  # noqa: E402
     MAX_STATE_BYTES,
     MEDIA_MAX_DIMENSION,
@@ -34,8 +39,123 @@ from plugins.gcd_comic_covers.presentation_bank import (  # noqa: E402
     _commit_records,
 )
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
+from runtime.bounded_parallel_stage import BoundedParallelStageRunner  # noqa: E402
+from runtime.long_task_executor import (  # noqa: E402
+    InstanceIdentity,
+    bind_long_task_runtime,
+)
+from runtime.refresh_contracts import TaskContext  # noqa: E402
+from runtime.resource_governor import RuntimeResourceGovernor  # noqa: E402
 
 MEDIA_MAX_BYTES = 128 * 1024 * 1024
+
+
+def test_gcd_manifest_attests_provider_free_prepared_presentations():
+    manifest_path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "gcd_comic_covers"
+        / "plugin-info.json"
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    assert manifest["capabilities"]["supports_presentation_refresh"] is True
+    assert (
+        manifest["capabilities"]["presentation_refresh_is_provider_free"]
+        is True
+    )
+
+
+class PublicGcdHttpBoundary:
+    def __init__(self):
+        self.calls = []
+        self.blocked = False
+
+    def _record(self, kind, url):
+        if self.blocked:
+            pytest.fail(f"prepare_presentation reached the {kind} provider boundary")
+        self.calls.append((kind, url))
+
+    def request_json(self, method, url, **_kwargs):
+        assert method == "GET"
+        self._record("json", url)
+        results = [
+            {
+                "id": index,
+                "name": f"Issue {index}",
+                "issue_number": str(index),
+                "cover_date": "2026-08-11",
+                "store_date": "2026-08-11",
+                "date_added": "2026-08-11T12:00:00Z",
+                "site_detail_url": f"https://comicvine.gamespot.com/issue/{index}/",
+                "image": {
+                    "super_url": (
+                        "https://comicvine.gamespot.com/a/uploads/scale_large/1/"
+                        f"{index}.png"
+                    )
+                },
+                "volume": {"name": f"Series {index}"},
+            }
+            for index in range(1, 9)
+        ]
+        return SimpleNamespace(
+            url=url,
+            data={"status_code": 1, "results": results},
+        )
+
+    def request_bytes(self, method, url, **_kwargs):
+        assert method == "GET"
+        self._record("bytes", url)
+        index = int(Path(url).stem)
+        buffer = BytesIO()
+        Image.new(
+            "RGB",
+            (220, 360),
+            ((index * 31) % 255, (index * 47) % 255, (index * 61) % 255),
+        ).save(buffer, format="PNG")
+        return SimpleNamespace(url=url, data=buffer.getvalue())
+
+    def request_text(self, *_args, **_kwargs):
+        pytest.fail("comic-vine-only public seam must not reach the GCD HTML provider")
+
+
+def test_gcd_prepare_presentation_uses_only_the_warm_public_bank(
+    tmp_path,
+    monkeypatch,
+):
+    boundary = PublicGcdHttpBoundary()
+    monkeypatch.setenv("INKYPI_GCD_COMIC_COVERS_CACHE", str(tmp_path))
+    monkeypatch.setattr(gcd_module, "get_http_client", lambda: boundary)
+    monkeypatch.setattr(gcd_module, "write_context", lambda *_args, **_kwargs: None)
+    plugin = GcdComicCovers({"id": "gcd_comic_covers"})
+    settings = bind_presentation_instance_identity(
+        {
+            "fitMode": "contain",
+            "sourceMode": "comicvine",
+            "comicVineApiKey": "test-key",
+            "comicVineLimit": 8,
+            "maxCoverAttempts": 8,
+        },
+        "gcd-public-provider-free",
+    )
+
+    assert plugin.presentation_mode(settings) is PresentationMode.PREPARED_BANK
+    plugin.generate_image(settings, DeviceConfig())
+    provider_calls = tuple(boundary.calls)
+    assert provider_calls
+
+    boundary.blocked = True
+    preparation = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=_request("a" * 32),
+        resolved_theme_context=None,
+    )
+
+    assert preparation.changed is True
+    assert preparation.image is not None
+    assert tuple(boundary.calls) == provider_calls
 
 
 class DeviceConfig:
@@ -511,6 +631,54 @@ def test_gcd_prepare_then_canceled_followup_leaves_seen_state_unchanged(tmp_path
     )
 
     assert plugin._state_path().read_bytes() == before
+
+
+def test_gcd_prepared_triptych_uses_bound_image_stage_with_identical_pixels(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    settings = _bound_settings(fit_mode="triptych")
+    _hydrate_presentation_bank(plugin, monkeypatch, settings)
+    request = _request("9" * 32)
+
+    serial = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=request,
+        resolved_theme_context=None,
+    )
+    expected_hash = hashlib.sha256(serial.image.tobytes()).hexdigest()
+    runner = BoundedParallelStageRunner(
+        governor=RuntimeResourceGovernor(
+            snapshot_provider=lambda: {
+                "available_mb": 200,
+                "swap_percent": 0,
+                "cpu_quota_cores": 1,
+            }
+        )
+    )
+    context = TaskContext.never_cancelled(
+        deadline_monotonic=time.monotonic() + 10,
+    )
+    identity = InstanceIdentity("gcd-test-instance", 1, 1)
+
+    with bind_long_task_runtime(
+        context,
+        identity,
+        identity_validator=lambda candidate: candidate == identity,
+        parallel_image_runner=runner,
+    ):
+        staged = plugin.prepare_presentation(
+            settings,
+            DeviceConfig(),
+            request=request,
+            resolved_theme_context=None,
+        )
+
+    assert hashlib.sha256(staged.image.tobytes()).hexdigest() == expected_hash
+    assert runner.last_run_snapshot["reason"] == "cpu_quota_below_parallel_threshold"
+    assert not list(tmp_path.glob(".parallel-image-stage-*"))
 
 
 @pytest.mark.parametrize(("fit_mode", "expected_count"), [("contain", 1), ("triptych", 3)])

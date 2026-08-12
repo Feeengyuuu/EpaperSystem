@@ -32,6 +32,15 @@ from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
 
+# The only local raster inputs are one weather background and one optional
+# hero cutout.  They live under independent roots and are each consumed once,
+# so forming separate one-item batches would add staging/IPC without parallel
+# work.  Keep this plugin on its existing parent-serial render path.
+PARALLEL_IMAGE_STAGE_ELIGIBLE = False
+PARALLEL_IMAGE_STAGE_RATIONALE = (
+    "weather background and hero cutout are single assets under independent roots"
+)
+
 LEGACY_CALENDAR_DIR = Path("/usr/local/inkypi/src/static/calendar")
 DEFAULT_DATA_DIR = Path("/var/lib/inkypi/data")
 DURABLE_CALENDAR_SUBDIR = Path("plugins/simple_calendar/calendars")

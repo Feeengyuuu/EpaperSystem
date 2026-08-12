@@ -1,0 +1,16 @@
+[Unit]
+Description=Recover an interrupted InkyPi update before display services
+After=local-fs.target
+Before=display-manager.service lightdm.service inkypi.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+Group=root
+ExecStart=/usr/local/sbin/inkypi-update --recover-only
+TimeoutStartSec=300
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

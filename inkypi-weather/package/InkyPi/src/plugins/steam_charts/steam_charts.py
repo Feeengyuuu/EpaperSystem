@@ -27,6 +27,8 @@ import time
 
 logger = logging.getLogger(__name__)
 
+MAX_PROVIDER_IO_WORKERS = 4
+
 
 SPARKLINE_INK = (6, 78, 59)
 LINE_SPARKLINE_AMPLIFICATION = 1.55
@@ -1903,7 +1905,7 @@ class SteamCharts(BasePlugin):
         def fetch_one(app_id):
             return app_id, self._fetch_chart_stats(app_id, sparkline_hours, include_change, sparkline_style)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_PROVIDER_IO_WORKERS) as executor:
             futures = {executor.submit(fetch_one, aid): aid for aid in app_ids}
             for future in concurrent.futures.as_completed(futures):
                 try:

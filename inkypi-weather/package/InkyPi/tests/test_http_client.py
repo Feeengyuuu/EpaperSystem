@@ -43,6 +43,25 @@ def _context(seconds=5):
     )
 
 
+class RecordingProviderGovernor:
+    def __init__(self):
+        self.calls = []
+        self.releases = 0
+
+    def acquire(self, kind, claim, context):
+        self.calls.append((kind, dict(claim), context))
+        owner = self
+
+        class Lease:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                owner.releases += 1
+
+        return Lease()
+
+
 
 def test_sanitize_dead_local_proxy_environment_removes_only_dead_proxy(monkeypatch):
     http_client.close_http_session()
@@ -203,6 +222,77 @@ def test_post_is_not_retried_and_get_retries_once_on_503():
     assert raised.value.status == 503
     assert len(session.calls) == 1
     assert failed.closed
+
+
+def test_request_holds_one_provider_capacity_lease_across_retries():
+    first = FakeResponse(503)
+    second = FakeResponse(200, b'{}')
+    session = FakeSession([first, second])
+    governor = RecordingProviderGovernor()
+    context = _context()
+    client = http_client.HttpClient(
+        session=session,
+        resource_governor=governor,
+    )
+
+    client.request_json(
+        "GET",
+        "https://API.Example.test.:443/resource?secret=value",
+        context=context,
+    )
+
+    assert governor.calls == [
+        (
+            "provider_io",
+            {"host": "https://API.Example.test.:443/resource?secret=value"},
+            context,
+        )
+    ]
+    assert governor.releases == 1
+    assert len(session.calls) == 2
+
+
+def test_provider_capacity_lease_is_released_after_transport_failure():
+    class FailingSession:
+        def request(self, *_args, **_kwargs):
+            raise http_client.requests.ConnectionError("private provider detail")
+
+    governor = RecordingProviderGovernor()
+    client = http_client.HttpClient(
+        session=FailingSession(),
+        resource_governor=governor,
+    )
+
+    with pytest.raises(http_client.HttpClientError):
+        client.request_bytes(
+            "GET",
+            "https://failure.example/path",
+            context=_context(),
+        )
+
+    assert governor.releases == 1
+
+
+def test_provider_io_lease_wraps_direct_transport_with_bound_context():
+    governor = RecordingProviderGovernor()
+    context = _context()
+
+    with http_client.provider_io_lease(
+        "https://direct.example/resource",
+        context=context,
+        resource_governor=governor,
+    ) as active_context:
+        assert active_context is context
+        assert governor.releases == 0
+
+    assert governor.calls == [
+        (
+            "provider_io",
+            {"host": "https://direct.example/resource"},
+            context,
+        )
+    ]
+    assert governor.releases == 1
 
 
 def test_request_bytes_closes_response_when_limit_exceeded():
