@@ -35,6 +35,7 @@ from runtime.long_task_executor import (  # noqa: E402
 )
 from runtime.refresh_contracts import TaskContext  # noqa: E402
 from runtime.resource_governor import RuntimeResourceGovernor  # noqa: E402
+from runtime.plugin_deferral import PluginRefreshDeferred  # noqa: E402
 from plugins.pixiv_r18_ranking.presentation_bank import PixivPresentationBankCold  # noqa: E402
 
 
@@ -1410,6 +1411,360 @@ def test_full_same_day_bank_keeps_daily_source_pool_without_provider_or_selectio
     assert profile["current_selection"] == current
     assert profile["pending_selection"] is None
     assert profile.get("date_buckets", {}).get("2026-07-12", {}).get("seen_illust_ids", []) == []
+
+
+def test_data_defers_before_provider_when_protected_media_blocks_bank_admission(
+    tmp_path,
+    monkeypatch,
+):
+    from plugins.pixiv_r18_ranking import presentation_bank
+
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings(forceRefresh="true")
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc),
+    )
+    _bank, _document, profile, current = warm_bank(tmp_path)
+    protected_count = len(set(current["record_keys"]))
+    monkeypatch.setattr(presentation_bank, "MEDIA_MAX_FILES", protected_count)
+    provider_calls = []
+    download_calls = []
+    resolution = {
+        "requested_mode": "day_r18",
+        "effective_mode": "daily_r18",
+        "content_rating": "r18",
+        "authenticated": True,
+        "healthy_r18": True,
+        "source_status": "fresh",
+        "cookie": "session-cookie",
+        "items": [make_ranking_item(99)],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: provider_calls.append(True) or dict(resolution),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_download_ranking_item_source_image",
+        lambda *_args, **_kwargs: download_calls.append(True)
+        or Image.new("RGB", (240, 420), "purple"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_ranking_page_with_deadline",
+        lambda *_args, **_kwargs: pytest.fail("blocked bank fetched another provider page"),
+    )
+
+    with pytest.raises(
+        PluginRefreshDeferred,
+        match="pixiv_bank_protected_capacity",
+    ) as deferred:
+        plugin.generate_image(settings, DummyDeviceConfig())
+
+    assert deferred.value.reason == "pixiv_bank_protected_capacity"
+    assert deferred.value.phase == "bank_admission"
+    assert deferred.value.minimum_seconds == 30 * 60
+    assert provider_calls == []
+    assert download_calls == []
+
+
+def test_cold_instance_defers_before_provider_when_another_profile_blocks_shared_bank(
+    tmp_path,
+    monkeypatch,
+):
+    from plugins.pixiv_r18_ranking import presentation_bank
+
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings(instance_uuid="cold-instance")
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc),
+    )
+    bank, _document, _profile, current = warm_bank(
+        tmp_path,
+        instance_uuid="other-instance",
+    )
+    monkeypatch.setattr(
+        presentation_bank,
+        "MEDIA_MAX_FILES",
+        len(set(current["record_keys"])),
+    )
+    provider_calls = []
+    download_calls = []
+    resolution = {
+        "requested_mode": "day_r18",
+        "effective_mode": "daily_r18",
+        "content_rating": "r18",
+        "authenticated": True,
+        "healthy_r18": True,
+        "source_status": "fresh",
+        "cookie": "session-cookie",
+        "items": [make_ranking_item(99)],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: provider_calls.append(True) or dict(resolution),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_download_ranking_item_source_image",
+        lambda *_args, **_kwargs: download_calls.append(True)
+        or Image.new("RGB", (240, 420), "purple"),
+    )
+    state_before = bank.state_path.read_bytes()
+    media_before = _pixiv_media_snapshot(bank)
+
+    with pytest.raises(PluginRefreshDeferred, match="pixiv_bank_protected_capacity"):
+        plugin.generate_image(settings, DummyDeviceConfig())
+
+    assert provider_calls == []
+    assert download_calls == []
+    assert bank.state_path.read_bytes() == state_before
+    assert _pixiv_media_snapshot(bank) == media_before
+
+
+def test_data_defers_without_deleting_media_when_protected_set_exceeds_budget(
+    tmp_path,
+    monkeypatch,
+):
+    from plugins.pixiv_r18_ranking import presentation_bank
+
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings()
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc),
+    )
+    bank, _document, _profile, current = warm_bank(tmp_path)
+    monkeypatch.setattr(
+        presentation_bank,
+        "MEDIA_MAX_FILES",
+        len(set(current["record_keys"])) - 1,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: pytest.fail("full same-day bank contacted provider"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_download_ranking_item_source_image",
+        lambda *_args, **_kwargs: pytest.fail("full same-day bank downloaded media"),
+    )
+    state_before = bank.state_path.read_bytes()
+    media_before = _pixiv_media_snapshot(bank)
+
+    with pytest.raises(PluginRefreshDeferred, match="pixiv_bank_protected_capacity"):
+        plugin.generate_image(settings, DummyDeviceConfig())
+
+    assert bank.state_path.read_bytes() == state_before
+    assert _pixiv_media_snapshot(bank) == media_before
+
+
+def test_data_defers_after_first_candidate_proves_protected_byte_budget_is_full(
+    tmp_path,
+    monkeypatch,
+):
+    from plugins.pixiv_r18_ranking import presentation_bank
+
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings(forceRefresh="true")
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc),
+    )
+    bank, _document, profile, current = warm_bank(tmp_path)
+    protected_keys = set(current["record_keys"])
+    protected_bytes = sum(
+        bank.media.path(record["media_key"], suffix=".png").stat().st_size
+        for record in profile["records"]
+        if record["record_key"] in protected_keys
+    )
+    monkeypatch.setattr(presentation_bank, "MEDIA_MAX_BYTES", protected_bytes + 1)
+    provider_calls = []
+    download_calls = []
+    resolution = {
+        "requested_mode": "day_r18",
+        "effective_mode": "daily_r18",
+        "content_rating": "r18",
+        "authenticated": True,
+        "healthy_r18": True,
+        "source_status": "fresh",
+        "cookie": "session-cookie",
+        "items": [make_ranking_item(index) for index in (99, 100, 101)],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: provider_calls.append(True) or dict(resolution),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_download_ranking_item_source_image",
+        lambda item, *_args, **_kwargs: download_calls.append(item["illust_id"])
+        or Image.new("RGB", (240, 420), "purple"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_ranking_page_with_deadline",
+        lambda *_args, **_kwargs: [],
+    )
+    state_before = bank.state_path.read_bytes()
+    media_before = _pixiv_media_snapshot(bank)
+
+    with pytest.raises(PluginRefreshDeferred, match="pixiv_bank_protected_capacity"):
+        plugin.generate_image(settings, DummyDeviceConfig())
+
+    assert provider_calls == [True]
+    assert download_calls == ["99"]
+    assert bank.state_path.read_bytes() == state_before
+    assert _pixiv_media_snapshot(bank) == media_before
+
+
+def test_data_retries_automatically_after_pending_selection_releases_capacity(
+    tmp_path,
+    monkeypatch,
+):
+    from plugins.pixiv_r18_ranking import presentation_bank
+
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings(forceRefresh="true")
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc),
+    )
+    bank, document, profile, current = warm_bank(tmp_path)
+    current_keys = set(current["record_keys"])
+    pending_keys = [
+        record["record_key"]
+        for record in profile["records"]
+        if record["record_key"] not in current_keys
+    ][:3]
+    request_id = "a" * 32
+    request = presentation_request(request_id)
+    bank.set_pending(
+        document,
+        profile,
+        request,
+        {
+            "record_keys": pending_keys,
+            "date_key": "2026-07-12",
+            "layout": "strip",
+            "reset_seen": False,
+        },
+    )
+    monkeypatch.setattr(
+        presentation_bank,
+        "MEDIA_MAX_FILES",
+        len(current_keys.union(pending_keys)),
+    )
+    provider_calls = []
+    download_calls = []
+    resolution = {
+        "requested_mode": "day_r18",
+        "effective_mode": "daily_r18",
+        "content_rating": "r18",
+        "authenticated": True,
+        "healthy_r18": True,
+        "source_status": "fresh",
+        "cookie": "session-cookie",
+        "items": [make_ranking_item(99)],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: provider_calls.append(True) or dict(resolution),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_download_ranking_item_source_image",
+        lambda item, *_args, **_kwargs: download_calls.append(item["illust_id"])
+        or Image.new("RGB", (240, 420), "purple"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_ranking_page_with_deadline",
+        lambda *_args, **_kwargs: [],
+    )
+
+    with pytest.raises(PluginRefreshDeferred):
+        plugin.generate_image(settings, DummyDeviceConfig())
+    assert provider_calls == []
+
+    bank.reconcile_receipt(
+        document,
+        profile,
+        presentation_receipt(request_id),
+    )
+    image = plugin.generate_image(settings, DummyDeviceConfig())
+
+    assert image.size == (800, 480)
+    assert provider_calls == [True]
+    assert download_calls == ["99"]
+
+
+def test_data_preserves_typed_deferral_when_exact_protected_media_cannot_be_recovered(
+    tmp_path,
+    monkeypatch,
+):
+    from plugins.pixiv_r18_ranking import presentation_bank
+
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings()
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc),
+    )
+    bank, _document, profile, current = warm_bank(tmp_path)
+    current_keys = set(current["record_keys"])
+    missing = next(
+        record for record in profile["records"] if record["record_key"] in current_keys
+    )
+    bank.media.path(missing["media_key"], suffix=".png").unlink()
+    monkeypatch.setattr(
+        presentation_bank,
+        "MEDIA_MAX_FILES",
+        len(current_keys) - 1,
+    )
+    provider_calls = []
+    download_calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: provider_calls.append(True)
+        or pytest.fail("protected-media recovery contacted the ranking provider"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_download_ranking_item_source_image",
+        lambda item, *_args, **_kwargs: download_calls.append(item["illust_id"])
+        or Image.new("RGB", (240, 420), "purple"),
+    )
+    state_before = bank.state_path.read_bytes()
+    media_before = _pixiv_media_snapshot(bank)
+
+    with pytest.raises(PluginRefreshDeferred, match="pixiv_bank_protected_capacity"):
+        plugin.generate_image(settings, DummyDeviceConfig())
+
+    assert provider_calls == []
+    assert download_calls == [missing["illust_id"]]
+    assert bank.state_path.read_bytes() == state_before
+    assert _pixiv_media_snapshot(bank) == media_before
 
 
 @pytest.mark.parametrize("force_key", ["forceRefresh", "force_refresh"])

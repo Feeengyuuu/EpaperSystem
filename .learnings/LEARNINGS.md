@@ -6,6 +6,70 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260814-002] best_practice
+
+**Logged**: 2026-08-14T22:44:37-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Prepared-presentation capacity recovery must use a runtime-supplied protected-request allowlist, never cache-local age guesses.
+
+### Details
+A per-instance prepared-PNG cap can contain a current request, its receipt, and a recent orphan after an interrupted cleanup. The presentation cache knows filenames and modification times but does not know which requests runtime state still protects. Reclaiming the oldest file can therefore delete a valid pending or receipt artifact. The safe seam keeps default admission fail-closed and permits recovery only when the single runtime submitter supplies the current request and receipt IDs; reclamation then remains descriptor-bound, same-instance only, and subject to the original instance, global-file, and byte caps.
+
+### Suggested Action
+Keep `PresentationCache.save()` fail-closed by default. For explicit recovery, pass a bounded allowlist derived from the same immutable runtime snapshot used to build the candidate, remove only same-instance artifacts absent from that allowlist, and re-run all capacity and path-safety checks before atomic publication. Test default refusal, all-protected refusal, exact unprotected reclamation, current-target replacement, cross-instance preservation, and unsafe-child failure.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/runtime/presentation_cache.py, inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/tests/test_presentation_cache.py
+- Tags: presentation-cache, prepared-bank, receipt, capacity, descriptor-safety, allowlist
+- Pattern-Key: presentation_cache.explicit_protected_request_allowlist
+- Recurrence-Count: 1
+- First-Seen: 2026-08-14
+- Last-Seen: 2026-08-14
+
+### Resolution
+- **Resolved**: 2026-08-14T22:44:37-07:00
+- **Commit/PR**: local worktree
+- **Notes**: Added an opt-in protected-request API with focused red-green coverage; scheduler integration remains in the parent task.
+
+---
+
+## [LRN-20260814-001] best_practice
+
+**Logged**: 2026-08-14T22:41:54-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Plugin-owned capacity deferrals need a distinct typed cancellation contract instead of masquerading as host resource pressure.
+
+### Details
+Reusing `ResourcePressureDeferred` for a deterministic prepared-bank constraint would pollute memory-pressure health statistics, emit the wrong error code, and apply the ordinary short pressure retry. A dedicated plugin deferral can carry only bounded machine tokens plus a bounded minimum delay, remain a non-failure cancellation, and preserve an exact lane `next_retry_at`. Broad candidate and recovery catches must explicitly rethrow this typed deferral so a bank does not continue expensive provider downloads after admission is known to be impossible. For a shared bank, the global admission check must also precede provider-side provenance discovery: a cold instance has no profile provenance yet, but another profile may already protect all shared capacity.
+
+### Suggested Action
+Use `PluginRefreshDeferred` for retryable plugin-local constraints, validate `reason` and `phase` as `[a-z0-9_]{1,64}`, cap requested delay at 24 hours, and keep the scheduler error code and metrics separate from resource pressure. Put provider-free shared-capacity admission before any cold-instance provider request. Add public DATA-seam tests proving early exit, state preservation, normal empty-bank bootstrap, and automatic retry after the blocking condition clears.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/runtime/plugin_deferral.py, inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/src/plugins/pixiv_r18_ranking/presentation_bank.py
+- Tags: scheduler, plugin-deferral, retry, metrics, prepared-bank, pixiv
+- Pattern-Key: runtime.plugin_deferral_separate_from_resource_pressure
+- Recurrence-Count: 2
+- First-Seen: 2026-08-14
+- Last-Seen: 2026-08-14
+
+### Resolution
+- **Resolved**: 2026-08-14T22:41:54-07:00
+- **Commit/PR**: local worktree
+- **Notes**: Added the bounded typed contract, Pixiv 30-minute capacity deferral, scheduler handling, cold-instance shared-capacity preflight, and focused red-green regression coverage.
+
+---
+
 ## [LRN-20260808-GBW] best_practice
 
 **Logged**: 2026-08-08T19:18:10-07:00

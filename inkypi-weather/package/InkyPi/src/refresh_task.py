@@ -57,6 +57,7 @@ from runtime.refresh_contracts import (
     TaskCancelled,
     TaskContext,
     TaskDeadlineExceeded,
+    freeze_payload,
     thaw_payload,
 )
 from runtime.cache_catalog import (
@@ -84,6 +85,7 @@ from runtime.presentation_cache import (
     prepared_presentation_path,
 )
 from runtime.refresh_queue import QueueEntry, RefreshQueue
+from runtime.plugin_deferral import PluginRefreshDeferred
 from runtime.resource_deferral import ResourcePressureDeferred
 from runtime.ian import (
     Ian,
@@ -107,6 +109,7 @@ from runtime.refresh_policy import (
 )
 from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
 from runtime.bounded_parallel_stage import BoundedParallelStageRunner
+from runtime.execution_policy import ExecutionClass, plugin_execution_class
 from runtime.resource_governor import RuntimeResourceGovernor
 from runtime.render_arbiter import RenderArbiter
 from runtime.sports_isolated_renderer import (
@@ -569,6 +572,7 @@ class RefreshTask:
         self._resource_tier = None
         self._due_counts = {lane.value: 0 for lane in RefreshLane}
         self._oldest_data_overdue_seconds = None
+        self._lightweight_followup_remaining = 0
         self._rotation_deadline_guard_active = False
         self._rotation_cache_starved_since = None
         self._display_transactions_enabled = False
@@ -1057,6 +1061,10 @@ class RefreshTask:
         except Exception:
             run = {}
         try:
+            cumulative = dict(self._parallel_image_runner.cumulative_snapshot)
+        except Exception:
+            cumulative = {}
+        try:
             active_child_count = len(self._parallel_image_runner.active_processes)
         except Exception:
             active_child_count = 0
@@ -1088,6 +1096,20 @@ class RefreshTask:
         }
         reason = run.get("reason")
         degrade_reason = reason if reason in known_reasons else None
+        raw_admission_counts = cumulative.get("admission_tier_counts", {})
+        if not isinstance(raw_admission_counts, Mapping):
+            raw_admission_counts = {}
+        raw_reason_counts = cumulative.get(
+            "serial_fallback_reason_counts",
+            {},
+        )
+        if not isinstance(raw_reason_counts, Mapping):
+            raw_reason_counts = {}
+        serial_reason_counts = {
+            known_reason: nonnegative_int(raw_reason_counts.get(known_reason))
+            for known_reason in sorted(known_reasons)
+            if nonnegative_int(raw_reason_counts.get(known_reason)) > 0
+        }
         status = run.get("status")
         if status not in {"not_run", "succeeded", "failed", "canceled"}:
             status = "unknown"
@@ -1121,6 +1143,35 @@ class RefreshTask:
             ),
             "cancellation_count": nonnegative_int(run.get("cancellation_count")),
             "active_child_count": nonnegative_int(active_child_count, maximum=1),
+            "cumulative": {
+                "admission_tier_counts": {
+                    "serial": nonnegative_int(
+                        raw_admission_counts.get("serial")
+                    ),
+                    "2_worker": nonnegative_int(
+                        raw_admission_counts.get("2_worker")
+                    ),
+                    "3_worker": nonnegative_int(
+                        raw_admission_counts.get("3_worker")
+                    ),
+                },
+                "serial_fallback_reason_counts": serial_reason_counts,
+                "batch_count": nonnegative_int(cumulative.get("batch_count")),
+                "batch_duration_ms_total": (
+                    optional_number(cumulative.get("batch_duration_ms_total"))
+                    or 0.0
+                ),
+                "normalized_work_pixels_total": nonnegative_int(
+                    cumulative.get("normalized_work_pixels_total")
+                ),
+                "child_peak_rss_bytes": nonnegative_int(
+                    cumulative.get("child_peak_rss_bytes"),
+                    default=None,
+                ),
+                "cancellation_count": nonnegative_int(
+                    cumulative.get("cancellation_count")
+                ),
+            },
             "cpu_throttling": {
                 "nr_periods": nonnegative_int(
                     throttling.get("nr_periods"),
@@ -1325,6 +1376,7 @@ class RefreshTask:
             return None
 
         try:
+            lightweight_followup = self._lightweight_followup_remaining > 0
             self.scheduler_state.record_attempt()
             self._attempt_count += 1
             restart_requested = self._memory_watchdog_should_restart()
@@ -1346,9 +1398,30 @@ class RefreshTask:
                 and disk_tier is not DiskPressureTier.HARD
                 and not self._cache_lifecycle_should_yield()
             ):
-                refresh_command = self._select_independent_refresh_command(current_dt)
+                if lightweight_followup:
+                    refresh_command = self._select_independent_refresh_command(
+                        current_dt,
+                        safe_light_only=True,
+                    )
+                else:
+                    refresh_command = self._select_independent_refresh_command(
+                        current_dt
+                    )
+                if lightweight_followup:
+                    if self._is_safe_lightweight_scheduler_command(
+                        refresh_command
+                    ):
+                        refresh_command = self._mark_lightweight_followup_command(
+                            refresh_command
+                        )
+                        self._lightweight_followup_remaining -= 1
+                    else:
+                        refresh_command = None
+                        self._lightweight_followup_remaining = 0
                 if refresh_command is not None:
                     self._submit_independent_refresh_command(refresh_command)
+            elif lightweight_followup:
+                self._lightweight_followup_remaining = 0
             next_delay = 30.0 if restart_requested else self._scheduler_poll_seconds()
             if (
                 not restart_requested
@@ -1389,6 +1462,64 @@ class RefreshTask:
         except Exception:
             logger.exception("Could not inspect active playlist for scheduler polling.")
         return max(1.0, min(poll_cap, interval))
+
+    def _scheduler_lightweight_burst_limit(self):
+        return self._config_int(
+            "scheduler_lightweight_burst_limit",
+            2,
+            1,
+            4,
+        )
+
+    @staticmethod
+    def _is_safe_lightweight_scheduler_command(command):
+        return bool(
+            isinstance(command, RefreshCommand)
+            and command.kind is CommandKind.CACHE_REFRESH
+            and command.source is CommandSource.BACKGROUND
+            and command.intent is RefreshIntent.DATA_REFRESH
+            and plugin_execution_class(command.plugin_id)
+            is ExecutionClass.INLINE
+        )
+
+    @staticmethod
+    def _mark_lightweight_followup_command(command):
+        payload = thaw_payload(command.payload)
+        payload["scheduler_lightweight_followup"] = True
+        return replace(command, payload=freeze_payload(payload))
+
+    def _note_lightweight_scheduler_terminal(self, command, finished):
+        is_followup = bool(
+            command.payload.get("scheduler_lightweight_followup") is True
+        )
+        if (
+            finished.status is not JobStatus.SUCCEEDED
+            or not self._is_safe_lightweight_scheduler_command(command)
+            or self._ian_retained_entries
+            or self.stop_event.is_set()
+            or not self.refresh_queue.snapshot().accepting
+        ):
+            if is_followup:
+                self._lightweight_followup_remaining = 0
+            return
+
+        if not is_followup:
+            self._lightweight_followup_remaining = max(
+                0,
+                self._scheduler_lightweight_burst_limit() - 1,
+            )
+        if self._lightweight_followup_remaining > 0:
+            self.scheduler_state.set_next_attempt(self._clock())
+
+    def _finalize_lightweight_followup_entry(self, entry):
+        if (
+            entry.command.payload.get("scheduler_lightweight_followup")
+            is not True
+        ):
+            return
+        current = self.refresh_queue.get_entry(entry.job.id)
+        if current is None or current.job.status is not JobStatus.SUCCEEDED:
+            self._lightweight_followup_remaining = 0
 
     def _rotation_presentation_wait_seconds(self):
         configured_wait = max(
@@ -2223,6 +2354,8 @@ class RefreshTask:
     def _select_independent_refresh_command(
         self,
         current_dt,
+        *,
+        safe_light_only=False,
     ) -> RefreshCommand | None:
         """Admit at most one ordinary renderer command for this probe."""
         self._update_burst_liveness_ordinary_yield_window()
@@ -2327,6 +2460,16 @@ class RefreshTask:
             theme_context,
             current_dt,
         )
+        if safe_light_only:
+            data_candidates = [
+                candidate
+                for candidate in data_candidates
+                if plugin_execution_class(candidate.instance.plugin_id)
+                is ExecutionClass.INLINE
+            ]
+            presentation_candidates = []
+            live_candidates = []
+            theme_candidate = None
         auxiliary_candidates = list(live_candidates)
         auxiliary_candidates.extend(presentation_candidates)
         if theme_candidate is not None:
@@ -3334,10 +3477,22 @@ class RefreshTask:
         )
 
     def _process_queue_entry(self, entry: QueueEntry):
-        if self._uses_ian_admission(entry.command):
-            self._process_ian_queue_entry(entry)
-            return
-        self._execute_queue_entry(entry)
+        if (
+            self._lightweight_followup_remaining > 0
+            and entry.command.payload.get("scheduler_lightweight_followup")
+            is not True
+        ):
+            self._lightweight_followup_remaining = 0
+            self.scheduler_state.set_next_attempt(
+                self._clock() + self._scheduler_poll_seconds()
+            )
+        try:
+            if self._uses_ian_admission(entry.command):
+                self._process_ian_queue_entry(entry)
+                return
+            self._execute_queue_entry(entry)
+        finally:
+            self._finalize_lightweight_followup_entry(entry)
 
     def _uses_ian_admission(self, command):
         return (
@@ -3953,6 +4108,28 @@ class RefreshTask:
                     error_code="sports_isolated_resource_pressure",
                     error=str(error),
                 )
+            except PluginRefreshDeferred as error:
+                next_retry_at = self._record_plugin_refresh_deferral(
+                    command,
+                    minimum_seconds=error.minimum_seconds,
+                )
+                logger.warning(
+                    "Deferring plugin-requested refresh. | plugin_id: %s | "
+                    "intent: %s | reason: %s | phase: %s | "
+                    "minimum_seconds: %s | next_retry_at: %s",
+                    command.plugin_id,
+                    command.intent.value if command.intent is not None else "none",
+                    error.reason,
+                    error.phase,
+                    error.minimum_seconds,
+                    next_retry_at,
+                )
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.CANCELED,
+                    error_code="plugin_refresh_deferred",
+                    error="plugin requested a bounded refresh retry",
+                )
             except ResourcePressureDeferred as error:
                 weather_background_data = self._is_weather_background_data_command(
                     command
@@ -4123,6 +4300,7 @@ class RefreshTask:
                             self.scheduler_state.record_success()
                     except Exception:
                         logger.exception("Refresh success bookkeeping failed")
+            self._note_lightweight_scheduler_terminal(command, finished)
             self._signal_completion(finished.id)
         finally:
             self._cleanup_transient_uploads(entry.job.id, entry.command)
@@ -4177,6 +4355,31 @@ class RefreshTask:
             command.intent,
             minimum_seconds=minimum_seconds,
         )
+
+    def _record_plugin_refresh_deferral(self, command, *, minimum_seconds):
+        lane = self._lane_for_intent(command.intent)
+        if command.instance_uuid is None or lane is None:
+            return None
+        deferred_at = self._runtime_now_iso()
+        next_retry_at = (
+            datetime.fromisoformat(deferred_at)
+            + timedelta(seconds=float(minimum_seconds))
+        ).isoformat()
+        try:
+            self.runtime_state.record_deferral(
+                command.instance_uuid,
+                deferred_at,
+                next_retry_at,
+                lane=lane,
+            )
+        except Exception:
+            logger.exception(
+                "Plugin-requested refresh deferral could not be recorded. | "
+                "plugin_id: %s",
+                command.plugin_id,
+            )
+            return None
+        return next_retry_at
 
     def _record_lane_resource_pressure_deferral(
         self,
@@ -5655,7 +5858,14 @@ class RefreshTask:
             request,
             theme_mode,
         )
-        self.presentation_cache.save(candidate, preparation.image)
+        protected_request_ids = {request.request_id}
+        if prior_receipt is not None:
+            protected_request_ids.add(prior_receipt.request_id)
+        self.presentation_cache.save(
+            candidate,
+            preparation.image,
+            protected_request_ids=protected_request_ids,
+        )
         try:
             self._require_fresh_selection(command, context)
             if not self._presentation_request_is_current(

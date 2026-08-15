@@ -32,6 +32,7 @@ from plugins.pixiv_r18_ranking.presentation_bank import (
     READY_TARGET,
     REFILL_THRESHOLD,
     PixivPresentationBank,
+    PixivPresentationBankCapacityDeferred,
     PixivPresentationBankCold,
     atomic_write_bounded_json,
     instance_profile_fingerprint,
@@ -345,6 +346,10 @@ class PixivR18Ranking(BasePlugin):
         instance_uuid = get_presentation_instance_uuid(settings)
         provenance = self._saved_provenance_for_instance(instance_uuid)
         if provenance is None:
+            PixivPresentationBank.require_shared_refill_admission(
+                self._presentation_state_path(),
+                self._presentation_media_dir(),
+            )
             provider_attempted = True
             provider_attempted_at = self._now_utc().isoformat()
             try:
@@ -384,6 +389,7 @@ class PixivR18Ranking(BasePlugin):
         if force_refresh or (
             profile.get("refill_in_progress") is True and len(ready) < READY_TARGET
         ):
+            bank.require_refill_admission(profile)
             if resolution is None:
                 provider_attempted = True
                 provider_attempted_at = self._now_utc().isoformat()
@@ -511,6 +517,8 @@ class PixivR18Ranking(BasePlugin):
                         ),
                     )
                     protected_changed = True
+                except PixivPresentationBankCapacityDeferred:
+                    raise
                 except Exception as recovery_error:
                     raise RuntimeError("Pixiv protected media recovery failed") from recovery_error
                 logger.info(
@@ -585,6 +593,8 @@ class PixivR18Ranking(BasePlugin):
                             MAX_DATA_SECONDS,
                         ),
                     )
+                except PixivPresentationBankCapacityDeferred:
+                    raise
                 except Exception as exc:
                     logger.warning("Pixiv bank candidate failed for %s: %s", item["illust_id"], exc)
                     continue

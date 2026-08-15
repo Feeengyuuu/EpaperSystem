@@ -500,6 +500,25 @@ def _independent_refresh_health_collector(tmp_path):
                 "child_peak_rss_bytes": 62 * 1024 * 1024,
                 "cancellation_count": 3,
                 "active_child_count": 0,
+                "cumulative": {
+                    "admission_tier_counts": {
+                        "serial": 9,
+                        "2_worker": 4,
+                        "3_worker": 1,
+                        "sensitive-instance-uuid": 99,
+                    },
+                    "serial_fallback_reason_counts": {
+                        "memory_below_parallel_threshold": 7,
+                        "/system.slice/inkypi.service": 99,
+                    },
+                    "batch_count": 12,
+                    "batch_duration_ms_total": 812.5,
+                    "normalized_work_pixels_total": 4_608_000,
+                    "child_peak_rss_bytes": 70 * 1024 * 1024,
+                    "cancellation_count": 3,
+                    "title": "secret-plugin-name",
+                    "settings": {"api_key": "secret"},
+                },
                 "cpu_throttling": {
                     "nr_periods": 900,
                     "nr_throttled": 12,
@@ -591,6 +610,7 @@ def test_health_exposes_only_whitelisted_parallel_runtime_aggregates(tmp_path):
         "child_peak_rss_bytes",
         "cancellation_count",
         "active_child_count",
+        "cumulative",
         "cpu_throttling",
     }
     assert parallel["resource_sample"] == {
@@ -602,6 +622,21 @@ def test_health_exposes_only_whitelisted_parallel_runtime_aggregates(tmp_path):
     assert parallel["selected_tier"] == "2_worker"
     assert parallel["child_peak_rss_bytes"] == 62 * 1024 * 1024
     assert parallel["cancellation_count"] == 3
+    assert parallel["cumulative"] == {
+        "admission_tier_counts": {
+            "serial": 9,
+            "2_worker": 4,
+            "3_worker": 1,
+        },
+        "serial_fallback_reason_counts": {
+            "memory_below_parallel_threshold": 7,
+        },
+        "batch_count": 12,
+        "batch_duration_ms_total": 812.5,
+        "normalized_work_pixels_total": 4_608_000,
+        "child_peak_rss_bytes": 70 * 1024 * 1024,
+        "cancellation_count": 3,
+    }
     assert parallel["cpu_throttling"] == {
         "nr_periods": 900,
         "nr_throttled": 12,

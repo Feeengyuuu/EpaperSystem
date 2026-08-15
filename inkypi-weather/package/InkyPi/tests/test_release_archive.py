@@ -118,6 +118,9 @@ def test_release_archive_normalizes_linux_entrypoints_to_lf(tmp_path):
     (source / "install" / "inkypi.service").write_bytes(
         b"[Service]\r\nExecStart=/usr/local/bin/inkypi\r\n"
     )
+    (source / ".envrc").write_bytes(
+        b"#!/usr/bin/env bash\r\nexport INKYPI_DEV=1\r\n"
+    )
     (source / "src" / "app.py").write_bytes(b"VALUE = 1\r\n")
     binary = b"\x89PNG\r\n\x1a\n\x00\r\n"
     (source / "assets" / "pixel.png").write_bytes(binary)
@@ -132,6 +135,9 @@ def test_release_archive_normalizes_linux_entrypoints_to_lf(tmp_path):
         assert archive.read("install/update.sh") == b"#!/bin/bash\nexit 0\n"
         assert archive.read("install/inkypi.service") == (
             b"[Service]\nExecStart=/usr/local/bin/inkypi\n"
+        )
+        assert archive.read(".envrc") == (
+            b"#!/usr/bin/env bash\nexport INKYPI_DEV=1\n"
         )
         assert archive.read("src/app.py") == b"VALUE = 1\n"
         assert archive.read("assets/pixel.png") == binary

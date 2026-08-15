@@ -51,6 +51,7 @@ LF_TEXT_SUFFIXES = {
     ".socket",
 }
 LF_TEXT_MEMBERS = {
+    ".envrc",
     "install/cli/inkypi-plugin",
     "install/debian-requirements.txt",
     "install/inkypi",

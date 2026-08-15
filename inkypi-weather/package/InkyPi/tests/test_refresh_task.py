@@ -47,6 +47,7 @@ from runtime.refresh_contracts import (
 )
 from runtime.refresh_queue import QueueFullError, QueueStoppingError, RefreshQueue
 from runtime.resource_deferral import ResourcePressureDeferred
+from runtime.plugin_deferral import PluginRefreshDeferred
 from runtime.ian import IanResourceSample
 from runtime.cache_catalog import authoritative_cache_path
 from runtime.cache_lifecycle import DiskPressureTier
@@ -6579,6 +6580,513 @@ def test_overdue_empty_playlist_advances_monotonic_attempt_deadline():
     assert task.attempt_count == 1
 
 
+def test_scheduler_burst_advances_two_reviewed_inline_jobs_without_admitting_heavy(
+    monkeypatch,
+):
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    simple = _runtime_plugin_data(
+        "simple_calendar",
+        "Simple",
+        latest_refresh_time=None,
+        interval=300,
+    )
+    simple["instance_uuid"] = "11111111111111111111111111111111"
+    species = _runtime_plugin_data(
+        "species_radar",
+        "Species",
+        latest_refresh_time=None,
+        interval=300,
+    )
+    species["instance_uuid"] = "22222222222222222222222222222222"
+    weather = _runtime_plugin_data(
+        "weather",
+        "Weather",
+        latest_refresh_time=None,
+        interval=300,
+    )
+    weather["instance_uuid"] = "33333333333333333333333333333333"
+    playlist = _runtime_playlist(simple, species, weather)
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("scheduler-bounded-inline-burst"),
+        playlists=[playlist],
+        cycle_seconds=300,
+    )
+    device_config.config["scheduler_lightweight_burst_limit"] = 2
+    calls = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: CapturePlugin(calls),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_sample_disk_pressure",
+        lambda: DiskPressureTier.HEALTHY,
+    )
+    monkeypatch.setattr(
+        task,
+        "_run_cache_lifecycle_maintenance",
+        lambda _tier: None,
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    first = task._run_one_iteration_for_test()
+    second = task._run_one_iteration_for_test()
+    bounded_stop = task._run_one_iteration_for_test()
+
+    assert first.command.plugin_id == "simple_calendar"
+    assert second.command.plugin_id == "species_radar"
+    assert bounded_stop is None
+    assert [call["id"] for call in calls] == ["simple_calendar", "species_radar"]
+    assert task.attempt_count == 2
+    runtime_instances = task.runtime_state.snapshot().instances
+    assert runtime_instances[
+        "11111111111111111111111111111111"
+    ].data.last_success_at == now.isoformat()
+    assert runtime_instances[
+        "22222222222222222222222222222222"
+    ].data.last_success_at == now.isoformat()
+
+
+def test_manual_work_preempts_and_ends_an_armed_lightweight_scheduler_burst(
+    monkeypatch,
+):
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    first_data = _runtime_plugin_data(
+        "simple_calendar",
+        "Simple",
+        latest_refresh_time=None,
+        interval=300,
+    )
+    first_data["instance_uuid"] = "11111111111111111111111111111111"
+    followup_data = _runtime_plugin_data(
+        "species_radar",
+        "Species",
+        latest_refresh_time=None,
+        interval=300,
+    )
+    followup_data["instance_uuid"] = "22222222222222222222222222222222"
+    playlist = _runtime_playlist(first_data, followup_data)
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("scheduler-inline-burst-manual-preemption"),
+        playlists=[playlist],
+        cycle_seconds=300,
+    )
+    calls = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: CapturePlugin(calls),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_sample_disk_pressure",
+        lambda: DiskPressureTier.HEALTHY,
+    )
+    monkeypatch.setattr(
+        task,
+        "_run_cache_lifecycle_maintenance",
+        lambda _tier: None,
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    first = task._run_one_iteration_for_test()
+    manual_command = task._command_from_refresh_action(
+        ManualRefresh("manual_plugin", {"id": "urgent-manual"})
+    )
+    task.refresh_queue.submit(manual_command)
+    urgent = task._run_one_iteration_for_test()
+    no_followup = task._run_one_iteration_for_test()
+
+    assert first.command.plugin_id == "simple_calendar"
+    assert urgent.command.id == manual_command.id
+    assert urgent.command.source is CommandSource.MANUAL
+    assert no_followup is None
+    assert [call["id"] for call in calls] == [
+        "simple_calendar",
+        "urgent-manual",
+    ]
+
+
+def test_stop_observed_at_lightweight_terminal_never_schedules_a_followup(
+    monkeypatch,
+):
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    first_data = _runtime_plugin_data(
+        "simple_calendar",
+        "Simple",
+        latest_refresh_time=None,
+        interval=300,
+    )
+    first_data["instance_uuid"] = "11111111111111111111111111111111"
+    followup_data = _runtime_plugin_data(
+        "species_radar",
+        "Species",
+        latest_refresh_time=None,
+        interval=300,
+    )
+    followup_data["instance_uuid"] = "22222222222222222222222222222222"
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("scheduler-inline-burst-stop"),
+        playlists=[_runtime_playlist(first_data, followup_data)],
+        cycle_seconds=300,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_sample_disk_pressure",
+        lambda: DiskPressureTier.HEALTHY,
+    )
+    monkeypatch.setattr(
+        task,
+        "_run_cache_lifecycle_maintenance",
+        lambda _tier: None,
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    executions = []
+
+    def finish_while_stopping(command):
+        executions.append(command.instance_uuid)
+        task.stop_event.set()
+
+    monkeypatch.setattr(task, "_execute_command", finish_while_stopping)
+
+    first = task._run_one_iteration_for_test()
+    after_stop = task._run_one_iteration_for_test()
+
+    assert first.command.plugin_id == "simple_calendar"
+    assert after_stop is None
+    assert executions == ["11111111111111111111111111111111"]
+    assert task.attempt_count == 1
+
+
+@pytest.mark.parametrize(
+    ("terminal_error", "expected_status", "expected_error_code"),
+    [
+        (RuntimeError("render failed"), JobStatus.FAILED, "refresh_failed"),
+        (
+            PluginRefreshDeferred(
+                reason="candidate_pool_temporarily_exhausted",
+                phase="bank_hydration",
+                minimum_seconds=30 * 60,
+            ),
+            JobStatus.CANCELED,
+            "plugin_refresh_deferred",
+        ),
+        (
+            ResourcePressureDeferred(
+                reason="image_resource_pressure",
+                phase="render",
+                available_mb=80,
+                swap_percent=70,
+            ),
+            JobStatus.CANCELED,
+            "resource_pressure_deferred",
+        ),
+    ],
+)
+def test_failed_or_deferred_lightweight_terminal_never_arms_a_burst(
+    monkeypatch,
+    terminal_error,
+    expected_status,
+    expected_error_code,
+):
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    plugin_data = _runtime_plugin_data(
+        "simple_calendar",
+        "Simple",
+        latest_refresh_time=None,
+        interval=300,
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir(f"scheduler-no-burst-{expected_error_code}"),
+        playlists=[_runtime_playlist(plugin_data)],
+        cycle_seconds=300,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_sample_disk_pressure",
+        lambda: DiskPressureTier.HEALTHY,
+    )
+    monkeypatch.setattr(
+        task,
+        "_run_cache_lifecycle_maintenance",
+        lambda _tier: None,
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    def fail(_command):
+        raise terminal_error
+
+    monkeypatch.setattr(task, "_execute_command", fail)
+
+    first = task._run_one_iteration_for_test()
+    no_followup = task._run_one_iteration_for_test()
+    completed = task.refresh_queue.get_entry(first.job.id)
+
+    assert completed.job.status is expected_status
+    assert completed.job.error_code == expected_error_code
+    assert no_followup is None
+    assert task.attempt_count == 1
+
+
+def test_ian_arrival_preempts_and_clears_an_armed_lightweight_scheduler_burst(
+    monkeypatch,
+):
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    first_data = _runtime_plugin_data(
+        "simple_calendar",
+        "Simple",
+        latest_refresh_time=None,
+        interval=300,
+    )
+    first_data["instance_uuid"] = "11111111111111111111111111111111"
+    followup_data = _runtime_plugin_data(
+        "species_radar",
+        "Species",
+        latest_refresh_time=None,
+        interval=300,
+    )
+    followup_data["instance_uuid"] = "22222222222222222222222222222222"
+    task, _device_config, clock = _make_runtime_task(
+        make_test_dir("scheduler-inline-burst-ian-preemption"),
+        playlists=[_runtime_playlist(first_data, followup_data)],
+        cycle_seconds=300,
+        ian_resource_sampler=lambda: IanResourceSample(
+            available_mb=100,
+            swap_percent=0,
+        ),
+    )
+    calls = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: CapturePlugin(calls),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_sample_disk_pressure",
+        lambda: DiskPressureTier.HEALTHY,
+    )
+    monkeypatch.setattr(
+        task,
+        "_run_cache_lifecycle_maintenance",
+        lambda _tier: None,
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    first = task._run_one_iteration_for_test()
+    sports = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="sports_dashboard",
+        instance_uuid="33333333333333333333333333333333",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "DailyDoseOfDay"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    sports_job = task.refresh_queue.submit(sports)
+    retained = task._run_one_iteration_for_test()
+    no_followup = task._run_one_iteration_for_test()
+
+    assert first.command.plugin_id == "simple_calendar"
+    assert retained.command.id == sports.id
+    assert task.refresh_queue.get_entry(sports_job.id).job.status is JobStatus.RUNNING
+    assert no_followup is None
+    assert [call["id"] for call in calls] == ["simple_calendar"]
+    assert task.attempt_count == 1
+
+
+@pytest.mark.parametrize("closed_gate", ["disk", "restart", "resource"])
+def test_hard_gate_stops_an_armed_lightweight_scheduler_burst(
+    monkeypatch,
+    closed_gate,
+):
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    first_data = _runtime_plugin_data(
+        "simple_calendar",
+        "Simple",
+        latest_refresh_time=None,
+        interval=300,
+    )
+    first_data["instance_uuid"] = "11111111111111111111111111111111"
+    followup_data = _runtime_plugin_data(
+        "species_radar",
+        "Species",
+        latest_refresh_time=None,
+        interval=300,
+    )
+    followup_data["instance_uuid"] = "22222222222222222222222222222222"
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir(f"scheduler-inline-burst-hard-{closed_gate}"),
+        playlists=[_runtime_playlist(first_data, followup_data)],
+        cycle_seconds=300,
+    )
+    gate = {"closed": False}
+    calls = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: CapturePlugin(calls),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(
+            available_mb=(60 if closed_gate == "resource" and gate["closed"] else 512),
+            swap_percent=0,
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_memory_watchdog_should_restart",
+        lambda: closed_gate == "restart" and gate["closed"],
+    )
+    monkeypatch.setattr(
+        task,
+        "_sample_disk_pressure",
+        lambda: (
+            DiskPressureTier.HARD
+            if closed_gate == "disk" and gate["closed"]
+            else DiskPressureTier.HEALTHY
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_run_cache_lifecycle_maintenance",
+        lambda _tier: None,
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    first = task._run_one_iteration_for_test()
+    gate["closed"] = True
+    blocked = task._run_one_iteration_for_test()
+    bounded_stop = task._run_one_iteration_for_test()
+
+    assert first.command.plugin_id == "simple_calendar"
+    assert blocked is None
+    assert bounded_stop is None
+    assert [call["id"] for call in calls] == ["simple_calendar"]
+    assert task.attempt_count == 2
+
+
+def test_followup_admission_early_terminal_clears_remaining_limit_four_budget(
+    monkeypatch,
+):
+    now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    plugins = []
+    for plugin_id, name, instance_uuid in (
+        (
+            "simple_calendar",
+            "Simple",
+            "11111111111111111111111111111111",
+        ),
+        (
+            "species_radar",
+            "Species",
+            "22222222222222222222222222222222",
+        ),
+        (
+            "moon_phase",
+            "Moon",
+            "33333333333333333333333333333333",
+        ),
+    ):
+        plugin_data = _runtime_plugin_data(
+            plugin_id,
+            name,
+            latest_refresh_time=None,
+            interval=300,
+        )
+        plugin_data["instance_uuid"] = instance_uuid
+        plugins.append(plugin_data)
+    task, _device_config, clock = _make_runtime_task(
+        make_test_dir("scheduler-followup-early-terminal-clears-budget"),
+        playlists=[_runtime_playlist(*plugins)],
+        cycle_seconds=300,
+    )
+    task.device_config.config["scheduler_lightweight_burst_limit"] = 4
+    calls = []
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: CapturePlugin(calls),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_sample_disk_pressure",
+        lambda: DiskPressureTier.HEALTHY,
+    )
+    monkeypatch.setattr(
+        task,
+        "_run_cache_lifecycle_maintenance",
+        lambda _tier: None,
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        task,
+        "_renderer_blocked_by_disk_pressure",
+        lambda command: command.plugin_id == "species_radar",
+    )
+
+    first = task._run_one_iteration_for_test()
+    early_terminal = task._run_one_iteration_for_test()
+    early_result = task.refresh_queue.get_entry(early_terminal.job.id)
+    retry_at = task.scheduler_snapshot().next_attempt_monotonic
+    clock.advance(retry_at - clock.monotonic())
+    regular_turn = task._run_one_iteration_for_test()
+
+    assert first.command.plugin_id == "simple_calendar"
+    assert early_terminal.command.plugin_id == "species_radar"
+    assert early_terminal.command.payload["scheduler_lightweight_followup"] is True
+    assert early_result.job.status is JobStatus.CANCELED
+    assert early_result.job.error_code == "disk_pressure_hard"
+    assert regular_turn.command.plugin_id == "species_radar"
+    assert "scheduler_lightweight_followup" not in regular_turn.command.payload
+    assert [call["id"] for call in calls] == ["simple_calendar"]
+
+
 def test_memory_watchdog_error_advances_deadline_without_killing_scheduler(monkeypatch):
     tmp_path = make_test_dir("runtime-watchdog-deadline")
     task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
@@ -6806,6 +7314,7 @@ def test_refresh_health_snapshot_reports_only_parallel_runtime_aggregates():
         "child_peak_rss_bytes",
         "cancellation_count",
         "active_child_count",
+        "cumulative",
         "cpu_throttling",
     }
     assert parallel["resource_sample"] == {
@@ -6822,12 +7331,96 @@ def test_refresh_health_snapshot_reports_only_parallel_runtime_aggregates():
     assert parallel["child_peak_rss_bytes"] is None
     assert parallel["cancellation_count"] == 0
     assert parallel["active_child_count"] == 0
+    cumulative = parallel["cumulative"]
+    assert set(cumulative) == {
+        "admission_tier_counts",
+        "serial_fallback_reason_counts",
+        "batch_count",
+        "batch_duration_ms_total",
+        "normalized_work_pixels_total",
+        "child_peak_rss_bytes",
+        "cancellation_count",
+    }
+    assert cumulative["admission_tier_counts"] == {
+        "serial": 1,
+        "2_worker": 0,
+        "3_worker": 0,
+    }
+    assert cumulative["serial_fallback_reason_counts"] == {
+        "memory_below_parallel_threshold": 1,
+    }
+    assert cumulative["batch_count"] == 1
+    assert cumulative["batch_duration_ms_total"] >= 0
+    assert cumulative["normalized_work_pixels_total"] == 96
+    assert cumulative["child_peak_rss_bytes"] is None
+    assert cumulative["cancellation_count"] == 0
     assert parallel["cpu_throttling"] == {
         "nr_periods": 100,
         "nr_throttled": 8,
         "throttled_usec": 4321,
     }
     assert "sensitive-instance-uuid" not in repr(parallel)
+
+
+def test_refresh_health_snapshot_accumulates_identity_free_parallel_runtime_metrics():
+    tmp_path = make_test_dir("runtime-parallel-health-cumulative")
+    identity = InstanceIdentity("sensitive-instance-uuid", 7, 11)
+    governor = RuntimeResourceGovernor(
+        snapshot_provider=lambda: {
+            "available_mb": 149,
+            "swap_percent": 12,
+            "cpu_quota_cores": 3,
+        }
+    )
+    runner = BoundedParallelStageRunner(governor=governor)
+
+    for ordinal, size in enumerate(((8, 12), (5, 7))):
+        source_path = tmp_path / f"source-{ordinal}.png"
+        Image.new("RGB", size, "purple").save(source_path, format="PNG")
+        runner.run(
+            ImmutableImageWorkset(
+                descriptors=(
+                    {
+                        "ordinal": ordinal,
+                        "source_path": str(source_path.resolve()),
+                        "source_sha256": hashlib.sha256(
+                            source_path.read_bytes()
+                        ).hexdigest(),
+                    },
+                ),
+                staging_dir=str(tmp_path.resolve()),
+                source_roots=(str(tmp_path.resolve()),),
+                instance_identity=identity,
+            ),
+            TaskContext.never_cancelled(
+                deadline_monotonic=time.monotonic() + 5
+            ),
+            lambda candidate: candidate == identity,
+        )
+
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[],
+        resource_governor=governor,
+        parallel_image_runner=runner,
+    )
+
+    cumulative = task.refresh_health_snapshot()["parallel_runtime"]["cumulative"]
+
+    assert cumulative["admission_tier_counts"] == {
+        "serial": 2,
+        "2_worker": 0,
+        "3_worker": 0,
+    }
+    assert cumulative["serial_fallback_reason_counts"] == {
+        "memory_below_parallel_threshold": 2,
+    }
+    assert cumulative["batch_count"] == 2
+    assert cumulative["batch_duration_ms_total"] >= 0
+    assert cumulative["normalized_work_pixels_total"] == 131
+    assert cumulative["child_peak_rss_bytes"] is None
+    assert cumulative["cancellation_count"] == 0
+    assert "sensitive-instance-uuid" not in repr(cumulative)
 
 
 def test_refresh_health_snapshot_preserves_child_peak_rss_as_an_integer():
@@ -7679,6 +8272,136 @@ def test_resource_pressure_deferral_preserves_last_good_and_cached_display(
     assert plugin_calls == []
     assert len(task.display_manager.calls) == 1
     assert task.display_manager.calls[0][0].getpixel((0, 0)) == (17, 34, 51)
+
+
+def test_plugin_requested_deferral_records_exact_lane_retry_without_failure(
+    monkeypatch,
+    caplog,
+):
+    current_dt = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    playlist = _runtime_playlist(
+        _runtime_plugin_data("pixiv_r18_ranking", "Pixiv", latest_refresh_time=None)
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("plugin-requested-deferral"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    instance = playlist.plugins[0].snapshot()
+    before_retry = task.retry_registry.snapshot()
+    before_scheduler_failure = task.scheduler_state.snapshot().last_failure_wall
+    monkeypatch.setattr(task, "_renderer_blocked_by_disk_pressure", lambda _c: False)
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    def defer(_command):
+        raise PluginRefreshDeferred(
+            reason="candidate_pool_temporarily_exhausted",
+            phase="bank_hydration",
+            minimum_seconds=30 * 60,
+        )
+
+    monkeypatch.setattr(task, "_execute_command", defer)
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current_dt,
+    )
+
+    with caplog.at_level("WARNING", logger=refresh_task_module.__name__):
+        completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.CANCELED
+    assert completed.job.error_code == "plugin_refresh_deferred"
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid].data
+    assert state.next_retry_at == (current_dt + timedelta(minutes=30)).isoformat()
+    assert state.last_failure_at is None
+    assert task.retry_registry.snapshot() == before_retry
+    assert task.scheduler_state.snapshot().last_failure_wall == before_scheduler_failure
+    assert "plugin-requested refresh" in caplog.text
+    assert "resource pressure" not in caplog.text.lower()
+
+
+def test_plugin_requested_deferral_completes_manual_waiter_once(monkeypatch):
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir("plugin-deferral-manual-waiter"),
+        playlists=[],
+    )
+
+    class DeferringPlugin(DelegatingThemeWrapper):
+        def generate_image(self, _settings, _device_config):
+            raise PluginRefreshDeferred(
+                reason="candidate_pool_temporarily_exhausted",
+                phase="bank_hydration",
+                minimum_seconds=30 * 60,
+            )
+
+    monkeypatch.setattr(
+        refresh_task_module,
+        "get_plugin_instance",
+        lambda _config: DeferringPlugin(),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    task.start()
+    try:
+        submitted = task.submit_manual_update(
+            ManualRefresh("pixiv_r18_ranking", {"id": "manual-pixiv"})
+        )
+        completed = task.wait_for_job(submitted["id"], timeout=1.0)
+    finally:
+        task.stop(join_timeout=1.0)
+
+    assert completed["status"] == "canceled"
+    assert completed["error_code"] == "plugin_refresh_deferred"
+    assert task.manual_update_requests == ()
+
+
+def test_plugin_requested_deferral_preserves_ian_terminal_queue_semantics(
+    monkeypatch,
+):
+    task, _device_config, clock = _make_runtime_task(
+        make_test_dir("plugin-deferral-ian-terminal"),
+        ian_resource_sampler=lambda: IanResourceSample(
+            available_mb=512,
+            swap_percent=0,
+        ),
+    )
+    monkeypatch.setattr(task, "_renderer_blocked_by_disk_pressure", lambda _c: False)
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    def defer(_command):
+        raise PluginRefreshDeferred(
+            reason="candidate_pool_temporarily_exhausted",
+            phase="bank_hydration",
+            minimum_seconds=30 * 60,
+        )
+
+    monkeypatch.setattr(task, "_execute_command", defer)
+    command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="sports_dashboard",
+        instance_uuid="sports-instance",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "DailyDoseOfDay"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+        priority=10,
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.CANCELED
+    assert completed.job.error_code == "plugin_refresh_deferred"
+    assert task.refresh_health_snapshot()["ian_retained"] == 0
+    assert task.refresh_health_snapshot()["ian_last_queue_status"] == "canceled"
 
 
 @pytest.mark.parametrize(
@@ -16164,6 +16887,18 @@ def test_presentation_prepare_reconciles_origin_then_prior_receipt_before_select
         changed_at=request.requested_at,
     )
     plugin = PresentationBankPlugin()
+    observed_protected_request_ids = []
+    original_save = task.presentation_cache.save
+
+    def save_with_observation(candidate, image, *, protected_request_ids=()):
+        observed_protected_request_ids.append(frozenset(protected_request_ids))
+        return original_save(
+            candidate,
+            image,
+            protected_request_ids=protected_request_ids,
+        )
+
+    monkeypatch.setattr(task.presentation_cache, "save", save_with_observation)
     monkeypatch.setattr(
         refresh_task_module,
         "get_plugin_instance",
@@ -16216,6 +16951,13 @@ def test_presentation_prepare_reconciles_origin_then_prior_receipt_before_select
         ("reconcile", instance.instance_uuid),
         ("prepare", instance.instance_uuid),
     ]
+    assert observed_protected_request_ids == [
+        frozenset({request.request_id, prior_receipt.request_id})
+    ]
+    followup = task.refresh_queue.take(timeout=0)
+    assert followup is not None
+    assert followup.command.intent is RefreshIntent.DISPLAY_CACHE
+    assert followup.command.payload["presentation_request_id"] == request.request_id
     assert json.dumps(
         refresh_task_module.thaw_payload(entry.command.payload),
         sort_keys=True,

@@ -232,6 +232,16 @@ class BoundedParallelStageRunner:
         self._quarantined_leases: dict[Any, ResourceLease] = {}
         self._snapshot_lock = threading.Lock()
         self._cancellation_count = 0
+        self._admission_tier_counts = {
+            "serial": 0,
+            "2_worker": 0,
+            "3_worker": 0,
+        }
+        self._serial_fallback_reason_counts: dict[str, int] = {}
+        self._batch_count = 0
+        self._batch_duration_ms_total = 0.0
+        self._normalized_work_pixels_total = 0
+        self._child_peak_rss_bytes = None
         self._last_run_snapshot: dict[str, Any] = {
             "worker_count": 1,
             "reason": "not_run",
@@ -261,6 +271,25 @@ class BoundedParallelStageRunner:
     def last_run_snapshot(self) -> Mapping[str, Any]:
         with self._snapshot_lock:
             return dict(self._last_run_snapshot)
+
+    @property
+    def cumulative_snapshot(self) -> Mapping[str, Any]:
+        """Return process-lifetime image-stage counters without job identity."""
+
+        with self._snapshot_lock:
+            return {
+                "admission_tier_counts": dict(self._admission_tier_counts),
+                "serial_fallback_reason_counts": dict(
+                    self._serial_fallback_reason_counts
+                ),
+                "batch_count": self._batch_count,
+                "batch_duration_ms_total": self._batch_duration_ms_total,
+                "normalized_work_pixels_total": (
+                    self._normalized_work_pixels_total
+                ),
+                "child_peak_rss_bytes": self._child_peak_rss_bytes,
+                "cancellation_count": self._cancellation_count,
+            }
 
     def run(
         self,
@@ -317,6 +346,7 @@ class BoundedParallelStageRunner:
             {"max_workers": 3},
             context,
         )
+        self._record_admission(lease)
         if lease.parallel:
             return _ParallelStageAdmission(self, lease)
         lease.release()
@@ -365,6 +395,7 @@ class BoundedParallelStageRunner:
                 {"max_workers": 3},
                 context,
             )
+            self._record_admission(lease)
         else:
             if not parallel_only or not isinstance(admission, _ParallelStageAdmission):
                 raise TypeError("lease must be a parallel image admission")
@@ -377,11 +408,15 @@ class BoundedParallelStageRunner:
         status = "running"
         cancellation_count = 0
         child_peak_rss_bytes = None
+        artifacts: tuple[PreparedImageArtifact, ...] = ()
+        work_started = False
         try:
             with _ParallelLeaseGuard(self, lease, admission):
                 if parallel_only and not lease.parallel:
                     status = "not_run"
                     return None
+
+                work_started = True
 
                 primitive_payload = workset.primitive_payload()
                 # Validate parent-owned inputs only after parallel admission.
@@ -433,6 +468,21 @@ class BoundedParallelStageRunner:
             duration_ms = max(0.0, (time.monotonic() - started) * 1000.0)
             with self._snapshot_lock:
                 self._cancellation_count += cancellation_count
+                if work_started:
+                    self._batch_count += 1
+                    self._batch_duration_ms_total += duration_ms
+                    self._normalized_work_pixels_total += sum(
+                        artifact.width * artifact.height
+                        for artifact in artifacts
+                    )
+                    if child_peak_rss_bytes is not None:
+                        if self._child_peak_rss_bytes is None:
+                            self._child_peak_rss_bytes = child_peak_rss_bytes
+                        else:
+                            self._child_peak_rss_bytes = max(
+                                self._child_peak_rss_bytes,
+                                child_peak_rss_bytes,
+                            )
                 self._last_run_snapshot = {
                     "worker_count": effective_worker_count,
                     "reason": run_reason,
@@ -445,6 +495,20 @@ class BoundedParallelStageRunner:
                     "cancellation_count": self._cancellation_count,
                     "child_peak_rss_bytes": child_peak_rss_bytes,
                 }
+
+    def _record_admission(self, lease: ResourceLease) -> None:
+        tier = {
+            1: "serial",
+            2: "2_worker",
+            3: "3_worker",
+        }.get(lease.worker_count, "serial")
+        with self._snapshot_lock:
+            self._admission_tier_counts[tier] += 1
+            if tier == "serial" and lease.reason:
+                reason = str(lease.reason)
+                self._serial_fallback_reason_counts[reason] = (
+                    self._serial_fallback_reason_counts.get(reason, 0) + 1
+                )
 
     def _run_parallel(
         self,

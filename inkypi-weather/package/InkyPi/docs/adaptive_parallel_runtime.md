@@ -13,6 +13,15 @@ independent worker. Multiple refresh consumers are intentionally forbidden:
 the queue coalescing and instance revision checks rely on a single ordered
 commit stream.
 
+One scheduler turn may fast-follow at most one additional reviewed inline
+DATA job (two jobs total by default, configurable only within a 1-4 bound).
+The follow-up is selected only after the prior job has reached a successful
+terminal state, so its runtime receipt has already made that exact identity no
+longer due. Queue work is probed first on every loop: manual/display work
+preempts and cancels the remaining follow-up budget, and a retained Ian request
+prevents the budget from being armed. Heavy, live, presentation, theme, and
+unknown-plugin commands never enter this fast-follow path.
+
 ## Public runtime seams
 
 ```python
@@ -190,6 +199,9 @@ Authorized detailed health exposes only aggregate parallel state:
 - effective CPU quota and last admission memory/swap sample;
 - last batch latency and worker/thread count;
 - child peak RSS, cancellation count, and active child count;
+- process-lifetime admission counts by tier, serial fallback counts by a fixed
+  reason whitelist, batch count and total latency, normalized output pixels,
+  cumulative child RSS peak, and cumulative cancellations;
 - cgroup CPU throttling counters when available.
 
 No descriptor path, plugin instance UUID, source URL, settings, provider error

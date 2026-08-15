@@ -564,6 +564,30 @@ class HealthCollector:
         throttling = value.get("cpu_throttling", {})
         if not isinstance(throttling, Mapping):
             throttling = {}
+        cumulative = value.get("cumulative", {})
+        if not isinstance(cumulative, Mapping):
+            cumulative = {}
+        admission_counts = cumulative.get("admission_tier_counts", {})
+        if not isinstance(admission_counts, Mapping):
+            admission_counts = {}
+        fallback_counts = cumulative.get(
+            "serial_fallback_reason_counts",
+            {},
+        )
+        if not isinstance(fallback_counts, Mapping):
+            fallback_counts = {}
+        sanitized_fallback_counts = {
+            known_reason: nonnegative_int(fallback_counts.get(known_reason))
+            for known_reason in sorted(known_reasons)
+            if nonnegative_int(fallback_counts.get(known_reason)) > 0
+        }
+        cumulative_child_peak_rss = cumulative.get("child_peak_rss_bytes")
+        if (
+            isinstance(cumulative_child_peak_rss, bool)
+            or not isinstance(cumulative_child_peak_rss, int)
+            or cumulative_child_peak_rss < 0
+        ):
+            cumulative_child_peak_rss = None
 
         def optional_int(item):
             if isinstance(item, bool) or not isinstance(item, int) or item < 0:
@@ -595,6 +619,29 @@ class HealthCollector:
                 value.get("active_child_count"),
                 maximum=1,
             ),
+            "cumulative": {
+                "admission_tier_counts": {
+                    "serial": nonnegative_int(admission_counts.get("serial")),
+                    "2_worker": nonnegative_int(
+                        admission_counts.get("2_worker")
+                    ),
+                    "3_worker": nonnegative_int(
+                        admission_counts.get("3_worker")
+                    ),
+                },
+                "serial_fallback_reason_counts": sanitized_fallback_counts,
+                "batch_count": nonnegative_int(cumulative.get("batch_count")),
+                "batch_duration_ms_total": optional_float(
+                    cumulative.get("batch_duration_ms_total")
+                ) or 0.0,
+                "normalized_work_pixels_total": nonnegative_int(
+                    cumulative.get("normalized_work_pixels_total")
+                ),
+                "child_peak_rss_bytes": cumulative_child_peak_rss,
+                "cancellation_count": nonnegative_int(
+                    cumulative.get("cancellation_count")
+                ),
+            },
             "cpu_throttling": {
                 "nr_periods": optional_int(throttling.get("nr_periods")),
                 "nr_throttled": optional_int(throttling.get("nr_throttled")),

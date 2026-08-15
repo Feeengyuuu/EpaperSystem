@@ -33,6 +33,7 @@ from plugins.daily_art.presentation_bank import (
     _validate_fallback_directory_chain,
     read_bounded_json_object as _secure_read_json,
 )
+from runtime.plugin_deferral import PluginRefreshDeferred
 from utils.atomic_file import atomic_write_bytes, fsync_directory
 from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
 
@@ -91,6 +92,17 @@ _PIXIV_HOST_SUFFIXES = ("pixiv.net", "pximg.net")
 
 class PixivPresentationBankCold(RuntimeError):
     """The instance has not completed its first background data refresh yet."""
+
+
+class PixivPresentationBankCapacityDeferred(PluginRefreshDeferred):
+    """The protected bank cannot safely admit another media object yet."""
+
+    def __init__(self):
+        super().__init__(
+            reason="pixiv_bank_protected_capacity",
+            phase="bank_admission",
+            minimum_seconds=30 * 60,
+        )
 
 
 def settings_key(settings):
@@ -264,6 +276,23 @@ class PixivPresentationBank:
         self.media = _PixivMediaStore(self.media_dir)
         self._loaded_document = None
 
+    @classmethod
+    def require_shared_refill_admission(cls, state_path, media_dir):
+        """Check shared protected capacity without creating an instance profile."""
+
+        probe_hash = "0" * 64
+        probe = cls(
+            state_path,
+            media_dir,
+            fingerprint=probe_hash,
+            base_fingerprint=probe_hash,
+            profile_settings_key=probe_hash,
+            instance_uuid="pixiv-admission-probe",
+            date_key="",
+        )
+        probe._loaded_document = probe._migrate_document(probe._read_document())
+        probe.require_refill_admission({})
+
     def load_for_data(self):
         document = self._migrate_document(self._read_document())
         profiles = document["profiles"]
@@ -367,6 +396,11 @@ class PixivPresentationBank:
                     seen.add(key)
                     result.append(record)
         return result
+
+    def require_refill_admission(self, profile):
+        """Defer provider work when no possible new media object can fit."""
+
+        self._plan_media_budget(profile, None, 1)
 
     def ingest(
         self,
@@ -651,6 +685,8 @@ class PixivPresentationBank:
         return image
 
     def cleanup(self, document, profile, *, before_save=None):
+        self._loaded_document = document
+        self._require_protected_media_budget()
         protected = self._protected_record_keys(profile)
         retained = []
         for record in profile["records"]:
@@ -678,7 +714,11 @@ class PixivPresentationBank:
 
     def _plan_media_budget(self, profile, incoming_key, incoming_bytes):
         self.media_dir.mkdir(parents=True, exist_ok=True)
-        target = self.media.path(incoming_key, suffix=".png")
+        target = (
+            self.media.path(incoming_key, suffix=".png")
+            if incoming_key is not None
+            else None
+        )
         protected_media_keys = self._all_protected_media_keys(profile)
         files = []
         for path in self.media_dir.glob("*.png"):
@@ -710,7 +750,7 @@ class PixivPresentationBank:
             count -= 1
             total -= size
         if count + 1 > MEDIA_MAX_FILES or total + incoming_bytes > MEDIA_MAX_BYTES:
-            raise RuntimeError("Pixiv protected media fills the bank budget")
+            raise PixivPresentationBankCapacityDeferred()
         return victims
 
     def _commit_media_transaction(
@@ -833,6 +873,7 @@ class PixivPresentationBank:
         self._loaded_document = document
         if not self.media_dir.exists():
             return
+        self._require_protected_media_budget()
         protected = self._all_protected_media_keys()
         files = []
         for path in self.media_dir.glob("*.png"):
@@ -867,7 +908,31 @@ class PixivPresentationBank:
             count -= 1
             total -= size
         if count > MEDIA_MAX_FILES or total > MEDIA_MAX_BYTES:
-            raise RuntimeError("Pixiv protected media fills the bank budget")
+            raise PixivPresentationBankCapacityDeferred()
+
+    def _require_protected_media_budget(self):
+        if not self.media_dir.exists():
+            return
+        protected = self._all_protected_media_keys()
+        count = 0
+        total = 0
+        for path in self.media_dir.glob("*.png"):
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise RuntimeError("Pixiv media could not be inspected safely") from exc
+            if (
+                path.stem not in protected
+                or _is_link_like(info)
+                or not stat.S_ISREG(info.st_mode)
+            ):
+                continue
+            count += 1
+            total += info.st_size
+        if count > MEDIA_MAX_FILES or total > MEDIA_MAX_BYTES:
+            raise PixivPresentationBankCapacityDeferred()
 
     def _unlink_unprotected_media(self, path, *, expected_size=None):
         try:

@@ -19,6 +19,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 INSTALLED_UPDATER = Path("/usr/local/sbin/inkypi-update")
 HEADLESS_CAPABILITY_ID = "headless_mode_v1"
 HEADLESS_CAPABILITY_ATTESTATION = "headless-mode-v1-capability.json"
+GPU_MEMORY_CANARY_STATE_NAME = "gpu-memory-canary-v1.json"
 LIB_CANDIDATES = (
     SCRIPT_DIR / "lib",
     Path("/usr/local/lib/inkypi-update"),
@@ -395,6 +396,15 @@ def _recover_existing(layout, coordinator, *, defer_service_starts=False):
     return journal
 
 
+def _ensure_gpu_memory_canary_inactive(layout) -> None:
+    """Fail closed before any update can change the canary-bound identity."""
+
+    if os.path.lexists(layout.state_root / GPU_MEMORY_CANARY_STATE_NAME):
+        raise RuntimeError(
+            "GPU memory canary is active; complete rollback before updating"
+        )
+
+
 def _recovery_update_lock(path):
     """Use blocking lock handoff, with an N-1 constructor compatibility seam."""
 
@@ -476,6 +486,74 @@ def run_finalize_recovery(*, layout=None, coordinator=None) -> int:
     return 0
 
 
+def run_gpu_memory_canary(action, *, layout=None) -> int:
+    """Run one fixed GPU-memory tryboot action through the installed updater."""
+
+    if action not in {"start", "status", "rollback"}:
+        raise RuntimeError("unsupported GPU memory canary action")
+    canary_layout = layout or ReleaseLayout(
+        Path("/opt/inkypi"),
+        Path("/var/lib/inkypi/update"),
+    )
+    for path in (
+        canary_layout.install_root,
+        canary_layout.releases_dir,
+        canary_layout.state_root,
+        canary_layout.history_dir,
+    ):
+        if path.is_symlink() or not path.is_dir():
+            raise RuntimeError("installed layout is unavailable for GPU canary")
+    if canary_layout.lock_path.is_symlink():
+        raise RuntimeError("installed layout is unavailable for GPU canary")
+    with UpdateLock(canary_layout.lock_path):
+        if os.path.lexists(canary_layout.journal_path):
+            raise RuntimeError("GPU memory canary refuses an active update journal")
+        attestation = _headless_capability_attested(canary_layout)
+        if attestation is None:
+            raise RuntimeError(
+                "installed updater does not match a committed current release"
+            )
+        if (
+            not isinstance(attestation, dict)
+            or set(attestation)
+            != {
+                "schema_version",
+                "capability",
+                "release_id",
+                "updater_sha256",
+            }
+            or type(attestation.get("schema_version")) is not int
+            or attestation["schema_version"] != 1
+            or attestation.get("capability") != HEADLESS_CAPABILITY_ID
+            or not isinstance(attestation.get("release_id"), str)
+            or not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}",
+                attestation["release_id"],
+            )
+            or not isinstance(attestation.get("updater_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", attestation["updater_sha256"])
+        ):
+            raise RuntimeError("installed updater attestation is invalid")
+        canary = _new_gpu_memory_canary(
+            identity={
+                "release_id": attestation["release_id"],
+                "updater_sha256": attestation["updater_sha256"],
+            },
+            state_root=canary_layout.state_root,
+        )
+        result = getattr(canary, action)()
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
+def _new_gpu_memory_canary(**kwargs):
+    # Keep the import lazy so a newly installed updater can still recover an
+    # N-1 journal before it requires the matching capability library.
+    from host_migration import TrustedGpuMemoryCanary
+
+    return TrustedGpuMemoryCanary(**kwargs)
+
+
 def _record_pre_switch_failure(layout, coordinator, journal, error):
     try:
         journal.update_metadata(
@@ -533,6 +611,7 @@ def run_update(args) -> int:
     # recover-only process waits for this lock after we leave the context.
     with UpdateLock(layout.lock_path):
         _recover_existing(layout, coordinator)
+        _ensure_gpu_memory_canary_inactive(layout)
         updater_capabilities = _bootstrap_attested_headless_capability(layout, args)
         durable_attestation = (
             _read_capability_attestation(layout) if updater_capabilities else None
@@ -544,6 +623,7 @@ def run_update(args) -> int:
     with UpdateLock(layout.lock_path):
         if layout.journal_path.exists():
             raise RuntimeError("update state changed during capability bootstrap; retry")
+        _ensure_gpu_memory_canary_inactive(layout)
         if updater_capabilities and (
             durable_attestation is None
             or _headless_capability_attested(layout) != durable_attestation
@@ -608,6 +688,11 @@ def run_update(args) -> int:
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--gpu-memory-canary",
+        choices=("start", "status", "rollback"),
+        help="run the fixed Zero 2 W gpu_mem=32 tryboot canary",
+    )
+    parser.add_argument(
         "--recover-only",
         action="store_true",
         help="recover the existing journal without accepting update inputs",
@@ -670,6 +755,23 @@ def main(argv=None) -> int:
         if os.name != "nt" and os.geteuid() != 0:
             parser.error("inkypi-update must run as root")
         return run_finalize_recovery()
+    if "--gpu-memory-canary" in raw_arguments:
+        if (
+            len(raw_arguments) != 2
+            or raw_arguments[0] != "--gpu-memory-canary"
+            or raw_arguments[1] not in {"start", "status", "rollback"}
+        ):
+            parser.error(
+                "--gpu-memory-canary requires exactly one of: "
+                "start, status, rollback"
+            )
+        if os.name != "nt" and os.geteuid() != 0:
+            parser.error("inkypi-update must run as root")
+        try:
+            return run_gpu_memory_canary(raw_arguments[1])
+        except Exception as error:
+            print(f"GPU memory canary failed: {error}", file=sys.stderr)
+            return 1
     args = parser.parse_args(raw_arguments)
     if os.name != "nt" and os.geteuid() != 0:
         parser.error("inkypi-update must run as root")

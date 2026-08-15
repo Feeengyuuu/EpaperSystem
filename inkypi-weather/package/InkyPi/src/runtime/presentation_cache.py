@@ -115,6 +115,18 @@ def _request_id(value) -> str:
     return value
 
 
+def _protected_request_id_set(values) -> frozenset[str]:
+    if isinstance(values, (str, bytes)) or not isinstance(
+        values,
+        (tuple, list, set, frozenset),
+    ):
+        raise TypeError("protected_request_ids must be a finite collection")
+    protected = frozenset(_request_id(value) for value in values)
+    if len(protected) > MAX_PRESENTATION_FILES_PER_INSTANCE:
+        raise ValueError("protected_request_ids exceeds the per-instance file cap")
+    return protected
+
+
 def prepared_presentation_path(
     cache_root,
     instance_uuid,
@@ -167,10 +179,17 @@ class PresentationCache:
     def __init__(self, cache_root):
         self.cache_root = Path(os.path.abspath(os.fspath(cache_root)))
 
-    def save(self, candidate: PreparedPresentationCandidate, image) -> None:
+    def save(
+        self,
+        candidate: PreparedPresentationCandidate,
+        image,
+        *,
+        protected_request_ids=(),
+    ) -> None:
         path = self._candidate_path(candidate)
         if path is None:
             raise ValueError("candidate does not identify its authoritative cache path")
+        protected = _protected_request_id_set(protected_request_ids)
         payload = self._encode_safe_png(image)
         self._ensure_safe_root()
 
@@ -179,6 +198,13 @@ class PresentationCache:
             if root is None:
                 raise OSError(errno.ELOOP, "presentation cache root is unsafe", str(self.cache_root))
             try:
+                if protected:
+                    self._reclaim_superseded_instance_files(
+                        path,
+                        candidate,
+                        protected,
+                        root,
+                    )
                 self._check_capacity(path, candidate, len(payload), root)
                 self._atomic_publish(path, payload, root)
             finally:
@@ -433,6 +459,82 @@ class PresentationCache:
             raise PresentationCacheCapacityError("prepared PNG global file cap reached")
         if prospective_bytes > MAX_PRESENTATION_TOTAL_BYTES:
             raise PresentationCacheCapacityError("prepared PNG global byte cap reached")
+
+    def _reclaim_superseded_instance_files(
+        self,
+        path: Path,
+        candidate: PreparedPresentationCandidate,
+        protected_request_ids: frozenset[str],
+        root: _BoundRoot,
+    ) -> None:
+        """Make room for a newer request without widening any cache budget.
+
+        The runtime has one current presentation request per instance.  At
+        this single-writer seam, older artifacts absent from the caller's
+        explicit protected-request allowlist are superseded; the canonical
+        display cache and receipt metadata live elsewhere.
+        """
+
+        try:
+            names = os.listdir(root.fd if root.fd is not None else self.cache_root)
+        except (OSError, TypeError, NotImplementedError) as error:
+            raise OSError("could not inspect presentation cache capacity") from error
+
+        expected_hash = hashlib.sha256(candidate.instance_uuid.encode("utf-8")).hexdigest()
+        matching = []
+        instance_files = 0
+        target_exists = False
+        for name in names:
+            try:
+                item_stat = self._stat_child(name, root)
+            except OSError as error:
+                raise OSError("presentation cache contains an unreadable child") from error
+            if not self._safe_regular_file_stat(item_stat):
+                raise OSError(errno.ELOOP, "presentation cache contains an unsafe child", name)
+            identity = parse_prepared_presentation_filename(name)
+            if identity is None or identity.uuid_hash != expected_hash:
+                continue
+            instance_files += 1
+            if name == path.name:
+                target_exists = True
+                continue
+            if identity.request_id in protected_request_ids:
+                continue
+            current_revision = (
+                identity.structural_generation == candidate.structural_generation
+                and identity.settings_revision == candidate.settings_revision
+            )
+            matching.append(
+                (
+                    1 if current_revision else 0,
+                    item_stat.st_mtime_ns,
+                    name,
+                    identity,
+                )
+            )
+
+        required_slots = max(
+            0,
+            instance_files
+            + (0 if target_exists else 1)
+            - MAX_PRESENTATION_FILES_PER_INSTANCE,
+        )
+        if required_slots <= 0:
+            return
+        if not self._root_still_matches(root):
+            raise OSError(errno.ELOOP, "presentation cache root identity changed")
+        for _revision_priority, _mtime_ns, name, identity in sorted(matching)[
+            :required_slots
+        ]:
+            superseded = PreparedPresentationCandidate(
+                instance_uuid=candidate.instance_uuid,
+                structural_generation=identity.structural_generation,
+                settings_revision=identity.settings_revision,
+                theme_mode=identity.theme_mode,
+                request_id=identity.request_id,
+                cache_path=str(self.cache_root / name),
+            )
+            self.remove(superseded)
 
     def _stat_child(self, name: str, root: _BoundRoot):
         if root.fd is not None:

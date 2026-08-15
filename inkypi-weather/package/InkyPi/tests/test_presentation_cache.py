@@ -603,6 +603,129 @@ def test_save_refuses_a_third_file_for_one_instance(tmp_path):
     assert not Path(candidates[2].cache_path).exists()
 
 
+def test_save_reclaims_only_unprotected_superseded_file_at_instance_cap(
+    tmp_path,
+):
+    root = tmp_path / ".refresh-presentation"
+    cache = PresentationCache(root)
+    receipt = _candidate(root, request_id=f"{1:032x}")
+    orphan = _candidate(root, request_id=f"{2:032x}")
+    current = _candidate(root, request_id=f"{3:032x}")
+    other_instance = _candidate(
+        root,
+        instance_uuid=OTHER_INSTANCE_UUID,
+        request_id=OTHER_REQUEST_ID,
+    )
+    with Image.new("RGB", (8, 8), "red") as image:
+        cache.save(receipt, image)
+        cache.save(orphan, image)
+        cache.save(other_instance, image)
+
+        orphan_mtime = Path(orphan.cache_path).stat().st_mtime_ns
+        os.utime(
+            receipt.cache_path,
+            ns=(orphan_mtime - 2_000_000_000, orphan_mtime - 2_000_000_000),
+        )
+        cache.save(
+            current,
+            image,
+            protected_request_ids=(receipt.request_id, current.request_id),
+        )
+
+    assert cache.validate(receipt) is True
+    assert not Path(orphan.cache_path).exists()
+    assert cache.validate(current) is True
+    assert cache.validate(other_instance) is True
+
+
+def test_save_refuses_recovery_when_all_existing_instance_files_are_protected(
+    tmp_path,
+):
+    root = tmp_path / ".refresh-presentation"
+    cache = PresentationCache(root)
+    protected = [_candidate(root, request_id=f"{index:032x}") for index in (1, 2)]
+    current = _candidate(root, request_id=f"{3:032x}")
+    with Image.new("RGB", (8, 8), "red") as image:
+        for candidate in protected:
+            cache.save(candidate, image)
+        with pytest.raises(OSError, match="prepared PNG instance file cap reached"):
+            cache.save(
+                current,
+                image,
+                protected_request_ids=tuple(
+                    candidate.request_id for candidate in protected
+                ),
+            )
+
+    assert all(Path(candidate.cache_path).exists() for candidate in protected)
+    assert not Path(current.cache_path).exists()
+
+
+def test_save_recovery_reuses_exact_current_target_and_reclaims_only_orphan(
+    tmp_path,
+):
+    root = tmp_path / ".refresh-presentation"
+    cache = PresentationCache(root)
+    receipt = _candidate(root, request_id=f"{1:032x}")
+    orphan = _candidate(root, request_id=f"{2:032x}")
+    current = _candidate(root, request_id=f"{3:032x}")
+    with Image.new("RGB", (8, 8), "red") as image:
+        cache.save(receipt, image)
+        cache.save(orphan, image)
+    _write_png(current.cache_path, color="red")
+
+    with Image.new("RGB", (8, 8), "blue") as image:
+        cache.save(
+            current,
+            image,
+            protected_request_ids=(receipt.request_id, current.request_id),
+        )
+
+    assert cache.validate(receipt) is True
+    assert not Path(orphan.cache_path).exists()
+    loaded = cache.load_image(current)
+    assert loaded is not None
+    try:
+        assert loaded.getpixel((0, 0)) == (0, 0, 255)
+    finally:
+        loaded.close()
+
+
+def test_save_recovery_fails_closed_on_unsafe_child_without_removing_protected(
+    tmp_path,
+    monkeypatch,
+):
+    root = tmp_path / ".refresh-presentation"
+    cache = PresentationCache(root)
+    protected = _candidate(root, request_id=f"{1:032x}")
+    unsafe = _candidate(root, request_id=f"{2:032x}")
+    current = _candidate(root, request_id=f"{3:032x}")
+    with Image.new("RGB", (8, 8), "red") as image:
+        cache.save(protected, image)
+        cache.save(unsafe, image)
+    real_lstat = presentation_cache_module.os.lstat
+
+    def report_unsafe_child(target):
+        result = real_lstat(target)
+        if Path(target) == Path(unsafe.cache_path):
+            return _clone_stat(result, st_mode=stat.S_IFLNK | 0o777)
+        return result
+
+    monkeypatch.setattr(presentation_cache_module.os, "lstat", report_unsafe_child)
+
+    with Image.new("RGB", (8, 8), "blue") as image:
+        with pytest.raises(OSError):
+            cache.save(
+                current,
+                image,
+                protected_request_ids=(protected.request_id, current.request_id),
+            )
+
+    assert cache.validate(protected) is True
+    assert Path(unsafe.cache_path).exists()
+    assert not Path(current.cache_path).exists()
+
+
 def test_save_refuses_global_file_and_byte_budget_overflow(
     tmp_path,
     monkeypatch,
