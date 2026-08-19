@@ -6,6 +6,33 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260815-001] best_practice
+
+**Logged**: 2026-08-15T12:30:25-07:00
+**Priority**: high
+**Status**: pending
+**Area**: infra
+
+### Summary
+When an EpaperPod loses mDNS, SSH, and HTTP together, treat the router's device record as last-known lease evidence only; after a reconnect, rediscover and cryptographically verify the new endpoint before interpreting runtime health.
+
+### Details
+A healthy historical snapshot cannot establish current health once the device is unreachable. In this incident, the hostname stopped resolving and the prior IPv4 and IPv6 addresses were unreachable. The router identified the exact device by its previously verified MAC and reported an offline status and last-activity timestamp, which established only the last known lease and disconnection boundary. After the user reconnected the device, that same router record remained stale at the old address. Two days and several reconnect attempts later, its last-activity timestamp was still unchanged and the expired record no longer included an IPv4 address. A fresh subnet service scan, InkyPi health probes, Bonjour discovery, IPv4/IPv6 neighbor lookup, and the MAC-derived IPv6 link-local probe still found no candidate. This distinguishes a stale router inventory row from evidence of current association: when even last activity does not advance, power/early boot or Wi-Fi association belongs above DHCP and application failures in the hypothesis order. `ColoredEpaperFrame.local` is not an out-of-band locator: it is the Linux hostname advertised by Avahi after the OS has started, Wi-Fi has associated, and the IP stack is available. Likewise, InkyPi's Wi-Fi reconnect watchdog starts inside the application process and can only reconnect an existing NetworkManager profile; neither mechanism can make a board that has not reached Linux or joined the LAN discoverable. On Raspberry Pi Zero, Zero W, and Zero 2 W, the single green LED is normally lit whenever the board has power and briefly goes off for storage activity; a steady green LED alone therefore proves power only, not a successful or failed boot. Treat it as early-boot evidence only when a close observation shows no storage flicker and the configured LED mode is known. OOM, watchdog, service, plugin, and GPU-canary causes remain unknown until a candidate passes pinned host-key validation. An e-paper panel retaining its last image also does not prove that the host is running.
+
+### Suggested Action
+After pinned hostname and address probes fail, query only the target record from the router's read-only device list and treat it as a last-known lease. After any physical or network reconnect, scan only the current subnet for expected SSH and InkyPi HTTP services, query mDNS/Bonjour, and accept a candidate only when its key matches the pinned ED25519 identity through the configured HostKeyAlias. Never promote a stale DHCP entry or an unverified responding host to the target. Do not describe `.local`, subnet scanning, or the in-process reconnect watchdog as self-location that works before network association; explicitly state their Linux, WLAN, IP, and service prerequisites. Compare the target's last-activity field across reconnect attempts: if it never advances, ask for a close 10-30 second recording of the Zero 2 W's single green LED and distinguish brief storage-activity dips or a repeating flash code from simple steady power indication. Do not call steady green a boot failure by itself. Investigate power stability, boot media, and 2.4 GHz association before DHCP or application services. If no verified candidate appears after a full boot window, stop scanning and ask for the newly observed IP or local console evidence. Keep all runtime metrics UNKNOWN until connectivity is verified, then inspect previous and current boot journals before assigning a cause.
+
+### Metadata
+- Source: user_feedback
+- Related Files: tools/epaperpod-deploy-zip.ps1
+- Tags: epaperpod, runtime-audit, mdns, avahi, router, offline, last-activity, wifi-watchdog, zero-2-w, led, evidence-boundary
+- Pattern-Key: runtime_audit.router_last_activity_fallback
+- Recurrence-Count: 2
+- First-Seen: 2026-08-15
+- Last-Seen: 2026-08-17
+
+---
+
 ## [LRN-20260814-002] best_practice
 
 **Logged**: 2026-08-14T22:44:37-07:00
@@ -67,6 +94,34 @@ Use `PluginRefreshDeferred` for retryable plugin-local constraints, validate `re
 - **Resolved**: 2026-08-14T22:41:54-07:00
 - **Commit/PR**: local worktree
 - **Notes**: Added the bounded typed contract, Pixiv 30-minute capacity deferral, scheduler handling, cold-instance shared-capacity preflight, and focused red-green regression coverage.
+
+---
+
+## [LRN-20260814-003] best_practice
+
+**Logged**: 2026-08-14T00:01:26-07:00
+**Priority**: high
+**Status**: pending
+**Area**: infra
+
+### Summary
+Runtime audits must compare configured intervals with observed DATA cadence and scheduler utilization, not treat interval settings or successful cache displays as freshness proof.
+
+### Details
+Magazine and Comic both retained a 300-second setting and equal display-slot counts, yet their recent DATA refresh median was about 26 minutes. Weather continued to render a valid cached image while its last fresh DATA success was more than 38 hours old. Pairing every `Refresh command started` with its matching `refresh-command-finally` also showed the single consumer was busy only about 40% of the sampled window, while Pixiv and prepared-cache retry storms consumed disproportionate turns. This separates scheduler/admission drift from CPU saturation and provider failure.
+
+### Suggested Action
+For each audited instance, report configured interval, latest successful DATA age, observed recent DATA interval, cache-display activity, and request terminal state. Pair serial start/final logs to calculate consumer utilization and attribute busy time by plugin before recommending more workers; first suppress retry storms and improve bounded fair admission for lightweight due work.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/src/runtime/ian.py
+- Tags: runtime-audit, freshness, cadence, scheduler-utilization, retry-storm
+- See Also: LRN-20260719-003
+- Pattern-Key: runtime_audit.observed_cadence_and_utilization
+- Recurrence-Count: 1
+- First-Seen: 2026-08-14
+- Last-Seen: 2026-08-14
 
 ---
 
