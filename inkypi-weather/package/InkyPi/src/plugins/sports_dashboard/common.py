@@ -305,6 +305,7 @@ LOCAL_PGA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_tour_title_wo
 LOCAL_MLB_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_title_wordmark.png")
 LOCAL_WNBA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_title_wordmark.png")
 LOCAL_CLUB_LEAGUE_ICON_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "club_leagues")
+LOCAL_CLUB_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "club_teams")
 LOCAL_CLUB_LEAGUE_ICON_PATHS = {
     "PL": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "pl.png"),
     "PD": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "pd.png"),
@@ -3518,15 +3519,29 @@ class SportsDashboardCommonMixin:
 
     @staticmethod
     def _local_team_logo_candidates(team_code):
+        return SportsDashboard._local_team_logo_candidates_in(
+            team_code,
+            (
+                LOCAL_TEAM_LOGO_DIR,
+                LOCAL_LPL_TEAM_LOGO_DIR,
+                LOCAL_LCK_TEAM_LOGO_DIR,
+            ),
+        )
+
+    @staticmethod
+    def _local_club_team_logo_candidates(team_code):
+        return SportsDashboard._local_team_logo_candidates_in(
+            team_code,
+            (LOCAL_CLUB_TEAM_LOGO_DIR,),
+        )
+
+    @staticmethod
+    def _local_team_logo_candidates_in(team_code, directories):
         code = "".join(ch for ch in str(team_code or "").strip().lower() if ch.isalnum() or ch in {"_", "-"})
         if not code:
             return []
         candidates = []
-        for directory in (
-            LOCAL_TEAM_LOGO_DIR,
-            LOCAL_LPL_TEAM_LOGO_DIR,
-            LOCAL_LCK_TEAM_LOGO_DIR,
-        ):
+        for directory in directories:
             candidates.extend(
                 os.path.join(directory, f"{code}{extension}")
                 for extension in (".png", ".webp", ".jpg", ".jpeg")
@@ -3535,7 +3550,21 @@ class SportsDashboardCommonMixin:
 
     @staticmethod
     def _load_local_team_logo(team_code, size):
-        for path in SportsDashboard._local_team_logo_candidates(team_code):
+        return SportsDashboard._load_local_team_logo_candidates(
+            SportsDashboard._local_team_logo_candidates(team_code),
+            size,
+        )
+
+    @staticmethod
+    def _load_local_club_team_logo(team_code, size):
+        return SportsDashboard._load_local_team_logo_candidates(
+            SportsDashboard._local_club_team_logo_candidates(team_code),
+            size,
+        )
+
+    @staticmethod
+    def _load_local_team_logo_candidates(candidates, size):
+        for path in candidates:
             cache_key = (path, size)
             if cache_key in TEAM_LOGO_CACHE:
                 return TEAM_LOGO_CACHE[cache_key]
@@ -3553,7 +3582,7 @@ class SportsDashboardCommonMixin:
                 TEAM_LOGO_CACHE[cache_key] = logo
                 return logo
             except Exception as exc:
-                logger.warning("Failed to load local LPL team logo %s: %s", path, exc)
+                logger.warning("Failed to load local team logo %s: %s", path, exc)
                 TEAM_LOGO_CACHE[cache_key] = None
         return None
 

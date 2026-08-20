@@ -1,0 +1,16 @@
+{
+  "version": "2026-08-20-current-club-v1",
+  "teams": {
+    "LM": {
+      "filename": "fl1-2697.png",
+      "local_logo_key": "fl1-2697",
+      "club": "Le Mans FC",
+      "normalized_names": ["lemans"],
+      "source_url": "https://www.lemansfc.fr/vue/img/interface/logo_lemansfc.png",
+      "source_page": "https://www.lemansfc.fr/",
+      "source_sha256": "db5b4d618ba99205e8656124b60c520abe3098c5f45447c6ffa7491d434d6f3c",
+      "output_sha256": "db5b4d618ba99205e8656124b60c520abe3098c5f45447c6ffa7491d434d6f3c"
+    }
+  },
+  "license_note": "Club crest sourced from the official Le Mans FC website; trademarks remain property of their owners."
+}

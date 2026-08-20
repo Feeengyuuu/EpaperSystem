@@ -51,6 +51,9 @@ CLUB_FOOTBALL_LEAGUES = {
     "SA": {"name": "意甲", "short_name": "意甲", "espn_slug": "ita.1", "api_football_id": 135},
     "FL1": {"name": "法甲", "short_name": "法甲", "espn_slug": "fra.1", "api_football_id": 61},
 }
+CLUB_FOOTBALL_LOCAL_TEAM_LOGO_KEYS = {
+    ("FL1", "name:lemans"): "fl1-2697",
+}
 
 
 class _ClubFootballRotationSeed(int):
@@ -1548,6 +1551,22 @@ class ClubFootballMixin:
         return localized[:2] or "TBD"
 
     @staticmethod
+    def _club_football_local_team_logo_key(event, side):
+        league_code = str((event or {}).get("league_code") or "").upper()
+        aliases = list((event or {}).get(f"{side}_aliases") or [])
+        aliases.append((event or {}).get(f"{side}_name"))
+        for alias in aliases:
+            normalized = SportsDashboard._club_team_match_key(alias)
+            if not normalized:
+                continue
+            key = CLUB_FOOTBALL_LOCAL_TEAM_LOGO_KEYS.get(
+                (league_code, f"name:{normalized}")
+            )
+            if key:
+                return key
+        return ""
+
+    @staticmethod
     def _club_football_worldcup_event(event, timezone_info):
         if not isinstance(event, Mapping):
             return None
@@ -1620,6 +1639,12 @@ class ClubFootballMixin:
             "team_b_source_name": str(event.get("away_name") or ""),
             "team_a_logo": str(event.get("home_logo_url") or "").strip(),
             "team_b_logo": str(event.get("away_logo_url") or "").strip(),
+            "team_a_local_logo_key": (
+                SportsDashboard._club_football_local_team_logo_key(event, "home")
+            ),
+            "team_b_local_logo_key": (
+                SportsDashboard._club_football_local_team_logo_key(event, "away")
+            ),
             "team_a_flag": str(event.get("home_logo_url") or "").strip(),
             "team_b_flag": str(event.get("away_logo_url") or "").strip(),
             "wins_a": home_score,

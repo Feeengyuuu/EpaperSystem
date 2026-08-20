@@ -2,6 +2,7 @@ from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 
 SportsDashboard = None
+LOCAL_CLUB_TEAM_LOGO_SCHEME = "local-club://"
 
 
 class WorldCupRenderMixin:
@@ -22,6 +23,15 @@ class WorldCupRenderMixin:
         event = event if isinstance(event, Mapping) else {}
         side_key = "a" if side == "a" else "b"
         if SportsDashboard._worldcup_team_asset_kind(presentation) == "logo":
+            if str((presentation or {}).get("competition") or "").lower() == "club":
+                local_key = str(
+                    event.get(f"team_{side_key}_local_logo_key") or ""
+                ).strip().lower()
+                if local_key and all(
+                    character.isalnum() or character in {"-", "_"}
+                    for character in local_key
+                ):
+                    return f"{LOCAL_CLUB_TEAM_LOGO_SCHEME}{local_key}"
             return str(
                 event.get(f"team_{side_key}_logo")
                 or event.get(f"team_{side_key}_logo_url")
@@ -66,6 +76,17 @@ class WorldCupRenderMixin:
                     _safe_exception_text(exc),
                 )
         if logo is not None:
+            if (
+                local_path
+                and self._club_icon_contrast_ratio(logo, COLORS["paper"]) < 3.0
+            ):
+                alpha = logo.getchannel("A")
+                logo = Image.new(
+                    "RGBA",
+                    logo.size,
+                    (*COLORS["text"], 255),
+                )
+                logo.putalpha(alpha)
             logo = ImageOps.contain(
                 logo.convert("RGBA"),
                 (size, size),
@@ -1880,11 +1901,21 @@ class WorldCupRenderMixin:
             presentation=presentation,
         )
         if self._worldcup_team_asset_kind(presentation) == "logo":
-            try:
-                flag = self._load_team_logo_for_render(
-                    flag_url,
+            flag = None
+            local_key = ""
+            if str(flag_url or "").startswith(LOCAL_CLUB_TEAM_LOGO_SCHEME):
+                local_key = str(flag_url)[len(LOCAL_CLUB_TEAM_LOGO_SCHEME):]
+            if local_key:
+                flag = self._load_local_club_team_logo(
+                    local_key,
                     min(display_w, display_h),
                 )
+            try:
+                if flag is None and not local_key:
+                    flag = self._load_team_logo_for_render(
+                        flag_url,
+                        min(display_w, display_h),
+                    )
             except Exception as exc:
                 logger.debug(
                     "Failed to load competition team logo %s: %s",

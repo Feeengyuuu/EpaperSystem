@@ -19885,6 +19885,149 @@ def test_club_timeline_header_prefers_packaged_league_icon(monkeypatch):
     assert any(color == (31, 77, 201) for _count, color in header_colors)
 
 
+@pytest.mark.parametrize(
+    ("league_code", "title"),
+    [
+        ("PL", "Premier League"),
+        ("PD", "La Liga"),
+        ("BL1", "Bundesliga"),
+        ("SA", "Serie A"),
+        ("FL1", "Ligue 1"),
+    ],
+)
+@pytest.mark.parametrize("palette", [DAY_COLORS, DEEP_NIGHT_COLORS])
+def test_club_timeline_header_logos_are_visible_on_both_palettes(
+    league_code,
+    title,
+    palette,
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    selected = {
+        "live": [],
+        "upcoming": [],
+        "recent": [],
+        "main": None,
+        "visible_matches": 4,
+        "presentation": {
+            "competition": "club",
+            "title": title,
+            "league_code": league_code,
+            "league_logo_url": "",
+            "team_asset_kind": "logo",
+            "show_worldcup_banner": False,
+            "show_five_leagues_filler": False,
+            "show_worldcup_pitch_art": False,
+        },
+    }
+    token = _ACTIVE_COLORS.set(palette)
+    try:
+        image = plugin._render_worldcup_api_panel(
+            (536, 240), selected, "CLUB LIVE", now.isoformat(), 4, now
+        )
+    finally:
+        _ACTIVE_COLORS.reset(token)
+
+    header_logo = image.crop((14, 7, 44, 37)).convert("RGB")
+    header_pixels = header_logo.load()
+
+    def relative_luminance(pixel):
+        normalized = []
+        for channel in pixel:
+            value = channel / 255
+            normalized.append(
+                value / 12.92
+                if value <= 0.04045
+                else ((value + 0.055) / 1.055) ** 2.4
+            )
+        return (
+            0.2126 * normalized[0]
+            + 0.7152 * normalized[1]
+            + 0.0722 * normalized[2]
+        )
+
+    background_luminance = relative_luminance(palette["paper"])
+    visible_pixels = sum(
+        (
+            max(relative_luminance(header_pixels[x, y]), background_luminance)
+            + 0.05
+        )
+        / (
+            min(relative_luminance(header_pixels[x, y]), background_luminance)
+            + 0.05
+        )
+        >= 3.0
+        for y in range(header_logo.height)
+        for x in range(header_logo.width)
+    )
+
+    assert visible_pixels >= 40, league_code
+
+
+def test_club_timeline_lemans_row_uses_packaged_logo_when_remote_is_missing():
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    club_event = {
+        "event_id": "FL1-le-mans-reims",
+        "league_code": "FL1",
+        "league_name": "Ligue 1",
+        "start_utc": now + timedelta(days=1),
+        "status": "SCHEDULED",
+        "home_name": "Le Mans FC",
+        "away_name": "Reims",
+        "home_name_zh": "Le Mans",
+        "away_name_zh": "Reims",
+        "home_aliases": ["Le Mans FC"],
+        "away_aliases": ["Reims"],
+        "home_team_id": "football-data-le-mans",
+        "away_team_id": "3243",
+        "home_logo_url": "https://upload.wikimedia.org/wikipedia/en/5/57/Le_Mans_FC_logo.svg",
+        "away_logo_url": "",
+        "home_score": None,
+        "away_score": None,
+        "matchday": 1,
+    }
+    upcoming = SportsDashboard._club_football_worldcup_event(
+        club_event,
+        timezone.utc,
+    )
+    selected = {
+        "live": [],
+        "upcoming": [upcoming],
+        "recent": [],
+        "main": None,
+        "visible_matches": 4,
+        "presentation": {
+            "competition": "club",
+            "title": "Ligue 1",
+            "league_code": "FL1",
+            "league_logo_url": "",
+            "team_asset_kind": "logo",
+            "show_worldcup_banner": False,
+            "show_five_leagues_filler": False,
+            "show_worldcup_pitch_art": False,
+        },
+    }
+    token = _ACTIVE_COLORS.set(DAY_COLORS)
+    try:
+        image = plugin._render_worldcup_api_panel(
+            (536, 240), selected, "CLUB LIVE", now.isoformat(), 4, now
+        )
+    finally:
+        _ACTIVE_COLORS.reset(token)
+
+    le_mans_logo = image.crop((281, 89, 311, 106)).convert("RGB")
+    le_mans_pixels = le_mans_logo.load()
+    red_pixels = sum(
+        red >= 140 and red >= green * 1.35 and red >= blue * 1.35
+        for y in range(le_mans_logo.height)
+        for x in range(le_mans_logo.width)
+        for red, green, blue in (le_mans_pixels[x, y],)
+    )
+
+    assert red_pixels >= 8
+
+
 def test_club_timeline_live_status_does_not_repeat_the_main_score(monkeypatch):
     plugin = _plugin()
     now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
