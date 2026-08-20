@@ -31,7 +31,10 @@ DEFAULT_CHART_URL = "https://www.the-numbers.com/weekend-box-office-chart"
 MAOYAN_DASHBOARD_URL = "https://piaofang.maoyan.com/dashboard-ajax"
 MAOYAN_MOVIE_DETAIL_URL = "https://m.maoyan.com/ajax/detailmovie"
 MAOYAN_SOURCE_LABEL = "\u732b\u773c\u4e13\u4e1a\u7248"
+ZGDYPW_REALTIME_URL = "https://zgdypf.zgdypw.cn/box"
+ZGDYPW_SOURCE_LABEL = "\u4e2d\u56fd\u7535\u5f71\u7968\u623f"
 CHINA_SOURCE_MODES = {"maoyan", "maoyan_china", "china", "china_mainland", "mainland_china"}
+MAINLAND_MOVIE_SOURCES = {"maoyan", "zgdypw_realtime"}
 TMDB_SEARCH_URL = "https://api.themoviedb.org/3/search/movie"
 TMDB_MOVIE_URL = "https://api.themoviedb.org/3/movie/{movie_id}"
 TMDB_ALT_TITLES_URL = "https://api.themoviedb.org/3/movie/{movie_id}/alternative_titles"
@@ -278,11 +281,40 @@ class BoxOfficeTopMovies(BasePlugin):
         chart_url = settings.get("chartUrl") or DEFAULT_CHART_URL
 
         if source_mode in CHINA_SOURCE_MODES:
-            data = self._fetch_json(settings.get("maoyanUrl") or MAOYAN_DASHBOARD_URL, MAOYAN_HEADERS)
-            movies = self._parse_maoyan_dashboard(data)
-            if movies:
-                return movies[:items_count], MAOYAN_SOURCE_LABEL
-            raise RuntimeError("Maoyan mainland China chart did not produce movies.")
+            errors = []
+            try:
+                data = self._fetch_json(
+                    settings.get("maoyanUrl") or MAOYAN_DASHBOARD_URL,
+                    MAOYAN_HEADERS,
+                )
+                movies = self._parse_maoyan_dashboard(data)
+                if movies:
+                    return movies[:items_count], MAOYAN_SOURCE_LABEL
+                errors.append("Maoyan mainland China chart did not produce movies.")
+            except Exception as exc:
+                errors.append(f"Maoyan realtime chart: {exc}")
+                logger.warning(
+                    "Maoyan realtime chart failed; trying official China box office: %s",
+                    exc,
+                )
+
+            try:
+                mainland_realtime_url = (
+                    settings.get("mainlandRealtimeUrl") or ZGDYPW_REALTIME_URL
+                )
+                html_text = self._fetch_text(mainland_realtime_url)
+                movies = self._parse_zgdypw_realtime(
+                    html_text,
+                    mainland_realtime_url,
+                )
+                if movies:
+                    return movies[:items_count], ZGDYPW_SOURCE_LABEL
+                errors.append("Official China realtime chart did not produce movies.")
+            except Exception as exc:
+                errors.append(f"official China realtime chart: {exc}")
+                logger.warning("Official China realtime chart failed: %s", exc)
+
+            raise RuntimeError("; ".join(errors))
 
         if source_mode in {"the_numbers", "auto"}:
             html_text = self._fetch_text(chart_url)
@@ -354,6 +386,58 @@ class BoxOfficeTopMovies(BasePlugin):
                 },
             ))
 
+        return movies
+
+    def _parse_zgdypw_realtime(
+        self,
+        html_text,
+        chart_url=ZGDYPW_REALTIME_URL,
+    ):
+        match = re.search(
+            r"window\.__INITIAL_STATE__\s*=\s*(\{.*?\})\s*;</script>",
+            html_text or "",
+            flags=re.DOTALL,
+        )
+        if not match:
+            return []
+        try:
+            state = json.loads(match.group(1))
+        except (TypeError, ValueError):
+            return []
+
+        rows = ((state or {}).get("boxData") or {}).get("list") or []
+        movies = []
+        seen_titles = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            title = _clean_text(row.get("name"))
+            if not title:
+                continue
+            normalized_title = _normalize_title(title)
+            if normalized_title in seen_titles:
+                continue
+            seen_titles.add(normalized_title)
+
+            release_days = row.get("releaseDays")
+            weeks = str(release_days) if isinstance(release_days, int) and release_days > 0 else ""
+            movies.append(BoxOfficeMovie(
+                rank=len(movies) + 1,
+                title=title,
+                weekend_gross=_clean_text(row.get("salesRateDesc")),
+                total_gross=_clean_text(row.get("sumSalesDesc")),
+                weeks=weeks,
+                chart_url=chart_url,
+                localized_language="zh-CN",
+                extra={
+                    "source": "zgdypw_realtime",
+                    "zgdypw_movie_code": str(row.get("code") or "").strip(),
+                    "official_chinese_title": title,
+                    "today_box_wan": _clean_text(row.get("salesInWanDesc")),
+                    "box_rate": _clean_text(row.get("salesRateDesc")),
+                    "show_count_rate": _clean_text(row.get("sessionRateDesc")),
+                },
+            ))
         return movies
 
     def _days_from_release_info(self, value):
@@ -476,7 +560,7 @@ class BoxOfficeTopMovies(BasePlugin):
             logger.info("TMDb credentials not configured; using Maoyan posters or placeholders.")
             return
 
-        has_china_movies = any(self._is_maoyan_movie(movie) for movie in movies)
+        has_china_movies = any(self._is_mainland_movie(movie) for movie in movies)
         default_language = "zh-CN" if has_china_movies else "en-US"
         default_region = "CN" if has_china_movies else "US"
         language = (settings.get("tmdbLanguage") or default_language).strip() or default_language
@@ -515,7 +599,7 @@ class BoxOfficeTopMovies(BasePlugin):
                     movie.release_year = str(item.get("release_date") or "")[:4]
                 if not movie.overview:
                     movie.overview = item.get("overview") or ""
-                if self._is_maoyan_movie(movie):
+                if self._is_mainland_movie(movie):
                     if not movie.extra.get("english_title"):
                         english_title = self._tmdb_english_title(movie, item, session, auth)
                         if english_title:
@@ -578,7 +662,7 @@ class BoxOfficeTopMovies(BasePlugin):
     def _select_tmdb_search_result(self, movie, results):
         if not results:
             return None
-        if not self._is_maoyan_movie(movie):
+        if not self._is_mainland_movie(movie):
             return results[0]
 
         official_title = str(
@@ -1169,7 +1253,10 @@ class BoxOfficeTopMovies(BasePlugin):
 
     def _is_china_chart(self, settings, source_label):
         source_mode = str((settings or {}).get("sourceMode") or "").strip().lower()
-        return source_mode in CHINA_SOURCE_MODES or str(source_label or "") == MAOYAN_SOURCE_LABEL
+        return source_mode in CHINA_SOURCE_MODES or str(source_label or "") in {
+            MAOYAN_SOURCE_LABEL,
+            ZGDYPW_SOURCE_LABEL,
+        }
 
     def _palette(self, settings):
         theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)
@@ -1225,6 +1312,7 @@ class BoxOfficeTopMovies(BasePlugin):
             settings.get("sourceMode") or "the_numbers",
             settings.get("chartUrl") or DEFAULT_CHART_URL,
             settings.get("maoyanUrl") or MAOYAN_DASHBOARD_URL,
+            settings.get("mainlandRealtimeUrl") or ZGDYPW_REALTIME_URL,
             settings.get("tmdbLanguage") or "en-US",
             settings.get("tmdbRegion") or "US",
             settings.get("localizedLanguage") or "zh-CN",
@@ -1428,7 +1516,7 @@ class BoxOfficeTopMovies(BasePlugin):
         return bounded_int(value, default, minimum, maximum)
 
     def _context_movie_name(self, movie):
-        if self._is_maoyan_movie(movie):
+        if self._is_mainland_movie(movie):
             chinese_title = movie.extra.get("official_chinese_title") or movie.title
             english_title = movie.extra.get("english_title") or ""
             return f"{chinese_title} ({english_title})" if english_title else chinese_title
@@ -1437,7 +1525,7 @@ class BoxOfficeTopMovies(BasePlugin):
         return movie.title
 
     def _display_titles(self, movie):
-        if self._is_maoyan_movie(movie):
+        if self._is_mainland_movie(movie):
             return movie.extra.get("official_chinese_title") or movie.title, movie.extra.get("english_title") or ""
         if movie.localized_title:
             return movie.localized_title, movie.title
@@ -1445,6 +1533,9 @@ class BoxOfficeTopMovies(BasePlugin):
 
     def _is_maoyan_movie(self, movie):
         return str((movie.extra or {}).get("source") or "").lower() == "maoyan"
+
+    def _is_mainland_movie(self, movie):
+        return str((movie.extra or {}).get("source") or "").lower() in MAINLAND_MOVIE_SOURCES
 
 
 def _clean_text(value):

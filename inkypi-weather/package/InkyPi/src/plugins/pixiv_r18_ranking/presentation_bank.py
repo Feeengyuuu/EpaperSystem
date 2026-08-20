@@ -290,11 +290,15 @@ class PixivPresentationBank:
             instance_uuid="pixiv-admission-probe",
             date_key="",
         )
-        probe._loaded_document = probe._migrate_document(probe._read_document())
+        document = probe._migrate_document(probe._read_document())
+        probe._loaded_document = document
+        probe._compact_obsolete_profiles(document)
         probe.require_refill_admission({})
 
     def load_for_data(self):
         document = self._migrate_document(self._read_document())
+        self._loaded_document = document
+        self._compact_obsolete_profiles(document)
         profiles = document["profiles"]
         profile = profiles.get(self.fingerprint)
         if not isinstance(profile, dict):
@@ -310,6 +314,32 @@ class PixivPresentationBank:
         profile["last_used_at"] = _utc_now()
         self._loaded_document = document
         return document, profile
+
+    def _compact_obsolete_profiles(self, document):
+        """Persistently retire profiles before their media becomes evictable."""
+
+        profiles = document["profiles"]
+        mapped = set(document["instance_profiles"].values())
+        active = document.get("active_fingerprint")
+        changed = False
+        if isinstance(active, str) and active in profiles:
+            mapped.add(active)
+        elif active is not None:
+            document["active_fingerprint"] = None
+            changed = True
+        if self.fingerprint in profiles:
+            mapped.add(self.fingerprint)
+        obsolete = [
+            fingerprint
+            for fingerprint, profile in profiles.items()
+            if fingerprint not in mapped
+            and not isinstance(profile.get("pending_selection"), dict)
+        ]
+        for fingerprint in obsolete:
+            profiles.pop(fingerprint, None)
+        if obsolete or changed:
+            self.save(document)
+        return bool(obsolete or changed)
 
     def load_warm(self):
         document = self._migrate_document(self._read_document())
@@ -1172,6 +1202,9 @@ class PixivPresentationBank:
         mappings = document["instance_profiles"]
         while len(profiles) + required_slots > MAX_PROFILES:
             protected = set(mappings.values()) | {self.fingerprint}
+            active_fingerprint = document.get("active_fingerprint")
+            if isinstance(active_fingerprint, str) and active_fingerprint in profiles:
+                protected.add(active_fingerprint)
             protected.update(
                 fingerprint
                 for fingerprint, profile in profiles.items()

@@ -6,6 +6,71 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260820-001] best_practice
+
+**Logged**: 2026-08-20T14:47:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+When a public provider moves its data API behind browser-bound request attestation, prefer an authoritative public SSR data fallback over reproducing the browser security layer on a constrained Pi.
+
+### Details
+The mainland box-office instance stopped advancing after Maoyan's legacy dashboard endpoint began returning HTTP 403. The current browser endpoint also requires dynamic H5Guard headers, so copying its visible query signature into a normal HTTP client is insufficient and would add brittle browser overhead. The China Film Data Information Network's public realtime page exposes the same chart class in `window.__INITIAL_STATE__`; parsing that structured state provides a lightweight authoritative fallback while keeping Maoyan first when it is available. Provider identity must flow through exact-title TMDb validation, display copy, provenance, and the cache key. If both live sources fail, the existing stale result must remain non-promotable through `inkypi_skip_cache` rather than replacing the last successful image.
+
+### Suggested Action
+Test live provider contracts with real response shapes, keep a same-domain authoritative fallback where possible, include every effective source URL in cache identity, and prove success through promoted refresh time, non-degraded logs, instance/current-image hash equality, and a hardware display job.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/box_office_top_movies/box_office_top_movies.py, inkypi-weather/package/InkyPi/tests/test_box_office_top_movies.py
+- Tags: box-office, maoyan, h5guard, zgdypw, ssr, fallback, cache, stale-data, live-proof
+- Pattern-Key: provider.browser_attestation_prefers_authoritative_ssr_fallback
+- Recurrence-Count: 1
+- First-Seen: 2026-08-20
+- Last-Seen: 2026-08-20
+
+### Resolution
+- **Resolved**: 2026-08-20T14:47:00-07:00
+- **Commit/PR**: local worktree
+- **Notes**: Deployed `deploy-20260820T212402Z-boxoffice-abf7afe3ca41`; official fallback promoted a fresh image and the displayed image matched the instance PNG byte-for-byte.
+
+---
+
+## [LRN-20260820-002] best_practice
+
+**Logged**: 2026-08-20T15:39:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Prepared-media protection must follow durable reachability, and obsolete state must be committed before its media becomes evictable.
+
+### Details
+Pixiv creates a date-specific presentation profile each day. Protecting every historical profile's `current_selection` indefinitely filled the 64-file shared media budget after roughly three weeks, so every DATA refresh was deferred in `bank_admission` before the provider could run. The safe repair is not to make old media immediately unprotected in a mutable candidate document: if a later state commit fails, the persisted last-good profile could still reference media already deleted by that candidate. Instead, first identify profiles that are not mapped, not the valid active profile, not the current operation target, and have no pending receipt; atomically persist their removal; only then allow their now-orphaned media to become transaction victims. Profile-capacity eviction must also protect a valid `active_fingerprint`, and pending profiles retain both current and pending selections.
+
+### Suggested Action
+For every prepared-bank cleanup, define reachability from mapped instances, active state, the current target, and pending receipts. Persist reachability changes before media deletion, add failure-injection tests that keep the prior committed selection loadable, and test both media and profile limits. Separately implement Pixiv instance-deletion cleanup so removed instance mappings cannot remain protected forever.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/pixiv_r18_ranking/presentation_bank.py, inkypi-weather/package/InkyPi/tests/test_pixiv_r18_ranking.py
+- Tags: pixiv, prepared-bank, capacity, reachability, atomic-state, last-good, pending-receipt, live-proof
+- See Also: LRN-20260814-001, LRN-20260814-002, LRN-20260719-004
+- Pattern-Key: prepared_bank.persist_reachability_before_media_eviction
+- Recurrence-Count: 1
+- First-Seen: 2026-08-20
+- Last-Seen: 2026-08-20
+
+### Resolution
+- **Resolved**: 2026-08-20T15:39:00-07:00
+- **Commit/PR**: local worktree
+- **Notes**: Deployed `deploy-20260820T221627Z-dailyporn-7eb0f27e3e01`; the provider completed, latest refresh advanced from August 13, and the instance image matched the physical display image byte-for-byte.
+
+---
+
 ## [LRN-20260815-001] best_practice
 
 **Logged**: 2026-08-15T12:30:25-07:00
@@ -1475,9 +1540,9 @@ Test helpers against the public status vocabulary, authenticate through the HTTP
 - Related Files: inkypi-weather/package/InkyPi/src/blueprints/plugin.py, inkypi-weather/package/InkyPi/src/security, tools/live_all_instances_acceptance.py, inkypi-weather/package/InkyPi/tests/test_live_all_instances_acceptance.py
 - Tags: acceptance, public-api, csrf, credentials, ownership, redaction
 - Pattern-Key: acceptance.public_api_status_vocabulary
-- Recurrence-Count: 2
+- Recurrence-Count: 3
 - First-Seen: 2026-07-12
-- Last-Seen: 2026-07-22
+- Last-Seen: 2026-08-20
 
 ---
 

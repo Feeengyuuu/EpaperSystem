@@ -1,4 +1,5 @@
 import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -424,6 +425,71 @@ def test_maoyan_tmdb_fallback_rejects_inexact_old_movie(monkeypatch):
     assert "english_title" not in movie.extra
 
 
+def test_official_china_chart_tmdb_fallback_requires_exact_title(monkeypatch):
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def get(self, url, params=None, headers=None, timeout=None):
+            if url.endswith("/search/movie"):
+                return FakeResponse({
+                    "results": [
+                        {
+                            "id": 406889,
+                            "title": "\u7b11\u516b\u4ed9",
+                            "original_title": "\u7b11\u516b\u4ed9",
+                            "release_date": "1993-11-18",
+                            "poster_path": "/wrong-old-baxian.jpg",
+                        },
+                        {
+                            "id": 999,
+                            "title": "\u516b\u4ed9\uff01",
+                            "original_title": "\u516b\u4ed9\uff01",
+                            "release_date": "2026-07-18",
+                            "poster_path": "/correct-baxian.jpg",
+                        },
+                    ]
+                })
+            if url.endswith("/movie/999/images"):
+                return FakeResponse({"posters": []})
+            if url.endswith("/movie/999"):
+                return FakeResponse({
+                    "title": "All Wishes Come True!",
+                    "original_title": "\u516b\u4ed9\uff01",
+                })
+            raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(box_office_module, "get_http_session", lambda: FakeSession())
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    movie = BoxOfficeMovie(
+        rank=1,
+        title="\u516b\u4ed9\uff01",
+        extra={
+            "source": "zgdypw_realtime",
+            "zgdypw_movie_code": "00100071026",
+            "official_chinese_title": "\u516b\u4ed9\uff01",
+        },
+    )
+
+    plugin._enrich_with_tmdb(
+        [movie],
+        {"sourceMode": "maoyan_china", "tmdbLanguage": "zh-CN", "tmdbRegion": "CN"},
+        EnvDeviceConfig({"TMDB_API_KEY": "device-key"}),
+    )
+
+    assert movie.tmdb_id == 999
+    assert movie.poster_url.endswith("/correct-baxian.jpg")
+    assert movie.extra["english_title"] == "All Wishes Come True!"
+    assert plugin._display_titles(movie) == ("\u516b\u4ed9\uff01", "All Wishes Come True!")
+
+
 def test_maoyan_china_source_fetches_mainland_chart(monkeypatch):
     class FakeResponse:
         encoding = None
@@ -450,6 +516,81 @@ def test_maoyan_china_source_fetches_mainland_chart(monkeypatch):
     assert [movie.title for movie in movies] == ["\u73a9\u5177\u603b\u52a8\u54585"]
 
 
+def test_maoyan_china_falls_back_to_official_realtime_chart(monkeypatch):
+    official_html = "<script>window.__INITIAL_STATE__ = " + json.dumps(
+        {
+            "dateRange": {"endDate": "2026-08-21"},
+            "boxData": {
+                "list": [
+                    {
+                        "code": "05101180026",
+                        "name": "\u5965\u5fb7\u8d5b",
+                        "releaseDays": 8,
+                        "salesInWanDesc": "996.72",
+                        "salesRateDesc": "29.52%",
+                        "sessionRateDesc": "9.13%",
+                        "sumSalesDesc": "3.69\u4ebf",
+                    },
+                    {
+                        "code": "00102860026",
+                        "name": "\u6b22\u8fce\u6765\u9f99\u9910\u9986",
+                        "releaseDays": 11,
+                        "salesInWanDesc": "949.88",
+                        "salesRateDesc": "28.13%",
+                        "sessionRateDesc": "35.47%",
+                        "sumSalesDesc": "12.89\u4ebf",
+                    },
+                ]
+            },
+        },
+        ensure_ascii=False,
+    ) + ";</script>"
+    requested_urls = []
+
+    class FakeResponse:
+        encoding = None
+
+        def __init__(self, *, text="", error=None):
+            self.text = text
+            self.error = error
+
+        def raise_for_status(self):
+            if self.error:
+                raise self.error
+
+        def json(self):
+            raise AssertionError("The official realtime chart is HTML, not JSON")
+
+    class FakeSession:
+        def get(self, url, timeout=None, headers=None):
+            requested_urls.append(url)
+            if url == box_office_module.MAOYAN_DASHBOARD_URL:
+                return FakeResponse(error=RuntimeError("403 Forbidden"))
+            if url == "https://zgdypf.zgdypw.cn/box":
+                return FakeResponse(text=official_html)
+            raise AssertionError(f"Unexpected URL: {url}")
+
+    monkeypatch.setattr(box_office_module, "get_http_session", lambda: FakeSession())
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+
+    movies, source_label = plugin._load_movies(
+        {"sourceMode": "maoyan_china"},
+        2,
+    )
+
+    assert source_label == "\u4e2d\u56fd\u7535\u5f71\u7968\u623f"
+    assert requested_urls == [
+        box_office_module.MAOYAN_DASHBOARD_URL,
+        "https://zgdypf.zgdypw.cn/box",
+    ]
+    assert [movie.title for movie in movies] == ["\u5965\u5fb7\u8d5b", "\u6b22\u8fce\u6765\u9f99\u9910\u9986"]
+    assert [movie.weekend_gross for movie in movies] == ["29.52%", "28.13%"]
+    assert [movie.total_gross for movie in movies] == ["3.69\u4ebf", "12.89\u4ebf"]
+    assert movies[0].weeks == "8"
+    assert movies[0].extra["source"] == "zgdypw_realtime"
+    assert movies[0].extra["zgdypw_movie_code"] == "05101180026"
+
+
 def test_china_chart_copy_uses_simplified_chinese_labels():
     plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
 
@@ -459,6 +600,54 @@ def test_china_chart_copy_uses_simplified_chinese_labels():
     assert copy["subtitle"] == "\u5b9e\u65f6\u699c TOP 5"
     assert copy["primary_metric_label"] == "\u4eca\u65e5\u5360\u6bd4"
     assert copy["total_prefix"] == "\u7d2f\u8ba1"
+
+
+def test_official_china_source_label_stays_mainland_without_settings():
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    movie = BoxOfficeMovie(
+        rank=1,
+        title="\u5965\u5fb7\u8d5b",
+        extra={"source": "zgdypw_realtime"},
+    )
+
+    assert plugin._is_china_chart({}, "\u4e2d\u56fd\u7535\u5f71\u7968\u623f") is True
+    assert plugin._context_summary("\u4e2d\u56fd\u7535\u5f71\u7968\u623f", [movie]).startswith(
+        "\u4e2d\u56fd\u5927\u9646\u7535\u5f71\u7968\u623f: "
+    )
+
+
+def test_official_realtime_custom_url_updates_cache_identity_and_provenance():
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    custom_url = "https://mirror.example/china-box-office"
+    html = "<script>window.__INITIAL_STATE__ = " + json.dumps(
+        {
+            "boxData": {
+                "list": [{
+                    "code": "05101180026",
+                    "name": "\u5965\u5fb7\u8d5b",
+                    "releaseDays": 8,
+                    "salesRateDesc": "29.52%",
+                    "sumSalesDesc": "3.69\u4ebf",
+                }]
+            }
+        },
+        ensure_ascii=False,
+    ) + ";</script>"
+
+    default_key = plugin._cache_key(
+        {"sourceMode": "maoyan_china"},
+        (800, 480),
+        5,
+    )
+    custom_key = plugin._cache_key(
+        {"sourceMode": "maoyan_china", "mainlandRealtimeUrl": custom_url},
+        (800, 480),
+        5,
+    )
+    movies = plugin._parse_zgdypw_realtime(html, custom_url)
+
+    assert custom_key != default_key
+    assert movies[0].chart_url == custom_url
 
 
 def test_china_chart_footer_credits_actual_poster_sources():

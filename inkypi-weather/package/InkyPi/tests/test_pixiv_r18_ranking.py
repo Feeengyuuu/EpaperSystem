@@ -750,7 +750,13 @@ def bank_candidate(index, *, content_rating="r18", effective_mode="daily_r18"):
     }
 
 
-def make_presentation_bank(tmp_path, *, instance_uuid="pixiv-instance", date_key="2026-07-12"):
+def make_presentation_bank(
+    tmp_path,
+    *,
+    instance_uuid="pixiv-instance",
+    date_key="2026-07-12",
+    settings_overrides=None,
+):
     from plugins.pixiv_r18_ranking.presentation_bank import (
         PixivPresentationBank,
         instance_profile_fingerprint,
@@ -758,7 +764,10 @@ def make_presentation_bank(tmp_path, *, instance_uuid="pixiv-instance", date_key
         settings_key,
     )
 
-    settings = bound_settings(instance_uuid=instance_uuid)
+    settings = bound_settings(
+        instance_uuid=instance_uuid,
+        **(settings_overrides or {}),
+    )
     base = settings_fingerprint(
         settings,
         (800, 480),
@@ -1411,6 +1420,397 @@ def test_full_same_day_bank_keeps_daily_source_pool_without_provider_or_selectio
     assert profile["current_selection"] == current
     assert profile["pending_selection"] is None
     assert profile.get("date_buckets", {}).get("2026-07-12", {}).get("seen_illust_ids", []) == []
+
+
+def test_next_day_refresh_reclaims_replaced_profile_media_at_the_bank_limit(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    settings = bound_settings(forceRefresh="true")
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    start = datetime(2026, 7, 1, 8, 0, tzinfo=timezone.utc)
+    candidate_index = 0
+
+    # A portrait presentation protects three records. Twenty-one replaced
+    # daily profiles plus the latest single-image profile fill the 64-file
+    # media budget without any genuinely active or pending cross-profile work.
+    for day_offset, count in [*((value, 3) for value in range(21)), (21, 1)]:
+        current_day = (start + timedelta(days=day_offset)).date().isoformat()
+        bank = make_presentation_bank(tmp_path, date_key=current_day)
+        document, profile = bank.load_for_data()
+        for _ in range(count):
+            candidate_index += 1
+            bank.ingest(
+                profile,
+                bank_candidate(candidate_index),
+                Image.new("RGB", (24, 42), "purple"),
+                downloaded_at=f"{current_day}T08:00:00+00:00",
+            )
+        ready = bank.ready_records(profile, prune=True)
+        bank.ensure_current(document, profile, ready, "auto_layout")
+        bank.save(document)
+
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc),
+    )
+    resolution = {
+        "requested_mode": "day_r18",
+        "effective_mode": "daily_r18",
+        "content_rating": "r18",
+        "authenticated": True,
+        "healthy_r18": True,
+        "source_status": "fresh",
+        "cookie": "session-cookie",
+        "items": [make_ranking_item(9999)],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: dict(resolution),
+    )
+    monkeypatch.setattr(plugin, "_fetch_ranking_page_with_deadline", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        plugin,
+        "_download_ranking_item_source_image",
+        lambda *_args, **_kwargs: Image.new("RGB", (240, 420), "green"),
+    )
+
+    image = plugin.generate_image(settings, DummyDeviceConfig())
+
+    assert image.size == (800, 480)
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+
+
+def test_same_day_profile_switch_back_reuses_current_selection_and_seen_state(tmp_path):
+    bank_a, document_a, profile_a, current_a = warm_bank(
+        tmp_path,
+        count=1,
+        date_key="2026-07-12",
+    )
+    bank_a.apply_trusted_origin(
+        document_a,
+        profile_a,
+        presentation_request("a" * 32),
+    )
+    seen_a = list(profile_a["date_buckets"]["2026-07-12"]["seen_illust_ids"])
+
+    bank_b = make_presentation_bank(
+        tmp_path,
+        date_key="2026-07-12",
+        settings_overrides={"fitMode": "contain"},
+    )
+    document_b, _profile_b = bank_b.load_for_data()
+    bank_b.save(document_b)
+
+    reopened_a = make_presentation_bank(tmp_path, date_key="2026-07-12")
+    _document, reopened_profile_a = reopened_a.load_for_data()
+
+    assert reopened_profile_a["current_selection"] == current_a
+    assert reopened_profile_a["date_buckets"]["2026-07-12"]["seen_illust_ids"] == seen_a
+
+
+def test_replaced_profile_awaiting_receipt_keeps_current_and_pending_media_protected(
+    tmp_path,
+    monkeypatch,
+):
+    from plugins.pixiv_r18_ranking import presentation_bank
+
+    old_bank = make_presentation_bank(tmp_path, date_key="2026-07-12")
+    document, old_profile = old_bank.load_for_data()
+    for index in (1, 2):
+        old_bank.ingest(
+            old_profile,
+            bank_candidate(index),
+            Image.new("RGB", (24, 42), "purple"),
+            downloaded_at="2026-07-12T08:00:00+00:00",
+        )
+    ready = old_bank.ready_records(old_profile, prune=True)
+    current = old_bank.ensure_current(document, old_profile, ready, "contain")
+    pending = old_bank.choose_selection(document, old_profile, ready, "contain")
+    old_bank.set_pending(
+        document,
+        old_profile,
+        presentation_request("a" * 32),
+        pending,
+    )
+    records = {record["record_key"]: record for record in old_profile["records"]}
+    protected_paths = [
+        old_bank.media.path(records[key]["media_key"], suffix=".png")
+        for key in [*current["record_keys"], *pending["record_keys"]]
+    ]
+
+    replacement = make_presentation_bank(tmp_path, date_key="2026-07-13")
+    replacement_document, _replacement_profile = replacement.load_for_data()
+    replacement.save(replacement_document)
+
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(presentation_bank, "MEDIA_MAX_FILES", 2)
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc),
+    )
+    provider_calls = []
+    resolution = {
+        "requested_mode": "day_r18",
+        "effective_mode": "daily_r18",
+        "content_rating": "r18",
+        "authenticated": True,
+        "healthy_r18": True,
+        "source_status": "fresh",
+        "cookie": "session-cookie",
+        "items": [make_ranking_item(9999)],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: provider_calls.append(True) or dict(resolution),
+    )
+    monkeypatch.setattr(plugin, "_fetch_ranking_page_with_deadline", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        plugin,
+        "_download_ranking_item_source_image",
+        lambda *_args, **_kwargs: Image.new("RGB", (240, 420), "green"),
+    )
+
+    with pytest.raises(PluginRefreshDeferred, match="pixiv_bank_protected_capacity"):
+        plugin.generate_image(
+            bound_settings(forceRefresh="true"),
+            DummyDeviceConfig(),
+        )
+
+    assert provider_calls == []
+    assert all(path.is_file() for path in protected_paths)
+
+
+def test_failed_next_day_state_commit_keeps_previous_committed_selection_loadable(
+    tmp_path,
+    monkeypatch,
+):
+    from plugins.pixiv_r18_ranking import presentation_bank
+
+    obsolete_bank = make_presentation_bank(tmp_path, date_key="2026-07-11")
+    obsolete_document, obsolete_profile = obsolete_bank.load_for_data()
+    obsolete_record = obsolete_bank.ingest(
+        obsolete_profile,
+        bank_candidate(1),
+        Image.new("RGB", (24, 42), "purple"),
+        downloaded_at="2026-07-11T08:00:00+00:00",
+    )
+    obsolete_ready = obsolete_bank.ready_records(obsolete_profile, prune=True)
+    obsolete_bank.ensure_current(
+        obsolete_document,
+        obsolete_profile,
+        obsolete_ready,
+        "contain",
+    )
+    obsolete_bank.save(obsolete_document)
+
+    previous_bank = make_presentation_bank(tmp_path, date_key="2026-07-12")
+    previous_document, previous_profile = previous_bank.load_for_data()
+    previous_record = previous_bank.ingest(
+        previous_profile,
+        bank_candidate(2),
+        Image.new("RGB", (24, 42), "blue"),
+        downloaded_at="2026-07-12T08:00:00+00:00",
+    )
+    previous_ready = previous_bank.ready_records(previous_profile, prune=True)
+    previous_current = previous_bank.ensure_current(
+        previous_document,
+        previous_profile,
+        previous_ready,
+        "contain",
+    )
+    previous_profile["source_provenance"] = {
+        "requested_mode": "day_r18",
+        "effective_mode": "daily_r18",
+        "content_rating": "r18",
+        "authenticated": True,
+        "healthy_r18": True,
+        "source_status": "fresh",
+    }
+    previous_bank.save(previous_document)
+
+    obsolete_path = obsolete_bank.media.path(
+        obsolete_record["media_key"],
+        suffix=".png",
+    )
+    previous_path = previous_bank.media.path(
+        previous_record["media_key"],
+        suffix=".png",
+    )
+    os.utime(previous_path, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(obsolete_path, ns=(2_000_000_000, 2_000_000_000))
+
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(presentation_bank, "MEDIA_MAX_FILES", 2)
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+    )
+    resolution = {
+        "requested_mode": "day_r18",
+        "effective_mode": "daily_r18",
+        "content_rating": "r18",
+        "authenticated": True,
+        "healthy_r18": True,
+        "source_status": "fresh",
+        "cookie": "session-cookie",
+        "items": [make_ranking_item(9999)],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: dict(resolution),
+    )
+    monkeypatch.setattr(plugin, "_fetch_ranking_page_with_deadline", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        plugin,
+        "_download_ranking_item_source_image",
+        lambda *_args, **_kwargs: Image.new("RGB", (240, 420), "green"),
+    )
+    monkeypatch.setattr(
+        presentation_bank,
+        "_atomic_write_json_before_commit",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("injected final state failure")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="injected final state failure"):
+        plugin.generate_image(
+            bound_settings(forceRefresh="true"),
+            DummyDeviceConfig(),
+        )
+
+    persisted = json.loads(previous_bank.state_path.read_text(encoding="utf-8"))
+    assert obsolete_bank.fingerprint not in persisted["profiles"]
+    assert not obsolete_path.exists()
+    assert persisted["instance_profiles"]["pixiv-instance"] == previous_bank.fingerprint
+    assert persisted["profiles"][previous_bank.fingerprint]["current_selection"] == previous_current
+    assert previous_path.is_file()
+    _document, reloaded_profile = previous_bank.load_warm()
+    loaded = previous_bank.selection_records(
+        reloaded_profile,
+        reloaded_profile["current_selection"],
+        load_media=True,
+    )
+    assert len(loaded) == 1
+
+
+def test_full_profile_bank_fails_closed_before_evicting_unmapped_active_selection(
+    tmp_path,
+    monkeypatch,
+):
+    from plugins.pixiv_r18_ranking import presentation_bank
+
+    active_bank = make_presentation_bank(
+        tmp_path,
+        instance_uuid="active-instance",
+        date_key="2026-07-11",
+    )
+    document, active_profile = active_bank.load_for_data()
+    active_record = active_bank.ingest(
+        active_profile,
+        bank_candidate(1),
+        Image.new("RGB", (24, 42), "purple"),
+        downloaded_at="2026-07-11T08:00:00+00:00",
+    )
+    active_ready = active_bank.ready_records(active_profile, prune=True)
+    active_current = active_bank.ensure_current(
+        document,
+        active_profile,
+        active_ready,
+        "contain",
+    )
+    document["instance_profiles"].pop("active-instance")
+    document["active_fingerprint"] = active_bank.fingerprint
+
+    saved_provenance = {
+        "requested_mode": "day_r18",
+        "effective_mode": "daily_r18",
+        "content_rating": "r18",
+        "authenticated": True,
+        "healthy_r18": True,
+        "source_status": "fresh",
+    }
+    for index in range(presentation_bank.MAX_PROFILES - 1):
+        instance_uuid = "pixiv-instance" if index == 0 else f"mapped-instance-{index}"
+        mapped_bank = make_presentation_bank(
+            tmp_path,
+            instance_uuid=instance_uuid,
+            date_key="2026-07-12",
+        )
+        mapped_profile = mapped_bank._empty_profile()
+        if instance_uuid == "pixiv-instance":
+            mapped_profile["source_provenance"] = dict(saved_provenance)
+        document["profiles"][mapped_bank.fingerprint] = mapped_profile
+        document["instance_profiles"][instance_uuid] = mapped_bank.fingerprint
+    active_bank.save(document)
+
+    active_path = active_bank.media.path(active_record["media_key"], suffix=".png")
+    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
+    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(tmp_path))
+    monkeypatch.setattr(presentation_bank, "MEDIA_MAX_FILES", 1)
+    monkeypatch.setattr(
+        plugin,
+        "_now_utc",
+        lambda: datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+    )
+    provider_calls = []
+    download_calls = []
+    resolution = {
+        **saved_provenance,
+        "cookie": "session-cookie",
+        "items": [make_ranking_item(9999)],
+    }
+    monkeypatch.setattr(
+        plugin,
+        "_resolve_ranking_with_provenance",
+        lambda *_args, **_kwargs: provider_calls.append(True) or dict(resolution),
+    )
+    monkeypatch.setattr(plugin, "_fetch_ranking_page_with_deadline", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        plugin,
+        "_download_ranking_item_source_image",
+        lambda *_args, **_kwargs: download_calls.append(True)
+        or Image.new("RGB", (240, 420), "green"),
+    )
+    monkeypatch.setattr(
+        presentation_bank,
+        "_atomic_write_json_before_commit",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("injected final state failure")
+        ),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        plugin.generate_image(
+            bound_settings(forceRefresh="true"),
+            DummyDeviceConfig(),
+        )
+
+    persisted = json.loads(active_bank.state_path.read_text(encoding="utf-8"))
+    persisted_active = persisted["profiles"][active_bank.fingerprint]
+    assert persisted["active_fingerprint"] == active_bank.fingerprint
+    assert persisted_active["current_selection"] == active_current
+    assert active_path.is_file()
+    _document, reloaded_profile = active_bank.load_for_data()
+    loaded = active_bank.selection_records(
+        reloaded_profile,
+        reloaded_profile["current_selection"],
+        load_media=True,
+    )
+    assert len(loaded) == 1
+    assert provider_calls == []
+    assert download_calls == []
+    assert str(exc_info.value) == "Pixiv profile capacity is fully active"
 
 
 def test_data_defers_before_provider_when_protected_media_blocks_bank_admission(
