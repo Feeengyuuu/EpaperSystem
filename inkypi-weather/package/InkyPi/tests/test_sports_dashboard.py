@@ -14270,6 +14270,26 @@ def test_worldcup_fresh_source_label_does_not_claim_match_is_live():
     assert "LIVE" not in label
 
 
+def test_worldcup_renderer_labels_club_timeline_sources_without_api_fallback():
+    assert SportsDashboard._worldcup_api_source_label("CLUB LIVE", None) == "CLUB DATA"
+    assert (
+        SportsDashboard._worldcup_api_source_label(
+            "CLUB LIVE",
+            "2026-08-15T17:58:00+00:00",
+            timezone.utc,
+        )
+        == "CLUB DATA 17:58"
+    )
+    assert (
+        SportsDashboard._worldcup_api_source_label("CLUB PARTIAL CACHE", None)
+        == "CLUB PARTIAL CACHE"
+    )
+    assert (
+        SportsDashboard._worldcup_api_source_label("CLUB UNAVAILABLE", None)
+        == "CLUB UNAVAILABLE"
+    )
+
+
 def test_worldcup_completed_only_selection_uses_recent_mode_and_year():
     recent = {
         "start": datetime(2022, 12, 18, 18, 0, tzinfo=timezone.utc),
@@ -18330,6 +18350,93 @@ def test_parse_club_football_data_event_never_infers_live_from_kickoff():
     assert event["matchday"] == 1
 
 
+def test_parse_club_football_data_event_inherits_payload_fetched_at():
+    fetched_at = "2026-08-15T17:58:00+00:00"
+
+    event = SportsDashboard._parse_club_football_data_events(
+        "PL",
+        _sample_club_football_data_matches(),
+        timezone.utc,
+        fetched_at=fetched_at,
+    )[0]
+
+    assert event["fetched_at"] == fetched_at
+
+
+def _seed_club_football_data_live_cache(plugin, now, age):
+    cached_match = {
+        **_sample_club_football_data_matches()[0],
+        "utcDate": (now - timedelta(minutes=20)).isoformat(),
+        "status": "IN_PLAY",
+    }
+    fetched_at = (now - age).isoformat()
+    current_path = plugin._club_football_cache_path("football_data", "PL")
+    last_good_path = plugin._club_football_last_good_cache_path(
+        "football_data", "PL"
+    )
+    plugin._club_write_cached_payload(
+        current_path,
+        last_good_path,
+        "sports-dashboard-club-football-provider-v1",
+        "PL",
+        {"matches": [cached_match]},
+        fetched_at,
+    )
+    return cached_match, fetched_at
+
+
+def test_club_football_data_live_cache_uses_short_refresh_ttl(monkeypatch, tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 15, 18, 20, tzinfo=timezone.utc)
+    cached_match, _fetched_at = _seed_club_football_data_live_cache(
+        plugin, now, timedelta(minutes=6)
+    )
+    calls = []
+
+    def fetch(path, params, api_key, settings, current):
+        calls.append((path, dict(params)))
+        return {"matches": [cached_match]}
+
+    monkeypatch.setattr(plugin, "_football_data_get_json", fetch)
+
+    _payload, source_state, refreshed_at = (
+        plugin._load_club_football_data_league_payload(
+            "PL", {}, "secret", timezone.utc, now
+        )
+    )
+
+    assert calls == [("/competitions/PL/matches", {})]
+    assert source_state == "FOOTBALL LIVE"
+    assert refreshed_at == now.isoformat()
+
+
+def test_club_football_data_live_cache_stays_fresh_for_four_minutes(
+    monkeypatch, tmp_path
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 15, 18, 20, tzinfo=timezone.utc)
+    cached_match, fetched_at = _seed_club_football_data_live_cache(
+        plugin, now, timedelta(minutes=4)
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_football_data_get_json",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("network called")),
+    )
+
+    payload, source_state, cached_at = (
+        plugin._load_club_football_data_league_payload(
+            "PL", {}, "secret", timezone.utc, now
+        )
+    )
+
+    assert payload == {"matches": [cached_match]}
+    assert source_state == "FOOTBALL CACHE"
+    assert cached_at == fetched_at
+
+
 def test_merge_club_events_matches_aliases_without_swapping_home_and_away():
     schedule = SportsDashboard._parse_club_football_data_events(
         "PL", _sample_club_football_data_matches(), timezone.utc
@@ -18633,6 +18740,259 @@ def test_select_club_football_keeps_no_schedule_rail_rows():
 
     assert [row["league_code"] for row in selected["rail"]] == list(enabled)
     assert sum(bool(row.get("no_schedule")) for row in selected["rail"]) == 4
+
+
+def test_build_club_football_event_sections_exposes_live_future_and_history():
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    enabled = tuple(sports_dashboard_module.CLUB_FOOTBALL_LEAGUES)
+    live = _club_selection_event(
+        "PL", "LIVE", now - timedelta(minutes=12), confirmed=True, suffix="live"
+    )
+    live.update(
+        {
+            "home_name_zh": "阿森纳",
+            "away_name_zh": "利物浦",
+            "home_logo_url": "https://example.test/arsenal.png",
+            "away_logo_url": "https://example.test/liverpool.png",
+            "home_score": 1,
+            "away_score": 0,
+            "display_clock": "32'",
+            "league_logo_url": "https://example.test/premier-league.png",
+        }
+    )
+    upcoming_near = _club_selection_event(
+        "PL", "SCHEDULED", now + timedelta(minutes=20), suffix="next"
+    )
+    upcoming_later = _club_selection_event(
+        "PL", "SCHEDULED", now + timedelta(hours=2), suffix="later"
+    )
+    recent_newest = _club_selection_event(
+        "PL", "FINAL", now - timedelta(minutes=30), suffix="final"
+    )
+    recent_newest.update({"home_score": 2, "away_score": 2})
+    recent_older = _club_selection_event(
+        "PL", "FINAL", now - timedelta(hours=3), suffix="older-final"
+    )
+    stale_schedule = _club_selection_event(
+        "PL", "SCHEDULED", now - timedelta(days=1), suffix="stale-schedule"
+    )
+    by_league = {
+        "PL": [
+            stale_schedule,
+            recent_older,
+            live,
+            upcoming_later,
+            recent_newest,
+            upcoming_near,
+        ],
+        "PD": [
+            _club_selection_event(
+                "PD", "SCHEDULED", now + timedelta(minutes=5), suffix="other-league"
+            )
+        ],
+    }
+    native = SportsDashboard._select_club_football_events(
+        by_league, enabled, now, 0
+    )
+
+    sections = SportsDashboard._build_club_football_event_sections(
+        by_league,
+        native,
+        enabled,
+        now,
+        timezone.utc,
+        visible_matches=4,
+        source_state="CLUB LIVE",
+    )
+
+    assert sections["main"] is sections["live"][0]
+    assert sections["main"]["event_id"] == "PL-live"
+    assert sections["main"]["team_a"] == "阿森纳"
+    assert sections["main"]["team_b"] == "利物浦"
+    assert sections["main"]["team_a_logo"] == "https://example.test/arsenal.png"
+    assert sections["main"]["wins_a"] == 1
+    assert sections["main"]["wins_b"] == 0
+    assert [event["event_id"] for event in sections["upcoming"]] == [
+        "PL-next",
+        "PL-later",
+    ]
+    assert [event["event_id"] for event in sections["recent"]] == [
+        "PL-final",
+        "PL-older-final",
+    ]
+    assert "PL-stale-schedule" not in {
+        event["event_id"]
+        for key in ("live", "upcoming", "recent")
+        for event in sections[key]
+    }
+    assert {
+        event["league_code"]
+        for key in ("live", "upcoming", "recent")
+        for event in sections[key]
+    } == {"PL"}
+    assert sections["visible_matches"] == 4
+    assert sections["presentation"]["competition"] == "club"
+    assert sections["presentation"]["title"] == "英超"
+    assert sections["presentation"]["team_asset_kind"] == "logo"
+
+
+def test_select_club_football_timeline_rotates_equal_priority_leagues_and_live_interrupts():
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    enabled = tuple(sports_dashboard_module.CLUB_FOOTBALL_LEAGUES)
+    by_league = {
+        "PL": [
+            _club_selection_event(
+                "PL", "SCHEDULED", now + timedelta(hours=1), suffix="next"
+            )
+        ],
+        "PD": [
+            _club_selection_event(
+                "PD", "SCHEDULED", now + timedelta(hours=2), suffix="next"
+            )
+        ],
+        "BL1": [
+            _club_selection_event(
+                "BL1", "SCHEDULED", now + timedelta(days=2), suffix="next"
+            )
+        ],
+        "SA": [
+            _club_selection_event(
+                "SA", "SCHEDULED", now + timedelta(days=3), suffix="next"
+            )
+        ],
+        "FL1": [
+            _club_selection_event(
+                "FL1", "SCHEDULED", now + timedelta(days=4), suffix="next"
+            )
+        ],
+    }
+
+    rotated = {
+        SportsDashboard._select_club_football_timeline_events(
+            by_league,
+            enabled,
+            now,
+            seed,
+            source_state="CLUB LIVE",
+        )["focus"]["league_code"]
+        for seed in range(5)
+    }
+
+    assert rotated == set(enabled)
+
+    by_league["SA"].append(
+        _club_selection_event(
+            "SA",
+            "LIVE",
+            now - timedelta(minutes=10),
+            confirmed=True,
+            suffix="live",
+        )
+    )
+    interrupted = {
+        SportsDashboard._select_club_football_timeline_events(
+            by_league,
+            enabled,
+            now,
+            seed,
+            source_state="CLUB LIVE",
+        )["focus"]["event_id"]
+        for seed in range(5)
+    }
+
+    assert interrupted == {"SA-live"}
+
+
+def test_club_football_timeline_does_not_promote_expired_live_confirmation():
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    stale_live = _club_selection_event(
+        "PL",
+        "LIVE",
+        now - timedelta(minutes=20),
+        confirmed=True,
+        suffix="stale-live",
+    )
+    stale_live["fetched_at"] = (now - timedelta(minutes=10)).isoformat()
+    future = _club_selection_event(
+        "PL", "SCHEDULED", now + timedelta(hours=1), suffix="next"
+    )
+    by_league = {"PL": [stale_live, future]}
+
+    native = SportsDashboard._select_club_football_timeline_events(
+        by_league,
+        ("PL",),
+        now,
+        0,
+        source_state="CLUB PARTIAL",
+    )
+    sections = SportsDashboard._build_club_football_event_sections(
+        by_league,
+        native,
+        ("PL",),
+        now,
+        timezone.utc,
+        source_state="CLUB PARTIAL",
+    )
+
+    assert native["focus"]["event_id"] == "PL-next"
+    assert sections["live"] == []
+    assert sections["main"]["event_id"] == "PL-next"
+
+
+def test_club_timeline_keeps_recent_kickoff_pending_without_claiming_live():
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    kickoff = _club_selection_event(
+        "PL", "SCHEDULED", now - timedelta(minutes=5), suffix="kickoff"
+    )
+    future = _club_selection_event(
+        "PL", "SCHEDULED", now + timedelta(hours=1), suffix="next"
+    )
+    by_league = {"PL": [kickoff, future]}
+
+    native = SportsDashboard._select_club_football_timeline_events(
+        by_league,
+        ("PL",),
+        now,
+        0,
+        source_state="CLUB LIVE",
+    )
+    sections = SportsDashboard._build_club_football_event_sections(
+        by_league,
+        native,
+        ("PL",),
+        now,
+        timezone.utc,
+        source_state="CLUB LIVE",
+    )
+
+    assert native["focus"]["event_id"] == "PL-kickoff"
+    assert sections["live"] == []
+    assert sections["main"]["event_id"] == "PL-kickoff"
+    assert sections["main"]["state"] == "TIMED"
+    assert sections["main"]["current_status_pending"] is True
+    assert SportsDashboard._worldcup_main_mode(sections, sections["main"]) == "pending"
+
+
+def test_club_live_refresh_state_ignores_expired_confirmation():
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    stale_live = _club_selection_event(
+        "PL",
+        "LIVE",
+        now - timedelta(minutes=20),
+        confirmed=True,
+        suffix="stale-live",
+    )
+    stale_live["fetched_at"] = (now - timedelta(minutes=10)).isoformat()
+    selected = {"focus": stale_live, "rail": [stale_live]}
+
+    refresh_until, active_leagues = SportsDashboard._club_football_live_activity(
+        selected,
+        now,
+        "CLUB PARTIAL",
+    )
+
+    assert refresh_until is None
+    assert active_leagues == []
 
 
 def test_club_football_live_state_extends_across_consecutive_matches(tmp_path):
@@ -19418,6 +19778,193 @@ def test_football_panel_route_preserves_exact_slot_and_neighbors(monkeypatch):
     assert club_image.crop((0, 0, 536, 240)).getpixel((535, 239)) == (10, 20, 30)
     assert club_image.crop((536, 0, 800, 480)).tobytes() == worldcup_image.crop((536, 0, 800, 480)).tobytes()
     assert club_image.crop((0, 240, 536, 480)).tobytes() == worldcup_image.crop((0, 240, 536, 480)).tobytes()
+
+
+def test_club_football_slot_uses_worldcup_timeline_renderer(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    future = _club_selection_event(
+        "PL", "SCHEDULED", now + timedelta(hours=1), suffix="next"
+    )
+    result = _club_selection_event(
+        "PL", "FINAL", now - timedelta(hours=2), suffix="result"
+    )
+    result.update({"home_score": 2, "away_score": 1})
+    captured = {}
+    monkeypatch.setattr(
+        plugin,
+        "_load_club_football_data",
+        lambda *args: (
+            {"PL": [result, future]},
+            {},
+            "CLUB LIVE",
+            now.isoformat(),
+        ),
+    )
+    monkeypatch.setattr(plugin, "_club_football_rotation_seed", lambda *_args: 0)
+    monkeypatch.setattr(
+        plugin,
+        "_attach_club_api_football_odds",
+        lambda selected, *_args: selected,
+    )
+    monkeypatch.setattr(plugin, "_write_club_football_live_state", lambda *_args: None)
+
+    def render(dimensions, events, source_state, fetched_at, visible_matches, now_arg):
+        captured.update(
+            dimensions=dimensions,
+            events=events,
+            source_state=source_state,
+            fetched_at=fetched_at,
+            visible_matches=visible_matches,
+            now=now_arg,
+        )
+        return Image.new("RGB", dimensions, (90, 90, 90))
+
+    monkeypatch.setattr(plugin, "_render_worldcup_api_panel", render)
+
+    panel, provenance, source = plugin._render_club_football_slot(
+        {"clubFootballEnabledLeagues": "PL"},
+        FakeDeviceConfig(),
+        (536, 240),
+        timezone.utc,
+        now,
+    )
+
+    assert panel.size == (536, 240)
+    assert captured["dimensions"] == (536, 240)
+    assert captured["events"]["main"]["event_id"] == "PL-next"
+    assert [event["event_id"] for event in captured["events"]["recent"]] == [
+        "PL-result"
+    ]
+    assert captured["events"]["presentation"]["competition"] == "club"
+    assert captured["visible_matches"] == 4
+    assert source == "CLUB LIVE"
+    assert provenance is SourceProvenance.LIVE
+
+
+def test_club_timeline_header_prefers_packaged_league_icon(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    local_calls = []
+
+    def load_local(path, size, **_kwargs):
+        local_calls.append((path, size))
+        return Image.new("RGBA", size, (31, 77, 201, 255))
+
+    monkeypatch.setattr(plugin, "_load_local_logo", load_local)
+    monkeypatch.setattr(
+        plugin,
+        "_load_team_logo_for_render",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("remote logo used")),
+    )
+    selected = {
+        "live": [],
+        "upcoming": [],
+        "recent": [],
+        "main": None,
+        "visible_matches": 4,
+        "presentation": {
+            "competition": "club",
+            "title": "英超",
+            "league_code": "PL",
+            "league_logo_url": "https://example.test/premier-league.png",
+            "team_asset_kind": "logo",
+            "show_worldcup_banner": False,
+            "show_five_leagues_filler": False,
+            "show_worldcup_pitch_art": False,
+        },
+    }
+
+    image = plugin._render_worldcup_api_panel(
+        (536, 240), selected, "CLUB LIVE", now.isoformat(), 4, now
+    )
+
+    assert local_calls[0][0] == sports_dashboard_module.LOCAL_CLUB_LEAGUE_ICON_PATHS["PL"]
+    header_colors = image.crop((14, 7, 44, 37)).getcolors(maxcolors=900)
+    assert header_colors is not None
+    assert any(color == (31, 77, 201) for _count, color in header_colors)
+
+
+def test_club_timeline_live_status_does_not_repeat_the_main_score(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    live = _club_selection_event(
+        "PL", "LIVE", now - timedelta(minutes=30), confirmed=True, suffix="live"
+    )
+    live.update(
+        {
+            "home_score": 2,
+            "away_score": 1,
+            "display_clock": "63'",
+            "fetched_at": now.isoformat(),
+        }
+    )
+    by_league = {"PL": [live]}
+    native = SportsDashboard._select_club_football_timeline_events(
+        by_league, ("PL",), now, 0, source_state="CLUB LIVE"
+    )
+    sections = SportsDashboard._build_club_football_event_sections(
+        by_league,
+        native,
+        ("PL",),
+        now,
+        timezone.utc,
+        source_state="CLUB LIVE",
+    )
+    fitted_text = []
+    original_fit_text = plugin._fit_text
+
+    def record_fit_text(draw, text, *args, **kwargs):
+        fitted_text.append(str(text))
+        return original_fit_text(draw, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_fit_text", record_fit_text)
+
+    plugin._render_club_football_panel(
+        (536, 240), sections, "CLUB LIVE", now.isoformat(), now
+    )
+
+    assert "ESPN 63'" in fitted_text
+    assert "ESPN 63' 2-1" not in fitted_text
+
+
+def test_club_timeline_keeps_recent_empty_state_visible(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    by_league = {
+        "PL": [
+            _club_selection_event(
+                "PL", "SCHEDULED", now + timedelta(days=index), suffix=f"next-{index}"
+            )
+            for index in range(1, 4)
+        ]
+    }
+    native = SportsDashboard._select_club_football_timeline_events(
+        by_league, ("PL",), now, 0, source_state="CLUB LIVE"
+    )
+    sections = SportsDashboard._build_club_football_event_sections(
+        by_league,
+        native,
+        ("PL",),
+        now,
+        timezone.utc,
+        source_state="CLUB LIVE",
+    )
+    rendered_text = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def record_text(draw, xy, text, *args, **kwargs):
+        rendered_text.append(str(text))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+
+    plugin._render_club_football_panel(
+        (536, 240), sections, "CLUB LIVE", now.isoformat(), now
+    )
+
+    assert "RECENT" in rendered_text
+    assert "暂无近期赛果" in rendered_text
 
 
 def test_club_football_slot_failure_renders_unavailable_not_worldcup(monkeypatch):

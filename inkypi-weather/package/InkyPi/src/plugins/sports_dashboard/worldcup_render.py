@@ -41,7 +41,22 @@ class WorldCupRenderMixin:
     ):
         logo_url = str((presentation or {}).get("league_logo_url") or "").strip()
         logo = None
-        if logo_url:
+        league_code = str((presentation or {}).get("league_code") or "").upper()
+        local_path = LOCAL_CLUB_LEAGUE_ICON_PATHS.get(league_code)
+        if local_path:
+            try:
+                logo = self._load_local_logo(
+                    local_path,
+                    (size, size),
+                    alpha_threshold=8,
+                )
+            except Exception as exc:
+                logger.debug(
+                    "Failed to load packaged competition logo %s: %s",
+                    local_path,
+                    _safe_exception_text(exc),
+                )
+        if logo is None and logo_url:
             try:
                 logo = self._load_team_logo_for_render(logo_url, size)
             except Exception as exc:
@@ -166,7 +181,15 @@ class WorldCupRenderMixin:
         main_event = selected.get("main")
         main_mode = self._worldcup_main_mode(selected, main_event)
         is_live = main_mode == "live"
-        pill_label = "LIVE" if is_live else ("RECENT" if main_mode == "recent" else "NEXT")
+        pill_label = (
+            "LIVE"
+            if is_live
+            else (
+                "RECENT"
+                if main_mode == "recent"
+                else ("CURRENT" if main_mode == "pending" else "NEXT")
+            )
+        )
         self._draw_status_pill(draw, x2 - 84, header_y + 4, pill_label, is_live)
         draw.line((x1 + 12, y1 + 48, x2 - 12, y1 + 48), fill=COLORS["border"], width=1)
 
@@ -212,7 +235,10 @@ class WorldCupRenderMixin:
         visible_matches = max(1, int(selected.get("visible_matches") or DEFAULT_WORLD_CUP_VISIBLE_MATCHES))
         upcoming_rows = [event for event in upcoming if event is not main_event]
         recent_rows = [event for event in recent if event is not main_event]
-        if recent_rows:
+        show_recent_empty_state = bool(
+            presentation and presentation.get("show_recent_empty_state")
+        )
+        if recent_rows or show_recent_empty_state:
             upcoming_max_rows = 2
             if presentation:
                 try:
@@ -261,7 +287,7 @@ class WorldCupRenderMixin:
                 upcoming_rows,
                 show_time=True,
             )
-        if recent_rows:
+        if recent_rows or show_recent_empty_state:
             recent_y = max(upcoming_used_bottom + 1, content_bottom - 53)
             if not presentation or bool(
                 presentation.get("show_worldcup_pitch_art")
@@ -547,6 +573,8 @@ class WorldCupRenderMixin:
         live = selected.get("live") or []
         upcoming = selected.get("upcoming") or []
         recent = selected.get("recent") or []
+        if main_event and bool(main_event.get("current_status_pending")):
+            return "pending"
         if main_event and any(event is main_event for event in live):
             return "live"
         if main_event and any(event is main_event for event in recent) and not upcoming:
@@ -585,6 +613,7 @@ class WorldCupRenderMixin:
     ):
         is_live = main_mode == "live"
         is_recent = main_mode == "recent"
+        is_pending = main_mode == "pending"
         if is_live:
             accent = COLORS["worldcup_live"]
         elif is_recent and event:
@@ -604,7 +633,15 @@ class WorldCupRenderMixin:
             self._draw_centered(draw, ((x1 + x2) / 2, (y1 + y2) / 2), message, message_font, COLORS["text"])
             return
 
-        tag = "NOW PLAYING" if is_live else ("RECENT RESULT" if is_recent else "NEXT MATCH")
+        tag = (
+            "NOW PLAYING"
+            if is_live
+            else (
+                "RECENT RESULT"
+                if is_recent
+                else ("KICKOFF" if is_pending else "NEXT MATCH")
+            )
+        )
         tag_w = 112 if is_recent else (104 if is_live else 88)
         tag_text, tag_font = self._fit_text(draw, tag, tag_w - 8, 11, bold=True, min_size=7)
         tag_fill = COLORS["worldcup_live"] if is_live else (COLORS["green"] if is_recent else COLORS["worldcup_tag"])
@@ -618,7 +655,20 @@ class WorldCupRenderMixin:
         stage_text, stage_font = self._fit_text(draw, stage, x2 - x1 - 34, 8, bold=True, min_size=6)
         draw.text((x1 + 18, y1 + 30), stage_text, font=stage_font, fill=COLORS["worldcup_accent"])
 
-        status_text = self._worldcup_main_status_label(event, now)
+        status_text = (
+            str(event.get("status") or "赛况待确认")
+            if is_pending
+            else self._worldcup_main_status_label(event, now)
+        )
+        if (
+            presentation
+            and presentation.get("main_status_include_score") is False
+            and (is_live or is_recent)
+        ):
+            status_text = str(event.get("status") or ("LIVE" if is_live else "FT"))
+            source = self._worldcup_status_source_label(event)
+            if source:
+                status_text = f"{source} {status_text}"
         status_text, status_font = self._fit_text(draw, status_text, x2 - x1 - 42, 16, bold=True, min_size=10)
         self._draw_centered(draw, ((x1 + x2) / 2, y1 + 41), status_text, status_font, COLORS["text"])
 
@@ -1939,8 +1989,17 @@ class WorldCupRenderMixin:
     def _worldcup_api_source_label(source_state, fetched_at, timezone_info=None):
         fetched = SportsDashboard._parse_cached_utc(fetched_at)
         source_timezone = timezone_info or ZoneInfo(DEFAULT_TIMEZONE)
-        time_text = fetched.astimezone(source_timezone).strftime("%I:%M %p").lstrip("0") if fetched else ""
         state = str(source_state or "API").upper()
+        if fetched and state.startswith("CLUB "):
+            time_text = fetched.astimezone(source_timezone).strftime("%H:%M")
+        else:
+            time_text = (
+                fetched.astimezone(source_timezone)
+                .strftime("%I:%M %p")
+                .lstrip("0")
+                if fetched
+                else ""
+            )
         csl_prefixes = {
             "CSL ESPN LIVE": "CSL ESPN DATA",
             "CSL ESPN CACHE": "CSL ESPN CACHE",
@@ -1949,7 +2008,17 @@ class WorldCupRenderMixin:
             "CSL ESPN UNAVAILABLE": "CSL ESPN UNAVAILABLE",
             "CSL ESPN NO DATA": "CSL ESPN UNAVAILABLE",
         }
-        if state in csl_prefixes:
+        club_prefixes = {
+            "CLUB LIVE": "CLUB DATA",
+            "CLUB PARTIAL": "CLUB PARTIAL",
+            "CLUB CACHE": "CLUB CACHE",
+            "CLUB PARTIAL CACHE": "CLUB PARTIAL CACHE",
+            "CLUB STALE": "CLUB STALE",
+            "CLUB UNAVAILABLE": "CLUB UNAVAILABLE",
+        }
+        if state in club_prefixes:
+            prefix = club_prefixes[state]
+        elif state in csl_prefixes:
             prefix = csl_prefixes[state]
         elif "ESPN" in state and "FOOTBALL" in state:
             prefix = "FD+ESPN"

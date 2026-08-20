@@ -5,6 +5,7 @@ from PIL import Image, ImageDraw, ImageOps
 
 from .common import (
     COLORS,
+    DEFAULT_WORLD_CUP_VISIBLE_MATCHES,
     LOCAL_CLUB_LEAGUE_ICON_PATHS,
     LOCAL_CLUB_LEAGUE_WORDMARK_PATHS,
 )
@@ -818,6 +819,19 @@ class ClubFootballRenderMixin:
                 )
 
     def _render_club_football_panel(self, dimensions, selected, source_state, fetched_at, now):
+        if (
+            isinstance(selected, Mapping)
+            and isinstance(selected.get("presentation"), Mapping)
+            and all(key in selected for key in ("live", "upcoming", "recent", "main"))
+        ):
+            return self._render_worldcup_api_panel(
+                dimensions,
+                selected,
+                source_state,
+                fetched_at,
+                selected.get("visible_matches") or DEFAULT_WORLD_CUP_VISIBLE_MATCHES,
+                now,
+            )
         width, height = [max(1, int(value)) for value in dimensions]
         panel = Image.new("RGB", (width, height), COLORS["paper"])
         draw = ImageDraw.Draw(panel)

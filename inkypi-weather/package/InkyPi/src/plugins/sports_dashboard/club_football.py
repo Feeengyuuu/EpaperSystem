@@ -1,3 +1,4 @@
+import re
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
@@ -22,6 +23,8 @@ CLUB_ESPN_SCOREBOARD_BASE_URL = "https://site.api.espn.com/apis/site/v2/sports/s
 CLUB_FOOTBALL_NORMAL_CACHE_SECONDS = 6 * 60 * 60
 CLUB_FOOTBALL_MATCHDAY_CACHE_SECONDS = 15 * 60
 CLUB_FOOTBALL_LIVE_CACHE_SECONDS = 60
+CLUB_FOOTBALL_DATA_LIVE_CACHE_SECONDS = 5 * 60
+CLUB_FOOTBALL_LIVE_CONFIRMATION_MAX_AGE = timedelta(minutes=5)
 CLUB_FOOTBALL_PREGAME_WINDOW = timedelta(minutes=15)
 CLUB_FOOTBALL_DEFAULT_MATCH_WINDOW = timedelta(hours=2)
 CLUB_FOOTBALL_ROTATION_STATE_VERSION = "sports-dashboard-club-football-rotation-v1"
@@ -549,7 +552,13 @@ class ClubFootballMixin:
         return parsed_events
 
     @staticmethod
-    def _parse_club_football_data_events(league_code, matches, timezone_info):
+    def _parse_club_football_data_events(
+        league_code,
+        matches,
+        timezone_info,
+        *,
+        fetched_at=None,
+    ):
         if league_code not in CLUB_FOOTBALL_LEAGUES:
             return []
 
@@ -612,7 +621,7 @@ class ClubFootballMixin:
                     "home_logo_url": str(home_team.get("crest") or "").strip(),
                     "away_logo_url": str(away_team.get("crest") or "").strip(),
                     "source_state": "football-data.org",
-                    "fetched_at": raw_match.get("fetched_at"),
+                    "fetched_at": raw_match.get("fetched_at") or fetched_at,
                 }
             )
             parsed_events.append(event)
@@ -732,6 +741,13 @@ class ClubFootballMixin:
             if isinstance(start, datetime) and start.astimezone(now.tzinfo).date() == now.date():
                 return CLUB_FOOTBALL_MATCHDAY_CACHE_SECONDS
         return CLUB_FOOTBALL_NORMAL_CACHE_SECONDS
+
+    @staticmethod
+    def _club_football_data_cache_seconds(events, now):
+        cache_seconds = SportsDashboard._club_espn_cache_seconds(events, now)
+        if cache_seconds == CLUB_FOOTBALL_LIVE_CACHE_SECONDS:
+            return CLUB_FOOTBALL_DATA_LIVE_CACHE_SECONDS
+        return cache_seconds
 
     @staticmethod
     def _club_espn_scoreboard_url(league_code):
@@ -925,11 +941,19 @@ class ClubFootballMixin:
             CLUB_FOOTBALL_PROVIDER_CACHE_VERSION,
             league_code,
         )
+        cached_payload = cache.get("payload") or {}
+        cached_events = self._parse_club_football_data_events(
+            league_code,
+            cached_payload.get("matches") or [],
+            timezone_info,
+            fetched_at=cache.get("fetched_at"),
+        )
+        cache_seconds = self._club_football_data_cache_seconds(cached_events, now)
         force_refresh = self._force_refresh_requested(settings)
         if cache and not force_refresh and self._club_cache_fresh(
-            cache, CLUB_FOOTBALL_NORMAL_CACHE_SECONDS, now_utc
+            cache, cache_seconds, now_utc
         ):
-            return cache["payload"], "FOOTBALL CACHE", cache.get("fetched_at")
+            return cached_payload, "FOOTBALL CACHE", cache.get("fetched_at")
 
         try:
             payload = self._football_data_get_json(
@@ -957,7 +981,7 @@ class ClubFootballMixin:
             return payload, "FOOTBALL LIVE", fetched_at
         except Exception:
             if cache:
-                return cache["payload"], "FOOTBALL STALE", cache.get("fetched_at")
+                return cached_payload, "FOOTBALL STALE", cache.get("fetched_at")
             raise
 
     def _load_club_standings_league_payload(
@@ -1034,6 +1058,7 @@ class ClubFootballMixin:
         for league_code in enabled_leagues:
             espn_payload = {}
             football_payload = {}
+            football_fetched_at = None
             try:
                 espn_payload, espn_state, espn_fetched_at = (
                     self._load_club_espn_league_payload(
@@ -1080,6 +1105,7 @@ class ClubFootballMixin:
                     league_code,
                     football_payload.get("matches") or [],
                     timezone_info,
+                    fetched_at=football_fetched_at,
                 )
                 try:
                     standings_payload, _standings_state, standings_fetched_at = (
@@ -1492,6 +1518,430 @@ class ClubFootballMixin:
             "priority": priority_labels.get(best_priority, "OTHER"),
         }
 
+    @staticmethod
+    def _club_football_event_identity(event):
+        if not isinstance(event, Mapping):
+            return ""
+        for key in ("event_key", "event_id", "provider_event_id"):
+            value = str(event.get(key) or "").strip()
+            if value:
+                return value
+        return SportsDashboard._club_event_key(
+            event.get("league_code"),
+            event.get("start_utc"),
+            event.get("home_name"),
+            event.get("away_name"),
+        )
+
+    @staticmethod
+    def _club_football_timeline_team_code(event, side):
+        aliases = list((event or {}).get(f"{side}_aliases") or [])
+        aliases.append((event or {}).get(f"{side}_name"))
+        for alias in aliases:
+            words = re.findall(r"[A-Za-z0-9]+", str(alias or ""))
+            if not words:
+                continue
+            if len(words) == 1:
+                return words[0][:3].upper()
+            return "".join(word[0] for word in words)[:3].upper()
+        localized = str((event or {}).get(f"{side}_name_zh") or "").strip()
+        return localized[:2] or "TBD"
+
+    @staticmethod
+    def _club_football_worldcup_event(event, timezone_info):
+        if not isinstance(event, Mapping):
+            return None
+        start = event.get("start_utc")
+        if not isinstance(start, datetime):
+            return None
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if timezone_info is not None:
+            start = start.astimezone(timezone_info)
+
+        league_code = str(event.get("league_code") or "").upper()
+        league = CLUB_FOOTBALL_LEAGUES.get(league_code, {})
+        league_name = str(event.get("league_name") or league.get("name") or league_code)
+        matchday = event.get("matchday")
+        block = league_name
+        if matchday not in (None, ""):
+            block = f"{league_name} · 第{matchday}轮"
+
+        status = str(event.get("status") or "").upper()
+        current_status_pending = bool(event.get("inferred_live_window"))
+        show_score = status in {"LIVE", "FINAL"}
+        home_score = event.get("home_score") if show_score else None
+        away_score = event.get("away_score") if show_score else None
+        if status == "LIVE":
+            state = "IN_PLAY"
+            status_label = str(event.get("display_clock") or "LIVE").strip()
+        elif status == "FINAL":
+            state = "FINISHED"
+            status_label = "FT"
+        elif current_status_pending:
+            state = "TIMED"
+            status_label = "赛况待确认"
+        else:
+            state = "TIMED"
+            status_label = start.strftime("%H:%M")
+
+        home_name = str(event.get("home_name_zh") or "").strip()
+        away_name = str(event.get("away_name_zh") or "").strip()
+        if not home_name:
+            home_name = SportsDashboard._club_team_zh_name(
+                league_code,
+                event.get("home_name"),
+                team_id=event.get("home_team_id"),
+            )
+        if not away_name:
+            away_name = SportsDashboard._club_team_zh_name(
+                league_code,
+                event.get("away_name"),
+                team_id=event.get("away_team_id"),
+            )
+
+        adapted = {
+            "event_id": SportsDashboard._club_football_event_identity(event),
+            "league_code": league_code,
+            "league_name": league_name,
+            "start": start,
+            "state": state,
+            "status": status_label,
+            "elapsed": str(event.get("display_clock") or "").strip(),
+            "team_a": home_name or "待定球队",
+            "team_b": away_name or "待定球队",
+            "team_a_tla": SportsDashboard._club_football_timeline_team_code(
+                event, "home"
+            ),
+            "team_b_tla": SportsDashboard._club_football_timeline_team_code(
+                event, "away"
+            ),
+            "team_a_source_name": str(event.get("home_name") or ""),
+            "team_b_source_name": str(event.get("away_name") or ""),
+            "team_a_logo": str(event.get("home_logo_url") or "").strip(),
+            "team_b_logo": str(event.get("away_logo_url") or "").strip(),
+            "team_a_flag": str(event.get("home_logo_url") or "").strip(),
+            "team_b_flag": str(event.get("away_logo_url") or "").strip(),
+            "wins_a": home_score,
+            "wins_b": away_score,
+            "block": block,
+            "provider": str(event.get("provider") or ""),
+            "score_source": str(event.get("provider") or ""),
+            "provider_status_confirmed": bool(
+                event.get("provider_status_confirmed") or status == "FINAL"
+            ),
+            "current_status_pending": current_status_pending,
+            "score_confirmed": bool(
+                show_score and home_score is not None and away_score is not None
+            ),
+            "league_logo_url": str(event.get("league_logo_url") or "").strip(),
+            "season": str(start.year),
+        }
+        if SportsDashboard._club_event_has_complete_odds(event):
+            adapted["odds"] = {
+                "team_a": f"{float(event['odds_home_decimal']):.2f}",
+                "draw": f"{float(event['odds_draw_decimal']):.2f}",
+                "team_b": f"{float(event['odds_away_decimal']):.2f}",
+            }
+        return adapted
+
+    @staticmethod
+    def _club_football_source_allows_live(source_state):
+        state = str(source_state or "").strip().upper()
+        return "STALE" not in state and "UNAVAILABLE" not in state
+
+    @staticmethod
+    def _club_football_event_is_current_live(event, now, source_state=""):
+        if not isinstance(event, Mapping):
+            return False
+        if str(event.get("status") or "").upper() != "LIVE":
+            return False
+        if not bool(event.get("provider_status_confirmed")):
+            return False
+        if not SportsDashboard._club_football_source_allows_live(source_state):
+            return False
+        fetched_at = SportsDashboard._parse_cached_utc(event.get("fetched_at"))
+        if fetched_at is None:
+            return True
+        current = now if isinstance(now, datetime) else datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        age = current.astimezone(timezone.utc) - fetched_at.astimezone(timezone.utc)
+        return -timedelta(minutes=1) <= age <= CLUB_FOOTBALL_LIVE_CONFIRMATION_MAX_AGE
+
+    @staticmethod
+    def _select_club_football_timeline_league_event(
+        events,
+        now,
+        *,
+        source_state="",
+    ):
+        current = now if isinstance(now, datetime) else datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        now_utc = current.astimezone(timezone.utc)
+        candidates = []
+        for raw_event in events or []:
+            if not isinstance(raw_event, Mapping):
+                continue
+            event = dict(raw_event)
+            start = event.get("start_utc")
+            if isinstance(start, datetime):
+                if start.tzinfo is None:
+                    start = start.replace(tzinfo=timezone.utc)
+                start = start.astimezone(timezone.utc)
+                event["start_utc"] = start
+            status = str(event.get("status") or "").upper()
+            inferred_live_window = bool(
+                status == "SCHEDULED"
+                and isinstance(start, datetime)
+                and start <= now_utc < start + CLUB_FOOTBALL_DEFAULT_MATCH_WINDOW
+            )
+            if SportsDashboard._club_football_event_is_current_live(
+                event, now_utc, source_state
+            ):
+                priority = 0
+                order_value = -start.timestamp() if isinstance(start, datetime) else 0
+            elif (
+                status == "SCHEDULED"
+                and isinstance(start, datetime)
+                and (inferred_live_window or start >= now_utc)
+            ):
+                priority = 1
+                order_value = 0 if inferred_live_window else (start - now_utc).total_seconds()
+            elif status == "FINAL" and isinstance(start, datetime):
+                priority = 2
+                order_value = -start.timestamp()
+            else:
+                continue
+            event["_selection_priority"] = priority
+            event["inferred_live_window"] = inferred_live_window
+            event["no_schedule"] = False
+            candidates.append(
+                (
+                    priority,
+                    order_value,
+                    SportsDashboard._club_football_event_identity(event),
+                    event,
+                )
+            )
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[:3])
+        return candidates[0][3]
+
+    @staticmethod
+    def _select_club_football_timeline_events(
+        by_league,
+        enabled_leagues,
+        now,
+        rotation_seed,
+        *,
+        source_state="",
+    ):
+        base = SportsDashboard._select_club_football_events(
+            by_league,
+            enabled_leagues,
+            now,
+            rotation_seed,
+        )
+        candidates = []
+        for league_code in enabled_leagues or ():
+            event = SportsDashboard._select_club_football_timeline_league_event(
+                (by_league or {}).get(league_code) or [],
+                now,
+                source_state=source_state,
+            )
+            if event is None:
+                continue
+            event["league_code"] = league_code
+            event.setdefault(
+                "league_name",
+                CLUB_FOOTBALL_LEAGUES.get(league_code, {}).get("name") or league_code,
+            )
+            candidates.append(event)
+        if not candidates:
+            return base
+
+        best_priority = min(event.get("_selection_priority", 3) for event in candidates)
+        eligible = [
+            event
+            for event in candidates
+            if event.get("_selection_priority", 3) == best_priority
+        ]
+        focus_index = int(rotation_seed or 0) % len(eligible)
+        previous_league = getattr(rotation_seed, "previous_league", None)
+        if (
+            previous_league
+            and len(eligible) > 1
+            and eligible[focus_index].get("league_code") == previous_league
+        ):
+            focus_index = (focus_index + 1) % len(eligible)
+        focus = eligible[focus_index]
+        priority_labels = {0: "LIVE", 1: "UPCOMING", 2: "FINAL"}
+        return {
+            "focus": focus,
+            "rail": list(base.get("rail") or []),
+            "priority": priority_labels.get(
+                focus.get("_selection_priority"), "OTHER"
+            ),
+        }
+
+    @staticmethod
+    def _build_club_football_event_sections(
+        by_league,
+        selected,
+        enabled_leagues,
+        now,
+        timezone_info,
+        *,
+        visible_matches=DEFAULT_WORLD_CUP_VISIBLE_MATCHES,
+        source_state="",
+    ):
+        current = now if isinstance(now, datetime) else datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        now_utc = current.astimezone(timezone.utc)
+        focus = (selected or {}).get("focus") if isinstance(selected, Mapping) else None
+        focus = focus if isinstance(focus, Mapping) else None
+        focus_league = str((focus or {}).get("league_code") or "").upper()
+        if focus_league not in tuple(enabled_leagues or ()):
+            focus_league = ""
+
+        focus_identity = SportsDashboard._club_football_event_identity(focus)
+        source_events = []
+        for raw_event in (by_league or {}).get(focus_league) or []:
+            if not isinstance(raw_event, Mapping):
+                continue
+            if (
+                focus_identity
+                and SportsDashboard._club_football_event_identity(raw_event)
+                == focus_identity
+            ):
+                source_events.append(focus)
+            else:
+                source_events.append(raw_event)
+
+        adapted_events = []
+        seen = set()
+        for raw_event in source_events:
+            adapted = SportsDashboard._club_football_worldcup_event(
+                raw_event, timezone_info
+            )
+            if adapted is None:
+                continue
+            identity = adapted.get("event_id")
+            if identity in seen:
+                continue
+            seen.add(identity)
+            adapted_events.append((raw_event, adapted))
+
+        live = sorted(
+            [
+                adapted
+                for raw_event, adapted in adapted_events
+                if SportsDashboard._club_football_event_is_current_live(
+                    raw_event, now_utc, source_state
+                )
+            ],
+            key=lambda event: event["start"],
+            reverse=True,
+        )
+        upcoming = sorted(
+            [
+                adapted
+                for raw_event, adapted in adapted_events
+                if str(raw_event.get("status") or "").upper() == "SCHEDULED"
+                and raw_event.get("start_utc") is not None
+                and (
+                    bool(raw_event.get("inferred_live_window"))
+                    or (
+                        raw_event["start_utc"].replace(tzinfo=timezone.utc)
+                        if raw_event["start_utc"].tzinfo is None
+                        else raw_event["start_utc"].astimezone(timezone.utc)
+                    )
+                    >= now_utc
+                )
+            ],
+            key=lambda event: event["start"],
+        )
+        recent = sorted(
+            [
+                adapted
+                for raw_event, adapted in adapted_events
+                if str(raw_event.get("status") or "").upper() == "FINAL"
+            ],
+            key=lambda event: event["start"],
+            reverse=True,
+        )
+
+        focus_adapted = next(
+            (
+                adapted
+                for _raw_event, adapted in adapted_events
+                if adapted.get("event_id") == focus_identity
+            ),
+            None,
+        )
+        visible_candidates = live + upcoming + recent
+        main = (
+            focus_adapted
+            if focus_adapted in visible_candidates
+            else (live[0] if live else (upcoming[0] if upcoming else (recent[0] if recent else None)))
+        )
+        visible = max(
+            1,
+            min(
+                WORLD_CUP_VISIBLE_MATCH_LIMIT,
+                int(visible_matches or DEFAULT_WORLD_CUP_VISIBLE_MATCHES),
+            ),
+        )
+        league = CLUB_FOOTBALL_LEAGUES.get(focus_league, {})
+        league_name = str(league.get("name") or "五大联赛")
+        logo_url = next(
+            (
+                str(event.get("league_logo_url") or "")
+                for _raw, event in adapted_events
+                if str(event.get("league_logo_url") or "")
+            ),
+            "",
+        )
+        return {
+            "live": live,
+            "upcoming": upcoming,
+            "recent": recent,
+            "main": main,
+            "focus": focus,
+            "rail": list((selected or {}).get("rail") or [])
+            if isinstance(selected, Mapping)
+            else [],
+            "visible_matches": visible,
+            "season": str(current.year),
+            "_source_timezone_info": timezone_info,
+            "presentation": {
+                "competition": "club",
+                "title": league_name,
+                "league_code": focus_league,
+                "league_logo_url": logo_url,
+                "team_asset_kind": "logo",
+                "empty_schedule_text": "暂无五大联赛赛程",
+                "upcoming_empty_text": "暂无后续赛程",
+                "recent_empty_text": "暂无近期赛果",
+                "show_worldcup_banner": False,
+                "show_five_leagues_filler": False,
+                "show_worldcup_pitch_art": False,
+                "show_recent_empty_state": True,
+                "upcoming_max_rows": 2,
+                "upcoming_row_gap": 0,
+                "main_team_logo_scale": 1.4,
+                "main_team_name_max_size": 14,
+                "main_team_name_min_size": 7,
+                "main_team_points_offset": 11,
+                "main_team_odds_offset": 6,
+                "main_status_include_score": False,
+            },
+        }
+
     def _club_football_rotation_state_path(self):
         return self._sports_dashboard_cache_dir() / "club_football_rotation_state.json"
 
@@ -1530,7 +1980,7 @@ class ClubFootballMixin:
         )
 
     @staticmethod
-    def _club_football_live_activity(selected, now):
+    def _club_football_live_activity(selected, now, source_state=""):
         if not isinstance(selected, Mapping) or not isinstance(now, datetime):
             return None, []
         if now.tzinfo is None:
@@ -1551,7 +2001,11 @@ class ClubFootballMixin:
                     start = start.replace(tzinfo=timezone.utc)
                 start = start.astimezone(timezone.utc)
             status = str(event.get("status") or "").upper()
-            confirmed_live = status == "LIVE" and bool(event.get("provider_status_confirmed"))
+            confirmed_live = SportsDashboard._club_football_event_is_current_live(
+                event,
+                now_utc,
+                source_state,
+            )
             if not isinstance(start, datetime) and not confirmed_live:
                 continue
             event_end = (
@@ -1616,7 +2070,11 @@ class ClubFootballMixin:
         if current.tzinfo is None:
             current = current.replace(tzinfo=timezone.utc)
         current_utc = current.astimezone(timezone.utc)
-        live_until, active_leagues = self._club_football_live_activity(selected, current_utc)
+        live_until, active_leagues = self._club_football_live_activity(
+            selected,
+            current_utc,
+            source_state,
+        )
         focus = (selected or {}).get("focus") if isinstance(selected, Mapping) else None
         focus = focus if isinstance(focus, Mapping) else {}
         start = focus.get("start_utc")

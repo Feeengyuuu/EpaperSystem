@@ -2357,6 +2357,8 @@ class SportsDashboardCommonMixin:
     ):
         enabled_leagues = self._club_football_enabled_leagues(settings)
         fetched_at = None
+        by_league = {}
+        rotation_seed = 0
         try:
             by_league, _standings, source_state, fetched_at = self._load_club_football_data(
                 settings,
@@ -2365,11 +2367,12 @@ class SportsDashboardCommonMixin:
                 now,
             )
             rotation_seed = self._club_football_rotation_seed(now)
-            selected = self._select_club_football_events(
+            selected = self._select_club_football_timeline_events(
                 by_league,
                 enabled_leagues,
                 now,
                 rotation_seed,
+                source_state=source_state,
             )
             selected = self._attach_club_api_football_odds(
                 selected,
@@ -2381,11 +2384,12 @@ class SportsDashboardCommonMixin:
         except Exception as exc:
             logger.warning("Club football top-left panel failed: %s", _safe_exception_text(exc))
             source_state = "CLUB UNAVAILABLE"
-            selected = self._select_club_football_events(
+            selected = self._select_club_football_timeline_events(
                 {},
                 enabled_leagues,
                 now,
                 0,
+                source_state=source_state,
             )
         self._write_club_football_live_state(
             selected,
@@ -2393,9 +2397,18 @@ class SportsDashboardCommonMixin:
             source_state,
             fetched_at,
         )
+        sections = self._build_club_football_event_sections(
+            by_league,
+            selected,
+            enabled_leagues,
+            now,
+            timezone_info,
+            visible_matches=DEFAULT_WORLD_CUP_VISIBLE_MATCHES,
+            source_state=source_state,
+        )
         panel = self._render_club_football_panel(
             dimensions,
-            selected,
+            sections,
             source_state,
             fetched_at,
             now,
