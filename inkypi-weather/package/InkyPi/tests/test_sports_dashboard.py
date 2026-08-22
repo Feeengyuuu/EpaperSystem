@@ -18479,6 +18479,114 @@ def test_merge_club_events_flips_score_and_logos_for_reversed_provider_order():
     assert merged[0]["away_logo_url"] == "https://example.test/chelsea.png"
 
 
+def test_merge_club_events_never_downgrades_a_confirmed_final_result():
+    schedule = SportsDashboard._parse_club_football_data_events(
+        "PL", _sample_club_football_data_matches(), timezone.utc
+    )
+    schedule[0].update(
+        {
+            "status": "FINAL",
+            "home_score": 2,
+            "away_score": 1,
+            "provider_status_confirmed": True,
+            "fetched_at": "2026-08-15T18:05:00+00:00",
+        }
+    )
+    stale_score = SportsDashboard._parse_club_espn_events(
+        "PL", _sample_club_espn_payload(), timezone.utc
+    )[0]
+    stale_score.update(
+        {
+            "status": "SCHEDULED",
+            "home_score": None,
+            "away_score": None,
+            "provider_status_confirmed": False,
+            "fetched_at": "2026-08-15T17:55:00+00:00",
+        }
+    )
+
+    merged = SportsDashboard._merge_club_football_events(schedule, [stale_score])
+
+    assert merged[0]["status"] == "FINAL"
+    assert (merged[0]["home_score"], merged[0]["away_score"]) == (2, 1)
+    assert merged[0]["provider_status_confirmed"] is True
+    assert merged[0]["fetched_at"] == "2026-08-15T18:05:00+00:00"
+
+
+def test_merge_club_events_never_downgrades_a_confirmed_live_result():
+    schedule = SportsDashboard._parse_club_football_data_events(
+        "PL", _sample_club_football_data_matches(), timezone.utc
+    )
+    schedule[0].update(
+        {
+            "status": "LIVE",
+            "home_score": 2,
+            "away_score": 1,
+            "display_clock": "67'",
+            "provider_status_confirmed": True,
+            "fetched_at": "2026-08-15T18:05:00+00:00",
+        }
+    )
+    stale_score = SportsDashboard._parse_club_espn_events(
+        "PL", _sample_club_espn_payload(), timezone.utc
+    )[0]
+    stale_score.update(
+        {
+            "status": "SCHEDULED",
+            "home_score": None,
+            "away_score": None,
+            "display_clock": "",
+            "provider_status_confirmed": False,
+            "fetched_at": "2026-08-15T17:55:00+00:00",
+        }
+    )
+
+    merged = SportsDashboard._merge_club_football_events(schedule, [stale_score])
+
+    assert merged[0]["status"] == "LIVE"
+    assert (merged[0]["home_score"], merged[0]["away_score"]) == (2, 1)
+    assert merged[0]["display_clock"] == "67'"
+    assert merged[0]["provider_status_confirmed"] is True
+
+
+def test_merge_club_events_prefers_newer_non_terminal_provider_evidence():
+    stale_schedule = SportsDashboard._parse_club_football_data_events(
+        "PL", _sample_club_football_data_matches(), timezone.utc
+    )
+    stale_schedule[0].update(
+        {
+            "status": "LIVE",
+            "home_score": 1,
+            "away_score": 0,
+            "display_clock": "45'",
+            "provider_status_confirmed": True,
+            "fetched_at": "2026-08-15T17:55:00+00:00",
+        }
+    )
+    fresh_score = SportsDashboard._parse_club_espn_events(
+        "PL", _sample_club_espn_payload(), timezone.utc
+    )[0]
+    fresh_score.update(
+        {
+            "status": "SCHEDULED",
+            "home_score": None,
+            "away_score": None,
+            "display_clock": "",
+            "provider_status_confirmed": False,
+            "fetched_at": "2026-08-15T18:05:00+00:00",
+        }
+    )
+
+    merged = SportsDashboard._merge_club_football_events(
+        stale_schedule, [fresh_score]
+    )
+
+    assert merged[0]["status"] == "SCHEDULED"
+    assert merged[0]["display_clock"] == ""
+    assert merged[0]["provider_status_confirmed"] is False
+    assert merged[0]["fetched_at"] == "2026-08-15T18:05:00+00:00"
+
+
 def test_club_espn_cache_seconds_is_fast_only_for_relevant_windows():
     now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
     live = {
@@ -18506,6 +18614,7 @@ def test_club_espn_cache_seconds_is_fast_only_for_relevant_windows():
     assert SportsDashboard._club_espn_cache_seconds([pregame], now) == 60
     assert SportsDashboard._club_espn_cache_seconds([later_today], now) == 900
     assert SportsDashboard._club_espn_cache_seconds([later_week], now) == 21600
+    assert SportsDashboard._club_espn_wide_cache_seconds([live], now) == 21600
 
 
 def test_club_espn_scoreboard_urls_are_built_only_from_registry():
@@ -18521,6 +18630,535 @@ def test_club_espn_scoreboard_urls_are_built_only_from_registry():
     }
     with pytest.raises(KeyError):
         SportsDashboard._club_espn_scoreboard_url("../../private")
+
+
+def test_fetch_club_espn_payload_requests_recent_history_and_future_schedule(
+    monkeypatch,
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    captured = {}
+
+    class FakeResponse:
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def json():
+            return {"events": []}
+
+    class FakeSession:
+        @staticmethod
+        def get(url, **kwargs):
+            captured.update(url=url, kwargs=kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FakeSession(),
+    )
+    monkeypatch.setattr(plugin, "_club_espn_calls_left", lambda *_args: 1)
+    monkeypatch.setattr(plugin, "_record_club_espn_call", lambda *_args: None)
+
+    payload = plugin._fetch_club_espn_payload("PL", {}, now)
+
+    assert payload == {"events": []}
+    assert captured["kwargs"]["params"] == {
+        "dates": "20260716-20261213",
+        "limit": "250",
+    }
+    assert captured["kwargs"]["headers"] == {"Accept": "application/json"}
+
+    plugin._fetch_club_espn_payload("PL", {}, now, live_window=True)
+
+    assert captured["kwargs"]["params"] == {
+        "dates": "20260814-20260816",
+        "limit": "100",
+    }
+
+
+def test_fetch_club_espn_payload_counts_connection_failures(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    recorded = []
+
+    class FailingSession:
+        @staticmethod
+        def get(*_args, **_kwargs):
+            raise TimeoutError("offline")
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FailingSession(),
+    )
+    monkeypatch.setattr(plugin, "_club_espn_calls_left", lambda *_args: 1)
+    monkeypatch.setattr(
+        plugin,
+        "_record_club_espn_call",
+        lambda attempted_at: recorded.append(attempted_at),
+    )
+
+    with pytest.raises(TimeoutError, match="offline"):
+        plugin._fetch_club_espn_payload("PL", {}, now)
+
+    assert recorded == [now]
+
+
+def test_club_espn_history_query_invalidates_legacy_daily_cache(
+    monkeypatch, tmp_path
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    current_path = plugin._club_football_cache_path("espn", "PL")
+    current_path.write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-club-football-provider-v1",
+                "league_code": "PL",
+                "fetched_at": now.isoformat(),
+                "payload": {"events": []},
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fetch(*_args):
+        calls.append("history")
+        return {"events": []}
+
+    monkeypatch.setattr(plugin, "_fetch_club_espn_payload", fetch)
+
+    payload, source_state, fetched_at = plugin._load_club_espn_league_payload(
+        "PL", {}, timezone.utc, now
+    )
+
+    assert calls == ["history"]
+    assert payload == {"events": [], "fetched_at": now.isoformat()}
+    assert source_state == "ESPN LIVE"
+    assert fetched_at == now.isoformat()
+
+
+def test_club_espn_live_refresh_uses_narrow_window_and_preserves_history(
+    monkeypatch, tmp_path
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    cached_at = now - timedelta(seconds=61)
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    current_path = plugin._club_football_cache_path("espn", "PL")
+    wide_payload = json.loads(json.dumps(_sample_club_espn_payload()))
+    historical = json.loads(json.dumps(wide_payload["events"][0]))
+    historical.update(
+        {
+            "id": "espn-pl-history",
+            "date": "2026-08-10T18:00:00Z",
+        }
+    )
+    historical["competitions"][0]["status"] = {
+        "type": {"state": "post", "completed": True, "shortDetail": "FT"},
+        "displayClock": "FT",
+    }
+    wide_payload["events"].append(historical)
+    wide_payload["fetched_at"] = cached_at.isoformat()
+    current_path.write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-club-football-espn-provider-v2",
+                "league_code": "PL",
+                "fetched_at": cached_at.isoformat(),
+                "payload": wide_payload,
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fetch(_league_code, _settings, _now_utc, *, live_window=False):
+        calls.append(live_window)
+        return _sample_club_espn_payload()
+
+    monkeypatch.setattr(plugin, "_fetch_club_espn_payload", fetch)
+
+    payload, source_state, fetched_at = plugin._load_club_espn_league_payload(
+        "PL", {}, timezone.utc, now
+    )
+
+    assert calls == [True]
+    assert {event["id"] for event in payload["events"]} == {
+        "espn-pl-1",
+        "espn-pl-history",
+    }
+    assert source_state == "ESPN LIVE"
+    assert fetched_at == now.isoformat()
+    stored_wide = json.loads(current_path.read_text(encoding="utf-8"))
+    stored_live = json.loads(
+        plugin._club_football_cache_path("espn_live", "PL").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert stored_wide["fetched_at"] == cached_at.isoformat()
+    assert {event["id"] for event in stored_wide["payload"]["events"]} == {
+        "espn-pl-1",
+        "espn-pl-history",
+    }
+    assert stored_live["fetched_at"] == now.isoformat()
+    assert {event["id"] for event in stored_live["payload"]["events"]} == {
+        "espn-pl-1"
+    }
+
+
+def test_club_espn_empty_live_window_clears_stale_live_but_keeps_history(
+    monkeypatch, tmp_path
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    cached_at = now - timedelta(seconds=61)
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    current_path = plugin._club_football_cache_path("espn", "PL")
+    wide_payload = json.loads(json.dumps(_sample_club_espn_payload()))
+    historical = json.loads(json.dumps(wide_payload["events"][0]))
+    historical.update(
+        {
+            "id": "espn-pl-history",
+            "date": "2026-08-10T18:00:00Z",
+        }
+    )
+    historical["competitions"][0]["status"] = {
+        "type": {"state": "post", "completed": True, "shortDetail": "FT"},
+        "displayClock": "FT",
+    }
+    wide_payload["events"].append(historical)
+    wide_payload["fetched_at"] = cached_at.isoformat()
+    current_path.write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-club-football-espn-provider-v2",
+                "league_code": "PL",
+                "fetched_at": cached_at.isoformat(),
+                "payload": wide_payload,
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fetch(_league_code, _settings, _now_utc, *, live_window=False):
+        calls.append(live_window)
+        return {"events": []}
+
+    monkeypatch.setattr(plugin, "_fetch_club_espn_payload", fetch)
+
+    payload, source_state, fetched_at = plugin._load_club_espn_league_payload(
+        "PL", {}, timezone.utc, now
+    )
+
+    assert calls == [True]
+    assert [event["id"] for event in payload["events"]] == [
+        "espn-pl-history"
+    ]
+    assert source_state == "ESPN LIVE"
+    assert fetched_at == now.isoformat()
+
+
+def test_club_espn_empty_live_window_preserves_in_window_final_result():
+    base_payload = json.loads(json.dumps(_sample_club_espn_payload()))
+    base_payload["events"][0]["competitions"][0]["status"] = {
+        "type": {"state": "post", "completed": True, "shortDetail": "FT"},
+        "displayClock": "FT",
+    }
+    overlay_payload = {
+        "events": [],
+        "window_start": "2026-08-14T00:00:00+00:00",
+        "window_end": "2026-08-17T00:00:00+00:00",
+        "fetched_at": "2026-08-15T18:05:00+00:00",
+    }
+
+    merged = SportsDashboard._merge_club_espn_payloads(
+        base_payload, overlay_payload
+    )
+
+    assert [event["id"] for event in merged["events"]] == ["espn-pl-1"]
+
+
+@pytest.mark.parametrize("overlay_state", ["pre", "in"])
+def test_club_espn_live_overlay_never_downgrades_final_result(overlay_state):
+    base_payload = json.loads(json.dumps(_sample_club_espn_payload()))
+    base_payload["events"][0]["competitions"][0]["status"] = {
+        "type": {"state": "post", "completed": True, "shortDetail": "FT"},
+        "displayClock": "FT",
+    }
+    overlay_payload = json.loads(json.dumps(_sample_club_espn_payload()))
+    overlay_payload["events"][0]["competitions"][0]["status"] = {
+        "type": {
+            "state": overlay_state,
+            "completed": False,
+            "shortDetail": "67'" if overlay_state == "in" else "8:00 PM",
+        }
+    }
+    overlay_payload.update(
+        {
+            "window_start": "2026-08-14T00:00:00+00:00",
+            "window_end": "2026-08-17T00:00:00+00:00",
+            "fetched_at": "2026-08-15T18:05:00+00:00",
+        }
+    )
+
+    merged = SportsDashboard._merge_club_espn_payloads(
+        base_payload, overlay_payload
+    )
+    event = SportsDashboard._parse_club_espn_events(
+        "PL", merged, timezone.utc
+    )[0]
+
+    assert event["status"] == "FINAL"
+
+
+def test_club_espn_invalid_wide_schema_does_not_replace_last_good(
+    monkeypatch, tmp_path
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    cached_at = now - timedelta(hours=7)
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    current_path = plugin._club_football_cache_path("espn", "PL")
+    last_good_path = plugin._club_football_last_good_cache_path("espn", "PL")
+    cached_payload = _sample_club_espn_payload()
+    wrapper = {
+        "version": "sports-dashboard-club-football-espn-provider-v2",
+        "league_code": "PL",
+        "fetched_at": cached_at.isoformat(),
+        "payload": cached_payload,
+    }
+    current_path.write_text(json.dumps(wrapper), encoding="utf-8")
+    last_good_path.write_text(json.dumps(wrapper), encoding="utf-8")
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_club_espn_payload",
+        lambda *_args, **_kwargs: {},
+    )
+
+    payload, source_state, fetched_at = plugin._load_club_espn_league_payload(
+        "PL", {}, timezone.utc, now
+    )
+
+    assert payload == cached_payload
+    assert source_state == "ESPN STALE"
+    assert fetched_at == cached_at.isoformat()
+    assert json.loads(current_path.read_text(encoding="utf-8")) == wrapper
+    assert json.loads(last_good_path.read_text(encoding="utf-8")) == wrapper
+
+
+def test_club_espn_stale_wide_cache_refreshes_active_window_first(
+    monkeypatch, tmp_path
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    cached_at = now - timedelta(hours=7)
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    current_path = plugin._club_football_cache_path("espn", "PL")
+    wide_payload = json.loads(json.dumps(_sample_club_espn_payload()))
+    historical = json.loads(json.dumps(wide_payload["events"][0]))
+    historical.update(
+        {
+            "id": "espn-pl-history",
+            "date": "2026-08-10T18:00:00Z",
+        }
+    )
+    historical["competitions"][0]["status"] = {
+        "type": {"state": "post", "completed": True, "shortDetail": "FT"},
+        "displayClock": "FT",
+    }
+    wide_payload["events"].append(historical)
+    current_path.write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-club-football-espn-provider-v2",
+                "league_code": "PL",
+                "fetched_at": cached_at.isoformat(),
+                "payload": wide_payload,
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fetch(_league_code, _settings, _now_utc, *, live_window=False):
+        calls.append(live_window)
+        if not live_window:
+            raise TimeoutError("wide payload timed out")
+        return _sample_club_espn_payload()
+
+    monkeypatch.setattr(plugin, "_fetch_club_espn_payload", fetch)
+
+    payload, source_state, fetched_at = plugin._load_club_espn_league_payload(
+        "PL", {}, timezone.utc, now
+    )
+
+    assert calls == [True]
+    assert {event["id"] for event in payload["events"]} == {
+        "espn-pl-1",
+        "espn-pl-history",
+    }
+    assert source_state == "ESPN LIVE"
+    assert fetched_at == now.isoformat()
+
+
+def test_club_espn_fresh_live_overlay_is_not_labeled_stale(
+    monkeypatch, tmp_path
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    wide_at = now - timedelta(hours=7)
+    live_at = now - timedelta(seconds=30)
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    wide_payload = _sample_club_espn_payload()
+    wide_payload["fetched_at"] = wide_at.isoformat()
+    live_payload = json.loads(json.dumps(_sample_club_espn_payload()))
+    live_payload.update(
+        {
+            "fetched_at": live_at.isoformat(),
+            "window_start": "2026-08-14T00:00:00+00:00",
+            "window_end": "2026-08-17T00:00:00+00:00",
+        }
+    )
+    plugin._club_football_cache_path("espn", "PL").write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-club-football-espn-provider-v2",
+                "league_code": "PL",
+                "fetched_at": wide_at.isoformat(),
+                "payload": wide_payload,
+            }
+        ),
+        encoding="utf-8",
+    )
+    plugin._club_football_cache_path("espn_live", "PL").write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-club-football-espn-live-v1",
+                "league_code": "PL",
+                "fetched_at": live_at.isoformat(),
+                "payload": live_payload,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_club_espn_payload",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("fresh overlay must not fetch")
+        ),
+    )
+
+    payload, source_state, fetched_at = plugin._load_club_espn_league_payload(
+        "PL", {}, timezone.utc, now
+    )
+    event = SportsDashboard._parse_club_espn_events(
+        "PL", payload, timezone.utc
+    )[0]
+
+    assert source_state == "ESPN CACHE"
+    assert fetched_at == live_at.isoformat()
+    assert SportsDashboard._club_football_event_is_current_live(
+        event, now, source_state
+    ) is True
+
+
+def test_club_espn_live_last_good_survives_missing_wide_cache_failure(
+    monkeypatch, tmp_path
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    live_at = now - timedelta(seconds=20)
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    live_payload = _sample_club_espn_payload()
+    live_payload.update(
+        {
+            "fetched_at": live_at.isoformat(),
+            "window_start": "2026-08-14T00:00:00+00:00",
+            "window_end": "2026-08-17T00:00:00+00:00",
+        }
+    )
+    plugin._club_football_last_good_cache_path("espn_live", "PL").write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-club-football-espn-live-v1",
+                "league_code": "PL",
+                "fetched_at": live_at.isoformat(),
+                "payload": live_payload,
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fetch(_league_code, _settings, _now_utc, *, live_window=False):
+        calls.append(live_window)
+        raise TimeoutError("wide payload unavailable")
+
+    monkeypatch.setattr(plugin, "_fetch_club_espn_payload", fetch)
+
+    payload, source_state, fetched_at = plugin._load_club_espn_league_payload(
+        "PL", {}, timezone.utc, now
+    )
+    event = SportsDashboard._parse_club_espn_events(
+        "PL", payload, timezone.utc
+    )[0]
+
+    assert calls == [False]
+    assert source_state == "ESPN CACHE"
+    assert fetched_at == live_at.isoformat()
+    assert SportsDashboard._club_football_event_is_current_live(
+        event, now, source_state
+    ) is True
+
+
+def test_club_espn_empty_live_last_good_avoids_duplicate_wide_failure(
+    monkeypatch, tmp_path
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    live_at = now - timedelta(seconds=20)
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    live_payload = {
+        "events": [],
+        "fetched_at": live_at.isoformat(),
+        "window_start": "2026-08-14T00:00:00+00:00",
+        "window_end": "2026-08-17T00:00:00+00:00",
+    }
+    plugin._club_football_last_good_cache_path("espn_live", "PL").write_text(
+        json.dumps(
+            {
+                "version": "sports-dashboard-club-football-espn-live-v1",
+                "league_code": "PL",
+                "fetched_at": live_at.isoformat(),
+                "payload": live_payload,
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fetch(_league_code, _settings, _now_utc, *, live_window=False):
+        calls.append(live_window)
+        raise TimeoutError("wide payload unavailable")
+
+    monkeypatch.setattr(plugin, "_fetch_club_espn_payload", fetch)
+
+    payload, source_state, fetched_at = plugin._load_club_espn_league_payload(
+        "PL", {}, timezone.utc, now
+    )
+
+    assert calls == [False]
+    assert payload["events"] == []
+    assert source_state == "ESPN STALE"
+    assert fetched_at == live_at.isoformat()
 
 
 def test_club_loader_keeps_football_data_when_espn_fails(monkeypatch, tmp_path):
@@ -20110,6 +20748,45 @@ def test_club_timeline_keeps_recent_empty_state_visible(monkeypatch):
     assert "暂无近期赛果" in rendered_text
 
 
+def test_club_timeline_only_final_reports_no_more_results(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    result = _club_selection_event(
+        "PL", "FINAL", now - timedelta(hours=2), suffix="result"
+    )
+    result.update({"home_score": 2, "away_score": 1})
+    by_league = {"PL": [result]}
+    native = SportsDashboard._select_club_football_timeline_events(
+        by_league, ("PL",), now, 0, source_state="CLUB LIVE"
+    )
+    sections = SportsDashboard._build_club_football_event_sections(
+        by_league,
+        native,
+        ("PL",),
+        now,
+        timezone.utc,
+        source_state="CLUB LIVE",
+    )
+    rendered_text = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def record_text(draw, xy, text, *args, **kwargs):
+        rendered_text.append(str(text))
+        return original_text(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+
+    plugin._render_club_football_panel(
+        (536, 240), sections, "CLUB LIVE", now.isoformat(), now
+    )
+
+    assert sections["main"]["event_id"] == "PL-result"
+    assert sections["presentation"]["recent_empty_text"] == "暂无更多赛果"
+    assert "RECENT RESULT" in rendered_text
+    assert "暂无近期赛果" not in rendered_text
+    assert "暂无更多赛果" in rendered_text
+
+
 def test_club_football_slot_failure_renders_unavailable_not_worldcup(monkeypatch):
     plugin = _plugin()
     now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
@@ -20237,6 +20914,39 @@ def test_club_football_source_check_summary_fails_only_on_failed_checks():
     assert "SKIP football-data.org: no key" in healthy_lines
     assert failed_code == 1
     assert "FAIL PL logo: decode failed" in failed_lines
+
+
+def test_club_football_source_checker_uses_production_http_session(monkeypatch):
+    module = _load_club_football_source_checker(
+        "check_club_football_sources_http_session"
+    )
+    captured = {}
+
+    class FakeResponse:
+        content = b'{"events": []}'
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+    class FakeSession:
+        @staticmethod
+        def get(url, **kwargs):
+            captured.update(url=url, kwargs=kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr(module, "get_http_session", lambda: FakeSession())
+
+    payload = module._request_json("https://example.test/scoreboard", timeout=7)
+
+    assert payload == {"events": []}
+    assert captured == {
+        "url": "https://example.test/scoreboard",
+        "kwargs": {
+            "headers": {"Accept": "application/json"},
+            "timeout": 7,
+        },
+    }
 
 def test_club_first_logo_accepts_espn_team_singular_logo_field():
     assert SportsDashboard._club_first_logo(

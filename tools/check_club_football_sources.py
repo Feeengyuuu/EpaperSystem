@@ -20,6 +20,7 @@ from plugins.sports_dashboard.sports_dashboard import (  # noqa: E402
     CLUB_FOOTBALL_LEAGUES,
     SportsDashboard,
 )
+from utils.http_client import get_http_session  # noqa: E402
 
 
 JSON_LIMIT = 6 * 1024 * 1024
@@ -58,12 +59,25 @@ def _request_bytes(url, *, headers=None, timeout=20, max_bytes=JSON_LIMIT):
 
 
 def _request_json(url, *, headers=None, timeout=20):
-    return json.loads(_request_bytes(url, headers=headers, timeout=timeout).decode("utf-8"))
+    response = get_http_session().get(
+        url,
+        headers={"Accept": "application/json", **(headers or {})},
+        timeout=timeout,
+    )
+    response.raise_for_status()
+    data = bytes(response.content or b"")
+    if len(data) > JSON_LIMIT:
+        raise ValueError(f"response exceeds {JSON_LIMIT} bytes")
+    return json.loads(data.decode("utf-8"))
 
 
 def _safe_error(exc):
     if isinstance(exc, urllib.error.HTTPError):
         return f"HTTP {exc.code}"
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code is not None:
+        return f"HTTP {status_code}"
     return type(exc).__name__
 
 

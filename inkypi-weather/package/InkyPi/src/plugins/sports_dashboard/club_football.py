@@ -17,6 +17,12 @@ CLUB_FOOTBALL_WORLD_CUP_LEAD = timedelta(days=14)
 CLUB_FOOTBALL_WORLD_CUP_TAIL = timedelta(hours=24)
 CLUB_FOOTBALL_DEFAULT_FINAL_DURATION = timedelta(hours=3)
 CLUB_FOOTBALL_PROVIDER_CACHE_VERSION = "sports-dashboard-club-football-provider-v1"
+CLUB_FOOTBALL_ESPN_PROVIDER_CACHE_VERSION = (
+    "sports-dashboard-club-football-espn-provider-v2"
+)
+CLUB_FOOTBALL_ESPN_LIVE_CACHE_VERSION = (
+    "sports-dashboard-club-football-espn-live-v1"
+)
 CLUB_FOOTBALL_STANDINGS_CACHE_VERSION = "sports-dashboard-club-football-standings-v1"
 CLUB_FOOTBALL_ESPN_STATE_VERSION = "sports-dashboard-club-football-espn-state-v1"
 CLUB_ESPN_SCOREBOARD_BASE_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer"
@@ -25,6 +31,12 @@ CLUB_FOOTBALL_MATCHDAY_CACHE_SECONDS = 15 * 60
 CLUB_FOOTBALL_LIVE_CACHE_SECONDS = 60
 CLUB_FOOTBALL_DATA_LIVE_CACHE_SECONDS = 5 * 60
 CLUB_FOOTBALL_LIVE_CONFIRMATION_MAX_AGE = timedelta(minutes=5)
+CLUB_FOOTBALL_ESPN_LOOKBACK = timedelta(days=30)
+CLUB_FOOTBALL_ESPN_LOOKAHEAD = timedelta(days=120)
+CLUB_FOOTBALL_ESPN_EVENT_LIMIT = 250
+CLUB_FOOTBALL_ESPN_LIVE_LOOKBACK = timedelta(days=1)
+CLUB_FOOTBALL_ESPN_LIVE_LOOKAHEAD = timedelta(days=1)
+CLUB_FOOTBALL_ESPN_LIVE_EVENT_LIMIT = 100
 CLUB_FOOTBALL_PREGAME_WINDOW = timedelta(minutes=15)
 CLUB_FOOTBALL_DEFAULT_MATCH_WINDOW = timedelta(hours=2)
 CLUB_FOOTBALL_ROTATION_STATE_VERSION = "sports-dashboard-club-football-rotation-v1"
@@ -43,6 +55,11 @@ CLUB_FOOTBALL_PENDING_TEAM_KEYS = {
     "tobedecided",
     "tobedetermined",
     "unknown",
+}
+CLUB_FOOTBALL_STATUS_RANK = {
+    "SCHEDULED": 1,
+    "LIVE": 2,
+    "FINAL": 3,
 }
 CLUB_FOOTBALL_LEAGUES = {
     "PL": {"name": "英超", "short_name": "英超", "espn_slug": "eng.1", "api_football_id": 39},
@@ -674,8 +691,65 @@ class ClubFootballMixin:
 
             score = remaining_scores.pop(match_index)
             merged = dict(schedule)
-            home_score = score.get("away_score") if reverse_order else score.get("home_score")
-            away_score = score.get("home_score") if reverse_order else score.get("away_score")
+            schedule_status = str(schedule.get("status") or "").upper()
+            score_status = str(score.get("status") or "").upper()
+            schedule_fetched_at = schedule.get("fetched_at")
+            score_fetched_at = score.get("fetched_at")
+            schedule_fetched_utc = SportsDashboard._parse_cached_utc(
+                schedule_fetched_at
+            )
+            score_fetched_utc = SportsDashboard._parse_cached_utc(score_fetched_at)
+            schedule_rank = CLUB_FOOTBALL_STATUS_RANK.get(schedule_status, 0)
+            score_rank = CLUB_FOOTBALL_STATUS_RANK.get(score_status, 0)
+            if schedule_status == "FINAL" and score_status != "FINAL":
+                prefer_schedule_evidence = True
+            elif score_status == "FINAL" and schedule_status != "FINAL":
+                prefer_schedule_evidence = False
+            elif (
+                schedule_fetched_utc is not None
+                and score_fetched_utc is not None
+                and schedule_fetched_utc != score_fetched_utc
+            ):
+                prefer_schedule_evidence = (
+                    schedule_fetched_utc > score_fetched_utc
+                )
+            else:
+                prefer_schedule_evidence = schedule_rank > score_rank
+
+            if prefer_schedule_evidence:
+                status = schedule_status or score_status
+                home_score = schedule.get("home_score")
+                away_score = schedule.get("away_score")
+                display_clock = str(schedule.get("display_clock") or "")
+                fallback_home_score = (
+                    score.get("away_score")
+                    if reverse_order
+                    else score.get("home_score")
+                )
+                fallback_away_score = (
+                    score.get("home_score")
+                    if reverse_order
+                    else score.get("away_score")
+                )
+            else:
+                status = score_status or schedule_status
+                home_score = (
+                    score.get("away_score")
+                    if reverse_order
+                    else score.get("home_score")
+                )
+                away_score = (
+                    score.get("home_score")
+                    if reverse_order
+                    else score.get("away_score")
+                )
+                display_clock = str(score.get("display_clock") or "")
+                fallback_home_score = schedule.get("home_score")
+                fallback_away_score = schedule.get("away_score")
+            if home_score is None:
+                home_score = fallback_home_score
+            if away_score is None:
+                away_score = fallback_away_score
             home_logo = score.get("away_logo_url") if reverse_order else score.get("home_logo_url")
             away_logo = score.get("home_logo_url") if reverse_order else score.get("away_logo_url")
             home_odds = (
@@ -688,20 +762,37 @@ class ClubFootballMixin:
                 if reverse_order
                 else score.get("odds_away_decimal")
             )
+            fetched_at = score_fetched_at or schedule_fetched_at
+            if schedule_fetched_utc is not None and (
+                score_fetched_utc is None
+                or schedule_fetched_utc >= score_fetched_utc
+            ):
+                fetched_at = schedule_fetched_at
+
             merged.update(
                 {
-                    "status": score.get("status") or schedule.get("status"),
+                    "status": status,
                     "home_score": home_score,
                     "away_score": away_score,
-                    "display_clock": score.get("display_clock") or "",
+                    "display_clock": display_clock,
                     "venue": score.get("venue") or schedule.get("venue") or "",
                     "league_logo_url": score.get("league_logo_url") or schedule.get("league_logo_url") or "",
                     "home_logo_url": home_logo or schedule.get("home_logo_url") or "",
                     "away_logo_url": away_logo or schedule.get("away_logo_url") or "",
                     "provider": "football-data.org+ESPN",
                     "source_state": "football-data.org+ESPN",
-                    "fetched_at": score.get("fetched_at") or schedule.get("fetched_at"),
-                    "provider_status_confirmed": bool(score.get("provider_status_confirmed")),
+                    "fetched_at": fetched_at,
+                    "provider_status_confirmed": bool(
+                        status == "FINAL"
+                        or (
+                            schedule_status == status
+                            and schedule.get("provider_status_confirmed")
+                        )
+                        or (
+                            score_status == status
+                            and score.get("provider_status_confirmed")
+                        )
+                    ),
                     "inferred_live_window": False,
                     "odds_home_decimal": home_odds,
                     "odds_draw_decimal": score.get("odds_draw_decimal"),
@@ -746,6 +837,107 @@ class ClubFootballMixin:
         return CLUB_FOOTBALL_NORMAL_CACHE_SECONDS
 
     @staticmethod
+    def _club_espn_wide_cache_seconds(events, now):
+        return CLUB_FOOTBALL_NORMAL_CACHE_SECONDS
+
+    @staticmethod
+    def _validate_club_espn_payload(payload, label="ESPN"):
+        if not isinstance(payload, Mapping):
+            raise ValueError(f"club football {label} response is not an object")
+        if not isinstance(payload.get("events"), list):
+            raise ValueError(f"club football {label} response has no event list")
+        return payload
+
+    @staticmethod
+    def _club_espn_live_window_bounds(now_utc):
+        start_date = (now_utc - CLUB_FOOTBALL_ESPN_LIVE_LOOKBACK).date()
+        end_date = (now_utc + CLUB_FOOTBALL_ESPN_LIVE_LOOKAHEAD).date()
+        window_start = datetime(
+            start_date.year,
+            start_date.month,
+            start_date.day,
+            tzinfo=timezone.utc,
+        )
+        window_end = datetime(
+            end_date.year,
+            end_date.month,
+            end_date.day,
+            tzinfo=timezone.utc,
+        ) + timedelta(days=1)
+        return window_start, window_end
+
+    @staticmethod
+    def _club_espn_raw_event_is_final(raw_event):
+        if not isinstance(raw_event, Mapping):
+            return False
+        competitions = raw_event.get("competitions") or []
+        competition = competitions[0] if competitions else {}
+        status_block = competition.get("status") or raw_event.get("status") or {}
+        type_block = status_block.get("type") or {}
+        return bool(type_block.get("completed")) or str(
+            type_block.get("state") or ""
+        ).strip().lower() == "post"
+
+    @staticmethod
+    def _merge_club_espn_payloads(base_payload, overlay_payload):
+        base = dict(base_payload) if isinstance(base_payload, Mapping) else {}
+        overlay = (
+            dict(overlay_payload) if isinstance(overlay_payload, Mapping) else {}
+        )
+        merged = dict(base)
+        for key, value in overlay.items():
+            if key != "events":
+                merged[key] = value
+
+        events = []
+        indexes = {}
+        window_start = SportsDashboard._parse_cached_utc(
+            overlay.get("window_start")
+        )
+        window_end = SportsDashboard._parse_cached_utc(overlay.get("window_end"))
+        for payload_index, payload in enumerate((base, overlay)):
+            for raw_event in payload.get("events") or []:
+                if not isinstance(raw_event, Mapping):
+                    continue
+                event = dict(raw_event)
+                if (
+                    payload_index == 0
+                    and window_start is not None
+                    and window_end is not None
+                ):
+                    event_start = SportsDashboard._club_parse_utc(
+                        event.get("date")
+                    )
+                    if (
+                        event_start is not None
+                        and window_start <= event_start < window_end
+                        and not SportsDashboard._club_espn_raw_event_is_final(
+                            event
+                        )
+                    ):
+                        continue
+                event_id = str(event.get("id") or event.get("uid") or "").strip()
+                event_key = ("id", event_id) if event_id else None
+                if event_key is not None and event_key in indexes:
+                    existing_index = indexes[event_key]
+                    if (
+                        SportsDashboard._club_espn_raw_event_is_final(
+                            events[existing_index]
+                        )
+                        and not SportsDashboard._club_espn_raw_event_is_final(
+                            event
+                        )
+                    ):
+                        continue
+                    events[existing_index] = event
+                    continue
+                if event_key is not None:
+                    indexes[event_key] = len(events)
+                events.append(event)
+        merged["events"] = events
+        return merged
+
+    @staticmethod
     def _club_football_data_cache_seconds(events, now):
         cache_seconds = SportsDashboard._club_espn_cache_seconds(events, now)
         if cache_seconds == CLUB_FOOTBALL_LIVE_CACHE_SECONDS:
@@ -788,6 +980,32 @@ class ClubFootballMixin:
                 and isinstance(cache.get("payload"), Mapping)
             ):
                 return cache
+        return {}
+
+    @staticmethod
+    def _club_read_valid_espn_cache(
+        current_path,
+        last_good_path,
+        version,
+        league_code,
+        label,
+    ):
+        for path in (current_path, last_good_path):
+            cache = SportsDashboard._club_read_cached_payload(
+                path,
+                path,
+                version,
+                league_code,
+            )
+            if not cache:
+                continue
+            try:
+                SportsDashboard._validate_club_espn_payload(
+                    cache.get("payload"), label
+                )
+            except ValueError:
+                continue
+            return cache
         return {}
 
     def _club_write_cached_payload(
@@ -859,22 +1077,43 @@ class ClubFootballMixin:
             },
         )
 
-    def _fetch_club_espn_payload(self, league_code, settings, now_utc):
+    def _fetch_club_espn_payload(
+        self,
+        league_code,
+        settings,
+        now_utc,
+        *,
+        live_window=False,
+    ):
         if self._club_espn_calls_left(settings, now_utc) <= 0:
             raise RuntimeError("club football ESPN daily request limit reached")
-        response = get_http_session().get(
-            self._club_espn_scoreboard_url(league_code),
-            headers={"User-Agent": "InkyPi/1.0"},
-            timeout=15,
+        event_limit = (
+            CLUB_FOOTBALL_ESPN_LIVE_EVENT_LIMIT
+            if live_window
+            else CLUB_FOOTBALL_ESPN_EVENT_LIMIT
         )
+        if live_window:
+            window_start, window_end = self._club_espn_live_window_bounds(now_utc)
+            start = window_start.strftime("%Y%m%d")
+            end = (window_end - timedelta(microseconds=1)).strftime("%Y%m%d")
+        else:
+            start = (now_utc - CLUB_FOOTBALL_ESPN_LOOKBACK).strftime("%Y%m%d")
+            end = (now_utc + CLUB_FOOTBALL_ESPN_LOOKAHEAD).strftime("%Y%m%d")
         try:
+            response = get_http_session().get(
+                self._club_espn_scoreboard_url(league_code),
+                headers={"Accept": "application/json"},
+                params={
+                    "dates": f"{start}-{end}",
+                    "limit": str(event_limit),
+                },
+                timeout=15,
+            )
             response.raise_for_status()
             payload = response.json()
         finally:
             self._record_club_espn_call(now_utc)
-        if not isinstance(payload, Mapping):
-            raise ValueError("club football ESPN response is not an object")
-        return payload
+        return self._validate_club_espn_payload(payload)
 
     def _load_club_espn_league_payload(
         self,
@@ -886,44 +1125,154 @@ class ClubFootballMixin:
         now_utc = now.astimezone(timezone.utc)
         current_path = self._club_football_cache_path("espn", league_code)
         last_good_path = self._club_football_last_good_cache_path("espn", league_code)
-        cache = self._club_read_cached_payload(
+        cache = self._club_read_valid_espn_cache(
             current_path,
             last_good_path,
-            CLUB_FOOTBALL_PROVIDER_CACHE_VERSION,
+            CLUB_FOOTBALL_ESPN_PROVIDER_CACHE_VERSION,
             league_code,
+            "ESPN cache",
         )
         cached_payload = cache.get("payload") or {}
         cached_events = self._parse_club_espn_events(
             league_code, cached_payload, timezone_info
         )
-        cache_seconds = self._club_espn_cache_seconds(cached_events, now)
+        cache_seconds = self._club_espn_wide_cache_seconds(cached_events, now)
         force_refresh = self._force_refresh_requested(settings)
-        if cache and not force_refresh and self._club_cache_fresh(
-            cache, cache_seconds, now_utc
+        fetched_at = cache.get("fetched_at")
+        live_current_path = self._club_football_cache_path("espn_live", league_code)
+        live_last_good_path = self._club_football_last_good_cache_path(
+            "espn_live", league_code
+        )
+        live_cache = self._club_read_valid_espn_cache(
+            live_current_path,
+            live_last_good_path,
+            CLUB_FOOTBALL_ESPN_LIVE_CACHE_VERSION,
+            league_code,
+            "ESPN live cache",
+        )
+        live_payload = live_cache.get("payload") or {}
+        base_fetched_utc = self._parse_cached_utc(fetched_at)
+        live_fetched_at = live_cache.get("fetched_at")
+        live_fetched_utc = self._parse_cached_utc(live_fetched_at)
+        live_is_newer = bool(
+            live_cache
+            and live_fetched_utc is not None
+            and (
+                base_fetched_utc is None
+                or live_fetched_utc > base_fetched_utc
+            )
+        )
+        combined_payload = (
+            self._merge_club_espn_payloads(cached_payload, live_payload)
+            if live_is_newer
+            else cached_payload
+        )
+        combined_events = self._parse_club_espn_events(
+            league_code, combined_payload, timezone_info
+        )
+        wide_cache_fresh = bool(
+            cache and self._club_cache_fresh(cache, cache_seconds, now_utc)
+        )
+        overlay_cache_seconds = self._club_espn_cache_seconds(
+            combined_events, now
+        )
+        if (
+            live_is_newer
+            and not live_payload.get("events")
+            and wide_cache_fresh
         ):
-            return cached_payload, "ESPN CACHE", cache.get("fetched_at")
+            overlay_cache_seconds = min(
+                overlay_cache_seconds,
+                self._club_espn_cache_seconds(cached_events, now),
+            )
+        needs_overlay_refresh = (
+            overlay_cache_seconds < CLUB_FOOTBALL_NORMAL_CACHE_SECONDS
+        )
+        combined_fetched_at = live_fetched_at if live_is_newer else fetched_at
+        source_state = "ESPN CACHE" if wide_cache_fresh else "ESPN STALE"
+        wide_fetch_failed = False
 
-        try:
-            payload = self._fetch_club_espn_payload(league_code, settings, now_utc)
-            parsed = self._parse_club_espn_events(league_code, payload, timezone_info)
-            if not isinstance(parsed, list):
-                raise ValueError("club football ESPN payload could not be parsed")
-            fetched_at = now_utc.isoformat()
+        def fetch_wide_payload():
+            payload = self._fetch_club_espn_payload(
+                league_code, settings, now_utc
+            )
+            self._validate_club_espn_payload(payload)
+            self._parse_club_espn_events(league_code, payload, timezone_info)
+            refreshed_at = now_utc.isoformat()
             payload = dict(payload)
-            payload["fetched_at"] = fetched_at
+            payload["fetched_at"] = refreshed_at
             self._club_write_cached_payload(
                 current_path,
                 last_good_path,
-                CLUB_FOOTBALL_PROVIDER_CACHE_VERSION,
+                CLUB_FOOTBALL_ESPN_PROVIDER_CACHE_VERSION,
                 league_code,
                 payload,
-                fetched_at,
+                refreshed_at,
             )
-            return payload, "ESPN LIVE", fetched_at
+            return payload, "ESPN LIVE", refreshed_at
+
+        if force_refresh or not cache:
+            try:
+                return fetch_wide_payload()
+            except Exception:
+                if not cache and not live_cache:
+                    raise
+                source_state = "ESPN STALE"
+                wide_fetch_failed = True
+
+        if needs_overlay_refresh:
+            if live_is_newer and self._club_cache_fresh(
+                live_cache, overlay_cache_seconds, now_utc
+            ):
+                return combined_payload, "ESPN CACHE", live_fetched_at
+
+            try:
+                live_payload = self._fetch_club_espn_payload(
+                    league_code,
+                    settings,
+                    now_utc,
+                    live_window=True,
+                )
+                self._validate_club_espn_payload(live_payload, "ESPN live")
+                self._parse_club_espn_events(
+                    league_code, live_payload, timezone_info
+                )
+                refreshed_at = now_utc.isoformat()
+                live_payload = dict(live_payload)
+                live_payload["fetched_at"] = refreshed_at
+                window_start, window_end = self._club_espn_live_window_bounds(
+                    now_utc
+                )
+                live_payload["window_start"] = window_start.isoformat()
+                live_payload["window_end"] = window_end.isoformat()
+                self._club_write_cached_payload(
+                    live_current_path,
+                    live_last_good_path,
+                    CLUB_FOOTBALL_ESPN_LIVE_CACHE_VERSION,
+                    league_code,
+                    live_payload,
+                    refreshed_at,
+                )
+                return (
+                    self._merge_club_espn_payloads(
+                        cached_payload, live_payload
+                    ),
+                    "ESPN LIVE",
+                    refreshed_at,
+                )
+            except Exception:
+                return combined_payload, source_state, combined_fetched_at
+
+        if wide_fetch_failed:
+            return combined_payload, "ESPN STALE", combined_fetched_at
+
+        if wide_cache_fresh:
+            return combined_payload, source_state, combined_fetched_at
+
+        try:
+            return fetch_wide_payload()
         except Exception:
-            if cache:
-                return cached_payload, "ESPN STALE", cache.get("fetched_at")
-            raise
+            return combined_payload, "ESPN STALE", combined_fetched_at
 
     def _load_club_football_data_league_payload(
         self,
@@ -1914,6 +2263,7 @@ class ClubFootballMixin:
             if focus_adapted in visible_candidates
             else (live[0] if live else (upcoming[0] if upcoming else (recent[0] if recent else None)))
         )
+        main_is_recent = any(main is event for event in recent)
         visible = max(
             1,
             min(
@@ -1951,7 +2301,9 @@ class ClubFootballMixin:
                 "team_asset_kind": "logo",
                 "empty_schedule_text": "暂无五大联赛赛程",
                 "upcoming_empty_text": "暂无后续赛程",
-                "recent_empty_text": "暂无近期赛果",
+                "recent_empty_text": (
+                    "暂无更多赛果" if main_is_recent else "暂无近期赛果"
+                ),
                 "show_worldcup_banner": False,
                 "show_five_leagues_filler": False,
                 "show_worldcup_pitch_art": False,
