@@ -18791,6 +18791,110 @@ def test_weather_scheduler_requires_normal_150_mib_start_margin(monkeypatch):
     assert state.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
 
 
+def test_weather_scheduler_reclaims_memory_before_drain_window_gate(monkeypatch):
+    current_dt = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, ordinary = _weather_margin_runtime(
+        "weather-preflight-memory-reclaim",
+        current_dt,
+    )
+    sample = {"value": ResourceSample(available_mb=108, swap_percent=75.3)}
+    maintenance = []
+    executions = []
+
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+
+    def reclaim_memory(reason, *, force=False, command=None):
+        maintenance.append((reason, force, command))
+        if reason == "weather-liveness-preflight":
+            sample["value"] = ResourceSample(
+                available_mb=126,
+                swap_percent=75.3,
+            )
+            return {"after": {"available_mb": 126, "swap_percent": 75.3}}
+        return None
+
+    monkeypatch.setattr(task, "_run_memory_maintenance", reclaim_memory)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_sample_disk_pressure",
+        lambda: DiskPressureTier.HEALTHY,
+    )
+    monkeypatch.setattr(task, "_select_prepared_display_retry_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_run_cache_lifecycle_maintenance", lambda _tier: None)
+    monkeypatch.setattr(task, "_execute_command", executions.append)
+    scheduler_dt = {"value": current_dt}
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: scheduler_dt["value"])
+    task.device_config.config["plugin_cycle_interval_seconds"] = 1
+
+    first_turn = task._run_one_iteration_for_test()
+
+    assert first_turn is None
+    assert task._weather_liveness_window is not None
+    assert task._weather_liveness_window.instance_uuid == weather.instance_uuid
+    assert maintenance == [("weather-liveness-preflight", False, None)]
+    assert executions == []
+
+    clock.advance(90)
+    scheduler_dt["value"] += timedelta(seconds=90)
+    sample["value"] = ResourceSample(available_mb=146, swap_percent=75.3)
+    weather_turn = task._run_one_iteration_for_test()
+
+    assert weather_turn is not None
+    assert weather_turn.command.instance_uuid == weather.instance_uuid
+    assert weather_turn.command.payload["weather_liveness_concession"] is True
+    finished = task.refresh_queue.get_entry(weather_turn.job.id)
+    assert finished.job.status is JobStatus.SUCCEEDED
+    assert [command.instance_uuid for command in executions] == [
+        weather.instance_uuid
+    ]
+
+
+def test_weather_scheduler_rechecks_floor_after_window_maintenance(monkeypatch):
+    current_dt = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+    task, _clock, _weather, _ordinary = _weather_margin_runtime(
+        "weather-window-post-maintenance-floor",
+        current_dt,
+    )
+    sample = {"value": ResourceSample(available_mb=146, swap_percent=75.3)}
+    maintenance = []
+    executions = []
+
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+
+    def maintain_memory(reason, *, force=False, command=None):
+        maintenance.append((reason, force, command))
+        if reason == "weather-liveness-window":
+            sample["value"] = ResourceSample(
+                available_mb=114.9,
+                swap_percent=75.3,
+            )
+            return {"after": {"available_mb": 114.9, "swap_percent": 75.3}}
+        return None
+
+    monkeypatch.setattr(task, "_run_memory_maintenance", maintain_memory)
+    monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
+    monkeypatch.setattr(
+        task,
+        "_sample_disk_pressure",
+        lambda: DiskPressureTier.HEALTHY,
+    )
+    monkeypatch.setattr(task, "_select_prepared_display_retry_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_select_cached_display_command", lambda _dt: None)
+    monkeypatch.setattr(task, "_run_cache_lifecycle_maintenance", lambda _tier: None)
+    monkeypatch.setattr(task, "_execute_command", executions.append)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    task.device_config.config["plugin_cycle_interval_seconds"] = 1
+
+    blocked_turn = task._run_one_iteration_for_test()
+
+    assert blocked_turn is None
+    assert task._weather_liveness_window is None
+    assert maintenance[0] == ("weather-liveness-window", True, None)
+    assert executions == []
+
+
 def test_weather_with_normal_margin_keeps_ordinary_data_ordering(monkeypatch):
     current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
     task, _clock, _weather, ordinary = _weather_margin_runtime(
@@ -18813,6 +18917,38 @@ def test_weather_with_normal_margin_keeps_ordinary_data_ordering(monkeypatch):
     assert command is not None
     assert command.instance_uuid == ordinary.instance_uuid
     assert command.priority == 10
+
+
+def test_weather_maintenance_recovery_preserves_ordinary_data_ordering(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+    task, _clock, _weather, ordinary = _weather_margin_runtime(
+        "weather-maintenance-recovery-ordering",
+        current_dt,
+    )
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(minutes=30)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    sample = {"value": ResourceSample(available_mb=149, swap_percent=75.3)}
+    maintenance = []
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+
+    def recover_memory(reason, *, force=False):
+        maintenance.append((reason, force))
+        sample["value"] = ResourceSample(available_mb=150, swap_percent=0)
+
+    monkeypatch.setattr(task, "_run_memory_maintenance", recover_memory)
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is not None
+    assert command.instance_uuid == ordinary.instance_uuid
+    assert command.priority == 10
+    assert task._weather_liveness_window is None
+    assert maintenance == [("weather-liveness-window", True)]
 
 
 def test_weather_window_starts_immediately_when_normal_margin_recovers(
@@ -18937,6 +19073,34 @@ def test_weather_window_concedes_once_at_deadline_with_140_mib_floor(monkeypatch
     assert task._weather_liveness_cooldown_until_monotonic > clock.monotonic()
 
 
+def test_weather_drain_window_never_spawns_below_140_mib_concession(monkeypatch):
+    current_dt = datetime(2026, 8, 21, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, ordinary = _weather_margin_runtime(
+        "weather-drain-window-safe-floor",
+        current_dt,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=126, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task._weather_liveness_window is not None
+    assert task._weather_liveness_window.instance_uuid == weather.instance_uuid
+
+    clock.advance(90)
+    command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=90)
+    )
+
+    assert command is not None
+    assert command.instance_uuid == ordinary.instance_uuid
+    assert task._weather_liveness_window is None
+    assert task._burst_liveness_yield_ordinary_pending is False
+
+
 def test_weather_concession_submit_rejection_preserves_window_and_cooldown(
     monkeypatch,
 ):
@@ -19019,7 +19183,7 @@ def test_non_concession_independent_submit_keeps_submit_only_queue_contract():
     assert queue.command is command
 
 
-def test_weather_below_140_mib_never_opens_window_or_holds_ordinary(monkeypatch):
+def test_weather_below_115_mib_never_opens_window_or_holds_ordinary(monkeypatch):
     current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
     task, clock, _weather, ordinary = _weather_margin_runtime(
         "weather-below-concession-floor",
@@ -19031,7 +19195,7 @@ def test_weather_below_140_mib_never_opens_window_or_holds_ordinary(monkeypatch)
     assert task._select_independent_refresh_command(current_dt) is None
     assert task._weather_liveness_window is None
 
-    sample["value"] = ResourceSample(available_mb=146, swap_percent=75.3)
+    sample["value"] = ResourceSample(available_mb=126, swap_percent=75.3)
     clock.advance(1)
     ordinary_command = task._select_independent_refresh_command(
         current_dt + timedelta(seconds=1)
@@ -19079,7 +19243,7 @@ def test_weather_normal_start_margin_is_strict_and_finite(
         (float("nan"), False),
     ],
 )
-def test_weather_concession_keeps_the_measured_safe_memory_floor(
+def test_weather_concession_keeps_the_execution_safe_floor(
     available_mb,
     expected,
 ):
@@ -19095,6 +19259,39 @@ def test_weather_concession_keeps_the_measured_safe_memory_floor(
 
     assert available is expected
     assert required_mb == 140
+
+
+@pytest.mark.parametrize(
+    ("configured_mb", "available_mb", "expected", "required_mb"),
+    [
+        (None, 115, True, 115),
+        (0, 114.9, False, 115),
+        (130, 126, False, 130),
+        (float("nan"), 115, True, 115),
+    ],
+)
+def test_weather_drain_margin_never_drops_below_browser_hard_floor(
+    configured_mb,
+    available_mb,
+    expected,
+    required_mb,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, _clock, _weather, _ordinary = _weather_margin_runtime(
+        f"weather-drain-margin-{configured_mb}-{available_mb}",
+        current_dt,
+    )
+    if configured_mb is not None:
+        task.device_config.config[
+            "weather_liveness_drain_min_available_mb"
+        ] = configured_mb
+
+    available, resolved_mb = task._weather_liveness_drain_margin(
+        ResourceSample(available_mb=available_mb, swap_percent=99)
+    )
+
+    assert available is expected
+    assert resolved_mb == required_mb
 
 
 def test_weather_concession_execution_race_stops_before_plugin_start(monkeypatch):

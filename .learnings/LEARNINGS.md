@@ -6,6 +6,72 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260821-002] best_practice
+
+**Logged**: 2026-08-21T17:52:54-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+When production contains unpublished changes, build a scoped release from the hash-pinned active artifact instead of a clean Git archive.
+
+### Details
+The active Pi release already contained deployed DailyArt and GCD artwork changes that were not present in `origin/main`. A candidate built from the clean maintenance worktree would have removed those assets and changed 35 archive members while fixing only Weather liveness. The safe candidate was instead derived from the verified active-release artifact, overlaid with the tested `src/refresh_task.py`, and compared member-by-member against that baseline. The final archive retained all 1,291 members and changed exactly the one allowlisted file.
+
+### Suggested Action
+Before every scoped live release, compare the worktree source with the active artifact and fail closed on unrelated drift. Hash-lock the live baseline, preserve its member set, enforce a per-member change allowlist, retain the baseline artifact for transactional rollback, and never edit the live release symlink directly.
+
+### Metadata
+- Source: conversation
+- Related Files: tools/epaperpod-deploy-zip.ps1, inkypi-weather/package/InkyPi/install/lib/release_archive.py, inkypi-weather/package/InkyPi/src/refresh_task.py
+- Tags: release, active-artifact, hash-pin, single-member-overlay, rollback, unpublished-runtime
+- See Also: LRN-20260719-005, LRN-20260713-003
+- Pattern-Key: release.active_artifact_single_member_overlay
+- Recurrence-Count: 1
+- First-Seen: 2026-08-21
+- Last-Seen: 2026-08-21
+
+### Resolution
+- **Resolved**: 2026-08-21T17:52:54-07:00
+- **Release**: deploy-20260822T002421Z-weather-liveness-dbf26f3545b6
+- **Notes**: The deployed ZIP was derived from active artifact `9f5623d797cb99c9bf44c432e91f65bcb496d643789938543bca1eee5b6c1699`, changed only `src/refresh_task.py`, and passed transactional activation, service, API, scheduler, and physical display verification.
+
+---
+
+## [LRN-20260821-001] best_practice
+
+**Logged**: 2026-08-21T17:10:08-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Resource maintenance inside scheduler admission must restart the complete admission decision with a fresh sample.
+
+### Details
+A Weather liveness preflight initially resampled memory only inside the plugin-specific decision. The outer scheduler still held the old pressure tier and candidate ordering, so a post-maintenance HARD sample could admit an ordinary renderer and a recovered normal sample could let Weather bypass an older due task. A local resample is insufficient when the sample determines global safety and fairness.
+
+### Suggested Action
+After maintenance that can change admission inputs, restart the complete selector so resource pressure, live-work gates, plugin-specific liveness, and ordinary due ordering all consume one fresh snapshot. Cover both threshold directions: a fresh HARD sample must start nothing, while a fresh normal sample must preserve global due ordering.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/refresh_task.py, inkypi-weather/package/InkyPi/tests/test_refresh_task.py
+- Tags: scheduler, admission, resource-pressure, resampling, fairness, weather
+- See Also: LRN-20260726-003, LRN-20260718-001, LRN-20260721-002
+- Pattern-Key: refresh_scheduler.maintenance_restarts_full_admission
+- Recurrence-Count: 1
+- First-Seen: 2026-08-21
+- Last-Seen: 2026-08-21
+
+### Resolution
+- **Resolved**: 2026-08-21T17:10:08-07:00
+- **Commit/PR**: local isolated worktree
+- **Notes**: The selector now restarts after Weather preflight maintenance; focused regressions prove fresh HARD rejection and fresh normal fairness, and the full suite passed.
+
+---
+
 ## [LRN-20260820-001] best_practice
 
 **Logged**: 2026-08-20T14:47:00-07:00

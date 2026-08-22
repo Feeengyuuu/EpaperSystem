@@ -160,6 +160,9 @@ DEFAULT_WEATHER_BACKGROUND_START_MIN_AVAILABLE_MB = 150
 DEFAULT_WEATHER_BACKGROUND_START_MAX_SWAP_PERCENT = 70
 DEFAULT_WEATHER_LIVENESS_WINDOW_SECONDS = 90
 DEFAULT_WEATHER_LIVENESS_COOLDOWN_SECONDS = 5 * 60
+DEFAULT_WEATHER_LIVENESS_DRAIN_MIN_AVAILABLE_MB = (
+    DEFAULT_BACKGROUND_BURST_START_MIN_AVAILABLE_MB
+)
 DEFAULT_WEATHER_LIVENESS_CONCESSION_MIN_AVAILABLE_MB = 140
 MIN_WEATHER_RESOURCE_PRESSURE_DEFERRAL_SECONDS = 5 * 60
 DEFAULT_BURST_LIVENESS_ORDINARY_YIELD_SECONDS = 30
@@ -200,6 +203,7 @@ DEFAULT_IAN_ADMISSION_RETRY_SECONDS = 1.0
 DEFAULT_IAN_RETAINED_LIMIT = 16
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
+_WEATHER_LIVENESS_RESAMPLE = object()
 
 
 @dataclass(frozen=True)
@@ -2356,6 +2360,7 @@ class RefreshTask:
         current_dt,
         *,
         safe_light_only=False,
+        weather_preflight_complete=False,
     ) -> RefreshCommand | None:
         """Admit at most one ordinary renderer command for this probe."""
         self._update_burst_liveness_ordinary_yield_window()
@@ -2518,6 +2523,7 @@ class RefreshTask:
                 runtime_instances,
                 current_dt,
                 resource_sample,
+                preflight_complete=weather_preflight_complete,
             )
         elif self._ticketmaster_liveness_window is not None:
             (
@@ -2589,7 +2595,14 @@ class RefreshTask:
                     runtime_instances,
                     current_dt,
                     resource_sample,
+                    preflight_complete=weather_preflight_complete,
                 )
+        if weather_liveness_candidate is _WEATHER_LIVENESS_RESAMPLE:
+            return self._select_independent_refresh_command(
+                current_dt,
+                safe_light_only=safe_light_only,
+                weather_preflight_complete=True,
+            )
         (
             ticketmaster_margin_available,
             ticketmaster_required_available_mb,
@@ -4513,6 +4526,29 @@ class RefreshTask:
             min_available_mb,
         )
 
+    def _weather_liveness_drain_margin(self, sample):
+        min_available_mb = self._config_float(
+            "weather_liveness_drain_min_available_mb",
+            DEFAULT_WEATHER_LIVENESS_DRAIN_MIN_AVAILABLE_MB,
+        )
+        if not math.isfinite(min_available_mb):
+            min_available_mb = DEFAULT_WEATHER_LIVENESS_DRAIN_MIN_AVAILABLE_MB
+        min_available_mb = max(
+            DEFAULT_WEATHER_LIVENESS_DRAIN_MIN_AVAILABLE_MB,
+            min_available_mb,
+        )
+        try:
+            available_mb = float(sample.available_mb)
+            swap_percent = float(sample.swap_percent)
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return False, min_available_mb
+        return (
+            math.isfinite(available_mb)
+            and math.isfinite(swap_percent)
+            and available_mb >= min_available_mb,
+            min_available_mb,
+        )
+
     def _weather_liveness_seconds(self, key, default, maximum):
         value = self._config_float(key, default)
         if not math.isfinite(value) or value < 0:
@@ -4631,6 +4667,8 @@ class RefreshTask:
         runtime_instances,
         current_dt,
         resource_sample,
+        *,
+        preflight_complete=False,
     ):
         """Reserve one bounded quiet window for a due Weather browser start."""
 
@@ -4648,7 +4686,7 @@ class RefreshTask:
         normal_margin, required_mb, max_swap = (
             self._weather_background_start_margin(resource_sample)
         )
-        concession_margin, _ = self._weather_concession_margin(
+        concession_margin, concession_min_mb = self._weather_concession_margin(
             resource_sample
         )
         window = self._weather_liveness_window
@@ -4732,10 +4770,6 @@ class RefreshTask:
             return None, False, False
         if now < self._weather_liveness_cooldown_until_monotonic:
             return None, False, False
-        # A quiet window is useful only when a bounded start could eventually
-        # be safe. Unknown metrics or less than 140 MiB never hold other work.
-        if not concession_margin:
-            return None, False, False
         window_seconds = self._weather_liveness_seconds(
             "weather_liveness_window_seconds",
             DEFAULT_WEATHER_LIVENESS_WINDOW_SECONDS,
@@ -4743,7 +4777,28 @@ class RefreshTask:
         )
         if window_seconds <= 0:
             return None, False, False
-        self._run_memory_maintenance("weather-liveness-window", force=True)
+        if not preflight_complete:
+            # Restart the complete admission decision after maintenance so the
+            # refreshed sample drives the global tier, every candidate lane,
+            # and ordinary DATA fairness—not only Weather's local gate.
+            self._run_memory_maintenance(
+                (
+                    "weather-liveness-window"
+                    if concession_margin
+                    else "weather-liveness-preflight"
+                ),
+                force=concession_margin,
+            )
+            return _WEATHER_LIVENESS_RESAMPLE, False, False
+        drain_margin, drain_min_mb = self._weather_liveness_drain_margin(
+            resource_sample
+        )
+        # The lower threshold can reserve a drain-only window, but the active
+        # window path still requires the 140 MiB concession before it can
+        # submit Weather. Unknown metrics or less than the isolated browser's
+        # hard floor never hold other work.
+        if not drain_margin:
+            return None, False, False
         due_since = self._align_datetime_tz(target.due_since, current_dt)
         self._weather_liveness_window = _WeatherLivenessWindow(
             instance_uuid=target.instance.instance_uuid,
@@ -4756,7 +4811,8 @@ class RefreshTask:
             "Reserving bounded quiet window for due Weather data. | "
             "instance_uuid_hash: %s | overdue_seconds: %.1f | window_seconds: %.1f | "
             "available_mb: %s | swap_percent: %s | required_available_mb: %s | "
-            "max_swap_percent: %s",
+            "max_swap_percent: %s | drain_min_available_mb: %s | "
+            "concession_min_available_mb: %s",
             hashlib.sha256(
                 target.instance.instance_uuid.encode("utf-8")
             ).hexdigest()[:16],
@@ -4766,6 +4822,8 @@ class RefreshTask:
             resource_sample.swap_percent,
             required_mb,
             max_swap,
+            drain_min_mb,
+            concession_min_mb,
         )
         return None, True, False
 
