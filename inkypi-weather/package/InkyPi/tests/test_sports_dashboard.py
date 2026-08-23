@@ -20076,16 +20076,21 @@ def test_club_football_production_layout_fits_five_native_rows():
 def test_club_img2_league_wordmark_assets_are_transparent_and_wide():
     paths = sports_dashboard_module.LOCAL_CLUB_LEAGUE_WORDMARK_PATHS
 
-    assert set(paths) == {"PL", "PD", "BL1", "SA", "FL1"}
-    assert len({Path(path).name for path in paths.values()}) == 5
+    assert set(paths) == {"PL", "PD", "BL1", "SA", "FL1", "MLS"}
+    assert len({Path(path).name for path in paths.values()}) == 6
     for path in paths.values():
         wordmark = Image.open(path).convert("RGBA")
         alpha = wordmark.getchannel("A")
         assert wordmark.width > wordmark.height * 1.8
         assert alpha.getbbox() is not None
         assert alpha.getextrema() == (0, 255)
+        assert alpha.point(lambda value: 255 if value >= 8 else 0).getbbox() == alpha.getbbox()
         assert wordmark.getpixel((0, 0))[3] == 0
         assert wordmark.getpixel((wordmark.width - 1, wordmark.height - 1))[3] == 0
+
+    mls_wordmark = Image.open(paths["MLS"]).convert("RGBA")
+    assert mls_wordmark.size == (331, 96)
+    assert mls_wordmark.getchannel("A").getbbox() == (4, 4, 327, 92)
 
 
 def test_club_league_icon_assets_are_bundled_for_european_five_and_mls():
@@ -20909,6 +20914,14 @@ def test_club_football_slot_renders_mls_updates_through_production_timeline(
         return original_fit_text(draw, text, *args, **kwargs)
 
     monkeypatch.setattr(plugin, "_fit_text", record_fit_text)
+    wordmark_calls = []
+    original_draw_wordmark = plugin._draw_club_league_wordmark
+
+    def record_wordmark(image, league_code, box, **kwargs):
+        wordmark_calls.append((league_code, box))
+        return original_draw_wordmark(image, league_code, box, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_club_league_wordmark", record_wordmark)
 
     panel, provenance, source = plugin._render_club_football_slot(
         {
@@ -20924,7 +20937,8 @@ def test_club_football_slot_renders_mls_updates_through_production_timeline(
     assert panel.size == (536, 240)
     assert provenance is SourceProvenance.LIVE
     assert source == "CLUB LIVE"
-    assert "美职联" in fitted_text
+    assert wordmark_calls == [("MLS", (52, 6, 230, 33))]
+    assert "美职联" not in fitted_text
     assert "Apple TV · Stade Saputo" in fitted_text
     assert "DELAYED" in fitted_text
     assert "CLUB DATA 17:55" in fitted_text
@@ -20971,6 +20985,168 @@ def test_club_timeline_header_prefers_packaged_league_icon(monkeypatch):
     header_colors = image.crop((14, 7, 44, 37)).getcolors(maxcolors=900)
     assert header_colors is not None
     assert any(color == (31, 77, 201) for _count, color in header_colors)
+
+
+@pytest.mark.parametrize(
+    ("league_code", "title"),
+    [
+        ("PL", "英超"),
+        ("PD", "西甲"),
+        ("BL1", "德甲"),
+        ("SA", "意甲"),
+        ("FL1", "法甲"),
+        ("MLS", "美职联"),
+    ],
+)
+def test_club_timeline_header_uses_img2_league_wordmark_instead_of_plain_text(
+    monkeypatch,
+    league_code,
+    title,
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    wordmark_calls = []
+    fitted_texts = []
+    original_fit = plugin._fit_text
+
+    def capture_wordmark(_image, code, box, **_kwargs):
+        wordmark_calls.append((code, box))
+        return True
+
+    def record_fit(draw, text, max_width, size, bold=False, min_size=11):
+        fitted_texts.append(str(text))
+        return original_fit(
+            draw,
+            text,
+            max_width,
+            size,
+            bold=bold,
+            min_size=min_size,
+        )
+
+    monkeypatch.setattr(plugin, "_draw_club_league_wordmark", capture_wordmark)
+    monkeypatch.setattr(plugin, "_fit_text", record_fit)
+    selected = {
+        "live": [],
+        "upcoming": [],
+        "recent": [],
+        "main": None,
+        "visible_matches": 4,
+        "presentation": {
+            "competition": "club",
+            "title": title,
+            "league_code": league_code,
+            "league_logo_url": "",
+            "team_asset_kind": "logo",
+            "show_worldcup_banner": False,
+            "show_five_leagues_filler": False,
+            "show_worldcup_pitch_art": False,
+        },
+    }
+
+    plugin._render_worldcup_api_panel(
+        (536, 240), selected, "CLUB LIVE", now.isoformat(), 4, now
+    )
+
+    assert wordmark_calls == [(league_code, (52, 6, 230, 33))]
+    assert title not in fitted_texts
+
+
+@pytest.mark.parametrize("league_code", ["PL", "PD", "BL1", "SA", "FL1", "MLS"])
+@pytest.mark.parametrize("palette", [DAY_COLORS, DEEP_NIGHT_COLORS])
+def test_club_league_wordmarks_are_legible_on_both_panel_themes(
+    league_code,
+    palette,
+):
+    plugin = _plugin()
+    image = Image.new("RGBA", (178, 27), (*palette["paper"], 255))
+    token = _ACTIVE_COLORS.set(palette)
+    try:
+        assert plugin._draw_club_league_wordmark(
+            image,
+            league_code,
+            (0, 0, 178, 27),
+            background=palette["paper"],
+        ) is True
+    finally:
+        _ACTIVE_COLORS.reset(token)
+
+    def relative_luminance(pixel):
+        normalized = []
+        for channel in pixel:
+            value = channel / 255
+            normalized.append(
+                value / 12.92
+                if value <= 0.04045
+                else ((value + 0.055) / 1.055) ** 2.4
+            )
+        return (
+            0.2126 * normalized[0]
+            + 0.7152 * normalized[1]
+            + 0.0722 * normalized[2]
+        )
+
+    background_luminance = relative_luminance(palette["paper"])
+    rendered = image.convert("RGB")
+    visible_pixels = 0
+    for y in range(rendered.height):
+        for x in range(rendered.width):
+            pixel_luminance = relative_luminance(rendered.getpixel((x, y)))
+            contrast = (
+                max(pixel_luminance, background_luminance) + 0.05
+            ) / (
+                min(pixel_luminance, background_luminance) + 0.05
+            )
+            visible_pixels += contrast >= 3.0
+
+    assert visible_pixels >= 300, league_code
+
+
+def test_club_timeline_header_preserves_mls_brand_colors_on_day_palette():
+    plugin = _plugin()
+    now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
+    selected = {
+        "live": [],
+        "upcoming": [],
+        "recent": [],
+        "main": None,
+        "visible_matches": 4,
+        "presentation": {
+            "competition": "club",
+            "title": "美职联",
+            "league_code": "MLS",
+            "league_logo_url": "",
+            "team_asset_kind": "logo",
+            "show_worldcup_banner": False,
+            "show_five_leagues_filler": False,
+            "show_worldcup_pitch_art": False,
+        },
+    }
+    token = _ACTIVE_COLORS.set(DAY_COLORS)
+    try:
+        image = plugin._render_worldcup_api_panel(
+            (536, 240), selected, "CLUB LIVE", now.isoformat(), 4, now
+        )
+    finally:
+        _ACTIVE_COLORS.reset(token)
+
+    header_logo = image.crop((14, 7, 44, 37)).convert("RGB")
+    pixels = [
+        header_logo.getpixel((x, y))
+        for y in range(header_logo.height)
+        for x in range(header_logo.width)
+    ]
+    red_pixels = sum(
+        red >= 140 and red >= green * 1.35 and red >= blue * 1.15
+        for red, green, blue in pixels
+    )
+    blue_pixels = sum(
+        blue >= 70 and blue >= red * 1.15 and blue >= green * 1.05
+        for red, green, blue in pixels
+    )
+
+    assert red_pixels >= 20
+    assert blue_pixels >= 20
 
 
 @pytest.mark.parametrize(

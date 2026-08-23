@@ -314,12 +314,14 @@ LOCAL_CLUB_LEAGUE_ICON_PATHS = {
     "FL1": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "fl1.png"),
     "MLS": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "mls.png"),
 }
+CLUB_LEAGUE_MONOCHROME_ICON_CODES = {"PL", "FL1"}
 LOCAL_CLUB_LEAGUE_WORDMARK_PATHS = {
     "PL": os.path.join(LOCAL_DECOR_DIR, "club_pl_title_wordmark.png"),
     "PD": os.path.join(LOCAL_DECOR_DIR, "club_pd_title_wordmark.png"),
     "BL1": os.path.join(LOCAL_DECOR_DIR, "club_bl1_title_wordmark.png"),
     "SA": os.path.join(LOCAL_DECOR_DIR, "club_sa_title_wordmark.png"),
     "FL1": os.path.join(LOCAL_DECOR_DIR, "club_fl1_title_wordmark.png"),
+    "MLS": os.path.join(LOCAL_DECOR_DIR, "club_mls_title_wordmark.png"),
 }
 LOCAL_NBA_COURT_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_court_strip.png")
 LOCAL_MLB_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_header_cutout.png")

@@ -78,6 +78,7 @@ class WorldCupRenderMixin:
         if logo is not None:
             if (
                 local_path
+                and league_code in CLUB_LEAGUE_MONOCHROME_ICON_CODES
                 and self._club_icon_contrast_ratio(logo, COLORS["paper"]) < 3.0
             ):
                 alpha = logo.getchannel("A")
@@ -142,13 +143,22 @@ class WorldCupRenderMixin:
             title_value = str(presentation.get("title") or "").strip()
             if not title_value:
                 title_value = f"{self._worldcup_title_year(selected)} World Cup"
-            title_drawn = is_csl_2026 and self._draw_csl_2026_title_wordmark(
-                image,
-                title_x,
-                header_y - 5,
-                190,
-                28,
-            )
+            title_drawn = False
+            if competition == "club":
+                title_drawn = self._draw_club_league_wordmark(
+                    image,
+                    presentation.get("league_code"),
+                    (title_x, header_y - 2, title_x + 178, header_y + 25),
+                    background=COLORS["paper"],
+                )
+            elif is_csl_2026:
+                title_drawn = self._draw_csl_2026_title_wordmark(
+                    image,
+                    title_x,
+                    header_y - 5,
+                    190,
+                    28,
+                )
             if not title_drawn:
                 title, title_font = self._fit_text(
                     draw,

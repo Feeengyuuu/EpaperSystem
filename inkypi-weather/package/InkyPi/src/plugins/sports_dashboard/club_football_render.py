@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from PIL import Image, ImageDraw, ImageOps
 
 from .common import (
+    CLUB_LEAGUE_MONOCHROME_ICON_CODES,
     COLORS,
     DEFAULT_WORLD_CUP_VISIBLE_MATCHES,
     LOCAL_CLUB_LEAGUE_ICON_PATHS,
@@ -26,7 +27,31 @@ CLUB_LEAGUE_ACCENT_KEYS = {
     "FL1": "cyan",
     "MLS": "blue",
 }
-CLUB_LEAGUE_MONOCHROME_ICON_CODES = {"PL", "FL1"}
+
+
+def _club_color_contrast_ratio(foreground, background):
+    def relative_luminance(rgb):
+        normalized = []
+        for channel in rgb:
+            value = channel / 255
+            normalized.append(
+                value / 12.92
+                if value <= 0.04045
+                else ((value + 0.055) / 1.055) ** 2.4
+            )
+        return (
+            0.2126 * normalized[0]
+            + 0.7152 * normalized[1]
+            + 0.0722 * normalized[2]
+        )
+
+    foreground_luminance = relative_luminance(foreground)
+    background_luminance = relative_luminance(background)
+    return (
+        max(foreground_luminance, background_luminance) + 0.05
+    ) / (
+        min(foreground_luminance, background_luminance) + 0.05
+    )
 
 
 class ClubFootballRenderMixin:
@@ -257,30 +282,15 @@ class ClubFootballRenderMixin:
             for channel in range(3)
         )
 
-        def relative_luminance(rgb):
-            normalized = []
-            for channel in rgb:
-                value = channel / 255
-                normalized.append(
-                    value / 12.92
-                    if value <= 0.04045
-                    else ((value + 0.055) / 1.055) ** 2.4
-                )
-            return (
-                0.2126 * normalized[0]
-                + 0.7152 * normalized[1]
-                + 0.0722 * normalized[2]
-            )
+        return _club_color_contrast_ratio(foreground, background)
 
-        foreground_luminance = relative_luminance(foreground)
-        background_luminance = relative_luminance(background)
-        return (
-            max(foreground_luminance, background_luminance) + 0.05
-        ) / (
-            min(foreground_luminance, background_luminance) + 0.05
-        )
-
-    def _draw_club_league_wordmark(self, image, league_code, box):
+    def _draw_club_league_wordmark(
+        self,
+        image,
+        league_code,
+        box,
+        background=None,
+    ):
         path = LOCAL_CLUB_LEAGUE_WORDMARK_PATHS.get(
             str(league_code or "").upper()
         )
@@ -294,6 +304,20 @@ class ClubFootballRenderMixin:
         )
         if not wordmark:
             return False
+        background = tuple(background or COLORS["panel"])
+        if self._club_icon_contrast_ratio(wordmark, background) < 3.0:
+            wordmark = wordmark.copy()
+            pixels = wordmark.load()
+            for pixel_y in range(wordmark.height):
+                for pixel_x in range(wordmark.width):
+                    red, green, blue, alpha = pixels[pixel_x, pixel_y]
+                    if alpha < 8:
+                        continue
+                    if _club_color_contrast_ratio(
+                        (red, green, blue),
+                        background,
+                    ) < 3.0:
+                        pixels[pixel_x, pixel_y] = (*COLORS["text"], alpha)
         paste_y = top + max(0, (bottom - top - wordmark.height) // 2)
         image.paste(wordmark, (left, paste_y), wordmark)
         return True
