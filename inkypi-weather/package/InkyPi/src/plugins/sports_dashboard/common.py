@@ -334,6 +334,7 @@ LOCAL_CLUB_LEAGUE_WORDMARK_PATHS = {
     "MLS": os.path.join(LOCAL_DECOR_DIR, "club_mls_title_wordmark.png"),
 }
 LOCAL_NBA_COURT_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_court_strip.png")
+LOCAL_TI_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "the_international_title_wordmark.png")
 LOCAL_MLB_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_header_cutout.png")
 LOCAL_WNBA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_header_cutout.png")
 LOCAL_PGA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_header_cutout.png")
@@ -347,6 +348,7 @@ LOCAL_NBA_EMPTY_SLOT_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_empty_slot
 LOCAL_NBA_OFFSEASON_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_offseason_filler.png")
 LOCAL_NBA_OFFSEASON_ACCENT_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_offseason_accent.png")
 LOCAL_PGA_FAIRWAY_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_fairway_strip.png")
+LOCAL_DOTA2_TI_EMPTY_SLOT_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "dota2_ti_empty_slot_filler.png")
 LOCAL_LPL_MARBLE_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "lpl_marble_filler.png")
 LOCAL_LPL_MSI_NEXT_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "lpl_msi_next_filler.png")
 LOCAL_LPL_MSI_OFFSEASON_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "lpl_msi_offseason_filler.png")

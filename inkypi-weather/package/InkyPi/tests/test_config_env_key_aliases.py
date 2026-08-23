@@ -705,6 +705,61 @@ def _sports_config(settings, *, migrations=None):
     return payload
 
 
+def test_startup_migrates_missing_sports_live_redisplay_to_explicit_true(
+    monkeypatch,
+    tmp_path,
+):
+    settings = {
+        "liveRefreshEnabled": "false",
+        **{key: "true" for key in _SPORTS_LIVE_REFRESH_KEYS},
+    }
+
+    config, config_path = _device_config(
+        monkeypatch,
+        tmp_path,
+        _sports_config(settings),
+    )
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    saved_settings = saved["playlist_config"]["playlists"][0]["plugins"][0][
+        "plugin_settings"
+    ]
+    assert saved_settings["backgroundCacheRefreshEnabled"] == "true"
+    assert saved["runtime_migrations"]["sports_live_redisplay_default_v1"] is True
+    assert config.get_playlist_manager().find_plugin(
+        "sports_dashboard",
+        "SportsDashboard",
+    ).settings == saved_settings
+
+
+def test_startup_preserves_explicit_sports_live_redisplay_opt_out(
+    monkeypatch,
+    tmp_path,
+):
+    settings = {
+        "liveRefreshEnabled": "false",
+        "backgroundCacheRefreshEnabled": "false",
+        **{key: "true" for key in _SPORTS_LIVE_REFRESH_KEYS},
+    }
+
+    config, config_path = _device_config(
+        monkeypatch,
+        tmp_path,
+        _sports_config(settings),
+    )
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    saved_settings = saved["playlist_config"]["playlists"][0]["plugins"][0][
+        "plugin_settings"
+    ]
+    assert saved_settings["backgroundCacheRefreshEnabled"] == "false"
+    assert saved["runtime_migrations"]["sports_live_redisplay_default_v1"] is True
+    assert config.get_playlist_manager().find_plugin(
+        "sports_dashboard",
+        "SportsDashboard",
+    ).settings == saved_settings
+
+
 def test_startup_repairs_the_legacy_all_disabled_sports_live_bundle_once(
     monkeypatch,
     tmp_path,
@@ -756,7 +811,10 @@ def test_startup_does_not_override_an_individual_sports_live_opt_out(
         "SportsDashboard",
     ).settings
     assert saved_settings["ewcLiveRefreshEnabled"] == "false"
-    assert config.get_config("runtime_migrations") is None
+    assert saved_settings["backgroundCacheRefreshEnabled"] == "true"
+    migrations = config.get_config("runtime_migrations")
+    assert migrations["sports_live_redisplay_default_v1"] is True
+    assert "sports_live_refresh_all_disabled_v1" not in migrations
 
 
 def test_completed_sports_live_repair_never_reapplies(

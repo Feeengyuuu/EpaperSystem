@@ -12839,7 +12839,7 @@ def test_explicit_false_legacy_background_flag_is_live_master_off_only(
     assert command.intent is RefreshIntent.DATA_REFRESH
 
 
-def test_queued_sports_live_success_does_not_write_the_current_screen_when_policy_is_off(
+def test_explicit_sports_live_redisplay_queues_exact_followup_when_global_policy_is_off(
     monkeypatch,
 ):
     task, device_config, _playlist, instance, current_dt, anchor = (
@@ -12882,8 +12882,8 @@ def test_queued_sports_live_success_does_not_write_the_current_screen_when_polic
     command = task._select_independent_refresh_command(current_dt)
     assert command is not None
     assert command.intent is RefreshIntent.LIVE_REFRESH
-    assert command.payload["background_live_refresh"] is True
-    assert command.payload.get("expected_displayed_instance_uuid") is None
+    assert command.payload.get("background_live_refresh") is not True
+    assert command.payload["expected_displayed_instance_uuid"] == instance.instance_uuid
     display_calls_before = len(task.display_manager.calls)
 
     submitted = task.refresh_queue.submit(command)
@@ -12891,7 +12891,12 @@ def test_queued_sports_live_success_does_not_write_the_current_screen_when_polic
     followup = task.refresh_queue.take(timeout=0)
 
     assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
-    assert followup is None
+    assert followup is not None
+    assert followup.command.intent is RefreshIntent.DISPLAY_CACHE
+    assert (
+        followup.command.payload["expected_displayed_instance_uuid"]
+        == instance.instance_uuid
+    )
     assert calls == []
     assert len(task._test_isolated_sports_calls) == 1
     assert device_config.refresh_info.refresh_time == anchor

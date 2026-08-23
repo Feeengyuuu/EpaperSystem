@@ -69,6 +69,8 @@ from plugins.sports_dashboard.sports_dashboard import (
     LOCAL_BRAND_LOGO_IMAGE_LIMITS,
     LOCAL_TEAM_LOGO_IMAGE_LIMITS,
     LOCAL_TEAM_LOGO_DIR,
+    LOCAL_DOTA2_TI_EMPTY_SLOT_FILLER_PATH,
+    LOCAL_TI_TITLE_WORDMARK_PATH,
     LOCAL_LPL_MARBLE_FILLER_PATH,
     LOCAL_LPL_MSI_CARD_ACCENT_DIR,
     LOCAL_LPL_MSI_CARD_ACCENT_PATH,
@@ -184,14 +186,12 @@ def test_sports_dashboard_settings_exposes_live_redisplay_master():
     )
     assert (
         'id="backgroundCacheRefreshEnabled" '
-        'name="backgroundCacheRefreshEnabled" value="true"'
+        'name="backgroundCacheRefreshEnabled" value="true" checked'
         in html
     )
-    assert "pluginSettings.backgroundCacheRefreshEnabled === true" in html
-    assert (
-        "String(pluginSettings.backgroundCacheRefreshEnabled).toLowerCase() === 'true'"
-        in html
-    )
+    assert "const liveRedisplaySetting =" in html
+    assert "liveRedisplaySetting === undefined" in html
+    assert "['1', 'true', 'on', 'yes'].includes" in html
 
 
 def test_sports_dashboard_presentation_rerenders_from_cache_without_forcing_providers(monkeypatch):
@@ -4339,6 +4339,41 @@ def test_right_region_renders_official_ti_live_over_waiting_lpl(monkeypatch, tmp
 
     assert conflicted.size == (800, 480)
     assert conflicted.tobytes() == uncontested.tobytes()
+    filler_crop = conflicted.crop((570, 366, 786, 480))
+    assert len(filler_crop.getcolors(maxcolors=216 * 114)) >= 12
+    ti_wordmark_crop = conflicted.crop((584, 84, 776, 150))
+    ti_wordmark_gold_pixels = sum(
+        count
+        for count, (red, green, blue) in ti_wordmark_crop.getcolors(maxcolors=192 * 66)
+        if red >= 140 and 65 <= green <= 210 and blue <= 90
+    )
+    repeated_dota_red_pixels = sum(
+        count
+        for count, (red, green, blue) in ti_wordmark_crop.getcolors(maxcolors=192 * 66)
+        if 175 <= red <= 205 and 35 <= green <= 60 and 15 <= blue <= 35
+    )
+    assert ti_wordmark_gold_pixels >= 600
+    assert repeated_dota_red_pixels <= 10
+    yan_logo_crop = conflicted.crop((602, 173, 632, 203))
+    yan_logo_red_pixels = sum(
+        count
+        for count, (red, green, blue) in yan_logo_crop.getcolors(maxcolors=30 * 30)
+        if red >= 220 and green <= 50 and blue <= 50
+    )
+    yan_logo_white_pixels = sum(
+        count
+        for count, (red, green, blue) in yan_logo_crop.getcolors(maxcolors=30 * 30)
+        if red >= 235 and green >= 235 and blue >= 235
+    )
+    yan_fallback_blue_pixels = sum(
+        count
+        for count, color in yan_logo_crop.getcolors(maxcolors=30 * 30)
+        if color == (44, 92, 147)
+    )
+    assert yan_logo_red_pixels >= 8
+    assert yan_logo_white_pixels >= 45
+    assert yan_fallback_blue_pixels == 0
+    assert conflicted.getpixel((676, 166)) == COLORS["border"]
 
 
 def test_right_esports_skips_valve_fetch_after_timed_ewc_candidate(
@@ -17454,6 +17489,7 @@ def test_sports_dashboard_local_asset_constants_exist():
         LOCAL_WORLDCUP_HEADER_BANNER_PATH,
         LOCAL_WORLDCUP_TITLE_WORDMARK_PATH,
         LOCAL_NBA_COURT_STRIP_PATH,
+        LOCAL_TI_TITLE_WORDMARK_PATH,
         LOCAL_MLB_HEADER_CUTOUT_PATH,
         LOCAL_WNBA_HEADER_CUTOUT_PATH,
         LOCAL_PGA_HEADER_CUTOUT_PATH,
@@ -17463,6 +17499,7 @@ def test_sports_dashboard_local_asset_constants_exist():
         LOCAL_NBA_OFFSEASON_FILLER_PATH,
         LOCAL_NBA_OFFSEASON_ACCENT_PATH,
         LOCAL_PGA_FAIRWAY_STRIP_PATH,
+        LOCAL_DOTA2_TI_EMPTY_SLOT_FILLER_PATH,
         LOCAL_LPL_MARBLE_FILLER_PATH,
         LOCAL_LPL_MSI_NEXT_FILLER_PATH,
         LOCAL_LPL_MSI_OFFSEASON_FILLER_PATH,
@@ -17472,6 +17509,36 @@ def test_sports_dashboard_local_asset_constants_exist():
         asset = Path(path)
         assert asset.is_file(), path
         assert asset.stat().st_size > 0, path
+
+
+def test_dota2_ti_empty_slot_filler_loads_with_transparent_background():
+    TEAM_LOGO_CACHE.clear()
+
+    filler = SportsDashboard._load_dota2_ti_empty_slot_filler((216, 114))
+
+    assert filler is not None
+    assert filler.mode == "RGBA"
+    assert filler.size == (216, 114)
+    alpha_min, alpha_max = filler.getchannel("A").getextrema()
+    assert alpha_min == 0
+    assert alpha_max == 255
+
+
+def test_ti_title_wordmark_asset_loads_as_transparent_header_art():
+    TEAM_LOGO_CACHE.clear()
+
+    wordmark = SportsDashboard._load_local_logo(
+        LOCAL_TI_TITLE_WORDMARK_PATH,
+        (184, 64),
+        alpha_threshold=8,
+    )
+
+    assert wordmark is not None
+    assert wordmark.mode == "RGBA"
+    assert wordmark.width <= 184
+    assert wordmark.height <= 64
+    assert wordmark.getchannel("A").getextrema() == (0, 255)
+    assert wordmark.getpixel((0, 0))[3] == 0
 
 
 def test_standalone_sport_header_cutouts_load_as_transparent_strips():
@@ -18343,6 +18410,52 @@ def test_valve_ti_live_secondary_section_uses_up_next_matches():
 
     assert title == "UP NEXT"
     assert rows == [next_match]
+
+
+def test_valve_ti_empty_slot_filler_yields_to_two_up_next_rows():
+    plugin = _plugin()
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    main = {
+        "series": "TI",
+        "state": "live",
+        "start": now - timedelta(hours=1),
+        "team_a": "YAN",
+        "team_b": "TS",
+        "team_a_score": 0,
+        "team_b_score": 1,
+    }
+    upcoming = [
+        {
+            "series": "TI",
+            "state": "unstarted",
+            "start": now + timedelta(hours=index + 1),
+            "team_a": f"A{index}",
+            "team_b": f"B{index}",
+        }
+        for index in range(2)
+    ]
+    primary = {
+        "series": "TI",
+        "sport": "THE INTERNATIONAL",
+        "event_name": "The International 2026",
+        "status": "LIVE",
+        "main": main,
+        "live": [main],
+        "upcoming": upcoming,
+        "recent": [],
+    }
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+
+    plugin._draw_valve_esports_sidebar(
+        image,
+        552,
+        {"primary": primary},
+        "DOTA 2 OFFICIAL",
+        now,
+    )
+
+    remaining_crop = image.crop((570, 421, 786, 480))
+    assert len(remaining_crop.getcolors(maxcolors=216 * 59)) <= 2
 
 
 def test_valve_ti_live_focus_date_uses_match_time_not_event_range():
@@ -19930,6 +20043,60 @@ def test_club_espn_live_refresh_uses_narrow_window_and_preserves_history(
     assert {event["id"] for event in stored_live["payload"]["events"]} == {
         "espn-pl-1"
     }
+
+
+def test_club_espn_force_refresh_merges_current_live_overlay_over_stale_wide(
+    monkeypatch, tmp_path
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 23, 5, 10, tzinfo=timezone.utc)
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    stale_wide = json.loads(json.dumps(_sample_club_espn_payload()))
+    stale_wide["events"][0]["date"] = "2026-08-23T02:30:00Z"
+    stale_competition = stale_wide["events"][0]["competitions"][0]
+    stale_competition["status"] = {
+        "type": {
+            "state": "in",
+            "completed": False,
+            "shortDetail": "45'+3'",
+        },
+        "displayClock": "45'+3'",
+    }
+    stale_competition["competitors"][0]["score"] = "0"
+    stale_competition["competitors"][1]["score"] = "1"
+    current_live = json.loads(json.dumps(stale_wide))
+    current_competition = current_live["events"][0]["competitions"][0]
+    current_competition["status"] = {
+        "type": {
+            "state": "post",
+            "completed": True,
+            "shortDetail": "FT",
+        },
+        "displayClock": "90'+6'",
+    }
+    current_competition["competitors"][0]["score"] = "1"
+    calls = []
+
+    def fetch(_league_code, _settings, _now_utc, *, live_window=False):
+        calls.append(live_window)
+        return current_live if live_window else stale_wide
+
+    monkeypatch.setattr(plugin, "_fetch_club_espn_payload", fetch)
+
+    payload, source_state, fetched_at = plugin._load_club_espn_league_payload(
+        "MLS", {"forceRefresh": True}, timezone.utc, now
+    )
+    event = SportsDashboard._parse_club_espn_events(
+        "MLS", payload, timezone.utc
+    )[0]
+
+    assert calls == [False, True]
+    assert event["status"] == "FINAL"
+    assert event["home_score"] == 1
+    assert event["away_score"] == 1
+    assert event["display_clock"] == "90'+6'"
+    assert source_state == "ESPN LIVE"
+    assert fetched_at == now.isoformat()
 
 
 def test_club_espn_empty_live_window_clears_stale_live_but_keeps_history(

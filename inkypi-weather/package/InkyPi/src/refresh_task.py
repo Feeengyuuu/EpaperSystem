@@ -278,6 +278,15 @@ def _display_triggered_refresh_enabled(device_config):
     return _setting_enabled(configured)
 
 
+def _live_display_refresh_enabled(device_config, plugin_id, settings):
+    """Allow an explicit SportsDashboard live re-display opt-in."""
+    if str(plugin_id).strip() == "sports_dashboard":
+        return _setting_enabled(
+            (settings or {}).get("backgroundCacheRefreshEnabled")
+        )
+    return _display_triggered_refresh_enabled(device_config)
+
+
 def _presentation_refresh_enabled(device_config, plugin_config):
     """Allow audited per-plugin exceptions without reopening provider work globally."""
 
@@ -3121,13 +3130,14 @@ class RefreshTask:
         if tier is ResourceTier.HARD:
             return []
         displayed_uuid = self.runtime_state.snapshot().displayed_instance_uuid
-        allow_display_triggered = _display_triggered_refresh_enabled(
-            self.device_config
-        )
         candidates = []
         for instance in active.plugins:
             is_displayed = instance.instance_uuid == displayed_uuid
-            requires_displayed_instance = is_displayed and allow_display_triggered
+            requires_displayed_instance = is_displayed and _live_display_refresh_enabled(
+                self.device_config,
+                instance.plugin_id,
+                instance.settings,
+            )
             if (
                 requires_displayed_instance
                 and self._snapshot_background_cache_disabled(instance)
@@ -5533,7 +5543,11 @@ class RefreshTask:
             if (
                 command.intent is RefreshIntent.LIVE_REFRESH
                 and command.payload.get("background_live_refresh") is not True
-                and not _display_triggered_refresh_enabled(self.device_config)
+                and not _live_display_refresh_enabled(
+                    self.device_config,
+                    command.plugin_id,
+                    command.payload.get("settings"),
+                )
             ):
                 raise _StaleSelection(
                     "display-triggered live refresh is disabled"
@@ -7112,13 +7126,17 @@ class RefreshTask:
         theme_mode,
     ):
         """Queue an exact cache-only display after a successful visible live refresh."""
-        if not _display_triggered_refresh_enabled(self.device_config):
+        instance = resolved_snapshot.instance
+        if not _live_display_refresh_enabled(
+            self.device_config,
+            instance.plugin_id,
+            instance.settings,
+        ):
             return None
         if command.payload.get("background_live_refresh") is True:
             return None
         if not self._live_display_target_is_current(command):
             return None
-        instance = resolved_snapshot.instance
         followup = self._playlist_command(
             resolved_snapshot.playlist_name,
             instance,

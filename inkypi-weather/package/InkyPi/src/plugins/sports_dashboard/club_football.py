@@ -1313,7 +1313,23 @@ class ClubFootballMixin:
 
         if force_refresh or not cache:
             try:
-                return fetch_wide_payload()
+                cached_payload, source_state, fetched_at = fetch_wide_payload()
+                cached_events = self._parse_club_espn_events(
+                    league_code, cached_payload, timezone_info
+                )
+                base_fetched_utc = self._parse_cached_utc(fetched_at)
+                combined_payload = cached_payload
+                combined_events = cached_events
+                wide_cache_fresh = True
+                overlay_cache_seconds = self._club_espn_cache_seconds(
+                    combined_events, now
+                )
+                needs_overlay_refresh = (
+                    force_refresh
+                    or overlay_cache_seconds < CLUB_FOOTBALL_NORMAL_CACHE_SECONDS
+                )
+                combined_fetched_at = fetched_at
+                live_is_newer = False
             except Exception:
                 if not cache and not live_cache:
                     raise

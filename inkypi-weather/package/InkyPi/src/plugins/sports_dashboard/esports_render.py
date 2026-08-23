@@ -6,6 +6,38 @@ SportsDashboard = None
 
 class EsportsRenderMixin:
     @staticmethod
+    def _load_dota2_ti_empty_slot_filler(size):
+        width, height = int(size[0]), int(size[1])
+        if width <= 0 or height <= 0:
+            return None
+        path = LOCAL_DOTA2_TI_EMPTY_SLOT_FILLER_PATH
+        cache_key = (path, (width, height), "dota2-ti-empty-slot-filler-v1")
+        if cache_key in TEAM_LOGO_CACHE:
+            return TEAM_LOGO_CACHE[cache_key]
+        if not os.path.exists(path):
+            TEAM_LOGO_CACHE[cache_key] = None
+            return None
+        try:
+            with Image.open(path) as source:
+                filler = source.convert("RGBA")
+            if filler.getchannel("A").getextrema() == (255, 255):
+                alpha = filler.convert("L").point(lambda value: 0 if value <= 4 else 255)
+                filler.putalpha(alpha)
+            if filler.size != (width, height):
+                filler = ImageOps.fit(
+                    filler,
+                    (width, height),
+                    method=Image.LANCZOS,
+                    centering=(0.5, 0.5),
+                )
+            TEAM_LOGO_CACHE[cache_key] = filler
+            return filler
+        except Exception as exc:
+            logger.warning("Failed to load Dota 2 TI empty-slot filler %s: %s", path, exc)
+            TEAM_LOGO_CACHE[cache_key] = None
+            return None
+
+    @staticmethod
     def _load_lpl_msi_next_filler(size):
         width, height = int(size[0]), int(size[1])
         if width <= 0 or height <= 0:
@@ -965,6 +997,34 @@ class EsportsRenderMixin:
         text, font = self._fit_text_ellipsis(draw, fallback_text, width - 28, max(16, int(height * 0.62)), bold=True, min_size=13)
         self._draw_centered(draw, (x + width / 2 + 4, y + height / 2), text, font, COLORS["text"])
 
+    def _draw_valve_ti_title_wordmark(self, image, box):
+        left, top, right, bottom = (int(value) for value in box)
+        width = max(1, right - left)
+        height = max(1, bottom - top)
+        wordmark = self._load_local_logo(
+            LOCAL_TI_TITLE_WORDMARK_PATH,
+            (width, height),
+            alpha_threshold=8,
+        )
+        if not wordmark:
+            return False
+        wordmark = wordmark.copy()
+        dark_theme = sum(COLORS["panel"]) < sum(COLORS["text"])
+        pixels = wordmark.load()
+        for pixel_y in range(wordmark.height):
+            for pixel_x in range(wordmark.width):
+                red, green, blue, alpha = pixels[pixel_x, pixel_y]
+                if not alpha:
+                    continue
+                if min(red, green, blue) >= 210:
+                    pixels[pixel_x, pixel_y] = (red, green, blue, 0)
+                elif dark_theme and max(red, green, blue) < 70:
+                    pixels[pixel_x, pixel_y] = (*COLORS["text"], alpha)
+        paste_x = left + (width - wordmark.width) // 2
+        paste_y = top + (height - wordmark.height) // 2
+        image.paste(wordmark, (paste_x, paste_y), wordmark)
+        return True
+
     def _draw_valve_status_badge(self, draw, x, y, width, height, text, is_live):
         color = COLORS["red"] if is_live else COLORS["green"]
         draw.rounded_rectangle((x, y, x + width, y + height), radius=4, outline=COLORS["border"], fill=COLORS["panel"], width=1)
@@ -997,26 +1057,55 @@ class EsportsRenderMixin:
             draw.text((card_x1 + 20, y + 58), "No Valve event", font=self._font(19, True), fill=COLORS["text"])
             return
 
-        header = self._valve_focus_header_layout(card_x1, card_x2, y)
-        tag_box = header["tag_box"]
-        tag = str((primary or {}).get("sport") or "VALVE").upper()
-        tag_text, tag_font = self._fit_text_ellipsis(draw, tag, tag_box[2] - tag_box[0] - 12, 11, bold=True, min_size=7)
-        draw.rectangle(tag_box, fill=self._valve_series_tag_fill(primary), outline=COLORS["border"], width=1)
-        self._draw_text_in_box(draw, (tag_box[0] + 6, tag_box[1], tag_box[2] - 6, tag_box[3]), tag_text, tag_font, COLORS["text"])
-
         date_label = self._valve_event_date_label(primary, event)
-        date_box = header["date_box"]
-        date_label, date_font = self._fit_text_ellipsis(draw, date_label, date_box[2] - date_box[0], 9, bold=True, min_size=7)
-        self._draw_text_in_box(draw, date_box, date_label, date_font, COLORS["muted"], align="right")
-
-        title = str((primary or {}).get("event_name") or "Valve Event").strip() or "Valve Event"
-        title_box = header["title_box"]
-        title, title_font = self._fit_text_ellipsis(draw, title, title_box[2] - title_box[0], 18, bold=True, min_size=11)
-        self._draw_text_in_box(draw, title_box, title, title_font, COLORS["text"])
-        subtitle = f"{event.get('source') or primary.get('source') or 'Valve'} TRACK"
-        subtitle_box = header["subtitle_box"]
-        subtitle, subtitle_font = self._fit_text_ellipsis(draw, subtitle, subtitle_box[2] - subtitle_box[0], 9, bold=True, min_size=7)
-        self._draw_text_in_box(draw, subtitle_box, subtitle, subtitle_font, accent)
+        ti_wordmark_drawn = (
+            self._valve_series_key(primary) == "ti"
+            and self._draw_valve_ti_title_wordmark(
+                image,
+                (card_x1 + 17, y + 5, card_x2 - 17, y + 69),
+            )
+        )
+        if ti_wordmark_drawn:
+            date_box = (card_x2 - 82, y + 70, card_x2 - 16, y + 81)
+            date_label, date_font = self._fit_text_ellipsis(
+                draw,
+                date_label,
+                date_box[2] - date_box[0],
+                8,
+                bold=True,
+                min_size=6,
+            )
+            self._draw_text_in_box(draw, date_box, date_label, date_font, COLORS["muted"], align="right")
+            subtitle_box = (card_x1 + 19, y + 70, card_x2 - 88, y + 81)
+            source = str(event.get("source") or primary.get("source") or "Valve").upper()
+            subtitle = "OFFICIAL TRACK" if "OFFICIAL" in source else f"{source} TRACK"
+            subtitle, subtitle_font = self._fit_text_ellipsis(
+                draw,
+                subtitle,
+                subtitle_box[2] - subtitle_box[0],
+                8,
+                bold=True,
+                min_size=6,
+            )
+            self._draw_text_in_box(draw, subtitle_box, subtitle, subtitle_font, accent)
+        else:
+            header = self._valve_focus_header_layout(card_x1, card_x2, y)
+            tag_box = header["tag_box"]
+            tag = str((primary or {}).get("sport") or "VALVE").upper()
+            tag_text, tag_font = self._fit_text_ellipsis(draw, tag, tag_box[2] - tag_box[0] - 12, 11, bold=True, min_size=7)
+            draw.rectangle(tag_box, fill=self._valve_series_tag_fill(primary), outline=COLORS["border"], width=1)
+            self._draw_text_in_box(draw, (tag_box[0] + 6, tag_box[1], tag_box[2] - 6, tag_box[3]), tag_text, tag_font, COLORS["text"])
+            date_box = header["date_box"]
+            date_label, date_font = self._fit_text_ellipsis(draw, date_label, date_box[2] - date_box[0], 9, bold=True, min_size=7)
+            self._draw_text_in_box(draw, date_box, date_label, date_font, COLORS["muted"], align="right")
+            title = str((primary or {}).get("event_name") or "Valve Event").strip() or "Valve Event"
+            title_box = header["title_box"]
+            title, title_font = self._fit_text_ellipsis(draw, title, title_box[2] - title_box[0], 18, bold=True, min_size=11)
+            self._draw_text_in_box(draw, title_box, title, title_font, COLORS["text"])
+            subtitle = f"{event.get('source') or primary.get('source') or 'Valve'} TRACK"
+            subtitle_box = header["subtitle_box"]
+            subtitle, subtitle_font = self._fit_text_ellipsis(draw, subtitle, subtitle_box[2] - subtitle_box[0], 9, bold=True, min_size=7)
+            self._draw_text_in_box(draw, subtitle_box, subtitle, subtitle_font, accent)
 
         center_x = (card_x1 + card_x2) / 2
         board_y1 = y + 88
@@ -1146,11 +1235,41 @@ class EsportsRenderMixin:
         if not events:
             empty_text = "No more scheduled matches" if title != "RECENT" else "No more Valve results"
             draw.text((right_x + 18, y + 36), empty_text, font=self._font(14, True), fill=COLORS["muted"])
+            self._draw_valve_ti_empty_slot_filler(
+                image,
+                right_x + 14,
+                right_x + right_w - 15,
+                max(y + 62, image.height - 114),
+                image.height - 1,
+                primary,
+            )
             return
         row_y = y + 29
-        for index, event in enumerate(events[:3]):
+        visible_events = events[:3]
+        for index, event in enumerate(visible_events):
             top = row_y + index * 55
             self._draw_valve_esports_recent_row(image, draw, right_x, right_w, top, event, accent)
+        self._draw_valve_ti_empty_slot_filler(
+            image,
+            right_x + 14,
+            right_x + right_w - 15,
+            row_y + len(visible_events) * 55,
+            image.height - 1,
+            primary,
+        )
+
+    def _draw_valve_ti_empty_slot_filler(self, image, x1, x2, y1, y2, primary):
+        if self._valve_series_key(primary) != "ti":
+            return
+        x1, x2, y1, y2 = (int(value) for value in (x1, x2, y1, y2))
+        width = x2 - x1 + 1
+        available_height = y2 - y1 + 1
+        if width < 80 or available_height < 72:
+            return
+        height = min(114, available_height)
+        filler = self._load_dota2_ti_empty_slot_filler((width, height))
+        if filler:
+            image.paste(filler, (x1, y2 - height + 1), filler)
 
     def _draw_valve_esports_recent_row(self, image, draw, right_x, right_w, y, event, accent):
         row_x1 = right_x + 14

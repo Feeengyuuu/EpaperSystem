@@ -19,6 +19,7 @@ _UNSET_MODEL_BASELINE = object()
 _SECRET_SCHEMA = SecretSchema.load()
 _RUNTIME_MIGRATIONS_KEY = "runtime_migrations"
 _SPORTS_LIVE_REFRESH_MIGRATION = "sports_live_refresh_all_disabled_v1"
+_SPORTS_LIVE_REDISPLAY_MIGRATION = "sports_live_redisplay_default_v1"
 _NEWSPAPER_HOURLY_REFILL_MIGRATION = "newspaper_hourly_refill_v1"
 _DAILY_ART_GALLERY_DECOR_MIGRATION = "daily_art_gallery_decor_v1"
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
@@ -92,6 +93,7 @@ class Config:
         self.refresh_info = self.load_refresh_info()
         self._apply_release_bound_nasapics_migration()
         self._repair_legacy_sports_live_refresh_settings()
+        self._migrate_missing_sports_live_redisplay_setting()
         self._migrate_rotating_newspapers_to_hourly_refill()
         self._migrate_legacy_daily_art_gallery_decor()
 
@@ -171,6 +173,56 @@ class Config:
             "| instances: %s",
             repaired_instances,
         )
+
+    def _migrate_missing_sports_live_redisplay_setting(self):
+        """Enable live re-display for legacy SportsDashboard instances once."""
+
+        migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
+        if (
+            isinstance(migrations, Mapping)
+            and migrations.get(_SPORTS_LIVE_REDISPLAY_MIGRATION) is True
+        ):
+            return
+
+        eligible_instances = 0
+        migrated_instances = 0
+        for snapshot in self.playlist_manager.snapshot_all_instances():
+            if snapshot.plugin_id != "sports_dashboard":
+                continue
+            eligible_instances += 1
+            settings = _detach_json(snapshot.settings)
+            if "backgroundCacheRefreshEnabled" in settings:
+                continue
+
+            repaired = dict(settings)
+            repaired["backgroundCacheRefreshEnabled"] = "true"
+            updated = self.playlist_manager.update_plugin_instance(
+                snapshot.instance_uuid,
+                settings=repaired,
+                expected_generation=snapshot.structural_generation,
+                expected_settings_revision=snapshot.settings_revision,
+            )
+            if updated is None:
+                raise ConfigConflictError(
+                    snapshot.settings_revision,
+                    snapshot.settings_revision + 1,
+                )
+            migrated_instances += 1
+
+        if not eligible_instances:
+            return
+
+        migration_state = (
+            _detach_json(migrations) if isinstance(migrations, Mapping) else {}
+        )
+        migration_state[_SPORTS_LIVE_REDISPLAY_MIGRATION] = True
+        self.update_config({_RUNTIME_MIGRATIONS_KEY: migration_state})
+        if migrated_instances:
+            logger.warning(
+                "Enabled live re-display for legacy SportsDashboard instances. "
+                "| instances: %s",
+                migrated_instances,
+            )
 
     def _migrate_rotating_newspapers_to_hourly_refill(self):
         """Give rotating newspaper banks enough passes to refresh every source."""
