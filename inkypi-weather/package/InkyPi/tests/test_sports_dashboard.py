@@ -17813,7 +17813,7 @@ def test_sports_dashboard_base_font_uses_shared_resolver(monkeypatch):
     assert calls == [(18, True)]
 
 
-def test_club_football_registry_maps_all_five_leagues():
+def test_club_football_registry_adds_mls_as_espn_first_league():
     registry = sports_dashboard_module.CLUB_FOOTBALL_LEAGUES
 
     assert {
@@ -17825,14 +17825,52 @@ def test_club_football_registry_maps_all_five_leagues():
         "BL1": "ger.1",
         "SA": "ita.1",
         "FL1": "fra.1",
+        "MLS": "usa.1",
     }
+    assert registry["MLS"]["football_data_code"] is None
+    assert registry["MLS"]["espn_base_url"] == (
+        "https://site.web.api.espn.com/apis/site/v2/sports/soccer"
+    )
+    assert registry["MLS"]["espn_lookback_days"] == 7
+    assert registry["MLS"]["espn_lookahead_days"] == 14
 
 
 def test_club_football_enabled_leagues_preserves_registry_order_and_whitelist():
     settings = {"clubFootballEnabledLeagues": "FL1,PL,unknown,PD,PL"}
 
     assert SportsDashboard._club_football_enabled_leagues(settings) == ("PL", "PD", "FL1")
-    assert SportsDashboard._club_football_enabled_leagues({}) == ("PL", "PD", "BL1", "SA", "FL1")
+    assert SportsDashboard._club_football_enabled_leagues({}) == (
+        "PL",
+        "PD",
+        "BL1",
+        "SA",
+        "FL1",
+        "MLS",
+    )
+
+
+def test_club_football_legacy_five_league_default_enables_mls_once():
+    legacy = {"clubFootballEnabledLeagues": "PL,PD,BL1,SA,FL1"}
+    migrated = {
+        **legacy,
+        "clubFootballLeagueRegistryVersion": "2",
+    }
+
+    assert SportsDashboard._club_football_enabled_leagues(legacy) == (
+        "PL",
+        "PD",
+        "BL1",
+        "SA",
+        "FL1",
+        "MLS",
+    )
+    assert SportsDashboard._club_football_enabled_leagues(migrated) == (
+        "PL",
+        "PD",
+        "BL1",
+        "SA",
+        "FL1",
+    )
 
 
 def test_football_panel_manual_modes_override_schedule():
@@ -18066,6 +18104,9 @@ def _sample_club_espn_payload():
                 "competitions": [
                     {
                         "venue": {"fullName": "Emirates Stadium"},
+                        "broadcasts": [
+                            {"market": "national", "names": ["Apple TV"]}
+                        ],
                         "status": {
                             "type": {
                                 "state": "in",
@@ -18150,8 +18191,31 @@ def test_parse_club_espn_event_preserves_confirmed_live_state_and_logos():
     assert event["home_score"] == 2
     assert event["away_score"] == 1
     assert event["display_clock"] == "67'"
+    assert event["broadcast"] == "Apple TV"
     assert event["league_logo_url"].endswith(".png")
     assert event["home_logo_url"].endswith(".png")
+
+
+def test_parse_club_espn_delayed_event_is_not_confirmed_live():
+    payload = _sample_club_espn_payload()
+    status = payload["events"][0]["competitions"][0]["status"]
+    status["type"].update(
+        {
+            "state": "pre",
+            "name": "STATUS_DELAYED",
+            "shortDetail": "Delayed",
+        }
+    )
+    status["displayClock"] = ""
+
+    event = SportsDashboard._parse_club_espn_events(
+        "PL", payload, timezone.utc
+    )[0]
+
+    assert event["status"] == "SCHEDULED"
+    assert event["provider_status_confirmed"] is False
+    assert event["provider_status_delayed"] is True
+    assert SportsDashboard._club_focus_status_label(event) == "DELAYED"
 
 
 def test_club_american_odds_are_converted_to_decimal():
@@ -18300,8 +18364,9 @@ def test_attach_club_api_football_odds_only_calls_fallback_for_missing(monkeypat
         selected, {}, None, timezone.utc, now
     )
 
-    assert calls == ["PD", "BL1", "SA", "FL1"]
-    assert attached["focus"]["odds_source"] == "ESPN"
+    assert calls == ["PL", "BL1", "SA", "FL1", "MLS"]
+    assert attached["focus"]["odds_source"] == "API-Football"
+    assert attached["rail"][0]["odds_source"] == "ESPN"
     assert attached["rail"][1]["odds_source"] == "API-Football"
 
 
@@ -18587,6 +18652,40 @@ def test_merge_club_events_prefers_newer_non_terminal_provider_evidence():
     assert merged[0]["fetched_at"] == "2026-08-15T18:05:00+00:00"
 
 
+def test_merge_club_events_does_not_copy_stale_delayed_status():
+    fresh_schedule = SportsDashboard._parse_club_football_data_events(
+        "PL", _sample_club_football_data_matches(), timezone.utc
+    )
+    fresh_schedule[0].update(
+        {
+            "status": "SCHEDULED",
+            "provider_status_delayed": False,
+            "fetched_at": "2026-08-15T18:05:00+00:00",
+        }
+    )
+    stale_score = SportsDashboard._parse_club_espn_events(
+        "PL", _sample_club_espn_payload(), timezone.utc
+    )[0]
+    stale_score.update(
+        {
+            "status": "SCHEDULED",
+            "home_score": None,
+            "away_score": None,
+            "provider_status_confirmed": False,
+            "provider_status_delayed": True,
+            "fetched_at": "2026-08-15T17:55:00+00:00",
+        }
+    )
+
+    merged = SportsDashboard._merge_club_football_events(
+        fresh_schedule, [stale_score]
+    )
+
+    assert merged[0]["status"] == "SCHEDULED"
+    assert merged[0]["provider_status_delayed"] is False
+    assert merged[0]["fetched_at"] == "2026-08-15T18:05:00+00:00"
+
+
 def test_club_espn_cache_seconds_is_fast_only_for_relevant_windows():
     now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
     live = {
@@ -18627,6 +18726,7 @@ def test_club_espn_scoreboard_urls_are_built_only_from_registry():
         "BL1": "https://site.api.espn.com/apis/site/v2/sports/soccer/ger.1/scoreboard",
         "SA": "https://site.api.espn.com/apis/site/v2/sports/soccer/ita.1/scoreboard",
         "FL1": "https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard",
+        "MLS": "https://site.web.api.espn.com/apis/site/v2/sports/soccer/usa.1/scoreboard",
     }
     with pytest.raises(KeyError):
         SportsDashboard._club_espn_scoreboard_url("../../private")
@@ -18669,7 +18769,10 @@ def test_fetch_club_espn_payload_requests_recent_history_and_future_schedule(
         "dates": "20260716-20261213",
         "limit": "250",
     }
-    assert captured["kwargs"]["headers"] == {"Accept": "application/json"}
+    assert captured["kwargs"]["headers"] == {
+        "Accept": "application/json",
+        "User-Agent": "InkyPi/1.0",
+    }
 
     plugin._fetch_club_espn_payload("PL", {}, now, live_window=True)
 
@@ -19161,6 +19264,63 @@ def test_club_espn_empty_live_last_good_avoids_duplicate_wide_failure(
     assert fetched_at == live_at.isoformat()
 
 
+def test_club_espn_mls_fetch_uses_bounded_recent_and_upcoming_window(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    captured = {}
+
+    class FakeResponse:
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def json():
+            return {"events": []}
+
+    class FakeSession:
+        @staticmethod
+        def get(url, **kwargs):
+            captured.update(url=url, kwargs=kwargs)
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FakeSession(),
+    )
+    monkeypatch.setattr(plugin, "_club_espn_calls_left", lambda *_args: 1)
+    monkeypatch.setattr(plugin, "_record_club_espn_call", lambda *_args: None)
+    now = datetime(2026, 8, 22, 18, tzinfo=timezone.utc)
+    payload = plugin._fetch_club_espn_payload(
+        "MLS",
+        {},
+        now,
+    )
+
+    assert payload == {"events": []}
+    assert captured["url"].endswith("/soccer/usa.1/scoreboard")
+    assert captured["kwargs"]["params"] == {
+        "dates": "20260815-20260905",
+        "limit": "100",
+    }
+    assert captured["kwargs"]["headers"] == {
+        "Accept": "application/json",
+        "User-Agent": "InkyPi/1.0",
+    }
+    assert captured["kwargs"]["timeout"] == 15
+
+    plugin._fetch_club_espn_payload("MLS", {}, now, live_window=True)
+
+    assert captured["kwargs"]["params"] == {
+        "dates": "20260821-20260823",
+        "limit": "100",
+    }
+
+
 def test_club_loader_keeps_football_data_when_espn_fails(monkeypatch, tmp_path):
     plugin = _plugin()
     plugin._sports_dashboard_cache_dir = lambda: tmp_path
@@ -19191,7 +19351,7 @@ def test_club_loader_keeps_football_data_when_espn_fails(monkeypatch, tmp_path):
         lambda *args, **kwargs: (
             {"standings": [{"type": "TOTAL", "table": []}]},
             "STANDINGS LIVE",
-            "2026-08-15T17:55:00+00:00",
+            "2026-08-15T17:59:00+00:00",
         ),
         raising=False,
     )
@@ -19203,8 +19363,60 @@ def test_club_loader_keeps_football_data_when_espn_fails(monkeypatch, tmp_path):
     assert len(by_league["PL"]) == 1
     assert standings["PL"][0]["type"] == "TOTAL"
     assert source_state == "CLUB PARTIAL"
-    assert fetched_at == "2026-08-15T17:55:00+00:00"
+    assert fetched_at == "2026-08-15T17:59:00+00:00"
     assert by_league["PL"][0]["provider_status_confirmed"] is False
+    assert by_league["PL"][0]["fetched_at"] == "2026-08-15T17:55:00+00:00"
+
+
+def test_club_loader_keeps_espn_only_mls_out_of_paid_football_data_path(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 22, 18, tzinfo=timezone.utc)
+    payload = _sample_club_espn_payload()
+    payload["leagues"][0]["slug"] = "usa.1"
+    paid_provider_calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_load_club_espn_league_payload",
+        lambda *args, **kwargs: (
+            payload,
+            "ESPN LIVE",
+            "2026-08-22T17:59:00+00:00",
+        ),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_club_football_data_league_payload",
+        lambda *args, **kwargs: paid_provider_calls.append("matches")
+        or ({"matches": []}, "FOOTBALL LIVE", now.isoformat()),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_club_standings_league_payload",
+        lambda *args, **kwargs: paid_provider_calls.append("standings")
+        or ({"standings": []}, "STANDINGS LIVE", now.isoformat()),
+    )
+
+    by_league, standings, source_state, fetched_at = plugin._load_club_football_data(
+        {
+            "clubFootballEnabledLeagues": "MLS",
+            "clubFootballLeagueRegistryVersion": "2",
+            "footballDataKey": "free-tier-token",
+        },
+        FakeDeviceConfig(),
+        timezone.utc,
+        now,
+    )
+
+    assert paid_provider_calls == []
+    assert len(by_league["MLS"]) == 1
+    assert by_league["MLS"][0]["fetched_at"] == "2026-08-22T17:59:00+00:00"
+    assert standings["MLS"] == []
+    assert source_state == "CLUB LIVE"
+    assert fetched_at == "2026-08-22T17:59:00+00:00"
 
 
 def test_club_cache_reader_uses_last_good_after_corrupt_current(tmp_path):
@@ -19327,7 +19539,7 @@ def test_select_club_football_fairly_rotates_equal_priority_leagues():
             now,
             seed,
         )["focus"]["league_code"]
-        for seed in range(5)
+        for seed in range(len(sports_dashboard_module.CLUB_FOOTBALL_LEAGUES))
     }
 
     assert focus_codes == set(sports_dashboard_module.CLUB_FOOTBALL_LEAGUES)
@@ -19376,8 +19588,37 @@ def test_select_club_football_keeps_no_schedule_rail_rows():
         by_league, enabled, now, 0
     )
 
-    assert [row["league_code"] for row in selected["rail"]] == list(enabled)
-    assert sum(bool(row.get("no_schedule")) for row in selected["rail"]) == 4
+    assert selected["focus"]["league_code"] == "PL"
+    assert [row["league_code"] for row in selected["rail"]] == list(enabled[1:])
+    assert sum(bool(row.get("no_schedule")) for row in selected["rail"]) == 5
+
+
+def test_select_six_club_leagues_shows_focus_plus_five_distinct_rail_rows():
+    now = datetime(2026, 8, 22, 18, tzinfo=timezone.utc)
+    enabled = tuple(sports_dashboard_module.CLUB_FOOTBALL_LEAGUES)
+    by_league = {
+        code: [
+            _club_selection_event(
+                code,
+                "SCHEDULED",
+                now + timedelta(hours=1),
+            )
+        ]
+        for code in enabled
+    }
+
+    selected = SportsDashboard._select_club_football_events(
+        by_league,
+        enabled,
+        now,
+        0,
+    )
+
+    focus_code = selected["focus"]["league_code"]
+    rail_codes = [event["league_code"] for event in selected["rail"]]
+    assert len(rail_codes) == 5
+    assert focus_code not in rail_codes
+    assert {focus_code, *rail_codes} == set(enabled)
 
 
 def test_build_club_football_event_sections_exposes_live_future_and_history():
@@ -19503,6 +19744,11 @@ def test_select_club_football_timeline_rotates_equal_priority_leagues_and_live_i
                 "FL1", "SCHEDULED", now + timedelta(days=4), suffix="next"
             )
         ],
+        "MLS": [
+            _club_selection_event(
+                "MLS", "SCHEDULED", now + timedelta(days=5), suffix="next"
+            )
+        ],
     }
 
     rotated = {
@@ -19513,7 +19759,7 @@ def test_select_club_football_timeline_rotates_equal_priority_leagues_and_live_i
             seed,
             source_state="CLUB LIVE",
         )["focus"]["league_code"]
-        for seed in range(5)
+        for seed in range(len(enabled))
     }
 
     assert rotated == set(enabled)
@@ -19535,10 +19781,70 @@ def test_select_club_football_timeline_rotates_equal_priority_leagues_and_live_i
             seed,
             source_state="CLUB LIVE",
         )["focus"]["event_id"]
-        for seed in range(5)
+        for seed in range(len(enabled))
     }
 
     assert interrupted == {"SA-live"}
+
+
+def test_club_timeline_rail_uses_fresh_candidates_for_all_six_leagues():
+    now = datetime(2026, 8, 22, 18, tzinfo=timezone.utc)
+    enabled = tuple(sports_dashboard_module.CLUB_FOOTBALL_LEAGUES)
+    stale_live = _club_selection_event(
+        "PL",
+        "LIVE",
+        now - timedelta(minutes=20),
+        confirmed=True,
+        suffix="stale-live",
+    )
+    stale_live["fetched_at"] = (now - timedelta(minutes=10)).isoformat()
+    pl_pregame = _club_selection_event(
+        "PL",
+        "SCHEDULED",
+        now + timedelta(minutes=10),
+        suffix="pregame",
+    )
+    by_league = {
+        "PL": [stale_live, pl_pregame],
+        **{
+            code: [
+                _club_selection_event(
+                    code,
+                    "SCHEDULED",
+                    now + timedelta(hours=index + 1),
+                    suffix="next",
+                )
+            ]
+            for index, code in enumerate(enabled[1:])
+        },
+    }
+
+    selected = SportsDashboard._select_club_football_timeline_events(
+        by_league,
+        enabled,
+        now,
+        len(enabled) - 1,
+        source_state="CLUB PARTIAL",
+    )
+
+    assert selected["focus"]["league_code"] == "MLS"
+    assert len(selected["rail"]) == 5
+    assert selected["focus"]["league_code"] not in {
+        event["league_code"] for event in selected["rail"]
+    }
+    assert {
+        selected["focus"]["league_code"],
+        *(event["league_code"] for event in selected["rail"]),
+    } == set(enabled)
+    pl_rail = next(event for event in selected["rail"] if event["league_code"] == "PL")
+    assert pl_rail["event_id"] == "PL-pregame"
+    assert pl_rail["status"] == "SCHEDULED"
+    _refresh_until, active_leagues = SportsDashboard._club_football_live_activity(
+        selected,
+        now,
+        "CLUB PARTIAL",
+    )
+    assert "PL" in active_leagues
 
 
 def test_club_football_timeline_does_not_promote_expired_live_confirmation():
@@ -19689,7 +19995,7 @@ def _sample_club_selection_for_render(now):
             }
         )
         rail.append(event)
-    return {"focus": rail[0], "rail": rail, "priority": "LIVE"}
+    return {"focus": rail[0], "rail": rail[1:], "priority": "LIVE"}
 
 
 def test_club_football_panel_is_exact_final_slot_size(monkeypatch):
@@ -19782,11 +20088,11 @@ def test_club_img2_league_wordmark_assets_are_transparent_and_wide():
         assert wordmark.getpixel((wordmark.width - 1, wordmark.height - 1))[3] == 0
 
 
-def test_club_league_icon_assets_are_bundled_for_all_five_leagues():
+def test_club_league_icon_assets_are_bundled_for_european_five_and_mls():
     paths = sports_dashboard_module.LOCAL_CLUB_LEAGUE_ICON_PATHS
 
-    assert set(paths) == {"PL", "PD", "BL1", "SA", "FL1"}
-    assert len({Path(path).name for path in paths.values()}) == 5
+    assert set(paths) == {"PL", "PD", "BL1", "SA", "FL1", "MLS"}
+    assert len({Path(path).name for path in paths.values()}) == 6
     icon_hashes = set()
     for path in paths.values():
         icon = Image.open(path).convert("RGBA")
@@ -19795,7 +20101,7 @@ def test_club_league_icon_assets_are_bundled_for_all_five_leagues():
         assert alpha.getbbox() is not None
         assert alpha.getextrema() == (0, 255)
         icon_hashes.add(hashlib.sha256(Path(path).read_bytes()).hexdigest())
-    assert len(icon_hashes) == 5
+    assert len(icon_hashes) == 6
 
 
 def test_club_league_icons_keep_a_legible_silhouette_at_rail_size():
@@ -19822,6 +20128,7 @@ def test_club_panel_routes_every_league_badge_through_local_first_renderer(
     plugin = _plugin()
     now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
     selection = _sample_club_selection_for_render(now)
+    selection["focus"]["league_logo_url"] = ""
     for event in selection["rail"]:
         event["league_logo_url"] = ""
     selection["rail"][2]["no_schedule"] = True
@@ -19847,11 +20154,11 @@ def test_club_panel_routes_every_league_badge_through_local_first_renderer(
 
     assert icon_calls[0] == ("PL", "")
     assert icon_calls[1:] == [
-        ("PL", ""),
         ("PD", ""),
         ("BL1", ""),
         ("SA", ""),
         ("FL1", ""),
+        ("MLS", ""),
     ]
 
 
@@ -19950,6 +20257,63 @@ def test_club_focus_uses_img2_league_wordmark_instead_of_plain_text(monkeypatch)
     assert "英超" not in fitted_texts
 
 
+def test_club_focus_header_shows_local_provider_update_time(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 22, 18, tzinfo=timezone.utc)
+    right_aligned = []
+    original_right_aligned = plugin._draw_right_aligned
+
+    def record_right_aligned(draw, xy, text, font, color):
+        right_aligned.append(str(text))
+        return original_right_aligned(draw, xy, text, font, color)
+
+    monkeypatch.setattr(plugin, "_draw_right_aligned", record_right_aligned)
+    monkeypatch.setattr(
+        plugin,
+        "_load_team_logo",
+        lambda *args, **kwargs: Image.new("RGBA", (40, 40), (20, 90, 180, 255)),
+    )
+
+    plugin._render_club_football_panel(
+        (536, 240),
+        _sample_club_selection_for_render(now),
+        "CLUB LIVE",
+        "2026-08-22T17:55:00+00:00",
+        now,
+    )
+
+    assert "更新 17:55" in right_aligned
+
+
+def test_club_focus_live_badge_includes_confirmed_match_clock(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 22, 18, tzinfo=timezone.utc)
+    centered = []
+    original_centered = plugin._draw_centered
+
+    def record_centered(draw, xy, text, font, color):
+        centered.append(str(text))
+        return original_centered(draw, xy, text, font, color)
+
+    monkeypatch.setattr(plugin, "_draw_centered", record_centered)
+    monkeypatch.setattr(
+        plugin,
+        "_load_team_logo",
+        lambda *args, **kwargs: Image.new("RGBA", (40, 40), (20, 90, 180, 255)),
+    )
+
+    plugin._render_club_football_panel(
+        (536, 240),
+        _sample_club_selection_for_render(now),
+        "CLUB LIVE",
+        None,
+        now,
+    )
+
+    assert "LIVE 67'" in centered
+    assert "LIVE" not in centered
+
+
 def test_club_rail_names_are_mirrored_around_fixed_score_column():
     anchors = SportsDashboard._club_rail_text_anchors((302, 33, 531, 69))
 
@@ -20006,6 +20370,20 @@ def test_club_time_labels_use_24_hour_clock_without_am_or_pm():
 
     assert SportsDashboard._club_event_score_or_time(event, now) == "23:05"
     assert SportsDashboard._club_focus_schedule_labels(event, now)[0] == "08/15 23:05"
+
+
+def test_club_focus_schedule_prioritizes_optional_broadcast_before_venue():
+    now = datetime(2026, 8, 22, 18, tzinfo=timezone.utc)
+    event = {
+        "start_utc": datetime(2026, 8, 22, 23, 5, tzinfo=timezone.utc),
+        "venue": "Stade Saputo",
+        "broadcast": "Apple TV",
+    }
+
+    assert SportsDashboard._club_focus_schedule_labels(event, now) == (
+        "08/22 23:05",
+        "Apple TV · Stade Saputo",
+    )
 
 
 def test_club_rail_rows_use_worldcup_left_x_right_odds_order(monkeypatch):
@@ -20480,6 +20858,78 @@ def test_club_football_slot_uses_worldcup_timeline_renderer(monkeypatch):
     assert provenance is SourceProvenance.LIVE
 
 
+def test_club_football_slot_renders_mls_updates_through_production_timeline(
+    monkeypatch,
+):
+    plugin = _plugin()
+    now = datetime(2026, 8, 22, 18, tzinfo=timezone.utc)
+    event_fetched_at = "2026-08-22T17:55:00+00:00"
+    aggregate_fetched_at = "2026-08-22T17:59:00+00:00"
+    delayed = _club_selection_event(
+        "MLS",
+        "SCHEDULED",
+        now + timedelta(minutes=10),
+        suffix="delayed",
+    )
+    delayed.update(
+        {
+            "home_name": "CF Montréal",
+            "away_name": "LA Galaxy",
+            "home_team_id": "9720",
+            "away_team_id": "187",
+            "broadcast": "Apple TV",
+            "venue": "Stade Saputo",
+            "provider": "ESPN",
+            "provider_status_delayed": True,
+            "fetched_at": event_fetched_at,
+        }
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_club_football_data",
+        lambda *args: (
+            {"MLS": [delayed]},
+            {"MLS": []},
+            "CLUB LIVE",
+            aggregate_fetched_at,
+        ),
+    )
+    monkeypatch.setattr(plugin, "_club_football_rotation_seed", lambda *_args: 0)
+    monkeypatch.setattr(
+        plugin,
+        "_attach_club_api_football_odds",
+        lambda selected, *_args: selected,
+    )
+    monkeypatch.setattr(plugin, "_write_club_football_live_state", lambda *_args: None)
+    fitted_text = []
+    original_fit_text = plugin._fit_text
+
+    def record_fit_text(draw, text, *args, **kwargs):
+        fitted_text.append(str(text))
+        return original_fit_text(draw, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_fit_text", record_fit_text)
+
+    panel, provenance, source = plugin._render_club_football_slot(
+        {
+            "clubFootballEnabledLeagues": "MLS",
+            "clubFootballLeagueRegistryVersion": "2",
+        },
+        FakeDeviceConfig(),
+        (536, 240),
+        timezone.utc,
+        now,
+    )
+
+    assert panel.size == (536, 240)
+    assert provenance is SourceProvenance.LIVE
+    assert source == "CLUB LIVE"
+    assert "美职联" in fitted_text
+    assert "Apple TV · Stade Saputo" in fitted_text
+    assert "DELAYED" in fitted_text
+    assert "CLUB DATA 17:55" in fitted_text
+
+
 def test_club_timeline_header_prefers_packaged_league_icon(monkeypatch):
     plugin = _plugin()
     now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
@@ -20531,6 +20981,7 @@ def test_club_timeline_header_prefers_packaged_league_icon(monkeypatch):
         ("BL1", "Bundesliga"),
         ("SA", "Serie A"),
         ("FL1", "Ligue 1"),
+        ("MLS", "美职联"),
     ],
 )
 @pytest.mark.parametrize("palette", [DAY_COLORS, DEEP_NIGHT_COLORS])
@@ -20829,12 +21280,20 @@ def test_club_football_settings_use_scalar_registry_and_false_sentinel():
     html = settings_path.read_text(encoding="utf-8")
 
     assert html.count('name="clubFootballEnabledLeagues"') == 1
-    assert html.count('<input type="checkbox" data-club-football-league=') == 5
-    for code in ("PL", "PD", "BL1", "SA", "FL1"):
+    assert html.count('<input type="checkbox" data-club-football-league=') == 6
+    for code in ("PL", "PD", "BL1", "SA", "FL1", "MLS"):
         assert f'data-club-football-league="{code}"' in html
+    assert (
+        'id="clubFootballLeagueRegistryVersion" '
+        'name="clubFootballLeagueRegistryVersion" value="2"'
+    ) in html
     assert 'type="hidden" name="clubFootballLiveRefreshEnabled" value="false"' in html
     assert 'id="clubFootballLiveRefreshEnabled" name="clubFootballLiveRefreshEnabled" value="true"' in html
-    assert 'clubFootballLeagueOrder = ["PL", "PD", "BL1", "SA", "FL1"]' in html
+    assert (
+        'clubFootballLeagueOrder = ["PL", "PD", "BL1", "SA", "FL1", "MLS"]'
+        in html
+    )
+    assert "European top five + MLS" in html
     assert 'id="clubFootballLiveRefreshIntervalSeconds"' in html
     assert 'id="footballPanelMode"' in html
     assert '<option value="csl">Chinese Super League</option>' in html
@@ -20968,6 +21427,53 @@ def test_club_team_name_localization_supports_all_five_leagues(
 ):
     assert SportsDashboard._club_team_zh_name(
         league_code, english_name, team_id=team_id
+    ) == expected_zh
+
+
+@pytest.mark.parametrize(
+    ("team_id", "english_name", "expected_zh"),
+    [
+        ("18418", "Atlanta United FC", "亚特兰大联"),
+        ("20906", "Austin FC", "奥斯汀FC"),
+        ("9720", "CF Montréal", "蒙特利尔CF"),
+        ("21300", "Charlotte FC", "夏洛特FC"),
+        ("182", "Chicago Fire FC", "芝加哥火焰"),
+        ("184", "Colorado Rapids", "科罗拉多急流"),
+        ("183", "Columbus Crew", "哥伦布机员"),
+        ("193", "D.C. United", "华盛顿联"),
+        ("18267", "FC Cincinnati", "辛辛那提FC"),
+        ("185", "FC Dallas", "达拉斯FC"),
+        ("6077", "Houston Dynamo FC", "休斯敦迪纳摩"),
+        ("20232", "Inter Miami CF", "迈阿密国际"),
+        ("187", "LA Galaxy", "洛杉矶银河"),
+        ("18966", "LAFC", "洛杉矶FC"),
+        ("17362", "Minnesota United FC", "明尼苏达联"),
+        ("18986", "Nashville SC", "纳什维尔"),
+        ("189", "New England Revolution", "新英格兰革命"),
+        ("17606", "New York City FC", "纽约城"),
+        ("12011", "Orlando City SC", "奥兰多城"),
+        ("10739", "Philadelphia Union", "费城联合"),
+        ("9723", "Portland Timbers", "波特兰伐木者"),
+        ("4771", "Real Salt Lake", "皇家盐湖城"),
+        ("190", "Red Bull New York", "纽约红牛"),
+        ("22529", "San Diego FC", "圣迭戈FC"),
+        ("191", "San Jose Earthquakes", "圣何塞地震"),
+        ("9726", "Seattle Sounders FC", "西雅图海湾人"),
+        ("186", "Sporting Kansas City", "堪萨斯城竞技"),
+        ("21812", "St. Louis CITY SC", "圣路易斯城"),
+        ("7318", "Toronto FC", "多伦多FC"),
+        ("9727", "Vancouver Whitecaps", "温哥华白帽"),
+    ],
+)
+def test_club_team_name_localization_supports_all_current_mls_teams(
+    team_id,
+    english_name,
+    expected_zh,
+):
+    assert SportsDashboard._club_team_zh_name(
+        "MLS",
+        english_name,
+        team_id=team_id,
     ) == expected_zh
 
 
@@ -21128,6 +21634,7 @@ def _sample_all_league_chinese_render_selection(now):
         "BL1": ("132", "Bayern Munich", "122", "FC Cologne"),
         "SA": ("110", "Internazionale", "4007", "Monza"),
         "FL1": ("176", "Marseille", "180", "Strasbourg"),
+        "MLS": ("20232", "Inter Miami CF", "18966", "LAFC"),
     }
     rail = []
     for index, (league_code, values) in enumerate(names.items()):
@@ -21150,7 +21657,7 @@ def _sample_all_league_chinese_render_selection(now):
             }
         )
         rail.append(event)
-    return {"focus": rail[0], "rail": rail, "priority": "UPCOMING"}
+    return {"focus": rail[0], "rail": rail[1:], "priority": "UPCOMING"}
 
 
 def test_club_football_renderer_draws_only_chinese_team_display_names(monkeypatch):
@@ -21191,6 +21698,8 @@ def test_club_football_renderer_draws_only_chinese_team_display_names(monkeypatc
         "蒙扎",
         "马赛",
         "斯特拉斯堡",
+        "迈阿密国际",
+        "洛杉矶FC",
     }
     assert expected.issubset(set(seen))
     assert not {
@@ -21204,6 +21713,8 @@ def test_club_football_renderer_draws_only_chinese_team_display_names(monkeypatc
         "Monza",
         "Marseille",
         "Strasbourg",
+        "Inter Miami CF",
+        "LAFC",
     }.intersection(seen)
 
 
@@ -21305,6 +21816,37 @@ def test_football_data_source_checks_include_chinese_name_coverage(monkeypatch):
 
     assert [result["status"] for result in results] == ["PASS", "FAIL"]
     assert "Unknown United" in results[1]["detail"]
+
+
+def test_football_data_source_checks_skip_espn_only_mls(monkeypatch):
+    module = _load_club_football_source_checker(
+        "check_club_football_sources_mls_skip"
+    )
+    requests = []
+    monkeypatch.setattr(module, "_football_data_key", lambda: "free-tier-token")
+    monkeypatch.setattr(
+        module,
+        "CLUB_FOOTBALL_LEAGUES",
+        {"MLS": {"football_data_code": None}},
+    )
+    monkeypatch.setattr(
+        module,
+        "_request_json",
+        lambda *args, **kwargs: requests.append((args, kwargs)),
+    )
+
+    results = module.run_football_data_checks(
+        now=datetime(2026, 8, 22, tzinfo=timezone.utc)
+    )
+
+    assert requests == []
+    assert results == [
+        {
+            "name": "football-data.org MLS",
+            "status": "SKIP",
+            "detail": "provider not enabled for this league",
+        }
+    ]
 
 
 def test_club_football_data_localization_does_not_reuse_espn_team_ids():

@@ -339,7 +339,7 @@ def test_sports_settings_expose_csl_and_default_to_auto():
     html = settings_path.read_text(encoding="utf-8")
 
     assert '<option value="csl">Chinese Super League</option>' in html
-    assert "Auto: World Cup, Chinese Super League, or five leagues" in html
+    assert "Auto: World Cup, Chinese Super League, or club leagues" in html
     assert "pluginSettings.footballPanelMode || 'auto'" in html
 
 

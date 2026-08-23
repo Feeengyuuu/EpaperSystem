@@ -1,5 +1,5 @@
 {
-  "version": "2026-07-22-current-brand-v1",
+  "version": "2026-08-22-mls-v2",
   "icons": {
     "PL": {
       "filename": "pl.png",
@@ -35,6 +35,13 @@
       "source_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Logo_Ligue_1_McDonald%27s_2024.svg/330px-Logo_Ligue_1_McDonald%27s_2024.svg.png",
       "source_sha256": "c4777c0653c5a6481127c02b782d18065e2f11da89c1a18fdc641ffdb60d85bc",
       "output_sha256": "73fe623c17ee3f7d6e355733ffc15ba2024aa3f50e56aea91e8d5450f07f03be"
+    },
+    "MLS": {
+      "filename": "mls.png",
+      "brand_version": "MLS shield returned by ESPN usa.1 in 2026",
+      "source_url": "https://a.espncdn.com/i/leaguelogos/soccer/500/19.png",
+      "source_sha256": "9e4b7c06391ad3742294dc761e7b951d0bf8603fd2b360370e1299832f602a9e",
+      "output_sha256": "1b276b600a6f9fd989d788c3558b9009292086c096338f96bfe5d69360e35d83"
     }
   }
 }

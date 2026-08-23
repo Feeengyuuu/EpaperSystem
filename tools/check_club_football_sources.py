@@ -261,9 +261,23 @@ def run_football_data_checks(now=None):
     date_from = (current - timedelta(days=7)).date().isoformat()
     date_to = (current + timedelta(days=45)).date().isoformat()
     results = []
-    for league_code in CLUB_FOOTBALL_LEAGUES:
+    for league_code, registry in CLUB_FOOTBALL_LEAGUES.items():
+        competition_code = (
+            registry.get("football_data_code")
+            if "football_data_code" in registry
+            else league_code
+        )
+        if not competition_code:
+            results.append(
+                {
+                    "name": f"football-data.org {league_code}",
+                    "status": "SKIP",
+                    "detail": "provider not enabled for this league",
+                }
+            )
+            continue
         url = (
-            f"{FOOTBALL_DATA_BASE_URL}/competitions/{league_code}/matches?"
+            f"{FOOTBALL_DATA_BASE_URL}/competitions/{competition_code}/matches?"
             + urllib.parse.urlencode({"dateFrom": date_from, "dateTo": date_to})
         )
         try:

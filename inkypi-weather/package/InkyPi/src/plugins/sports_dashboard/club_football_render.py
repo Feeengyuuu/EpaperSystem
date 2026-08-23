@@ -24,6 +24,7 @@ CLUB_LEAGUE_ACCENT_KEYS = {
     "BL1": "red",
     "SA": "blue",
     "FL1": "cyan",
+    "MLS": "blue",
 }
 CLUB_LEAGUE_MONOCHROME_ICON_CODES = {"PL", "FL1"}
 
@@ -298,17 +299,28 @@ class ClubFootballRenderMixin:
         return True
 
     @staticmethod
-    def _club_source_freshness_label(source_state):
+    def _club_source_freshness_label(source_state, fetched_at=None, now=None):
         source = str(source_state or "").upper()
         if "UNAVAILABLE" in source:
-            return "UNAVAILABLE"
-        if "PARTIAL" in source:
-            return "PARTIAL DATA"
-        if "STALE" in source or "CACHE" in source:
-            return "CACHED"
-        if "LIVE" in source:
-            return "LIVE DATA"
-        return "CACHED"
+            label = "不可用"
+        elif "PARTIAL" in source and ("STALE" in source or "CACHE" in source):
+            label = "部分缓存"
+        elif "PARTIAL" in source:
+            label = "部分更新"
+        elif "STALE" in source or "CACHE" in source:
+            label = "缓存"
+        elif "LIVE" in source:
+            label = "更新"
+        else:
+            label = "缓存"
+
+        fetched = SportsDashboard._club_parse_utc(fetched_at)
+        if fetched is None:
+            return label
+        current = now if isinstance(now, datetime) else datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        return f"{label} {fetched.astimezone(current.tzinfo).strftime('%H:%M')}"
 
     @staticmethod
     def _club_event_local_start(event, now):
@@ -338,7 +350,9 @@ class ClubFootballRenderMixin:
             else "\u65f6\u95f4\u5f85\u5b9a"
         )
         venue = str((event or {}).get("venue") or "").strip()
-        return date_time, venue
+        broadcast = str((event or {}).get("broadcast") or "").strip()
+        context = " · ".join(value for value in (broadcast, venue) if value)
+        return date_time, context
 
     @staticmethod
     def _club_event_score_or_time(event, now):
@@ -351,6 +365,26 @@ class ClubFootballRenderMixin:
             return f"{home_score}\u2013{away_score}"
         local_start = ClubFootballRenderMixin._club_event_local_start(event, now)
         return local_start.strftime("%H:%M") if local_start else "VS"
+
+    @staticmethod
+    def _club_live_badge_label(event):
+        clock = str((event or {}).get("display_clock") or "").strip()
+        normalized = clock.upper().replace(" ", "")
+        if normalized in {"HALFTIME", "HT"}:
+            clock = "HT"
+        elif len(clock) > 8:
+            clock = clock[:8].rstrip()
+        return f"LIVE {clock}" if clock else "LIVE"
+
+    @staticmethod
+    def _club_focus_status_label(event):
+        if bool((event or {}).get("provider_status_delayed")):
+            return "DELAYED"
+        return (
+            "FINAL"
+            if str((event or {}).get("status") or "").upper() == "FINAL"
+            else "NEXT"
+        )
 
     @staticmethod
     def _club_worldcup_odds_triplet(event):
@@ -421,7 +455,7 @@ class ClubFootballRenderMixin:
         )
         title_box = (left + 42, y(7), left + 146, y(33))
         if not self._draw_club_league_wordmark(panel, league_code, title_box):
-            league_name = str((focus or {}).get("league_name") or "五大联赛")
+            league_name = str((focus or {}).get("league_name") or "俱乐部联赛")
             league_name, league_font = self._fit_text_ellipsis(
                 draw, league_name, 104, 17, bold=True, min_size=11
             )
@@ -431,7 +465,11 @@ class ClubFootballRenderMixin:
                 font=league_font,
                 fill=palette["text"],
             )
-        freshness = self._club_source_freshness_label(source_state)
+        freshness = self._club_source_freshness_label(
+            source_state,
+            (focus or {}).get("fetched_at") or fetched_at,
+            now,
+        )
         freshness, freshness_font = self._fit_text(
             draw, freshness, 78, 9, bold=True, min_size=7
         )
@@ -511,21 +549,35 @@ class ClubFootballRenderMixin:
             and bool(focus.get("provider_status_confirmed"))
         )
         if confirmed_live:
+            live_label = self._club_live_badge_label(focus)
+            live_label, live_font = self._fit_text(
+                draw,
+                live_label,
+                64,
+                10,
+                bold=True,
+                min_size=8,
+            )
+            badge_half_width = 34 if live_label != "LIVE" else 23
             draw.rounded_rectangle(
-                ((left + right) / 2 - 23, y(116), (left + right) / 2 + 23, y(135)),
+                (
+                    (left + right) / 2 - badge_half_width,
+                    y(116),
+                    (left + right) / 2 + badge_half_width,
+                    y(135),
+                ),
                 radius=8,
                 fill=COLORS["red"],
             )
-            live_font = self._font(10, bold=True)
             self._draw_centered(
                 draw,
                 ((left + right) / 2, y(125)),
-                "LIVE",
+                live_label,
                 live_font,
                 COLORS["paper_text"],
             )
         else:
-            status = "FINAL" if str(focus.get("status") or "").upper() == "FINAL" else "NEXT"
+            status = self._club_focus_status_label(focus)
             status_font = self._font(9, bold=True)
             self._draw_centered(
                 draw,
@@ -558,7 +610,7 @@ class ClubFootballRenderMixin:
             draw, (away_team_center_x, y(151)), away_name, away_font, COLORS["text"]
         )
 
-        schedule_label, venue = self._club_focus_schedule_labels(focus, now)
+        schedule_label, context = self._club_focus_schedule_labels(focus, now)
         schedule_box = (left + 65, y(171), right - 65, y(203))
         draw.rounded_rectangle(
             schedule_box,
@@ -582,10 +634,10 @@ class ClubFootballRenderMixin:
             schedule_font,
             COLORS["text"],
         )
-        if venue:
-            venue, venue_font = self._fit_text_ellipsis(
+        if context:
+            context, context_font = self._fit_text_ellipsis(
                 draw,
-                venue,
+                context,
                 schedule_box[2] - schedule_box[0] - 14,
                 8,
                 bold=True,
@@ -594,8 +646,8 @@ class ClubFootballRenderMixin:
             self._draw_centered(
                 draw,
                 ((left + right) / 2, y(197)),
-                venue,
-                venue_font,
+                context,
+                context_font,
                 COLORS["muted"],
             )
         odds_triplet = self._club_worldcup_odds_triplet(focus)
@@ -665,7 +717,7 @@ class ClubFootballRenderMixin:
         header_font = self._font(12, bold=True)
         draw.text(
             (left + 11, top + 5),
-            "五大联赛追踪",
+            "俱乐部联赛追踪",
             font=header_font,
             fill=palette["text"],
         )

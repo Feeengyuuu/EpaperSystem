@@ -41,6 +41,8 @@ CLUB_FOOTBALL_PREGAME_WINDOW = timedelta(minutes=15)
 CLUB_FOOTBALL_DEFAULT_MATCH_WINDOW = timedelta(hours=2)
 CLUB_FOOTBALL_ROTATION_STATE_VERSION = "sports-dashboard-club-football-rotation-v1"
 CLUB_FOOTBALL_API_ODDS_CACHE_VERSION = "sports-dashboard-club-api-football-odds-v1"
+CLUB_FOOTBALL_LEAGUE_REGISTRY_VERSION = 2
+CLUB_FOOTBALL_LEGACY_DEFAULT_LEAGUES = ("PL", "PD", "BL1", "SA", "FL1")
 DEFAULT_CLUB_FOOTBALL_ESPN_DAILY_LIMIT = 720
 DEFAULT_CLUB_FOOTBALL_API_ODDS_CACHE_HOURS = 3
 DEFAULT_CLUB_FOOTBALL_API_ODDS_DAILY_LIMIT = 40
@@ -67,6 +69,21 @@ CLUB_FOOTBALL_LEAGUES = {
     "BL1": {"name": "德甲", "short_name": "德甲", "espn_slug": "ger.1", "api_football_id": 78},
     "SA": {"name": "意甲", "short_name": "意甲", "espn_slug": "ita.1", "api_football_id": 135},
     "FL1": {"name": "法甲", "short_name": "法甲", "espn_slug": "fra.1", "api_football_id": 61},
+    "MLS": {
+        "name": "美职联",
+        "short_name": "美职联",
+        "espn_slug": "usa.1",
+        # The legacy site.api host currently rejects MLS scoreboard requests
+        # with Akamai 403 responses; the equivalent first-party web host
+        # returns the same scoreboard schema without authentication.
+        "espn_base_url": "https://site.web.api.espn.com/apis/site/v2/sports/soccer",
+        # football-data.org exposes MLS only on its Tier Two paid plan. Keep
+        # the default path ESPN-only so a normal/free token does not fail on
+        # every refresh.
+        "football_data_code": None,
+        "espn_lookback_days": 7,
+        "espn_lookahead_days": 14,
+    },
 }
 CLUB_FOOTBALL_LOCAL_TEAM_LOGO_KEYS = {
     ("FL1", "name:lemans"): "fl1-2697",
@@ -83,9 +100,21 @@ class _ClubFootballRotationSeed(int):
 class ClubFootballMixin:
     @staticmethod
     def _club_football_enabled_leagues(settings):
+        settings = settings or {}
         default_value = ",".join(CLUB_FOOTBALL_LEAGUES)
-        raw = str((settings or {}).get("clubFootballEnabledLeagues") or default_value)
+        raw = str(settings.get("clubFootballEnabledLeagues") or default_value)
         requested = {item.strip().upper() for item in raw.split(",") if item.strip()}
+        try:
+            registry_version = int(
+                settings.get("clubFootballLeagueRegistryVersion") or 1
+            )
+        except (TypeError, ValueError):
+            registry_version = 1
+        if (
+            registry_version < CLUB_FOOTBALL_LEAGUE_REGISTRY_VERSION
+            and requested == set(CLUB_FOOTBALL_LEGACY_DEFAULT_LEAGUES)
+        ):
+            requested.add("MLS")
         enabled = tuple(code for code in CLUB_FOOTBALL_LEAGUES if code in requested)
         return enabled or tuple(CLUB_FOOTBALL_LEAGUES)
 
@@ -247,6 +276,7 @@ class ClubFootballMixin:
             "away_score": None,
             "display_clock": "",
             "venue": "",
+            "broadcast": "",
             "matchday": None,
             "league_logo_url": "",
             "home_logo_url": "",
@@ -255,6 +285,7 @@ class ClubFootballMixin:
             "source_state": provider,
             "fetched_at": None,
             "provider_status_confirmed": bool(provider_status_confirmed),
+            "provider_status_delayed": False,
             "inferred_live_window": False,
         }
 
@@ -339,6 +370,22 @@ class ClubFootballMixin:
                 "odds_source": "ESPN",
             }
         return {}
+
+    @staticmethod
+    def _club_espn_broadcast_label(competition):
+        labels = []
+        for broadcast in (competition or {}).get("broadcasts") or []:
+            for name in (broadcast or {}).get("names") or []:
+                label = str(name or "").strip()
+                if label and label not in labels:
+                    labels.append(label)
+        if not labels:
+            for broadcast in (competition or {}).get("geoBroadcasts") or []:
+                media = (broadcast or {}).get("media") or {}
+                label = str(media.get("shortName") or media.get("name") or "").strip()
+                if label and label not in labels:
+                    labels.append(label)
+        return " / ".join(labels[:2])
 
     @staticmethod
     def _club_event_has_complete_odds(event):
@@ -474,7 +521,12 @@ class ClubFootballMixin:
         return merged
 
     @staticmethod
-    def _parse_club_espn_events(league_code, payload, timezone_info):
+    def _parse_club_espn_events(
+        league_code,
+        payload,
+        timezone_info,
+        fetched_at=None,
+    ):
         if league_code not in CLUB_FOOTBALL_LEAGUES or not isinstance(payload, Mapping):
             return []
 
@@ -525,11 +577,11 @@ class ClubFootballMixin:
             provider_state = str(type_block.get("state") or "").strip().lower()
             provider_name = str(type_block.get("name") or "").strip().upper()
             completed = bool(type_block.get("completed")) or provider_state == "post"
-            confirmed_live = provider_state in {"in", "live"} or provider_name in {
-                "STATUS_IN_PROGRESS",
-                "STATUS_HALFTIME",
-                "STATUS_DELAYED",
-            }
+            provider_status_delayed = provider_name == "STATUS_DELAYED"
+            confirmed_live = not provider_status_delayed and (
+                provider_state in {"in", "live"}
+                or provider_name in {"STATUS_IN_PROGRESS", "STATUS_HALFTIME"}
+            )
             status = "FINAL" if completed else ("LIVE" if confirmed_live else "SCHEDULED")
             event = SportsDashboard._club_base_event(
                 league_code,
@@ -560,11 +612,15 @@ class ClubFootballMixin:
                         or ""
                     ).strip(),
                     "venue": str((competition.get("venue") or {}).get("fullName") or "").strip(),
+                    "broadcast": SportsDashboard._club_espn_broadcast_label(
+                        competition
+                    ),
                     "league_logo_url": league_logo_url,
                     "home_logo_url": SportsDashboard._club_first_logo(home_team),
                     "away_logo_url": SportsDashboard._club_first_logo(away_team),
                     "source_state": "ESPN",
-                    "fetched_at": payload.get("fetched_at"),
+                    "fetched_at": payload.get("fetched_at") or fetched_at,
+                    "provider_status_delayed": provider_status_delayed,
                     **SportsDashboard._club_espn_moneyline_odds(competition),
                 }
             )
@@ -768,6 +824,11 @@ class ClubFootballMixin:
                 or schedule_fetched_utc >= score_fetched_utc
             ):
                 fetched_at = schedule_fetched_at
+            selected_delayed = (
+                schedule.get("provider_status_delayed")
+                if prefer_schedule_evidence
+                else score.get("provider_status_delayed")
+            )
 
             merged.update(
                 {
@@ -776,6 +837,7 @@ class ClubFootballMixin:
                     "away_score": away_score,
                     "display_clock": display_clock,
                     "venue": score.get("venue") or schedule.get("venue") or "",
+                    "broadcast": score.get("broadcast") or schedule.get("broadcast") or "",
                     "league_logo_url": score.get("league_logo_url") or schedule.get("league_logo_url") or "",
                     "home_logo_url": home_logo or schedule.get("home_logo_url") or "",
                     "away_logo_url": away_logo or schedule.get("away_logo_url") or "",
@@ -792,6 +854,9 @@ class ClubFootballMixin:
                             score_status == status
                             and score.get("provider_status_confirmed")
                         )
+                    ),
+                    "provider_status_delayed": bool(
+                        status == "SCHEDULED" and selected_delayed
                     ),
                     "inferred_live_window": False,
                     "odds_home_decimal": home_odds,
@@ -947,7 +1012,31 @@ class ClubFootballMixin:
     @staticmethod
     def _club_espn_scoreboard_url(league_code):
         league = CLUB_FOOTBALL_LEAGUES[league_code]
-        return f"{CLUB_ESPN_SCOREBOARD_BASE_URL}/{league['espn_slug']}/scoreboard"
+        base_url = str(
+            league.get("espn_base_url") or CLUB_ESPN_SCOREBOARD_BASE_URL
+        ).rstrip("/")
+        return f"{base_url}/{league['espn_slug']}/scoreboard"
+
+    @staticmethod
+    def _club_football_data_code(league_code):
+        league = CLUB_FOOTBALL_LEAGUES[league_code]
+        if "football_data_code" in league:
+            return league.get("football_data_code")
+        return league_code
+
+    @staticmethod
+    def _club_espn_scoreboard_params(league_code, now_utc):
+        league = CLUB_FOOTBALL_LEAGUES[league_code]
+        lookback_days = int(league.get("espn_lookback_days") or 0)
+        lookahead_days = int(league.get("espn_lookahead_days") or 0)
+        if lookback_days <= 0 and lookahead_days <= 0:
+            return None
+        current = SportsDashboard._club_parse_utc(now_utc)
+        if current is None:
+            return None
+        start = (current - timedelta(days=max(0, lookback_days))).strftime("%Y%m%d")
+        end = (current + timedelta(days=max(0, lookahead_days))).strftime("%Y%m%d")
+        return {"dates": f"{start}-{end}", "limit": "100"}
 
     def _club_football_cache_path(self, provider, league_code):
         safe_provider = str(provider).replace("-", "_")
@@ -1096,17 +1185,28 @@ class ClubFootballMixin:
             window_start, window_end = self._club_espn_live_window_bounds(now_utc)
             start = window_start.strftime("%Y%m%d")
             end = (window_end - timedelta(microseconds=1)).strftime("%Y%m%d")
+            params = {
+                "dates": f"{start}-{end}",
+                "limit": str(event_limit),
+            }
         else:
-            start = (now_utc - CLUB_FOOTBALL_ESPN_LOOKBACK).strftime("%Y%m%d")
-            end = (now_utc + CLUB_FOOTBALL_ESPN_LOOKAHEAD).strftime("%Y%m%d")
+            params = self._club_espn_scoreboard_params(league_code, now_utc)
+            if not params:
+                start = (now_utc - CLUB_FOOTBALL_ESPN_LOOKBACK).strftime("%Y%m%d")
+                end = (now_utc + CLUB_FOOTBALL_ESPN_LOOKAHEAD).strftime("%Y%m%d")
+                params = {
+                    "dates": f"{start}-{end}",
+                    "limit": str(event_limit),
+                }
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "InkyPi/1.0",
+        }
         try:
             response = get_http_session().get(
                 self._club_espn_scoreboard_url(league_code),
-                headers={"Accept": "application/json"},
-                params={
-                    "dates": f"{start}-{end}",
-                    "limit": str(event_limit),
-                },
+                headers=headers,
+                params=params,
                 timeout=15,
             )
             response.raise_for_status()
@@ -1283,6 +1383,9 @@ class ClubFootballMixin:
         now,
     ):
         now_utc = now.astimezone(timezone.utc)
+        competition_code = self._club_football_data_code(league_code)
+        if not competition_code:
+            raise ValueError(f"football-data.org is disabled for {league_code}")
         current_path = self._club_football_cache_path("football_data", league_code)
         last_good_path = self._club_football_last_good_cache_path(
             "football_data", league_code
@@ -1309,7 +1412,7 @@ class ClubFootballMixin:
 
         try:
             payload = self._football_data_get_json(
-                f"/competitions/{league_code}/matches",
+                f"/competitions/{competition_code}/matches",
                 {},
                 api_key,
                 settings,
@@ -1346,6 +1449,9 @@ class ClubFootballMixin:
         league_events=None,
     ):
         now_utc = now.astimezone(timezone.utc)
+        competition_code = self._club_football_data_code(league_code)
+        if not competition_code:
+            raise ValueError(f"football-data.org standings are disabled for {league_code}")
         current_path = self._club_football_standings_cache_path(league_code)
         last_good_path = self._club_football_standings_last_good_path(league_code)
         cache = self._club_read_cached_payload(
@@ -1363,7 +1469,7 @@ class ClubFootballMixin:
 
         try:
             payload = self._football_data_get_json(
-                f"/competitions/{league_code}/standings",
+                f"/competitions/{competition_code}/standings",
                 {},
                 api_key,
                 settings,
@@ -1405,11 +1511,19 @@ class ClubFootballMixin:
         live_provider_count = 0
         cached_provider_count = 0
         usable_event_count = 0
-        expected_provider_count = len(enabled_leagues) * (2 if api_key else 1)
+        expected_provider_count = sum(
+            1
+            + int(
+                bool(api_key)
+                and bool(self._club_football_data_code(league_code))
+            )
+            for league_code in enabled_leagues
+        )
 
         for league_code in enabled_leagues:
             espn_payload = {}
             football_payload = {}
+            espn_fetched_at = None
             football_fetched_at = None
             try:
                 espn_payload, espn_state, espn_fetched_at = (
@@ -1430,7 +1544,8 @@ class ClubFootballMixin:
                     _safe_exception_text(exc),
                 )
 
-            if api_key:
+            football_data_code = self._club_football_data_code(league_code)
+            if api_key and football_data_code:
                 try:
                     football_payload, football_state, football_fetched_at = (
                         self._load_club_football_data_league_payload(
@@ -1485,7 +1600,10 @@ class ClubFootballMixin:
                 standings[league_code] = []
 
             espn_events = self._parse_club_espn_events(
-                league_code, espn_payload, timezone_info
+                league_code,
+                espn_payload,
+                timezone_info,
+                espn_fetched_at,
             )
             merged_events = self._merge_club_football_events(
                 football_events, espn_events
@@ -1719,7 +1837,7 @@ class ClubFootballMixin:
         if not api_key:
             return selected
 
-        candidates = list(selected.get("rail") or []) + [selected.get("focus")]
+        candidates = [selected.get("focus")] + list(selected.get("rail") or [])
         seen = set()
         for event in candidates:
             if not isinstance(event, dict) or event.get("no_schedule"):
@@ -1846,6 +1964,9 @@ class ClubFootballMixin:
             rail.append(event)
 
         if not focus_candidates:
+            if len(rail) > 5:
+                start_index = int(rotation_seed or 0) % len(rail)
+                rail = (rail[start_index:] + rail[:start_index])[:5]
             return {"focus": None, "rail": rail, "priority": "NO SCHEDULE"}
 
         best_priority = min(event.get("_selection_priority", 3) for event in focus_candidates)
@@ -1863,6 +1984,13 @@ class ClubFootballMixin:
         ):
             focus_index = (focus_index + 1) % len(equal_priority)
         focus = equal_priority[focus_index]
+        if len(rail) > 5:
+            focus_league = str(focus.get("league_code") or "")
+            rail = [
+                event
+                for event in rail
+                if str(event.get("league_code") or "") != focus_league
+            ][:5]
         priority_labels = {0: "LIVE", 1: "UPCOMING", 2: "FINAL", 3: "OTHER"}
         return {
             "focus": focus,
@@ -1931,16 +2059,31 @@ class ClubFootballMixin:
         league = CLUB_FOOTBALL_LEAGUES.get(league_code, {})
         league_name = str(event.get("league_name") or league.get("name") or league_code)
         matchday = event.get("matchday")
-        block = league_name
+        context_parts = []
         if matchday not in (None, ""):
-            block = f"{league_name} · 第{matchday}轮"
+            context_parts.append(f"第{matchday}轮")
+        context_parts.extend(
+            value
+            for value in (
+                str(event.get("broadcast") or "").strip(),
+                str(event.get("venue") or "").strip(),
+            )
+            if value
+        )
+        block = " · ".join(context_parts) or league_name
 
         status = str(event.get("status") or "").upper()
-        current_status_pending = bool(event.get("inferred_live_window"))
+        provider_status_delayed = bool(event.get("provider_status_delayed"))
+        current_status_pending = bool(
+            event.get("inferred_live_window") or provider_status_delayed
+        )
         show_score = status in {"LIVE", "FINAL"}
         home_score = event.get("home_score") if show_score else None
         away_score = event.get("away_score") if show_score else None
-        if status == "LIVE":
+        if provider_status_delayed:
+            state = "TIMED"
+            status_label = "DELAYED"
+        elif status == "LIVE":
             state = "IN_PLAY"
             status_label = str(event.get("display_clock") or "LIVE").strip()
         elif status == "FINAL":
@@ -2004,10 +2147,14 @@ class ClubFootballMixin:
             "provider_status_confirmed": bool(
                 event.get("provider_status_confirmed") or status == "FINAL"
             ),
+            "provider_status_delayed": provider_status_delayed,
             "current_status_pending": current_status_pending,
             "score_confirmed": bool(
                 show_score and home_score is not None and away_score is not None
             ),
+            "broadcast": str(event.get("broadcast") or "").strip(),
+            "venue": str(event.get("venue") or "").strip(),
+            "fetched_at": event.get("fetched_at"),
             "league_logo_url": str(event.get("league_logo_url") or "").strip(),
             "season": str(start.year),
         }
@@ -2113,29 +2260,47 @@ class ClubFootballMixin:
         *,
         source_state="",
     ):
-        base = SportsDashboard._select_club_football_events(
-            by_league,
-            enabled_leagues,
-            now,
-            rotation_seed,
-        )
         candidates = []
+        league_events = []
         for league_code in enabled_leagues or ():
+            league = CLUB_FOOTBALL_LEAGUES.get(league_code, {})
             event = SportsDashboard._select_club_football_timeline_league_event(
                 (by_league or {}).get(league_code) or [],
                 now,
                 source_state=source_state,
             )
             if event is None:
+                league_events.append(
+                    {
+                        "event_id": "",
+                        "league_code": league_code,
+                        "league_name": league.get("name") or league_code,
+                        "status": "NO SCHEDULE",
+                        "provider_status_confirmed": False,
+                        "inferred_live_window": False,
+                        "no_schedule": True,
+                        "_selection_priority": 99,
+                    }
+                )
                 continue
             event["league_code"] = league_code
             event.setdefault(
                 "league_name",
-                CLUB_FOOTBALL_LEAGUES.get(league_code, {}).get("name") or league_code,
+                league.get("name") or league_code,
             )
+            league_events.append(event)
             candidates.append(event)
         if not candidates:
-            return base
+            if len(league_events) > 5:
+                start_index = int(rotation_seed or 0) % len(league_events)
+                league_events = (
+                    league_events[start_index:] + league_events[:start_index]
+                )[:5]
+            return {
+                "focus": None,
+                "rail": league_events,
+                "priority": "NO SCHEDULE",
+            }
 
         best_priority = min(event.get("_selection_priority", 3) for event in candidates)
         eligible = [
@@ -2152,10 +2317,16 @@ class ClubFootballMixin:
         ):
             focus_index = (focus_index + 1) % len(eligible)
         focus = eligible[focus_index]
+        focus_league = str(focus.get("league_code") or "")
+        rail = [
+            event
+            for event in league_events
+            if str(event.get("league_code") or "") != focus_league
+        ][:5]
         priority_labels = {0: "LIVE", 1: "UPCOMING", 2: "FINAL"}
         return {
             "focus": focus,
-            "rail": list(base.get("rail") or []),
+            "rail": rail,
             "priority": priority_labels.get(
                 focus.get("_selection_priority"), "OTHER"
             ),
@@ -2272,7 +2443,7 @@ class ClubFootballMixin:
             ),
         )
         league = CLUB_FOOTBALL_LEAGUES.get(focus_league, {})
-        league_name = str(league.get("name") or "五大联赛")
+        league_name = str(league.get("name") or "俱乐部联赛")
         logo_url = next(
             (
                 str(event.get("league_logo_url") or "")
@@ -2299,7 +2470,7 @@ class ClubFootballMixin:
                 "league_code": focus_league,
                 "league_logo_url": logo_url,
                 "team_asset_kind": "logo",
-                "empty_schedule_text": "暂无五大联赛赛程",
+                "empty_schedule_text": "暂无俱乐部联赛赛程",
                 "upcoming_empty_text": "暂无后续赛程",
                 "recent_empty_text": (
                     "暂无更多赛果" if main_is_recent else "暂无近期赛果"

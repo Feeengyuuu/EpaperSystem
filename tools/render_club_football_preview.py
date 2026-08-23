@@ -43,7 +43,8 @@ def preview_settings():
     return {
         "id": "sports_dashboard",
         "footballPanelMode": "club",
-        "clubFootballEnabledLeagues": "PL,PD,BL1,SA,FL1",
+        "clubFootballEnabledLeagues": "PL,PD,BL1,SA,FL1,MLS",
+        "clubFootballLeagueRegistryVersion": "2",
         "clubFootballLiveRefreshEnabled": "true",
         "clubFootballLiveRefreshIntervalSeconds": "60",
         "worldCupLeftWidth": "536",

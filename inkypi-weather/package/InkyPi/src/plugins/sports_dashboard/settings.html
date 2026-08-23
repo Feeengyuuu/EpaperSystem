@@ -19,8 +19,8 @@
 <div class="form-group">
     <label for="footballPanelMode" class="form-label">Top-left football panel:</label>
     <select id="footballPanelMode" name="footballPanelMode" class="form-input">
-        <option value="club">Five club leagues</option>
-        <option value="auto">Auto: World Cup, Chinese Super League, or five leagues</option>
+        <option value="club">European top five + MLS</option>
+        <option value="auto">Auto: World Cup, Chinese Super League, or club leagues</option>
         <option value="worldcup">World Cup</option>
         <option value="csl">Chinese Super League</option>
     </select>
@@ -28,13 +28,15 @@
 
 <div class="form-group">
     <label class="form-label">Tracked club leagues:</label>
-    <input type="hidden" id="clubFootballEnabledLeagues" name="clubFootballEnabledLeagues" value="PL,PD,BL1,SA,FL1">
+    <input type="hidden" id="clubFootballEnabledLeagues" name="clubFootballEnabledLeagues" value="PL,PD,BL1,SA,FL1,MLS">
+    <input type="hidden" id="clubFootballLeagueRegistryVersion" name="clubFootballLeagueRegistryVersion" value="2">
     <div class="club-football-league-options">
         <label><input type="checkbox" data-club-football-league="PL" checked> Premier League</label>
         <label><input type="checkbox" data-club-football-league="PD" checked> La Liga</label>
         <label><input type="checkbox" data-club-football-league="BL1" checked> Bundesliga</label>
         <label><input type="checkbox" data-club-football-league="SA" checked> Serie A</label>
         <label><input type="checkbox" data-club-football-league="FL1" checked> Ligue 1</label>
+        <label><input type="checkbox" data-club-football-league="MLS" checked> Major League Soccer</label>
     </div>
 </div>
 
@@ -483,7 +485,8 @@
 </div>
 
 <script>
-    const clubFootballLeagueOrder = ["PL", "PD", "BL1", "SA", "FL1"];
+    const clubFootballLeagueOrder = ["PL", "PD", "BL1", "SA", "FL1", "MLS"];
+    const legacyClubFootballLeagueOrder = ["PL", "PD", "BL1", "SA", "FL1"];
 
     const syncClubFootballLeagues = () => {
         const hidden = document.getElementById('clubFootballEnabledLeagues');
@@ -506,7 +509,25 @@
             document.getElementById('footballDataCacheHours').value = pluginSettings.footballDataCacheHours || '';
             document.getElementById('footballDataDailyLimit').value = pluginSettings.footballDataDailyLimit || '';
             document.getElementById('footballPanelMode').value = pluginSettings.footballPanelMode || 'auto';
-            document.getElementById('clubFootballEnabledLeagues').value = pluginSettings.clubFootballEnabledLeagues || 'PL,PD,BL1,SA,FL1';
+            const configuredClubFootballLeagues = new Set(
+                String(pluginSettings.clubFootballEnabledLeagues || clubFootballLeagueOrder.join(','))
+                    .split(',')
+                    .map((code) => code.trim().toUpperCase())
+                    .filter(Boolean)
+            );
+            const configuredRegistryVersion = Number(
+                pluginSettings.clubFootballLeagueRegistryVersion || 1
+            );
+            if (
+                configuredRegistryVersion < 2
+                && configuredClubFootballLeagues.size === legacyClubFootballLeagueOrder.length
+                && legacyClubFootballLeagueOrder.every((code) => configuredClubFootballLeagues.has(code))
+            ) {
+                configuredClubFootballLeagues.add('MLS');
+            }
+            document.getElementById('clubFootballEnabledLeagues').value = clubFootballLeagueOrder
+                .filter((code) => configuredClubFootballLeagues.has(code))
+                .join(',');
             document.getElementById('clubFootballLiveRefreshEnabled').checked = pluginSettings.clubFootballLiveRefreshEnabled !== 'false';
             document.getElementById('clubFootballLiveRefreshIntervalSeconds').value = pluginSettings.clubFootballLiveRefreshIntervalSeconds || '';
             document.getElementById('worldCupScoreboardEnabled').checked = pluginSettings.worldCupScoreboardEnabled !== 'false';
@@ -587,7 +608,7 @@
             document.getElementById('overlayWorldCupLocalTimes').checked = pluginSettings.overlayWorldCupLocalTimes !== 'false';
         }
         const configuredClubLeagues = new Set(
-            (document.getElementById('clubFootballEnabledLeagues').value || 'PL,PD,BL1,SA,FL1')
+            (document.getElementById('clubFootballEnabledLeagues').value || clubFootballLeagueOrder.join(','))
                 .split(',')
                 .map((code) => code.trim().toUpperCase())
                 .filter(Boolean)

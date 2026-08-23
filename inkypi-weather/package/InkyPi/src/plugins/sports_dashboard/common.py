@@ -312,6 +312,7 @@ LOCAL_CLUB_LEAGUE_ICON_PATHS = {
     "BL1": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "bl1.png"),
     "SA": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "sa.png"),
     "FL1": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "fl1.png"),
+    "MLS": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "mls.png"),
 }
 LOCAL_CLUB_LEAGUE_WORDMARK_PATHS = {
     "PL": os.path.join(LOCAL_DECOR_DIR, "club_pl_title_wordmark.png"),
@@ -2407,11 +2408,15 @@ class SportsDashboardCommonMixin:
             visible_matches=DEFAULT_WORLD_CUP_VISIBLE_MATCHES,
             source_state=source_state,
         )
+        focus = selected.get("focus") if isinstance(selected, Mapping) else None
+        focus_fetched_at = (
+            focus.get("fetched_at") if isinstance(focus, Mapping) else None
+        ) or fetched_at
         panel = self._render_club_football_panel(
             dimensions,
             sections,
             source_state,
-            fetched_at,
+            focus_fetched_at,
             now,
         )
         if source_state == "CLUB PARTIAL":
