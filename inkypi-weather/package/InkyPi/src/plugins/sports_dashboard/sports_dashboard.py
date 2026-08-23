@@ -245,7 +245,13 @@ class SportsDashboard(
         if source == "ewc":
             return self._int_setting(settings, "ewcLiveRefreshIntervalSeconds", DEFAULT_EWC_LIVE_REFRESH_SECONDS, 60, 900)
         if source == "valve_esports":
-            return self._int_setting(settings, "valveEsportsLiveRefreshIntervalSeconds", 60, 60, 900)
+            return self._int_setting(
+                settings,
+                "valveEsportsLiveRefreshIntervalSeconds",
+                DEFAULT_VALVE_ESPORTS_LIVE_REFRESH_SECONDS,
+                60,
+                900,
+            )
         if source == "f1":
             return self._int_setting(settings, "f1LiveRefreshIntervalSeconds", 60, 60, 900)
         return 60

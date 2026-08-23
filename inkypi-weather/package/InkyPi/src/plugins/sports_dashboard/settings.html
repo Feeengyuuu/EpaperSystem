@@ -373,6 +373,23 @@
 
 <div class="form-group">
     <label class="form-label">
+        <input type="checkbox" id="valveEsportsTiOfficialEnabled" name="valveEsportsTiOfficialEnabled" value="true">
+        Use official Dota 2 schedule for live / upcoming TI series
+    </label>
+</div>
+
+<div class="form-group">
+    <label for="valveEsportsTiLeagueId" class="form-label">Official Dota 2 TI league ID:</label>
+    <input type="number" id="valveEsportsTiLeagueId" name="valveEsportsTiLeagueId" min="1" placeholder="19719" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="valveEsportsTiCacheSeconds" class="form-label">Official TI schedule cache seconds:</label>
+    <input type="number" id="valveEsportsTiCacheSeconds" name="valveEsportsTiCacheSeconds" min="60" max="3600" placeholder="900" class="form-input">
+</div>
+
+<div class="form-group">
+    <label class="form-label">
         <input type="checkbox" id="valveEsportsHltvEnabled" name="valveEsportsHltvEnabled" value="true">
         Use HLTV for CS Major results
     </label>
@@ -381,8 +398,20 @@
 <div class="form-group">
     <label class="form-label">
         <input type="checkbox" id="valveEsportsOpenDotaEnabled" name="valveEsportsOpenDotaEnabled" value="true">
-        Use OpenDota for The International results
+        Use OpenDota as a TI results fallback
     </label>
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="valveEsportsLiveRefreshEnabled" name="valveEsportsLiveRefreshEnabled" value="true">
+        Refresh the dashboard while a Valve esports series is live
+    </label>
+</div>
+
+<div class="form-group">
+    <label for="valveEsportsLiveRefreshIntervalSeconds" class="form-label">Valve live refresh interval seconds:</label>
+    <input type="number" id="valveEsportsLiveRefreshIntervalSeconds" name="valveEsportsLiveRefreshIntervalSeconds" min="60" max="900" placeholder="180" class="form-input">
 </div>
 
 <div class="form-group">
@@ -586,8 +615,13 @@
             document.getElementById('nbaOddsCacheHours').value = pluginSettings.nbaOddsCacheHours || '';
             document.getElementById('nbaOddsDailyLimit').value = pluginSettings.nbaOddsDailyLimit || '';
             document.getElementById('valveEsportsEnabled').checked = pluginSettings.valveEsportsEnabled !== 'false';
+            document.getElementById('valveEsportsTiOfficialEnabled').checked = pluginSettings.valveEsportsTiOfficialEnabled !== 'false';
+            document.getElementById('valveEsportsTiLeagueId').value = pluginSettings.valveEsportsTiLeagueId || '';
+            document.getElementById('valveEsportsTiCacheSeconds').value = pluginSettings.valveEsportsTiCacheSeconds || '';
             document.getElementById('valveEsportsHltvEnabled').checked = pluginSettings.valveEsportsHltvEnabled !== 'false';
             document.getElementById('valveEsportsOpenDotaEnabled').checked = pluginSettings.valveEsportsOpenDotaEnabled !== 'false';
+            document.getElementById('valveEsportsLiveRefreshEnabled').checked = pluginSettings.valveEsportsLiveRefreshEnabled !== 'false';
+            document.getElementById('valveEsportsLiveRefreshIntervalSeconds').value = pluginSettings.valveEsportsLiveRefreshIntervalSeconds || '';
             document.getElementById('valveEsportsCacheHours').value = pluginSettings.valveEsportsCacheHours || '';
             document.getElementById('valveEsportsDailyLimit').value = pluginSettings.valveEsportsDailyLimit || '';
             document.getElementById('valveEsportsWindowAfterDays').value = pluginSettings.valveEsportsWindowAfterDays || '';

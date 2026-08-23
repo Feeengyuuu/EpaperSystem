@@ -2486,17 +2486,19 @@ class EsportsMixin:
     def _select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now, ewc_card=None):
         lol_cards = [dict(card) for card in (lol_cards or []) if card and card.get("selected") is not None]
         candidates = []
-        for card in lol_cards:
-            phase = SportsDashboard._lol_sidebar_candidate_phase(card)
-            if phase is None:
-                continue
+        # Resolve the preferred LoL league first (LPL/LCK/MSI), then compare
+        # that single timed choice with EWC. This preserves the configured LoL
+        # league order without letting it hide an earlier cross-module match.
+        lol_choice = SportsDashboard._select_lol_esports_sidebar(lol_cards, now)
+        phase = SportsDashboard._lol_sidebar_candidate_phase(lol_choice)
+        if phase is not None:
             candidates.append(
                 {
                     "kind": "lol",
-                    "choice": card,
+                    "choice": lol_choice,
                     "phase": phase,
-                    "priority": SportsDashboard._right_sidebar_lol_priority(card),
-                    "tie": SportsDashboard._right_sidebar_lol_tie_value(card),
+                    "priority": SportsDashboard._right_sidebar_lol_priority(lol_choice),
+                    "tie": SportsDashboard._right_sidebar_lol_tie_value(lol_choice),
                 }
             )
 
@@ -2518,6 +2520,16 @@ class EsportsMixin:
             ewc_provenance = SportsDashboard._sports_source_state_provenance(
                 ewc_source_state
             )
+            competition_source_state = str(
+                (ewc_card or {}).get("competition_source_state") or ""
+            ).strip()
+            competition_provenance = (
+                SportsDashboard._sports_source_state_provenance(
+                    competition_source_state
+                )
+                if competition_source_state
+                else None
+            )
             if ewc_phase is not None and ewc_provenance in {
                 SourceProvenance.LIVE,
                 SourceProvenance.FRESH_CACHE,
@@ -2529,6 +2541,17 @@ class EsportsMixin:
                         "source_state": ewc_source_state,
                         "phase": ewc_phase,
                         "priority": SportsDashboard._right_sidebar_ewc_priority(),
+                        "schedule_rank": (
+                            1
+                            if ewc_phase == 1
+                            and competition_provenance
+                            not in {
+                                None,
+                                SourceProvenance.LIVE,
+                                SourceProvenance.FRESH_CACHE,
+                            }
+                            else 0
+                        ),
                         "tie": SportsDashboard._ewc_sidebar_main_timestamp(
                             focused_ewc_card,
                             float("inf"),
@@ -2537,14 +2560,29 @@ class EsportsMixin:
                 )
 
         for card in SportsDashboard._valve_esports_active_cards(valve_selected):
+            source_state = card.get("source_state") or valve_source_state or "VALVE DATA"
+            phase = SportsDashboard._valve_sidebar_candidate_phase(card)
+            provenance = SportsDashboard._sports_source_state_provenance(source_state)
+            if phase is None or (
+                phase in (0, 1)
+                and provenance
+                not in {
+                    SourceProvenance.LIVE,
+                    SourceProvenance.FRESH_CACHE,
+                }
+            ):
+                continue
             candidates.append(
                 {
                     "kind": "valve",
                     "selected": SportsDashboard._valve_esports_selected_for_card(valve_selected, card),
-                    "source_state": card.get("source_state") or valve_source_state or "VALVE DATA",
-                    "phase": 1,
+                    "source_state": source_state,
+                    "phase": phase,
                     "priority": SportsDashboard._right_sidebar_valve_priority(card),
-                    "tie": str(card.get("event_name") or ""),
+                    "tie": SportsDashboard._valve_sidebar_main_timestamp(
+                        card,
+                        float("inf"),
+                    ),
                 }
             )
 
@@ -2566,20 +2604,30 @@ class EsportsMixin:
             priority = 99
         kind = str((item or {}).get("kind") or "").strip().lower()
 
-        # LoL league cards and EWC cards both carry a real next-match time.
-        # Preserve the configured provider order within the upcoming phase,
-        # then use the schedule to choose between equally ranked candidates.
-        if phase == 1 and kind in {"lol", "ewc"}:
+        # The chosen LoL card and EWC both carry a real next-match time. When
+        # neither is live, surface the earlier match; provider order is only a
+        # deterministic tie-break for equal or unavailable timestamps. An EWC
+        # detail backed by a stale competition overview stays below trusted
+        # upcoming schedules instead of winning on time alone.
+        if phase == 1 and kind in {"lol", "ewc", "valve"}:
+            try:
+                schedule_rank = int((item or {}).get("schedule_rank") or 0)
+            except (TypeError, ValueError):
+                schedule_rank = 1
             try:
                 scheduled_at = float((item or {}).get("tie"))
             except (TypeError, ValueError):
                 scheduled_at = float("inf")
             if scheduled_at != scheduled_at or scheduled_at in {float("inf"), float("-inf")}:
                 scheduled_at = float("inf")
-            return (phase, 0, priority, scheduled_at, kind)
+            return (phase, 0, schedule_rank, scheduled_at, priority, kind)
 
-        # Valve cards represent an active tournament/result window rather than
-        # a comparable next-match timestamp, so retain their existing priority.
+        # A bounded recent tournament card is useful when the normal LPL slot is
+        # otherwise only an offseason/recent fallback.
+        if phase == 2:
+            fallback_rank = {"valve": 0, "ewc": 1, "lol": 2}.get(kind, 3)
+            return (phase, fallback_rank, priority, str((item or {}).get("tie") or ""), kind)
+
         return (phase, 1, float(priority), str((item or {}).get("tie") or ""), kind)
 
     @staticmethod
@@ -2592,6 +2640,31 @@ class EsportsMixin:
         if str((card or {}).get("league_key") or "").strip().upper() == "LPL":
             return 2
         return None
+
+    @staticmethod
+    def _valve_sidebar_candidate_phase(card):
+        card = card or {}
+        status = str(card.get("status") or "").strip().upper()
+        if card.get("live") or status == "LIVE":
+            return 0
+        if card.get("upcoming") or status == "NEXT":
+            return 1
+        if card.get("recent") and card.get("window_active"):
+            return 2
+        if status == "ACTIVE" and card.get("window_active"):
+            return 2
+        return None
+
+    @staticmethod
+    def _valve_sidebar_main_timestamp(card, default):
+        card = card or {}
+        event = card.get("main") or {}
+        if card.get("upcoming"):
+            event = card["upcoming"][0]
+        start = event.get("start")
+        if isinstance(start, datetime):
+            return start.timestamp()
+        return default
 
     @staticmethod
     def _right_sidebar_lol_sort_key(card):
@@ -2693,7 +2766,7 @@ class EsportsMixin:
             return start.timestamp()
         return default
 
-    def _load_valve_esports(self, settings, timezone_info, now):
+    def _load_valve_esports(self, settings, timezone_info, now, official_ti_result=None):
         preview_card = self._valve_dota2_preview_card(settings, now)
         if preview_card:
             return {
@@ -2705,6 +2778,24 @@ class EsportsMixin:
             }, "DOTA2 PREVIEW"
         cards = []
         source_states = []
+        official_ti_card = None
+        official_ti_trusted = False
+        if official_ti_result is not None:
+            official_ti_card, official_ti_source_state = official_ti_result
+            if official_ti_source_state:
+                source_states.append(official_ti_source_state)
+            if official_ti_card:
+                official_ti_card["source_state"] = (
+                    official_ti_source_state or "DOTA2 DATA"
+                )
+                cards.append(official_ti_card)
+                official_ti_trusted = (
+                    self._sports_source_state_provenance(official_ti_source_state)
+                    in {
+                        SourceProvenance.LIVE,
+                        SourceProvenance.FRESH_CACHE,
+                    }
+                )
         if self._bool_setting(settings, "valveEsportsHltvEnabled", True):
             try:
                 matches, source_state, _fetched_at = self._load_valve_hltv_matches(
@@ -2718,7 +2809,10 @@ class EsportsMixin:
                 source_states.append(source_state)
             except Exception as exc:
                 logger.warning("HLTV Major fetch failed: %s", _safe_exception_text(exc))
-        if self._bool_setting(settings, "valveEsportsOpenDotaEnabled", True):
+        if (
+            not official_ti_trusted
+            and self._bool_setting(settings, "valveEsportsOpenDotaEnabled", True)
+        ):
             try:
                 matches, source_state, _fetched_at = self._load_valve_opendota_matches(settings, timezone_info)
                 team_profiles = self._load_valve_opendota_team_profiles(settings, self._valve_ti_team_ids(matches))
@@ -2734,6 +2828,334 @@ class EsportsMixin:
         source_state = primary.get("source_state") or ", ".join(source_states) or "VALVE DATA"
         selected["source_states"] = source_states
         return selected, source_state
+
+    def _load_valve_ti_official_card(self, settings, timezone_info, now):
+        now_value = now if isinstance(now, datetime) else datetime.now(timezone_info)
+        if now_value.tzinfo is None:
+            now_value = now_value.replace(tzinfo=timezone_info)
+        now_utc = now_value.astimezone(timezone.utc)
+        cache_path = self._valve_ti_official_cache_path()
+        cache = self._read_json_file(cache_path)
+        cache_key = self._valve_ti_official_cache_key(settings, timezone_info)
+        cache_seconds = self._int_setting(
+            settings or {},
+            "valveEsportsTiCacheSeconds",
+            DEFAULT_VALVE_TI_CACHE_SECONDS,
+            60,
+            3600,
+        )
+        cached_payload = cache.get("league")
+        has_compatible_cache = (
+            cache.get("cache_key") == cache_key
+            and isinstance(cached_payload, Mapping)
+        )
+
+        def cached_card(source_state):
+            card = self._parse_valve_ti_official_card(
+                cached_payload,
+                timezone_info,
+                now_value,
+                settings,
+            )
+            if card:
+                card["source_state"] = source_state
+            return card, source_state
+
+        if has_compatible_cache and not self._force_refresh_requested(settings):
+            card, source_state = cached_card("DOTA2 CACHE")
+            if card:
+                effective_cache_seconds = cache_seconds
+                status = str(card.get("status") or "").upper()
+                main_start = ((card.get("main") or {}).get("start"))
+                near_next_match = (
+                    status == "NEXT"
+                    and isinstance(main_start, datetime)
+                    and main_start <= now_value + timedelta(seconds=cache_seconds)
+                )
+                if status != "LIVE" and not near_next_match:
+                    effective_cache_seconds = max(
+                        cache_seconds,
+                        DEFAULT_VALVE_TI_SCHEDULE_CACHE_SECONDS,
+                    )
+                if self._cache_is_fresh_seconds(
+                    cache,
+                    effective_cache_seconds,
+                    now_utc,
+                ):
+                    return card, source_state
+
+        if self._valve_esports_calls_left(settings, now_utc) <= 0:
+            if has_compatible_cache:
+                card, source_state = cached_card("DOTA2 STALE")
+                if card:
+                    return card, source_state
+            return None, "DOTA2 LIMIT"
+
+        try:
+            payload = self._fetch_valve_ti_official_payload(
+                settings,
+                cache_key,
+                now_utc,
+            )
+            card = self._parse_valve_ti_official_card(
+                payload["league"],
+                timezone_info,
+                now_value,
+                settings,
+            )
+            if not card:
+                raise ValueError("official Dota 2 TI payload contained no usable series")
+        except Exception:
+            if has_compatible_cache:
+                card, source_state = cached_card("DOTA2 STALE")
+                if card:
+                    return card, source_state
+            raise
+
+        try:
+            self._write_json_file(cache_path, payload)
+        except OSError as exc:
+            logger.warning("Failed to write official Dota 2 TI cache: %s", exc)
+        card["source_state"] = "DOTA2 LIVE"
+        return card, "DOTA2 LIVE"
+
+    def _fetch_valve_ti_official_payload(self, settings, cache_key, now_utc):
+        league_id = self._valve_ti_official_league_id(settings)
+        url = DOTA2_LEAGUE_DATA_URL.format(league_id=league_id)
+        try:
+            response = get_http_session().get(
+                url,
+                headers={
+                    "Accept": "application/json",
+                    "User-Agent": "EpaperSystem/ValveEsports",
+                },
+                timeout=20,
+                stream=True,
+            )
+            raw_payload = read_limited_response_bytes(
+                response,
+                max_bytes=VALVE_TI_OFFICIAL_RESPONSE_MAX_BYTES,
+            )
+        finally:
+            self._record_valve_esports_call(settings, now_utc)
+        league = json.loads(raw_payload.decode("utf-8"))
+        if not isinstance(league, Mapping):
+            raise ValueError("official Dota 2 TI response was not an object")
+        data = league.get("result") if isinstance(league.get("result"), Mapping) else league
+        if not isinstance(data.get("node_groups"), list):
+            raise ValueError("official Dota 2 TI response omitted node_groups")
+        return {
+            "version": VALVE_TI_OFFICIAL_CACHE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "provider": "dota2-official",
+            "league": league,
+        }
+
+    @staticmethod
+    def _parse_valve_ti_official_card(payload, timezone_info, now, settings=None):
+        if not isinstance(payload, Mapping):
+            return None
+        data = payload.get("result") if isinstance(payload.get("result"), Mapping) else payload
+        info = data.get("info") if isinstance(data.get("info"), Mapping) else {}
+        node_groups = data.get("node_groups")
+        if not isinstance(node_groups, list):
+            return None
+
+        profiles = {}
+        flattened_nodes = []
+        series_by_id = {}
+        for series in data.get("series_infos") or []:
+            if not isinstance(series, Mapping):
+                continue
+            series_id = SportsDashboard._lpl_int_value(series.get("series_id"))
+            if series_id:
+                series_by_id[series_id] = series
+
+        def visit(groups, inherited_stage=""):
+            for group in groups or []:
+                if not isinstance(group, Mapping):
+                    continue
+                stage = str(
+                    group.get("name")
+                    or group.get("phase")
+                    or inherited_stage
+                    or "Main Event"
+                ).strip()
+                for standing in group.get("team_standings") or []:
+                    if not isinstance(standing, Mapping):
+                        continue
+                    team_id = SportsDashboard._lpl_int_value(standing.get("team_id"))
+                    if not team_id:
+                        continue
+                    profiles[team_id] = {
+                        "name": str(standing.get("team_name") or "").strip(),
+                        "tag": str(
+                            standing.get("team_abbreviation")
+                            or standing.get("team_tag")
+                            or ""
+                        ).strip(),
+                        "logo_url": str(standing.get("team_logo_url") or "").strip(),
+                    }
+                for node in group.get("nodes") or []:
+                    if isinstance(node, Mapping):
+                        flattened_nodes.append((node, stage))
+                visit(group.get("node_groups") or [], stage)
+
+        visit(node_groups)
+        now_value = now if isinstance(now, datetime) else datetime.now(timezone_info)
+        if now_value.tzinfo is None:
+            now_value = now_value.replace(tzinfo=timezone_info)
+        event_name = str(info.get("name") or "The International").strip() or "The International"
+        events = []
+        seen = set()
+        for node, stage in flattened_nodes:
+            node_id = SportsDashboard._lpl_int_value(node.get("node_id"))
+            series_id = SportsDashboard._lpl_int_value(node.get("series_id"))
+            identity = (series_id or 0, node_id or 0)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            series_info = series_by_id.get(series_id) or {}
+            completed = bool(node.get("is_completed"))
+            started = bool(node.get("has_started"))
+            if completed or started:
+                raw_start = (
+                    node.get("actual_time")
+                    or series_info.get("start_time")
+                    or node.get("scheduled_time")
+                )
+            else:
+                raw_start = (
+                    node.get("scheduled_time")
+                    or series_info.get("start_time")
+                    or node.get("actual_time")
+                )
+            start = SportsDashboard._parse_opendota_start_time(
+                raw_start,
+                timezone_info,
+            )
+            if not start:
+                continue
+            if completed:
+                state = "completed"
+            elif started:
+                state = "inProgress"
+            elif start >= now_value - timedelta(hours=6):
+                state = "unstarted"
+            else:
+                continue
+            team_a_id = SportsDashboard._lpl_int_value(node.get("team_id_1"))
+            team_b_id = SportsDashboard._lpl_int_value(node.get("team_id_2"))
+            team_a = profiles.get(team_a_id) or {}
+            team_b = profiles.get(team_b_id) or {}
+            match_ids = []
+            for match in node.get("matches") or []:
+                value = (
+                    match.get("match_id")
+                    if isinstance(match, Mapping)
+                    else match
+                )
+                parsed_id = SportsDashboard._lpl_int_value(value)
+                if parsed_id:
+                    match_ids.append(parsed_id)
+            if not match_ids:
+                for value in series_info.get("match_ids") or []:
+                    parsed_id = SportsDashboard._lpl_int_value(value)
+                    if parsed_id:
+                        match_ids.append(parsed_id)
+            event = {
+                "series": "TI",
+                "event_name": event_name,
+                "match_id": str(series_id or node_id or ""),
+                "node_id": node_id,
+                "series_id": series_id,
+                "match_ids": match_ids,
+                "start": start,
+                "state": state,
+                "stage": stage or str(node.get("name") or "Main Event").strip(),
+                "team_a": str(team_a.get("name") or "TBD").strip() or "TBD",
+                "team_b": str(team_b.get("name") or "TBD").strip() or "TBD",
+                "team_a_tag": str(team_a.get("tag") or "").strip(),
+                "team_b_tag": str(team_b.get("tag") or "").strip(),
+                "team_a_id": team_a_id,
+                "team_b_id": team_b_id,
+                "team_a_logo": str(team_a.get("logo_url") or "").strip(),
+                "team_b_logo": str(team_b.get("logo_url") or "").strip(),
+                "wins_a": (
+                    SportsDashboard._lpl_int_value(node.get("team_1_wins"))
+                    if state != "unstarted"
+                    else None
+                ),
+                "wins_b": (
+                    SportsDashboard._lpl_int_value(node.get("team_2_wins"))
+                    if state != "unstarted"
+                    else None
+                ),
+                "best_of": SportsDashboard._opendota_best_of(
+                    series_info.get("series_type")
+                ),
+                "source": "Dota 2 Official",
+                "score_kind": "MAPS",
+            }
+            events.append(event)
+
+        live = sorted(
+            [event for event in events if event.get("state") == "inProgress"],
+            key=lambda event: (event["start"], str(event.get("match_id") or "")),
+        )
+        upcoming = sorted(
+            [event for event in events if event.get("state") == "unstarted"],
+            key=lambda event: (event["start"], str(event.get("match_id") or "")),
+        )
+        recent = sorted(
+            [event for event in events if event.get("state") == "completed"],
+            key=lambda event: (event["start"], str(event.get("match_id") or "")),
+            reverse=True,
+        )
+        main = (live or upcoming or recent or [None])[0]
+        if not main:
+            return None
+        status = "LIVE" if live else "NEXT" if upcoming else "RECENT"
+        first_start = min(event["start"] for event in events)
+        latest_start = max(event["start"] for event in events)
+        official_start = SportsDashboard._parse_opendota_start_time(
+            info.get("start_timestamp"),
+            timezone_info,
+        )
+        official_end = SportsDashboard._parse_opendota_start_time(
+            info.get("end_timestamp"),
+            timezone_info,
+        )
+        window_after = SportsDashboard._int_setting(
+            settings or {},
+            "valveEsportsWindowAfterDays",
+            DEFAULT_VALVE_ESPORTS_WINDOW_AFTER_DAYS,
+            0,
+            14,
+        )
+        active_until = (official_end or latest_start) + timedelta(days=window_after)
+        window_active = bool(live or upcoming) or now_value <= active_until
+        return {
+            "series": "TI",
+            "sport": "The International",
+            "event_name": event_name,
+            "status": status,
+            "window_active": window_active,
+            "main": main,
+            "live": live,
+            "upcoming": upcoming,
+            "recent": recent,
+            "events": sorted(events, key=lambda event: event["start"]),
+            "start": official_start or first_start,
+            "event_end": official_end or latest_start,
+            "end": active_until,
+            "latest": latest_start,
+            "logo_path": LOCAL_TI_LOGO_PATH,
+            "source": "Dota 2 Official",
+            "source_state": "DOTA2 DATA",
+            "order": 1,
+        }
 
     def _valve_dota2_preview_card(self, settings, now):
         if not self._valve_dota2_preview_enabled():
@@ -3331,6 +3753,9 @@ class EsportsMixin:
     def _valve_hltv_cache_path(self):
         return self._sports_dashboard_cache_dir() / "valve_hltv_matches.json"
 
+    def _valve_ti_official_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "valve_ti_official.json"
+
     def _valve_opendota_cache_path(self):
         return self._sports_dashboard_cache_dir() / "valve_opendota_matches.json"
 
@@ -3353,6 +3778,24 @@ class EsportsMixin:
                 self._timezone_key(timezone_info),
             ]
         )
+
+    def _valve_ti_official_cache_key(self, settings, timezone_info):
+        return "|".join(
+            [
+                VALVE_TI_OFFICIAL_CACHE_VERSION,
+                DOTA2_LEAGUE_DATA_URL,
+                self._valve_ti_official_league_id(settings),
+                self._timezone_key(timezone_info),
+            ]
+        )
+
+    @staticmethod
+    def _valve_ti_official_league_id(settings):
+        configured = SportsDashboard._lpl_int_value(
+            (settings or {}).get("valveEsportsTiLeagueId")
+        )
+        fallback = SportsDashboard._lpl_int_value(DEFAULT_VALVE_TI_LEAGUE_ID)
+        return str(configured or fallback)
 
     def _valve_opendota_cache_key(self, settings, timezone_info):
         base_url = str((settings or {}).get("valveEsportsOpenDotaBaseUrl") or OPENDOTA_BASE_URL).strip().rstrip("/") or OPENDOTA_BASE_URL
@@ -3401,11 +3844,26 @@ class EsportsMixin:
     def _write_valve_esports_live_state(self, selected, now, source_state):
         primary = (selected or {}).get("primary") or {}
         main = primary.get("main") or {}
+        trusted_source = self._sports_source_state_provenance(source_state) in {
+            SourceProvenance.LIVE,
+            SourceProvenance.FRESH_CACHE,
+        }
+        has_live = (
+            str(primary.get("status") or "").upper() == "LIVE"
+            and trusted_source
+        )
+        live_until = None
+        if has_live and isinstance(now, datetime):
+            live_until = (
+                now.astimezone(timezone.utc)
+                + timedelta(seconds=DEFAULT_VALVE_ESPORTS_LIVE_STATE_TTL_SECONDS)
+            ).isoformat()
         payload = {
             "version": VALVE_ESPORTS_LIVE_STATE_VERSION,
             "updated_at": now.astimezone(timezone.utc).isoformat() if isinstance(now, datetime) else "",
             "source_state": source_state,
-            "has_live": str(primary.get("status") or "").upper() == "LIVE",
+            "has_live": has_live,
+            "live_until": live_until,
             "displaying_valve_event": bool(primary),
             "rotation_pool": (selected or {}).get("rotation_pool") or [],
         }
@@ -4818,18 +5276,6 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

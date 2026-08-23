@@ -77,7 +77,8 @@ LCK_LIVE_STATE_VERSION = "sports-dashboard-lck-live-v1"
 MSI_TOURNAMENT_STATE_VERSION = "sports-dashboard-msi-tournament-v1"
 MSI_LIVE_STATE_VERSION = "sports-dashboard-msi-live-v1"
 VALVE_ESPORTS_STATE_VERSION = "sports-dashboard-valve-esports-v1"
-VALVE_ESPORTS_LIVE_STATE_VERSION = "sports-dashboard-valve-esports-live-v1"
+VALVE_ESPORTS_LIVE_STATE_VERSION = "sports-dashboard-valve-esports-live-v2"
+VALVE_TI_OFFICIAL_CACHE_VERSION = "sports-dashboard-valve-ti-official-v1"
 EWC_STATE_VERSION = "sports-dashboard-ewc-v1"
 EWC_DETAIL_STATE_VERSION = "sports-dashboard-ewc-detail-v2"
 EWC_LIVE_STATE_VERSION = "sports-dashboard-ewc-live-v1"
@@ -227,11 +228,20 @@ HLTV_BASE_URL = "https://www.hltv.org"
 HLTV_MAJOR_EVENTS_URL = f"{HLTV_BASE_URL}/events"
 HLTV_MAJOR_ARCHIVE_URL = f"{HLTV_BASE_URL}/events/archive"
 OPENDOTA_BASE_URL = "https://api.opendota.com/api"
+DOTA2_LEAGUE_DATA_URL = (
+    "https://www.dota2.com/webapi/IDOTA2League/GetLeagueData/v001"
+    "?league_id={league_id}&delay_seconds=0"
+)
+DEFAULT_VALVE_TI_LEAGUE_ID = "19719"
+DEFAULT_VALVE_TI_CACHE_SECONDS = 15 * 60
+DEFAULT_VALVE_TI_SCHEDULE_CACHE_SECONDS = 6 * 60 * 60
+VALVE_TI_OFFICIAL_RESPONSE_MAX_BYTES = 2 * 1024 * 1024
 DEFAULT_VALVE_ESPORTS_CACHE_HOURS = 6
 DEFAULT_VALVE_ESPORTS_DAILY_LIMIT = 48
 DEFAULT_VALVE_ESPORTS_OPENDOTA_LIMIT = 120
 DEFAULT_VALVE_ESPORTS_WINDOW_AFTER_DAYS = 2
 DEFAULT_VALVE_ESPORTS_LIVE_REFRESH_SECONDS = 180
+DEFAULT_VALVE_ESPORTS_LIVE_STATE_TTL_SECONDS = 30 * 60
 DEFAULT_EWC_COMPETITIONS_URL = "https://esportsworldcup.com/en/competitions/2026"
 DEFAULT_EWC_CACHE_HOURS = 12
 DEFAULT_EWC_DETAIL_CACHE_SECONDS = 600
@@ -2848,6 +2858,7 @@ class SportsDashboardCommonMixin:
     ):
         lol_cards = self._load_lol_esports_sidebar_cards(settings, device_config, timezone_info, now)
         lol_sidebar_override = self._lol_esports_sidebar_override(settings)
+        official_ti_state_persisted = False
         if lol_sidebar_override:
             esports_choice = {
                 "kind": "lol",
@@ -2873,35 +2884,89 @@ class SportsDashboardCommonMixin:
                         "EWC sidebar failed, falling back to other esports panels: %s",
                         _safe_exception_text(exc),
                     )
+            official_ti_card = None
+            official_ti_source_state = ""
+            official_ti_enabled = (
+                self._bool_setting(settings, "valveEsportsEnabled", True)
+                and self._bool_setting(settings, "valveEsportsTiOfficialEnabled", True)
+            )
+            if official_ti_enabled:
+                try:
+                    official_ti_card, official_ti_source_state = (
+                        self._load_valve_ti_official_card(
+                            settings,
+                            timezone_info,
+                            now,
+                        )
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Official Dota 2 TI sidebar failed, falling back to other esports panels: %s",
+                        _safe_exception_text(exc),
+                    )
+            official_ti_selected = self._select_valve_esports(
+                [official_ti_card] if official_ti_card else [],
+                now,
+            )
+            if official_ti_enabled:
+                self._write_valve_esports_live_state(
+                    official_ti_selected,
+                    now,
+                    official_ti_source_state or "DOTA2 NO DATA",
+                )
+                official_ti_state_persisted = bool(official_ti_card)
             esports_choice = self._select_right_esports_sidebar(
                 lol_cards,
-                None,
-                "",
+                official_ti_selected,
+                official_ti_source_state,
                 now,
                 ewc_card=ewc_card,
             )
             choice_kind = str(
                 (esports_choice or {}).get("kind") or ""
             ).strip().lower()
-            has_timed_lol_or_ewc = choice_kind == "ewc" or (
+            has_timed_esports_choice = (
+                choice_kind == "ewc"
+                and self._ewc_sidebar_candidate_phase(
+                    {"selected": (esports_choice or {}).get("selected")}
+                )
+                in (0, 1)
+            ) or (
                 choice_kind == "lol"
                 and self._lol_sidebar_candidate_phase(
                     (esports_choice or {}).get("choice")
                 )
                 in (0, 1)
+            ) or (
+                choice_kind == "valve"
+                and self._valve_sidebar_candidate_phase(
+                    ((esports_choice or {}).get("selected") or {}).get("primary")
+                )
+                in (0, 1)
             )
             if (
-                not has_timed_lol_or_ewc
+                not has_timed_esports_choice
                 and self._bool_setting(settings, "valveEsportsEnabled", True)
             ):
                 valve_selected = None
                 valve_source_state = ""
                 try:
-                    valve_selected, valve_source_state = self._load_valve_esports(
-                        settings,
-                        timezone_info,
-                        now,
-                    )
+                    if official_ti_enabled:
+                        valve_selected, valve_source_state = self._load_valve_esports(
+                            settings,
+                            timezone_info,
+                            now,
+                            official_ti_result=(
+                                official_ti_card,
+                                official_ti_source_state,
+                            ),
+                        )
+                    else:
+                        valve_selected, valve_source_state = self._load_valve_esports(
+                            settings,
+                            timezone_info,
+                            now,
+                        )
                 except Exception as exc:
                     logger.warning(
                         "Valve esports sidebar failed, falling back to LPL: %s",
@@ -2924,7 +2989,12 @@ class SportsDashboardCommonMixin:
         if esports_choice.get("kind") == "valve":
             valve_selected = esports_choice["selected"]
             valve_source_state = esports_choice["source_state"]
-            self._write_valve_esports_live_state(valve_selected, now, valve_source_state)
+            if not official_ti_state_persisted:
+                self._write_valve_esports_live_state(
+                    valve_selected,
+                    now,
+                    valve_source_state,
+                )
             self._draw_valve_esports_sidebar(image, left_width, valve_selected, valve_source_state, now)
             return self._sports_source_state_provenance(valve_source_state)
 
@@ -3838,6 +3908,9 @@ class SportsDashboardCommonMixin:
         return {
             "LIVE DATA": "LIVE DATA",
             "CACHE DATA": "CACHE DATA",
+            "DOTA2 LIVE": "OFFICIAL LIVE",
+            "DOTA2 CACHE": "OFFICIAL CACHE",
+            "DOTA2 STALE": "STALE CACHE",
         }.get(str(source_state or "").upper(), str(source_state or "DATA"))
 
     @staticmethod

@@ -1579,7 +1579,7 @@ def test_live_refresh_state_reads_active_source_files():
         ),
         (
             "valve_esports_live_state.json",
-            "sports-dashboard-valve-esports-live-v1",
+            "sports-dashboard-valve-esports-live-v2",
             "valveEsportsLiveRefreshIntervalSeconds",
             270,
         ),
@@ -1630,6 +1630,41 @@ def test_live_refresh_state_defaults_to_one_minute_interval():
     )
 
     assert state == {"active": True, "interval_seconds": 60}
+
+
+def test_valve_ti_live_refresh_is_bounded_and_defaults_to_three_minutes(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    match = {
+        "match_id": "1132977",
+        "start": now - timedelta(minutes=20),
+        "team_a": "Team Yandex",
+        "team_b": "Team Spirit",
+        "wins_a": 1,
+        "wins_b": 0,
+    }
+    selected = {
+        "primary": {
+            "series": "TI",
+            "event_name": "The International 2026",
+            "status": "LIVE",
+            "main": match,
+            "source": "Dota 2 Official",
+        },
+        "rotation_pool": ["TI"],
+    }
+
+    plugin._write_valve_esports_live_state(selected, now, "DOTA2 LIVE")
+
+    state = json.loads((tmp_path / "valve_esports_live_state.json").read_text(encoding="utf-8"))
+    assert state["has_live"] is True
+    assert state["live_until"] == "2026-08-22T12:30:00+00:00"
+    assert plugin.get_live_refresh_state({}, now) == {
+        "active": True,
+        "interval_seconds": 180,
+    }
+    assert plugin.get_live_refresh_state({}, now + timedelta(minutes=31)) is None
 
 
 def test_live_refresh_state_respects_disabled_source():
@@ -3538,7 +3573,114 @@ def test_right_sidebar_prefers_active_valve_over_ewc_schedule_overview():
     assert choice["choice"]["league_key"] == "LPL"
 
 
-def test_right_sidebar_keeps_upcoming_lpl_ahead_of_earlier_ewc():
+def test_right_sidebar_keeps_live_lpl_ahead_of_live_ti():
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    lpl_match = {"start": now, "state": "inProgress", "team_a": "TES", "team_b": "AL"}
+    ti_match = {"start": now - timedelta(minutes=20), "state": "inProgress", "team_a": "Yandex", "team_b": "Spirit"}
+    ti_card = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "LIVE",
+        "window_active": True,
+        "main": ti_match,
+        "live": [ti_match],
+        "upcoming": [],
+        "recent": [],
+        "source_state": "DOTA2 LIVE",
+    }
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [
+            {
+                "league_key": "LPL",
+                "selected": SportsDashboard._select_lpl_events([lpl_match], now),
+                "source_state": "LIVE DATA",
+                "priority": 0,
+            }
+        ],
+        {"primary": ti_card, "cards": [ti_card]},
+        "DOTA2 LIVE",
+        now,
+    )
+
+    assert choice["kind"] == "lol"
+
+
+@pytest.mark.parametrize(
+    ("lpl_offset", "ti_offset", "expected_kind"),
+    [(8, 2, "valve"), (2, 8, "lol")],
+)
+def test_right_sidebar_uses_earliest_trusted_upcoming_between_lpl_and_ti(
+    lpl_offset,
+    ti_offset,
+    expected_kind,
+):
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    lpl_match = {"start": now + timedelta(hours=lpl_offset), "state": "unstarted", "team_a": "TES", "team_b": "AL"}
+    ti_match = {"start": now + timedelta(hours=ti_offset), "state": "unstarted", "team_a": "Yandex", "team_b": "Spirit"}
+    ti_card = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "NEXT",
+        "window_active": True,
+        "main": ti_match,
+        "live": [],
+        "upcoming": [ti_match],
+        "recent": [],
+        "source_state": "DOTA2 CACHE",
+    }
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [
+            {
+                "league_key": "LPL",
+                "selected": SportsDashboard._select_lpl_events([lpl_match], now),
+                "source_state": "LIVE DATA",
+                "priority": 0,
+            }
+        ],
+        {"primary": ti_card, "cards": [ti_card]},
+        "DOTA2 CACHE",
+        now,
+    )
+
+    assert choice["kind"] == expected_kind
+
+
+def test_right_sidebar_does_not_let_stale_ti_preempt_trusted_upcoming_lpl():
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    lpl_match = {"start": now + timedelta(hours=8), "state": "unstarted", "team_a": "TES", "team_b": "AL"}
+    ti_match = {"start": now + timedelta(hours=2), "state": "unstarted", "team_a": "Yandex", "team_b": "Spirit"}
+    ti_card = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "NEXT",
+        "window_active": True,
+        "main": ti_match,
+        "live": [],
+        "upcoming": [ti_match],
+        "recent": [],
+        "source_state": "DOTA2 STALE",
+    }
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [
+            {
+                "league_key": "LPL",
+                "selected": SportsDashboard._select_lpl_events([lpl_match], now),
+                "source_state": "LIVE DATA",
+                "priority": 0,
+            }
+        ],
+        {"primary": ti_card, "cards": [ti_card]},
+        "DOTA2 STALE",
+        now,
+    )
+
+    assert choice["kind"] == "lol"
+
+
+def test_right_sidebar_prefers_earlier_upcoming_ewc_over_waiting_lpl():
     now = datetime(2026, 7, 16, 12, 0, tzinfo=timezone.utc)
     ewc_selected = SportsDashboard._select_ewc_events(
         [
@@ -3591,8 +3733,8 @@ def test_right_sidebar_keeps_upcoming_lpl_ahead_of_earlier_ewc():
         ewc_card={"selected": ewc_selected, "source_state": "EWC LIVE", "priority": 2},
     )
 
-    assert choice["kind"] == "lol"
-    assert choice["choice"]["league_key"] == "LPL"
+    assert choice["kind"] == "ewc"
+    assert choice["selected"]["main_match"]["event_id"] == "ewc-lol"
 
 
 def test_right_sidebar_keeps_upcoming_lpl_ahead_of_earlier_lck():
@@ -3953,6 +4095,252 @@ def test_fresh_live_ewc_match_does_not_depend_on_competition_overview_freshness(
     assert choice["selected"]["main_match"]["event_id"] == ewc_match["event_id"]
 
 
+def test_right_region_renders_earlier_ewc_when_lpl_is_waiting(tmp_path):
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    ewc_match = {
+        "kind": "match",
+        "event_id": "ewc-cs2-next",
+        "match_id": "ewc-cs2-next",
+        "slug": "cs2",
+        "game": "Counter-Strike 2",
+        "start": now + timedelta(hours=1),
+        "end": now + timedelta(hours=4),
+        "status": "UPCOMING",
+        "stage": "Playoffs",
+        "team_a": "Spirit",
+        "team_b": "Vitality",
+        "_ewc_detail_source_state": "EWC DETAIL LIVE",
+    }
+    ewc_selected = {
+        "display_window_active": True,
+        "competition_live": True,
+        "live": [],
+        "upcoming": [ewc_match],
+        "recent": [],
+        "main": ewc_match,
+        "main_match": ewc_match,
+        "all_upcoming_matches": [ewc_match],
+        "selected_match_group": {
+            "key": "cs2",
+            "slug": "cs2",
+            "game": "Counter-Strike 2",
+            "matches": [ewc_match],
+            "live_matches": [],
+            "upcoming_matches": [ewc_match],
+            "recent_matches": [],
+            "rotation_group_count": 1,
+        },
+    }
+    ewc_card = {
+        "selected": ewc_selected,
+        "source_state": "EWC DETAIL LIVE",
+        "competition_source_state": "EWC LIVE",
+        "priority": 2,
+    }
+    waiting_lpl = SportsDashboard._select_lpl_events(
+        [
+            {
+                "start": now + timedelta(hours=8),
+                "state": "unstarted",
+                "team_a": "TES",
+                "team_b": "AL",
+                "team_a_logo": "",
+                "team_b_logo": "",
+                "best_of": 3,
+                "block": "Week 5",
+            }
+        ],
+        now,
+    )
+
+    def render_right_region(lpl_selected, cache_name):
+        plugin = _plugin()
+        cache_root = tmp_path / cache_name
+        plugin._sports_dashboard_cache_dir = lambda: cache_root
+        plugin._load_lol_esports_sidebar_cards = lambda *_args: [
+            {
+                "league_key": "LPL",
+                "selected": lpl_selected,
+                "source_state": "LIVE DATA",
+                "priority": 0,
+            }
+        ]
+        plugin._load_ewc_sidebar_card = lambda *_args: ewc_card
+        plugin._attach_lpl_realtime_info = lambda *_args, **_kwargs: None
+        image, provenance = plugin.render_isolated_region(
+            {
+                "ewcSidebarEnabled": True,
+                "valveEsportsEnabled": False,
+            },
+            FakeDeviceConfig(timezone="UTC"),
+            region="esports",
+            now=now,
+        )
+        assert provenance is SourceProvenance.LIVE
+        return image
+
+    conflicted = render_right_region(waiting_lpl, "conflicted")
+    uncontested = render_right_region(
+        SportsDashboard._select_lpl_events([], now),
+        "uncontested",
+    )
+
+    assert conflicted.size == (800, 480)
+    assert conflicted.tobytes() == uncontested.tobytes()
+
+
+def test_right_region_renders_official_ti_live_over_waiting_lpl(monkeypatch, tmp_path):
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+
+    def lol_payload(start, state):
+        return {
+            "data": {
+                "schedule": {
+                    "events": [
+                        {
+                            "startTime": start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+                            "state": state,
+                            "blockName": "Week 5",
+                            "match": {
+                                "id": f"lpl-{state}",
+                                "strategy": {"type": "bestOf", "count": 3},
+                                "teams": [
+                                    {"code": "TES", "image": "", "result": {"gameWins": 2}},
+                                    {"code": "AL", "image": "", "result": {"gameWins": 1}},
+                                ],
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+
+    ti_payload = {
+        "info": {
+            "league_id": 19719,
+            "name": "The International 2026",
+            "start_timestamp": int((now - timedelta(days=2)).timestamp()),
+            "end_timestamp": int((now + timedelta(days=6)).timestamp()),
+        },
+        "node_groups": [
+            {
+                "name": "Playoffs",
+                "team_standings": [
+                    {
+                        "team_id": 9823272,
+                        "team_name": "Team Yandex",
+                        "team_tag": "Yandex",
+                        "team_abbreviation": "YANDEX",
+                        "team_logo_url": "",
+                    },
+                    {
+                        "team_id": 7119388,
+                        "team_name": "Team Spirit",
+                        "team_tag": "Spirit",
+                        "team_abbreviation": "TS",
+                        "team_logo_url": "",
+                    },
+                ],
+                "nodes": [
+                    {
+                        "name": "Upper Bracket",
+                        "node_id": 27,
+                        "series_id": 1132977,
+                        "scheduled_time": int((now - timedelta(hours=1)).timestamp()),
+                        "actual_time": int((now - timedelta(minutes=50)).timestamp()),
+                        "team_id_1": 9823272,
+                        "team_id_2": 7119388,
+                        "team_1_wins": 1,
+                        "team_2_wins": 0,
+                        "has_started": True,
+                        "is_completed": False,
+                        "matches": [{"match_id": 901}],
+                    },
+                    {
+                        "name": "Upper Bracket",
+                        "node_id": 28,
+                        "series_id": 1132978,
+                        "scheduled_time": int((now + timedelta(hours=3)).timestamp()),
+                        "team_id_1": 9823272,
+                        "team_id_2": 7119388,
+                        "team_1_wins": 0,
+                        "team_2_wins": 0,
+                        "has_started": False,
+                        "is_completed": False,
+                        "matches": [],
+                    },
+                ],
+                "node_groups": [],
+            }
+        ],
+        "series_infos": [],
+    }
+
+    def render_right_region(lpl_payload, cache_name):
+        calls = []
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self._payload = payload
+                self.headers = {}
+
+            def raise_for_status(self):
+                return None
+
+            def iter_content(self, chunk_size):
+                assert chunk_size > 0
+                yield json.dumps(self._payload).encode("utf-8")
+
+            def close(self):
+                return None
+
+        class FakeSession:
+            def get(self, url, headers=None, timeout=None, **_kwargs):
+                calls.append(url)
+                if "getSchedule" in url:
+                    return FakeResponse(lpl_payload)
+                if "IDOTA2League/GetLeagueData" in url:
+                    return FakeResponse(ti_payload)
+                raise AssertionError(f"unexpected request: {url}")
+
+        monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
+        plugin = _plugin()
+        plugin._sports_dashboard_cache_dir = lambda: tmp_path / cache_name
+        image, provenance = plugin.render_isolated_region(
+            {
+                "localTimezone": "UTC",
+                "lplLiveEndpointEnabled": False,
+                "lplOddsEnabled": False,
+                "lckEnabled": False,
+                "msiEnabled": False,
+                "ewcSidebarEnabled": False,
+                "valveEsportsEnabled": True,
+                "valveEsportsHltvEnabled": False,
+                "valveEsportsOpenDotaEnabled": False,
+                "valveEsportsTiOfficialEnabled": True,
+                "valveEsportsTiLeagueId": "19719",
+            },
+            FakeDeviceConfig(timezone="UTC"),
+            region="esports",
+            now=now,
+        )
+        assert provenance is SourceProvenance.LIVE
+        assert any("IDOTA2League/GetLeagueData" in url for url in calls)
+        return image
+
+    conflicted = render_right_region(
+        lol_payload(now + timedelta(hours=8), "unstarted"),
+        "conflicted",
+    )
+    uncontested = render_right_region(
+        lol_payload(now - timedelta(hours=2), "completed"),
+        "uncontested",
+    )
+
+    assert conflicted.size == (800, 480)
+    assert conflicted.tobytes() == uncontested.tobytes()
+
+
 def test_right_esports_skips_valve_fetch_after_timed_ewc_candidate(
     monkeypatch,
 ):
@@ -4020,7 +4408,11 @@ def test_right_esports_skips_valve_fetch_after_timed_ewc_candidate(
 
     provenance = plugin._draw_right_esports_region(
         Image.new("RGB", (800, 480), COLORS["paper"]),
-        {"ewcSidebarEnabled": True, "valveEsportsEnabled": True},
+        {
+            "ewcSidebarEnabled": True,
+            "valveEsportsEnabled": True,
+            "valveEsportsTiOfficialEnabled": False,
+        },
         FakeDeviceConfig(),
         timezone.utc,
         now,
@@ -4150,7 +4542,11 @@ def test_right_esports_loads_valve_when_ewc_cannot_win(
 
     provenance = plugin._draw_right_esports_region(
         Image.new("RGB", (800, 480), COLORS["paper"]),
-        {"ewcSidebarEnabled": True, "valveEsportsEnabled": True},
+        {
+            "ewcSidebarEnabled": True,
+            "valveEsportsEnabled": True,
+            "valveEsportsTiOfficialEnabled": False,
+        },
         FakeDeviceConfig(),
         timezone.utc,
         now,
@@ -4159,6 +4555,190 @@ def test_right_esports_loads_valve_when_ewc_cannot_win(
 
     assert calls == ["load", "state", "valve"]
     assert provenance is SourceProvenance.FRESH_CACHE
+
+
+def test_right_esports_phase_two_ewc_still_loads_valve(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+    recent = {
+        "kind": "match",
+        "event_id": "ewc-recent",
+        "game": "Dota 2",
+        "start": now - timedelta(hours=4),
+        "end": now - timedelta(hours=1),
+        "status": "COMPLETED",
+        "team_a": "A",
+        "team_b": "B",
+    }
+    ewc_selected = {
+        "display_window_active": True,
+        "live": [],
+        "upcoming": [],
+        "recent": [recent],
+        "main": recent,
+        "main_match": recent,
+    }
+    valve_card = {
+        "series": "CS",
+        "event_name": "CS Major",
+        "status": "ACTIVE",
+        "window_active": True,
+        "main": {"match_id": "cs-1", "start": now},
+    }
+    calls = []
+    monkeypatch.setattr(plugin, "_load_lol_esports_sidebar_cards", lambda *_args: [])
+    monkeypatch.setattr(
+        plugin,
+        "_load_ewc_sidebar_card",
+        lambda *_args: {
+            "selected": ewc_selected,
+            "source_state": "EWC DETAIL CACHE",
+            "priority": 2,
+        },
+    )
+    monkeypatch.setattr(plugin, "_write_ewc_live_state", lambda *_args: None)
+    monkeypatch.setattr(
+        plugin,
+        "_select_right_esports_sidebar",
+        lambda _lol, valve_selected, valve_source_state, _now, ewc_card=None: (
+            {
+                "kind": "valve",
+                "selected": valve_selected,
+                "source_state": valve_source_state,
+            }
+            if (valve_selected or {}).get("primary")
+            else {
+                "kind": "ewc",
+                "selected": ewc_card["selected"],
+                "source_state": ewc_card["source_state"],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_valve_esports",
+        lambda *_args, **_kwargs: (
+            calls.append("load")
+            or {
+                "primary": valve_card,
+                "cards": [valve_card],
+                "rotation_pool": ["CS"],
+            },
+            "HLTV CACHE",
+        ),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_write_valve_esports_live_state",
+        lambda *_args: calls.append("state"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_draw_valve_esports_sidebar",
+        lambda *_args: calls.append("valve"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_draw_ewc_sidebar",
+        lambda *_args: calls.append("ewc"),
+    )
+
+    provenance = plugin._draw_right_esports_region(
+        Image.new("RGB", (800, 480), COLORS["paper"]),
+        {
+            "ewcSidebarEnabled": True,
+            "valveEsportsEnabled": True,
+            "valveEsportsTiOfficialEnabled": False,
+        },
+        FakeDeviceConfig(),
+        timezone.utc,
+        now,
+        552,
+    )
+
+    assert calls == ["load", "state", "valve"]
+    assert provenance is SourceProvenance.FRESH_CACHE
+
+
+def test_right_esports_persists_ti_live_state_when_lpl_wins(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    lpl_match = {
+        "start": now - timedelta(minutes=10),
+        "state": "inProgress",
+        "team_a": "TES",
+        "team_b": "AL",
+    }
+    ti_match = {
+        "match_id": "1132977",
+        "start": now - timedelta(minutes=20),
+        "state": "inProgress",
+        "team_a": "Team Yandex",
+        "team_b": "Team Spirit",
+    }
+    ti_card = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "LIVE",
+        "window_active": True,
+        "main": ti_match,
+        "live": [ti_match],
+        "upcoming": [],
+        "recent": [],
+    }
+    valve_states = []
+    monkeypatch.setattr(
+        plugin,
+        "_load_lol_esports_sidebar_cards",
+        lambda *_args: [
+            {
+                "league_key": "LPL",
+                "selected": SportsDashboard._select_lpl_events([lpl_match], now),
+                "source_state": "LIVE DATA",
+                "priority": 0,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_valve_ti_official_card",
+        lambda *_args: (ti_card, "DOTA2 LIVE"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_valve_esports",
+        lambda *_args, **_kwargs: pytest.fail(
+            "heavy Valve providers must not load after a timed LPL choice"
+        ),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_write_valve_esports_live_state",
+        lambda selected, _now, source_state: valve_states.append(
+            (selected, source_state)
+        ),
+    )
+    monkeypatch.setattr(plugin, "_attach_lpl_realtime_info", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_write_lol_live_state", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_lpl_sidebar", lambda *_args, **_kwargs: None)
+
+    provenance = plugin._draw_right_esports_region(
+        Image.new("RGB", (800, 480), COLORS["paper"]),
+        {
+            "ewcSidebarEnabled": False,
+            "valveEsportsEnabled": True,
+            "valveEsportsTiOfficialEnabled": True,
+        },
+        FakeDeviceConfig(),
+        timezone.utc,
+        now,
+        552,
+    )
+
+    assert len(valve_states) == 1
+    assert valve_states[0][0]["primary"] is ti_card
+    assert valve_states[0][1] == "DOTA2 LIVE"
+    assert provenance is SourceProvenance.LIVE
 
 
 def test_stale_live_ewc_does_not_replace_fresh_upcoming_lpl_with_old_region():
@@ -11849,6 +12429,7 @@ def test_sports_dashboard_uses_offseason_hub_during_nba_offseason(monkeypatch):
     image = Image.new("RGB", (800, 480), COLORS["paper"])
     la = ZoneInfo("America/Los_Angeles")
     calls = []
+    network_calls = []
     now = datetime(2026, 6, 14, 9, 0, tzinfo=la)
     hub_selected = SportsDashboard._select_offseason_hub(
         {
@@ -11878,6 +12459,39 @@ def test_sports_dashboard_uses_offseason_hub_during_nba_offseason(monkeypatch):
     monkeypatch.setattr(plugin, "_write_lpl_live_state", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(plugin, "_draw_lpl_sidebar", lambda *_args, **_kwargs: None)
 
+    def render_isolated_football(
+        _settings,
+        _device_config,
+        dimensions,
+        _timezone_info,
+        _visible_matches,
+        _now,
+    ):
+        panel = Image.new("RGB", dimensions, COLORS["panel"])
+        return (
+            panel,
+            SourceProvenance.LOCAL_FALLBACK,
+            "TEST FOOTBALL",
+            (0, 0, dimensions[0], dimensions[1]),
+        )
+
+    class NoNetworkSession:
+        def get(self, url, *args, **kwargs):
+            network_calls.append(url)
+            raise AssertionError(f"offseason hub test attempted network access: {url}")
+
+    monkeypatch.setattr(plugin, "_render_selected_football_panel", render_isolated_football)
+    monkeypatch.setattr(
+        plugin,
+        "_draw_right_esports_region",
+        lambda *_args, **_kwargs: SourceProvenance.LOCAL_FALLBACK,
+    )
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: NoNetworkSession(),
+    )
+
     result = plugin._generate_image_with_active_colors(
         {},
         FakeDeviceConfig(),
@@ -11888,6 +12502,7 @@ def test_sports_dashboard_uses_offseason_hub_during_nba_offseason(monkeypatch):
 
     assert result.size == image.size
     assert calls == ["hub"]
+    assert network_calls == []
 
 
 def test_f1_compact_panel_draws_core_labels():
@@ -17235,6 +17850,55 @@ def test_valve_loader_preserves_selected_hltv_freshness_state(monkeypatch):
     assert source_state == "HLTV CACHE"
 
 
+def test_valve_loader_uses_opendota_results_when_official_ti_is_stale(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    stale_match = {"match_id": "stale-live", "start": now, "state": "inProgress"}
+    stale_card = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "LIVE",
+        "window_active": True,
+        "main": stale_match,
+        "live": [stale_match],
+        "upcoming": [],
+        "recent": [],
+    }
+    fallback_match = {"match_id": "recent", "start": now - timedelta(hours=2), "state": "completed"}
+    fallback_card = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "ACTIVE",
+        "window_active": True,
+        "main": fallback_match,
+        "live": [],
+        "upcoming": [],
+        "recent": [fallback_match],
+    }
+    calls = []
+    monkeypatch.setattr(SportsDashboard, "_valve_dota2_preview_enabled", staticmethod(lambda: False))
+    monkeypatch.setattr(
+        plugin,
+        "_load_valve_opendota_matches",
+        lambda *_args: (calls.append("opendota") or [{}], "OPENDOTA CACHE", now.isoformat()),
+    )
+    monkeypatch.setattr(plugin, "_load_valve_opendota_team_profiles", lambda *_args: {})
+    monkeypatch.setattr(plugin, "_parse_valve_ti_cards", lambda *_args: [dict(fallback_card)])
+
+    selected, _source_state = plugin._load_valve_esports(
+        {
+            "valveEsportsHltvEnabled": False,
+            "valveEsportsOpenDotaEnabled": True,
+        },
+        timezone.utc,
+        now,
+        official_ti_result=(stale_card, "DOTA2 STALE"),
+    )
+
+    assert calls == ["opendota"]
+    assert any(card.get("source_state") == "OPENDOTA CACHE" for card in selected["cards"])
+
+
 def _sample_valve_ti_payload():
     return [
         {
@@ -17264,6 +17928,80 @@ def _sample_valve_ti_payload():
             "duration": 3180,
         },
     ]
+
+
+def _sample_valve_ti_official_payload(now):
+    teams = [
+        {
+            "team_id": 9823272,
+            "team_name": "Team Yandex",
+            "team_tag": "Yandex",
+            "team_abbreviation": "YANDEX",
+            "team_logo_url": "https://example.com/yandex.png",
+        },
+        {
+            "team_id": 7119388,
+            "team_name": "Team Spirit",
+            "team_tag": "Spirit",
+            "team_abbreviation": "TS",
+            "team_logo_url": "https://example.com/spirit.png",
+        },
+    ]
+
+    def node(node_id, offset_hours, *, started=False, completed=False, wins=(0, 0)):
+        scheduled = now + timedelta(hours=offset_hours)
+        actual = scheduled + timedelta(minutes=15) if started else scheduled
+        return {
+            "name": f"Match {node_id}",
+            "node_id": node_id,
+            "node_type": 2,
+            "series_id": 1132900 + node_id,
+            "scheduled_time": int(scheduled.timestamp()),
+            "actual_time": int(actual.timestamp()),
+            "team_id_1": 9823272,
+            "team_id_2": 7119388,
+            "team_1_wins": wins[0],
+            "team_2_wins": wins[1],
+            "has_started": started,
+            "is_completed": completed,
+            "matches": [{"match_id": 9000 + node_id}] if started else [],
+        }
+
+    return {
+        "info": {
+            "league_id": 19719,
+            "name": "The International 2026",
+            "start_timestamp": int((now - timedelta(days=2)).timestamp()),
+            "end_timestamp": int((now + timedelta(days=6)).timestamp()),
+        },
+        "node_groups": [
+            {
+                "name": "",
+                "team_standings": teams,
+                "nodes": [],
+                "node_groups": [
+                    {
+                        "name": "Playoffs",
+                        "team_standings": [],
+                        "nodes": [
+                            node(1, -5, started=True, completed=True, wins=(2, 1)),
+                            node(2, -1, started=True, wins=(1, 0)),
+                            node(3, 3),
+                        ],
+                        "node_groups": [],
+                    }
+                ],
+            }
+        ],
+        "series_infos": [
+            {
+                "series_id": 1132900 + node_id,
+                "series_type": 1,
+                "match_ids": [str(9000 + node_id)],
+            }
+            for node_id in (1, 2, 3)
+        ],
+    }
 
 
 def test_valve_hltv_parser_selects_active_major_and_excludes_qualifiers():
@@ -17334,6 +18072,215 @@ def test_valve_ti_parser_excludes_regional_qualifiers():
     assert SportsDashboard._valve_score_label(card["main"]) == "42:37"
 
 
+def test_valve_ti_official_parser_distributes_live_upcoming_and_recent():
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+
+    card = SportsDashboard._parse_valve_ti_official_card(
+        _sample_valve_ti_official_payload(now),
+        timezone.utc,
+        now,
+        {},
+    )
+
+    assert card["status"] == "LIVE"
+    assert card["main"] is card["live"][0]
+    assert [event["match_id"] for event in card["live"]] == ["1132902"]
+    assert [event["match_id"] for event in card["upcoming"]] == ["1132903"]
+    assert [event["match_id"] for event in card["recent"]] == ["1132901"]
+    assert card["main"]["team_a"] == "Team Yandex"
+    assert card["main"]["team_b_tag"] == "TS"
+    assert card["main"]["team_a_logo"] == "https://example.com/yandex.png"
+    assert card["main"]["stage"] == "Playoffs"
+    assert card["main"]["best_of"] == 3
+    assert card["main"]["start"] == now - timedelta(minutes=45)
+    assert card["main"]["score_kind"] == "MAPS"
+    assert SportsDashboard._valve_score_label(card["main"]) == "1:0"
+    assert SportsDashboard._valve_score_label(card["upcoming"][0]) == "VS"
+
+
+def test_valve_ti_official_loader_uses_fresh_and_stale_last_good_cache(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    payload = _sample_valve_ti_official_payload(now)
+    calls = []
+    should_fail = {"value": False}
+
+    class FakeResponse:
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield json.dumps(payload).encode("utf-8")
+
+        def close(self):
+            return None
+
+    class FakeSession:
+        def get(self, url, headers=None, timeout=None, stream=False):
+            assert stream is True
+            calls.append(url)
+            if should_fail["value"]:
+                raise OSError("offline")
+            return FakeResponse()
+
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", lambda: FakeSession())
+    settings = {
+        "valveEsportsTiLeagueId": "19719",
+        "valveEsportsTiCacheSeconds": "180",
+    }
+
+    live_card, live_state = plugin._load_valve_ti_official_card(
+        settings,
+        timezone.utc,
+        now,
+    )
+    should_fail["value"] = True
+    cached_card, cached_state = plugin._load_valve_ti_official_card(
+        settings,
+        timezone.utc,
+        now + timedelta(seconds=60),
+    )
+    stale_card, stale_state = plugin._load_valve_ti_official_card(
+        settings,
+        timezone.utc,
+        now + timedelta(seconds=240),
+    )
+
+    assert live_state == "DOTA2 LIVE"
+    assert cached_state == "DOTA2 CACHE"
+    assert stale_state == "DOTA2 STALE"
+    assert live_card["main"]["match_id"] == cached_card["main"]["match_id"]
+    assert stale_card["main"]["match_id"] == live_card["main"]["match_id"]
+    assert len(calls) == 2
+
+
+def test_valve_ti_official_loader_uses_long_schedule_cache(monkeypatch, tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    payload = _sample_valve_ti_official_payload(now)
+    playoff_nodes = payload["node_groups"][0]["node_groups"][0]["nodes"]
+    playoff_nodes[1]["is_completed"] = True
+    settings = {
+        "valveEsportsTiLeagueId": "19719",
+        "valveEsportsTiCacheSeconds": "180",
+    }
+    plugin._write_json_file(
+        plugin._valve_ti_official_cache_path(),
+        {
+            "version": sports_dashboard_module.VALVE_TI_OFFICIAL_CACHE_VERSION,
+            "cache_key": plugin._valve_ti_official_cache_key(settings, timezone.utc),
+            "fetched_at": (now - timedelta(minutes=10)).isoformat(),
+            "provider": "dota2-official",
+            "league": payload,
+        },
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_valve_ti_official_payload",
+        lambda *_args: pytest.fail("upcoming schedule cache should remain fresh"),
+    )
+
+    card, source_state = plugin._load_valve_ti_official_card(
+        settings,
+        timezone.utc,
+        now,
+    )
+
+    assert source_state == "DOTA2 CACHE"
+    assert card["status"] == "NEXT"
+
+
+def test_valve_ti_official_loader_respects_shared_daily_budget(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    payload = _sample_valve_ti_official_payload(now)
+    settings = {"valveEsportsTiLeagueId": "19719"}
+    plugin._write_json_file(
+        plugin._valve_ti_official_cache_path(),
+        {
+            "version": sports_dashboard_module.VALVE_TI_OFFICIAL_CACHE_VERSION,
+            "cache_key": plugin._valve_ti_official_cache_key(settings, timezone.utc),
+            "fetched_at": (now - timedelta(hours=1)).isoformat(),
+            "provider": "dota2-official",
+            "league": payload,
+        },
+    )
+    monkeypatch.setattr(plugin, "_valve_esports_calls_left", lambda *_args: 0)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_valve_ti_official_payload",
+        lambda *_args: pytest.fail("daily budget must prevent an official request"),
+    )
+
+    card, source_state = plugin._load_valve_ti_official_card(
+        settings,
+        timezone.utc,
+        now,
+    )
+
+    assert source_state == "DOTA2 STALE"
+    assert card["status"] == "LIVE"
+
+
+def test_valve_ti_official_fetch_streams_with_hard_response_cap(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    closed = []
+    recorded = []
+
+    class FakeResponse:
+        headers = {
+            "Content-Length": str(
+                sports_dashboard_module.VALVE_TI_OFFICIAL_RESPONSE_MAX_BYTES + 1
+            )
+        }
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            raise AssertionError("oversized response must fail before body consumption")
+
+        def close(self):
+            closed.append(True)
+
+    class FakeSession:
+        def get(self, _url, *, headers, timeout, stream):
+            assert headers["Accept"] == "application/json"
+            assert timeout == 20
+            assert stream is True
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FakeSession(),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_record_valve_esports_call",
+        lambda *_args: recorded.append(True),
+    )
+
+    with pytest.raises(Exception, match="exceeds limit"):
+        plugin._fetch_valve_ti_official_payload({}, "cache-key", now)
+
+    assert closed == [True]
+    assert recorded == [True]
+
+
 
 def test_valve_dota2_preview_flag_short_circuits_live_sources(monkeypatch):
     plugin = _plugin()
@@ -17376,6 +18323,65 @@ def test_valve_ti_sidebar_header_uses_dota2_label(monkeypatch):
 
     assert "Dota 2" in seen_texts
     assert "Counter-Strike 2" not in seen_texts
+
+
+def test_valve_ti_live_secondary_section_uses_up_next_matches():
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+    live = {"match_id": "live", "start": now - timedelta(hours=1)}
+    next_match = {"match_id": "next", "start": now + timedelta(hours=2)}
+    recent = {"match_id": "recent", "start": now - timedelta(hours=4)}
+
+    title, rows = SportsDashboard._valve_sidebar_secondary_section(
+        {
+            "status": "LIVE",
+            "main": live,
+            "live": [live],
+            "upcoming": [next_match],
+            "recent": [recent],
+        }
+    )
+
+    assert title == "UP NEXT"
+    assert rows == [next_match]
+
+
+def test_valve_ti_live_focus_date_uses_match_time_not_event_range():
+    match_time = datetime(2026, 8, 22, 12, 30, tzinfo=timezone.utc)
+
+    label = SportsDashboard._valve_event_date_label(
+        {
+            "status": "LIVE",
+            "start": match_time - timedelta(days=3),
+            "latest": match_time + timedelta(days=3),
+        },
+        {"start": match_time},
+    )
+
+    assert label == "08/22 12:30"
+
+
+def test_valve_upcoming_row_includes_local_start_time():
+    start = datetime(2026, 8, 22, 21, 0, tzinfo=timezone.utc)
+
+    assert SportsDashboard._valve_row_time_label(
+        {"state": "unstarted", "start": start}
+    ) == "08/22 21:00"
+    assert SportsDashboard._valve_row_time_label(
+        {"state": "completed", "start": start}
+    ) == "08/22"
+
+
+def test_valve_official_source_labels_are_human_readable():
+    assert SportsDashboard._source_label("DOTA2 LIVE") == "OFFICIAL LIVE"
+    assert SportsDashboard._source_label("DOTA2 CACHE") == "OFFICIAL CACHE"
+    assert SportsDashboard._source_label("DOTA2 STALE") == "STALE CACHE"
+
+
+def test_valve_ti_match_detail_includes_stage_and_series_length():
+    assert SportsDashboard._valve_match_detail_label(
+        {"stage": "Playoffs", "best_of": 3, "source": "Dota 2 Official"}
+    ) == "PLAYOFFS  |  BO3"
+
 
 def test_valve_ti_uses_red_theme_and_split_focus_header():
     primary = {"series": "TI", "status": "ACTIVE"}
@@ -17578,6 +18584,7 @@ def test_generate_image_uses_lpl_before_active_valve_when_lpl_live():
             "worldCupTopHeight": "208",
             "overlayWorldCupLocalTimes": "false",
             "ewcSidebarEnabled": "false",
+            "valveEsportsTiOfficialEnabled": "false",
         },
         FakeDeviceConfig(),
         (800, 480),
@@ -17637,7 +18644,12 @@ def test_generate_image_uses_active_valve_when_lol_has_no_active_or_upcoming():
     plugin._draw_lpl_sidebar = lambda *args, **kwargs: calls.append("lpl")
 
     image = plugin._generate_image_with_active_colors(
-        {"worldCupTopHeight": "208", "overlayWorldCupLocalTimes": "false", "ewcSidebarEnabled": "false"},
+        {
+            "worldCupTopHeight": "208",
+            "overlayWorldCupLocalTimes": "false",
+            "ewcSidebarEnabled": "false",
+            "valveEsportsTiOfficialEnabled": "false",
+        },
         FakeDeviceConfig(),
         (800, 480),
         la,
@@ -17738,8 +18750,13 @@ def test_settings_exposes_valve_esports_controls():
     html = settings_path.read_text(encoding="utf-8")
     fields = [
         "valveEsportsEnabled",
+        "valveEsportsTiOfficialEnabled",
+        "valveEsportsTiLeagueId",
+        "valveEsportsTiCacheSeconds",
         "valveEsportsHltvEnabled",
         "valveEsportsOpenDotaEnabled",
+        "valveEsportsLiveRefreshEnabled",
+        "valveEsportsLiveRefreshIntervalSeconds",
         "valveEsportsCacheHours",
         "valveEsportsDailyLimit",
         "valveEsportsWindowAfterDays",

@@ -822,7 +822,6 @@ class EsportsRenderMixin:
         right_w = width - right_x
         primary = (selected or {}).get("primary") or {}
         main_event = primary.get("main") or {}
-        recent = primary.get("recent") or []
         status = str(primary.get("status") or "ACTIVE").upper()
         accent = self._valve_series_accent(primary, status)
 
@@ -898,8 +897,31 @@ class EsportsRenderMixin:
         draw.line((panel_left + 2, 66, panel_right - 2, 66), fill=COLORS["border"], width=1)
 
         self._draw_valve_esports_focus_card(image, draw, right_x, right_w, 78, primary, main_event, now, accent)
-        rows = [event for event in recent if event is not main_event][:3]
-        self._draw_valve_esports_recent_rows(image, draw, right_x, right_w, 282, rows, primary, accent)
+        section_title, rows = self._valve_sidebar_secondary_section(primary)
+        self._draw_valve_esports_recent_rows(
+            image,
+            draw,
+            right_x,
+            right_w,
+            282,
+            rows,
+            primary,
+            accent,
+            title=section_title,
+        )
+
+    @staticmethod
+    def _valve_sidebar_secondary_section(primary):
+        primary = primary or {}
+        main = primary.get("main")
+        upcoming = [event for event in primary.get("upcoming") or [] if event is not main]
+        recent = [event for event in primary.get("recent") or [] if event is not main]
+        status = str(primary.get("status") or "").strip().upper()
+        if status == "LIVE" and upcoming:
+            return "UP NEXT", upcoming[:3]
+        if status == "NEXT" and upcoming:
+            return "UPCOMING", upcoming[:3]
+        return "RECENT", recent[:3]
 
     @staticmethod
     def _valve_series_key(primary):
@@ -1119,10 +1141,11 @@ class EsportsRenderMixin:
         seed = sum((index + 1) * ord(ch) for index, ch in enumerate(seed_text))
         return palette[seed % len(palette)]
 
-    def _draw_valve_esports_recent_rows(self, image, draw, right_x, right_w, y, events, primary, accent):
-        self._draw_section_header(draw, right_x, right_w, y, "RECENT", accent)
+    def _draw_valve_esports_recent_rows(self, image, draw, right_x, right_w, y, events, primary, accent, title="RECENT"):
+        self._draw_section_header(draw, right_x, right_w, y, title, accent)
         if not events:
-            draw.text((right_x + 18, y + 36), "No more Valve results", font=self._font(14, True), fill=COLORS["muted"])
+            empty_text = "No more scheduled matches" if title != "RECENT" else "No more Valve results"
+            draw.text((right_x + 18, y + 36), empty_text, font=self._font(14, True), fill=COLORS["muted"])
             return
         row_y = y + 29
         for index, event in enumerate(events[:3]):
@@ -1135,8 +1158,9 @@ class EsportsRenderMixin:
         row_h = 50
         draw.rounded_rectangle((row_x1, y, row_x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
         draw.rectangle((row_x1 + 1, y + 1, row_x1 + 5, y + row_h - 1), fill=accent)
-        date_label = event["start"].strftime("%m/%d") if isinstance(event.get("start"), datetime) else "--/--"
-        date_label, date_font = self._fit_text_ellipsis(draw, date_label, 40, 8, bold=True, min_size=6)
+        date_label = self._valve_row_time_label(event)
+        date_width = 68 if str(event.get("state") or "").strip().lower() in {"unstarted", "inprogress", "live"} else 40
+        date_label, date_font = self._fit_text_ellipsis(draw, date_label, date_width, 8, bold=True, min_size=6)
         draw.text((row_x1 + 10, y + 4), date_label, font=date_font, fill=COLORS["muted"])
         score = self._valve_score_label(event)
         score, score_font = self._fit_text_ellipsis(draw, score, 40, 13, bold=True, min_size=9)
@@ -1158,7 +1182,22 @@ class EsportsRenderMixin:
         self._draw_centered_in_box(draw, (row_x1 + 10, y + 38, row_x2 - 10, y + row_h - 1), detail, detail_font, COLORS["muted"])
 
     @staticmethod
+    def _valve_row_time_label(event):
+        event = event or {}
+        start = event.get("start")
+        if not isinstance(start, datetime):
+            return "--/--"
+        state = str(event.get("state") or "").strip().lower()
+        if state in {"unstarted", "inprogress", "live"}:
+            return start.strftime("%m/%d %H:%M")
+        return start.strftime("%m/%d")
+
+    @staticmethod
     def _valve_event_date_label(primary, event):
+        status = str((primary or {}).get("status") or "").strip().upper()
+        match_start = (event or {}).get("start")
+        if status in {"LIVE", "NEXT"} and isinstance(match_start, datetime):
+            return match_start.strftime("%m/%d %H:%M")
         start = (primary or {}).get("start") or (event or {}).get("start")
         end = (primary or {}).get("latest")
         if isinstance(start, datetime) and isinstance(end, datetime) and start.date() != end.date():
@@ -1182,6 +1221,9 @@ class EsportsRenderMixin:
         duration = SportsDashboard._lpl_int_value(event.get("duration"))
         best_of = SportsDashboard._lpl_int_value(event.get("best_of"))
         bits = []
+        stage = str(event.get("stage") or "").strip().upper()
+        if stage:
+            bits.append(stage)
         if best_of:
             bits.append(f"BO{best_of}")
         if duration:
