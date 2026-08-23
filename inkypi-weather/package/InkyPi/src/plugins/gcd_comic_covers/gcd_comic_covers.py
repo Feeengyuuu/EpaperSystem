@@ -69,6 +69,8 @@ DEFAULT_FIT_MODE = "triptych"
 DEFAULT_SOURCE_MODE = "mixed"
 TRIPTYCH_COVER_COUNT = 3
 TRIPTYCH_FIT_MODES = {"triptych", "three_vertical", "three_covers", "three_posters", "gallery"}
+TRIPTYCH_BACKGROUND_PATH = Path(__file__).with_name("assets") / "triptych_background_800x480.png"
+TRIPTYCH_TITLE = "COMIC COVERS"
 GCD_API_CONNECT_TIMEOUT_SECONDS = 5
 GCD_API_READ_TIMEOUT_SECONDS = 10
 GCD_COVER_CONNECT_TIMEOUT_SECONDS = 5
@@ -521,6 +523,8 @@ class GcdComicCovers(BasePlugin):
             cover = covers[0]
             if cover.get("render_kind") == "metadata":
                 return cover["image"]
+            if self._fit_mode(settings) in TRIPTYCH_FIT_MODES:
+                return self._compose_triptych_display_image(covers, dimensions, settings)
             return self._fit_cover(cover["image"], dimensions, settings, cover)
         finally:
             for staged_image in staged or ():
@@ -1765,9 +1769,16 @@ class GcdComicCovers(BasePlugin):
         return canvas
 
     def _triptych_backdrop(self, images, dimensions, settings):
+        try:
+            background = safe_open_image(TRIPTYCH_BACKGROUND_PATH).convert("RGB")
+            background = ImageOps.fit(background, dimensions, method=Image.LANCZOS)
+            return self._with_triptych_title(background)
+        except Exception as exc:
+            logger.warning("Could not render GCD comic triptych background asset: %s", exc)
+
         background = self._plain_background(dimensions, settings)
         if not images:
-            return background
+            return self._with_triptych_title(background)
 
         try:
             backdrop = ImageOps.fit(images[0], dimensions, method=Image.LANCZOS)
@@ -1775,10 +1786,52 @@ class GcdComicCovers(BasePlugin):
             backdrop = backdrop.filter(ImageFilter.GaussianBlur(radius=blur_radius))
             backdrop = ImageEnhance.Color(backdrop).enhance(0.35)
             backdrop = ImageEnhance.Contrast(backdrop).enhance(0.75)
-            return Image.blend(backdrop, background, 0.72)
+            return self._with_triptych_title(Image.blend(backdrop, background, 0.72))
         except Exception as exc:
             logger.warning("Could not render GCD cover triptych backdrop: %s", exc)
-            return background
+            return self._with_triptych_title(background)
+
+    def _with_triptych_title(self, image):
+        image = image.copy()
+        draw = ImageDraw.Draw(image)
+        width, height = image.size
+        scale = min(width / 800.0, height / 480.0)
+
+        x = max(12, round(16 * scale))
+        y = max(9, round(11 * scale))
+        badge_h = max(20, round(27 * scale))
+        badge_pad = max(5, round(7 * scale))
+        gap = max(4, round(6 * scale))
+        gcd_font = self._fallback_font(max(11, round(13 * scale)), bold=True)
+        title_font = self._fallback_font(max(13, round(17 * scale)), bold=True)
+
+        gcd_bbox = draw.textbbox((0, 0), "GCD", font=gcd_font)
+        gcd_w = gcd_bbox[2] - gcd_bbox[0]
+        title_bbox = draw.textbbox((0, 0), TRIPTYCH_TITLE, font=title_font)
+        title_w = title_bbox[2] - title_bbox[0]
+        badge_w = gcd_w + badge_pad * 2
+        title_x = x + badge_w + gap
+        plate_pad = max(4, round(5 * scale))
+        plate = (
+            x - 2,
+            y - 2,
+            min(width - 10, title_x + title_w + plate_pad),
+            y + badge_h + 2,
+        )
+        draw.rectangle(plate, fill=(255, 255, 255), outline=(0, 0, 0), width=max(1, round(2 * scale)))
+        draw.rectangle((x, y, x + badge_w, y + badge_h), fill=(0, 0, 0))
+
+        gcd_y = y + (badge_h - (gcd_bbox[3] - gcd_bbox[1])) // 2 - gcd_bbox[1]
+        draw.text((x + badge_pad, gcd_y), "GCD", font=gcd_font, fill=(255, 255, 255))
+        title_y = y + (badge_h - (title_bbox[3] - title_bbox[1])) // 2 - title_bbox[1]
+        draw.text((title_x, title_y), TRIPTYCH_TITLE, font=title_font, fill=(0, 0, 0))
+        accent_y = y + badge_h + max(1, round(1 * scale))
+        draw.line(
+            (title_x, accent_y, min(width - 10, title_x + max(28, round(42 * scale))), accent_y),
+            fill=(220, 28, 28),
+            width=max(2, round(3 * scale)),
+        )
+        return image
 
     def _plain_background(self, dimensions, settings):
         color = (settings.get("backgroundColor") or "white").lower()

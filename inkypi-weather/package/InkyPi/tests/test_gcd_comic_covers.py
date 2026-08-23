@@ -2101,6 +2101,71 @@ def test_generate_image_defaults_to_plain_triptych_without_mutating_seen_state(t
     assert state.get("date_buckets", {}).get("05-30", {}).get("seen_issue_ids", []) == []
 
 
+def test_triptych_background_asset_is_project_ready():
+    with Image.open(gcd_module.TRIPTYCH_BACKGROUND_PATH) as background:
+        background.load()
+
+        assert background.size == (800, 480)
+        assert background.mode == "RGB"
+        assert background.format == "PNG"
+        color_counts = {
+            color: count
+            for count, color in background.getcolors(maxcolors=800 * 480)
+        }
+        assert set(color_counts) <= {
+            (0, 0, 0),
+            (255, 255, 255),
+            (255, 255, 0),
+            (255, 0, 0),
+            (0, 0, 255),
+            (0, 255, 0),
+        }
+        assert color_counts[(255, 255, 255)] >= 800 * 480 * 0.95
+
+
+def test_triptych_background_uses_asset_and_draws_minimal_title(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    asset_path = tmp_path / "triptych-background.png"
+    base_color = (17, 131, 197)
+    Image.new("RGB", (80, 48), base_color).save(asset_path)
+    monkeypatch.setattr(gcd_module, "TRIPTYCH_BACKGROUND_PATH", asset_path)
+
+    image = plugin._triptych_backdrop([], (800, 480), {})
+
+    assert image.size == (800, 480)
+    assert image.getpixel((400, 240)) == base_color
+    assert image.getpixel((700, 20)) == base_color
+    title_colors = {
+        color
+        for _count, color in image.crop((10, 7, 260, 45)).getcolors(maxcolors=250 * 38)
+    }
+    assert (0, 0, 0) in title_colors
+    assert (220, 28, 28) in title_colors
+    assert (255, 255, 255) in title_colors
+
+
+@pytest.mark.parametrize("asset_state", ["missing", "corrupt"])
+def test_triptych_background_asset_failure_falls_back_to_cover_blur(
+    tmp_path,
+    monkeypatch,
+    asset_state,
+):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    asset_path = tmp_path / "triptych-background.png"
+    if asset_state == "corrupt":
+        asset_path.write_bytes(b"not an image")
+    monkeypatch.setattr(gcd_module, "TRIPTYCH_BACKGROUND_PATH", asset_path)
+
+    image = plugin._triptych_backdrop(
+        [Image.new("RGB", (200, 400), (220, 0, 0))],
+        (800, 480),
+        {"backgroundColor": "white"},
+    )
+
+    assert image.size == (800, 480)
+    assert image.getpixel((400, 240)) != (255, 255, 255)
+
+
 def test_triptych_generation_prefers_portrait_covers_over_wide_strips(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path, monkeypatch)
     today = date(2026, 5, 30)
@@ -2150,11 +2215,15 @@ def test_triptych_mode_renders_available_cover_without_info_label(tmp_path, monk
         "image": Image.new("RGB", (200, 400), (220, 0, 0)),
     }
 
-    image = plugin._compose_triptych_display_image([cover], (800, 480), {"backgroundColor": "white"})
+    settings = {"backgroundColor": "white"}
+    image = plugin._compose_triptych_display_image([cover], (800, 480), settings)
+    expected_background = plugin._triptych_backdrop([cover["image"]], (800, 480), settings)
 
     assert image.size == (800, 480)
     assert image.getpixel((399, 240)) == (220, 0, 0)
-    assert image.getpixel((20, 460)) != (255, 255, 255)
+    assert image.crop((0, 400, 250, 480)).tobytes() == expected_background.crop(
+        (0, 400, 250, 480)
+    ).tobytes()
 
 
 def test_triptych_mode_expands_two_covers_to_fill_screen_width(tmp_path, monkeypatch):
