@@ -477,6 +477,222 @@ def test_generate_image_auto_gallery_collects_portrait_artworks(tmp_path, monkey
     assert image.getpixel((666, 240)) == (20, 70, 220)
 
 
+def test_daily_art_decor_asset_is_project_ready():
+    with Image.open(daily_art_module.DAILY_ART_DECOR_PATH) as decor:
+        decor.load()
+
+        assert decor.size == (800, 480)
+        assert decor.mode == "RGBA"
+        assert decor.format == "PNG"
+        colors = decor.getcolors(maxcolors=800 * 480)
+        assert colors is not None
+        alpha_counts = {
+            alpha: count
+            for count, alpha in decor.getchannel("A").getcolors(maxcolors=256)
+        }
+        assert set(alpha_counts) == {0, 255}
+        assert 0 < alpha_counts[255] <= 800 * 480 * 0.02
+        assert {
+            rgba[:3]
+            for _count, rgba in colors
+            if rgba[3] == 255
+        } <= {
+            (0, 0, 0),
+            (255, 255, 255),
+            (255, 255, 0),
+            (255, 0, 0),
+            (0, 0, 255),
+            (0, 255, 0),
+        }
+        assert decor.getchannel("A").crop((0, 66, 800, 404)).getbbox() is None
+
+
+def test_gallery_default_uses_clean_wall_decor_and_minimal_title(tmp_path):
+    plugin = make_plugin(tmp_path)
+    colors = [(190, 30, 30), (30, 150, 60), (30, 70, 190)]
+    images = [Image.new("RGB", (266, 356), color) for color in colors]
+    artworks = [art_candidate(index) for index in range(3)]
+
+    rendered = plugin._render_artwork_gallery(images, artworks, (800, 480), {})
+
+    assert rendered.size == (800, 480)
+    assert rendered.getpixel((210, 20)) == (255, 255, 255)
+    assert rendered.getpixel((400, 16)) == (0, 0, 0)
+    assert rendered.getpixel((25, 28)) == (0, 0, 255)
+    assert rendered.getpixel((133, 240)) == colors[0]
+    assert rendered.getpixel((399, 240)) == colors[1]
+    assert rendered.getpixel((666, 240)) == colors[2]
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 4])
+def test_gallery_decor_preserves_each_artwork_center(tmp_path, count):
+    plugin = make_plugin(tmp_path)
+    colors = [(170, 20 + index * 30, 40 + index * 40) for index in range(count)]
+    column_width = 800 // count
+    widths = [
+        column_width if index < count - 1 else 800 - index * column_width
+        for index in range(count)
+    ]
+    images = [
+        Image.new("RGB", (target_width, 356), color)
+        for target_width, color in zip(widths, colors)
+    ]
+
+    rendered = plugin._render_artwork_gallery(
+        images,
+        [art_candidate(index) for index in range(count)],
+        (800, 480),
+        {"galleryCount": count},
+    )
+
+    for index, (target_width, color) in enumerate(zip(widths, colors)):
+        x0 = index * column_width
+        assert rendered.getpixel((x0 + target_width // 2, 240)) == color
+
+
+@pytest.mark.parametrize("asset_state", ["missing", "corrupt"])
+def test_gallery_decor_failure_keeps_clean_fallback_and_title(
+    tmp_path,
+    monkeypatch,
+    asset_state,
+):
+    plugin = make_plugin(tmp_path)
+    asset_path = tmp_path / "daily-art-decor.png"
+    if asset_state == "corrupt":
+        asset_path.write_bytes(b"not an image")
+    monkeypatch.setattr(daily_art_module, "DAILY_ART_DECOR_PATH", asset_path)
+    images = [Image.new("RGB", (266, 356), (80, 100, 120)) for _index in range(3)]
+
+    rendered = plugin._render_artwork_gallery(
+        images,
+        [art_candidate(index) for index in range(3)],
+        (800, 480),
+        {},
+    )
+
+    assert rendered.getpixel((400, 16)) == (255, 255, 255)
+    assert rendered.getpixel((25, 28)) == (0, 0, 255)
+    assert rendered.getpixel((399, 240)) == (80, 100, 120)
+
+
+def test_daily_art_backdrop_preserves_explicit_background_styles(tmp_path):
+    plugin = make_plugin(tmp_path)
+    source = Image.new("RGB", (240, 420), (220, 20, 20))
+
+    background = plugin._daily_art_backdrop(
+        source,
+        (800, 480),
+        {"backgroundStyle": "plain", "backgroundColor": "black"},
+    )
+
+    assert background.getpixel((400, 240)) == (15, 14, 13)
+    assert background.getpixel((720, 10)) == (0, 0, 255)
+
+    blurred = plugin._daily_art_backdrop(
+        source,
+        (800, 480),
+        {"backgroundStyle": "blur", "backgroundColor": "warm"},
+    )
+    assert blurred.getpixel((400, 240)) != (255, 255, 255)
+
+
+def test_single_contain_uses_daily_art_decor_and_title(tmp_path):
+    plugin = make_plugin(tmp_path)
+    artwork = Image.new("RGB", (640, 300), (80, 120, 160))
+
+    rendered = plugin._render_artwork(artwork, art_candidate(0), (800, 480), {})
+
+    assert rendered.getpixel((400, 16)) == (0, 0, 0)
+    assert rendered.getpixel((25, 28)) == (0, 0, 255)
+    assert rendered.getpixel((400, 240)) == (80, 120, 160)
+
+
+def test_single_cover_keeps_artwork_unobscured(tmp_path):
+    plugin = make_plugin(tmp_path)
+    color = (80, 120, 160)
+
+    rendered = plugin._render_artwork(
+        Image.new("RGB", (640, 300), color),
+        art_candidate(0),
+        (800, 480),
+        {"fitMode": "cover"},
+    )
+
+    assert rendered.getcolors(maxcolors=2) == [(800 * 480, color)]
+
+
+def test_gallery_omits_title_when_tall_artwork_would_split_it(tmp_path):
+    plugin = make_plugin(tmp_path)
+    images = [
+        Image.new("RGB", (120, 480), (120, 80, 40)),
+        Image.new("RGB", (266, 356), (40, 120, 80)),
+        Image.new("RGB", (268, 356), (40, 80, 120)),
+    ]
+
+    rendered = plugin._render_artwork_gallery(
+        images,
+        [art_candidate(index) for index in range(3)],
+        (800, 480),
+        {},
+    )
+
+    assert rendered.getpixel((25, 28)) == (255, 255, 255)
+    assert rendered.getpixel((133, 240)) == (120, 80, 40)
+
+
+@pytest.mark.parametrize("font_family", [daily_art_module.DEFAULT_FONT, "Dogica", "Jost"])
+def test_daily_art_title_layout_contains_selected_font_and_uses_half_open_box(
+    tmp_path,
+    font_family,
+):
+    plugin = make_plugin(tmp_path)
+    layout = plugin._daily_art_title_layout(
+        (800, 480),
+        {"fontFamily": font_family},
+    )
+
+    assert layout is not None
+    x0, y0, x1, y1 = layout["plate"]
+    text_x, text_y = layout["text_position"]
+    text_bbox = layout["text_bbox"]
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    assert x0 <= text_x < text_x + text_width <= x1
+    assert y0 <= text_y < text_y + text_height <= y1
+    assert not daily_art_module._rectangles_overlap(
+        layout["plate"],
+        (x1, y0, x1 + 10, y1),
+    )
+    assert daily_art_module._rectangles_overlap(
+        layout["plate"],
+        (x1 - 1, y0, x1 + 10, y1),
+    )
+
+
+def test_daily_art_title_is_disabled_when_canvas_is_too_short(tmp_path):
+    plugin = make_plugin(tmp_path)
+
+    assert plugin._daily_art_title_layout((300, 23), {}) is None
+
+
+def test_bucket_cache_key_tracks_background_style_and_render_revision(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    default_key = plugin._cache_key({}, (800, 480), "2026-08-20")
+
+    assert default_key != plugin._cache_key(
+        {"backgroundStyle": "plain"},
+        (800, 480),
+        "2026-08-20",
+    )
+    assert default_key != plugin._cache_key(
+        {"fontFamily": "Dogica"},
+        (800, 480),
+        "2026-08-20",
+    )
+    monkeypatch.setattr(daily_art_module, "DAILY_ART_RENDER_STYLE_VERSION", "daily-art-decor-v2")
+    assert default_key != plugin._cache_key({}, (800, 480), "2026-08-20")
+
+
 def test_generate_image_auto_gallery_falls_back_to_landscape_single(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
     device = FakeDeviceConfig()
@@ -679,7 +895,7 @@ def test_every_refresh_source_fingerprint_is_stable_and_excludes_runtime_noise()
         ("layoutMode", "auto_gallery"),
         ("galleryCount", 3),
         ("fitMode", "contain"),
-        ("backgroundStyle", "blur"),
+        ("backgroundStyle", "gallery_decor"),
         ("backgroundColor", "warm"),
         ("showCaption", "false"),
         ("fontFamily", "Microsoft YaHei"),
@@ -745,7 +961,7 @@ def test_equal_default_fingerprints_have_equal_selection_and_render_pixels(tmp_p
         "layoutMode": "auto_gallery",
         "galleryCount": 3,
         "fitMode": "contain",
-        "backgroundStyle": "blur",
+        "backgroundStyle": "gallery_decor",
         "backgroundColor": "warm",
         "fontFamily": "Microsoft YaHei",
         "iiifWidth": 1200,

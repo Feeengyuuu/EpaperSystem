@@ -119,7 +119,7 @@ def settings_key(settings, enabled_sources):
         "layout_mode": _layout_mode(settings),
         "gallery_count": _bounded_int(settings.get("galleryCount"), 3, 1, 4),
         "fit_mode": str(settings.get("fitMode") or "contain").strip().lower(),
-        "background_style": str(settings.get("backgroundStyle") or "blur").strip().lower(),
+        "background_style": str(settings.get("backgroundStyle") or "gallery_decor").strip().lower(),
         "background_color": str(settings.get("backgroundColor") or "warm").strip().lower(),
         "show_caption": _enabled(settings.get("showCaption"), default=False),
         "font_family": str(settings.get("fontFamily") or DEFAULT_FONT_FAMILY).strip(),

@@ -45,13 +45,17 @@ from utils.safe_image import ImageLimits, safe_open_image
 logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "daily_art"
-CACHE_SCHEMA_VERSION = "daily-art-cache-v1"
+CACHE_SCHEMA_VERSION = "daily-art-cache-v2"
 STATE_SCHEMA_VERSION = "daily-art-state-v1"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 DEFAULT_FONT = DEFAULT_FONT_FAMILY
 DEFAULT_LAYOUT_MODE = "auto_gallery"
 DEFAULT_GALLERY_COUNT = 3
+DEFAULT_BACKGROUND_STYLE = "gallery_decor"
 GALLERY_LAYOUT_MODES = {"auto_gallery", "gallery"}
+DAILY_ART_DECOR_PATH = Path(__file__).with_name("assets") / "daily_art_decor_800x480.png"
+DAILY_ART_RENDER_STYLE_VERSION = "daily-art-decor-v1"
+DAILY_ART_TITLE = "DAILY ART"
 DEFAULT_SOURCES = ("met", "artic", "europeana", "harvard")
 DEFAULT_QUERY_TERMS = (
     "painting",
@@ -125,6 +129,7 @@ HARVARD_ENV_KEYS = (
 )
 
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
+NEAREST = getattr(Image, "Resampling", Image).NEAREST
 
 
 @dataclass
@@ -733,6 +738,7 @@ class DailyArt(BasePlugin):
     def _cache_key(self, settings, dimensions, rotation_key):
         parts = [
             CACHE_SCHEMA_VERSION,
+            DAILY_ART_RENDER_STYLE_VERSION,
             rotation_key,
             str(dimensions),
             self._source_mode(settings),
@@ -741,7 +747,9 @@ class DailyArt(BasePlugin):
             self._layout_mode(settings),
             str(self._gallery_count(settings)),
             str(settings.get("showCaption") or "true"),
+            str(settings.get("backgroundStyle") or DEFAULT_BACKGROUND_STYLE),
             str(settings.get("backgroundColor") or "warm"),
+            str(settings.get("fontFamily") or DEFAULT_FONT),
         ]
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
@@ -1155,17 +1163,23 @@ class DailyArt(BasePlugin):
     def _render_artwork(self, image, artwork, dimensions, settings):
         width, height = dimensions
         image = ImageOps.exif_transpose(image).convert("RGB")
-        canvas = self._art_backdrop(image, dimensions, settings)
         fit_mode = str(settings.get("fitMode") or "contain").strip().lower()
 
         if fit_mode == "cover":
             fitted = ImageOps.fit(image, dimensions, method=RESAMPLE)
-            canvas.paste(fitted, (0, 0))
+            x = 0
+            y = 0
         else:
             fitted = ImageOps.contain(image, dimensions, method=RESAMPLE)
             x = (width - fitted.width) // 2
             y = (height - fitted.height) // 2
-            canvas.paste(fitted, (x, y))
+
+        canvas = self._daily_art_backdrop(image, dimensions, settings)
+        title_layout = self._daily_art_title_layout(dimensions, settings)
+        artwork_box = (x, y, x + fitted.width, y + fitted.height)
+        if title_layout and not _rectangles_overlap(title_layout["plate"], artwork_box):
+            canvas = self._with_daily_art_title(canvas, settings, title_layout)
+        canvas.paste(fitted, (x, y))
 
         if _enabled(settings.get("showCaption"), default=False):
             canvas = self._with_caption(canvas, artwork, settings)
@@ -1177,10 +1191,10 @@ class DailyArt(BasePlugin):
         if not images:
             return self._fallback_image(dimensions, "Daily Art", "No usable artwork image")
 
-        canvas = self._art_backdrop(images[0], dimensions, settings)
         visible_count = min(len(images), self._gallery_count(settings))
         column_width = width // visible_count
         fit_mode = str(settings.get("fitMode") or "contain").strip().lower()
+        placements = []
 
         for index, image in enumerate(images[:visible_count]):
             x0 = index * column_width
@@ -1191,11 +1205,159 @@ class DailyArt(BasePlugin):
                 fitted = ImageOps.contain(image, (target_width, height), method=RESAMPLE)
             x = x0 + (target_width - fitted.width) // 2
             y = (height - fitted.height) // 2
+            placements.append((fitted, x, y))
+
+        canvas = self._daily_art_backdrop(images[0], dimensions, settings)
+        title_layout = self._daily_art_title_layout(dimensions, settings)
+        occupied_boxes = [
+            (x, y, x + fitted.width, y + fitted.height)
+            for fitted, x, y in placements
+        ]
+        if title_layout and not any(
+            _rectangles_overlap(title_layout["plate"], box)
+            for box in occupied_boxes
+        ):
+            canvas = self._with_daily_art_title(canvas, settings, title_layout)
+
+        for fitted, x, y in placements:
             canvas.paste(fitted, (x, y))
 
         if _enabled(settings.get("showCaption"), default=False) and artworks:
             canvas = self._with_caption(canvas, artworks[0], settings)
         return canvas
+
+    def _daily_art_backdrop(self, image, dimensions, settings):
+        background_style = str(
+            settings.get("backgroundStyle") or DEFAULT_BACKGROUND_STYLE
+        ).strip().lower()
+        background_color = str(settings.get("backgroundColor") or "warm").strip().lower()
+        if background_style == DEFAULT_BACKGROUND_STYLE:
+            base = {
+                "black": (0, 0, 0),
+                "white": (255, 255, 255),
+                "gray": (226, 224, 218),
+            }.get(background_color, (255, 255, 255))
+            background = Image.new("RGB", dimensions, base)
+        else:
+            background = self._art_backdrop(image, dimensions, settings)
+        try:
+            decor_source = safe_open_image(DAILY_ART_DECOR_PATH)
+            try:
+                decor = decor_source.convert("RGBA")
+            finally:
+                decor_source.close()
+            if decor.size != dimensions:
+                decor = decor.resize(dimensions, resample=NEAREST)
+            composed = background.convert("RGBA")
+            composed.alpha_composite(decor)
+            return composed.convert("RGB")
+        except Exception as exc:
+            logger.warning("DailyArt decor failed: %s", exc)
+            return background
+
+    def _daily_art_title_layout(self, dimensions, settings):
+        width, height = dimensions
+        scale = min(width / 800.0, height / 480.0)
+        x0 = max(12, round(14 * scale))
+        y0 = max(10, round(10 * scale))
+        edge_margin = max(12, round(12 * scale))
+        right_limit = width - edge_margin
+        bottom_limit = height - edge_margin
+        if right_limit <= x0 or bottom_limit <= y0:
+            return None
+
+        horizontal_pad = max(7, round(9 * scale))
+        text_gap = max(8, round(10 * scale))
+        marker_size = max(5, round(7 * scale))
+        minimum_width = max(132, round(178 * scale))
+        minimum_height = max(30, round(36 * scale))
+        font_family = str(settings.get("fontFamily") or DEFAULT_FONT)
+        font_size = max(16, round(20 * scale))
+        minimum_font_size = max(11, round(13 * scale))
+
+        while True:
+            title_font = _font(font_family, font_size, "bold")
+            probe = ImageDraw.Draw(Image.new("L", (1, 1), 0))
+            text_bbox = probe.textbbox((0, 0), DAILY_ART_TITLE, font=title_font)
+            text_width_px = text_bbox[2] - text_bbox[0]
+            text_height_px = text_bbox[3] - text_bbox[1]
+            content_width = (
+                horizontal_pad
+                + marker_size
+                + text_gap
+                + text_width_px
+                + horizontal_pad
+            )
+            plate_width = max(minimum_width, content_width)
+            if x0 + plate_width <= right_limit or font_size <= minimum_font_size:
+                break
+            font_size -= 1
+
+        plate_height = max(
+            minimum_height,
+            text_height_px + max(10, round(12 * scale)),
+        )
+        x1 = min(right_limit, x0 + plate_width)
+        y1 = min(bottom_limit, y0 + plate_height)
+        marker_x = x0 + horizontal_pad
+        marker_y = y0 + ((y1 - y0) - marker_size) // 2
+        text_x = marker_x + marker_size + text_gap
+        text_y = y0 + ((y1 - y0) - text_height_px) // 2
+        if (
+            text_x + text_width_px + horizontal_pad > x1
+            or text_y < y0
+            or text_y + text_height_px > y1
+            or marker_y < y0
+            or marker_y + marker_size > y1
+        ):
+            return None
+        return {
+            "plate": (x0, y0, x1, y1),
+            "marker": (marker_x, marker_y, marker_x + marker_size, marker_y + marker_size),
+            "font": title_font,
+            "text_bbox": text_bbox,
+            "text_position": (text_x, text_y),
+        }
+
+    def _with_daily_art_title(self, image, settings, layout=None):
+        image = image.copy()
+        layout = layout or self._daily_art_title_layout(image.size, settings)
+        if not layout:
+            return image
+        draw = ImageDraw.Draw(image)
+        x0, y0, x1, y1 = layout["plate"]
+        scale = min(image.width / 800.0, image.height / 480.0)
+        dark = str(settings.get("backgroundColor") or "warm").strip().lower() == "black"
+        plate_fill = (0, 0, 0) if dark else (255, 255, 255)
+        ink = (255, 255, 255) if dark else (0, 0, 0)
+        accent = (255, 255, 0) if dark else (0, 0, 255)
+        border_width = max(1, round(scale))
+        draw.rectangle(
+            (x0, y0, x1 - 1, y1 - 1),
+            fill=plate_fill,
+            outline=ink,
+            width=border_width,
+        )
+
+        marker_x0, marker_y0, marker_x1, marker_y1 = layout["marker"]
+        draw.rectangle((marker_x0, marker_y0, marker_x1 - 1, marker_y1 - 1), fill=accent)
+
+        title_font = layout["font"]
+        text_bbox = layout["text_bbox"]
+        text_x, text_y = layout["text_position"]
+        text_width_px = text_bbox[2] - text_bbox[0]
+        text_height_px = text_bbox[3] - text_bbox[1]
+        mask = Image.new("L", (max(1, text_width_px), max(1, text_height_px)), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.text(
+            (-text_bbox[0], -text_bbox[1]),
+            DAILY_ART_TITLE,
+            font=title_font,
+            fill=255,
+        )
+        mask = mask.point(lambda value: 255 if value >= 128 else 0)
+        image.paste(ink, (text_x, text_y), mask)
+        return image
 
     def _art_backdrop(self, image, dimensions, settings):
         color = str(settings.get("backgroundColor") or "warm").strip().lower()
@@ -1205,7 +1367,10 @@ class DailyArt(BasePlugin):
             "gray": (226, 224, 218),
         }.get(color, (241, 237, 229))
         background = Image.new("RGB", dimensions, base)
-        if str(settings.get("backgroundStyle") or "blur").strip().lower() != "blur":
+        background_style = str(
+            settings.get("backgroundStyle") or DEFAULT_BACKGROUND_STYLE
+        ).strip().lower()
+        if background_style not in {"blur", DEFAULT_BACKGROUND_STYLE}:
             return background
         try:
             backdrop = ImageOps.fit(image, dimensions, method=RESAMPLE)
@@ -1560,6 +1725,15 @@ def _enabled(value, default=False):
     if value is None:
         return bool(default)
     return str(value).strip().lower() in {"1", "true", "yes", "on", "show"}
+
+
+def _rectangles_overlap(first, second):
+    return (
+        first[0] < second[2]
+        and first[2] > second[0]
+        and first[1] < second[3]
+        and first[3] > second[1]
+    )
 
 
 def _clean_text(value):

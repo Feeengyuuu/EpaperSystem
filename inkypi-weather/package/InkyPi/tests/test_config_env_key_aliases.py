@@ -851,3 +851,136 @@ def test_completed_newspaper_refill_migration_preserves_later_user_schedule(
         "newspaper",
         "ChinaDaily",
     ).refresh == {"scheduled": "15:00"}
+
+
+def _daily_art_config(settings, *, migrations=None):
+    payload = {
+        "resolution": [800, 480],
+        "playlist_config": {
+            "playlists": [
+                {
+                    "name": "DailyDoseOfDay",
+                    "start_time": "00:00",
+                    "end_time": "24:00",
+                    "plugins": [
+                        {
+                            "plugin_id": "daily_art",
+                            "name": "DailyArt",
+                            "plugin_settings": dict(settings),
+                            "refresh": {"interval": 300},
+                        }
+                    ],
+                }
+            ],
+            "active_playlist": "DailyDoseOfDay",
+        },
+    }
+    if migrations is not None:
+        payload["runtime_migrations"] = dict(migrations)
+    return payload
+
+
+def _legacy_daily_art_settings(**overrides):
+    settings = {
+        "layoutMode": "auto_gallery",
+        "galleryCount": "3",
+        "fitMode": "contain",
+        "backgroundStyle": "blur",
+        "backgroundColor": "warm",
+        "showCaption": "false",
+        "queryTerms": "painting, landscape",
+        "fontFamily": "DejaVu Sans",
+    }
+    settings.update(overrides)
+    return settings
+
+
+def test_startup_migrates_exact_legacy_daily_art_visual_defaults_once(
+    monkeypatch,
+    tmp_path,
+):
+    original = _legacy_daily_art_settings()
+
+    config, config_path = _device_config(
+        monkeypatch,
+        tmp_path,
+        _daily_art_config(original, migrations={"existing_migration_v1": True}),
+    )
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    plugin = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    assert plugin["plugin_settings"] == {
+        **original,
+        "backgroundStyle": "gallery_decor",
+    }
+    assert plugin["refresh"] == {"interval": 300}
+    assert saved["runtime_migrations"]["daily_art_gallery_decor_v1"] is True
+    assert saved["runtime_migrations"]["existing_migration_v1"] is True
+    assert config.get_playlist_manager().find_plugin(
+        "daily_art",
+        "DailyArt",
+    ).settings == plugin["plugin_settings"]
+
+    first_revision = saved["config_revision"]
+    restarted = Config()
+    restarted_saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert restarted_saved["config_revision"] == first_revision
+    assert restarted.get_playlist_manager().find_plugin(
+        "daily_art",
+        "DailyArt",
+    ).settings == plugin["plugin_settings"]
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"layoutMode": "single"},
+        {"galleryCount": "4"},
+        {"fitMode": "cover"},
+        {"backgroundStyle": "plain"},
+        {"backgroundColor": "gray"},
+        {"showCaption": "true"},
+    ],
+)
+def test_daily_art_migration_preserves_custom_visual_choices(
+    monkeypatch,
+    tmp_path,
+    override,
+):
+    original = _legacy_daily_art_settings(**override)
+
+    config, config_path = _device_config(
+        monkeypatch,
+        tmp_path,
+        _daily_art_config(original),
+    )
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    plugin = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    assert plugin["plugin_settings"] == original
+    assert saved["runtime_migrations"]["daily_art_gallery_decor_v1"] is True
+    assert config.get_playlist_manager().find_plugin(
+        "daily_art",
+        "DailyArt",
+    ).settings == original
+
+
+def test_completed_daily_art_migration_preserves_later_blur_choice(
+    monkeypatch,
+    tmp_path,
+):
+    original = _legacy_daily_art_settings()
+
+    config, _ = _device_config(
+        monkeypatch,
+        tmp_path,
+        _daily_art_config(
+            original,
+            migrations={"daily_art_gallery_decor_v1": True},
+        ),
+    )
+
+    assert config.get_playlist_manager().find_plugin(
+        "daily_art",
+        "DailyArt",
+    ).settings == original

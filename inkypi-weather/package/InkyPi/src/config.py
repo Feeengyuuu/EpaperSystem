@@ -20,6 +20,7 @@ _SECRET_SCHEMA = SecretSchema.load()
 _RUNTIME_MIGRATIONS_KEY = "runtime_migrations"
 _SPORTS_LIVE_REFRESH_MIGRATION = "sports_live_refresh_all_disabled_v1"
 _NEWSPAPER_HOURLY_REFILL_MIGRATION = "newspaper_hourly_refill_v1"
+_DAILY_ART_GALLERY_DECOR_MIGRATION = "daily_art_gallery_decor_v1"
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _SPORTS_LIVE_REFRESH_KEYS = (
     "worldCupLiveRefreshEnabled",
@@ -92,6 +93,7 @@ class Config:
         self._apply_release_bound_nasapics_migration()
         self._repair_legacy_sports_live_refresh_settings()
         self._migrate_rotating_newspapers_to_hourly_refill()
+        self._migrate_legacy_daily_art_gallery_decor()
 
     @staticmethod
     def _is_explicit_false(value):
@@ -221,6 +223,70 @@ class Config:
         if migrated_instances:
             logger.warning(
                 "Migrated rotating Newspaper instances to hourly background refill. "
+                "| instances: %s",
+                migrated_instances,
+            )
+
+    def _migrate_legacy_daily_art_gallery_decor(self):
+        """Move the exact legacy DailyArt visual defaults to the new default once.
+
+        A saved plugin instance does not inherit a later HTML default.  Match the
+        complete legacy visual bundle so an explicit custom backdrop is never
+        reinterpreted, then persist the migration marker even when a DailyArt
+        instance chose a different visual configuration.
+        """
+
+        migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
+        if (
+            isinstance(migrations, Mapping)
+            and migrations.get(_DAILY_ART_GALLERY_DECOR_MIGRATION) is True
+        ):
+            return
+
+        eligible_instances = 0
+        migrated_instances = 0
+        for snapshot in self.playlist_manager.snapshot_all_instances():
+            if snapshot.plugin_id != "daily_art":
+                continue
+            eligible_instances += 1
+            settings = _detach_json(snapshot.settings)
+            is_legacy_default = (
+                settings.get("layoutMode") == "auto_gallery"
+                and settings.get("galleryCount") == "3"
+                and settings.get("fitMode") == "contain"
+                and settings.get("backgroundStyle") == "blur"
+                and settings.get("backgroundColor") == "warm"
+                and settings.get("showCaption") == "false"
+            )
+            if not is_legacy_default:
+                continue
+
+            updated_settings = dict(settings)
+            updated_settings["backgroundStyle"] = "gallery_decor"
+            updated = self.playlist_manager.update_plugin_instance(
+                snapshot.instance_uuid,
+                settings=updated_settings,
+                expected_generation=snapshot.structural_generation,
+                expected_settings_revision=snapshot.settings_revision,
+            )
+            if updated is None:
+                raise ConfigConflictError(
+                    snapshot.settings_revision,
+                    snapshot.settings_revision + 1,
+                )
+            migrated_instances += 1
+
+        if not eligible_instances:
+            return
+
+        migration_state = (
+            _detach_json(migrations) if isinstance(migrations, Mapping) else {}
+        )
+        migration_state[_DAILY_ART_GALLERY_DECOR_MIGRATION] = True
+        self.update_config({_RUNTIME_MIGRATIONS_KEY: migration_state})
+        if migrated_instances:
+            logger.warning(
+                "Migrated legacy DailyArt gallery defaults to curated decor. "
                 "| instances: %s",
                 migrated_instances,
             )
