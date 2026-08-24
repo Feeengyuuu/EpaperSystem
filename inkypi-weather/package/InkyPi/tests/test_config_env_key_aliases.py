@@ -1042,3 +1042,109 @@ def test_completed_daily_art_migration_preserves_later_blur_choice(
         "daily_art",
         "DailyArt",
     ).settings == original
+
+
+def _vehicle_status_config(*, refresh, migrations=None):
+    payload = {
+        "resolution": [800, 480],
+        "playlist_config": {
+            "playlists": [
+                {
+                    "name": "DailyDoseOfDay",
+                    "start_time": "00:00",
+                    "end_time": "24:00",
+                    "plugins": [
+                        {
+                            "plugin_id": "vehicle_status",
+                            "name": "Vehicle Status",
+                            "plugin_settings": {
+                                "language": "zh-CN",
+                                "cacheSeconds": "900",
+                            },
+                            "refresh": dict(refresh),
+                        }
+                    ],
+                }
+            ],
+            "active_playlist": "DailyDoseOfDay",
+        },
+    }
+    if migrations is not None:
+        payload["runtime_migrations"] = dict(migrations)
+    return payload
+
+
+def test_startup_migrates_exact_legacy_vehicle_status_interval_to_three_hours(
+    monkeypatch,
+    tmp_path,
+):
+    config, config_path = _device_config(
+        monkeypatch,
+        tmp_path,
+        _vehicle_status_config(
+            refresh={"interval": 3600},
+            migrations={"existing_migration_v1": True},
+        ),
+    )
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    plugin = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    assert plugin["refresh"] == {"interval": 10_800}
+    assert plugin["plugin_settings"] == {
+        "language": "zh-CN",
+        "cacheSeconds": "900",
+    }
+    assert (
+        saved["runtime_migrations"]["vehicle_status_three_hour_refresh_v1"] is True
+    )
+    assert saved["runtime_migrations"]["existing_migration_v1"] is True
+
+    first_revision = saved["config_revision"]
+    restarted = Config()
+    restarted_saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert restarted_saved["config_revision"] == first_revision
+    assert restarted.get_playlist_manager().find_plugin(
+        "vehicle_status",
+        "Vehicle Status",
+    ).refresh == {"interval": 10_800}
+
+
+def test_vehicle_status_interval_migration_preserves_custom_schedule(
+    monkeypatch,
+    tmp_path,
+):
+    config, config_path = _device_config(
+        monkeypatch,
+        tmp_path,
+        _vehicle_status_config(refresh={"interval": 7200}),
+    )
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    plugin = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    assert plugin["refresh"] == {"interval": 7200}
+    assert (
+        saved["runtime_migrations"]["vehicle_status_three_hour_refresh_v1"] is True
+    )
+    assert config.get_playlist_manager().find_plugin(
+        "vehicle_status",
+        "Vehicle Status",
+    ).refresh == {"interval": 7200}
+
+
+def test_completed_vehicle_status_interval_migration_never_reapplies(
+    monkeypatch,
+    tmp_path,
+):
+    config, _ = _device_config(
+        monkeypatch,
+        tmp_path,
+        _vehicle_status_config(
+            refresh={"interval": 3600},
+            migrations={"vehicle_status_three_hour_refresh_v1": True},
+        ),
+    )
+
+    assert config.get_playlist_manager().find_plugin(
+        "vehicle_status",
+        "Vehicle Status",
+    ).refresh == {"interval": 3600}
