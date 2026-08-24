@@ -534,9 +534,9 @@ def test_v3_location_fetches_google_address_and_native_map_without_leaking_secre
     assert map_call[3]["max_bytes"] == 128 * 1024
 
     assert _visible_color_bbox(image, (0, 0, 800, 480), (255, 0, 255)) == (
-        442,
+        394,
         18,
-        650,
+        602,
         76,
     )
 
@@ -578,9 +578,9 @@ def test_v3_location_fetches_google_address_and_native_map_without_leaking_secre
     assert theme_device.loaded == []
     assert no_network.calls == []
     assert _visible_color_bbox(themed, (0, 0, 800, 480), (255, 0, 255)) == (
-        442,
+        394,
         18,
-        650,
+        602,
         76,
     )
 
@@ -865,9 +865,63 @@ def test_english_freshness_status_never_overwrites_location_map(
         DeviceConfig(env={"GOOGLE_MAPS_API_KEY": "google-maps-test-secret"}),
     )
 
-    map_box = (442, 18, 650, 76)
+    map_box = (394, 18, 602, 76)
     expected_map = Image.new("RGB", (208, 58), map_color)
     assert ImageChops.difference(image.crop(map_box), expected_map).getbbox() is None
+
+
+def test_header_identity_vehicle_map_and_status_have_even_visual_gaps(
+    tmp_path,
+    monkeypatch,
+):
+    vehicle_color = (255, 0, 255)
+    map_color = (0, 255, 0)
+    vehicle = Image.new("RGBA", (231, 100), (*vehicle_color, 255))
+    wordmark = Image.new("RGBA", (736, 172), (0, 0, 0, 255))
+    real_safe_open_image = vehicle_module.safe_open_image
+
+    def load_header_sentinels(path, *args, **kwargs):
+        name = Path(path).name if isinstance(path, (str, os.PathLike)) else ""
+        if name == "vehicle.png":
+            return vehicle.copy()
+        if name == "grey_bullet_wordmark.png":
+            return wordmark.copy()
+        return real_safe_open_image(path, *args, **kwargs)
+
+    monkeypatch.setattr(vehicle_module, "safe_open_image", load_header_sentinels)
+    now = datetime.fromisoformat("2026-08-08T20:00:00+00:00").timestamp()
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    client = LocationHttpClient(_summary_v3(), _map_png(map_color))
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+
+    image = _plugin(tmp_path).generate_image(
+        {
+            "cacheSeconds": 0,
+            "language": "en",
+            "_inkypi_theme": {"mode": "day", "palette": {}},
+        },
+        DeviceConfig(env={"GOOGLE_MAPS_API_KEY": "google-maps-test-secret"}),
+    )
+
+    identity_crop = (40, 18, 230, 62)
+    identity = _visible_color_bbox(image, identity_crop, (24, 28, 33))
+    vehicle_bbox = _visible_color_bbox(image, (0, 0, 800, 100), vehicle_color)
+    map_bbox = _visible_color_bbox(image, (0, 0, 800, 100), map_color)
+    status_crop = (600, 20, 761, 60)
+    status = _visible_color_bbox(image, status_crop, (35, 116, 79))
+
+    assert identity is not None
+    assert vehicle_bbox is not None
+    assert map_bbox is not None
+    assert status is not None
+    identity_right = identity_crop[0] + identity[2]
+    status_left = status_crop[0] + status[0]
+    gaps = (
+        vehicle_bbox[0] - identity_right,
+        map_bbox[0] - vehicle_bbox[2],
+        status_left - map_bbox[2],
+    )
+    assert gaps == (18, 18, 18)
 
 
 @pytest.mark.parametrize("theme_mode", ["day", "night"])
@@ -1753,19 +1807,24 @@ def test_header_vehicle_is_centered_between_identity_and_location_map(
         },
     )
 
-    middle_header = (277, 26, 415, 92)
+    identity_header = (40, 18, 246, 92)
+    identity_bbox = _visible_non_background_bbox(image, identity_header, surface)
+    middle_header = (246, 26, 376, 92)
     visible_bbox = _visible_non_background_bbox(image, middle_header, surface)
 
+    assert identity_bbox is not None
     assert visible_bbox is not None
+    identity_right = identity_header[0] + identity_bbox[2]
     left = middle_header[0] + visible_bbox[0]
     top = middle_header[1] + visible_bbox[1]
     right = middle_header[0] + visible_bbox[2]
     bottom = middle_header[1] + visible_bbox[3]
-    assert 277 <= left < right <= 415
+    assert 246 <= left < right <= 376
     assert 26 <= top < bottom <= 92
     assert right - left >= 130
     assert bottom - top >= 55
-    assert abs(((left + right) / 2) - 346) <= 1
+    assert abs(((left + right) / 2) - 311) <= 1
+    assert left - identity_right >= 18
 
 
 def test_header_vehicle_is_prominent_centered_and_clear_of_neighbors(
@@ -1803,12 +1862,12 @@ def test_header_vehicle_is_prominent_centered_and_clear_of_neighbors(
     width = right - left
     height = bottom - top
 
-    assert 136 <= width <= 138
-    assert 58 <= height <= 60
+    assert 128 <= width <= 130
+    assert 55 <= height <= 57
     assert 2.28 <= width / height <= 2.34
-    assert abs(((left + right) / 2) - 346) <= 1
-    assert left >= 277
-    assert right <= 415
+    assert abs(((left + right) / 2) - 311) <= 1
+    assert left >= 246
+    assert right <= 376
     assert top >= 26
     assert bottom <= 92
 
@@ -1840,7 +1899,7 @@ def test_grey_bullet_uses_a_prominent_theme_aware_wordmark(
             "_inkypi_theme": {"mode": theme_mode, "palette": {}},
         },
     )
-    name_box = (40, 18, 250, 62)
+    name_box = (40, 18, 230, 62)
     visible = _visible_color_bbox(image, name_box, ink)
 
     assert visible is not None
@@ -1876,7 +1935,7 @@ def test_grey_bullet_wordmark_failure_falls_back_to_dynamic_name(
     assert fallback.mode == "RGB"
     assert read_source_provenance(fallback) is SourceProvenance.LIVE
     assert difference is not None
-    assert 40 <= difference[0] < difference[2] <= 250
+    assert 40 <= difference[0] < difference[2] <= 230
     assert 18 <= difference[1] < difference[3] <= 62
 
 
@@ -1988,7 +2047,7 @@ def test_night_vehicle_keeps_a_visible_outline_after_epd7in3e_quantization(
         palette=palette,
         dither=Image.Dither.NONE,
     ).convert("RGB")
-    vehicle_box = (277, 26, 415, 92)
+    vehicle_box = (246, 26, 376, 92)
     visible = _visible_non_background_bbox(panel_image, vehicle_box, (0, 0, 0))
 
     assert visible is not None
