@@ -365,6 +365,109 @@ describe("Tesla third-party user boundary", () => {
     expect(JSON.stringify(result)).not.toContain("remote_start");
   });
 
+  test("requests location only when authorized and keeps only bounded coordinates", async () => {
+    let request: Request | undefined;
+    const client = createTeslaUserClient(CONFIG, async (input, init) => {
+      request = new Request(input, init);
+      return Response.json({
+        response: {
+          drive_state: {
+            gps_as_of: 1_785_999_995,
+            latitude: 37.5012349,
+            longitude: -122.0012349,
+            heading: 270,
+            speed: 55,
+            active_route_destination: "private destination",
+          },
+          latitude: 1,
+          longitude: 2,
+        },
+      });
+    });
+
+    const result = await client.fetchVehicleSnapshot(
+      "user-access-token",
+      {
+        vin: "5YJ3E1EA7KF000001",
+        display_name: "Gray Bullet",
+        state: "online",
+        access_type: "OWNER",
+        in_service: false,
+      },
+      1_786_000_000_000,
+      true,
+    );
+
+    expect(new URL(request!.url).searchParams.get("endpoints")).toBe(
+      "charge_state;climate_state;closures_state;gui_settings;location_data;vehicle_config;vehicle_state",
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      snapshot: {
+        location: {
+          captured_at_ms: 1_785_999_995_000,
+          latitude: 37.501235,
+          longitude: -122.001235,
+        },
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("private destination");
+    expect(JSON.stringify(result)).not.toContain("heading");
+    expect(JSON.stringify(result)).not.toContain('"speed":55');
+  });
+
+  test.each([
+    [{ latitude: 91, longitude: -122 }],
+    [{ latitude: 37.5, longitude: -181 }],
+    [{ latitude: 37.5 }],
+    [{ longitude: -122 }],
+    [{ latitude: "37.5", longitude: -122 }],
+  ])("rejects incomplete or invalid vehicle location pairs: %j", async (driveState) => {
+    const client = createTeslaUserClient(CONFIG, async () =>
+      Response.json({ response: { drive_state: driveState } }),
+    );
+
+    const result = await client.fetchVehicleSnapshot(
+      "user-access-token",
+      {
+        vin: "5YJ3E1EA7KF000001",
+        display_name: "Gray Bullet",
+        state: "online",
+        access_type: "OWNER",
+        in_service: false,
+      },
+      1_786_000_000_000,
+      true,
+    );
+
+    expect(result).toMatchObject({ ok: true, snapshot: { location: null } });
+  });
+
+  test.each([
+    [{ latitude: 37.5, longitude: -122 }],
+    [{ latitude: 37.5, longitude: -122, gps_as_of: "invalid" }],
+    [{ latitude: 37.5, longitude: -122, timestamp: -1 }],
+  ])("rejects location without a trustworthy provider timestamp: %j", async (driveState) => {
+    const client = createTeslaUserClient(CONFIG, async () =>
+      Response.json({ response: { drive_state: driveState } }),
+    );
+
+    const result = await client.fetchVehicleSnapshot(
+      "user-access-token",
+      {
+        vin: "5YJ3E1EA7KF000001",
+        display_name: "Gray Bullet",
+        state: "online",
+        access_type: "OWNER",
+        in_service: false,
+      },
+      1_786_000_000_000,
+      true,
+    );
+
+    expect(result).toMatchObject({ ok: true, snapshot: { location: null } });
+  });
+
   test("canonicalizes energy, charging, and unit preferences from existing groups", async () => {
     const client = createTeslaUserClient(CONFIG, async () =>
       Response.json({

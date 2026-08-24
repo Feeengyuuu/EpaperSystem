@@ -14,7 +14,7 @@ function base64UrlJson(value: unknown): string {
 function accessToken(): string {
   return `${base64UrlJson({ alg: "RS256" })}.${base64UrlJson({
     exp: 2_000_000_000,
-    scp: ["openid", "offline_access", "vehicle_device_data"],
+    scp: ["openid", "offline_access", "vehicle_device_data", "vehicle_location"],
   })}.test-signature`;
 }
 
@@ -26,6 +26,7 @@ afterEach(async () => {
 describe("deployed Worker composition", () => {
   test("completes OAuth and returns one sanitized read-only snapshot", async () => {
     const upstreamRequests: Request[] = [];
+    const locationCapturedAtMs = Math.floor((Date.now() - 5_000) / 1_000) * 1_000;
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const request = new Request(input, init);
       upstreamRequests.push(request);
@@ -73,7 +74,12 @@ describe("deployed Worker composition", () => {
               odometer: 12345.6,
               car_version: "2026.20.100 abc123",
             },
-            location_data: { latitude: 37.5, longitude: -122.0 },
+            drive_state: {
+              gps_as_of: locationCapturedAtMs / 1_000,
+              latitude: 37.501235,
+              longitude: -122.001235,
+              active_route_destination: "must not leave Tesla boundary",
+            },
           },
         });
       }
@@ -102,7 +108,7 @@ describe("deployed Worker composition", () => {
     expect(startResponse.status).toBe(303);
     const teslaAuthorize = new URL(startResponse.headers.get("Location")!);
     expect(teslaAuthorize.searchParams.get("scope")).toBe(
-      "openid offline_access vehicle_device_data",
+      "openid offline_access vehicle_device_data vehicle_location",
     );
     expect(teslaAuthorize.searchParams.has("code_challenge")).toBe(false);
     const browserCookie = startResponse.headers
@@ -177,13 +183,33 @@ describe("deployed Worker composition", () => {
       vehicle: { display_name: "Gray Bullet" },
     });
 
-    expect(upstreamRequests).toHaveLength(3);
+    const summaryV3Response = await workerExports.default.fetch(
+      new Request(`${origin}/api/vehicle-summary?schema_version=3`, {
+        headers: { Authorization: "Bearer test-read-token" },
+      }),
+    );
+    expect(summaryV3Response.status).toBe(200);
+    const summaryV3 = await summaryV3Response.json<Record<string, unknown>>();
+    expect(summaryV3).toMatchObject({
+      schema_version: 3,
+      location: {
+        captured_at: new Date(locationCapturedAtMs).toISOString(),
+        latitude: 37.501235,
+        longitude: -122.001235,
+      },
+    });
+    expect(JSON.stringify(summaryV3)).not.toContain("must not leave Tesla boundary");
+
+    expect(upstreamRequests).toHaveLength(5);
     expect(upstreamRequests.some((request) => request.url.includes("wake_up"))).toBe(
       false,
     );
-    expect(
-      upstreamRequests.some((request) => request.url.includes("location_data")),
-    ).toBe(false);
+    const vehicleDataRequests = upstreamRequests.filter((request) =>
+      request.url.includes("/vehicle_data?"),
+    );
+    expect(vehicleDataRequests).toHaveLength(2);
+    expect(vehicleDataRequests[0].url).not.toContain("location_data");
+    expect(vehicleDataRequests[1].url).toContain("location_data");
     expect(
       upstreamRequests.every((request) => request.redirect === "manual"),
     ).toBe(true);
@@ -198,6 +224,7 @@ describe("deployed Worker composition", () => {
         const stored = rows.map((row) => row.value).join("\n");
         expect(stored).not.toContain("integration-refresh-token");
         expect(stored).not.toContain(accessToken());
+        expect(stored).not.toContain("37.501235");
       },
     );
   });

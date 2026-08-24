@@ -27,9 +27,13 @@ key migration.
 - OAuth launch, state, and browser tokens are random, single-use, short-lived,
   and stored only as hashes where applicable.
 - Redirects from Tesla endpoints are rejected and response bodies are bounded.
-- The Worker has no route or OAuth scope for location, wake, or vehicle
-  commands. It does not expose VIN, Tesla vehicle IDs, raw provider responses,
-  tokens, or provider URLs.
+- The Worker has no OAuth scope or route for waking the vehicle or sending
+  vehicle commands. The read-only `vehicle_location` scope is used only for
+  schema v3 location data after explicit Tesla authorization.
+- Schemas v1 and v2 do not expose location. Schema v3 exposes only a bounded
+  coordinate pair and its capture age to the bearer-protected Pi endpoint. It
+  never exposes VIN, Tesla vehicle IDs, raw provider responses, tokens,
+  provider URLs, routes, or media.
 
 ## HTTP surface
 
@@ -46,8 +50,13 @@ key migration.
 - `GET /api/vehicle-summary` — requires the read bearer and returns the strict
   schema-v1 compatibility summary.
 - `GET /api/vehicle-summary?schema_version=2` — returns the expanded fixed-key
-  telemetry summary. Unknown, empty, or repeated schema-version parameters are
-  rejected before any Tesla request.
+  telemetry summary.
+- `GET /api/vehicle-summary?schema_version=3` — returns schema v2 telemetry plus
+  a nullable, fixed-key last-known location. An existing authorization without
+  `vehicle_location` returns `tesla_reauthorization_required`; complete the
+  OAuth flow again before using v3.
+- Unknown, empty, or repeated schema-version parameters are rejected before any
+  Tesla request.
 - All other routes and methods return `404`.
 
 Automatic invocation logs are disabled because OAuth codes and state arrive in
@@ -57,17 +66,23 @@ the callback query string. Unexpected errors return only
 ## Summary schemas
 
 Schema v1 remains shape-compatible with existing InkyPi releases. Schema v2 is
-opt-in so the device parser can be deployed before the Worker changes. It adds
-canonical, nullable groups for energy and charging, climate equipment,
-door/window details, tire pressures and warnings, vehicle configuration,
-software updates, and the vehicle's preferred units. Every v2 key is present;
-missing, malformed, conflicting, or out-of-range provider values are `null`
-rather than fabricated as zero, off, or closed.
+opt-in and adds canonical, nullable groups for energy and charging, climate
+equipment, door/window details, tire pressures and warnings, vehicle
+configuration, software updates, and the vehicle's preferred units. Every v2
+key is present; missing, malformed, conflicting, or out-of-range provider
+values are `null` rather than fabricated as zero, off, or closed.
 
-The Worker continues to request only the existing read-only `vehicle_data`
-groups. V2 does not add an OAuth scope or another Tesla request. VIN, provider
-IDs, location, routes, media, tokens, remote-start state, commands, and wake
-operations remain outside the public contract.
+Schema v3 keeps the exact v2 telemetry shape and adds `location`. That value is
+either `null` or an object containing `captured_at`, `age_seconds`, `latitude`,
+and `longitude`. Coordinates are accepted only as a valid pair and disappear
+after 24 hours. V1 and v2 projections remain location-free.
+
+The Worker requests Tesla's `location_data` vehicle-data group only with an
+authorization that includes the read-only `vehicle_location` scope. The Fleet
+API application must permit that scope and an older user grant must be
+authorized again before v3 is available. Provider IDs, routes, media, tokens,
+remote-start state, commands, and wake operations remain outside the public
+contract.
 
 ## Data freshness and provider use
 
@@ -79,8 +94,10 @@ another account's snapshot.
 
 The Worker lists vehicles and requests `vehicle_data` only when a refresh is
 needed and the selected vehicle reports online. It never wakes a vehicle and
-does not use Fleet Telemetry. Tesla can apply Fleet API billing and rate limits;
-the cache is the primary request-cost control. See Tesla's current
+does not use Fleet Telemetry. While the vehicle sleeps, schema v3 can return the
+last known location until its 24-hour limit; it does not refresh that location
+by waking the car. Tesla can apply Fleet API billing and rate limits; the cache
+is the primary request-cost control. See Tesla's current
 [Billing and Limits](https://developer.tesla.com/docs/fleet-api/billing-and-limits)
 documentation before changing refresh intervals.
 

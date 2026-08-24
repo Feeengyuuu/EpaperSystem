@@ -1,12 +1,17 @@
 <div style="margin-bottom:14px;">
   <div style="font-family:'Helvetica Neue',Arial,sans-serif;font-size:1em;color:var(--text-primary);font-weight:500;background:var(--bg-secondary);padding:12px 14px;border-left:3px solid var(--border-color);border-radius:2px;line-height:1.45;max-width:100%;">
-    Read-only vehicle status through the private Epaper Vehicle Bridge. This plugin never wakes the vehicle, sends commands, or requests location data.
+    Read-only vehicle status through the private Epaper Vehicle Bridge. Schema v3 uses Tesla's read-only <strong>vehicle_location</strong> permission to show the vehicle's address and map. This plugin never wakes the vehicle or sends commands. While the vehicle is asleep, it shows the last known location for up to 24 hours instead of waking it.
   </div>
 </div>
 
 <div class="form-group">
   <label class="form-label">Bridge Token</label>
   <small>Store it in API Keys as <strong>EPAPER_VEHICLE_BRIDGE_TOKEN</strong>. The token is never saved in playlist settings or the plugin cache.</small>
+</div>
+
+<div class="form-group">
+  <label class="form-label">Location Map</label>
+  <small>Store the Google Maps Platform key in API Keys as <strong>GOOGLE_MAPS_API_KEY</strong>. It is used for the Vehicle Status address and map and is never saved in playlist settings or the plugin cache.</small>
 </div>
 
 <div class="form-group">

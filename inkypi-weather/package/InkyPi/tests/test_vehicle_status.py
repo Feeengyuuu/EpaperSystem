@@ -1,10 +1,14 @@
 from copy import deepcopy
+from datetime import datetime
+from io import BytesIO
 import hashlib
 import json
+import os
 import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from PIL import Image, ImageChops, ImageDraw, ImageFont
@@ -24,8 +28,9 @@ from plugins.vehicle_status.vehicle_status import (  # noqa: E402
 
 
 class DeviceConfig:
-    def __init__(self, token="bridge-token"):
-        self.token = token
+    def __init__(self, token="bridge-token", env=None):
+        self.env = {"EPAPER_VEHICLE_BRIDGE_TOKEN": token}
+        self.env.update(env or {})
         self.loaded = []
 
     def get_resolution(self):
@@ -36,7 +41,7 @@ class DeviceConfig:
 
     def load_env_key(self, key):
         self.loaded.append(key)
-        return self.token
+        return self.env.get(key)
 
 
 class FakeHttpClient:
@@ -50,6 +55,50 @@ class FakeHttpClient:
         if self.error:
             raise self.error
         return SimpleNamespace(status=200, data=self.payload, headers={}, url=url)
+
+
+class LocationHttpClient:
+    def __init__(self, bridge_payload, map_bytes, *, geocode_error=None, map_error=None):
+        self.bridge_payload = bridge_payload
+        self.map_bytes = map_bytes
+        self.geocode_error = geocode_error
+        self.map_error = map_error
+        self.calls = []
+
+    def request_json(self, method, url, **kwargs):
+        self.calls.append(("json", method, url, kwargs))
+        parsed = urlparse(url)
+        if parsed.netloc == "epaper-vehicle-bridge.superxfy.workers.dev":
+            return SimpleNamespace(status=200, data=self.bridge_payload, headers={}, url=url)
+        if parsed.path == "/maps/api/geocode/json":
+            if self.geocode_error:
+                raise self.geocode_error
+            return SimpleNamespace(
+                status=200,
+                data={
+                    "status": "OK",
+                    "results": [{"formatted_address": ("1600 Amphitheatre Parkway, Mountain View, CA 94043, USA")}],
+                },
+                headers={},
+                url=url,
+            )
+        raise AssertionError(f"unexpected JSON host/path: {parsed.netloc}{parsed.path}")
+
+    def request_bytes(self, method, url, **kwargs):
+        self.calls.append(("bytes", method, url, kwargs))
+        parsed = urlparse(url)
+        assert parsed.netloc == "maps.googleapis.com"
+        assert parsed.path == "/maps/api/staticmap"
+        if self.map_error:
+            raise self.map_error
+        return SimpleNamespace(status=200, data=self.map_bytes, headers={}, url=url)
+
+
+def _map_png(color=(255, 0, 255)):
+    image = Image.new("RGB", (208, 58), color)
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 class AsciiOnlyFont:
@@ -286,6 +335,22 @@ def _summary_v2(*, freshness="live", connectivity="online"):
     }
 
 
+def _summary_v3(*, freshness="live", connectivity="online", location=True):
+    payload = _summary_v2(freshness=freshness, connectivity=connectivity)
+    payload["schema_version"] = 3
+    payload["location"] = (
+        {
+            "captured_at": "2026-08-08T19:59:50.000Z",
+            "age_seconds": 10,
+            "latitude": 37.501235,
+            "longitude": -122.001235,
+        }
+        if location
+        else None
+    )
+    return payload
+
+
 def _null_v2_summary():
     payload = _summary_v2()
     payload["vehicle"].update(
@@ -316,15 +381,10 @@ def _null_v2_summary():
     payload["vehicle"]["speed_limit_mode"] = {"active": None, "limit": None}
     payload["battery"] = {key: None for key in payload["battery"]}
     payload["charging"] = {
-        key: ({"pending": None, "mode": None} if key == "scheduled" else None)
-        for key in payload["charging"]
+        key: ({"pending": None, "mode": None} if key == "scheduled" else None) for key in payload["charging"]
     }
     payload["climate"] = {
-        key: (
-            {item: None for item in value}
-            if isinstance(value, dict)
-            else None
-        )
+        key: ({item: None for item in value} if isinstance(value, dict) else None)
         for key, value in payload["climate"].items()
     }
     payload["closures"] = {
@@ -334,10 +394,7 @@ def _null_v2_summary():
         "doors": {key: None for key in payload["closures"]["doors"]},
         "windows": {key: None for key in payload["closures"]["windows"]},
     }
-    payload["tires"] = {
-        group: {position: None for position in values}
-        for group, values in payload["tires"].items()
-    }
+    payload["tires"] = {group: {position: None for position in values} for group, values in payload["tires"].items()}
     payload["software_update"] = {key: None for key in payload["software_update"]}
     payload["preferences"] = {key: None for key in payload["preferences"]}
     return payload
@@ -402,7 +459,7 @@ def test_live_fetch_is_fixed_bounded_and_never_follows_redirects(tmp_path, monke
     assert len(client.calls) == 1
     method, url, kwargs = client.calls[0]
     assert (method, url) == ("GET", BRIDGE_SUMMARY_URL)
-    assert url.endswith("?schema_version=2")
+    assert url.endswith("?schema_version=3")
     assert kwargs["headers"] == {"Authorization": "Bearer bridge-token"}
     assert kwargs["allow_redirects"] is False
     assert kwargs["timeout"] == (4, 12)
@@ -412,6 +469,374 @@ def test_live_fetch_is_fixed_bounded_and_never_follows_redirects(tmp_path, monke
     assert "bridge-token" not in cache_text
     assert "vin" not in cache_text.lower()
     assert "location" not in cache_text.lower()
+
+
+def test_v3_location_fetches_google_address_and_native_map_without_leaking_secrets(
+    tmp_path,
+    monkeypatch,
+):
+    now = datetime.fromisoformat("2026-08-08T20:00:00+00:00").timestamp()
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    client = LocationHttpClient(_summary_v3(), _map_png())
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+    plugin = _plugin(tmp_path)
+    device = DeviceConfig(
+        env={"GOOGLE_MAPS_API_KEY": "google-maps-test-secret"},
+    )
+
+    image = plugin.generate_image(
+        {
+            "cacheSeconds": 0,
+            "language": "en",
+            "_inkypi_theme": {"mode": "day", "palette": {}},
+        },
+        device,
+    )
+
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+    assert device.loaded == [
+        "EPAPER_VEHICLE_BRIDGE_TOKEN",
+        "GOOGLE_MAPS_API_KEY",
+    ]
+    assert len(client.calls) == 3
+    bridge_call, geocode_call, map_call = client.calls
+    assert bridge_call[:3] == ("json", "GET", BRIDGE_SUMMARY_URL)
+    assert bridge_call[3]["allow_redirects"] is False
+    assert bridge_call[3]["max_bytes"] == 64 * 1024
+
+    geocode_url = urlparse(geocode_call[2])
+    geocode_query = parse_qs(geocode_url.query)
+    assert (geocode_url.scheme, geocode_url.netloc, geocode_url.path) == (
+        "https",
+        "maps.googleapis.com",
+        "/maps/api/geocode/json",
+    )
+    assert geocode_query == {
+        "key": ["google-maps-test-secret"],
+        "language": ["en"],
+        "latlng": ["37.501235,-122.001235"],
+    }
+    assert geocode_call[3]["allow_redirects"] is False
+    assert geocode_call[3]["max_bytes"] == 128 * 1024
+
+    map_url = urlparse(map_call[2])
+    map_query = parse_qs(map_url.query)
+    assert (map_url.scheme, map_url.netloc, map_url.path) == (
+        "https",
+        "maps.googleapis.com",
+        "/maps/api/staticmap",
+    )
+    assert map_query["size"] == ["208x58"]
+    assert map_query["scale"] == ["1"]
+    assert map_query["key"] == ["google-maps-test-secret"]
+    assert map_query["markers"] == ["color:red|37.501235,-122.001235"]
+    assert map_call[3]["allow_redirects"] is False
+    assert map_call[3]["max_bytes"] == 128 * 1024
+
+    assert _visible_color_bbox(image, (0, 0, 800, 480), (255, 0, 255)) == (
+        442,
+        18,
+        650,
+        76,
+    )
+
+    summary_text = plugin._cache_file().read_text(encoding="utf-8")
+    summary_payload = json.loads(summary_text)
+    assert plugin._cache_file().name == "summary-v3.json"
+    assert summary_payload["summary"]["location"] is None
+    assert len(summary_payload["location_fingerprint"]) == 64
+    for sensitive in (
+        "37.501235",
+        "-122.001235",
+        "latitude",
+        "longitude",
+        "google-maps-test-secret",
+    ):
+        assert sensitive not in summary_text
+
+    presentation_path = plugin._location_presentation_file()
+    presentation_text = presentation_path.read_text(encoding="utf-8")
+    assert presentation_path.stat().st_size <= 256 * 1024
+    assert "1600 Amphitheatre Parkway" in presentation_text
+    for sensitive in ("37.501235", "-122.001235", "google-maps-test-secret"):
+        assert sensitive not in presentation_text
+    if os.name != "nt":
+        assert presentation_path.stat().st_mode & 0o777 == 0o600
+
+    no_network = FakeHttpClient(error=AssertionError("theme render used network"))
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: no_network)
+    theme_device = DeviceConfig(token=None, env={"GOOGLE_MAPS_API_KEY": "unused"})
+    themed = plugin.generate_image(
+        {
+            "cacheSeconds": 900,
+            "language": "en",
+            "_theme_render_only": True,
+            "_inkypi_theme": {"mode": "night", "palette": {}},
+        },
+        theme_device,
+    )
+    assert theme_device.loaded == []
+    assert no_network.calls == []
+    assert _visible_color_bbox(themed, (0, 0, 800, 480), (255, 0, 255)) == (
+        442,
+        18,
+        650,
+        76,
+    )
+
+
+def test_v3_location_contract_is_exact_and_bounded():
+    assert vehicle_module.sanitize_summary(_summary_v3())["location"] == {
+        "captured_at": "2026-08-08T19:59:50Z",
+        "age_seconds": 10.0,
+        "latitude": 37.501235,
+        "longitude": -122.001235,
+    }
+    assert vehicle_module.sanitize_summary(_summary_v3(location=False))["location"] is None
+
+    invalid = []
+    extra = _summary_v3()
+    extra["location"]["heading"] = 90
+    invalid.append(extra)
+    for key, value in (("latitude", 91), ("longitude", -181), ("age_seconds", 86_401)):
+        payload = _summary_v3()
+        payload["location"][key] = value
+        invalid.append(payload)
+    missing = _summary_v3()
+    missing["location"].pop("longitude")
+    invalid.append(missing)
+    bad_time = _summary_v3()
+    bad_time["location"]["captured_at"] = "not-a-time"
+    invalid.append(bad_time)
+
+    for payload in invalid:
+        with pytest.raises(vehicle_module.SummaryContractError):
+            vehicle_module.sanitize_summary(payload)
+
+
+def test_new_coordinates_never_reuse_an_old_address_or_map_after_google_failure(
+    tmp_path,
+    monkeypatch,
+):
+    now = datetime.fromisoformat("2026-08-08T20:00:00+00:00").timestamp()
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    plugin = _plugin(tmp_path)
+    device = DeviceConfig(env={"GOOGLE_MAPS_API_KEY": "google-maps-test-secret"})
+    first_client = LocationHttpClient(_summary_v3(), _map_png())
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: first_client)
+    first = plugin.generate_image({"cacheSeconds": 0}, device)
+    presentation_path = plugin._location_presentation_file()
+    original_presentation = presentation_path.read_bytes()
+    original_payload = json.loads(original_presentation)
+
+    moved = _summary_v3()
+    moved["location"].update({"latitude": 37.601235, "longitude": -122.101235})
+    failed_client = LocationHttpClient(
+        moved,
+        _map_png((0, 255, 0)),
+        map_error=RuntimeError("secret query must not be logged"),
+    )
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: failed_client)
+    second = plugin.generate_image({"cacheSeconds": 0}, device)
+
+    assert _visible_color_bbox(first, (0, 0, 800, 480), (255, 0, 255)) is not None
+    assert _visible_color_bbox(second, (0, 0, 800, 480), (255, 0, 255)) is None
+    assert presentation_path.read_bytes() == original_presentation
+    summary_payload = json.loads(plugin._cache_file().read_text(encoding="utf-8"))
+    assert summary_payload["location_fingerprint"] != original_payload["location_fingerprint"]
+    assert len(failed_client.calls) == 3
+
+
+def test_older_bridge_location_cannot_replace_a_newer_local_presentation(
+    tmp_path,
+    monkeypatch,
+):
+    now = datetime.fromisoformat("2026-08-08T20:00:00+00:00").timestamp()
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    plugin = _plugin(tmp_path)
+    device = DeviceConfig(env={"GOOGLE_MAPS_API_KEY": "google-maps-test-secret"})
+
+    first_client = LocationHttpClient(_summary_v3(), _map_png())
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: first_client)
+    plugin.generate_image({"cacheSeconds": 0}, device)
+    original_summary = plugin._cache_file().read_bytes()
+    original_presentation = plugin._location_presentation_file().read_bytes()
+
+    older = _summary_v3()
+    older["snapshot"].update(
+        {
+            "captured_at": "2026-08-08T19:00:00Z",
+            "freshness": "stale_cache",
+            "age_seconds": 3_600,
+            "vehicle_connectivity": "asleep",
+        }
+    )
+    older["location"].update(
+        {
+            "captured_at": "2026-08-08T19:00:00Z",
+            "age_seconds": 3_600,
+            "latitude": 37.601235,
+            "longitude": -122.101235,
+        }
+    )
+    older_client = LocationHttpClient(older, _map_png((0, 255, 0)))
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: older_client)
+
+    image = plugin.generate_image({"cacheSeconds": 0}, device)
+
+    assert len(older_client.calls) == 1
+    assert plugin._cache_file().read_bytes() == original_summary
+    assert plugin._location_presentation_file().read_bytes() == original_presentation
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+    assert _visible_color_bbox(image, (0, 0, 800, 480), (255, 0, 255)) is not None
+    assert _visible_color_bbox(image, (0, 0, 800, 480), (0, 255, 0)) is None
+
+
+def test_summary_write_failure_never_commits_a_new_location_presentation(
+    tmp_path,
+    monkeypatch,
+):
+    now = datetime.fromisoformat("2026-08-08T20:00:00+00:00").timestamp()
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    plugin = _plugin(tmp_path)
+    device = DeviceConfig(env={"GOOGLE_MAPS_API_KEY": "google-maps-test-secret"})
+
+    first_client = LocationHttpClient(_summary_v3(), _map_png())
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: first_client)
+    plugin.generate_image({"cacheSeconds": 0}, device)
+    original_summary = plugin._cache_file().read_bytes()
+    original_presentation = plugin._location_presentation_file().read_bytes()
+    write_cache = plugin._write_cache_unlocked
+
+    moved = _summary_v3()
+    moved["location"].update({"latitude": 37.601235, "longitude": -122.101235})
+    moved_client = LocationHttpClient(moved, _map_png((0, 255, 0)))
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: moved_client)
+    monkeypatch.setattr(
+        plugin,
+        "_write_cache_unlocked",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    live = plugin.generate_image({"cacheSeconds": 0}, device)
+
+    assert len(moved_client.calls) == 3
+    assert _visible_color_bbox(live, (0, 0, 800, 480), (0, 255, 0)) is not None
+    assert plugin._cache_file().read_bytes() == original_summary
+    assert plugin._location_presentation_file().read_bytes() == original_presentation
+
+    monkeypatch.setattr(plugin, "_write_cache_unlocked", write_cache)
+    no_network = FakeHttpClient(error=AssertionError("theme render used network"))
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: no_network)
+    themed = plugin.generate_image(
+        {"cacheSeconds": 900, "_theme_render_only": True},
+        DeviceConfig(token=None),
+    )
+    assert no_network.calls == []
+    assert _visible_color_bbox(themed, (0, 0, 800, 480), (255, 0, 255)) is not None
+
+
+def test_location_presentation_older_than_24_hours_is_not_rendered(
+    tmp_path,
+    monkeypatch,
+):
+    now = datetime.fromisoformat("2026-08-08T20:00:00+00:00").timestamp()
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    plugin = _plugin(tmp_path)
+    client = LocationHttpClient(_summary_v3(), _map_png())
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+    plugin.generate_image(
+        {"cacheSeconds": 0},
+        DeviceConfig(env={"GOOGLE_MAPS_API_KEY": "google-maps-test-secret"}),
+    )
+    path = plugin._location_presentation_file()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["captured_at"] = "2026-08-07T19:59:58Z"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    no_network = FakeHttpClient(error=AssertionError("theme render used network"))
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: no_network)
+
+    image = plugin.generate_image(
+        {"cacheSeconds": 900, "_theme_render_only": True},
+        DeviceConfig(token=None),
+    )
+
+    assert no_network.calls == []
+    assert _visible_color_bbox(image, (0, 0, 800, 480), (255, 0, 255)) is None
+
+
+@pytest.mark.parametrize(
+    "captured_at",
+    (
+        "2026-08-07T19:59:59Z",
+        "2026-08-08T20:05:01Z",
+    ),
+)
+def test_live_location_outside_the_display_window_never_calls_google(
+    tmp_path,
+    monkeypatch,
+    captured_at,
+):
+    now = datetime.fromisoformat("2026-08-08T20:00:00+00:00").timestamp()
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    payload = _summary_v3()
+    payload["location"]["captured_at"] = captured_at
+    client = LocationHttpClient(payload, _map_png())
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+    device = DeviceConfig(env={"GOOGLE_MAPS_API_KEY": "google-maps-test-secret"})
+    plugin = _plugin(tmp_path)
+
+    image = plugin.generate_image({"cacheSeconds": 0}, device)
+
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+    assert len(client.calls) == 1
+    assert device.loaded == ["EPAPER_VEHICLE_BRIDGE_TOKEN"]
+    assert _visible_color_bbox(image, (0, 0, 800, 480), (255, 0, 255)) is None
+    cache_payload = json.loads(plugin._cache_file().read_text(encoding="utf-8"))
+    assert "location_fingerprint" not in cache_payload
+
+
+def test_location_presentation_is_language_specific(tmp_path, monkeypatch):
+    now = datetime.fromisoformat("2026-08-08T20:00:00+00:00").timestamp()
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    plugin = _plugin(tmp_path)
+    device = DeviceConfig(env={"GOOGLE_MAPS_API_KEY": "google-maps-test-secret"})
+
+    english_client = LocationHttpClient(_summary_v3(), _map_png())
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: english_client)
+    plugin.generate_image({"cacheSeconds": 0, "language": "en"}, device)
+    english_fingerprint = json.loads(plugin._location_presentation_file().read_text(encoding="utf-8"))[
+        "location_fingerprint"
+    ]
+
+    no_network = FakeHttpClient(error=AssertionError("theme render used network"))
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: no_network)
+    mismatched_theme = plugin.generate_image(
+        {
+            "cacheSeconds": 900,
+            "language": "zh-CN",
+            "_theme_render_only": True,
+        },
+        DeviceConfig(token=None),
+    )
+    assert no_network.calls == []
+    assert _visible_color_bbox(mismatched_theme, (0, 0, 800, 480), (255, 0, 255)) is None
+
+    chinese_client = LocationHttpClient(_summary_v3(), _map_png((0, 255, 0)))
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: chinese_client)
+    chinese = plugin.generate_image(
+        {"cacheSeconds": 0, "language": "zh-CN"},
+        device,
+    )
+    chinese_fingerprint = json.loads(plugin._location_presentation_file().read_text(encoding="utf-8"))[
+        "location_fingerprint"
+    ]
+
+    assert len(chinese_client.calls) == 3
+    geocode_query = parse_qs(urlparse(chinese_client.calls[1][2]).query)
+    assert geocode_query["language"] == ["zh-CN"]
+    assert chinese_fingerprint != english_fingerprint
+    assert _visible_color_bbox(chinese, (0, 0, 800, 480), (0, 255, 0)) is not None
 
 
 @pytest.mark.parametrize("theme_mode", ["day", "night"])
@@ -510,11 +935,7 @@ def test_all_simplified_chinese_copy_has_real_msyh_glyphs(font_path):
     characters = vehicle_module._fixed_ui_characters("zh-CN")
 
     assert characters
-    missing = [
-        character
-        for character in characters
-        if _font_mask_signature(font, character) == notdef
-    ]
+    missing = [character for character in characters if _font_mask_signature(font, character) == notdef]
     assert missing == []
 
 
@@ -587,9 +1008,7 @@ def test_long_chinese_v2_payload_keeps_panel_gutters_clean(tmp_path, monkeypatch
         (334, 258, 761, 275),
     ):
         crop = image.crop(gutter)
-        assert crop.getcolors(maxcolors=crop.width * crop.height) == [
-            (crop.width * crop.height, surface)
-        ]
+        assert crop.getcolors(maxcolors=crop.width * crop.height) == [(crop.width * crop.height, surface)]
 
 
 def _font_mask_signature(font, text):
@@ -619,12 +1038,8 @@ def test_v2_unknown_openings_never_render_as_all_closed(tmp_path, monkeypatch):
 
 def test_v2_rr_hard_warning_changes_only_tire_region(tmp_path, monkeypatch):
     safe = _summary_v2()
-    safe["tires"]["soft_warnings"] = {
-        position: False for position in safe["tires"]["soft_warnings"]
-    }
-    safe["tires"]["hard_warnings"] = {
-        position: False for position in safe["tires"]["hard_warnings"]
-    }
+    safe["tires"]["soft_warnings"] = {position: False for position in safe["tires"]["soft_warnings"]}
+    safe["tires"]["hard_warnings"] = {position: False for position in safe["tires"]["hard_warnings"]}
     warning = deepcopy(safe)
     warning["tires"]["hard_warnings"]["rear_right"] = True
 
@@ -690,22 +1105,31 @@ def test_v2_auto_units_follow_vehicle_preferences():
         "pressure_unit": "psi",
     }
 
-    assert vehicle_module._measurement_text(
-        {"value": 100, "unit": "mi"},
-        {"distanceUnit": "auto"},
-        preferences,
-    ) == "161 km"
+    assert (
+        vehicle_module._measurement_text(
+            {"value": 100, "unit": "mi"},
+            {"distanceUnit": "auto"},
+            preferences,
+        )
+        == "161 km"
+    )
     assert vehicle_module._temperature_text(0, {}, preferences) == "32 F"
-    assert vehicle_module._pressure_text(
-        {"value": 2.758, "unit": "bar"},
-        {},
-        preferences,
-    ) == "40 PSI"
-    assert vehicle_module._speed_text(
-        {"value": 10, "unit": "mi/h"},
-        {},
-        preferences,
-    ) == "16 KM/H"
+    assert (
+        vehicle_module._pressure_text(
+            {"value": 2.758, "unit": "bar"},
+            {},
+            preferences,
+        )
+        == "40 PSI"
+    )
+    assert (
+        vehicle_module._speed_text(
+            {"value": 10, "unit": "mi/h"},
+            {},
+            preferences,
+        )
+        == "16 KM/H"
+    )
 
 
 def test_v2_contract_is_exact_and_contradictions_fail_closed(tmp_path, monkeypatch):
@@ -720,13 +1144,8 @@ def test_v2_contract_is_exact_and_contradictions_fail_closed(tmp_path, monkeypat
         "all_closed": True,
         "open": [],
         "charge_port_open": False,
-        "doors": {
-            key: (None if key == "driver_front" else False)
-            for key in uncertain_closed["closures"]["doors"]
-        },
-        "windows": {
-            key: False for key in uncertain_closed["closures"]["windows"]
-        },
+        "doors": {key: (None if key == "driver_front" else False) for key in uncertain_closed["closures"]["doors"]},
+        "windows": {key: False for key in uncertain_closed["closures"]["windows"]},
     }
     uncertain_listed_open = _summary_v2()
     uncertain_listed_open["closures"]["doors"]["rear_trunk"] = None
@@ -737,13 +1156,8 @@ def test_v2_contract_is_exact_and_contradictions_fail_closed(tmp_path, monkeypat
         "all_closed": None,
         "open": [],
         "charge_port_open": False,
-        "doors": {
-            key: False for key in unknown_with_all_known_closed["closures"]["doors"]
-        },
-        "windows": {
-            key: False
-            for key in unknown_with_all_known_closed["closures"]["windows"]
-        },
+        "doors": {key: False for key in unknown_with_all_known_closed["closures"]["doors"]},
+        "windows": {key: False for key in unknown_with_all_known_closed["closures"]["windows"]},
     }
     invalid_warning = _summary_v2()
     invalid_warning["tires"]["hard_warnings"]["rear_right"] = "yes"
@@ -770,7 +1184,7 @@ def test_v2_contract_is_exact_and_contradictions_fail_closed(tmp_path, monkeypat
         assert not plugin._cache_file(create=False).exists()
 
 
-def test_legacy_summary_v1_cache_is_read_and_new_writes_use_v2_filename(
+def test_legacy_summary_v1_cache_is_read_and_new_writes_use_v3_filename(
     tmp_path,
     monkeypatch,
 ):
@@ -789,10 +1203,10 @@ def test_legacy_summary_v1_cache_is_read_and_new_writes_use_v2_filename(
     assert client.calls == []
     assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
     assert legacy_path.exists()
-    assert not (cache_dir / "summary-v2.json").exists()
+    assert not (cache_dir / "summary-v3.json").exists()
 
     plugin._write_cache({"fetched_at": time.time(), "summary": _summary_v2()})
-    assert plugin._cache_file().name == "summary-v2.json"
+    assert plugin._cache_file().name == "summary-v3.json"
     assert plugin._cache_file().exists()
 
 
@@ -977,9 +1391,7 @@ def test_failed_refresh_never_displays_vehicle_values_older_than_24_hours(tmp_pa
     monkeypatch.setattr(
         plugin,
         "_render_summary",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("expired vehicle values rendered")
-        ),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("expired vehicle values rendered")),
     )
 
     image = plugin.generate_image({"cacheSeconds": 900}, DeviceConfig())
@@ -1021,9 +1433,21 @@ def test_theme_only_marks_expired_cache_stale_and_advances_age(tmp_path, monkeyp
     rendered = {}
     render_summary = plugin._render_summary
 
-    def capture_summary(summary, dimensions, theme, settings):
+    def capture_summary(
+        summary,
+        dimensions,
+        theme,
+        settings,
+        location_presentation=None,
+    ):
         rendered["summary"] = summary
-        return render_summary(summary, dimensions, theme, settings)
+        return render_summary(
+            summary,
+            dimensions,
+            theme,
+            settings,
+            location_presentation=location_presentation,
+        )
 
     monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
     monkeypatch.setattr(plugin, "_render_summary", capture_summary)
@@ -1129,9 +1553,7 @@ def test_contradictory_closure_summary_is_never_rendered_or_cached(
     monkeypatch.setattr(
         plugin,
         "_render_summary",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            AssertionError("contradictory closure state rendered")
-        ),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("contradictory closure state rendered")),
     )
 
     image = plugin.generate_image({"cacheSeconds": 0}, DeviceConfig())
@@ -1159,6 +1581,7 @@ def test_manifest_and_settings_keep_secret_out_of_playlist_config():
     plugin_dir = Path(vehicle_module.__file__).parent
     manifest = json.loads((plugin_dir / "plugin-info.json").read_text(encoding="utf-8"))
     settings_html = (plugin_dir / "settings.html").read_text(encoding="utf-8")
+    secret_schema = json.loads((plugin_dir.parents[1] / "config" / "secret_schema.json").read_text(encoding="utf-8"))
 
     assert manifest["schema_version"] == 2
     assert manifest["capabilities"] == {
@@ -1170,6 +1593,10 @@ def test_manifest_and_settings_keep_secret_out_of_playlist_config():
     assert manifest["recommended_refresh"]["interval"] == 10800
     assert 'type="password"' not in settings_html
     assert "EPAPER_VEHICLE_BRIDGE_TOKEN" in settings_html
+    assert "GOOGLE_MAPS_API_KEY" in settings_html
+    assert "vehicle_location" in settings_html
+    assert "never wakes the vehicle" in settings_html
+    assert "requests location data" not in settings_html
     assert 'id="showClimate"' not in settings_html
     assert 'name="showClimate"' not in settings_html
     assert '<select id="language" name="language"' in settings_html
@@ -1185,6 +1612,8 @@ def test_manifest_and_settings_keep_secret_out_of_playlist_config():
     assert "pluginSettings.temperatureUnit || 'auto'" in settings_html
     assert "pluginSettings.pressureUnit || 'auto'" in settings_html
     assert "pluginSettings.language || 'zh-CN'" in settings_html
+    google_entry = next(item for item in secret_schema["entries"] if item["canonical"] == "GOOGLE_MAPS_API_KEY")
+    assert "Vehicle Status map and address" in google_entry["features"]
 
 
 def test_vehicle_art_is_a_real_transparent_cutout_without_chroma_fringe():
@@ -1267,7 +1696,7 @@ def test_battery_percent_keeps_a_visible_gap_after_level(
         ("en", "night", (22, 29, 38)),
     ],
 )
-def test_header_vehicle_is_visually_centered_between_long_identity_and_status(
+def test_header_vehicle_is_centered_between_identity_and_location_map(
     tmp_path,
     monkeypatch,
     language,
@@ -1293,7 +1722,7 @@ def test_header_vehicle_is_visually_centered_between_long_identity_and_status(
         },
     )
 
-    middle_header = (300, 20, 500, 98)
+    middle_header = (300, 26, 438, 92)
     visible_bbox = _visible_non_background_bbox(image, middle_header, surface)
 
     assert visible_bbox is not None
@@ -1301,11 +1730,11 @@ def test_header_vehicle_is_visually_centered_between_long_identity_and_status(
     top = middle_header[1] + visible_bbox[1]
     right = middle_header[0] + visible_bbox[2]
     bottom = middle_header[1] + visible_bbox[3]
-    assert 310 <= left < right <= 490
-    assert 20 <= top < bottom <= 96
-    assert right - left >= 170
-    assert bottom - top >= 70
-    assert abs(((left + right) / 2) - 400) <= 1
+    assert 300 <= left < right <= 438
+    assert 26 <= top < bottom <= 92
+    assert right - left >= 130
+    assert bottom - top >= 55
+    assert abs(((left + right) / 2) - 369) <= 1
 
 
 def test_header_vehicle_is_prominent_centered_and_clear_of_neighbors(
@@ -1343,14 +1772,14 @@ def test_header_vehicle_is_prominent_centered_and_clear_of_neighbors(
     width = right - left
     height = bottom - top
 
-    assert 174 <= width <= 178
-    assert 74 <= height <= 76
+    assert 136 <= width <= 138
+    assert 58 <= height <= 60
     assert 2.28 <= width / height <= 2.34
-    assert abs(((left + right) / 2) - 400) <= 1
-    assert left >= 310
-    assert right <= 490
-    assert top >= 20
-    assert bottom <= 96
+    assert abs(((left + right) / 2) - 369) <= 1
+    assert left >= 300
+    assert right <= 438
+    assert top >= 26
+    assert bottom <= 92
 
 
 @pytest.mark.parametrize(
@@ -1460,10 +1889,7 @@ def test_grey_bullet_wordmark_is_a_small_transparent_img2_asset():
     assert image.size == (736, 172)
     alpha = image.getchannel("A")
     assert alpha.getextrema() == (0, 255)
-    assert all(
-        alpha.getpixel(point) == 0
-        for point in ((0, 0), (735, 0), (0, 171), (735, 171))
-    )
+    assert all(alpha.getpixel(point) == 0 for point in ((0, 0), (735, 0), (0, 171), (735, 171)))
     left, top, right, bottom = alpha.getbbox()
     assert 6 <= left < right <= 730
     assert 6 <= top < bottom <= 166
@@ -1472,10 +1898,7 @@ def test_grey_bullet_wordmark_is_a_small_transparent_img2_asset():
     flattened = getattr(image, "get_flattened_data", image.getdata)
     visible = [pixel for pixel in flattened() if pixel[3] > 32]
     assert visible
-    assert not any(
-        green > 180 and red < 100 and blue < 100
-        for red, green, blue, _alpha in visible
-    )
+    assert not any(green > 180 and red < 100 and blue < 100 for red, green, blue, _alpha in visible)
 
 
 def test_night_vehicle_keeps_a_visible_outline_after_epd7in3e_quantization(
@@ -1534,12 +1957,12 @@ def test_night_vehicle_keeps_a_visible_outline_after_epd7in3e_quantization(
         palette=palette,
         dither=Image.Dither.NONE,
     ).convert("RGB")
-    vehicle_box = (300, 20, 500, 96)
+    vehicle_box = (300, 26, 438, 92)
     visible = _visible_non_background_bbox(panel_image, vehicle_box, (0, 0, 0))
 
     assert visible is not None
-    assert visible[2] - visible[0] >= 145
-    assert visible[3] - visible[1] >= 42
+    assert visible[2] - visible[0] >= 122
+    assert visible[3] - visible[1] >= 34
 
 
 _DASHBOARD_ICON_ASSETS = (
@@ -1567,10 +1990,7 @@ def test_dashboard_icon_assets_are_small_binary_alpha_img2_glyphs(filename):
     flattened_alpha = getattr(alpha, "get_flattened_data", alpha.getdata)
     alpha_values = set(flattened_alpha())
     assert alpha_values == {0, 255}
-    assert all(
-        alpha.getpixel(point) == 0
-        for point in ((0, 0), (63, 0), (0, 63), (63, 63))
-    )
+    assert all(alpha.getpixel(point) == 0 for point in ((0, 0), (63, 0), (0, 63), (63, 63)))
     left, top, right, bottom = alpha.getbbox()
     assert 4 <= left < right <= 60
     assert 4 <= top < bottom <= 60
@@ -1582,10 +2002,7 @@ def test_dashboard_icon_assets_are_small_binary_alpha_img2_glyphs(filename):
     flattened = getattr(image, "get_flattened_data", image.getdata)
     visible = [pixel for pixel in flattened() if pixel[3] > 0]
     assert len(visible) >= 450
-    assert not any(
-        red > 180 and green < 80 and blue > 170
-        for red, green, blue, _alpha in visible
-    )
+    assert not any(red > 180 and green < 80 and blue > 170 for red, green, blue, _alpha in visible)
 
 
 def test_dashboard_icon_assets_are_visually_distinct():
@@ -1650,10 +2067,13 @@ def test_dashboard_icons_are_static_scan_anchors_with_clean_title_gaps(
     assert freshness_visible is not None
     assert freshness_visible[2] - freshness_visible[0] >= 12
     assert freshness_visible[3] - freshness_visible[1] >= 12
-    assert ImageChops.difference(
-        full.crop(freshness_box),
-        empty.crop(freshness_box),
-    ).getbbox() is None
+    assert (
+        ImageChops.difference(
+            full.crop(freshness_box),
+            empty.crop(freshness_box),
+        ).getbbox()
+        is None
+    )
     freshness_gap = full.crop(freshness_gap_box)
     freshness_gap_pixels = getattr(
         freshness_gap,
@@ -1709,11 +2129,17 @@ def test_one_broken_dashboard_icon_falls_back_without_losing_live_page(
     assert degraded.size == (800, 480)
     assert read_source_provenance(degraded) is SourceProvenance.LIVE
     for box in ((350, 122, 470, 145), (40, 432, 220, 455)):
-        assert ImageChops.difference(
-            degraded.crop(box),
-            text_only.crop(box),
-        ).getbbox() is None
-        assert ImageChops.difference(
-            normal.crop(box),
-            degraded.crop(box),
-        ).getbbox() is not None
+        assert (
+            ImageChops.difference(
+                degraded.crop(box),
+                text_only.crop(box),
+            ).getbbox()
+            is None
+        )
+        assert (
+            ImageChops.difference(
+                normal.crop(box),
+                degraded.crop(box),
+            ).getbbox()
+            is not None
+        )

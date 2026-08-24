@@ -7,14 +7,14 @@ const ALLOWED_AUDIENCES = new Set([
   "https://fleet-api.prd.eu.vn.cloud.tesla.com",
   "https://fleet-api.prd.cn.vn.cloud.tesla.cn",
 ]);
-const VEHICLE_DATA_GROUPS = [
+const BASE_VEHICLE_DATA_GROUPS = [
   "charge_state",
   "climate_state",
   "closures_state",
   "gui_settings",
   "vehicle_config",
   "vehicle_state",
-].join(";");
+];
 const VIN_PATTERN = /^[A-HJ-NPR-Z0-9]{17}$/;
 
 export type TeslaUserClientConfig = {
@@ -117,6 +117,11 @@ export type StoredVehicleSnapshot = {
   captured_at_ms: number;
   checked_at_ms: number;
   vehicle_connectivity: string;
+  location?: {
+    captured_at_ms: number;
+    latitude: number;
+    longitude: number;
+  } | null;
   vehicle: {
     key: "primary";
     display_name: string;
@@ -233,6 +238,7 @@ export type TeslaUserClient = {
     accessToken: string,
     vehicle: VehicleInventory,
     nowMs: number,
+    includeLocation?: boolean,
   ): Promise<TeslaSnapshotResult>;
 };
 
@@ -335,7 +341,7 @@ export function createTeslaUserClient(
       return { ok: true, vehicles };
     },
 
-    async fetchVehicleSnapshot(accessToken, vehicle, nowMs) {
+    async fetchVehicleSnapshot(accessToken, vehicle, nowMs, includeLocation = false) {
       const vin = vehicle.vin.toUpperCase();
       if (!VIN_PATTERN.test(vin)) {
         return { ok: false, error: "invalid_vehicle_identifier" };
@@ -344,7 +350,14 @@ export function createTeslaUserClient(
         `/api/1/vehicles/${encodeURIComponent(vin)}/vehicle_data`,
         config.audience,
       );
-      url.searchParams.set("endpoints", VEHICLE_DATA_GROUPS);
+      const groups = includeLocation
+        ? [
+            ...BASE_VEHICLE_DATA_GROUPS.slice(0, 4),
+            "location_data",
+            ...BASE_VEHICLE_DATA_GROUPS.slice(4),
+          ]
+        : BASE_VEHICLE_DATA_GROUPS;
+      url.searchParams.set("endpoints", groups.join(";"));
       const response = await requestJson(
         fetcher,
         url.toString(),
@@ -362,7 +375,7 @@ export function createTeslaUserClient(
       }
       return {
         ok: true,
-        snapshot: sanitizeVehicleSnapshot(data, vehicle, nowMs),
+        snapshot: sanitizeVehicleSnapshot(data, vehicle, nowMs, includeLocation),
       };
     },
   };
@@ -438,11 +451,13 @@ function sanitizeVehicleSnapshot(
   data: Record<string, unknown>,
   vehicle: VehicleInventory,
   nowMs: number,
+  includeLocation: boolean,
 ): StoredVehicleSnapshot {
   const charge = asRecord(data.charge_state);
   const climate = asRecord(data.climate_state);
   const closures = asRecord(data.closures_state);
   const preferences = asRecord(data.gui_settings);
+  const drive = asRecord(data.drive_state);
   const config = asRecord(data.vehicle_config);
   const state = asRecord(data.vehicle_state);
   const speedLimitMode = asRecord(state?.speed_limit_mode);
@@ -457,7 +472,7 @@ function sanitizeVehicleSnapshot(
   ];
   const softwareVersion = cleanString(state?.car_version, 64).split(/\s+/)[0] || null;
 
-  return {
+  const snapshot: StoredVehicleSnapshot = {
     captured_at_ms: nowMs,
     checked_at_ms: nowMs,
     vehicle_connectivity:
@@ -668,6 +683,54 @@ function sanitizeVehicleSnapshot(
       ),
     },
   };
+  if (includeLocation) {
+    snapshot.location = sanitizeLocation(drive, nowMs);
+  }
+  return snapshot;
+}
+
+function sanitizeLocation(
+  drive: Record<string, unknown> | null,
+  nowMs: number,
+): StoredVehicleSnapshot["location"] {
+  const latitude = finiteNumber(drive?.latitude, -90, 90);
+  const longitude = finiteNumber(drive?.longitude, -180, 180);
+  if (latitude === null || longitude === null) {
+    return null;
+  }
+
+  const latestAllowedMs = nowMs + 5 * 60_000;
+  const gpsSeconds = finiteNumber(
+    drive?.gps_as_of,
+    0,
+    Math.floor(latestAllowedMs / 1_000),
+  );
+  const providerTimestampMs = finiteNumber(
+    drive?.timestamp,
+    0,
+    latestAllowedMs,
+  );
+  if (gpsSeconds === null && providerTimestampMs === null) {
+    return null;
+  }
+  const capturedAtMs = gpsSeconds !== null
+    ? Math.trunc(gpsSeconds * 1_000)
+    : providerTimestampMs !== null
+      ? Math.trunc(providerTimestampMs)
+      : null;
+  if (capturedAtMs === null) {
+    return null;
+  }
+
+  return {
+    captured_at_ms: capturedAtMs,
+    latitude: roundCoordinate(latitude),
+    longitude: roundCoordinate(longitude),
+  };
+}
+
+function roundCoordinate(value: number): number {
+  return Math.round(value * 1_000_000) / 1_000_000;
 }
 
 function modelName(code: string): string | null {

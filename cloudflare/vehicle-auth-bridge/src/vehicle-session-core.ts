@@ -7,6 +7,7 @@ import type {
   VehicleSummarySchemaVersion,
   VehicleSummaryV1,
   VehicleSummaryV2,
+  VehicleSummaryV3,
 } from "./contracts";
 import type {
   StoredVehicleSnapshot,
@@ -136,6 +137,14 @@ export class VehicleSessionCore {
       if (authorization.reauthorization_required) {
         return { ok: false, error: "tesla_reauthorization_required" };
       }
+      const hasLocationScope = authorization.tokens.scopes.includes(
+        "vehicle_location",
+      );
+      if (schemaVersion === 3 && !hasLocationScope) {
+        await this.#repository.markReauthorizationRequired();
+        return { ok: false, error: "tesla_reauthorization_required" };
+      }
+      const includeLocation = schemaVersion === 3 && hasLocationScope;
       const accountGeneration = accountGenerationOf(authorization);
       let cached = await this.#repository.getCachedSnapshot();
       if (cached && cached.account_generation !== accountGeneration) {
@@ -156,11 +165,18 @@ export class VehicleSessionCore {
       }
       if (
         cached &&
-        nowMs - cached.snapshot.checked_at_ms < cacheTtlMs
+        nowMs - cached.snapshot.checked_at_ms < cacheTtlMs &&
+        (!includeLocation || cached.snapshot.location !== undefined)
       ) {
         return {
           ok: true,
-          summary: toSummary(cached, nowMs, false, schemaVersion),
+          summary: toSummary(
+            cached,
+            nowMs,
+            false,
+            schemaVersion,
+            this.#maxStaleMs,
+          ),
         };
       }
 
@@ -243,15 +259,28 @@ export class VehicleSessionCore {
         await this.#repository.putCachedSnapshot(offline);
         return {
           ok: true,
-          summary: toSummary(offline, nowMs, false, schemaVersion),
+          summary: toSummary(
+            offline,
+            nowMs,
+            false,
+            schemaVersion,
+            this.#maxStaleMs,
+          ),
         };
       }
 
-      let snapshot = await this.#tesla.fetchVehicleSnapshot(
-        authorization.tokens.access_token,
-        vehicle,
-        nowMs,
-      );
+      let snapshot = includeLocation
+        ? await this.#tesla.fetchVehicleSnapshot(
+            authorization.tokens.access_token,
+            vehicle,
+            nowMs,
+            true,
+          )
+        : await this.#tesla.fetchVehicleSnapshot(
+            authorization.tokens.access_token,
+            vehicle,
+            nowMs,
+          );
       if (!snapshot.ok && snapshot.http_status === 401) {
         const refreshed = await this.#ensureAccessToken(
           authorization,
@@ -267,11 +296,18 @@ export class VehicleSessionCore {
           );
         }
         authorization = refreshed.authorization;
-        snapshot = await this.#tesla.fetchVehicleSnapshot(
-          authorization.tokens.access_token,
-          vehicle,
-          nowMs,
-        );
+        snapshot = includeLocation
+          ? await this.#tesla.fetchVehicleSnapshot(
+              authorization.tokens.access_token,
+              vehicle,
+              nowMs,
+              true,
+            )
+          : await this.#tesla.fetchVehicleSnapshot(
+              authorization.tokens.access_token,
+              vehicle,
+              nowMs,
+            );
       }
 
       if (!snapshot.ok) {
@@ -290,16 +326,35 @@ export class VehicleSessionCore {
         );
       }
 
+      let storedSnapshot = rollbackSafeSnapshot(snapshot.snapshot);
+      if (hasLocationScope) {
+        const previousSnapshot =
+          cached?.selected_vehicle_id === vehicleIdOf(vehicle)
+            ? cached.snapshot
+            : undefined;
+        storedSnapshot = preserveLastKnownLocation(
+          storedSnapshot,
+          previousSnapshot,
+          nowMs,
+          this.#maxStaleMs,
+        );
+      }
       cached = {
         account_generation: accountGenerationOf(authorization),
         selected_vehicle_id: vehicleIdOf(vehicle),
-        snapshot: rollbackSafeSnapshot(snapshot.snapshot),
+        snapshot: storedSnapshot,
         stale: false,
       };
       await this.#repository.putCachedSnapshot(cached);
       return {
         ok: true,
-        summary: toSummary(cached, nowMs, true, schemaVersion),
+        summary: toSummary(
+          cached,
+          nowMs,
+          true,
+          schemaVersion,
+          this.#maxStaleMs,
+        ),
       };
     });
   }
@@ -385,7 +440,13 @@ export class VehicleSessionCore {
       await this.#repository.putCachedSnapshot(stale);
       return {
         ok: true,
-        summary: toSummary(stale, nowMs, false, schemaVersion),
+        summary: toSummary(
+          stale,
+          nowMs,
+          false,
+          schemaVersion,
+          this.#maxStaleMs,
+        ),
       };
     }
     return { ok: false, error };
@@ -717,7 +778,11 @@ function toSummary(
   nowMs: number,
   live: boolean,
   schemaVersion: VehicleSummarySchemaVersion,
+  maxStaleMs: number,
 ): VehicleSummary {
+  if (schemaVersion === 3) {
+    return toSummaryV3(cached, nowMs, live, maxStaleMs);
+  }
   return schemaVersion === 2
     ? toSummaryV2(cached, nowMs, live)
     : toSummaryV1(cached, nowMs, live);
@@ -969,6 +1034,81 @@ function toSummaryV2(
       use_24_hour_time: preferences?.use_24_hour_time ?? null,
     },
   };
+}
+
+function toSummaryV3(
+  cached: CachedVehicleSnapshot,
+  nowMs: number,
+  live: boolean,
+  maxStaleMs: number,
+): VehicleSummaryV3 {
+  const versionTwo = toSummaryV2(cached, nowMs, live);
+  const location = validStoredLocation(cached.snapshot.location);
+  const rawAgeMs = location
+    ? nowMs - location.captured_at_ms
+    : Number.POSITIVE_INFINITY;
+  return {
+    ...versionTwo,
+    schema_version: 3,
+    location:
+      location && rawAgeMs >= -5 * 60_000 && rawAgeMs <= maxStaleMs
+        ? {
+            captured_at: new Date(location.captured_at_ms).toISOString(),
+            age_seconds: Math.max(0, Math.floor(rawAgeMs / 1_000)),
+            latitude: location.latitude,
+            longitude: location.longitude,
+          }
+        : null,
+  };
+}
+
+function validStoredLocation(
+  value: StoredVehicleSnapshot["location"],
+): NonNullable<StoredVehicleSnapshot["location"]> | null {
+  if (
+    !value ||
+    !Number.isFinite(value.captured_at_ms) ||
+    value.captured_at_ms < 0 ||
+    !Number.isFinite(value.latitude) ||
+    value.latitude < -90 ||
+    value.latitude > 90 ||
+    !Number.isFinite(value.longitude) ||
+    value.longitude < -180 ||
+    value.longitude > 180
+  ) {
+    return null;
+  }
+  return value;
+}
+
+function preserveLastKnownLocation(
+  next: StoredVehicleSnapshot,
+  previous: StoredVehicleSnapshot | undefined,
+  nowMs: number,
+  maxStaleMs: number,
+): StoredVehicleSnapshot {
+  const usableLocation = (
+    value: StoredVehicleSnapshot["location"],
+  ): NonNullable<StoredVehicleSnapshot["location"]> | null => {
+    const location = validStoredLocation(value);
+    if (!location) {
+      return null;
+    }
+    const ageMs = nowMs - location.captured_at_ms;
+    return ageMs >= -5 * 60_000 && ageMs <= maxStaleMs ? location : null;
+  };
+  const nextLocation = usableLocation(next.location);
+  const previousLocation = usableLocation(previous?.location);
+  const newestLocation =
+    nextLocation &&
+    (!previousLocation ||
+      nextLocation.captured_at_ms >= previousLocation.captured_at_ms)
+      ? nextLocation
+      : previousLocation;
+  if (newestLocation) {
+    return { ...next, location: { ...newestLocation } };
+  }
+  return next.location === undefined ? next : { ...next, location: null };
 }
 
 function normalizeChargingState(value: string | null): string | null {

@@ -10,7 +10,7 @@
     "TESLA_AUDIENCE": "https://fleet-api.prd.na.vn.cloud.tesla.com",
     "TESLA_APP_DOMAIN": "epaper-vehicle-bridge.superxfy.workers.dev",
     "TESLA_REDIRECT_URI": "https://epaper-vehicle-bridge.superxfy.workers.dev/oauth/callback",
-    "TESLA_OAUTH_SCOPES": "openid offline_access vehicle_device_data",
+    "TESLA_OAUTH_SCOPES": "openid offline_access vehicle_device_data vehicle_location",
     "OAUTH_LAUNCH_TTL_SECONDS": "120",
     "OAUTH_SESSION_TTL_SECONDS": "600",
     "VEHICLE_SUMMARY_TTL_SECONDS": "900",

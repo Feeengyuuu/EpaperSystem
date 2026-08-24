@@ -31,6 +31,10 @@ const TOKENS: TeslaTokens = {
   access_expires_at: NOW + 3_600_000,
   scopes: ["offline_access", "openid", "vehicle_device_data"],
 };
+const LOCATION_TOKENS: TeslaTokens = {
+  ...TOKENS,
+  scopes: [...TOKENS.scopes, "vehicle_location"],
+};
 const SNAPSHOT: StoredVehicleSnapshot = {
   captured_at_ms: NOW - 60_000,
   checked_at_ms: NOW - 60_000,
@@ -304,6 +308,447 @@ function createCore(
 }
 
 describe("vehicle session coordination", () => {
+  test("requires renewed vehicle-location consent before serving schema three", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1,
+      account_generation: 1,
+      reauthorization_required: false,
+      tokens: TOKENS,
+    };
+    repository.cachedSnapshot = {
+      account_generation: 1,
+      snapshot: SNAPSHOT,
+      stale: false,
+    };
+    const tesla = createTesla();
+
+    const result = await createCore(repository, tesla).getVehicleSummary(
+      NOW,
+      900,
+      3,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "tesla_reauthorization_required",
+    });
+    expect(repository.authorization.reauthorization_required).toBe(true);
+    expect(tesla.listVehicles).not.toHaveBeenCalled();
+    expect(tesla.fetchVehicleSnapshot).not.toHaveBeenCalled();
+  });
+
+  test("projects a private cached location only into schema three", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1,
+      account_generation: 1,
+      reauthorization_required: false,
+      tokens: LOCATION_TOKENS,
+    };
+    repository.cachedSnapshot = {
+      account_generation: 1,
+      snapshot: {
+        ...SNAPSHOT,
+        location: {
+          captured_at_ms: NOW - 120_000,
+          latitude: 37.501235,
+          longitude: -122.001235,
+        },
+      },
+      stale: false,
+    };
+    const core = createCore(repository);
+
+    const versionThree = await core.getVehicleSummary(NOW, 900, 3);
+    const versionTwo = await core.getVehicleSummary(NOW, 900, 2);
+
+    expect(versionThree).toMatchObject({
+      ok: true,
+      summary: {
+        schema_version: 3,
+        location: {
+          captured_at: new Date(NOW - 120_000).toISOString(),
+          age_seconds: 120,
+          latitude: 37.501235,
+          longitude: -122.001235,
+        },
+      },
+    });
+    expect(JSON.stringify(versionTwo)).not.toContain("location");
+  });
+
+  test("does not request location for schema two even after location consent", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1,
+      account_generation: 1,
+      reauthorization_required: false,
+      tokens: LOCATION_TOKENS,
+    };
+    const tesla = createTesla();
+
+    const result = await createCore(repository, tesla).getVehicleSummary(
+      NOW,
+      0,
+      2,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      summary: { schema_version: 2 },
+    });
+    expect(tesla.fetchVehicleSnapshot).toHaveBeenCalledWith(
+      "access-token",
+      VEHICLE,
+      NOW,
+    );
+    expect(tesla.fetchVehicleSnapshot.mock.calls[0]).toHaveLength(3);
+    expect(JSON.stringify(repository.cachedSnapshot)).not.toContain("location");
+  });
+
+  test("schema three bypasses a fresh cache that never requested location", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1,
+      account_generation: 1,
+      reauthorization_required: false,
+      tokens: LOCATION_TOKENS,
+    };
+    repository.cachedSnapshot = {
+      account_generation: 1,
+      snapshot: SNAPSHOT,
+      stale: false,
+    };
+    const tesla = createTesla({
+      fetchVehicleSnapshot: vi.fn(async () => ({
+        ok: true,
+        snapshot: {
+          ...SNAPSHOT,
+          location: {
+            captured_at_ms: NOW - 120_000,
+            latitude: 37.501235,
+            longitude: -122.001235,
+          },
+        },
+      })),
+    });
+
+    const result = await createCore(repository, tesla).getVehicleSummary(
+      NOW,
+      900,
+      3,
+    );
+
+    expect(tesla.fetchVehicleSnapshot).toHaveBeenCalledWith(
+      "access-token",
+      VEHICLE,
+      NOW,
+      true,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      summary: {
+        schema_version: 3,
+        location: { latitude: 37.501235, longitude: -122.001235 },
+      },
+    });
+  });
+
+  test("schema three refresh preserves a valid last-known location when Tesla temporarily omits it", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1,
+      account_generation: 1,
+      reauthorization_required: false,
+      tokens: LOCATION_TOKENS,
+    };
+    repository.cachedSnapshot = {
+      account_generation: 1,
+      selected_vehicle_id: VEHICLE.vin,
+      snapshot: {
+        ...SNAPSHOT,
+        checked_at_ms: NOW - 2_000,
+        location: {
+          captured_at_ms: NOW - 120_000,
+          latitude: 37.501235,
+          longitude: -122.001235,
+        },
+      },
+      stale: false,
+    };
+    const tesla = createTesla({
+      fetchVehicleSnapshot: vi.fn(async () => ({
+        ok: true,
+        snapshot: { ...SNAPSHOT, location: null },
+      })),
+    });
+
+    const result = await createCore(repository, tesla).getVehicleSummary(
+      NOW,
+      1,
+      3,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      summary: {
+        schema_version: 3,
+        location: {
+          captured_at: new Date(NOW - 120_000).toISOString(),
+          age_seconds: 120,
+          latitude: 37.501235,
+          longitude: -122.001235,
+        },
+      },
+    });
+  });
+
+  test("schema three refresh keeps the newer of cached and provider locations", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1,
+      account_generation: 1,
+      reauthorization_required: false,
+      tokens: LOCATION_TOKENS,
+    };
+    repository.cachedSnapshot = {
+      account_generation: 1,
+      selected_vehicle_id: VEHICLE.vin,
+      snapshot: {
+        ...SNAPSHOT,
+        checked_at_ms: NOW - 2_000,
+        location: {
+          captured_at_ms: NOW - 120_000,
+          latitude: 37.501235,
+          longitude: -122.001235,
+        },
+      },
+      stale: false,
+    };
+    const tesla = createTesla({
+      fetchVehicleSnapshot: vi.fn(async () => ({
+        ok: true,
+        snapshot: {
+          ...SNAPSHOT,
+          location: {
+            captured_at_ms: NOW - 300_000,
+            latitude: 38.501235,
+            longitude: -121.001235,
+          },
+        },
+      })),
+    });
+
+    const result = await createCore(repository, tesla).getVehicleSummary(
+      NOW,
+      1,
+      3,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      summary: {
+        schema_version: 3,
+        location: {
+          captured_at: new Date(NOW - 120_000).toISOString(),
+          latitude: 37.501235,
+          longitude: -122.001235,
+        },
+      },
+    });
+  });
+
+  test("does not persist an out-of-window provider location", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1,
+      account_generation: 1,
+      reauthorization_required: false,
+      tokens: LOCATION_TOKENS,
+    };
+    const tesla = createTesla({
+      fetchVehicleSnapshot: vi.fn(async () => ({
+        ok: true,
+        snapshot: {
+          ...SNAPSHOT,
+          location: {
+            captured_at_ms: NOW - 86_400_001,
+            latitude: 37.501235,
+            longitude: -122.001235,
+          },
+        },
+      })),
+    });
+
+    const result = await createCore(repository, tesla).getVehicleSummary(
+      NOW,
+      1,
+      3,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      summary: { schema_version: 3, location: null },
+    });
+    expect(repository.cachedSnapshot?.snapshot.location).toBeNull();
+  });
+
+  test("schema two refresh preserves a valid last-known location for later sleep", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1,
+      account_generation: 1,
+      reauthorization_required: false,
+      tokens: LOCATION_TOKENS,
+    };
+    repository.cachedSnapshot = {
+      account_generation: 1,
+      selected_vehicle_id: VEHICLE.vin,
+      snapshot: {
+        ...SNAPSHOT,
+        checked_at_ms: NOW - 2_000,
+        location: {
+          captured_at_ms: NOW - 120_000,
+          latitude: 37.501235,
+          longitude: -122.001235,
+        },
+      },
+      stale: false,
+    };
+    const asleep = { ...VEHICLE, state: "asleep" };
+    const tesla = createTesla({
+      listVehicles: vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, vehicles: [VEHICLE] })
+        .mockResolvedValueOnce({ ok: true, vehicles: [asleep] }),
+    });
+    const core = createCore(repository, tesla);
+
+    const versionTwo = await core.getVehicleSummary(NOW, 1, 2);
+    const sleepingVersionThree = await core.getVehicleSummary(
+      NOW + 2_000,
+      1,
+      3,
+    );
+
+    expect(versionTwo).toMatchObject({
+      ok: true,
+      summary: { schema_version: 2 },
+    });
+    expect(sleepingVersionThree).toMatchObject({
+      ok: true,
+      summary: {
+        schema_version: 3,
+        snapshot: { vehicle_connectivity: "asleep" },
+        location: {
+          age_seconds: 122,
+          latitude: 37.501235,
+          longitude: -122.001235,
+        },
+      },
+    });
+    expect(tesla.fetchVehicleSnapshot).toHaveBeenCalledTimes(1);
+    expect(tesla.fetchVehicleSnapshot.mock.calls[0]).toHaveLength(3);
+  });
+
+  test("keeps a last-known location while asleep without waking or fetching data", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1,
+      account_generation: 1,
+      reauthorization_required: false,
+      tokens: LOCATION_TOKENS,
+    };
+    repository.cachedSnapshot = {
+      account_generation: 1,
+      selected_vehicle_id: VEHICLE.vin,
+      snapshot: {
+        ...SNAPSHOT,
+        location: {
+          captured_at_ms: NOW - 7_200_000,
+          latitude: 37.501235,
+          longitude: -122.001235,
+        },
+      },
+      stale: false,
+    };
+    const asleep = { ...VEHICLE, state: "asleep" };
+    const tesla = createTesla({
+      listVehicles: vi.fn(async () => ({ ok: true, vehicles: [asleep] })),
+    });
+
+    const result = await createCore(repository, tesla).getVehicleSummary(NOW, 1, 3);
+
+    expect(result).toMatchObject({
+      ok: true,
+      summary: {
+        schema_version: 3,
+        snapshot: { freshness: "stale_cache", vehicle_connectivity: "asleep" },
+        location: { age_seconds: 7_200 },
+      },
+    });
+    expect(tesla.fetchVehicleSnapshot).not.toHaveBeenCalled();
+  });
+
+  test("hides a location older than the maximum stale window", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1,
+      account_generation: 1,
+      reauthorization_required: false,
+      tokens: LOCATION_TOKENS,
+    };
+    repository.cachedSnapshot = {
+      account_generation: 1,
+      snapshot: {
+        ...SNAPSHOT,
+        location: {
+          captured_at_ms: NOW - 86_400_001,
+          latitude: 37.501235,
+          longitude: -122.001235,
+        },
+      },
+      stale: false,
+    };
+
+    const result = await createCore(repository).getVehicleSummary(NOW, 900, 3);
+
+    expect(result).toMatchObject({
+      ok: true,
+      summary: { schema_version: 3, location: null },
+    });
+  });
+
+  test("hides a cached location more than five minutes in the future", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1,
+      account_generation: 1,
+      reauthorization_required: false,
+      tokens: LOCATION_TOKENS,
+    };
+    repository.cachedSnapshot = {
+      account_generation: 1,
+      snapshot: {
+        ...SNAPSHOT,
+        location: {
+          captured_at_ms: NOW + 300_001,
+          latitude: 37.501235,
+          longitude: -122.001235,
+        },
+      },
+      stale: false,
+    };
+
+    const result = await createCore(repository).getVehicleSummary(NOW, 900, 3);
+
+    expect(result).toMatchObject({
+      ok: true,
+      summary: { schema_version: 3, location: null },
+    });
+  });
+
   test("consumes both OAuth launch and callback state exactly once", async () => {
     const repository = new MemoryRepository();
     repository.authorization = {

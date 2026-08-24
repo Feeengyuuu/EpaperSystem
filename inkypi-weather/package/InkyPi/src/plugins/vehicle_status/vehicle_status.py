@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import base64
 from copy import deepcopy
 from datetime import datetime, timezone
+from io import BytesIO
+import hashlib
+import hmac
 import json
 import logging
 import math
 from pathlib import Path
 import threading
 import time
+from urllib.parse import urlencode
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
@@ -27,12 +32,34 @@ from utils.safe_image import ImageLimits, safe_open_image
 logger = logging.getLogger(__name__)
 
 BRIDGE_ORIGIN = "https://epaper-vehicle-bridge.superxfy.workers.dev"
-BRIDGE_SUMMARY_URL = f"{BRIDGE_ORIGIN}/api/vehicle-summary?schema_version=2"
+BRIDGE_SUMMARY_URL = f"{BRIDGE_ORIGIN}/api/vehicle-summary?schema_version=3"
 BRIDGE_TOKEN_ENV = "EPAPER_VEHICLE_BRIDGE_TOKEN"
+GOOGLE_MAPS_KEY_ENVS = ("GOOGLE_MAPS_API_KEY", "Google_KEY", "GOOGLE_KEY")
+GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+GOOGLE_STATIC_MAP_URL = "https://maps.googleapis.com/maps/api/staticmap"
 SUMMARY_MAX_BYTES = 64 * 1024
 CACHE_MAX_BYTES = 64 * 1024
-CACHE_FILE_NAME = "summary-v2.json"
-LEGACY_CACHE_FILE_NAME = "summary-v1.json"
+CACHE_FILE_NAME = "summary-v3.json"
+LEGACY_CACHE_FILE_NAME = "summary-v2.json"
+OLDEST_CACHE_FILE_NAME = "summary-v1.json"
+LOCATION_PRESENTATION_FILE_NAME = "location-presentation-v1.json"
+LOCATION_PRESENTATION_MAX_BYTES = 256 * 1024
+LOCATION_MAP_MAX_BYTES = 128 * 1024
+LOCATION_ADDRESS_MAX_CHARS = 256
+LOCATION_MAX_AGE_SECONDS = 86_400
+LOCATION_FUTURE_TOLERANCE_SECONDS = 300
+LOCATION_MAP_BOX = (442, 18, 650, 76)
+LOCATION_MAP_SIZE = (
+    LOCATION_MAP_BOX[2] - LOCATION_MAP_BOX[0],
+    LOCATION_MAP_BOX[3] - LOCATION_MAP_BOX[1],
+)
+LOCATION_MAP_LIMITS = ImageLimits(
+    max_bytes=LOCATION_MAP_MAX_BYTES,
+    max_width=LOCATION_MAP_SIZE[0],
+    max_height=LOCATION_MAP_SIZE[1],
+    max_pixels=LOCATION_MAP_SIZE[0] * LOCATION_MAP_SIZE[1],
+    allowed_formats=frozenset({"PNG"}),
+)
 VEHICLE_IMAGE_NAME = "vehicle.png"
 VEHICLE_WORDMARK_NAME = "grey_bullet_wordmark.png"
 DASHBOARD_ICON_DIR_NAME = "dashboard_icons"
@@ -60,7 +87,7 @@ VEHICLE_WORDMARK_LIMITS = ImageLimits(
 )
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 LOCAL_MAX_STALE_SECONDS = 86_400
-VEHICLE_ART_BOX = (300, 20, 500, 96)
+VEHICLE_ART_BOX = (300, 26, 438, 92)
 VEHICLE_WORDMARK_BOX = (40, 20, 250, 60)
 HEADER_IDENTITY_RIGHT = 300
 GREY_BULLET_NAMES = frozenset({"gray bullet", "grey bullet"})
@@ -88,6 +115,8 @@ _TOP_KEYS_V2 = {
     "software_update",
     "preferences",
 }
+_TOP_KEYS_V3 = _TOP_KEYS_V2 | {"location"}
+_LOCATION_KEYS = {"captured_at", "age_seconds", "latitude", "longitude"}
 _SNAPSHOT_KEYS = {"captured_at", "freshness", "age_seconds", "vehicle_connectivity"}
 _VEHICLE_KEYS_V1 = {
     "key",
@@ -308,7 +337,10 @@ _UI_TEXT = {
         "pressure_partial": "PRESSURES PARTIAL",
         "pressure_ok": "PRESSURES OK",
         "updated": "UPDATED {age} AGO / {freshness}",
-        "read_only_footer": "READ ONLY / NO WAKE / NO COMMANDS / NO LOCATION",
+        "read_only_footer": "READ ONLY / NO WAKE / NO COMMANDS",
+        "location_current": "CURRENT / GOOGLE MAPS",
+        "location_last_known": "LAST KNOWN {age} / GOOGLE MAPS",
+        "location_unavailable": "LOCATION UNAVAILABLE",
         "unknown": "UNKNOWN",
         "none": "NONE",
         "not_reported": "NOT REPORTED",
@@ -340,7 +372,7 @@ _UI_TEXT = {
         "age_hours": "{value}H",
         "duration_minutes": "{value}M",
         "duration_hours": "{hours}H {minutes}M",
-        "setup_footer": "Read-only / no wake / no commands / no location",
+        "setup_footer": "Read-only / no wake / no commands",
         "connect_bridge_title": "CONNECT BRIDGE",
         "connect_bridge_message": "Add {token} in API Keys.",
         "status_old_title": "STATUS TOO OLD",
@@ -430,7 +462,10 @@ _UI_TEXT = {
         "pressure_partial": "胎压数据不完整",
         "pressure_ok": "胎压正常",
         "updated": "{age}前更新 / {freshness}",
-        "read_only_footer": "只读 / 不唤醒 / 不读取位置 / 不发送指令",
+        "read_only_footer": "只读 / 不唤醒 / 不发送指令",
+        "location_current": "当前位置 / GOOGLE MAPS",
+        "location_last_known": "上次位置 {age} 前 / GOOGLE MAPS",
+        "location_unavailable": "位置不可用",
         "unknown": "未知",
         "none": "无更新",
         "not_reported": "未上报",
@@ -462,7 +497,7 @@ _UI_TEXT = {
         "age_hours": "{value}小时",
         "duration_minutes": "{value}分",
         "duration_hours": "{hours}小时{minutes}分",
-        "setup_footer": "只读 / 不唤醒 / 不读取位置 / 不发送指令",
+        "setup_footer": "只读 / 不唤醒 / 不发送指令",
         "connect_bridge_title": "连接车辆桥接",
         "connect_bridge_message": "请在 API 密钥中添加 {token}。",
         "status_old_title": "车辆状态已过期",
@@ -619,23 +654,23 @@ class VehicleStatus(BasePlugin):
             return self._theme_only_image(settings, dimensions, theme)
 
         cache_seconds = _int_setting(settings, "cacheSeconds", 900, 0, 86_400)
-        force_refresh = any(
-            _bool_setting(settings, key, False)
-            for key in ("forceRefresh", "force_refresh")
-        )
+        force_refresh = any(_bool_setting(settings, key, False) for key in ("forceRefresh", "force_refresh"))
 
         with _CACHE_LOCK:
             cached = self._read_cache_unlocked()
             now = time.time()
             cached_is_usable = _cache_within_max_stale(cached, now)
-            if (
-                not force_refresh
-                and cached_is_usable
-                and self._cache_is_fresh(cached, cache_seconds, now)
-            ):
+            if not force_refresh and cached_is_usable and self._cache_is_fresh(cached, cache_seconds, now):
                 summary = _advance_cached_age(cached["summary"], cached["fetched_at"], now)
                 provenance = _local_cache_provenance(summary)
-                return self._render_attested(summary, dimensions, theme, settings, provenance)
+                return self._render_attested(
+                    summary,
+                    dimensions,
+                    theme,
+                    settings,
+                    provenance,
+                    self._presentation_for_cache(cached, now, language),
+                )
 
             token = str(device_config.load_env_key(BRIDGE_TOKEN_ENV) or "").strip()
             if not token:
@@ -647,6 +682,7 @@ class VehicleStatus(BasePlugin):
                         theme,
                         settings,
                         SourceProvenance.STALE_CACHE,
+                        self._presentation_for_cache(cached, now, language),
                     )
                 if cached:
                     return self._render_local_message(
@@ -669,7 +705,8 @@ class VehicleStatus(BasePlugin):
                 )
 
             try:
-                result = get_http_client().request_json(
+                client = get_http_client()
+                result = client.request_json(
                     "GET",
                     BRIDGE_SUMMARY_URL,
                     headers={"Authorization": f"Bearer {token}"},
@@ -690,6 +727,7 @@ class VehicleStatus(BasePlugin):
                         theme,
                         settings,
                         SourceProvenance.STALE_CACHE,
+                        self._presentation_for_cache(cached, now, language),
                     )
                 if cached:
                     return self._render_local_message(
@@ -707,6 +745,43 @@ class VehicleStatus(BasePlugin):
                     language,
                 )
 
+            should_replace_cache = _should_replace_local_cache(cached, summary, now)
+            if not should_replace_cache and cached_is_usable:
+                cached_summary = _advance_cached_age(
+                    cached["summary"],
+                    cached["fetched_at"],
+                    now,
+                )
+                return self._render_attested(
+                    cached_summary,
+                    dimensions,
+                    theme,
+                    settings,
+                    _local_cache_provenance(cached_summary),
+                    self._presentation_for_cache(cached, now, language),
+                )
+
+            location_fingerprint = None
+            location_presentation = None
+            if summary["schema_version"] == 3 and summary["location"] is not None:
+                location_age = _timestamp_age(summary["location"]["captured_at"], now)
+                if -LOCATION_FUTURE_TOLERANCE_SECONDS <= location_age <= LOCATION_MAX_AGE_SECONDS:
+                    location_fingerprint = _location_fingerprint(
+                        summary["location"],
+                        token,
+                        language,
+                    )
+                    location_presentation = self._location_presentation_for_live(
+                        client,
+                        device_config,
+                        summary["location"],
+                        location_fingerprint,
+                        language,
+                        now,
+                    )
+                else:
+                    logger.warning("Vehicle location map unavailable reason=outside_time_window")
+
             provenance = _bridge_provenance(summary)
             image = self._render_attested(
                 summary,
@@ -714,15 +789,34 @@ class VehicleStatus(BasePlugin):
                 theme,
                 settings,
                 provenance,
+                location_presentation,
             )
-            if _should_replace_local_cache(cached, summary, now):
+            cache_committed = False
+            if should_replace_cache:
                 try:
-                    self._write_cache_unlocked({"fetched_at": now, "summary": summary})
+                    self._write_cache_unlocked(
+                        {
+                            "fetched_at": now,
+                            "summary": summary,
+                            "location_fingerprint": location_fingerprint,
+                            "location_language": language,
+                        }
+                    )
+                    cache_committed = True
                 except Exception as exc:
                     logger.warning(
                         "Vehicle cache write failed type=%s",
                         type(exc).__name__,
                     )
+            if (
+                cache_committed
+                and location_presentation is not None
+                and location_presentation.get("_pending_write") is True
+            ):
+                try:
+                    self._write_location_presentation(location_presentation)
+                except Exception as exc:
+                    _log_location_cache_failure("write", exc)
             return image
 
     def _theme_only_image(self, settings, dimensions, theme):
@@ -759,9 +853,18 @@ class VehicleStatus(BasePlugin):
             theme,
             settings,
             provenance,
+            self._presentation_for_cache(cached, now, language),
         )
 
-    def _render_attested(self, summary, dimensions, theme, settings, provenance):
+    def _render_attested(
+        self,
+        summary,
+        dimensions,
+        theme,
+        settings,
+        provenance,
+        location_presentation=None,
+    ):
         display_summary = dict(summary)
         display_snapshot = dict(summary["snapshot"])
         display_snapshot["freshness"] = {
@@ -771,7 +874,13 @@ class VehicleStatus(BasePlugin):
             SourceProvenance.LOCAL_FALLBACK: "stale_cache",
         }[provenance]
         display_summary["snapshot"] = display_snapshot
-        image = self._render_summary(display_summary, dimensions, theme, settings)
+        image = self._render_summary(
+            display_summary,
+            dimensions,
+            theme,
+            settings,
+            location_presentation=location_presentation,
+        )
         if provenance in {SourceProvenance.STALE_CACHE, SourceProvenance.LOCAL_FALLBACK}:
             image.info[SKIP_CACHE_IMAGE_INFO_KEY] = True
         return attach_source_provenance(image, provenance)
@@ -789,6 +898,14 @@ class VehicleStatus(BasePlugin):
         root = self.cache_dir(leaf="cache", create=create)
         return Path(root) / LEGACY_CACHE_FILE_NAME
 
+    def _oldest_cache_file(self, *, create=False):
+        root = self.cache_dir(leaf="cache", create=create)
+        return Path(root) / OLDEST_CACHE_FILE_NAME
+
+    def _location_presentation_file(self, *, create=True):
+        root = self.cache_dir(leaf="cache", create=create)
+        return Path(root) / LOCATION_PRESENTATION_FILE_NAME
+
     def _read_cache(self, *, create=False):
         with _CACHE_LOCK:
             return self._read_cache_unlocked(create=create)
@@ -797,6 +914,7 @@ class VehicleStatus(BasePlugin):
         paths = (
             self._cache_file(create=create),
             self._legacy_cache_file(create=False),
+            self._oldest_cache_file(create=False),
         )
         candidates = []
         for path in paths:
@@ -804,15 +922,39 @@ class VehicleStatus(BasePlugin):
                 if not path.is_file() or path.stat().st_size > CACHE_MAX_BYTES:
                     continue
                 payload = json.loads(path.read_text(encoding="utf-8"))
-                if type(payload) is not dict or set(payload) != {"fetched_at", "summary"}:
+                if type(payload) is not dict or set(payload) not in (
+                    {"fetched_at", "summary"},
+                    {"fetched_at", "summary", "location_fingerprint"},
+                    {
+                        "fetched_at",
+                        "summary",
+                        "location_fingerprint",
+                        "location_language",
+                    },
+                ):
                     continue
                 fetched_at = _number(payload.get("fetched_at"), 0, 100_000_000_000)
                 if fetched_at is None:
                     continue
+                location_fingerprint = _sanitize_location_fingerprint(payload.get("location_fingerprint"))
+                if (
+                    "location_fingerprint" in payload
+                    and payload["location_fingerprint"] is not None
+                    and location_fingerprint is None
+                ):
+                    continue
+                location_language = _sanitize_location_language(payload.get("location_language"))
+                if "location_language" in payload and (location_fingerprint is None or location_language is None):
+                    continue
+                summary = sanitize_summary(payload.get("summary"))
+                if summary.get("schema_version") == 3 and summary.get("location") is not None:
+                    continue
                 candidates.append(
                     {
                         "fetched_at": fetched_at,
-                        "summary": sanitize_summary(payload.get("summary")),
+                        "summary": summary,
+                        "location_fingerprint": location_fingerprint,
+                        "location_language": location_language,
                     }
                 )
             except (OSError, UnicodeError, json.JSONDecodeError, SummaryContractError):
@@ -840,10 +982,249 @@ class VehicleStatus(BasePlugin):
         if fetched_at is None:
             raise SummaryContractError("cache fetched_at is invalid")
         summary = sanitize_summary(payload.get("summary"))
+        location_fingerprint = _sanitize_location_fingerprint(payload.get("location_fingerprint"))
+        if payload.get("location_fingerprint") is not None and location_fingerprint is None:
+            raise SummaryContractError("location fingerprint is invalid")
+        location_language = _sanitize_location_language(payload.get("location_language"))
+        if location_fingerprint is not None and location_language is None:
+            raise SummaryContractError("location language is invalid")
+        disk_summary = deepcopy(summary)
+        if disk_summary["schema_version"] == 3:
+            disk_summary["location"] = None
+        disk_payload = {"fetched_at": fetched_at, "summary": disk_summary}
+        if location_fingerprint is not None:
+            disk_payload["location_fingerprint"] = location_fingerprint
+            disk_payload["location_language"] = location_language
         path = self._cache_file(create=True)
         atomic_write_json(
             path,
-            {"fetched_at": fetched_at, "summary": summary},
+            disk_payload,
+            mode=0o600,
+        )
+
+    def _presentation_for_cache(self, cached, now, language):
+        if not cached or cached.get("location_language") != language:
+            return None
+        return self._read_location_presentation(
+            now=now,
+            expected_fingerprint=cached.get("location_fingerprint"),
+            expected_language=language,
+        )
+
+    def _location_presentation_for_live(
+        self,
+        client,
+        device_config,
+        location,
+        location_fingerprint,
+        language,
+        now,
+    ):
+        existing = self._read_location_presentation(
+            now=now,
+            expected_fingerprint=location_fingerprint,
+            expected_language=language,
+        )
+        if existing is not None:
+            return self._refresh_matching_location_presentation(
+                existing,
+                location["captured_at"],
+                now,
+            )
+
+        api_key = self._google_maps_api_key(device_config)
+        if not api_key:
+            logger.warning("Vehicle location map unavailable reason=missing_google_key")
+            return None
+
+        coordinate = _location_coordinate(location)
+        try:
+            geocode_result = client.request_json(
+                "GET",
+                f"{GOOGLE_GEOCODE_URL}?{urlencode({'latlng': coordinate, 'language': language, 'key': api_key})}",
+                allow_redirects=False,
+                timeout=(4, 8),
+                max_bytes=LOCATION_MAP_MAX_BYTES,
+            )
+            address = _google_formatted_address(geocode_result.data)
+        except Exception as exc:
+            _log_google_failure("geocode", exc)
+            return None
+
+        map_query = urlencode(
+            {
+                "center": coordinate,
+                "zoom": "15",
+                "size": f"{LOCATION_MAP_SIZE[0]}x{LOCATION_MAP_SIZE[1]}",
+                "scale": "1",
+                "format": "png",
+                "maptype": "roadmap",
+                "language": language,
+                "markers": f"color:red|{coordinate}",
+                "key": api_key,
+            }
+        )
+        try:
+            map_result = client.request_bytes(
+                "GET",
+                f"{GOOGLE_STATIC_MAP_URL}?{map_query}",
+                allow_redirects=False,
+                timeout=(4, 10),
+                max_bytes=LOCATION_MAP_MAX_BYTES,
+            )
+            map_image, map_png_base64 = _validated_location_map(map_result.data)
+        except Exception as exc:
+            _log_google_failure("static_map", exc)
+            return None
+
+        presentation = {
+            "location_fingerprint": location_fingerprint,
+            "captured_at": location["captured_at"],
+            "fetched_at": now,
+            "formatted_address": address,
+            "language": language,
+            "map_png_base64": map_png_base64,
+            "map_image": map_image,
+            "age_seconds": _timestamp_age(location["captured_at"], now),
+            "_pending_write": True,
+        }
+        return presentation
+
+    def _google_maps_api_key(self, device_config):
+        for key_name in GOOGLE_MAPS_KEY_ENVS:
+            value = str(device_config.load_env_key(key_name) or "").strip()
+            if value:
+                return value
+        return ""
+
+    def _read_location_presentation(
+        self,
+        *,
+        now,
+        expected_fingerprint,
+        expected_language,
+    ):
+        expected_fingerprint = _sanitize_location_fingerprint(expected_fingerprint)
+        if expected_fingerprint is None:
+            return None
+        path = self._location_presentation_file(create=False)
+        try:
+            if not path.is_file() or path.stat().st_size > LOCATION_PRESENTATION_MAX_BYTES:
+                return None
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if type(payload) is not dict or set(payload) != {
+                "version",
+                "location_fingerprint",
+                "captured_at",
+                "fetched_at",
+                "formatted_address",
+                "language",
+                "map_png_base64",
+            }:
+                return None
+            if type(payload["version"]) is not int or payload["version"] != 1:
+                return None
+            fingerprint = _sanitize_location_fingerprint(payload["location_fingerprint"])
+            if fingerprint != expected_fingerprint:
+                return None
+            language = _sanitize_location_language(payload["language"])
+            if language is None or language != expected_language:
+                return None
+            captured_at = _timestamp(payload["captured_at"], "captured_at")
+            fetched_at = _number(payload["fetched_at"], 0, 100_000_000_000)
+            if fetched_at is None:
+                return None
+            address = _string(
+                payload["formatted_address"],
+                LOCATION_ADDRESS_MAX_CHARS,
+                "formatted_address",
+            )
+            encoded_map = payload["map_png_base64"]
+            if type(encoded_map) is not str or len(encoded_map) > ((LOCATION_MAP_MAX_BYTES * 4) // 3) + 8:
+                return None
+            map_bytes = base64.b64decode(encoded_map, validate=True)
+            if len(map_bytes) > LOCATION_MAP_MAX_BYTES:
+                return None
+            map_image, clean_encoded_map = _validated_location_map(map_bytes)
+            age_seconds = _timestamp_age(captured_at, now)
+            if age_seconds < -LOCATION_FUTURE_TOLERANCE_SECONDS or age_seconds > LOCATION_MAX_AGE_SECONDS:
+                return None
+            return {
+                "location_fingerprint": fingerprint,
+                "captured_at": captured_at,
+                "fetched_at": fetched_at,
+                "formatted_address": address,
+                "language": language,
+                "map_png_base64": clean_encoded_map,
+                "map_image": map_image,
+                "age_seconds": max(0, age_seconds),
+            }
+        except (
+            OSError,
+            UnicodeError,
+            json.JSONDecodeError,
+            ValueError,
+            TypeError,
+        ) as exc:
+            _log_location_cache_failure("read", exc)
+            return None
+
+    def _refresh_matching_location_presentation(self, presentation, captured_at, now):
+        existing_epoch = _timestamp_epoch(presentation["captured_at"])
+        updated_epoch = _timestamp_epoch(captured_at)
+        if updated_epoch < existing_epoch:
+            return presentation
+        refreshed = dict(presentation)
+        refreshed["captured_at"] = captured_at
+        refreshed["fetched_at"] = now
+        refreshed["age_seconds"] = max(0, _timestamp_age(captured_at, now))
+        if captured_at != presentation["captured_at"]:
+            try:
+                self._write_location_presentation(refreshed)
+            except Exception as exc:
+                _log_location_cache_failure("refresh", exc)
+        return refreshed
+
+    def _write_location_presentation(self, presentation):
+        fingerprint = _sanitize_location_fingerprint(presentation.get("location_fingerprint"))
+        if fingerprint is None:
+            raise SummaryContractError("location fingerprint is invalid")
+        captured_at = _timestamp(presentation.get("captured_at"), "captured_at")
+        fetched_at = _number(
+            presentation.get("fetched_at"),
+            0,
+            100_000_000_000,
+        )
+        if fetched_at is None:
+            raise SummaryContractError("location fetched_at is invalid")
+        address = _string(
+            presentation.get("formatted_address"),
+            LOCATION_ADDRESS_MAX_CHARS,
+            "formatted_address",
+        )
+        language = _sanitize_location_language(presentation.get("language"))
+        if language is None:
+            raise SummaryContractError("location language is invalid")
+        encoded_map = presentation.get("map_png_base64")
+        if type(encoded_map) is not str:
+            raise SummaryContractError("location map is invalid")
+        map_bytes = base64.b64decode(encoded_map, validate=True)
+        _, clean_encoded_map = _validated_location_map(map_bytes)
+        payload = {
+            "version": 1,
+            "location_fingerprint": fingerprint,
+            "captured_at": captured_at,
+            "fetched_at": fetched_at,
+            "formatted_address": address,
+            "language": language,
+            "map_png_base64": clean_encoded_map,
+        }
+        encoded_size = len((json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8"))
+        if encoded_size > LOCATION_PRESENTATION_MAX_BYTES:
+            raise SummaryContractError("location presentation is too large")
+        atomic_write_json(
+            self._location_presentation_file(create=True),
+            payload,
             mode=0o600,
         )
 
@@ -854,7 +1235,14 @@ class VehicleStatus(BasePlugin):
         age = now - cached["fetched_at"]
         return 0 <= age < cache_seconds
 
-    def _render_summary(self, summary, dimensions, theme, settings):
+    def _render_summary(
+        self,
+        summary,
+        dimensions,
+        theme,
+        settings,
+        location_presentation=None,
+    ):
         colors = _render_colors(theme)
         language = _language(settings)
         canvas = Image.new("RGB", (800, 480), colors["background"])
@@ -864,16 +1252,14 @@ class VehicleStatus(BasePlugin):
         climate = summary["climate"]
         closures = summary["closures"]
         snapshot = summary["snapshot"]
-        is_v2 = summary["schema_version"] == 2
-        if is_v2:
+        has_extended_status = summary["schema_version"] in {2, 3}
+        if has_extended_status:
             charging = summary["charging"]
             preferences = summary["preferences"]
             tires = summary["tires"]
             software_update = summary["software_update"]
             hero_range = battery["rated_range"] or battery["estimated_range"]
-            hero_range_label = (
-                "RATED RANGE" if battery["rated_range"] is not None else "EST. RANGE"
-            )
+            hero_range_label = "RATED RANGE" if battery["rated_range"] is not None else "EST. RANGE"
         else:
             charging = {
                 "state": battery["charging_state"],
@@ -904,9 +1290,7 @@ class VehicleStatus(BasePlugin):
             HEADER_IDENTITY_RIGHT - 40,
         )
         model_line = " / ".join(
-            _enum_text(language, "provider", item)
-            for item in (vehicle["model"], vehicle["trim"])
-            if item
+            _enum_text(language, "provider", item) for item in (vehicle["model"], vehicle["trim"]) if item
         ) or _t(language, "vehicle_fallback")
         model_line = _ellipsize_text(
             draw,
@@ -919,6 +1303,9 @@ class VehicleStatus(BasePlugin):
         draw.text((42, 67), model_line, font=model_font, fill=colors["muted"])
 
         vehicle_art = _load_vehicle_art()
+        alpha_bounds = vehicle_art.getchannel("A").getbbox()
+        if alpha_bounds is not None:
+            vehicle_art = vehicle_art.crop(alpha_bounds)
         art_left, art_top, art_right, art_bottom = VEHICLE_ART_BOX
         vehicle_art.thumbnail(
             (art_right - art_left, art_bottom - art_top),
@@ -934,6 +1321,61 @@ class VehicleStatus(BasePlugin):
             outline.putalpha(outline_mask)
             canvas.paste(outline, (art_x, art_y), outline)
         canvas.paste(vehicle_art, (art_x, art_y), vehicle_art)
+
+        map_left, map_top, map_right, map_bottom = LOCATION_MAP_BOX
+        if location_presentation is not None:
+            location_map = location_presentation.get("map_image")
+            if isinstance(location_map, Image.Image) and location_map.size == LOCATION_MAP_SIZE:
+                canvas.paste(location_map.convert("RGB"), (map_left, map_top))
+                location_age = max(0, location_presentation.get("age_seconds", 0))
+                location_label = (
+                    _t(language, "location_current")
+                    if location_age <= 900
+                    else _t(
+                        language,
+                        "location_last_known",
+                        age=_age_text(location_age, language),
+                    )
+                )
+                draw.text(
+                    (map_left, map_bottom + 1),
+                    _ellipsize_text(
+                        draw,
+                        location_label,
+                        _font(8, True),
+                        map_right - map_left,
+                    ),
+                    font=_font(8, True),
+                    fill=colors["muted"],
+                )
+                draw.text(
+                    (map_left, map_bottom + 11),
+                    _ellipsize_text(
+                        draw,
+                        location_presentation["formatted_address"],
+                        _font(9, True),
+                        map_right - map_left,
+                    ),
+                    font=_font(9, True),
+                    fill=colors["ink"],
+                )
+            else:
+                location_presentation = None
+        if location_presentation is None:
+            draw.rounded_rectangle(
+                LOCATION_MAP_BOX,
+                radius=6,
+                outline=colors["rule"],
+                width=1,
+            )
+            _center_text(
+                draw,
+                (map_left + map_right) // 2,
+                map_top + 21,
+                _t(language, "location_unavailable"),
+                _font(9, True),
+                colors["muted"],
+            )
 
         status_label = _enum_text(
             language,
@@ -997,7 +1439,7 @@ class VehicleStatus(BasePlugin):
             _font(22, True),
             colors["ink"],
         )
-        if is_v2 and battery["usable_level_percent"] is not None:
+        if has_extended_status and battery["usable_level_percent"] is not None:
             usable = int(round(battery["usable_level_percent"]))
             draw.text(
                 (58, 211),
@@ -1009,7 +1451,7 @@ class VehicleStatus(BasePlugin):
 
         charge = charging["state"] or "unknown"
         charge_color = _charging_state_color(charge, colors)
-        cable = charging.get("cable_type") if is_v2 else None
+        cable = charging.get("cable_type") if has_extended_status else None
         charge_width = 142 if cable else 224
         charge_text = _ellipsize_text(
             draw,
@@ -1032,7 +1474,7 @@ class VehicleStatus(BasePlugin):
         limit_text = "--" if limit is None else f"{int(round(limit))}%"
         power = charging["power_kw"]
         power_text = _number_with_unit(power, "unit_kw", None, language)
-        if is_v2:
+        if has_extended_status:
             rows = _v2_energy_rows(
                 battery,
                 charging,
@@ -1105,7 +1547,7 @@ class VehicleStatus(BasePlugin):
                 "sentry",
                 value=_enum_text(language, "state", vehicle["sentry_mode"]),
             )
-            if is_v2
+            if has_extended_status
             else _t(language, "sentry_not_reported")
         )
         sentry_text = _ellipsize_text(draw, sentry_text, _font(10, True), 92)
@@ -1140,7 +1582,7 @@ class VehicleStatus(BasePlugin):
             _t(language, "unknown"),
         )
         draw.text((350, 232), port_text, font=_font(10, True), fill=colors["muted"])
-        if is_v2:
+        if has_extended_status:
             security_flag = _security_flag_text(
                 vehicle,
                 settings,
@@ -1179,7 +1621,7 @@ class VehicleStatus(BasePlugin):
             _t(language, "unknown"),
         )
         draw.text((580, 149), climate_status, font=_font(19, True), fill=colors["ink"])
-        if is_v2:
+        if has_extended_status:
             keeper = _enum_text(language, "keeper", climate["keeper_mode"])
             _right_text(
                 draw,
@@ -1206,7 +1648,7 @@ class VehicleStatus(BasePlugin):
             ),
         )
         draw.text((580, 178), temperature_line, font=_font(14, True), fill=colors["ink"])
-        if is_v2:
+        if has_extended_status:
             climate_lines = _v2_climate_lines(
                 climate,
                 settings,
@@ -1232,7 +1674,7 @@ class VehicleStatus(BasePlugin):
             colors,
             "vehicle",
         )
-        if is_v2:
+        if has_extended_status:
             display_state = vehicle["center_display_state"]
             _right_text(
                 draw,
@@ -1300,7 +1742,7 @@ class VehicleStatus(BasePlugin):
             colors,
             "tires",
         )
-        if is_v2:
+        if has_extended_status:
             _render_tires(draw, tires, settings, preferences, colors, language)
         else:
             draw.text(
@@ -1378,6 +1820,8 @@ def sanitize_summary(payload):
         return _sanitize_summary_v1(payload)
     if schema_version == 2:
         return _sanitize_summary_v2(payload)
+    if schema_version == 3:
+        return _sanitize_summary_v3(payload)
     raise SummaryContractError("schema version is unsupported")
 
 
@@ -1632,21 +2076,15 @@ def _sanitize_summary_v2(payload):
 
     battery_raw = _object(root["battery"], _BATTERY_KEYS_V2, "battery")
     battery = {
-        "level_percent": _nullable_number(
-            battery_raw["level_percent"], 0, 100, "battery.level_percent"
-        ),
+        "level_percent": _nullable_number(battery_raw["level_percent"], 0, 100, "battery.level_percent"),
         "usable_level_percent": _nullable_number(
             battery_raw["usable_level_percent"],
             0,
             100,
             "battery.usable_level_percent",
         ),
-        "rated_range": _measurement(
-            battery_raw["rated_range"], 0, 2_500, "battery.rated_range"
-        ),
-        "estimated_range": _measurement(
-            battery_raw["estimated_range"], 0, 2_500, "battery.estimated_range"
-        ),
+        "rated_range": _measurement(battery_raw["rated_range"], 0, 2_500, "battery.rated_range"),
+        "estimated_range": _measurement(battery_raw["estimated_range"], 0, 2_500, "battery.estimated_range"),
     }
 
     charging_raw = _object(root["charging"], _CHARGING_KEYS_V2, "charging")
@@ -1669,27 +2107,21 @@ def _sanitize_summary_v2(payload):
             10_000,
             "charging.time_to_full_minutes",
         ),
-        "power_kw": _nullable_number(
-            charging_raw["power_kw"], 0, 1_000, "charging.power_kw"
-        ),
+        "power_kw": _nullable_number(charging_raw["power_kw"], 0, 1_000, "charging.power_kw"),
         "energy_added_kwh": _nullable_number(
             charging_raw["energy_added_kwh"],
             0,
             1_000,
             "charging.energy_added_kwh",
         ),
-        "rate": _measurement(
-            charging_raw["rate"], 0, 5_000, "charging.rate", {"mi/h"}
-        ),
+        "rate": _measurement(charging_raw["rate"], 0, 5_000, "charging.rate", {"mi/h"}),
         "actual_current_a": _nullable_number(
             charging_raw["actual_current_a"],
             0,
             2_000,
             "charging.actual_current_a",
         ),
-        "voltage_v": _nullable_number(
-            charging_raw["voltage_v"], 0, 2_000, "charging.voltage_v"
-        ),
+        "voltage_v": _nullable_number(charging_raw["voltage_v"], 0, 2_000, "charging.voltage_v"),
         "phases": _nullable_number(charging_raw["phases"], 0, 10, "charging.phases"),
         "requested_current_a": _nullable_number(
             charging_raw["requested_current_a"],
@@ -1704,9 +2136,7 @@ def _sanitize_summary_v2(payload):
             "charging.max_current_a",
         ),
         "enabled": _nullable_bool(charging_raw["enabled"], "charging.enabled"),
-        "cable_type": _nullable_string(
-            charging_raw["cable_type"], 40, "charging.cable_type"
-        ),
+        "cable_type": _nullable_string(charging_raw["cable_type"], 40, "charging.cable_type"),
         "fast_charger_present": _nullable_bool(
             charging_raw["fast_charger_present"],
             "charging.fast_charger_present",
@@ -1716,9 +2146,7 @@ def _sanitize_summary_v2(payload):
             40,
             "charging.fast_charger_type",
         ),
-        "port_latch": _nullable_string(
-            charging_raw["port_latch"], 40, "charging.port_latch"
-        ),
+        "port_latch": _nullable_string(charging_raw["port_latch"], 40, "charging.port_latch"),
         "port_cold_weather_mode": _nullable_bool(
             charging_raw["port_cold_weather_mode"],
             "charging.port_cold_weather_mode",
@@ -1774,15 +2202,9 @@ def _sanitize_summary_v2(payload):
         "climate.cabin_overheat",
     )
     climate = {
-        "inside_temp_c": _nullable_number(
-            climate_raw["inside_temp_c"], -100, 100, "climate.inside_temp_c"
-        ),
-        "outside_temp_c": _nullable_number(
-            climate_raw["outside_temp_c"], -100, 100, "climate.outside_temp_c"
-        ),
-        "is_climate_on": _nullable_bool(
-            climate_raw["is_climate_on"], "climate.is_climate_on"
-        ),
+        "inside_temp_c": _nullable_number(climate_raw["inside_temp_c"], -100, 100, "climate.inside_temp_c"),
+        "outside_temp_c": _nullable_number(climate_raw["outside_temp_c"], -100, 100, "climate.outside_temp_c"),
+        "is_climate_on": _nullable_bool(climate_raw["is_climate_on"], "climate.is_climate_on"),
         "driver_target_temp_c": _nullable_number(
             climate_raw["driver_target_temp_c"],
             -100,
@@ -1795,12 +2217,8 @@ def _sanitize_summary_v2(payload):
             100,
             "climate.passenger_target_temp_c",
         ),
-        "keeper_mode": _nullable_string(
-            climate_raw["keeper_mode"], 40, "climate.keeper_mode"
-        ),
-        "defrost_mode": _nullable_string(
-            climate_raw["defrost_mode"], 40, "climate.defrost_mode"
-        ),
+        "keeper_mode": _nullable_string(climate_raw["keeper_mode"], 40, "climate.keeper_mode"),
+        "defrost_mode": _nullable_string(climate_raw["defrost_mode"], 40, "climate.defrost_mode"),
         "rear_defroster_on": _nullable_bool(
             climate_raw["rear_defroster_on"],
             "climate.rear_defroster_on",
@@ -1813,12 +2231,8 @@ def _sanitize_summary_v2(payload):
             climate_raw["wiper_heater_on"],
             "climate.wiper_heater_on",
         ),
-        "hvac_auto_mode": _nullable_string(
-            climate_raw["hvac_auto_mode"], 40, "climate.hvac_auto_mode"
-        ),
-        "fan_status": _nullable_number(
-            climate_raw["fan_status"], -1, 20, "climate.fan_status"
-        ),
+        "hvac_auto_mode": _nullable_string(climate_raw["hvac_auto_mode"], 40, "climate.hvac_auto_mode"),
+        "fan_status": _nullable_number(climate_raw["fan_status"], -1, 20, "climate.fan_status"),
         "steering_wheel_heat_level": _nullable_number(
             climate_raw["steering_wheel_heat_level"],
             -1,
@@ -1886,9 +2300,7 @@ def _sanitize_summary_v2(payload):
         "software_update",
     )
     software_update = {
-        "version": _nullable_string(
-            update_raw["version"], 64, "software_update.version"
-        ),
+        "version": _nullable_string(update_raw["version"], 64, "software_update.version"),
         "download_percent": _nullable_number(
             update_raw["download_percent"],
             0,
@@ -1952,12 +2364,41 @@ def _sanitize_summary_v2(payload):
     }
 
 
+def _sanitize_summary_v3(payload):
+    root = _object(payload, _TOP_KEYS_V3, "summary")
+    v2_payload = {key: root[key] for key in _TOP_KEYS_V2}
+    v2_payload["schema_version"] = 2
+    result = _sanitize_summary_v2(v2_payload)
+    result["schema_version"] = 3
+    result["location"] = _sanitize_location(root["location"])
+    return result
+
+
+def _sanitize_location(value):
+    if value is None:
+        return None
+    raw = _object(value, _LOCATION_KEYS, "location")
+    return {
+        "captured_at": _timestamp(raw["captured_at"], "location.captured_at"),
+        "age_seconds": _required_number(
+            raw["age_seconds"],
+            0,
+            LOCATION_MAX_AGE_SECONDS,
+            "location.age_seconds",
+        ),
+        "latitude": _required_number(raw["latitude"], -90, 90, "location.latitude"),
+        "longitude": _required_number(
+            raw["longitude"],
+            -180,
+            180,
+            "location.longitude",
+        ),
+    }
+
+
 def _sanitize_nullable_bool_object(value, expected_keys, field):
     raw = _object(value, expected_keys, field)
-    return {
-        key: _nullable_bool(raw[key], f"{field}.{key}")
-        for key in expected_keys
-    }
+    return {key: _nullable_bool(raw[key], f"{field}.{key}") for key in expected_keys}
 
 
 def _sanitize_nullable_number_object(
@@ -1968,10 +2409,7 @@ def _sanitize_nullable_number_object(
     field,
 ):
     raw = _object(value, expected_keys, field)
-    return {
-        key: _nullable_number(raw[key], minimum, maximum, f"{field}.{key}")
-        for key in expected_keys
-    }
+    return {key: _nullable_number(raw[key], minimum, maximum, f"{field}.{key}") for key in expected_keys}
 
 
 def _sanitize_closures_v2(value):
@@ -2003,12 +2441,8 @@ def _sanitize_closures_v2(value):
     for label, state in nested.items():
         if (label in open_items) != (state is True):
             raise SummaryContractError("closures open list contradicts nested state")
-    known_open = charge_port_open is True or any(
-        state is True for state in nested.values()
-    )
-    all_known_closed = charge_port_open is False and all(
-        state is False for state in nested.values()
-    )
+    known_open = charge_port_open is True or any(state is True for state in nested.values())
+    all_known_closed = charge_port_open is False and all(state is False for state in nested.values())
     expected_all_closed = False if known_open else True if all_known_closed else None
     if all_closed is not expected_all_closed:
         raise SummaryContractError("closures contradict all_closed")
@@ -2072,6 +2506,13 @@ def _nullable_number(value, minimum, maximum, field):
     return number
 
 
+def _required_number(value, minimum, maximum, field):
+    number = _number(value, minimum, maximum)
+    if number is None:
+        raise SummaryContractError(f"{field} is invalid")
+    return number
+
+
 def _measurement(
     value,
     minimum,
@@ -2105,6 +2546,73 @@ def _timestamp(value, field):
 
 def _nullable_timestamp(value, field):
     return None if value is None else _timestamp(value, field)
+
+
+def _timestamp_epoch(value):
+    normalized = _timestamp(value, "timestamp")
+    return datetime.fromisoformat(normalized.replace("Z", "+00:00")).timestamp()
+
+
+def _timestamp_age(value, now):
+    return float(now) - _timestamp_epoch(value)
+
+
+def _location_coordinate(location):
+    return f"{location['latitude']:.6f},{location['longitude']:.6f}"
+
+
+def _location_fingerprint(location, token, language):
+    presentation_identity = f"{language}\0{_location_coordinate(location)}"
+    return hmac.new(
+        str(token).encode("utf-8"),
+        presentation_identity.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _sanitize_location_fingerprint(value):
+    if value is None:
+        return None
+    if type(value) is not str or len(value) != 64:
+        return None
+    if any(character not in "0123456789abcdef" for character in value):
+        return None
+    return value
+
+
+def _sanitize_location_language(value):
+    return value if type(value) is str and value in {"en", "zh-CN"} else None
+
+
+def _google_formatted_address(payload):
+    if type(payload) is not dict or payload.get("status") != "OK":
+        raise SummaryContractError("Google geocode status is invalid")
+    results = payload.get("results")
+    if type(results) is not list or not results or len(results) > 20:
+        raise SummaryContractError("Google geocode results are invalid")
+    first = results[0]
+    if type(first) is not dict:
+        raise SummaryContractError("Google geocode result is invalid")
+    return _string(
+        first.get("formatted_address"),
+        LOCATION_ADDRESS_MAX_CHARS,
+        "formatted_address",
+    )
+
+
+def _validated_location_map(payload):
+    if type(payload) is not bytes:
+        raise SummaryContractError("Google map payload is invalid")
+    with safe_open_image(payload, limits=LOCATION_MAP_LIMITS) as source:
+        if source.size != LOCATION_MAP_SIZE:
+            raise SummaryContractError("Google map dimensions are invalid")
+        map_image = source.convert("RGB")
+    buffer = BytesIO()
+    map_image.save(buffer, format="PNG")
+    clean_payload = buffer.getvalue()
+    if len(clean_payload) > LOCATION_MAP_MAX_BYTES:
+        raise SummaryContractError("Google map payload is too large")
+    return map_image, base64.b64encode(clean_payload).decode("ascii")
 
 
 def _advance_cached_age(summary, fetched_at, now):
@@ -2173,6 +2681,25 @@ def _log_bridge_failure(exc, *, has_cache):
     )
 
 
+def _log_google_failure(kind, exc):
+    status = exc.status if isinstance(exc, HttpStatusError) else None
+    detail = f" status={status}" if status is not None else ""
+    logger.warning(
+        "Vehicle Google location unavailable kind=%s type=%s%s",
+        kind,
+        type(exc).__name__,
+        detail,
+    )
+
+
+def _log_location_cache_failure(operation, exc):
+    logger.warning(
+        "Vehicle location cache unavailable operation=%s type=%s",
+        operation,
+        type(exc).__name__,
+    )
+
+
 def _language(settings):
     value = str((settings or {}).get("language") or "zh-CN").strip().lower()
     return "en" if value in {"en", "en-us", "english"} else "zh-CN"
@@ -2205,12 +2732,7 @@ def _fixed_ui_characters(language):
     chunks.extend(_OPENING_TEXT[language].values())
     return tuple(
         sorted(
-            {
-                character
-                for chunk in chunks
-                for character in chunk
-                if ord(character) > 127 and not character.isspace()
-            }
+            {character for chunk in chunks for character in chunk if ord(character) > 127 and not character.isspace()}
         )
     )
 
@@ -2395,11 +2917,7 @@ def _charging_input_text(charging, language):
     current = _number_with_unit(charging["actual_current_a"], "unit_amp", 0, language)
     voltage = _number_with_unit(charging["voltage_v"], "unit_volt", 0, language)
     phases = charging["phases"]
-    phase_text = (
-        "--"
-        if phases is None
-        else f"{phases:g} {_t(language, 'unit_phase')}"
-    )
+    phase_text = "--" if phases is None else f"{phases:g} {_t(language, 'unit_phase')}"
     return f"{current} / {voltage} / {phase_text}"
 
 
@@ -2547,11 +3065,7 @@ def _climate_feature_text(climate, language):
         active.append(_t(language, "seat_cool", value=" ".join(cooling)))
     overheat = climate["cabin_overheat"]
     if overheat["mode"]:
-        limit = (
-            f"/{_enum_text(language, 'state', overheat['temp_limit'])}"
-            if overheat["temp_limit"]
-            else ""
-        )
+        limit = f"/{_enum_text(language, 'state', overheat['temp_limit'])}" if overheat["temp_limit"] else ""
         active.append(
             _t(
                 language,
@@ -2695,13 +3209,16 @@ def _vehicle_equipment_text(vehicle, language):
 
 
 def _render_tires(draw, tires, settings, preferences, colors, language):
-    unit = _preferred_unit(
-        settings,
-        preferences,
-        "pressureUnit",
-        "pressure_unit",
-        {"psi", "bar"},
-    ) or "bar"
+    unit = (
+        _preferred_unit(
+            settings,
+            preferences,
+            "pressureUnit",
+            "pressure_unit",
+            {"psi", "bar"},
+        )
+        or "bar"
+    )
     unit_text = _t(language, "unit_psi" if unit == "psi" else "unit_bar")
     _right_text(draw, 744, 294, unit_text, _font(10, True), colors["muted"])
     positions = (
@@ -2743,10 +3260,7 @@ def _tire_warning_level(tires, position):
         return "hard"
     if tires["soft_warnings"][position] is True:
         return "soft"
-    if (
-        tires["hard_warnings"][position] is None
-        or tires["soft_warnings"][position] is None
-    ):
+    if tires["hard_warnings"][position] is None or tires["soft_warnings"][position] is None:
         return "unknown"
     return "none"
 
@@ -2772,9 +3286,7 @@ def _tire_status(tires, colors, language):
             _t(language, "low_pressure", positions=" ".join(soft)),
             colors["warning"],
         )
-    warnings = tuple(tires["hard_warnings"].values()) + tuple(
-        tires["soft_warnings"].values()
-    )
+    warnings = tuple(tires["hard_warnings"].values()) + tuple(tires["soft_warnings"].values())
     if any(warning is None for warning in warnings):
         return _t(language, "pressure_unknown"), colors["warning"]
     if any(value is None for value in tires["pressures"].values()):
@@ -2864,14 +3376,8 @@ def _minutes_text(value, language="en"):
 def _closure_status_text(closures, language="en"):
     if closures["all_closed"] is True:
         return _t(language, "all_closed")
-    count = len(closures["open"]) + (
-        1 if closures["charge_port_open"] is True else 0
-    )
-    return (
-        _t(language, "open_count", count=count)
-        if count
-        else _t(language, "status_unknown")
-    )
+    count = len(closures["open"]) + (1 if closures["charge_port_open"] is True else 0)
+    return _t(language, "open_count", count=count) if count else _t(language, "status_unknown")
 
 
 def _closure_detail_lines(closures, language="en"):
@@ -2881,9 +3387,7 @@ def _closure_detail_lines(closures, language="en"):
         items.append(labels["charge_port"])
     if not items:
         return [
-            _t(language, "all_access_secure")
-            if closures["all_closed"] is True
-            else _t(language, "opening_incomplete")
+            _t(language, "all_access_secure") if closures["all_closed"] is True else _t(language, "opening_incomplete")
         ]
     if len(items) <= 2:
         return items

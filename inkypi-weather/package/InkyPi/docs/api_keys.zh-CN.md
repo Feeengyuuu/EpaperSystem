@@ -57,7 +57,7 @@ sudo systemctl restart inkypi
 | `OPENDOTA_API_KEY` | OpenDota | Dota Profile Dashboard | <https://www.opendota.com/api-keys> |
 | `FLIGHTAWARE_API_KEY` | FlightAware AeroAPI | Flight Radar | <https://flightaware.com/aeroapi/portal/> |
 | `RAPIDAPI_KEY` | RapidAPI | Flight Radar、Daily Knowledge | <https://rapidapi.com/hub> |
-| `GOOGLE_MAPS_API_KEY` | Google Maps Platform | Flight Radar 地图背景 | <https://console.cloud.google.com/google/maps-apis/credentials> |
+| `GOOGLE_MAPS_API_KEY` | Google Maps Platform | Flight Radar 地图背景、Vehicle Status 地图与地址 | <https://console.cloud.google.com/google/maps-apis/credentials> |
 | `EUROPEANA_API_KEY` | Europeana | Daily Art | <https://pro.europeana.eu/page/get-api> |
 | `HARVARD_ART_MUSEUMS_API_KEY` | Harvard Art Museums | Daily Art | <https://harvardartmuseums.org/collections/api> |
 | `TMDB_BEARER_TOKEN` | The Movie Database | Box Office Top Movies | <https://www.themoviedb.org/settings/api> |

@@ -243,12 +243,17 @@ async function handleVehicleSummary(
     requestedVersions.length > 1 ||
     (requestedVersions.length === 1 &&
       requestedVersions[0] !== "1" &&
-      requestedVersions[0] !== "2")
+      requestedVersions[0] !== "2" &&
+      requestedVersions[0] !== "3")
   ) {
     return jsonResponse({ error: "invalid_schema_version" }, 400);
   }
   const schemaVersion: VehicleSummarySchemaVersion =
-    requestedVersions[0] === "2" ? 2 : 1;
+    requestedVersions[0] === "3"
+      ? 3
+      : requestedVersions[0] === "2"
+        ? 2
+        : 1;
 
   const result = await options.session.getVehicleSummary(
     Date.now(),

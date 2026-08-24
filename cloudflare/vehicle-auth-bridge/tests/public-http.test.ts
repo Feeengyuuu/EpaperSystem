@@ -5,6 +5,7 @@ import type {
   VehicleSummary,
   VehicleSummaryResult,
   VehicleSummaryV2,
+  VehicleSummaryV3,
 } from "../src/contracts";
 import { createWorker, type VehicleAuthSession } from "../src/worker";
 
@@ -210,6 +211,17 @@ const SUMMARY_V2: VehicleSummaryV2 = {
     pressure_unit: null,
     charge_display_unit: null,
     use_24_hour_time: null,
+  },
+};
+
+const SUMMARY_V3: VehicleSummaryV3 = {
+  ...SUMMARY_V2,
+  schema_version: 3,
+  location: {
+    captured_at: "2026-08-05T20:28:00.000Z",
+    age_seconds: 120,
+    latitude: 37.501235,
+    longitude: -122.001235,
   },
 };
 
@@ -452,10 +464,11 @@ describe("public onboarding HTTP interface", () => {
 
   test.each([
     "?schema_version=",
-    "?schema_version=3",
+    "?schema_version=4",
     "?schema_version=1&schema_version=1",
     "?schema_version=1&schema_version=2",
     "?schema_version=2&schema_version=2",
+    "?schema_version=3&schema_version=3",
   ])(
     "rejects an invalid vehicle-summary schema version before reading vehicle data: %s",
     async (query) => {
@@ -511,6 +524,25 @@ describe("public onboarding HTTP interface", () => {
       expect.any(Number),
       900,
       2,
+    );
+  });
+
+  test("selects the location summary only when schema three is explicit", async () => {
+    const session = createSession({ ok: true, summary: SUMMARY_V3 });
+
+    const response = await workerFor(session).fetch(
+      new Request(
+        "https://example.com/api/vehicle-summary?schema_version=3",
+        { headers: readBearer() },
+      ),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(SUMMARY_V3);
+    expect(session.getVehicleSummary).toHaveBeenCalledWith(
+      expect.any(Number),
+      900,
+      3,
     );
   });
 

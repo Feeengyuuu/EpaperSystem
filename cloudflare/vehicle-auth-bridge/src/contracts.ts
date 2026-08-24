@@ -1,5 +1,5 @@
 export type SnapshotFreshness = "live" | "fresh_cache" | "stale_cache";
-export type VehicleSummarySchemaVersion = 1 | 2;
+export type VehicleSummarySchemaVersion = 1 | 2 | 3;
 
 export type NullableMeasurement = {
   value: number;
@@ -204,7 +204,17 @@ export type VehicleSummaryV2 = {
   };
 };
 
-export type VehicleSummary = VehicleSummaryV1 | VehicleSummaryV2;
+export type VehicleSummaryV3 = Omit<VehicleSummaryV2, "schema_version"> & {
+  schema_version: 3;
+  location: {
+    captured_at: string;
+    age_seconds: number;
+    latitude: number;
+    longitude: number;
+  } | null;
+};
+
+export type VehicleSummary = VehicleSummaryV1 | VehicleSummaryV2 | VehicleSummaryV3;
 
 export type OAuthCompletion =
   | { ok: true }
