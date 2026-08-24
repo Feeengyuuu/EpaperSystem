@@ -87,9 +87,11 @@ VEHICLE_WORDMARK_LIMITS = ImageLimits(
 )
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 LOCAL_MAX_STALE_SECONDS = 86_400
-VEHICLE_ART_BOX = (300, 26, 438, 92)
+VEHICLE_ART_BOX = (277, 26, 415, 92)
 VEHICLE_WORDMARK_BOX = (40, 20, 250, 60)
-HEADER_IDENTITY_RIGHT = 300
+HEADER_IDENTITY_RIGHT = VEHICLE_ART_BOX[0]
+HEADER_STATUS_LEFT = 654
+HEADER_STATUS_RIGHT = 760
 GREY_BULLET_NAMES = frozenset({"gray bullet", "grey bullet"})
 
 _CACHE_LOCK = threading.RLock()
@@ -1383,14 +1385,32 @@ class VehicleStatus(BasePlugin):
             snapshot["vehicle_connectivity"],
         )
         status_color = _connectivity_color(snapshot["vehicle_connectivity"], colors)
-        _pill(draw, (654, 27, 760, 58), status_label, status_color, colors["surface"])
+        _pill(
+            draw,
+            (HEADER_STATUS_LEFT, 27, HEADER_STATUS_RIGHT, 58),
+            status_label,
+            status_color,
+            colors["surface"],
+        )
         freshness = _enum_text(language, "freshness", snapshot["freshness"])
+        freshness_text = f"{freshness} / {_age_text(snapshot['age_seconds'], language)}"
+        freshness_max_width = HEADER_STATUS_RIGHT - HEADER_STATUS_LEFT
+        for freshness_font_size in range(13, 9, -1):
+            freshness_font = _font(freshness_font_size, True)
+            if draw.textbbox((0, 0), freshness_text, font=freshness_font)[2] <= freshness_max_width:
+                break
+        freshness_text = _ellipsize_text(
+            draw,
+            freshness_text,
+            freshness_font,
+            freshness_max_width,
+        )
         _right_text(
             draw,
-            760,
+            HEADER_STATUS_RIGHT,
             68,
-            f"{freshness} / {_age_text(snapshot['age_seconds'], language)}",
-            _font(13, True),
+            freshness_text,
+            freshness_font,
             colors["muted"],
         )
         draw.line((40, 100, 760, 100), fill=colors["rule"], width=1)

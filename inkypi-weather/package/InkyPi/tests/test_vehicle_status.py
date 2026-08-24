@@ -839,6 +839,37 @@ def test_location_presentation_is_language_specific(tmp_path, monkeypatch):
     assert _visible_color_bbox(chinese, (0, 0, 800, 480), (0, 255, 0)) is not None
 
 
+@pytest.mark.parametrize(
+    ("freshness", "age_seconds"),
+    [
+        ("fresh_cache", 3_600),
+        ("stale_cache", 86_400),
+    ],
+)
+def test_english_freshness_status_never_overwrites_location_map(
+    tmp_path,
+    monkeypatch,
+    freshness,
+    age_seconds,
+):
+    now = datetime.fromisoformat("2026-08-08T20:00:00+00:00").timestamp()
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    payload = _summary_v3(freshness=freshness)
+    payload["snapshot"]["age_seconds"] = age_seconds
+    map_color = (255, 0, 255)
+    client = LocationHttpClient(payload, _map_png(map_color))
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+
+    image = _plugin(tmp_path).generate_image(
+        {"cacheSeconds": 0, "language": "en"},
+        DeviceConfig(env={"GOOGLE_MAPS_API_KEY": "google-maps-test-secret"}),
+    )
+
+    map_box = (442, 18, 650, 76)
+    expected_map = Image.new("RGB", (208, 58), map_color)
+    assert ImageChops.difference(image.crop(map_box), expected_map).getbbox() is None
+
+
 @pytest.mark.parametrize("theme_mode", ["day", "night"])
 def test_full_v2_dashboard_public_render_populates_every_region(
     tmp_path,
@@ -1722,7 +1753,7 @@ def test_header_vehicle_is_centered_between_identity_and_location_map(
         },
     )
 
-    middle_header = (300, 26, 438, 92)
+    middle_header = (277, 26, 415, 92)
     visible_bbox = _visible_non_background_bbox(image, middle_header, surface)
 
     assert visible_bbox is not None
@@ -1730,11 +1761,11 @@ def test_header_vehicle_is_centered_between_identity_and_location_map(
     top = middle_header[1] + visible_bbox[1]
     right = middle_header[0] + visible_bbox[2]
     bottom = middle_header[1] + visible_bbox[3]
-    assert 300 <= left < right <= 438
+    assert 277 <= left < right <= 415
     assert 26 <= top < bottom <= 92
     assert right - left >= 130
     assert bottom - top >= 55
-    assert abs(((left + right) / 2) - 369) <= 1
+    assert abs(((left + right) / 2) - 346) <= 1
 
 
 def test_header_vehicle_is_prominent_centered_and_clear_of_neighbors(
@@ -1775,9 +1806,9 @@ def test_header_vehicle_is_prominent_centered_and_clear_of_neighbors(
     assert 136 <= width <= 138
     assert 58 <= height <= 60
     assert 2.28 <= width / height <= 2.34
-    assert abs(((left + right) / 2) - 369) <= 1
-    assert left >= 300
-    assert right <= 438
+    assert abs(((left + right) / 2) - 346) <= 1
+    assert left >= 277
+    assert right <= 415
     assert top >= 26
     assert bottom <= 92
 
@@ -1957,7 +1988,7 @@ def test_night_vehicle_keeps_a_visible_outline_after_epd7in3e_quantization(
         palette=palette,
         dither=Image.Dither.NONE,
     ).convert("RGB")
-    vehicle_box = (300, 26, 438, 92)
+    vehicle_box = (277, 26, 415, 92)
     visible = _visible_non_background_bbox(panel_image, vehicle_box, (0, 0, 0))
 
     assert visible is not None
