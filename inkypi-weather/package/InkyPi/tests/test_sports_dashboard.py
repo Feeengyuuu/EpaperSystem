@@ -170,7 +170,7 @@ def test_sports_dashboard_manifest_disables_internal_panel_refresh_on_display():
     assert manifest["refresh_on_display"] is False
 
 
-def test_sports_dashboard_settings_exposes_live_redisplay_master():
+def test_sports_dashboard_settings_exposes_background_live_refresh_master():
     settings_path = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -189,8 +189,9 @@ def test_sports_dashboard_settings_exposes_live_redisplay_master():
         'name="backgroundCacheRefreshEnabled" value="true" checked'
         in html
     )
-    assert "const liveRedisplaySetting =" in html
-    assert "liveRedisplaySetting === undefined" in html
+    assert "Keep live score data updated in the background" in html
+    assert "const backgroundLiveRefreshSetting =" in html
+    assert "backgroundLiveRefreshSetting === undefined" in html
     assert "['1', 'true', 'on', 'yes'].includes" in html
 
 
@@ -1630,6 +1631,29 @@ def test_live_refresh_state_defaults_to_one_minute_interval():
     )
 
     assert state == {"active": True, "interval_seconds": 60}
+
+
+def test_background_live_refresh_tracks_active_sources_and_master_setting(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    current_dt = datetime(2026, 5, 26, 7, 0, tzinfo=timezone.utc)
+
+    assert plugin.wants_background_live_refresh({}, current_dt) is False
+
+    _write_live_refresh_state(
+        tmp_path / "lpl_live_state.json",
+        "sports-dashboard-lpl-live-v1",
+    )
+
+    assert plugin.wants_background_live_refresh({}, current_dt) is True
+    assert plugin.wants_background_live_refresh(
+        {"backgroundCacheRefreshEnabled": "true"},
+        current_dt,
+    ) is True
+    assert plugin.wants_background_live_refresh(
+        {"backgroundCacheRefreshEnabled": "false"},
+        current_dt,
+    ) is False
 
 
 def test_valve_ti_live_refresh_is_bounded_and_defaults_to_three_minutes(tmp_path):

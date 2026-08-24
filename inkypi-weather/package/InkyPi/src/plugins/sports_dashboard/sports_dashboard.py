@@ -103,7 +103,16 @@ class SportsDashboard(
         return {"active": True, "interval_seconds": min(active_intervals)}
 
     def wants_background_live_refresh(self, settings, current_dt):
-        return self._worldcup_release_one_shot_window_active(current_dt)
+        settings = settings or {}
+        if self._worldcup_release_one_shot_window_active(current_dt):
+            return True
+        if not self._bool_setting(
+            settings,
+            "backgroundCacheRefreshEnabled",
+            True,
+        ):
+            return False
+        return bool(self._active_live_refresh_sources(settings, current_dt))
 
     def _active_live_refresh_sources(self, settings, current_dt):
         sources = []

@@ -278,12 +278,10 @@ def _display_triggered_refresh_enabled(device_config):
     return _setting_enabled(configured)
 
 
-def _live_display_refresh_enabled(device_config, plugin_id, settings):
-    """Allow an explicit SportsDashboard live re-display opt-in."""
+def _live_display_refresh_enabled(device_config, plugin_id, _settings):
+    """Keep Sports live updates cache-only; gate other live re-display globally."""
     if str(plugin_id).strip() == "sports_dashboard":
-        return _setting_enabled(
-            (settings or {}).get("backgroundCacheRefreshEnabled")
-        )
+        return False
     return _display_triggered_refresh_enabled(device_config)
 
 
@@ -5498,6 +5496,17 @@ class RefreshTask:
             if resolved is None:
                 raise _StaleSelection("playlist selection is stale")
             if command.intent is RefreshIntent.DISPLAY_CACHE:
+                if (
+                    command.source is CommandSource.LIVE
+                    and not _live_display_refresh_enabled(
+                        self.device_config,
+                        command.plugin_id,
+                        command.payload.get("settings"),
+                    )
+                ):
+                    raise _StaleSelection(
+                        "live display follow-up is disabled"
+                    )
                 image, prepared_selection = self._load_catalog_display_image(
                     command,
                     resolved,

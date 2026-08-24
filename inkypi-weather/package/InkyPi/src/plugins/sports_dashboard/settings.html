@@ -2,7 +2,7 @@
     <input type="hidden" name="backgroundCacheRefreshEnabled" value="false">
     <label class="form-label">
         <input type="checkbox" id="backgroundCacheRefreshEnabled" name="backgroundCacheRefreshEnabled" value="true" checked>
-        Re-display this dashboard automatically while live scores are changing
+        Keep live score data updated in the background
     </label>
 </div>
 
@@ -528,12 +528,12 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         if (loadPluginSettings) {
-            const liveRedisplaySetting = pluginSettings.backgroundCacheRefreshEnabled;
+            const backgroundLiveRefreshSetting = pluginSettings.backgroundCacheRefreshEnabled;
             document.getElementById('backgroundCacheRefreshEnabled').checked =
-                liveRedisplaySetting === undefined
-                || liveRedisplaySetting === null
+                backgroundLiveRefreshSetting === undefined
+                || backgroundLiveRefreshSetting === null
                 || ['1', 'true', 'on', 'yes'].includes(
-                    String(liveRedisplaySetting).trim().toLowerCase()
+                    String(backgroundLiveRefreshSetting).trim().toLowerCase()
                 );
             document.getElementById('worldCupUrl').value = pluginSettings.worldCupUrl || '';
             document.getElementById('footballDataKey').value = pluginSettings.footballDataKey || '';

@@ -705,7 +705,7 @@ def _sports_config(settings, *, migrations=None):
     return payload
 
 
-def test_startup_migrates_missing_sports_live_redisplay_to_explicit_true(
+def test_startup_migrates_missing_sports_background_live_refresh_to_explicit_true(
     monkeypatch,
     tmp_path,
 ):
@@ -732,7 +732,7 @@ def test_startup_migrates_missing_sports_live_redisplay_to_explicit_true(
     ).settings == saved_settings
 
 
-def test_startup_preserves_explicit_sports_live_redisplay_opt_out(
+def test_startup_preserves_explicit_sports_background_live_refresh_opt_out(
     monkeypatch,
     tmp_path,
 ):

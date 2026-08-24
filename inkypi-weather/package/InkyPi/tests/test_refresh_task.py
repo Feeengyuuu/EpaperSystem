@@ -6481,6 +6481,22 @@ def test_live_failures_never_delay_the_playlist_rotation_deadline(monkeypatch):
         "_resource_sample",
         lambda: ResourceSample(available_mb=512, swap_percent=0),
     )
+    background_probe = SimpleNamespace(
+        wants_background_live_refresh=lambda _settings, _current_dt: True,
+    )
+    monkeypatch.setattr(
+        task,
+        "_get_plugin_for_snapshot",
+        lambda _instance, require_live_refresh=False: background_probe,
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_state",
+        lambda _instance, _current_dt, plugin=None: {
+            "active": True,
+            "interval_seconds": 60,
+        },
+    )
     command = task._select_independent_refresh_command(current_dt)
     assert command.intent is RefreshIntent.LIVE_REFRESH
     monkeypatch.setattr(
@@ -12086,6 +12102,22 @@ def test_sports_quiet_window_expires_before_ordinary_refresh_is_starved(
         "_resource_sample",
         lambda: ResourceSample(available_mb=113, swap_percent=50),
     )
+    background_probe = SimpleNamespace(
+        wants_background_live_refresh=lambda _settings, _current_dt: True,
+    )
+    monkeypatch.setattr(
+        task,
+        "_get_plugin_for_snapshot",
+        lambda _instance, require_live_refresh=False: background_probe,
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_state",
+        lambda _instance, _current_dt, plugin=None: {
+            "active": True,
+            "interval_seconds": 60,
+        },
+    )
 
     assert task._select_independent_refresh_command(current_dt) is None
     assert task._due_counts[RefreshLane.LIVE.value] == 1
@@ -12736,16 +12768,27 @@ def test_sports_normal_interval_is_selected_when_background_flag_is_false(
     _assert_sports_normal_selected(monkeypatch, False)
 
 
-def test_sports_live_redisplay_is_off_when_master_setting_is_missing(monkeypatch):
+def test_sports_live_cache_refresh_is_background_only_when_master_setting_is_missing(
+    monkeypatch,
+):
     task, _device_config, _playlist, _instance, current_dt, _anchor = (
         _sports_live_runtime("sports-live-master-missing")
     )
+    background_probe = SimpleNamespace(
+        wants_background_live_refresh=lambda _settings, _current_dt: True,
+    )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
-        lambda _config: FakePlugin(
-            [],
-            live_state={"active": True, "interval_seconds": 60},
-        ),
+        task,
+        "_get_plugin_for_snapshot",
+        lambda _instance, require_live_refresh=False: background_probe,
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_state",
+        lambda _instance, _current_dt, plugin=None: {
+            "active": True,
+            "interval_seconds": 60,
+        },
     )
     monkeypatch.setattr(
         task,
@@ -12753,7 +12796,12 @@ def test_sports_live_redisplay_is_off_when_master_setting_is_missing(monkeypatch
         lambda: ResourceSample(available_mb=512, swap_percent=0),
     )
 
-    assert task._select_independent_refresh_command(current_dt) is None
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is not None
+    assert command.intent is RefreshIntent.LIVE_REFRESH
+    assert command.payload["background_live_refresh"] is True
+    assert command.payload.get("expected_displayed_instance_uuid") is None
 
 
 @pytest.mark.parametrize(
@@ -12761,13 +12809,13 @@ def test_sports_live_redisplay_is_off_when_master_setting_is_missing(monkeypatch
     [
         (True, True, True, ResourceSample(512, 0), True),
         (True, False, True, ResourceSample(512, 0), False),
-        (True, True, False, ResourceSample(512, 0), False),
+        (True, True, False, ResourceSample(512, 0), True),
         (True, True, True, ResourceSample(100, 0), True),
         (True, True, True, ResourceSample(60, 0), False),
         (False, True, True, ResourceSample(512, 0), False),
     ],
 )
-def test_sports_live_requires_enabled_hook_displayed_uuid_and_non_hard_tier(
+def test_sports_background_live_requires_enabled_hook_and_non_hard_tier(
     monkeypatch,
     enabled,
     hook_active,
@@ -12787,15 +12835,23 @@ def test_sports_live_requires_enabled_hook_displayed_uuid_and_non_hard_tier(
             instance_uuid="different-instance",
             changed_at=current_dt.isoformat(),
         )
+    background_probe = SimpleNamespace(
+        wants_background_live_refresh=lambda _settings, _current_dt: (
+            enabled and hook_active
+        ),
+    )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
-        lambda _config: FakePlugin(
-            [],
-            live_state=(
-                {"active": True, "interval_seconds": 60}
-                if hook_active
-                else None
-            ),
+        task,
+        "_get_plugin_for_snapshot",
+        lambda _instance, require_live_refresh=False: background_probe,
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_state",
+        lambda _instance, _current_dt, plugin=None: (
+            {"active": True, "interval_seconds": 60}
+            if hook_active
+            else None
         ),
     )
     monkeypatch.setattr(task, "_resource_sample", lambda: sample)
@@ -12839,8 +12895,10 @@ def test_explicit_false_legacy_background_flag_is_live_master_off_only(
     assert command.intent is RefreshIntent.DATA_REFRESH
 
 
-def test_explicit_sports_live_redisplay_queues_exact_followup_when_global_policy_is_off(
+@pytest.mark.parametrize("display_policy", [False, True])
+def test_sports_live_success_updates_cache_without_redisplaying(
     monkeypatch,
+    display_policy,
 ):
     task, device_config, _playlist, instance, current_dt, anchor = (
         _sports_live_runtime(
@@ -12878,12 +12936,12 @@ def test_explicit_sports_live_redisplay_queues_exact_followup_when_global_policy
             "interval_seconds": 60,
         },
     )
-    device_config.config["display_triggered_refresh_enabled"] = False
+    device_config.config["display_triggered_refresh_enabled"] = display_policy
     command = task._select_independent_refresh_command(current_dt)
     assert command is not None
     assert command.intent is RefreshIntent.LIVE_REFRESH
-    assert command.payload.get("background_live_refresh") is not True
-    assert command.payload["expected_displayed_instance_uuid"] == instance.instance_uuid
+    assert command.payload["background_live_refresh"] is True
+    assert command.payload.get("expected_displayed_instance_uuid") is None
     display_calls_before = len(task.display_manager.calls)
 
     submitted = task.refresh_queue.submit(command)
@@ -12891,27 +12949,66 @@ def test_explicit_sports_live_redisplay_queues_exact_followup_when_global_policy
     followup = task.refresh_queue.take(timeout=0)
 
     assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
-    assert followup is not None
-    assert followup.command.intent is RefreshIntent.DISPLAY_CACHE
-    assert (
-        followup.command.payload["expected_displayed_instance_uuid"]
-        == instance.instance_uuid
-    )
+    assert followup is None
     assert calls == []
     assert len(task._test_isolated_sports_calls) == 1
     assert device_config.refresh_info.refresh_time == anchor
     assert len(task.display_manager.calls) == display_calls_before
 
 
+def test_queued_live_followup_is_canceled_if_display_policy_turns_off(
+    monkeypatch,
+):
+    task, device_config, instance, current_dt, _data_success, _anchor = (
+        _live_radar_runtime("live-followup-policy-recheck")
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            [],
+            live_state={"active": True, "interval_seconds": 60},
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+
+    live = task._select_independent_refresh_command(current_dt)
+    assert live is not None
+    assert live.intent is RefreshIntent.LIVE_REFRESH
+    assert live.payload.get("background_live_refresh") is not True
+    assert live.payload["expected_displayed_instance_uuid"] == instance.instance_uuid
+
+    task.refresh_queue.submit(live)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+    followup = task.refresh_queue.take(timeout=0)
+    assert followup is not None
+    assert followup.command.source is CommandSource.LIVE
+    assert followup.command.intent is RefreshIntent.DISPLAY_CACHE
+
+    device_config.config["display_triggered_refresh_enabled"] = False
+    display_calls_before = len(task.display_manager.calls)
+    task._process_queue_entry(followup)
+    result = task.refresh_queue.get_entry(followup.job.id).job
+
+    assert result.status is JobStatus.CANCELED
+    assert result.error_code == "stale_selection"
+    assert len(task.display_manager.calls) == display_calls_before
+
+
 def test_live_exact_followup_does_not_merge_with_pending_manual_display(
     monkeypatch,
 ):
-    task, _device_config, playlist, instance, current_dt, _anchor = (
-        _sports_live_runtime(
-            "sports-live-exact-followup-scope",
-            background_value=True,
-        )
+    task, _device_config, instance, current_dt, _data_success, _anchor = (
+        _live_radar_runtime("live-exact-followup-scope")
     )
+    playlist = task.device_config.get_playlist_manager().snapshot_active_playlist(
+        current_dt
+    )
+    assert playlist is not None
     monkeypatch.setattr(
         "src.refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
@@ -12982,6 +13079,22 @@ def test_sports_live_success_does_not_advance_normal_data_cadence(monkeypatch):
         lambda: ResourceSample(available_mb=512, swap_percent=0),
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+    background_probe = SimpleNamespace(
+        wants_background_live_refresh=lambda _settings, _current_dt: True,
+    )
+    monkeypatch.setattr(
+        task,
+        "_get_plugin_for_snapshot",
+        lambda _instance, require_live_refresh=False: background_probe,
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_state",
+        lambda _instance, _current_dt, plugin=None: {
+            "active": True,
+            "interval_seconds": 60,
+        },
+    )
     command = task._select_independent_refresh_command(current_dt)
 
     submitted = task.refresh_queue.submit(command)
