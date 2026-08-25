@@ -140,8 +140,6 @@ class SportsDashboard(
             sources.append("msi")
         if self._live_state_active(self._lck_live_state_path(), LCK_LIVE_STATE_VERSION, current_dt):
             sources.append("lck")
-        if self._live_state_active(self._ewc_live_state_path(), EWC_LIVE_STATE_VERSION, current_dt):
-            sources.append("ewc")
         if self._live_state_active(
             self._valve_esports_live_state_path(),
             VALVE_ESPORTS_LIVE_STATE_VERSION,
@@ -189,8 +187,6 @@ class SportsDashboard(
             return self._bool_setting(settings, "offseasonHubLiveRefreshEnabled", True)
         if source in {"lpl", "lck", "msi"}:
             return self._bool_setting(settings, "lplLiveRefreshEnabled", True)
-        if source == "ewc":
-            return self._bool_setting(settings, "ewcLiveRefreshEnabled", True)
         if source == "valve_esports":
             return self._bool_setting(settings, "valveEsportsEnabled", True) and self._bool_setting(
                 settings, "valveEsportsLiveRefreshEnabled", True
@@ -251,8 +247,6 @@ class SportsDashboard(
             return self._int_setting(settings, "offseasonHubLiveRefreshIntervalSeconds", 60, 60, 900)
         if source in {"lpl", "lck", "msi"}:
             return self._int_setting(settings, "lplLiveRefreshIntervalSeconds", 60, 60, 900)
-        if source == "ewc":
-            return self._int_setting(settings, "ewcLiveRefreshIntervalSeconds", DEFAULT_EWC_LIVE_REFRESH_SECONDS, 60, 900)
         if source == "valve_esports":
             return self._int_setting(
                 settings,

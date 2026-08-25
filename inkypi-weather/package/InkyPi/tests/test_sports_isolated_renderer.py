@@ -67,23 +67,6 @@ class _RecordingExecutor:
     def submit(self, task_name, payload, **kwargs):
         payload = _copy_primitive(payload, max_bytes=MAX_PAYLOAD_BYTES)
         self.submissions.append((task_name, payload, kwargs))
-        if task_name == sports_isolated_renderer.SPORTS_EWC_PREFETCH_TASK:
-            return _CompletedHandle(
-                LongTaskResult(
-                    "succeeded",
-                    value={
-                        "region": "ewc_prefetch",
-                        "source_state": "EWC DETAIL LIVE",
-                        "prefetch_source_state": "EWC DETAIL LIVE",
-                        "has_detail": True,
-                        "cache_handoff_verified": True,
-                        "prefetch_handoff_matches": True,
-                        "degraded_reason": "",
-                        "worker_oom_score_adj": 800,
-                        "worker_pid": 4241,
-                    },
-                )
-            )
         index = sum(
             1
             for submitted_task, _payload, _kwargs in self.submissions[:-1]
@@ -155,10 +138,8 @@ def test_isolated_renderer_runs_one_short_lived_job_per_region(monkeypatch):
         now=SimpleNamespace(isoformat=lambda: "2026-07-27T09:00:00-07:00"),
     )
 
-    assert executor.submissions[0][0] == (
-        sports_isolated_renderer.SPORTS_EWC_PREFETCH_TASK
-    )
-    assert "base_png" not in executor.submissions[0][1]
+    assert executor.submissions[0][0] == sports_isolated_renderer.SPORTS_REGION_TASK
+    assert executor.submissions[0][1]["region"] == "esports"
     region_submissions = [
         item
         for item in executor.submissions
@@ -169,7 +150,7 @@ def test_isolated_renderer_runs_one_short_lived_job_per_region(monkeypatch):
         "football",
         "lower",
     ]
-    assert maintenance_calls == [True, True, True, True]
+    assert maintenance_calls == [True, True, True]
     assert region_submissions[0][1]["base_png"] is None
     assert isinstance(region_submissions[1][1]["base_png"], bytes)
     assert region_submissions[2][1]["panel_provenances"] == {
@@ -184,10 +165,9 @@ def test_isolated_renderer_runs_one_short_lived_job_per_region(monkeypatch):
         submission[1]["settings"]["_inkypi_sports_low_memory"] is True
         for submission in executor.submissions
     )
-    assert "_inkypi_ewc_cache_only" not in executor.submissions[0][1]["settings"]
     assert all(
-        submission[1]["settings"]["_inkypi_ewc_cache_only"] is True
-        for submission in region_submissions
+        "_inkypi_ewc_cache_only" not in submission[1]["settings"]
+        for submission in executor.submissions
     )
     assert all(
         "_inkypi_presentation_instance_identity"

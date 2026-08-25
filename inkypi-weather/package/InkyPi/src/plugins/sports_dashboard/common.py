@@ -2871,21 +2871,6 @@ class SportsDashboardCommonMixin:
                 ),
             }
         else:
-            ewc_card = None
-            if self._bool_setting(settings, "ewcSidebarEnabled", True):
-                try:
-                    ewc_card = self._load_ewc_sidebar_card(settings, timezone_info, now)
-                    if ewc_card:
-                        self._write_ewc_live_state(
-                            ewc_card.get("selected"),
-                            now,
-                            ewc_card.get("source_state") or "EWC DATA",
-                        )
-                except Exception as exc:
-                    logger.warning(
-                        "EWC sidebar failed, falling back to other esports panels: %s",
-                        _safe_exception_text(exc),
-                    )
             official_ti_card = None
             official_ti_source_state = ""
             official_ti_enabled = (
@@ -2922,18 +2907,11 @@ class SportsDashboardCommonMixin:
                 official_ti_selected,
                 official_ti_source_state,
                 now,
-                ewc_card=ewc_card,
             )
             choice_kind = str(
                 (esports_choice or {}).get("kind") or ""
             ).strip().lower()
             has_timed_esports_choice = (
-                choice_kind == "ewc"
-                and self._ewc_sidebar_candidate_phase(
-                    {"selected": (esports_choice or {}).get("selected")}
-                )
-                in (0, 1)
-            ) or (
                 choice_kind == "lol"
                 and self._lol_sidebar_candidate_phase(
                     (esports_choice or {}).get("choice")
@@ -2979,14 +2957,7 @@ class SportsDashboardCommonMixin:
                     valve_selected,
                     valve_source_state,
                     now,
-                    ewc_card=ewc_card,
                 )
-
-        if esports_choice.get("kind") == "ewc":
-            ewc_selected = esports_choice["selected"]
-            ewc_source_state = esports_choice["source_state"]
-            self._draw_ewc_sidebar(image, left_width, ewc_selected, ewc_source_state, now)
-            return self._sports_source_state_provenance(ewc_source_state)
 
         if esports_choice.get("kind") == "valve":
             valve_selected = esports_choice["selected"]

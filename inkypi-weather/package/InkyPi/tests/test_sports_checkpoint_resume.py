@@ -97,23 +97,6 @@ class _RegionExecutor:
 
     def submit(self, task_name, payload, **kwargs):
         self.submissions.append((task_name, payload, kwargs))
-        if task_name == sports_isolated_renderer.SPORTS_EWC_PREFETCH_TASK:
-            return _CompletedHandle(
-                LongTaskResult(
-                    "succeeded",
-                    value={
-                        "region": "ewc_prefetch",
-                        "source_state": "EWC DETAIL CACHE",
-                        "prefetch_source_state": "EWC DETAIL LIVE",
-                        "has_detail": True,
-                        "cache_handoff_verified": True,
-                        "prefetch_handoff_matches": True,
-                        "degraded_reason": "",
-                        "worker_oom_score_adj": 800,
-                        "worker_pid": 4241,
-                    },
-                )
-            )
         region = payload["region"]
         index = sports_isolated_renderer.SPORTS_REGIONS.index(region)
         value = {
@@ -242,16 +225,11 @@ def test_next_permit_resumes_the_first_unfinished_region(
         for task_name, payload, _kwargs in executor.submissions
         if task_name == sports_isolated_renderer.SPORTS_REGION_TASK
     ]
-    prefetch_submissions = [
-        payload
-        for task_name, payload, _kwargs in executor.submissions
-        if task_name == sports_isolated_renderer.SPORTS_EWC_PREFETCH_TASK
-    ]
     assert [payload["region"] for payload in region_submissions] == [
         "esports",
         "football",
     ]
-    assert len(prefetch_submissions) == 1
+    assert len(executor.submissions) == 2
     assert region_submissions[1]["base_png"] == _png_bytes((20, 40, 60))
     assert region_submissions[1]["panel_provenances"] == {
         "esports": SourceProvenance.LIVE.value,

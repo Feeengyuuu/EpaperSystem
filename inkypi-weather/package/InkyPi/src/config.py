@@ -35,7 +35,6 @@ _SPORTS_LIVE_REFRESH_KEYS = (
     "nbaLiveRefreshEnabled",
     "offseasonHubLiveRefreshEnabled",
     "lplLiveRefreshEnabled",
-    "ewcLiveRefreshEnabled",
     "valveEsportsLiveRefreshEnabled",
     "f1LiveRefreshEnabled",
 )

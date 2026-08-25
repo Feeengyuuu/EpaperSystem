@@ -672,7 +672,6 @@ _SPORTS_LIVE_REFRESH_KEYS = (
     "nbaLiveRefreshEnabled",
     "offseasonHubLiveRefreshEnabled",
     "lplLiveRefreshEnabled",
-    "ewcLiveRefreshEnabled",
     "valveEsportsLiveRefreshEnabled",
     "f1LiveRefreshEnabled",
 )
@@ -797,7 +796,7 @@ def test_startup_does_not_override_an_individual_sports_live_opt_out(
     settings = {
         "liveRefreshEnabled": "false",
         **{key: "true" for key in _SPORTS_LIVE_REFRESH_KEYS},
-        "ewcLiveRefreshEnabled": "false",
+        "lplLiveRefreshEnabled": "false",
     }
 
     config, _ = _device_config(
@@ -810,7 +809,7 @@ def test_startup_does_not_override_an_individual_sports_live_opt_out(
         "sports_dashboard",
         "SportsDashboard",
     ).settings
-    assert saved_settings["ewcLiveRefreshEnabled"] == "false"
+    assert saved_settings["lplLiveRefreshEnabled"] == "false"
     assert saved_settings["backgroundCacheRefreshEnabled"] == "true"
     migrations = config.get_config("runtime_migrations")
     assert migrations["sports_live_redisplay_default_v1"] is True
