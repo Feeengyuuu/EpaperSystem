@@ -84,6 +84,7 @@ from plugins.sports_dashboard.sports_dashboard import (
     LOCAL_MLB_LOGO_PATH,
     LOCAL_MLB_TITLE_WORDMARK_PATH,
     LOCAL_MSI_LOGO_PATH,
+    LOCAL_TBD_TEAM_LOGO_PATH,
     LOCAL_NCAA_HEADER_CUTOUT_PATH,
     LOCAL_NCAA_LOGO_PATH,
     LOCAL_NBA_COURT_STRIP_PATH,
@@ -17171,6 +17172,73 @@ def test_worldcup_title_wordmark_draws_inside_header_slot():
     assert bbox[1] >= 6
     assert bbox[3] <= 6 + 27
 
+
+def test_tbd_team_badge_preserves_approved_img2_source_and_runtime_asset():
+    source_path = (
+        Path(LOCAL_TBD_TEAM_LOGO_PATH).parents[1]
+        / "source"
+        / "tbd_team_badge_img2_approved.png"
+    )
+
+    assert hashlib.sha256(source_path.read_bytes()).hexdigest() == (
+        "a29c74f353f086d3c80a9ef36db205ae2c384f3dbb634e3971499e34027984b8"
+    )
+    with Image.open(source_path) as source:
+        assert source.mode == "RGBA"
+        assert source.size == (1254, 1254)
+        assert source.getchannel("A").getextrema() == (0, 255)
+
+    with Image.open(LOCAL_TBD_TEAM_LOGO_PATH) as runtime_logo:
+        assert runtime_logo.mode == "RGBA"
+        assert runtime_logo.size == (256, 256)
+        alpha = runtime_logo.getchannel("A")
+        assert alpha.getextrema() == (0, 255)
+        assert [
+            alpha.getpixel((0, 0)),
+            alpha.getpixel((255, 0)),
+            alpha.getpixel((0, 255)),
+            alpha.getpixel((255, 255)),
+        ] == [0, 0, 0, 0]
+
+
+@pytest.mark.parametrize("label", ["TBD", " tbd ", "TBA", "To Be Determined", "To Be Announced"])
+def test_tbd_team_labels_use_the_approved_local_badge(label):
+    assert SportsDashboard._is_tbd_team_label(label) is True
+    assert SportsDashboard._local_team_logo_candidates(label) == [
+        LOCAL_TBD_TEAM_LOGO_PATH
+    ]
+    assert SportsDashboard._load_local_team_logo(label, 42) is not None
+
+
+def test_tbd_team_badge_does_not_capture_real_team_names():
+    assert SportsDashboard._is_tbd_team_label("TBD Esports") is False
+    assert SportsDashboard._is_tbd_team_label("TES") is False
+
+
+def test_tbd_team_badge_overrides_remote_placeholder(monkeypatch):
+    plugin = _plugin()
+    image = Image.new("RGB", (64, 64), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+
+    monkeypatch.setattr(
+        plugin,
+        "_load_team_logo_for_render",
+        lambda *_args: pytest.fail("TBD must not fetch the provider placeholder"),
+    )
+
+    plugin._draw_team_logo(
+        image,
+        draw,
+        "https://example.invalid/riot-tbd-placeholder.png",
+        10,
+        8,
+        42,
+        "TBD",
+    )
+
+    assert image.tobytes() != Image.new("RGB", image.size, COLORS["panel"]).tobytes()
+
+
 def test_lpl_team_logos_are_synced_and_loadable():
     expected_codes = {
         "AL",
@@ -17229,6 +17297,7 @@ def test_sports_dashboard_local_asset_constants_exist():
         LOCAL_LPL_LOGO_PATH,
         LOCAL_LCK_LOGO_PATH,
         LOCAL_MSI_LOGO_PATH,
+        LOCAL_TBD_TEAM_LOGO_PATH,
         LOCAL_WORLDCUP_LOGO_PATH,
         LOCAL_NBA_LOGO_PATH,
         LOCAL_F1_LOGO_PATH,

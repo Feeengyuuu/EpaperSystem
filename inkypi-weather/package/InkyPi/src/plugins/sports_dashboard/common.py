@@ -289,6 +289,7 @@ LOCAL_EWC_GAME_PLACEHOLDER_DIR = os.path.join(
     "ewc_game_placeholders",
 )
 LOCAL_MSI_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "msi.png")
+LOCAL_TBD_TEAM_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "tbd.png")
 LOCAL_WORLDCUP_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "worldcup.png")
 LOCAL_NBA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nba.png")
 LOCAL_F1_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "f1.png")
@@ -3569,6 +3570,8 @@ class SportsDashboardCommonMixin:
 
     @staticmethod
     def _local_team_logo_candidates(team_code):
+        if SportsDashboard._is_tbd_team_label(team_code):
+            return [LOCAL_TBD_TEAM_LOGO_PATH]
         return SportsDashboard._local_team_logo_candidates_in(
             team_code,
             (
@@ -3577,6 +3580,15 @@ class SportsDashboardCommonMixin:
                 LOCAL_LCK_TEAM_LOGO_DIR,
             ),
         )
+
+    @staticmethod
+    def _is_tbd_team_label(value):
+        compact = "".join(
+            character
+            for character in str(value or "").upper()
+            if character.isalnum()
+        )
+        return compact in {"TBD", "TBA", "TOBEDETERMINED", "TOBEANNOUNCED"}
 
     @staticmethod
     def _local_club_team_logo_candidates(team_code):

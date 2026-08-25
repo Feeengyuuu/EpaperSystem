@@ -6,6 +6,38 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260824-001] correction
+
+**Logged**: 2026-08-24T20:42:37-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: ui
+
+### Summary
+Tiny SportsDashboard unknown-team badges should use an approved img-2 bitmap with a dominant question mark.
+
+### Details
+For TBD team slots, a procedural placeholder or an ornate generated crest adds noise at the 19 px row size. Generate one transparent bitmap with img-2, simplify the silhouette and palette, make the question mark the primary shape, preserve the approved source as the visual anchor, and derive a smaller runtime asset from that source. Validate both the 42 px focus-card render and the 19 px schedule-row render before integration.
+
+### Suggested Action
+Reuse the approved TBD bitmap through the local-first team-logo resolver, and require real-layout previews at every production draw size for future placeholder assets.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/common.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/logos/tbd.png
+- Tags: sports-dashboard, tbd, img-2, bitmap, small-size, visual-approval
+- Pattern-Key: sports.tbd_badge_img2_small_size_validation
+- Recurrence-Count: 1
+- First-Seen: 2026-08-24
+- Last-Seen: 2026-08-24
+
+### Resolution
+- **Resolved**: 2026-08-24T20:42:37-07:00
+- **Commit/PR**: local branch
+- **Notes**: Preserved the approved img-2 source, added a 256 px runtime derivative, and verified it through the real 800x480 sidebar renderer at 42 px and 19 px.
+
+---
+
 ## [LRN-20260820-001] best_practice
 
 **Logged**: 2026-08-20T14:47:00-07:00
