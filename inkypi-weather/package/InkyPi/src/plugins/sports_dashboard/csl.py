@@ -2,14 +2,14 @@ import re
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
-from .common import get_http_session
+from .common import ESPN_SITE_API_BASE_URL, get_http_session
 
 
 CSL_SCOREBOARD_LOOKBACK_DAYS = 7
 CSL_SCOREBOARD_LOOKAHEAD_DAYS = 7
 CSL_VISIBLE_MATCH_LIMIT = 4
 CSL_SCOREBOARD_EVENT_LIMIT = 100
-CSL_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard"
+CSL_SCOREBOARD_URL = f"{ESPN_SITE_API_BASE_URL}/sports/soccer/chn.1/scoreboard"
 CSL_SCOREBOARD_STATE_VERSION = "sports-dashboard-csl-scoreboard-v1"
 CSL_REQUEST_STATE_VERSION = "sports-dashboard-csl-requests-v1"
 CSL_LIVE_STATE_VERSION = "sports-dashboard-csl-live-v1"

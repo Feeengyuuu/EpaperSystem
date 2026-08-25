@@ -25,7 +25,7 @@ CLUB_FOOTBALL_ESPN_LIVE_CACHE_VERSION = (
 )
 CLUB_FOOTBALL_STANDINGS_CACHE_VERSION = "sports-dashboard-club-football-standings-v1"
 CLUB_FOOTBALL_ESPN_STATE_VERSION = "sports-dashboard-club-football-espn-state-v1"
-CLUB_ESPN_SCOREBOARD_BASE_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer"
+CLUB_ESPN_SCOREBOARD_BASE_URL = f"{ESPN_SITE_API_BASE_URL}/sports/soccer"
 CLUB_FOOTBALL_NORMAL_CACHE_SECONDS = 6 * 60 * 60
 CLUB_FOOTBALL_MATCHDAY_CACHE_SECONDS = 15 * 60
 CLUB_FOOTBALL_LIVE_CACHE_SECONDS = 60
@@ -73,10 +73,6 @@ CLUB_FOOTBALL_LEAGUES = {
         "name": "美职联",
         "short_name": "美职联",
         "espn_slug": "usa.1",
-        # The legacy site.api host currently rejects MLS scoreboard requests
-        # with Akamai 403 responses; the equivalent first-party web host
-        # returns the same scoreboard schema without authentication.
-        "espn_base_url": "https://site.web.api.espn.com/apis/site/v2/sports/soccer",
         # football-data.org exposes MLS only on its Tier Two paid plan. Keep
         # the default path ESPN-only so a normal/free token does not fail on
         # every refresh.

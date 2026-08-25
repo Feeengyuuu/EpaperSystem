@@ -380,7 +380,13 @@ class WorldCupRenderMixin:
         now_utc = datetime.now(timezone.utc)
         cache_path = self._sports_dashboard_cache_dir() / "worldcup_standings.json"
         cache = self._read_json_file(cache_path)
-        url = str(settings.get("worldCupStandingsUrl") or DEFAULT_WORLD_CUP_STANDINGS_URL).strip() or DEFAULT_WORLD_CUP_STANDINGS_URL
+        url = normalize_espn_site_api_url(
+            str(
+                settings.get("worldCupStandingsUrl")
+                or DEFAULT_WORLD_CUP_STANDINGS_URL
+            ).strip()
+            or DEFAULT_WORLD_CUP_STANDINGS_URL
+        )
         cache_key = "|".join([WORLD_CUP_STANDINGS_STATE_VERSION, url])
         has_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("standings"), Mapping)
         cache_hours = self._int_setting(settings, "worldCupStandingsCacheHours", DEFAULT_WORLD_CUP_STANDINGS_CACHE_HOURS, 1, 24)

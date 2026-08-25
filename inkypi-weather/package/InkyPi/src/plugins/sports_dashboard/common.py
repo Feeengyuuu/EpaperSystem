@@ -50,6 +50,24 @@ logger = logging.getLogger(__name__)
 def _safe_exception_text(exc):
     return redact_sensitive_text(exc)
 
+
+ESPN_LEGACY_SITE_API_HOST = "site.api.espn.com"
+ESPN_SITE_API_HOST = "site.web.api.espn.com"
+ESPN_SITE_API_BASE_URL = f"https://{ESPN_SITE_API_HOST}/apis/site/v2"
+
+
+def normalize_espn_site_api_url(value):
+    """Move saved legacy ESPN site URLs to the working first-party host."""
+
+    text = str(value or "").strip()
+    if not text:
+        return text
+    parsed = urlparse(text)
+    if parsed.netloc.casefold() != ESPN_LEGACY_SITE_API_HOST:
+        return text
+    return urlunparse(parsed._replace(netloc=ESPN_SITE_API_HOST))
+
+
 DEFAULT_WORLD_CUP_URL = "https://www.sportbusy.com/embed/world-cup"
 DEFAULT_WORLD_CUP_VISIBLE_MATCHES = 4
 WORLD_CUP_VISIBLE_MATCH_LIMIT = 4
@@ -97,7 +115,7 @@ F1_LIVE_STATE_VERSION = "sports-dashboard-f1-live-v1"
 OFFSEASON_HUB_STATE_VERSION = "sports-dashboard-offseason-hub-v1"
 THE_ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4"
 ODDS_API_IO_BASE_URL = "https://api.odds-api.io/v3"
-DEFAULT_NBA_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+DEFAULT_NBA_SCOREBOARD_URL = f"{ESPN_SITE_API_BASE_URL}/sports/basketball/nba/scoreboard"
 DEFAULT_NBA_CACHE_HOURS = 1
 DEFAULT_NBA_DAILY_LIMIT = 96
 DEFAULT_NBA_LOOKBACK_DAYS = 10
@@ -122,10 +140,10 @@ DEFAULT_F1_LIVE_REFRESH_SECONDS = 180
 F1_SESSION_PREGAME_WINDOW = timedelta(minutes=15)
 F1_SESSION_RESULT_WINDOW = timedelta(hours=6)
 DEFAULT_MLB_SCOREBOARD_URL = "https://statsapi.mlb.com/api/v1/schedule"
-DEFAULT_WNBA_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard"
-DEFAULT_PGA_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/golf/pga/scoreboard"
-DEFAULT_NFL_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
-DEFAULT_NCAA_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard"
+DEFAULT_WNBA_SCOREBOARD_URL = f"{ESPN_SITE_API_BASE_URL}/sports/basketball/wnba/scoreboard"
+DEFAULT_PGA_SCOREBOARD_URL = f"{ESPN_SITE_API_BASE_URL}/sports/golf/pga/scoreboard"
+DEFAULT_NFL_SCOREBOARD_URL = f"{ESPN_SITE_API_BASE_URL}/sports/football/nfl/scoreboard"
+DEFAULT_NCAA_SCOREBOARD_URL = f"{ESPN_SITE_API_BASE_URL}/sports/football/college-football/scoreboard"
 DEFAULT_OFFSEASON_HUB_CACHE_HOURS = 1
 DEFAULT_OFFSEASON_HUB_DAILY_LIMIT = 96
 DEFAULT_OFFSEASON_HUB_LIVE_REFRESH_SECONDS = 180
@@ -162,11 +180,11 @@ TEAM_LOGO_DISK_CACHE_BUDGET = CacheBudget(
     256,
     50 * 1024 * 1024,
 )
-DEFAULT_WORLD_CUP_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard"
+DEFAULT_WORLD_CUP_SCOREBOARD_URL = f"{ESPN_SITE_API_BASE_URL}/sports/soccer/fifa.world/scoreboard"
 # Authoritative ESPN group table (key-free): cumulative PTS/W-D-L for all 12 groups,
 # correct on every matchday regardless of the scoreboard date window. Note: apis/v2
 # (the "apis/site/v2" variant returns an empty body for this standings resource).
-DEFAULT_WORLD_CUP_STANDINGS_URL = "https://site.api.espn.com/apis/v2/sports/soccer/fifa.world/standings"
+DEFAULT_WORLD_CUP_STANDINGS_URL = f"https://{ESPN_SITE_API_HOST}/apis/v2/sports/soccer/fifa.world/standings"
 DEFAULT_WORLD_CUP_STANDINGS_CACHE_HOURS = 1
 DEFAULT_WORLD_CUP_SCOREBOARD_CACHE_HOURS = 1
 DEFAULT_WORLD_CUP_SCOREBOARD_DAILY_LIMIT = 720

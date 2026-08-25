@@ -439,7 +439,7 @@ def test_csl_loader_returns_compatible_fresh_cache_without_network(tmp_path):
         "version": "sports-dashboard-csl-scoreboard-v1",
         "cache_key": (
             "sports-dashboard-csl-scoreboard-v1|"
-            "https://site.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard|"
+            "https://site.web.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard|"
             "2026-07-18|2026-08-01|America/Los_Angeles|100"
         ),
         "fetched_at": "2026-07-25T11:59:30+00:00",
@@ -481,7 +481,7 @@ def test_csl_loader_fetches_only_bounded_window_and_persists_current_last_good_a
     assert fetched_at == "2026-07-25T12:00:00+00:00"
     assert session.calls == [
         (
-            "https://site.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard",
+            "https://site.web.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard",
             {
                 "params": {
                     "dates": "20260718-20260801",
@@ -517,7 +517,7 @@ def test_csl_loader_rejects_http_200_object_without_events_and_preserves_last_go
         "version": "sports-dashboard-csl-scoreboard-v1",
         "cache_key": (
             "sports-dashboard-csl-scoreboard-v1|"
-            "https://site.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard|"
+            "https://site.web.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard|"
             "2026-07-23|2026-08-01|UTC|100"
         ),
         "fetched_at": "2026-07-25T10:00:00+00:00",
@@ -608,7 +608,7 @@ def test_csl_force_refresh_still_respects_daily_budget_and_returns_stale_cache(
         "version": "sports-dashboard-csl-scoreboard-v1",
         "cache_key": (
             "sports-dashboard-csl-scoreboard-v1|"
-            "https://site.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard|"
+            "https://site.web.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard|"
             "2026-07-23|2026-08-01|America/Los_Angeles|100"
         ),
         "fetched_at": "2026-07-25T10:00:00+00:00",

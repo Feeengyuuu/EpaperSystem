@@ -18771,7 +18771,7 @@ def test_sports_dashboard_base_font_uses_shared_resolver(monkeypatch):
     assert calls == [(18, True)]
 
 
-def test_club_football_registry_adds_mls_as_espn_first_league():
+def test_club_football_registry_adds_mls_as_espn_league():
     registry = sports_dashboard_module.CLUB_FOOTBALL_LEAGUES
 
     assert {
@@ -18786,9 +18786,6 @@ def test_club_football_registry_adds_mls_as_espn_first_league():
         "MLS": "usa.1",
     }
     assert registry["MLS"]["football_data_code"] is None
-    assert registry["MLS"]["espn_base_url"] == (
-        "https://site.web.api.espn.com/apis/site/v2/sports/soccer"
-    )
     assert registry["MLS"]["espn_lookback_days"] == 7
     assert registry["MLS"]["espn_lookahead_days"] == 14
 
@@ -19679,15 +19676,43 @@ def test_club_espn_scoreboard_urls_are_built_only_from_registry():
         code: SportsDashboard._club_espn_scoreboard_url(code)
         for code in sports_dashboard_module.CLUB_FOOTBALL_LEAGUES
     } == {
-        "PL": "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard",
-        "PD": "https://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard",
-        "BL1": "https://site.api.espn.com/apis/site/v2/sports/soccer/ger.1/scoreboard",
-        "SA": "https://site.api.espn.com/apis/site/v2/sports/soccer/ita.1/scoreboard",
-        "FL1": "https://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard",
+        "PL": "https://site.web.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard",
+        "PD": "https://site.web.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard",
+        "BL1": "https://site.web.api.espn.com/apis/site/v2/sports/soccer/ger.1/scoreboard",
+        "SA": "https://site.web.api.espn.com/apis/site/v2/sports/soccer/ita.1/scoreboard",
+        "FL1": "https://site.web.api.espn.com/apis/site/v2/sports/soccer/fra.1/scoreboard",
         "MLS": "https://site.web.api.espn.com/apis/site/v2/sports/soccer/usa.1/scoreboard",
     }
     with pytest.raises(KeyError):
         SportsDashboard._club_espn_scoreboard_url("../../private")
+
+
+def test_espn_site_urls_use_web_host_and_migrate_saved_legacy_values():
+    defaults = (
+        sports_dashboard_common_module.DEFAULT_NBA_SCOREBOARD_URL,
+        sports_dashboard_common_module.DEFAULT_WNBA_SCOREBOARD_URL,
+        sports_dashboard_common_module.DEFAULT_PGA_SCOREBOARD_URL,
+        sports_dashboard_common_module.DEFAULT_NFL_SCOREBOARD_URL,
+        sports_dashboard_common_module.DEFAULT_NCAA_SCOREBOARD_URL,
+        sports_dashboard_common_module.DEFAULT_WORLD_CUP_SCOREBOARD_URL,
+        sports_dashboard_common_module.DEFAULT_WORLD_CUP_STANDINGS_URL,
+    )
+    assert {urlparse(value).hostname for value in defaults} == {
+        "site.web.api.espn.com"
+    }
+
+    legacy_nba = (
+        "https://site.api.espn.com/apis/site/v2/"
+        "sports/basketball/nba/scoreboard?region=us"
+    )
+    assert SportsDashboard._nba_scoreboard_url(
+        {"nbaScoreboardUrl": legacy_nba}
+    ) == (
+        "https://site.web.api.espn.com/apis/site/v2/"
+        "sports/basketball/nba/scoreboard?region=us"
+    )
+    custom = "https://scores.example.test/nba"
+    assert sports_dashboard_common_module.normalize_espn_site_api_url(custom) == custom
 
 
 def test_fetch_club_espn_payload_requests_recent_history_and_future_schedule(

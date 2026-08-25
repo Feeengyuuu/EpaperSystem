@@ -537,7 +537,7 @@ class WorldCupMixin:
     @staticmethod
     def _worldcup_scoreboard_url(settings):
         value = str(settings.get("worldCupScoreboardUrl") or DEFAULT_WORLD_CUP_SCOREBOARD_URL).strip()
-        return value or DEFAULT_WORLD_CUP_SCOREBOARD_URL
+        return normalize_espn_site_api_url(value or DEFAULT_WORLD_CUP_SCOREBOARD_URL)
 
     @staticmethod
     def _worldcup_scoreboard_date_range(settings, timezone_info, now_utc):
@@ -2318,7 +2318,6 @@ class WorldCupMixin:
             now,
         )
         return image
-
 
 
 

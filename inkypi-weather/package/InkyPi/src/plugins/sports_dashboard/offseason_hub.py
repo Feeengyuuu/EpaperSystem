@@ -187,17 +187,17 @@ class OffseasonHubMixin:
     @staticmethod
     def _pga_scoreboard_url(settings):
         value = str((settings or {}).get("pgaScoreboardUrl") or DEFAULT_PGA_SCOREBOARD_URL).strip()
-        return value or DEFAULT_PGA_SCOREBOARD_URL
+        return normalize_espn_site_api_url(value or DEFAULT_PGA_SCOREBOARD_URL)
 
     @staticmethod
     def _nfl_scoreboard_url(settings):
         value = str((settings or {}).get("nflScoreboardUrl") or DEFAULT_NFL_SCOREBOARD_URL).strip()
-        return value or DEFAULT_NFL_SCOREBOARD_URL
+        return normalize_espn_site_api_url(value or DEFAULT_NFL_SCOREBOARD_URL)
 
     @staticmethod
     def _ncaa_scoreboard_url(settings):
         value = str((settings or {}).get("ncaaScoreboardUrl") or DEFAULT_NCAA_SCOREBOARD_URL).strip()
-        return value or DEFAULT_NCAA_SCOREBOARD_URL
+        return normalize_espn_site_api_url(value or DEFAULT_NCAA_SCOREBOARD_URL)
 
     def _offseason_hub_cache_path(self):
         return self._sports_dashboard_cache_dir() / "offseason_hub.json"
@@ -1563,7 +1563,6 @@ class OffseasonHubMixin:
             logger.warning("Failed to load PGA fairway strip %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
 
 
 

@@ -18,7 +18,7 @@ class NBAMixin:
     @staticmethod
     def _wnba_scoreboard_url(settings):
         value = str((settings or {}).get("wnbaScoreboardUrl") or DEFAULT_WNBA_SCOREBOARD_URL).strip()
-        return value or DEFAULT_WNBA_SCOREBOARD_URL
+        return normalize_espn_site_api_url(value or DEFAULT_WNBA_SCOREBOARD_URL)
 
     @staticmethod
     def _parse_wnba_scoreboard(payload, timezone_info):
@@ -670,7 +670,7 @@ class NBAMixin:
     @staticmethod
     def _nba_scoreboard_url(settings):
         value = str(settings.get("nbaScoreboardUrl") or DEFAULT_NBA_SCOREBOARD_URL).strip()
-        return value or DEFAULT_NBA_SCOREBOARD_URL
+        return normalize_espn_site_api_url(value or DEFAULT_NBA_SCOREBOARD_URL)
 
     @staticmethod
     def _nba_scoreboard_date_range(settings, timezone_info, now_utc):
