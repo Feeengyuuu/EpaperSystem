@@ -44,6 +44,7 @@ from runtime.refresh_contracts import (
     RefreshIntent,
     TaskCancelled,
     TaskContext,
+    TaskDeadlineExceeded,
 )
 from runtime.refresh_queue import QueueFullError, QueueStoppingError, RefreshQueue
 from runtime.resource_deferral import ResourcePressureDeferred
@@ -9335,7 +9336,7 @@ def test_rotation_defers_display_until_presentation_prepared(tmp_path):
     assert ready.payload.get("presentation_request_id") == request.request_id
 
 
-def test_rotation_never_falls_back_to_stale_cache_when_prepare_stalls(tmp_path):
+def test_rotation_falls_back_to_cached_display_when_prepare_stalls(tmp_path):
     task, instance = _prepared_rotation_task(
         make_test_dir("rotation-prepare-stall")
     )
@@ -9347,7 +9348,12 @@ def test_rotation_never_falls_back_to_stale_cache_when_prepare_stalls(tmp_path):
     )
 
     playlist = task.device_config.get_playlist_manager().playlists[0]
-    assert fallback is None
+    assert fallback is not None
+    assert fallback.instance_uuid == instance.instance_uuid
+    assert fallback.intent is RefreshIntent.DISPLAY_CACHE
+    assert fallback.payload["automatic_rotation"] is True
+    assert fallback.payload["display_cached_only"] is True
+    assert fallback.allow_prepared_presentation is False
     assert instance.instance_uuid in playlist.plugin_rotation_queue
     assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
 
@@ -15136,8 +15142,9 @@ def test_rotation_deadline_policy_prioritizes_five_minute_switches(monkeypatch):
     monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
 
     assert refresh_task_module.DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS == 60
+    assert refresh_task_module.DEFAULT_ROTATION_PRESENTATION_DEADLINE_SECONDS == 300
     assert refresh_task_module.DEFAULT_ROTATION_MAX_INTERVAL_SECONDS == 420
-    assert task._rotation_presentation_wait_seconds() == 120
+    assert task._rotation_presentation_wait_seconds() == 0
     assert task._scheduler_poll_seconds() == 1
 
 
@@ -15704,7 +15711,9 @@ def test_exact_manual_display_rejects_unproven_hardware_write(monkeypatch):
     assert device_config.write_count == 0
 
 
-def test_rotation_preflight_records_one_coalesced_presentation_request(monkeypatch):
+def test_rotation_preflight_keeps_one_coalesced_request_when_deadline_falls_open(
+    monkeypatch,
+):
     task, device_config, clock, playlist, _display = _make_presentation_task("presentation-normal-display-request")
     instance = playlist.plugins[0].snapshot()
     _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
@@ -15725,8 +15734,13 @@ def test_rotation_preflight_records_one_coalesced_presentation_request(monkeypat
     assert original is not None
     clock.advance(61)
     now[0] += timedelta(seconds=61)
-    assert task._select_cached_display_command(now[0]) is None
+    fallback = task._select_cached_display_command(now[0])
 
+    assert fallback is not None
+    assert fallback.instance_uuid == instance.instance_uuid
+    assert fallback.intent is RefreshIntent.DISPLAY_CACHE
+    assert fallback.payload["automatic_rotation"] is True
+    assert fallback.allow_prepared_presentation is False
     assert task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_request == original
 
 
@@ -16157,8 +16171,10 @@ def test_provider_free_attestation_revoked_during_execution_fails_before_plugin(
         task._execute_command(command)
 
 
-def test_rotation_preflight_timeout_defers_stale_cache_and_keeps_shuffle_member(monkeypatch):
-    task, device_config, _clock, playlist, _display = _make_presentation_task(
+def test_rotation_preflight_timeout_fails_open_to_cached_display_and_keeps_shuffle_member(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, display = _make_presentation_task(
         "presentation-timeout-defers-stale-cache",
         plugin_count=2,
     )
@@ -16169,28 +16185,60 @@ def test_rotation_preflight_timeout_defers_stale_cache_and_keeps_shuffle_member(
     playlist._plugin_rotation_reserved_key = None
     for instance in (first, second):
         _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.config["plugin_cycle_interval_seconds"] = 300
     device_config.refresh_info.refresh_time = (
-        PRESENTATION_NOW - timedelta(minutes=2)
+        PRESENTATION_NOW - timedelta(seconds=300)
     ).isoformat()
-    device_config.config["rotation_presentation_wait_seconds"] = 0
+    device_config.config["rotation_presentation_wait_seconds"] = 999
+    now = [PRESENTATION_NOW]
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now[0])
     monkeypatch.setattr(
         task,
         "_resource_sample",
         lambda: ResourceSample(available_mb=512, swap_percent=0),
     )
+    _install_display_provider_plugin_sentinels(monkeypatch)
 
     command = task._select_cached_display_command(PRESENTATION_NOW)
 
-    assert command is None
-    assert playlist.plugin_rotation_queue == [
-        second.instance_uuid,
-        first.instance_uuid,
-    ]
+    assert command is not None
+    assert command.instance_uuid == first.instance_uuid
+    assert command.intent is RefreshIntent.DISPLAY_CACHE
+    assert command.payload["automatic_rotation"] is True
+    assert command.payload["display_cached_only"] is True
+    assert playlist.plugin_rotation_queue == [first.instance_uuid, second.instance_uuid]
     assert playlist.plugin_rotation_recent_history == []
-    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is True
+
+    result = _queue_and_process(task, command)
+
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert len(display.calls) == 1
+    assert display.calls[0]["force_hardware_write"] is True
+    assert display.calls[0]["logical_target"]["instance_uuid"] == first.instance_uuid
+    assert playlist.plugin_rotation_queue == [second.instance_uuid]
+    assert playlist.plugin_rotation_recent_history == [first.instance_uuid]
+    assert device_config.refresh_info.refresh_time == PRESENTATION_NOW.isoformat()
+
+    now[0] += timedelta(seconds=299)
+    assert task._select_cached_display_command(now[0]) is None
+
+    now[0] += timedelta(seconds=1)
+    next_command = task._select_cached_display_command(now[0])
+
+    assert next_command is not None
+    assert next_command.instance_uuid == second.instance_uuid
+    assert next_command.intent is RefreshIntent.DISPLAY_CACHE
+    assert next_command.payload["automatic_rotation"] is True
+
+    next_result = _queue_and_process(task, next_command)
+    assert next_result.job.status is JobStatus.SUCCEEDED
+    assert len(display.calls) == 2
+    assert display.calls[1]["force_hardware_write"] is True
+    assert display.calls[1]["logical_target"]["instance_uuid"] == second.instance_uuid
 
 
-def test_rotation_preflight_timeout_keeps_last_member_reserved_for_preparation(
+def test_rotation_preflight_timeout_fails_open_for_last_shuffle_member(
     monkeypatch,
 ):
     task, device_config, _clock, playlist, _display = _make_presentation_task(
@@ -16214,28 +16262,19 @@ def test_rotation_preflight_timeout_keeps_last_member_reserved_for_preparation(
         lambda: ResourceSample(available_mb=512, swap_percent=0),
     )
 
-    assert task._select_cached_display_command(PRESENTATION_NOW) is None
+    command = task._select_cached_display_command(PRESENTATION_NOW)
 
+    assert command is not None
+    assert command.instance_uuid == first.instance_uuid
+    assert command.intent is RefreshIntent.DISPLAY_CACHE
+    assert command.payload["automatic_rotation"] is True
+    assert command.payload["display_cached_only"] is True
     assert playlist.plugin_rotation_queue == [first.instance_uuid]
     assert playlist.is_rotation_reservation_current(first.instance_uuid) is True
     assert device_config.write_count == 0
 
-    task.runtime_state.record_attempt(
-        first.instance_uuid,
-        (PRESENTATION_NOW + timedelta(seconds=1)).isoformat(),
-        lane=RefreshLane.DATA,
-    )
-    command = task._select_independent_refresh_command(
-        PRESENTATION_NOW + timedelta(seconds=1)
-    )
 
-    assert command is not None
-    assert command.instance_uuid == first.instance_uuid
-    assert command.intent is RefreshIntent.PRESENTATION_REFRESH
-    assert command.priority == 90
-
-
-def test_rotation_preflight_timeout_keeps_only_eligible_member_reserved(
+def test_rotation_preflight_timeout_fails_open_for_only_eligible_member(
     monkeypatch,
 ):
     task, device_config, _clock, playlist, _display = _make_presentation_task(
@@ -16258,8 +16297,13 @@ def test_rotation_preflight_timeout_keeps_only_eligible_member_reserved(
         lambda: ResourceSample(available_mb=512, swap_percent=0),
     )
 
-    assert task._select_cached_display_command(PRESENTATION_NOW) is None
+    command = task._select_cached_display_command(PRESENTATION_NOW)
 
+    assert command is not None
+    assert command.instance_uuid == first.instance_uuid
+    assert command.intent is RefreshIntent.DISPLAY_CACHE
+    assert command.payload["automatic_rotation"] is True
+    assert command.payload["display_cached_only"] is True
     assert playlist.plugin_rotation_queue == [
         first.instance_uuid,
         second.instance_uuid,
@@ -16267,19 +16311,40 @@ def test_rotation_preflight_timeout_keeps_only_eligible_member_reserved(
     assert playlist.is_rotation_reservation_current(first.instance_uuid) is True
     assert device_config.write_count == 0
 
-    task.runtime_state.record_attempt(
-        first.instance_uuid,
-        (PRESENTATION_NOW + timedelta(seconds=1)).isoformat(),
-        lane=RefreshLane.DATA,
+
+def test_rotation_preflight_hard_pressure_still_defers_cached_display(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "presentation-hard-pressure-defers-cached-display",
+        plugin_count=2,
     )
-    command = task._select_independent_refresh_command(
-        PRESENTATION_NOW + timedelta(seconds=1)
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = None
+    for instance in (first, second):
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=2)
+    ).isoformat()
+    device_config.config["rotation_presentation_wait_seconds"] = 60
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=50, swap_percent=0),
     )
 
-    assert command is not None
-    assert command.instance_uuid == first.instance_uuid
-    assert command.intent is RefreshIntent.PRESENTATION_REFRESH
-    assert command.priority == 90
+    command = task._select_cached_display_command(PRESENTATION_NOW)
+
+    assert command is None
+    assert playlist.plugin_rotation_queue == [
+        second.instance_uuid,
+        first.instance_uuid,
+    ]
+    assert playlist.plugin_rotation_recent_history == []
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
 
 
 @pytest.mark.parametrize(
@@ -16308,7 +16373,7 @@ def test_failed_rotation_presentation_releases_member_during_retry_backoff(
     device_config.refresh_info.refresh_time = (
         PRESENTATION_NOW - timedelta(minutes=2)
     ).isoformat()
-    device_config.config["rotation_presentation_wait_seconds"] = 0
+    device_config.config["rotation_presentation_wait_seconds"] = 60
     now = [PRESENTATION_NOW]
     monkeypatch.setattr(task, "_get_current_datetime", lambda: now[0])
     monkeypatch.setattr(
@@ -16344,6 +16409,1252 @@ def test_failed_rotation_presentation_releases_member_during_retry_backoff(
     assert recovery is not None
     assert recovery.instance_uuid == second.instance_uuid
     assert recovery.intent is RefreshIntent.DATA_REFRESH
+
+
+def test_pending_rotation_presentation_deadline_records_backoff_and_releases_member(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "presentation-deadline-releases-reservation",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    for instance in (first, second):
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=2)
+    ).isoformat()
+    request = _seed_presentation_request(task, first)
+    command = task._playlist_command(
+        playlist.name,
+        first,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=90,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+        presentation_request_id=request.request_id,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(
+            TaskDeadlineExceeded("presentation deadline expired")
+        ),
+    )
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    state = task.runtime_state.snapshot().instances[first.instance_uuid]
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    assert state.presentation.last_failure_at is not None
+    assert state.presentation.next_retry_at is not None
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+
+    device_config.config["rotation_presentation_wait_seconds"] = 0
+    recovery = task._select_cached_display_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    )
+    assert recovery is not None
+    assert recovery.instance_uuid == second.instance_uuid
+    assert recovery.intent is RefreshIntent.DISPLAY_CACHE
+
+
+@pytest.mark.parametrize(
+    ("intent", "kind", "display_cached_only"),
+    [
+        (RefreshIntent.DATA_REFRESH, CommandKind.CACHE_REFRESH, False),
+        (RefreshIntent.DISPLAY_CACHE, CommandKind.DISPLAY, True),
+    ],
+)
+def test_automatic_rotation_command_deadline_backs_off_member_and_moves_on(
+    monkeypatch,
+    intent,
+    kind,
+    display_cached_only,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        f"automatic-{intent.value}-deadline-releases-reservation",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    for instance in (first, second):
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=5)
+    ).isoformat()
+    device_config.config["rotation_presentation_wait_seconds"] = 0
+    command = task._playlist_command(
+        playlist.name,
+        first,
+        source=(
+            CommandSource.BACKGROUND
+            if intent is RefreshIntent.DATA_REFRESH
+            else CommandSource.SCHEDULER
+        ),
+        intent=intent,
+        force=False,
+        display_cached_only=display_cached_only,
+        priority=95,
+        kind=kind,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(
+            TaskDeadlineExceeded(f"{intent.value} deadline expired")
+        ),
+    )
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    failed_state = task.runtime_state.snapshot().instances.get(first.instance_uuid)
+    if intent is RefreshIntent.DATA_REFRESH:
+        assert failed_state is not None
+        assert failed_state.data.last_failure_at is not None
+        assert failed_state.data.next_retry_at is not None
+    else:
+        assert failed_state is None or failed_state.data.last_failure_at is None
+        assert failed_state is None or failed_state.data.next_retry_at is None
+        assert task.retry_registry.next_delay(
+            task._rotation_display_retry_key(first.instance_uuid),
+            task._clock(),
+        ) > 0
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+
+    recovery = task._select_cached_display_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    )
+    assert recovery is not None
+    assert recovery.instance_uuid == second.instance_uuid
+    assert recovery.intent is RefreshIntent.DISPLAY_CACHE
+
+
+def test_queued_automatic_rotation_deadline_runs_cleanup_before_retry(
+    monkeypatch,
+):
+    task, device_config, clock, playlist, display = _make_presentation_task(
+        "queued-automatic-display-deadline-runs-cleanup",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    for instance in (first, second):
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=5)
+    ).isoformat()
+    device_config.config["rotation_presentation_wait_seconds"] = 0
+    command = task._playlist_command(
+        playlist.name,
+        first,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=95,
+        kind=CommandKind.DISPLAY,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    submitted = task.refresh_queue.submit(command)
+    clock.advance(181)
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+
+    task._process_queue_entry(entry)
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    assert display.calls == []
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+    assert task.retry_registry.next_delay(
+        task._rotation_display_retry_key(first.instance_uuid),
+        task._clock(),
+    ) > 0
+    recovery = task._select_cached_display_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    )
+    assert recovery is not None
+    assert recovery.instance_uuid == second.instance_uuid
+
+
+def test_expired_automatic_data_is_cleaned_before_ian_admission(
+    monkeypatch,
+):
+    task, _device_config, clock, playlist, _display = _make_presentation_task(
+        "expired-automatic-data-is-cleaned-before-ian",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    historical_success = task._runtime_now_iso(offset_seconds=-3600)
+    task.runtime_state.record_success(
+        first.instance_uuid,
+        historical_success,
+        lane=RefreshLane.DATA,
+    )
+    command = task._playlist_command(
+        playlist.name,
+        first,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    submitted = task.refresh_queue.submit(command)
+    clock.advance(181)
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(task, "_uses_ian_admission", lambda _command: True)
+    monkeypatch.setattr(
+        task,
+        "_process_ian_queue_entry",
+        lambda _entry: pytest.fail("expired work reached Ian admission"),
+    )
+
+    task._process_queue_entry(entry)
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    state = task.runtime_state.snapshot().instances[first.instance_uuid]
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    assert state.data.last_success_at == historical_success
+    assert state.data.last_failure_at is not None
+    assert state.data.next_retry_at is not None
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+
+
+def test_expired_retained_ian_rotation_entry_is_removed_before_cleanup_returns(
+    monkeypatch,
+):
+    task, _device_config, clock, playlist, _display = _make_presentation_task(
+        "expired-retained-ian-entry-is-removed"
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    task._ian_retained_entries[command.id] = entry
+    task._ian_recorded_deferrals.add(command.id)
+    clock.advance(181)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+
+    task._process_queue_entry(entry)
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    assert command.id not in task._ian_retained_entries
+    assert command.id not in task._ian_recorded_deferrals
+    assert task._ian_entry_ready_to_resume() is None
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is False
+
+
+def test_ian_deadline_after_executor_success_does_not_reclassify_rotation(
+    monkeypatch,
+):
+    task, _device_config, _clock, playlist, _display = _make_presentation_task(
+        "ian-deadline-after-executor-success"
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    historical_success = task._runtime_now_iso(offset_seconds=-3600)
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        historical_success,
+        lane=RefreshLane.DATA,
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    request = task._ian_request_adapter(command)
+    monkeypatch.setattr(task, "_execute_command", lambda _command: None)
+
+    def deadline_after_success():
+        task._execute_queue_entry(entry, ian_admitted=True)
+        return SimpleNamespace(
+            status=refresh_task_module.IanTurnStatus.DEADLINE_EXPIRED,
+            request=request,
+            reason="ian_deadline_expired_after_execution",
+        )
+
+    monkeypatch.setattr(task._ian, "run_turn", deadline_after_success)
+
+    task._process_ian_queue_entry(entry)
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert result.status is JobStatus.SUCCEEDED
+    assert state.data.last_success_at == historical_success
+    assert state.data.last_failure_at is None
+    assert state.data.next_retry_at is None
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
+    assert command.id not in task._ian_retained_entries
+    assert command.id not in task._ian_recorded_deferrals
+
+
+def test_single_rotation_member_display_deadline_waits_for_transient_backoff(
+    monkeypatch,
+):
+    task, device_config, clock, playlist, _display = _make_presentation_task(
+        "single-member-display-deadline-waits-for-backoff"
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=5)
+    ).isoformat()
+    device_config.config["rotation_presentation_wait_seconds"] = 0
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=95,
+        kind=CommandKind.DISPLAY,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(
+            TaskDeadlineExceeded("single member display deadline")
+        ),
+    )
+
+    _queue_and_process(task, command)
+
+    assert playlist.plugin_rotation_queue == [instance.instance_uuid]
+    assert playlist.plugin_rotation_recent_history == []
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is False
+    assert task._select_cached_display_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    ) is None
+
+    clock.advance(34)
+    retry = task._select_cached_display_command(
+        PRESENTATION_NOW + timedelta(seconds=35)
+    )
+    assert retry is not None
+    assert retry.instance_uuid == instance.instance_uuid
+    assert retry.intent is RefreshIntent.DISPLAY_CACHE
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
+
+
+@pytest.mark.parametrize("manual_first", [False, True])
+def test_manual_data_coalesced_with_automatic_rotation_keeps_failure_ownership(
+    monkeypatch,
+    manual_first,
+):
+    task, _device_config, _clock, playlist, _display = _make_presentation_task(
+        "manual-data-coalesced-with-automatic-rotation",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    automatic = task._playlist_command(
+        playlist.name,
+        first,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    manual = task._playlist_command(
+        playlist.name,
+        first,
+        source=CommandSource.MANUAL,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=True,
+        display_cached_only=False,
+        priority=100,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=False,
+    )
+    first_command, second_command = (
+        (manual, automatic) if manual_first else (automatic, manual)
+    )
+    first_job = task.refresh_queue.submit(first_command)
+    second_job = task.refresh_queue.submit(second_command)
+    entry = task.refresh_queue.take(timeout=0)
+    assert second_job.id == first_job.id
+    assert entry.command.source is CommandSource.MANUAL
+    assert entry.command.payload["automatic_rotation"] is True
+    assert entry.command.payload["rotation_deadline_cleanup"] is True
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(
+            TaskDeadlineExceeded("coalesced data deadline expired")
+        ),
+    )
+
+    task._process_queue_entry(entry)
+
+    result = task.refresh_queue.get_entry(first_job.id).job
+    state = task.runtime_state.snapshot().instances[first.instance_uuid]
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    assert state.data.last_failure_at is not None
+    assert state.data.next_retry_at is not None
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+
+
+def test_automatic_rotation_exception_after_deadline_backs_off_member_and_moves_on(
+    monkeypatch,
+):
+    task, device_config, clock, playlist, _display = _make_presentation_task(
+        "automatic-exception-after-deadline-releases-reservation",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    for instance in (first, second):
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=5)
+    ).isoformat()
+    device_config.config["rotation_presentation_wait_seconds"] = 0
+    command = task._playlist_command(
+        playlist.name,
+        first,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+
+    def fail_after_deadline(_command):
+        clock.advance(181)
+        raise RuntimeError("renderer failed after its deadline")
+
+    monkeypatch.setattr(task, "_execute_command", fail_after_deadline)
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    failed_state = task.runtime_state.snapshot().instances[first.instance_uuid]
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    assert failed_state.data.last_failure_at is not None
+    assert failed_state.data.next_retry_at is not None
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+
+    recovery = task._select_cached_display_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    )
+    assert recovery is not None
+    assert recovery.instance_uuid == second.instance_uuid
+    assert recovery.intent is RefreshIntent.DISPLAY_CACHE
+
+
+def test_automatic_rotation_checkpoint_after_deadline_releases_member(
+    monkeypatch,
+):
+    task, _device_config, clock, playlist, _display = _make_presentation_task(
+        "automatic-checkpoint-after-deadline-releases-reservation",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    command = task._playlist_command(
+        playlist.name,
+        first,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+
+    def checkpoint_after_deadline(_command):
+        clock.advance(181)
+        raise SportsIsolatedCheckpointPending(
+            fingerprint="c" * 64,
+            completed_regions=("esports",),
+            next_region="football",
+        )
+
+    monkeypatch.setattr(task, "_execute_command", checkpoint_after_deadline)
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    failed_state = task.runtime_state.snapshot().instances[first.instance_uuid]
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    assert failed_state.data.last_failure_at is not None
+    assert failed_state.data.next_retry_at is not None
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+
+
+def test_automatic_rotation_deadline_during_checkpoint_yield_releases_member(
+    monkeypatch,
+):
+    task, device_config, clock, playlist, _display = _make_presentation_task(
+        "automatic-deadline-during-checkpoint-yield-releases-reservation",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    for instance in (first, second):
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=5)
+    ).isoformat()
+    device_config.config["rotation_presentation_wait_seconds"] = 0
+    command = task._playlist_command(
+        playlist.name,
+        first,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(
+            SportsIsolatedCheckpointPending(
+                fingerprint="d" * 64,
+                completed_regions=("esports",),
+                next_region="football",
+            )
+        ),
+    )
+    original_yield_running = task.refresh_queue.yield_running
+
+    def deadline_during_yield(job_id):
+        clock.advance(181)
+        return original_yield_running(job_id)
+
+    monkeypatch.setattr(
+        task.refresh_queue,
+        "yield_running",
+        deadline_during_yield,
+    )
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    failed_state = task.runtime_state.snapshot().instances[first.instance_uuid]
+    assert result.status is JobStatus.CANCELED
+    assert result.error_code == "deadline_expired"
+    assert failed_state.data.last_failure_at is not None
+    assert failed_state.data.next_retry_at is not None
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+    recovery = task._select_cached_display_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    )
+    assert recovery is not None
+    assert recovery.instance_uuid == second.instance_uuid
+
+
+def test_canceled_rotation_during_checkpoint_yield_keeps_reservation(
+    monkeypatch,
+):
+    task, _device_config, clock, playlist, _display = _make_presentation_task(
+        "canceled-during-checkpoint-yield-keeps-reservation"
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(
+            SportsIsolatedCheckpointPending(
+                fingerprint="e" * 64,
+                completed_regions=("esports",),
+                next_region="football",
+            )
+        ),
+    )
+    original_yield_running = task.refresh_queue.yield_running
+
+    def cancel_and_expire_during_yield(job_id):
+        assert task.refresh_queue.cancel_instance(instance.instance_uuid) == 1
+        clock.advance(181)
+        return original_yield_running(job_id)
+
+    monkeypatch.setattr(
+        task.refresh_queue,
+        "yield_running",
+        cancel_and_expire_during_yield,
+    )
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert result.status is JobStatus.CANCELED
+    assert result.error_code == "deadline_expired"
+    assert result.cancel_requested_at is not None
+    assert state.data.last_failure_at is None
+    assert state.data.next_retry_at is None
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
+
+
+def test_automatic_rotation_expired_at_submit_releases_member(monkeypatch):
+    task, device_config, clock, playlist, _display = _make_presentation_task(
+        "automatic-expired-at-submit-releases-reservation",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    for instance in (first, second):
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(minutes=5)
+    ).isoformat()
+    device_config.config["rotation_presentation_wait_seconds"] = 0
+    command = task._playlist_command(
+        playlist.name,
+        first,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        deadline_monotonic=clock.monotonic(),
+        automatic_rotation=True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    task._process_queue_entry(entry)
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    failed_state = task.runtime_state.snapshot().instances[first.instance_uuid]
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    assert failed_state.data.last_failure_at is not None
+    assert failed_state.data.next_retry_at is not None
+    assert playlist.is_rotation_reservation_current(first.instance_uuid) is False
+    recovery = task._select_cached_display_command(
+        PRESENTATION_NOW + timedelta(seconds=1)
+    )
+    assert recovery is not None
+    assert recovery.instance_uuid == second.instance_uuid
+
+
+def test_successful_data_result_before_deadline_abort_is_not_reclassified_as_failure(
+    monkeypatch,
+):
+    task, _device_config, clock, playlist, _display = _make_presentation_task(
+        "successful-data-result-before-deadline-abort-keeps-reservation"
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+
+    def succeed_then_fail_after_deadline(_command):
+        task.runtime_state.record_success(
+            instance.instance_uuid,
+            task._runtime_now_iso(offset_seconds=1),
+            lane=RefreshLane.DATA,
+        )
+        clock.advance(181)
+        raise RuntimeError("post-commit bookkeeping failed after deadline")
+
+    monkeypatch.setattr(task, "_execute_command", succeed_then_fail_after_deadline)
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    assert state.data.last_success_at is not None
+    assert state.data.last_failure_at is None
+    assert state.data.next_retry_at is None
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
+
+
+def test_existing_data_failure_is_not_counted_twice_by_deadline_classification(
+    monkeypatch,
+):
+    task, _device_config, _clock, playlist, _display = _make_presentation_task(
+        "existing-data-failure-is-not-counted-twice"
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+
+    def record_failure_then_hit_deadline(_command):
+        task._record_intent_failure(
+            command,
+            RuntimeError("data attempt already failed"),
+            PRESENTATION_NOW,
+        )
+        raise TaskDeadlineExceeded("deadline after recorded data failure")
+
+    monkeypatch.setattr(task, "_execute_command", record_failure_then_hit_deadline)
+
+    result = _queue_and_process(task, command)
+
+    retry_key = task._lane_retry_key(instance.instance_uuid, RefreshLane.DATA)
+    retry_entry = next(
+        entry
+        for entry in task.retry_registry.snapshot()
+        if entry.key == retry_key
+    )
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert result.job.status is JobStatus.ABANDONED
+    assert retry_entry.failure_count == 1
+    assert state.data.last_failure_at is not None
+    assert state.data.next_retry_at is not None
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
+
+
+def test_nonautomatic_presentation_deadline_records_request_backoff_without_rotation_mutation(
+    monkeypatch,
+):
+    task, _device_config, _clock, playlist, _display = _make_presentation_task(
+        "nonautomatic-presentation-deadline-keeps-rotation-reservation"
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    request = _seed_presentation_request(task, instance)
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=90,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=False,
+        presentation_request_id=request.request_id,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(
+            TaskDeadlineExceeded("nonautomatic presentation deadline expired")
+        ),
+    )
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    assert state.presentation.last_failure_at is not None
+    assert state.presentation.next_retry_at is not None
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
+
+
+def test_stale_automatic_rotation_deadline_does_not_pollute_current_reservation(
+    monkeypatch,
+):
+    task, _device_config, _clock, playlist, _display = _make_presentation_task(
+        "stale-automatic-deadline-keeps-current-reservation",
+        plugin_count=2,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    command = task._playlist_command(
+        playlist.name,
+        first,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    playlist._plugin_rotation_reserved_key = second.instance_uuid
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(
+            TaskDeadlineExceeded("stale automatic deadline")
+        ),
+    )
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    state = task.runtime_state.snapshot().instances[first.instance_uuid]
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    assert state.data.last_failure_at is None
+    assert state.data.next_retry_at is None
+    assert playlist.is_rotation_reservation_current(second.instance_uuid) is True
+
+
+def test_canceled_automatic_command_at_deadline_does_not_record_failure_or_release(
+    monkeypatch,
+):
+    task, _device_config, clock, playlist, _display = _make_presentation_task(
+        "canceled-automatic-command-at-deadline-keeps-reservation"
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    historical_success = task._runtime_now_iso(offset_seconds=-3600)
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        historical_success,
+        lane=RefreshLane.DATA,
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=95,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    assert task.refresh_queue.cancel_instance(instance.instance_uuid) == 1
+    clock.advance(181)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(
+            TaskDeadlineExceeded("deadline during shutdown cancellation")
+        ),
+    )
+
+    task._process_queue_entry(entry)
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert result.status is JobStatus.CANCELED
+    assert result.error_code == "task_canceled"
+    assert state.data.last_success_at == historical_success
+    assert state.data.last_failure_at is None
+    assert state.data.next_retry_at is None
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
+
+
+def test_successful_automatic_display_clears_transient_rotation_backoff(
+    monkeypatch,
+):
+    task, _device_config, _clock, playlist, _display = _make_presentation_task(
+        "successful-automatic-display-clears-transient-backoff"
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    retry_key = task._rotation_display_retry_key(instance.instance_uuid)
+    task.retry_registry.mark_failure(retry_key, task._clock())
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=95,
+        kind=CommandKind.DISPLAY,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+        force_hardware_write=True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    result = _queue_and_process(task, command)
+
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert task.retry_registry.next_delay(retry_key, task._clock()) == 0
+
+
+def test_committed_automatic_display_is_not_reclassified_as_rotation_failure(
+    monkeypatch,
+):
+    task, _device_config, clock, playlist, display = _make_presentation_task(
+        "committed-display-is-not-reclassified-as-rotation-failure"
+    )
+    _device_config.config["display_triggered_refresh_enabled"] = False
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
+    retry_key = task._rotation_display_retry_key(instance.instance_uuid)
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=95,
+        kind=CommandKind.DISPLAY,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+        force_hardware_write=True,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    _install_display_provider_plugin_sentinels(monkeypatch)
+    execute = task._execute_command
+
+    def commit_then_cross_deadline(current_command):
+        result = execute(current_command)
+        clock.advance(181)
+        return result
+
+    monkeypatch.setattr(task, "_execute_command", commit_then_cross_deadline)
+
+    result = _queue_and_process(task, command)
+
+    assert result.job.status is JobStatus.ABANDONED
+    assert result.job.error_code == "deadline_expired"
+    assert len(display.calls) == 1
+    assert playlist.plugin_rotation_queue == []
+    assert playlist.plugin_rotation_recent_history == [instance.instance_uuid]
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is False
+    assert task.retry_registry.next_delay(retry_key, task._clock()) == 0
+
+
+def test_manual_display_deadline_does_not_release_automatic_rotation_reservation(
+    monkeypatch,
+):
+    task, _device_config, _clock, playlist, _display = _make_presentation_task(
+        "manual-display-deadline-keeps-rotation-reservation"
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    task.runtime_state.record_attempt(
+        instance.instance_uuid,
+        PRESENTATION_NOW.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.MANUAL,
+        intent=RefreshIntent.DISPLAY_CACHE,
+        force=False,
+        display_cached_only=True,
+        priority=100,
+        kind=CommandKind.DISPLAY,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=False,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(
+            TaskDeadlineExceeded("manual display deadline expired")
+        ),
+    )
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert result.status is JobStatus.ABANDONED
+    assert result.error_code == "deadline_expired"
+    assert state.data.last_failure_at is None
+    assert state.data.next_retry_at is None
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
+
+
+def test_prepared_rotation_presentation_deadline_does_not_record_false_failure(
+    monkeypatch,
+):
+    task, _device_config, _clock, playlist, _display = _make_presentation_task(
+        "prepared-presentation-deadline-keeps-result"
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    request = _seed_presentation_request(task, instance)
+    _seed_prepared_presentation(task, instance, request)
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=90,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+        presentation_request_id=request.request_id,
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(
+            TaskDeadlineExceeded("deadline after prepared publication")
+        ),
+    )
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert result.status is JobStatus.ABANDONED
+    assert state.presentation.last_failure_at is None
+    assert state.presentation.next_retry_at is None
+    assert state.presentation_request is not None
+    assert state.presentation_request.request_id == request.request_id
+    assert state.presentation_request.prepared_at is not None
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
+
+
+def test_replaced_rotation_presentation_deadline_does_not_pollute_new_request(
+    monkeypatch,
+):
+    task, _device_config, _clock, playlist, _display = _make_presentation_task(
+        "replaced-presentation-deadline-keeps-new-request"
+    )
+    instance = playlist.plugins[0].snapshot()
+    playlist.plugin_rotation_pool = [instance.instance_uuid]
+    playlist.plugin_rotation_queue = [instance.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = instance.instance_uuid
+    original = _seed_presentation_request(task, instance)
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=90,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        automatic_rotation=True,
+        presentation_request_id=original.request_id,
+    )
+    assert task.runtime_state.satisfy_presentation_no_change(
+        instance.instance_uuid,
+        original.request_id,
+        original.requested_at,
+    )
+    replacement = _seed_presentation_request(
+        task,
+        instance,
+        request_id=uuid.uuid4().hex,
+        requested_at=PRESENTATION_NOW + timedelta(seconds=1),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(
+        task,
+        "_execute_command",
+        lambda _command: (_ for _ in ()).throw(
+            TaskDeadlineExceeded("stale presentation deadline")
+        ),
+    )
+
+    submitted = task.refresh_queue.submit(command)
+    task._process_queue_entry(task.refresh_queue.take(timeout=0))
+
+    result = task.refresh_queue.get_entry(submitted.id).job
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert result.status is JobStatus.ABANDONED
+    assert state.presentation.last_failure_at is None
+    assert state.presentation.next_retry_at is None
+    assert state.presentation_request == replacement
+    assert playlist.is_rotation_reservation_current(instance.instance_uuid) is True
 
 
 def test_rotation_preflight_no_change_displays_cached_member_without_request_loop(

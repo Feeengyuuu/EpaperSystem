@@ -173,6 +173,7 @@ DEFAULT_SPORTS_ISOLATED_LIVENESS_COOLDOWN_SECONDS = 5 * 60
 MAX_RESOURCE_PRESSURE_DEFERRAL_SECONDS = 5 * 60
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
 DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS = 60
+DEFAULT_ROTATION_PRESENTATION_DEADLINE_SECONDS = 5 * 60
 DEFAULT_ROTATION_MAX_INTERVAL_SECONDS = 7 * 60
 DEFAULT_ROTATION_BACKGROUND_GUARD_SECONDS = 2 * 60
 DEFAULT_ROTATION_CACHE_RECOVERY_SECONDS = 30
@@ -1545,7 +1546,7 @@ class RefreshTask:
         )
         remaining_budget = max(
             0.0,
-            DEFAULT_ROTATION_MAX_INTERVAL_SECONDS - cycle_interval,
+            DEFAULT_ROTATION_PRESENTATION_DEADLINE_SECONDS - cycle_interval,
         )
         return min(configured_wait, remaining_budget)
 
@@ -1852,6 +1853,18 @@ class RefreshTask:
             eligible[instance_uuid] = candidate
         return eligible
 
+    def _rotation_cache_candidates_outside_display_backoff(self, candidates):
+        """Keep a timed-out panel write from immediately reclaiming rotation."""
+        return {
+            instance_uuid: candidate
+            for instance_uuid, candidate in candidates.items()
+            if self.retry_registry.next_delay(
+                self._rotation_display_retry_key(instance_uuid),
+                self._clock(),
+            )
+            <= 0
+        }
+
     def _presentation_request_in_retry_backoff(self, state, current_dt):
         request = state.presentation_request
         failed_at = self._parse_iso_datetime(state.presentation.last_failure_at)
@@ -1966,6 +1979,9 @@ class RefreshTask:
                     current_dt,
                 )
             )
+        candidates = self._rotation_cache_candidates_outside_display_backoff(
+            candidates
+        )
         recovery_elapsed = None
         if rotation_due and (theme_changed or not candidates):
             if self._rotation_cache_starved_since is None:
@@ -1996,6 +2012,11 @@ class RefreshTask:
                         current_dt,
                     )
                 )
+            fallback_candidates = (
+                self._rotation_cache_candidates_outside_display_backoff(
+                    fallback_candidates
+                )
+            )
             if fallback_candidates:
                 candidates = fallback_candidates
             elif not candidates:
@@ -2149,39 +2170,51 @@ class RefreshTask:
                             self._resource_sample(),
                             self._resource_thresholds(),
                         )
-                        timed_out = requested_at is not None and (
+                        wait_expired = requested_at is None or (
                             current_dt - requested_at
                         ).total_seconds() >= max(0.0, wait_seconds)
-                        if resource_tier is not ResourceTier.HARD and not timed_out:
+                        if (
+                            resource_tier is not ResourceTier.HARD
+                            and not wait_expired
+                        ):
                             return None
-                        reason = (
-                            "hard_resource_pressure"
-                            if resource_tier is ResourceTier.HARD
-                            else "timeout"
-                        )
-                        deferred = manager.defer_rotation_reservation(
-                            selection.instance.instance_uuid,
-                            expected_playlist_name=selection.playlist_name,
-                            eligible_instance_uuids=frozenset(candidates),
-                        )
-                        released = False
-                        if not deferred and resource_tier is ResourceTier.HARD:
-                            released = manager.release_rotation_reservation(
+                        if resource_tier is ResourceTier.HARD:
+                            deferred = manager.defer_rotation_reservation(
                                 selection.instance.instance_uuid,
                                 expected_playlist_name=selection.playlist_name,
+                                eligible_instance_uuids=frozenset(candidates),
                             )
-                        if deferred or released:
-                            self._write_device_config()
+                            released = False
+                            if not deferred:
+                                released = manager.release_rotation_reservation(
+                                    selection.instance.instance_uuid,
+                                    expected_playlist_name=selection.playlist_name,
+                                )
+                            if deferred or released:
+                                self._write_device_config()
+                            logger.warning(
+                                "Rotation presentation preflight unavailable; deferred cached display during hard resource pressure. | plugin_id: %s | instance_uuid: %s | request_id: %s | deferred: %s | released: %s",
+                                selection.instance.plugin_id,
+                                selection.instance.instance_uuid,
+                                request.request_id,
+                                deferred,
+                                released,
+                            )
+                            return None
+
+                        reason = (
+                            "invalid_requested_at"
+                            if requested_at is None
+                            else "timeout"
+                        )
                         logger.warning(
-                            "Rotation presentation preflight unavailable; deferred stale cache behind the remaining shuffle round. | plugin_id: %s | instance_uuid: %s | request_id: %s | reason: %s | deferred: %s | released: %s",
+                            "Rotation presentation preflight deadline expired; using the available cache to preserve automatic rotation cadence. | plugin_id: %s | instance_uuid: %s | request_id: %s | reason: %s | wait_seconds: %.1f",
                             selection.instance.plugin_id,
                             selection.instance.instance_uuid,
                             request.request_id,
                             reason,
-                            deferred,
-                            released,
+                            wait_seconds,
                         )
-                        return None
         display_theme_context = (
             theme_context
             if (
@@ -3495,6 +3528,55 @@ class RefreshTask:
                 self._clock() + self._scheduler_poll_seconds()
             )
         try:
+            context = TaskContext(
+                entry.cancel_event,
+                entry.command.deadline_monotonic,
+                self._clock,
+            )
+            try:
+                context.raise_if_cancelled()
+            except TaskDeadlineExceeded as error:
+                current_entry = self.refresh_queue.get_entry(entry.job.id)
+                if (
+                    current_entry is None
+                    or current_entry.job.status is not JobStatus.RUNNING
+                ):
+                    # A retained Ian snapshot can outlive executor
+                    # terminalization by one turn. Discard that stale
+                    # retention without reclassifying completed work.
+                    self._ian_retained_entries.pop(entry.command.id, None)
+                    self._ian_recorded_deferrals.discard(entry.command.id)
+                    return
+                if entry.cancel_event.is_set():
+                    self._finish_pre_execution_entry(
+                        entry,
+                        JobStatus.CANCELED,
+                        error_code="task_canceled",
+                        error="refresh command was canceled before execution",
+                    )
+                else:
+                    # Establish this attempt before comparing terminal lane state;
+                    # otherwise old success/failure timestamps can suppress cleanup.
+                    self._record_runtime_attempt(entry.command)
+                    self._record_rotation_deadline_failure_safely(
+                        entry.command,
+                        error,
+                    )
+                    self._finish_pre_execution_entry(
+                        entry,
+                        JobStatus.ABANDONED,
+                        error_code="deadline_expired",
+                        error=str(error),
+                    )
+                return
+            except TaskCancelled as error:
+                self._finish_pre_execution_entry(
+                    entry,
+                    JobStatus.CANCELED,
+                    error_code="task_canceled",
+                    error=str(error),
+                )
+                return
             if self._uses_ian_admission(entry.command):
                 self._process_ian_queue_entry(entry)
                 return
@@ -3581,6 +3663,17 @@ class RefreshTask:
                 return
             offer = self._ian.offer(request)
             if offer.status is IanOfferStatus.REJECTED:
+                if (
+                    offer.reason == "ian_deadline_expired"
+                    and not entry.cancel_event.is_set()
+                ):
+                    self._record_runtime_attempt(entry.command)
+                    self._record_rotation_deadline_failure_safely(
+                        entry.command,
+                        TaskDeadlineExceeded(
+                            "Ian rejected an expired background command"
+                        ),
+                    )
                 status = (
                     JobStatus.ABANDONED
                     if offer.reason == "ian_deadline_expired"
@@ -3685,6 +3778,28 @@ class RefreshTask:
                 JobStatus.SUCCEEDED,
             )
         elif turn.status is IanTurnStatus.DEADLINE_EXPIRED:
+            expired_entry = self._ian_retained_entries.get(terminal_id)
+            current_entry = (
+                None
+                if expired_entry is None
+                else self.refresh_queue.get_entry(expired_entry.job.id)
+            )
+            if (
+                expired_entry is not None
+                and current_entry is not None
+                and current_entry.job.status is JobStatus.RUNNING
+                and not expired_entry.cancel_event.is_set()
+            ):
+                # Ian can observe its deadline immediately after the executor
+                # has already committed a terminal success. Only a still-
+                # running queue job remains eligible for deadline bookkeeping.
+                self._record_runtime_attempt(expired_entry.command)
+                self._record_rotation_deadline_failure_safely(
+                    expired_entry.command,
+                    TaskDeadlineExceeded(
+                        "Ian background execution deadline expired"
+                    ),
+                )
             terminal_entry = self._finish_ian_entry(
                 terminal_id,
                 JobStatus.ABANDONED,
@@ -3742,6 +3857,28 @@ class RefreshTask:
         self._ian_recorded_deferrals.discard(request_id)
         if entry is None:
             return None
+        return self._finish_queue_entry_once(
+            entry,
+            status,
+            error_code=error_code,
+            error=error,
+        )
+
+    def _finish_pre_execution_entry(
+        self,
+        entry,
+        status,
+        *,
+        error_code=None,
+        error=None,
+    ):
+        if entry.command.id in self._ian_retained_entries:
+            return self._finish_ian_entry(
+                entry.command.id,
+                status,
+                error_code=error_code,
+                error=error,
+            )
         return self._finish_queue_entry_once(
             entry,
             status,
@@ -4070,6 +4207,14 @@ class RefreshTask:
                     status, error_code, abort_message = self._abort_details(
                         abort_error
                     )
+                    if (
+                        isinstance(abort_error, TaskDeadlineExceeded)
+                        and not entry.cancel_event.is_set()
+                    ):
+                        self._record_rotation_deadline_failure_safely(
+                            command,
+                            abort_error,
+                        )
                     finished = self.refresh_queue.finish(
                         entry.job.id,
                         status,
@@ -4100,6 +4245,20 @@ class RefreshTask:
                     pending.next_region,
                     yielded.status.value,
                 )
+                if (
+                    yielded.error_code == "deadline_expired"
+                    and yielded.cancel_requested_at is None
+                    and not self.stop_event.is_set()
+                ):
+                    # The deadline can cross between the context check and the
+                    # queue's atomic yield. Recover the same exact rotation
+                    # failure/release bookkeeping used by direct aborts.
+                    self._record_rotation_deadline_failure_safely(
+                        command,
+                        TaskDeadlineExceeded(
+                            "Sports Dashboard checkpoint deadline expired"
+                        ),
+                    )
                 if yielded.status is not JobStatus.QUEUED:
                     self._signal_completion(yielded.id)
                 return
@@ -4186,6 +4345,8 @@ class RefreshTask:
                     error=str(error),
                 )
             except TaskDeadlineExceeded as error:
+                if not entry.cancel_event.is_set():
+                    self._record_rotation_deadline_failure_safely(command, error)
                 finished = self.refresh_queue.finish(
                     entry.job.id,
                     JobStatus.ABANDONED,
@@ -4256,6 +4417,14 @@ class RefreshTask:
                     )
                 else:
                     status, error_code, abort_error = abort
+                    if (
+                        error_code == "deadline_expired"
+                        and not entry.cancel_event.is_set()
+                    ):
+                        self._record_rotation_deadline_failure_safely(
+                            command,
+                            TaskDeadlineExceeded(abort_error),
+                        )
                     finished = self.refresh_queue.finish(
                         entry.job.id,
                         status,
@@ -5350,6 +5519,10 @@ class RefreshTask:
     def _lane_retry_key(instance_uuid, lane):
         return f"{instance_uuid}:{lane.value}"
 
+    @staticmethod
+    def _rotation_display_retry_key(instance_uuid):
+        return f"{instance_uuid}:rotation-display"
+
     def _record_intent_success(
         self,
         command,
@@ -5751,6 +5924,154 @@ class RefreshTask:
         )
         self.scheduler_state.set_next_attempt(self._clock() + self._scheduler_poll_seconds())
 
+    def _record_pending_presentation_deadline_failure(
+        self,
+        command,
+        error,
+        current_dt,
+    ):
+        """Back off only the exact unprepared request that exhausted its deadline."""
+        # Presentation mutation is owned by this single RefreshTask consumer,
+        # so no prepared/replaced publication can interleave between this
+        # final state check and failure bookkeeping.  If that ownership ever
+        # becomes concurrent, this boundary must move into RuntimeStateStore
+        # as one request-id/revision/prepared-at CAS.
+        if (
+            command.intent is not RefreshIntent.PRESENTATION_REFRESH
+            or command.instance_uuid is None
+        ):
+            return False
+        selection = self._resolve_playlist_command(command)
+        if selection is None:
+            return False
+        if command.payload.get("automatic_rotation") is True and not (
+            self.device_config.get_playlist_manager().validate_rotation_reservation(
+                command.instance_uuid,
+                expected_playlist_name=selection.playlist_name,
+            )
+        ):
+            return False
+        expected_request_id = command.payload.get("presentation_request_id")
+        state = self.runtime_state.snapshot().instances.get(
+            command.instance_uuid,
+            InstanceRuntimeState(),
+        )
+        request = state.presentation_request
+        if (
+            request is None
+            or request.request_id != expected_request_id
+            or request.structural_generation != command.structural_generation
+            or request.settings_revision != command.settings_revision
+            or request.prepared_at is not None
+        ):
+            return False
+        self._record_presentation_failure(command, error, current_dt)
+        return True
+
+    def _record_pending_rotation_deadline_failure(
+        self,
+        command,
+        error,
+        current_dt,
+    ):
+        """Back off the exact pending work without mutating newer ownership."""
+        if command.intent is RefreshIntent.PRESENTATION_REFRESH:
+            return self._record_pending_presentation_deadline_failure(
+                command,
+                error,
+                current_dt,
+            )
+        if (
+            command.intent
+            not in {RefreshIntent.DATA_REFRESH, RefreshIntent.DISPLAY_CACHE}
+            or command.instance_uuid is None
+            or command.payload.get("automatic_rotation") is not True
+            or (
+                command.intent is RefreshIntent.DATA_REFRESH
+                and (
+                    command.source
+                    not in {CommandSource.BACKGROUND, CommandSource.MANUAL}
+                    or command.kind is not CommandKind.CACHE_REFRESH
+                )
+            )
+            or (
+                command.intent is RefreshIntent.DISPLAY_CACHE
+                and (
+                    command.source is not CommandSource.SCHEDULER
+                    or command.kind is not CommandKind.DISPLAY
+                )
+            )
+        ):
+            return False
+        # Queue coalescing can promote automatic DATA_REFRESH to MANUAL while
+        # retaining the automatic reservation payload.  It still owns cleanup.
+        selection = self._resolve_playlist_command(command)
+        if selection is None or not (
+            self.device_config.get_playlist_manager().validate_rotation_reservation(
+                command.instance_uuid,
+                expected_playlist_name=selection.playlist_name,
+            )
+        ):
+            return False
+
+        if command.intent is RefreshIntent.DISPLAY_CACHE:
+            self.scheduler_state.record_failure(error)
+            self.retry_registry.mark_failure(
+                self._rotation_display_retry_key(command.instance_uuid),
+                self._clock(),
+            )
+        else:
+            terminal_outcome = self._data_attempt_terminal_outcome(
+                command,
+                current_dt,
+            )
+            if terminal_outcome is not None:
+                return False
+            self.scheduler_state.record_failure(error)
+            self._record_intent_failure(command, error, current_dt)
+        self._release_failed_rotation_reservation(command)
+        self.scheduler_state.set_next_attempt(
+            self._clock() + self._scheduler_poll_seconds()
+        )
+        return True
+
+    def _data_attempt_terminal_outcome(self, command, current_dt):
+        """Return a terminal result already recorded for this exact data attempt."""
+        state = self.runtime_state.snapshot().instances.get(
+            command.instance_uuid,
+            InstanceRuntimeState(),
+        ).data
+        attempted_at = self._parse_iso_datetime(state.last_attempt_at)
+        if attempted_at is None:
+            return None
+        attempted_at = self._align_datetime_tz(attempted_at, current_dt)
+        succeeded_at = self._parse_iso_datetime(state.last_success_at)
+        failed_at = self._parse_iso_datetime(state.last_failure_at)
+        if succeeded_at is not None:
+            succeeded_at = self._align_datetime_tz(succeeded_at, current_dt)
+        if failed_at is not None:
+            failed_at = self._align_datetime_tz(failed_at, current_dt)
+        if succeeded_at is not None and succeeded_at >= attempted_at and (
+            failed_at is None or succeeded_at >= failed_at
+        ):
+            return "success"
+        if failed_at is not None and failed_at >= attempted_at:
+            return "failure"
+        return None
+
+    def _record_rotation_deadline_failure_safely(self, command, error):
+        try:
+            return self._record_pending_rotation_deadline_failure(
+                command,
+                error,
+                self._get_current_datetime(),
+            )
+        except Exception:
+            logger.exception(
+                "Automatic rotation deadline failure bookkeeping also failed"
+            )
+            return False
+
     def _release_failed_rotation_reservation(self, command):
         if not command.payload.get("automatic_rotation"):
             return False
@@ -5765,7 +6086,7 @@ class RefreshTask:
         )
         if released:
             logger.warning(
-                "Failed rotation presentation released its reservation during retry backoff. | plugin_id: %s | instance_uuid: %s",
+                "Failed automatic rotation command released its reservation during retry backoff. | plugin_id: %s | instance_uuid: %s",
                 command.plugin_id,
                 command.instance_uuid,
             )
@@ -7524,6 +7845,9 @@ class RefreshTask:
             payload["presentation_request_id"] = str(presentation_request_id)
         if automatic_rotation:
             payload["automatic_rotation"] = True
+            # Queue expiry must hand this command back to RefreshTask so the
+            # exact reservation can be released with retry bookkeeping.
+            payload["rotation_deadline_cleanup"] = True
         if force_hardware_write:
             payload["force_hardware_write"] = True
         if allow_prepared_presentation is None:
@@ -8177,6 +8501,9 @@ class RefreshTask:
                     command.instance_uuid,
                 )
             raise
+        self.retry_registry.mark_success(
+            self._rotation_display_retry_key(command.instance_uuid)
+        )
 
     def _write_device_config(self):
         with self.config_write_lock:

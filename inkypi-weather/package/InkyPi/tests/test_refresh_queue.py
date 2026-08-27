@@ -659,6 +659,7 @@ def test_manual_display_coalescing_never_inherits_automatic_rotation_ack(
             "playlist_name": "Default",
             "require_active": True,
             "automatic_rotation": True,
+            "rotation_deadline_cleanup": True,
             "owner": "automatic",
         },
         intent=RefreshIntent.DISPLAY_CACHE,
@@ -685,6 +686,57 @@ def test_manual_display_coalescing_never_inherits_automatic_rotation_ack(
 
     assert selected.source is CommandSource.MANUAL
     assert selected.payload.get("automatic_rotation") is None
+    assert selected.payload.get("rotation_deadline_cleanup") is None
+
+
+@pytest.mark.parametrize("manual_first", [False, True])
+@pytest.mark.parametrize("manual_require_active", [True, False])
+def test_manual_data_coalescing_preserves_automatic_rotation_cleanup(
+    manual_first,
+    manual_require_active,
+):
+    queue = make_queue(capacity=4, manual_reserved=0)
+    automatic = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid=f"manual-data-rotation-boundary-{manual_first}",
+        priority=50,
+        payload={
+            "playlist_name": "Default",
+            "require_active": True,
+            "automatic_rotation": True,
+            "rotation_deadline_cleanup": True,
+            "owner": "automatic",
+        },
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    manual = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.MANUAL,
+        instance_uuid=f"manual-data-rotation-boundary-{manual_first}",
+        priority=100,
+        force=True,
+        payload={
+            "playlist_name": "Default",
+            "require_active": manual_require_active,
+            "owner": "manual",
+        },
+        intent=RefreshIntent.DATA_REFRESH,
+    )
+    first, second = (manual, automatic) if manual_first else (automatic, manual)
+
+    first_job = queue.submit(first)
+    second_job = queue.submit(second)
+    selected = queue.take(timeout=0).command
+
+    assert second_job.id == first_job.id
+    assert selected.source is CommandSource.MANUAL
+    assert selected.force is True
+    assert selected.payload["automatic_rotation"] is True
+    assert selected.payload["rotation_deadline_cleanup"] is True
+    if not manual_require_active:
+        assert selected.payload["require_active"] is False
+        assert selected.payload["owner"] == "manual"
 
 
 @pytest.mark.parametrize("manual_first", [False, True])
@@ -696,7 +748,11 @@ def test_manual_display_never_inherits_newer_automatic_revision_ack(manual_first
         instance_uuid=f"manual-newer-rotation-boundary-{manual_first}",
         settings_revision=2,
         priority=50,
-        payload={"automatic_rotation": True, "owner": "automatic"},
+        payload={
+            "automatic_rotation": True,
+            "rotation_deadline_cleanup": True,
+            "owner": "automatic",
+        },
         intent=RefreshIntent.DISPLAY_CACHE,
         allow_prepared_presentation=True,
     )
@@ -719,6 +775,7 @@ def test_manual_display_never_inherits_newer_automatic_revision_ack(manual_first
     assert selected.source is CommandSource.MANUAL
     assert selected.settings_revision == 2
     assert selected.payload.get("automatic_rotation") is None
+    assert selected.payload.get("rotation_deadline_cleanup") is None
 
 
 @pytest.mark.parametrize("manual_first", [False, True])
@@ -1976,6 +2033,74 @@ def test_expired_pending_job_is_canceled_but_running_job_can_finish_after_deadli
     finished = queue.finish(entry.job.id, JobStatus.SUCCEEDED)
     assert finished.status is JobStatus.SUCCEEDED
     assert finished.completed_at == 120.0
+
+
+def test_expired_automatic_rotation_job_is_taken_for_consumer_cleanup():
+    fake_time = FakeTime(monotonic=10.0, wall=100.0)
+    queue = make_queue(fake_time)
+    rotation = command(
+        instance_uuid="expired-rotation",
+        intent=RefreshIntent.DISPLAY_CACHE,
+        source=CommandSource.SCHEDULER,
+        payload={
+            "automatic_rotation": True,
+            "rotation_deadline_cleanup": True,
+        },
+        deadline=11.0,
+    )
+    submitted = queue.submit(rotation)
+    fake_time.advance(2.0)
+
+    entry = queue.take(timeout=0)
+
+    assert entry is not None
+    assert entry.job.id == submitted.id
+    assert entry.job.status is JobStatus.RUNNING
+    assert entry.command.payload["automatic_rotation"] is True
+
+
+def test_automatic_rotation_expired_at_submit_is_taken_for_consumer_cleanup():
+    fake_time = FakeTime(monotonic=10.0, wall=100.0)
+    queue = make_queue(fake_time)
+    rotation = command(
+        instance_uuid="submit-expired-rotation",
+        intent=RefreshIntent.DATA_REFRESH,
+        source=CommandSource.BACKGROUND,
+        kind=CommandKind.CACHE_REFRESH,
+        payload={
+            "automatic_rotation": True,
+            "rotation_deadline_cleanup": True,
+        },
+        deadline=10.0,
+    )
+
+    submitted = queue.submit(rotation)
+    entry = queue.take(timeout=0)
+
+    assert submitted.status is JobStatus.QUEUED
+    assert entry is not None
+    assert entry.job.id == submitted.id
+    assert entry.job.status is JobStatus.RUNNING
+    assert entry.command.payload["automatic_rotation"] is True
+    assert entry.command.payload["rotation_deadline_cleanup"] is True
+
+
+def test_expired_rotation_shaped_payload_without_cleanup_contract_is_canceled():
+    fake_time = FakeTime(monotonic=10.0, wall=100.0)
+    queue = make_queue(fake_time)
+    malformed = command(
+        instance_uuid="malformed-expired-rotation",
+        intent=RefreshIntent.DISPLAY_CACHE,
+        source=CommandSource.SCHEDULER,
+        payload={"automatic_rotation": True},
+        deadline=10.0,
+    )
+    submitted = queue.submit(malformed)
+
+    assert queue.take(timeout=0) is None
+    result = queue.get_job(submitted.id)
+    assert result.status is JobStatus.CANCELED
+    assert result.error_code == "deadline_expired"
 
 
 def test_cancel_request_wins_success_finish_race_and_terminal_finish_is_idempotent():

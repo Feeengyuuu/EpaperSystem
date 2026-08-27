@@ -173,7 +173,10 @@ class RefreshQueue:
                 )
                 raise InvalidRefreshCommandError(invalid_reason, rejected)
 
-            if normalized.deadline_monotonic <= now:
+            if (
+                normalized.deadline_monotonic <= now
+                and not self._consumer_owns_deadline_cleanup(normalized)
+            ):
                 return self._cancel_expired_submission_locked(normalized, now)
 
             if normalized.idempotency_key is None:
@@ -888,6 +891,7 @@ class RefreshQueue:
         ):
             without_rotation_ack = dict(selected_payload)
             without_rotation_ack.pop("automatic_rotation", None)
+            without_rotation_ack.pop("rotation_deadline_cleanup", None)
             selected_payload = freeze_payload(without_rotation_ack)
 
         if revision_comparison == 0:
@@ -896,6 +900,25 @@ class RefreshQueue:
                 incoming.payload,
                 selected_payload,
             )
+            automatic_data_owner = next(
+                (
+                    candidate
+                    for candidate in (existing, incoming)
+                    if candidate.intent is RefreshIntent.DATA_REFRESH
+                    and candidate.payload.get("automatic_rotation") is True
+                    and candidate.payload.get("rotation_deadline_cleanup") is True
+                ),
+                None,
+            )
+            if automatic_data_owner is not None:
+                # A manual DATA_REFRESH may share execution with the exact
+                # automatic rotation request. Preserve scheduler ownership in
+                # either submission order so deadline cleanup still releases
+                # the reserved shuffle member. DISPLAY remains manual-owned.
+                with_rotation_cleanup = dict(selected_payload)
+                with_rotation_cleanup["automatic_rotation"] = True
+                with_rotation_cleanup["rotation_deadline_cleanup"] = True
+                selected_payload = freeze_payload(with_rotation_cleanup)
 
         deadline = existing.deadline_monotonic
         if (
@@ -1147,6 +1170,9 @@ class RefreshQueue:
                 job_id
                 for job_id in self._pending
                 if self._commands[job_id].deadline_monotonic <= now
+                and not self._consumer_owns_deadline_cleanup(
+                    self._commands[job_id]
+                )
             ),
             key=self._pending.__getitem__,
         )
@@ -1163,6 +1189,29 @@ class RefreshQueue:
             self._cancel_events[job_id].set()
             self._record_terminal_locked(job_id, now)
         self._prune_terminal_locked(now)
+
+    @staticmethod
+    def _consumer_owns_deadline_cleanup(command: RefreshCommand) -> bool:
+        """Let rotation work run once so its reservation can be released safely."""
+        if (
+            command.payload.get("automatic_rotation") is not True
+            or command.payload.get("rotation_deadline_cleanup") is not True
+        ):
+            return False
+        if command.kind is CommandKind.CACHE_REFRESH:
+            return (
+                command.intent is RefreshIntent.PRESENTATION_REFRESH
+                and command.source is CommandSource.BACKGROUND
+            ) or (
+                command.intent is RefreshIntent.DATA_REFRESH
+                and command.source
+                in {CommandSource.BACKGROUND, CommandSource.MANUAL}
+            )
+        return (
+            command.kind is CommandKind.DISPLAY
+            and command.intent is RefreshIntent.DISPLAY_CACHE
+            and command.source is CommandSource.SCHEDULER
+        )
 
     def _cancel_matching_locked(self, predicate, now: float) -> int:
         completed_at = self._wall_clock()
