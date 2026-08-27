@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import logging
 import os
 from pathlib import Path
+import time
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
@@ -35,7 +36,8 @@ try:
     from utils.app_utils import resolve_dimensions as _resolve_dimensions
 except Exception:  # pragma: no cover - compatibility with older app_utils layout
     _resolve_dimensions = None
-from utils.http_client import get_http_session
+from runtime.refresh_contracts import TaskContext, TaskDeadlineExceeded
+from utils.http_client import HttpClient, get_http_session
 from utils.image_utils import take_screenshot
 
 try:
@@ -95,8 +97,10 @@ LCK_LIVE_STATE_VERSION = "sports-dashboard-lck-live-v1"
 MSI_TOURNAMENT_STATE_VERSION = "sports-dashboard-msi-tournament-v1"
 MSI_LIVE_STATE_VERSION = "sports-dashboard-msi-live-v1"
 VALVE_ESPORTS_STATE_VERSION = "sports-dashboard-valve-esports-v1"
-VALVE_ESPORTS_LIVE_STATE_VERSION = "sports-dashboard-valve-esports-live-v2"
+VALVE_ESPORTS_LIVE_STATE_VERSION = "sports-dashboard-valve-esports-live-v4"
 VALVE_TI_OFFICIAL_CACHE_VERSION = "sports-dashboard-valve-ti-official-v1"
+PANDASCORE_CS2_CACHE_VERSION = "sports-dashboard-pandascore-cs2-v1"
+PANDASCORE_CS2_STATE_VERSION = "sports-dashboard-pandascore-cs2-calls-v1"
 EWC_STATE_VERSION = "sports-dashboard-ewc-v1"
 EWC_DETAIL_STATE_VERSION = "sports-dashboard-ewc-detail-v2"
 EWC_LIVE_STATE_VERSION = "sports-dashboard-ewc-live-v1"
@@ -257,9 +261,31 @@ VALVE_TI_OFFICIAL_RESPONSE_MAX_BYTES = 2 * 1024 * 1024
 DEFAULT_VALVE_ESPORTS_CACHE_HOURS = 6
 DEFAULT_VALVE_ESPORTS_DAILY_LIMIT = 48
 DEFAULT_VALVE_ESPORTS_OPENDOTA_LIMIT = 120
-DEFAULT_VALVE_ESPORTS_WINDOW_AFTER_DAYS = 2
+DEFAULT_VALVE_ESPORTS_WINDOW_AFTER_DAYS = 0
 DEFAULT_VALVE_ESPORTS_LIVE_REFRESH_SECONDS = 180
 DEFAULT_VALVE_ESPORTS_LIVE_STATE_TTL_SECONDS = 30 * 60
+PANDASCORE_API_BASE_URL = "https://api.pandascore.co"
+PANDASCORE_BLAST_OPEN_PORTO_TOURNAMENT_IDS = ("21714", "21715", "21716")
+PANDASCORE_BLAST_OPEN_PORTO_EVENT_NAME = "BLAST Premier Open Porto 2026"
+DEFAULT_PANDASCORE_CS2_CACHE_SECONDS = 180
+DEFAULT_PANDASCORE_CS2_SCHEDULE_CACHE_SECONDS = 15 * 60
+DEFAULT_PANDASCORE_CS2_DAILY_LIMIT = 720
+PANDASCORE_CS2_RESPONSE_MAX_BYTES = 2 * 1024 * 1024
+PANDASCORE_CS2_REFRESH_DEADLINE_SECONDS = 45
+PANDASCORE_CS2_PREGAME_WINDOW = timedelta(minutes=30)
+PANDASCORE_CS2_MATCH_REFRESH_WINDOW = timedelta(hours=12)
+PANDASCORE_BLAST_OPEN_PORTO_EVENT_END_UTC = datetime(
+    2026,
+    9,
+    7,
+    tzinfo=timezone.utc,
+)
+PANDASCORE_BLAST_OPEN_PORTO_FETCH_UNTIL_UTC = datetime(
+    2026,
+    9,
+    9,
+    tzinfo=timezone.utc,
+)
 DEFAULT_EWC_COMPETITIONS_URL = "https://esportsworldcup.com/en/competitions/2026"
 DEFAULT_EWC_CACHE_HOURS = 12
 DEFAULT_EWC_DETAIL_CACHE_SECONDS = 600
@@ -2879,7 +2905,9 @@ class SportsDashboardCommonMixin:
     ):
         lol_cards = self._load_lol_esports_sidebar_cards(settings, device_config, timezone_info, now)
         lol_sidebar_override = self._lol_esports_sidebar_override(settings)
-        official_ti_state_persisted = False
+        tracked_valve_selected = None
+        tracked_valve_source_state = ""
+        should_write_valve_state = False
         if lol_sidebar_override:
             esports_choice = {
                 "kind": "lol",
@@ -2890,6 +2918,31 @@ class SportsDashboardCommonMixin:
                 ),
             }
         else:
+            pandascore_card = None
+            pandascore_source_state = ""
+            pandascore_enabled = (
+                self._bool_setting(settings, "valveEsportsEnabled", True)
+                and self._bool_setting(settings, "pandaScoreCs2Enabled", True)
+            )
+            if pandascore_enabled:
+                try:
+                    pandascore_card, pandascore_source_state = (
+                        self._load_pandascore_cs2_card(
+                            settings,
+                            device_config,
+                            timezone_info,
+                            now,
+                        )
+                    )
+                    if pandascore_card:
+                        pandascore_card["source_state"] = (
+                            pandascore_source_state or "PANDASCORE DATA"
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "PandaScore CS2 sidebar failed, falling back to other esports panels: %s",
+                        _safe_exception_text(exc),
+                    )
             official_ti_card = None
             official_ti_source_state = ""
             official_ti_enabled = (
@@ -2905,26 +2958,59 @@ class SportsDashboardCommonMixin:
                             now,
                         )
                     )
+                    if official_ti_card:
+                        official_ti_card["source_state"] = (
+                            official_ti_source_state or "DOTA2 DATA"
+                        )
                 except Exception as exc:
                     logger.warning(
                         "Official Dota 2 TI sidebar failed, falling back to other esports panels: %s",
                         _safe_exception_text(exc),
                     )
-            official_ti_selected = self._select_valve_esports(
-                [official_ti_card] if official_ti_card else [],
+            early_valve_cards = [
+                card
+                for card in (pandascore_card, official_ti_card)
+                if card
+            ]
+            early_valve_selected = self._select_valve_esports(
+                early_valve_cards,
                 now,
             )
-            if official_ti_enabled:
-                self._write_valve_esports_live_state(
-                    official_ti_selected,
-                    now,
-                    official_ti_source_state or "DOTA2 NO DATA",
+            early_primary = (early_valve_selected or {}).get("primary") or {}
+            early_source_state = (
+                (early_primary or {}).get("source_state")
+                or pandascore_source_state
+                or official_ti_source_state
+                or "VALVE NO DATA"
+            )
+            previous_valve_state = self._read_json_file(
+                self._valve_esports_live_state_path()
+            )
+            has_previous_valve_state = (
+                previous_valve_state.get("version")
+                == VALVE_ESPORTS_LIVE_STATE_VERSION
+                and bool(
+                    previous_valve_state.get("match_id")
+                    or previous_valve_state.get("has_live")
+                    or previous_valve_state.get("refresh_from")
                 )
-                official_ti_state_persisted = bool(official_ti_card)
+            )
+            should_clear_early_state = bool(
+                official_ti_enabled
+                or (
+                    pandascore_enabled
+                    and pandascore_source_state
+                    not in {"", "PANDASCORE NO KEY"}
+                )
+                or (not early_valve_cards and has_previous_valve_state)
+            )
+            tracked_valve_selected = early_valve_selected
+            tracked_valve_source_state = early_source_state
+            should_write_valve_state = bool(early_valve_cards) or should_clear_early_state
             esports_choice = self._select_right_esports_sidebar(
                 lol_cards,
-                official_ti_selected,
-                official_ti_source_state,
+                early_valve_selected,
+                early_source_state,
                 now,
             )
             choice_kind = str(
@@ -2950,15 +3036,23 @@ class SportsDashboardCommonMixin:
                 valve_selected = None
                 valve_source_state = ""
                 try:
+                    preloaded_results = {}
                     if official_ti_enabled:
+                        preloaded_results["official_ti_result"] = (
+                            official_ti_card,
+                            official_ti_source_state,
+                        )
+                    if pandascore_card:
+                        preloaded_results["pandascore_result"] = (
+                            pandascore_card,
+                            pandascore_source_state,
+                        )
+                    if preloaded_results:
                         valve_selected, valve_source_state = self._load_valve_esports(
                             settings,
                             timezone_info,
                             now,
-                            official_ti_result=(
-                                official_ti_card,
-                                official_ti_source_state,
-                            ),
+                            **preloaded_results,
                         )
                     else:
                         valve_selected, valve_source_state = self._load_valve_esports(
@@ -2971,6 +3065,14 @@ class SportsDashboardCommonMixin:
                         "Valve esports sidebar failed, falling back to LPL: %s",
                         _safe_exception_text(exc),
                     )
+                if valve_selected is not None:
+                    tracked_valve_selected = valve_selected
+                    tracked_valve_source_state = valve_source_state
+                    should_write_valve_state = bool(
+                        (valve_selected or {}).get("cards")
+                        or (valve_selected or {}).get("primary")
+                        or should_clear_early_state
+                    )
                 esports_choice = self._select_right_esports_sidebar(
                     lol_cards,
                     valve_selected,
@@ -2978,15 +3080,16 @@ class SportsDashboardCommonMixin:
                     now,
                 )
 
+        if tracked_valve_selected is not None and should_write_valve_state:
+            self._write_valve_esports_live_state(
+                tracked_valve_selected,
+                now,
+                tracked_valve_source_state,
+            )
+
         if esports_choice.get("kind") == "valve":
             valve_selected = esports_choice["selected"]
             valve_source_state = esports_choice["source_state"]
-            if not official_ti_state_persisted:
-                self._write_valve_esports_live_state(
-                    valve_selected,
-                    now,
-                    valve_source_state,
-                )
             self._draw_valve_esports_sidebar(image, left_width, valve_selected, valve_source_state, now)
             return self._sports_source_state_provenance(valve_source_state)
 
@@ -3013,7 +3116,18 @@ class SportsDashboardCommonMixin:
         state = str(source_state or "").strip().upper()
         if any(
             marker in state
-            for marker in ("FALLBACK", "NO DATA", "LIMIT", "BLOCKED", "PREVIEW", "WATCH")
+            for marker in (
+                "FALLBACK",
+                "NO DATA",
+                "NO KEY",
+                "AUTH",
+                "LIMIT",
+                "BLOCKED",
+                "PREVIEW",
+                "WATCH",
+                "CLOSED",
+                "ARCHIVE",
+            )
         ):
             return SourceProvenance.LOCAL_FALLBACK
         if "STALE" in state:
@@ -3914,6 +4028,19 @@ class SportsDashboardCommonMixin:
             "DOTA2 LIVE": "OFFICIAL LIVE",
             "DOTA2 CACHE": "OFFICIAL CACHE",
             "DOTA2 STALE": "STALE CACHE",
+            "DOTA2 ARCHIVE": "ARCHIVED",
+            "PANDASCORE LIVE": "PANDASCORE DATA",
+            "PANDASCORE LIVE PARTIAL": "PANDASCORE DATA PARTIAL",
+            "PANDASCORE CACHE": "PANDASCORE CACHE",
+            "PANDASCORE CACHE PARTIAL": "PANDASCORE CACHE PARTIAL",
+            "PANDASCORE STALE": "PANDASCORE STALE",
+            "PANDASCORE STALE PARTIAL": "PANDASCORE STALE PARTIAL",
+            "PANDASCORE STALE PARTIAL AUTH": "PANDASCORE STALE PARTIAL",
+            "PANDASCORE STALE PARTIAL LIMIT": "PANDASCORE STALE PARTIAL",
+            "PANDASCORE STALE NO KEY": "PANDASCORE STALE",
+            "PANDASCORE STALE AUTH": "PANDASCORE STALE",
+            "PANDASCORE STALE LIMIT": "PANDASCORE STALE",
+            "PANDASCORE ARCHIVE": "PANDASCORE ARCHIVE",
         }.get(str(source_state or "").upper(), str(source_state or "DATA"))
 
     @staticmethod

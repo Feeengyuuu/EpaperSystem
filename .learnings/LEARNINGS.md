@@ -6,6 +6,65 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260826-002] correction
+
+**Logged**: 2026-08-26T23:22:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Sports rotation must separate result retention from occupancy and release a slot at the authoritative event end.
+
+### Details
+The raw TI cache is reparsed against the current clock, but the former default deliberately kept completed results eligible for two extra days. That retention policy made an ended tournament occupy a sidebar slot even though its authoritative event end had passed. Cached lifecycle fields still require a final deadline guard when normalized cards cross a selection or background-refresh boundary.
+
+### Suggested Action
+Keep cached results if useful, but remove display and polling eligibility at `event_end`. Permit an overrun only when a trusted provider still reports live play or a real future match. Recheck the deadline in selectors and live-state writers, stop archived-source fetches, and cover the exact terminal boundary with tests.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/esports.py, inkypi-weather/package/InkyPi/tests/test_sports_dashboard.py
+- Tags: sports-dashboard, lifecycle, expiry, cache, rotation, live-refresh
+- Pattern-Key: sports_dashboard.cached_event_flags_require_clock_based_expiry
+- Recurrence-Count: 1
+- First-Seen: 2026-08-26
+- Last-Seen: 2026-08-26
+
+### Resolution
+- **Resolved**: 2026-08-26T23:22:00-07:00
+- **Commit/PR**: local branch
+- **Notes**: Authoritative TI completion now archives immediately, skips OpenDota revival, stops normal refetches, and is excluded from Valve selection, right-sidebar rotation, and live-state tracking.
+
+---
+
+## [LRN-20260826-001] best_practice
+
+**Logged**: 2026-08-26T22:17:05-07:00
+**Priority**: high
+**Status**: pending
+**Area**: backend
+
+### Summary
+Separate technical reachability, live-state semantics, and usage rights when adopting an undocumented official sports feed.
+
+### Details
+BLAST's first-party tournament backend was anonymously reachable and its bracket response exposed explicit `isLive` / `isCompleted`, series scores, and map scores. A sibling `/matches` response was less complete: it omitted future TBD nodes and did not expose the explicit lifecycle flags. Neither endpoint publishes a schema, quota, freshness target, or SLA, while BLAST's website terms restrict reverse engineering and copying or exploiting site content. Treating an HTTP 200 as both a stable contract and permission to redistribute would therefore create independent correctness and legal risks.
+
+### Suggested Action
+Use the richest provider-confirmed lifecycle endpoint as the normalized authority, keep undocumented adapters isolated behind last-good and stale provenance, never infer live solely from elapsed kickoff, and review provider terms or obtain written permission before shipping. Document the difference between schedule/result freshness and true in-map real-time data.
+
+### Metadata
+- Source: conversation
+- Related Files: docs/research/blast-open-porto-2026-live-data-sources.md
+- Tags: sports-dashboard, blast, esports, provider-contract, live-state, terms
+- Pattern-Key: sports_dashboard.undocumented_official_feed_requires_contract_and_semantic_authority
+- Recurrence-Count: 1
+- First-Seen: 2026-08-26
+- Last-Seen: 2026-08-26
+
+---
+
 ## [LRN-20260824-001] correction
 
 **Logged**: 2026-08-24T20:42:37-07:00

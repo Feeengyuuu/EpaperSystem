@@ -1077,8 +1077,8 @@ class EsportsRenderMixin:
             )
             self._draw_text_in_box(draw, date_box, date_label, date_font, COLORS["muted"], align="right")
             subtitle_box = (card_x1 + 19, y + 70, card_x2 - 88, y + 81)
-            source = str(event.get("source") or primary.get("source") or "Valve").upper()
-            subtitle = "OFFICIAL TRACK" if "OFFICIAL" in source else f"{source} TRACK"
+            source = str(event.get("source") or primary.get("source") or "Valve")
+            subtitle = self._valve_source_attribution(source)
             subtitle, subtitle_font = self._fit_text_ellipsis(
                 draw,
                 subtitle,
@@ -1102,7 +1102,9 @@ class EsportsRenderMixin:
             title_box = header["title_box"]
             title, title_font = self._fit_text_ellipsis(draw, title, title_box[2] - title_box[0], 18, bold=True, min_size=11)
             self._draw_text_in_box(draw, title_box, title, title_font, COLORS["text"])
-            subtitle = f"{event.get('source') or primary.get('source') or 'Valve'} TRACK"
+            subtitle = self._valve_source_attribution(
+                event.get("source") or primary.get("source") or "Valve"
+            )
             subtitle_box = header["subtitle_box"]
             subtitle, subtitle_font = self._fit_text_ellipsis(draw, subtitle, subtitle_box[2] - subtitle_box[0], 9, bold=True, min_size=7)
             self._draw_text_in_box(draw, subtitle_box, subtitle, subtitle_font, accent)
@@ -1138,6 +1140,14 @@ class EsportsRenderMixin:
         detail = self._valve_match_detail_label(event)
         detail, detail_font = self._fit_text_ellipsis(draw, detail, card_x2 - card_x1 - 44, 10, bold=True, min_size=7)
         self._draw_centered_in_box(draw, (card_x1 + 20, y + 160, card_x2 - 20, y + 176), detail, detail_font, COLORS["muted"])
+
+    @staticmethod
+    def _valve_source_attribution(source):
+        value = str(source or "Valve").strip() or "Valve"
+        if value.casefold() == "pandascore":
+            return "SOURCE: PANDASCORE"
+        value = value.upper()
+        return "OFFICIAL TRACK" if "OFFICIAL" in value else f"{value} TRACK"
 
     @staticmethod
     def _valve_team_display_name(event, side):

@@ -188,8 +188,24 @@ class SportsDashboard(
         if source in {"lpl", "lck", "msi"}:
             return self._bool_setting(settings, "lplLiveRefreshEnabled", True)
         if source == "valve_esports":
-            return self._bool_setting(settings, "valveEsportsEnabled", True) and self._bool_setting(
-                settings, "valveEsportsLiveRefreshEnabled", True
+            if not self._bool_setting(settings, "valveEsportsEnabled", True):
+                return False
+            if self._lol_esports_sidebar_override(settings):
+                return False
+            state = self._read_json_file(self._valve_esports_live_state_path())
+            state_source = " ".join(
+                str(state.get(key) or "")
+                for key in ("source", "source_state")
+            ).casefold()
+            if (
+                "pandascore" in state_source
+                and not self._bool_setting(settings, "pandaScoreCs2Enabled", True)
+            ):
+                return False
+            return self._bool_setting(
+                settings,
+                "valveEsportsLiveRefreshEnabled",
+                True,
             )
         if source == "f1":
             return self._bool_setting(settings, "f1LiveRefreshEnabled", True)
@@ -263,6 +279,18 @@ class SportsDashboard(
         state = self._read_json_file(path)
         if state.get("version") != version:
             return False
+        current = current_dt if isinstance(current_dt, datetime) else datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        current = current.astimezone(timezone.utc)
+        refresh_from = self._parse_live_state_datetime(state.get("refresh_from"))
+        refresh_until = self._parse_live_state_datetime(state.get("refresh_until"))
+        if (
+            refresh_from
+            and refresh_until
+            and refresh_from <= current <= refresh_until
+        ):
+            return True
         has_live = state.get("has_live")
         if has_live is None and live_status_fallback:
             has_live = str(state.get("status") or "").strip().upper() == "LIVE"
@@ -271,10 +299,7 @@ class SportsDashboard(
         live_until = self._parse_live_state_datetime(state.get("live_until"))
         if not live_until:
             return True
-        current = current_dt if isinstance(current_dt, datetime) else datetime.now(timezone.utc)
-        if current.tzinfo is None:
-            current = current.replace(tzinfo=timezone.utc)
-        return current.astimezone(timezone.utc) <= live_until
+        return current <= live_until
 
     @staticmethod
     def _parse_live_state_datetime(value):

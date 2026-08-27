@@ -2559,7 +2559,10 @@ class EsportsMixin:
                     }
                 )
 
-        for card in SportsDashboard._valve_esports_active_cards(valve_selected):
+        for card in SportsDashboard._valve_esports_active_cards(
+            valve_selected,
+            now,
+        ):
             source_state = card.get("source_state") or valve_source_state or "VALVE DATA"
             phase = SportsDashboard._valve_sidebar_candidate_phase(card)
             provenance = SportsDashboard._sports_source_state_provenance(source_state)
@@ -2575,7 +2578,11 @@ class EsportsMixin:
             candidates.append(
                 {
                     "kind": "valve",
-                    "selected": SportsDashboard._valve_esports_selected_for_card(valve_selected, card),
+                    "selected": SportsDashboard._valve_esports_selected_for_card(
+                        valve_selected,
+                        card,
+                        now,
+                    ),
                     "source_state": source_state,
                     "phase": phase,
                     "priority": SportsDashboard._right_sidebar_valve_priority(card),
@@ -2712,10 +2719,68 @@ class EsportsMixin:
         }
 
     @staticmethod
-    def _valve_esports_active_cards(selected):
+    def _valve_esports_card_is_expired(card, now):
+        if not isinstance(now, datetime):
+            return False
+
+        def parsed_deadline(value):
+            if isinstance(value, datetime):
+                return value
+            if not isinstance(value, str):
+                return None
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+
+        def deadline_reached(deadline):
+            if not isinstance(deadline, datetime):
+                return False
+            now_value = now
+            if deadline.tzinfo is None and now_value.tzinfo is not None:
+                deadline = deadline.replace(tzinfo=now_value.tzinfo)
+            elif deadline.tzinfo is not None and now_value.tzinfo is None:
+                now_value = now_value.replace(tzinfo=deadline.tzinfo)
+            if deadline.tzinfo is not None and now_value.tzinfo is not None:
+                now_value = now_value.astimezone(deadline.tzinfo)
+            return now_value >= deadline
+
+        card = card or {}
+        event_end = parsed_deadline(card.get("event_end"))
+        if deadline_reached(event_end):
+            source_state = str(card.get("source_state") or "").strip()
+            trusted = SportsDashboard._sports_source_state_provenance(
+                source_state
+            ) in {SourceProvenance.LIVE, SourceProvenance.FRESH_CACHE}
+            status = str(card.get("status") or "").strip().upper()
+            provider_live = bool(card.get("live") or status == "LIVE")
+            upcoming = list(card.get("upcoming") or [])
+            if status == "NEXT" and card.get("main"):
+                upcoming.append(card["main"])
+            has_future_upcoming = any(
+                isinstance((event or {}).get("start"), datetime)
+                and not deadline_reached((event or {}).get("start"))
+                for event in upcoming
+                if isinstance(event, Mapping)
+            )
+            if trusted and (provider_live or has_future_upcoming):
+                return False
+            return True
+
+        return deadline_reached(parsed_deadline(card.get("end")))
+
+    @staticmethod
+    def _valve_esports_active_cards(selected, now=None):
         cards = (selected or {}).get("cards") or []
         return sorted(
-            [card for card in cards if card and card.get("main") and card.get("window_active")],
+            [
+                card
+                for card in cards
+                if card
+                and card.get("main")
+                and card.get("window_active")
+                and not SportsDashboard._valve_esports_card_is_expired(card, now)
+            ],
             key=lambda card: (
                 SportsDashboard._valve_esports_status_rank(card.get("status")),
                 SportsDashboard._right_sidebar_valve_priority(card),
@@ -2724,10 +2789,16 @@ class EsportsMixin:
         )
 
     @staticmethod
-    def _valve_esports_selected_for_card(selected, card):
+    def _valve_esports_selected_for_card(selected, card, now=None):
         selected_copy = dict(selected or {})
         selected_copy["primary"] = card
-        selected_copy["rotation_pool"] = [item.get("series") for item in SportsDashboard._valve_esports_active_cards(selected_copy)]
+        selected_copy["rotation_pool"] = [
+            item.get("series")
+            for item in SportsDashboard._valve_esports_active_cards(
+                selected_copy,
+                now,
+            )
+        ]
         return selected_copy
 
     @staticmethod
@@ -2766,7 +2837,14 @@ class EsportsMixin:
             return start.timestamp()
         return default
 
-    def _load_valve_esports(self, settings, timezone_info, now, official_ti_result=None):
+    def _load_valve_esports(
+        self,
+        settings,
+        timezone_info,
+        now,
+        official_ti_result=None,
+        pandascore_result=None,
+    ):
         preview_card = self._valve_dota2_preview_card(settings, now)
         if preview_card:
             return {
@@ -2778,8 +2856,18 @@ class EsportsMixin:
             }, "DOTA2 PREVIEW"
         cards = []
         source_states = []
+        if pandascore_result is not None:
+            pandascore_card, pandascore_source_state = pandascore_result
+            if pandascore_source_state:
+                source_states.append(pandascore_source_state)
+            if pandascore_card:
+                pandascore_card["source_state"] = (
+                    pandascore_source_state or "PANDASCORE DATA"
+                )
+                cards.append(pandascore_card)
         official_ti_card = None
         official_ti_trusted = False
+        official_ti_terminal = False
         if official_ti_result is not None:
             official_ti_card, official_ti_source_state = official_ti_result
             if official_ti_source_state:
@@ -2796,6 +2884,13 @@ class EsportsMixin:
                         SourceProvenance.FRESH_CACHE,
                     }
                 )
+                official_ti_terminal = bool(
+                    official_ti_card.get("event_end")
+                    and self._valve_esports_card_is_expired(
+                        official_ti_card,
+                        now,
+                    )
+                )
         if self._bool_setting(settings, "valveEsportsHltvEnabled", True):
             try:
                 matches, source_state, _fetched_at = self._load_valve_hltv_matches(
@@ -2811,6 +2906,7 @@ class EsportsMixin:
                 logger.warning("HLTV Major fetch failed: %s", _safe_exception_text(exc))
         if (
             not official_ti_trusted
+            and not official_ti_terminal
             and self._bool_setting(settings, "valveEsportsOpenDotaEnabled", True)
         ):
             try:
@@ -2828,6 +2924,448 @@ class EsportsMixin:
         source_state = primary.get("source_state") or ", ".join(source_states) or "VALVE DATA"
         selected["source_states"] = source_states
         return selected, source_state
+
+    def _load_pandascore_cs2_card(
+        self,
+        settings,
+        device_config,
+        timezone_info,
+        now,
+    ):
+        settings = settings or {}
+        now_value = now if isinstance(now, datetime) else datetime.now(timezone_info)
+        if now_value.tzinfo is None:
+            now_value = now_value.replace(tzinfo=timezone_info)
+        now_utc = now_value.astimezone(timezone.utc)
+        cache_path = self._pandascore_cs2_cache_path()
+        cache = self._read_json_file(cache_path)
+        cache_key = self._pandascore_cs2_cache_key(settings, timezone_info)
+        cached_matches = cache.get("matches")
+        cached_matches_by_tournament = cache.get("matches_by_tournament")
+        if not isinstance(cached_matches_by_tournament, Mapping):
+            cached_matches_by_tournament = {}
+        has_compatible_cache = (
+            cache.get("version") == PANDASCORE_CS2_CACHE_VERSION
+            and cache.get("cache_key") == cache_key
+            and isinstance(cached_matches, list)
+        )
+
+        def cached_card(source_state):
+            card = self._parse_pandascore_cs2_card(
+                cached_matches,
+                timezone_info,
+                now_value,
+                settings,
+            )
+            if card:
+                polling_failure_kind = self._pandascore_polling_blocked_kind(
+                    cache
+                )
+                card["polling_blocked"] = bool(polling_failure_kind)
+                card["polling_failure_kind"] = polling_failure_kind
+                if (
+                    source_state == "PANDASCORE CACHE"
+                    and cache.get("failed_tournament_ids")
+                ):
+                    successful_ids = {
+                        str(value)
+                        for value in cache.get("successful_tournament_ids") or []
+                    }
+                    main_tournament_id = str(
+                        ((card.get("main") or {}).get("tournament_id")) or ""
+                    )
+                    if main_tournament_id in successful_ids:
+                        source_state = "PANDASCORE CACHE PARTIAL"
+                    else:
+                        failure_kind = str(
+                            (cache.get("failure_kinds") or {}).get(
+                                main_tournament_id
+                            )
+                            or ""
+                        ).strip().upper()
+                        source_state = "PANDASCORE STALE PARTIAL"
+                        if failure_kind in {"AUTH", "LIMIT"}:
+                            source_state += f" {failure_kind}"
+                card["source_state"] = source_state
+            return card, source_state
+
+        if has_compatible_cache and not self._force_refresh_requested(settings):
+            card, source_state = cached_card("PANDASCORE CACHE")
+            if card:
+                if now_utc >= PANDASCORE_BLAST_OPEN_PORTO_FETCH_UNTIL_UTC:
+                    card["source_state"] = "PANDASCORE ARCHIVE"
+                    card["window_active"] = False
+                    return card, "PANDASCORE ARCHIVE"
+                cache_seconds = self._int_setting(
+                    settings,
+                    "pandaScoreCs2CacheSeconds",
+                    DEFAULT_PANDASCORE_CS2_CACHE_SECONDS,
+                    60,
+                    900,
+                )
+                schedule_cache_seconds = self._int_setting(
+                    settings,
+                    "pandaScoreCs2ScheduleCacheSeconds",
+                    DEFAULT_PANDASCORE_CS2_SCHEDULE_CACHE_SECONDS,
+                    300,
+                    3600,
+                )
+                status = str(card.get("status") or "").upper()
+                main_start = ((card.get("main") or {}).get("start"))
+                near_next_match = (
+                    status == "NEXT"
+                    and isinstance(main_start, datetime)
+                    and main_start <= now_value + PANDASCORE_CS2_PREGAME_WINDOW
+                )
+                effective_cache_seconds = (
+                    cache_seconds
+                    if status == "LIVE" or near_next_match
+                    else schedule_cache_seconds
+                )
+                if (
+                    now_utc >= PANDASCORE_BLAST_OPEN_PORTO_EVENT_END_UTC
+                    and status != "LIVE"
+                ):
+                    effective_cache_seconds = max(
+                        effective_cache_seconds,
+                        60 * 60,
+                    )
+                if self._cache_is_fresh_seconds(
+                    cache,
+                    effective_cache_seconds,
+                    now_utc,
+                ):
+                    return card, source_state
+
+        if (
+            now_utc >= PANDASCORE_BLAST_OPEN_PORTO_FETCH_UNTIL_UTC
+            and not self._force_refresh_requested(settings)
+        ):
+            return None, "PANDASCORE CLOSED"
+
+        api_key = self._pandascore_api_key(device_config)
+        if not api_key:
+            if has_compatible_cache:
+                card, source_state = cached_card("PANDASCORE STALE NO KEY")
+                if card:
+                    return card, source_state
+            return None, "PANDASCORE NO KEY"
+
+        tournament_ids = self._pandascore_cs2_tournament_ids(settings)
+        if self._pandascore_cs2_calls_left(settings, now_utc) < len(tournament_ids):
+            if has_compatible_cache:
+                card, source_state = cached_card("PANDASCORE STALE LIMIT")
+                if card:
+                    return card, source_state
+            return None, "PANDASCORE LIMIT"
+
+        try:
+            payload = self._fetch_pandascore_cs2_payload(
+                settings,
+                api_key,
+                cache_key,
+                now_utc,
+                cached_matches_by_tournament=cached_matches_by_tournament,
+                cached_stage_fetched_at=cache.get("stage_fetched_at"),
+            )
+            card = self._parse_pandascore_cs2_card(
+                payload["matches"],
+                timezone_info,
+                now_value,
+                settings,
+            )
+            if not card:
+                raise ValueError(
+                    "PandaScore payload contained no BLAST Open Porto 2026 matches"
+                )
+        except Exception as exc:
+            failure_kind = self._pandascore_failure_kind(exc)
+            failure_state = (
+                "PANDASCORE STALE AUTH"
+                if failure_kind == "AUTH"
+                else "PANDASCORE STALE LIMIT"
+                if failure_kind == "LIMIT"
+                else "PANDASCORE STALE"
+            )
+            logger.warning(
+                "PandaScore CS2 refresh failed; retaining last-good data when available: %s",
+                _safe_exception_text(exc),
+            )
+            if has_compatible_cache:
+                card, source_state = cached_card(failure_state)
+                if card:
+                    return card, source_state
+            raise
+
+        try:
+            self._write_json_file(cache_path, payload)
+        except OSError as exc:
+            logger.warning("Failed to write PandaScore CS2 cache: %s", exc)
+        failed_ids = {
+            str(value) for value in payload.get("failed_tournament_ids") or []
+        }
+        if failed_ids:
+            successful_ids = {
+                str(value)
+                for value in payload.get("successful_tournament_ids") or []
+            }
+            main_tournament_id = str(
+                ((card.get("main") or {}).get("tournament_id")) or ""
+            )
+            if main_tournament_id in successful_ids:
+                source_state = "PANDASCORE LIVE PARTIAL"
+            else:
+                failure_kind = str(
+                    (payload.get("failure_kinds") or {}).get(main_tournament_id)
+                    or ""
+                ).strip().upper()
+                source_state = "PANDASCORE STALE PARTIAL"
+                if failure_kind in {"AUTH", "LIMIT"}:
+                    source_state += f" {failure_kind}"
+        else:
+            source_state = "PANDASCORE LIVE"
+        polling_failure_kind = self._pandascore_polling_blocked_kind(payload)
+        card["polling_blocked"] = bool(polling_failure_kind)
+        card["polling_failure_kind"] = polling_failure_kind
+        card["source_state"] = source_state
+        return card, source_state
+
+    def _fetch_pandascore_cs2_payload(
+        self,
+        settings,
+        api_key,
+        cache_key,
+        now_utc,
+        cached_matches_by_tournament=None,
+        cached_stage_fetched_at=None,
+    ):
+        tournament_ids = self._pandascore_cs2_tournament_ids(settings)
+        cached_matches_by_tournament = (
+            cached_matches_by_tournament
+            if isinstance(cached_matches_by_tournament, Mapping)
+            else {}
+        )
+        cached_stage_fetched_at = (
+            cached_stage_fetched_at
+            if isinstance(cached_stage_fetched_at, Mapping)
+            else {}
+        )
+        matches_by_tournament = {}
+        stage_fetched_at = {}
+        successful_tournament_ids = []
+        failed_tournament_ids = []
+        failures = []
+        failure_kinds = {}
+        fetched_at = now_utc.isoformat()
+        request_context = TaskContext.never_cancelled(
+            deadline_monotonic=(
+                time.monotonic() + PANDASCORE_CS2_REFRESH_DEADLINE_SECONDS
+            )
+        )
+        http_client = HttpClient(session=get_http_session())
+        for tournament_index, tournament_id in enumerate(tournament_ids):
+            url = (
+                f"{PANDASCORE_API_BASE_URL}/tournaments/"
+                f"{tournament_id}/matches"
+            )
+            try:
+                result = http_client.request_json(
+                    "GET",
+                    url,
+                    context=request_context,
+                    max_bytes=PANDASCORE_CS2_RESPONSE_MAX_BYTES,
+                    headers={
+                        "Accept": "application/json",
+                        "Authorization": f"Bearer {api_key}",
+                        "User-Agent": "EpaperSystem/SportsDashboard",
+                    },
+                    params={"page[size]": 100},
+                    timeout=20,
+                )
+                tournament_matches = result.data
+                if not isinstance(tournament_matches, list):
+                    raise ValueError(
+                        "PandaScore tournament matches response was not a list"
+                    )
+                if len(tournament_matches) > 100:
+                    raise ValueError(
+                        "PandaScore tournament matches exceeded page size"
+                    )
+                matches_by_tournament[tournament_id] = tournament_matches
+                stage_fetched_at[tournament_id] = fetched_at
+                successful_tournament_ids.append(tournament_id)
+            except Exception as exc:
+                failed_tournament_ids.append(tournament_id)
+                failures.append(exc)
+                failure_kind = self._pandascore_failure_kind(exc)
+                failure_kinds[tournament_id] = failure_kind
+                cached_matches = cached_matches_by_tournament.get(tournament_id)
+                if isinstance(cached_matches, list):
+                    matches_by_tournament[tournament_id] = cached_matches
+                    cached_fetched_at = cached_stage_fetched_at.get(tournament_id)
+                    if cached_fetched_at:
+                        stage_fetched_at[tournament_id] = cached_fetched_at
+                if isinstance(exc, TaskDeadlineExceeded):
+                    for remaining_id in tournament_ids[tournament_index + 1 :]:
+                        failed_tournament_ids.append(remaining_id)
+                        failure_kinds[remaining_id] = failure_kind
+                        remaining_cached = cached_matches_by_tournament.get(
+                            remaining_id
+                        )
+                        if isinstance(remaining_cached, list):
+                            matches_by_tournament[remaining_id] = remaining_cached
+                            remaining_fetched_at = cached_stage_fetched_at.get(
+                                remaining_id
+                            )
+                            if remaining_fetched_at:
+                                stage_fetched_at[remaining_id] = (
+                                    remaining_fetched_at
+                                )
+                    break
+            finally:
+                self._record_pandascore_cs2_call(settings, now_utc)
+
+        if failed_tournament_ids:
+            logger.warning(
+                "PandaScore CS2 stage refresh incomplete (%s): %s",
+                ",".join(failed_tournament_ids),
+                _safe_exception_text(failures[0]),
+            )
+        if not successful_tournament_ids:
+            raise failures[0]
+
+        matches = []
+        for tournament_id in tournament_ids:
+            matches.extend(matches_by_tournament.get(tournament_id) or [])
+        return {
+            "version": PANDASCORE_CS2_CACHE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": fetched_at,
+            "provider": "pandascore",
+            "tournament_ids": list(tournament_ids),
+            "matches_by_tournament": matches_by_tournament,
+            "stage_fetched_at": stage_fetched_at,
+            "successful_tournament_ids": successful_tournament_ids,
+            "failed_tournament_ids": failed_tournament_ids,
+            "failure_kinds": failure_kinds,
+            "matches": matches,
+        }
+
+    @staticmethod
+    def _pandascore_failure_kind(exc):
+        if (
+            isinstance(exc, TaskDeadlineExceeded)
+            and "retry delay" in str(exc).casefold()
+        ):
+            return "LIMIT"
+        response = getattr(exc, "response", None)
+        status_code = getattr(exc, "status", None)
+        if status_code is None:
+            status_code = getattr(response, "status_code", None)
+        if status_code in {401, 403}:
+            return "AUTH"
+        if status_code == 429:
+            return "LIMIT"
+        return "NETWORK"
+
+    @staticmethod
+    def _pandascore_polling_blocked_kind(payload):
+        failure_kinds = payload.get("failure_kinds") if isinstance(payload, Mapping) else {}
+        values = {
+            str(value or "").strip().upper()
+            for value in (failure_kinds or {}).values()
+        }
+        if "LIMIT" in values:
+            return "LIMIT"
+        if "AUTH" in values:
+            return "AUTH"
+        return ""
+
+    @staticmethod
+    def _pandascore_api_key(device_config=None):
+        if device_config is not None and hasattr(device_config, "load_env_key"):
+            return str(
+                device_config.load_env_key("PANDASCORE_API_KEY") or ""
+            ).strip()
+        return str(os.getenv("PANDASCORE_API_KEY") or "").strip()
+
+    @staticmethod
+    def _pandascore_cs2_tournament_ids(settings=None):
+        configured = str(
+            (settings or {}).get("pandaScoreCs2TournamentIds") or ""
+        ).strip()
+        values = (
+            re.split(r"[\s,;]+", configured)
+            if configured
+            else list(PANDASCORE_BLAST_OPEN_PORTO_TOURNAMENT_IDS)
+        )
+        result = []
+        for value in values:
+            value = str(value or "").strip()
+            if not re.fullmatch(r"[1-9][0-9]{0,9}", value) or value in result:
+                continue
+            result.append(value)
+            if len(result) == 6:
+                break
+        return tuple(result or PANDASCORE_BLAST_OPEN_PORTO_TOURNAMENT_IDS)
+
+    def _pandascore_cs2_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "pandascore_cs2_blast_porto.json"
+
+    def _pandascore_cs2_state_path(self):
+        return self._sports_dashboard_cache_dir() / "pandascore_cs2_calls.json"
+
+    def _pandascore_cs2_cache_key(self, settings, timezone_info):
+        return "|".join(
+            [
+                PANDASCORE_CS2_CACHE_VERSION,
+                PANDASCORE_API_BASE_URL,
+                ",".join(self._pandascore_cs2_tournament_ids(settings)),
+                PANDASCORE_BLAST_OPEN_PORTO_EVENT_NAME,
+                self._timezone_key(timezone_info),
+            ]
+        )
+
+    def _pandascore_cs2_calls_left(self, settings, now_utc):
+        limit = self._int_setting(
+            settings or {},
+            "pandaScoreCs2DailyLimit",
+            DEFAULT_PANDASCORE_CS2_DAILY_LIMIT,
+            3,
+            5000,
+        )
+        state = self._read_json_file(self._pandascore_cs2_state_path())
+        today = now_utc.date().isoformat()
+        if state.get("date") != today:
+            return limit
+        try:
+            count = int(state.get("count") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        return max(0, limit - count)
+
+    def _record_pandascore_cs2_call(self, settings, now_utc):
+        path = self._pandascore_cs2_state_path()
+        state = self._read_json_file(path)
+        today = now_utc.date().isoformat()
+        count = 0
+        if state.get("date") == today:
+            try:
+                count = int(state.get("count") or 0)
+            except (TypeError, ValueError):
+                count = 0
+        try:
+            self._write_json_file(
+                path,
+                {
+                    "version": PANDASCORE_CS2_STATE_VERSION,
+                    "date": today,
+                    "count": count + 1,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except OSError as exc:
+            logger.warning("Failed to write PandaScore CS2 request counter: %s", exc)
 
     def _load_valve_ti_official_card(self, settings, timezone_info, now):
         now_value = now if isinstance(now, datetime) else datetime.now(timezone_info)
@@ -2864,6 +3402,13 @@ class EsportsMixin:
         if has_compatible_cache and not self._force_refresh_requested(settings):
             card, source_state = cached_card("DOTA2 CACHE")
             if card:
+                if card.get("event_end") and self._valve_esports_card_is_expired(
+                    card,
+                    now_value,
+                ):
+                    card["window_active"] = False
+                    card["source_state"] = "DOTA2 ARCHIVE"
+                    return card, "DOTA2 ARCHIVE"
                 effective_cache_seconds = cache_seconds
                 status = str(card.get("status") or "").upper()
                 main_start = ((card.get("main") or {}).get("start"))
@@ -3127,6 +3672,8 @@ class EsportsMixin:
             info.get("end_timestamp"),
             timezone_info,
         )
+        if isinstance(official_end, datetime) and official_end < latest_start:
+            official_end = None
         window_after = SportsDashboard._int_setting(
             settings or {},
             "valveEsportsWindowAfterDays",
@@ -3148,7 +3695,7 @@ class EsportsMixin:
             "recent": recent,
             "events": sorted(events, key=lambda event: event["start"]),
             "start": official_start or first_start,
-            "event_end": official_end or latest_start,
+            "event_end": official_end,
             "end": active_until,
             "latest": latest_start,
             "logo_path": LOCAL_TI_LOGO_PATH,
@@ -3156,6 +3703,199 @@ class EsportsMixin:
             "source_state": "DOTA2 DATA",
             "order": 1,
         }
+
+    @staticmethod
+    def _parse_pandascore_cs2_card(payload, timezone_info, now, settings=None):
+        if not isinstance(payload, list):
+            return None
+        now_value = now if isinstance(now, datetime) else datetime.now(timezone_info)
+        if now_value.tzinfo is None:
+            now_value = now_value.replace(tzinfo=timezone_info)
+
+        events = []
+        seen = set()
+        for item in payload:
+            if not isinstance(item, Mapping):
+                continue
+            league = item.get("league") if isinstance(item.get("league"), Mapping) else {}
+            serie = item.get("serie") if isinstance(item.get("serie"), Mapping) else {}
+            tournament = (
+                item.get("tournament")
+                if isinstance(item.get("tournament"), Mapping)
+                else {}
+            )
+            provider_identity = " ".join(
+                str(value or "").strip()
+                for value in (
+                    league.get("name"),
+                    serie.get("full_name"),
+                    serie.get("name"),
+                    tournament.get("name"),
+                )
+            ).casefold()
+            if not all(marker in provider_identity for marker in ("blast", "porto", "2026")):
+                continue
+
+            match_id = str(item.get("id") or "").strip()
+            if not match_id or match_id in seen:
+                continue
+            start_utc = SportsDashboard._parse_cached_utc(
+                item.get("begin_at")
+                or item.get("scheduled_at")
+                or item.get("original_scheduled_at")
+            )
+            if start_utc is None:
+                continue
+            status = str(item.get("status") or "").strip().casefold()
+            state = {
+                "running": "inProgress",
+                "finished": "completed",
+                "not_started": "unstarted",
+            }.get(status)
+            if state is None:
+                continue
+            start_value = start_utc.astimezone(now_value.tzinfo)
+            if (
+                state == "inProgress"
+                and now_value < start_value - PANDASCORE_CS2_PREGAME_WINDOW
+            ):
+                continue
+            if (
+                state == "unstarted"
+                and now_value > start_value + PANDASCORE_CS2_MATCH_REFRESH_WINDOW
+            ):
+                continue
+
+            teams = []
+            for raw_opponent in item.get("opponents") or []:
+                if not isinstance(raw_opponent, Mapping):
+                    continue
+                opponent = raw_opponent.get("opponent")
+                if isinstance(opponent, Mapping):
+                    teams.append(opponent)
+                if len(teams) == 2:
+                    break
+            while len(teams) < 2:
+                teams.append({})
+            team_a, team_b = teams
+            team_a_id = SportsDashboard._lpl_int_value(team_a.get("id"))
+            team_b_id = SportsDashboard._lpl_int_value(team_b.get("id"))
+            best_of = SportsDashboard._lpl_int_value(item.get("number_of_games"))
+            if best_of is not None and not 1 <= best_of <= 7:
+                best_of = None
+            max_series_wins = (best_of // 2 + 1) if best_of else None
+            scores = {}
+            for result in item.get("results") or []:
+                if not isinstance(result, Mapping):
+                    continue
+                result_team_id = SportsDashboard._lpl_int_value(result.get("team_id"))
+                result_score = SportsDashboard._lpl_int_value(result.get("score"))
+                if (
+                    result_team_id is not None
+                    and result_score is not None
+                    and 0 <= result_score <= 9
+                    and (
+                        max_series_wins is None
+                        or result_score <= max_series_wins
+                    )
+                ):
+                    scores[result_team_id] = result_score
+
+            seen.add(match_id)
+            events.append(
+                {
+                    "series": "CS",
+                    "event_name": "BLAST Premier Open Porto 2026",
+                    "match_id": match_id,
+                    "start": start_utc.astimezone(timezone_info),
+                    "state": state,
+                    "stage": str(tournament.get("name") or "Main Event").strip()
+                    or "Main Event",
+                    "tournament_id": str(tournament.get("id") or "").strip(),
+                    "team_a": str(team_a.get("name") or "TBD").strip() or "TBD",
+                    "team_b": str(team_b.get("name") or "TBD").strip() or "TBD",
+                    "team_a_tag": str(team_a.get("acronym") or "").strip(),
+                    "team_b_tag": str(team_b.get("acronym") or "").strip(),
+                    "team_a_id": team_a_id,
+                    "team_b_id": team_b_id,
+                    "team_a_logo": SportsDashboard._pandascore_logo_url(
+                        team_a.get("image_url")
+                    ),
+                    "team_b_logo": SportsDashboard._pandascore_logo_url(
+                        team_b.get("image_url")
+                    ),
+                    "wins_a": scores.get(team_a_id) if state != "unstarted" else None,
+                    "wins_b": scores.get(team_b_id) if state != "unstarted" else None,
+                    "best_of": best_of,
+                    "maps": [],
+                    "source": "PandaScore",
+                    "score_kind": "MAPS",
+                }
+            )
+
+        if not events:
+            return None
+        live = sorted(
+            [event for event in events if event.get("state") == "inProgress"],
+            key=lambda event: (event["start"], event["match_id"]),
+        )
+        upcoming = sorted(
+            [event for event in events if event.get("state") == "unstarted"],
+            key=lambda event: (event["start"], event["match_id"]),
+        )
+        recent = sorted(
+            [event for event in events if event.get("state") == "completed"],
+            key=lambda event: (event["start"], event["match_id"]),
+            reverse=True,
+        )
+        main = (live or upcoming or recent)[0]
+        first_start = min(event["start"] for event in events)
+        latest_start = max(event["start"] for event in events)
+        window_after = SportsDashboard._int_setting(
+            settings or {},
+            "valveEsportsWindowAfterDays",
+            DEFAULT_VALVE_ESPORTS_WINDOW_AFTER_DAYS,
+            0,
+            14,
+        )
+        event_end = PANDASCORE_BLAST_OPEN_PORTO_EVENT_END_UTC.astimezone(
+            timezone_info
+        )
+        active_until = max(
+            latest_start + timedelta(days=window_after),
+            event_end,
+        )
+        return {
+            "series": "CS",
+            "sport": "BLAST Open",
+            "event_name": "BLAST Premier Open Porto 2026",
+            "status": "LIVE" if live else "NEXT" if upcoming else "RECENT",
+            "window_active": bool(live or upcoming) or now_value <= active_until,
+            "main": main,
+            "live": live,
+            "upcoming": upcoming,
+            "recent": recent,
+            "events": sorted(events, key=lambda event: event["start"]),
+            "start": first_start,
+            "event_end": event_end,
+            "end": active_until,
+            "latest": latest_start,
+            "logo_path": LOCAL_CS_MAJOR_LOGO_PATH,
+            "source": "PandaScore",
+            "source_state": "PANDASCORE DATA",
+            "order": 0,
+        }
+
+    @staticmethod
+    def _pandascore_logo_url(value):
+        text = str(value or "").strip()
+        parsed = urlparse(text)
+        hostname = str(parsed.hostname or "").casefold()
+        if parsed.scheme != "https" or not (
+            hostname == "pandascore.co" or hostname.endswith(".pandascore.co")
+        ):
+            return ""
+        return text
 
     def _valve_dota2_preview_card(self, settings, now):
         if not self._valve_dota2_preview_enabled():
@@ -3667,7 +4407,12 @@ class EsportsMixin:
     def _select_valve_esports(cards, now):
         cards = [card for card in cards or [] if card and card.get("main")]
         pool = sorted(
-            [card for card in cards if card.get("window_active")],
+            [
+                card
+                for card in cards
+                if card.get("window_active")
+                and not SportsDashboard._valve_esports_card_is_expired(card, now)
+            ],
             key=lambda card: (SportsDashboard._valve_esports_status_rank(card.get("status")), card.get("order", 99), str(card.get("event_name") or "")),
         )
         primary = None
@@ -3842,46 +4587,212 @@ class EsportsMixin:
             logger.warning("Failed to write Valve esports request counter: %s", exc)
 
     def _write_valve_esports_live_state(self, selected, now, source_state):
-        primary = (selected or {}).get("primary") or {}
-        main = primary.get("main") or {}
-        trusted_source = self._sports_source_state_provenance(source_state) in {
-            SourceProvenance.LIVE,
-            SourceProvenance.FRESH_CACHE,
-        }
-        has_live = (
-            str(primary.get("status") or "").upper() == "LIVE"
+        selected = selected or {}
+        primary = selected.get("primary") or {}
+        now_value = now if isinstance(now, datetime) else datetime.now(timezone.utc)
+        if now_value.tzinfo is None:
+            now_value = now_value.replace(tzinfo=timezone.utc)
+        now_utc = now_value.astimezone(timezone.utc)
+        if self._valve_esports_card_is_expired(primary, now_utc):
+            primary = {}
+
+        candidates = []
+        blocked_candidates = []
+        seen = set()
+        for card in [*(selected.get("cards") or []), primary]:
+            if not card or id(card) in seen:
+                continue
+            if self._valve_esports_card_is_expired(card, now_utc):
+                continue
+            seen.add(id(card))
+            card_source_state = str(card.get("source_state") or "").strip()
+            if not card_source_state and card is primary:
+                card_source_state = str(source_state or "").strip()
+            provenance = self._sports_source_state_provenance(card_source_state)
+            trusted = provenance in {
+                SourceProvenance.LIVE,
+                SourceProvenance.FRESH_CACHE,
+            }
+            status = str(card.get("status") or "").strip().upper()
+            main = card.get("main") or {}
+            start = main.get("start")
+            source = str(card.get("source") or main.get("source") or "")
+            pandascore_source = "pandascore" in (
+                source + " " + card_source_state
+            ).casefold()
+            retry_allowed = not any(
+                marker in card_source_state.upper()
+                for marker in ("AUTH", "LIMIT", "NO KEY", "CLOSED")
+            )
+            polling_blocked = bool(card.get("polling_blocked"))
+            if polling_blocked:
+                retry_allowed = False
+            rank = None
+            if status == "LIVE" and trusted:
+                rank = 0
+            elif (
+                status == "LIVE"
+                and pandascore_source
+                and retry_allowed
+                and isinstance(start, datetime)
+            ):
+                rank = 1
+            elif (
+                status == "NEXT"
+                and pandascore_source
+                and isinstance(start, datetime)
+                and trusted
+            ):
+                start_value = (
+                    start.replace(tzinfo=timezone.utc)
+                    if start.tzinfo is None
+                    else start
+                )
+                rank = (
+                    2
+                    if start_value <= now_value + PANDASCORE_CS2_PREGAME_WINDOW
+                    else 3
+                )
+            elif (
+                status == "NEXT"
+                and pandascore_source
+                and retry_allowed
+                and isinstance(start, datetime)
+            ):
+                rank = 4
+            if rank is not None:
+                candidate = (
+                    rank,
+                    self._right_sidebar_valve_priority(card),
+                    start.timestamp() if isinstance(start, datetime) else float("inf"),
+                    card,
+                    card_source_state,
+                    trusted,
+                    pandascore_source,
+                    retry_allowed,
+                    polling_blocked,
+                )
+                (blocked_candidates if polling_blocked else candidates).append(candidate)
+
+        candidate_pool = candidates or blocked_candidates
+        if candidate_pool:
+            (
+                _rank,
+                _priority,
+                _start_value,
+                tracked_card,
+                tracked_source_state,
+                trusted_source,
+                pandascore_source,
+                retry_allowed,
+                polling_blocked,
+            ) = min(candidate_pool, key=lambda item: item[:3])
+        else:
+            tracked_card = primary
+            tracked_source_state = str(
+                tracked_card.get("source_state") or source_state or ""
+            ).strip()
+            trusted_source = self._sports_source_state_provenance(
+                tracked_source_state
+            ) in {SourceProvenance.LIVE, SourceProvenance.FRESH_CACHE}
+            tracked_main = tracked_card.get("main") or {}
+            tracked_source = str(
+                tracked_card.get("source") or tracked_main.get("source") or ""
+            )
+            pandascore_source = "pandascore" in (
+                tracked_source + " " + tracked_source_state
+            ).casefold()
+            retry_allowed = False
+            polling_blocked = bool(tracked_card.get("polling_blocked"))
+
+        main = tracked_card.get("main") or {}
+        status = str(tracked_card.get("status") or "").strip().upper()
+        start = main.get("start")
+        start_utc = None
+        if isinstance(start, datetime):
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            start_utc = start.astimezone(timezone.utc)
+        refresh_from = None
+        refresh_until = None
+        if (
+            pandascore_source
+            and status in {"LIVE", "NEXT"}
+            and start_utc is not None
+            and (trusted_source or retry_allowed)
+            and not polling_blocked
+        ):
+            refresh_from = start_utc - PANDASCORE_CS2_PREGAME_WINDOW
+            refresh_until = start_utc + PANDASCORE_CS2_MATCH_REFRESH_WINDOW
+        lifecycle_active = bool(
+            refresh_from
+            and refresh_until
+            and refresh_from <= now_utc <= refresh_until
+        )
+        provider_confirmed_live = bool(
+            status == "LIVE"
             and trusted_source
         )
+        polling_for_start = bool(
+            status == "NEXT" and pandascore_source and refresh_from and refresh_until
+        )
+        polling_for_retry = bool(
+            pandascore_source
+            and not trusted_source
+            and retry_allowed
+            and status in {"LIVE", "NEXT"}
+            and lifecycle_active
+        )
+        has_live = provider_confirmed_live
+        if polling_blocked:
+            has_live = False
         live_until = None
-        if has_live and isinstance(now, datetime):
+        if has_live:
             live_until = (
-                now.astimezone(timezone.utc)
+                now_utc
                 + timedelta(seconds=DEFAULT_VALVE_ESPORTS_LIVE_STATE_TTL_SECONDS)
             ).isoformat()
         payload = {
             "version": VALVE_ESPORTS_LIVE_STATE_VERSION,
-            "updated_at": now.astimezone(timezone.utc).isoformat() if isinstance(now, datetime) else "",
-            "source_state": source_state,
+            "updated_at": now_utc.isoformat(),
+            "source_state": tracked_source_state,
             "has_live": has_live,
+            "provider_confirmed_live": provider_confirmed_live,
+            "polling_for_start": polling_for_start,
+            "polling_for_retry": polling_for_retry,
+            "polling_blocked": polling_blocked,
+            "polling_failure_kind": str(
+                tracked_card.get("polling_failure_kind") or ""
+            ),
             "live_until": live_until,
+            "scheduled_start": start_utc.isoformat() if start_utc else None,
+            "refresh_from": refresh_from.isoformat() if refresh_from else None,
+            "refresh_until": refresh_until.isoformat() if refresh_until else None,
+            "retry_until": (
+                refresh_until.isoformat()
+                if polling_for_retry and refresh_until
+                else None
+            ),
             "displaying_valve_event": bool(primary),
-            "rotation_pool": (selected or {}).get("rotation_pool") or [],
+            "rotation_pool": [
+                card.get("series")
+                for card in self._valve_esports_active_cards(selected, now_utc)
+            ],
         }
-        if primary:
-            start = main.get("start")
-            end = primary.get("end")
+        if tracked_card:
+            end = tracked_card.get("end")
             payload.update(
                 {
-                    "series": primary.get("series") or "",
-                    "event_name": primary.get("event_name") or "",
-                    "status": primary.get("status") or "",
+                    "series": tracked_card.get("series") or "",
+                    "event_name": tracked_card.get("event_name") or "",
+                    "status": tracked_card.get("status") or "",
                     "team_a": main.get("team_a") or "",
                     "team_b": main.get("team_b") or "",
                     "score": self._valve_score_label(main),
                     "match_id": main.get("match_id") or "",
-                    "started_at": start.astimezone(timezone.utc).isoformat() if isinstance(start, datetime) else None,
+                    "started_at": start_utc.isoformat() if start_utc else None,
                     "active_until": end.astimezone(timezone.utc).isoformat() if isinstance(end, datetime) else None,
-                    "source": primary.get("source") or "",
+                    "source": tracked_card.get("source") or "",
                 }
             )
         try:
@@ -5276,20 +6187,3 @@ class EsportsMixin:
             logger.warning("Failed to load LPL sidebar filler %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

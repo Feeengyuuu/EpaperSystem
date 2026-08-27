@@ -1573,12 +1573,12 @@ def test_live_refresh_state_reads_active_source_files():
             "lplLiveRefreshIntervalSeconds",
             210,
         ),
-        (
-            "valve_esports_live_state.json",
-            "sports-dashboard-valve-esports-live-v2",
-            "valveEsportsLiveRefreshIntervalSeconds",
-            270,
-        ),
+            (
+                "valve_esports_live_state.json",
+                sports_dashboard_module.VALVE_ESPORTS_LIVE_STATE_VERSION,
+                "valveEsportsLiveRefreshIntervalSeconds",
+                270,
+            ),
         (
             "nba_live_state.json",
             "sports-dashboard-nba-live-v1",
@@ -17793,6 +17793,53 @@ def test_valve_loader_uses_opendota_results_when_official_ti_is_stale(monkeypatc
     assert any(card.get("source_state") == "OPENDOTA CACHE" for card in selected["cards"])
 
 
+def test_valve_loader_does_not_revive_archived_ti_through_opendota(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 24, 8, 0, tzinfo=timezone.utc)
+    archived_match = {
+        "match_id": "ti-final",
+        "start": now - timedelta(hours=4),
+        "state": "completed",
+    }
+    archived_card = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "RECENT",
+        "window_active": False,
+        "main": archived_match,
+        "live": [],
+        "upcoming": [],
+        "recent": [archived_match],
+        "event_end": now - timedelta(hours=1),
+        "end": now + timedelta(days=2),
+        "source_state": "DOTA2 ARCHIVE",
+    }
+    monkeypatch.setattr(
+        SportsDashboard,
+        "_valve_dota2_preview_enabled",
+        staticmethod(lambda: False),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_valve_opendota_matches",
+        lambda *_args: pytest.fail("archived TI must not fall back to OpenDota"),
+    )
+
+    selected, source_state = plugin._load_valve_esports(
+        {
+            "valveEsportsHltvEnabled": False,
+            "valveEsportsOpenDotaEnabled": True,
+        },
+        timezone.utc,
+        now,
+        official_ti_result=(archived_card, "DOTA2 ARCHIVE"),
+    )
+
+    assert selected["primary"] is None
+    assert selected["rotation_pool"] == []
+    assert source_state == "DOTA2 ARCHIVE"
+
+
 def _sample_valve_ti_payload():
     return [
         {
@@ -17896,6 +17943,1528 @@ def _sample_valve_ti_official_payload(now):
             for node_id in (1, 2, 3)
         ],
     }
+
+
+def _sample_pandascore_blast_matches(now):
+    def match(
+        match_id,
+        offset_hours,
+        team_a,
+        team_b,
+        *,
+        score=(0, 0),
+        is_live=False,
+        is_completed=False,
+        stage="Group A",
+    ):
+        team_a_id = match_id * 10 + 1
+        team_b_id = match_id * 10 + 2
+        return {
+            "id": match_id,
+            "name": f"{team_a} vs {team_b}",
+            "begin_at": (now + timedelta(hours=offset_hours)).isoformat(),
+            "status": "finished" if is_completed else "running" if is_live else "not_started",
+            "number_of_games": 3,
+            "league": {"name": "BLAST Premier"},
+            "serie": {"full_name": "BLAST Open Porto Fall 2026"},
+            "tournament": {"id": 21714, "name": stage},
+            "opponents": [
+                {
+                    "type": "Team",
+                    "opponent": {
+                        "id": team_a_id,
+                        "name": team_a,
+                        "acronym": team_a[:3].upper(),
+                        "image_url": f"https://cdn.pandascore.co/{team_a_id}.png",
+                    },
+                },
+                {
+                    "type": "Team",
+                    "opponent": {
+                        "id": team_b_id,
+                        "name": team_b,
+                        "acronym": team_b[:3].upper(),
+                        "image_url": f"https://cdn.pandascore.co/{team_b_id}.png",
+                    },
+                },
+            ],
+            "results": [
+                {"team_id": team_a_id, "score": score[0]},
+                {"team_id": team_b_id, "score": score[1]},
+            ],
+        }
+
+    return [
+        match(101, -4, "Aurora", "G2", score=(0, 2), is_completed=True),
+        match(102, -0.5, "Spirit", "DENDELE", score=(1, 0), is_live=True),
+        match(103, 2, "Natus Vincere", "M80"),
+    ]
+
+
+def test_pandascore_blast_parser_distributes_live_upcoming_and_recent():
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+
+    card = SportsDashboard._parse_pandascore_cs2_card(
+        _sample_pandascore_blast_matches(now),
+        timezone.utc,
+        now,
+        {},
+    )
+
+    assert card["sport"] == "BLAST Open"
+    assert card["event_name"] == "BLAST Premier Open Porto 2026"
+    assert card["status"] == "LIVE"
+    assert card["main"] is card["live"][0]
+    assert [event["match_id"] for event in card["live"]] == ["102"]
+    assert [event["match_id"] for event in card["upcoming"]] == ["103"]
+    assert [event["match_id"] for event in card["recent"]] == ["101"]
+    assert card["main"]["team_a"] == "Spirit"
+    assert card["main"]["team_b"] == "DENDELE"
+    assert card["main"]["stage"] == "Group A"
+    assert card["main"]["best_of"] == 3
+    assert card["main"]["source"] == "PandaScore"
+    assert card["main"]["team_a_logo"] == "https://cdn.pandascore.co/1021.png"
+    assert SportsDashboard._valve_score_label(card["main"]) == "1:0"
+    assert SportsDashboard._valve_score_label(card["upcoming"][0]) == "VS"
+    assert SportsDashboard._valve_match_detail_label(card["main"], compact=True) == "GROUP A  |  BO3"
+
+
+def test_pandascore_parser_rejects_impossible_lifecycle_times():
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    expired_next = _sample_pandascore_blast_matches(now)[2]
+    expired_next["begin_at"] = (now - timedelta(hours=13)).isoformat()
+    impossible_live = _sample_pandascore_blast_matches(now)[1]
+    impossible_live["begin_at"] = (now + timedelta(minutes=31)).isoformat()
+
+    card = SportsDashboard._parse_pandascore_cs2_card(
+        [expired_next, impossible_live],
+        timezone.utc,
+        now,
+        {},
+    )
+
+    assert card is None
+
+
+def test_pandascore_confirmed_running_outlives_stale_retry_window(tmp_path):
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    delayed_live = _sample_pandascore_blast_matches(now)[1]
+    delayed_live["begin_at"] = (now - timedelta(hours=13)).isoformat()
+    card = SportsDashboard._parse_pandascore_cs2_card(
+        [delayed_live],
+        timezone.utc,
+        now,
+        {},
+    )
+
+    assert card["status"] == "LIVE"
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    card["source_state"] = "PANDASCORE LIVE"
+    plugin._write_valve_esports_live_state(
+        {"primary": card, "cards": [card], "rotation_pool": ["CS"]},
+        now,
+        "PANDASCORE LIVE",
+    )
+
+    state = plugin._read_json_file(plugin._valve_esports_live_state_path())
+    assert state["provider_confirmed_live"] is True
+    assert plugin.get_live_refresh_state({}, now) == {
+        "active": True,
+        "interval_seconds": 180,
+    }
+
+
+def test_pandascore_parser_drops_series_scores_above_best_of():
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    match = _sample_pandascore_blast_matches(now)[1]
+    match["results"][0]["score"] = 9
+
+    card = SportsDashboard._parse_pandascore_cs2_card(
+        [match],
+        timezone.utc,
+        now,
+        {},
+    )
+
+    assert card["main"]["wins_a"] is None
+    assert card["main"]["wins_b"] == 0
+    assert SportsDashboard._valve_score_label(card["main"]) == "VS"
+
+
+def test_pandascore_cs2_loader_requires_private_env_key_without_network(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_pandascore_cs2_payload",
+        lambda *_args, **_kwargs: pytest.fail("missing key must not issue a request"),
+    )
+
+    card, source_state = plugin._load_pandascore_cs2_card(
+        {},
+        FakeDeviceConfig(timezone="UTC"),
+        timezone.utc,
+        datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert card is None
+    assert source_state == "PANDASCORE NO KEY"
+
+
+def test_pandascore_cs2_defaults_to_all_porto_stages_and_rejects_unsafe_ids():
+    assert SportsDashboard._pandascore_cs2_tournament_ids({}) == (
+        "21714",
+        "21715",
+        "21716",
+    )
+    assert SportsDashboard._pandascore_cs2_tournament_ids(
+        {"pandaScoreCs2TournamentIds": "21714, ../../secret, 21714;21716"}
+    ) == ("21714", "21716")
+
+
+def test_pandascore_logo_url_is_restricted_to_provider_https_hosts():
+    assert SportsDashboard._pandascore_logo_url(
+        "https://cdn.pandascore.co/images/team.png"
+    ) == "https://cdn.pandascore.co/images/team.png"
+    assert SportsDashboard._pandascore_logo_url(
+        "http://cdn.pandascore.co/images/team.png"
+    ) == ""
+    assert SportsDashboard._pandascore_logo_url(
+        "https://pandascore.co.evil.example/team.png"
+    ) == ""
+
+
+def test_pandascore_cs2_loader_uses_bearer_auth_and_last_good_cache(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    payload = _sample_pandascore_blast_matches(now)
+    device_config = FakeDeviceConfig(timezone="UTC")
+    device_config.env["PANDASCORE_API_KEY"] = "private-token"
+    requests = []
+    should_fail = {"value": False}
+
+    class FakeResponse:
+        headers = {}
+
+        def __init__(self, body):
+            self.body = body
+            self.status_code = 200
+            self.url = "https://api.pandascore.co/test"
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield json.dumps(self.body).encode("utf-8")
+
+        def close(self):
+            return None
+
+    class FakeSession:
+        def request(self, method, url, *, headers, params, timeout, stream):
+            assert method == "GET"
+            assert headers["Authorization"] == "Bearer private-token"
+            assert params == {"page[size]": 100}
+            assert timeout == 20
+            assert stream is True
+            assert "private-token" not in url
+            requests.append(url)
+            if should_fail["value"]:
+                raise OSError("offline")
+            return FakeResponse(payload if "/21714/" in url else [])
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FakeSession(),
+    )
+    settings = {
+        "pandaScoreCs2TournamentIds": "21714, 21715, 21716",
+        "pandaScoreCs2CacheSeconds": "180",
+    }
+
+    live_card, live_state = plugin._load_pandascore_cs2_card(
+        settings,
+        device_config,
+        timezone.utc,
+        now,
+    )
+    cached_card, cached_state = plugin._load_pandascore_cs2_card(
+        settings,
+        device_config,
+        timezone.utc,
+        now + timedelta(seconds=60),
+    )
+    should_fail["value"] = True
+    stale_card, stale_state = plugin._load_pandascore_cs2_card(
+        settings,
+        device_config,
+        timezone.utc,
+        now + timedelta(seconds=240),
+    )
+
+    assert live_state == "PANDASCORE LIVE"
+    assert cached_state == "PANDASCORE CACHE"
+    assert stale_state == "PANDASCORE STALE"
+    assert live_card["main"]["match_id"] == "102"
+    assert cached_card["main"]["match_id"] == "102"
+    assert stale_card["main"]["match_id"] == "102"
+    assert len(requests) == 6
+
+
+def test_pandascore_cs2_loader_keeps_successful_stages_when_one_stage_fails(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    payload = _sample_pandascore_blast_matches(now)
+    device_config = FakeDeviceConfig(timezone="UTC")
+    device_config.env["PANDASCORE_API_KEY"] = "private-token"
+    requested_ids = []
+
+    class FakeResponse:
+        headers = {}
+
+        def __init__(self, body):
+            self.body = body
+            self.status_code = 200
+            self.url = "https://api.pandascore.co/test"
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield json.dumps(self.body).encode("utf-8")
+
+        def close(self):
+            return None
+
+    class FakeSession:
+        def request(self, method, url, **_kwargs):
+            assert method == "GET"
+            tournament_id = url.split("/tournaments/", 1)[1].split("/", 1)[0]
+            requested_ids.append(tournament_id)
+            if tournament_id == "21715":
+                raise OSError("Group B temporarily unavailable")
+            return FakeResponse(payload if tournament_id == "21714" else [])
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FakeSession(),
+    )
+
+    card, source_state = plugin._load_pandascore_cs2_card(
+        {"pandaScoreCs2TournamentIds": "21714,21715,21716"},
+        device_config,
+        timezone.utc,
+        now,
+    )
+
+    assert requested_ids == ["21714", "21715", "21716"]
+    assert card["main"]["match_id"] == "102"
+    assert source_state == "PANDASCORE LIVE PARTIAL"
+    cache = plugin._read_json_file(plugin._pandascore_cs2_cache_path())
+    assert cache["failed_tournament_ids"] == ["21715"]
+
+
+def test_pandascore_cs2_partial_refresh_keeps_failed_live_stage_stale(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    settings = {"pandaScoreCs2TournamentIds": "21714,21715,21716"}
+    live_match = _sample_pandascore_blast_matches(now)[1]
+    live_match["tournament"]["id"] = 21715
+    plugin._write_json_file(
+        plugin._pandascore_cs2_cache_path(),
+        {
+            "version": sports_dashboard_module.PANDASCORE_CS2_CACHE_VERSION,
+            "cache_key": plugin._pandascore_cs2_cache_key(settings, timezone.utc),
+            "fetched_at": (now - timedelta(minutes=10)).isoformat(),
+            "provider": "pandascore",
+            "tournament_ids": ["21714", "21715", "21716"],
+            "matches_by_tournament": {
+                "21714": [],
+                "21715": [live_match],
+                "21716": [],
+            },
+            "stage_fetched_at": {
+                "21714": (now - timedelta(minutes=10)).isoformat(),
+                "21715": (now - timedelta(minutes=10)).isoformat(),
+                "21716": (now - timedelta(minutes=10)).isoformat(),
+            },
+            "matches": [live_match],
+        },
+    )
+    device_config = FakeDeviceConfig(timezone="UTC")
+    device_config.env["PANDASCORE_API_KEY"] = "private-token"
+
+    class FakeResponse:
+        headers = {}
+        status_code = 200
+        url = "https://api.pandascore.co/test"
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield b"[]"
+
+        def close(self):
+            return None
+
+    class FakeSession:
+        def request(self, method, url, **_kwargs):
+            assert method == "GET"
+            if "/21715/" in url:
+                raise OSError("Group B temporarily unavailable")
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FakeSession(),
+    )
+
+    card, source_state = plugin._load_pandascore_cs2_card(
+        settings,
+        device_config,
+        timezone.utc,
+        now,
+    )
+
+    assert card["main"]["match_id"] == "102"
+    assert card["main"]["tournament_id"] == "21715"
+    assert source_state == "PANDASCORE STALE PARTIAL"
+
+
+@pytest.mark.parametrize(
+    ("status_code", "failure_kind"),
+    ((401, "AUTH"), (429, "LIMIT")),
+)
+def test_pandascore_partial_nonretryable_main_stage_stops_fast_polling(
+    monkeypatch,
+    tmp_path,
+    status_code,
+    failure_kind,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    settings = {"pandaScoreCs2TournamentIds": "21714,21715,21716"}
+    live_match = _sample_pandascore_blast_matches(now)[1]
+    live_match["tournament"]["id"] = 21715
+    plugin._write_json_file(
+        plugin._pandascore_cs2_cache_path(),
+        {
+            "version": sports_dashboard_module.PANDASCORE_CS2_CACHE_VERSION,
+            "cache_key": plugin._pandascore_cs2_cache_key(settings, timezone.utc),
+            "fetched_at": (now - timedelta(minutes=10)).isoformat(),
+            "provider": "pandascore",
+            "tournament_ids": ["21714", "21715", "21716"],
+            "matches_by_tournament": {
+                "21714": [],
+                "21715": [live_match],
+                "21716": [],
+            },
+            "matches": [live_match],
+        },
+    )
+    device_config = FakeDeviceConfig(timezone="UTC")
+    device_config.env["PANDASCORE_API_KEY"] = "private-token"
+
+    class FakeResponse:
+        headers = {}
+        url = "https://api.pandascore.co/test"
+
+        def __init__(self, response_status):
+            self.status_code = response_status
+
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield b"[]"
+
+        def close(self):
+            return None
+
+    class FakeSession:
+        _inkypi_adapter_retries = True
+
+        def request(self, method, url, **_kwargs):
+            assert method == "GET"
+            return FakeResponse(status_code if "/21715/" in url else 200)
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FakeSession(),
+    )
+
+    card, source_state = plugin._load_pandascore_cs2_card(
+        settings,
+        device_config,
+        timezone.utc,
+        now,
+    )
+    plugin._write_valve_esports_live_state(
+        {"primary": card, "cards": [card], "rotation_pool": ["CS"]},
+        now,
+        source_state,
+    )
+
+    assert source_state == f"PANDASCORE STALE PARTIAL {failure_kind}"
+    assert plugin.get_live_refresh_state({}, now) is None
+
+
+def test_pandascore_partial_limit_outside_main_stage_blocks_fast_polling(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    settings = {"pandaScoreCs2TournamentIds": "21714,21715,21716"}
+    live_match = _sample_pandascore_blast_matches(now)[1]
+    live_match["tournament"]["id"] = 21714
+    device_config = FakeDeviceConfig(timezone="UTC")
+    device_config.env["PANDASCORE_API_KEY"] = "private-token"
+
+    class FakeResponse:
+        headers = {}
+        url = "https://api.pandascore.co/test"
+
+        def __init__(self, response_status, body):
+            self.status_code = response_status
+            self._body = body
+
+        def iter_content(self, chunk_size):
+            assert chunk_size > 0
+            yield json.dumps(self._body).encode("utf-8")
+
+        def close(self):
+            return None
+
+    class FakeSession:
+        _inkypi_adapter_retries = True
+
+        def request(self, method, url, **_kwargs):
+            assert method == "GET"
+            if "/21714/" in url:
+                return FakeResponse(200, [live_match])
+            if "/21715/" in url:
+                return FakeResponse(429, [])
+            return FakeResponse(200, [])
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FakeSession(),
+    )
+
+    card, source_state = plugin._load_pandascore_cs2_card(
+        settings,
+        device_config,
+        timezone.utc,
+        now,
+    )
+    plugin._write_valve_esports_live_state(
+        {"primary": card, "cards": [card], "rotation_pool": ["CS"]},
+        now,
+        source_state,
+    )
+    live_state = plugin._read_json_file(plugin._valve_esports_live_state_path())
+
+    assert card["status"] == "LIVE"
+    assert source_state == "PANDASCORE LIVE PARTIAL"
+    assert card["polling_blocked"] is True
+    assert card["polling_failure_kind"] == "LIMIT"
+    assert live_state["provider_confirmed_live"] is True
+    assert live_state["has_live"] is False
+    assert live_state["polling_blocked"] is True
+    assert live_state["polling_failure_kind"] == "LIMIT"
+    assert plugin.get_live_refresh_state({}, now) is None
+
+
+def test_pandascore_cs2_loader_respects_daily_budget_with_stale_cache(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    settings = {"pandaScoreCs2TournamentIds": "21714,21715,21716"}
+    cache_key = plugin._pandascore_cs2_cache_key(settings, timezone.utc)
+    plugin._write_json_file(
+        plugin._pandascore_cs2_cache_path(),
+        {
+            "version": sports_dashboard_module.PANDASCORE_CS2_CACHE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": (now - timedelta(hours=1)).isoformat(),
+            "provider": "pandascore",
+            "matches": _sample_pandascore_blast_matches(now),
+        },
+    )
+    device_config = FakeDeviceConfig(timezone="UTC")
+    device_config.env["PANDASCORE_API_KEY"] = "private-token"
+    monkeypatch.setattr(plugin, "_pandascore_cs2_calls_left", lambda *_args: 0)
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_pandascore_cs2_payload",
+        lambda *_args, **_kwargs: pytest.fail("daily budget must prevent requests"),
+    )
+
+    card, source_state = plugin._load_pandascore_cs2_card(
+        settings,
+        device_config,
+        timezone.utc,
+        now,
+    )
+
+    assert card["status"] == "LIVE"
+    assert source_state == "PANDASCORE STALE LIMIT"
+
+
+def test_pandascore_cs2_all_finished_snapshot_can_discover_later_round(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 9, 6, 20, 0, tzinfo=timezone.utc)
+    settings = {"pandaScoreCs2TournamentIds": "21714,21715,21716"}
+    matches_by_tournament = {}
+    matches = []
+    for offset, tournament_id in enumerate(("21714", "21715", "21716")):
+        match = _sample_pandascore_blast_matches(
+            now - timedelta(hours=offset + 2)
+        )[0]
+        match["id"] = 900 + offset
+        match["status"] = "finished"
+        match["tournament"]["id"] = int(tournament_id)
+        matches_by_tournament[tournament_id] = [match]
+        matches.append(match)
+    plugin._write_json_file(
+        plugin._pandascore_cs2_cache_path(),
+        {
+            "version": sports_dashboard_module.PANDASCORE_CS2_CACHE_VERSION,
+            "cache_key": plugin._pandascore_cs2_cache_key(settings, timezone.utc),
+            "fetched_at": (now - timedelta(hours=2)).isoformat(),
+            "provider": "pandascore",
+            "tournament_ids": ["21714", "21715", "21716"],
+            "matches_by_tournament": matches_by_tournament,
+            "matches": matches,
+            "terminal": True,
+        },
+    )
+    device_config = FakeDeviceConfig(timezone="UTC")
+    device_config.env["PANDASCORE_API_KEY"] = "private-token"
+    calls = []
+
+    def fetch_with_new_round(_settings, _key, cache_key, now_utc, **_kwargs):
+        calls.append(True)
+        new_match = _sample_pandascore_blast_matches(now)[2]
+        new_match["id"] = 999
+        new_match["tournament"]["id"] = 21716
+        return {
+            "version": sports_dashboard_module.PANDASCORE_CS2_CACHE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "provider": "pandascore",
+            "tournament_ids": ["21714", "21715", "21716"],
+            "matches_by_tournament": {
+                "21714": matches_by_tournament["21714"],
+                "21715": matches_by_tournament["21715"],
+                "21716": [new_match],
+            },
+            "stage_fetched_at": {
+                tournament_id: now_utc.isoformat()
+                for tournament_id in ("21714", "21715", "21716")
+            },
+            "successful_tournament_ids": ["21714", "21715", "21716"],
+            "failed_tournament_ids": [],
+            "terminal": False,
+            "matches": [*matches, new_match],
+        }
+
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_pandascore_cs2_payload",
+        fetch_with_new_round,
+    )
+
+    card, source_state = plugin._load_pandascore_cs2_card(
+        settings,
+        device_config,
+        timezone.utc,
+        now,
+    )
+
+    assert calls == [True]
+    assert card["status"] == "NEXT"
+    assert card["main"]["match_id"] == "999"
+    assert source_state == "PANDASCORE LIVE"
+
+
+def test_pandascore_cs2_safety_cutoff_archives_unfinished_cache_without_network(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 9, 10, 0, 0, tzinfo=timezone.utc)
+    settings = {"pandaScoreCs2TournamentIds": "21714,21715,21716"}
+    match = _sample_pandascore_blast_matches(now)[2]
+    plugin._write_json_file(
+        plugin._pandascore_cs2_cache_path(),
+        {
+            "version": sports_dashboard_module.PANDASCORE_CS2_CACHE_VERSION,
+            "cache_key": plugin._pandascore_cs2_cache_key(settings, timezone.utc),
+            "fetched_at": (now - timedelta(days=2)).isoformat(),
+            "provider": "pandascore",
+            "tournament_ids": ["21714", "21715", "21716"],
+            "matches": [match],
+        },
+    )
+    device_config = FakeDeviceConfig(timezone="UTC")
+    device_config.env["PANDASCORE_API_KEY"] = "private-token"
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_pandascore_cs2_payload",
+        lambda *_args, **_kwargs: pytest.fail(
+            "fixed post-event cutoff must stop routine polling"
+        ),
+    )
+
+    card, source_state = plugin._load_pandascore_cs2_card(
+        settings,
+        device_config,
+        timezone.utc,
+        now,
+    )
+
+    assert source_state == "PANDASCORE ARCHIVE"
+    assert card["window_active"] is False
+    assert SportsDashboard._select_valve_esports([card], now)["primary"] is None
+
+
+def test_pandascore_cs2_loader_uses_live_ttl_only_near_next_match(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    settings = {
+        "pandaScoreCs2TournamentIds": "21714",
+        "pandaScoreCs2CacheSeconds": "180",
+        "pandaScoreCs2ScheduleCacheSeconds": "900",
+    }
+    device_config = FakeDeviceConfig(timezone="UTC")
+    device_config.env["PANDASCORE_API_KEY"] = "private-token"
+    calls = []
+
+    def write_cache(match):
+        plugin._write_json_file(
+            plugin._pandascore_cs2_cache_path(),
+            {
+                "version": sports_dashboard_module.PANDASCORE_CS2_CACHE_VERSION,
+                "cache_key": plugin._pandascore_cs2_cache_key(
+                    settings,
+                    timezone.utc,
+                ),
+                "fetched_at": (now - timedelta(seconds=181)).isoformat(),
+                "provider": "pandascore",
+                "tournament_ids": ["21714"],
+                "matches_by_tournament": {"21714": [match]},
+                "matches": [match],
+            },
+        )
+
+    def fake_fetch(_settings, _key, cache_key, now_utc, **_kwargs):
+        calls.append(True)
+        match = _sample_pandascore_blast_matches(now)[2]
+        match["begin_at"] = (now + timedelta(minutes=20)).isoformat()
+        return {
+            "version": sports_dashboard_module.PANDASCORE_CS2_CACHE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": now_utc.isoformat(),
+            "provider": "pandascore",
+            "tournament_ids": ["21714"],
+            "matches_by_tournament": {"21714": [match]},
+            "stage_fetched_at": {"21714": now_utc.isoformat()},
+            "successful_tournament_ids": ["21714"],
+            "failed_tournament_ids": [],
+            "terminal": False,
+            "matches": [match],
+        }
+
+    monkeypatch.setattr(plugin, "_fetch_pandascore_cs2_payload", fake_fetch)
+    far_match = _sample_pandascore_blast_matches(now)[2]
+    far_match["begin_at"] = (now + timedelta(hours=2)).isoformat()
+    write_cache(far_match)
+
+    far_card, far_state = plugin._load_pandascore_cs2_card(
+        settings,
+        device_config,
+        timezone.utc,
+        now,
+    )
+    near_match = _sample_pandascore_blast_matches(now)[2]
+    near_match["begin_at"] = (now + timedelta(minutes=20)).isoformat()
+    write_cache(near_match)
+    near_card, near_state = plugin._load_pandascore_cs2_card(
+        settings,
+        device_config,
+        timezone.utc,
+        now,
+    )
+
+    assert far_card["status"] == "NEXT"
+    assert far_state == "PANDASCORE CACHE"
+    assert near_card["status"] == "NEXT"
+    assert near_state == "PANDASCORE LIVE"
+    assert calls == [True]
+
+
+def test_pandascore_cs2_fetch_streams_with_hard_response_cap(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    closed = []
+    recorded = []
+
+    class FakeResponse:
+        headers = {
+            "Content-Length": str(
+                sports_dashboard_module.PANDASCORE_CS2_RESPONSE_MAX_BYTES + 1
+            )
+        }
+        status_code = 200
+        url = "https://api.pandascore.co/test"
+
+        def raise_for_status(self):
+            return None
+
+        def iter_content(self, chunk_size):
+            raise AssertionError("oversized response must fail before body consumption")
+
+        def close(self):
+            closed.append(True)
+
+    class FakeSession:
+        def request(self, method, _url, *, headers, params, timeout, stream):
+            assert method == "GET"
+            assert headers["Authorization"] == "Bearer private-token"
+            assert params == {"page[size]": 100}
+            assert timeout == 20
+            assert stream is True
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FakeSession(),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_record_pandascore_cs2_call",
+        lambda *_args: recorded.append(True),
+    )
+
+    with pytest.raises(Exception, match="exceeded"):
+        plugin._fetch_pandascore_cs2_payload(
+            {"pandaScoreCs2TournamentIds": "21714"},
+            "private-token",
+            "cache-key",
+            now,
+        )
+
+    assert closed == [True]
+    assert recorded == [True]
+
+
+def test_pandascore_long_retry_after_becomes_nonretryable_stale_limit(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    settings = {"pandaScoreCs2TournamentIds": "21714,21715,21716"}
+    live_match = _sample_pandascore_blast_matches(now)[1]
+    plugin._write_json_file(
+        plugin._pandascore_cs2_cache_path(),
+        {
+            "version": sports_dashboard_module.PANDASCORE_CS2_CACHE_VERSION,
+            "cache_key": plugin._pandascore_cs2_cache_key(settings, timezone.utc),
+            "fetched_at": (now - timedelta(minutes=10)).isoformat(),
+            "provider": "pandascore",
+            "tournament_ids": ["21714", "21715", "21716"],
+            "matches_by_tournament": {"21714": [live_match]},
+            "matches": [live_match],
+        },
+    )
+    device_config = FakeDeviceConfig(timezone="UTC")
+    device_config.env["PANDASCORE_API_KEY"] = "private-token"
+    requests = []
+    recorded = []
+
+    class FakeResponse:
+        status_code = 429
+        headers = {"Retry-After": "3600"}
+        url = "https://api.pandascore.co/test"
+
+        def close(self):
+            return None
+
+    class FakeSession:
+        def request(self, method, url, **_kwargs):
+            requests.append((method, url))
+            return FakeResponse()
+
+    monkeypatch.setattr(
+        sports_dashboard_module,
+        "get_http_session",
+        lambda: FakeSession(),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_record_pandascore_cs2_call",
+        lambda *_args: recorded.append(True),
+    )
+
+    card, source_state = plugin._load_pandascore_cs2_card(
+        settings,
+        device_config,
+        timezone.utc,
+        now,
+    )
+    plugin._write_valve_esports_live_state(
+        {"primary": card, "cards": [card], "rotation_pool": ["CS"]},
+        now,
+        source_state,
+    )
+
+    assert requests == [
+        ("GET", "https://api.pandascore.co/tournaments/21714/matches")
+    ]
+    assert recorded == [True]
+    assert source_state == "PANDASCORE STALE LIMIT"
+    assert plugin.get_live_refresh_state({}, now) is None
+
+
+def test_valve_loader_merges_preloaded_pandascore_card():
+    plugin = _plugin()
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    upcoming_match = _sample_pandascore_blast_matches(now)[2]
+    card = SportsDashboard._parse_pandascore_cs2_card(
+        [upcoming_match],
+        timezone.utc,
+        now,
+        {},
+    )
+
+    selected, source_state = plugin._load_valve_esports(
+        {
+            "valveEsportsHltvEnabled": False,
+            "valveEsportsOpenDotaEnabled": False,
+        },
+        timezone.utc,
+        now,
+        pandascore_result=(card, "PANDASCORE CACHE"),
+    )
+
+    assert selected["primary"]["event_name"] == "BLAST Premier Open Porto 2026"
+    assert selected["primary"]["source_state"] == "PANDASCORE CACHE"
+    assert source_state == "PANDASCORE CACHE"
+
+
+def test_right_esports_prefetches_pandascore_and_uses_earlier_match(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    panda_match = _sample_pandascore_blast_matches(now)[2]
+    panda_match["begin_at"] = (now + timedelta(hours=1)).isoformat()
+    panda_card = SportsDashboard._parse_pandascore_cs2_card(
+        [panda_match],
+        timezone.utc,
+        now,
+        {},
+    )
+    lpl_match = {
+        "start": now + timedelta(hours=2),
+        "state": "unstarted",
+        "team_a": "BLG",
+        "team_b": "TES",
+    }
+    calls = []
+    monkeypatch.setattr(
+        plugin,
+        "_load_lol_esports_sidebar_cards",
+        lambda *_args: [
+            {
+                "league_key": "LPL",
+                "selected": SportsDashboard._select_lpl_events([lpl_match], now),
+                "source_state": "LIVE DATA",
+                "priority": 0,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_pandascore_cs2_card",
+        lambda *_args: (calls.append("pandascore") or panda_card, "PANDASCORE LIVE"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_valve_esports",
+        lambda *_args, **_kwargs: pytest.fail(
+            "timed PandaScore card should avoid loading fallback providers"
+        ),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_write_valve_esports_live_state",
+        lambda selected, _now, source_state: calls.append(
+            f"state:{selected['primary']['event_name']}:{source_state}"
+        ),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_draw_valve_esports_sidebar",
+        lambda *_args: calls.append("valve"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_draw_lpl_sidebar",
+        lambda *_args, **_kwargs: pytest.fail("earlier PandaScore match must win"),
+    )
+
+    provenance = plugin._draw_right_esports_region(
+        Image.new("RGB", (800, 480), COLORS["paper"]),
+        {
+            "valveEsportsEnabled": True,
+            "valveEsportsTiOfficialEnabled": False,
+            "pandaScoreCs2Enabled": True,
+        },
+        FakeDeviceConfig(timezone="UTC"),
+        timezone.utc,
+        now,
+        552,
+    )
+
+    assert calls == [
+        "pandascore",
+        "state:BLAST Premier Open Porto 2026:PANDASCORE LIVE",
+        "valve",
+    ]
+    assert provenance is SourceProvenance.LIVE
+
+
+def test_pandascore_next_match_starts_background_polling_without_fake_live(
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    match = {
+        "match_id": "103",
+        "start": now + timedelta(minutes=20),
+        "team_a": "Natus Vincere",
+        "team_b": "M80",
+    }
+    selected = {
+        "primary": {
+            "series": "CS",
+            "event_name": "BLAST Premier Open Porto 2026",
+            "status": "NEXT",
+            "main": match,
+            "source": "PandaScore",
+        },
+        "rotation_pool": ["CS"],
+    }
+
+    plugin._write_valve_esports_live_state(selected, now, "PANDASCORE CACHE")
+
+    state = json.loads(
+        (tmp_path / "valve_esports_live_state.json").read_text(encoding="utf-8")
+    )
+    assert state["status"] == "NEXT"
+    assert state["has_live"] is False
+    assert state["provider_confirmed_live"] is False
+    assert state["polling_for_start"] is True
+    assert plugin.get_live_refresh_state({}, now) == {
+        "active": True,
+        "interval_seconds": 180,
+    }
+    assert plugin.get_live_refresh_state(
+        {"pandaScoreCs2Enabled": False},
+        now,
+    ) is None
+    assert plugin.get_live_refresh_state(
+        {"lolEsportsSidebarOverride": "LPL"},
+        now,
+    ) is None
+
+
+def test_pandascore_next_match_live_state_wakes_without_another_render(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    written_at = datetime(2026, 8, 26, 10, 0, tzinfo=timezone.utc)
+    starts_at = written_at + timedelta(hours=2)
+    selected = {
+        "primary": {
+            "series": "CS",
+            "event_name": "BLAST Premier Open Porto 2026",
+            "status": "NEXT",
+            "window_active": True,
+            "main": {
+                "match_id": "103",
+                "start": starts_at,
+                "team_a": "Natus Vincere",
+                "team_b": "M80",
+            },
+            "source": "PandaScore",
+            "source_state": "PANDASCORE CACHE",
+        },
+        "cards": [],
+        "rotation_pool": ["CS"],
+    }
+
+    plugin._write_valve_esports_live_state(
+        selected,
+        written_at,
+        "PANDASCORE CACHE",
+    )
+
+    state = plugin._read_json_file(plugin._valve_esports_live_state_path())
+    assert state["has_live"] is False
+    assert state["refresh_from"] == (
+        starts_at - timedelta(minutes=30)
+    ).isoformat()
+    assert plugin.get_live_refresh_state({}, written_at) is None
+    assert plugin.get_live_refresh_state(
+        {}, starts_at - timedelta(minutes=20)
+    ) == {"active": True, "interval_seconds": 180}
+    assert plugin.get_live_refresh_state(
+        {}, starts_at + timedelta(hours=12, seconds=1)
+    ) is None
+
+
+def test_pandascore_stale_live_keeps_bounded_retry_without_claiming_live(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    starts_at = datetime(2026, 8, 26, 11, 40, tzinfo=timezone.utc)
+    fresh_at = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    card = {
+        "series": "CS",
+        "event_name": "BLAST Premier Open Porto 2026",
+        "status": "LIVE",
+        "window_active": True,
+        "main": {"match_id": "102", "start": starts_at},
+        "source": "PandaScore",
+        "source_state": "PANDASCORE LIVE",
+    }
+    selected = {"primary": card, "cards": [card], "rotation_pool": ["CS"]}
+
+    plugin._write_valve_esports_live_state(
+        selected,
+        fresh_at,
+        "PANDASCORE LIVE",
+    )
+    card["source_state"] = "PANDASCORE STALE"
+    plugin._write_valve_esports_live_state(
+        selected,
+        fresh_at + timedelta(minutes=3),
+        "PANDASCORE STALE",
+    )
+
+    state = plugin._read_json_file(plugin._valve_esports_live_state_path())
+    assert state["has_live"] is False
+    assert state["provider_confirmed_live"] is False
+    assert state["polling_for_retry"] is True
+    assert state["source_state"] == "PANDASCORE STALE"
+    assert plugin.get_live_refresh_state(
+        {}, fresh_at + timedelta(minutes=3)
+    ) == {"active": True, "interval_seconds": 180}
+    assert plugin.get_live_refresh_state(
+        {}, starts_at + timedelta(hours=12, seconds=1)
+    ) is None
+
+
+@pytest.mark.parametrize(
+    "source_state",
+    (
+        "PANDASCORE STALE NO KEY",
+        "PANDASCORE STALE AUTH",
+        "PANDASCORE STALE LIMIT",
+    ),
+)
+def test_pandascore_nonretryable_failure_does_not_start_fast_polling(
+    tmp_path,
+    source_state,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    card = {
+        "series": "CS",
+        "event_name": "BLAST Premier Open Porto 2026",
+        "status": "LIVE",
+        "window_active": True,
+        "main": {"match_id": "102", "start": now - timedelta(minutes=20)},
+        "source": "PandaScore",
+        "source_state": source_state,
+    }
+
+    plugin._write_valve_esports_live_state(
+        {"primary": card, "cards": [card], "rotation_pool": ["CS"]},
+        now,
+        source_state,
+    )
+
+    state = plugin._read_json_file(plugin._valve_esports_live_state_path())
+    assert state["has_live"] is False
+    assert state["polling_for_retry"] is False
+    assert state["refresh_from"] is None
+    assert plugin.get_live_refresh_state({}, now) is None
+
+
+def test_valve_live_state_scans_nonprimary_pandascore_live_card(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    ti_next = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "NEXT",
+        "window_active": True,
+        "main": {
+            "match_id": "ti-next",
+            "start": now + timedelta(hours=4),
+            "team_a": "TBD",
+            "team_b": "TBD",
+        },
+        "source": "Dota 2 Official",
+        "source_state": "DOTA2 CACHE",
+    }
+    panda_live = {
+        "series": "CS",
+        "event_name": "BLAST Premier Open Porto 2026",
+        "status": "LIVE",
+        "window_active": True,
+        "main": {
+            "match_id": "panda-live",
+            "start": now - timedelta(minutes=20),
+            "team_a": "Spirit",
+            "team_b": "DENDELE",
+        },
+        "source": "PandaScore",
+        "source_state": "PANDASCORE LIVE",
+    }
+    selected = {
+        "primary": ti_next,
+        "cards": [ti_next, panda_live],
+        "rotation_pool": ["TI", "CS"],
+    }
+
+    plugin._write_valve_esports_live_state(selected, now, "DOTA2 CACHE")
+
+    state = plugin._read_json_file(plugin._valve_esports_live_state_path())
+    assert state["has_live"] is True
+    assert state["series"] == "CS"
+    assert state["match_id"] == "panda-live"
+    assert state["source_state"] == "PANDASCORE LIVE"
+
+
+def test_valve_live_state_ignores_stale_primary_for_fresh_ti_live(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    stale_panda = {
+        "series": "CS",
+        "event_name": "BLAST Premier Open Porto 2026",
+        "status": "LIVE",
+        "window_active": True,
+        "main": {
+            "match_id": "stale-panda",
+            "start": now - timedelta(minutes=20),
+        },
+        "source": "PandaScore",
+        "source_state": "PANDASCORE STALE",
+    }
+    ti_live = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "LIVE",
+        "window_active": True,
+        "main": {
+            "match_id": "ti-live",
+            "start": now - timedelta(minutes=10),
+        },
+        "source": "Dota 2 Official",
+        "source_state": "DOTA2 LIVE",
+    }
+    selected = {
+        "primary": stale_panda,
+        "cards": [stale_panda, ti_live],
+        "rotation_pool": ["CS", "TI"],
+    }
+
+    plugin._write_valve_esports_live_state(
+        selected,
+        now,
+        "PANDASCORE STALE",
+    )
+
+    state = plugin._read_json_file(plugin._valve_esports_live_state_path())
+    assert state["has_live"] is True
+    assert state["series"] == "TI"
+    assert state["match_id"] == "ti-live"
+    assert state["source_state"] == "DOTA2 LIVE"
+
+
+def test_valve_live_state_ignores_blocked_pandascore_for_fresh_ti_live(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    blocked_panda = {
+        "series": "CS",
+        "event_name": "BLAST Premier Open Porto 2026",
+        "status": "LIVE",
+        "window_active": True,
+        "main": {
+            "match_id": "blocked-panda",
+            "start": now - timedelta(minutes=20),
+        },
+        "source": "PandaScore",
+        "source_state": "PANDASCORE LIVE PARTIAL",
+        "polling_blocked": True,
+        "polling_failure_kind": "LIMIT",
+    }
+    ti_live = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "LIVE",
+        "window_active": True,
+        "main": {
+            "match_id": "ti-live",
+            "start": now - timedelta(minutes=10),
+        },
+        "source": "Dota 2 Official",
+        "source_state": "DOTA2 LIVE",
+    }
+    selected = {
+        "primary": blocked_panda,
+        "cards": [blocked_panda, ti_live],
+        "rotation_pool": ["CS", "TI"],
+    }
+
+    plugin._write_valve_esports_live_state(
+        selected,
+        now,
+        "PANDASCORE LIVE PARTIAL",
+    )
+
+    state = plugin._read_json_file(plugin._valve_esports_live_state_path())
+    assert state["has_live"] is True
+    assert state["polling_blocked"] is False
+    assert state["series"] == "TI"
+    assert state["match_id"] == "ti-live"
+    assert state["source_state"] == "DOTA2 LIVE"
+    assert plugin.get_live_refresh_state({}, now) == {
+        "active": True,
+        "interval_seconds": 180,
+    }
+
+
+def test_valve_live_state_drops_expired_cached_tournament(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 27, 6, 30, tzinfo=timezone.utc)
+    expired_ti = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "LIVE",
+        "window_active": True,
+        "main": {
+            "match_id": "stale-ti-live",
+            "start": now - timedelta(days=3),
+        },
+        "event_end": now,
+        "end": now + timedelta(days=2),
+        "source": "Dota 2 Official",
+        "source_state": "DOTA2 STALE",
+    }
+
+    plugin._write_valve_esports_live_state(
+        {"primary": expired_ti, "cards": [expired_ti], "rotation_pool": ["TI"]},
+        now,
+        "DOTA2 STALE",
+    )
+
+    state = plugin._read_json_file(plugin._valve_esports_live_state_path())
+    assert state["has_live"] is False
+    assert state["displaying_valve_event"] is False
+    assert state.get("series", "") == ""
+    assert plugin.get_live_refresh_state({}, now) is None
+
+
+def test_valve_live_state_keeps_trusted_live_overrun_after_scheduled_end(tmp_path):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 24, 7, 30, tzinfo=timezone.utc)
+    live_ti = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "LIVE",
+        "window_active": True,
+        "main": {
+            "match_id": "ti-final-overrun",
+            "start": now - timedelta(hours=3),
+        },
+        "live": [{"match_id": "ti-final-overrun", "start": now - timedelta(hours=3)}],
+        "event_end": now - timedelta(minutes=30),
+        "end": now + timedelta(days=2),
+        "source": "Dota 2 Official",
+        "source_state": "DOTA2 LIVE",
+    }
+
+    plugin._write_valve_esports_live_state(
+        {"primary": live_ti, "cards": [live_ti], "rotation_pool": ["TI"]},
+        now,
+        "DOTA2 LIVE",
+    )
+
+    state = plugin._read_json_file(plugin._valve_esports_live_state_path())
+    assert state["has_live"] is True
+    assert state["displaying_valve_event"] is True
+    assert state["series"] == "TI"
+    assert plugin.get_live_refresh_state({}, now) == {
+        "active": True,
+        "interval_seconds": 180,
+    }
+
+
+def test_right_esports_live_state_tracks_nonprimary_pandascore_during_rotation(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 26, 12, 30, tzinfo=timezone.utc)
+    panda_card = SportsDashboard._parse_pandascore_cs2_card(
+        [_sample_pandascore_blast_matches(now)[1]],
+        timezone.utc,
+        now,
+        {},
+    )
+    ti_next = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "NEXT",
+        "window_active": True,
+        "main": {
+            "match_id": "ti-next",
+            "start": now + timedelta(hours=4),
+            "team_a": "TBD",
+            "team_b": "TBD",
+        },
+        "source": "Dota 2 Official",
+        "source_state": "DOTA2 CACHE",
+        "order": 1,
+    }
+    monkeypatch.setattr(plugin, "_load_lol_esports_sidebar_cards", lambda *_args: [])
+    monkeypatch.setattr(
+        plugin,
+        "_load_pandascore_cs2_card",
+        lambda *_args: (panda_card, "PANDASCORE LIVE"),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_valve_ti_official_card",
+        lambda *_args: (ti_next, "DOTA2 CACHE"),
+    )
+    monkeypatch.setattr(plugin, "_draw_valve_esports_sidebar", lambda *_args: None)
+    monkeypatch.setattr(
+        plugin,
+        "_draw_lpl_sidebar",
+        lambda *_args, **_kwargs: pytest.fail("live PandaScore card should win"),
+    )
+
+    plugin._draw_right_esports_region(
+        Image.new("RGB", (800, 480), COLORS["paper"]),
+        {
+            "valveEsportsEnabled": True,
+            "valveEsportsTiOfficialEnabled": True,
+            "pandaScoreCs2Enabled": True,
+        },
+        FakeDeviceConfig(timezone="UTC"),
+        timezone.utc,
+        now,
+        552,
+    )
+
+    state = plugin._read_json_file(plugin._valve_esports_live_state_path())
+    assert state["has_live"] is True
+    assert state["series"] == "CS"
+    assert state["source_state"] == "PANDASCORE LIVE"
+
+
+def test_pandascore_sidebar_renders_required_source_attribution(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    card = SportsDashboard._parse_pandascore_cs2_card(
+        [_sample_pandascore_blast_matches(now)[1]],
+        timezone.utc,
+        now,
+        {},
+    )
+    card["source_state"] = "PANDASCORE LIVE"
+    selected = SportsDashboard._select_valve_esports([card], now)
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+    seen_texts = []
+    original_draw_text_in_box = plugin._draw_text_in_box
+
+    def record_text(draw, box, text, font, color, align="left"):
+        seen_texts.append(str(text))
+        return original_draw_text_in_box(
+            draw,
+            box,
+            text,
+            font,
+            color,
+            align=align,
+        )
+
+    monkeypatch.setattr(plugin, "_draw_text_in_box", record_text)
+    monkeypatch.setattr(plugin, "_load_team_logo", lambda *_args: None)
+
+    plugin._draw_valve_esports_sidebar(
+        image,
+        552,
+        selected,
+        "PANDASCORE LIVE",
+        now,
+    )
+
+    assert "SOURCE: PANDASCORE" in seen_texts
+    assert "PANDASCORE DATA" in seen_texts
+    assert "PANDASCORE LIVE" not in seen_texts
 
 
 def test_valve_hltv_parser_selects_active_major_and_excludes_qualifiers():
@@ -18090,6 +19659,117 @@ def test_valve_ti_official_loader_uses_long_schedule_cache(monkeypatch, tmp_path
 
     assert source_state == "DOTA2 CACHE"
     assert card["status"] == "NEXT"
+
+
+def test_valve_ti_official_loader_archives_finished_event_without_refetch(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 24, 8, 0, tzinfo=timezone.utc)
+    payload = _sample_valve_ti_official_payload(now - timedelta(days=1))
+    payload["info"]["end_timestamp"] = int(
+        (now - timedelta(hours=1)).timestamp()
+    )
+    playoff_nodes = payload["node_groups"][0]["node_groups"][0]["nodes"]
+    for node in playoff_nodes:
+        node["has_started"] = True
+        node["is_completed"] = True
+    settings = {
+        "valveEsportsTiLeagueId": "19719",
+        "valveEsportsTiCacheSeconds": "180",
+    }
+    plugin._write_json_file(
+        plugin._valve_ti_official_cache_path(),
+        {
+            "version": sports_dashboard_module.VALVE_TI_OFFICIAL_CACHE_VERSION,
+            "cache_key": plugin._valve_ti_official_cache_key(settings, timezone.utc),
+            "fetched_at": (now - timedelta(minutes=10)).isoformat(),
+            "provider": "dota2-official",
+            "league": payload,
+        },
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_valve_ti_official_payload",
+        lambda *_args: pytest.fail("an archived TI must not be refetched"),
+    )
+
+    card, source_state = plugin._load_valve_ti_official_card(
+        settings,
+        timezone.utc,
+        now,
+    )
+
+    assert source_state == "DOTA2 ARCHIVE"
+    assert card["status"] == "RECENT"
+    assert card["window_active"] is False
+
+
+@pytest.mark.parametrize("end_timestamp", (None, 0, "between_observed_matches"))
+def test_valve_ti_missing_official_end_remains_refreshable_for_later_stage(
+    monkeypatch,
+    tmp_path,
+    end_timestamp,
+):
+    plugin = _plugin()
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    now = datetime(2026, 8, 20, 12, 0, tzinfo=timezone.utc)
+    cached_payload = _sample_valve_ti_official_payload(now - timedelta(days=1))
+    if end_timestamp is None:
+        cached_payload["info"].pop("end_timestamp", None)
+    elif end_timestamp == "between_observed_matches":
+        cached_payload["info"]["end_timestamp"] = int(
+            (now - timedelta(hours=23)).timestamp()
+        )
+    else:
+        cached_payload["info"]["end_timestamp"] = end_timestamp
+    cached_nodes = cached_payload["node_groups"][0]["node_groups"][0]["nodes"]
+    for node in cached_nodes:
+        node["has_started"] = True
+        node["is_completed"] = True
+
+    later_payload = _sample_valve_ti_official_payload(now)
+    settings = {
+        "valveEsportsTiLeagueId": "19719",
+        "valveEsportsTiCacheSeconds": "180",
+    }
+    cache_key = plugin._valve_ti_official_cache_key(settings, timezone.utc)
+    plugin._write_json_file(
+        plugin._valve_ti_official_cache_path(),
+        {
+            "version": sports_dashboard_module.VALVE_TI_OFFICIAL_CACHE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": (now - timedelta(hours=7)).isoformat(),
+            "provider": "dota2-official",
+            "league": cached_payload,
+        },
+    )
+    calls = []
+
+    def fetch(_settings, used_cache_key, now_utc):
+        calls.append((used_cache_key, now_utc))
+        return {
+            "version": sports_dashboard_module.VALVE_TI_OFFICIAL_CACHE_VERSION,
+            "cache_key": cache_key,
+            "fetched_at": now.isoformat(),
+            "provider": "dota2-official",
+            "league": later_payload,
+        }
+
+    monkeypatch.setattr(plugin, "_fetch_valve_ti_official_payload", fetch)
+
+    card, source_state = plugin._load_valve_ti_official_card(
+        settings,
+        timezone.utc,
+        now,
+    )
+
+    assert calls == [(cache_key, now)]
+    assert source_state == "DOTA2 LIVE"
+    assert card["status"] == "LIVE"
+    assert card["upcoming"]
 
 
 def test_valve_ti_official_loader_respects_shared_daily_budget(
@@ -18315,6 +19995,7 @@ def test_valve_official_source_labels_are_human_readable():
     assert SportsDashboard._source_label("DOTA2 LIVE") == "OFFICIAL LIVE"
     assert SportsDashboard._source_label("DOTA2 CACHE") == "OFFICIAL CACHE"
     assert SportsDashboard._source_label("DOTA2 STALE") == "STALE CACHE"
+    assert SportsDashboard._source_label("DOTA2 ARCHIVE") == "ARCHIVED"
 
 
 def test_valve_ti_match_detail_includes_stage_and_series_length():
@@ -18431,6 +20112,63 @@ def test_valve_selector_rotates_active_cards_and_ignores_break_cards():
     assert selected["primary"] in (active_cs, active_ti)
     assert selected["rotation_pool"] == ["CS", "TI"]
     assert SportsDashboard._valve_esports_has_displayable_event(selected) is True
+
+
+def test_valve_selector_rechecks_cached_expiry_at_selection_time():
+    now = datetime(2026, 8, 27, 6, 30, tzinfo=timezone.utc)
+    active_cs = {
+        "series": "CS",
+        "event_name": "BLAST Premier Open Porto 2026",
+        "status": "NEXT",
+        "window_active": True,
+        "order": 0,
+        "main": {"start": now + timedelta(hours=6)},
+        "end": now + timedelta(days=10),
+    }
+    expired_ti = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "RECENT",
+        "window_active": True,
+        "order": 1,
+        "main": {"start": now - timedelta(days=3)},
+        "event_end": now,
+        "end": now + timedelta(days=2),
+    }
+
+    selected = SportsDashboard._select_valve_esports(
+        [expired_ti, active_cs],
+        now,
+    )
+
+    assert selected["primary"] is active_cs
+    assert selected["rotation_pool"] == ["CS"]
+    assert SportsDashboard._valve_esports_active_cards(selected, now) == [active_cs]
+
+
+@pytest.mark.parametrize(
+    ("offset_seconds", "expired"),
+    ((-1, False), (0, True), (1, True)),
+)
+def test_valve_authoritative_event_end_boundary(offset_seconds, expired):
+    event_end = datetime(2026, 8, 24, 7, 0, tzinfo=timezone.utc)
+    card = {
+        "series": "TI",
+        "event_name": "The International 2026",
+        "status": "RECENT",
+        "window_active": True,
+        "main": {"start": event_end - timedelta(hours=4)},
+        "live": [],
+        "upcoming": [],
+        "event_end": event_end,
+        "end": event_end + timedelta(days=2),
+        "source_state": "DOTA2 LIVE",
+    }
+
+    assert SportsDashboard._valve_esports_card_is_expired(
+        card,
+        event_end + timedelta(seconds=offset_seconds),
+    ) is expired
 
 
 def test_right_esports_sidebar_priority_order_lpl_lck_cs_ti():
@@ -18691,6 +20429,11 @@ def test_settings_exposes_valve_esports_controls():
     html = settings_path.read_text(encoding="utf-8")
     fields = [
         "valveEsportsEnabled",
+        "pandaScoreCs2Enabled",
+        "pandaScoreCs2TournamentIds",
+        "pandaScoreCs2CacheSeconds",
+        "pandaScoreCs2ScheduleCacheSeconds",
+        "pandaScoreCs2DailyLimit",
         "valveEsportsTiOfficialEnabled",
         "valveEsportsTiLeagueId",
         "valveEsportsTiCacheSeconds",
@@ -18707,6 +20450,9 @@ def test_settings_exposes_valve_esports_controls():
         assert f'id="{field}"' in html
         assert f'name="{field}"' in html
         assert f"pluginSettings.{field}" in html
+
+    assert "Source: PandaScore" in html
+    assert "PANDASCORE_API_KEY" in html
 
 def test_settings_exposes_lck_sidebar_controls():
     settings_path = (

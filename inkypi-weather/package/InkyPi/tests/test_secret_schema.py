@@ -155,6 +155,16 @@ def test_liveradar_twitch_credentials_are_canonical_schema_entries():
     assert entries["TWITCH_CLIENT_SECRET"].value_type == "secret"
 
 
+def test_pandascore_token_is_registered_for_sports_dashboard():
+    schema = SecretSchema.load(DEFAULT_SCHEMA_PATH)
+    entries = {entry.canonical: entry for entry in schema.entries}
+
+    entry = entries["PANDASCORE_API_KEY"]
+    assert entry.features == ("Sports Dashboard CS2",)
+    assert entry.value_type == "secret"
+    assert entry.help_url == "https://app.pandascore.co/signup"
+
+
 def test_installer_can_read_schema_without_site_packages():
     environment = dict(os.environ)
     environment.pop("PYTHONPATH", None)

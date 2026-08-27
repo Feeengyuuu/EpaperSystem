@@ -428,6 +428,20 @@
       "value_type": "secret"
     },
     {
+      "key": "PANDASCORE_API_KEY",
+      "service": "PandaScore",
+      "features": [
+        "Sports Dashboard CS2"
+      ],
+      "required": false,
+      "aliases": [
+        "PANDASCORE_TOKEN"
+      ],
+      "signup_url": "https://app.pandascore.co/signup",
+      "notes": "Keep this token server-side. Used for BLAST Porto schedules, running status, and series results.",
+      "value_type": "secret"
+    },
+    {
       "key": "PIXIV_PHPSESSID",
       "service": "Pixiv",
       "features": [

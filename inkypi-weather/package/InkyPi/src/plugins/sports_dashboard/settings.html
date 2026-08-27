@@ -367,8 +367,36 @@
 <div class="form-group">
     <label class="form-label">
         <input type="checkbox" id="valveEsportsEnabled" name="valveEsportsEnabled" value="true">
-        Replace LPL sidebar with active Valve CS Major / TI events
+        Replace LPL sidebar with active CS2 / TI events
     </label>
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="pandaScoreCs2Enabled" name="pandaScoreCs2Enabled" value="true">
+        Include BLAST Premier Open Porto 2026 live / upcoming matches
+    </label>
+    <small>Source: PandaScore. Configure the private <code>PANDASCORE_API_KEY</code> in InkyPi API Keys; the free Fixtures plan provides schedules, running status, and series results.</small>
+</div>
+
+<div class="form-group">
+    <label for="pandaScoreCs2TournamentIds" class="form-label">PandaScore BLAST Porto tournament IDs:</label>
+    <input type="text" id="pandaScoreCs2TournamentIds" name="pandaScoreCs2TournamentIds" placeholder="21714,21715,21716" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="pandaScoreCs2CacheSeconds" class="form-label">PandaScore live / pregame cache seconds:</label>
+    <input type="number" id="pandaScoreCs2CacheSeconds" name="pandaScoreCs2CacheSeconds" min="60" max="900" placeholder="180" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="pandaScoreCs2ScheduleCacheSeconds" class="form-label">PandaScore schedule cache seconds:</label>
+    <input type="number" id="pandaScoreCs2ScheduleCacheSeconds" name="pandaScoreCs2ScheduleCacheSeconds" min="300" max="3600" placeholder="900" class="form-input">
+</div>
+
+<div class="form-group">
+    <label for="pandaScoreCs2DailyLimit" class="form-label">PandaScore CS2 daily request safety limit:</label>
+    <input type="number" id="pandaScoreCs2DailyLimit" name="pandaScoreCs2DailyLimit" min="3" max="5000" placeholder="720" class="form-input">
 </div>
 
 <div class="form-group">
@@ -425,8 +453,8 @@
 </div>
 
 <div class="form-group">
-    <label for="valveEsportsWindowAfterDays" class="form-label">Valve event active window after latest result:</label>
-    <input type="number" id="valveEsportsWindowAfterDays" name="valveEsportsWindowAfterDays" min="0" max="14" placeholder="2" class="form-input">
+    <label for="valveEsportsWindowAfterDays" class="form-label">Fallback result-day retention (extra days):</label>
+    <input type="number" id="valveEsportsWindowAfterDays" name="valveEsportsWindowAfterDays" min="0" max="14" placeholder="0" class="form-input">
 </div>
 
 <div class="form-group">
@@ -598,6 +626,11 @@
             document.getElementById('nbaOddsCacheHours').value = pluginSettings.nbaOddsCacheHours || '';
             document.getElementById('nbaOddsDailyLimit').value = pluginSettings.nbaOddsDailyLimit || '';
             document.getElementById('valveEsportsEnabled').checked = pluginSettings.valveEsportsEnabled !== 'false';
+            document.getElementById('pandaScoreCs2Enabled').checked = pluginSettings.pandaScoreCs2Enabled !== 'false';
+            document.getElementById('pandaScoreCs2TournamentIds').value = pluginSettings.pandaScoreCs2TournamentIds || '';
+            document.getElementById('pandaScoreCs2CacheSeconds').value = pluginSettings.pandaScoreCs2CacheSeconds || '';
+            document.getElementById('pandaScoreCs2ScheduleCacheSeconds').value = pluginSettings.pandaScoreCs2ScheduleCacheSeconds || '';
+            document.getElementById('pandaScoreCs2DailyLimit').value = pluginSettings.pandaScoreCs2DailyLimit || '';
             document.getElementById('valveEsportsTiOfficialEnabled').checked = pluginSettings.valveEsportsTiOfficialEnabled !== 'false';
             document.getElementById('valveEsportsTiLeagueId').value = pluginSettings.valveEsportsTiLeagueId || '';
             document.getElementById('valveEsportsTiCacheSeconds').value = pluginSettings.valveEsportsTiCacheSeconds || '';
