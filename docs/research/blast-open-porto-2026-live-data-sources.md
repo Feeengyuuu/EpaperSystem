@@ -360,3 +360,44 @@ provider-isolated adapter:
   no schema, quota or SLA guarantee; isolate it and retain last-good cache.
 - **Usage rights: NEEDS PERMISSION OR A LICENSED PROVIDER.** Public reachability
   alone does not override BLAST's website terms.
+
+## Runtime verification on 2026-08-27
+
+The production device was verified against source release
+`47c7f6f26f9dde75af6e75856d876796e24ce22e` after configuring the managed
+`PANDASCORE_API_KEY`. The credential value was never printed, logged, written
+to source, or copied into this report.
+
+- The managed secret store listed exactly one configured PandaScore entry. An
+  unauthenticated mutation probe returned HTTP 401 after provisioning, so the
+  normal administrator guard was active again.
+- Authenticated requests to PandaScore's production
+  `/tournaments/{id}/matches` endpoint returned HTTP 200 for Group A `21714`,
+  Group B `21715`, and Playoffs `21716`, with 12, 12, and 5 match records
+  respectively.
+- The device-side SportsDashboard data-refresh job
+  `703ae03978ae413f9bde1583bd64d965` reached `completed`. The corresponding
+  service window contained no PandaScore partial-refresh warning, no 401/403
+  authentication error, and no traceback.
+- The explicitly authorized display job
+  `c52f971d625043a28ad86bf68ddfd990` reached `completed`. The generated
+  SportsDashboard image and `/api/current_image` were byte-identical with
+  SHA-256
+  `fcefac7d32e00d2fb33a5b88b5073f10c8b83d429c8e5f97fefdbec99dbbd84a`,
+  and the service journal recorded exactly one Waveshare hardware write for
+  that verification window.
+- The rendered priority view showed the current LCK, CSL, and PGA cards. The
+  finished International was absent, and the future Porto event did not
+  displace higher-priority current competitions. This is expected scheduling
+  behavior, not a PandaScore failure.
+- Final runtime pointers were
+  `deploy-20260827T085226Z-pandascore-safe2-d5e9b6ee66a7` (current) and
+  `deploy-20260827T083926Z-pandascore-safe1-d5e9b6ee66a7` (rollback). Both used
+  the release request guard hash
+  `2bf9ebb5eb9a3adf1b06254e31d6e8c036e208c0eb3a8467ec5ed52432b16dd9`;
+  the one-time loopback provisioning release was pruned before acceptance.
+
+Production cache JSON remains root-protected and was not copied out for this
+report. Provider acceptance, the completed device refresh, sanitized service
+logs, the rendered image, and the physical-write transaction were therefore
+verified independently without weakening cache permissions.
