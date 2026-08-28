@@ -49,10 +49,10 @@ DAILY_IMAGE_TITLE_PATH = PLUGIN_DIR / "assets" / "daily_image_title.png"
 DAILY_HEADER_FILLER_PATH = PLUGIN_DIR / "assets" / "daily_header_pixel_filler.png"
 HISTORY_TITLE_WORDMARK_PATH = PLUGIN_DIR / "assets" / "history_title_wordmark.png"
 TOPIC_PLACEHOLDER_PATH = PLUGIN_DIR / "assets" / "topic_pixel_placeholder.png"
-CACHE_SCHEMA_VERSION = "daily-wiki-page-v6"
+CACHE_SCHEMA_VERSION = "daily-wiki-page-v7"
 DEFAULT_FONT = DEFAULT_FONT_FAMILY
 DEFAULT_TIMEZONE = "America/Los_Angeles"
-FEED_URL = "https://api.wikimedia.org/feed/v1/wikipedia/{language}/featured/{year}/{month}/{day}"
+FEED_URL = "https://{language}.wikipedia.org/api/rest_v1/feed/featured/{year}/{month}/{day}"
 ZH_ACTION_API_URL = "https://zh.wikipedia.org/w/api.php"
 ZH_SIMPLIFIED_VARIANT = "zh-cn"
 ZH_DATE_PAGE_API_URL = "https://zh.wikipedia.org/w/api.php"
@@ -238,7 +238,7 @@ class DailyWikiPage(BasePlugin):
             logger.warning("DailyWikiPage live fetch failed: %s", exc)
 
         cached = cache.get("payload")
-        if isinstance(cached, dict):
+        if cache.get("schema") == CACHE_SCHEMA_VERSION and isinstance(cached, dict):
             payload = dict(cached)
             payload["source_state"] = "cache"
             return payload
@@ -249,6 +249,7 @@ class DailyWikiPage(BasePlugin):
 
     def _fetch_live_payload(self, now, language, fallback_language, settings):
         errors = []
+        primary_failure_type = "UnknownError"
         languages = [language]
         if fallback_language and fallback_language not in languages:
             languages.append(fallback_language)
@@ -257,10 +258,21 @@ class DailyWikiPage(BasePlugin):
                 feed = self._fetch_feed(now, self._feed_language(current_language))
                 payload = self._payload_from_feed(feed, current_language, settings, now=now)
                 if payload.get("title") and payload.get("extract"):
+                    if current_language != language:
+                        logger.warning(
+                            "DailyWikiPage primary language %s failed; using fallback language %s (%s)",
+                            language,
+                            current_language,
+                            primary_failure_type,
+                        )
                     return payload
-                errors.append(f"{current_language}: empty article")
+                errors.append(f"{current_language}: EmptyArticle")
+                if current_language == language:
+                    primary_failure_type = "EmptyArticle"
             except Exception as exc:
-                errors.append(f"{current_language}: {exc}")
+                errors.append(f"{current_language}: {type(exc).__name__}")
+                if current_language == language:
+                    primary_failure_type = type(exc).__name__
         raise RuntimeError("; ".join(errors) or "no Wikimedia payload")
 
     def _fetch_feed(self, now, language):
@@ -1064,18 +1076,36 @@ class DailyWikiPage(BasePlugin):
         events = feed.get("onthisday") if isinstance(feed.get("onthisday"), list) else []
         date_page_events = date_page_events or []
         items = []
-        for event in events[:6]:
+        seen_event_signatures = set()
+        for event in events:
             if not isinstance(event, dict):
                 continue
             text = self._clean_text(self._text(event, "text"))
-            year = self._text(event, "year")
+            year = self._clean_text(self._text(event, "year"))
             if text:
                 page_titles = self._event_page_titles(event)
+                event_signature = self._history_event_signature(year, text)
+                if event_signature in seen_event_signatures:
+                    continue
                 enriched_text = self._match_date_page_event_text(year, text, page_titles, date_page_events)
-                items.append({"year": str(year) if year not in (None, "") else "", "text": enriched_text or text})
+                items.append({"year": year, "text": enriched_text or text})
+                if event_signature is not None:
+                    seen_event_signatures.add(event_signature)
             if len(items) >= 5:
                 break
         return items
+
+    def _history_event_signature(self, year, text):
+        year = self._clean_text(year)
+        normalized_text = self._clean_text(text).casefold()
+        normalized_text = re.sub(
+            r"[\(\uff08]\s*(?:(?:both\s+)?pictured|[图圖])\s*[\)\uff09]",
+            " ",
+            normalized_text,
+            flags=re.IGNORECASE,
+        )
+        normalized_text = re.sub(r"[\W_]+", " ", normalized_text).strip()
+        return (year, normalized_text) if year and normalized_text else None
 
     def _event_page_titles(self, event):
         pages = event.get("pages") if isinstance(event, dict) else []
@@ -1122,7 +1152,7 @@ class DailyWikiPage(BasePlugin):
         selected_items = [item for item in (selected_items or [])[:5] if isinstance(item, dict)]
         fallback = {}
         candidates = []
-        for event_index, event in enumerate(events[:6]):
+        for event_index, event in enumerate(events):
             if not isinstance(event, dict):
                 continue
             selected_index = self._history_selected_event_index(event, selected_items)

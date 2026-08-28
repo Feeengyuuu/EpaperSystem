@@ -155,6 +155,28 @@ def sample_feed():
     }
 
 
+def test_fetch_feed_uses_official_per_wiki_rest_endpoint(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    captured = {}
+
+    def fake_get_json(url, params=None):
+        captured["url"] = url
+        captured["params"] = params
+        return {"tfa": {}}
+
+    monkeypatch.setattr(plugin, "_get_json", fake_get_json)
+
+    plugin._fetch_feed(
+        datetime(2026, 8, 28, 1, 19),
+        "zh",
+    )
+
+    assert captured == {
+        "url": "https://zh.wikipedia.org/api/rest_v1/feed/featured/2026/08/28",
+        "params": None,
+    }
+
+
 def test_daily_wiki_settings_refresh_on_display_default_enabled():
     settings_path = Path(__file__).resolve().parents[1] / "src" / "plugins" / "daily_wiki_page" / "settings.html"
     html = settings_path.read_text(encoding="utf-8")
@@ -271,6 +293,107 @@ def test_payload_uses_daily_image_and_history_only(tmp_path):
     assert payload["most_read"] == []
 
 
+def test_on_this_day_deduplicates_normalized_event_when_pages_change(tmp_path):
+    plugin = make_plugin(tmp_path)
+    feed = sample_feed()
+    galileo_pages = [
+        {"titles": {"normalized": "Galileo (spacecraft)"}},
+        {"titles": {"normalized": "243 Ida"}},
+        {"titles": {"normalized": "Minor-planet moon"}},
+    ]
+    feed["onthisday"] = [
+        {
+            "year": 2021,
+            "text": "The second phase of a rapid-transit line opened.",
+            "pages": [{"titles": {"normalized": "Thomson-East Coast Line"}}],
+        },
+        {
+            "year": 1993,
+            "text": "The NASA spacecraft Galileo flew by 243 Ida (both pictured).",
+            "pages": galileo_pages,
+        },
+        {
+            "year": 1993,
+            "text": "THE NASA SPACECRAFT GALILEO—FLEW BY 243 IDA!",
+            "pages": [
+                {"titles": {"normalized": "Galileo (spacecraft)"}},
+                {"titles": {"normalized": "Dactyl (moon)"}},
+            ],
+        },
+        {
+            "year": 1987,
+            "text": "Construction began on the Ryugyong Hotel.",
+            "pages": [{"titles": {"normalized": "Ryugyong Hotel"}}],
+        },
+        {
+            "year": 1973,
+            "text": "The Norrmalmstorg robbery ended.",
+            "pages": [{"titles": {"normalized": "Norrmalmstorg robbery"}}],
+        },
+        {
+            "year": 1963,
+            "text": "Martin Luther King Jr. delivered the I Have a Dream speech.",
+            "pages": [{"titles": {"normalized": "I Have a Dream"}}],
+        },
+    ]
+
+    payload = plugin._payload_from_feed(feed, "en", {})
+
+    assert [item["year"] for item in payload["on_this_day"]] == [
+        "2021",
+        "1993",
+        "1987",
+        "1973",
+        "1963",
+    ]
+    assert payload["on_this_day"][1]["text"] == (
+        "The NASA spacecraft Galileo flew by 243 Ida (both pictured)."
+    )
+
+
+def test_on_this_day_keeps_same_year_same_pages_when_event_text_differs(tmp_path):
+    plugin = make_plugin(tmp_path)
+    feed = sample_feed()
+    shared_pages = [
+        {"titles": {"normalized": "Galileo (spacecraft)"}},
+        {"titles": {"normalized": "1993"}},
+    ]
+    feed["onthisday"] = [
+        {
+            "year": 1993,
+            "text": "Galileo photographed the asteroid 243 Ida.",
+            "pages": shared_pages,
+        },
+        {
+            "year": 1993,
+            "text": "The Oslo Accords were signed.",
+            "pages": list(reversed(shared_pages)),
+        },
+    ]
+
+    payload = plugin._payload_from_feed(feed, "en", {})
+
+    assert payload["on_this_day"] == [
+        {"year": "1993", "text": "Galileo photographed the asteroid 243 Ida."},
+        {"year": "1993", "text": "The Oslo Accords were signed."},
+    ]
+
+
+@pytest.mark.parametrize("annotation", ["(pictured)", "(both pictured)", "（图）", "（圖）"])
+def test_history_event_signature_ignores_pictorial_annotations(tmp_path, annotation):
+    plugin = make_plugin(tmp_path)
+
+    signature = plugin._history_event_signature(
+        "1993",
+        f"The NASA spacecraft Galileo flew by 243 Ida {annotation}.",
+    )
+
+    assert signature == plugin._history_event_signature(
+        "1993",
+        "THE NASA SPACECRAFT GALILEO—FLEW BY 243 IDA!",
+    )
+
+
 def test_history_image_tracks_displayed_events(tmp_path):
     plugin = make_plugin(tmp_path)
     feed = sample_feed()
@@ -285,6 +408,39 @@ def test_history_image_tracks_displayed_events(tmp_path):
     assert history_image["url"] == "https://example.com/selected.jpg"
     assert history_image["title"] == "Selected event"
     assert history_image["year"] == "2001"
+
+
+def test_history_image_scans_beyond_six_events_for_selected_item(tmp_path):
+    plugin = make_plugin(tmp_path)
+    feed = sample_feed()
+    feed["onthisday"] = [
+        {"year": 1900 + index, "text": "", "pages": []}
+        for index in range(6)
+    ]
+    feed["onthisday"].append(
+        {
+            "year": 2007,
+            "text": "The seventh feed item is the first displayable event.",
+            "pages": [
+                {
+                    "titles": {"normalized": "Seventh selected event"},
+                    "thumbnail": {"source": "https://example.com/seventh.jpg"},
+                }
+            ],
+        }
+    )
+
+    selected = plugin._on_this_day_items(feed, {}, date_page_events=[])
+    history_image = plugin._history_image_from_feed(feed, selected)
+
+    assert selected == [
+        {"year": "2007", "text": "The seventh feed item is the first displayable event."}
+    ]
+    assert history_image == {
+        "url": "https://example.com/seventh.jpg",
+        "title": "Seventh selected event",
+        "year": "2007",
+    }
 
 
 def test_simplified_chinese_keeps_daily_image_with_its_caption(tmp_path, monkeypatch):
@@ -347,6 +503,94 @@ def test_daily_payload_fetches_once_then_uses_cache(tmp_path, monkeypatch):
     assert first["source_state"] == "live"
     assert second["source_state"] == "cache"
     assert calls["fetch"] == 1
+
+
+def test_daily_payload_ignores_v6_cache_and_fetches_current_source(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 8, 28, 1, 19)
+    settings = {
+        "language": "zh-cn",
+        "fallbackLanguage": "en",
+        "showImage": True,
+        "showOnThisDay": True,
+    }
+    plugin._write_cache(
+        {
+            "schema": "daily-wiki-page-v6",
+            "cache_key": "7a19ac743fc6ac9e52dedacc752db098f8202579",
+            "generated_at": "2026-08-28T01:19:00-07:00",
+            "payload": {
+                "date": "2026-08-28",
+                "language": "en",
+                "source": "Wikimedia",
+                "title": "Cached English fallback",
+                "extract": "Cached English content.",
+                "source_state": "live",
+            },
+        }
+    )
+    calls = {"fetch": 0}
+
+    def fake_fetch(current, language, fallback_language, current_settings):
+        calls["fetch"] += 1
+        assert language == "zh-cn"
+        assert fallback_language == "en"
+        assert current_settings == settings
+        return {
+            "date": current.strftime("%Y-%m-%d"),
+            "language": "zh-cn",
+            "source": "Wikimedia",
+            "title": "Fresh Chinese source",
+            "extract": "Fresh Chinese content.",
+        }
+
+    monkeypatch.setattr(plugin, "_fetch_live_payload", fake_fetch)
+
+    payload = plugin._daily_payload(settings, now)
+
+    assert calls["fetch"] == 1
+    assert payload["language"] == "zh-cn"
+    assert payload["title"] == "Fresh Chinese source"
+    assert payload["source_state"] == "live"
+    assert plugin._read_cache()["schema"] == "daily-wiki-page-v7"
+
+
+def test_daily_payload_rejects_v6_cache_when_live_fetch_fails(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 8, 28, 1, 19)
+    settings = {
+        "language": "zh-cn",
+        "fallbackLanguage": "en",
+        "showImage": True,
+        "showOnThisDay": True,
+        "forceRefresh": True,
+    }
+    plugin._write_cache(
+        {
+            "schema": "daily-wiki-page-v6",
+            "cache_key": "7a19ac743fc6ac9e52dedacc752db098f8202579",
+            "payload": {
+                "date": "2026-08-28",
+                "language": "en",
+                "source": "Wikimedia",
+                "title": "Cached English fallback",
+                "extract": "Cached English content.",
+            },
+        }
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_fetch_live_payload",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("private upstream detail")),
+    )
+
+    payload = plugin._daily_payload(settings, now)
+
+    assert payload["source_state"] == "local"
+    assert payload["_source_provenance"] == "local_fallback"
+    assert payload["source"] == "Local Encyclopedia"
+    assert payload["language"] == "zh-cn"
+    assert payload["title"] != "Cached English fallback"
 
 
 def test_daily_wiki_theme_only_opposite_palette_reuses_warm_source_cache(
@@ -1191,6 +1435,62 @@ def test_empty_fallback_language_disables_fallback(tmp_path):
     plugin = make_plugin(tmp_path)
 
     assert plugin._fallback_language({"fallbackLanguage": ""}, "zh-cn") == ""
+
+
+def test_live_payload_logs_primary_language_failure_when_fallback_succeeds(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    plugin = make_plugin(tmp_path)
+
+    def fake_fetch_feed(_now, language):
+        if language == "zh":
+            raise TimeoutError("private upstream detail")
+        return sample_feed()
+
+    monkeypatch.setattr(plugin, "_fetch_feed", fake_fetch_feed)
+    caplog.set_level(30, logger=wiki_module.__name__)
+
+    payload = plugin._fetch_live_payload(
+        datetime(2026, 8, 28, 1, 19),
+        "zh-cn",
+        "en",
+        {},
+    )
+
+    assert payload["language"] == "en"
+    assert caplog.messages == [
+        "DailyWikiPage primary language zh-cn failed; using fallback language en (TimeoutError)"
+    ]
+    assert "private upstream detail" not in caplog.text
+
+
+def test_live_payload_combined_failures_only_include_safe_error_types(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+
+    def fake_fetch_feed(_now, language):
+        if language == "zh":
+            raise TimeoutError("primary credential=do-not-log")
+        raise ConnectionError("fallback token=do-not-log")
+
+    monkeypatch.setattr(plugin, "_fetch_feed", fake_fetch_feed)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        plugin._fetch_live_payload(
+            datetime(2026, 8, 28, 1, 19),
+            "zh-cn",
+            "en",
+            {},
+        )
+
+    message = str(exc_info.value)
+    assert message == "zh-cn: TimeoutError; en: ConnectionError"
+    assert "credential" not in message
+    assert "token" not in message
 
 
 def test_simplified_chinese_payload_uses_zh_cn_variant(tmp_path, monkeypatch):
