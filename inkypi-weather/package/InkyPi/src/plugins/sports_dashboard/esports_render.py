@@ -1048,6 +1048,34 @@ class EsportsRenderMixin:
         value, value_font = self._fit_text_ellipsis(draw, text, width - dot_size - 14, 9, bold=True, min_size=7)
         self._draw_text_in_box(draw, (x + dot_size + 10, y + 1, x + width - 4, y + height - 1), value, value_font, COLORS["text"])
 
+    def _draw_valve_match_time_badge(self, draw, box, label, accent, max_size, min_size):
+        x1, y1, x2, y2 = (int(value) for value in box)
+        fill = self._blend(accent, COLORS["panel"], 0.12)
+        draw.rounded_rectangle(
+            (x1, y1, x2, y2),
+            radius=3,
+            fill=fill,
+            outline=COLORS["border"],
+            width=1,
+        )
+        draw.rectangle((x1 + 1, y1 + 2, x1 + 3, y2 - 2), fill=accent)
+        label, font = self._fit_text_ellipsis(
+            draw,
+            label,
+            x2 - x1 - 10,
+            max_size,
+            bold=True,
+            min_size=min_size,
+        )
+        self._draw_text_in_box(
+            draw,
+            (x1 + 6, y1 + 1, x2 - 3, y2 - 1),
+            label,
+            font,
+            COLORS["text"],
+            align="center",
+        )
+
     @staticmethod
     def _valve_status_pill_text(primary):
         status = str((primary or {}).get("status") or "ACTIVE").strip().upper()
@@ -1072,6 +1100,10 @@ class EsportsRenderMixin:
             return
 
         date_label = self._valve_event_date_label(primary, event)
+        match_date_label, match_time_label = self._valve_match_datetime_labels(
+            event,
+            fallback_start=(primary or {}).get("start"),
+        )
         ti_wordmark_drawn = (
             self._valve_series_key(primary) == "ti"
             and self._draw_valve_ti_title_wordmark(
@@ -1112,30 +1144,38 @@ class EsportsRenderMixin:
         elif event_logo_drawn:
             meta_x1 = card_x1 + 104
             meta_x2 = card_x2 - 16
-            date_box = (meta_x1, y + 12, meta_x2, y + 25)
-            date_label, date_font = self._fit_text_ellipsis(
+            date_box = (meta_x1, y + 6, meta_x1 + 39, y + 31)
+            match_date_label, date_font = self._fit_text_ellipsis(
                 draw,
-                date_label,
+                match_date_label,
                 date_box[2] - date_box[0],
-                8,
+                10,
                 bold=True,
-                min_size=6,
+                min_size=9,
             )
             self._draw_text_in_box(
                 draw,
                 date_box,
-                date_label,
+                match_date_label,
                 date_font,
-                COLORS["muted"],
-                align="right",
+                COLORS["text"],
+                align="center",
+            )
+            self._draw_valve_match_time_badge(
+                draw,
+                (meta_x1 + 43, y + 5, meta_x2, y + 31),
+                match_time_label,
+                accent,
+                max_size=16,
+                min_size=14,
             )
             caption = str(primary.get("event_logo_caption") or "").strip()
-            caption_box = (meta_x1, y + 30, meta_x2, y + 53)
+            caption_box = (meta_x1, y + 36, meta_x2, y + 60)
             caption, caption_font = self._fit_text_ellipsis(
                 draw,
                 caption,
                 caption_box[2] - caption_box[0],
-                14,
+                12,
                 bold=True,
                 min_size=9,
             )
@@ -1145,6 +1185,7 @@ class EsportsRenderMixin:
                 caption,
                 caption_font,
                 COLORS["text"],
+                align="center",
             )
             subtitle = self._valve_source_attribution(
                 event.get("source") or primary.get("source") or "Valve"
@@ -1391,10 +1432,32 @@ class EsportsRenderMixin:
         row_h = 50
         draw.rounded_rectangle((row_x1, y, row_x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
         draw.rectangle((row_x1 + 1, y + 1, row_x1 + 5, y + row_h - 1), fill=accent)
-        date_label = self._valve_row_time_label(event)
-        date_width = 68 if str(event.get("state") or "").strip().lower() in {"unstarted", "inprogress", "live"} else 40
-        date_label, date_font = self._fit_text_ellipsis(draw, date_label, date_width, 8, bold=True, min_size=6)
-        draw.text((row_x1 + 10, y + 4), date_label, font=date_font, fill=COLORS["muted"])
+        date_label, time_label = self._valve_match_datetime_labels(event)
+        date_box = (row_x1 + 10, y + 2, row_x1 + 59, y + 20)
+        date_label, date_font = self._fit_text_ellipsis(
+            draw,
+            date_label,
+            date_box[2] - date_box[0],
+            10,
+            bold=True,
+            min_size=9,
+        )
+        self._draw_text_in_box(
+            draw,
+            date_box,
+            date_label,
+            date_font,
+            COLORS["text"],
+            align="center",
+        )
+        self._draw_valve_match_time_badge(
+            draw,
+            (row_x2 - 63, y + 2, row_x2 - 8, y + 20),
+            time_label,
+            accent,
+            max_size=12,
+            min_size=11,
+        )
         score = self._valve_score_label(event)
         score, score_font = self._fit_text_ellipsis(draw, score, 40, 13, bold=True, min_size=9)
         self._draw_centered_in_box(draw, (row_x1 + 91, y + 4, row_x2 - 91, y + 20), score, score_font, COLORS["text"])
@@ -1415,15 +1478,11 @@ class EsportsRenderMixin:
         self._draw_centered_in_box(draw, (row_x1 + 10, y + 38, row_x2 - 10, y + row_h - 1), detail, detail_font, COLORS["muted"])
 
     @staticmethod
-    def _valve_row_time_label(event):
-        event = event or {}
-        start = event.get("start")
+    def _valve_match_datetime_labels(event, fallback_start=None):
+        start = (event or {}).get("start") or fallback_start
         if not isinstance(start, datetime):
-            return "--/--"
-        state = str(event.get("state") or "").strip().lower()
-        if state in {"unstarted", "inprogress", "live"}:
-            return start.strftime("%m/%d %H:%M")
-        return start.strftime("%m/%d")
+            return "--/--", "--:--"
+        return start.strftime("%m/%d"), start.strftime("%H:%M")
 
     @staticmethod
     def _valve_event_date_label(primary, event):

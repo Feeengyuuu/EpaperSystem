@@ -19544,7 +19544,8 @@ def test_pandascore_sidebar_renders_required_source_attribution(monkeypatch):
 
     assert "SOURCE: PANDASCORE" in seen_texts
     assert "PORTO 2026" in seen_texts
-    assert "08/26 11:30" in seen_texts
+    assert "08/26" in seen_texts
+    assert "11:30" in seen_texts
     assert "PANDASCORE DATA" in seen_texts
     assert "PANDASCORE LIVE" not in seen_texts
 
@@ -20133,15 +20134,114 @@ def test_valve_ti_live_focus_date_uses_match_time_not_event_range():
     assert label == "08/22 12:30"
 
 
-def test_valve_upcoming_row_includes_local_start_time():
+def test_valve_match_datetime_labels_preserve_local_start_time():
     start = datetime(2026, 8, 22, 21, 0, tzinfo=timezone.utc)
 
-    assert SportsDashboard._valve_row_time_label(
+    assert SportsDashboard._valve_match_datetime_labels(
         {"state": "unstarted", "start": start}
-    ) == "08/22 21:00"
-    assert SportsDashboard._valve_row_time_label(
+    ) == ("08/22", "21:00")
+    assert SportsDashboard._valve_match_datetime_labels(
         {"state": "completed", "start": start}
-    ) == "08/22"
+    ) == ("08/22", "21:00")
+    assert SportsDashboard._valve_match_datetime_labels({}) == ("--/--", "--:--")
+
+
+@pytest.mark.parametrize("palette", [DAY_COLORS, DEEP_NIGHT_COLORS])
+def test_blast_match_times_use_legible_hierarchy_on_both_themes(monkeypatch, palette):
+    plugin = _plugin()
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    card = SportsDashboard._parse_pandascore_cs2_card(
+        _sample_pandascore_blast_matches(now),
+        timezone.utc,
+        now,
+        {},
+    )
+    selected = SportsDashboard._select_valve_esports([card], now)
+    image = Image.new("RGB", (800, 480), palette["paper"])
+    drawn_text = []
+    fit_calls = []
+    original_draw_text_in_box = plugin._draw_text_in_box
+    original_fit_text_ellipsis = plugin._fit_text_ellipsis
+
+    def record_draw_text_in_box(draw, box, text, font, color, align="left"):
+        drawn_text.append(
+            {
+                "text": str(text),
+                "box": tuple(int(value) for value in box),
+                "font_size": int(getattr(font, "size", 0)),
+                "color": color,
+                "align": align,
+            }
+        )
+        return original_draw_text_in_box(draw, box, text, font, color, align=align)
+
+    def record_fit_text_ellipsis(draw, text, max_width, size, bold=False, min_size=11):
+        fit_calls.append(
+            {
+                "text": str(text),
+                "max_width": int(max_width),
+                "size": int(size),
+                "bold": bool(bold),
+                "min_size": int(min_size),
+            }
+        )
+        return original_fit_text_ellipsis(
+            draw,
+            text,
+            max_width,
+            size,
+            bold=bold,
+            min_size=min_size,
+        )
+
+    monkeypatch.setattr(plugin, "_draw_text_in_box", record_draw_text_in_box)
+    monkeypatch.setattr(plugin, "_fit_text_ellipsis", record_fit_text_ellipsis)
+    monkeypatch.setattr(plugin, "_load_team_logo", lambda *_args: None)
+    token = _ACTIVE_COLORS.set(palette)
+    try:
+        plugin._draw_valve_esports_sidebar(
+            image,
+            552,
+            selected,
+            "PANDASCORE LIVE",
+            now,
+        )
+    finally:
+        _ACTIVE_COLORS.reset(token)
+
+    def only_text(value):
+        matches = [entry for entry in drawn_text if entry["text"] == value]
+        assert len(matches) == 1
+        return matches[0]
+
+    main_time = only_text("11:30")
+    upcoming_time = only_text("14:00")
+    recent_time = only_text("08:00")
+    date_entries = sorted(
+        (entry for entry in drawn_text if entry["text"] == "08/26"),
+        key=lambda entry: entry["box"][1],
+    )
+
+    assert len(date_entries) == 3
+    assert main_time["font_size"] >= 14
+    assert upcoming_time["font_size"] >= 11
+    assert recent_time["font_size"] >= 11
+    assert all(
+        entry["color"] == palette["text"]
+        for entry in [main_time, upcoming_time, recent_time, *date_entries]
+    )
+    assert all(entry["font_size"] >= 9 for entry in date_entries)
+    assert date_entries[0]["box"][2] <= main_time["box"][0]
+    assert main_time["box"][3] < 114
+    assert upcoming_time["box"][0] > 683
+    assert recent_time["box"][0] > 683
+    assert upcoming_time["box"][3] <= 331
+    assert recent_time["box"][3] <= 423
+    time_texts = {"08/26", "11:30", "14:00", "08:00"}
+    time_fit_calls = [call for call in fit_calls if call["text"] in time_texts]
+    assert {call["text"] for call in time_fit_calls} == time_texts
+    assert all(call["bold"] for call in time_fit_calls)
+    assert image.size == (800, 480)
 
 
 def test_valve_official_source_labels_are_human_readable():
