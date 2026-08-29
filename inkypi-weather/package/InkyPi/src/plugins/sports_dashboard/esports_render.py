@@ -929,18 +929,20 @@ class EsportsRenderMixin:
         draw.line((panel_left + 2, 66, panel_right - 2, 66), fill=COLORS["border"], width=1)
 
         self._draw_valve_esports_focus_card(image, draw, right_x, right_w, 78, primary, main_event, now, accent)
-        section_title, rows = self._valve_sidebar_secondary_section(primary)
-        self._draw_valve_esports_recent_rows(
-            image,
-            draw,
-            right_x,
-            right_w,
-            282,
-            rows,
-            primary,
-            accent,
-            title=section_title,
-        )
+        sections = self._valve_sidebar_secondary_sections(primary)
+        section_ys = (282, 374) if len(sections) > 1 else (282,)
+        for section_y, (section_title, rows) in zip(section_ys, sections):
+            self._draw_valve_esports_recent_rows(
+                image,
+                draw,
+                right_x,
+                right_w,
+                section_y,
+                rows,
+                primary,
+                accent,
+                title=section_title,
+            )
 
     @staticmethod
     def _valve_sidebar_secondary_section(primary):
@@ -954,6 +956,18 @@ class EsportsRenderMixin:
         if status == "NEXT" and upcoming:
             return "UPCOMING", upcoming[:3]
         return "RECENT", recent[:3]
+
+    @staticmethod
+    def _valve_sidebar_secondary_sections(primary):
+        primary = primary or {}
+        title, rows = SportsDashboard._valve_sidebar_secondary_section(primary)
+        if str(primary.get("sport") or "").strip().casefold() != "blast open":
+            return [(title, rows)]
+        main = primary.get("main")
+        recent = [event for event in primary.get("recent") or [] if event is not main]
+        if title in {"UP NEXT", "UPCOMING"} and rows and recent:
+            return [(title, rows[:1]), ("RECENT", recent[:1])]
+        return [(title, rows)]
 
     @staticmethod
     def _valve_series_key(primary):
@@ -1065,6 +1079,13 @@ class EsportsRenderMixin:
                 (card_x1 + 17, y + 5, card_x2 - 17, y + 69),
             )
         )
+        event_logo_drawn = False
+        if not ti_wordmark_drawn:
+            event_logo_drawn = self._draw_valve_focus_event_logo(
+                image,
+                (card_x1 + 16, y + 6, card_x1 + 95, y + 63),
+                primary,
+            )
         if ti_wordmark_drawn:
             date_box = (card_x2 - 82, y + 70, card_x2 - 16, y + 81)
             date_label, date_font = self._fit_text_ellipsis(
@@ -1088,6 +1109,62 @@ class EsportsRenderMixin:
                 min_size=6,
             )
             self._draw_text_in_box(draw, subtitle_box, subtitle, subtitle_font, accent)
+        elif event_logo_drawn:
+            meta_x1 = card_x1 + 104
+            meta_x2 = card_x2 - 16
+            date_box = (meta_x1, y + 12, meta_x2, y + 25)
+            date_label, date_font = self._fit_text_ellipsis(
+                draw,
+                date_label,
+                date_box[2] - date_box[0],
+                8,
+                bold=True,
+                min_size=6,
+            )
+            self._draw_text_in_box(
+                draw,
+                date_box,
+                date_label,
+                date_font,
+                COLORS["muted"],
+                align="right",
+            )
+            caption = str(primary.get("event_logo_caption") or "").strip()
+            caption_box = (meta_x1, y + 30, meta_x2, y + 53)
+            caption, caption_font = self._fit_text_ellipsis(
+                draw,
+                caption,
+                caption_box[2] - caption_box[0],
+                14,
+                bold=True,
+                min_size=9,
+            )
+            self._draw_text_in_box(
+                draw,
+                caption_box,
+                caption,
+                caption_font,
+                COLORS["text"],
+            )
+            subtitle = self._valve_source_attribution(
+                event.get("source") or primary.get("source") or "Valve"
+            )
+            subtitle_box = (card_x1 + 19, y + 70, card_x2 - 19, y + 81)
+            subtitle, subtitle_font = self._fit_text_ellipsis(
+                draw,
+                subtitle,
+                subtitle_box[2] - subtitle_box[0],
+                8,
+                bold=True,
+                min_size=6,
+            )
+            self._draw_text_in_box(
+                draw,
+                subtitle_box,
+                subtitle,
+                subtitle_font,
+                accent,
+            )
         else:
             header = self._valve_focus_header_layout(card_x1, card_x2, y)
             tag_box = header["tag_box"]
@@ -1140,6 +1217,33 @@ class EsportsRenderMixin:
         detail = self._valve_match_detail_label(event)
         detail, detail_font = self._fit_text_ellipsis(draw, detail, card_x2 - card_x1 - 44, 10, bold=True, min_size=7)
         self._draw_centered_in_box(draw, (card_x1 + 20, y + 160, card_x2 - 20, y + 176), detail, detail_font, COLORS["muted"])
+
+    def _draw_valve_focus_event_logo(self, image, box, primary):
+        primary = primary or {}
+        logo_path = str(primary.get("event_logo_path") or "").strip()
+        if sum(COLORS["panel"]) < sum(COLORS["text"]):
+            logo_path = str(primary.get("event_logo_path_dark") or logo_path).strip()
+        if not logo_path:
+            return False
+        x1, y1, x2, y2 = (int(value) for value in box)
+        width = max(1, x2 - x1 + 1)
+        height = max(1, y2 - y1 + 1)
+        logo = self._load_local_logo(
+            logo_path,
+            (width, height),
+            alpha_threshold=8,
+        )
+        if not logo:
+            return False
+        image.paste(
+            logo,
+            (
+                x1 + (width - logo.width) // 2,
+                y1 + (height - logo.height) // 2,
+            ),
+            logo,
+        )
+        return True
 
     @staticmethod
     def _valve_source_attribution(source):

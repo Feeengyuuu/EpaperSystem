@@ -337,6 +337,11 @@ LOCAL_TBD_TEAM_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "tbd.png")
 LOCAL_WORLDCUP_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "worldcup.png")
 LOCAL_NBA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nba.png")
 LOCAL_F1_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "f1.png")
+LOCAL_BLAST_OPEN_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "blast_open.png")
+LOCAL_BLAST_OPEN_DARK_LOGO_PATH = os.path.join(
+    LOCAL_TEAM_LOGO_DIR,
+    "blast_open_white.png",
+)
 LOCAL_CS_MAJOR_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "cs_major.png")
 LOCAL_DOTA2_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "dota2.png")
 LOCAL_TI_LOGO_PATH = LOCAL_DOTA2_LOGO_PATH

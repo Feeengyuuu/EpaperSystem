@@ -1,0 +1,22 @@
+{
+  "source_page": "https://mediakit.blast.tv/assets/premier",
+  "content_policy": "https://blast.tv/fankit/content-policy",
+  "disclaimer": "This material is unofficial and is not endorsed by BLAST.",
+  "transform": "Proportional 512px-wide LANCZOS downsample; colors and transparency preserved.",
+  "assets": {
+    "blast_open.png": {
+      "variant": "black",
+      "source_url": "https://mediakit.blast.tv/files/OP-RD-26_Logo_Open_Black.png",
+      "source_sha256": "6d293435e75e9958c4f8d02449eb3801411fab15f5a9b6dcc364aec30df88579",
+      "runtime_sha256": "e5379cdd470e6f1ab004b7a08f2e15e9c2a9f1e5dd8e98739a4c5cd7732e2119",
+      "runtime_dimensions": [512, 366]
+    },
+    "blast_open_white.png": {
+      "variant": "white",
+      "source_url": "https://mediakit.blast.tv/files/OP-RD-26_Logo_Open_White.png",
+      "source_sha256": "894f16c30d6c85708d8b9c6d579f625fc45f0b08ae47ea3968be84f52874b3c3",
+      "runtime_sha256": "b2462dd8a4bdcba2391ff96e643b7b1669957602824233e8050e33a034f21cb4",
+      "runtime_dimensions": [512, 366]
+    }
+  }
+}

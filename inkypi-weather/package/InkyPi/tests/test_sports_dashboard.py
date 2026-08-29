@@ -58,6 +58,8 @@ from plugins.sports_dashboard.sports_dashboard import (
     DEFAULT_WORLD_CUP_STANDINGS_CACHE_HOURS,
     DEFAULT_WORLD_CUP_STANDINGS_URL,
     LOCAL_F1_LOGO_PATH,
+    LOCAL_BLAST_OPEN_DARK_LOGO_PATH,
+    LOCAL_BLAST_OPEN_LOGO_PATH,
     LOCAL_CS_MAJOR_LOGO_PATH,
     LOCAL_EWC_LOGO_PATH,
     LOCAL_EWC_GAME_LOGO_DIR,
@@ -17060,6 +17062,76 @@ def test_uploaded_brand_logos_are_loaded_from_local_assets():
         assert logo.getchannel("A").getextrema()[0] == 0
 
 
+def test_blast_open_assets_are_transparent_official_theme_variants():
+    for path in (LOCAL_BLAST_OPEN_LOGO_PATH, LOCAL_BLAST_OPEN_DARK_LOGO_PATH):
+        with Image.open(path) as source:
+            assert source.mode == "RGBA"
+            assert source.size == (512, 366)
+            alpha = source.getchannel("A")
+            assert alpha.getextrema() == (0, 255)
+            assert all(
+                alpha.getpixel(point) == 0
+                for point in (
+                    (0, 0),
+                    (source.width - 1, 0),
+                    (0, source.height - 1),
+                    (source.width - 1, source.height - 1),
+                )
+            )
+
+
+@pytest.mark.parametrize("palette", [DAY_COLORS, DEEP_NIGHT_COLORS])
+def test_blast_open_focus_logo_is_legible_on_both_themes(palette):
+    plugin = _plugin()
+    image = Image.new("RGB", (80, 58), palette["panel"])
+    token = _ACTIVE_COLORS.set(palette)
+    try:
+        drawn = plugin._draw_valve_focus_event_logo(
+            image,
+            (0, 0, 79, 57),
+            {
+                "series": "CS",
+                "event_logo_path": LOCAL_BLAST_OPEN_LOGO_PATH,
+                "event_logo_path_dark": LOCAL_BLAST_OPEN_DARK_LOGO_PATH,
+            },
+        )
+    finally:
+        _ACTIVE_COLORS.reset(token)
+
+    assert drawn is True
+
+    def relative_luminance(rgb):
+        channels = []
+        for channel in rgb:
+            value = channel / 255
+            channels.append(
+                value / 12.92
+                if value <= 0.04045
+                else ((value + 0.055) / 1.055) ** 2.4
+            )
+        return (
+            0.2126 * channels[0]
+            + 0.7152 * channels[1]
+            + 0.0722 * channels[2]
+        )
+
+    background_luminance = relative_luminance(palette["panel"])
+    high_contrast_pixels = 0
+    for y in range(image.height):
+        for x in range(image.width):
+            pixel_luminance = relative_luminance(image.getpixel((x, y)))
+            contrast = (max(pixel_luminance, background_luminance) + 0.05) / (
+                min(pixel_luminance, background_luminance) + 0.05
+            )
+            high_contrast_pixels += contrast >= 3.0
+
+    assert all(
+        image.getpixel(point) == palette["panel"]
+        for point in ((0, 0), (79, 0), (0, 57), (79, 57))
+    )
+    assert high_contrast_pixels >= 1700
+
+
 def test_packaged_local_logos_fit_low_memory_decode_budget():
     supported_suffixes = {".gif", ".jpeg", ".jpg", ".png", ".webp"}
     logo_paths = [
@@ -17301,6 +17373,8 @@ def test_sports_dashboard_local_asset_constants_exist():
         LOCAL_WORLDCUP_LOGO_PATH,
         LOCAL_NBA_LOGO_PATH,
         LOCAL_F1_LOGO_PATH,
+        LOCAL_BLAST_OPEN_LOGO_PATH,
+        LOCAL_BLAST_OPEN_DARK_LOGO_PATH,
         LOCAL_CS_MAJOR_LOGO_PATH,
         LOCAL_EWC_LOGO_PATH,
         LOCAL_TI_LOGO_PATH,
@@ -18013,6 +18087,12 @@ def test_pandascore_blast_parser_distributes_live_upcoming_and_recent():
 
     assert card["sport"] == "BLAST Open"
     assert card["event_name"] == "BLAST Premier Open Porto 2026"
+    assert card["event_logo_caption"] == "PORTO 2026"
+    assert card["logo_path"] == LOCAL_CS_MAJOR_LOGO_PATH
+    assert card["event_logo_path"] == LOCAL_BLAST_OPEN_LOGO_PATH
+    assert card["event_logo_path_dark"] == LOCAL_BLAST_OPEN_DARK_LOGO_PATH
+    assert "logo_path_dark" not in card
+    assert "logo_width" not in card
     assert card["status"] == "LIVE"
     assert card["main"] is card["live"][0]
     assert [event["match_id"] for event in card["live"]] == ["102"]
@@ -19463,6 +19543,8 @@ def test_pandascore_sidebar_renders_required_source_attribution(monkeypatch):
     )
 
     assert "SOURCE: PANDASCORE" in seen_texts
+    assert "PORTO 2026" in seen_texts
+    assert "08/26 11:30" in seen_texts
     assert "PANDASCORE DATA" in seen_texts
     assert "PANDASCORE LIVE" not in seen_texts
 
@@ -19917,6 +19999,77 @@ def test_valve_ti_live_secondary_section_uses_up_next_matches():
 
     assert title == "UP NEXT"
     assert rows == [next_match]
+    assert SportsDashboard._valve_sidebar_secondary_sections(
+        {
+            "sport": "The International",
+            "status": "LIVE",
+            "main": live,
+            "live": [live],
+            "upcoming": [next_match],
+            "recent": [recent],
+        }
+    ) == [("UP NEXT", [next_match])]
+
+
+def test_blast_live_secondary_sections_keep_up_next_and_recent():
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    live = {"match_id": "live", "start": now - timedelta(minutes=30)}
+    next_match = {"match_id": "next", "start": now + timedelta(hours=2)}
+    recent = {"match_id": "recent", "start": now - timedelta(hours=4)}
+
+    sections = SportsDashboard._valve_sidebar_secondary_sections(
+        {
+            "sport": "BLAST Open",
+            "status": "LIVE",
+            "main": live,
+            "live": [live],
+            "upcoming": [next_match],
+            "recent": [recent],
+        }
+    )
+
+    assert sections == [("UP NEXT", [next_match]), ("RECENT", [recent])]
+
+
+def test_blast_sidebar_places_up_next_and_recent_inside_480px(monkeypatch):
+    plugin = _plugin()
+    now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    card = SportsDashboard._parse_pandascore_cs2_card(
+        _sample_pandascore_blast_matches(now),
+        timezone.utc,
+        now,
+        {},
+    )
+    selected = SportsDashboard._select_valve_esports([card], now)
+    image = Image.new("RGB", (800, 480), COLORS["paper"])
+    headers = []
+    rows = []
+
+    monkeypatch.setattr(
+        plugin,
+        "_draw_section_header",
+        lambda _draw, _x, _w, y, title, _accent: headers.append((title, y)),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_draw_valve_esports_recent_row",
+        lambda _image, _draw, _x, _w, y, event, _accent: rows.append(
+            (event["match_id"], y)
+        ),
+    )
+    monkeypatch.setattr(plugin, "_load_team_logo", lambda *_args: None)
+
+    plugin._draw_valve_esports_sidebar(
+        image,
+        552,
+        selected,
+        "PANDASCORE LIVE",
+        now,
+    )
+
+    assert headers == [("UP NEXT", 282), ("RECENT", 374)]
+    assert rows == [("103", 311), ("101", 403)]
+    assert rows[-1][1] + 50 < image.height
 
 
 def test_valve_ti_empty_slot_filler_yields_to_two_up_next_rows():
