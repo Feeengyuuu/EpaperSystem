@@ -127,6 +127,7 @@ def test_telegram_refresh_on_display_uses_prepared_background_render(tmp_path):
     saved = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     assert saved["pending_presentation_display"] == {
         "request_id": request.request_id,
+        "origin_display_commit_id": request.origin_display_commit_id,
         "keys": ["chat:42"],
         "source_state": "live",
         "account_api": True,
@@ -272,6 +273,7 @@ def test_telegram_reconciles_plugin_read_state_only_from_display_receipt(tmp_pat
         "status": {"source_state": "live", "account_api": True},
         "pending_presentation_display": {
             "request_id": "c" * 32,
+            "origin_display_commit_id": "origin-display-commit",
             "keys": ["chat:42"],
             "source_state": "live",
             "account_api": True,
@@ -295,6 +297,64 @@ def test_telegram_reconciles_plugin_read_state_only_from_display_receipt(tmp_pat
     assert saved["display_read"]["last_display_commit_id"] == receipt.display_commit_id
     assert saved["display_read"]["last_receipt_request_id"] == receipt.request_id
     assert "pending_presentation_display" not in saved
+
+
+def test_telegram_ignores_origin_receipt_until_a_new_display_commit(tmp_path):
+    plugin = _plugin(tmp_path)
+    state = {
+        "schema": STATE_VERSION,
+        "messages": [
+            {"key": "chat:42", "title": "prepared", "media_kind": "text", "date": 42},
+        ],
+        "stats": {},
+        "status": {"source_state": "live", "account_api": True},
+        "pending_presentation_display": {
+            "request_id": "d" * 32,
+            "origin_display_commit_id": "origin-display-commit",
+            "keys": ["chat:42"],
+            "source_state": "live",
+            "account_api": True,
+        },
+    }
+    (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+    origin_receipt = PresentationCommitReceipt(
+        request_id="d" * 32,
+        committed_at="2026-07-13T20:00:00+00:00",
+        display_commit_id="origin-display-commit",
+        structural_generation=1,
+        settings_revision=1,
+        theme_mode="night",
+    )
+
+    plugin.reconcile_presentation_receipt(
+        {"markDisplayedRead": True},
+        origin_receipt,
+    )
+
+    pending = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert "display_read" not in pending
+    assert pending["pending_presentation_display"]["request_id"] == "d" * 32
+
+    physical_receipt = PresentationCommitReceipt(
+        request_id="d" * 32,
+        committed_at="2026-07-13T20:01:00+00:00",
+        display_commit_id="physical-display-commit",
+        structural_generation=1,
+        settings_revision=1,
+        theme_mode="day",
+    )
+    plugin.reconcile_presentation_receipt(
+        {"markDisplayedRead": True},
+        physical_receipt,
+    )
+
+    committed = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert committed["display_read"]["keys"] == ["chat:42"]
+    assert (
+        committed["display_read"]["last_display_commit_id"]
+        == "physical-display-commit"
+    )
+    assert "pending_presentation_display" not in committed
 
 
 def test_telegram_ignores_receipt_for_a_different_prepared_request(tmp_path):

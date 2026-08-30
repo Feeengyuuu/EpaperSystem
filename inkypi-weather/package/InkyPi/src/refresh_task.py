@@ -7434,19 +7434,46 @@ class RefreshTask:
             display_commit_id,
             committed_at,
         )
-        if not requested:
+        reservation_has_work = requested
+        if not reservation_has_work:
+            # Same-revision requests coalesce instead of being recreated. Keep
+            # the newly selected member reserved while its existing request
+            # still awaits preparation or display, except during retry backoff.
+            state = self.runtime_state.snapshot().instances.get(
+                selection.instance.instance_uuid,
+                InstanceRuntimeState(),
+            )
+            existing_request = state.presentation_request
+            receipt = state.presentation_receipt
+            reservation_has_work = (
+                existing_request is not None
+                and existing_request.structural_generation
+                == selection.instance.structural_generation
+                and existing_request.settings_revision
+                == selection.instance.settings_revision
+                and (
+                    receipt is None
+                    or receipt.request_id != existing_request.request_id
+                )
+                and not self._presentation_request_in_retry_backoff(
+                    state,
+                    current_dt,
+                )
+            )
+        if not reservation_has_work:
             manager.release_rotation_reservation(
                 selection.instance.instance_uuid,
                 expected_playlist_name=selection.playlist_name,
             )
-        if requested:
+        if reservation_has_work:
             logger.info(
-                "Reserved next rotation member for immediate presentation preparation. | "
-                "plugin_id: %s | instance_uuid: %s",
+                "Reserved next rotation member for presentation preparation. | "
+                "plugin_id: %s | instance_uuid: %s | request_created: %s",
                 selection.instance.plugin_id,
                 selection.instance.instance_uuid,
+                requested,
             )
-        return requested
+        return reservation_has_work
 
     def _enqueue_live_display_followup(
         self,

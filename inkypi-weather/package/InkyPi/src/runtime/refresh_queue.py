@@ -786,7 +786,7 @@ class RefreshQueue:
         existing: RefreshCommand,
         incoming: RefreshCommand,
     ) -> bool:
-        return (
+        same_command_identity = (
             bool(existing.instance_uuid)
             and existing.instance_uuid == incoming.instance_uuid
             and existing.plugin_id == incoming.plugin_id
@@ -796,6 +796,14 @@ class RefreshQueue:
             and existing.allow_prepared_presentation
             == incoming.allow_prepared_presentation
         )
+        if not same_command_identity:
+            return False
+        if existing.intent is RefreshIntent.PRESENTATION_REFRESH:
+            # The same revision can have distinct prepared-image requests.
+            return existing.payload.get(
+                "presentation_request_id"
+            ) == incoming.payload.get("presentation_request_id")
+        return True
 
     def _merged_command(
         self,
@@ -900,21 +908,26 @@ class RefreshQueue:
                 incoming.payload,
                 selected_payload,
             )
-            automatic_data_owner = next(
+            automatic_rotation_owner = next(
                 (
                     candidate
                     for candidate in (existing, incoming)
-                    if candidate.intent is RefreshIntent.DATA_REFRESH
+                    if candidate.intent
+                    in {
+                        RefreshIntent.DATA_REFRESH,
+                        RefreshIntent.PRESENTATION_REFRESH,
+                    }
                     and candidate.payload.get("automatic_rotation") is True
                     and candidate.payload.get("rotation_deadline_cleanup") is True
                 ),
                 None,
             )
-            if automatic_data_owner is not None:
-                # A manual DATA_REFRESH may share execution with the exact
-                # automatic rotation request. Preserve scheduler ownership in
-                # either submission order so deadline cleanup still releases
-                # the reserved shuffle member. DISPLAY remains manual-owned.
+            if automatic_rotation_owner is not None:
+                # DATA_REFRESH and same-request PRESENTATION_REFRESH work may
+                # share execution with an automatic rotation request. Preserve
+                # scheduler ownership in either submission order so deadline
+                # cleanup still releases the reserved shuffle member. DISPLAY
+                # remains manual-owned.
                 with_rotation_cleanup = dict(selected_payload)
                 with_rotation_cleanup["automatic_rotation"] = True
                 with_rotation_cleanup["rotation_deadline_cleanup"] = True

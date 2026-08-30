@@ -118,6 +118,7 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         )
         state[PENDING_PRESENTATION_DISPLAY_STATE_KEY] = {
             "request_id": request.request_id,
+            "origin_display_commit_id": request.origin_display_commit_id,
             "keys": rendered_keys,
             "source_state": str(status.get("source_state") or ""),
             "account_api": bool(status.get("account_api")),
@@ -137,6 +138,17 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
             if not isinstance(pending, dict):
                 return None
             if str(pending.get("request_id") or "") != receipt.request_id:
+                return None
+            # A same-request theme reprepare replays the origin receipt. It
+            # does not prove these pending keys reached the display. Legacy
+            # pending state without an origin must also fail closed.
+            origin_display_commit_id = str(
+                pending.get("origin_display_commit_id") or ""
+            )
+            if (
+                not origin_display_commit_id
+                or origin_display_commit_id == receipt.display_commit_id
+            ):
                 return None
             display_read = state.get("display_read")
             display_read = dict(display_read) if isinstance(display_read, dict) else {}

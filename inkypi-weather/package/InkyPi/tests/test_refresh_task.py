@@ -14369,6 +14369,7 @@ def _presentation_manifest(
     *,
     provider_free=False,
     provider_refresh=False,
+    supports_theme=False,
 ):
     return PluginManifest(
         schema_version=2,
@@ -14380,6 +14381,7 @@ def _presentation_manifest(
             supports_presentation_refresh=True,
             presentation_refresh_is_provider_free=provider_free,
             allows_display_triggered_provider_refresh=provider_refresh,
+            supports_day_night_theme=supports_theme,
         ),
         raw={},
     )
@@ -14566,6 +14568,7 @@ def _make_presentation_task(
     display_manager=None,
     provider_free=False,
     provider_refresh=False,
+    supports_theme=False,
 ):
     tmp_path = make_test_dir(name)
     plugins = [
@@ -14595,6 +14598,7 @@ def _make_presentation_task(
             plugin["plugin_id"],
             provider_free=provider_free,
             provider_refresh=provider_refresh,
+            supports_theme=supports_theme,
         )
         for plugin in plugins
     }
@@ -15179,6 +15183,178 @@ def test_successful_rotation_immediately_requests_the_next_presentation():
         == "current-display-commit"
     )
     assert playlist.is_rotation_reservation_current(second.instance_uuid) is True
+
+
+def test_successful_rotation_keeps_existing_next_presentation_on_critical_path(
+    monkeypatch,
+):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "existing-next-presentation-stays-reserved",
+        plugin_count=2,
+        provider_refresh=True,
+        supports_theme=True,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    device_config.config["display_triggered_refresh_enabled"] = False
+    device_config.config["plugin_cycle_interval_seconds"] = 300
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = first.instance_uuid
+    acknowledgement = task.device_config.playlist_manager.acknowledge_rotation_display(
+        first.instance_uuid,
+        expected_playlist_name=playlist.name,
+    )
+    assert acknowledgement is not None
+    _write_runtime_theme_cache(task, second, "day")
+    request = _seed_presentation_request(
+        task,
+        second,
+        origin_theme_mode="night",
+    )
+    _seed_prepared_presentation(
+        task,
+        second,
+        request,
+        theme_mode="night",
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    requested = task._request_next_presentation_after_display(
+        PRESENTATION_NOW,
+        "current-display-commit",
+        PRESENTATION_NOW.isoformat(),
+        displayed_instance_uuid=first.instance_uuid,
+    )
+
+    state = task.runtime_state.snapshot().instances[second.instance_uuid]
+    assert requested is True
+    assert state.presentation_request is not None
+    assert state.presentation_request.request_id == request.request_id
+    assert state.presentation_request.prepared_theme_mode == "night"
+    assert playlist.is_rotation_reservation_current(second.instance_uuid) is True
+
+    presentation = task._select_independent_refresh_command(PRESENTATION_NOW)
+
+    assert presentation is not None
+    assert presentation.intent is RefreshIntent.PRESENTATION_REFRESH
+    assert presentation.instance_uuid == second.instance_uuid
+    assert presentation.priority == 90
+    assert presentation.payload["automatic_rotation"] is True
+    assert presentation.payload["presentation_request_id"] == request.request_id
+
+
+@pytest.mark.parametrize("already_prepared", [False, True])
+def test_existing_next_presentation_respects_retry_backoff(already_prepared):
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        f"existing-next-presentation-backoff-{already_prepared}",
+        plugin_count=2,
+        provider_refresh=True,
+        supports_theme=True,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    device_config.config["display_triggered_refresh_enabled"] = False
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [second.instance_uuid]
+    playlist.plugin_rotation_recent_history = [first.instance_uuid]
+    playlist._plugin_rotation_reserved_key = None
+    request = _seed_presentation_request(task, second, origin_theme_mode="night")
+    if already_prepared:
+        _seed_prepared_presentation(task, second, request, theme_mode="night")
+    task.runtime_state.record_failure(
+        second.instance_uuid,
+        PRESENTATION_NOW.isoformat(),
+        "presentation fetch failed",
+        (PRESENTATION_NOW + timedelta(minutes=5)).isoformat(),
+        lane=RefreshLane.PRESENTATION,
+    )
+    before = task.runtime_state.snapshot().instances[second.instance_uuid]
+
+    requested = task._request_next_presentation_after_display(
+        PRESENTATION_NOW,
+        "current-display-commit",
+        PRESENTATION_NOW.isoformat(),
+        displayed_instance_uuid=first.instance_uuid,
+    )
+
+    after = task.runtime_state.snapshot().instances[second.instance_uuid]
+    assert requested is False
+    assert after.presentation_request == before.presentation_request
+    assert after.presentation == before.presentation
+    assert playlist.is_rotation_reservation_current(second.instance_uuid) is False
+
+
+def test_matching_existing_next_presentation_is_adopted_at_next_rotation(
+    monkeypatch,
+):
+    task, device_config, clock, playlist, display = _make_presentation_task(
+        "existing-next-prepared-presentation-adopted-on-cadence",
+        plugin_count=2,
+        provider_refresh=True,
+        supports_theme=True,
+    )
+    first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    device_config.config["display_triggered_refresh_enabled"] = False
+    device_config.config["plugin_cycle_interval_seconds"] = 300
+    device_config.refresh_info.refresh_time = PRESENTATION_NOW.isoformat()
+    playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
+    playlist.plugin_rotation_queue = [second.instance_uuid]
+    playlist.plugin_rotation_recent_history = [first.instance_uuid]
+    playlist._plugin_rotation_reserved_key = None
+    for instance in (first, second):
+        _write_runtime_theme_cache(task, instance, "day")
+        task.runtime_state.record_success(
+            instance.instance_uuid,
+            PRESENTATION_NOW.isoformat(),
+            lane=RefreshLane.DATA,
+        )
+    request = _seed_presentation_request(task, second, origin_theme_mode="day")
+    _seed_prepared_presentation(task, second, request, theme_mode="day")
+    now = [PRESENTATION_NOW]
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now[0])
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    _install_display_provider_plugin_sentinels(monkeypatch)
+
+    assert task._request_next_presentation_after_display(
+        now[0],
+        "current-display-commit",
+        now[0].isoformat(),
+        displayed_instance_uuid=first.instance_uuid,
+    ) is True
+    assert playlist.is_rotation_reservation_current(second.instance_uuid) is True
+    assert task._select_independent_refresh_command(now[0]) is None
+
+    clock.advance(299)
+    now[0] += timedelta(seconds=299)
+    assert task._select_cached_display_command(now[0]) is None
+    assert display.calls == []
+    clock.advance(1)
+    now[0] += timedelta(seconds=1)
+    command = task._select_cached_display_command(now[0])
+    assert command is not None
+    assert command.instance_uuid == second.instance_uuid
+    assert command.intent is RefreshIntent.DISPLAY_CACHE
+    assert command.allow_prepared_presentation is True
+    assert command.payload["presentation_request_id"] == request.request_id
+
+    result = _queue_and_process(task, command)
+
+    state = task.runtime_state.snapshot().instances[second.instance_uuid]
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert len(display.calls) == 1
+    assert display.calls[0]["image"].getpixel((0, 0)) == (255, 255, 255)
+    assert state.presentation_request is None
+    assert state.presentation_receipt.request_id == request.request_id
+    assert state.presentation_receipt.theme_mode == "day"
+    assert device_config.refresh_info.refresh_time == now[0].isoformat()
 
 
 def test_provider_free_automatic_display_requests_next_when_global_provider_policy_is_off(

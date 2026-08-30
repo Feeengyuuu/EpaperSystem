@@ -2756,6 +2756,93 @@ def test_presentation_queue_coalesces_by_intent_without_absorbing_exact_display(
     assert queue.snapshot().depth == 2
 
 
+@pytest.mark.parametrize("automatic_first", [False, True])
+@pytest.mark.parametrize("expired", [False, True])
+def test_presentation_coalescing_preserves_automatic_rotation_cleanup(
+    automatic_first,
+    expired,
+):
+    fake_time = FakeTime()
+    queue = make_queue(fake_time, capacity=4, manual_reserved=0)
+    request_id = "0123456789abcdef0123456789abcdef"
+    generic = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid=f"presentation-rotation-boundary-{automatic_first}",
+        priority=20,
+        payload={
+            "playlist_name": "Default",
+            "presentation_request_id": request_id,
+        },
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+    )
+    automatic = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid=f"presentation-rotation-boundary-{automatic_first}",
+        priority=90,
+        payload={
+            "playlist_name": "Default",
+            "presentation_request_id": request_id,
+            "automatic_rotation": True,
+            "rotation_deadline_cleanup": True,
+        },
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+    )
+    first, second = (
+        (automatic, generic) if automatic_first else (generic, automatic)
+    )
+
+    first_job = queue.submit(first)
+    second_job = queue.submit(second)
+    if expired:
+        fake_time.advance(991)
+    entry = queue.take(timeout=0)
+
+    assert second_job.id == first_job.id
+    assert entry is not None
+    assert entry.job.status is JobStatus.RUNNING
+    selected = entry.command
+    assert selected.priority == 90
+    assert selected.payload["presentation_request_id"] == request_id
+    assert selected.payload["automatic_rotation"] is True
+    assert selected.payload["rotation_deadline_cleanup"] is True
+
+
+def test_presentation_queue_does_not_coalesce_different_request_ids():
+    queue = make_queue(capacity=4, manual_reserved=0)
+    first = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid="presentation-request-identity",
+        priority=20,
+        payload={
+            "playlist_name": "Default",
+            "presentation_request_id": "0123456789abcdef0123456789abcdef",
+        },
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+    )
+    replacement = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid="presentation-request-identity",
+        priority=90,
+        payload={
+            "playlist_name": "Default",
+            "presentation_request_id": "fedcba9876543210fedcba9876543210",
+            "automatic_rotation": True,
+            "rotation_deadline_cleanup": True,
+        },
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+    )
+
+    first_job = queue.submit(first)
+    replacement_job = queue.submit(replacement)
+
+    assert replacement_job.id != first_job.id
+    assert queue.snapshot().depth == 2
+
+
 def test_prepared_presentation_eligibility_changes_command_replay_identity():
     queue = make_queue(capacity=4, manual_reserved=0)
     original = command(
