@@ -385,6 +385,8 @@ def test_csl_schedule_summary_exposes_current_window_priority_and_freshness():
         "has_relevant_events": True,
         "has_live": True,
         "main_event_id": "live",
+        "main_start": live["start"],
+        "selection_priority": "LIVE",
         "first_start": recent["start"],
         "last_start": upcoming["start"],
         "final_end": upcoming["start"] + timedelta(hours=3),

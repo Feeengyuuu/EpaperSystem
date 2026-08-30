@@ -27,6 +27,22 @@ def test_auto_football_route_prefers_active_csl_when_world_cup_is_inactive(
             "first_start": now - timedelta(days=120),
             "final_end": now + timedelta(days=100),
             "has_relevant_events": True,
+            "selection_priority": "UPCOMING",
+            "main_start": now + timedelta(hours=2),
+            "next_start": now + timedelta(hours=2),
+            "fetched_at": now.isoformat(),
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_club_route_summary",
+        lambda *_args: {
+            "has_relevant_events": True,
+            "selection_priority": "UPCOMING",
+            "main_start": now + timedelta(days=2),
+            "next_start": now + timedelta(days=2),
+            "fetched_at": now.isoformat(),
         },
         raising=False,
     )
@@ -254,7 +270,23 @@ def test_auto_csl_route_reuses_the_scoreboard_read_when_rendering(monkeypatch):
             "has_relevant_events": True,
             "first_start": now,
             "final_end": now + timedelta(days=1),
+            "selection_priority": "UPCOMING",
+            "main_start": now + timedelta(hours=2),
+            "next_start": now + timedelta(hours=2),
+            "fetched_at": now.isoformat(),
         },
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_club_route_summary",
+        lambda *_args: {
+            "has_relevant_events": True,
+            "selection_priority": "UPCOMING",
+            "main_start": now + timedelta(days=2),
+            "next_start": now + timedelta(days=2),
+            "fetched_at": now.isoformat(),
+        },
+        raising=False,
     )
     monkeypatch.setattr(
         plugin,
@@ -307,6 +339,14 @@ def test_auto_football_route_does_not_fetch_csl_during_world_cup_window(
         "_load_csl_route_summary",
         lambda *_args: (_ for _ in ()).throw(
             AssertionError("CSL should not be fetched while World Cup has priority")
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_club_route_summary",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("Club should not be fetched while World Cup has priority")
         ),
         raising=False,
     )
@@ -403,6 +443,7 @@ def test_generate_image_auto_route_places_csl_in_exact_top_left_slot(
             return values.get(key, default)
 
     plugin = SportsDashboard({"id": "sports_dashboard"})
+    route_now = datetime.now(timezone.utc)
     marker_color = (17, 93, 41)
     csl_panel = Image.new("RGB", (536, 240), marker_color)
     calls = []
@@ -411,7 +452,19 @@ def test_generate_image_auto_route_places_csl_in_exact_top_left_slot(
     monkeypatch.setattr(
         plugin,
         "_load_csl_route_summary",
-        lambda *_args: {"active": True, "has_relevant_events": True},
+        lambda *_args: {
+            "active": True,
+            "has_relevant_events": True,
+            "selection_priority": "UPCOMING",
+            "main_start": route_now + timedelta(hours=1),
+            "next_start": route_now + timedelta(hours=1),
+            "fetched_at": route_now.isoformat(),
+        },
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_club_route_summary",
+        lambda *_args: None,
     )
     monkeypatch.setattr(
         plugin,

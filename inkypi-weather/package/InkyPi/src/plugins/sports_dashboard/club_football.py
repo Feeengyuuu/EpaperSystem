@@ -125,6 +125,7 @@ class ClubFootballMixin:
         now,
         worldcup_summary,
         csl_summary=None,
+        club_summary=None,
     ):
         if mode in {"worldcup", "csl", "club"}:
             return mode
@@ -153,15 +154,62 @@ class ClubFootballMixin:
                 ):
                     return "worldcup"
 
-        if isinstance(csl_summary, Mapping) and bool(
-            csl_summary.get(
-                "has_relevant_events",
-                csl_summary.get("active"),
-            )
-        ):
+        csl_rank = ClubFootballMixin._football_panel_summary_rank(csl_summary, now)
+        club_rank = ClubFootballMixin._football_panel_summary_rank(club_summary, now)
+        if csl_rank is not None and club_rank is not None:
+            return "csl" if csl_rank <= club_rank else "club"
+        if csl_rank is not None:
             return "csl"
 
         return "club"
+
+    @staticmethod
+    def _football_panel_summary_rank(summary, now):
+        if not isinstance(summary, Mapping) or not bool(
+            summary.get(
+                "has_relevant_events",
+                summary.get("active"),
+            )
+        ):
+            return None
+        current = now if isinstance(now, datetime) else datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        current_utc = current.astimezone(timezone.utc)
+
+        priority_label = str(summary.get("selection_priority") or "").upper()
+        if not priority_label:
+            if bool(summary.get("has_live")):
+                priority_label = "LIVE"
+            elif isinstance(summary.get("next_start"), datetime):
+                priority_label = "UPCOMING"
+            elif isinstance(summary.get("latest_result_start"), datetime):
+                priority_label = "FINAL"
+            else:
+                priority_label = "OTHER"
+        priority = {"LIVE": 0, "UPCOMING": 1, "FINAL": 2}.get(
+            priority_label,
+            3,
+        )
+
+        if priority_label == "UPCOMING":
+            start = summary.get("next_start") or summary.get("main_start")
+        elif priority_label == "FINAL":
+            start = summary.get("latest_result_start") or summary.get("main_start")
+        else:
+            start = summary.get("main_start")
+        if isinstance(start, datetime):
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=timezone.utc)
+            distance = abs(
+                (start.astimezone(timezone.utc) - current_utc).total_seconds()
+            )
+        else:
+            distance = float("inf")
+
+        fetched_at = ClubFootballMixin._club_parse_utc(summary.get("fetched_at"))
+        freshness = -fetched_at.timestamp() if fetched_at is not None else float("inf")
+        return priority, distance, freshness
 
 
     @staticmethod
@@ -1933,20 +1981,30 @@ class ClubFootballMixin:
             event["_selection_priority"] = priority
             if isinstance(start, datetime):
                 if priority == 0:
-                    order_value = -start.timestamp()
+                    order_value = abs((start - now_utc).total_seconds())
                 elif priority == 1:
                     order_value = abs((start - now_utc).total_seconds())
                 elif priority == 2:
-                    order_value = -start.timestamp()
+                    order_value = abs((start - now_utc).total_seconds())
                 else:
                     order_value = abs((start - now_utc).total_seconds())
             else:
                 order_value = float("inf")
-            candidates.append((priority, order_value, str(event.get("event_id") or ""), event))
+            event["_selection_order_value"] = order_value
+            freshness = ClubFootballMixin._club_event_selection_rank(event)[2]
+            candidates.append(
+                (
+                    priority,
+                    order_value,
+                    freshness,
+                    str(event.get("event_id") or ""),
+                    event,
+                )
+            )
         if not candidates:
             return None
-        candidates.sort(key=lambda item: item[:3])
-        return candidates[0][3]
+        candidates.sort(key=lambda item: item[:4])
+        return candidates[0][4]
 
     @staticmethod
     def _select_club_football_events(by_league, enabled_leagues, now, rotation_seed):
@@ -1981,11 +2039,15 @@ class ClubFootballMixin:
                 rail = (rail[start_index:] + rail[:start_index])[:5]
             return {"focus": None, "rail": rail, "priority": "NO SCHEDULE"}
 
-        best_priority = min(event.get("_selection_priority", 3) for event in focus_candidates)
+        best_rank = min(
+            ClubFootballMixin._club_event_selection_rank(event)
+            for event in focus_candidates
+        )
+        best_priority = best_rank[0]
         equal_priority = [
             event
             for event in focus_candidates
-            if event.get("_selection_priority", 3) == best_priority
+            if ClubFootballMixin._club_event_selection_rank(event) == best_rank
         ]
         focus_index = int(rotation_seed or 0) % len(equal_priority)
         previous_league = getattr(rotation_seed, "previous_league", None)
@@ -2009,6 +2071,22 @@ class ClubFootballMixin:
             "rail": rail,
             "priority": priority_labels.get(best_priority, "OTHER"),
         }
+
+    @staticmethod
+    def _club_event_selection_rank(event):
+        if not isinstance(event, Mapping):
+            return 99, float("inf"), float("inf")
+        try:
+            priority = int(event.get("_selection_priority", 99))
+        except (TypeError, ValueError):
+            priority = 99
+        try:
+            order_value = float(event.get("_selection_order_value", float("inf")))
+        except (TypeError, ValueError):
+            order_value = float("inf")
+        fetched_at = ClubFootballMixin._club_parse_utc(event.get("fetched_at"))
+        freshness = -fetched_at.timestamp() if fetched_at is not None else float("inf")
+        return priority, order_value, freshness
 
     @staticmethod
     def _club_football_event_identity(event):
@@ -2234,34 +2312,40 @@ class ClubFootballMixin:
                 event, now_utc, source_state
             ):
                 priority = 0
-                order_value = -start.timestamp() if isinstance(start, datetime) else 0
+                order_value = (
+                    abs((start - now_utc).total_seconds())
+                    if isinstance(start, datetime)
+                    else 0
+                )
             elif (
                 status == "SCHEDULED"
                 and isinstance(start, datetime)
                 and (inferred_live_window or start >= now_utc)
             ):
                 priority = 1
-                order_value = 0 if inferred_live_window else (start - now_utc).total_seconds()
+                order_value = abs((start - now_utc).total_seconds())
             elif status == "FINAL" and isinstance(start, datetime):
                 priority = 2
-                order_value = -start.timestamp()
+                order_value = abs((start - now_utc).total_seconds())
             else:
                 continue
             event["_selection_priority"] = priority
+            event["_selection_order_value"] = order_value
             event["inferred_live_window"] = inferred_live_window
             event["no_schedule"] = False
             candidates.append(
                 (
                     priority,
                     order_value,
+                    SportsDashboard._club_event_selection_rank(event)[2],
                     SportsDashboard._club_football_event_identity(event),
                     event,
                 )
             )
         if not candidates:
             return None
-        candidates.sort(key=lambda item: item[:3])
-        return candidates[0][3]
+        candidates.sort(key=lambda item: item[:4])
+        return candidates[0][4]
 
     @staticmethod
     def _select_club_football_timeline_events(
@@ -2314,11 +2398,14 @@ class ClubFootballMixin:
                 "priority": "NO SCHEDULE",
             }
 
-        best_priority = min(event.get("_selection_priority", 3) for event in candidates)
+        best_rank = min(
+            SportsDashboard._club_event_selection_rank(event) for event in candidates
+        )
+        best_priority = best_rank[0]
         eligible = [
             event
             for event in candidates
-            if event.get("_selection_priority", 3) == best_priority
+            if SportsDashboard._club_event_selection_rank(event) == best_rank
         ]
         focus_index = int(rotation_seed or 0) % len(eligible)
         previous_league = getattr(rotation_seed, "previous_league", None)

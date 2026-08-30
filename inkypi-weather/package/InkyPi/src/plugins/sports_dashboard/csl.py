@@ -713,6 +713,16 @@ class CSLMixin:
             "has_relevant_events": has_relevant_events,
             "has_live": bool(selected.get("live")),
             "main_event_id": str(main.get("event_id") or ""),
+            "main_start": main.get("start"),
+            "selection_priority": (
+                "LIVE"
+                if main in (selected.get("live") or [])
+                else (
+                    "UPCOMING"
+                    if main in upcoming
+                    else ("FINAL" if main in recent else "OTHER")
+                )
+            ),
             "first_start": ordered[0]["start"],
             "last_start": ordered[-1]["start"],
             "final_end": ordered[-1]["start"] + CSL_MATCH_WINDOW,

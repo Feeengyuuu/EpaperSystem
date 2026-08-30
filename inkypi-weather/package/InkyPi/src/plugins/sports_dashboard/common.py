@@ -2413,6 +2413,74 @@ class SportsDashboardCommonMixin:
         )
         return left, left_provenance, left_source, content_box
 
+    def _load_club_route_summary(
+        self,
+        settings,
+        device_config,
+        timezone_info,
+        now,
+    ):
+        enabled_leagues = self._club_football_enabled_leagues(settings)
+        by_league = {}
+        fetched_at = None
+        try:
+            by_league, _standings, source_state, fetched_at = (
+                self._load_club_football_data(
+                    settings,
+                    device_config,
+                    timezone_info,
+                    now,
+                )
+            )
+            selected = self._select_club_football_timeline_events(
+                by_league,
+                enabled_leagues,
+                now,
+                self._club_football_rotation_seed(now),
+                source_state=source_state,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Club football route summary failed: %s",
+                _safe_exception_text(exc),
+            )
+            source_state = "CLUB UNAVAILABLE"
+            selected = self._select_club_football_timeline_events(
+                {},
+                enabled_leagues,
+                now,
+                0,
+                source_state=source_state,
+            )
+
+        focus = selected.get("focus") if isinstance(selected, Mapping) else None
+        focus = focus if isinstance(focus, Mapping) else None
+        priority = str((selected or {}).get("priority") or "OTHER").upper()
+        main_start = focus.get("start_utc") if focus is not None else None
+        focus_fetched_at = (
+            focus.get("fetched_at") if focus is not None else None
+        ) or fetched_at
+        summary = {
+            "active": focus is not None,
+            "has_relevant_events": focus is not None,
+            "has_live": priority == "LIVE",
+            "main_event_id": str((focus or {}).get("event_id") or ""),
+            "main_start": main_start,
+            "selection_priority": priority,
+            "next_start": main_start if priority == "UPCOMING" else None,
+            "latest_result_start": main_start if priority == "FINAL" else None,
+            "source_state": str(source_state or ""),
+            "fetched_at": focus_fetched_at,
+            "_render_data": {
+                "enabled_leagues": enabled_leagues,
+                "by_league": by_league,
+                "source_state": source_state,
+                "fetched_at": fetched_at,
+                "selected": selected,
+            },
+        }
+        return summary
+
     def _render_club_football_slot(
         self,
         settings,
@@ -2420,26 +2488,49 @@ class SportsDashboardCommonMixin:
         dimensions,
         timezone_info,
         now,
+        route_summary=None,
     ):
         enabled_leagues = self._club_football_enabled_leagues(settings)
         fetched_at = None
         by_league = {}
-        rotation_seed = 0
         try:
-            by_league, _standings, source_state, fetched_at = self._load_club_football_data(
-                settings,
-                device_config,
-                timezone_info,
-                now,
+            render_data = (
+                route_summary.get("_render_data")
+                if isinstance(route_summary, Mapping)
+                else None
             )
-            rotation_seed = self._club_football_rotation_seed(now)
-            selected = self._select_club_football_timeline_events(
-                by_league,
-                enabled_leagues,
-                now,
-                rotation_seed,
-                source_state=source_state,
-            )
+            if isinstance(render_data, Mapping):
+                enabled_leagues = tuple(
+                    render_data.get("enabled_leagues") or enabled_leagues
+                )
+                by_league = render_data.get("by_league") or {}
+                source_state = render_data.get("source_state") or "CLUB UNAVAILABLE"
+                fetched_at = render_data.get("fetched_at")
+                selected = render_data.get("selected")
+            else:
+                by_league, _standings, source_state, fetched_at = (
+                    self._load_club_football_data(
+                        settings,
+                        device_config,
+                        timezone_info,
+                        now,
+                    )
+                )
+                selected = self._select_club_football_timeline_events(
+                    by_league,
+                    enabled_leagues,
+                    now,
+                    self._club_football_rotation_seed(now),
+                    source_state=source_state,
+                )
+            if not isinstance(selected, Mapping):
+                selected = self._select_club_football_timeline_events(
+                    by_league,
+                    enabled_leagues,
+                    now,
+                    0,
+                    source_state=source_state,
+                )
             selected = self._attach_club_api_football_odds(
                 selected,
                 settings,
@@ -2603,6 +2694,7 @@ class SportsDashboardCommonMixin:
         mode = self._football_panel_mode(settings)
         worldcup_summary = None
         csl_summary = None
+        club_summary = None
         if mode == "auto":
             worldcup_summary = self._worldcup_schedule_summary(
                 settings,
@@ -2622,11 +2714,18 @@ class SportsDashboardCommonMixin:
                     timezone_info,
                     now,
                 )
+                club_summary = self._load_club_route_summary(
+                    settings,
+                    device_config,
+                    timezone_info,
+                    now,
+                )
                 panel_kind = self._select_football_panel_kind(
                     mode,
                     now,
                     worldcup_summary,
                     csl_summary,
+                    club_summary,
                 )
         else:
             panel_kind = self._select_football_panel_kind(
@@ -2634,6 +2733,7 @@ class SportsDashboardCommonMixin:
                 now,
                 worldcup_summary,
                 csl_summary,
+                club_summary,
             )
         if panel_kind == "csl":
             panel, provenance, source = self._render_csl_slot(
@@ -2653,6 +2753,7 @@ class SportsDashboardCommonMixin:
                 dimensions,
                 timezone_info,
                 now,
+                club_summary,
             )
             return panel, provenance, source, None
         return self._render_worldcup_slot(
