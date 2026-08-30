@@ -1,6 +1,7 @@
 import time
 
 from flask import Flask
+import pytest
 
 from src.blueprints.health import health_bp
 from src.health import HealthPublisher, ReadinessEvaluator
@@ -114,3 +115,135 @@ def test_authenticated_detail_hook_can_add_sanitized_components():
     assert "components" in detailed
     assert detailed["components"]["config"]["version"] == 3
     assert detailed["error_codes"] == []
+
+
+@pytest.mark.parametrize(
+    ("data_stalled_count", "presentation_stalled_count", "expected_codes"),
+    [
+        (2, 0, ["data_progress_stalled"]),
+        (0, 1, ["presentation_progress_stalled"]),
+        (2, 1, ["data_progress_stalled", "presentation_progress_stalled"]),
+    ],
+)
+def test_readyz_exposes_sustained_progress_stalls_without_requesting_restart(
+    data_stalled_count,
+    presentation_stalled_count,
+    expected_codes,
+):
+    app, publisher = _app_with_health()
+    publisher.publish_component(
+        "scheduler",
+        {
+            "heartbeat_monotonic": time.monotonic(),
+            "tick_seconds": 30,
+            "active_deadline_monotonic": None,
+            "progress": {
+                "enabled": True,
+                "observed": True,
+                "active_instances": 27,
+                "data_stalled_count": data_stalled_count,
+                "presentation_stalled_count": presentation_stalled_count,
+                "oldest_data_overdue_seconds": 86400.0,
+                "oldest_presentation_pending_seconds": 172800.0,
+            },
+        },
+    )
+    public = app.test_client().get("/readyz")
+    app.config["HEALTH_DETAIL_AUTHORIZER"] = lambda _request: True
+    client = app.test_client()
+
+    ready = client.get("/readyz")
+    health = client.get("/healthz")
+
+    assert ready.status_code == 200
+    assert public.status_code == 200
+    assert public.get_json()["status"] == "degraded"
+    assert set(public.get_json()) == {
+        "status", "release_id", "boot_id", "uptime_seconds",
+    }
+    assert ready.get_json()["status"] == "degraded"
+    assert ready.get_json()["error_codes"] == expected_codes
+    assert health.status_code == 200
+    assert health.get_json()["status"] == "alive"
+    assert health.get_json()["readiness_status"] == "degraded"
+
+
+@pytest.mark.parametrize(
+    "progress",
+    [
+        None,
+        {},
+        [],
+        {"enabled": False, "observed": True, "data_stalled_count": 2},
+        {"enabled": True, "observed": False, "data_stalled_count": 2},
+        {"enabled": "true", "observed": True, "data_stalled_count": 2},
+        {"enabled": True, "observed": 1, "data_stalled_count": 2},
+        {"enabled": True, "observed": True, "data_stalled_count": "private-text"},
+        {"enabled": True, "observed": True, "data_stalled_count": True},
+        {"enabled": True, "observed": True, "data_stalled_count": float("nan")},
+        {
+            "enabled": True,
+            "observed": True,
+            "active_instances": 27,
+            "data_stalled_count": 0,
+            "presentation_stalled_count": 0,
+            "oldest_data_overdue_seconds": 86400.0,
+            "oldest_presentation_pending_seconds": 16200.0,
+            "presentation_pending_count": 4,
+            "obsolete_presentation_count": 3,
+        },
+    ],
+    ids=[
+        "missing", "empty", "malformed", "disabled", "not-observed",
+        "invalid-enabled", "invalid-observed", "invalid-count-text",
+        "invalid-count-bool", "invalid-count-nan", "daily-and-next-rotation-wait",
+    ],
+)
+def test_readyz_does_not_infer_stalls_from_age_or_unconfirmed_progress(progress):
+    app, publisher = _app_with_health()
+    publisher.publish_component(
+        "scheduler",
+        {
+            "heartbeat_monotonic": time.monotonic(),
+            "tick_seconds": 30,
+            "active_deadline_monotonic": None,
+            "oldest_data_overdue_seconds": 172800.0,
+            "progress": progress,
+        },
+    )
+    app.config["HEALTH_DETAIL_AUTHORIZER"] = lambda _request: True
+
+    response = app.test_client().get("/readyz")
+
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "ready"
+    assert response.get_json()["error_codes"] == []
+
+
+def test_readyz_keeps_fatal_display_failure_above_progress_degradation():
+    app, publisher = _app_with_health()
+    publisher.publish_components(
+        {
+            "display": {"state": "display_unknown", "commit_id": "pending"},
+            "scheduler": {
+                "heartbeat_monotonic": time.monotonic(),
+                "tick_seconds": 30,
+                "active_deadline_monotonic": None,
+                "progress": {
+                    "enabled": True,
+                    "observed": True,
+                    "data_stalled_count": 2,
+                    "presentation_stalled_count": 1,
+                },
+            },
+        },
+    )
+    app.config["HEALTH_DETAIL_AUTHORIZER"] = lambda _request: True
+
+    response = app.test_client().get("/readyz")
+
+    assert response.status_code == 503
+    assert response.get_json()["status"] == "not_ready"
+    assert response.get_json()["error_codes"] == [
+        "display_unknown", "data_progress_stalled", "presentation_progress_stalled",
+    ]

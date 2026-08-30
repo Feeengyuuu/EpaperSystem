@@ -96,8 +96,12 @@ class _BootService:
     def daemon_reload(self):
         self.events.append("daemon_reload")
 
+    def wait_ready(self, release_id):
+        return self.active and release_id == "old"
+
 
 def _applying_headless_journal(layout, old, new):
+    (old / ".release-id").write_text("old\n", encoding="utf-8")
     journal = UpdateJournal.create(layout.journal_path, release_id="new")
     journal.transition(UpdatePhase.DOWNLOADED)
     journal.transition(UpdatePhase.PREFLIGHTED)
@@ -857,6 +861,7 @@ def test_activation_failure_restores_previous_managed_recovery_unit(tmp_path):
     old = layout.release_path("old")
     new = layout.release_path("new")
     (old / "install").mkdir(parents=True)
+    (old / ".release-id").write_text("old\n", encoding="utf-8")
     (new / "install").mkdir(parents=True)
     (new / "install" / RECOVERY_UNIT_NAME).write_text(
         "candidate unit\n",
@@ -869,8 +874,8 @@ def test_activation_failure_restores_previous_managed_recovery_unit(tmp_path):
     service = _BootService()
     service.active = True
 
-    def wait_ready(_release_id):
-        return False
+    def wait_ready(release_id):
+        return release_id == "old"
 
     service.wait_ready = wait_ready
     journal = UpdateJournal.create(layout.journal_path, release_id="new")

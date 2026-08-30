@@ -34,6 +34,7 @@ from release_state import (
     atomic_symlink,
     fsync_directory,
     recover_incomplete_update,
+    validate_release_id,
 )
 
 
@@ -310,6 +311,7 @@ class UpdateCoordinator:
                     self.service.start_deferred()
                 else:
                     self.service.start()
+                    self._wait_for_previous_release(metadata)
             if defer_service_starts:
                 journal.transition(UpdatePhase.ROLLBACK_PENDING_SERVICES)
             else:
@@ -332,6 +334,22 @@ class UpdateCoordinator:
                 except BaseException:
                     pass
             raise
+
+    def _wait_for_previous_release(self, metadata) -> None:
+        previous_raw = metadata.get("previous_target")
+        if not previous_raw:
+            raise UpdateFailed("restored release identity is unavailable")
+        previous = Path(previous_raw)
+        legacy_source = metadata.get("legacy_source")
+        if not previous.exists() and legacy_source:
+            previous = Path(legacy_source)
+        try:
+            with (previous / ".release-id").open(encoding="utf-8") as identity:
+                release_id = validate_release_id(identity.readline(66).rstrip("\r\n"))
+        except (OSError, UnicodeError, ValueError) as error:
+            raise UpdateFailed("restored release identity is unavailable or invalid") from error
+        if not self.service.wait_ready(release_id):
+            raise UpdateFailed("restored release did not become ready")
 
     def recover(self, journal, *, defer_service_starts=False):
         # Readiness alone is not the commit point for a host mutation.  If the
@@ -384,6 +402,8 @@ class UpdateCoordinator:
             metadata.get("service_was_active", False)
         ):
             raise UpdateFailed("restored InkyPi active state does not match")
+        if metadata.get("service_was_active"):
+            self._wait_for_previous_release(metadata)
         journal.transition(UpdatePhase.ROLLED_BACK)
         self.cleanup_backups(journal)
 

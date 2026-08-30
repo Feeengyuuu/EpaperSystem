@@ -2,6 +2,8 @@ from pathlib import Path
 import time
 from types import MappingProxyType, SimpleNamespace
 
+import pytest
+
 from src.health import HealthCollector, HealthPublisher, ReadinessEvaluator
 import src.health as health_module
 
@@ -439,7 +441,7 @@ def test_cache_lifecycle_disk_hard_is_degraded_with_stable_error_code():
     assert "cache_lifecycle_disk_hard" in result.error_codes
 
 
-def _independent_refresh_health_collector(tmp_path):
+def _independent_refresh_health_collector(tmp_path, *, progress=None):
     active = SimpleNamespace(
         command_id="sensitive-command-id",
         kind="cache_refresh",
@@ -480,8 +482,9 @@ def _independent_refresh_health_collector(tmp_path):
         active_operation_snapshot=lambda: active,
         refresh_health_snapshot=lambda: {
             "resource_tier": "healthy",
-            "due_counts": {"data": 2, "live": 1, "theme": 1},
+            "due_counts": {"data": 2, "live": 1, "theme": 1, "presentation": 3},
             "oldest_data_overdue_seconds": 90.0,
+            "progress": progress,
             "ian_status": "deferred",
             "ian_last_queue_status": "running",
             "ian_retained": 1,
@@ -567,7 +570,12 @@ def test_health_exposes_only_aggregate_tier_due_counts_and_active_intent(tmp_pat
     scheduler = publisher.snapshot().components["scheduler"]
 
     assert scheduler["resource_tier"] == "healthy"
-    assert dict(scheduler["due_counts"]) == {"data": 2, "live": 1, "theme": 1}
+    assert dict(scheduler["due_counts"]) == {
+        "data": 2,
+        "live": 1,
+        "theme": 1,
+        "presentation": 3,
+    }
     assert scheduler["oldest_data_overdue_seconds"] == 90.0
     assert scheduler["active_intent"] == "theme_redraw"
     assert scheduler["ian"] == {
@@ -590,6 +598,119 @@ def test_health_never_exposes_instance_uuid_name_settings_or_error_text(tmp_path
     assert "secret-plugin-name" not in rendered
     assert "api_key" not in rendered
     assert "provider exploded with secret text" not in rendered
+
+
+def test_health_publishes_bounded_progress_without_instance_details(tmp_path):
+    collector, publisher = _independent_refresh_health_collector(
+        tmp_path,
+        progress={
+            "enabled": True,
+            "observed": True,
+            "active_instances": 27,
+            "data_overdue_count": 3,
+            "data_stalled_count": 2,
+            "data_backoff_count": 1,
+            "never_succeeded_count": 1,
+            "presentation_pending_count": 4,
+            "presentation_stalled_count": 1,
+            "obsolete_presentation_count": 2,
+            "oldest_data_overdue_seconds": 1800.0,
+            "oldest_presentation_pending_seconds": 172800.0,
+            "data_stall_grace_floor_seconds": 900.0,
+            "presentation_stall_threshold_seconds": 16200.0,
+            "instance_uuid": "private-instance",
+            "name": "private-plugin-name",
+            "settings": {"api_key": "private-key"},
+            "error": "private-error-text",
+        },
+    )
+
+    collector.collect_once()
+    progress = publisher.snapshot().components["scheduler"]["progress"]
+
+    assert dict(progress) == {
+        "enabled": True,
+        "observed": True,
+        "active_instances": 27,
+        "data_overdue_count": 3,
+        "data_stalled_count": 2,
+        "data_backoff_count": 1,
+        "never_succeeded_count": 1,
+        "presentation_pending_count": 4,
+        "presentation_stalled_count": 1,
+        "obsolete_presentation_count": 2,
+        "oldest_data_overdue_seconds": 1800.0,
+        "oldest_presentation_pending_seconds": 172800.0,
+        "data_stall_grace_floor_seconds": 900.0,
+        "presentation_stall_threshold_seconds": 16200.0,
+    }
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [True, "private-counter-text", -1, float("nan"), float("inf"), {"private": 1}],
+)
+def test_health_discards_invalid_progress_statistics_without_leaking_text(tmp_path, invalid):
+    collector, publisher = _independent_refresh_health_collector(
+        tmp_path,
+        progress={
+            "enabled": "true",
+            "observed": 1,
+            "active_instances": invalid,
+            "data_overdue_count": invalid,
+            "data_stalled_count": invalid,
+            "data_backoff_count": invalid,
+            "never_succeeded_count": invalid,
+            "presentation_pending_count": invalid,
+            "presentation_stalled_count": invalid,
+            "obsolete_presentation_count": invalid,
+            "oldest_data_overdue_seconds": invalid,
+            "oldest_presentation_pending_seconds": invalid,
+            "data_stall_grace_floor_seconds": invalid,
+            "presentation_stall_threshold_seconds": invalid,
+        },
+    )
+
+    collector.collect_once()
+    progress = publisher.snapshot().components["scheduler"]["progress"]
+
+    assert dict(progress) == {
+        "enabled": False,
+        "observed": False,
+        "active_instances": 0,
+        "data_overdue_count": 0,
+        "data_stalled_count": 0,
+        "data_backoff_count": 0,
+        "never_succeeded_count": 0,
+        "presentation_pending_count": 0,
+        "presentation_stalled_count": 0,
+        "obsolete_presentation_count": 0,
+        "oldest_data_overdue_seconds": None,
+        "oldest_presentation_pending_seconds": None,
+        "data_stall_grace_floor_seconds": None,
+        "presentation_stall_threshold_seconds": None,
+    }
+
+
+def test_oversized_progress_statistics_do_not_hide_the_scheduler_heartbeat(tmp_path):
+    collector, publisher = _independent_refresh_health_collector(
+        tmp_path,
+        progress={
+            "enabled": True,
+            "observed": True,
+            "active_instances": 10**1000,
+            "data_stalled_count": 10**1000,
+            "oldest_data_overdue_seconds": 10**1000,
+        },
+    )
+
+    collector.collect_once()
+    scheduler = publisher.snapshot().components["scheduler"]
+
+    assert scheduler["heartbeat_monotonic"] == 150.0
+    assert scheduler["progress"]["active_instances"] == 2_147_483_647
+    assert scheduler["progress"]["data_stalled_count"] == 2_147_483_647
+    assert scheduler["progress"]["oldest_data_overdue_seconds"] is None
 
 
 def test_health_exposes_only_whitelisted_parallel_runtime_aggregates(tmp_path):

@@ -345,6 +345,7 @@ def test_ready_failure_stops_candidate_before_restoring_graphical_host(
     layout.ensure()
     old = layout.release_path("old")
     (old / "install").mkdir(parents=True)
+    (old / ".release-id").write_text("old\n", encoding="utf-8")
     new = _headless_candidate(layout.releases_dir, release_id="new")
     config = tmp_path / "device.json"
     config.write_text("{}\n", encoding="utf-8")
@@ -377,9 +378,9 @@ def test_ready_failure_stops_candidate_before_restoring_graphical_host(
             events.append("service:start")
             super().start()
 
-        def wait_ready(self, _release_id):
+        def wait_ready(self, release_id):
             events.append("service:ready-failed")
-            return False
+            return release_id == "old"
 
     journal = _prepared_journal(layout, "new")
     coordinator = UpdateCoordinator(
@@ -417,6 +418,7 @@ def test_headless_apply_failure_restores_exact_host_snapshot(
     layout.ensure()
     old = layout.release_path("old")
     (old / "install").mkdir(parents=True)
+    (old / ".release-id").write_text("old\n", encoding="utf-8")
     new = _headless_candidate(layout.releases_dir, release_id="new")
     config = tmp_path / "device.json"
     config.write_text("{}\n", encoding="utf-8")
@@ -492,6 +494,7 @@ def test_power_loss_at_each_headless_action_boundary_restores_snapshot(
     old = layout.release_path("old")
     new = layout.release_path("new")
     (old / "install").mkdir(parents=True)
+    (old / ".release-id").write_text("old\n", encoding="utf-8")
     (new / "install").mkdir(parents=True)
     state = {
         "default_target": "graphical.target",
@@ -578,6 +581,7 @@ def test_transient_host_restore_failure_remains_boot_retryable(
     old = layout.release_path("old")
     new = layout.release_path("new")
     (old / "install").mkdir(parents=True)
+    (old / ".release-id").write_text("old\n", encoding="utf-8")
     (new / "install").mkdir(parents=True)
     state = {
         "default_target": "multi-user.target",
@@ -689,6 +693,7 @@ def test_power_loss_after_headless_migration_health_restores_graphical_snapshot(
     old = layout.release_path("old")
     new = layout.release_path("new")
     (old / "install").mkdir(parents=True)
+    (old / ".release-id").write_text("old\n", encoding="utf-8")
     (new / "install").mkdir(parents=True)
     journal = UpdateJournal.create(layout.journal_path, release_id="new")
     journal.transition(UpdatePhase.DOWNLOADED)

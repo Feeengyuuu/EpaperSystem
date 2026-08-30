@@ -107,6 +107,7 @@ from runtime.refresh_policy import (
     evaluate_data_due,
     evaluate_presentation_due,
 )
+from runtime.refresh_progress import RefreshProgressTracker
 from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
 from runtime.bounded_parallel_stage import BoundedParallelStageRunner
 from runtime.execution_policy import ExecutionClass, plugin_execution_class
@@ -580,6 +581,7 @@ class RefreshTask:
         self._resource_tier = None
         self._due_counts = {lane.value: 0 for lane in RefreshLane}
         self._oldest_data_overdue_seconds = None
+        self._refresh_progress = RefreshProgressTracker(clock=clock)
         self._lightweight_followup_remaining = 0
         self._rotation_deadline_guard_active = False
         self._rotation_cache_starved_since = None
@@ -1203,6 +1205,7 @@ class RefreshTask:
             "resource_tier": "unknown" if tier is None else str(tier),
             "due_counts": dict(self._due_counts),
             "oldest_data_overdue_seconds": self._oldest_data_overdue_seconds,
+            "progress": self._refresh_progress.snapshot(),
             "ian_status": self._ian_last_turn_status,
             "ian_last_queue_status": self._ian_last_queue_status,
             "ian_retained": len(self._ian_retained_entries),
@@ -1390,6 +1393,7 @@ class RefreshTask:
             restart_requested = self._memory_watchdog_should_restart()
             disk_tier = self._sample_disk_pressure()
             current_dt = self._get_current_datetime()
+            self._observe_refresh_progress(current_dt)
             command = self._select_prepared_display_retry_command(current_dt)
             if command is None:
                 command = self._select_cached_display_command(current_dt)
@@ -2388,6 +2392,43 @@ class RefreshTask:
             self._config_float(
                 "independent_refresh_starvation_seconds",
                 DEFAULT_INDEPENDENT_REFRESH_STARVATION_SECONDS,
+            ),
+        )
+
+    def _observe_refresh_progress(self, current_dt):
+        """Sample before admission gates; HTTP only reads the detached aggregate."""
+        manager = self.device_config.get_playlist_manager()
+        active = manager.snapshot_active_playlist(current_dt)
+        instances = () if active is None else active.plugins
+        runtime_instances = self.runtime_state.snapshot().instances
+        # CacheCatalog memoizes decoding by file identity. Subsequent scheduler
+        # selections reuse that validation; health polling does no file IO.
+        cache_candidates = self._active_cache_candidates(
+            active, get_theme_context(self.device_config, now=current_dt)
+        )
+        presentation_instance_uuids = set()
+        for instance in instances:
+            plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            if (
+                _presentation_refresh_enabled(self.device_config, plugin_config)
+                and plugin_supports_presentation_refresh(plugin_config)
+            ):
+                try:
+                    if resolve_refresh_on_display_for_config(
+                        thaw_payload(instance.settings), plugin_config
+                    ):
+                        presentation_instance_uuids.add(instance.instance_uuid)
+                except PluginSettingError:
+                    pass
+        self._refresh_progress.observe(
+            instances=instances,
+            runtime_instances=runtime_instances,
+            cache_instance_uuids=cache_candidates,
+            presentation_instance_uuids=presentation_instance_uuids,
+            now=current_dt,
+            rotation_cycle_seconds=self._config_float(
+                "plugin_cycle_interval_seconds",
+                DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
             ),
         )
 
@@ -5930,7 +5971,7 @@ class RefreshTask:
         error,
         current_dt,
     ):
-        """Back off only the exact unprepared request that exhausted its deadline."""
+        """Back off the exact request unless it is prepared for the current theme."""
         # Presentation mutation is owned by this single RefreshTask consumer,
         # so no prepared/replaced publication can interleave between this
         # final state check and failure bookkeeping.  If that ownership ever
@@ -5962,9 +6003,14 @@ class RefreshTask:
             or request.request_id != expected_request_id
             or request.structural_generation != command.structural_generation
             or request.settings_revision != command.settings_revision
-            or request.prepared_at is not None
         ):
             return False
+        if request.prepared_at is not None:
+            _config, _context, theme_mode = self._latest_presentation_theme(
+                selection.instance
+            )
+            if request.prepared_theme_mode == theme_mode:
+                return False
         self._record_presentation_failure(command, error, current_dt)
         return True
 

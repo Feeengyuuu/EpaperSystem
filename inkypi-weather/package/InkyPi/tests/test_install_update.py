@@ -127,12 +127,13 @@ class FakeService:
 
     def wait_ready(self, release_id):
         self.events.append(("ready", release_id))
-        return self.fail_stage != "ready"
+        return self.fail_stage != "ready" or release_id == "old"
 
 
 def _release(layout, name, unit_text):
     release = layout.release_path(name)
     (release / "install").mkdir(parents=True)
+    (release / ".release-id").write_text(f"{name}\n", encoding="utf-8")
     (release / "install" / "inkypi.service").write_text(unit_text, encoding="utf-8")
     (release / "install" / "inkypi").write_text(f"launcher-{name}", encoding="utf-8")
     return release

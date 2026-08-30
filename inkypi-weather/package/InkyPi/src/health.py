@@ -239,6 +239,20 @@ class ReadinessEvaluator:
             if scheduler_stalled:
                 fatal.append("scheduler_stalled")
 
+        progress = scheduler.get("progress", {})
+        if (
+            isinstance(progress, Mapping)
+            and progress.get("enabled") is True
+            and progress.get("observed") is True
+        ):
+            for field, error_code in (
+                ("data_stalled_count", "data_progress_stalled"),
+                ("presentation_stalled_count", "presentation_progress_stalled"),
+            ):
+                count = progress.get(field)
+                if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+                    degraded.append(error_code)
+
         if lifecycle_state == "running" and not queue.get("accepting", False):
             fatal.append("queue_not_accepting")
         try:
@@ -469,11 +483,12 @@ class HealthCollector:
                 "resource_tier": str(aggregate.get("resource_tier", "unknown")),
                 "due_counts": {
                     lane: max(0, int(due_counts.get(lane, 0)))
-                    for lane in ("data", "live", "theme")
+                    for lane in ("data", "live", "theme", "presentation")
                 },
                 "oldest_data_overdue_seconds": aggregate.get(
                     "oldest_data_overdue_seconds"
                 ),
+                "progress": self._progress_component(aggregate.get("progress")),
                 "active_intent": (
                     None if active_intent is None else str(active_intent)
                 ),
@@ -500,6 +515,54 @@ class HealthCollector:
                 "active_deadline_monotonic": None,
                 "error_code": type(error).__name__,
             }
+
+    @staticmethod
+    def _progress_component(value):
+        """Publish the producer's aggregate policy verdict, never instance data."""
+
+        if not isinstance(value, Mapping):
+            value = {}
+
+        def nonnegative_int(item):
+            if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+                return 0
+            return min(item, 2_147_483_647)
+
+        def optional_seconds(item):
+            if isinstance(item, bool) or not isinstance(item, (int, float)):
+                return None
+            try:
+                converted = float(item)
+            except OverflowError:
+                return None
+            return converted if math.isfinite(converted) and converted >= 0 else None
+
+        return {
+            "enabled": value.get("enabled") is True,
+            "observed": value.get("observed") is True,
+            **{
+                field: nonnegative_int(value.get(field))
+                for field in (
+                    "active_instances",
+                    "data_overdue_count",
+                    "data_stalled_count",
+                    "data_backoff_count",
+                    "never_succeeded_count",
+                    "presentation_pending_count",
+                    "presentation_stalled_count",
+                    "obsolete_presentation_count",
+                )
+            },
+            **{
+                field: optional_seconds(value.get(field))
+                for field in (
+                    "oldest_data_overdue_seconds",
+                    "oldest_presentation_pending_seconds",
+                    "data_stall_grace_floor_seconds",
+                    "presentation_stall_threshold_seconds",
+                )
+            },
+        }
 
     def _parallel_runtime_component(self):
         """Publish only bounded, identity-free image-stage aggregates."""
