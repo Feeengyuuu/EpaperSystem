@@ -256,6 +256,21 @@ class ClubFootballMixin:
         return key
 
     @staticmethod
+    def _club_team_identity_keys(league_code, name):
+        league_key = str(league_code or "").upper()
+        name_key = SportsDashboard._club_team_match_key(name)
+        if not name_key:
+            return set()
+
+        keys = {name_key}
+        for entry_id, english_name, _chinese_name in (
+            CLUB_FOOTBALL_TEAM_LOCALIZATIONS.get(league_key, ())
+        ):
+            if SportsDashboard._club_team_match_key(english_name) == name_key:
+                keys.add(f"local:{league_key}:{entry_id}")
+        return keys
+
+    @staticmethod
     def _club_team_zh_name(league_code, name, team_id=""):
         display_name = str(name or "").strip()
         if contains_chinese(display_name):
@@ -452,11 +467,14 @@ class ClubFootballMixin:
     def _club_event_team_keys(event, side):
         values = list((event or {}).get(f"{side}_aliases") or [])
         values.append((event or {}).get(f"{side}_name"))
-        return {
-            SportsDashboard._club_team_match_key(value)
-            for value in values
-            if str(value or "").strip()
-        }
+        league_code = (event or {}).get("league_code")
+        keys = set()
+        for value in values:
+            if str(value or "").strip():
+                keys.update(
+                    SportsDashboard._club_team_identity_keys(league_code, value)
+                )
+        return keys
 
     @staticmethod
     def _club_api_football_fixture_id(event, payload, tolerance=timedelta(minutes=20)):
@@ -484,13 +502,13 @@ class ClubFootballMixin:
             if fixture_start is None or abs(fixture_start - event_start) > tolerance:
                 continue
             teams = item.get("teams") or {}
-            api_home = SportsDashboard._club_team_match_key(
-                (teams.get("home") or {}).get("name")
+            api_home_keys = SportsDashboard._club_team_identity_keys(
+                league_code, (teams.get("home") or {}).get("name")
             )
-            api_away = SportsDashboard._club_team_match_key(
-                (teams.get("away") or {}).get("name")
+            api_away_keys = SportsDashboard._club_team_identity_keys(
+                league_code, (teams.get("away") or {}).get("name")
             )
-            if api_home in home_keys and api_away in away_keys:
+            if home_keys & api_home_keys and away_keys & api_away_keys:
                 return str(fixture.get("id") or "")
         return ""
 
@@ -647,6 +665,24 @@ class ClubFootballMixin:
                     "away_name_zh": SportsDashboard._club_team_zh_name(
                         league_code, away_name, team_id=away_team.get("id")
                     ),
+                    "home_aliases": [
+                        value
+                        for value in (
+                            home_name,
+                            home_team.get("shortDisplayName"),
+                            home_team.get("abbreviation"),
+                        )
+                        if value
+                    ],
+                    "away_aliases": [
+                        value
+                        for value in (
+                            away_name,
+                            away_team.get("shortDisplayName"),
+                            away_team.get("abbreviation"),
+                        )
+                        if value
+                    ],
                     "home_score": SportsDashboard._club_score_value(home.get("score")),
                     "away_score": SportsDashboard._club_score_value(away.get("score")),
                     "display_clock": str(
@@ -768,17 +804,21 @@ class ClubFootballMixin:
                     continue
                 if abs(schedule_start - score_start) > tolerance:
                     continue
+                schedule_home_keys = SportsDashboard._club_event_team_keys(
+                    schedule, "home"
+                )
+                schedule_away_keys = SportsDashboard._club_event_team_keys(
+                    schedule, "away"
+                )
+                score_home_keys = SportsDashboard._club_event_team_keys(score, "home")
+                score_away_keys = SportsDashboard._club_event_team_keys(score, "away")
                 same_order = (
-                    SportsDashboard._club_team_match_key(schedule.get("home_name"))
-                    == SportsDashboard._club_team_match_key(score.get("home_name"))
-                    and SportsDashboard._club_team_match_key(schedule.get("away_name"))
-                    == SportsDashboard._club_team_match_key(score.get("away_name"))
+                    bool(schedule_home_keys & score_home_keys)
+                    and bool(schedule_away_keys & score_away_keys)
                 )
                 reversed_names = (
-                    SportsDashboard._club_team_match_key(schedule.get("home_name"))
-                    == SportsDashboard._club_team_match_key(score.get("away_name"))
-                    and SportsDashboard._club_team_match_key(schedule.get("away_name"))
-                    == SportsDashboard._club_team_match_key(score.get("home_name"))
+                    bool(schedule_home_keys & score_away_keys)
+                    and bool(schedule_away_keys & score_home_keys)
                 )
                 if same_order or reversed_names:
                     match_index = index

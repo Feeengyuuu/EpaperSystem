@@ -1,8 +1,8 @@
 """Simplified-Chinese display names for the supported club leagues.
 
-English provider names remain the canonical matching keys. This registry is
-used only at the display boundary so provider events can still be reconciled
-without depending on translated strings.
+English provider names remain the canonical matching keys. Their league-scoped
+registry IDs also group exact provider aliases during event reconciliation;
+matching never depends on translated strings or raw provider IDs.
 
 Rows that share a team ID are deliberate exact-name aliases from different
 providers. Keep them explicit: broad prefix or year stripping can merge

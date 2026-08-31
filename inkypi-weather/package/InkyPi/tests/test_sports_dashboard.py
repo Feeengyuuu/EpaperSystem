@@ -21341,6 +21341,35 @@ def test_club_api_football_fixture_matching_uses_time_and_both_teams():
     assert fixture_id == "9001"
 
 
+def test_club_api_football_fixture_matching_uses_canonical_team_aliases():
+    start_utc = datetime(2026, 9, 4, 17, tzinfo=timezone.utc)
+    event = SportsDashboard._club_base_event(
+        "FL1",
+        start_utc,
+        "SCHEDULED",
+        "Olympique Lyonnais",
+        "AJ Auxerre",
+        provider="football-data.org",
+    )
+    event["home_aliases"].append("OLY")
+    payload = {
+        "response": [
+            {
+                "fixture": {"id": 9002, "date": start_utc.isoformat()},
+                "league": {"id": 61},
+                "teams": {
+                    "home": {"name": "Lyon"},
+                    "away": {"name": "AJ Auxerre"},
+                },
+            }
+        ]
+    }
+
+    fixture_id = SportsDashboard._club_api_football_fixture_id(event, payload)
+
+    assert fixture_id == "9002"
+
+
 def test_club_api_football_match_winner_odds_are_normalized_for_fallback():
     odds = SportsDashboard._club_parse_api_football_odds(
         _sample_club_api_football_odds()
@@ -21565,6 +21594,148 @@ def test_merge_club_events_matches_aliases_without_swapping_home_and_away():
     assert (merged[0]["home_score"], merged[0]["away_score"]) == (2, 1)
     assert merged[0]["provider"] == "football-data.org+ESPN"
     assert merged[0]["provider_status_confirmed"] is True
+
+
+def test_merge_club_events_matches_explicit_cross_provider_team_aliases():
+    matches = _sample_club_football_data_matches()
+    matches[0].update({"utcDate": "2026-09-03T19:00:00Z", "status": "SCHEDULED"})
+    matches[0]["homeTeam"].update(
+        {"name": "Real Sociedad de Fútbol", "shortName": "Real Sociedad", "tla": "RSO"}
+    )
+    matches[0]["awayTeam"].update(
+        {"name": "RC Celta de Vigo", "shortName": "RC Celta", "tla": "CEL"}
+    )
+    schedule = SportsDashboard._parse_club_football_data_events(
+        "PD", matches, timezone.utc
+    )[0]
+
+    payload = _sample_club_espn_payload()
+    payload["events"][0]["date"] = "2026-09-03T19:00:00Z"
+    competition = payload["events"][0]["competitions"][0]
+    competition["status"] = {
+        "type": {"state": "pre", "completed": False, "shortDetail": "9/3 - 3:00 PM"}
+    }
+    home, away = competition["competitors"]
+    home["team"].update(
+        {
+            "displayName": "Real Sociedad",
+            "shortDisplayName": "Real Sociedad",
+            "abbreviation": "RSO",
+        }
+    )
+    away["team"].update(
+        {
+            "displayName": "Celta Vigo",
+            "shortDisplayName": "Celta Vigo",
+            "abbreviation": "CEL",
+        }
+    )
+    score = SportsDashboard._parse_club_espn_events(
+        "PD", payload, timezone.utc
+    )[0]
+
+    assert SportsDashboard._club_team_match_key(
+        schedule["away_name"]
+    ) != SportsDashboard._club_team_match_key(score["away_name"])
+    assert "cel" in (
+        SportsDashboard._club_event_team_keys(schedule, "away")
+        & SportsDashboard._club_event_team_keys(score, "away")
+    )
+
+    merged = SportsDashboard._merge_club_football_events([schedule], [score])
+
+    assert schedule["event_key"] != score["event_key"]
+    assert len(merged) == 1
+    assert merged[0]["provider"] == "football-data.org+ESPN"
+
+
+def test_merge_club_events_matches_league_scoped_canonical_team_aliases():
+    matches = _sample_club_football_data_matches()
+    matches[0].update({"utcDate": "2026-09-04T17:00:00Z", "status": "SCHEDULED"})
+    matches[0]["homeTeam"].update(
+        {
+            "id": 523,
+            "name": "Olympique Lyonnais",
+            "shortName": "Olympique Lyonnais",
+            "tla": "OLY",
+        }
+    )
+    matches[0]["awayTeam"].update(
+        {"id": 519, "name": "AJ Auxerre", "shortName": "Auxerre", "tla": "AUX"}
+    )
+    schedule = SportsDashboard._parse_club_football_data_events(
+        "FL1", matches, timezone.utc
+    )[0]
+
+    payload = _sample_club_espn_payload()
+    payload["events"][0]["date"] = "2026-09-04T17:00:00Z"
+    competition = payload["events"][0]["competitions"][0]
+    competition["status"] = {
+        "type": {"state": "pre", "completed": False, "shortDetail": "9/4 - 10:00 AM"}
+    }
+    home, away = competition["competitors"]
+    home["team"].update(
+        {
+            "id": "167",
+            "displayName": "Lyon",
+            "shortDisplayName": "Lyon",
+            "abbreviation": "LYON",
+        }
+    )
+    away["team"].update(
+        {
+            "id": "172",
+            "displayName": "AJ Auxerre",
+            "shortDisplayName": "Auxerre",
+            "abbreviation": "AUX",
+        }
+    )
+    score = SportsDashboard._parse_club_espn_events(
+        "FL1", payload, timezone.utc
+    )[0]
+
+    schedule_home_raw = {
+        SportsDashboard._club_team_match_key(value)
+        for value in schedule["home_aliases"]
+    }
+    score_home_raw = {
+        SportsDashboard._club_team_match_key(value) for value in score["home_aliases"]
+    }
+    assert schedule_home_raw.isdisjoint(score_home_raw)
+    assert "local:FL1:167" in (
+        SportsDashboard._club_event_team_keys(schedule, "home")
+        & SportsDashboard._club_event_team_keys(score, "home")
+    )
+
+    merged = SportsDashboard._merge_club_football_events([schedule], [score])
+
+    assert schedule["event_key"] != score["event_key"]
+    assert len(merged) == 1
+    assert merged[0]["provider"] == "football-data.org+ESPN"
+
+
+def test_merge_club_events_keeps_unknown_same_time_teams_separate():
+    start_utc = datetime(2026, 9, 4, 17, tzinfo=timezone.utc)
+    schedule = SportsDashboard._club_base_event(
+        "FL1",
+        start_utc,
+        "SCHEDULED",
+        "Example United",
+        "Example City",
+        provider="football-data.org",
+    )
+    score = SportsDashboard._club_base_event(
+        "FL1",
+        start_utc,
+        "SCHEDULED",
+        "Different United",
+        "Different City",
+        provider="ESPN",
+    )
+
+    merged = SportsDashboard._merge_club_football_events([schedule], [score])
+
+    assert len(merged) == 2
 
 
 def test_merge_club_events_flips_score_and_logos_for_reversed_provider_order():
@@ -25123,6 +25294,21 @@ def test_club_team_name_localization_preserves_named_unmapped_team():
         SportsDashboard._club_team_zh_name("SA", "Example United 1907")
         == "Example United 1907"
     )
+
+
+def test_club_team_localization_aliases_are_unambiguous_within_each_league():
+    from plugins.sports_dashboard.club_football_localization import (
+        CLUB_FOOTBALL_TEAM_LOCALIZATIONS,
+    )
+
+    for league_code, entries in CLUB_FOOTBALL_TEAM_LOCALIZATIONS.items():
+        alias_ids = {}
+        team_names = {}
+        for entry_id, english_name, chinese_name in entries:
+            alias_key = SportsDashboard._club_team_match_key(english_name)
+            assert alias_key
+            assert alias_ids.setdefault(alias_key, entry_id) == entry_id, league_code
+            assert team_names.setdefault(entry_id, chinese_name) == chinese_name, league_code
 
 
 @pytest.mark.parametrize("provider_name", ["", "TBD", "To Be Determined"])

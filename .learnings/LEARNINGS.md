@@ -585,27 +585,27 @@ Keep a bounded normal match window that tolerates short provider outages. Extend
 **Area**: frontend
 
 ### Summary
-Cross-provider club names need league-scoped exact aliases and provider-specific coverage checks at the display boundary.
+Cross-provider club names need league-scoped exact aliases and canonical registry identities at localization and event-reconciliation boundaries.
 
 ### Details
-ESPN events can localize through ESPN team IDs, but football-data.org uses a different ID domain and returns formal names such as `Como 1907` and `Deportivo Alavés`. Reusing IDs would map the wrong domain, while broad removal of prefixes, founding years, or club suffixes could merge unrelated teams and weaken event reconciliation. A current 96-team five-league comparison found 45 missing formal-name aliases; two additional recent-team aliases were kept for rotation compatibility.
+ESPN events can localize through ESPN team IDs, but football-data.org uses a different ID domain and returns formal names such as `Como 1907` and `Deportivo Alavés`. Reusing IDs would map the wrong domain, while broad removal of prefixes, founding years, or club suffixes could merge unrelated teams and weaken event reconciliation. A current 96-team five-league comparison found 45 missing formal-name aliases; two additional recent-team aliases were kept for rotation compatibility. The same gap later produced two identical UPCOMING rows for Real Sociedad versus Celta: football-data.org retained `RC Celta de Vigo`, `RC Celta`, and `CEL`, while ESPN exposed `Celta Vigo` and `CEL` but its parser persisted only the primary display name. The first merge repair therefore still lacked a shared away-team key on the live device. Retaining ESPN aliases fixed that fixture, but the next live rotation exposed Lyon versus AJ Auxerre because football-data.org used `Olympique Lyonnais` and `OLY` while ESPN used `Lyon` and `LYON`; provider abbreviations are not a dependable shared identity either.
 
 ### Suggested Action
-Enumerate current provider names per league, add explicit display-only aliases, and validate every provider payload rather than only ESPN. Keep the original provider name and normalized event key for merging, preserve unknown named teams verbatim, and reserve `待定球队` for genuine placeholders.
+Enumerate current provider names per league, retain exact provider aliases on every parsed event, and validate the actual fields from every provider. Add league-scoped canonical identity tokens only when an exact normalized English alias matches the localization registry; never compare raw provider IDs or translated names. Reconcile same-time cross-provider fixtures through non-empty home and away identity intersections while keeping the original provider name and normalized event key stable. Preserve unknown named teams verbatim and reserve `待定球队` for genuine placeholders.
 
 ### Metadata
 - Source: user_feedback
-- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/club_football_localization.py, inkypi-weather/package/InkyPi/tests/test_sports_dashboard.py, tools/check_club_football_sources.py
-- Tags: sports-dashboard, football-data, localization, aliases, provider-id, event-key
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/club_football.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/club_football_localization.py, inkypi-weather/package/InkyPi/tests/test_sports_dashboard.py, tools/check_club_football_sources.py
+- Tags: sports-dashboard, football-data, localization, aliases, provider-id, event-key, reconciliation, upcoming
 - Pattern-Key: sports_dashboard.club_localization_requires_provider_exact_aliases
-- Recurrence-Count: 1
+- Recurrence-Count: 4
 - First-Seen: 2026-07-22
-- Last-Seen: 2026-07-22
+- Last-Seen: 2026-08-31
 
 ### Resolution
 - **Resolved**: 2026-07-22T21:54:58-07:00
 - **Commit/PR**: operational
-- **Notes**: Added 47 exact aliases, expanded football-data name coverage checks, passed 672 source-tree tests and 668 packaged tests with 4 expected repo-tool skips, deployed `deploy-20260723T043754Z-00fa7fee1086`, and verified `阿拉维斯` plus `科莫` on the exact current display image.
+- **Notes**: Added 47 exact aliases, expanded football-data name coverage checks, passed 672 source-tree tests and 668 packaged tests with 4 expected repo-tool skips, deployed `deploy-20260723T043754Z-00fa7fee1086`, and verified `阿拉维斯` plus `科莫` on the exact current display image. The 2026-08-31 recurrence first added parsed alias intersections and retained ESPN short-name and abbreviation aliases without changing event keys. Live-image inspection rejected both the parser-incomplete attempt and the abbreviation-only boundary exposed by Lyon. The final repair maps exact English registry aliases to league-scoped canonical identities while preserving unknown teams and provider-domain separation.
 
 ---
 
