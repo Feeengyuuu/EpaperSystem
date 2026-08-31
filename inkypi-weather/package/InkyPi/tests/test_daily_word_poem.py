@@ -642,7 +642,7 @@ def test_generate_image_attests_fresh_remote_cache_without_network(tmp_path, mon
     assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
 
 
-def test_forced_provider_failure_uses_local_fallback_without_promoting_cache_or_context(
+def test_forced_provider_failure_allows_daily_image_but_not_provider_cache_or_context(
     tmp_path,
     monkeypatch,
 ):
@@ -670,13 +670,13 @@ def test_forced_provider_failure_uses_local_fallback_without_promoting_cache_or_
     image = plugin.generate_image({"forceRefresh": True}, FakeDeviceConfig())
 
     assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
-    assert image.info["inkypi_skip_cache"] is True
+    assert not image.info.get("inkypi_skip_cache", False)
     assert not (tmp_path / "daily.json").exists()
     assert context_calls == []
 
 
 @pytest.mark.parametrize("failed_provider", ["dictionary", "wikiquote"])
-def test_partial_provider_success_is_local_and_never_promoted(
+def test_partial_provider_success_allows_daily_image_but_not_provider_cache(
     tmp_path,
     monkeypatch,
     failed_provider,
@@ -716,7 +716,7 @@ def test_partial_provider_success_is_local_and_never_promoted(
     image = plugin.generate_image({"force_refresh": True}, FakeDeviceConfig())
 
     assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
-    assert image.info["inkypi_skip_cache"] is True
+    assert not image.info.get("inkypi_skip_cache", False)
     assert not (tmp_path / "daily.json").exists()
     assert context_calls == []
 

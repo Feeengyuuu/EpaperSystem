@@ -33,7 +33,7 @@ WIKIQUOTE_QOTD_DATE_URL = "https://wq-quote-of-the-day-parser.toolforge.org/api/
 WIKIQUOTE_DAY_RAW_URL = "https://en.wikiquote.org/w/index.php?title=Wikiquote:Quote_of_the_day/{day_slug}&action=raw"
 WIKIQUOTE_DAY_PAGE_URL = "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day/{day_slug}"
 REQUEST_HEADERS = {"User-Agent": "InkyPi Daily Word Quote/1.0"}
-CACHE_SCHEMA_VERSION = "daily-word-quote-v5"
+CACHE_SCHEMA_VERSION = "daily-word-quote-v6"
 DEFAULT_FONT = "Jost"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
@@ -485,10 +485,10 @@ class DailyWordPoem(BasePlugin):
             self._write_daily_word_context(payload, now)
         theme_context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config, now=now)
         image = self._render(dimensions, settings, payload, now, theme_context)
-        if provenance in {
-            SourceProvenance.STALE_CACHE,
-            SourceProvenance.LOCAL_FALLBACK,
-        }:
+        # Today's deterministic local page is still useful display content.
+        # Keep its degraded attestation so the scheduler retries the providers,
+        # but do not freeze yesterday's canonical image during their outage.
+        if provenance is SourceProvenance.STALE_CACHE:
             image.info["inkypi_skip_cache"] = True
         return attach_source_provenance(image, provenance)
 
@@ -744,12 +744,14 @@ class DailyWordPoem(BasePlugin):
 
     def _fetch_wikiquote_quote(self, date_key: str) -> dict[str, str]:
         session = get_http_session()
+        try:
+            return self._fetch_wikiquote_day_quote(date_key, session)
+        except Exception as exc:
+            last_error: Exception | None = exc
         urls = [
             WIKIQUOTE_QOTD_DATE_URL.format(date=quote(date_key)),
             WIKIQUOTE_QOTD_URL,
         ]
-        last_error: Exception | None = None
-
         for url in urls:
             try:
                 response = session.get(url, timeout=10, headers=REQUEST_HEADERS)
@@ -757,16 +759,13 @@ class DailyWordPoem(BasePlugin):
                     last_error = RuntimeError(f"Wikiquote API returned 404 for {url}")
                     continue
                 response.raise_for_status()
-                return self._parse_wikiquote_quote(response.json())
+                parsed = self._parse_wikiquote_quote(response.json(), expected_date=date_key)
+                parsed["source_url"] = url
+                return parsed
             except Exception as exc:
                 last_error = exc
 
-        try:
-            return self._fetch_wikiquote_day_quote(date_key, session)
-        except Exception as exc:
-            if last_error:
-                raise RuntimeError(f"{last_error}; official Wikiquote date page failed: {exc}") from exc
-            raise
+        raise RuntimeError(f"No Wikiquote quote available for {date_key}: {last_error}") from last_error
 
     def _fetch_wikiquote_day_quote(self, date_key: str, session=None) -> dict[str, str]:
         session = session or get_http_session()
@@ -781,13 +780,15 @@ class DailyWordPoem(BasePlugin):
     def _wikiquote_day_slug(self, date_key: str) -> str:
         date_value = datetime.strptime(date_key, "%Y-%m-%d")
         month = WIKIQUOTE_MONTH_NAMES[date_value.month - 1]
-        return f"{month}_{date_value.day}"
+        return f"{month}_{date_value.day},_{date_value.year}"
 
-    def _parse_wikiquote_quote(self, data: Any) -> dict[str, str]:
+    def _parse_wikiquote_quote(self, data: Any, *, expected_date: str | None = None) -> dict[str, str]:
         if isinstance(data, list) and data:
             data = data[0]
         if not isinstance(data, dict):
             raise RuntimeError("Wikiquote response is not a JSON object.")
+        if expected_date is not None and data.get("featured_date") != expected_date:
+            raise RuntimeError("Wikiquote response does not match the requested date.")
 
         quote_text = _clean_quote_text(data.get("quote") or data.get("text") or data.get("content"))
         author = _clean_text(data.get("author") or data.get("attribution") or "Wikiquote", 80)
@@ -808,10 +809,38 @@ class DailyWordPoem(BasePlugin):
         if not isinstance(data, str) or not data.strip():
             raise RuntimeError("Wikiquote date page is empty.")
 
-        raw = html.unescape(data)
+        # Entity-encoded punctuation is content, not wikitext structure.
+        # Decode only through the text cleaners after locating content fields.
+        raw = data
+        raw = re.sub(r"<!--.*?-->", "", raw, flags=re.DOTALL)
+        if "<!--" in raw:
+            raise RuntimeError("Wikiquote date page has an incomplete comment.")
+        if re.search(r"<!doctype\b|<html\b|^\s*#redirect\b", raw, flags=re.IGNORECASE):
+            raise RuntimeError("Wikiquote date page is not a raw quotation.")
+        if re.search(r"</?ref\b", raw, flags=re.IGNORECASE):
+            raise RuntimeError("Wikiquote date page contains unsupported reference markup.")
+        template_fields = self._wikiquote_day_template_fields(raw)
+        if template_fields is not None:
+            quote_markup = template_fields.get("quote", "")
+            author_markup = template_fields.get("author", "")
+            if "{{" in quote_markup or "{{" in author_markup:
+                raise RuntimeError("Wikiquote quote template contains unsupported nested markup.")
+            quote_markup = re.sub(r"\[\[(?:[^|\]]+\|)?([^\]]+)\]\]", r"\1", quote_markup)
+            author_markup = re.sub(r"\[\[(?:[^|\]]+\|)?([^\]]+)\]\]", r"\1", author_markup)
+            quote_text = _clean_quote_text(quote_markup)
+            author = _clean_text(author_markup, 80)
+            if not quote_text or not author:
+                raise RuntimeError("Wikiquote quote template lacks quote or author.")
+            return {
+                "text": quote_text,
+                "author": author,
+                "topic": "Wikiquote QOTD",
+                "featured_date": date_key,
+                "source": "Wikiquote QOTD",
+                "source_url": source_url,
+            }
         raw = raw.split("{{QoDfooter", 1)[0]
         raw = re.sub(r"\[\[(?:File|Image):[^\]]+\]\]", " ", raw, flags=re.IGNORECASE)
-        raw = re.sub(r"\{\{[^{}]*\}\}", " ", raw)
         raw = re.sub(r"\[\[(?:[^|\]]+\|)?([^\]]+)\]\]", r"\1", raw)
         raw = re.sub(r"<br\s*/?>", "\n", raw, flags=re.IGNORECASE)
 
@@ -825,6 +854,8 @@ class DailyWordPoem(BasePlugin):
             flags=re.IGNORECASE | re.MULTILINE,
         )
         raw = re.sub(r"^\s*\|\s*", "", raw, flags=re.MULTILINE)
+        if "{{" in raw or "}}" in raw:
+            raise RuntimeError("Wikiquote date page contains unsupported nested markup.")
         text = re.sub(r"<[^>]+>", " ", raw)
         parts = [_clean_text(part, QUOTE_SOURCE_MAX_LEN) for part in text.splitlines()]
 
@@ -845,8 +876,7 @@ class DailyWordPoem(BasePlugin):
             quote_text = _clean_quote_text(match.group("quote"))
             author = _clean_text(match.group("author"), 80)
         else:
-            quote_text = _clean_quote_text(parts[0] if parts else "")
-            author = "Wikiquote"
+            raise RuntimeError("Wikiquote date page has no quote text with attribution.")
 
         if re.fullmatch(r"~\s*[^~]+?(?:\s*~)?\s*", quote_text):
             quote_text = ""
@@ -861,6 +891,70 @@ class DailyWordPoem(BasePlugin):
             "source": "Wikiquote QOTD",
             "source_url": source_url,
         }
+
+    @staticmethod
+    def _wikiquote_day_template_fields(raw: str) -> dict[str, str] | None:
+        """Split named parameters only outside nested templates and wikilinks."""
+        match = re.search(
+            r"\{\{\s*Wikiquote:Quote[ _]of[ _]the[ _]day/Template\s*(?=\||\n|\})",
+            raw,
+            flags=re.IGNORECASE,
+        )
+        if match is None:
+            return None
+        depth, links = 1, 0
+        cursor = start = match.end()
+        parts = []
+        while cursor < len(raw):
+            if raw[cursor] == "<":
+                literal = re.match(r"<nowiki\b[^>]*>", raw[cursor:], flags=re.IGNORECASE)
+                if literal:
+                    cursor += literal.end()
+                    if literal.group().endswith("/>"):
+                        continue
+                    closing = re.search(r"</nowiki\s*>", raw[cursor:], flags=re.IGNORECASE)
+                    if closing is None:
+                        raise RuntimeError("Wikiquote quote template has incomplete literal markup.")
+                    cursor += closing.end()
+                    continue
+            pair = raw[cursor:cursor + 2]
+            if pair == "{{":
+                depth += 1
+                cursor += 2
+                continue
+            if pair == "}}":
+                depth -= 1
+                if depth == 0:
+                    parts.append(raw[start:cursor])
+                    break
+                cursor += 2
+                continue
+            if pair == "[[":
+                links += 1
+                cursor += 2
+                continue
+            if pair == "]]":
+                links -= 1
+                if links < 0:
+                    raise RuntimeError("Wikiquote quote template has malformed links.")
+                cursor += 2
+                continue
+            if raw[cursor] == "|" and depth == 1 and links == 0:
+                parts.append(raw[start:cursor])
+                start = cursor + 1
+            cursor += 1
+        if depth != 0 or links != 0:
+            raise RuntimeError("Wikiquote quote template is incomplete.")
+        fields = {}
+        for part in parts:
+            key, separator, value = part.partition("=")
+            if separator:
+                key = key.strip().lower()
+                if key in {"quote", "author"}:
+                    if key in fields:
+                        raise RuntimeError("Wikiquote quote template has duplicate content fields.")
+                    fields[key] = value.strip()
+        return fields
 
     def _daily_quote(self, settings, now: datetime) -> dict[str, str]:
         custom_quotes = self._custom_quotes(settings.get("quote_list"))
