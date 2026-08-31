@@ -4,12 +4,14 @@ import hashlib
 import html
 import json
 import logging
+import math
 import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import pytz
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -20,20 +22,29 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
+from runtime.long_task_executor import current_task_context
+from runtime.refresh_contracts import TaskContext
 from utils.app_utils import get_available_font_names, get_font
+from utils.atomic_file import atomic_write_json
 from utils.image_utils import text_width
-from utils.http_client import get_http_session
+from utils.http_client import HttpClient, get_http_session
 from utils.theme_utils import get_theme_palette
 
 logger = logging.getLogger(__name__)
 
 DICTIONARY_API_URL = "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
+WIKTIONARY_API_URL = "https://en.wiktionary.org/w/api.php"
+DICTIONARY_HEADERS = {"User-Agent": "InkyPi-DailyWord/2.0 (https://github.com/Feeengyuuu/EpaperSystem)"}
+WORD_CACHE_FRESH_SECONDS = 30 * 86400
+WORD_CACHE_MAX_AGE_SECONDS = 365 * 86400
+WORD_CACHE_MAX_ENTRIES = 128
+WORD_CACHE_MAX_BYTES = 524288
 WIKIQUOTE_QOTD_URL = "https://wq-quote-of-the-day-parser.toolforge.org/api/quote_of_the_day"
 WIKIQUOTE_QOTD_DATE_URL = "https://wq-quote-of-the-day-parser.toolforge.org/api/quotes/{date}"
 WIKIQUOTE_DAY_RAW_URL = "https://en.wikiquote.org/w/index.php?title=Wikiquote:Quote_of_the_day/{day_slug}&action=raw"
 WIKIQUOTE_DAY_PAGE_URL = "https://en.wikiquote.org/wiki/Wikiquote:Quote_of_the_day/{day_slug}"
 REQUEST_HEADERS = {"User-Agent": "InkyPi Daily Word Quote/1.0"}
-CACHE_SCHEMA_VERSION = "daily-word-quote-v6"
+CACHE_SCHEMA_VERSION = "daily-word-quote-v7"
 DEFAULT_FONT = "Jost"
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
@@ -476,11 +487,13 @@ class DailyWordPoem(BasePlugin):
         return params
 
     def generate_image(self, settings, device_config):
+        self._check_task_cancelled()
         settings = settings or {}
         dimensions = self._display_dimensions(device_config)
         now = self._localized_now(device_config)
         payload = self._daily_payload(settings, now)
         provenance = self._payload_provenance(payload)
+        self._check_task_cancelled()
         if provenance is not SourceProvenance.LOCAL_FALLBACK:
             self._write_daily_word_context(payload, now)
         theme_context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config, now=now)
@@ -510,6 +523,8 @@ class DailyWordPoem(BasePlugin):
         cache_key = self._cache_key(date_key, word_entry["word"], settings)
         cache_file = self._cache_dir() / "daily.json"
         cached = _safe_json_load(cache_file, {})
+        if not isinstance(cached, dict):
+            cached = {}
 
         theme_render_only = _enabled(settings.get("_theme_render_only"))
         force_refresh = (
@@ -539,16 +554,22 @@ class DailyWordPoem(BasePlugin):
         }
         providers_attempted = 0
         providers_succeeded = 0
+        live_sources = 0
 
         if _enabled(settings.get("fetch_dictionary"), default=True):
             providers_attempted += 1
             try:
-                enriched = self._fetch_dictionary_entry(word_entry["word"])
+                enriched, definition_state = self._definition_for_day(word_entry["word"], now, force_refresh)
                 if enriched:
                     payload["word"] = {**word_entry, **enriched}
-                    payload["sources"][0] = "Free Dictionary API"
-                    providers_succeeded += 1
+                    payload["sources"][0] = enriched.get("source_attribution") or enriched.get("source") or "Free Dictionary API"
+                    if definition_state == "stale":
+                        payload["warnings"].append("definition cached")
+                    else:
+                        providers_succeeded += 1
+                        live_sources += int(definition_state == "live")
             except Exception as exc:
+                self._check_task_cancelled()
                 logger.warning("Daily word definition fetch failed: %s", exc)
                 payload["warnings"].append("definition offline")
 
@@ -559,17 +580,23 @@ class DailyWordPoem(BasePlugin):
             providers_attempted += 1
             try:
                 wikiquote = self._fetch_wikiquote_quote(date_key)
+                self._check_task_cancelled()
                 if wikiquote:
                     payload["quote"] = wikiquote
                     payload["sources"][1] = wikiquote.get("source") or "Wikiquote QOTD"
                     providers_succeeded += 1
+                    live_sources += 1
             except Exception as exc:
+                self._check_task_cancelled()
                 logger.warning("Wikiquote quote of the day fetch failed: %s", exc)
                 payload["warnings"].append("quote offline")
 
+        self._check_task_cancelled()
         if providers_attempted and providers_succeeded == providers_attempted:
             _safe_json_write(cache_file, payload)
-            payload["_source_provenance"] = SourceProvenance.LIVE.value
+            payload["_source_provenance"] = (
+                SourceProvenance.LIVE.value if live_sources else SourceProvenance.FRESH_CACHE.value
+            )
             return payload
 
         if (
@@ -596,6 +623,7 @@ class DailyWordPoem(BasePlugin):
             isinstance(source, str)
             and (
                 "free dictionary api" in source.lower()
+                or "wiktionary" in source.lower()
                 or "wikiquote" in source.lower()
             )
             for source in sources
@@ -644,6 +672,11 @@ class DailyWordPoem(BasePlugin):
                     "part_of_speech": _clean_text(word.get("part_of_speech"), 40),
                     "definition": definition,
                     "example": _clean_text(word.get("example"), 120),
+                    "word_source": word.get("source", ""),
+                    "word_source_url": word.get("source_url", ""),
+                    "word_source_revision": word.get("source_revision"),
+                    "word_source_license": word.get("source_license", ""),
+                    "word_source_attribution": word.get("source_attribution", ""),
                     "quote": quote_text,
                     "author": quote_author,
                     "topic": _clean_text(quote.get("topic"), 40),
@@ -700,10 +733,138 @@ class DailyWordPoem(BasePlugin):
 
     def _fetch_dictionary_entry(self, word: str) -> dict[str, str]:
         url = DICTIONARY_API_URL.format(word=quote(word))
-        session = get_http_session()
-        response = session.get(url, timeout=8, headers=REQUEST_HEADERS)
-        response.raise_for_status()
-        return self._parse_dictionary_entry(response.json(), word)
+        try:
+            result = self._parse_dictionary_entry(self._dictionary_json(url), word)
+            if result["word"].casefold() != word.casefold() or not result["definition"]:
+                raise ValueError("Dictionary did not return the requested definition")
+            return {**result, "source": "Free Dictionary API", "source_url": url}
+        except Exception as exc:
+            self._check_task_cancelled()
+            logger.warning("Primary dictionary unavailable (%s); trying Wiktionary", type(exc).__name__)
+
+        from plugins.daily_word_poem.dictionary_sources import parse_wiktionary_entry
+
+        data = self._dictionary_json(WIKTIONARY_API_URL, params={
+            "action": "parse", "page": word, "prop": "text|revid",
+            "format": "json", "formatversion": "2", "redirects": "1", "maxlag": "5",
+        })
+        return parse_wiktionary_entry(data, word)
+
+    def _definition_for_day(self, word, now, force_refresh):
+        """Reuse source-backed definitions, without renewing their fetch age."""
+        stamp = now.timestamp()
+        path = self._cache_dir() / "dictionary.json"
+        entries = {}
+        try:
+            if path.is_file() and path.stat().st_size <= WORD_CACHE_MAX_BYTES:
+                document = _safe_json_load(path, {})
+                if isinstance(document, dict) and document.get("schema") == 1:
+                    candidates = document.get("entries")
+                    if isinstance(candidates, dict):
+                        entries = {key: row for key, row in candidates.items()
+                                   if self._valid_word_cache(key, row, stamp)}
+        except OSError:
+            logger.warning("Per-word dictionary cache is unavailable")
+        cached = entries.get(word)
+        if cached and not force_refresh and stamp - cached["fetched_at"] <= WORD_CACHE_FRESH_SECONDS:
+            return dict(cached["entry"]), "fresh"
+
+        try:
+            enriched = self._fetch_dictionary_entry(word)
+            if not isinstance(enriched, dict) or not isinstance(enriched.get("definition"), str) or not enriched["definition"].strip():
+                raise ValueError("No usable dictionary definition")
+            enriched = dict(enriched)
+            enriched.setdefault("source", "Free Dictionary API")
+            enriched.setdefault("source_url", DICTIONARY_API_URL.format(word=quote(word)))
+            row = {"fetched_at": stamp, "entry": enriched}
+            if not self._valid_word_cache(word, row, stamp):
+                raise ValueError("Invalid dictionary source metadata")
+            entries[word] = row
+            # One bounded file avoids unbounded per-custom-word file growth.
+            entries = self._bounded_word_entries(entries)
+            self._check_task_cancelled()
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_json(path, {"schema": 1, "entries": entries})
+            except OSError:
+                logger.warning("Could not persist per-word dictionary cache")
+            return enriched, "live"
+        except Exception:
+            self._check_task_cancelled()
+            if cached:
+                return dict(cached["entry"]), "stale"
+            raise
+
+    @staticmethod
+    def _bounded_word_entries(entries):
+        retained = {}
+        size = len((json.dumps({"schema": 1, "entries": {}}, ensure_ascii=False) + "\n").encode("utf-8"))
+        for word, row in sorted(entries.items(), key=lambda item: item[1]["fetched_at"], reverse=True):
+            item_size = len(json.dumps({word: row}, ensure_ascii=False, allow_nan=False).encode("utf-8")) - 2
+            item_size += 2 if retained else 0
+            if size + item_size > WORD_CACHE_MAX_BYTES:
+                continue
+            retained[word] = row
+            size += item_size
+            if len(retained) >= WORD_CACHE_MAX_ENTRIES:
+                break
+        return retained
+
+    @staticmethod
+    def _valid_word_cache(word, row, stamp):
+        if not isinstance(word, str) or not isinstance(row, dict):
+            return False
+        fetched = row.get("fetched_at")
+        if isinstance(fetched, bool) or not isinstance(fetched, (int, float)) or not math.isfinite(fetched):
+            return False
+        if not 0 <= stamp - fetched <= WORD_CACHE_MAX_AGE_SECONDS:
+            return False
+        entry = row.get("entry")
+        if not isinstance(entry, dict) or not isinstance(entry.get("word"), str) or entry["word"].casefold() != word.casefold():
+            return False
+        if set(entry) - {"word", "definition", "phonetic", "part_of_speech", "example", "source", "source_url",
+                         "source_revision", "source_license", "source_license_url", "source_attribution"}:
+            return False
+        if not isinstance(entry.get("definition"), str) or not 1 <= len(entry["definition"].strip()) <= 2048:
+            return False
+        for key in ("phonetic", "part_of_speech", "example", "source_url", "source_license", "source_license_url", "source_attribution"):
+            if key in entry and (not isinstance(entry[key], str) or len(entry[key]) > 1024):
+                return False
+        source = entry.get("source")
+        try:
+            url = urlsplit(entry.get("source_url", ""))
+        except ValueError:
+            return False
+        if url.scheme != "https" or url.username or url.password:
+            return False
+        if source == "Wiktionary":
+            revision = entry.get("source_revision")
+            return (url.netloc == "en.wiktionary.org" and isinstance(revision, int)
+                    and not isinstance(revision, bool) and revision > 0
+                    and entry.get("source_license") == "CC BY-SA 4.0"
+                    and bool(entry.get("source_attribution")))
+        return source == "Free Dictionary API" and url.netloc == "api.dictionaryapi.dev"
+
+    @staticmethod
+    def _check_task_cancelled():
+        context = current_task_context()
+        if context is not None:
+            context.raise_if_cancelled()
+
+    @staticmethod
+    def _dictionary_json(url, **kwargs):
+        parent = current_task_context()
+        if parent is None:
+            context = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 8)
+        else:
+            parent.raise_if_cancelled()
+            context = TaskContext(parent.cancel_event, min(parent.deadline_monotonic, parent.clock() + 8), parent.clock)
+        # The shared client caps decoded bytes, closes every response, honors
+        # cancellation/Retry-After and never gives a retry a new time budget.
+        return HttpClient(session=get_http_session()).request_json(
+            "GET", url, timeout=8, context=context, max_bytes=262144,
+            headers=DICTIONARY_HEADERS, **kwargs,
+        ).data
 
     def _parse_dictionary_entry(self, data: Any, fallback_word: str) -> dict[str, str]:
         if not isinstance(data, list) or not data:
@@ -727,6 +888,10 @@ class DailyWordPoem(BasePlugin):
 
         if not selected_definition:
             raise RuntimeError("Dictionary response has no definitions.")
+        raw_definition = selected_definition.get("definition")
+        if (not isinstance(raw_definition, str) or not raw_definition.strip()
+                or re.search(r"<\s*/?\s*[A-Za-z][^>]*>", html.unescape(raw_definition))):
+            raise ValueError("Dictionary definition is not plain text")
 
         example = _clean_text(selected_definition.get("example"), 180)
         if not example:

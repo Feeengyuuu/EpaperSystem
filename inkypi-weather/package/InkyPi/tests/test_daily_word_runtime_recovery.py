@@ -1,8 +1,10 @@
 """DailyWord's real render/cache/display path under an upstream outage."""
 
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import sys
+from urllib.parse import unquote
 
 from PIL import Image
 import pytest
@@ -45,23 +47,36 @@ def test_dailyword_outage_advances_daily_display_without_claiming_provider_recov
 
     class ProviderResponse:
         status_code = 200
+        headers = {}
         text = "<p>A newly fetched sentence.</p><p> ~ [[Fixture Author]] ~ </p>"
+
+        def __init__(self, url):
+            self.url = url
 
         def raise_for_status(self):
             pass
 
         def json(self):
-            return [{"word": "tranquil", "meanings": [{
+            return [{"word": unquote(self.url.rsplit("/", 1)[-1]), "meanings": [{
                 "partOfSpeech": "adjective",
                 "definitions": [{"definition": "A recovered live definition."}],
             }]}]
 
+        def iter_content(self, chunk_size):
+            yield json.dumps(self.json()).encode()
+
+        def close(self):
+            pass
+
     class OfflineSession:
+        def request(self, method, url, **kwargs):
+            return self.get(url, **kwargs)
+
         def get(self, url, **_kwargs):
-            provider = "dictionary" if "dictionaryapi.dev" in url else "wikiquote"
+            provider = "dictionary" if "dictionaryapi.dev" in url or "wiktionary.org" in url else "wikiquote"
             if not recovery[0] and failed_provider in (provider, "both"):
                 raise ReadTimeout("fixture upstream unavailable")
-            return ProviderResponse()
+            return ProviderResponse(url)
 
     monkeypatch.setattr(word_module, "get_http_session", OfflineSession)
     instance = playlist.plugins[0].snapshot()

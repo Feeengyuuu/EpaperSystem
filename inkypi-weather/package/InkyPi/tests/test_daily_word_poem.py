@@ -544,7 +544,7 @@ def test_cached_payload_is_reused_without_network(tmp_path):
 
     def fake_dictionary(word):
         calls["dictionary"] += 1
-        return {"definition": "Network definition."}
+        return {"word": word, "definition": "Network definition."}
 
     def fake_wikiquote(date_key):
         calls["wikiquote"] += 1
