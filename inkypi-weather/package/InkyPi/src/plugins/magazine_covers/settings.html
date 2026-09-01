@@ -1,6 +1,109 @@
 <input type="hidden" id="refreshOnDisplay" name="refreshOnDisplay" value="true">
 <input type="hidden" id="dailyLibraryMode" name="dailyLibraryMode" value="true">
 <input type="hidden" id="libraryRefreshHours" name="libraryRefreshHours" value="6">
+<input type="hidden" id="overlayMode" name="overlayMode" value="none">
+
+<div class="form-group">
+    <label for="contentMode" class="form-label">Cover library:</label>
+    <select id="contentMode" name="contentMode" value="comprehensive" class="form-input">
+        <option value="comprehensive" selected>Historical and current covers</option>
+        <option value="latest">Current covers only</option>
+    </select>
+    <div style="color: var(--text-primary); font-size: 0.9em; margin-top: 0.35rem;">
+        Comprehensive mode blends notable and exploratory covers from history with current issues.
+    </div>
+</div>
+
+<div class="form-group">
+    <label for="selectionHoldHours" class="form-label">Keep each group (hours):</label>
+    <input
+        type="number"
+        id="selectionHoldHours"
+        name="selectionHoldHours"
+        value="3"
+        min="1"
+        max="168"
+        step="1"
+        class="form-input"
+    >
+</div>
+
+<div class="form-group">
+    <label for="historicalPercent" class="form-label">Historical covers (%):</label>
+    <input
+        type="number"
+        id="historicalPercent"
+        name="historicalPercent"
+        value="80"
+        min="0"
+        max="100"
+        step="1"
+        class="form-input"
+    >
+</div>
+
+<div class="form-group">
+    <label for="categories" class="form-label">Categories:</label>
+    <input
+        type="text"
+        id="categories"
+        name="categories"
+        value="art_design,sports,news_politics,fashion_culture,science_nature,entertainment_music,adult,general_history"
+        class="form-input"
+        spellcheck="false"
+    >
+</div>
+
+<div class="form-group">
+    <label for="includeAdult" class="form-label">Adult magazine covers:</label>
+    <select id="includeAdult" name="includeAdult" value="true" class="form-input">
+        <option value="true" selected>Include original covers</option>
+        <option value="false">Exclude</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="historyStartYear" class="form-label">Earliest year:</label>
+    <input
+        type="number"
+        id="historyStartYear"
+        name="historyStartYear"
+        value=""
+        min="1"
+        max="2100"
+        step="1"
+        class="form-input"
+        placeholder="Earliest available"
+    >
+</div>
+
+<div class="form-group">
+    <label for="catalogRefreshHours" class="form-label">Historical catalog refresh (hours):</label>
+    <input
+        type="number"
+        id="catalogRefreshHours"
+        name="catalogRefreshHours"
+        value="24"
+        min="1"
+        max="168"
+        step="1"
+        class="form-input"
+    >
+</div>
+
+<div class="form-group">
+    <label for="latestRefreshHours" class="form-label">Current cover refresh (hours):</label>
+    <input
+        type="number"
+        id="latestRefreshHours"
+        name="latestRefreshHours"
+        value="6"
+        min="1"
+        max="72"
+        step="1"
+        class="form-input"
+    >
+</div>
 
 <div class="form-group">
     <label for="rotationMode" class="form-label">Magazine selection:</label>
@@ -58,7 +161,32 @@
 
 <script>
     document.addEventListener('DOMContentLoaded', () => {
+        const clampNumber = (element, fallback, min, max) => {
+            const parsed = Number.parseFloat(element.value);
+            const value = Number.isFinite(parsed) ? parsed : fallback;
+            element.value = String(Math.min(max, Math.max(min, value)));
+        };
+
+        const contentMode = document.getElementById('contentMode');
+        const selectionHoldHours = document.getElementById('selectionHoldHours');
+        const historicalPercent = document.getElementById('historicalPercent');
+        const categories = document.getElementById('categories');
+        const includeAdult = document.getElementById('includeAdult');
+        const historyStartYear = document.getElementById('historyStartYear');
+        const overlayMode = document.getElementById('overlayMode');
+        const catalogRefreshHours = document.getElementById('catalogRefreshHours');
+        const latestRefreshHours = document.getElementById('latestRefreshHours');
+
         if (loadPluginSettings) {
+            contentMode.value = pluginSettings.contentMode || 'comprehensive';
+            selectionHoldHours.value = pluginSettings.selectionHoldHours ?? '3';
+            historicalPercent.value = pluginSettings.historicalPercent ?? '80';
+            categories.value = pluginSettings.categories || 'art_design,sports,news_politics,fashion_culture,science_nature,entertainment_music,adult,general_history';
+            includeAdult.value = pluginSettings.includeAdult ?? 'true';
+            historyStartYear.value = pluginSettings.historyStartYear || '';
+            overlayMode.value = pluginSettings.overlayMode || 'none';
+            catalogRefreshHours.value = pluginSettings.catalogRefreshHours ?? '24';
+            latestRefreshHours.value = pluginSettings.latestRefreshHours ?? '6';
             document.getElementById('rotationMode').value = pluginSettings.rotationMode || 'random';
             document.getElementById('sources').value = pluginSettings.sources || `{{ default_sources }}`;
             document.getElementById('fitMode').value = pluginSettings.fitMode || 'triptych';
@@ -67,6 +195,14 @@
             document.getElementById('showSourceLabel').value = pluginSettings.showSourceLabel || 'true';
             document.getElementById('dailyLibraryMode').value = pluginSettings.dailyLibraryMode || 'true';
             document.getElementById('libraryRefreshHours').value = pluginSettings.libraryRefreshHours || '6';
+        }
+
+        clampNumber(selectionHoldHours, 3, 1, 168);
+        clampNumber(historicalPercent, 80, 0, 100);
+        clampNumber(catalogRefreshHours, 24, 1, 168);
+        clampNumber(latestRefreshHours, 6, 1, 72);
+        if (historyStartYear.value !== '') {
+            clampNumber(historyStartYear, 1, 1, 2100);
         }
     });
 </script>

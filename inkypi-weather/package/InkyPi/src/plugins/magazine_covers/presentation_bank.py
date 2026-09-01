@@ -32,14 +32,15 @@ from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
 
 
 SCHEMA_VERSION = 1
-READY_TARGET = 18
-REFILL_THRESHOLD = 6
+READY_TARGET = 36
+REFILL_THRESHOLD = 12
+UNSEEN_REFILL_THRESHOLD = 12
 MAX_PROFILES = 64
 MAX_RECORDS_PER_PROFILE = READY_TARGET
 MAX_SEEN_SOURCES = 5000
 MAX_DATE_BUCKETS = 366
 MAX_STATE_BYTES = 4 * 1024 * 1024
-MEDIA_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+MEDIA_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 MEDIA_MAX_FILES = 48
 MEDIA_MAX_BYTES = 128 * 1024 * 1024
 GLOBAL_MEDIA_ROOT_MAX_BYTES = 512 * 1024 * 1024
@@ -54,7 +55,25 @@ MEDIA_IMAGE_LIMITS = ImageLimits(
     allowed_formats=frozenset({"PNG"}),
 )
 COVER_FRESH_SECONDS = 20 * 60 * 60
+HISTORICAL_FRESH_SECONDS = 30 * 24 * 60 * 60
+SELECTION_TIME_BAG_SIZE = 15
+SELECTION_TIME_BAG_HISTORICAL = 12
+SELECTION_TIME_BAG_LATEST = 3
+EPOCH_RECENT_GUARD_SIZE = 12
+PERCEPTUAL_HASH_HAMMING_THRESHOLD = 6
+MAGAZINE_CATEGORIES = (
+    "art_design",
+    "sports",
+    "news_politics",
+    "fashion_culture",
+    "science_nature",
+    "entertainment_music",
+    "adult",
+    "general_history",
+)
+_MAGAZINE_CATEGORY_SET = frozenset(MAGAZINE_CATEGORIES)
 _HEX = frozenset("0123456789abcdef")
+_LEGACY_COVER_ID_PREFIX = "__inkypi_legacy_record_key__:"
 _PROFILE_KEYS = {
     "profile_fingerprint",
     "settings_fingerprint",
@@ -75,6 +94,16 @@ _PROFILE_KEYS = {
     "library_pool_key",
     "library_scan_source_ids",
     "library_scan_started_at",
+    "category_bags",
+    "selection_time_bag",
+    "selection_time_bag_cursor",
+    "selection_time_bag_historical_percent",
+    "selection_epoch",
+    "epoch_seen_cover_ids",
+    "epoch_guard_cover_ids",
+    "recent_cover_ids",
+    "current_selection_committed_at",
+    "committed_selection_record_keys",
     "last_used_at",
 }
 
@@ -336,6 +365,15 @@ class ProtectedMediaStore:
 
 def settings_key(settings, sources):
     settings = settings or {}
+    content_mode = str(settings.get("contentMode") or "comprehensive").strip().lower()
+    if content_mode not in {"comprehensive", "latest"}:
+        content_mode = "comprehensive"
+    include_adult_value = settings.get("includeAdult")
+    include_adult = (
+        True
+        if include_adult_value is None or str(include_adult_value).strip() == ""
+        else _enabled(include_adult_value, default=True)
+    )
     payload = {
         "sources": [
             {
@@ -351,6 +389,16 @@ def settings_key(settings, sources):
         "show_source_label": _enabled(settings.get("showSourceLabel"), default=True),
         "daily_library_mode": _enabled(settings.get("dailyLibraryMode"), default=True),
         "library_refresh_hours": _library_refresh_hours(settings.get("libraryRefreshHours")),
+        "content_mode": content_mode,
+        "categories": _settings_categories(settings.get("categories")),
+        "include_adult": include_adult,
+        "history_start_year": _settings_history_start_year(
+            settings.get("historyStartYear")
+        ),
+        "historical_percent": _historical_percent(
+            settings.get("historicalPercent")
+        ),
+        "overlay_mode": _settings_overlay_mode(settings.get("overlayMode")),
     }
     return _json_hash(payload)
 
@@ -397,14 +445,46 @@ def _record_content_id(record):
     raise RuntimeError("Magazine cover has no stable display identity")
 
 
+def _record_key_for_cover_id(cover_id):
+    normalized = str(cover_id or "").strip()
+    if not normalized:
+        raise RuntimeError("Magazine cover identity is missing")
+    if normalized.startswith(_LEGACY_COVER_ID_PREFIX):
+        legacy_record_key = normalized.removeprefix(_LEGACY_COVER_ID_PREFIX)
+        if _valid_hash(legacy_record_key):
+            return legacy_record_key
+    return sha256(
+        b"magazine-cover-record-v2\0" + normalized.encode("utf-8")
+    ).hexdigest()
+
+
 def _unique_content_records(records):
     unique = []
     content_ids = set()
+    cover_ids = set()
+    perceptual_hashes = []
     for record in records:
         content_id = _record_content_id(record)
-        if content_id in content_ids:
+        cover_id = str(record.get("cover_id") or "")
+        perceptual_hash = _normalize_perceptual_hash(record.get("perceptual_hash"))
+        if (
+            content_id in content_ids
+            or (cover_id and cover_id in cover_ids)
+            or (
+                perceptual_hash
+                and any(
+                    _perceptual_hash_distance(perceptual_hash, existing)
+                    <= PERCEPTUAL_HASH_HAMMING_THRESHOLD
+                    for existing in perceptual_hashes
+                )
+            )
+        ):
             continue
         content_ids.add(content_id)
+        if cover_id:
+            cover_ids.add(cover_id)
+        if perceptual_hash:
+            perceptual_hashes.append(perceptual_hash)
         unique.append(record)
     return unique
 
@@ -451,6 +531,7 @@ class MagazinePresentationBank:
 
     def load_for_data(self):
         document = self._migrate_document(self._read_document())
+        self._loaded_document = deepcopy(document)
         profiles = document["profiles"]
         profile = profiles.get(self.fingerprint)
         if not isinstance(profile, dict):
@@ -466,11 +547,12 @@ class MagazinePresentationBank:
         document["instance_profiles"][self.instance_uuid] = self.fingerprint
         document["active_fingerprint"] = self.fingerprint
         profile["last_used_at"] = _utc_now()
-        self._loaded_document = document
+        self._loaded_document = deepcopy(document)
         return document, profile
 
     def load_warm(self):
         document = self._migrate_document(self._read_document())
+        self._loaded_document = deepcopy(document)
         migrated_profile = None
         if self.fingerprint not in document["profiles"]:
             migrated_profile = self._adopt_compatible_instance_profile(document)
@@ -480,20 +562,23 @@ class MagazinePresentationBank:
         profile = document["profiles"].get(fingerprint)
         if not isinstance(profile, dict):
             raise RuntimeError("Magazine presentation bank is cold for these settings")
+        source_profile = deepcopy(profile)
         profile = self._normalize_profile(profile, document.get("date_buckets"))
+        profile_changed = profile != source_profile
         if profile["profile_fingerprint"] != self.fingerprint:
             raise RuntimeError("Magazine presentation bank fingerprint does not match")
         profile["last_used_at"] = _utc_now()
         document["profiles"][self.fingerprint] = profile
         self._make_profile_room(document, required_slots=0)
-        if migrated_profile is not None:
+        if migrated_profile is not None or profile_changed:
             self.save(document)
         else:
-            self._loaded_document = document
+            self._loaded_document = deepcopy(document)
         return document, profile
 
     def load_receipt_profile(self, request_id):
         document = self._migrate_document(self._read_document())
+        self._loaded_document = deepcopy(document)
         profile = document["profiles"].get(self.fingerprint)
         if not isinstance(profile, dict):
             raise RuntimeError("Magazine receipt profile is unavailable")
@@ -502,14 +587,14 @@ class MagazinePresentationBank:
         if not isinstance(pending, dict) or pending.get("request_id") != request_id:
             raise RuntimeError("Magazine receipt no longer matches a pending selection")
         document["profiles"][self.fingerprint] = profile
-        self._loaded_document = document
+        self._loaded_document = deepcopy(document)
         return document, profile
 
     def save(self, document):
         document["presentation_schema_version"] = SCHEMA_VERSION
         validate_state_payload_size(document)
         _atomic_write_bounded_json(self.state_path, document)
-        self._loaded_document = document
+        self._loaded_document = deepcopy(document)
 
     def ready_records(self, profile, *, prune, now=None):
         ready = []
@@ -563,6 +648,7 @@ class MagazinePresentationBank:
     def ingest(self, profile, source, cover, image, *, fetched_at=None):
         normalized = self.normalize_cover(source, cover)
         normalized_image = self._normalize_media_image(image)
+        normalized["perceptual_hash"] = _perceptual_hash(normalized_image)
         output = BytesIO()
         normalized_image.save(output, format="PNG", optimize=True)
         payload = output.getvalue()
@@ -570,8 +656,67 @@ class MagazinePresentationBank:
             raise RuntimeError("Magazine cover media exceeds its object budget")
         content_hash = sha256(payload).hexdigest()
         records = list(profile["records"])
-        for index, candidate in enumerate(records):
+        cover_match_index = next(
+            (
+                index
+                for index, candidate in enumerate(records)
+                if candidate.get("cover_id") == normalized["cover_id"]
+            ),
+            None,
+        )
+        if cover_match_index is not None:
+            candidate = records[cover_match_index]
             if candidate.get("content_hash") == content_hash:
+                refreshed = {
+                    **candidate,
+                    **normalized,
+                    "record_key": candidate["record_key"],
+                    "media_key": candidate["media_key"],
+                    "content_hash": content_hash,
+                    "width": normalized_image.width,
+                    "height": normalized_image.height,
+                    "fetched_at": _iso_datetime(fetched_at),
+                    "date_key": self.date_key,
+                }
+                cover_updated = False
+            else:
+                media_key = content_hash
+                self.media.put_bytes(media_key, payload, suffix=".png")
+                refreshed = {
+                    **candidate,
+                    **normalized,
+                    "record_key": candidate["record_key"],
+                    "media_key": media_key,
+                    "content_hash": content_hash,
+                    "width": normalized_image.width,
+                    "height": normalized_image.height,
+                    "fetched_at": _iso_datetime(fetched_at),
+                    "date_key": self.date_key,
+                }
+                cover_updated = True
+            records[cover_match_index] = refreshed
+            profile["records"] = records
+            return {
+                **refreshed,
+                "_content_duplicate": False,
+                "_cover_duplicate": not cover_updated,
+                "_cover_updated": cover_updated,
+                "_perceptual_duplicate": False,
+            }
+        for index, candidate in enumerate(records):
+            duplicate_kind = None
+            if candidate.get("content_hash") == content_hash:
+                duplicate_kind = "content"
+            elif (
+                normalized["perceptual_hash"]
+                and _perceptual_hash_distance(
+                    candidate.get("perceptual_hash"),
+                    normalized["perceptual_hash"],
+                )
+                <= PERCEPTUAL_HASH_HAMMING_THRESHOLD
+            ):
+                duplicate_kind = "perceptual"
+            if duplicate_kind is not None:
                 refreshed = {
                     **candidate,
                     "fetched_at": _iso_datetime(fetched_at),
@@ -579,11 +724,16 @@ class MagazinePresentationBank:
                 }
                 records[index] = refreshed
                 profile["records"] = records
-                return {**refreshed, "_content_duplicate": True}
-        media_key = sha256(normalized["image_url"].encode("utf-8")).hexdigest()
+                return {
+                    **refreshed,
+                    "_content_duplicate": duplicate_kind == "content",
+                    "_cover_duplicate": False,
+                    "_cover_updated": False,
+                    "_perceptual_duplicate": duplicate_kind == "perceptual",
+                }
+        media_key = content_hash
         self.media.put_bytes(media_key, payload, suffix=".png")
-        source_id = normalized["source_id"]
-        record_key = sha256(f"{source_id}\0{normalized['image_url']}".encode("utf-8")).hexdigest()
+        record_key = _record_key_for_cover_id(normalized["cover_id"])
         record = {
             **normalized,
             "record_key": record_key,
@@ -594,16 +744,12 @@ class MagazinePresentationBank:
             "fetched_at": _iso_datetime(fetched_at),
             "date_key": self.date_key,
         }
-        replaced = False
         protected = self._protected_record_keys(profile)
         for index, candidate in enumerate(records):
-            if candidate.get("source_id") == source_id:
-                if candidate.get("record_key") in protected:
-                    break
+            if candidate.get("record_key") == record_key:
                 records[index] = record
-                replaced = True
                 break
-        if not replaced:
+        else:
             records.append(record)
         while len(records) > MAX_RECORDS_PER_PROFILE:
             victim = next(
@@ -622,20 +768,21 @@ class MagazinePresentationBank:
         return record
 
     def recover_media(self, profile, record, image, *, recovered_at=None):
-        normalized = self.normalize_cover(record, record)
-        expected_media_key = sha256(normalized["image_url"].encode("utf-8")).hexdigest()
-        if record.get("media_key") != expected_media_key:
-            raise RuntimeError("Magazine protected media identity does not match its URL")
+        self.normalize_cover(record, record)
         normalized_image = self._normalize_media_image(image)
         output = BytesIO()
         normalized_image.save(output, format="PNG", optimize=True)
         payload = output.getvalue()
         if not payload or len(payload) > MEDIA_MAX_OBJECT_BYTES:
             raise RuntimeError("Magazine recovered media exceeds its object budget")
-        self.media.put_bytes(expected_media_key, payload, suffix=".png")
+        content_hash = sha256(payload).hexdigest()
+        media_key = content_hash
+        self.media.put_bytes(media_key, payload, suffix=".png")
         updated = {
             **record,
-            "content_hash": sha256(payload).hexdigest(),
+            "media_key": media_key,
+            "content_hash": content_hash,
+            "perceptual_hash": _perceptual_hash(normalized_image),
             "width": normalized_image.width,
             "height": normalized_image.height,
             "media_recovered_at": _iso_datetime(recovered_at),
@@ -651,25 +798,267 @@ class MagazinePresentationBank:
             raise RuntimeError("Magazine cover metadata is invalid")
         source_name = str(source.get("name") or cover.get("source_name") or "").strip()[:200]
         source_url = _normalize_public_url(source.get("url") or cover.get("source_url"))
-        image_url = _normalize_public_url(cover.get("image_url"))
-        page_url = _normalize_public_url(cover.get("page_url") or source_url)
+        image_url = _normalize_public_url(cover.get("image_url") or cover.get("cover_url"))
+        page_url = _normalize_public_url(
+            cover.get("page_url") or cover.get("record_url") or source_url
+        )
         if not source_name or not source_url or not image_url:
             raise RuntimeError("Magazine cover source metadata is incomplete")
-        source_id = f"{source_name}|{source_url}"
+        supplied_source_id = _normalize_optional_text(
+            source.get("source_id") or cover.get("source_id"),
+            field_name="source_id",
+            max_chars=800,
+        )
+        source_id = supplied_source_id or f"{source_name}|{source_url}"
+        publication = str(cover.get("publication") or source.get("publication") or source_name).strip()[:200]
+        supplied_cover_id = _normalize_optional_text(
+            cover.get("cover_id") or cover.get("issue_id"),
+            field_name="cover_id",
+            max_chars=300,
+        )
+        cover_id = supplied_cover_id or sha256(
+            f"{source_id}\0{image_url}".encode("utf-8")
+        ).hexdigest()
+        category = _normalize_category(cover.get("category") or source.get("category"))
+        adult = _normalize_optional_bool(
+            cover.get("adult", source.get("adult")),
+            field_name="adult",
+            default=False,
+        ) or category == "adult"
         return {
             "source_id": source_id,
             "source_name": source_name,
             "source_url": source_url,
             "image_url": image_url,
             "page_url": page_url,
-            "title": str(cover.get("title") or source_name).strip()[:600],
+            "title": str(cover.get("title") or cover.get("issue_title") or source_name).strip()[:600],
+            "publication": publication or source_name,
+            "cover_id": cover_id,
+            "category": category,
+            "temporal_class": _normalize_temporal_class(
+                cover.get("temporal_class") or source.get("temporal_class")
+            ),
+            "curation_tier": _normalize_curation_tier(
+                cover.get("curation_tier") or source.get("curation_tier")
+            ),
+            "perceptual_hash": _normalize_perceptual_hash(cover.get("perceptual_hash")),
+            "provider": _normalize_optional_text(
+                cover.get("provider") or source.get("provider"),
+                field_name="provider",
+                max_chars=64,
+            ).lower(),
+            "provider_record_id": _normalize_optional_text(
+                cover.get("provider_record_id")
+                or cover.get("source_record_id")
+                or source.get("provider_record_id")
+                or source.get("source_record_id"),
+                field_name="provider_record_id",
+                max_chars=512,
+            ),
+            "issue": _normalize_optional_text(
+                cover.get("issue") or source.get("issue"),
+                field_name="issue",
+                max_chars=512,
+            ),
+            "issue_date": _normalize_optional_text(
+                cover.get("issue_date") or source.get("issue_date"),
+                field_name="issue_date",
+                max_chars=128,
+            ),
+            "year": _normalize_optional_year(cover.get("year", source.get("year"))),
+            "adult": adult,
+            "rights": _normalize_optional_text(
+                cover.get("rights") or source.get("rights"),
+                field_name="rights",
+                max_chars=4096,
+            ),
+            "rights_uri": _normalize_public_url(
+                cover.get("rights_uri") or source.get("rights_uri")
+            ),
+            "attribution": _normalize_optional_text(
+                cover.get("attribution") or source.get("attribution"),
+                field_name="attribution",
+                max_chars=4096,
+            ),
+            "personal_use_only": _normalize_optional_bool(
+                cover.get("personal_use_only", source.get("personal_use_only")),
+                field_name="personal_use_only",
+                default=False,
+            ),
         }
 
-    def choose_selection(self, profile, ready, fit_mode, rotation_mode="random"):
+    def choose_selection(
+        self,
+        profile,
+        ready,
+        fit_mode,
+        rotation_mode="random",
+        *,
+        selection_hold_hours=None,
+        hold_hours=None,
+        historical_percent=80,
+        now=None,
+    ):
         if not ready:
             raise RuntimeError("Magazine presentation bank has no fresh cover records")
+        hold_seconds = _selection_hold_seconds(
+            selection_hold_hours
+            if selection_hold_hours is not None
+            else hold_hours
+        )
+        now_value = _coerce_datetime(now) or datetime.now(timezone.utc)
+        current = profile.get("current_selection")
+        ready_keys = {record.get("record_key") for record in ready}
+        if self._selection_hold_active(
+            profile,
+            current,
+            ready_keys,
+            hold_seconds=hold_seconds,
+            now=now_value,
+        ):
+            return deepcopy(current)
+
+        slot_percent = _historical_percent(historical_percent)
+        count = 3 if str(fit_mode).lower() in {"triptych", "three_covers", "gallery"} else 1
+        comprehensive_triptych = count == 3 and hold_seconds > 0
+        if comprehensive_triptych and len(ready) < 3:
+            count = 1
+        strict_editorial = comprehensive_triptych and len(ready) >= 3
+        working = deepcopy(profile)
+        candidates = self._unseen_ready_records(
+            profile,
+            ready,
+            block_pending=False,
+        )
+        reset_seen = False
+        epoch_bridge = None
+        tail_candidates = list(candidates)
+        tail_has_editorial_group = bool(
+            _assemble_available_editorial_groups(
+                tail_candidates,
+                max_groups=1,
+            )
+        )
+        needs_new_epoch = not candidates or (
+            strict_editorial and not tail_has_editorial_group
+        )
+        if needs_new_epoch:
+            candidates = self._new_epoch_candidates(profile, ready, fit_mode=fit_mode)
+            reset_seen = True
+            working["selection_time_bag"] = []
+            working["selection_time_bag_cursor"] = 0
+            working["selection_time_bag_historical_percent"] = None
+            working["category_bags"] = {
+                category: [] for category in MAGAZINE_CATEGORIES
+            }
+            if strict_editorial and tail_candidates:
+                epoch_bridge = _assemble_epoch_bridge_editorial_group(
+                    tail_candidates,
+                    candidates,
+                )
+        if epoch_bridge:
+            chosen = epoch_bridge
+            working["selection_time_bag"] = [
+                record["cover_id"] for record in chosen
+            ]
+            working["selection_time_bag_cursor"] = len(chosen)
+            working["selection_time_bag_historical_percent"] = slot_percent
+        else:
+            try:
+                chosen = self._take_from_selection_time_bag(
+                    working,
+                    candidates,
+                    ready=ready,
+                    count=count,
+                    rotation_mode=rotation_mode,
+                    historical_percent=slot_percent,
+                    strict_editorial=strict_editorial,
+                )
+            except RuntimeError:
+                fallback = self._committed_compliant_current(profile, ready)
+                if strict_editorial and fallback is not None:
+                    return fallback
+                raise
+        if not chosen:
+            raise RuntimeError("Magazine presentation bank could not choose a cover")
+        if strict_editorial and not _triptych_group_is_compliant(chosen):
+            fallback = self._committed_compliant_current(profile, ready)
+            if fallback is not None:
+                return fallback
+            raise RuntimeError(
+                "Magazine presentation bank lacks a compliant editorial triptych"
+            )
+        return {
+            "record_keys": [record["record_key"] for record in chosen],
+            "request_id": None,
+            "date_key": self.date_key,
+            "layout": "triptych" if len(chosen) > 1 else "single",
+            "reset_seen": reset_seen,
+            "rotation_state": self._rotation_state(working),
+        }
+
+    def _committed_compliant_current(self, profile, ready):
+        current = profile.get("current_selection")
+        if not self._selection_matches_committed_group(profile, current):
+            return None
+        by_key = {record.get("record_key"): record for record in ready}
+        records = [
+            by_key.get(record_key)
+            for record_key in current.get("record_keys") or []
+        ]
+        if any(record is None for record in records) or not _triptych_group_is_compliant(
+            records
+        ):
+            return None
+        return deepcopy(current)
+
+    def _selection_hold_active(
+        self,
+        profile,
+        selection,
+        ready_keys,
+        *,
+        hold_seconds,
+        now,
+    ):
+        if hold_seconds <= 0 or not isinstance(selection, dict):
+            return False
+        record_keys = selection.get("record_keys")
+        if not isinstance(record_keys, list) or not record_keys:
+            return False
+        if not set(record_keys).issubset(ready_keys):
+            return False
+        committed_keys = profile.get("committed_selection_record_keys") or []
+        if list(record_keys) != list(committed_keys):
+            return False
+        committed_at = _coerce_datetime(profile.get("current_selection_committed_at"))
+        if committed_at is None:
+            return False
+        return (now - committed_at).total_seconds() < hold_seconds
+
+    def unseen_ready_count(self, profile, ready):
+        return len(self._unseen_ready_records(profile, ready))
+
+    def needs_unseen_refill(
+        self,
+        profile,
+        ready,
+        *,
+        threshold=UNSEEN_REFILL_THRESHOLD,
+    ):
+        try:
+            minimum = max(0, int(threshold))
+        except (TypeError, ValueError):
+            minimum = UNSEEN_REFILL_THRESHOLD
+        return self.unseen_ready_count(profile, ready) < minimum
+
+    def _unseen_ready_records(self, profile, ready, *, block_pending=True):
         current_keys = set((profile.get("current_selection") or {}).get("record_keys", []))
-        pending_keys = set((profile.get("pending_selection") or {}).get("record_keys", []))
+        pending_keys = (
+            set((profile.get("pending_selection") or {}).get("record_keys", []))
+            if block_pending
+            else set()
+        )
         blocked_keys = current_keys | pending_keys
         blocked_content_ids = {
             _record_content_id(record)
@@ -682,46 +1071,329 @@ class MagazinePresentationBank:
             if isinstance(bucket, dict)
             for value in bucket.get("seen_content_ids", [])
         }
-        candidates = _unique_content_records(
+        epoch_seen_cover_ids = set(profile.get("epoch_seen_cover_ids") or [])
+        epoch_guard_cover_ids = set(profile.get("epoch_guard_cover_ids") or [])
+        return _unique_content_records(
             record
             for record in ready
-            if record["record_key"] not in blocked_keys
+            if record.get("record_key") not in blocked_keys
             and _record_content_id(record) not in blocked_content_ids
             and _record_content_id(record) not in seen_content_ids
+            and record.get("cover_id") not in epoch_seen_cover_ids
+            and record.get("cover_id") not in epoch_guard_cover_ids
         )
-        reset_seen = False
-        if not candidates:
-            candidates = _unique_content_records(
-                record
-                for record in ready
-                if record["record_key"] not in blocked_keys
-                and _record_content_id(record) not in blocked_content_ids
+
+    def _new_epoch_candidates(self, profile, ready, *, fit_mode):
+        del fit_mode
+        current_keys = set((profile.get("current_selection") or {}).get("record_keys", []))
+        unique_ready = _unique_content_records(ready)
+        recent = list(profile.get("recent_cover_ids") or [])[-EPOCH_RECENT_GUARD_SIZE:]
+        guard = set(recent)
+        return [
+            record
+            for record in unique_ready
+            if record.get("record_key") not in current_keys
+            and record.get("cover_id") not in guard
+        ]
+
+    def _take_from_selection_time_bag(
+        self,
+        profile,
+        candidates,
+        *,
+        ready,
+        count,
+        rotation_mode,
+        historical_percent,
+        strict_editorial,
+    ):
+        candidate_by_cover_id = {
+            record["cover_id"]: record
+            for record in candidates
+            if record.get("cover_id")
+        }
+        ready_by_cover_id = {
+            record["cover_id"]: record
+            for record in ready
+            if record.get("cover_id")
+        }
+        bag = [
+            cover_id
+            for cover_id in profile.get("selection_time_bag", [])
+            if cover_id in ready_by_cover_id
+        ]
+        try:
+            cursor = max(0, int(profile.get("selection_time_bag_cursor") or 0))
+        except (TypeError, ValueError):
+            cursor = 0
+        selected_ids = bag[cursor : cursor + count]
+        bag_is_reusable = (
+            bag == profile.get("selection_time_bag")
+            and profile.get("selection_time_bag_historical_percent") == historical_percent
+            and len(selected_ids) == min(count, len(candidate_by_cover_id))
+            and all(cover_id in candidate_by_cover_id for cover_id in selected_ids)
+            and (
+                not strict_editorial
+                or _triptych_bag_is_compliant(bag, ready_by_cover_id)
             )
-            reset_seen = bool(candidates)
-        if not candidates:
-            candidates = _unique_content_records(ready)
-            reset_seen = bool(seen_content_ids)
-        if str(rotation_mode).strip().lower() not in {"rotate", "sequential", "single"}:
-            random.shuffle(candidates)
-        count = 3 if str(fit_mode).lower() in {"triptych", "three_covers", "gallery"} else 1
-        chosen = candidates[:count]
-        if not chosen:
-            raise RuntimeError("Magazine presentation bank could not choose a cover")
+        )
+        if not bag_is_reusable:
+            bag = self._build_selection_time_bag(
+                profile,
+                candidates,
+                rotation_mode=rotation_mode,
+                historical_percent=historical_percent,
+                strict_editorial=strict_editorial,
+            )
+            cursor = 0
+        selected_ids = bag[cursor : cursor + count]
+        profile["selection_time_bag"] = list(bag)
+        profile["selection_time_bag_cursor"] = cursor + len(selected_ids)
+        profile["selection_time_bag_historical_percent"] = historical_percent
+        return [ready_by_cover_id[cover_id] for cover_id in selected_ids]
+
+    def _build_selection_time_bag(
+        self,
+        profile,
+        candidates,
+        *,
+        rotation_mode,
+        historical_percent,
+        strict_editorial,
+    ):
+        ordered = self._category_bag_order(profile, candidates, rotation_mode=rotation_mode)
+        bag_size = min(SELECTION_TIME_BAG_SIZE, len(ordered))
+        if strict_editorial:
+            bag_size -= bag_size % 3
+            if bag_size < 3:
+                raise RuntimeError(
+                    "Magazine presentation bank lacks a compliant editorial triptych"
+                )
+            if bag_size < SELECTION_TIME_BAG_SIZE:
+                assembled = _assemble_available_editorial_groups(
+                    ordered,
+                    max_groups=bag_size // 3,
+                )
+                if not assembled:
+                    raise RuntimeError(
+                        "Magazine presentation bank lacks a compliant editorial triptych"
+                    )
+                bag = [record["cover_id"] for record in assembled]
+                selected_cover_ids = set(bag)
+                for category in MAGAZINE_CATEGORIES:
+                    profile["category_bags"][category] = [
+                        cover_id
+                        for cover_id in profile["category_bags"].get(category, [])
+                        if cover_id not in selected_cover_ids
+                    ]
+                return bag
+        selected = []
+        selected_ids = set()
+
+        def take(temporal_class, curation_tier, target):
+            matches = [
+                record
+                for record in ordered
+                if record["cover_id"] not in selected_ids
+                and record.get("temporal_class") == temporal_class
+                and record.get("curation_tier") == curation_tier
+            ]
+            for record in matches[:target]:
+                selected.append(record)
+                selected_ids.add(record["cover_id"])
+
+        historical_target = _slot_target(bag_size, historical_percent)
+        latest_target = bag_size - historical_target
+        group_count = bag_size // 3
+        exact_allocation = _exact_editorial_temporal_allocation(
+            ordered,
+            historical_target=historical_target,
+            latest_target=latest_target,
+            group_count=group_count,
+            historical_percent=historical_percent,
+        )
+        if exact_allocation is None:
+            historical_featured = min(
+                historical_target,
+                _slot_target(group_count, historical_percent),
+            )
+            latest_featured = min(
+                latest_target,
+                group_count - historical_featured,
+            )
+        else:
+            historical_featured, latest_featured = exact_allocation
+        take("historical", "featured", historical_featured)
+        take("historical", "discovery", historical_target - historical_featured)
+        take("latest", "featured", latest_featured)
+        take("latest", "discovery", latest_target - latest_featured)
+
+        for temporal_class, target in (
+            ("historical", historical_target),
+            ("latest", latest_target),
+        ):
+            current = sum(record.get("temporal_class") == temporal_class for record in selected)
+            for record in ordered:
+                if current >= target:
+                    break
+                if record["cover_id"] in selected_ids or record.get("temporal_class") != temporal_class:
+                    continue
+                selected.append(record)
+                selected_ids.add(record["cover_id"])
+                current += 1
+        for record in ordered:
+            if len(selected) >= bag_size:
+                break
+            if record["cover_id"] not in selected_ids:
+                selected.append(record)
+                selected_ids.add(record["cover_id"])
+
+        selected = selected[:bag_size]
+        assembled = _assemble_editorial_groups(selected)
+        if strict_editorial and not _triptych_bag_is_compliant(
+            [record["cover_id"] for record in assembled],
+            {record["cover_id"]: record for record in assembled},
+        ):
+            assembled = _assemble_available_editorial_groups(
+                ordered,
+                max_groups=bag_size // 3,
+            )
+            if not assembled:
+                raise RuntimeError(
+                    "Magazine presentation bank lacks compliant editorial triptychs"
+                )
+        bag = [record["cover_id"] for record in assembled]
+        selected_cover_ids = set(bag)
+        for category in MAGAZINE_CATEGORIES:
+            profile["category_bags"][category] = [
+                cover_id
+                for cover_id in profile["category_bags"].get(category, [])
+                if cover_id not in selected_cover_ids
+            ]
+        return bag
+
+    @staticmethod
+    def _rotation_state(profile):
         return {
-            "record_keys": [record["record_key"] for record in chosen],
-            "request_id": None,
-            "date_key": self.date_key,
-            "layout": "triptych" if len(chosen) > 1 else "single",
-            "reset_seen": reset_seen,
+            "category_bags": deepcopy(profile.get("category_bags") or {}),
+            "selection_time_bag": list(profile.get("selection_time_bag") or []),
+            "selection_time_bag_cursor": int(
+                profile.get("selection_time_bag_cursor") or 0
+            ),
+            "selection_time_bag_historical_percent": profile.get(
+                "selection_time_bag_historical_percent"
+            ),
         }
 
-    def ensure_current(self, document, profile, ready, fit_mode, rotation_mode="random"):
-        valid_keys = {record["record_key"] for record in profile["records"]}
+    def _category_bag_order(self, profile, candidates, *, rotation_mode):
+        candidate_by_cover_id = {record["cover_id"]: record for record in candidates}
+        random_mode = str(rotation_mode).strip().lower() not in {
+            "rotate",
+            "sequential",
+            "single",
+        }
+        bags = {}
+        for category in MAGAZINE_CATEGORIES:
+            existing = [
+                cover_id
+                for cover_id in profile.get("category_bags", {}).get(category, [])
+                if cover_id in candidate_by_cover_id
+                and candidate_by_cover_id[cover_id].get("category") == category
+            ]
+            newcomers = [
+                record["cover_id"]
+                for record in candidates
+                if record.get("category") == category
+                and record["cover_id"] not in set(existing)
+            ]
+            if random_mode:
+                random.shuffle(newcomers)
+            bags[category] = existing + newcomers
+        profile["category_bags"] = bags
+
+        queues = {category: list(values) for category, values in bags.items()}
+        ordered = []
+        while any(queues.values()):
+            for category in MAGAZINE_CATEGORIES:
+                if queues[category]:
+                    ordered.append(candidate_by_cover_id[queues[category].pop(0)])
+        return ordered
+
+    def ensure_current(
+        self,
+        document,
+        profile,
+        ready,
+        fit_mode,
+        rotation_mode="random",
+        *,
+        selection_hold_hours=None,
+        hold_hours=None,
+        historical_percent=80,
+        now=None,
+    ):
+        records_by_key = {
+            record["record_key"]: record for record in profile["records"]
+        }
+        valid_keys = set(records_by_key)
         current = profile.get("current_selection")
+        replace_uncommitted_current = False
         if self._selection_is_valid(current, valid_keys):
-            return current
-        current = self.choose_selection(profile, ready, fit_mode, rotation_mode)
+            current_records = [
+                records_by_key[record_key]
+                for record_key in current["record_keys"]
+            ]
+            if all(
+                self.record_provenance(record, now=now) != "stale_cache"
+                for record in current_records
+            ):
+                hold_seconds = _selection_hold_seconds(
+                    selection_hold_hours
+                    if selection_hold_hours is not None
+                    else hold_hours
+                )
+                triptych_requested = str(fit_mode).lower() in {
+                    "triptych",
+                    "three_covers",
+                    "gallery",
+                }
+                current_is_editorial = (
+                    current.get("layout") == "triptych"
+                    and _triptych_group_is_compliant(current_records)
+                )
+                ready_has_editorial_group = bool(
+                    _assemble_available_editorial_groups(
+                        _unique_content_records(ready),
+                        max_groups=1,
+                    )
+                )
+                replace_uncommitted_current = (
+                    triptych_requested
+                    and hold_seconds > 0
+                    and not self._selection_matches_committed_group(profile, current)
+                    and not isinstance(profile.get("pending_selection"), dict)
+                    and not current_is_editorial
+                    and ready_has_editorial_group
+                )
+                if not replace_uncommitted_current:
+                    return current
+        selection_profile = profile
+        if replace_uncommitted_current:
+            selection_profile = deepcopy(profile)
+            selection_profile["current_selection"] = None
+        current = self.choose_selection(
+            selection_profile,
+            ready,
+            fit_mode,
+            rotation_mode,
+            selection_hold_hours=selection_hold_hours,
+            hold_hours=hold_hours,
+            historical_percent=historical_percent,
+            now=now,
+        )
         profile["current_selection"] = current
+        profile["current_selection_committed_at"] = None
+        profile["committed_selection_record_keys"] = []
         self.save(document)
         return current
 
@@ -742,12 +1414,8 @@ class MagazinePresentationBank:
         return selected
 
     def apply_trusted_origin(self, document, profile, request):
-        if profile["last_applied_origin_commit_id"] == request.origin_display_commit_id:
-            return None
-        committed = self._commit_selection(profile, profile.get("current_selection"), request.requested_at)
-        profile["last_applied_origin_commit_id"] = request.origin_display_commit_id
-        self.save(document)
-        return committed
+        del document, profile, request
+        return None
 
     def pending_for_request(self, profile, request_id):
         pending = profile.get("pending_selection")
@@ -764,6 +1432,7 @@ class MagazinePresentationBank:
             "date_key": selection["date_key"],
             "layout": selection["layout"],
             "reset_seen": bool(selection.get("reset_seen")),
+            "rotation_state": deepcopy(selection.get("rotation_state")),
         }
         profile["pending_selection"] = pending
         self.save(document)
@@ -784,23 +1453,67 @@ class MagazinePresentationBank:
             now=receipt.committed_at,
         )
         records = [record for record, _image in selected]
-        _commit_records(profile, records, pending, receipt.committed_at)
-        profile["current_selection"] = {
-            "record_keys": list(pending["record_keys"]),
-            "request_id": receipt.request_id,
-            "date_key": pending["date_key"],
-            "layout": pending["layout"],
-            "reset_seen": False,
-        }
+        committed = None
+        matches_committed = self._selection_matches_committed_group(profile, pending)
+        if not matches_committed:
+            self._apply_rotation_state(profile, pending)
+            _commit_records(profile, records, pending, receipt.committed_at)
+            self._set_committed_group(
+                profile,
+                pending,
+                receipt.committed_at,
+            )
+            committed = records
+        profile["current_selection"] = _committed_selection(
+            pending,
+            request_id=receipt.request_id,
+        )
         profile["pending_selection"] = None
         profile["last_applied_request_id"] = receipt.request_id
         self.save(document)
-        return records
+        return committed
+
+    @staticmethod
+    def _selection_matches_committed_group(profile, selection):
+        if not isinstance(selection, dict):
+            return False
+        committed_at = _coerce_datetime(profile.get("current_selection_committed_at"))
+        return committed_at is not None and list(selection.get("record_keys") or []) == list(
+            profile.get("committed_selection_record_keys") or []
+        )
+
+    @staticmethod
+    def _apply_rotation_state(profile, selection):
+        if not isinstance(selection, dict):
+            return
+        state = selection.get("rotation_state")
+        if not _rotation_state_is_valid(state):
+            return
+        profile["category_bags"] = deepcopy(state["category_bags"])
+        profile["selection_time_bag"] = list(state["selection_time_bag"])
+        profile["selection_time_bag_cursor"] = state["selection_time_bag_cursor"]
+        profile["selection_time_bag_historical_percent"] = state[
+            "selection_time_bag_historical_percent"
+        ]
+
+    @staticmethod
+    def _set_committed_group(profile, selection, committed_at):
+        if not isinstance(selection, dict):
+            return
+        timestamp = _coerce_datetime(committed_at)
+        if timestamp is None:
+            raise RuntimeError("Magazine display receipt timestamp is invalid")
+        profile["current_selection_committed_at"] = timestamp.isoformat()
+        profile["committed_selection_record_keys"] = list(
+            selection.get("record_keys") or []
+        )
 
     def record_provenance(self, record, *, now=None):
         now = _coerce_datetime(now) or datetime.now(timezone.utc)
         fetched_at = _coerce_datetime(record.get("fetched_at"))
-        if fetched_at is None or (now - fetched_at).total_seconds() > COVER_FRESH_SECONDS:
+        if fetched_at is None or (
+            now - fetched_at
+        ).total_seconds() > _record_fresh_seconds(record):
             return "stale_cache"
         return "fresh_cache"
 
@@ -821,10 +1534,18 @@ class MagazinePresentationBank:
         payload = self.media.get_bytes(media_key, suffix=".png")
         if payload is None or not payload or len(payload) > MEDIA_MAX_OBJECT_BYTES:
             raise RuntimeError("Magazine cover media is unavailable")
+        content_hash = record.get("content_hash")
+        if not _valid_hash(content_hash):
+            raise RuntimeError("Magazine cover media content hash is missing")
+        if sha256(payload).hexdigest() != content_hash:
+            raise RuntimeError("Magazine cover media payload hash failed integrity validation")
         try:
             source = safe_open_image(payload, limits=MEDIA_IMAGE_LIMITS)
             self._validate_media_dimensions(source.size)
-            return self._normalize_media_image(source)
+            normalized = self._normalize_media_image(source)
+            if normalized.size != (record.get("width"), record.get("height")):
+                raise RuntimeError("Magazine cover media dimensions do not match metadata")
+            return normalized
         except ImageLimitError as exc:
             raise RuntimeError(
                 "Magazine cover media dimensions or safety limits were exceeded"
@@ -887,6 +1608,16 @@ class MagazinePresentationBank:
             "library_pool_key": None,
             "library_scan_source_ids": [],
             "library_scan_started_at": None,
+            "category_bags": {category: [] for category in MAGAZINE_CATEGORIES},
+            "selection_time_bag": [],
+            "selection_time_bag_cursor": 0,
+            "selection_time_bag_historical_percent": None,
+            "selection_epoch": 0,
+            "epoch_seen_cover_ids": [],
+            "epoch_guard_cover_ids": [],
+            "recent_cover_ids": [],
+            "current_selection_committed_at": None,
+            "committed_selection_record_keys": [],
             "last_used_at": _utc_now(),
         }
 
@@ -908,21 +1639,80 @@ class MagazinePresentationBank:
         status = str(profile.get("last_provider_status") or "").strip().lower()
         profile["last_provider_status"] = status if status in {"success", "empty", "error"} else None
         normalized_records = []
+        normalized_record_indexes = {}
+        record_key_aliases = {}
+        identity_to_cover_id = {}
         for record in profile.get("records") or []:
             if self._valid_record(record):
                 normalized = {**record, **self.normalize_cover(record, record)}
-                if not _valid_hash(normalized.get("content_hash")):
+                old_record_key = record["record_key"]
+                if not str(record.get("cover_id") or "").strip():
+                    normalized["cover_id"] = (
+                        f"{_LEGACY_COVER_ID_PREFIX}{old_record_key}"
+                    )
+                stable_record_key = _record_key_for_cover_id(normalized["cover_id"])
+                normalized["record_key"] = stable_record_key
+                record_key_aliases[old_record_key] = stable_record_key
+                record_key_aliases[stable_record_key] = stable_record_key
+                identity_to_cover_id[old_record_key] = normalized["cover_id"]
+                identity_to_cover_id[stable_record_key] = normalized["cover_id"]
+                payload = None
+                content_hash = normalized.get("content_hash")
+                if (
+                    not _valid_hash(content_hash)
+                    or not _normalize_perceptual_hash(
+                        normalized.get("perceptual_hash")
+                    )
+                ):
                     try:
                         payload = self.media.get_bytes(normalized["media_key"], suffix=".png")
                     except RuntimeError:
                         payload = None
-                    if payload:
-                        normalized["content_hash"] = sha256(payload).hexdigest()
-                normalized_records.append(normalized)
+                if payload:
+                    actual_hash = sha256(payload).hexdigest()
+                    expected_hash = (
+                        content_hash if _valid_hash(content_hash) else actual_hash
+                    )
+                    try:
+                        media_image = safe_open_image(payload, limits=MEDIA_IMAGE_LIMITS)
+                        normalized_image = self._normalize_media_image(media_image)
+                    except Exception:
+                        normalized_image = None
+                    if actual_hash == expected_hash and normalized_image is not None:
+                        normalized["content_hash"] = actual_hash
+                        normalized["width"] = normalized_image.width
+                        normalized["height"] = normalized_image.height
+                        if not _normalize_perceptual_hash(
+                            normalized.get("perceptual_hash")
+                        ):
+                            normalized["perceptual_hash"] = _perceptual_hash(
+                                normalized_image
+                            )
+                existing_index = normalized_record_indexes.get(stable_record_key)
+                if existing_index is None:
+                    normalized_record_indexes[stable_record_key] = len(
+                        normalized_records
+                    )
+                    normalized_records.append(normalized)
+                else:
+                    existing = normalized_records[existing_index]
+                    existing_at = _coerce_datetime(existing.get("fetched_at"))
+                    incoming_at = _coerce_datetime(normalized.get("fetched_at"))
+                    if existing_at is None or (
+                        incoming_at is not None and incoming_at >= existing_at
+                    ):
+                        normalized_records[existing_index] = normalized
         profile["records"] = normalized_records[-MAX_RECORDS_PER_PROFILE:]
+        for name in ("current_selection", "pending_selection"):
+            profile[name] = _migrate_selection_identity(
+                profile.get(name),
+                record_key_aliases,
+                identity_to_cover_id,
+            )
         profile["date_buckets"] = _migrate_seen_content_history(
             profile["date_buckets"],
             profile["records"],
+            record_key_aliases=record_key_aliases,
         )
         profile["refill_in_progress"] = profile.get("refill_in_progress") is True
         try:
@@ -939,11 +1729,86 @@ class MagazinePresentationBank:
         ]
         if _coerce_datetime(profile.get("library_scan_started_at")) is None:
             profile["library_scan_started_at"] = None
+        raw_category_bags = profile.get("category_bags")
+        if not isinstance(raw_category_bags, dict):
+            raw_category_bags = {}
+        profile["category_bags"] = {
+            category: _bounded_unique_text_list(
+                _migrate_bag_identities(
+                    raw_category_bags.get(category),
+                    identity_to_cover_id,
+                ),
+                limit=MAX_RECORDS_PER_PROFILE,
+                text_limit=300,
+            )
+            for category in MAGAZINE_CATEGORIES
+        }
+        profile["selection_time_bag"] = _bounded_unique_text_list(
+            _migrate_bag_identities(
+                profile.get("selection_time_bag"),
+                identity_to_cover_id,
+            ),
+            limit=SELECTION_TIME_BAG_SIZE,
+            text_limit=300,
+        )
+        try:
+            bag_cursor = int(profile.get("selection_time_bag_cursor") or 0)
+        except (TypeError, ValueError):
+            bag_cursor = 0
+        profile["selection_time_bag_cursor"] = min(
+            max(0, bag_cursor),
+            len(profile["selection_time_bag"]),
+        )
+        bag_percent = profile.get("selection_time_bag_historical_percent")
+        if bag_percent is None:
+            profile["selection_time_bag_historical_percent"] = None
+        else:
+            profile["selection_time_bag_historical_percent"] = _historical_percent(
+                bag_percent
+            )
+        try:
+            profile["selection_epoch"] = max(0, int(profile.get("selection_epoch") or 0))
+        except (TypeError, ValueError):
+            profile["selection_epoch"] = 0
+        for key, limit in (
+            ("epoch_seen_cover_ids", MAX_SEEN_SOURCES),
+            ("epoch_guard_cover_ids", EPOCH_RECENT_GUARD_SIZE),
+            ("recent_cover_ids", EPOCH_RECENT_GUARD_SIZE),
+        ):
+            profile[key] = _bounded_unique_text_list(
+                profile.get(key),
+                limit=limit,
+                text_limit=300,
+            )
+        committed_at = _coerce_datetime(profile.get("current_selection_committed_at"))
+        profile["current_selection_committed_at"] = (
+            committed_at.isoformat() if committed_at is not None else None
+        )
+        committed_keys = [
+            record_key_aliases.get(value, value)
+            for value in _bounded_unique_text_list(
+                profile.get("committed_selection_record_keys"),
+                limit=3,
+                text_limit=64,
+            )
+            if _valid_hash(value)
+        ]
+        profile["committed_selection_record_keys"] = [
+            value
+            for value in dict.fromkeys(committed_keys)
+            if _valid_hash(value)
+        ]
         valid_keys = {record["record_key"] for record in profile["records"]}
         for name in ("current_selection", "pending_selection"):
             selection = profile.get(name)
             if selection is not None and not self._selection_is_valid(selection, valid_keys):
                 raise RuntimeError("Magazine protected selection metadata is invalid")
+        if committed_at is not None and not profile["committed_selection_record_keys"]:
+            current = profile.get("current_selection")
+            if isinstance(current, dict):
+                profile["committed_selection_record_keys"] = list(
+                    current.get("record_keys") or []
+                )
         return profile
 
     def _adopt_compatible_instance_profile(self, document):
@@ -957,7 +1822,6 @@ class MagazinePresentationBank:
         if not (
             isinstance(previous, dict)
             and previous.get("instance_uuid") == self.instance_uuid
-            and previous.get("settings_key") == self.profile_settings_key
             and self.fingerprint not in profiles
         ):
             return None
@@ -985,18 +1849,14 @@ class MagazinePresentationBank:
         if not structure:
             return False
         try:
-            normalized = self.normalize_cover(record, record)
+            self.normalize_cover(record, record)
             self._validate_media_dimensions((record["width"], record["height"]))
         except RuntimeError:
             return False
         content_hash = record.get("content_hash")
         if content_hash is not None and not _valid_hash(content_hash):
             return False
-        expected_media_key = sha256(normalized["image_url"].encode("utf-8")).hexdigest()
-        expected_record_key = sha256(
-            f"{normalized['source_id']}\0{normalized['image_url']}".encode("utf-8")
-        ).hexdigest()
-        return record["media_key"] == expected_media_key and record["record_key"] == expected_record_key
+        return True
 
     def _selection_is_valid(self, selection, valid_keys):
         if not isinstance(selection, dict):
@@ -1011,6 +1871,9 @@ class MagazinePresentationBank:
             return False
         request_id = selection.get("request_id")
         if request_id is not None and not _valid_request_id(request_id):
+            return False
+        rotation_state = selection.get("rotation_state")
+        if rotation_state is not None and not _rotation_state_is_valid(rotation_state):
             return False
         return isinstance(selection.get("date_key"), str) and selection.get("layout") in {"single", "triptych"}
 
@@ -1120,6 +1983,17 @@ def _commit_records(profile, records, selection, committed_at):
             if isinstance(candidate, dict):
                 candidate["seen_source_ids"] = []
                 candidate["seen_content_ids"] = []
+        try:
+            profile["selection_epoch"] = max(
+                0,
+                int(profile.get("selection_epoch") or 0),
+            ) + 1
+        except (TypeError, ValueError):
+            profile["selection_epoch"] = 1
+        profile["epoch_guard_cover_ids"] = list(
+            profile.get("recent_cover_ids") or []
+        )[-EPOCH_RECENT_GUARD_SIZE:]
+        profile["epoch_seen_cover_ids"] = []
     seen = [str(value) for value in bucket.get("seen_source_ids", []) if value]
     seen_content = [
         str(value)
@@ -1133,6 +2007,19 @@ def _commit_records(profile, records, selection, committed_at):
         content_id = _record_content_id(record)
         if content_id not in seen_content:
             seen_content.append(content_id)
+    epoch_seen = list(profile.get("epoch_seen_cover_ids") or [])
+    recent = list(profile.get("recent_cover_ids") or [])
+    for record in records:
+        cover_id = str(record.get("cover_id") or "").strip()
+        if not cover_id:
+            continue
+        if cover_id not in epoch_seen:
+            epoch_seen.append(cover_id)
+        if cover_id in recent:
+            recent.remove(cover_id)
+        recent.append(cover_id)
+    profile["epoch_seen_cover_ids"] = epoch_seen[-MAX_SEEN_SOURCES:]
+    profile["recent_cover_ids"] = recent[-EPOCH_RECENT_GUARD_SIZE:]
     bucket["seen_source_ids"] = seen[-MAX_SEEN_SOURCES:]
     bucket["seen_content_ids"] = seen_content[-MAX_SEEN_SOURCES:]
     existing_at = _coerce_datetime(bucket.get("committed_at"))
@@ -1170,7 +2057,7 @@ def validate_state_shape(payload):
                 raise RuntimeError("Magazine record capacity exceeds the limit")
             if len(profile) > len(_PROFILE_KEYS):
                 raise RuntimeError("Magazine profile metadata exceeds the field limit")
-            if not all(isinstance(record, dict) and len(record) <= 24 for record in records):
+            if not all(isinstance(record, dict) and len(record) <= 36 for record in records):
                 raise RuntimeError("Magazine record metadata exceeds the field limit")
             for name in ("current_selection", "pending_selection"):
                 selection = profile.get(name)
@@ -1185,6 +2072,11 @@ def validate_state_shape(payload):
                     and all(_valid_hash(key) for key in keys)
                 ):
                     raise RuntimeError("Magazine selection capacity exceeds the limit")
+                rotation_state = selection.get("rotation_state")
+                if rotation_state is not None and not _rotation_state_is_valid(
+                    rotation_state
+                ):
+                    raise RuntimeError("Magazine selection rotation state is invalid")
             _validate_date_buckets(profile.get("date_buckets"))
     mappings = payload.get("instance_profiles")
     if mappings is not None and not isinstance(mappings, dict):
@@ -1232,14 +2124,80 @@ def _valid_content_id(value):
     return separator == ":" and prefix in {"content", "record"} and _valid_hash(digest)
 
 
-def _migrate_seen_content_history(buckets, records):
+def _migrate_bag_identities(values, identity_to_cover_id):
+    if not isinstance(values, list):
+        return values
+    migrated = []
+    for value in values:
+        replacement = (
+            identity_to_cover_id.get(value, value)
+            if isinstance(value, str)
+            else value
+        )
+        if replacement not in migrated:
+            migrated.append(replacement)
+    return migrated
+
+
+def _migrate_selection_identity(
+    selection,
+    record_key_aliases,
+    identity_to_cover_id,
+):
+    if not isinstance(selection, dict):
+        return selection
+    migrated = deepcopy(selection)
+    record_keys = migrated.get("record_keys")
+    if isinstance(record_keys, list):
+        migrated_keys = []
+        for value in record_keys:
+            replacement = (
+                record_key_aliases.get(value, value)
+                if isinstance(value, str)
+                else value
+            )
+            if replacement not in migrated_keys:
+                migrated_keys.append(replacement)
+        migrated["record_keys"] = migrated_keys
+    rotation_state = migrated.get("rotation_state")
+    if isinstance(rotation_state, dict):
+        rotation_state = deepcopy(rotation_state)
+        category_bags = rotation_state.get("category_bags")
+        if isinstance(category_bags, dict):
+            rotation_state["category_bags"] = {
+                category: _migrate_bag_identities(values, identity_to_cover_id)
+                for category, values in category_bags.items()
+            }
+        rotation_state["selection_time_bag"] = _migrate_bag_identities(
+            rotation_state.get("selection_time_bag"),
+            identity_to_cover_id,
+        )
+        migrated["rotation_state"] = rotation_state
+    return migrated
+
+
+def _migrate_seen_content_history(
+    buckets,
+    records,
+    *,
+    record_key_aliases=None,
+):
     migrated = deepcopy(_bounded_date_buckets(buckets))
+    records_by_key = {
+        record["record_key"]: record
+        for record in records
+        if _valid_hash(record.get("record_key"))
+    }
     upgraded_record_ids = {
         f"record:{record['record_key']}": _record_content_id(record)
         for record in records
         if _valid_hash(record.get("record_key"))
         and _valid_hash(record.get("content_hash"))
     }
+    for old_key, stable_key in (record_key_aliases or {}).items():
+        record = records_by_key.get(stable_key)
+        if record is not None and _valid_hash(record.get("content_hash")):
+            upgraded_record_ids[f"record:{old_key}"] = _record_content_id(record)
     for date_key, bucket in migrated.items():
         if "seen_content_ids" in bucket:
             values = bucket.get("seen_content_ids")
@@ -1298,6 +2256,404 @@ def _bounded_date_buckets(value):
     )
     retained = set(ranked[-MAX_DATE_BUCKETS:])
     return {key: bucket for key, bucket in candidates.items() if key in retained}
+
+
+def _normalize_category(value):
+    normalized = str(value or "").strip().lower()
+    return normalized if normalized in _MAGAZINE_CATEGORY_SET else "general_history"
+
+
+def _normalize_optional_text(value, *, field_name, max_chars):
+    if value is None or value == "":
+        return ""
+    if not isinstance(value, str):
+        raise RuntimeError(f"Magazine {field_name} metadata must be text")
+    normalized = " ".join(value.split())
+    if len(normalized) > max_chars:
+        raise RuntimeError(f"Magazine {field_name} metadata exceeds its length limit")
+    return normalized
+
+
+def _normalize_optional_bool(value, *, field_name, default):
+    if value is None or value == "":
+        return bool(default)
+    if type(value) is not bool:
+        raise RuntimeError(f"Magazine {field_name} metadata must be a boolean")
+    return value
+
+
+def _normalize_optional_year(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if type(value) is not int or not 1000 <= value <= 3000:
+        raise RuntimeError("Magazine year metadata is invalid")
+    return value
+
+
+def _bounded_unique_text_list(value, *, limit, text_limit):
+    if not isinstance(value, list):
+        return []
+    result = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        normalized = item.strip()[:text_limit]
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _assemble_available_editorial_groups(records, *, max_groups):
+    featured = [
+        record for record in records if record.get("curation_tier") == "featured"
+    ]
+    discovery = [
+        record for record in records if record.get("curation_tier") == "discovery"
+    ]
+    groups = []
+    for featured_record in featured:
+        choices = []
+        for first_index, first in enumerate(discovery):
+            for second_index in range(first_index + 1, len(discovery)):
+                second = discovery[second_index]
+                if _triptych_group_is_compliant(
+                    [featured_record, first, second]
+                ):
+                    choices.append((first_index, second_index))
+        if not choices:
+            continue
+        usage = [0] * len(discovery)
+        for first_index, second_index in choices:
+            usage[first_index] += 1
+            usage[second_index] += 1
+        first_index, second_index = max(
+            choices,
+            key=lambda pair: (
+                len(
+                    {
+                        featured_record.get("category"),
+                        discovery[pair[0]].get("category"),
+                        discovery[pair[1]].get("category"),
+                    }
+                ),
+                len(
+                    {
+                        featured_record.get("publication"),
+                        discovery[pair[0]].get("publication"),
+                        discovery[pair[1]].get("publication"),
+                    }
+                ),
+                usage[pair[0]] + usage[pair[1]],
+                -pair[0],
+                -pair[1],
+            ),
+        )
+        first = discovery[first_index]
+        second = discovery[second_index]
+        groups.extend((featured_record, first, second))
+        for index in sorted((first_index, second_index), reverse=True):
+            discovery.pop(index)
+        if len(groups) // 3 >= max_groups:
+            break
+    return groups
+
+
+def _assemble_epoch_bridge_editorial_group(tail_records, epoch_candidates):
+    preferred_cover_ids = {
+        record.get("cover_id")
+        for record in tail_records
+        if isinstance(record, dict) and record.get("cover_id")
+    }
+    candidates = _unique_content_records(epoch_candidates)
+    featured = [
+        record for record in candidates if record.get("curation_tier") == "featured"
+    ]
+    discovery = [
+        record for record in candidates if record.get("curation_tier") == "discovery"
+    ]
+    choices = []
+    for featured_index, featured_record in enumerate(featured):
+        for first_index, first in enumerate(discovery):
+            for second_index in range(first_index + 1, len(discovery)):
+                second = discovery[second_index]
+                group = [featured_record, first, second]
+                if not _triptych_group_is_compliant(group):
+                    continue
+                choices.append(
+                    (
+                        sum(
+                            record.get("cover_id") in preferred_cover_ids
+                            for record in group
+                        ),
+                        len({record.get("category") for record in group}),
+                        len({record.get("publication") for record in group}),
+                        -featured_index,
+                        -first_index,
+                        -second_index,
+                        group,
+                    )
+                )
+    if not choices:
+        return []
+    return max(choices, key=lambda choice: choice[:-1])[-1]
+
+
+def _assemble_editorial_groups(records):
+    featured = [record for record in records if record.get("curation_tier") == "featured"]
+    discovery = [record for record in records if record.get("curation_tier") != "featured"]
+    groups = []
+    group_count = min(5, len(featured))
+    for featured_record in featured[:group_count]:
+        group = [featured_record]
+        for _index in range(2):
+            if not discovery:
+                break
+            used_categories = {record.get("category") for record in group}
+            used_publications = {record.get("publication") for record in group}
+            best_index = min(
+                range(len(discovery)),
+                key=lambda index: (
+                    discovery[index].get("category") in used_categories,
+                    discovery[index].get("publication") in used_publications,
+                    index,
+                ),
+            )
+            group.append(discovery.pop(best_index))
+        groups.extend(group)
+    remaining = featured[group_count:] + discovery
+    groups.extend(remaining)
+    return groups[: len(records)]
+
+
+def _triptych_group_is_compliant(records):
+    if len(records) != 3 or any(not isinstance(record, dict) for record in records):
+        return False
+    tiers = [record.get("curation_tier") for record in records]
+    return (
+        tiers.count("featured") == 1
+        and tiers.count("discovery") == 2
+        and len({record.get("cover_id") for record in records}) == 3
+    )
+
+
+def _triptych_bag_is_compliant(bag, record_by_cover_id):
+    if (
+        not isinstance(bag, list)
+        or not 3 <= len(bag) <= SELECTION_TIME_BAG_SIZE
+        or len(bag) % 3
+    ):
+        return False
+    records = [record_by_cover_id.get(cover_id) for cover_id in bag]
+    if any(record is None for record in records):
+        return False
+    return all(
+        _triptych_group_is_compliant(records[offset : offset + 3])
+        for offset in range(0, len(records), 3)
+    )
+
+
+def _normalize_temporal_class(value):
+    normalized = str(value or "").strip().lower()
+    if normalized in {"historical", "history", "archive", "archival"}:
+        return "historical"
+    return "latest"
+
+
+def _normalize_curation_tier(value):
+    normalized = str(value or "").strip().lower()
+    if normalized in {"featured", "iconic", "important", "famous", "artistic", "curated"}:
+        return "featured"
+    return "discovery"
+
+
+def _normalize_perceptual_hash(value):
+    normalized = str(value or "").strip().lower()
+    if len(normalized) == 16 and all(character in _HEX for character in normalized):
+        return normalized
+    return ""
+
+
+def _perceptual_hash(image):
+    grayscale = ImageOps.fit(image.convert("L"), (9, 8), method=Image.Resampling.LANCZOS)
+    red, green, blue = ImageOps.fit(
+        image.convert("RGB"),
+        (1, 1),
+        method=Image.Resampling.BOX,
+    ).getpixel((0, 0))
+    low, high = grayscale.getextrema()
+    if high - low <= 4:
+        color_bucket = bytes((red >> 3, green >> 3, blue >> 3))
+        color_mask = int.from_bytes(
+            sha256(b"magazine-cover-color\0" + color_bucket).digest()[:8],
+            "big",
+        )
+        return f"{color_mask:016x}"
+    bits = 0
+    for y in range(8):
+        for x in range(8):
+            bits = (bits << 1) | int(grayscale.getpixel((x, y)) > grayscale.getpixel((x + 1, y)))
+    return f"{bits:016x}"
+
+
+def _perceptual_hash_distance(first, second):
+    left = _normalize_perceptual_hash(first)
+    right = _normalize_perceptual_hash(second)
+    if not left or not right:
+        return 65
+    return (int(left, 16) ^ int(right, 16)).bit_count()
+
+
+def _historical_percent(value):
+    try:
+        percent = int(float(value))
+    except (TypeError, ValueError, OverflowError):
+        percent = 80
+    return min(100, max(0, percent))
+
+
+def _settings_categories(value):
+    if isinstance(value, str):
+        configured = {part.strip().lower() for part in value.split(",")}
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        configured = {str(part).strip().lower() for part in value}
+    else:
+        configured = set()
+    selected = [
+        category for category in MAGAZINE_CATEGORIES if category in configured
+    ]
+    return selected or list(MAGAZINE_CATEGORIES)
+
+
+def _settings_history_start_year(value):
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        year = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return min(2100, max(1, year))
+
+
+def _settings_overlay_mode(value):
+    normalized = str(value or "none").strip().lower()
+    return normalized if normalized in {"none", "source"} else "none"
+
+
+def _slot_target(total, historical_percent):
+    return min(total, max(0, (total * historical_percent + 50) // 100))
+
+
+def _exact_editorial_temporal_allocation(
+    records,
+    *,
+    historical_target,
+    latest_target,
+    group_count,
+    historical_percent,
+):
+    supply = {
+        (temporal_class, curation_tier): sum(
+            record.get("temporal_class") == temporal_class
+            and record.get("curation_tier") == curation_tier
+            for record in records
+        )
+        for temporal_class in ("historical", "latest")
+        for curation_tier in ("featured", "discovery")
+    }
+    feasible = []
+    for historical_featured in range(group_count + 1):
+        latest_featured = group_count - historical_featured
+        historical_discovery = historical_target - historical_featured
+        latest_discovery = latest_target - latest_featured
+        if historical_discovery < 0 or latest_discovery < 0:
+            continue
+        if (
+            historical_featured <= supply[("historical", "featured")]
+            and latest_featured <= supply[("latest", "featured")]
+            and historical_discovery <= supply[("historical", "discovery")]
+            and latest_discovery <= supply[("latest", "discovery")]
+        ):
+            feasible.append((historical_featured, latest_featured))
+    if not feasible:
+        return None
+    ideal_historical_featured = _slot_target(group_count, historical_percent)
+    return min(
+        feasible,
+        key=lambda allocation: (
+            abs(allocation[0] - ideal_historical_featured),
+            -allocation[0],
+        ),
+    )
+
+
+def _selection_hold_seconds(value):
+    try:
+        hours = float(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        hours = 0
+    if hours <= 0:
+        return 0.0
+    return min(hours, 168.0) * 60 * 60
+
+
+def _record_fresh_seconds(record):
+    if _normalize_temporal_class(record.get("temporal_class")) == "historical":
+        return HISTORICAL_FRESH_SECONDS
+    return COVER_FRESH_SECONDS
+
+
+def _rotation_state_is_valid(state):
+    if not isinstance(state, dict) or set(state) != {
+        "category_bags",
+        "selection_time_bag",
+        "selection_time_bag_cursor",
+        "selection_time_bag_historical_percent",
+    }:
+        return False
+    category_bags = state.get("category_bags")
+    if not isinstance(category_bags, dict) or set(category_bags) != set(
+        MAGAZINE_CATEGORIES
+    ):
+        return False
+    for values in category_bags.values():
+        if not isinstance(values, list) or len(values) > MAX_RECORDS_PER_PROFILE:
+            return False
+        if len(values) != len(set(values)) or any(
+            not isinstance(value, str) or not value or len(value) > 300
+            for value in values
+        ):
+            return False
+    bag = state.get("selection_time_bag")
+    if not isinstance(bag, list) or not 0 < len(bag) <= SELECTION_TIME_BAG_SIZE:
+        return False
+    if len(bag) != len(set(bag)) or any(
+        not isinstance(value, str) or not value or len(value) > 300 for value in bag
+    ):
+        return False
+    cursor = state.get("selection_time_bag_cursor")
+    if type(cursor) is not int or not 0 <= cursor <= len(bag):
+        return False
+    percent = state.get("selection_time_bag_historical_percent")
+    return percent is None or (type(percent) is int and 0 <= percent <= 100)
+
+
+def _committed_selection(selection, *, request_id=None):
+    if not isinstance(selection, dict):
+        return None
+    return {
+        "record_keys": list(selection.get("record_keys") or []),
+        "request_id": request_id if request_id is not None else selection.get("request_id"),
+        "date_key": selection.get("date_key"),
+        "layout": selection.get("layout"),
+        "reset_seen": False,
+    }
 
 
 def _normalize_public_url(value):

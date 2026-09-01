@@ -1147,3 +1147,181 @@ def test_completed_vehicle_status_interval_migration_never_reapplies(
         "vehicle_status",
         "Vehicle Status",
     ).refresh == {"interval": 3600}
+
+
+_MAGAZINE_HISTORICAL_DEFAULTS = {
+    "contentMode": "comprehensive",
+    "selectionHoldHours": "3",
+    "historicalPercent": "80",
+    "categories": (
+        "art_design,sports,news_politics,fashion_culture,science_nature,"
+        "entertainment_music,adult,general_history"
+    ),
+    "includeAdult": "true",
+    "historyStartYear": "",
+    "overlayMode": "none",
+    "catalogRefreshHours": "24",
+    "latestRefreshHours": "6",
+}
+
+
+def _magazine_config(
+    settings,
+    *,
+    refresh,
+    migrations=None,
+    plugin_id="magazine_covers",
+    name="MagazineCovers",
+):
+    payload = {
+        "resolution": [800, 480],
+        "playlist_config": {
+            "playlists": [
+                {
+                    "name": "DailyDoseOfDay",
+                    "start_time": "00:00",
+                    "end_time": "24:00",
+                    "plugins": [
+                        {
+                            "plugin_id": plugin_id,
+                            "name": name,
+                            "plugin_settings": dict(settings),
+                            "refresh": dict(refresh),
+                        }
+                    ],
+                }
+            ],
+            "active_playlist": "DailyDoseOfDay",
+        },
+    }
+    if migrations is not None:
+        payload["runtime_migrations"] = dict(migrations)
+    return payload
+
+
+def test_startup_migrates_magazine_covers_to_historical_library_once(
+    monkeypatch,
+    tmp_path,
+):
+    original = {
+        "sources": "TIME|magazine|time\nVogue|magazine|vogue",
+        "rotationMode": "rotate",
+        "fitMode": "contain",
+        "refreshOnDisplay": "false",
+    }
+    config, config_path = _device_config(
+        monkeypatch,
+        tmp_path,
+        _magazine_config(
+            original,
+            refresh={"interval": 300},
+            migrations={"existing_migration_v1": True},
+        ),
+    )
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    plugin = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    assert plugin["plugin_settings"] == {**original, **_MAGAZINE_HISTORICAL_DEFAULTS}
+    assert plugin["refresh"] == {"interval": 3600}
+    assert saved["runtime_migrations"]["magazine_historical_library_v1"] is True
+    assert saved["runtime_migrations"]["existing_migration_v1"] is True
+    assert config.get_playlist_manager().find_plugin(
+        "magazine_covers",
+        "MagazineCovers",
+    ).settings == plugin["plugin_settings"]
+
+    first_revision = saved["config_revision"]
+    restarted = Config()
+    restarted_saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert restarted_saved["config_revision"] == first_revision
+    assert restarted.get_playlist_manager().find_plugin(
+        "magazine_covers",
+        "MagazineCovers",
+    ).refresh == {"interval": 3600}
+
+
+def test_magazine_covers_migration_preserves_explicit_settings_and_schedule(
+    monkeypatch,
+    tmp_path,
+):
+    original = {
+        "sources": "Custom|magazine|custom",
+        "contentMode": "latest",
+        "historicalPercent": "25",
+        "includeAdult": "false",
+        "overlayMode": "source",
+        "catalogRefreshHours": "48",
+    }
+    config, config_path = _device_config(
+        monkeypatch,
+        tmp_path,
+        _magazine_config(original, refresh={"interval": 7200}),
+    )
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    plugin = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    expected = {**_MAGAZINE_HISTORICAL_DEFAULTS, **original}
+    assert plugin["plugin_settings"] == expected
+    assert plugin["refresh"] == {"interval": 7200}
+    assert saved["runtime_migrations"]["magazine_historical_library_v1"] is True
+    assert config.get_playlist_manager().find_plugin(
+        "magazine_covers",
+        "MagazineCovers",
+    ).settings == expected
+
+
+def test_completed_magazine_covers_migration_never_reapplies(
+    monkeypatch,
+    tmp_path,
+):
+    original = {"sources": "TIME|magazine|time"}
+    config, _ = _device_config(
+        monkeypatch,
+        tmp_path,
+        _magazine_config(
+            original,
+            refresh={"interval": 300},
+            migrations={"magazine_historical_library_v1": True},
+        ),
+    )
+
+    instance = config.get_playlist_manager().find_plugin(
+        "magazine_covers",
+        "MagazineCovers",
+    )
+    assert instance.settings == original
+    assert instance.refresh == {"interval": 300}
+
+
+@pytest.mark.parametrize(
+    ("plugin_id", "name"),
+    [
+        ("magazine_covers", "Another Magazine"),
+        ("newspaper", "MagazineCovers"),
+    ],
+)
+def test_magazine_covers_migration_ignores_non_target_instances(
+    monkeypatch,
+    tmp_path,
+    plugin_id,
+    name,
+):
+    original = {"sources": "Custom|magazine|custom"}
+    config, _ = _device_config(
+        monkeypatch,
+        tmp_path,
+        _magazine_config(
+            original,
+            refresh={"interval": 300},
+            plugin_id=plugin_id,
+            name=name,
+        ),
+    )
+
+    instance = config.get_playlist_manager().find_plugin(plugin_id, name)
+    assert instance.settings == original
+    assert instance.refresh == {"interval": 300}
+    assert "magazine_historical_library_v1" not in config.get_config(
+        "runtime_migrations",
+        default={},
+    )

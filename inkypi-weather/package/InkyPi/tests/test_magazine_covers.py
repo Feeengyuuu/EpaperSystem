@@ -124,6 +124,7 @@ def bound_magazine_settings(*, instance_uuid="magazine-test-instance", count=24,
         "fitMode": "contain",
         "showSourceLabel": "false",
         "dailyLibraryMode": "true",
+        "contentMode": "latest",
     }
     settings.update(overrides)
     return bind_presentation_instance_identity(settings, instance_uuid)
@@ -1077,7 +1078,7 @@ def test_source_label_adds_publication_context():
     fitted = plugin._fit_cover(
         source,
         (800, 480),
-        {"fitMode": "contain"},
+        {"fitMode": "contain", "contentMode": "latest"},
         {"name": "Variety"},
     )
 
@@ -1178,6 +1179,7 @@ def test_daily_library_triptych_uses_three_cached_covers(monkeypatch):
             "fitMode": "triptych",
             "showSourceLabel": "false",
             "dailyLibraryMode": "true",
+            "contentMode": "latest",
         },
         "legacy-triptych",
     )
@@ -1225,6 +1227,7 @@ def test_daily_library_triptych_consumes_three_new_sources_each_refresh(monkeypa
         "fitMode": "triptych",
         "showSourceLabel": "false",
         "dailyLibraryMode": "true",
+        "contentMode": "latest",
     }, "legacy-triptych-queue")
 
     plugin.generate_image(settings, DummyDeviceConfig())
@@ -1288,6 +1291,7 @@ def test_daily_library_refreshes_all_sources_once_then_rotates_from_cache(monkey
         "fitMode": "contain",
         "showSourceLabel": "false",
         "dailyLibraryMode": "true",
+        "contentMode": "latest",
     }, "legacy-daily-cache")
 
     first = plugin.generate_image(settings, DummyDeviceConfig())
@@ -1341,6 +1345,7 @@ def test_daily_library_refreshes_again_after_daily_interval(monkeypatch):
         "showSourceLabel": "false",
         "dailyLibraryMode": "true",
         "libraryRefreshHours": "23",
+        "contentMode": "latest",
     }, "legacy-daily-interval")
 
     plugin.generate_image(settings, DummyDeviceConfig())
@@ -1390,6 +1395,7 @@ def test_daily_library_date_rollover_keeps_warm_pool_until_refresh_interval(monk
         "showSourceLabel": "false",
         "dailyLibraryMode": "true",
         "libraryRefreshHours": "23",
+        "contentMode": "latest",
     }, "legacy-day-key")
     monkeypatch.setattr(plugin, "_presentation_date_key", lambda _device: current_day[0])
 
@@ -1442,6 +1448,7 @@ def test_daily_library_keeps_cached_cover_when_refresh_source_fails(monkeypatch)
             "fitMode": "contain",
             "showSourceLabel": "false",
             "dailyLibraryMode": "true",
+            "contentMode": "latest",
         }, "legacy-fail-cache"),
         DummyDeviceConfig(),
     )
@@ -1537,24 +1544,24 @@ def test_magazine_equal_default_fingerprints_have_equal_render_pixels():
     ).tobytes()
 
 
-def test_magazine_data_hydrates_six_per_run_to_eighteen_without_consuming_display_state(
+def test_magazine_data_hydrates_six_per_run_to_thirty_six_without_consuming_display_state(
     tmp_path,
     monkeypatch,
 ):
     from plugins.magazine_covers import presentation_bank
 
     plugin = make_banked_plugin(tmp_path)
-    settings = bound_magazine_settings()
+    settings = bound_magazine_settings(count=48)
 
-    calls = hydrate_magazine_bank(plugin, monkeypatch, settings, runs=3)
+    calls = hydrate_magazine_bank(plugin, monkeypatch, settings, runs=6)
     state = magazine_presentation_state(plugin)
     profile = magazine_profile(state)
 
-    assert presentation_bank.READY_TARGET == 18
-    assert presentation_bank.REFILL_THRESHOLD == 6
-    assert len(calls) == 18
-    assert [len(calls[:6]), len(calls[6:12]), len(calls[12:18])] == [6, 6, 6]
-    assert len(profile["records"]) == 18
+    assert presentation_bank.READY_TARGET == 36
+    assert presentation_bank.REFILL_THRESHOLD == 12
+    assert len(calls) == 36
+    assert [len(calls[index : index + 6]) for index in range(0, 36, 6)] == [6, 6, 6, 6, 6, 6]
+    assert len(profile["records"]) == 36
     assert profile["current_selection"] is not None
     assert profile["pending_selection"] is None
     assert profile.get("date_buckets", {}).get("2026-07-12", {}).get("seen_source_ids", []) == []
@@ -1591,7 +1598,11 @@ def test_magazine_warm_presentation_is_provider_free_and_receipt_commits_once(
     assert prepared.changed is True
     assert prepared.image.info["inkypi_theme_mode"] == "night"
     assert len(pending_ids) == 3
-    seen_before_pending = magazine_profile(pending_state)["date_buckets"]["2026-07-12"].get("seen_source_ids", [])
+    seen_before_pending = (
+        magazine_profile(pending_state)["date_buckets"]
+        .get("2026-07-12", {})
+        .get("seen_source_ids", [])
+    )
     assert not set(pending_ids).intersection(seen_before_pending)
 
     plugin.reconcile_presentation_receipt(settings, magazine_receipt("a" * 32))
@@ -1677,7 +1688,7 @@ def test_magazine_prepared_triptych_uses_bound_image_stage_with_identical_pixels
     assert not list(tmp_path.glob(".parallel-image-stage-*"))
 
 
-def test_magazine_legacy_media_above_parallel_budget_uses_original_bank_loader(
+def test_magazine_tampered_media_above_parallel_budget_is_rejected_before_display(
     tmp_path,
     monkeypatch,
 ):
@@ -1691,13 +1702,6 @@ def test_magazine_legacy_media_above_parallel_budget_uses_original_bank_loader(
         for path in (tmp_path / "presentation-media").glob("*.png"):
             legacy.save(path, format="PNG")
 
-    expected = plugin.prepare_presentation(
-        settings,
-        DummyDeviceConfig(),
-        request=request,
-        resolved_theme_context=None,
-    )
-    expected_hash = hashlib.sha256(expected.image.tobytes()).hexdigest()
     load_calls = []
     original_load_media = MagazinePresentationBank.load_media
 
@@ -1726,15 +1730,15 @@ def test_magazine_legacy_media_above_parallel_budget_uses_original_bank_loader(
         identity_validator=lambda candidate: candidate == identity,
         parallel_image_runner=runner,
     ):
-        prepared = plugin.prepare_presentation(
-            settings,
-            DummyDeviceConfig(),
-            request=request,
-            resolved_theme_context=None,
-        )
+        with pytest.raises(RuntimeError, match="hash|integrity|media|fresh cover"):
+            plugin.prepare_presentation(
+                settings,
+                DummyDeviceConfig(),
+                request=request,
+                resolved_theme_context=None,
+            )
 
     assert load_calls
-    assert hashlib.sha256(prepared.image.tobytes()).hexdigest() == expected_hash
     assert runner.active_processes == ()
     assert not list(tmp_path.glob(".parallel-image-stage-*"))
 
@@ -1768,7 +1772,7 @@ def test_magazine_corrupt_bank_media_falls_back_and_is_rejected_by_original_load
         identity_validator=lambda candidate: candidate == identity,
         parallel_image_runner=runner,
     ):
-        with pytest.raises(RuntimeError, match="decode|media"):
+        with pytest.raises(RuntimeError, match="decode|media|fresh cover"):
             plugin.prepare_presentation(
                 settings,
                 DummyDeviceConfig(),
@@ -2190,13 +2194,24 @@ def test_magazine_seen_content_does_not_block_new_cover_from_same_source(tmp_pat
         "layout": "single",
         "reset_seen": False,
     }
-    bank.apply_trusted_origin(
+    prepared_request = magazine_request(
+        "3" * 32,
+        origin="previous-plugin-display",
+        requested_at="2026-07-13T00:01:00+00:00",
+    )
+    bank.set_pending(
         document,
         profile,
-        magazine_request(
-            "3" * 32,
-            origin="display-old-time",
-            requested_at="2026-07-13T00:01:00+00:00",
+        prepared_request,
+        profile["current_selection"],
+    )
+    bank.reconcile_receipt(
+        document,
+        profile,
+        magazine_receipt(
+            prepared_request.request_id,
+            display="display-old-time",
+            committed_at="2026-07-13T00:01:00+00:00",
         ),
     )
     new_time = bank.ingest(
@@ -2376,9 +2391,13 @@ def test_magazine_six_hour_library_and_twenty_hour_cover_ttls_are_independent(
 
     now[0] += timedelta(hours=14)
     calls.clear()
-    with pytest.raises(RuntimeError, match="fresh prepared"):
-        plugin.generate_image(settings, DummyDeviceConfig())
+    image = plugin.generate_image(settings, DummyDeviceConfig())
     assert len(calls) == 6
+    assert image.size == (800, 480)
+    assert read_source_provenance(image) in {
+        SourceProvenance.LIVE,
+        SourceProvenance.FRESH_CACHE,
+    }
     assert DAILY_LIBRARY_REFRESH_INTERVAL == timedelta(hours=6)
     assert magazine_module.IMAGE_CACHE_TTL == timedelta(hours=20)
 
@@ -2447,11 +2466,28 @@ def test_magazine_data_recovers_exact_protected_current_or_fails_byte_stable(
     )
 
     plugin.generate_image(settings, DummyDeviceConfig())
-    assert magazine_profile(magazine_presentation_state(plugin))["current_selection"] == current
+    recovered_profile = magazine_profile(magazine_presentation_state(plugin))
+    assert recovered_profile["current_selection"] == current
     assert recovered_urls == [record["image_url"]]
     assert len(scan_urls) == 6
+    recovered_record = next(
+        item
+        for item in recovered_profile["records"]
+        if item["record_key"] == record["record_key"]
+    )
+    recovered_media_path = (
+        plugin._presentation_media_dir() / f"{recovered_record['media_key']}.png"
+    )
+    assert recovered_record["media_key"] != record["media_key"]
+    assert recovered_record["media_key"] == recovered_record["content_hash"]
+    assert recovered_media_path.is_file()
+    assert (
+        hashlib.sha256(recovered_media_path.read_bytes()).hexdigest()
+        == recovered_record["content_hash"]
+    )
+    assert not media_path.exists()
 
-    media_path.unlink()
+    recovered_media_path.unlink()
     baseline = plugin._presentation_state_path().read_bytes()
     monkeypatch.setattr(
         plugin,
@@ -2488,13 +2524,13 @@ def test_magazine_stale_and_local_fallback_provenance_do_not_claim_fresh(
     monkeypatch.setattr(plugin, "_load_cover", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("offline")))
     runtime_last_good = tmp_path / "runtime-last-good.png"
     runtime_last_good.write_bytes(b"last-good")
-    promoted = []
-    try:
-        generated = plugin.generate_image(settings, DummyDeviceConfig())
-        promoted.append(generated)
-    except RuntimeError:
-        pass
-    assert promoted == []
+    generated = plugin.generate_image(settings, DummyDeviceConfig())
+    assert generated.info["inkypi_source_provenance"] == "fresh_cache"
+    refreshed_state = magazine_presentation_state(plugin)
+    refreshed_profile = magazine_profile(refreshed_state)
+    assert record["record_key"] not in refreshed_profile["current_selection"][
+        "record_keys"
+    ]
     assert runtime_last_good.read_bytes() == b"last-good"
 
     preview_plugin = make_banked_plugin(tmp_path / "preview")
@@ -2800,12 +2836,12 @@ def test_magazine_presentation_bank_limits_media_state_and_reparse_paths(
 ):
     from plugins.magazine_covers import presentation_bank
 
-    assert presentation_bank.READY_TARGET == 18
-    assert presentation_bank.REFILL_THRESHOLD == 6
+    assert presentation_bank.READY_TARGET == 36
+    assert presentation_bank.REFILL_THRESHOLD == 12
     assert presentation_bank.MAX_PROFILES == 64
     assert presentation_bank.MAX_SEEN_SOURCES == 5000
     assert presentation_bank.MAX_STATE_BYTES == 4 * 1024 * 1024
-    assert presentation_bank.MEDIA_MAX_AGE_SECONDS == 7 * 24 * 60 * 60
+    assert presentation_bank.MEDIA_MAX_AGE_SECONDS == 30 * 24 * 60 * 60
     assert presentation_bank.MEDIA_MAX_FILES == 48
     assert presentation_bank.MEDIA_MAX_BYTES == 128 * 1024 * 1024
     assert presentation_bank.MEDIA_MAX_OBJECT_BYTES == 16 * 1024 * 1024

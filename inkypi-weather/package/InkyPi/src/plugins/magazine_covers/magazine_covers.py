@@ -5,6 +5,7 @@ import html
 import ipaddress
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -28,6 +29,13 @@ from plugins.base_plugin.render_provenance import SourceProvenance, attach_sourc
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.base_plugin.parallel_image_stage import prepare_local_bank_images
 from plugins.context_cache import write_context
+from plugins.magazine_covers.historical_catalog import (
+    CATALOG_TARGET_ITEMS,
+    CATEGORY_TARGET_ITEMS,
+    FEATURED_TARGET_ITEMS,
+    HISTORICAL_CATEGORIES,
+    MagazineHistoricalCatalog,
+)
 from plugins.magazine_covers.presentation_bank import (
     COVER_FRESH_SECONDS,
     READY_TARGET,
@@ -38,6 +46,8 @@ from plugins.magazine_covers.presentation_bank import (
     settings_fingerprint,
     settings_key,
 )
+from runtime.long_task_executor import current_task_context
+from runtime.refresh_contracts import TaskCancelled, TaskContext
 from security.ssrf import get_ssrf_policy
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_client
@@ -170,6 +180,11 @@ DEFAULT_FIT_MODE = "triptych"
 TRIPTYCH_COVER_COUNT = 3
 DATA_PROVIDER_ATTEMPT_LIMIT = 6
 DATA_HYDRATION_TIME_LIMIT_SECONDS = 75
+HISTORICAL_CATALOG_REFRESH_HOURS = 24
+LATEST_COVER_REFRESH_HOURS = 6
+DEFAULT_SELECTION_HOLD_HOURS = 3
+DEFAULT_HISTORICAL_PERCENT = 80
+HISTORICAL_CATALOG_PAGE_SIZE = 40
 MAX_PROVIDER_REDIRECTS = 4
 MAX_HTML_BYTES = 2 * 1024 * 1024
 MAX_IMAGE_BYTES = 16 * 1024 * 1024
@@ -180,6 +195,10 @@ _PERSISTENT_WRITES_ENABLED = ContextVar(
 )
 
 _SOURCE_HOST_ALLOWLISTS = {
+    "archive.org": ("archive.org", "us.archive.org"),
+    "wikimedia.org": ("wikimedia.org",),
+    "loc.gov": ("loc.gov",),
+    "bnf.fr": ("bnf.fr",),
     "magazineshop.us": ("magazineshop.us", "cdn.shopify.com", "shopifycdn.net"),
     "vanityfair.com": ("vanityfair.com", "condenast.com", "condenastdigital.com"),
     "theatlantic.com": ("theatlantic.com",),
@@ -187,6 +206,60 @@ _SOURCE_HOST_ALLOWLISTS = {
     "penthousemagazine.com": ("penthousemagazine.com",),
     "hustlermagazine.com": ("hustlermagazine.com",),
     "maxim.com": ("maxim.com",),
+}
+
+_FEATURED_PUBLICATION_TOKENS = (
+    "time",
+    "vogue",
+    "sports illustrated",
+    "rolling stone",
+    "playboy",
+    "national geographic",
+    "the new yorker",
+    "life",
+    "vanity fair",
+    "newsweek",
+    "billboard",
+)
+
+_LATEST_CATEGORY_KEYWORDS = {
+    "adult": ("playboy", "penthouse", "hustler", "maxim"),
+    "sports": (
+        "sport",
+        "football",
+        "baseball",
+        "basketball",
+        "hockey",
+        "soccer",
+        "surfer",
+        "powder",
+        "fitness",
+        "athlon",
+    ),
+    "news_politics": ("time", "news", "politic", "atlantic"),
+    "art_design": ("art", "design", "decorator", "coloring"),
+    "science_nature": ("science", "nature", "health", "wellness"),
+    "entertainment_music": (
+        "rolling stone",
+        "billboard",
+        "music",
+        "entertainment",
+        "hollywood",
+        "variety",
+        "tv guide",
+        "taylor swift",
+    ),
+    "fashion_culture": (
+        "vogue",
+        "fashion",
+        "vanity fair",
+        "people",
+        "women",
+        "woman",
+        "men's",
+        "mens",
+        "culture",
+    ),
 }
 
 
@@ -358,9 +431,10 @@ class MagazineCovers(BasePlugin):
 
     def _generate_banked_image(self, settings, device_config):
         data_deadline = self._monotonic() + DATA_HYDRATION_TIME_LIMIT_SECONDS
+        self._raise_if_data_cancelled()
         dimensions = self._display_dimensions(device_config)
-        sources = self._sources_from_settings(settings)
-        if not sources:
+        latest_sources = self._sources_from_settings(settings)
+        if not latest_sources:
             raise RuntimeError("No magazine cover sources configured.")
         now = self._now_utc()
         force_refresh = _setting_enabled(settings.get("forceRefresh")) or _setting_enabled(
@@ -370,12 +444,13 @@ class MagazineCovers(BasePlugin):
             settings,
             dimensions,
             self._presentation_date_key(device_config),
-            sources,
+            latest_sources,
         )
         document, profile = bank.load_for_data()
 
         protected_changed = False
         for protected in bank.protected_records(profile):
+            self._raise_if_data_cancelled()
             try:
                 bank.load_media(protected, now=now)
             except RuntimeError as media_error:
@@ -396,12 +471,15 @@ class MagazineCovers(BasePlugin):
                         dimensions,
                         deadline=data_deadline,
                     )
+                    self._raise_if_data_cancelled()
                     if self._remaining_data_time(data_deadline) <= 0:
                         raise RuntimeError(
                             "Magazine DATA deadline expired during protected recovery"
                         )
                     bank.recover_media(profile, protected, recovered, recovered_at=now)
                     protected_changed = True
+                except TaskCancelled:
+                    raise
                 except Exception as recovery_error:
                     raise RuntimeError("Magazine protected cover exact recovery failed") from recovery_error
                 logger.info(
@@ -412,7 +490,20 @@ class MagazineCovers(BasePlugin):
         if protected_changed:
             bank.save(document)
 
-        ready = bank.ready_records(profile, prune=True, now=now)
+        ready = self._eligible_bank_records(
+            settings,
+            bank.ready_records(profile, prune=True, now=now),
+        )
+        sources = list(latest_sources)
+        if self._content_mode(settings) == "comprehensive":
+            sources = self._comprehensive_data_sources(
+                settings,
+                latest_sources,
+                deadline=data_deadline,
+                force_refresh=force_refresh,
+            )
+        if not sources:
+            sources = list(latest_sources)
         pool_key = self._pool_key(sources)
         if profile.get("library_pool_key") != pool_key:
             profile["library_pool_key"] = pool_key
@@ -421,11 +512,24 @@ class MagazineCovers(BasePlugin):
             profile["library_scan_source_ids"] = []
             profile["library_scan_started_at"] = None
         library_due = force_refresh or self._bank_library_due(profile, pool_key, settings, now)
-        if len(ready) < REFILL_THRESHOLD:
+        comprehensive_mode = self._content_mode(settings) == "comprehensive"
+        refill_needed = (
+            bank.needs_unseen_refill(profile, ready)
+            if comprehensive_mode
+            else len(ready) < REFILL_THRESHOLD
+        )
+        if refill_needed:
             profile["refill_in_progress"] = True
 
         live_record_keys = set()
         source_by_id = {self._source_id(source): source for source in sources}
+        latest_refresh_source_ids = {
+            record.get("source_id")
+            for record in ready
+            if comprehensive_mode
+            and record.get("temporal_class") == "latest"
+            and record.get("source_id") in source_by_id
+        }
         scan_queue = [
             source_id
             for source_id in profile.get("library_scan_source_ids") or []
@@ -434,13 +538,28 @@ class MagazineCovers(BasePlugin):
         if library_due and not scan_queue:
             record_source_ids = {
                 record.get("source_id")
-                for record in profile.get("records") or []
+                for record in ready
                 if isinstance(record, dict)
             }
             cursor = int(profile.get("hydration_cursor") or 0) % len(sources)
             ordered_sources = sources[cursor:] + sources[:cursor]
             if force_refresh:
                 scan_queue = [self._source_id(source) for source in ordered_sources]
+            elif comprehensive_mode:
+                ordered_source_ids = [
+                    self._source_id(source) for source in ordered_sources
+                ]
+                due_latest = [
+                    source_id
+                    for source_id in ordered_source_ids
+                    if source_id in latest_refresh_source_ids
+                ]
+                scan_queue = due_latest + [
+                    source_id
+                    for source_id in ordered_source_ids
+                    if source_id not in record_source_ids
+                    and source_id not in latest_refresh_source_ids
+                ]
             else:
                 scan_queue = [
                     self._source_id(source)
@@ -470,12 +589,21 @@ class MagazineCovers(BasePlugin):
         attempts = 0
         provider_successes = 0
         provider_errors = 0
-        if work_source_ids:
-            if self._remaining_data_time(data_deadline) <= 0:
-                bank.save(document)
+        if work_source_ids and self._remaining_data_time(data_deadline) <= 0:
+            profile["library_last_attempt_at"] = now.isoformat()
+            profile["last_provider_status"] = "error"
+            profile["refill_in_progress"] = True
+            bank.save(document)
+            if not ready or not comprehensive_mode:
                 raise RuntimeError("Magazine library scan could not start before the DATA deadline")
+            work_source_ids = []
+            logger.warning(
+                "Magazine DATA deadline expired after catalog refresh; keeping warm cover bank."
+            )
+        if work_source_ids:
             profile["refill_in_progress"] = True
             for source_id in list(work_source_ids):
+                self._raise_if_data_cancelled()
                 if attempts >= DATA_PROVIDER_ATTEMPT_LIMIT:
                     break
                 if self._remaining_data_time(data_deadline) <= 0:
@@ -490,6 +618,8 @@ class MagazineCovers(BasePlugin):
                         force_refresh=True,
                         deadline=data_deadline,
                     )
+                    self._raise_if_data_cancelled()
+                    cover = self._decorate_cover_metadata(source, cover)
                     record = bank.ingest(
                         profile,
                         source,
@@ -499,7 +629,10 @@ class MagazineCovers(BasePlugin):
                     )
                     provider_record = record
                     provider_successes += 1
+                except TaskCancelled:
+                    raise
                 except Exception as exc:
+                    self._raise_if_data_cancelled()
                     provider_errors += 1
                     cached = self._read_cached_cover(source, dimensions)
                     if cached is None:
@@ -510,7 +643,7 @@ class MagazineCovers(BasePlugin):
                             record = bank.ingest(
                                 profile,
                                 source,
-                                cached,
+                                self._decorate_cover_metadata(source, cached),
                                 cached["image"],
                                 fetched_at=cached.get("fetched_at") or now,
                             )
@@ -530,7 +663,10 @@ class MagazineCovers(BasePlugin):
                     existing_fresh_sources.add(record["source_id"])
                     if provider_record is record and not record.get("_content_duplicate"):
                         live_record_keys.add(record["record_key"])
-                    ready = bank.ready_records(profile, prune=True, now=now)
+                    ready = self._eligible_bank_records(
+                        settings,
+                        bank.ready_records(profile, prune=True, now=now),
+                    )
             profile["library_last_attempt_at"] = now.isoformat()
             profile["last_provider_status"] = (
                 "success"
@@ -538,24 +674,54 @@ class MagazineCovers(BasePlugin):
                 else ("error" if provider_errors else "empty")
             )
             profile["library_scan_source_ids"] = list(scan_queue)
+            if (
+                comprehensive_mode
+                and len(ready) >= READY_TARGET
+                and not bank.needs_unseen_refill(profile, ready)
+                and not any(
+                    source_id in latest_refresh_source_ids
+                    for source_id in scan_queue
+                )
+            ):
+                scan_queue = []
+                profile["library_scan_source_ids"] = []
+                profile["library_refreshed_at"] = now.isoformat()
+                profile["library_scan_started_at"] = None
             if library_due and not scan_queue:
                 profile["library_refreshed_at"] = now.isoformat()
                 profile["library_scan_started_at"] = None
-            profile["refill_in_progress"] = len(ready) < READY_TARGET
-
-        bank.save(document)
-        ready = bank.ready_records(profile, prune=True, now=now)
-        current = profile.get("current_selection")
-        if current is None:
-            if not ready:
-                raise RuntimeError("Magazine cover bank has no fresh prepared cover")
-            current = bank.ensure_current(
-                document,
-                profile,
-                ready,
-                self._fit_mode(settings),
-                settings.get("rotationMode") or "random",
+            profile["refill_in_progress"] = (
+                bank.needs_unseen_refill(profile, ready)
+                if comprehensive_mode
+                else len(ready) < READY_TARGET
             )
+
+        self._raise_if_data_cancelled()
+        bank.save(document)
+        ready = self._eligible_bank_records(
+            settings,
+            bank.ready_records(profile, prune=True, now=now),
+        )
+        logger.info(
+            "Magazine presentation bank ready. | records: %s | ready: %s | "
+            "unseen: %s | refill_in_progress: %s",
+            len(profile.get("records") or []),
+            len(ready),
+            bank.unseen_ready_count(profile, ready),
+            profile.get("refill_in_progress") is True,
+        )
+        if not ready:
+            raise RuntimeError("Magazine cover bank has no fresh prepared cover")
+        current = bank.ensure_current(
+            document,
+            profile,
+            ready,
+            self._fit_mode(settings),
+            settings.get("rotationMode") or "random",
+            selection_hold_hours=self._selection_hold_hours(settings),
+            historical_percent=self._historical_percent(settings),
+            now=now,
+        )
         try:
             selected = bank.selection_records(profile, current, load_media=True, now=now)
         except RuntimeError:
@@ -567,6 +733,9 @@ class MagazineCovers(BasePlugin):
                 ready,
                 self._fit_mode(settings),
                 settings.get("rotationMode") or "random",
+                selection_hold_hours=self._selection_hold_hours(settings),
+                historical_percent=self._historical_percent(settings),
+                now=now,
             )
             selected = bank.selection_records(profile, current, load_media=True, now=now)
         if any(
@@ -624,16 +793,19 @@ class MagazineCovers(BasePlugin):
             sources,
         )
         document, profile = bank.load_warm()
-        committed_origin = bank.apply_trusted_origin(document, profile, request)
-        if committed_origin:
-            self._write_records_context(committed_origin)
-        ready = bank.ready_records(profile, prune=False, now=self._now_utc())
+        ready = self._eligible_bank_records(
+            settings,
+            bank.ready_records(profile, prune=False, now=self._now_utc()),
+        )
         pending = bank.pending_for_request(profile, request.request_id)
         selection = pending or bank.choose_selection(
             profile,
             ready,
             self._fit_mode(settings),
             settings.get("rotationMode") or "random",
+            selection_hold_hours=self._selection_hold_hours(settings),
+            historical_percent=self._historical_percent(settings),
+            now=self._now_utc(),
         )
         selected = bank.selection_records(profile, selection, load_media=False, now=self._now_utc())
         image = self._render_bank_records(
@@ -835,6 +1007,24 @@ class MagazineCovers(BasePlugin):
         records = list(records or [])
         if not records:
             return
+        logger.info(
+            "Magazine display receipt committed. | covers: %s",
+            " | ".join(
+                ":".join(
+                    filter(
+                        None,
+                        (
+                            str(record.get("cover_id") or record.get("source_id") or "")[:80],
+                            str(record.get("publication") or record.get("source_name") or "")[:80],
+                            str(record.get("year") or "")[:8],
+                            str(record.get("category") or "")[:40],
+                            str(record.get("provider") or "")[:40],
+                        ),
+                    )
+                )
+                for record in records
+            ),
+        )
         first = records[0]
         self._write_cover_context(
             {"name": first["source_name"], "url": first["source_url"]},
@@ -853,11 +1043,362 @@ class MagazineCovers(BasePlugin):
             return True
         return now - refreshed_at >= self._daily_library_refresh_interval(settings)
 
+    def _content_mode(self, settings):
+        mode = str((settings or {}).get("contentMode") or "comprehensive").strip().lower()
+        return mode if mode in {"comprehensive", "latest"} else "comprehensive"
+
+    def _selection_hold_hours(self, settings):
+        if self._content_mode(settings) != "comprehensive":
+            return 0.0
+        return self._bounded_number_setting(
+            (settings or {}).get("selectionHoldHours"),
+            DEFAULT_SELECTION_HOLD_HOURS,
+            minimum=1,
+            maximum=168,
+        )
+
+    def _historical_percent(self, settings):
+        return int(
+            self._bounded_number_setting(
+                (settings or {}).get("historicalPercent"),
+                DEFAULT_HISTORICAL_PERCENT,
+                minimum=0,
+                maximum=100,
+            )
+        )
+
+    def _historical_categories(self, settings):
+        configured = str((settings or {}).get("categories") or "").split(",")
+        selected = []
+        for value in configured:
+            category = value.strip().lower()
+            if category in HISTORICAL_CATEGORIES and category not in selected:
+                selected.append(category)
+        if not selected:
+            selected = list(HISTORICAL_CATEGORIES)
+        include_adult = self._include_adult(settings)
+        if not include_adult:
+            selected = [category for category in selected if category != "adult"]
+        return tuple(selected)
+
+    def _include_adult(self, settings):
+        value = (settings or {}).get("includeAdult")
+        return True if value is None or value == "" else _setting_enabled(value)
+
+    def _history_start_year(self, settings):
+        raw = (settings or {}).get("historyStartYear")
+        if raw is None or str(raw).strip() == "":
+            return None
+        try:
+            year = int(raw)
+        except (TypeError, ValueError):
+            return None
+        return min(2100, max(1, year))
+
+    def _catalog_refresh_interval(self, settings):
+        hours = self._bounded_number_setting(
+            (settings or {}).get("catalogRefreshHours"),
+            HISTORICAL_CATALOG_REFRESH_HOURS,
+            minimum=1,
+            maximum=168,
+        )
+        return timedelta(hours=hours)
+
+    def _latest_refresh_interval(self, settings):
+        hours = self._bounded_number_setting(
+            (settings or {}).get("latestRefreshHours"),
+            LATEST_COVER_REFRESH_HOURS,
+            minimum=1,
+            maximum=72,
+        )
+        return timedelta(hours=hours)
+
+    def _eligible_bank_records(self, settings, records):
+        mode = self._content_mode(settings)
+        categories = set(self._historical_categories(settings))
+        include_adult = self._include_adult(settings)
+        start_year = self._history_start_year(settings)
+        eligible = []
+        for record in records:
+            if mode == "latest" and record.get("temporal_class") != "latest":
+                continue
+            if mode == "comprehensive" and record.get("category") not in categories:
+                continue
+            if not include_adult and record.get("adult") is True:
+                continue
+            year = record.get("year")
+            if (
+                mode == "comprehensive"
+                and start_year is not None
+                and isinstance(year, int)
+                and year < start_year
+            ):
+                continue
+            eligible.append(record)
+        return eligible
+
+    @staticmethod
+    def _raise_if_data_cancelled():
+        context = current_task_context()
+        if context is not None:
+            context.raise_if_cancelled()
+
+    def _comprehensive_data_sources(
+        self,
+        settings,
+        latest_sources,
+        *,
+        deadline,
+        force_refresh,
+    ):
+        catalog = MagazineHistoricalCatalog(
+            self._historical_catalog_path(),
+            personal_mode=True,
+        )
+        categories = self._historical_categories(settings)
+        candidates = catalog.load()
+        if force_refresh or self._historical_catalog_due(settings, candidates=candidates):
+            try:
+                result = catalog.refresh(
+                    categories=categories,
+                    include_adult=self._include_adult(settings),
+                    page_size=HISTORICAL_CATALOG_PAGE_SIZE,
+                    context=self._catalog_task_context(deadline),
+                )
+                candidates = result.candidates
+                if result.errors:
+                    logger.warning(
+                        "Historical magazine catalog refreshed with partial provider errors. | "
+                        "requests: %s | entries: %s | errors: %s",
+                        result.request_count,
+                        len(candidates),
+                        len(result.errors),
+                    )
+                else:
+                    logger.info(
+                        "Historical magazine catalog refreshed. | requests: %s | entries: %s | added: %s",
+                        result.request_count,
+                        len(candidates),
+                        result.added_count,
+                    )
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                candidates = catalog.load()
+                logger.warning(
+                    "Historical magazine catalog refresh failed; keeping last-good catalog. | "
+                    "entries: %s | error: %s",
+                    len(candidates),
+                    exc,
+                )
+
+        selected_categories = set(categories)
+        start_year = self._history_start_year(settings)
+        include_adult = self._include_adult(settings)
+        eligible = []
+        for candidate in candidates:
+            if candidate.category not in selected_categories:
+                continue
+            if candidate.adult and not include_adult:
+                continue
+            if start_year is not None and candidate.year is not None and candidate.year < start_year:
+                continue
+            eligible.append(candidate)
+
+        historical = [
+            candidate
+            for candidate in eligible
+            if candidate.temporal_class == "historical"
+        ]
+        catalog_latest = [
+            candidate
+            for candidate in eligible
+            if candidate.temporal_class == "latest"
+        ]
+        historical = self._balanced_historical_candidates(historical, categories)
+
+        filtered_latest = [
+            source
+            for source in latest_sources
+            if self._latest_source_category(source) in selected_categories
+            and (include_adult or self._latest_source_category(source) != "adult")
+        ]
+        latest = list(filtered_latest)
+        latest.extend(self._candidate_source(candidate) for candidate in catalog_latest)
+        historical_sources = [self._candidate_source(candidate) for candidate in historical]
+        combined = self._weighted_source_interleave(
+            historical_sources,
+            latest,
+            historical_percent=self._historical_percent(settings),
+            limit=5000,
+        )
+        if not combined:
+            combined = list(latest_sources)
+
+        category_counts = {
+            category: sum(candidate.category == category for candidate in eligible)
+            for category in HISTORICAL_CATEGORIES
+        }
+        logger.info(
+            "Historical magazine catalog ready. | catalog: %s | eligible: %s | "
+            "historical: %s | latest: %s | provider_pool: %s | categories: %s",
+            len(candidates),
+            len(eligible),
+            len(historical_sources),
+            len(latest),
+            len(combined),
+            ",".join(f"{key}={value}" for key, value in category_counts.items()),
+        )
+        return combined
+
+    def _historical_catalog_due(self, settings, *, candidates=None):
+        if candidates is None:
+            candidates = MagazineHistoricalCatalog(
+                self._historical_catalog_path(),
+                personal_mode=True,
+            ).load()
+        candidates = tuple(candidates)
+        categories = self._historical_categories(settings)
+        if len(candidates) < CATALOG_TARGET_ITEMS:
+            return True
+        if any(
+            sum(candidate.category == category for candidate in candidates)
+            < CATEGORY_TARGET_ITEMS
+            for category in categories
+        ):
+            return True
+        if (
+            sum(candidate.curation_tier == "featured" for candidate in candidates)
+            < FEATURED_TARGET_ITEMS
+        ):
+            return True
+        path = self._historical_catalog_path()
+        try:
+            modified = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+        except (FileNotFoundError, OSError, ValueError, OverflowError):
+            return True
+        return self._now_utc() - modified >= self._catalog_refresh_interval(settings)
+
+    def _catalog_task_context(self, deadline):
+        parent = current_task_context()
+        if parent is None:
+            return TaskContext.never_cancelled(
+                deadline_monotonic=deadline,
+                clock=self._monotonic,
+            )
+        return TaskContext(
+            cancel_event=parent.cancel_event,
+            deadline_monotonic=min(parent.deadline_monotonic, deadline),
+            clock=parent.clock,
+        )
+
+    def _candidate_source(self, candidate):
+        document = candidate.to_document()
+        return {
+            "source_id": candidate.cover_id,
+            "name": candidate.publication,
+            "url": candidate.record_url,
+            "publication": candidate.publication,
+            "category": candidate.category,
+            "temporal_class": candidate.temporal_class,
+            "curation_tier": candidate.curation_tier,
+            "historical_candidate": document,
+        }
+
+    def _balanced_historical_candidates(self, candidates, categories):
+        category_queues = {}
+        for category in categories:
+            category_candidates = [
+                candidate for candidate in candidates if candidate.category == category
+            ]
+            featured = [
+                candidate
+                for candidate in category_candidates
+                if candidate.curation_tier == "featured"
+            ]
+            discovery = [
+                candidate
+                for candidate in category_candidates
+                if candidate.curation_tier != "featured"
+            ]
+            editorial = []
+            while featured or discovery:
+                if featured:
+                    editorial.append(featured.pop(0))
+                for _index in range(2):
+                    if discovery:
+                        editorial.append(discovery.pop(0))
+                if not featured and discovery:
+                    editorial.extend(discovery)
+                    discovery = []
+            category_queues[category] = editorial
+
+        ordered = []
+        while any(category_queues.values()):
+            for category in categories:
+                queue = category_queues.get(category) or []
+                if queue:
+                    ordered.append(queue.pop(0))
+        return ordered
+
+    @staticmethod
+    def _weighted_source_interleave(
+        historical,
+        latest,
+        *,
+        historical_percent,
+        limit,
+    ):
+        historical = list(historical)
+        latest = list(latest)
+        historical_index = 0
+        latest_index = 0
+        accumulator = 0
+        combined = []
+        while len(combined) < limit and (
+            historical_index < len(historical) or latest_index < len(latest)
+        ):
+            if historical_index >= len(historical):
+                take_historical = False
+            elif latest_index >= len(latest):
+                take_historical = True
+            elif historical_percent <= 0:
+                take_historical = False
+            elif historical_percent >= 100:
+                take_historical = True
+            else:
+                accumulator += historical_percent
+                take_historical = accumulator >= 100
+                if take_historical:
+                    accumulator -= 100
+            if take_historical:
+                combined.append(historical[historical_index])
+                historical_index += 1
+            else:
+                combined.append(latest[latest_index])
+                latest_index += 1
+        return combined
+
+    @staticmethod
+    def _bounded_number_setting(value, default, *, minimum, maximum):
+        try:
+            parsed = float(value)
+        except (TypeError, ValueError):
+            parsed = float(default)
+        if not math.isfinite(parsed):
+            parsed = float(default)
+        if not (minimum <= parsed <= maximum):
+            parsed = min(maximum, max(minimum, parsed))
+        return parsed
+
     def _presentation_state_path(self):
         return self._cache_dir() / "presentation-state.json"
 
     def _presentation_media_dir(self):
         return self._cache_dir() / "presentation-media"
+
+    def _historical_catalog_path(self):
+        return self._cache_dir() / "historical-catalog.json"
 
     def _presentation_date_key(self, _device_config):
         return self._now_utc().astimezone().date().isoformat()
@@ -1157,6 +1698,79 @@ class MagazineCovers(BasePlugin):
 
         return configured
 
+    def _decorate_cover_metadata(self, source, cover):
+        decorated = dict(cover or {})
+        if isinstance((source or {}).get("historical_candidate"), dict):
+            candidate = source["historical_candidate"]
+            for key in (
+                "cover_id",
+                "provider",
+                "source_record_id",
+                "publication",
+                "issue",
+                "year",
+                "issue_date",
+                "category",
+                "temporal_class",
+                "curation_tier",
+                "adult",
+                "rights",
+                "rights_uri",
+                "attribution",
+                "personal_use_only",
+            ):
+                if decorated.get(key) in {None, ""} and candidate.get(key) not in {None, ""}:
+                    decorated[key] = candidate[key]
+            decorated.setdefault("provider_record_id", candidate.get("source_record_id"))
+            return decorated
+
+        image_url = str(decorated.get("image_url") or "").strip()
+        publication = re.sub(
+            r"\s+(?:page\s+\d+|special editions?)$",
+            "",
+            str((source or {}).get("name") or "Magazine").strip(),
+            flags=re.IGNORECASE,
+        )
+        category = self._latest_source_category(source)
+        lowered = publication.lower()
+        decorated.setdefault(
+            "cover_id",
+            "latest_" + hashlib.sha256(image_url.encode("utf-8")).hexdigest(),
+        )
+        decorated.setdefault("provider", "publisher_web")
+        decorated.setdefault("provider_record_id", image_url)
+        decorated.setdefault("source_record_id", image_url)
+        decorated.setdefault("publication", publication)
+        decorated.setdefault("issue", "")
+        decorated.setdefault("issue_date", "")
+        decorated.setdefault("year", None)
+        decorated.setdefault("category", category)
+        decorated.setdefault("temporal_class", "latest")
+        decorated.setdefault(
+            "curation_tier",
+            "featured"
+            if any(token in lowered for token in _FEATURED_PUBLICATION_TOKENS)
+            else "discovery",
+        )
+        decorated.setdefault("adult", category == "adult")
+        decorated.setdefault("rights", "")
+        decorated.setdefault("rights_uri", "")
+        decorated.setdefault("attribution", publication)
+        decorated.setdefault("personal_use_only", True)
+        return decorated
+
+    def _latest_source_category(self, source):
+        haystack = " ".join(
+            (
+                str((source or {}).get("name") or ""),
+                str((source or {}).get("url") or ""),
+            )
+        ).lower()
+        for category, keywords in _LATEST_CATEGORY_KEYWORDS.items():
+            if any(keyword in haystack for keyword in keywords):
+                return category
+        return "general_history"
+
     def _rotation_order(self, sources):
         if len(sources) <= 1:
             return sources
@@ -1213,6 +1827,15 @@ class MagazineCovers(BasePlugin):
         return [source_by_id[source_id] for source_id in ordered_ids]
 
     def _load_cover(self, source, dimensions, force_refresh=False, deadline=None):
+        self._raise_if_data_cancelled()
+        historical = (source or {}).get("historical_candidate")
+        if isinstance(historical, dict):
+            return self._load_historical_cover(
+                source,
+                historical,
+                dimensions,
+                deadline=deadline,
+            )
         if not force_refresh:
             cached = self._read_cached_cover(source, dimensions)
             if cached:
@@ -1227,6 +1850,7 @@ class MagazineCovers(BasePlugin):
         candidates = self._rank_candidates(source, parser)
         errors = []
         for candidate in candidates[:12]:
+            self._raise_if_data_cancelled()
             if deadline is not None and self._remaining_data_time(deadline) <= 0:
                 raise RuntimeError("Magazine DATA deadline expired during candidate scan")
             try:
@@ -1242,11 +1866,72 @@ class MagazineCovers(BasePlugin):
                     }
                     self._write_cached_cover(source, dimensions, cover)
                     return cover
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 errors.append(f"{candidate['url']}: {exc}")
 
         detail = "; ".join(errors[-3:])
         raise RuntimeError(f"no usable cover image found. {detail}")
+
+    def _load_historical_cover(self, source, candidate, dimensions, *, deadline=None):
+        self._raise_if_data_cancelled()
+        image_urls = []
+        for key in ("cover_url", "fallback_cover_url"):
+            url = str(candidate.get(key) or "").strip()
+            if url and url not in image_urls:
+                image_urls.append(url)
+        if not image_urls:
+            raise RuntimeError("Historical magazine candidate has no cover URL")
+
+        errors = []
+        for image_url in image_urls:
+            self._raise_if_data_cancelled()
+            if deadline is not None and self._remaining_data_time(deadline) <= 0:
+                raise RuntimeError("Magazine DATA deadline expired during historical cover fetch")
+            image_candidate = {
+                "url": image_url,
+                "score": 100,
+                "alt": candidate.get("issue_title") or candidate.get("publication") or "",
+                "_source": source,
+            }
+            try:
+                image = self._download_candidate_image(
+                    image_candidate,
+                    dimensions,
+                    deadline=deadline,
+                )
+                if not self._looks_like_cover(image, image_candidate):
+                    raise RuntimeError("historical image does not look like a magazine cover")
+                return {
+                    "image": image,
+                    "image_url": image_url,
+                    "page_url": candidate.get("record_url") or source["url"],
+                    "title": candidate.get("issue_title") or candidate.get("publication") or source["name"],
+                    "cover_id": candidate.get("cover_id"),
+                    "provider": candidate.get("provider"),
+                    "provider_record_id": candidate.get("source_record_id"),
+                    "source_record_id": candidate.get("source_record_id"),
+                    "publication": candidate.get("publication") or source["name"],
+                    "issue": candidate.get("issue") or "",
+                    "issue_date": candidate.get("issue_date") or "",
+                    "year": candidate.get("year"),
+                    "category": candidate.get("category") or "general_history",
+                    "temporal_class": candidate.get("temporal_class") or "historical",
+                    "curation_tier": candidate.get("curation_tier") or "discovery",
+                    "adult": bool(candidate.get("adult")),
+                    "rights": candidate.get("rights") or "",
+                    "rights_uri": candidate.get("rights_uri") or "",
+                    "attribution": candidate.get("attribution") or "",
+                    "personal_use_only": bool(candidate.get("personal_use_only")),
+                }
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                errors.append(f"{image_url}: {exc}")
+        raise RuntimeError(
+            "historical magazine cover download failed. " + "; ".join(errors[-2:])
+        )
 
     def _fetch_text(self, url, source=None, deadline=None):
         source = source or {"name": urlparse(url).hostname or "source", "url": url}
@@ -1265,6 +1950,7 @@ class MagazineCovers(BasePlugin):
         client = get_http_client()
         current_url = str(url or "").strip()
         for redirect_count in range(MAX_PROVIDER_REDIRECTS + 1):
+            self._raise_if_data_cancelled()
             remaining = self._remaining_data_time(deadline)
             if remaining is not None and remaining <= 0:
                 raise RuntimeError("Magazine DATA deadline expired before provider request")
@@ -1288,6 +1974,7 @@ class MagazineCovers(BasePlugin):
                 allow_redirects=False,
             )
             try:
+                self._raise_if_data_cancelled()
                 remaining = self._remaining_data_time(deadline)
                 if remaining is not None and remaining <= 0:
                     raise RuntimeError("Magazine DATA deadline expired after provider response")
@@ -1317,6 +2004,7 @@ class MagazineCovers(BasePlugin):
                 payload = bytearray()
                 chunks = iter(response.iter_content(chunk_size=64 * 1024))
                 while True:
+                    self._raise_if_data_cancelled()
                     remaining = self._remaining_data_time(deadline)
                     if remaining is not None and remaining <= 0:
                         raise RuntimeError("Magazine DATA deadline expired during provider stream")
@@ -1339,6 +2027,7 @@ class MagazineCovers(BasePlugin):
                     payload.extend(chunk)
                 if not payload:
                     raise RuntimeError("Magazine provider response is empty")
+                self._raise_if_data_cancelled()
                 remaining = self._remaining_data_time(deadline)
                 if remaining is not None and remaining <= 0:
                     raise RuntimeError("Magazine DATA deadline expired after provider stream")
@@ -1577,6 +2266,7 @@ class MagazineCovers(BasePlugin):
             return None
 
     def _download_candidate_image(self, candidate, dimensions, deadline=None):
+        self._raise_if_data_cancelled()
         if deadline is None:
             tmp_path = self._download_candidate_to_temp(
                 candidate["url"],
@@ -1591,6 +2281,7 @@ class MagazineCovers(BasePlugin):
         decode_path = tmp_path
         resized_path = None
         try:
+            self._raise_if_data_cancelled()
             if deadline is not None and self._remaining_data_time(deadline) <= 0:
                 raise RuntimeError("Magazine DATA deadline expired before candidate decode")
             image_info = self._source_image_info(tmp_path)
@@ -1611,6 +2302,7 @@ class MagazineCovers(BasePlugin):
             image = self.image_loader.from_file(str(decode_path), dimensions, resize=False)
             if not image:
                 raise RuntimeError("image load returned empty")
+            self._raise_if_data_cancelled()
             if deadline is not None and self._remaining_data_time(deadline) <= 0:
                 raise RuntimeError("Magazine DATA deadline expired during image loading")
             return image.convert("RGB")
@@ -1633,6 +2325,7 @@ class MagazineCovers(BasePlugin):
             timeout=35,
             deadline=deadline,
         )
+        self._raise_if_data_cancelled()
         suffix = Path(urlparse(url).path).suffix or ".img"
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
         tmp_path = Path(temp_file.name)
@@ -1894,6 +2587,10 @@ class MagazineCovers(BasePlugin):
         return max(0, min(max_offset, offset))
 
     def _with_source_label(self, image, source, settings):
+        if self._content_mode(settings) == "comprehensive" and str(
+            settings.get("overlayMode") or "none"
+        ).strip().lower() == "none":
+            return image
         if str(settings.get("showSourceLabel", "true")).lower() in {"false", "0", "off", "no"}:
             return image
 
@@ -2199,6 +2896,9 @@ class MagazineCovers(BasePlugin):
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def _source_id(self, source):
+        explicit = str((source or {}).get("source_id") or "").strip()
+        if explicit:
+            return explicit[:600]
         return f"{source['name']}|{source['url']}"
 
     def _dimensions_key(self, dimensions):
@@ -2208,6 +2908,8 @@ class MagazineCovers(BasePlugin):
         return self._now_utc().astimezone().date().isoformat()
 
     def _daily_library_refresh_interval(self, settings):
+        if str((settings or {}).get("contentMode") or "").strip().lower() == "comprehensive":
+            return self._latest_refresh_interval(settings)
         try:
             hours = float(settings.get("libraryRefreshHours") or 0)
         except (TypeError, ValueError):

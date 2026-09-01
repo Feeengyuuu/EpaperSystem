@@ -27,9 +27,26 @@ _DAILY_ART_GALLERY_DECOR_MIGRATION = "daily_art_gallery_decor_v1"
 _VEHICLE_STATUS_THREE_HOUR_REFRESH_MIGRATION = (
     "vehicle_status_three_hour_refresh_v1"
 )
+_MAGAZINE_HISTORICAL_LIBRARY_MIGRATION = "magazine_historical_library_v1"
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_LEGACY_REFRESH_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_REFRESH_INTERVAL_SECONDS = 3 * 60 * 60
+_MAGAZINE_LEGACY_REFRESH_INTERVAL_SECONDS = 5 * 60
+_MAGAZINE_DATA_REFRESH_INTERVAL_SECONDS = 60 * 60
+_MAGAZINE_HISTORICAL_DEFAULTS = {
+    "contentMode": "comprehensive",
+    "selectionHoldHours": "3",
+    "historicalPercent": "80",
+    "categories": (
+        "art_design,sports,news_politics,fashion_culture,science_nature,"
+        "entertainment_music,adult,general_history"
+    ),
+    "includeAdult": "true",
+    "historyStartYear": "",
+    "overlayMode": "none",
+    "catalogRefreshHours": "24",
+    "latestRefreshHours": "6",
+}
 _SPORTS_LIVE_REFRESH_KEYS = (
     "worldCupLiveRefreshEnabled",
     "nbaLiveRefreshEnabled",
@@ -103,6 +120,7 @@ class Config:
         self._migrate_rotating_newspapers_to_hourly_refill()
         self._migrate_legacy_daily_art_gallery_decor()
         self._migrate_legacy_vehicle_status_refresh_interval()
+        self._migrate_magazine_covers_historical_library()
 
     @staticmethod
     def _is_explicit_false(value):
@@ -397,6 +415,73 @@ class Config:
         if migrated_instances:
             logger.warning(
                 "Migrated legacy Vehicle Status refresh interval to three hours. "
+                "| instances: %s",
+                migrated_instances,
+            )
+
+    def _migrate_magazine_covers_historical_library(self):
+        """Upgrade the live MagazineCovers instance to comprehensive mode once."""
+
+        migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
+        if (
+            isinstance(migrations, Mapping)
+            and migrations.get(_MAGAZINE_HISTORICAL_LIBRARY_MIGRATION) is True
+        ):
+            return
+
+        eligible_instances = 0
+        migrated_instances = 0
+        for snapshot in self.playlist_manager.snapshot_all_instances():
+            if (
+                snapshot.plugin_id != "magazine_covers"
+                or snapshot.name != "MagazineCovers"
+            ):
+                continue
+            eligible_instances += 1
+
+            settings = _detach_json(snapshot.settings)
+            updated_settings = dict(settings)
+            for key, value in _MAGAZINE_HISTORICAL_DEFAULTS.items():
+                updated_settings.setdefault(key, value)
+            settings_changed = updated_settings != settings
+
+            refresh = _detach_json(snapshot.refresh)
+            refresh_changed = (
+                refresh.get("interval")
+                == _MAGAZINE_LEGACY_REFRESH_INTERVAL_SECONDS
+            )
+            updated_refresh = dict(refresh)
+            if refresh_changed:
+                updated_refresh["interval"] = _MAGAZINE_DATA_REFRESH_INTERVAL_SECONDS
+
+            if not settings_changed and not refresh_changed:
+                continue
+
+            updated = self.playlist_manager.update_plugin_instance(
+                snapshot.instance_uuid,
+                settings=updated_settings if settings_changed else None,
+                refresh=updated_refresh if refresh_changed else None,
+                expected_generation=snapshot.structural_generation,
+                expected_settings_revision=snapshot.settings_revision,
+            )
+            if updated is None:
+                raise ConfigConflictError(
+                    snapshot.settings_revision,
+                    snapshot.settings_revision + 1,
+                )
+            migrated_instances += 1
+
+        if not eligible_instances:
+            return
+
+        migration_state = (
+            _detach_json(migrations) if isinstance(migrations, Mapping) else {}
+        )
+        migration_state[_MAGAZINE_HISTORICAL_LIBRARY_MIGRATION] = True
+        self.update_config({_RUNTIME_MIGRATIONS_KEY: migration_state})
+        if migrated_instances:
+            logger.warning(
+                "Migrated MagazineCovers to the comprehensive historical library. "
                 "| instances: %s",
                 migrated_instances,
             )
