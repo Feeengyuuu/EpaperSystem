@@ -419,6 +419,223 @@ def test_comprehensive_data_refresh_failure_keeps_warm_historical_catalog(
     }
 
 
+def test_forced_data_catalog_change_filters_removed_ids_and_preserves_scan_progress(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    settings = comprehensive_settings(instance_uuid="catalog-growth-progress")
+    now = datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+    monkeypatch.setattr(plugin, "_presentation_date_key", lambda _device: "2026-09-01")
+    monkeypatch.setattr(magazine_module, "write_context", lambda *_args, **_kwargs: None)
+
+    candidates = [
+        catalog_candidate(
+            index,
+            temporal_class="latest" if index % 5 == 4 else "historical",
+        )
+        for index in range(18)
+    ]
+    first_sources = [plugin._candidate_source(candidate) for candidate in candidates]
+    added_source = plugin._candidate_source(catalog_candidate(99))
+    removed_queued_source = first_sources[6]
+    second_sources = [added_source, *first_sources[:6], *first_sources[7:]]
+    pools = [first_sources, second_sources]
+    pool_calls = []
+
+    def changing_catalog(*_args, **_kwargs):
+        index = min(len(pool_calls), len(pools) - 1)
+        pool_calls.append(index)
+        return list(pools[index])
+
+    monkeypatch.setattr(plugin, "_comprehensive_data_sources", changing_catalog)
+    loaded_source_ids = []
+
+    def load_cover(source, _dimensions, force_refresh=False, deadline=None):
+        assert force_refresh is True
+        assert deadline is not None
+        loaded_source_ids.append(source["source_id"])
+        candidate = source["historical_candidate"]
+        image_index = int(candidate["source_record_id"].rsplit("-", 1)[-1])
+        return {
+            "image": cover_image(400 + image_index),
+            "image_url": candidate["cover_url"],
+            "page_url": candidate["record_url"],
+            "title": candidate["issue_title"],
+        }
+
+    monkeypatch.setattr(plugin, "_load_cover", load_cover)
+    force_settings = {**settings, "forceRefresh": "true"}
+
+    plugin.generate_image(force_settings, DummyDeviceConfig())
+    _state, first_profile = profile_state(plugin, "catalog-growth-progress")
+    first_batch = list(loaded_source_ids)
+    protected_before = {
+        "current_selection": first_profile["current_selection"],
+        "pending_selection": first_profile["pending_selection"],
+        "date_buckets": first_profile["date_buckets"],
+        "epoch_seen_cover_ids": first_profile["epoch_seen_cover_ids"],
+    }
+
+    assert first_batch == [source["source_id"] for source in first_sources[:6]]
+    assert len(first_profile["records"]) == 6
+    assert first_profile["library_scan_source_ids"] == [
+        source["source_id"] for source in first_sources[6:]
+    ]
+
+    plugin.generate_image(force_settings, DummyDeviceConfig())
+    _state, second_profile = profile_state(plugin, "catalog-growth-progress")
+    second_batch = loaded_source_ids[len(first_batch) :]
+
+    assert second_batch == [source["source_id"] for source in first_sources[7:13]]
+    assert set(first_batch).isdisjoint(second_batch)
+    assert removed_queued_source["source_id"] not in loaded_source_ids
+    assert len(second_profile["records"]) == 12
+    assert second_profile["library_scan_source_ids"] == [
+        source["source_id"] for source in first_sources[13:]
+    ]
+    assert removed_queued_source["source_id"] not in second_profile[
+        "library_scan_source_ids"
+    ]
+    assert second_profile["hydration_cursor"] != 0
+    assert second_profile["library_pool_key"] == plugin._pool_key(second_sources)
+    assert {
+        "current_selection": second_profile["current_selection"],
+        "pending_selection": second_profile["pending_selection"],
+        "date_buckets": second_profile["date_buckets"],
+        "epoch_seen_cover_ids": second_profile["epoch_seen_cover_ids"],
+    } == protected_before
+
+
+def test_comprehensive_refill_stays_active_until_bank_is_full(
+    tmp_path,
+    monkeypatch,
+):
+    plugin = make_plugin(tmp_path)
+    settings = comprehensive_settings(instance_uuid="refill-until-full")
+    now = datetime(2026, 9, 1, 0, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(plugin, "_now_utc", lambda: now)
+    monkeypatch.setattr(plugin, "_presentation_date_key", lambda _device: "2026-09-01")
+    monkeypatch.setattr(magazine_module, "write_context", lambda *_args, **_kwargs: None)
+    bank = seed_comprehensive_bank(
+        plugin,
+        settings,
+        fetched_at=now,
+        count=21,
+    )
+    document, profile = bank.load_for_data()
+    current_keys = set(profile["current_selection"]["record_keys"])
+    seen_records = [
+        record for record in profile["records"] if record["record_key"] not in current_keys
+    ][:2]
+    profile["date_buckets"] = {
+        "2026-09-01": {
+            "seen_source_ids": [record["source_id"] for record in seen_records],
+            "seen_content_ids": [
+                f"content:{record['content_hash']}" for record in seen_records
+            ],
+            "committed_at": now.isoformat(),
+        }
+    }
+
+    def sources_for(records):
+        return [
+            {"name": record["source_name"], "url": record["source_url"]}
+            for record in records
+        ]
+
+    source_pool = [sources_for(profile["records"])]
+    profile["library_pool_key"] = plugin._pool_key(source_pool[0])
+    profile["library_refreshed_at"] = now.isoformat()
+    profile["library_scan_source_ids"] = []
+    profile["refill_in_progress"] = False
+    bank.save(document)
+    monkeypatch.setattr(
+        plugin,
+        "_comprehensive_data_sources",
+        lambda *_args, **_kwargs: list(source_pool[0]),
+    )
+    monkeypatch.setattr(
+        plugin,
+        "_load_cover",
+        lambda *_args, **_kwargs: pytest.fail("complete source set was rescanned"),
+    )
+
+    plugin.generate_image(settings, DummyDeviceConfig())
+    state, partial_profile = profile_state(plugin, "refill-until-full")
+    partial_bank = MagazinePresentationBank.from_profile(
+        plugin._presentation_state_path(),
+        plugin._presentation_media_dir(),
+        state["instance_profiles"]["refill-until-full"],
+        partial_profile,
+    )
+    partial_ready = partial_bank.ready_records(partial_profile, prune=False, now=now)
+    assert len(partial_ready) == 21
+    assert partial_bank.unseen_ready_count(partial_profile, partial_ready) == 16
+    assert partial_profile["refill_in_progress"] is True
+
+    full_bank = plugin._presentation_bank(
+        settings,
+        (800, 480),
+        "2026-09-01",
+        plugin._sources_from_settings(settings),
+    )
+    full_document, full_profile = full_bank.load_for_data()
+    categories = (
+        "art_design",
+        "sports",
+        "news_politics",
+        "fashion_culture",
+        "science_nature",
+        "entertainment_music",
+        "adult",
+        "general_history",
+    )
+    for index in range(21, 36):
+        publication = f"Publication {index:02d}"
+        source = {
+            "name": publication,
+            "url": f"https://archive.org/details/magazine-{index:02d}",
+        }
+        full_bank.ingest(
+            full_profile,
+            source,
+            {
+                "cover_id": f"archive:issue:{index:03d}",
+                "publication": publication,
+                "category": categories[index % len(categories)],
+                "temporal_class": "latest" if index % 5 == 4 else "historical",
+                "curation_tier": "featured" if index % 3 == 0 else "discovery",
+                "image_url": (
+                    f"https://archive.org/download/magazine-{index:02d}/page/n0_w600.jpg"
+                ),
+                "page_url": source["url"],
+                "title": f"{publication} issue",
+            },
+            cover_image(index),
+            fetched_at=now,
+        )
+    source_pool[0] = sources_for(full_profile["records"])
+    full_profile["library_pool_key"] = plugin._pool_key(source_pool[0])
+    full_profile["library_refreshed_at"] = now.isoformat()
+    full_profile["library_scan_source_ids"] = []
+    full_bank.save(full_document)
+
+    plugin.generate_image(settings, DummyDeviceConfig())
+    state, complete_profile = profile_state(plugin, "refill-until-full")
+    complete_bank = MagazinePresentationBank.from_profile(
+        plugin._presentation_state_path(),
+        plugin._presentation_media_dir(),
+        state["instance_profiles"]["refill-until-full"],
+        complete_profile,
+    )
+    complete_ready = complete_bank.ready_records(complete_profile, prune=False, now=now)
+    assert len(complete_ready) == 36
+    assert complete_bank.unseen_ready_count(complete_profile, complete_ready) >= 12
+    assert complete_profile["refill_in_progress"] is False
+
+
 def test_three_hour_hold_uses_trusted_display_time_and_rotates_at_boundary(
     tmp_path,
     monkeypatch,

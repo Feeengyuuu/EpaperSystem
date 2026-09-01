@@ -494,8 +494,9 @@ class MagazineCovers(BasePlugin):
             settings,
             bank.ready_records(profile, prune=True, now=now),
         )
+        comprehensive_mode = self._content_mode(settings) == "comprehensive"
         sources = list(latest_sources)
-        if self._content_mode(settings) == "comprehensive":
+        if comprehensive_mode:
             sources = self._comprehensive_data_sources(
                 settings,
                 latest_sources,
@@ -507,14 +508,14 @@ class MagazineCovers(BasePlugin):
         pool_key = self._pool_key(sources)
         if profile.get("library_pool_key") != pool_key:
             profile["library_pool_key"] = pool_key
-            profile["hydration_cursor"] = 0
             profile["refill_in_progress"] = True
-            profile["library_scan_source_ids"] = []
-            profile["library_scan_started_at"] = None
+            if not comprehensive_mode:
+                profile["hydration_cursor"] = 0
+                profile["library_scan_source_ids"] = []
+                profile["library_scan_started_at"] = None
         library_due = force_refresh or self._bank_library_due(profile, pool_key, settings, now)
-        comprehensive_mode = self._content_mode(settings) == "comprehensive"
         refill_needed = (
-            bank.needs_unseen_refill(profile, ready)
+            len(ready) < READY_TARGET or bank.needs_unseen_refill(profile, ready)
             if comprehensive_mode
             else len(ready) < REFILL_THRESHOLD
         )
@@ -690,12 +691,11 @@ class MagazineCovers(BasePlugin):
             if library_due and not scan_queue:
                 profile["library_refreshed_at"] = now.isoformat()
                 profile["library_scan_started_at"] = None
-            profile["refill_in_progress"] = (
-                bank.needs_unseen_refill(profile, ready)
-                if comprehensive_mode
-                else len(ready) < READY_TARGET
-            )
-
+        profile["refill_in_progress"] = (
+            len(ready) < READY_TARGET or bank.needs_unseen_refill(profile, ready)
+            if comprehensive_mode
+            else len(ready) < READY_TARGET
+        )
         self._raise_if_data_cancelled()
         bank.save(document)
         ready = self._eligible_bank_records(
