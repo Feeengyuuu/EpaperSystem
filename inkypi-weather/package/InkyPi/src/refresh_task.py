@@ -179,6 +179,8 @@ DEFAULT_ROTATION_MAX_INTERVAL_SECONDS = 7 * 60
 DEFAULT_ROTATION_BACKGROUND_GUARD_SECONDS = 2 * 60
 DEFAULT_ROTATION_CACHE_RECOVERY_SECONDS = 30
 DEFAULT_ROTATION_HARDWARE_BUDGET_SECONDS = 60
+DEFAULT_ROTATION_DEADLINE_CLEANUP_SECONDS = 5
+AUTOMATIC_ROTATION_DISPLAY_PRIORITY = 85
 DEFAULT_ROTATION_SCHEDULER_POLL_SECONDS = 1
 DEFAULT_IDLE_SCHEDULER_POLL_SECONDS = 30
 DEFAULT_INDEPENDENT_REFRESH_STARVATION_SECONDS = 5 * 60
@@ -1660,7 +1662,7 @@ class RefreshTask:
                 source=CommandSource.SCHEDULER,
                 intent=RefreshIntent.DISPLAY_CACHE,
                 display_cached_only=True,
-                priority=50,
+                priority=AUTOMATIC_ROTATION_DISPLAY_PRIORITY,
                 automatic_rotation=True,
             )
 
@@ -2234,7 +2236,7 @@ class RefreshTask:
             intent=RefreshIntent.DISPLAY_CACHE,
             force=False,
             display_cached_only=True,
-            priority=50,
+            priority=AUTOMATIC_ROTATION_DISPLAY_PRIORITY,
             current_dt=current_dt,
             cache_theme_mode=candidate.theme_mode,
             theme_context=display_theme_context,
@@ -4531,6 +4533,14 @@ class RefreshTask:
             try:
                 self._run_memory_maintenance(
                     "refresh-command-finally",
+                    force=(
+                        command.plugin_id == "telegram_digest"
+                        and command.intent
+                        in {
+                            RefreshIntent.DATA_REFRESH,
+                            RefreshIntent.PRESENTATION_REFRESH,
+                        }
+                    ),
                     command=command,
                 )
             except Exception:
@@ -7867,9 +7877,30 @@ class RefreshTask:
         weather_liveness_concession=False,
     ):
         now = self._clock()
+        normalized_intent = RefreshIntent(intent)
         if deadline_monotonic is None:
             deadline_monotonic = now + self._manual_update_timeout_seconds()
-        normalized_intent = RefreshIntent(intent)
+        if (
+            automatic_rotation
+            and normalized_intent is RefreshIntent.PRESENTATION_REFRESH
+        ):
+            try:
+                rotation_wait_seconds = float(self._get_rotation_wait_seconds())
+            except (TypeError, ValueError, OverflowError):
+                logger.exception(
+                    "Could not resolve automatic presentation rotation deadline."
+                )
+            else:
+                if math.isfinite(rotation_wait_seconds):
+                    rotation_budget_seconds = max(
+                        0.01,
+                        rotation_wait_seconds
+                        - DEFAULT_ROTATION_DEADLINE_CLEANUP_SECONDS,
+                    )
+                    deadline_monotonic = min(
+                        deadline_monotonic,
+                        now + rotation_budget_seconds,
+                    )
         if (
             expected_displayed_instance_uuid is None
             and normalized_intent is RefreshIntent.THEME_REDRAW

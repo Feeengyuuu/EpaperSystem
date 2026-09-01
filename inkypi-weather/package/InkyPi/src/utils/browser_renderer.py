@@ -371,6 +371,28 @@ class BrowserRenderer:
                 self._resource_thresholds,
             )
             if resource_tier is not ResourceTier.HEALTHY:
+                if abort_on_hard_pressure:
+                    # The failed attempt coincided with resource pressure, so
+                    # do not classify it as a persistent document failure.
+                    # Let the scheduler defer the work instead of retrying in
+                    # the same pressure window.
+                    self._forget_negative(key)
+                    self._forget_html_failure(failure_domain)
+                    logger.warning(
+                        "Deferring Chromium HTML retry due to resource pressure. | "
+                        "failure_domain: %s | tier: %s | available_mb: %s | "
+                        "swap_percent: %s",
+                        failure_domain,
+                        resource_tier.value,
+                        resource_sample.available_mb,
+                        resource_sample.swap_percent,
+                    )
+                    raise ResourcePressureDeferred(
+                        reason=BROWSER_RESOURCE_PRESSURE_REASON,
+                        phase="retry",
+                        available_mb=resource_sample.available_mb,
+                        swap_percent=resource_sample.swap_percent,
+                    )
                 logger.warning(
                     "Skipping Chromium HTML retry due to resource pressure. | "
                     "failure_domain: %s | tier: %s | available_mb: %s | "

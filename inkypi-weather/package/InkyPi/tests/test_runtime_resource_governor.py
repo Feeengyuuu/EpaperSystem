@@ -133,7 +133,7 @@ def test_acquire_selects_two_workers_and_low_resources_fall_back_to_serial():
     )
     low_resource_governor = RuntimeResourceGovernor(
         snapshot_provider=lambda: {
-            "available_mb": 149,
+            "available_mb": 159,
             "swap_percent": 10,
             "cpu_quota_cores": 4,
         }

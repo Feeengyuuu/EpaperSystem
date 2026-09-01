@@ -28,6 +28,7 @@ CHROMIUM = "chromium"
 AI_GENERATION = "ai_generation"
 HEAVY_CHILD = "heavy_child"
 DISPLAY_WRITE = "display_write"
+TWO_WORKER_ADMISSION_MIN_AVAILABLE_MB = 160.0
 _SINGLETON_RESOURCE_KINDS = frozenset(
     {
         CHROMIUM,
@@ -389,13 +390,18 @@ class RuntimeResourceGovernor:
             return 1, "resource_snapshot_unavailable"
         if requested >= 3 and available >= 170 and swap < 60 and quota >= 3:
             return 3, None
-        if requested >= 2 and available >= 150 and swap < 65 and quota >= 2:
+        if (
+            requested >= 2
+            and available >= TWO_WORKER_ADMISSION_MIN_AVAILABLE_MB
+            and swap < 65
+            and quota >= 2
+        ):
             return 2, None
         if requested == 1:
             return 1, "serial_requested"
         if quota < 2:
             return 1, "cpu_quota_below_parallel_threshold"
-        if available < 150:
+        if available < TWO_WORKER_ADMISSION_MIN_AVAILABLE_MB:
             return 1, "memory_below_parallel_threshold"
         if swap >= 65:
             return 1, "swap_above_parallel_threshold"

@@ -927,6 +927,67 @@ def test_html_retry_once_skips_second_launch_under_resource_pressure(
     )
 
 
+@pytest.mark.parametrize("available_mb", [100, 60])
+@pytest.mark.parametrize("failure_mode", ["timeout", "exit"])
+def test_html_first_failure_defers_retry_when_pressure_is_soft_or_hard(
+    tmp_path,
+    available_mb,
+    failure_mode,
+    monkeypatch,
+):
+    launches = []
+
+    class FailedProcess:
+        returncode = 1
+        pid = 9877
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+    process = TimeoutProcess() if failure_mode == "timeout" else FailedProcess()
+    pressure_sample_after = 3 if failure_mode == "timeout" else 2
+    sample_calls = 0
+
+    def sample_resources():
+        nonlocal sample_calls
+        sample_calls += 1
+        if sample_calls < pressure_sample_after:
+            return ResourceSample(available_mb=512, swap_percent=0)
+        return ResourceSample(available_mb=available_mb, swap_percent=0)
+
+    renderer = BrowserRenderer(
+        binary="chromium",
+        temp_root=tmp_path,
+        popen=lambda *_args, **_kwargs: launches.append(process) or process,
+        resource_sampler=sample_resources,
+    )
+    _route_fake_process_group_signals(monkeypatch, lambda: launches)
+
+    with pytest.raises(ResourcePressureDeferred) as deferred:
+        renderer.render_html(
+            "<p>weather</p>",
+            viewport=(80, 48),
+            context=_context(),
+            timeout_seconds=0.01,
+            failure_domain="weather:weather.html",
+            retry_once=True,
+            abort_on_hard_pressure=True,
+        )
+
+    assert deferred.value.reason == "browser_resource_pressure"
+    assert deferred.value.phase == "retry"
+    assert deferred.value.available_mb == available_mb
+    assert deferred.value.swap_percent == 0
+    assert len(launches) == 1
+    assert renderer.active_processes == ()
+    assert renderer.negative_cache_size == 0
+    assert renderer.html_circuit_size == 0
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_html_render_aborts_running_chromium_when_pressure_becomes_hard(
     tmp_path,
     caplog,

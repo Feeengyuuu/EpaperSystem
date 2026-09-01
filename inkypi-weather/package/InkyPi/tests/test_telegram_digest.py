@@ -591,6 +591,9 @@ def test_plugin_info_and_settings_defaults_are_declared():
     assert 'name="unreadOnly"' in settings
     assert 'name="markDisplayedRead"' in settings
     assert 'name="mediaDownloadLimit"' in settings
+    assert 'max="4" step="1" name="mediaDownloadLimit"' in settings
+    assert 'id="mediaDownloadLimit" value="4"' in settings
+    assert "key === 'mediaDownloadLimit'" in settings
     assert 'name="botToken"' in settings
     assert 'name="chatFilter"' in settings
 
@@ -907,20 +910,20 @@ def test_account_mode_requests_newest_unread_message_first(tmp_path, monkeypatch
     assert FakeTelegramClient.message_calls[0]["reverse"] is False
 
 
-def test_account_mode_default_media_download_limit_caches_more_than_three_photos(tmp_path, monkeypatch):
+def test_account_mode_downloads_visible_media_plus_one_prefetch_with_hard_cap(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     now = datetime(2026, 6, 27, 18, 42, tzinfo=timezone.utc)
     session_base = tmp_path / "telegram_account"
     session_base.with_suffix(".session").write_text("authorized", encoding="utf-8")
     entity = SimpleNamespace(id=-100123, username="daily_signal", title="Daily Signal")
-    dialog = SimpleNamespace(entity=entity, id=-100123, title="Daily Signal", unread_count=5)
+    dialog = SimpleNamespace(entity=entity, id=-100123, title="Daily Signal", unread_count=6)
     messages = []
-    for offset in range(5):
+    for offset in range(6):
         messages.append(SimpleNamespace(
             id=60 - offset,
             date=now,
-            raw_text=f"Photo {offset}\nCaption {offset}",
-            message=f"Photo {offset}\nCaption {offset}",
+            raw_text="",
+            message="",
             photo=SimpleNamespace(w=1280, h=720),
             video=None,
             gif=None,
@@ -942,18 +945,23 @@ def test_account_mode_default_media_download_limit_caches_more_than_three_photos
             "telegramApiHash": "hash-value",
             "telegramSessionPath": str(session_base),
             "dialogFilter": "@daily_signal",
-            "messagesPerDialog": "5",
+            "messagesPerDialog": "6",
             "maxMessages": "8",
+            "mediaDownloadLimit": "30",
         },
         DummyDeviceConfig(),
         now,
     )
 
-    assert len(FakeTelegramClient.download_calls) == 5
-    assert all(Path(item["media_path"]).is_file() for item in payload["messages"][:5])
-    assert payload["stats"]["media_cached_count"] == 5
-    assert payload["stats"]["media_missing_count"] == 0
-    assert payload["status"]["media_cache"] == "ok"
+    visible_keys = plugin._displayed_message_keys(payload["messages"])
+    cached_keys = [item["key"] for item in payload["messages"] if item["media_path"]]
+
+    assert visible_keys == ["-100123:60", "-100123:59", "-100123:58"]
+    assert cached_keys == [*visible_keys, "-100123:57"]
+    assert len(FakeTelegramClient.download_calls) == 4
+    assert payload["stats"]["media_cached_count"] == 4
+    assert payload["stats"]["media_missing_count"] == 2
+    assert payload["status"]["media_cache"] == "partial"
 
 
 

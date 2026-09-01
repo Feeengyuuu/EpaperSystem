@@ -37,9 +37,12 @@ DEFAULT_MAX_PIXELS = 8_000_000
 DEFAULT_MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 DEFAULT_POLL_INTERVAL_SECONDS = 0.02
 DEFAULT_TERMINATE_GRACE_SECONDS = 0.25
+DEFAULT_SOFT_PAUSE_GRACE_SECONDS = 1.0
 HARD_MIN_AVAILABLE_MB = 70.0
 HARD_MAX_SWAP_PERCENT = 75.0
 SOFT_MAX_SWAP_PERCENT = 70.0
+TWO_WORKER_SOFT_PAUSE_MIN_AVAILABLE_MB = 150.0
+THREE_WORKER_SOFT_PAUSE_MIN_AVAILABLE_MB = 170.0
 _DESCRIPTOR_KEYS = frozenset(
     {
         "ordinal",
@@ -222,11 +225,16 @@ class BoundedParallelStageRunner:
         start_method: str = "spawn",
         poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
         terminate_grace_seconds: float = DEFAULT_TERMINATE_GRACE_SECONDS,
+        soft_pause_grace_seconds: float = DEFAULT_SOFT_PAUSE_GRACE_SECONDS,
     ):
         self._governor = governor or RuntimeResourceGovernor()
         self._mp = multiprocessing.get_context(start_method)
         self._poll_interval = max(0.005, float(poll_interval_seconds))
         self._terminate_grace = max(0.01, float(terminate_grace_seconds))
+        self._soft_pause_grace = max(
+            self._poll_interval,
+            float(soft_pause_grace_seconds),
+        )
         self._active_lock = threading.Lock()
         self._active: set[Any] = set()
         self._quarantined_leases: dict[Any, ResourceLease] = {}
@@ -434,6 +442,7 @@ class BoundedParallelStageRunner:
                         child_pid,
                         worker_thread_count,
                         child_peak_rss_bytes,
+                        soft_pressure_serial_fallback,
                     ) = self._run_parallel(
                         workset,
                         context,
@@ -442,6 +451,8 @@ class BoundedParallelStageRunner:
                         created_paths,
                         lease.worker_count,
                     )
+                    if soft_pressure_serial_fallback:
+                        run_reason = "soft_pressure_serial_fallback"
                 else:
                     artifacts = self._run_serial(
                         workset,
@@ -518,7 +529,7 @@ class BoundedParallelStageRunner:
         staging_dir: Path,
         created_paths: list[Path],
         worker_count: int,
-    ) -> tuple[tuple[PreparedImageArtifact, ...], int, int, int | None]:
+    ) -> tuple[tuple[PreparedImageArtifact, ...], int, int, int | None, bool]:
         run_id = uuid4().hex
         payload = workset.primitive_payload()
         receiver, sender = self._mp.Pipe(duplex=False)
@@ -549,6 +560,7 @@ class BoundedParallelStageRunner:
         child_pid = int(process.pid)
         child_peak_rss_bytes = None
         message = None
+        soft_pause_started = None
         try:
             while True:
                 try:
@@ -586,15 +598,42 @@ class BoundedParallelStageRunner:
                         available_mb=available,
                         swap_percent=swap,
                     )
-                soft_available = 170.0 if worker_count >= 3 else 150.0
+                soft_available = (
+                    THREE_WORKER_SOFT_PAUSE_MIN_AVAILABLE_MB
+                    if worker_count >= 3
+                    else TWO_WORKER_SOFT_PAUSE_MIN_AVAILABLE_MB
+                )
                 if (
                     (available is not None and available < soft_available)
                     or (swap is not None and swap >= SOFT_MAX_SWAP_PERCENT)
                 ):
                     dispatch_event.clear()
+                    if soft_pause_started is None:
+                        soft_pause_started = time.monotonic()
+                    elif (
+                        time.monotonic() - soft_pause_started
+                        >= self._soft_pause_grace
+                    ):
+                        self._terminate_process(process, cancel_event)
+                        _remove_run_paths(staging_dir, run_id)
+                        serial_artifacts = self._run_serial(
+                            workset,
+                            context,
+                            identity_validator,
+                            staging_dir,
+                            created_paths,
+                        )
+                        return (
+                            serial_artifacts,
+                            child_pid,
+                            0,
+                            child_peak_rss_bytes,
+                            True,
+                        )
                 else:
                     # Paused dispatch is reversible: when pressure recovers the
                     # child may submit its remaining descriptors.
+                    soft_pause_started = None
                     dispatch_event.set()
 
                 if receiver.poll(self._poll_interval):
@@ -690,7 +729,13 @@ class BoundedParallelStageRunner:
             )
         _require_current_identity(workset.instance_identity, identity_validator)
         artifacts.sort(key=lambda item: item.ordinal)
-        return tuple(artifacts), child_pid, worker_thread_count, child_peak_rss_bytes
+        return (
+            tuple(artifacts),
+            child_pid,
+            worker_thread_count,
+            child_peak_rss_bytes,
+            False,
+        )
 
     def _run_serial(
         self,

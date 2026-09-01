@@ -2774,6 +2774,7 @@ def test_presentation_coalescing_preserves_automatic_rotation_cleanup(
             "playlist_name": "Default",
             "presentation_request_id": request_id,
         },
+        deadline=280,
         intent=RefreshIntent.PRESENTATION_REFRESH,
     )
     automatic = command(
@@ -2787,6 +2788,7 @@ def test_presentation_coalescing_preserves_automatic_rotation_cleanup(
             "automatic_rotation": True,
             "rotation_deadline_cleanup": True,
         },
+        deadline=165,
         intent=RefreshIntent.PRESENTATION_REFRESH,
     )
     first, second = (
@@ -2807,6 +2809,39 @@ def test_presentation_coalescing_preserves_automatic_rotation_cleanup(
     assert selected.payload["presentation_request_id"] == request_id
     assert selected.payload["automatic_rotation"] is True
     assert selected.payload["rotation_deadline_cleanup"] is True
+    assert selected.deadline_monotonic == 165
+
+
+@pytest.mark.parametrize("earlier_first", [False, True])
+def test_presentation_coalescing_keeps_earliest_automatic_rotation_deadline(
+    earlier_first,
+):
+    queue = make_queue(capacity=4, manual_reserved=0)
+    payload = {
+        "playlist_name": "Default",
+        "presentation_request_id": "0123456789abcdef0123456789abcdef",
+        "automatic_rotation": True,
+        "rotation_deadline_cleanup": True,
+    }
+    earlier = command(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        instance_uuid=f"presentation-earliest-deadline-{earlier_first}",
+        priority=90,
+        payload=payload,
+        deadline=80,
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+    )
+    later = replace(earlier, id=f"{earlier.id}-later", deadline_monotonic=100)
+    first, second = (earlier, later) if earlier_first else (later, earlier)
+
+    first_job = queue.submit(first)
+    second_job = queue.submit(second)
+    entry = queue.take(timeout=0)
+
+    assert second_job.id == first_job.id
+    assert entry is not None
+    assert entry.command.deadline_monotonic == 80
 
 
 def test_presentation_queue_does_not_coalesce_different_request_ids():

@@ -69,8 +69,8 @@
 </div>
 
 <div class="form-group">
-  <label class="form-label" for="mediaDownloadLimit">Media downloads per refresh</label>
-  <input class="form-control" type="number" min="1" max="30" step="1" name="mediaDownloadLimit" id="mediaDownloadLimit" value="12">
+  <label class="form-label" for="mediaDownloadLimit">Media downloads per refresh (max 4)</label>
+  <input class="form-control" type="number" min="1" max="4" step="1" name="mediaDownloadLimit" id="mediaDownloadLimit" value="4">
 </div>
 
 <div class="form-group">
@@ -103,7 +103,12 @@
         if (el.type === 'checkbox') {
           el.checked = value === true || value === 'on' || value === 'true';
         } else if ((key !== 'botToken' && key !== 'telegramApiHash') || value) {
-          el.value = value;
+          if (key === 'mediaDownloadLimit') {
+            const parsed = Number.parseInt(value, 10);
+            el.value = Number.isFinite(parsed) ? Math.min(4, Math.max(1, parsed)) : 4;
+          } else {
+            el.value = value;
+          }
         }
       }
     }

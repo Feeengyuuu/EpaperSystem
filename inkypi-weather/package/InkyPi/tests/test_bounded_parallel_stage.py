@@ -23,6 +23,7 @@ from runtime.bounded_parallel_stage import (
 )
 from runtime.long_task_executor import InstanceIdentity
 from runtime.refresh_contracts import TaskContext
+from runtime.resource_deferral import ResourcePressureDeferred
 from runtime.resource_governor import RuntimeResourceGovernor
 
 
@@ -485,9 +486,54 @@ def test_soft_pressure_pauses_new_dispatch_until_resources_recover(tmp_path):
     assert runner.active_processes == ()
 
 
-def test_sustained_soft_pressure_reaps_child_at_deadline_without_serial_remainder(
-    tmp_path,
-):
+def test_two_worker_runtime_threshold_keeps_dispatching_at_exactly_150_mb(tmp_path):
+    sources = tuple(
+        _png_bytes((2600, 1800), (index * 20, 40, 80))
+        for index in range(4)
+    )
+    identity = InstanceIdentity("magazine", 1, 1)
+    samples = {"count": 0}
+
+    def snapshot():
+        samples["count"] += 1
+        return {
+            "available_mb": 160 if samples["count"] == 1 else 150,
+            "swap_percent": 0,
+            "cpu_quota_cores": 2,
+        }
+
+    workset = ImmutableImageWorkset(
+        descriptors=tuple(
+            {
+                "ordinal": index,
+                "source_bytes": source,
+                "source_sha256": hashlib.sha256(source).hexdigest(),
+                "target_width": 800,
+                "target_height": 480,
+            }
+            for index, source in enumerate(sources)
+        ),
+        staging_dir=str(tmp_path),
+        instance_identity=identity,
+    )
+    runner = BoundedParallelStageRunner(
+        governor=RuntimeResourceGovernor(snapshot_provider=snapshot),
+        soft_pause_grace_seconds=0.05,
+    )
+
+    artifacts = runner.run_parallel_only(
+        workset,
+        _context(5),
+        lambda value: value == identity,
+    )
+
+    assert artifacts is not None
+    assert tuple(item.ordinal for item in artifacts) == (0, 1, 2, 3)
+    assert runner.last_run_snapshot["worker_count"] == 2
+    assert runner.last_run_snapshot["reason"] is None
+
+
+def test_sustained_soft_pressure_falls_back_to_serial_before_deadline(tmp_path):
     sources = tuple(
         _png_bytes((2600, 1800), (index * 20, 40, 80))
         for index in range(4)
@@ -519,15 +565,63 @@ def test_sustained_soft_pressure_reaps_child_at_deadline_without_serial_remainde
     )
     runner = BoundedParallelStageRunner(
         governor=RuntimeResourceGovernor(snapshot_provider=snapshot),
+        soft_pause_grace_seconds=0.05,
     )
 
-    with pytest.raises(Exception, match="deadline"):
+    artifacts = runner.run_parallel_only(
+        workset,
+        _context(5),
+        lambda value: value == identity,
+    )
+
+    assert artifacts is not None
+    assert tuple(item.ordinal for item in artifacts) == (0, 1, 2, 3)
+    assert runner.active_processes == ()
+    assert runner.last_run_snapshot["status"] == "succeeded"
+    assert runner.last_run_snapshot["reason"] == "soft_pressure_serial_fallback"
+
+
+def test_hard_pressure_during_soft_pause_remains_retryable_deferral(tmp_path):
+    source = _png_bytes((2600, 1800), (20, 40, 80))
+    identity = InstanceIdentity("magazine", 1, 1)
+    samples = {"count": 0}
+
+    def snapshot():
+        samples["count"] += 1
+        return {
+            "available_mb": {1: 160, 2: 149}.get(samples["count"], 69),
+            "swap_percent": 0,
+            "cpu_quota_cores": 2,
+        }
+
+    workset = ImmutableImageWorkset(
+        descriptors=tuple(
+            {
+                "ordinal": index,
+                "source_bytes": source,
+                "source_sha256": hashlib.sha256(source).hexdigest(),
+                "target_width": 800,
+                "target_height": 480,
+            }
+            for index in range(4)
+        ),
+        staging_dir=str(tmp_path),
+        instance_identity=identity,
+    )
+    runner = BoundedParallelStageRunner(
+        governor=RuntimeResourceGovernor(snapshot_provider=snapshot),
+        soft_pause_grace_seconds=0.5,
+    )
+
+    with pytest.raises(ResourcePressureDeferred) as deferred:
         runner.run_parallel_only(
             workset,
-            _context(0.35),
+            _context(5),
             lambda value: value == identity,
         )
 
+    assert deferred.value.reason == "parallel_image_hard_resource_limit"
+    assert deferred.value.phase == "parallel_image_batch"
     assert runner.active_processes == ()
     assert tuple(tmp_path.glob("image-stage-*.png")) == ()
 

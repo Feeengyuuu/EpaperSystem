@@ -37,8 +37,9 @@ DEFAULT_MESSAGES_PER_DIALOG = 4
 MAX_MESSAGE_CACHE = 30
 CHAT_FEED_MAX_ROWS = 14
 ACCOUNT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS = 7
-DEFAULT_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = 12
-MAX_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = MAX_MESSAGE_CACHE
+DEFAULT_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = 4
+MAX_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = 4
+ACCOUNT_MEDIA_PREFETCH_LIMIT = 1
 DISPLAY_READ_KEY_LIMIT = 1000
 ACCOUNT_SCAN_LIMIT_CAP = 100
 DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
@@ -504,8 +505,8 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
     def _account_media_download_queue(self, messages):
         queue = []
         seen = set()
-        prioritized = list(self._visible_message_items(messages)) + list(messages or [])
-        for item in prioritized:
+
+        for item in self._visible_message_items(messages):
             if not isinstance(item, dict) or not item:
                 continue
             key = str(item.get("key") or "")
@@ -514,6 +515,23 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
             seen.add(key)
             if str(item.get("media_kind") or "").lower() in {"photo", "video"}:
                 queue.append(item)
+
+        prefetched = 0
+        for item in messages or []:
+            if prefetched >= ACCOUNT_MEDIA_PREFETCH_LIMIT:
+                break
+            if not isinstance(item, dict) or not item:
+                continue
+            key = str(item.get("key") or "")
+            if key in seen:
+                continue
+            seen.add(key)
+            if (
+                str(item.get("media_kind") or "").lower() in {"photo", "video"}
+                and not item.get("media_path")
+            ):
+                queue.append(item)
+                prefetched += 1
         return queue
 
     def _account_config(self, settings, device_config):

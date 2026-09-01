@@ -2529,6 +2529,54 @@ def test_queue_command_final_memory_log_includes_command_and_process_usage(
         assert "process_hwm_mb: 64.0" in memory_log
 
 
+@pytest.mark.parametrize(
+    ("intent", "expected_force"),
+    [
+        (RefreshIntent.DATA_REFRESH, True),
+        (RefreshIntent.PRESENTATION_REFRESH, True),
+        (RefreshIntent.DISPLAY_CACHE, False),
+    ],
+)
+def test_telegram_refresh_forces_command_final_memory_maintenance(
+    monkeypatch,
+    intent,
+    expected_force,
+):
+    clock = RuntimeClock()
+    task, _device_config, _clock = _make_runtime_task(
+        make_test_dir(f"telegram-final-maintenance-{intent.value}"),
+        playlists=[],
+        clock=clock,
+    )
+    command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.BACKGROUND,
+        plugin_id="telegram_digest",
+        instance_uuid="telegram-instance",
+        structural_generation=1,
+        settings_revision=1,
+        payload={"playlist_name": "Daily"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 180,
+        priority=10,
+        intent=intent,
+    )
+    calls = []
+    monkeypatch.setattr(task, "_execute_command", lambda _command: None)
+    monkeypatch.setattr(
+        task,
+        "_run_memory_maintenance",
+        lambda reason, force=False, *, command=None: calls.append(
+            (reason, force, command)
+        ),
+    )
+
+    completed = _queue_and_process(task, command)
+
+    assert completed.job.status is JobStatus.SUCCEEDED
+    assert calls == [("refresh-command-finally", expected_force, command)]
+
+
 def test_memory_watchdog_first_swap_only_pressure_maintains_without_restart(monkeypatch):
     tmp_path = make_test_dir("memory-watchdog-swap")
     device_config = FakeDeviceConfig(tmp_path)
@@ -6049,7 +6097,7 @@ def test_playlist_cycle_wins_before_live_or_sports_priority(monkeypatch, live_du
     assert command is not None
     assert command.instance_uuid == ordinary.instance_uuid
     assert command.source is CommandSource.SCHEDULER
-    assert command.priority == 50
+    assert command.priority == 85
 
 
 @pytest.mark.parametrize("under_pressure", [False, True])
@@ -15150,6 +15198,78 @@ def test_rotation_deadline_policy_prioritizes_five_minute_switches(monkeypatch):
     assert refresh_task_module.DEFAULT_ROTATION_MAX_INTERVAL_SECONDS == 420
     assert task._rotation_presentation_wait_seconds() == 0
     assert task._scheduler_poll_seconds() == 1
+
+
+def test_automatic_presentation_deadline_ends_before_rotation_tick(monkeypatch):
+    clock = RuntimeClock(
+        monotonic=1000,
+        wall=PRESENTATION_NOW.timestamp(),
+    )
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "automatic-presentation-deadline-before-rotation",
+        clock=clock,
+    )
+    device_config.config["plugin_cycle_interval_seconds"] = 300
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(seconds=230)
+    ).isoformat()
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    instance = playlist.plugins[0].snapshot()
+
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+        force=False,
+        display_cached_only=False,
+        priority=90,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        presentation_request_id="rotation-request",
+        automatic_rotation=True,
+    )
+
+    assert task._get_rotation_wait_seconds() == 70
+    assert command.deadline_monotonic == pytest.approx(
+        clock.monotonic()
+        + 70
+        - refresh_task_module.DEFAULT_ROTATION_DEADLINE_CLEANUP_SECONDS
+    )
+
+
+def test_manual_presentation_keeps_manual_timeout_deadline():
+    clock = RuntimeClock(
+        monotonic=1000,
+        wall=PRESENTATION_NOW.timestamp(),
+    )
+    task, device_config, _clock, playlist, _display = _make_presentation_task(
+        "manual-presentation-keeps-timeout",
+        clock=clock,
+    )
+    device_config.config["plugin_cycle_interval_seconds"] = 300
+    device_config.refresh_info.refresh_time = (
+        PRESENTATION_NOW - timedelta(seconds=230)
+    ).isoformat()
+    instance = playlist.plugins[0].snapshot()
+
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.MANUAL,
+        intent=RefreshIntent.PRESENTATION_REFRESH,
+        force=True,
+        display_cached_only=False,
+        priority=100,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=PRESENTATION_NOW,
+        presentation_request_id="manual-request",
+        automatic_rotation=False,
+    )
+
+    assert command.deadline_monotonic == pytest.approx(
+        clock.monotonic() + refresh_task_module.DEFAULT_MANUAL_UPDATE_TIMEOUT_SECONDS
+    )
 
 
 def test_successful_rotation_immediately_requests_the_next_presentation():

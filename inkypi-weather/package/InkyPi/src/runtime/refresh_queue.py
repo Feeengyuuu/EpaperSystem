@@ -902,6 +902,7 @@ class RefreshQueue:
             without_rotation_ack.pop("rotation_deadline_cleanup", None)
             selected_payload = freeze_payload(without_rotation_ack)
 
+        automatic_presentation_owners = ()
         if revision_comparison == 0:
             selected_payload = self._merged_admission_payload(
                 existing.payload,
@@ -932,6 +933,13 @@ class RefreshQueue:
                 with_rotation_cleanup["automatic_rotation"] = True
                 with_rotation_cleanup["rotation_deadline_cleanup"] = True
                 selected_payload = freeze_payload(with_rotation_cleanup)
+            automatic_presentation_owners = tuple(
+                candidate
+                for candidate in (existing, incoming)
+                if candidate.intent is RefreshIntent.PRESENTATION_REFRESH
+                and candidate.payload.get("automatic_rotation") is True
+                and candidate.payload.get("rotation_deadline_cleanup") is True
+            )
 
         deadline = existing.deadline_monotonic
         if (
@@ -941,6 +949,14 @@ class RefreshQueue:
             deadline = incoming.deadline_monotonic
         if deadline <= now and incoming.deadline_monotonic > now:
             deadline = incoming.deadline_monotonic
+        if automatic_presentation_owners:
+            # The automatic owner is bounded by the next rotation tick.  A
+            # generic presentation request for the same immutable request may
+            # share the work, but must not extend that scheduler deadline.
+            deadline = min(
+                candidate.deadline_monotonic
+                for candidate in automatic_presentation_owners
+            )
 
         kind = existing.kind if reuse_existing else incoming.kind
         return replace(
