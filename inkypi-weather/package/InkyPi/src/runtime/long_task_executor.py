@@ -705,12 +705,16 @@ class LongTaskExecutor:
                 process_group_ready_event,
             )
             if reaped:
-                with self._lock:
-                    self._active.pop(job.handle.id, None)
-                try:
-                    process.close()
-                except (OSError, ValueError):
-                    pass
+                # shutdown can still be joining the same process while the
+                # coordinator finishes reaping. Keep its OS handle alive until
+                # that termination finishes (notably on Windows).
+                with job.termination_lock:
+                    with self._lock:
+                        self._active.pop(job.handle.id, None)
+                    try:
+                        process.close()
+                    except (OSError, ValueError):
+                        pass
             else:
                 raise LongTaskProcessLeakError(getattr(process, "pid", None))
 

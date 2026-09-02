@@ -21,6 +21,10 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
+from plugins.box_office_top_movies.china_source import (
+    ACTIVE_BUDGET, ChinaFetchBudget, SHANGHAI, official_metadata, validate_comprehensive_metrics,
+)
+from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import bounded_int, get_base_ui_font
 from utils.http_client import get_http_session
 from utils.safe_image import safe_open_image_response
@@ -33,7 +37,7 @@ MAOYAN_MOVIE_DETAIL_URL = "https://m.maoyan.com/ajax/detailmovie"
 MAOYAN_SOURCE_LABEL = "\u732b\u773c\u4e13\u4e1a\u7248"
 ZGDYPW_REALTIME_URL = "https://zgdypf.zgdypw.cn/box"
 ZGDYPW_SOURCE_LABEL = "\u4e2d\u56fd\u7535\u5f71\u7968\u623f"
-CHINA_SOURCE_MODES = {"maoyan", "maoyan_china", "china", "china_mainland", "mainland_china"}
+CHINA_SOURCE_MODES = {"official_china", "maoyan", "maoyan_china", "china", "china_mainland", "mainland_china"}
 MAINLAND_MOVIE_SOURCES = {"maoyan", "zgdypw_realtime"}
 TMDB_SEARCH_URL = "https://api.themoviedb.org/3/search/movie"
 TMDB_MOVIE_URL = "https://api.themoviedb.org/3/movie/{movie_id}"
@@ -201,6 +205,9 @@ class BoxOfficeTopMovies(BasePlugin):
             and bool(cache.get("movies"))
         )
         cache_is_fresh = self._cache_is_fresh(cache, cache_key, cache_hours)
+        if str(settings.get("sourceMode") or "").strip().lower() == "official_china":
+            cached_source_date = (cache.get("source_metadata") or {}).get("statistic_date")
+            cache_is_fresh = cache_is_fresh and cached_source_date == self._source_now().astimezone(SHANGHAI).date().isoformat()
         provenance = SourceProvenance.LOCAL_FALLBACK
 
         if theme_render_only and not source_cache_ready:
@@ -218,11 +225,10 @@ class BoxOfficeTopMovies(BasePlugin):
                 provenance = SourceProvenance.FRESH_CACHE
             else:
                 provenance = SourceProvenance.STALE_CACHE
+                stale = True
         else:
             try:
-                movies, source_label = self._load_movies(settings, items_count)
-                self._enrich_with_tmdb(movies, settings, device_config)
-                self._download_posters(movies)
+                movies, source_label = self._load_and_enrich_movies(settings, items_count, device_config)
                 generated_at = self._now_for_device(device_config)
                 provenance = (
                     SourceProvenance.LOCAL_FALLBACK
@@ -235,11 +241,14 @@ class BoxOfficeTopMovies(BasePlugin):
                         "cache_key": cache_key,
                         "generated_at": generated_at.astimezone(timezone.utc).isoformat(),
                         "source_label": source_label,
+                        "source_metadata": (movies[0].extra or {}).get("source_metadata") if movies else None,
                         "movies": [movie.to_dict() for movie in movies],
                     })
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 logger.warning("Box office refresh failed: %s", exc)
-                if source_cache_ready:
+                if source_cache_ready or self._legacy_mainland_fallback_ready(cache, settings, dimensions, items_count, device_config):
                     movies = [BoxOfficeMovie.from_dict(item) for item in cache.get("movies", [])]
                     source_label = cache.get("source_label") or source_label
                     generated_at = self._parse_datetime(cache.get("generated_at")) or generated_at
@@ -276,9 +285,62 @@ class BoxOfficeTopMovies(BasePlugin):
             image.info["inkypi_skip_cache"] = True
         return attach_source_provenance(image, provenance)
 
+    def _legacy_mainland_fallback_ready(self, cache, settings, dimensions, items_count, device_config):
+        """After a source-only migration, retain old mainland data as STALE only."""
+        if str(settings.get("sourceMode") or "").strip().lower() != "official_china":
+            return False
+        expected_source = {MAOYAN_SOURCE_LABEL: "maoyan", ZGDYPW_SOURCE_LABEL: "zgdypw_realtime"}.get(cache.get("source_label"))
+        movies = cache.get("movies")
+        if (cache.get("version") != self._cache_state_version() or not expected_source
+                or not self._parse_datetime(cache.get("generated_at"))
+                or not isinstance(movies, list) or not movies):
+            return False
+        if any(not isinstance(movie, dict) or not isinstance(movie.get("extra"), dict)
+               or movie["extra"].get("source") != expected_source for movie in movies):
+            return False
+        return any(
+            cache.get("cache_key") == self._cache_key({**settings, "sourceMode": mode}, dimensions, items_count, device_config)
+            for mode in CHINA_SOURCE_MODES - {"official_china"}
+        )
+
+    def _load_and_enrich_movies(self, settings, items_count, device_config):
+        if str(settings.get("sourceMode") or "").strip().lower() == "official_china":
+            with ChinaFetchBudget() as budget:
+                movies, label = self._load_movies(settings, items_count)
+                if budget.remaining_seconds() > 0:
+                    self._enrich_with_tmdb(movies, settings, device_config, session=budget)
+                if budget.remaining_seconds() > 0:
+                    self._download_posters(movies, session=budget)
+                return movies, label
+        movies, label = self._load_movies(settings, items_count)
+        self._enrich_with_tmdb(movies, settings, device_config)
+        self._download_posters(movies)
+        return movies, label
+
+    @staticmethod
+    def _source_now():
+        return datetime.now(timezone.utc)
+
     def _load_movies(self, settings, items_count):
         source_mode = (settings.get("sourceMode") or "the_numbers").strip().lower()
         chart_url = settings.get("chartUrl") or DEFAULT_CHART_URL
+
+        if source_mode == "official_china":
+            if ACTIVE_BUDGET.get() is None:
+                with ChinaFetchBudget():
+                    return self._load_movies(settings, items_count)
+            url = settings.get("mainlandRealtimeUrl") or ZGDYPW_REALTIME_URL
+            html_text = self._fetch_text(url)
+            metadata = official_metadata(html_text, self._source_now())
+            movies = self._parse_zgdypw_realtime(html_text, url)[:items_count]
+            if not movies:
+                raise RuntimeError("Official China chart did not produce movies")
+            for movie in movies:
+                validate_comprehensive_metrics(movie.extra.get("today_box_wan"), movie.extra.get("box_rate"))
+                movie.extra["source_metadata"] = dict(metadata)
+            # Maoyan's available schema has no verified source time/service-fee
+            # contract. Legacy mode remains available; do not mix its data here.
+            return movies, ZGDYPW_SOURCE_LABEL
 
         if source_mode in CHINA_SOURCE_MODES:
             errors = []
@@ -331,7 +393,7 @@ class BoxOfficeTopMovies(BasePlugin):
         raise RuntimeError("No box office chart source produced movies.")
 
     def _fetch_text(self, url):
-        response = get_http_session().get(url, timeout=20, headers=REQUEST_HEADERS)
+        response = (ACTIVE_BUDGET.get() or get_http_session()).get(url, timeout=20, headers=REQUEST_HEADERS)
         response.raise_for_status()
         if not response.encoding:
             response.encoding = "utf-8"
@@ -545,9 +607,11 @@ class BoxOfficeTopMovies(BasePlugin):
                 last = raw
         return last
 
-    def _enrich_with_tmdb(self, movies, settings, device_config=None):
-        session = get_http_session()
+    def _enrich_with_tmdb(self, movies, settings, device_config=None, *, session=None):
+        session = session or get_http_session()
         for movie in movies:
+            if isinstance(session, ChinaFetchBudget) and session.remaining_seconds() <= 0:
+                break
             if not self._is_maoyan_movie(movie):
                 continue
             try:
@@ -568,6 +632,8 @@ class BoxOfficeTopMovies(BasePlugin):
         show_localized = self._truthy(settings.get("showLocalizedTitles"), True)
         region = (settings.get("tmdbRegion") or default_region).strip().upper()[:2] or default_region
         for movie in movies:
+            if isinstance(session, ChinaFetchBudget) and session.remaining_seconds() <= 0:
+                break
             if (
                 self._is_maoyan_movie(movie)
                 and movie.poster_url
@@ -915,8 +981,10 @@ class BoxOfficeTopMovies(BasePlugin):
                     return value
         return ""
 
-    def _download_posters(self, movies):
+    def _download_posters(self, movies, *, session=None):
         for movie in movies:
+            if isinstance(session, ChinaFetchBudget) and session.remaining_seconds() <= 0:
+                break
             if not movie.poster_url:
                 continue
             try:
@@ -924,7 +992,7 @@ class BoxOfficeTopMovies(BasePlugin):
                 if path.is_file() and path.stat().st_size > 0:
                     movie.poster_path = str(path)
                     continue
-                response = get_http_session().get(
+                response = (session or get_http_session()).get(
                     movie.poster_url,
                     timeout=18,
                     headers=IMAGE_HEADERS,
@@ -976,7 +1044,13 @@ class BoxOfficeTopMovies(BasePlugin):
             draw.text((margin, margin - 2), copy["title"], fill=colors["ink"], font=title_font)
             draw.text((margin, margin + int(header_h * 0.58)), copy["subtitle"], fill=accent, font=subtitle_font)
 
+        metadata = (movies[0].extra or {}).get("source_metadata") if movies else None
         meta = self._updated_text(generated_at, source_label, stale)
+        if self._is_china_chart(settings, source_label):
+            source_time = self._parse_datetime((metadata or {}).get("source_updated_at"))
+            when = source_time.astimezone(SHANGHAI).strftime("%m/%d %H:%M") if source_time else "时间未知"
+            scope = " 综合票房·含服务费" if metadata else ""
+            meta = f"{'旧数据 ' if stale else ''}{source_label} 北京时间 {when}{scope}"
         meta_w = draw.textlength(meta, font=small_font)
         draw.text((width - margin - meta_w, margin + int(header_h * 0.62)), meta, fill=colors["muted"], font=small_font)
 

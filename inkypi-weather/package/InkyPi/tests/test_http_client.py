@@ -43,6 +43,13 @@ def _context(seconds=5):
     )
 
 
+def test_explicit_single_attempt_client_has_no_hidden_adapter_retries():
+    with http_client.create_single_attempt_http_client() as client:
+        assert client.max_attempts == 1
+        assert client.owns_session
+        assert client.session.get_adapter("https://example.test").max_retries.total == 0
+
+
 class RecordingProviderGovernor:
     def __init__(self):
         self.calls = []

@@ -220,9 +220,13 @@ class HttpClient:
         session=None,
         owns_session=False,
         resource_governor=None,
+        max_attempts=None,
     ):
         self.session = session if session is not None else get_http_session()
         self.owns_session = bool(owns_session)
+        if max_attempts is not None and (type(max_attempts) is not int or max_attempts not in (1, 2)):
+            raise ValueError("max_attempts must be 1, 2, or None")
+        self.max_attempts = max_attempts
         self.resource_governor = (
             _HTTP_RESOURCE_GOVERNOR
             if resource_governor is None
@@ -385,6 +389,8 @@ class HttpClient:
             getattr(self.session, "_inkypi_adapter_retries", False)
         )
         attempts = 1 if managed_retries or method not in RETRYABLE_METHODS else 2
+        if self.max_attempts is not None:
+            attempts = min(attempts, self.max_attempts)
 
         for attempt in range(attempts):
             context.raise_if_cancelled()
@@ -435,6 +441,13 @@ class HttpClient:
 
     def __exit__(self, *_args):
         self.close()
+
+
+def create_single_attempt_http_client():
+    """Own a no-retry transport when the caller owns a shared retry budget."""
+    session = TimeoutSession()
+    _disable_dead_local_proxy(session)
+    return HttpClient(session=session, owns_session=True, max_attempts=1)
 
 
 @contextmanager
