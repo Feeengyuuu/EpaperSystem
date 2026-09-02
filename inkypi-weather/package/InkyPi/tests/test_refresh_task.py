@@ -10287,6 +10287,54 @@ def test_noncacheable_due_rotation_refresh_enters_backoff_without_stale_display(
     assert selected.instance_uuid == fresh.instance_uuid
 
 
+def test_rebuilt_data_lanes_receive_first_attempt_under_continuous_due_load(monkeypatch):
+    """A restored cache must not make its first DATA turn perpetually youngest."""
+    now = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=now.timestamp())
+    cold_intervals = {
+        "steam_profile_dashboard": 300,
+        "lol_info": 7200,
+        "ticketmaster_events": 10800,
+        "ai_ecosystem_pulse": 3600,
+        "orbital_signal": 3600,
+        "vehicle_status": 10800,
+    }
+    playlist = _runtime_playlist(*(
+        [_runtime_plugin_data(f"warm-{i}", f"Warm {i}", interval=300)
+         for i in range(22)]
+        + [_runtime_plugin_data(key, key, interval=interval, latest_refresh_time=None)
+           for key, interval in cold_intervals.items()]
+    ))
+    task, config, _clock = _make_runtime_task(
+        make_test_dir("rebuilt-data-fairness"), playlists=[playlist], clock=clock,
+    )
+    config.config.update({"theme_mode": "day", "active_theme": "day"})
+    monkeypatch.setattr(task, "_resource_sample", lambda: ResourceSample(512, 0))
+    for plugin in playlist.plugins:
+        instance = plugin.snapshot()
+        _write_runtime_cache(task, instance)
+        if instance.plugin_id.startswith("warm-"):
+            task.runtime_state.record_success(
+                instance.instance_uuid, (now - timedelta(hours=1)).isoformat(),
+                lane=RefreshLane.DATA,
+            )
+    first_attempt = {}
+    counts = {}
+    for _ in range(100):
+        current = datetime.fromtimestamp(clock.wall_time(), timezone.utc)
+        command = task._select_independent_refresh_command(current)
+        assert command is not None
+        assert command.intent is RefreshIntent.DATA_REFRESH
+        first_attempt.setdefault(command.plugin_id, clock.monotonic())
+        counts[command.plugin_id] = counts.get(command.plugin_id, 0) + 1
+        task.runtime_state.record_attempt(command.instance_uuid, current.isoformat(), lane=RefreshLane.DATA)
+        task.runtime_state.record_success(command.instance_uuid, current.isoformat(), lane=RefreshLane.DATA)
+        clock.advance(20)
+    assert set(cold_intervals) <= first_attempt.keys()
+    assert max(first_attempt[key] for key in cold_intervals) <= 28 * 20
+    assert all(counts[f"warm-{i}"] >= 2 for i in range(22))
+
+
 def test_soft_pressure_makes_spaced_fair_progress_across_ordinary_instances(
     monkeypatch,
 ):

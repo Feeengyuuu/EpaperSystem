@@ -97,6 +97,7 @@ from runtime.ian import (
 from runtime.ian_refresh_adapter import refresh_command_to_ian_request
 from runtime.refresh_policy import (
     AdmissionState,
+    FirstDataDueTracker,
     DueCandidate,
     DueReason,
     ResourceSample,
@@ -580,6 +581,7 @@ class RefreshTask:
             )
         )
         self._admission_state = AdmissionState()
+        self._first_data_due = FirstDataDueTracker()
         self._resource_tier = None
         self._due_counts = {lane.value: 0 for lane in RefreshLane}
         self._oldest_data_overdue_seconds = None
@@ -2408,6 +2410,9 @@ class RefreshTask:
         cache_candidates = self._active_cache_candidates(
             active, get_theme_context(self.device_config, now=current_dt)
         )
+        self._first_data_due.observe(
+            instances, runtime_instances, now=current_dt, now_monotonic=self._clock(),
+        )
         presentation_instance_uuids = set()
         for instance in instances:
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
@@ -2452,6 +2457,7 @@ class RefreshTask:
             != theme_context.get("mode")
         )
         if active is None:
+            self._first_data_due.observe((), {}, now=current_dt, now_monotonic=self._clock())
             self._theme_due_candidate(
                 manager,
                 None,
@@ -2465,6 +2471,9 @@ class RefreshTask:
 
         cache_candidates = self._active_cache_candidates(active, theme_context)
         runtime_instances = self.runtime_state.snapshot().instances
+        first_due_since = self._first_data_due.observe(
+            active.plugins, runtime_instances, now=current_dt, now_monotonic=self._clock(),
+        )
         data_candidates = []
         presentation_candidates = []
         for instance in active.plugins:
@@ -2477,6 +2486,7 @@ class RefreshTask:
                 runtime_instance,
                 instance.instance_uuid in cache_candidates,
                 current_dt,
+                first_due_since=first_due_since.get(instance.instance_uuid),
             )
             if data_evaluation.invalid_fields:
                 logger.warning(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 from zoneinfo import ZoneInfo
@@ -12,6 +13,7 @@ from src.runtime.refresh_policy import (
     AdmissionState,
     DueCandidate,
     DueReason,
+    FirstDataDueTracker,
     ResourceSample,
     ResourceThresholds,
     ResourceTier,
@@ -30,6 +32,86 @@ from src.runtime.runtime_state import (
 
 
 UTC = timezone.utc
+
+
+def test_first_data_wait_survives_failure_backoff_and_wall_clock_changes():
+    tracker = FirstDataDueTracker()
+    now = datetime(2026, 9, 2, 12, tzinfo=UTC)
+    instance = _instance(refresh={"interval": 300})
+    first = tracker.observe([instance], {}, now=now, now_monotonic=10)
+    assert first[instance.instance_uuid] == now
+    failed = InstanceRuntimeState(data=_lane(
+        attempt=now + timedelta(seconds=10), failure=now + timedelta(seconds=10),
+        retry=now + timedelta(seconds=600),
+    ))
+    waiting = tracker.observe(
+        [instance], {instance.instance_uuid: failed},
+        now=now + timedelta(seconds=120), now_monotonic=130,
+    )
+    assert evaluate_data_due(
+        instance, failed, True, now + timedelta(seconds=120),
+        first_due_since=waiting[instance.instance_uuid],
+    ).candidate is None
+    # The age comes from elapsed time, even after the wall clock is corrected.
+    shifted_now = now - timedelta(hours=1)
+    shifted = tracker.observe(
+        [instance], {instance.instance_uuid: failed},
+        now=shifted_now, now_monotonic=310,
+    )
+    assert shifted_now - shifted[instance.instance_uuid] == timedelta(seconds=300)
+    retried = tracker.observe(
+        [instance], {instance.instance_uuid: failed},
+        now=now + timedelta(seconds=601), now_monotonic=611,
+    )
+    candidate = evaluate_data_due(
+        instance, failed, True, now + timedelta(seconds=601),
+        first_due_since=retried[instance.instance_uuid],
+    ).candidate
+    assert candidate.due_since == now
+    assert candidate.last_attempt_at == now + timedelta(seconds=10)
+
+
+def test_first_data_wait_resets_for_success_inactivity_and_revision_changes():
+    now = datetime(2026, 9, 2, 12, tzinfo=UTC)
+    instance = _instance(refresh={"interval": 300})
+    for replacement in (
+        replace(instance, settings_revision=8),
+        replace(instance, structural_generation=4),
+    ):
+        tracker = FirstDataDueTracker()
+        tracker.observe([instance], {}, now=now, now_monotonic=0)
+        later = now + timedelta(seconds=300)
+        assert tracker.observe([replacement], {}, now=later, now_monotonic=300) == {
+            instance.instance_uuid: later,
+        }
+    for inactive, states in (
+        ([], {}),
+        ([replace(instance, refresh=MappingProxyType({}))], {}),
+        ([instance], {instance.instance_uuid: InstanceRuntimeState(data=_lane(success=now))}),
+    ):
+        tracker = FirstDataDueTracker()
+        tracker.observe([instance], {}, now=now, now_monotonic=0)
+        assert tracker.observe(inactive, states, now=now, now_monotonic=300) == {}
+        later = now + timedelta(seconds=600)
+        assert tracker.observe([instance], {}, now=later, now_monotonic=600) == {
+            instance.instance_uuid: later,
+        }
+
+
+def test_first_data_anchor_keeps_schedule_bootstrap_and_success_cadence():
+    now = datetime(2026, 9, 2, 12, tzinfo=UTC)
+    anchor = now - timedelta(minutes=10)
+    instance = _instance(refresh={"interval": 300, "scheduled": "09:00"})
+    scheduled = evaluate_data_due(instance, InstanceRuntimeState(), True, now, first_due_since=anchor)
+    assert scheduled.candidate.due_since == now.replace(hour=9)
+    missing = evaluate_data_due(instance, InstanceRuntimeState(), False, now, first_due_since=anchor)
+    assert missing.candidate.reason is DueReason.BOOTSTRAP_MISSING
+    success = InstanceRuntimeState(data=_lane(success=now - timedelta(seconds=301)))
+    interval = evaluate_data_due(instance, success, True, now, first_due_since=anchor)
+    assert interval.candidate.due_since == now - timedelta(seconds=1)
+    # A restarted scheduler starts a fresh bounded wait, without changing persisted state.
+    restarted = FirstDataDueTracker()
+    assert restarted.observe([instance], {}, now=now, now_monotonic=500) == {instance.instance_uuid: now}
 
 
 def _instance(

@@ -77,6 +77,36 @@ class AdmissionDecision:
     state: AdmissionState
 
 
+class FirstDataDueTracker:
+    """Keep a bounded monotonic age for interval instances awaiting first success."""
+
+    def __init__(self):
+        self._first_seen = {}
+
+    def observe(self, instances, runtime_instances, *, now, now_monotonic):
+        """Retain ages across backoff; forget inactive, changed, or successful work."""
+        retained = {}
+        due_since = {}
+        for instance in instances:
+            state = runtime_instances.get(instance.instance_uuid, InstanceRuntimeState())
+            if (
+                _valid_interval(instance.refresh.get("interval"), []) is None
+                or _parse_lane_time(state.data.last_success_at, now) is not None
+            ):
+                continue
+            identity = (
+                instance.instance_uuid,
+                instance.structural_generation,
+                instance.settings_revision,
+            )
+            first_seen = self._first_seen.get(identity, now_monotonic)
+            retained[identity] = first_seen
+            elapsed = max(0.0, now_monotonic - first_seen)
+            due_since[instance.instance_uuid] = _add_elapsed_seconds(now, -elapsed, now)
+        self._first_seen = retained
+        return due_since
+
+
 def classify_resource_tier(
     sample: ResourceSample,
     thresholds: ResourceThresholds,
@@ -271,6 +301,8 @@ def evaluate_data_due(
     runtime_state: InstanceRuntimeState,
     has_displayable_cache: bool,
     now: datetime,
+    *,
+    first_due_since: datetime | None = None,
 ) -> DueEvaluation:
     """Evaluate ordinary data cadence from immutable caller-supplied facts."""
     invalid_fields: list[str] = []
@@ -288,7 +320,7 @@ def evaluate_data_due(
     else:
         if interval is not None:
             interval_due = (
-                now
+                (now if first_due_since is None else first_due_since)
                 if last_success is None
                 else _add_elapsed_seconds(last_success, interval, now)
             )
