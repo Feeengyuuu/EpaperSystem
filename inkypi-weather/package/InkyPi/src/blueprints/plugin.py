@@ -23,6 +23,7 @@ from utils.app_utils import (
 from utils.refresh_validation import (
     RefreshValidationError,
     parse_refresh_config,
+    normalize_plugin_refresh,
     validation_error_payload,
 )
 from utils.theme_utils import normalize_theme_mode
@@ -425,13 +426,18 @@ def update_plugin_instance(instance_name):
         plugin_settings = form_data
         plugin_settings.update(prepared_files.locations)
         snapshot = selection.instance
+        requested_refresh = dict(parsed_refresh.refresh) if parsed_refresh else dict(snapshot.refresh)
+        normalized_refresh = normalize_plugin_refresh(
+            plugin_id, plugin_settings or snapshot.settings, requested_refresh
+        )
+        refresh_update = normalized_refresh if parsed_refresh or normalized_refresh != dict(snapshot.refresh) else None
         with playlist_manager.instance_lifecycle_guard():
             prepared_files.promote()
             validate_request_file_references(plugin_settings)
             mutation = playlist_manager.update_plugin_instance_atomic(
                 snapshot.instance_uuid,
                 settings=plugin_settings or None,
-                refresh=dict(parsed_refresh.refresh) if parsed_refresh else None,
+                refresh=refresh_update,
                 expected_generation=snapshot.structural_generation,
                 expected_settings_revision=snapshot.settings_revision,
             )

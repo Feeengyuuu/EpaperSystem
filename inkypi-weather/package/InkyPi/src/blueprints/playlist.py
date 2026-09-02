@@ -18,6 +18,7 @@ from utils.app_utils import (
 from utils.refresh_validation import (
     RefreshValidationError,
     parse_refresh_config,
+    normalize_plugin_refresh,
     validation_error_payload,
 )
 
@@ -60,7 +61,7 @@ def add_plugin():
         plugin_settings.update(prepared_files.locations)
         plugin_dict = {
             "plugin_id": plugin_id,
-            "refresh": dict(parsed_refresh.refresh),
+            "refresh": normalize_plugin_refresh(plugin_id, plugin_settings, parsed_refresh.refresh),
             "plugin_settings": plugin_settings,
             "name": instance_name
         }

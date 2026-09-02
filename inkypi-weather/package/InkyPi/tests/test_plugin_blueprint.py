@@ -1165,6 +1165,24 @@ def test_update_uses_resolved_cas_then_cancel_write_and_signal(plugin_env):
     assert plugin_env.task.refresh_queue.canceled == ["home-uuid"]
 
 
+@pytest.mark.parametrize("request_data", [
+    {"showGameEvents": "true"},
+    {"refresh_settings": json.dumps({"refreshType": "interval", "unit": "hour", "interval": 2})},
+])
+def test_game_calendar_setting_and_refresh_only_saves_normalize_cadence(plugin_env, request_data):
+    plugin_env.inner_manager.add_plugin_to_playlist_snapshot("Default", {
+        "plugin_id": "simple_calendar", "name": "Calendar", "instance_uuid": "calendar-uuid",
+        "plugin_settings": {"showGameEvents": "true"}, "refresh": {"interval": 7200},
+    })
+    before = plugin_env.inner_manager.resolve_plugin_instance_snapshot("Default", "simple_calendar", "Calendar").instance
+    response = plugin_env.client.put("/update_plugin_instance/Calendar", data={"plugin_id": "simple_calendar", **request_data})
+    assert response.status_code == 200
+    after = plugin_env.inner_manager.snapshot_instance(before.instance_uuid)
+    assert after.refresh == {"interval": 3600}
+    assert after.settings["showGameEvents"] == "true"
+    assert after.settings_revision > before.settings_revision
+
+
 def test_resolve_then_recreate_same_name_cannot_update_replacement(
     plugin_env,
     monkeypatch,

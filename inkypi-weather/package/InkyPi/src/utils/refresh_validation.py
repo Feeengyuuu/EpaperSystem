@@ -92,3 +92,17 @@ def validation_error_payload(error: RefreshValidationError) -> dict[str, Any]:
         "error": message,
         "message": message,
     }
+
+
+def normalize_plugin_refresh(plugin_id, settings, refresh):
+    """Align an opted-in game calendar with its three-hour provider checks."""
+    result = dict(refresh or {})
+    opted_in = str((settings or {}).get("showGameEvents", "")).strip().lower() in {
+        "1", "true", "on", "yes",
+    }
+    if plugin_id != "simple_calendar" or not opted_in:
+        return result
+    interval = result.get("interval")
+    if type(interval) is int and 0 < interval <= 3600 and 3600 % interval == 0:
+        return result
+    return {"interval": 3600}

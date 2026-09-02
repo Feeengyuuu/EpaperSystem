@@ -26,6 +26,8 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import read_contexts
+from plugins.simple_calendar.game_events import GameEventProvider, enabled as game_events_enabled
+from plugins.simple_calendar.game_event_sources import SERIES as GAME_EVENT_SERIES
 from utils.app_utils import get_base_ui_font, get_font
 from utils.atomic_file import atomic_write_json
 from utils.http_client import get_http_session
@@ -588,9 +590,15 @@ class SimpleCalendar(BasePlugin):
     _SOURCE_PROVENANCE_SETTING = "_inkypi_simple_calendar_source_provenance"
     _DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
 
+    def __init__(self, config, **dependencies):
+        self.game_events = dependencies.pop("game_event_provider", None) or GameEventProvider()
+        super().__init__(config, **dependencies)
+
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
         template_params['style_settings'] = False
+        template_params['game_event_series'] = GAME_EVENT_SERIES
+        template_params['game_event_status'] = self.game_events.read
         return template_params
 
     def presentation_mode(self, settings):
@@ -635,7 +643,7 @@ class SimpleCalendar(BasePlugin):
             image=image,
             changed=True,
         )
-        attach_source_provenance(preparation.image, provenance)
+        # generate_image already attests the merged base + optional game data.
         return preparation
 
     def generate_image(self, settings, device_config):
@@ -676,6 +684,22 @@ class SimpleCalendar(BasePlugin):
                 selected_date,
                 tz,
             )
+        if game_events_enabled(settings.get("showGameEvents")):
+            game_result = (
+                self.game_events.read(settings)
+                if cached_events is not None or theme_render_only or display_render
+                else self.game_events.refresh(settings)
+            )
+            game_calendar_events = self.game_events.calendar_events(
+                game_result, selected_date, tz
+            )
+            if theme_palette:
+                for event in game_calendar_events:
+                    event["color"] = theme_palette["accent"]
+            holiday_events = list(holiday_events) + game_calendar_events
+            provenance = self._worst_source_provenance([
+                provenance or SourceProvenance.LIVE, game_result.provenance
+            ])
         weather_panel_background_path = self._get_weather_panel_background_path(settings, device_config, selected_date)
         date_hero_overlay_enabled = self._date_hero_overlay_enabled(settings)
 

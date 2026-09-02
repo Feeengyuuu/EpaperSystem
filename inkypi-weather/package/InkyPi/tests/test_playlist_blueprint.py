@@ -250,6 +250,16 @@ def test_add_plugin_rejects_invalid_refresh_before_any_effect(
     assert playlist_env.events == []
 
 
+def test_new_game_calendar_normalizes_cadence_on_create(playlist_env):
+    response = playlist_env.client.post("/add_plugin", data={
+        "plugin_id": "simple_calendar", "showGameEvents": "true",
+        "refresh_settings": json.dumps({"playlist": "Other", "instance_name": "Calendar", "refreshType": "scheduled", "refreshTime": "08:00"}),
+    })
+    assert response.status_code == 200
+    added = playlist_env.inner_manager.resolve_plugin_instance_snapshot("Other", "simple_calendar", "Calendar").instance
+    assert added.refresh == {"interval": 3600}
+
+
 def test_add_plugin_uses_atomic_snapshot_then_write_and_signal(playlist_env):
     response = playlist_env.client.post(
         "/add_plugin",

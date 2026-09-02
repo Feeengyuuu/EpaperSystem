@@ -88,6 +88,49 @@
 		</div>
 </div>
 
+<fieldset class="form-group" style="border:1px solid var(--border-color); padding:12px;">
+    <legend>游戏发布会</legend>
+    <input type="hidden" name="showGameEvents" value="false">
+    <label class="form-label">
+        <input type="checkbox" id="showGameEvents" name="showGameEvents" value="true">
+        自动同步游戏发布会（每三小时检查）
+    </label>
+    <p class="form-help">按设备时区显示，时刻未定时标注“时间待定”。启用后日历数据每小时刷新，已有更快且可整除一小时的频率会保留。</p>
+    <input type="hidden" name="gameEventSeries[]" value="">
+    {% for key, title in game_event_series.items() %}
+    <label style="display:block; margin:5px 0;">
+        <input type="checkbox" name="gameEventSeries[]" value="{{ key }}" checked>
+        {{ title }}
+    </label>
+    {% endfor %}
+    <input type="hidden" name="allowGameEventMedia" value="false">
+    <label class="form-label">
+        <input type="checkbox" id="allowGameEventMedia" name="allowGameEventMedia" value="true" checked>
+        允许 Eurogamer / IGN 补充已确认公告
+    </label>
+    <p class="form-help">官方优先，传闻不入历。访问失败保留已知日期并标注“待核验”，恢复后自动更新。</p>
+    {% set game_status = game_event_status(plugin_settings|default({})) %}
+    {% if game_status.sources %}
+    <details>
+        <summary>来源状态与最近核验时间（UTC）</summary>
+        {% for source, status in game_status.sources.items() %}
+        <p><strong>{{ source }}</strong>：{{ status.last_success_at or '尚未成功检查' }}
+            {% if status.error %}<br>待核验：{{ status.error }}{% endif %}
+            {% if status.next_check_at %}<br>下次检查：{{ status.next_check_at }}{% endif %}
+        </p>
+        {% endfor %}
+        {% for event in game_status.events %}
+        <p>{{ event.event_date }} · {{ event.title }}
+            {% if event.authority == 1 %} · 媒体补充{% endif %}
+            {% if event.conflict %} · 来源时间有冲突，保留较高优先级信息{% endif %}
+            {% if event.pending_verification %} · 待核验{% endif %}
+            <br><a href="{{ event.source_url }}" target="_blank" rel="noopener noreferrer">查看公告</a>
+        </p>
+        {% endfor %}
+    </details>
+    {% endif %}
+</fieldset>
+
 <script>
 	const defaultHolidayCalendars = [
 		{
@@ -170,6 +213,15 @@
 	}
 
 	document.addEventListener('DOMContentLoaded', () => {
+		const gameSettings = typeof pluginSettings === 'object' ? pluginSettings : {};
+		const isEnabled = value => value === true || ['1', 'true', 'on', 'yes'].includes(String(value).toLowerCase());
+		document.getElementById('showGameEvents').checked = isEnabled(gameSettings.showGameEvents);
+		document.getElementById('allowGameEventMedia').checked = gameSettings.allowGameEventMedia === undefined || isEnabled(gameSettings.allowGameEventMedia);
+		let chosenSeries = gameSettings['gameEventSeries[]'];
+		if (chosenSeries !== undefined) {
+			if (!Array.isArray(chosenSeries)) chosenSeries = [chosenSeries];
+			document.querySelectorAll('input[type="checkbox"][name="gameEventSeries[]"]').forEach(input => { input.checked = chosenSeries.includes(input.value); });
+		}
 		if (loadPluginSettings) {
 			document.getElementById('customDate').value = pluginSettings.customDate || '';
 			const language = document.getElementById('language');
