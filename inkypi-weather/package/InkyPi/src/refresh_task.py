@@ -267,6 +267,15 @@ class _PreparedDisplaySelection:
     theme_mode: str | None
 
 
+@dataclass(frozen=True)
+class _RotationDisplayCandidate:
+    instance_uuid: str
+    structural_generation: int
+    settings_revision: int
+    theme_mode: str | None
+    presentation_request_id: str | None = None
+
+
 def _setting_enabled(value):
     return value is True or str(value).lower() in {"1", "true", "on", "yes"}
 
@@ -1830,6 +1839,52 @@ class RefreshTask:
                 candidates[instance.instance_uuid] = candidate
         return candidates
 
+    def _rotation_display_candidates(self, active, theme_context, *, exact_theme_only=False):
+        """Keep shuffle order while preferring this instance's exact prepared request.
+
+        Scan request metadata only. Decode the selected file once before enqueueing
+        and again at execution, so unrelated prepared files cost no image decodes.
+        DATA admission continues to use the authoritative cache catalog.
+        """
+        candidates = {
+            key: _RotationDisplayCandidate(
+                value.instance_uuid, value.structural_generation,
+                value.settings_revision, value.theme_mode,
+            )
+            for key, value in self._active_cache_candidates(
+                active, theme_context, exact_theme_only=exact_theme_only,
+            ).items()
+        }
+        if active is None:
+            return candidates
+        states = self.runtime_state.snapshot().instances
+        for instance in active.plugins:
+            state = states.get(instance.instance_uuid, InstanceRuntimeState())
+            request = state.presentation_request
+            if request is None or request.prepared_at is None:
+                continue
+            plugin_config, _context, theme = self._latest_presentation_theme(instance)
+            if (
+                not _presentation_refresh_enabled(self.device_config, plugin_config)
+                or not plugin_supports_presentation_refresh(plugin_config)
+                or request.structural_generation != instance.structural_generation
+                or request.settings_revision != instance.settings_revision
+                or request.prepared_theme_mode != theme
+                or (state.presentation_receipt is not None
+                    and state.presentation_receipt.request_id == request.request_id)
+            ):
+                continue
+            try:
+                if not resolve_refresh_on_display_for_config(thaw_payload(instance.settings), plugin_config):
+                    continue
+            except (PluginSettingError, TypeError, ValueError):
+                continue
+            candidates[instance.instance_uuid] = _RotationDisplayCandidate(
+                instance.instance_uuid, instance.structural_generation,
+                instance.settings_revision, theme, request.request_id,
+            )
+        return candidates
+
     def _rotation_cache_candidates_outside_refresh_backoff(
         self,
         candidates,
@@ -1966,7 +2021,7 @@ class RefreshTask:
             self._rotation_cache_starved_since = None
             return None
 
-        candidates = self._active_cache_candidates(
+        candidates = self._rotation_display_candidates(
             active,
             theme_context,
             exact_theme_only=True,
@@ -2000,7 +2055,7 @@ class RefreshTask:
             )
             if recovery_elapsed < DEFAULT_ROTATION_CACHE_RECOVERY_SECONDS:
                 return None
-            fallback_candidates = self._active_cache_candidates(
+            fallback_candidates = self._rotation_display_candidates(
                 active,
                 theme_context,
                 exact_theme_only=False,
@@ -2063,6 +2118,7 @@ class RefreshTask:
 
         if (
             allow_display_triggered
+            and candidate.presentation_request_id is None
             and not self._snapshot_background_cache_disabled(selection.instance)
             and self._snapshot_should_refresh(selection.instance, current_dt)
             and not self._snapshot_retry_delayed(selection.instance, current_dt)
@@ -2121,6 +2177,14 @@ class RefreshTask:
                     InstanceRuntimeState(),
                 )
                 request = state.presentation_request
+                if candidate.presentation_request_id is not None and (
+                    request is None or request.request_id != candidate.presentation_request_id
+                ):
+                    manager.release_rotation_reservation(
+                        selection.instance.instance_uuid,
+                        expected_playlist_name=selection.playlist_name,
+                    )
+                    return None
                 presentation_satisfied = (
                     request is None
                     and self._presentation_succeeded_since_display(
@@ -2231,7 +2295,7 @@ class RefreshTask:
             )
             else None
         )
-        return self._playlist_command(
+        command = self._playlist_command(
             selection.playlist_name,
             selection.instance,
             source=CommandSource.SCHEDULER,
@@ -2246,6 +2310,17 @@ class RefreshTask:
             allow_prepared_presentation=allow_prepared_presentation,
             presentation_request_id=presentation_request_id,
         )
+        if presentation_request_id is not None:
+            prepared = self._presentation_candidate(selection.instance, request, candidate.theme_mode)
+            if not self.presentation_cache.validate(prepared):
+                self._invalidate_prepared_display(command, selection.instance, request, prepared)
+                if manager.release_rotation_reservation(
+                    selection.instance.instance_uuid,
+                    expected_playlist_name=selection.playlist_name,
+                ):
+                    self._write_device_config()
+                return None
+        return command
 
     def _presentation_succeeded_since_display(
         self,
@@ -5895,21 +5970,9 @@ class RefreshTask:
                     )
                     image = self.presentation_cache.load_image(candidate)
                     if image is None:
-                        error = RuntimeError("prepared presentation cache is missing or corrupt")
-                        cleared_at = self._get_current_datetime().isoformat()
-                        if not self.runtime_state.clear_prepared_presentation(
-                            instance.instance_uuid,
-                            request.request_id,
-                            cleared_at,
-                        ):
+                        if not self._invalidate_prepared_display(command, instance, request, candidate):
                             raise _StaleSelection("prepared presentation changed during validation")
-                        self._record_presentation_failure(
-                            command,
-                            error,
-                            self._get_current_datetime(),
-                        )
-                        self.presentation_cache.remove(candidate)
-                        raise _CacheUnavailable(str(error))
+                        raise _CacheUnavailable("prepared presentation cache is missing or corrupt")
                     return image, _PreparedDisplaySelection(
                         candidate=candidate,
                         request=request,
@@ -5938,6 +6001,19 @@ class RefreshTask:
         if resolved is None:
             return image
         return image, None
+
+    def _invalidate_prepared_display(self, command, instance, request, candidate):
+        """Cool only the exact invalid request; preserve canonical bytes and receipts."""
+        now = self._get_current_datetime()
+        if not self.runtime_state.clear_prepared_presentation(
+            instance.instance_uuid, request.request_id, now.isoformat(),
+        ):
+            return False
+        self._record_presentation_failure(
+            command, RuntimeError("prepared presentation cache is missing, expired or corrupt"), now,
+        )
+        self.presentation_cache.remove(candidate)
+        return True
 
     def _latest_presentation_theme(self, instance):
         plugin_config = self.device_config.get_plugin(instance.plugin_id)

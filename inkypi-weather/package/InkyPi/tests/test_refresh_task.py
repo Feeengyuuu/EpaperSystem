@@ -9375,6 +9375,10 @@ def test_rotation_defers_display_until_presentation_prepared(tmp_path):
         (first_dt + timedelta(seconds=45)).isoformat(),
         None,
     )
+    task.presentation_cache.save(
+        task._presentation_candidate(instance.snapshot(), request, None),
+        Image.new("RGB", (32, 16), "white"),
+    )
     ready = task._select_cached_display_command(
         first_dt + timedelta(seconds=60)
     )
@@ -15523,6 +15527,87 @@ def test_matching_existing_next_presentation_is_adopted_at_next_rotation(
     assert state.presentation_receipt.request_id == request.request_id
     assert state.presentation_receipt.theme_mode == "day"
     assert device_config.refresh_info.refresh_time == now[0].isoformat()
+
+
+@pytest.mark.parametrize("provider_free", [False, True])
+@pytest.mark.parametrize("fault", [None, "missing", "corrupt", "expired", "write_failure", "theme_change"])
+def test_day_prepared_rotates_after_night_cache_supersedes_old_day(monkeypatch, provider_free, fault):
+    task, config, clock, playlist, display = _make_presentation_task(
+        "day-prepared-with-night-authoritative", plugin_count=2,
+        provider_free=provider_free, provider_refresh=not provider_free, supports_theme=True,
+    )
+    peer, prepared = [plugin.snapshot() for plugin in playlist.plugins]
+    config.config["display_triggered_refresh_enabled"] = False
+    config.config["plugin_cycle_interval_seconds"] = 300
+    original_plugin = config.get_plugin
+    config.get_plugin = lambda key: original_plugin(key) if key == prepared.plugin_id else {"id": key}
+    config.refresh_info.refresh_time = (PRESENTATION_NOW - timedelta(minutes=5)).isoformat()
+    playlist.plugin_rotation_pool = [peer.instance_uuid, prepared.instance_uuid]
+    playlist.plugin_rotation_queue = [prepared.instance_uuid, peer.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    playlist._plugin_rotation_reserved_key = None
+    _write_runtime_cache(task, peer)
+    old_day = _write_runtime_theme_cache(task, prepared, "day")
+    os.utime(old_day, (PRESENTATION_NOW.timestamp() - 3600,) * 2)
+    _write_runtime_theme_cache(task, prepared, "night")
+    task.runtime_state.record_success(
+        prepared.instance_uuid, PRESENTATION_NOW.isoformat(), lane=RefreshLane.DATA,
+        last_good_cache=LastGoodCacheState(
+            theme_mode="night", structural_generation=prepared.structural_generation,
+            settings_revision=prepared.settings_revision, promoted_at=PRESENTATION_NOW.isoformat(),
+        ),
+    )
+    request = _seed_presentation_request(task, prepared, origin_theme_mode="day")
+    prepared_file = _seed_prepared_presentation(task, prepared, request, theme_mode="day")
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(task, "_resource_sample", lambda: ResourceSample(512, 0))
+    _install_display_provider_plugin_sentinels(monkeypatch)
+    active = config.playlist_manager.snapshot_active_playlist(PRESENTATION_NOW)
+    assert prepared.instance_uuid not in task._active_cache_candidates(
+        active, {"mode": "day"}, exact_theme_only=True,
+    )
+    if fault == "missing":
+        Path(prepared_file.cache_path).unlink()
+    elif fault == "corrupt":
+        Path(prepared_file.cache_path).write_bytes(b"invalid PNG")
+    elif fault == "expired":
+        os.utime(prepared_file.cache_path, (1, 1))
+
+    command = task._select_cached_display_command(PRESENTATION_NOW)
+
+    if fault in {"missing", "corrupt", "expired"}:
+        assert command is None
+        state = task.runtime_state.snapshot().instances[prepared.instance_uuid]
+        assert state.presentation_request.request_id == request.request_id
+        assert state.presentation_request.prepared_at is None
+        assert state.presentation.next_retry_at is not None
+        assert state.presentation_receipt is None
+        assert state.last_good_cache.theme_mode == "night"
+        assert display.calls == []
+        assert task._select_cached_display_command(PRESENTATION_NOW).instance_uuid == peer.instance_uuid
+        return
+    assert command is not None
+    assert command.instance_uuid == prepared.instance_uuid
+    assert command.payload["presentation_request_id"] == request.request_id
+    assert task.runtime_state.snapshot().instances[prepared.instance_uuid].presentation_receipt is None
+    if fault == "write_failure":
+        def failed_write(*args, **kwargs):
+            raise RuntimeError("panel write failed")
+        monkeypatch.setattr(display, "display_image", failed_write)
+    elif fault == "theme_change":
+        config.config["theme_mode"] = "night"
+    result = _queue_and_process(task, command)
+    state = task.runtime_state.snapshot().instances[prepared.instance_uuid]
+    if fault is not None:
+        assert result.job.status is not JobStatus.SUCCEEDED
+        assert state.presentation_receipt is None
+        assert state.last_good_cache.theme_mode == "night"
+        assert state.presentation_request.request_id == request.request_id
+        return
+    assert result.job.status is JobStatus.SUCCEEDED
+    assert state.presentation_receipt.request_id == request.request_id
+    assert state.last_good_cache.theme_mode == "day"
+    assert display.calls[0]["image"].getpixel((0, 0)) == (255, 255, 255)
 
 
 def test_provider_free_automatic_display_requests_next_when_global_provider_policy_is_off(
