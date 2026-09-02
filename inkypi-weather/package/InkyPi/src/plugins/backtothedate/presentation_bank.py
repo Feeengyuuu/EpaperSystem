@@ -440,7 +440,8 @@ class PosterPresentationBank:
         profile["last_applied_request_id"] = receipt.request_id
         return True
 
-    def load_media(self, record, *, min_remaining_seconds=0):
+    def media_path_for_decode(self, record, *, min_remaining_seconds=0):
+        """Validate selected metadata and file bounds without decoding the bank."""
         downloaded_at = _parse_datetime(record.get("downloaded_at"))
         now = datetime.now(timezone.utc)
         maximum_age = MEDIA_MAX_AGE_SECONDS - max(
@@ -458,6 +459,10 @@ class PosterPresentationBank:
             raise RuntimeError("BacktotheDate poster media is not a regular file")
         if file_info.st_size <= 0 or file_info.st_size > MEDIA_MAX_OBJECT_BYTES:
             raise RuntimeError("BacktotheDate poster media exceeds its object budget")
+        return target
+
+    def load_media(self, record, *, min_remaining_seconds=0):
+        self.media_path_for_decode(record, min_remaining_seconds=min_remaining_seconds)
         payload = self.media.get_bytes(record["media_key"], suffix=".png")
         if payload is None:
             raise RuntimeError("BacktotheDate poster media is missing")

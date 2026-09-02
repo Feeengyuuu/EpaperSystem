@@ -546,6 +546,13 @@ def test_triptych_receipt_commits_all_three_only_after_display(monkeypatch):
 def test_restart_reuses_pending_selection_without_choosing_another(monkeypatch):
     plugin = make_plugin("restart-pending")
     settings, _posters, _loader, _image = _hydrate_bank(plugin, monkeypatch)
+    bank_type = type(plugin._presentation_bank(settings, DeviceConfig().get_resolution()))
+    decoded = []
+    original_load = bank_type.load_media
+    def counted_load(bank, record, **kwargs):
+        decoded.append(record["media_key"])
+        return original_load(bank, record, **kwargs)
+    monkeypatch.setattr(bank_type, "load_media", counted_load)
     request = _request("1" * 32)
     first = plugin.prepare_presentation(
         settings,
@@ -558,6 +565,9 @@ def test_restart_reuses_pending_selection_without_choosing_another(monkeypatch):
         request.request_id,
     )
     state_bytes_before = plugin._state_path().read_bytes()
+    first_decodes = len(decoded)
+    decoded.clear()
+    monkeypatch.setattr(bank_type, "ready_records", lambda *_a, **_k: pytest.fail("pending retry must not decode the whole bank"))
 
     restarted = make_plugin("restart-pending", base=plugin.get_plugin_dir())
     restarted.image_loader = FakeImageLoader(Image.new("RGB", (1, 1), "red"))
@@ -585,6 +595,9 @@ def test_restart_reuses_pending_selection_without_choosing_another(monkeypatch):
     ) == pending_before
     assert restarted._state_path().read_bytes() == state_bytes_before
     assert first.image.tobytes() == second.image.tobytes()
+    assert 0 < len(decoded) <= len(pending_before["media_keys"])
+    assert first_decodes > len(decoded)
+    print({"backtothedate_first_decodes": first_decodes, "pending_retry_decodes": len(decoded)})
 
 
 def test_triptych_landscape_receipt_commits_only_single_rendered_poster(monkeypatch):

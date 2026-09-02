@@ -6235,6 +6235,34 @@ class RefreshTask:
         return released
 
     def _render_presentation_command(self, command, resolved, context):
+        started = self._clock()
+        before = self._read_process_memory_stats()
+        state = self.runtime_state.snapshot().instances.get(command.instance_uuid, InstanceRuntimeState())
+        request = state.presentation_request
+        requested_at = self._parse_iso_datetime(request.requested_at) if request else None
+        current_dt = self._get_current_datetime()
+        if requested_at is not None:
+            requested_at = self._align_datetime_tz(requested_at, current_dt)
+        waiting = None if requested_at is None else max(
+            0.0, (current_dt - requested_at).total_seconds(),
+        )
+        outcome = "failed"
+        try:
+            result = self._render_presentation_command_impl(command, resolved, context)
+            outcome = "completed"
+            return result
+        finally:
+            after = self._read_process_memory_stats()
+            logger.info(
+                "Presentation preparation measured. | plugin_id: %s | request_id: %s | "
+                "outcome: %s | elapsed_seconds: %.3f | request_age_seconds: %s | "
+                "rss_before_mb: %s | rss_after_mb: %s | process_hwm_mb: %s",
+                command.plugin_id, command.payload.get("presentation_request_id"), outcome,
+                max(0.0, self._clock() - started), waiting,
+                before.get("rss_mb"), after.get("rss_mb"), after.get("hwm_mb"),
+            )
+
+    def _render_presentation_command_impl(self, command, resolved, context):
         """Prepare presentation bytes on the shared worker."""
         selection = self._require_fresh_selection(command, context)
         instance = selection.instance

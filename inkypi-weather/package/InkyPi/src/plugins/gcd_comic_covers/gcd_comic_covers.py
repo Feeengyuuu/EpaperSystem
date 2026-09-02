@@ -415,9 +415,9 @@ class GcdComicCovers(BasePlugin):
         committed_origin = bank.apply_trusted_origin(document, profile, request)
         if committed_origin:
             self._write_cover_context(committed_origin)
-        ready = bank.ready_records(profile, prune=False)
         pending = bank.pending_for_request(profile, request.request_id)
         if pending is None:
+            ready = bank.ready_records(profile, prune=False)
             selection = bank.choose_selection(
                 document,
                 profile,

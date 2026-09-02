@@ -863,14 +863,24 @@ def test_gcd_restart_reuses_exact_pending_selection(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path, monkeypatch)
     settings = _bound_settings()
     _hydrate_presentation_bank(plugin, monkeypatch, settings)
+    bank_type = type(plugin._presentation_bank(settings, DeviceConfig().get_resolution(), date(2026, 7, 12)))
+    decoded = []
+    original_load = bank_type.load_media
+    def counted_load(bank, record):
+        decoded.append(record["media_key"])
+        return original_load(bank, record)
+    monkeypatch.setattr(bank_type, "load_media", counted_load)
     request = _request("2" * 32)
-    plugin.prepare_presentation(
+    first_image = plugin.prepare_presentation(
         settings,
         DeviceConfig(),
         request=request,
         resolved_theme_context=None,
     )
     first = _pending_issue_ids(_state_json(plugin), request.request_id)
+    first_decodes = len(decoded)
+    decoded.clear()
+    monkeypatch.setattr(bank_type, "ready_records", lambda *_a, **_k: pytest.fail("pending retry must not decode the whole bank"))
     restarted = make_plugin(tmp_path, monkeypatch)
     monkeypatch.setattr(
         restarted,
@@ -878,7 +888,7 @@ def test_gcd_restart_reuses_exact_pending_selection(tmp_path, monkeypatch):
         lambda *_args, **_kwargs: pytest.fail("warm restart cannot query providers"),
     )
 
-    restarted.prepare_presentation(
+    retried_image = restarted.prepare_presentation(
         settings,
         DeviceConfig(),
         request=request,
@@ -886,6 +896,10 @@ def test_gcd_restart_reuses_exact_pending_selection(tmp_path, monkeypatch):
     )
 
     assert _pending_issue_ids(_state_json(restarted), request.request_id) == first
+    assert first_image.image.tobytes() == retried_image.image.tobytes()
+    assert 0 < len(decoded) <= len(first)
+    assert first_decodes > len(decoded)
+    print({"gcd_first_decodes": first_decodes, "pending_retry_decodes": len(decoded)})
 
 
 def test_gcd_missing_prepared_media_fails_closed_and_keeps_pending_metadata(tmp_path, monkeypatch):

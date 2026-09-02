@@ -14829,6 +14829,23 @@ def _queue_and_process(task, command):
     return task.refresh_queue.get_entry(submitted.id)
 
 
+def test_preparation_diagnostics_accept_legacy_naive_request_time(monkeypatch, caplog):
+    task, _config, _clock, playlist, _display = _make_presentation_task("naive-request-diagnostics")
+    instance = playlist.plugins[0].snapshot()
+    request = _seed_presentation_request(task, instance, requested_at=PRESENTATION_NOW.replace(tzinfo=None))
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
+    monkeypatch.setattr(task, "_render_presentation_command_impl", lambda *_a: "prepared-result")
+    command = task._playlist_command(
+        playlist.name, instance, source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.PRESENTATION_REFRESH, current_dt=PRESENTATION_NOW,
+        presentation_request_id=request.request_id,
+    )
+    with caplog.at_level("INFO", logger=refresh_task_module.__name__):
+        assert task._render_presentation_command(command, None, None) == "prepared-result"
+    assert "request_age_seconds: 0.0" in caplog.text
+    assert "process_hwm_mb:" in caplog.text
+
+
 @pytest.mark.parametrize(
     "first_sample",
     [

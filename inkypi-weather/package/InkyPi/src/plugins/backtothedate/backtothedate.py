@@ -293,9 +293,10 @@ class BacktotheDate(BasePlugin):
         bank = self._presentation_bank(settings, dimensions)
         document, profile = bank.load_warm()
         bank.apply_trusted_origin(document, profile, request)
-        ready = bank.ready_records(document, profile, prune=False)
-
         pending = bank.pending_for_request(profile, request.request_id)
+        # Pending selections are immutable until receipt. Validate only their
+        # selected media in the renderer; a full scan is only for first choice.
+        ready = bank.ready_records(document, profile, prune=False) if pending is None else []
         if pending is None and not ready:
             logger.info(
                 "BacktotheDate presentation bank is cold; leaving the display "
@@ -326,7 +327,6 @@ class BacktotheDate(BasePlugin):
             settings,
             use_bound_image_stage=True,
             expected_instance_uuid=get_presentation_instance_uuid(settings),
-            parallel_ready_media_keys={record["media_key"] for record in ready},
         )
         if resolved_theme_context is not None:
             image = apply_media_theme_chrome(
@@ -377,12 +377,10 @@ class BacktotheDate(BasePlugin):
         *,
         use_bound_image_stage=False,
         expected_instance_uuid=None,
-        parallel_ready_media_keys=None,
     ):
         poster_images = None
         staged = None
         media_keys = tuple((selection or {}).get("media_keys") or ())
-        ready_keys = set(parallel_ready_media_keys or ())
         records = {
             record.get("media_key"): record
             for record in profile.get("records") or []
@@ -392,14 +390,13 @@ class BacktotheDate(BasePlugin):
             use_bound_image_stage
             and expected_instance_uuid
             and len(media_keys) > 1
-            and all(key in ready_keys for key in media_keys)
             and all(record is not None for record in selected_records)
         ):
             staged = prepare_local_bank_images(
                 plugin_id=PLUGIN_ID,
                 media_root=bank.media.root,
                 source_paths=tuple(
-                    bank.media.path(record["media_key"], suffix=".png")
+                    bank.media_path_for_decode(record)
                     for record in selected_records
                 ),
                 target_sizes=tuple(None for _record in selected_records),
