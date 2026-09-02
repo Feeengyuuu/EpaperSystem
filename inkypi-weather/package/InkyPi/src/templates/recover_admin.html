@@ -31,9 +31,9 @@
         <label for="recovery_token">One-time recovery token</label>
         <input id="recovery_token" name="recovery_token" type="password" autocomplete="one-time-code" required autofocus>
         <label for="password">New administrator password</label>
-        <input id="password" name="password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
+        <input id="password" name="password" type="password" minlength="9" maxlength="1024" autocomplete="new-password" required>
         <label for="confirm_password">Confirm password</label>
-        <input id="confirm_password" name="confirm_password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
+        <input id="confirm_password" name="confirm_password" type="password" minlength="9" maxlength="1024" autocomplete="new-password" required>
         <button type="submit">Reset administrator password</button>
     </form>
     <p><a href="{{ url_for('auth.login') }}">Return to sign in</a></p>

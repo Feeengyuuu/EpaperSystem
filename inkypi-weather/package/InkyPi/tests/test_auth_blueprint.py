@@ -49,7 +49,7 @@ def test_setup_consumes_bootstrap_and_starts_bounded_admin_session(tmp_path):
     csrf = _csrf(client)
     response = client.post(
         "/auth/setup",
-        json={"bootstrap_token": token, "password": "strong-password"},
+        json={"bootstrap_token": token, "password": "test-pass"},
         headers={"X-CSRF-Token": csrf, "Accept": "application/json"},
     )
 
@@ -57,7 +57,8 @@ def test_setup_consumes_bootstrap_and_starts_bounded_admin_session(tmp_path):
     assert token not in page.get_data(as_text=True)
     assert response.status_code == 201
     assert response.get_json()["authenticated"] is True
-    assert store.verify_admin_password("strong-password")
+    assert store.verify_admin_password("test-pass")
+    assert 'minlength="9"' in page.get_data(as_text=True)
     with client.session_transaction() as session:
         assert session["admin_identity"] == "admin"
         assert session["csrf_token"] != csrf
@@ -109,7 +110,7 @@ def test_logout_and_password_rotation_require_authenticated_csrf(tmp_path):
         "/auth/password",
         json={
             "current_password": "first-strong-password",
-            "new_password": "second-strong-password",
+            "new_password": "test-pass",
         },
         headers={"X-CSRF-Token": csrf},
     )
@@ -120,7 +121,7 @@ def test_logout_and_password_rotation_require_authenticated_csrf(tmp_path):
     )
 
     assert rotated.status_code == 200
-    assert store.verify_admin_password("second-strong-password")
+    assert store.verify_admin_password("test-pass")
     assert logged_out.status_code == 200
     with client.session_transaction() as session:
         assert "admin_identity" not in session
@@ -183,11 +184,20 @@ def test_root_recovery_token_can_reset_password_once(tmp_path):
 
     page = client.get("/auth/recover")
     csrf = _csrf(client)
+    too_short = client.post(
+        "/auth/recover",
+        json={"recovery_token": recovery, "password": "short123"},
+        headers={"X-CSRF-Token": csrf, "Accept": "application/json"},
+    )
+    assert too_short.status_code == 400
+    assert too_short.get_json()["error_code"] == "invalid_password"
+    assert store.verify_admin_password("first-strong-password")
+
     response = client.post(
         "/auth/recover",
         json={
             "recovery_token": recovery,
-            "password": "recovered-strong-password",
+            "password": "test-pass",
         },
         headers={"X-CSRF-Token": csrf, "Accept": "application/json"},
     )
@@ -196,7 +206,9 @@ def test_root_recovery_token_can_reset_password_once(tmp_path):
     assert recovery not in page.get_data(as_text=True)
     assert response.status_code == 200
     assert response.get_json()["authenticated"] is True
-    assert store.verify_admin_password("recovered-strong-password")
+    assert store.verify_admin_password("test-pass")
+    assert not store.verify_admin_password("first-strong-password")
+    assert 'minlength="9"' in page.get_data(as_text=True)
     assert not store.recovery_plaintext_path.exists()
     with client.session_transaction() as recovered_session:
         assert recovered_session["admin_identity"] == "admin"
@@ -212,3 +224,13 @@ def test_root_recovery_token_can_reset_password_once(tmp_path):
     )
     assert reused.status_code == 401
     assert reused.get_json()["error_code"] == "invalid_recovery_token"
+
+    fresh_client = app.test_client()
+    login_page = fresh_client.get("/auth/login")
+    assert 'minlength="9"' in login_page.get_data(as_text=True)
+    login = fresh_client.post(
+        "/auth/login",
+        data={"password": "test-pass", "_csrf_token": _csrf(fresh_client)},
+    )
+    assert login.status_code == 302
+    assert fresh_client.get("/auth/status").get_json()["authenticated"] is True

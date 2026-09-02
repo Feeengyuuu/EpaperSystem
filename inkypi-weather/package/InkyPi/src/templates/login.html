@@ -28,7 +28,7 @@
     <form method="post" action="{{ url_for('auth.login', next=request.args.get('next', '')) }}">
         <input type="hidden" name="_csrf_token" value="{{ inkypi_csrf_token }}">
         <label for="password">Administrator password</label>
-        <input id="password" name="password" type="password" minlength="12" maxlength="1024" autocomplete="current-password" required autofocus>
+        <input id="password" name="password" type="password" minlength="9" maxlength="1024" autocomplete="current-password" required autofocus>
         <button type="submit">Sign in</button>
     </form>
     <p><a href="{{ url_for('auth.recover') }}">Recover access with a device-generated token</a></p>

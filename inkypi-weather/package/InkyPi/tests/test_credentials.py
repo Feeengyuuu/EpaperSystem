@@ -77,7 +77,7 @@ def test_password_policy_and_authenticated_rotation(tmp_path):
     store = CredentialStore(tmp_path)
     token = store.create_bootstrap_token()
     with pytest.raises(InvalidPassword):
-        store.consume_bootstrap_token(token, "too-short")
+        store.consume_bootstrap_token(token, "short123")
     store.consume_bootstrap_token(token, "first-strong-password")
 
     with pytest.raises(InvalidPassword):
