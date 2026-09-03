@@ -29,6 +29,15 @@ def acceptance():
     return module
 
 
+@pytest.fixture
+def trusted_privileged_helper(acceptance, monkeypatch):
+    monkeypatch.setattr(
+        acceptance,
+        "verify_privileged_helper_installation",
+        lambda: None,
+    )
+
+
 def _config(count=27, *, duplicate_uuid=False):
     plugins = []
     for index in range(count):
@@ -89,6 +98,17 @@ def _logical_config_bytes(payload):
     document = json.loads(payload.decode("utf-8"))
     document.pop("config_revision", None)
     return document
+
+
+def _root_sticky_directory_stat(path):
+    raw = os.lstat(path)
+    return SimpleNamespace(
+        st_mode=stat.S_IFDIR | 0o1777,
+        st_dev=raw.st_dev,
+        st_ino=raw.st_ino,
+        st_uid=0,
+        st_gid=0,
+    )
 
 
 def _instance(acceptance):
@@ -2525,11 +2545,13 @@ def test_runtime_config_snapshot_cli_prints_only_safe_metadata(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
     snapshot_root = tmp_path / "snapshots"
     monkeypatch.setattr(acceptance, "CONFIG_SNAPSHOT_ROOT", snapshot_root)
     config_path = tmp_path / "device.json"
+    monkeypatch.setattr(acceptance, "RUNTIME_CONFIG_PATH", config_path)
     secret = "stdout-must-never-contain-this"
     payload = _snapshot_config_payload(revision=19, secret=secret)
     config_path.write_bytes(payload)
@@ -2552,11 +2574,535 @@ def test_runtime_config_snapshot_cli_prints_only_safe_metadata(
     assert "private_api_token" not in printed
 
 
+@pytest.mark.parametrize(
+    "mode_args",
+    (
+        ("--backup-config-snapshot", "wrong-path"),
+        ("--restore-config-snapshot", "wrong-path"),
+        ("--print-refresh-cadences",),
+    ),
+)
+def test_runtime_config_modes_reject_nonfixed_config_path(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+    mode_args,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(
+        acceptance,
+        "verify_privileged_helper_installation",
+        lambda: None,
+        raising=False,
+    )
+    fixed_path = tmp_path / "fixed" / "device.json"
+    fixed_path.parent.mkdir()
+    fixed_path.write_bytes(
+        _snapshot_config_payload(revision=19, secret="fixed-secret")
+    )
+    wrong_path = tmp_path / "wrong" / "device.json"
+    wrong_path.parent.mkdir()
+    wrong_path.write_bytes(
+        _snapshot_config_payload(revision=20, secret="wrong-secret")
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "RUNTIME_CONFIG_PATH",
+        fixed_path,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "CONFIG_SNAPSHOT_ROOT",
+        tmp_path / "snapshots",
+    )
+
+    exit_code = acceptance.main(["--config", str(wrong_path), *mode_args])
+
+    printed = capsys.readouterr().out
+    assert exit_code == 2
+    assert json.loads(printed) == {
+        "status": "aborted",
+        "abort_code": "runtime_config_path_not_fixed",
+    }
+    assert "fixed-secret" not in printed
+    assert "wrong-secret" not in printed
+    assert not (tmp_path / "snapshots").exists()
+
+
+def test_runtime_config_snapshot_cli_rejects_lexical_alias(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(
+        acceptance,
+        "verify_privileged_helper_installation",
+        lambda: None,
+    )
+    fixed_path = tmp_path / "device.json"
+    fixed_path.write_bytes(
+        _snapshot_config_payload(revision=20, secret="alias-secret")
+    )
+    alias_component = tmp_path / "alias-component"
+    alias_component.mkdir()
+    alias_path = alias_component / ".." / fixed_path.name
+    monkeypatch.setattr(acceptance, "RUNTIME_CONFIG_PATH", fixed_path)
+    monkeypatch.setattr(
+        acceptance,
+        "CONFIG_SNAPSHOT_ROOT",
+        tmp_path / "snapshots",
+    )
+
+    exit_code = acceptance.main([
+        "--config", str(alias_path),
+        "--backup-config-snapshot", "alias-path",
+    ])
+
+    printed = capsys.readouterr().out
+    assert exit_code == 2
+    assert json.loads(printed) == {
+        "status": "aborted",
+        "abort_code": "runtime_config_path_not_fixed",
+    }
+    assert "alias-secret" not in printed
+    assert not (tmp_path / "snapshots").exists()
+
+
+def test_runtime_config_snapshot_cli_rejects_fixed_path_symlink(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(
+        acceptance,
+        "verify_privileged_helper_installation",
+        lambda: None,
+        raising=False,
+    )
+    real_path = tmp_path / "real-device.json"
+    real_path.write_bytes(
+        _snapshot_config_payload(revision=20, secret="symlink-secret")
+    )
+    fixed_path = tmp_path / "device.json"
+    _symlink_or_skip(real_path, fixed_path)
+    monkeypatch.setattr(
+        acceptance,
+        "RUNTIME_CONFIG_PATH",
+        fixed_path,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "CONFIG_SNAPSHOT_ROOT",
+        tmp_path / "snapshots",
+    )
+
+    exit_code = acceptance.main([
+        "--config", str(fixed_path),
+        "--backup-config-snapshot", "symlinked",
+    ])
+
+    printed = capsys.readouterr().out
+    assert exit_code == 2
+    assert json.loads(printed) == {
+        "status": "aborted",
+        "abort_code": "runtime_config_path_not_fixed",
+    }
+    assert "symlink-secret" not in printed
+    assert not (tmp_path / "snapshots").exists()
+
+
+def test_privileged_helper_hardening_rejects_wrong_hash_without_leaking_content(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    helper_path = tmp_path / "live_all_instances_acceptance.py"
+    secret = "helper-source-bait-secret"
+    helper_path.write_text(f"# {secret}\n", encoding="utf-8")
+    monkeypatch.setattr(acceptance, "PRIVILEGED_HELPER_PATH", helper_path, raising=False)
+    monkeypatch.setattr(acceptance, "__file__", str(helper_path))
+    parent_identity = _root_sticky_directory_stat(helper_path.parent)
+    monkeypatch.setattr(
+        acceptance,
+        "_validate_privileged_helper_parent",
+        lambda _target, _parent_stat=None: (
+            parent_identity.st_dev,
+            parent_identity.st_ino,
+        ),
+    )
+
+    exit_code = acceptance.main([
+        "--harden-privileged-helper",
+        "--expected-helper-sha256", "0" * 64,
+    ])
+
+    printed = capsys.readouterr().out
+    assert exit_code == 2
+    assert json.loads(printed) == {
+        "status": "aborted",
+        "abort_code": "privileged_helper_sha_mismatch",
+    }
+    assert secret not in printed
+
+
+def test_privileged_helper_hardening_requires_explicit_sha256(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    helper_path = tmp_path / "live_all_instances_acceptance.py"
+    helper_path.write_text("# missing-hash-secret\n", encoding="utf-8")
+    monkeypatch.setattr(acceptance, "PRIVILEGED_HELPER_PATH", helper_path)
+    monkeypatch.setattr(acceptance, "__file__", str(helper_path))
+
+    exit_code = acceptance.main(["--harden-privileged-helper"])
+
+    printed = capsys.readouterr().out
+    assert exit_code == 2
+    assert json.loads(printed) == {
+        "status": "aborted",
+        "abort_code": "privileged_helper_expected_sha_invalid",
+    }
+    assert "missing-hash-secret" not in printed
+
+
+def test_privileged_helper_hardening_rejects_wrong_running_path(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    helper_path = tmp_path / "live_all_instances_acceptance.py"
+    helper_bytes = b"print('fixed helper')\n"
+    helper_path.write_bytes(helper_bytes)
+    wrong_running_path = tmp_path / "other.py"
+    wrong_running_path.write_text("# wrong-running-path-secret\n", encoding="utf-8")
+    monkeypatch.setattr(acceptance, "PRIVILEGED_HELPER_PATH", helper_path)
+    monkeypatch.setattr(acceptance, "__file__", str(wrong_running_path))
+
+    exit_code = acceptance.main([
+        "--harden-privileged-helper",
+        "--expected-helper-sha256", hashlib.sha256(helper_bytes).hexdigest(),
+    ])
+
+    printed = capsys.readouterr().out
+    assert exit_code == 2
+    assert json.loads(printed) == {
+        "status": "aborted",
+        "abort_code": "privileged_helper_path_not_fixed",
+    }
+    assert "wrong-running-path-secret" not in printed
+
+
+def test_privileged_helper_hardening_rejects_symlink_target(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    real_path = tmp_path / "real.py"
+    helper_bytes = b"print('symlink-secret')\n"
+    real_path.write_bytes(helper_bytes)
+    helper_path = tmp_path / "live_all_instances_acceptance.py"
+    _symlink_or_skip(real_path, helper_path)
+    monkeypatch.setattr(acceptance, "PRIVILEGED_HELPER_PATH", helper_path)
+    monkeypatch.setattr(acceptance, "__file__", str(helper_path))
+
+    exit_code = acceptance.main([
+        "--harden-privileged-helper",
+        "--expected-helper-sha256", hashlib.sha256(helper_bytes).hexdigest(),
+    ])
+
+    printed = capsys.readouterr().out
+    assert exit_code == 2
+    assert json.loads(printed) == {
+        "status": "aborted",
+        "abort_code": "privileged_helper_path_not_fixed",
+    }
+    assert "symlink-secret" not in printed
+
+
+def test_privileged_helper_hardening_hash_gates_then_locks_and_verifies(
+    acceptance,
+    tmp_path,
+    monkeypatch,
+):
+    helper_path = tmp_path / "live_all_instances_acceptance.py"
+    secret = "helper-source-bait-secret"
+    helper_bytes = f"# {secret}\nprint('safe')\n".encode("utf-8")
+    helper_path.write_bytes(helper_bytes)
+    monkeypatch.setattr(acceptance, "PRIVILEGED_HELPER_PATH", helper_path)
+    security = {"uid": 1000, "gid": 1000, "mode": 0o600}
+    events = []
+
+    def change_owner(descriptor, uid, gid):
+        assert os.fstat(descriptor).st_ino == helper_path.stat().st_ino
+        events.append(("owner", uid, gid))
+        security.update(uid=uid, gid=gid)
+
+    def change_mode(descriptor, mode):
+        assert os.fstat(descriptor).st_ino == helper_path.stat().st_ino
+        events.append(("mode", mode))
+        security["mode"] = mode
+
+    def sync_descriptor(descriptor):
+        os.write(descriptor, b"")
+        os.fsync(descriptor)
+        events.append(("fsync",))
+
+    def secured_stat(raw):
+        return SimpleNamespace(
+            st_mode=stat.S_IFREG | security["mode"],
+            st_nlink=raw.st_nlink,
+            st_dev=raw.st_dev,
+            st_ino=raw.st_ino,
+            st_uid=security["uid"],
+            st_gid=security["gid"],
+        )
+
+    result = acceptance.harden_privileged_helper(
+        hashlib.sha256(helper_bytes).hexdigest(),
+        helper_path=helper_path,
+        running_path=helper_path,
+        owner_changer=change_owner,
+        mode_changer=change_mode,
+        descriptor_sync=sync_descriptor,
+        post_descriptor_stat=lambda descriptor: secured_stat(os.fstat(descriptor)),
+        post_path_stat=lambda path: secured_stat(os.lstat(path)),
+        parent_stat=_root_sticky_directory_stat,
+    )
+
+    assert events == [("owner", 0, 0), ("mode", 0o600), ("fsync",)]
+    assert result == {
+        "helper_path": str(helper_path),
+        "sha256": hashlib.sha256(helper_bytes).hexdigest(),
+        "owner_uid": 0,
+        "owner_gid": 0,
+        "mode": "0600",
+    }
+    assert secret not in json.dumps(result, sort_keys=True)
+
+
+@pytest.mark.parametrize(
+    ("parent_uid", "parent_gid", "parent_mode"),
+    (
+        (1000, 0, stat.S_IFDIR | 0o1777),
+        (0, 1000, stat.S_IFDIR | 0o1777),
+        (0, 0, stat.S_IFDIR | 0o0777),
+    ),
+)
+def test_privileged_helper_hardening_rejects_insecure_parent(
+    acceptance,
+    tmp_path,
+    monkeypatch,
+    parent_uid,
+    parent_gid,
+    parent_mode,
+):
+    helper_path = tmp_path / "live_all_instances_acceptance.py"
+    helper_bytes = b"print('safe')\n"
+    helper_path.write_bytes(helper_bytes)
+    monkeypatch.setattr(acceptance, "PRIVILEGED_HELPER_PATH", helper_path)
+    raw_parent = os.lstat(helper_path.parent)
+    events = []
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.harden_privileged_helper(
+            hashlib.sha256(helper_bytes).hexdigest(),
+            helper_path=helper_path,
+            running_path=helper_path,
+            owner_changer=lambda *_args: events.append("owner"),
+            mode_changer=lambda *_args: events.append("mode"),
+            descriptor_sync=lambda _descriptor: events.append("fsync"),
+            parent_stat=lambda _path: SimpleNamespace(
+                st_mode=parent_mode,
+                st_dev=raw_parent.st_dev,
+                st_ino=raw_parent.st_ino,
+                st_uid=parent_uid,
+                st_gid=parent_gid,
+            ),
+        )
+
+    assert captured.value.code == "privileged_helper_parent_insecure"
+    assert events == []
+
+
+def test_normal_privileged_mode_rejects_unhardened_helper(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    helper_path = tmp_path / "live_all_instances_acceptance.py"
+    secret = "unhardened-helper-bait-secret"
+    helper_path.write_text(f"# {secret}\n", encoding="utf-8")
+    monkeypatch.setattr(acceptance, "PRIVILEGED_HELPER_PATH", helper_path)
+    monkeypatch.setattr(acceptance, "__file__", str(helper_path))
+    parent_identity = _root_sticky_directory_stat(helper_path.parent)
+    monkeypatch.setattr(
+        acceptance,
+        "_validate_privileged_helper_parent",
+        lambda _target, _parent_stat=None: (
+            parent_identity.st_dev,
+            parent_identity.st_ino,
+        ),
+    )
+    output_dir = tmp_path / "evidence"
+    output_dir.mkdir()
+    (output_dir / "summary.json").write_text(
+        json.dumps({"status": "passed"}),
+        encoding="utf-8",
+    )
+
+    exit_code = acceptance.main([
+        "--output-dir", str(output_dir),
+        "--print-summary",
+    ])
+
+    printed = capsys.readouterr().out
+    assert exit_code == 2
+    assert json.loads(printed) == {
+        "status": "aborted",
+        "abort_code": "privileged_helper_not_hardened",
+    }
+    assert secret not in printed
+
+
+@pytest.mark.parametrize(
+    ("helper_uid", "helper_gid", "helper_mode"),
+    (
+        (1000, 0, 0o600),
+        (0, 1000, 0o600),
+        (0, 0, 0o620),
+    ),
+)
+def test_privileged_helper_verification_rejects_owner_or_mode_drift(
+    acceptance,
+    tmp_path,
+    monkeypatch,
+    helper_uid,
+    helper_gid,
+    helper_mode,
+):
+    helper_path = tmp_path / "live_all_instances_acceptance.py"
+    helper_path.write_text("# owner-mode-secret\n", encoding="utf-8")
+    monkeypatch.setattr(acceptance, "PRIVILEGED_HELPER_PATH", helper_path)
+
+    def drifted_stat(raw):
+        return SimpleNamespace(
+            st_mode=stat.S_IFREG | helper_mode,
+            st_nlink=raw.st_nlink,
+            st_dev=raw.st_dev,
+            st_ino=raw.st_ino,
+            st_uid=helper_uid,
+            st_gid=helper_gid,
+        )
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.verify_privileged_helper_installation(
+            helper_path=helper_path,
+            running_path=helper_path,
+            descriptor_stat=lambda descriptor: drifted_stat(os.fstat(descriptor)),
+            path_stat=lambda path: drifted_stat(os.lstat(path)),
+            parent_stat=_root_sticky_directory_stat,
+        )
+
+    assert captured.value.code == "privileged_helper_not_hardened"
+
+
+def test_privileged_helper_verification_accepts_exact_locked_file(
+    acceptance,
+    tmp_path,
+    monkeypatch,
+):
+    helper_path = tmp_path / "live_all_instances_acceptance.py"
+    helper_path.write_text("# verified-helper\n", encoding="utf-8")
+    monkeypatch.setattr(acceptance, "PRIVILEGED_HELPER_PATH", helper_path)
+
+    def locked_stat(raw):
+        return SimpleNamespace(
+            st_mode=stat.S_IFREG | 0o600,
+            st_nlink=raw.st_nlink,
+            st_dev=raw.st_dev,
+            st_ino=raw.st_ino,
+            st_uid=0,
+            st_gid=0,
+        )
+
+    acceptance.verify_privileged_helper_installation(
+        helper_path=helper_path,
+        running_path=helper_path,
+        descriptor_stat=lambda descriptor: locked_stat(os.fstat(descriptor)),
+        path_stat=lambda path: locked_stat(os.lstat(path)),
+        parent_stat=_root_sticky_directory_stat,
+    )
+
+
+def test_privileged_helper_hardening_detects_post_lock_content_change(
+    acceptance,
+    tmp_path,
+    monkeypatch,
+):
+    helper_path = tmp_path / "live_all_instances_acceptance.py"
+    original = b"print('safe')\n"
+    changed = b"print('evil')\n"
+    assert len(original) == len(changed)
+    helper_path.write_bytes(original)
+    monkeypatch.setattr(acceptance, "PRIVILEGED_HELPER_PATH", helper_path)
+    security = {"uid": 1000, "gid": 1000, "mode": 0o600}
+
+    def locked_stat(raw):
+        return SimpleNamespace(
+            st_mode=stat.S_IFREG | security["mode"],
+            st_nlink=raw.st_nlink,
+            st_dev=raw.st_dev,
+            st_ino=raw.st_ino,
+            st_uid=security["uid"],
+            st_gid=security["gid"],
+        )
+
+    def change_owner(_descriptor, uid, gid):
+        security.update(uid=uid, gid=gid)
+
+    def change_mode(_descriptor, mode):
+        security["mode"] = mode
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.harden_privileged_helper(
+            hashlib.sha256(original).hexdigest(),
+            helper_path=helper_path,
+            running_path=helper_path,
+            owner_changer=change_owner,
+            mode_changer=change_mode,
+            descriptor_sync=lambda _descriptor: helper_path.write_bytes(changed),
+            post_descriptor_stat=lambda descriptor: locked_stat(os.fstat(descriptor)),
+            post_path_stat=lambda path: locked_stat(os.lstat(path)),
+            parent_stat=_root_sticky_directory_stat,
+        )
+
+    assert captured.value.code == "privileged_helper_changed"
+
+
 def test_runtime_config_restore_cli_uses_config_store_and_prints_no_secrets(
     acceptance,
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
     snapshot_root = tmp_path / "snapshots"
@@ -2567,6 +3113,7 @@ def test_runtime_config_restore_cli_uses_config_store_and_prints_no_secrets(
         lambda: _snapshot_store_factory,
     )
     config_path = tmp_path / "device.json"
+    monkeypatch.setattr(acceptance, "RUNTIME_CONFIG_PATH", config_path)
     snapshot_secret = "snapshot-cli-secret"
     current_secret = "current-cli-secret"
     snapshot_payload = _snapshot_config_payload(
@@ -2651,6 +3198,7 @@ def test_print_refresh_cadences_is_allowlisted_and_never_prints_settings(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
     config = _config(count=2)
@@ -2670,6 +3218,7 @@ def test_print_refresh_cadences_is_allowlisted_and_never_prints_settings(
     plugins[0]["plugin_settings"]["api_key"] = "plugin-secret"
     original_uuid = plugins[0]["instance_uuid"]
     config_path = tmp_path / "device.json"
+    monkeypatch.setattr(acceptance, "RUNTIME_CONFIG_PATH", config_path)
     config_path.write_text(json.dumps(config), encoding="utf-8")
 
     exit_code = acceptance.main([
@@ -2724,6 +3273,7 @@ def test_print_summary_flag_prints_existing_summary(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
     output_dir = tmp_path / "evidence"
@@ -2748,6 +3298,7 @@ def test_print_summary_flag_aborts_cleanly_without_summary(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
 
@@ -2772,6 +3323,7 @@ def test_print_output_png_base64_allows_only_a_png_basename(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
     output_dir = tmp_path / "evidence"
@@ -2801,6 +3353,7 @@ def test_print_runtime_state_flag_prints_state_document(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
     state_path = tmp_path / "runtime_state.json"
@@ -2824,6 +3377,7 @@ def test_print_config_keys_prints_only_allowlisted_scalars(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
     config_path = tmp_path / "device.json"
@@ -2855,6 +3409,7 @@ def test_print_cache_tree_lists_names_sizes_and_mtimes_only(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
     cache_root = tmp_path / "cache"
@@ -2878,6 +3433,7 @@ def test_set_open_display_control_stops_writes_and_restarts(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
     config_path = tmp_path / "device.json"
@@ -2919,6 +3475,7 @@ def test_set_plugin_cycle_interval_stops_writes_and_restarts(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
     config_path = tmp_path / "device.json"
@@ -2963,6 +3520,7 @@ def test_clean_apt_generated_cache_removes_only_regenerable_files(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
     cache_root = tmp_path / "cache" / "apt"
@@ -2996,6 +3554,7 @@ def test_merge_env_adds_missing_keys_without_overwriting_or_printing_values(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
     source = tmp_path / "legacy.env"
@@ -3037,6 +3596,7 @@ def test_merge_env_aborts_cleanly_when_source_is_missing(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
 
@@ -3054,6 +3614,7 @@ def test_main_routes_freeze_flag_through_cycle_interval_orchestrator(
     acceptance,
     tmp_path,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     secret_path = tmp_path / "flask_secret"
     secret_path.write_text("unit-test-secret", encoding="utf-8")
@@ -3102,6 +3663,7 @@ def test_stocktracker_config_diagnostics_never_prints_private_values(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     config = _config()
     settings = config["playlist_config"]["playlists"][0]["plugins"][0]
@@ -3147,6 +3709,7 @@ def test_stocktracker_config_diagnostics_detects_spcx_without_printing_holdings(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     portfolio_path = tmp_path / "portfolio.csv"
     portfolio_path.write_text("ticker,shares\nSPCX,7\nPRIVATE,99\n", encoding="utf-8")
@@ -3225,6 +3788,7 @@ def test_install_robinhood_token_validates_and_never_prints_secret(
     tmp_path,
     capsys,
     monkeypatch,
+    trusted_privileged_helper,
 ):
     source = tmp_path / "staged-token.json"
     target = tmp_path / "secrets" / "robinhood_mcp.json"

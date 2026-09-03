@@ -47,9 +47,12 @@ POLL_INTERVAL_SECONDS = 1.0
 DEFAULT_CACHE_ROOT = "/var/cache/inkypi"
 DEFAULT_DATA_ROOT = "/var/lib/inkypi/data"
 DEFAULT_PLUGIN_ROOT = "/opt/inkypi/current/src/plugins"
+RUNTIME_CONFIG_PATH = Path("/var/lib/inkypi/config/device.json")
 CONFIG_SNAPSHOT_ROOT = Path("/var/lib/inkypi/config-snapshots")
 CONFIG_SNAPSHOT_READY_BASE_URL = "http://127.0.0.1"
 MAX_RUNTIME_CONFIG_BYTES = 8 * 1024 * 1024
+PRIVILEGED_HELPER_PATH = Path("/var/tmp/live_all_instances_acceptance.py")
+MAX_PRIVILEGED_HELPER_BYTES = 2 * 1024 * 1024
 APT_CACHE_ROOT = Path("/var/cache/apt")
 HEALTH_RETRY_SECONDS = 120
 HEALTH_POLL_INTERVAL_SECONDS = 1.0
@@ -1389,10 +1392,298 @@ def _validate_snapshot_id(snapshot_id) -> str:
     return snapshot_id
 
 
+def _require_fixed_runtime_config_path(config_path) -> Path:
+    """Accept only the canonical absolute runtime config path."""
+
+    target = Path(config_path)
+    expected = Path(RUNTIME_CONFIG_PATH)
+    if (
+        os.fspath(config_path) != os.fspath(expected)
+        or not target.is_absolute()
+    ):
+        raise AuditAbort("runtime_config_path_not_fixed")
+    try:
+        resolved = target.resolve(strict=True)
+    except OSError as error:
+        raise AuditAbort("runtime_config_path_invalid") from error
+    if resolved != target:
+        raise AuditAbort("runtime_config_path_not_fixed")
+    return target
+
+
 def _validate_sha256(value, *, code: str) -> str:
     if not isinstance(value, str) or _SHA256_HEX.fullmatch(value) is None:
         raise AuditAbort(code)
     return value.lower()
+
+
+def _require_pinned_helper_path(helper_path, running_path) -> Path:
+    expected_raw = os.fspath(PRIVILEGED_HELPER_PATH)
+    target_raw = os.fspath(helper_path)
+    running_raw = os.fspath(running_path)
+    target = Path(helper_path)
+    if (
+        target_raw != expected_raw
+        or running_raw != expected_raw
+        or not target.is_absolute()
+    ):
+        raise AuditAbort("privileged_helper_path_not_fixed")
+    try:
+        resolved = target.resolve(strict=True)
+    except OSError as error:
+        raise AuditAbort("privileged_helper_path_invalid") from error
+    if resolved != target:
+        raise AuditAbort("privileged_helper_path_not_fixed")
+    return target
+
+
+def _validate_privileged_helper_parent(target: Path, parent_stat=None):
+    parent = target.parent
+    try:
+        metadata = os.lstat(parent) if parent_stat is None else parent_stat(parent)
+        resolved = parent.resolve(strict=True)
+    except OSError as error:
+        raise AuditAbort("privileged_helper_parent_invalid") from error
+    if (
+        resolved != parent
+        or not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != 0
+        or metadata.st_gid != 0
+        or not (stat.S_IMODE(metadata.st_mode) & stat.S_ISVTX)
+    ):
+        raise AuditAbort("privileged_helper_parent_insecure")
+    return metadata.st_dev, metadata.st_ino
+
+
+def _open_privileged_helper(
+    helper_path,
+    running_path,
+    *,
+    parent_stat=None,
+    writable=False,
+):
+    target = _require_pinned_helper_path(helper_path, running_path)
+    parent_identity = _validate_privileged_helper_parent(target, parent_stat)
+    try:
+        before = os.lstat(target)
+    except OSError as error:
+        raise AuditAbort("privileged_helper_stat_failed") from error
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise AuditAbort("privileged_helper_not_regular")
+    if before.st_nlink != 1:
+        raise AuditAbort("privileged_helper_link_count_invalid")
+    if before.st_size > MAX_PRIVILEGED_HELPER_BYTES:
+        raise AuditAbort("privileged_helper_too_large")
+
+    flags = os.O_RDWR if writable else os.O_RDONLY
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_BINARY", 0)
+    descriptor = None
+    try:
+        descriptor = os.open(target, flags)
+        opened = os.fstat(descriptor)
+    except OSError as error:
+        if descriptor is not None:
+            os.close(descriptor)
+        raise AuditAbort("privileged_helper_open_failed") from error
+    if (
+        not stat.S_ISREG(opened.st_mode)
+        or opened.st_nlink != 1
+        or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+    ):
+        os.close(descriptor)
+        raise AuditAbort("privileged_helper_changed")
+    return target, descriptor, opened, parent_identity
+
+
+def _hash_open_helper(descriptor, *, code_prefix: str):
+    try:
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        before = os.fstat(descriptor)
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(
+                descriptor,
+                min(65536, MAX_PRIVILEGED_HELPER_BYTES + 1 - total),
+            )
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_PRIVILEGED_HELPER_BYTES:
+                raise AuditAbort(f"{code_prefix}_too_large")
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+    except AuditFailure:
+        raise
+    except OSError as error:
+        raise AuditAbort(f"{code_prefix}_read_failed") from error
+    stable_before = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    stable_after = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if stable_before != stable_after or total != after.st_size:
+        raise AuditAbort(f"{code_prefix}_changed")
+    return digest.hexdigest()
+
+
+def harden_privileged_helper(
+    expected_sha256,
+    *,
+    helper_path=None,
+    running_path=None,
+    owner_changer=None,
+    mode_changer=None,
+    descriptor_sync=None,
+    post_descriptor_stat=None,
+    post_path_stat=None,
+    parent_stat=None,
+) -> dict:
+    """Hash-gate and lock the fixed sudo helper to root:root mode 0600."""
+
+    expected_sha256 = _validate_sha256(
+        expected_sha256,
+        code="privileged_helper_expected_sha_invalid",
+    )
+    target, descriptor, _opened, parent_identity = _open_privileged_helper(
+        PRIVILEGED_HELPER_PATH if helper_path is None else helper_path,
+        __file__ if running_path is None else running_path,
+        parent_stat=parent_stat,
+        writable=True,
+    )
+    try:
+        observed_sha256 = _hash_open_helper(
+            descriptor,
+            code_prefix="privileged_helper",
+        )
+        if observed_sha256 != expected_sha256:
+            raise AuditAbort("privileged_helper_sha_mismatch")
+        if owner_changer is None:
+            owner_changer = getattr(os, "fchown", None)
+        if mode_changer is None:
+            mode_changer = getattr(os, "fchmod", None)
+        if owner_changer is None or mode_changer is None:
+            raise AuditAbort("privileged_helper_hardening_unsupported")
+        if descriptor_sync is None:
+            descriptor_sync = os.fsync
+        try:
+            owner_changer(descriptor, 0, 0)
+            mode_changer(descriptor, 0o600)
+            descriptor_sync(descriptor)
+        except OSError as error:
+            raise AuditAbort("privileged_helper_hardening_failed") from error
+
+        try:
+            descriptor_stat = (
+                os.fstat(descriptor)
+                if post_descriptor_stat is None
+                else post_descriptor_stat(descriptor)
+            )
+            path_stat = (
+                os.lstat(target)
+                if post_path_stat is None
+                else post_path_stat(target)
+            )
+        except OSError as error:
+            raise AuditAbort("privileged_helper_hardening_verify_failed") from error
+        post_parent_identity = _validate_privileged_helper_parent(
+            target,
+            parent_stat,
+        )
+        if (
+            not stat.S_ISREG(descriptor_stat.st_mode)
+            or not stat.S_ISREG(path_stat.st_mode)
+            or descriptor_stat.st_nlink != 1
+            or path_stat.st_nlink != 1
+            or (descriptor_stat.st_dev, descriptor_stat.st_ino)
+            != (path_stat.st_dev, path_stat.st_ino)
+            or descriptor_stat.st_uid != 0
+            or descriptor_stat.st_gid != 0
+            or path_stat.st_uid != 0
+            or path_stat.st_gid != 0
+            or stat.S_IMODE(descriptor_stat.st_mode) != 0o600
+            or stat.S_IMODE(path_stat.st_mode) != 0o600
+            or post_parent_identity != parent_identity
+        ):
+            raise AuditAbort("privileged_helper_hardening_verify_failed")
+        if _hash_open_helper(
+            descriptor,
+            code_prefix="privileged_helper",
+        ) != expected_sha256:
+            raise AuditAbort("privileged_helper_changed")
+        return {
+            "helper_path": str(target),
+            "sha256": expected_sha256,
+            "owner_uid": 0,
+            "owner_gid": 0,
+            "mode": "0600",
+        }
+    finally:
+        os.close(descriptor)
+
+
+def verify_privileged_helper_installation(
+    *,
+    helper_path=None,
+    running_path=None,
+    descriptor_stat=None,
+    path_stat=None,
+    parent_stat=None,
+) -> None:
+    """Require the running sudo helper to be the locked root-owned file."""
+
+    target, descriptor, _opened, parent_identity = _open_privileged_helper(
+        PRIVILEGED_HELPER_PATH if helper_path is None else helper_path,
+        __file__ if running_path is None else running_path,
+        parent_stat=parent_stat,
+    )
+    try:
+        _hash_open_helper(descriptor, code_prefix="privileged_helper")
+        try:
+            descriptor_metadata = (
+                os.fstat(descriptor)
+                if descriptor_stat is None
+                else descriptor_stat(descriptor)
+            )
+            path_metadata = (
+                os.lstat(target)
+                if path_stat is None
+                else path_stat(target)
+            )
+        except OSError as error:
+            raise AuditAbort("privileged_helper_stat_failed") from error
+        post_parent_identity = _validate_privileged_helper_parent(
+            target,
+            parent_stat,
+        )
+        if (
+            not stat.S_ISREG(descriptor_metadata.st_mode)
+            or not stat.S_ISREG(path_metadata.st_mode)
+            or descriptor_metadata.st_nlink != 1
+            or path_metadata.st_nlink != 1
+            or (descriptor_metadata.st_dev, descriptor_metadata.st_ino)
+            != (path_metadata.st_dev, path_metadata.st_ino)
+            or descriptor_metadata.st_uid != 0
+            or descriptor_metadata.st_gid != 0
+            or path_metadata.st_uid != 0
+            or path_metadata.st_gid != 0
+            or stat.S_IMODE(descriptor_metadata.st_mode) != 0o600
+            or stat.S_IMODE(path_metadata.st_mode) != 0o600
+            or post_parent_identity != parent_identity
+        ):
+            raise AuditAbort("privileged_helper_not_hardened")
+    finally:
+        os.close(descriptor)
 
 
 def _reject_json_constant(_value):
@@ -2946,6 +3237,14 @@ def _parser() -> argparse.ArgumentParser:
             "SHA-256 gates, restart, wait ready, and exit"
         ),
     )
+    snapshot_group.add_argument(
+        "--harden-privileged-helper",
+        action="store_true",
+        help=(
+            "Hash-gate and lock the fixed /var/tmp sudo helper to root:root "
+            "mode 0600, print only safe metadata, and exit"
+        ),
+    )
     parser.add_argument(
         "--expected-current-config-sha256",
         default=None,
@@ -2955,6 +3254,11 @@ def _parser() -> argparse.ArgumentParser:
         "--expected-snapshot-sha256",
         default=None,
         help="Required stored snapshot SHA-256 gate for snapshot restore",
+    )
+    parser.add_argument(
+        "--expected-helper-sha256",
+        default=None,
+        help="Required current helper SHA-256 gate for self-hardening",
     )
     parser.add_argument(
         "--print-refresh-cadences",
@@ -3706,10 +4010,24 @@ def main(argv=None) -> int:
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         print(json.dumps({"status": "aborted", "abort_code": "root_required"}))
         return 2
+    if args.harden_privileged_helper:
+        try:
+            payload = harden_privileged_helper(args.expected_helper_sha256)
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        return 0
+    try:
+        verify_privileged_helper_installation()
+    except AuditFailure as error:
+        print(json.dumps({"status": "aborted", "abort_code": error.code}))
+        return 2
     if args.backup_config_snapshot is not None:
         try:
+            config_path = _require_fixed_runtime_config_path(args.config)
             payload = backup_runtime_config_snapshot(
-                Path(args.config),
+                config_path,
                 args.backup_config_snapshot,
             )
         except AuditFailure as error:
@@ -3719,8 +4037,9 @@ def main(argv=None) -> int:
         return 0
     if args.restore_config_snapshot is not None:
         try:
+            config_path = _require_fixed_runtime_config_path(args.config)
             payload = restore_runtime_config_snapshot(
-                Path(args.config),
+                config_path,
                 args.restore_config_snapshot,
                 expected_current_sha256=args.expected_current_config_sha256,
                 expected_snapshot_sha256=args.expected_snapshot_sha256,
@@ -3736,8 +4055,9 @@ def main(argv=None) -> int:
         return 0
     if args.print_refresh_cadences:
         try:
+            config_path = _require_fixed_runtime_config_path(args.config)
             config = _secure_read_runtime_config(
-                Path(args.config),
+                config_path,
                 code_prefix="config_refresh_cadence",
             )
             payload = refresh_cadence_diagnostics(config.document)
