@@ -12763,7 +12763,8 @@ def _sports_live_runtime(
     name,
     *,
     background_value="missing",
-    live_age_seconds=300,
+    live_age_seconds=900,
+    data_age_seconds=1800,
     clock=None,
     sports_renderer=None,
 ):
@@ -12826,7 +12827,7 @@ def _sports_live_runtime(
     _write_runtime_cache(task, instance)
     task.runtime_state.record_success(
         instance.instance_uuid,
-        current_dt.isoformat(),
+        (current_dt - timedelta(seconds=data_age_seconds)).isoformat(),
         lane=RefreshLane.DATA,
     )
     task.runtime_state.record_success(
@@ -12932,12 +12933,12 @@ def test_sports_live_cache_refresh_is_background_only_when_master_setting_is_mis
     assert command.payload.get("expected_displayed_instance_uuid") is None
 
 
-def test_sports_background_live_defaults_to_a_300_second_interval_floor(monkeypatch):
+def test_sports_background_live_defaults_to_a_900_second_interval_floor(monkeypatch):
     task, _device_config, _playlist, instance, current_dt, _anchor = (
         _sports_live_runtime(
             "sports-background-live-default-floor",
             background_value=True,
-            live_age_seconds=120,
+            live_age_seconds=899,
         )
     )
     task.runtime_state.set_display_state(
@@ -12947,12 +12948,21 @@ def test_sports_background_live_defaults_to_a_300_second_interval_floor(monkeypa
     )
     _install_sports_live_snapshot(monkeypatch, task)
 
-    command = task._select_independent_refresh_command(current_dt)
+    before_floor = task._select_independent_refresh_command(current_dt)
+    at_floor = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
 
-    assert command is None
+    assert before_floor is None
+    assert at_floor is not None
+    assert at_floor.instance_uuid == instance.instance_uuid
+    assert at_floor.source is CommandSource.LIVE
+    assert at_floor.intent is RefreshIntent.LIVE_REFRESH
+    assert at_floor.payload["background_live_refresh"] is True
+    assert at_floor.payload.get("expected_displayed_instance_uuid") is None
 
 
-def test_sports_background_live_waits_300_seconds_after_non_promoted_attempt(
+def test_sports_background_live_waits_900_seconds_after_non_promoted_attempt(
     monkeypatch,
 ):
     current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
@@ -12970,7 +12980,7 @@ def test_sports_background_live_waits_300_seconds_after_non_promoted_attempt(
         _sports_live_runtime(
             "sports-background-live-attempt-floor",
             background_value=True,
-            live_age_seconds=600,
+            live_age_seconds=1800,
             clock=clock,
             sports_renderer=non_promoted_renderer,
         )
@@ -12997,10 +13007,10 @@ def test_sports_background_live_waits_300_seconds_after_non_promoted_attempt(
         instance.instance_uuid
     ].live
     before_floor = task._select_independent_refresh_command(
-        current_dt + timedelta(seconds=299)
+        current_dt + timedelta(seconds=899)
     )
     at_floor = task._select_independent_refresh_command(
-        current_dt + timedelta(seconds=300)
+        current_dt + timedelta(seconds=900)
     )
 
     assert job.status is JobStatus.SUCCEEDED
@@ -13016,7 +13026,8 @@ def test_sports_displayed_live_keeps_its_hook_interval(monkeypatch):
         _sports_live_runtime(
             "sports-displayed-live-hook-interval",
             background_value=True,
-            live_age_seconds=120,
+            live_age_seconds=59,
+            data_age_seconds=0,
         )
     )
     task.runtime_state.record_attempt(
@@ -13026,11 +13037,93 @@ def test_sports_displayed_live_keeps_its_hook_interval(monkeypatch):
     )
     _install_sports_live_snapshot(monkeypatch, task)
 
+    before_hook_interval = task._select_independent_refresh_command(current_dt)
+    at_hook_interval = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert before_hook_interval is None
+    assert at_hook_interval is not None
+    assert at_hook_interval.intent is RefreshIntent.LIVE_REFRESH
+    assert at_hook_interval.payload["background_live_refresh"] is True
+    assert at_hook_interval.payload.get("expected_displayed_instance_uuid") is None
+
+
+def test_sports_background_live_uses_successful_data_as_a_shared_cadence_anchor(
+    monkeypatch,
+):
+    task, _device_config, _playlist, instance, current_dt, _anchor = (
+        _sports_live_runtime(
+            "sports-background-live-data-anchor",
+            background_value=True,
+            live_age_seconds=1800,
+        )
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid="different-instance",
+        changed_at=current_dt.isoformat(),
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        current_dt.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    before_state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    _install_sports_live_snapshot(monkeypatch, task)
+
+    before_floor = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=899)
+    )
+    at_floor = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=900)
+    )
+
+    assert before_floor is None
+    assert at_floor is not None
+    assert at_floor.intent is RefreshIntent.LIVE_REFRESH
+    after_state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert after_state.data.last_success_at == before_state.data.last_success_at
+    assert after_state.live.last_success_at == before_state.live.last_success_at
+
+
+def test_sports_background_live_does_not_use_failed_data_as_a_cadence_anchor(
+    monkeypatch,
+):
+    task, _device_config, _playlist, instance, current_dt, _anchor = (
+        _sports_live_runtime(
+            "sports-background-live-failed-data-anchor",
+            background_value=True,
+            live_age_seconds=1800,
+        )
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid="different-instance",
+        changed_at=current_dt.isoformat(),
+    )
+    task.runtime_state.record_attempt(
+        instance.instance_uuid,
+        current_dt.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_failure(
+        instance.instance_uuid,
+        current_dt.isoformat(),
+        RuntimeError("data failed"),
+        (current_dt + timedelta(seconds=300)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    data_state = task.runtime_state.snapshot().instances[instance.instance_uuid].data
+    assert data_state.last_attempt_at == current_dt.isoformat()
+    assert data_state.last_failure_at == current_dt.isoformat()
+    assert data_state.next_retry_at == (current_dt + timedelta(seconds=300)).isoformat()
+    _install_sports_live_snapshot(monkeypatch, task)
+
     command = task._select_independent_refresh_command(current_dt)
 
     assert command is not None
     assert command.intent is RefreshIntent.LIVE_REFRESH
-    assert command.payload["background_live_refresh"] is True
 
 
 def test_sports_background_live_interval_floor_is_configurable(monkeypatch):
@@ -13123,7 +13216,7 @@ def test_sports_background_live_yields_to_data_after_checkpointed_logical_job(
         _write_runtime_cache(task, instance)
     task.runtime_state.record_success(
         sports.instance_uuid,
-        current_dt.isoformat(),
+        (current_dt - timedelta(seconds=61)).isoformat(),
         lane=RefreshLane.DATA,
     )
     task.runtime_state.record_success(
@@ -13557,6 +13650,40 @@ def _live_radar_runtime(name):
         image_hash="old",
     )
     return task, device_config, instance, current_dt, data_success, anchor
+
+
+def test_non_sports_live_cadence_does_not_share_the_data_success_anchor(
+    monkeypatch,
+):
+    task, _device_config, instance, current_dt, _data_success, _anchor = (
+        _live_radar_runtime("non-sports-live-data-anchor")
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        current_dt.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(
+        "src.refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin(
+            [],
+            live_state={"active": True, "interval_seconds": 60},
+        ),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is not None
+    assert command.intent is RefreshIntent.LIVE_REFRESH
+    assert command.source is CommandSource.LIVE
+    assert command.payload.get("background_live_refresh") is not True
+    assert command.payload["expected_displayed_instance_uuid"] == instance.instance_uuid
 
 
 def test_live_radar_display_state_does_not_create_a_live_refresh_candidate_by_default(

@@ -174,7 +174,7 @@ DEFAULT_SPORTS_ISOLATED_ABORT_MAX_SWAP_PERCENT = 75
 DEFAULT_SPORTS_ISOLATED_LIVENESS_STARVATION_SECONDS = 30 * 60
 DEFAULT_SPORTS_ISOLATED_LIVENESS_WINDOW_SECONDS = 90
 DEFAULT_SPORTS_ISOLATED_LIVENESS_COOLDOWN_SECONDS = 5 * 60
-DEFAULT_SPORTS_BACKGROUND_LIVE_MIN_INTERVAL_SECONDS = 5 * 60
+DEFAULT_SPORTS_BACKGROUND_LIVE_MIN_INTERVAL_SECONDS = 15 * 60
 MAX_RESOURCE_PRESSURE_DEFERRAL_SECONDS = 5 * 60
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
 DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS = 60
@@ -3649,10 +3649,11 @@ class RefreshTask:
                         DEFAULT_SPORTS_BACKGROUND_LIVE_MIN_INTERVAL_SECONDS
                     )
                 interval_seconds = max(interval_seconds, configured_floor)
-            runtime = runtime_instances.get(
+            instance_runtime = runtime_instances.get(
                 instance.instance_uuid,
                 InstanceRuntimeState(),
-            ).live
+            )
+            runtime = instance_runtime.live
             next_retry = self._parse_iso_datetime(runtime.next_retry_at)
             if next_retry is not None:
                 next_retry = self._align_datetime_tz(next_retry, current_dt)
@@ -3663,10 +3664,21 @@ class RefreshTask:
             if last_attempt is not None:
                 last_attempt = self._align_datetime_tz(last_attempt, current_dt)
             cadence_anchor = last_success
-            if is_offscreen_sports and last_attempt is not None:
-                cadence_anchor = max(
-                    (value for value in (last_success, last_attempt) if value is not None),
-                    key=lambda value: value.timestamp(),
+            if is_offscreen_sports:
+                data_success = self._parse_iso_datetime(
+                    instance_runtime.data.last_success_at
+                )
+                if data_success is not None:
+                    data_success = self._align_datetime_tz(data_success, current_dt)
+                cadence_anchors = tuple(
+                    value
+                    for value in (last_success, last_attempt, data_success)
+                    if value is not None
+                )
+                cadence_anchor = (
+                    max(cadence_anchors, key=lambda value: value.timestamp())
+                    if cadence_anchors
+                    else None
                 )
             if cadence_anchor is None:
                 due_since = current_dt
