@@ -62,6 +62,7 @@ class DueCandidate:
 class DueEvaluation:
     candidate: DueCandidate | None
     invalid_fields: tuple[str, ...] = ()
+    next_due_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -312,6 +313,7 @@ def evaluate_data_due(
     next_retry = _parse_lane_time(data_state.next_retry_at, now)
 
     candidates: list[tuple[datetime, DueReason]] = []
+    future_due: list[datetime] = []
     interval = _valid_interval(instance.refresh.get("interval"), invalid_fields)
     scheduled = _valid_schedule(instance.refresh.get("scheduled"), invalid_fields)
 
@@ -326,6 +328,8 @@ def evaluate_data_due(
             )
             if _instant_key(interval_due) <= _instant_key(now):
                 candidates.append((interval_due, DueReason.INTERVAL))
+            else:
+                future_due.append(interval_due)
 
         if scheduled is not None:
             scheduled_due = _most_recent_schedule_occurrence(now, scheduled)
@@ -334,12 +338,23 @@ def evaluate_data_due(
                 or _instant_key(last_success) < _instant_key(scheduled_due)
             ):
                 candidates.append((scheduled_due, DueReason.SCHEDULED))
+            next_schedule = _next_schedule_occurrence(now, scheduled)
+            if next_schedule is not None:
+                future_due.append(next_schedule)
+
+    due_times = [due for due, _reason in candidates] + future_due
+    next_due = min(due_times, key=_instant_key) if due_times else None
+    if next_due is not None and next_retry is not None:
+        next_due = max((next_due, next_retry), key=_instant_key)
 
     if not candidates or (
         next_retry is not None
         and _instant_key(next_retry) > _instant_key(now)
     ):
-        return DueEvaluation(None, tuple(invalid_fields))
+        return DueEvaluation(
+            None, tuple(invalid_fields),
+            next_due if next_due is not None and _instant_key(next_due) > _instant_key(now) else None,
+        )
 
     due_since, reason = min(
         candidates,
@@ -401,7 +416,7 @@ def evaluate_presentation_due(
             or attempted_current_request
         )
     ):
-        return DueEvaluation(None)
+        return DueEvaluation(None, next_due_at=next_retry)
     return DueEvaluation(
         DueCandidate(
             instance=instance,
@@ -488,6 +503,22 @@ def _most_recent_schedule_occurrence(now: datetime, scheduled):
         ]
         if eligible:
             return max(eligible, key=_instant_key)
+    return None
+
+
+def _next_schedule_occurrence(now: datetime, scheduled):
+    """Find the next real wall-clock occurrence, including DST folds and gaps."""
+    now_key = _instant_key(now)
+    timezone_info = now.tzinfo if _is_aware(now) else None
+    for days_ahead in range(_SCHEDULE_LOOKBACK_DAYS):
+        wall_time = datetime.combine(now.date() + timedelta(days=days_ahead), scheduled)
+        occurrences = (
+            (wall_time,) if timezone_info is None
+            else _valid_local_occurrences(wall_time, timezone_info)
+        )
+        future = [value for value in occurrences if _instant_key(value) > now_key]
+        if future:
+            return min(future, key=_instant_key)
     return None
 
 
@@ -616,11 +647,10 @@ def _order_auxiliary_candidates(candidates):
     ]
 
 
-def _soft_spacing_elapsed(
+def soft_spacing_deadline(
     state: AdmissionState,
-    now_monotonic: float,
     thresholds: ResourceThresholds,
-) -> bool:
+) -> float | None:
     admitted_at = (
         state.last_soft_data_admitted_monotonic,
         state.last_soft_renderer_admitted_monotonic,
@@ -629,6 +659,13 @@ def _soft_spacing_elapsed(
         (value for value in admitted_at if value is not None),
         default=None,
     )
-    return last_admitted is None or (
-        now_monotonic - last_admitted >= thresholds.soft_spacing_seconds
-    )
+    return None if last_admitted is None else last_admitted + thresholds.soft_spacing_seconds
+
+
+def _soft_spacing_elapsed(
+    state: AdmissionState,
+    now_monotonic: float,
+    thresholds: ResourceThresholds,
+) -> bool:
+    deadline = soft_spacing_deadline(state, thresholds)
+    return deadline is None or now_monotonic >= deadline

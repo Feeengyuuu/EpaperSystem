@@ -246,6 +246,9 @@ def test_liveradar_cadence_preserves_prepared_commits_and_background_sports(tmp_
     assert result["probe_metrics"]["prepared_guard_blocks"] > 0
     assert result["prepared_commit_count"] >= 3
     assert result["sports_live_count"] >= 18
+    # Preserve the prior release's worst physical cadence; allowing 365s here
+    # would hide a long LIVE job crossing an unreserved rotation deadline.
+    assert result["write_gap_seconds"][1] <= 310
     # Keep the actual 120s guard. Allow its delay plus one panel write, one
     # non-preemptible Sports request, the own provider, and the normal poll.
     assert result["radar_max_gap"] <= 300 + 120 + 60 + 55 + 5 + 30

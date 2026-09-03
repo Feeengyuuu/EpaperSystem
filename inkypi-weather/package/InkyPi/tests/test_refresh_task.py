@@ -6645,7 +6645,7 @@ def test_overdue_empty_playlist_advances_monotonic_attempt_deadline():
     assert task.attempt_count == 1
 
 
-def test_scheduler_burst_advances_two_reviewed_inline_jobs_without_admitting_heavy(
+def test_bounded_inline_followup_returns_to_full_admission_without_idle_poll(
     monkeypatch,
 ):
     now = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
@@ -6703,13 +6703,14 @@ def test_scheduler_burst_advances_two_reviewed_inline_jobs_without_admitting_hea
 
     first = task._run_one_iteration_for_test()
     second = task._run_one_iteration_for_test()
-    bounded_stop = task._run_one_iteration_for_test()
+    ordinary = task._run_one_iteration_for_test()
 
     assert first.command.plugin_id == "simple_calendar"
     assert second.command.plugin_id == "species_radar"
-    assert bounded_stop is None
-    assert [call["id"] for call in calls] == ["simple_calendar", "species_radar"]
-    assert task.attempt_count == 2
+    assert ordinary.command.plugin_id == "weather"
+    assert "scheduler_lightweight_followup" not in ordinary.command.payload
+    assert [call["id"] for call in calls] == ["simple_calendar", "species_radar", "weather"]
+    assert task.attempt_count == 3
     runtime_instances = task.runtime_state.snapshot().instances
     assert runtime_instances[
         "11111111111111111111111111111111"
@@ -6773,15 +6774,17 @@ def test_manual_work_preempts_and_ends_an_armed_lightweight_scheduler_burst(
     )
     task.refresh_queue.submit(manual_command)
     urgent = task._run_one_iteration_for_test()
-    no_followup = task._run_one_iteration_for_test()
+    ordinary = task._run_one_iteration_for_test()
 
     assert first.command.plugin_id == "simple_calendar"
     assert urgent.command.id == manual_command.id
     assert urgent.command.source is CommandSource.MANUAL
-    assert no_followup is None
+    assert ordinary.command.plugin_id == "species_radar"
+    assert "scheduler_lightweight_followup" not in ordinary.command.payload
     assert [call["id"] for call in calls] == [
         "simple_calendar",
         "urgent-manual",
+        "species_radar",
     ]
 
 
@@ -6885,6 +6888,7 @@ def test_failed_or_deferred_lightweight_terminal_never_arms_a_burst(
         make_test_dir(f"scheduler-no-burst-{expected_error_code}"),
         playlists=[_runtime_playlist(plugin_data)],
         cycle_seconds=300,
+        clock=RuntimeClock(wall=now.timestamp()),
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
     monkeypatch.setattr(
@@ -6917,7 +6921,10 @@ def test_failed_or_deferred_lightweight_terminal_never_arms_a_burst(
     assert completed.job.status is expected_status
     assert completed.job.error_code == expected_error_code
     assert no_followup is None
-    assert task.attempt_count == 1
+    assert task.attempt_count == 2  # One empty recheck, then a positive wait.
+    assert task.scheduler_snapshot().next_attempt_monotonic > task._clock()
+    assert task._run_one_iteration_for_test() is None
+    assert task.attempt_count == 2
 
 
 def test_ian_arrival_preempts_and_clears_an_armed_lightweight_scheduler_burst(
@@ -6987,14 +6994,15 @@ def test_ian_arrival_preempts_and_clears_an_armed_lightweight_scheduler_burst(
     )
     sports_job = task.refresh_queue.submit(sports)
     retained = task._run_one_iteration_for_test()
-    no_followup = task._run_one_iteration_for_test()
+    ordinary = task._run_one_iteration_for_test()
 
     assert first.command.plugin_id == "simple_calendar"
     assert retained.command.id == sports.id
     assert task.refresh_queue.get_entry(sports_job.id).job.status is JobStatus.RUNNING
-    assert no_followup is None
-    assert [call["id"] for call in calls] == ["simple_calendar"]
-    assert task.attempt_count == 1
+    assert ordinary.command.plugin_id == "species_radar"
+    assert "scheduler_lightweight_followup" not in ordinary.command.payload
+    assert [call["id"] for call in calls] == ["simple_calendar", "species_radar"]
+    assert task.attempt_count == 2
 
 
 @pytest.mark.parametrize("closed_gate", ["disk", "restart", "resource"])

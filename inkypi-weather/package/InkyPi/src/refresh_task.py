@@ -108,6 +108,7 @@ from runtime.refresh_policy import (
     choose_refresh_candidate,
     evaluate_data_due,
     evaluate_presentation_due,
+    soft_spacing_deadline,
 )
 from runtime.refresh_progress import RefreshProgressTracker
 from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
@@ -598,7 +599,10 @@ class RefreshTask:
         self._refresh_progress = RefreshProgressTracker(clock=clock)
         self._lightweight_followup_remaining = 0
         self._background_scheduler_recheck_pending = False
+        self._scheduler_due_wake_monotonic = None
+        self._scheduler_probe_monotonic = None
         self._rotation_deadline_guard_active = False
+        self._rotation_has_ready_candidates = False
         self._rotation_cache_starved_since = None
         self._display_transactions_enabled = False
         bind_runtime_state = getattr(display_manager, "bind_runtime_state", None)
@@ -1399,7 +1403,6 @@ class RefreshTask:
             self._background_scheduler_recheck_pending
             and not self.stop_event.is_set()
             and self._restart_request is None
-            and not self._ian_retained_entries
             and self.refresh_queue.snapshot().accepting
             and self.retry_registry.next_delay(RetryRegistry.GLOBAL_KEY, now) <= 0
         )
@@ -1411,13 +1414,22 @@ class RefreshTask:
         ):
             return None
 
+        global_delay = self.retry_registry.next_delay(RetryRegistry.GLOBAL_KEY, now)
+        if global_delay > 0:
+            self.scheduler_state.set_next_attempt(max(
+                now + global_delay, scheduler.next_attempt_monotonic or now,
+            ))
+            return None
+
         try:
+            self._scheduler_due_wake_monotonic = None
             lightweight_followup = self._lightweight_followup_remaining > 0
             self.scheduler_state.record_attempt()
             self._attempt_count += 1
             restart_requested = self._memory_watchdog_should_restart()
             disk_tier = self._sample_disk_pressure()
             current_dt = self._get_current_datetime()
+            self._scheduler_probe_monotonic = self._clock()
             self._observe_refresh_progress(current_dt)
             refresh_command = None
             command = self._select_prepared_display_retry_command(current_dt)
@@ -1435,6 +1447,7 @@ class RefreshTask:
                 command is None
                 and disk_tier is not DiskPressureTier.HARD
                 and not self._cache_lifecycle_should_yield()
+                and self._ian_entry_ready_to_resume() is None
             ):
                 if lightweight_followup:
                     refresh_command = self._select_independent_refresh_command(
@@ -1445,6 +1458,10 @@ class RefreshTask:
                     refresh_command = self._select_independent_refresh_command(
                         current_dt
                     )
+                if self.retry_registry.next_delay(RetryRegistry.GLOBAL_KEY, self._clock()) > 0:
+                    # Selection can encounter a failed retry-state write. Keep
+                    # the resulting cooldown and do not submit from that probe.
+                    return None
                 if lightweight_followup:
                     if self._is_safe_lightweight_scheduler_command(
                         refresh_command
@@ -1460,6 +1477,25 @@ class RefreshTask:
                     self._submit_independent_refresh_command(refresh_command)
             elif lightweight_followup:
                 self._lightweight_followup_remaining = 0
+            for window in (
+                self._weather_liveness_window,
+                self._ticketmaster_liveness_window,
+                self._sports_liveness_window,
+            ):
+                if window is not None:
+                    self._note_scheduler_deadline(
+                        window.deadline_monotonic,
+                        allow_elapsed=(
+                            window.deadline_monotonic > self._scheduler_probe_monotonic
+                        ),
+                    )
+            self._note_scheduler_deadline(
+                self._burst_liveness_yield_deadline_monotonic,
+                allow_elapsed=(
+                    self._burst_liveness_yield_deadline_monotonic
+                    > self._scheduler_probe_monotonic
+                ),
+            )
             next_delay = 30.0 if restart_requested else self._scheduler_poll_seconds()
             if (
                 not restart_requested
@@ -1470,6 +1506,8 @@ class RefreshTask:
                     max(0.05, self._memory_watchdog_next_check_seconds),
                 )
             next_attempt = now + next_delay
+            if not restart_requested and self._scheduler_due_wake_monotonic is not None:
+                next_attempt = min(next_attempt, self._scheduler_due_wake_monotonic)
             if (
                 completion_recheck
                 and not restart_requested
@@ -1489,6 +1527,31 @@ class RefreshTask:
             self.scheduler_state.set_next_attempt(now + max(30.0, delay))
             logger.exception("Scheduled refresh selection failed")
             return None
+
+    def _note_scheduler_due_at(self, due_at, current_dt):
+        """Keep a future policy deadline from facts already read by selection."""
+        if due_at is None:
+            return
+        delay = due_at.timestamp() - current_dt.timestamp()
+        if not math.isfinite(delay) or delay <= 0:
+            # Overdue work may be blocked by admission. It is not a zero-time
+            # timer; a fresh capacity event or the bounded idle poll retries it.
+            return
+        reference = self._scheduler_probe_monotonic
+        deadline = (self._clock() if reference is None else reference) + delay
+        # This deadline was future when the probe sampled its facts. If a
+        # later hook consumed that time, recheck on the next worker turn.
+        self._note_scheduler_deadline(deadline, allow_elapsed=True)
+
+    def _note_scheduler_deadline(self, deadline, *, allow_elapsed=False):
+        if deadline is None or not math.isfinite(deadline):
+            return
+        if not allow_elapsed and deadline <= self._clock():
+            return
+        previous = self._scheduler_due_wake_monotonic
+        self._scheduler_due_wake_monotonic = (
+            deadline if previous is None else min(previous, deadline)
+        )
 
     def _scheduler_poll_seconds(self):
         interval = self._config_float(
@@ -1571,18 +1634,13 @@ class RefreshTask:
         if current is None or current.job.status is not JobStatus.SUCCEEDED:
             self._lightweight_followup_remaining = 0
 
-    def _note_background_scheduler_terminal(self, command, finished):
-        """Recheck admission when a reviewed background renderer frees the worker."""
+    def _note_scheduler_terminal(self, command, finished):
+        """Recheck admission after a terminal command has released its resources."""
         if (
-            finished.status is not JobStatus.SUCCEEDED
-            or command.kind is not CommandKind.CACHE_REFRESH
-            or command.source is not CommandSource.BACKGROUND
-            or command.intent is not RefreshIntent.DATA_REFRESH
-            or plugin_execution_class(command.plugin_id) not in {
-                ExecutionClass.PARALLEL_IMAGE, ExecutionClass.NESTED_IO,
-                ExecutionClass.SERIAL_HEAVY,
-            }
-            or self._ian_retained_entries
+            (finished.status not in {
+                JobStatus.SUCCEEDED, JobStatus.FAILED,
+                JobStatus.CANCELED, JobStatus.ABANDONED,
+            } and command.id not in self._ian_retained_entries)
             or self.stop_event.is_set()
             or self._restart_request is not None
             or not self.refresh_queue.snapshot().accepting
@@ -1594,20 +1652,32 @@ class RefreshTask:
         next_attempt = self.scheduler_state.snapshot().next_attempt_monotonic
         if next_attempt is None or next_attempt <= now:
             return
-        if classify_resource_tier(
-            self._resource_sample(), self._resource_thresholds(),
-        ) is not ResourceTier.HEALTHY:
-            # Completion alone is no reason to add probes under pressure.
+        thresholds = self._resource_thresholds()
+        tier = classify_resource_tier(self._resource_sample(), thresholds)
+        if tier is ResourceTier.HARD:
             return
+        if tier is ResourceTier.SOFT:
+            spacing_deadline = soft_spacing_deadline(self._admission_state, thresholds)
+            if spacing_deadline is not None and spacing_deadline > now:
+                self.scheduler_state.set_next_attempt(min(next_attempt, spacing_deadline))
+                return
         # This wakes the normal selector, not a renderer. Queue priority, disk,
         # memory spacing, rotation reservations and provider backoff still apply.
         self._background_scheduler_recheck_pending = True
         logger.info(
-            "Background renderer completed; requesting one scheduler recheck. | "
-            "plugin_id: %s | idle_poll_remaining_seconds: %.3f",
+            "Refresh command released capacity; requesting one scheduler recheck. | "
+            "plugin_id: %s | status: %s | idle_poll_remaining_seconds: %.3f",
             command.plugin_id,
+            finished.status.value,
             next_attempt - now,
         )
+
+    def _defer_scheduler_after_bookkeeping_error(self):
+        """Keep failed persistence from turning capacity wakes into retry loops."""
+        now = self._clock()
+        delay = self.retry_registry.mark_failure(RetryRegistry.GLOBAL_KEY, now)
+        self.scheduler_state.set_next_attempt(now + max(30.0, delay))
+        self._background_scheduler_recheck_pending = False
 
     def _rotation_presentation_wait_seconds(self):
         configured_wait = max(
@@ -2066,6 +2136,7 @@ class RefreshTask:
     def _select_cached_display_command(self, current_dt) -> RefreshCommand | None:
         """Select one random eligible cache without loading plugin code."""
         self._rotation_deadline_guard_active = False
+        self._rotation_has_ready_candidates = False
         manager = self.device_config.get_playlist_manager()
         active = manager.snapshot_active_playlist(current_dt)
         if active is None:
@@ -2159,6 +2230,7 @@ class RefreshTask:
         else:
             self._rotation_cache_starved_since = None
 
+        self._rotation_has_ready_candidates = bool(candidates)
         starvation_cap = self._rotation_starvation_concession_seconds()
         if recovery_elapsed is not None:
             starvation_cap = max(0.0, starvation_cap - recovery_elapsed)
@@ -2456,7 +2528,7 @@ class RefreshTask:
         if request is None or request.prepared_at is None:
             return None
         next_retry = self._parse_iso_datetime(state.presentation.next_retry_at)
-        if next_retry is None or next_retry > current_dt:
+        if next_retry is None:
             return None
         plugin_config, _theme_context, theme_mode = self._latest_presentation_theme(
             instance
@@ -2468,6 +2540,10 @@ class RefreshTask:
             or request.settings_revision != instance.settings_revision
             or request.prepared_theme_mode != theme_mode
         ):
+            return None
+        next_retry = self._align_datetime_tz(next_retry, current_dt)
+        self._note_scheduler_due_at(next_retry, current_dt)
+        if next_retry.timestamp() > current_dt.timestamp():
             return None
         return self._playlist_command(
             active.name,
@@ -2638,6 +2714,7 @@ class RefreshTask:
                 current_dt,
                 first_due_since=first_due_since.get(instance.instance_uuid),
             )
+            self._note_scheduler_due_at(data_evaluation.next_due_at, current_dt)
             if data_evaluation.invalid_fields:
                 logger.warning(
                     "Ignoring invalid refresh cadence fields. | plugin_id: %s | fields: %s",
@@ -2671,6 +2748,7 @@ class RefreshTask:
                     resolved_theme_mode,
                     current_dt,
                 )
+                self._note_scheduler_due_at(presentation.next_due_at, current_dt)
                 if presentation.candidate is not None:
                     presentation_candidates.append(presentation.candidate)
                     provider_presentation_due = (
@@ -2690,6 +2768,8 @@ class RefreshTask:
         thresholds = self._resource_thresholds()
         resource_sample = self._resource_sample()
         tier = classify_resource_tier(resource_sample, thresholds)
+        if tier is ResourceTier.SOFT:
+            self._note_scheduler_deadline(soft_spacing_deadline(self._admission_state, thresholds))
         live_candidates = self._live_due_candidates(
             active,
             runtime_instances,
@@ -2933,6 +3013,10 @@ class RefreshTask:
                 if candidate.instance.instance_uuid
                 not in sports_liveness_excluded_uuids
             ]
+        if self.retry_registry.next_delay(RetryRegistry.GLOBAL_KEY, self._clock()) > 0:
+            # No fairness/spacing turn is consumed when admission bookkeeping
+            # has failed and armed the scheduler's own backoff.
+            return None
         if (
             not sports_liveness_holds_independent
             and not ticketmaster_liveness_holds_independent
@@ -3060,6 +3144,38 @@ class RefreshTask:
             <= DEFAULT_ROTATION_BACKGROUND_GUARD_SECONDS
         ):
             return None
+
+        # Keep an admission window even for playlists configured shorter than
+        # the normal five-minute rotation; the guard must not cover a cycle.
+        ordinary_rotation_guard = min(
+            DEFAULT_ROTATION_BACKGROUND_GUARD_SECONDS,
+            self._config_float(
+                "plugin_cycle_interval_seconds", DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
+            ) / 2,
+        )
+        if (
+            self._rotation_has_ready_candidates
+            and self._get_rotation_wait_seconds() <= ordinary_rotation_guard
+        ):
+            # A ready rotation need not have a reservation yet. Keep long
+            # renderer classes out of its write window while shorter ordinary
+            # work can still use the worker. Due ages and retries are unchanged.
+            def fits_rotation_window(candidate):
+                return plugin_execution_class(candidate.instance.plugin_id) in {
+                    ExecutionClass.PARALLEL_IMAGE, ExecutionClass.INLINE,
+                }
+
+            eligible_data_candidates = [
+                item for item in eligible_data_candidates if fits_rotation_window(item)
+            ]
+            auxiliary_candidates = [
+                item for item in auxiliary_candidates
+                if item.lane not in {RefreshLane.DATA, RefreshLane.LIVE}
+                or fits_rotation_window(item)
+            ]
+            weather_liveness_candidate = None
+            sports_liveness_candidate = None
+            ticketmaster_liveness_candidate = None
 
         if weather_liveness_candidate is not None:
             liveness_admission = choose_refresh_candidate(
@@ -3320,6 +3436,7 @@ class RefreshTask:
             if next_retry is not None:
                 next_retry = self._align_datetime_tz(next_retry, current_dt)
                 if catchup.target_mode == target_mode and current_dt < next_retry:
+                    self._note_scheduler_due_at(next_retry, current_dt)
                     continue
             last_attempt = self._parse_iso_datetime(catchup.last_attempt_at)
             if last_attempt is not None:
@@ -3421,18 +3538,22 @@ class RefreshTask:
             next_retry = self._parse_iso_datetime(runtime.next_retry_at)
             if next_retry is not None:
                 next_retry = self._align_datetime_tz(next_retry, current_dt)
-                if current_dt < next_retry:
-                    continue
             last_success = self._parse_iso_datetime(runtime.last_success_at)
             if last_success is None:
                 due_since = current_dt
             else:
                 last_success = self._align_datetime_tz(last_success, current_dt)
-                due_since = last_success + timedelta(
-                    seconds=live_state["interval_seconds"]
+                due_since = datetime.fromtimestamp(
+                    last_success.timestamp() + live_state["interval_seconds"],
+                    tz=current_dt.tzinfo,
                 )
-                if current_dt < due_since:
-                    continue
+            wake_at = max(
+                (due_since, next_retry) if next_retry is not None else (due_since,),
+                key=lambda value: value.timestamp(),
+            )
+            self._note_scheduler_due_at(wake_at, current_dt)
+            if current_dt.timestamp() < wake_at.timestamp():
+                continue
             last_attempt = self._parse_iso_datetime(runtime.last_attempt_at)
             if last_attempt is not None:
                 last_attempt = self._align_datetime_tz(last_attempt, current_dt)
@@ -3529,6 +3650,7 @@ class RefreshTask:
         if next_retry is not None:
             next_retry = self._align_datetime_tz(next_retry, current_dt)
             if current_dt < next_retry:
+                self._note_scheduler_due_at(next_retry, current_dt)
                 if theme_info_changed:
                     self._write_device_config()
                 return None
@@ -3789,6 +3911,15 @@ class RefreshTask:
             self._execute_queue_entry(entry)
         finally:
             self._finalize_lightweight_followup_entry(entry)
+            # Execution cleanup and IAN retention release must finish before
+            # sampling capacity. Every terminal outcome frees this queue turn;
+            # the failed instance's own retry is still enforced by admission.
+            finished = self.refresh_queue.get_job(entry.job.id)
+            if finished is not None:
+                try:
+                    self._note_scheduler_terminal(entry.command, finished)
+                except Exception:
+                    logger.exception("Could not request scheduling after command cleanup.")
 
     def _uses_ian_admission(self, command):
         return (
@@ -4591,6 +4722,7 @@ class RefreshTask:
                     logger.exception(
                         "Prepared display failure bookkeeping also failed"
                     )
+                    self._defer_scheduler_after_bookkeeping_error()
                 finished = self.refresh_queue.finish(
                     entry.job.id,
                     JobStatus.FAILED,
@@ -4619,6 +4751,7 @@ class RefreshTask:
                         abort = self._abort_details(abort_error)
                     except Exception:
                         logger.exception("Refresh failure bookkeeping also failed")
+                        self._defer_scheduler_after_bookkeeping_error()
                 if abort is None:
                     abort = self._classify_command_abort(command, context)
                 if abort is None:
@@ -4691,7 +4824,6 @@ class RefreshTask:
                     except Exception:
                         logger.exception("Refresh success bookkeeping failed")
             self._note_lightweight_scheduler_terminal(command, finished)
-            self._note_background_scheduler_terminal(command, finished)
             self._signal_completion(finished.id)
         finally:
             self._cleanup_transient_uploads(entry.job.id, entry.command)
@@ -4777,6 +4909,7 @@ class RefreshTask:
                 "plugin_id: %s",
                 command.plugin_id,
             )
+            self._defer_scheduler_after_bookkeeping_error()
             return None
         return next_retry_at
 
@@ -4817,6 +4950,7 @@ class RefreshTask:
                 "instance_uuid: %s",
                 instance_uuid,
             )
+            self._defer_scheduler_after_bookkeeping_error()
             return None
         return next_retry_at
 
@@ -6346,6 +6480,7 @@ class RefreshTask:
             logger.exception(
                 "Automatic rotation deadline failure bookkeeping also failed"
             )
+            self._defer_scheduler_after_bookkeeping_error()
             return False
 
     def _release_failed_rotation_reservation(self, command):

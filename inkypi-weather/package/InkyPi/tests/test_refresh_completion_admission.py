@@ -117,23 +117,28 @@ def test_successful_completion_with_no_due_work_returns_to_idle_poll(tmp_path, m
         ),
     ],
 )
-def test_failure_and_deferral_keep_scheduled_wait(
+def test_failure_and_deferral_keep_own_retry_without_delaying_other_work(
     tmp_path, monkeypatch, terminal_error, status, error_code,
 ):
     case = _completion_case(tmp_path, monkeypatch)
 
-    def fail(_command):
-        raise terminal_error
+    def fail(command):
+        if command.plugin_id == "live_radar":
+            raise terminal_error
 
     case.after_render.append(fail)
     first = case.task._run_one_iteration_for_test()
+    own_retry = case.task.runtime_state.snapshot().instances[first.command.instance_uuid].data.next_retry_at
     second = case.task._run_one_iteration_for_test()
     finished = case.task.refresh_queue.get_job(first.job.id)
 
     assert finished.status is status
     assert finished.error_code == error_code
-    assert second is None
-    assert case.rendered == [("live_radar", 0.0)]
+    assert second.command.plugin_id == "bambu_monitor"
+    assert case.task.refresh_queue.get_job(second.job.id).status is JobStatus.SUCCEEDED
+    assert own_retry is not None
+    assert case.task.runtime_state.snapshot().instances[first.command.instance_uuid].data.next_retry_at == own_retry
+    assert case.rendered == [("live_radar", 0.0), ("bambu_monitor", 5.0)]
 
 
 @pytest.mark.parametrize("gate", ["hard_memory", "hard_disk", "restart"])
@@ -226,7 +231,7 @@ def test_success_does_not_erase_an_active_global_scheduler_retry(tmp_path, monke
     assert case.rendered == [("live_radar", 0.0)]
 
 
-def test_success_does_not_reopen_admission_while_ian_retains_work(tmp_path, monkeypatch):
+def test_success_rechecks_ordinary_work_during_ian_retry_wait(tmp_path, monkeypatch):
     case = _completion_case(
         tmp_path, monkeypatch,
         ian_resource_sampler=lambda: IanResourceSample(available_mb=100, swap_percent=0),
@@ -250,17 +255,18 @@ def test_success_does_not_reopen_admission_while_ian_retains_work(tmp_path, monk
     case.task.scheduler_state.set_next_attempt(30)
 
     first = case.task._run_one_iteration_for_test()
-    blocked = case.task._run_one_iteration_for_test()
+    following = case.task._run_one_iteration_for_test()
 
     assert retained.command.id == sports.id
     assert case.task.refresh_queue.get_job(sports_job.id).status is JobStatus.RUNNING
     assert first.command.id == ordinary.id
     assert case.task.refresh_queue.get_job(first.job.id).status is JobStatus.SUCCEEDED
-    assert blocked is None
-    assert case.rendered == [("live_radar", 0.0)]
+    assert following.command.plugin_id == "bambu_monitor"
+    assert case.task.refresh_queue.get_job(sports_job.id).status is JobStatus.RUNNING
+    assert case.rendered == [("live_radar", 0.0), ("bambu_monitor", 5.0)]
 
 
-def test_ian_arriving_after_completion_preempts_the_unused_early_admission(tmp_path, monkeypatch):
+def test_queued_ian_preempts_completion_then_yields_ordinary_work_during_retry(tmp_path, monkeypatch):
     case = _completion_case(
         tmp_path, monkeypatch,
         ian_resource_sampler=lambda: IanResourceSample(available_mb=100, swap_percent=0),
@@ -276,11 +282,11 @@ def test_ian_arriving_after_completion_preempts_the_unused_early_admission(tmp_p
     sports_job = case.task.refresh_queue.submit(sports)
 
     retained = case.task._run_one_iteration_for_test()
-    no_early_admission = case.task._run_one_iteration_for_test()
+    following = case.task._run_one_iteration_for_test()
 
     assert case.task.refresh_queue.get_job(first.job.id).status is JobStatus.SUCCEEDED
     assert retained.command.id == sports.id
     assert case.task.refresh_queue.get_job(sports_job.id).status is JobStatus.RUNNING
-    assert no_early_admission is None
-    assert case.clock.monotonic() == 5
-    assert case.rendered == [("live_radar", 0.0)]
+    assert following.command.plugin_id == "bambu_monitor"
+    assert case.clock.monotonic() == 10
+    assert case.rendered == [("live_radar", 0.0), ("bambu_monitor", 5.0)]
