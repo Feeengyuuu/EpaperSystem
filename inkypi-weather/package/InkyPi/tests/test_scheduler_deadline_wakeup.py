@@ -135,6 +135,14 @@ def _live_deadline_case(tmp_path, monkeypatch, *, scan_seconds=0):
     manifest = case.config.get_plugin(instance.plugin_id)["_manifest"]
     manifest = replace(manifest, capabilities=replace(manifest.capabilities, supports_live_refresh=True))
     case.config.get_plugin = lambda key: {"id": key, "_manifest": manifest}
+    # Keep Sports displayed so this fixture isolates retry/deadline publication
+    # at its 300s hook cadence. The 900s offscreen floor has separate coverage.
+    case.task.runtime_state.set_display_state(
+        "committed",
+        "sports-live-deadline",
+        instance_uuid=instance.instance_uuid,
+        changed_at=START.isoformat(),
+    )
 
     class SportsStream(NoChangePresentationPlugin):
         def get_live_refresh_state(self, settings, current_dt):

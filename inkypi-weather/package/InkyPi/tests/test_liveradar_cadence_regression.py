@@ -142,10 +142,17 @@ def _run_cadence_scenario(
     radar = [began for key, began in data if key == "live_radar"]
     gaps = [end - begin for begin, end in zip(radar, radar[1:])]
     write_gaps = [end - begin for begin, end in zip(writes, writes[1:])]
+    sports_live_starts = [
+        began
+        for key, began, intent in renders
+        if key == "sports_dashboard" and intent is RefreshIntent.LIVE_REFRESH
+    ]
     utilization = sum(
         provider_seconds / (86400 if isinstance(cadence, str) else cadence)
         for cadence in cadences.values()
-    ) + (panel_seconds + sports_live_seconds) / 300
+    ) + panel_seconds / 300 + (
+        sports_live_seconds * len(sports_live_starts) / horizon_seconds
+    )
     result = {
         "synthetic_utilization": utilization,
         "radar_starts": radar,
@@ -160,7 +167,8 @@ def _run_cadence_scenario(
         "write_gap_seconds": [min(write_gaps), max(write_gaps)],
         "probe_metrics": getattr(task, "_cadence_probe_metrics", {}),
         "prepared_commit_count": len(receipt_ids),
-        "sports_live_count": sum(intent is RefreshIntent.LIVE_REFRESH for _, _, intent in renders),
+        "sports_live_count": len(sports_live_starts),
+        "sports_live_starts": sports_live_starts,
     }
     assert utilization < (0.7 if sports_live_seconds else 0.5)
     assert len(radar) >= 2
@@ -245,7 +253,11 @@ def test_liveradar_cadence_preserves_prepared_commits_and_background_sports(tmp_
     assert result["probe_metrics"]["preparations"] >= 3
     assert result["probe_metrics"]["prepared_guard_blocks"] > 0
     assert result["prepared_commit_count"] >= 3
-    assert result["sports_live_count"] >= 18
+    # Six to eight LIVE jobs in two hours proves the new floor removes the old
+    # 300s churn without starving Sports. The count includes foreground
+    # Sports, whose hook cadence intentionally remains exempt from the floor;
+    # exact offscreen 899/900 boundaries have focused coverage.
+    assert 6 <= result["sports_live_count"] <= 8
     # Preserve the prior release's worst physical cadence; allowing 365s here
     # would hide a long LIVE job crossing an unreserved rotation deadline.
     assert result["write_gap_seconds"][1] <= 310

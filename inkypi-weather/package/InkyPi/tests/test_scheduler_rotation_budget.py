@@ -47,7 +47,15 @@ def test_unreserved_rotation_runs_short_data_then_displays_before_heavy_refresh(
         cache_path = _write_runtime_cache(case.task, instance)
         os.utime(cache_path, (case.clock.wall_time(), case.clock.wall_time()))
         is_due = instance.plugin_id == "bambu_monitor" or heavy_intent is RefreshIntent.DATA_REFRESH
-        succeeded_at = case.now() - timedelta(seconds=300 if is_due else 0)
+        age_seconds = 300 if is_due else 0
+        if (
+            instance.plugin_id == "sports_dashboard"
+            and heavy_intent is RefreshIntent.LIVE_REFRESH
+        ):
+            # The test needs an already-due offscreen Sports LIVE candidate;
+            # its production floor is intentionally longer than DATA cadence.
+            age_seconds = 900
+        succeeded_at = case.now() - timedelta(seconds=age_seconds)
         case.task.runtime_state.record_success(instance.instance_uuid, succeeded_at.isoformat(), lane=RefreshLane.DATA)
 
     renders = []
