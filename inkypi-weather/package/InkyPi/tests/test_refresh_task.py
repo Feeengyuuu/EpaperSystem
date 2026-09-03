@@ -21099,6 +21099,7 @@ def test_rotation_starved_data_does_not_reuse_weather_window_deadline(monkeypatc
     assert command is not None
     assert command.instance_uuid == ordinary.instance_uuid
     assert command.intent is RefreshIntent.DATA_REFRESH
+    assert task._burst_liveness_yield_ordinary_pending is False
 
     task.runtime_state.record_success(
         ordinary.instance_uuid,
@@ -21342,6 +21343,282 @@ def test_low_margin_offscreen_sports_does_not_cancel_weather_window(monkeypatch)
     assert concession is not None
     assert concession.instance_uuid == weather.instance_uuid
     assert concession.payload["weather_liveness_concession"] is True
+
+
+def test_low_margin_rotation_starved_sports_does_not_retire_weather_window(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    sample = {"value": ResourceSample(available_mb=146, swap_percent=50)}
+    task, clock, _weather, sports = _weather_margin_runtime(
+        "weather-window-survives-low-margin-rotation-starved-sports",
+        current_dt,
+        alternative_plugin_id="sports_dashboard",
+    )
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(task, "_get_rotation_wait_seconds", lambda: 600)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    original_window = task._weather_liveness_window
+    assert original_window is not None
+
+    manager = task.device_config.playlist_manager
+    reserved = manager.reserve_next_active_instance(
+        current_dt + timedelta(seconds=1),
+        latest_refresh=None,
+        interval_seconds=0,
+        eligible_instance_uuids={sports.instance_uuid},
+    )
+    assert reserved is not None
+    task.runtime_state.record_success(
+        sports.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    sample["value"] = ResourceSample(available_mb=100, swap_percent=50)
+    clock.advance(1)
+
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=1)
+        )
+        is None
+    )
+    assert task._weather_liveness_window == original_window
+    assert task._weather_liveness_cooldown_until_monotonic == 0
+    assert task._burst_liveness_yield_ordinary_pending is False
+
+
+def test_qualified_rotation_starved_sports_retires_weather_and_yields_ordinary(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    sample = {"value": ResourceSample(available_mb=146, swap_percent=50)}
+    task, clock, _weather, sports = _weather_margin_runtime(
+        "weather-window-yields-qualified-rotation-starved-sports",
+        current_dt,
+        alternative_plugin_id="sports_dashboard",
+    )
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(task, "_get_rotation_wait_seconds", lambda: 600)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    manager = task.device_config.playlist_manager
+    reserved = manager.reserve_next_active_instance(
+        current_dt + timedelta(seconds=1),
+        latest_refresh=None,
+        interval_seconds=0,
+        eligible_instance_uuids={sports.instance_uuid},
+    )
+    assert reserved is not None
+    task.runtime_state.record_success(
+        sports.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    sample["value"] = ResourceSample(available_mb=120, swap_percent=50)
+    clock.advance(1)
+
+    command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert command is not None
+    assert command.instance_uuid == sports.instance_uuid
+    assert command.intent is RefreshIntent.DATA_REFRESH
+    assert task._weather_liveness_window is None
+    assert task._burst_liveness_yield_ordinary_pending is True
+
+
+def test_low_margin_reserved_sports_data_first_does_not_retire_weather_window(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    sample = {"value": ResourceSample(available_mb=146, swap_percent=50)}
+    task, clock, _weather, sports = _weather_margin_runtime(
+        "weather-window-survives-low-margin-reserved-sports-data-first",
+        current_dt,
+        alternative_plugin_id="sports_dashboard",
+    )
+    manifest = _presentation_manifest(sports.plugin_id)
+    task.device_config.config["display_triggered_refresh_enabled"] = True
+    task.device_config.get_plugin = lambda plugin_id: (
+        {
+            "id": plugin_id,
+            "refresh_on_display": True,
+            "_manifest": manifest,
+        }
+        if plugin_id == sports.plugin_id
+        else {"id": plugin_id}
+    )
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(task, "_get_rotation_wait_seconds", lambda: 600)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    original_window = task._weather_liveness_window
+    assert original_window is not None
+
+    manager = task.device_config.playlist_manager
+    reserved = manager.reserve_next_active_instance(
+        current_dt + timedelta(seconds=1),
+        latest_refresh=None,
+        interval_seconds=0,
+        eligible_instance_uuids={sports.instance_uuid},
+    )
+    assert reserved is not None
+    task.runtime_state.record_success(
+        sports.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    request = _seed_presentation_request(
+        task,
+        sports,
+        requested_at=current_dt + timedelta(seconds=1),
+    )
+    sample["value"] = ResourceSample(available_mb=100, swap_percent=50)
+    clock.advance(1)
+
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=1)
+        )
+        is None
+    )
+    assert task._weather_liveness_window == original_window
+    assert task._weather_liveness_cooldown_until_monotonic == 0
+    runtime = task.runtime_state.snapshot().instances[sports.instance_uuid]
+    assert runtime.presentation_request.request_id == request.request_id
+
+
+def test_soft_pressure_sports_theme_does_not_retire_weather_window(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, _weather, sports = _weather_margin_runtime(
+        "weather-window-survives-soft-pressure-sports-theme",
+        current_dt,
+        alternative_plugin_id="sports_dashboard",
+    )
+    sample = ResourceSample(available_mb=146, swap_percent=50)
+    theme_candidate = {"value": None}
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample)
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        task,
+        "_theme_due_candidate",
+        lambda *_a, **_k: theme_candidate["value"],
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    original_window = task._weather_liveness_window
+    assert original_window is not None
+    theme_candidate["value"] = DueCandidate(
+        instance=sports,
+        lane=RefreshLane.THEME,
+        due_since=current_dt,
+        reason=DueReason.THEME,
+        last_attempt_at=None,
+    )
+    clock.advance(1)
+
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=1)
+        )
+        is None
+    )
+    assert task._weather_liveness_window == original_window
+    assert task._weather_liveness_cooldown_until_monotonic == 0
+
+
+def test_weather_alternative_reselection_skips_low_margin_sports_data(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    weather_data = _runtime_plugin_data(
+        "weather",
+        "Weather",
+        interval=60,
+    )
+    weather_data["instance_uuid"] = "00000000000000000000000000000001"
+    sports_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "Sports",
+        interval=3600,
+    )
+    sports_data["instance_uuid"] = "11111111111111111111111111111111"
+    ordinary_data = _runtime_plugin_data(
+        "ordinary",
+        "Ordinary",
+        interval=3600,
+    )
+    ordinary_data["instance_uuid"] = "22222222222222222222222222222222"
+    playlist = _runtime_playlist(weather_data, sports_data, ordinary_data)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("weather-alternative-reselection-skips-low-margin-sports"),
+        playlists=[playlist],
+        clock=clock,
+    )
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "weather_liveness_window_seconds": 90,
+            "weather_liveness_cooldown_seconds": 300,
+        }
+    )
+    weather, sports, ordinary = [
+        instance.snapshot() for instance in playlist.plugins
+    ]
+    for instance in (weather, sports, ordinary):
+        _write_runtime_cache(task, instance)
+        task.runtime_state.record_success(
+            instance.instance_uuid,
+            (
+                current_dt - timedelta(minutes=20)
+                if instance.instance_uuid == weather.instance_uuid
+                else current_dt
+            ).isoformat(),
+            lane=RefreshLane.DATA,
+        )
+
+    sample = {"value": ResourceSample(available_mb=146, swap_percent=50)}
+    theme_candidate = {"value": None}
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        task,
+        "_theme_due_candidate",
+        lambda *_a, **_k: theme_candidate["value"],
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    assert task._weather_liveness_window is not None
+
+    task.runtime_state.record_success(
+        sports.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    theme_candidate["value"] = DueCandidate(
+        instance=ordinary,
+        lane=RefreshLane.THEME,
+        due_since=current_dt,
+        reason=DueReason.THEME,
+        last_attempt_at=None,
+    )
+    sample["value"] = ResourceSample(available_mb=100, swap_percent=50)
+    clock.advance(1)
+
+    command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert command is not None
+    assert command.instance_uuid == ordinary.instance_uuid
+    assert command.intent is RefreshIntent.THEME_REDRAW
+    assert task._weather_liveness_window is None
 
 
 def test_weather_with_normal_margin_keeps_ordinary_data_ordering(monkeypatch):

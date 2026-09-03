@@ -2824,6 +2824,13 @@ class RefreshTask:
         }
         eligible_data_candidates = list(data_candidates)
         weather_liveness_data_candidates = list(data_candidates)
+        weather_work_pending = bool(
+            self._weather_liveness_window is not None
+            or any(
+                candidate.instance.plugin_id == "weather"
+                for candidate in weather_liveness_data_candidates
+            )
+        )
         ticketmaster_liveness_candidate = None
         ticketmaster_liveness_holds_independent = False
         sports_liveness_candidate = None
@@ -2888,6 +2895,26 @@ class RefreshTask:
                     current_dt,
                     resource_sample,
                 )
+        sports_isolated_start_margin_available, _, _ = (
+            self._sports_isolated_start_margin(resource_sample)
+        )
+        sports_heavyweight_start_margin_available, _, _ = (
+            self._heavyweight_renderer_resource_margin(resource_sample)
+        )
+
+        def has_sports_start_margin(candidate):
+            if candidate.instance.plugin_id != "sports_dashboard":
+                return True
+            if candidate.lane in {RefreshLane.DATA, RefreshLane.LIVE}:
+                return (
+                    tier is not ResourceTier.HARD
+                    and sports_isolated_start_margin_available
+                )
+            return (
+                tier is ResourceTier.HEALTHY
+                and sports_heavyweight_start_margin_available
+            )
+
         (
             ticketmaster_margin_available,
             ticketmaster_required_available_mb,
@@ -2988,6 +3015,17 @@ class RefreshTask:
                 if candidate.instance.instance_uuid
                 not in sports_liveness_excluded_uuids
             ]
+        if weather_work_pending:
+            eligible_data_candidates = [
+                candidate
+                for candidate in eligible_data_candidates
+                if has_sports_start_margin(candidate)
+            ]
+            auxiliary_candidates = [
+                candidate
+                for candidate in auxiliary_candidates
+                if has_sports_start_margin(candidate)
+            ]
         if self.retry_registry.next_delay(RetryRegistry.GLOBAL_KEY, self._clock()) > 0:
             # No fairness/spacing turn is consumed when admission bookkeeping
             # has failed and armed the scheduler's own backoff.
@@ -3026,20 +3064,19 @@ class RefreshTask:
                 if concession.candidate is not None:
                     self._admission_state = concession.state
                     candidate = concession.candidate
-                    self._finish_weather_liveness_for_runnable_alternative(
-                        candidate,
+                    return self._finish_weather_liveness_for_selected_alternative(
+                        self._playlist_command(
+                            active.name,
+                            candidate.instance,
+                            source=CommandSource.BACKGROUND,
+                            intent=RefreshIntent.DATA_REFRESH,
+                            force=False,
+                            display_cached_only=False,
+                            priority=96,
+                            kind=CommandKind.CACHE_REFRESH,
+                            current_dt=current_dt,
+                        ),
                         resource_sample,
-                    )
-                    return self._playlist_command(
-                        active.name,
-                        candidate.instance,
-                        source=CommandSource.BACKGROUND,
-                        intent=RefreshIntent.DATA_REFRESH,
-                        force=False,
-                        display_cached_only=False,
-                        priority=96,
-                        kind=CommandKind.CACHE_REFRESH,
-                        current_dt=current_dt,
                     )
 
         # A presentation request for the reserved next rotation member is part
@@ -3067,6 +3104,7 @@ class RefreshTask:
             if (
                 data_candidate is not None
                 and tier is not ResourceTier.HARD
+                and has_sports_start_margin(data_candidate)
                 and (
                     presentation_instance.plugin_id != "ticketmaster_events"
                     or ticketmaster_margin_available
@@ -3083,42 +3121,42 @@ class RefreshTask:
                         consecutive_data_admissions=0,
                         consecutive_background_live_admissions=0,
                     )
-                    self._finish_weather_liveness_for_runnable_alternative(
-                        data_candidate,
+                    return self._finish_weather_liveness_for_selected_alternative(
+                        self._playlist_command(
+                            active.name,
+                            presentation_instance,
+                            source=CommandSource.BACKGROUND,
+                            intent=RefreshIntent.DATA_REFRESH,
+                            force=False,
+                            display_cached_only=False,
+                            priority=95,
+                            kind=CommandKind.CACHE_REFRESH,
+                            current_dt=current_dt,
+                            automatic_rotation=True,
+                        ),
                         resource_sample,
                     )
-                    return self._playlist_command(
-                        active.name,
-                        presentation_instance,
-                        source=CommandSource.BACKGROUND,
-                        intent=RefreshIntent.DATA_REFRESH,
-                        force=False,
-                        display_cached_only=False,
-                        priority=95,
-                        kind=CommandKind.CACHE_REFRESH,
-                        current_dt=current_dt,
-                        automatic_rotation=True,
-                    )
+            if not has_sports_start_margin(presentation_candidate):
+                continue
             self._admission_state = replace(
                 self._admission_state,
                 consecutive_data_admissions=0,
             )
-            self._finish_weather_liveness_for_runnable_alternative(
-                presentation_candidate,
+            return self._finish_weather_liveness_for_selected_alternative(
+                self._playlist_command(
+                    active.name,
+                    presentation_instance,
+                    source=CommandSource.BACKGROUND,
+                    intent=RefreshIntent.PRESENTATION_REFRESH,
+                    force=False,
+                    display_cached_only=False,
+                    priority=90,
+                    kind=CommandKind.CACHE_REFRESH,
+                    current_dt=current_dt,
+                    presentation_request_id=request.request_id,
+                    automatic_rotation=True,
+                ),
                 resource_sample,
-            )
-            return self._playlist_command(
-                active.name,
-                presentation_instance,
-                source=CommandSource.BACKGROUND,
-                intent=RefreshIntent.PRESENTATION_REFRESH,
-                force=False,
-                display_cached_only=False,
-                priority=90,
-                kind=CommandKind.CACHE_REFRESH,
-                current_dt=current_dt,
-                presentation_request_id=request.request_id,
-                automatic_rotation=True,
             )
 
         # Do not start a provider/render job that can occupy the single worker
@@ -3176,32 +3214,13 @@ class RefreshTask:
                 and self._ticketmaster_liveness_window is None
             )
         )
-        weather_work_pending = bool(
-            self._weather_liveness_window is not None
-            or any(
-                candidate.instance.plugin_id == "weather"
-                for candidate in weather_liveness_data_candidates
-            )
-        )
         if weather_liveness_allowed and weather_work_pending:
-            sports_start_margin_available, _, _ = (
-                self._sports_isolated_start_margin(resource_sample)
-            )
-
-            def has_dedicated_start_margin(candidate):
-                return (
-                    candidate.instance.plugin_id != "sports_dashboard"
-                    or candidate.lane
-                    not in {RefreshLane.DATA, RefreshLane.LIVE}
-                    or sports_start_margin_available
-                )
-
             # AdmissionState is immutable. This dry decision deliberately drops
             # the returned state so probing an alternative cannot consume its
             # fairness or SOFT-spacing turn. Both lists have already passed the
             # same generic resource and display-window filters used by normal
-            # admission. The dedicated Sports child-process start gate mirrors
-            # the executor check without duplicating its threshold policy.
+            # admission. The Sports isolated and heavyweight start gates mirror
+            # the executor checks without duplicating their threshold policy.
             runnable_weather_alternative = choose_refresh_candidate(
                 [
                     candidate
@@ -3213,19 +3232,13 @@ class RefreshTask:
                     candidate
                     for candidate in auxiliary_candidates
                     if candidate.instance.plugin_id != "weather"
-                    and has_dedicated_start_margin(candidate)
                 ],
                 tier=tier,
                 state=self._admission_state,
                 now_monotonic=self._clock(),
                 thresholds=thresholds,
             ).candidate
-            if runnable_weather_alternative is not None:
-                self._finish_weather_liveness_for_runnable_alternative(
-                    runnable_weather_alternative,
-                    resource_sample,
-                )
-            else:
+            if runnable_weather_alternative is None:
                 (
                     weather_liveness_candidate,
                     weather_liveness_holds_independent,
@@ -3251,17 +3264,20 @@ class RefreshTask:
             candidate = liveness_admission.candidate
             if candidate is None:
                 return None
-            return self._playlist_command(
-                active.name,
-                candidate.instance,
-                source=CommandSource.BACKGROUND,
-                intent=RefreshIntent.DATA_REFRESH,
-                force=False,
-                display_cached_only=False,
-                priority=98,
-                kind=CommandKind.CACHE_REFRESH,
-                current_dt=current_dt,
-                weather_liveness_concession=weather_liveness_concession,
+            return self._finish_weather_liveness_for_selected_alternative(
+                self._playlist_command(
+                    active.name,
+                    candidate.instance,
+                    source=CommandSource.BACKGROUND,
+                    intent=RefreshIntent.DATA_REFRESH,
+                    force=False,
+                    display_cached_only=False,
+                    priority=98,
+                    kind=CommandKind.CACHE_REFRESH,
+                    current_dt=current_dt,
+                    weather_liveness_concession=weather_liveness_concession,
+                ),
+                resource_sample,
             )
         if weather_liveness_holds_independent:
             return None
@@ -3297,16 +3313,19 @@ class RefreshTask:
                 return None
             self._burst_liveness_yield_ordinary_pending = False
             self._burst_liveness_yield_deadline_monotonic = 0.0
-            return self._playlist_command(
-                active.name,
-                candidate.instance,
-                source=CommandSource.BACKGROUND,
-                intent=RefreshIntent.DATA_REFRESH,
-                force=False,
-                display_cached_only=False,
-                priority=98,
-                kind=CommandKind.CACHE_REFRESH,
-                current_dt=current_dt,
+            return self._finish_weather_liveness_for_selected_alternative(
+                self._playlist_command(
+                    active.name,
+                    candidate.instance,
+                    source=CommandSource.BACKGROUND,
+                    intent=RefreshIntent.DATA_REFRESH,
+                    force=False,
+                    display_cached_only=False,
+                    priority=98,
+                    kind=CommandKind.CACHE_REFRESH,
+                    current_dt=current_dt,
+                ),
+                resource_sample,
             )
 
         if sports_liveness_candidate is not None:
@@ -3322,16 +3341,19 @@ class RefreshTask:
             candidate = liveness_admission.candidate
             if candidate is None:
                 return None
-            return self._playlist_command(
-                active.name,
-                candidate.instance,
-                source=CommandSource.BACKGROUND,
-                intent=RefreshIntent.DATA_REFRESH,
-                force=False,
-                display_cached_only=False,
-                priority=97,
-                kind=CommandKind.CACHE_REFRESH,
-                current_dt=current_dt,
+            return self._finish_weather_liveness_for_selected_alternative(
+                self._playlist_command(
+                    active.name,
+                    candidate.instance,
+                    source=CommandSource.BACKGROUND,
+                    intent=RefreshIntent.DATA_REFRESH,
+                    force=False,
+                    display_cached_only=False,
+                    priority=97,
+                    kind=CommandKind.CACHE_REFRESH,
+                    current_dt=current_dt,
+                ),
+                resource_sample,
             )
         if ticketmaster_liveness_candidate is not None:
             liveness_admission = choose_refresh_candidate(
@@ -3346,16 +3368,19 @@ class RefreshTask:
             candidate = liveness_admission.candidate
             if candidate is None:
                 return None
-            return self._playlist_command(
-                active.name,
-                candidate.instance,
-                source=CommandSource.BACKGROUND,
-                intent=RefreshIntent.DATA_REFRESH,
-                force=False,
-                display_cached_only=False,
-                priority=97,
-                kind=CommandKind.CACHE_REFRESH,
-                current_dt=current_dt,
+            return self._finish_weather_liveness_for_selected_alternative(
+                self._playlist_command(
+                    active.name,
+                    candidate.instance,
+                    source=CommandSource.BACKGROUND,
+                    intent=RefreshIntent.DATA_REFRESH,
+                    force=False,
+                    display_cached_only=False,
+                    priority=97,
+                    kind=CommandKind.CACHE_REFRESH,
+                    current_dt=current_dt,
+                ),
+                resource_sample,
             )
         if sports_liveness_holds_independent:
             return None
@@ -3373,73 +3398,90 @@ class RefreshTask:
         self._admission_state = decision.state
         candidate = decision.candidate
         if candidate is None:
-            return self._select_theme_catchup_command(
-                active,
-                runtime_instances,
-                theme_context,
-                current_dt,
-                tier,
-                theme_transition_pending,
+            return self._finish_weather_liveness_for_selected_alternative(
+                self._select_theme_catchup_command(
+                    active,
+                    runtime_instances,
+                    theme_context,
+                    current_dt,
+                    tier,
+                    theme_transition_pending,
+                ),
+                resource_sample,
             )
         if candidate.lane is RefreshLane.THEME:
-            return self._playlist_command(
-                active.name,
-                candidate.instance,
-                source=CommandSource.SCHEDULER,
-                intent=RefreshIntent.THEME_REDRAW,
-                force=False,
-                display_cached_only=False,
-                priority=80,
-                kind=CommandKind.CACHE_REFRESH,
-                theme_context=theme_context,
-                theme_render_only=True,
-                current_dt=current_dt,
-                expected_displayed_instance_uuid=candidate.instance.instance_uuid,
+            return self._finish_weather_liveness_for_selected_alternative(
+                self._playlist_command(
+                    active.name,
+                    candidate.instance,
+                    source=CommandSource.SCHEDULER,
+                    intent=RefreshIntent.THEME_REDRAW,
+                    force=False,
+                    display_cached_only=False,
+                    priority=80,
+                    kind=CommandKind.CACHE_REFRESH,
+                    theme_context=theme_context,
+                    theme_render_only=True,
+                    current_dt=current_dt,
+                    expected_displayed_instance_uuid=(
+                        candidate.instance.instance_uuid
+                    ),
+                ),
+                resource_sample,
             )
         if candidate.lane is RefreshLane.LIVE:
-            return self._playlist_command(
-                active.name,
-                candidate.instance,
-                source=CommandSource.LIVE,
-                intent=RefreshIntent.LIVE_REFRESH,
-                force=False,
-                display_cached_only=False,
-                priority=70,
-                kind=CommandKind.CACHE_REFRESH,
-                current_dt=current_dt,
-                expected_displayed_instance_uuid=(
-                    candidate.instance.instance_uuid
-                    if candidate.requires_displayed_instance
-                    else None
+            return self._finish_weather_liveness_for_selected_alternative(
+                self._playlist_command(
+                    active.name,
+                    candidate.instance,
+                    source=CommandSource.LIVE,
+                    intent=RefreshIntent.LIVE_REFRESH,
+                    force=False,
+                    display_cached_only=False,
+                    priority=70,
+                    kind=CommandKind.CACHE_REFRESH,
+                    current_dt=current_dt,
+                    expected_displayed_instance_uuid=(
+                        candidate.instance.instance_uuid
+                        if candidate.requires_displayed_instance
+                        else None
+                    ),
+                    background_live_refresh=not candidate.requires_displayed_instance,
                 ),
-                background_live_refresh=not candidate.requires_displayed_instance,
+                resource_sample,
             )
         if candidate.lane is RefreshLane.PRESENTATION:
             request = runtime_instances[candidate.instance.instance_uuid].presentation_request
             if request is None:
                 return None
-            return self._playlist_command(
+            return self._finish_weather_liveness_for_selected_alternative(
+                self._playlist_command(
+                    active.name,
+                    candidate.instance,
+                    source=CommandSource.BACKGROUND,
+                    intent=RefreshIntent.PRESENTATION_REFRESH,
+                    force=False,
+                    display_cached_only=False,
+                    priority=20,
+                    kind=CommandKind.CACHE_REFRESH,
+                    current_dt=current_dt,
+                    presentation_request_id=request.request_id,
+                ),
+                resource_sample,
+            )
+        return self._finish_weather_liveness_for_selected_alternative(
+            self._playlist_command(
                 active.name,
                 candidate.instance,
                 source=CommandSource.BACKGROUND,
-                intent=RefreshIntent.PRESENTATION_REFRESH,
+                intent=RefreshIntent.DATA_REFRESH,
                 force=False,
                 display_cached_only=False,
-                priority=20,
+                priority=10,
                 kind=CommandKind.CACHE_REFRESH,
                 current_dt=current_dt,
-                presentation_request_id=request.request_id,
-            )
-        return self._playlist_command(
-            active.name,
-            candidate.instance,
-            source=CommandSource.BACKGROUND,
-            intent=RefreshIntent.DATA_REFRESH,
-            force=False,
-            display_cached_only=False,
-            priority=10,
-            kind=CommandKind.CACHE_REFRESH,
-            current_dt=current_dt,
+            ),
+            resource_sample,
         )
 
     def _select_theme_catchup_command(
@@ -5167,19 +5209,51 @@ class RefreshTask:
         self._burst_liveness_yield_ordinary_pending = False
         self._burst_liveness_yield_deadline_monotonic = 0.0
 
-    def _finish_weather_liveness_for_runnable_alternative(
+    def _finish_weather_liveness_for_selected_alternative(
         self,
-        candidate,
+        command,
         resource_sample,
     ):
-        """Retire the Weather wait without reselecting the chosen alternative."""
-        if candidate.instance.plugin_id == "weather":
-            return
+        """Retire the Weather wait only after constructing its replacement."""
+        if command is None or command.plugin_id == "weather":
+            return command
+        if self._weather_liveness_window is None:
+            return command
+        if (
+            command.plugin_id == "sports_dashboard"
+            and command.intent in _RENDERER_INTENTS
+        ):
+            tier = classify_resource_tier(
+                resource_sample,
+                self._resource_thresholds(),
+            )
+            isolated = self._is_isolated_sports_refresh_command(command)
+            if tier is ResourceTier.HARD or (
+                not isolated and tier is not ResourceTier.HEALTHY
+            ):
+                return None
+            if isolated:
+                margin_available, _, _ = self._sports_isolated_start_margin(
+                    resource_sample
+                )
+            else:
+                margin_available, _, _ = self._heavyweight_renderer_resource_margin(
+                    resource_sample
+                )
+            if not margin_available:
+                return None
         self._finish_weather_liveness_window(
             reason="runnable_alternative",
             resource_sample=resource_sample,
-            yield_to_ordinary=(candidate.lane is RefreshLane.DATA),
+            # Ordinary DATA consumes the handoff itself. Specialized burst
+            # DATA still owes one bounded turn to ordinary background work.
+            yield_to_ordinary=(
+                command.intent is RefreshIntent.DATA_REFRESH
+                and command.plugin_id
+                in {"sports_dashboard", "ticketmaster_events"}
+            ),
         )
+        return command
 
     def _finish_weather_liveness_window(
         self,
