@@ -717,6 +717,13 @@ class VehicleStatus(BasePlugin):
                     max_bytes=SUMMARY_MAX_BYTES,
                 )
                 summary = sanitize_summary(result.data)
+                if _same_cached_snapshot(cached, summary) and summary["snapshot"]["freshness"] == "stale_cache":
+                    # A newer bridge response cannot make the same vehicle values younger.
+                    previous_age = _cached_content_age(cached, now)
+                    if previous_age is not None:
+                        summary["snapshot"]["age_seconds"] = max(
+                            summary["snapshot"]["age_seconds"] or 0, previous_age
+                        )
                 if not _summary_within_max_stale(summary):
                     raise SummaryContractError("bridge summary is too stale")
             except Exception as exc:
@@ -795,11 +802,24 @@ class VehicleStatus(BasePlugin):
             )
             cache_committed = False
             if should_replace_cache:
+                cache_summary = summary
+                fetched_at = now
+                if (
+                    cached_is_usable
+                    and _same_cached_snapshot(cached, summary)
+                    and provenance is SourceProvenance.STALE_CACHE
+                ):
+                    # Keep the original polling deadline while storing the latest status.
+                    fetched_at = cached["fetched_at"]
+                    cache_summary = deepcopy(summary)
+                    cache_summary["snapshot"]["age_seconds"] = max(
+                        0, summary["snapshot"]["age_seconds"] - max(0, now - fetched_at)
+                    )
                 try:
                     self._write_cache_unlocked(
                         {
-                            "fetched_at": now,
-                            "summary": summary,
+                            "fetched_at": fetched_at,
+                            "summary": cache_summary,
                             "location_fingerprint": location_fingerprint,
                             "location_language": language,
                         }
@@ -2681,9 +2701,21 @@ def _should_replace_local_cache(cached, summary, now):
         return True
     if not _cache_within_max_stale(cached, now):
         return True
+    if _same_cached_snapshot(cached, summary):
+        # served_at orders bridge responses, not Tesla connectivity checks.
+        return _timestamp_epoch(summary["served_at"]) > _timestamp_epoch(cached["summary"]["served_at"])
+    new_captured_at = summary["snapshot"]["captured_at"]
+    old_captured_at = cached["summary"]["snapshot"]["captured_at"]
+    if new_captured_at and old_captured_at:
+        return _timestamp_epoch(new_captured_at) > _timestamp_epoch(old_captured_at)
     new_age = summary["snapshot"]["age_seconds"]
     old_age = _cached_content_age(cached, now)
     return new_age is not None and (old_age is None or new_age < old_age)
+
+
+def _same_cached_snapshot(cached, summary):
+    captured_at = summary["snapshot"]["captured_at"]
+    return bool(captured_at and cached and captured_at == cached["summary"]["snapshot"]["captured_at"])
 
 
 def _bridge_provenance(summary):

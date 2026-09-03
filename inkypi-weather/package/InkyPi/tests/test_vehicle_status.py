@@ -1576,10 +1576,146 @@ def test_worker_stale_snapshot_stays_stale_and_non_cacheable(tmp_path, monkeypat
     assert image.info["inkypi_skip_cache"] is True
 
 
+def test_same_snapshot_uses_new_bridge_status_without_renewing_source_cache(
+    tmp_path, monkeypatch
+):
+    now = datetime.fromisoformat("2026-08-05T20:05:00+00:00").timestamp()
+    plugin = _plugin(tmp_path)
+    original = _summary(freshness="stale_cache", connectivity="offline")
+    plugin._write_cache({"fetched_at": now - 300, "summary": original})
+    updated = deepcopy(original)
+    updated["served_at"] = "2026-08-05T20:05:00Z"
+    updated["snapshot"].update(age_seconds=305, vehicle_connectivity="unavailable")
+    client = FakeHttpClient(updated)
+    rendered = {}
+    render_summary = plugin._render_summary
+
+    def capture_summary(summary, *args, **kwargs):
+        rendered["summary"] = deepcopy(summary)
+        return render_summary(summary, *args, **kwargs)
+
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+    monkeypatch.setattr(plugin, "_render_summary", capture_summary)
+
+    image = plugin.generate_image({"cacheSeconds": 0}, DeviceConfig())
+
+    assert rendered["summary"]["snapshot"] == {
+        "captured_at": "2026-08-05T19:59:55Z",
+        "freshness": "stale_cache",
+        "age_seconds": 305,
+        "vehicle_connectivity": "unavailable",
+    }
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
+    cached = plugin._read_cache()
+    assert cached["fetched_at"] == now - 300
+    assert cached["summary"]["served_at"] == "2026-08-05T20:05:00Z"
+    assert cached["summary"]["snapshot"]["captured_at"] == "2026-08-05T19:59:55Z"
+    assert cached["summary"]["snapshot"]["age_seconds"] == 5
+    assert cached["summary"]["snapshot"]["vehicle_connectivity"] == "unavailable"
+
+
+@pytest.mark.parametrize("reported_age", [900, None])
+def test_status_update_keeps_cache_deadline_and_monotonic_age(
+    tmp_path, monkeypatch, reported_age
+):
+    now = datetime.fromisoformat("2026-08-05T20:14:59+00:00").timestamp()
+    plugin = _plugin(tmp_path)
+    original = _summary(freshness="stale_cache", connectivity="offline")
+    plugin._write_cache({"fetched_at": now - 899, "summary": original})
+    updated = deepcopy(original)
+    updated["served_at"] = "2026-08-05T20:14:59Z"
+    updated["snapshot"].update(age_seconds=reported_age, vehicle_connectivity="unavailable")
+    client = FakeHttpClient(updated)
+    rendered = []
+    render_summary = plugin._render_summary
+
+    def capture_summary(summary, *args, **kwargs):
+        rendered.append(deepcopy(summary))
+        return render_summary(summary, *args, **kwargs)
+
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+    monkeypatch.setattr(plugin, "_render_summary", capture_summary)
+
+    image = plugin.generate_image({"cacheSeconds": 900, "forceRefresh": True}, DeviceConfig())
+    assert rendered[-1]["snapshot"]["age_seconds"] == 904
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+
+    now += 2
+    plugin.generate_image({"_theme_render_only": True}, DeviceConfig(token=None))
+    assert rendered[-1]["snapshot"]["age_seconds"] == 906
+    assert rendered[-1]["snapshot"]["vehicle_connectivity"] == "unavailable"
+    assert len(client.calls) == 1
+
+    client.error = RuntimeError("bridge unavailable")
+    image = plugin.generate_image({"cacheSeconds": 900}, DeviceConfig())
+    assert len(client.calls) == 2
+    assert rendered[-1]["snapshot"]["age_seconds"] == 906
+    assert rendered[-1]["snapshot"]["vehicle_connectivity"] == "unavailable"
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
+
+    now = datetime.fromisoformat("2026-08-06T19:59:56+00:00").timestamp()
+    rendered_count = len(rendered)
+    image = plugin.generate_image({"_theme_render_only": True}, DeviceConfig(token=None))
+    assert len(rendered) == rendered_count
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+    assert image.info["inkypi_skip_cache"] is True
+
+
+@pytest.mark.parametrize(
+    "captured_at, served_at",
+    [
+        ("2026-08-05T19:59:00Z", "2026-08-05T20:05:00Z"),
+        ("2026-08-05T19:59:55Z", "2026-08-05T19:59:59Z"),
+        ("2026-08-05T19:59:55Z", "2026-08-05T20:00:00Z"),
+    ],
+)
+def test_older_stale_response_cannot_downgrade_fresher_local_snapshot(
+    tmp_path, monkeypatch, captured_at, served_at
+):
+    now = datetime.fromisoformat("2026-08-05T20:05:00+00:00").timestamp()
+    plugin = _plugin(tmp_path)
+    original = _summary()
+    plugin._write_cache({"fetched_at": now - 300, "summary": original})
+    original_bytes = plugin._cache_file().read_bytes()
+    replay = deepcopy(original)
+    replay["served_at"] = served_at
+    replay["snapshot"].update(
+        captured_at=captured_at,
+        age_seconds=300,
+        freshness="stale_cache",
+        vehicle_connectivity="unavailable",
+    )
+    client = FakeHttpClient(replay)
+    rendered = {}
+    render_summary = plugin._render_summary
+
+    def capture_summary(summary, *args, **kwargs):
+        rendered["summary"] = deepcopy(summary)
+        return render_summary(summary, *args, **kwargs)
+
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+    monkeypatch.setattr(plugin, "_render_summary", capture_summary)
+
+    image = plugin.generate_image({"cacheSeconds": 0}, DeviceConfig())
+
+    assert rendered["summary"]["snapshot"]["captured_at"] == "2026-08-05T19:59:55Z"
+    assert rendered["summary"]["snapshot"]["vehicle_connectivity"] == "online"
+    assert rendered["summary"]["snapshot"]["age_seconds"] == 305
+    assert read_source_provenance(image) is SourceProvenance.FRESH_CACHE
+    assert plugin._cache_file().read_bytes() == original_bytes
+
+
 def test_new_usable_stale_snapshot_replaces_expired_local_cache(tmp_path, monkeypatch):
-    now = 1_800_000_000.0
+    now = datetime.fromisoformat("2026-08-05T20:00:00+00:00").timestamp()
     plugin = _plugin(tmp_path)
     expired = _summary()
+    expired["served_at"] = "2026-08-04T19:00:00Z"
+    expired["snapshot"]["captured_at"] = "2026-08-04T18:59:55Z"
     expired["vehicle"]["display_name"] = "Expired vehicle"
     plugin._write_cache({"fetched_at": now - 90_000, "summary": expired})
     replacement = _summary(freshness="stale_cache", connectivity="asleep")
@@ -1597,6 +1733,50 @@ def test_new_usable_stale_snapshot_replaces_expired_local_cache(tmp_path, monkey
     assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
     assert cached["fetched_at"] == now
     assert cached["summary"]["vehicle"]["display_name"] == "Current vehicle"
+
+
+def test_same_expired_snapshot_cannot_be_revived_by_reset_bridge_age(tmp_path, monkeypatch):
+    now = datetime.fromisoformat("2026-08-06T20:00:00+00:00").timestamp()
+    plugin = _plugin(tmp_path)
+    original = _summary(freshness="stale_cache", connectivity="offline")
+    plugin._write_cache({"fetched_at": now - 86_400, "summary": original})
+    original_bytes = plugin._cache_file().read_bytes()
+    replay = deepcopy(original)
+    replay["served_at"] = "2026-08-06T20:00:00Z"
+    replay["snapshot"]["vehicle_connectivity"] = "unavailable"
+    client = FakeHttpClient(replay)
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+    monkeypatch.setattr(
+        plugin,
+        "_render_summary",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("expired vehicle values rendered")),
+    )
+
+    image = plugin.generate_image({"cacheSeconds": 0}, DeviceConfig())
+
+    assert len(client.calls) == 1
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+    assert image.info["inkypi_skip_cache"] is True
+    assert plugin._cache_file().read_bytes() == original_bytes
+
+
+def test_status_response_recovers_from_a_future_local_cache_clock(tmp_path, monkeypatch):
+    now = datetime.fromisoformat("2026-08-05T20:05:00+00:00").timestamp()
+    plugin = _plugin(tmp_path)
+    original = _summary(freshness="stale_cache", connectivity="offline")
+    plugin._write_cache({"fetched_at": now + 60, "summary": original})
+    updated = deepcopy(original)
+    updated["served_at"] = "2026-08-05T20:05:00Z"
+    updated["snapshot"].update(age_seconds=None, vehicle_connectivity="unavailable")
+    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: FakeHttpClient(updated))
+
+    image = plugin.generate_image({"cacheSeconds": 900}, DeviceConfig())
+
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
+    assert plugin._read_cache()["fetched_at"] == now
 
 
 def test_invalid_or_sensitive_response_is_never_cached(tmp_path, monkeypatch):
