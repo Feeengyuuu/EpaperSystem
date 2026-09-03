@@ -28,6 +28,7 @@ _VEHICLE_STATUS_THREE_HOUR_REFRESH_MIGRATION = (
     "vehicle_status_three_hour_refresh_v1"
 )
 _MAGAZINE_HISTORICAL_LIBRARY_MIGRATION = "magazine_historical_library_v1"
+_RUNTIME_BALANCE_CADENCE_MIGRATION = "runtime_balance_cadence_v1"
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_LEGACY_REFRESH_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_REFRESH_INTERVAL_SECONDS = 3 * 60 * 60
@@ -47,6 +48,49 @@ _MAGAZINE_HISTORICAL_DEFAULTS = {
     "catalogRefreshHours": "24",
     "latestRefreshHours": "6",
 }
+_RUNTIME_BALANCE_LEGACY_INTERVAL_SECONDS = 5 * 60
+_RUNTIME_BALANCE_CADENCE_TARGETS = (
+    (
+        "d45cd9dc716240bea25e3eb77aef406d",
+        "weather",
+        "AwesomeWeather",
+        1,
+        1,
+        15 * 60,
+    ),
+    (
+        "c77bdce845dc451aad3e5439a1fdc21b",
+        "steam_profile_dashboard",
+        "SteamDaily",
+        1,
+        1,
+        15 * 60,
+    ),
+    (
+        "8e80501ddeaf423f8813edfa24c2fcd2",
+        "daily_word_poem",
+        "DailyWord",
+        1,
+        2,
+        60 * 60,
+    ),
+    (
+        "8e0046a5330149d9903ef4a456df827e",
+        "gcd_comic_covers",
+        "ComicCovers",
+        1,
+        1,
+        60 * 60,
+    ),
+    (
+        "462bd9102b004ca1b71ed63c959909af",
+        "daily_art",
+        "DailyArt",
+        1,
+        2,
+        60 * 60,
+    ),
+)
 _SPORTS_LIVE_REFRESH_KEYS = (
     "worldCupLiveRefreshEnabled",
     "nbaLiveRefreshEnabled",
@@ -115,6 +159,7 @@ class Config:
         self.playlist_manager = self.load_playlist_manager()
         self.refresh_info = self.load_refresh_info()
         self._apply_release_bound_nasapics_migration()
+        self._migrate_runtime_balance_cadences()
         self._repair_legacy_sports_live_refresh_settings()
         self._migrate_missing_sports_background_live_refresh_setting()
         self._migrate_rotating_newspapers_to_hourly_refill()
@@ -139,6 +184,104 @@ class Config:
             expectation_path=_nasapics_expectation_path(),
             release_id=release_id,
         )
+
+    def _migrate_runtime_balance_cadences(self):
+        """Reduce offered load only for the five exact legacy 5-minute jobs."""
+
+        migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
+        if (
+            isinstance(migrations, Mapping)
+            and migrations.get(_RUNTIME_BALANCE_CADENCE_MIGRATION) is True
+        ):
+            return
+
+        (
+            expected_config_version,
+            authoritative_config,
+            authoritative_playlist,
+            detached_manager,
+        ) = self.capture_detached_playlist_transaction()
+        migrations = authoritative_config.get(_RUNTIME_MIGRATIONS_KEY, {})
+        if (
+            isinstance(migrations, Mapping)
+            and migrations.get(_RUNTIME_BALANCE_CADENCE_MIGRATION) is True
+        ):
+            return
+
+        snapshots_by_uuid = {
+            snapshot.instance_uuid.replace("-", "").lower(): snapshot
+            for snapshot in detached_manager.snapshot_all_instances()
+        }
+        expected_uuids = {target[0] for target in _RUNTIME_BALANCE_CADENCE_TARGETS}
+        if not expected_uuids.intersection(snapshots_by_uuid):
+            return
+        if not expected_uuids.issubset(snapshots_by_uuid):
+            raise ConfigLoadError("runtime-balance cadence target set is incomplete")
+
+        selected = []
+        for (
+            instance_uuid,
+            plugin_id,
+            instance_name,
+            expected_generation,
+            expected_revision,
+            target_interval,
+        ) in _RUNTIME_BALANCE_CADENCE_TARGETS:
+            snapshot = snapshots_by_uuid[instance_uuid]
+            refresh = _detach_json(snapshot.refresh)
+            if (
+                snapshot.plugin_id != plugin_id
+                or snapshot.name != instance_name
+                or snapshot.structural_generation != expected_generation
+                or snapshot.settings_revision != expected_revision
+                or type(refresh.get("interval")) is not int
+                or refresh["interval"] != _RUNTIME_BALANCE_LEGACY_INTERVAL_SECONDS
+            ):
+                raise ConfigLoadError("runtime-balance cadence target drifted")
+            selected.append((snapshot, refresh, target_interval))
+
+        migrated_instances = 0
+        for snapshot, refresh, target_interval in selected:
+            mutation = detached_manager.migrate_plugin_instance_refresh_interval_atomic(
+                snapshot.instance_uuid,
+                interval=target_interval,
+                expected_generation=snapshot.structural_generation,
+                expected_settings_revision=snapshot.settings_revision,
+                expected_refresh=refresh,
+            )
+            if mutation is None or mutation.new_snapshot is None:
+                raise ConfigConflictError(
+                    snapshot.settings_revision,
+                    snapshot.settings_revision,
+                )
+            if (
+                mutation.new_snapshot.structural_generation
+                != snapshot.structural_generation
+                or mutation.new_snapshot.settings_revision
+                != snapshot.settings_revision
+            ):
+                raise ConfigLoadError(
+                    "runtime-balance cadence migration changed render identity"
+                )
+            migrated_instances += 1
+
+        migration_state = (
+            _detach_json(migrations) if isinstance(migrations, Mapping) else {}
+        )
+        migration_state[_RUNTIME_BALANCE_CADENCE_MIGRATION] = True
+        self.commit_detached_playlist_transaction(
+            expected_config_version=expected_config_version,
+            expected_config_data=authoritative_config,
+            expected_playlist_config=authoritative_playlist,
+            playlist_manager=detached_manager,
+            config_updates={_RUNTIME_MIGRATIONS_KEY: migration_state},
+        )
+        if migrated_instances:
+            logger.warning(
+                "Migrated exact legacy five-minute runtime-balance cadences. "
+                "| instances: %s",
+                migrated_instances,
+            )
 
     def _repair_legacy_sports_live_refresh_settings(self):
         """Repair the old blanket-disabled SportsDashboard bundle exactly once.

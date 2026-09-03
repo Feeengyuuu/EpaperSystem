@@ -3075,6 +3075,78 @@ class TestPlaylistManagerAtomicWebMutations:
         ) is None
 
 
+class TestPlaylistManagerStartupScheduleMigrations:
+    @staticmethod
+    def _manager():
+        return PlaylistManager.from_dict({
+            "playlists": [{
+                "name": "Default",
+                "start_time": "00:00",
+                "end_time": "24:00",
+                "plugins": [{
+                    "plugin_id": "weather",
+                    "name": "Home",
+                    "plugin_settings": {"units": "metric"},
+                    "refresh": {"interval": 300, "opaque": {"keep": True}},
+                    "instance_uuid": "home-uuid",
+                    "structural_generation": 2,
+                    "settings_revision": 7,
+                }],
+            }],
+        })
+
+    def test_cadence_migration_preserves_render_and_cache_identity(self):
+        manager = self._manager()
+        before = manager.snapshot_instance("home-uuid")
+
+        mutation = manager.migrate_plugin_instance_refresh_interval_atomic(
+            before.instance_uuid,
+            interval=900,
+            expected_generation=before.structural_generation,
+            expected_settings_revision=before.settings_revision,
+            expected_refresh=before.refresh,
+        )
+
+        assert mutation.playlist_name == "Default"
+        assert mutation.old_snapshot == before
+        assert mutation.new_snapshot.refresh == {
+            "interval": 900,
+            "opaque": {"keep": True},
+        }
+        assert mutation.new_snapshot.settings == before.settings
+        assert mutation.new_snapshot.structural_generation == before.structural_generation
+        assert mutation.new_snapshot.settings_revision == before.settings_revision
+        assert manager.snapshot_instance(before.instance_uuid) == mutation.new_snapshot
+
+    @pytest.mark.parametrize(
+        ("generation_delta", "revision_delta", "expected_refresh"),
+        [
+            (1, 0, {"interval": 300, "opaque": {"keep": True}}),
+            (0, 1, {"interval": 300, "opaque": {"keep": True}}),
+            (0, 0, {"interval": 301, "opaque": {"keep": True}}),
+        ],
+    )
+    def test_cadence_migration_rejects_stale_identity_or_schedule(
+        self,
+        generation_delta,
+        revision_delta,
+        expected_refresh,
+    ):
+        manager = self._manager()
+        before = manager.snapshot_instance("home-uuid")
+
+        mutation = manager.migrate_plugin_instance_refresh_interval_atomic(
+            before.instance_uuid,
+            interval=900,
+            expected_generation=before.structural_generation + generation_delta,
+            expected_settings_revision=before.settings_revision + revision_delta,
+            expected_refresh=expected_refresh,
+        )
+
+        assert mutation is None
+        assert manager.snapshot_instance(before.instance_uuid) == before
+
+
 @pytest.mark.parametrize(
     "legacy_interval",
     [0, -1, "-5", float("-inf"), "-Infinity"],

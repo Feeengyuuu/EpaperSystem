@@ -750,6 +750,51 @@ class PlaylistManager:
                 new_snapshot=instance.snapshot(),
             )
 
+    def migrate_plugin_instance_refresh_interval_atomic(
+        self,
+        instance_uuid,
+        *,
+        interval,
+        expected_generation,
+        expected_settings_revision,
+        expected_refresh,
+    ) -> PluginInstanceMutationResult | None:
+        """CAS-update startup-only scheduling metadata without changing render identity.
+
+        Ordinary UI edits must continue through ``update_plugin_instance_atomic``.
+        This narrow seam exists for release migrations whose interval-only change
+        must not invalidate an otherwise current rendered cache.
+        """
+
+        if type(interval) is not int or interval <= 0:
+            raise ValueError("refresh interval must be a positive integer")
+        expected_refresh_frozen = freeze_payload(expected_refresh)
+        if not isinstance(expected_refresh_frozen, Mapping):
+            raise TypeError("expected_refresh must be a mapping")
+
+        with self._lock:
+            match = self._find_instance_by_uuid(instance_uuid)
+            if not match:
+                return None
+
+            playlist, _index, instance = match
+            if (
+                instance.structural_generation != expected_generation
+                or instance.settings_revision != expected_settings_revision
+                or freeze_payload(instance.refresh) != expected_refresh_frozen
+            ):
+                return None
+
+            old_snapshot = instance.snapshot()
+            updated_refresh = deepcopy(instance.refresh)
+            updated_refresh["interval"] = interval
+            instance.refresh = updated_refresh
+            return PluginInstanceMutationResult(
+                playlist_name=playlist.name,
+                old_snapshot=old_snapshot,
+                new_snapshot=instance.snapshot(),
+            )
+
     def delete_plugin_instance(self, instance_uuid, *, expected_generation=None):
         """Atomically delete an instance, optionally rejecting a stale generation."""
         with self._lock:
