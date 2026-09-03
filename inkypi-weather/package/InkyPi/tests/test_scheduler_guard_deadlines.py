@@ -30,7 +30,8 @@ def test_quiet_window_expiry_releases_due_ordinary_work_without_an_extra_idle_po
         cache = _write_runtime_cache(case.task, instance)
         os.utime(cache, (case.clock.wall_time(), case.clock.wall_time()))
         case.task.runtime_state.record_success(
-            instance.instance_uuid, (START - timedelta(hours=20 if index == 0 else 1)).isoformat(),
+            instance.instance_uuid,
+            (START - timedelta(hours=20) if index == 0 else START).isoformat(),
             lane=RefreshLane.DATA,
         )
 
@@ -45,6 +46,12 @@ def test_quiet_window_expiry_releases_due_ordinary_work_without_an_extra_idle_po
 
     assert case.task._run_one_iteration_for_test() is None
     assert case.rendered == []
+    ordinary = case.playlist.plugins[1].snapshot()
+    case.task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (START - timedelta(hours=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
     deadline = case.task.scheduler_snapshot().next_attempt_monotonic
     case.clock.advance(deadline - case.clock.monotonic())
     entry = case.task._run_one_iteration_for_test()
@@ -88,7 +95,8 @@ def test_quiet_window_expiring_during_probe_rechecks_as_soon_as_probe_finishes(t
         cache = _write_runtime_cache(case.task, instance)
         os.utime(cache, (case.clock.wall_time(), case.clock.wall_time()))
         case.task.runtime_state.record_success(
-            instance.instance_uuid, (START - timedelta(hours=20 if index == 0 else 1)).isoformat(),
+            instance.instance_uuid,
+            (START - timedelta(hours=20) if index == 0 else START).isoformat(),
             lane=RefreshLane.DATA,
         )
     assert case.task._run_one_iteration_for_test() is None
@@ -106,6 +114,12 @@ def test_quiet_window_expiring_during_probe_rechecks_as_soon_as_probe_finishes(t
     assert case.task._run_one_iteration_for_test() is None
     probe_finished = case.clock.monotonic()
     assert probe_finished == expiry + 1
+    ordinary = case.playlist.plugins[1].snapshot()
+    case.task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (START - timedelta(hours=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
     deadline = case.task.scheduler_snapshot().next_attempt_monotonic
     case.clock.advance(max(0, deadline - case.clock.monotonic()))
     entry = case.task._run_one_iteration_for_test()

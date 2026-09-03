@@ -2831,18 +2831,52 @@ class RefreshTask:
         weather_liveness_candidate = None
         weather_liveness_holds_independent = False
         weather_liveness_concession = False
+        runnable_weather_alternative = None
+        if self._weather_liveness_window is not None or any(
+            candidate.instance.plugin_id == "weather"
+            for candidate in data_candidates
+        ):
+            # AdmissionState is immutable. This dry decision deliberately drops
+            # the returned state so probing an alternative cannot consume its
+            # fairness or SOFT-spacing turn.
+            runnable_weather_alternative = choose_refresh_candidate(
+                [
+                    candidate
+                    for candidate in eligible_data_candidates
+                    if candidate.instance.plugin_id
+                    not in {"sports_dashboard", "ticketmaster_events", "weather"}
+                ],
+                [
+                    candidate
+                    for candidate in auxiliary_candidates
+                    if candidate.instance.plugin_id != "weather"
+                ],
+                tier=tier,
+                state=self._admission_state,
+                now_monotonic=self._clock(),
+                thresholds=thresholds,
+            ).candidate
         if self._weather_liveness_window is not None:
-            (
-                weather_liveness_candidate,
-                weather_liveness_holds_independent,
-                weather_liveness_concession,
-            ) = self._weather_liveness_decision(
-                active,
-                data_candidates,
-                runtime_instances,
-                current_dt,
-                resource_sample,
-            )
+            if runnable_weather_alternative is not None:
+                self._finish_weather_liveness_window(
+                    reason="runnable_alternative",
+                    resource_sample=resource_sample,
+                    yield_to_ordinary=(
+                        runnable_weather_alternative.lane is RefreshLane.DATA
+                    ),
+                )
+            else:
+                (
+                    weather_liveness_candidate,
+                    weather_liveness_holds_independent,
+                    weather_liveness_concession,
+                ) = self._weather_liveness_decision(
+                    active,
+                    data_candidates,
+                    runtime_instances,
+                    current_dt,
+                    resource_sample,
+                )
         elif self._ticketmaster_liveness_window is not None:
             (
                 ticketmaster_liveness_candidate,
@@ -2902,6 +2936,7 @@ class RefreshTask:
                 and ticketmaster_liveness_candidate is None
                 and not ticketmaster_liveness_holds_independent
                 and self._ticketmaster_liveness_window is None
+                and runnable_weather_alternative is None
             ):
                 (
                     weather_liveness_candidate,
@@ -5100,7 +5135,13 @@ class RefreshTask:
         self._burst_liveness_yield_ordinary_pending = False
         self._burst_liveness_yield_deadline_monotonic = 0.0
 
-    def _finish_weather_liveness_window(self, *, reason, resource_sample):
+    def _finish_weather_liveness_window(
+        self,
+        *,
+        reason,
+        resource_sample,
+        yield_to_ordinary=True,
+    ):
         window = self._weather_liveness_window
         if window is None:
             return
@@ -5112,12 +5153,18 @@ class RefreshTask:
         )
         self._weather_liveness_window = None
         self._weather_liveness_cooldown_until_monotonic = now + cooldown_seconds
-        self._request_burst_liveness_ordinary_yield()
+        if yield_to_ordinary:
+            self._request_burst_liveness_ordinary_yield()
+        handoff = (
+            "ordinary background data gets the next bounded admission turn"
+            if yield_to_ordinary
+            else "runnable auxiliary background work may proceed"
+        )
         logger.warning(
-            "Weather quiet window ended; ordinary background data gets the next "
-            "bounded admission turn. | reason: %s | instance_uuid_hash: %s | "
+            "Weather quiet window ended; %s. | reason: %s | instance_uuid_hash: %s | "
             "window_seconds: %.1f | cooldown_seconds: %.1f | available_mb: %s | "
             "swap_percent: %s",
+            handoff,
             reason,
             hashlib.sha256(window.instance_uuid.encode("utf-8")).hexdigest()[:16],
             max(0.0, window.deadline_monotonic - window.started_monotonic),

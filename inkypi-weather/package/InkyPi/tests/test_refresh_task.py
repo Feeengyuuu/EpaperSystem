@@ -20754,7 +20754,7 @@ def test_nasapics_display_now_is_provider_free_and_forces_one_hardware_write(
     assert display.calls[0]["force_hardware_write"] is True
 
 
-def _weather_margin_runtime(name, current_dt):
+def _weather_margin_runtime(name, current_dt, *, ordinary_due=False):
     weather_data = _runtime_plugin_data(
         "weather",
         "AwesomeWeather",
@@ -20764,7 +20764,7 @@ def _weather_margin_runtime(name, current_dt):
     ordinary_data = _runtime_plugin_data(
         "ordinary",
         "Ordinary",
-        interval=60,
+        interval=3600,
     )
     ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
     playlist = _runtime_playlist(weather_data, ordinary_data)
@@ -20785,9 +20785,15 @@ def _weather_margin_runtime(name, current_dt):
     weather, ordinary = [instance.snapshot() for instance in playlist.plugins]
     for instance in (weather, ordinary):
         _write_runtime_cache(task, instance)
+        if instance.instance_uuid == weather.instance_uuid:
+            last_success = current_dt - timedelta(minutes=20)
+        elif ordinary_due:
+            last_success = current_dt - timedelta(hours=2)
+        else:
+            last_success = current_dt
         task.runtime_state.record_success(
             instance.instance_uuid,
-            (current_dt - timedelta(minutes=20)).isoformat(),
+            last_success.isoformat(),
             lane=RefreshLane.DATA,
         )
     return task, clock, weather, ordinary
@@ -20821,6 +20827,111 @@ def test_weather_scheduler_requires_normal_150_mib_start_margin(monkeypatch):
     assert state.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
 
 
+def test_weather_quiet_window_yields_runnable_ordinary_data(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, _clock, _weather, ordinary = _weather_margin_runtime(
+        "weather-window-yields-runnable-ordinary",
+        current_dt,
+        ordinary_due=True,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is not None
+    assert command.instance_uuid == ordinary.instance_uuid
+    assert command.intent is RefreshIntent.DATA_REFRESH
+
+
+def test_weather_quiet_window_yields_ordinary_data_that_becomes_due(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, _weather, ordinary = _weather_margin_runtime(
+        "weather-window-yields-newly-due-ordinary",
+        current_dt,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    clock.advance(1)
+
+    command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert command is not None
+    assert command.instance_uuid == ordinary.instance_uuid
+    assert command.intent is RefreshIntent.DATA_REFRESH
+
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt + timedelta(seconds=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    clock.advance(90)
+
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=91)
+        )
+        is None
+    )
+
+
+def test_weather_quiet_window_yields_runnable_auxiliary_work(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, _weather, ordinary = _weather_margin_runtime(
+        "weather-window-yields-runnable-auxiliary",
+        current_dt,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    live_candidates = {"value": []}
+    monkeypatch.setattr(
+        task,
+        "_live_due_candidates",
+        lambda *_args: live_candidates["value"],
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    live_candidates["value"] = [
+        DueCandidate(
+            instance=ordinary,
+            lane=RefreshLane.LIVE,
+            due_since=current_dt,
+            reason=DueReason.LIVE,
+            last_attempt_at=None,
+        )
+    ]
+    clock.advance(1)
+
+    command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert command is not None
+    assert command.instance_uuid == ordinary.instance_uuid
+    assert command.intent is RefreshIntent.LIVE_REFRESH
+
+
 def test_weather_with_normal_margin_keeps_ordinary_data_ordering(monkeypatch):
     current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
     task, _clock, _weather, ordinary = _weather_margin_runtime(
@@ -20829,7 +20940,7 @@ def test_weather_with_normal_margin_keeps_ordinary_data_ordering(monkeypatch):
     )
     task.runtime_state.record_success(
         ordinary.instance_uuid,
-        (current_dt - timedelta(minutes=30)).isoformat(),
+        (current_dt - timedelta(hours=2)).isoformat(),
         lane=RefreshLane.DATA,
     )
     monkeypatch.setattr(
@@ -20922,6 +21033,11 @@ def test_weather_typed_pressure_ends_window_and_yields_retry_turn_to_ordinary(
     assert task._weather_liveness_window is None
     assert "reason: resource_pressure" in caplog.text
 
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
     sample["value"] = ResourceSample(available_mb=146, swap_percent=75.3)
     clock.advance(60)
     next_command = task._select_independent_refresh_command(
@@ -21054,6 +21170,7 @@ def test_weather_below_140_mib_never_opens_window_or_holds_ordinary(monkeypatch)
     task, clock, _weather, ordinary = _weather_margin_runtime(
         "weather-below-concession-floor",
         current_dt,
+        ordinary_due=True,
     )
     sample = {"value": ResourceSample(available_mb=100, swap_percent=80)}
     monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
@@ -21222,6 +21339,11 @@ def test_weather_concession_yields_next_soft_pressure_turn_to_ordinary_data(
     assert queued is not None
     assert queued.job.id == submitted.id
     task.refresh_queue.finish(queued.job.id, JobStatus.SUCCEEDED)
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
 
     clock.advance(1)
     ordinary_command = task._select_independent_refresh_command(
@@ -21267,6 +21389,11 @@ def test_weather_concession_long_execution_preserves_one_shot_ordinary_handoff(
     # deadline inside Weather/Chromium before another scheduler turn exists.
     clock.advance(31)
     task.refresh_queue.finish(queued.job.id, JobStatus.SUCCEEDED)
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
 
     scheduler_dt = {"value": current_dt + timedelta(seconds=121)}
     monkeypatch.setattr(task, "_get_current_datetime", lambda: scheduler_dt["value"])
