@@ -24,10 +24,10 @@ from plugins.context_cache import write_context
 from plugins.box_office_top_movies.china_source import (
     ACTIVE_BUDGET, ChinaFetchBudget, SHANGHAI, official_metadata, validate_comprehensive_metrics,
 )
-from runtime.refresh_contracts import TaskCancelled
+from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.app_utils import bounded_int, get_base_ui_font
 from utils.http_client import get_http_session
-from utils.safe_image import safe_open_image_response
+from utils.safe_image import safe_open_image, safe_open_image_response
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +226,13 @@ class BoxOfficeTopMovies(BasePlugin):
             else:
                 provenance = SourceProvenance.STALE_CACHE
                 stale = True
+            if not theme_render_only and str(settings.get("sourceMode") or "").strip().lower() == "official_china":
+                # Media repair does not fetch a chart or advance its freshness.
+                with ChinaFetchBudget() as budget:
+                    self._complete_official_posters(movies, settings, device_config, budget)
+                repaired = [movie.to_dict() for movie in movies]
+                if repaired != cache.get("movies"):
+                    self._write_cache({**cache, "movies": repaired})
         else:
             try:
                 movies, source_label = self._load_and_enrich_movies(settings, items_count, device_config)
@@ -307,15 +314,162 @@ class BoxOfficeTopMovies(BasePlugin):
         if str(settings.get("sourceMode") or "").strip().lower() == "official_china":
             with ChinaFetchBudget() as budget:
                 movies, label = self._load_movies(settings, items_count)
-                if budget.remaining_seconds() > 0:
-                    self._enrich_with_tmdb(movies, settings, device_config, session=budget)
-                if budget.remaining_seconds() > 0:
-                    self._download_posters(movies, session=budget)
+                cache = self._read_cache()
+                if (cache.get("version") == STATE_VERSION
+                        and cache.get("cache_key") == self._cache_key(settings, None, items_count, device_config)):
+                    self._reuse_official_media(movies, cache.get("movies") or [])
+                self._complete_official_posters(movies, settings, device_config, budget)
                 return movies, label
         movies, label = self._load_movies(settings, items_count)
         self._enrich_with_tmdb(movies, settings, device_config)
         self._download_posters(movies)
         return movies, label
+
+    @staticmethod
+    def _official_media_identity(movie):
+        extra = movie.extra or {}
+        code = str(extra.get("zgdypw_movie_code") or "").strip()
+        title = _normalize_title(extra.get("official_chinese_title") or movie.title)
+        if extra.get("source") == "zgdypw_realtime" and code and title:
+            return code, title
+        return None
+
+    def _reuse_official_media(self, movies, cached):
+        previous = {}
+        for row in cached:
+            old = BoxOfficeMovie.from_dict(row)
+            identity = self._official_media_identity(old)
+            if identity:
+                previous[identity] = old
+        for movie in movies:
+            old = previous.get(self._official_media_identity(movie))
+            if old is None or (movie.release_year and old.release_year and movie.release_year != old.release_year):
+                continue
+            # Never copy rank, gross, source dates or other chart facts.
+            for name in ("tmdb_id", "poster_url", "release_year", "overview"):
+                if not getattr(movie, name):
+                    setattr(movie, name, getattr(old, name))
+            for name in ("poster_source", "poster_language", "poster_market", "english_title", "poster_attempt"):
+                if name in old.extra:
+                    movie.extra[name] = old.extra[name]
+
+    def _restore_local_poster(self, movie):
+        """Attach only a decodable file belonging to the current poster URL."""
+        movie.poster_path = ""
+        if not movie.poster_url:
+            return False
+        path = self._poster_cache_path(movie)
+        try:
+            with safe_open_image(path):
+                pass
+        except (OSError, ValueError):
+            return False
+        movie.poster_path = str(path)
+        return True
+
+    def _complete_official_posters(self, movies, settings, device_config, budget):
+        # Reattach local files even when the chart has used the network budget.
+        missing = [movie for movie in movies if not self._restore_local_poster(movie)]
+        auth = self._tmdb_auth(settings, device_config)
+        language = str(settings.get("tmdbLanguage") or "zh-CN").strip() or "zh-CN"
+        region = str(settings.get("tmdbRegion") or "CN").strip().upper()[:2] or "CN"
+
+        def attempt(movie):
+            value = movie.extra.get("poster_attempt", 0)
+            return value if type(value) is int and value >= 0 else 0
+
+        sequence = max((attempt(movie) for movie in movies), default=0)
+        deferred_images = []
+        # A slow/missing title cannot monopolize every later repair opportunity.
+        for movie in sorted(missing, key=lambda item: (attempt(item), item.rank)):
+            if budget.remaining_seconds() <= 0:
+                break
+            if not movie.poster_url and not auth:
+                continue
+            sequence += 1
+            movie.extra["poster_attempt"] = sequence
+            try:
+                if movie.tmdb_id and not movie.poster_url:
+                    # Previously identified covers share the same fair queue as
+                    # searches, so a slow unmatched title cannot starve them.
+                    self._fetch_official_poster_images(movie, budget, auth, language, region)
+                    continue
+                if not movie.poster_url and not movie.tmdb_id:
+                    results = self._tmdb_get_json(budget, TMDB_SEARCH_URL, auth, {
+                        "query": movie.title, "include_adult": "false", "language": language, "region": region,
+                    }).get("results") or []
+                    item = self._select_tmdb_search_result(movie, results)
+                    if not item:
+                        continue
+                    movie.tmdb_id = item.get("id")
+                    movie.release_year = movie.release_year or str(item.get("release_date") or "")[:4]
+                    movie.overview = movie.overview or item.get("overview") or ""
+                    english = self._usable_english_title(item.get("original_title"), movie.title)
+                    if english:
+                        movie.extra["english_title"] = english
+                    poster = item.get("poster_path")
+                    if poster:
+                        movie.poster_url = TMDB_IMAGE_BASE + poster
+                        movie.extra.update(poster_source="tmdb", poster_market=region)
+                    elif movie.tmdb_id:
+                        deferred_images.append(movie)
+                if movie.poster_url and budget.remaining_seconds() > 0:
+                    self._download_posters([movie], session=budget)
+            except TaskDeadlineExceeded:
+                break
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("Official chart poster lookup failed for %s: %s", movie.title, type(exc).__name__)
+
+        # A verified search may have no poster_path while its images endpoint
+        # has a cover. Try this after the other movies' basic poster opportunities.
+        if auth:
+            for movie in deferred_images:
+                if budget.remaining_seconds() <= 0:
+                    break
+                sequence += 1
+                movie.extra["poster_attempt"] = sequence
+                try:
+                    self._fetch_official_poster_images(movie, budget, auth, language, region)
+                except TaskDeadlineExceeded:
+                    break
+                except TaskCancelled:
+                    raise
+                except Exception as exc:
+                    logger.warning("Official chart poster images failed for %s: %s", movie.title, type(exc).__name__)
+
+        # Optional names come after every available basic poster. Search results
+        # already supply an English original title for many international films.
+        if auth and all(movie.poster_path for movie in movies):
+            for movie in movies:
+                if budget.remaining_seconds() <= 0:
+                    break
+                if not movie.tmdb_id or movie.extra.get("english_title"):
+                    continue
+                try:
+                    detail = self._tmdb_get_json(budget, TMDB_MOVIE_URL.format(movie_id=movie.tmdb_id), auth, {"language": "en-US"})
+                    english = self._usable_english_title(detail.get("title"), movie.title)
+                    if english:
+                        movie.extra["english_title"] = english
+                except TaskDeadlineExceeded:
+                    break
+                except TaskCancelled:
+                    raise
+                except Exception as exc:
+                    logger.warning("Official chart title lookup failed for %s: %s", movie.title, type(exc).__name__)
+        logger.info("Official chart posters ready. | ready=%s total=%s budget_remaining_seconds=%.3f",
+                    sum(bool(movie.poster_path) for movie in movies), len(movies), budget.remaining_seconds())
+
+    def _fetch_official_poster_images(self, movie, budget, auth, language, region):
+        poster_language = self._tmdb_poster_language(language)
+        data = self._tmdb_get_json(budget, TMDB_MOVIE_IMAGES_URL.format(movie_id=movie.tmdb_id), auth,
+                                  {"include_image_language": f"{poster_language},null"})
+        poster, selected_language = self._select_tmdb_poster(data.get("posters") or [], poster_language)
+        if poster:
+            movie.poster_url = TMDB_IMAGE_BASE + poster
+            movie.extra.update(poster_source="tmdb", poster_market=region, poster_language=selected_language)
+            self._download_posters([movie], session=budget)
 
     @staticmethod
     def _source_now():
@@ -983,25 +1137,28 @@ class BoxOfficeTopMovies(BasePlugin):
 
     def _download_posters(self, movies, *, session=None):
         for movie in movies:
-            if isinstance(session, ChinaFetchBudget) and session.remaining_seconds() <= 0:
-                break
             if not movie.poster_url:
                 continue
             try:
                 path = self._poster_cache_path(movie)
-                if path.is_file() and path.stat().st_size > 0:
-                    movie.poster_path = str(path)
+                if self._restore_local_poster(movie):
                     continue
+                if isinstance(session, ChinaFetchBudget) and session.remaining_seconds() <= 0:
+                    break
                 response = (session or get_http_session()).get(
                     movie.poster_url,
                     timeout=18,
                     headers=IMAGE_HEADERS,
                     stream=True,
                 )
-                image = safe_open_image_response(response).convert("RGB")
-                path.parent.mkdir(parents=True, exist_ok=True)
-                image.save(path, format="JPEG", quality=88)
+                with safe_open_image_response(response) as decoded, decoded.convert("RGB") as image:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    temporary = path.with_suffix(".tmp")
+                    image.save(temporary, format="JPEG", quality=88)
+                    os.replace(temporary, path)
                 movie.poster_path = str(path)
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 logger.warning("Poster download failed for %s: %s", movie.title, exc)
 
