@@ -47,6 +47,9 @@ POLL_INTERVAL_SECONDS = 1.0
 DEFAULT_CACHE_ROOT = "/var/cache/inkypi"
 DEFAULT_DATA_ROOT = "/var/lib/inkypi/data"
 DEFAULT_PLUGIN_ROOT = "/opt/inkypi/current/src/plugins"
+CONFIG_SNAPSHOT_ROOT = Path("/var/lib/inkypi/config-snapshots")
+CONFIG_SNAPSHOT_READY_BASE_URL = "http://127.0.0.1"
+MAX_RUNTIME_CONFIG_BYTES = 8 * 1024 * 1024
 APT_CACHE_ROOT = Path("/var/cache/apt")
 HEALTH_RETRY_SECONDS = 120
 HEALTH_POLL_INTERVAL_SECONDS = 1.0
@@ -103,6 +106,8 @@ SAFE_JOB_FIELDS = (
     "cancel_requested_at",
 )
 _SAFE_FILE_TOKEN = re.compile(r"[^a-zA-Z0-9_.-]+")
+_CONFIG_SNAPSHOT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+_SHA256_HEX = re.compile(r"[0-9a-fA-F]{64}")
 _MISSING = object()
 
 
@@ -131,6 +136,14 @@ class PreparedCycleIntervalFreeze:
     original_background_min_available_present: bool
     original_background_min_available_value: object
     interval_seconds: int
+
+
+@dataclass(frozen=True)
+class RuntimeConfigPayload:
+    content: bytes
+    document: dict
+    sha256: str
+    config_revision: int
 
 
 @dataclass(frozen=True)
@@ -1367,6 +1380,668 @@ def restore_cycle_interval(
     return document
 
 
+def _validate_snapshot_id(snapshot_id) -> str:
+    if (
+        not isinstance(snapshot_id, str)
+        or _CONFIG_SNAPSHOT_ID.fullmatch(snapshot_id) is None
+    ):
+        raise AuditAbort("config_snapshot_id_invalid")
+    return snapshot_id
+
+
+def _validate_sha256(value, *, code: str) -> str:
+    if not isinstance(value, str) or _SHA256_HEX.fullmatch(value) is None:
+        raise AuditAbort(code)
+    return value.lower()
+
+
+def _reject_json_constant(_value):
+    raise ValueError("non-finite JSON number")
+
+
+def _secure_read_runtime_config(
+    path,
+    *,
+    code_prefix: str,
+    directory_fd=None,
+    required_mode=None,
+    required_owner=None,
+    require_single_link=False,
+) -> RuntimeConfigPayload:
+    """Read one bounded regular config file without following a symlink."""
+
+    target = Path(path)
+    lookup = target.name if directory_fd is not None else target
+    try:
+        if directory_fd is None:
+            before = os.lstat(target)
+        else:
+            before = os.stat(
+                lookup,
+                dir_fd=directory_fd,
+                follow_symlinks=False,
+            )
+    except OSError as error:
+        raise AuditAbort(f"{code_prefix}_read_failed") from error
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise AuditAbort(f"{code_prefix}_not_regular")
+    if before.st_size > MAX_RUNTIME_CONFIG_BYTES:
+        raise AuditAbort(f"{code_prefix}_too_large")
+    if (
+        os.name != "nt"
+        and required_mode is not None
+        and stat.S_IMODE(before.st_mode) != required_mode
+    ):
+        raise AuditAbort(f"{code_prefix}_permissions_invalid")
+    if required_owner is not None and before.st_uid != required_owner:
+        raise AuditAbort(f"{code_prefix}_owner_invalid")
+    if require_single_link and before.st_nlink != 1:
+        raise AuditAbort(f"{code_prefix}_link_count_invalid")
+
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_BINARY", 0)
+    descriptor = None
+    try:
+        if directory_fd is None:
+            descriptor = os.open(target, flags)
+        else:
+            descriptor = os.open(lookup, flags, dir_fd=directory_fd)
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise AuditAbort(f"{code_prefix}_not_regular")
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise AuditAbort(f"{code_prefix}_changed")
+        if (
+            os.name != "nt"
+            and required_mode is not None
+            and stat.S_IMODE(opened.st_mode) != required_mode
+        ):
+            raise AuditAbort(f"{code_prefix}_permissions_invalid")
+        if required_owner is not None and opened.st_uid != required_owner:
+            raise AuditAbort(f"{code_prefix}_owner_invalid")
+        if require_single_link and opened.st_nlink != 1:
+            raise AuditAbort(f"{code_prefix}_link_count_invalid")
+
+        chunks = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(65536, MAX_RUNTIME_CONFIG_BYTES + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > MAX_RUNTIME_CONFIG_BYTES:
+                raise AuditAbort(f"{code_prefix}_too_large")
+        content = b"".join(chunks)
+        after = os.fstat(descriptor)
+    except AuditFailure:
+        raise
+    except OSError as error:
+        raise AuditAbort(f"{code_prefix}_read_failed") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+    stable_before = (
+        opened.st_dev,
+        opened.st_ino,
+        opened.st_size,
+        opened.st_mtime_ns,
+        opened.st_ctime_ns,
+    )
+    stable_after = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if stable_before != stable_after or len(content) != after.st_size:
+        raise AuditAbort(f"{code_prefix}_changed")
+    try:
+        document = json.loads(
+            content.decode("utf-8-sig"),
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError, ValueError) as error:
+        raise AuditAbort(f"{code_prefix}_invalid") from error
+    if not isinstance(document, dict):
+        raise AuditAbort(f"{code_prefix}_invalid")
+    schema_version = document.get("schema_version")
+    if type(schema_version) is not int or schema_version != 1:
+        raise AuditAbort(f"{code_prefix}_schema_invalid")
+    config_revision = document.get("config_revision")
+    if type(config_revision) is not int or config_revision < 0:
+        raise AuditAbort(f"{code_prefix}_revision_invalid")
+    return RuntimeConfigPayload(
+        content=content,
+        document=document,
+        sha256=hashlib.sha256(content).hexdigest(),
+        config_revision=config_revision,
+    )
+
+
+def _open_restricted_snapshot_root(snapshot_root):
+    root = Path(snapshot_root)
+    created = False
+    try:
+        os.mkdir(root, 0o700)
+        created = True
+    except FileExistsError:
+        pass
+    except OSError as error:
+        raise AuditAbort("config_snapshot_root_create_failed") from error
+    try:
+        root_stat = os.lstat(root)
+    except OSError as error:
+        raise AuditAbort("config_snapshot_root_stat_failed") from error
+    if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+        raise AuditAbort("config_snapshot_root_not_directory")
+    if os.name != "nt" and stat.S_IMODE(root_stat.st_mode) != 0o700:
+        raise AuditAbort("config_snapshot_root_permissions_invalid")
+    expected_owner = (
+        os.geteuid()
+        if os.name != "nt" and hasattr(os, "geteuid")
+        else None
+    )
+    if expected_owner is not None and root_stat.st_uid != expected_owner:
+        raise AuditAbort("config_snapshot_root_owner_invalid")
+
+    # Windows cannot open directories as descriptors. Production is Linux;
+    # the path fallback keeps unit tests portable while POSIX stays dir-fd pinned.
+    if os.name == "nt":
+        return root, None, expected_owner
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        directory_fd = os.open(root, flags)
+        opened = os.fstat(directory_fd)
+    except OSError as error:
+        raise AuditAbort("config_snapshot_root_open_failed") from error
+    if (
+        not stat.S_ISDIR(opened.st_mode)
+        or (opened.st_dev, opened.st_ino) != (root_stat.st_dev, root_stat.st_ino)
+        or stat.S_IMODE(opened.st_mode) != 0o700
+        or (expected_owner is not None and opened.st_uid != expected_owner)
+    ):
+        os.close(directory_fd)
+        raise AuditAbort("config_snapshot_root_changed")
+    try:
+        os.fsync(directory_fd)
+        if created:
+            parent_fd = os.open(root.parent, flags)
+            try:
+                os.fsync(parent_fd)
+            finally:
+                os.close(parent_fd)
+    except OSError as error:
+        os.close(directory_fd)
+        raise AuditAbort("config_snapshot_root_fsync_failed") from error
+    return root, directory_fd, expected_owner
+
+
+def _write_all(descriptor, payload: bytes, *, code: str) -> None:
+    offset = 0
+    try:
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                raise OSError("short write")
+            offset += written
+        os.fsync(descriptor)
+    except OSError as error:
+        raise AuditAbort(code) from error
+
+
+def _fsync_directory(directory_fd, *, code: str) -> None:
+    if directory_fd is None:
+        return
+    try:
+        os.fsync(directory_fd)
+    except OSError as error:
+        raise AuditAbort(code) from error
+
+
+def _snapshot_result(snapshot_id: str, path: Path, payload: RuntimeConfigPayload) -> dict:
+    return {
+        "snapshot_id": snapshot_id,
+        "snapshot_path": str(path),
+        "sha256": payload.sha256,
+        "config_revision": payload.config_revision,
+    }
+
+
+def backup_runtime_config_snapshot(
+    config_path,
+    snapshot_id,
+    *,
+    snapshot_root=None,
+) -> dict:
+    """Create one immutable, private, exact-byte runtime config snapshot."""
+
+    snapshot_id = _validate_snapshot_id(snapshot_id)
+    source = _secure_read_runtime_config(
+        config_path,
+        code_prefix="config_snapshot_source",
+    )
+    root, root_fd, expected_owner = _open_restricted_snapshot_root(
+        CONFIG_SNAPSHOT_ROOT if snapshot_root is None else snapshot_root,
+    )
+    filename = f"{snapshot_id}.json"
+    snapshot_path = root / filename
+    temporary_name = f".{filename}.{secrets.token_hex(8)}.tmp"
+    temporary_path = root / temporary_name
+    descriptor = None
+    try:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_BINARY", 0)
+        if root_fd is None:
+            descriptor = os.open(temporary_path, flags, 0o600)
+        else:
+            descriptor = os.open(
+                temporary_name,
+                flags,
+                0o600,
+                dir_fd=root_fd,
+            )
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, 0o600)
+        _write_all(
+            descriptor,
+            source.content,
+            code="config_snapshot_write_failed",
+        )
+        written_stat = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(written_stat.st_mode)
+            or (
+                os.name != "nt"
+                and stat.S_IMODE(written_stat.st_mode) != 0o600
+            )
+            or (
+                expected_owner is not None
+                and written_stat.st_uid != expected_owner
+            )
+        ):
+            raise AuditAbort("config_snapshot_temporary_invalid")
+        os.close(descriptor)
+        descriptor = None
+        try:
+            if root_fd is None:
+                os.link(temporary_path, snapshot_path)
+            else:
+                os.link(
+                    temporary_name,
+                    filename,
+                    src_dir_fd=root_fd,
+                    dst_dir_fd=root_fd,
+                    follow_symlinks=False,
+                )
+        except FileExistsError:
+            existing = _secure_read_runtime_config(
+                snapshot_path,
+                code_prefix="config_snapshot",
+                directory_fd=root_fd,
+                required_mode=0o600,
+                required_owner=expected_owner,
+                require_single_link=True,
+            )
+            if existing.sha256 != source.sha256:
+                raise AuditAbort("config_snapshot_id_conflict")
+        except OSError as error:
+            raise AuditAbort("config_snapshot_publish_failed") from error
+        if root_fd is None:
+            temporary_path.unlink()
+        else:
+            os.unlink(temporary_name, dir_fd=root_fd)
+        _fsync_directory(root_fd, code="config_snapshot_root_fsync_failed")
+        stored = _secure_read_runtime_config(
+            snapshot_path,
+            code_prefix="config_snapshot",
+            directory_fd=root_fd,
+            required_mode=0o600,
+            required_owner=expected_owner,
+            require_single_link=True,
+        )
+        if stored.sha256 != source.sha256:
+            raise AuditAbort("config_snapshot_verify_failed")
+        return _snapshot_result(snapshot_id, snapshot_path, stored)
+    except AuditFailure:
+        raise
+    except OSError as error:
+        raise AuditAbort("config_snapshot_write_failed") from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            if root_fd is None:
+                temporary_path.unlink()
+            else:
+                os.unlink(temporary_name, dir_fd=root_fd)
+        except OSError:
+            pass
+        if root_fd is not None:
+            os.close(root_fd)
+
+
+def _load_runtime_config_store_class():
+    """Load ConfigStore only from the currently deployed runtime source."""
+
+    source_root = Path(DEFAULT_PLUGIN_ROOT).parent
+    expected_module = source_root / "config_store.py"
+    try:
+        if not expected_module.is_file():
+            raise OSError("runtime config_store.py is missing")
+        sys.path.insert(0, str(source_root))
+        module = __import__("config_store")
+        module_path = Path(module.__file__).resolve()
+        if module_path != expected_module.resolve():
+            raise OSError("unexpected config_store module")
+        atomic_module = sys.modules.get("utils.atomic_file")
+        expected_atomic_module = source_root / "utils" / "atomic_file.py"
+        if (
+            atomic_module is None
+            or Path(atomic_module.__file__).resolve()
+            != expected_atomic_module.resolve()
+        ):
+            raise OSError("unexpected atomic_file module")
+        config_store_class = module.ConfigStore
+    except Exception as error:
+        raise AuditAbort("config_snapshot_store_import_failed") from error
+    finally:
+        if sys.path and sys.path[0] == str(source_root):
+            del sys.path[0]
+    return config_store_class
+
+
+def _logical_config_bytes(document: dict) -> bytes:
+    logical = copy.deepcopy(document)
+    logical.pop("config_revision", None)
+    return json.dumps(
+        logical,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _commit_runtime_config_candidate(
+    config_path,
+    candidate: dict,
+    *,
+    expected_current_sha256: str,
+    config_store_factory,
+) -> RuntimeConfigPayload:
+    """Commit one logical candidate with ConfigStore's revision/LKG transaction."""
+
+    observed = _secure_read_runtime_config(
+        config_path,
+        code_prefix="config_snapshot_target",
+    )
+    if observed.sha256 != expected_current_sha256:
+        raise AuditAbort("config_snapshot_target_sha_mismatch")
+    try:
+        store = config_store_factory(config_path)
+        state = store.load()
+    except Exception as error:
+        raise AuditAbort("config_snapshot_store_load_failed") from error
+    if (
+        not state.status.valid
+        or not state.status.writable
+        or state.status.source != "primary"
+        or state.status.degraded_reason is not None
+        or state.snapshot is None
+        or state.snapshot.version != observed.config_revision
+    ):
+        raise AuditAbort("config_snapshot_store_not_writable")
+
+    latest = _secure_read_runtime_config(
+        config_path,
+        code_prefix="config_snapshot_target",
+    )
+    if latest.sha256 != expected_current_sha256:
+        raise AuditAbort("config_snapshot_target_sha_mismatch")
+    prepared = copy.deepcopy(candidate)
+    prepared.pop("config_revision", None)
+    try:
+        committed = store.commit(state.snapshot.version, prepared)
+    except Exception as error:
+        raise AuditAbort("config_snapshot_store_commit_failed") from error
+    status = store.status()
+    if (
+        not status.valid
+        or not status.writable
+        or status.source != "primary"
+        or status.degraded_reason is not None
+    ):
+        raise AuditAbort("config_snapshot_store_commit_degraded")
+
+    try:
+        verification_store = config_store_factory(config_path)
+        verification_state = verification_store.load()
+    except Exception as error:
+        raise AuditAbort("config_snapshot_store_reload_failed") from error
+    if (
+        not verification_state.status.valid
+        or not verification_state.status.writable
+        or verification_state.status.source != "primary"
+        or verification_state.status.degraded_reason is not None
+        or verification_state.snapshot is None
+        or verification_state.snapshot.version != committed.version
+    ):
+        raise AuditAbort("config_snapshot_store_reload_failed")
+
+    persisted = _secure_read_runtime_config(
+        config_path,
+        code_prefix="config_snapshot_target",
+    )
+    if (
+        persisted.config_revision != committed.version
+        or _logical_config_bytes(persisted.document)
+        != _logical_config_bytes(candidate)
+    ):
+        raise AuditAbort("config_snapshot_store_verify_failed")
+    return persisted
+
+
+def _restart_unchanged_config(controller, ready_check) -> None:
+    try:
+        controller.start()
+        ready_check()
+    except Exception as error:
+        try:
+            controller.stop()
+        except Exception:
+            pass
+        raise AuditAbort(
+            "config_snapshot_restore_rollback_failed",
+            safe_details={"service_left_stopped": True},
+        ) from error
+
+
+def _rollback_failed_restore(
+    config_path,
+    *,
+    rollback: RuntimeConfigPayload,
+    snapshot: RuntimeConfigPayload,
+    controller,
+    ready_check,
+    config_store_factory,
+) -> None:
+    try:
+        controller.stop()
+        observed = _secure_read_runtime_config(
+            config_path,
+            code_prefix="config_snapshot_target",
+        )
+        if _logical_config_bytes(observed.document) == _logical_config_bytes(
+            snapshot.document
+        ):
+            _commit_runtime_config_candidate(
+                config_path,
+                rollback.document,
+                expected_current_sha256=observed.sha256,
+                config_store_factory=config_store_factory,
+            )
+        elif (
+            _logical_config_bytes(observed.document)
+            != _logical_config_bytes(rollback.document)
+        ):
+            raise AuditAbort("config_snapshot_rollback_target_drift")
+        controller.start()
+        ready_check()
+    except Exception as error:
+        try:
+            controller.stop()
+        except Exception:
+            pass
+        raise AuditAbort(
+            "config_snapshot_restore_rollback_failed",
+            safe_details={"service_left_stopped": True},
+        ) from error
+
+
+def restore_runtime_config_snapshot(
+    config_path,
+    snapshot_id,
+    *,
+    expected_current_sha256,
+    expected_snapshot_sha256,
+    controller,
+    ready_check,
+    snapshot_root=None,
+    config_store_factory=None,
+) -> dict:
+    """Forward-commit a snapshot through two SHA gates and auto-recovery."""
+
+    snapshot_id = _validate_snapshot_id(snapshot_id)
+    expected_current_sha256 = _validate_sha256(
+        expected_current_sha256,
+        code="config_snapshot_expected_current_sha_invalid",
+    )
+    expected_snapshot_sha256 = _validate_sha256(
+        expected_snapshot_sha256,
+        code="config_snapshot_expected_snapshot_sha_invalid",
+    )
+    root, root_fd, expected_owner = _open_restricted_snapshot_root(
+        CONFIG_SNAPSHOT_ROOT if snapshot_root is None else snapshot_root,
+    )
+    snapshot_path = root / f"{snapshot_id}.json"
+    try:
+        snapshot = _secure_read_runtime_config(
+            snapshot_path,
+            code_prefix="config_snapshot",
+            directory_fd=root_fd,
+            required_mode=0o600,
+            required_owner=expected_owner,
+            require_single_link=True,
+        )
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
+    if snapshot.sha256 != expected_snapshot_sha256:
+        raise AuditAbort("config_snapshot_sha_mismatch")
+    before_stop = _secure_read_runtime_config(
+        config_path,
+        code_prefix="config_snapshot_target",
+    )
+    if before_stop.sha256 != expected_current_sha256:
+        raise AuditAbort("config_snapshot_current_sha_mismatch")
+    if config_store_factory is None:
+        config_store_factory = _load_runtime_config_store_class()
+
+    controller.stop()
+    try:
+        rollback = _secure_read_runtime_config(
+            config_path,
+            code_prefix="config_snapshot_target",
+        )
+    except AuditFailure:
+        _restart_unchanged_config(controller, ready_check)
+        raise
+    if rollback.sha256 != expected_current_sha256:
+        _restart_unchanged_config(controller, ready_check)
+        raise AuditAbort("config_snapshot_current_sha_mismatch_after_stop")
+
+    try:
+        restored = _commit_runtime_config_candidate(
+            config_path,
+            snapshot.document,
+            expected_current_sha256=expected_current_sha256,
+            config_store_factory=config_store_factory,
+        )
+        controller.start()
+        ready_check()
+        after_ready = _secure_read_runtime_config(
+            config_path,
+            code_prefix="config_snapshot_target",
+        )
+        if (
+            after_ready.config_revision < restored.config_revision
+            or _logical_config_bytes(after_ready.document)
+            != _logical_config_bytes(snapshot.document)
+        ):
+            raise AuditAbort("config_snapshot_post_ready_verify_failed")
+        restored = after_ready
+    except Exception as error:
+        _rollback_failed_restore(
+            config_path,
+            rollback=rollback,
+            snapshot=snapshot,
+            controller=controller,
+            ready_check=ready_check,
+            config_store_factory=config_store_factory,
+        )
+        raise AuditAbort("config_snapshot_restore_failed_rolled_back") from error
+    return _snapshot_result(snapshot_id, snapshot_path, restored)
+
+
+def wait_for_service_ready(
+    base_url,
+    *,
+    session=None,
+    monotonic=time.monotonic,
+    sleep=time.sleep,
+) -> None:
+    """Wait for a strict loopback-ready response without exposing its body."""
+
+    owned_session = session is None
+    if session is None:
+        session = requests.Session()
+        session.trust_env = False
+    deadline = monotonic() + HEALTH_RETRY_SECONDS
+    try:
+        while True:
+            try:
+                response = session.get(
+                    _url(base_url, "/readyz"),
+                    timeout=min(HTTP_TIMEOUT_SECONDS, HEALTH_RETRY_SECONDS),
+                )
+                try:
+                    payload = response.json()
+                except (TypeError, ValueError):
+                    payload = None
+                if (
+                    response.status_code == 200
+                    and isinstance(payload, dict)
+                    and payload.get("status") in {"ready", "degraded"}
+                ):
+                    return
+            except requests.RequestException:
+                pass
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise AuditAbort("config_snapshot_service_not_ready")
+            sleep(min(HEALTH_POLL_INTERVAL_SECONDS, remaining))
+    finally:
+        if owned_session:
+            session.close()
+
+
 def atomic_write_json(path, document: dict) -> None:
     """Atomically replace JSON while preserving owner and permission bits."""
 
@@ -2252,6 +2927,43 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the runtime state document from --runtime-state and exit",
     )
+    snapshot_group = parser.add_mutually_exclusive_group()
+    snapshot_group.add_argument(
+        "--backup-config-snapshot",
+        default=None,
+        metavar="SNAPSHOT_ID",
+        help=(
+            "Back up exact device config bytes under the fixed restricted "
+            "snapshot root, print only safe metadata, and exit"
+        ),
+    )
+    snapshot_group.add_argument(
+        "--restore-config-snapshot",
+        default=None,
+        metavar="SNAPSHOT_ID",
+        help=(
+            "Restore one fixed-root config snapshot through both expected "
+            "SHA-256 gates, restart, wait ready, and exit"
+        ),
+    )
+    parser.add_argument(
+        "--expected-current-config-sha256",
+        default=None,
+        help="Required current device config SHA-256 gate for snapshot restore",
+    )
+    parser.add_argument(
+        "--expected-snapshot-sha256",
+        default=None,
+        help="Required stored snapshot SHA-256 gate for snapshot restore",
+    )
+    parser.add_argument(
+        "--print-refresh-cadences",
+        action="store_true",
+        help=(
+            "Print only revision, runtime-balance state, and privacy-safe "
+            "per-instance refresh cadence metadata"
+        ),
+    )
     parser.add_argument(
         "--merge-env-from",
         default=None,
@@ -2350,6 +3062,92 @@ PRINTABLE_CONFIG_KEYS = frozenset({
     "plugin_cycle_interval_seconds",
     "timezone",
 })
+RUNTIME_BALANCE_MARKERS = (
+    "runtime_balance_cadence_v1",
+    "runtime_balance_soft_threshold_v1",
+)
+
+
+def refresh_cadence_diagnostics(document: dict) -> dict:
+    """Return the narrow persisted scheduling state without plugin settings."""
+
+    if not isinstance(document, dict):
+        raise AuditAbort("config_refresh_cadence_invalid")
+    revision = document.get("config_revision")
+    if type(revision) is not int or revision < 0:
+        raise AuditAbort("config_refresh_cadence_revision_invalid")
+    threshold = document.get("background_cache_refresh_min_available_mb")
+    if type(threshold) is not int:
+        threshold = None
+    migrations = document.get("runtime_migrations")
+    if not isinstance(migrations, dict):
+        migrations = {}
+    markers = {
+        marker: migrations.get(marker) is True
+        for marker in RUNTIME_BALANCE_MARKERS
+    }
+
+    instances = []
+    playlist_config = document.get("playlist_config")
+    playlists = (
+        playlist_config.get("playlists")
+        if isinstance(playlist_config, dict)
+        else None
+    )
+    if not isinstance(playlists, list):
+        raise AuditAbort("config_refresh_cadence_playlist_invalid")
+    for playlist in playlists:
+        if not isinstance(playlist, dict):
+            continue
+        plugins = playlist.get("plugins")
+        if not isinstance(plugins, list):
+            continue
+        for instance in plugins:
+            if not isinstance(instance, dict):
+                continue
+            instance_uuid = instance.get("instance_uuid")
+            refresh = instance.get("refresh")
+            interval = (
+                refresh.get("interval")
+                if isinstance(refresh, dict)
+                else None
+            )
+            instances.append({
+                "plugin_id": (
+                    instance.get("plugin_id")
+                    if isinstance(instance.get("plugin_id"), str)
+                    else None
+                ),
+                "name": (
+                    instance.get("name")
+                    if isinstance(instance.get("name"), str)
+                    else None
+                ),
+                "instance_uuid_hash": (
+                    hash_identifier(instance_uuid)
+                    if isinstance(instance_uuid, str) and instance_uuid
+                    else None
+                ),
+                "structural_generation": (
+                    instance.get("structural_generation")
+                    if type(instance.get("structural_generation")) is int
+                    else None
+                ),
+                "settings_revision": (
+                    instance.get("settings_revision")
+                    if type(instance.get("settings_revision")) is int
+                    else None
+                ),
+                "refresh_interval_seconds": (
+                    interval if type(interval) is int else None
+                ),
+            })
+    return {
+        "config_revision": revision,
+        "background_cache_refresh_min_available_mb": threshold,
+        "runtime_balance_markers": markers,
+        "instances": instances,
+    }
 
 ROBINHOOD_MCP_URL = "https://agent.robinhood.com/mcp/trading"
 ROBINHOOD_TOKEN_URL = "https://api.robinhood.com/oauth2/token/"
@@ -2908,6 +3706,46 @@ def main(argv=None) -> int:
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         print(json.dumps({"status": "aborted", "abort_code": "root_required"}))
         return 2
+    if args.backup_config_snapshot is not None:
+        try:
+            payload = backup_runtime_config_snapshot(
+                Path(args.config),
+                args.backup_config_snapshot,
+            )
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        return 0
+    if args.restore_config_snapshot is not None:
+        try:
+            payload = restore_runtime_config_snapshot(
+                Path(args.config),
+                args.restore_config_snapshot,
+                expected_current_sha256=args.expected_current_config_sha256,
+                expected_snapshot_sha256=args.expected_snapshot_sha256,
+                controller=SystemdController(),
+                ready_check=lambda: wait_for_service_ready(
+                    CONFIG_SNAPSHOT_READY_BASE_URL
+                ),
+            )
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        return 0
+    if args.print_refresh_cadences:
+        try:
+            config = _secure_read_runtime_config(
+                Path(args.config),
+                code_prefix="config_refresh_cadence",
+            )
+            payload = refresh_cadence_diagnostics(config.document)
+        except AuditFailure as error:
+            print(json.dumps({"status": "aborted", "abort_code": error.code}))
+            return 2
+        print(json.dumps(payload, ensure_ascii=True, sort_keys=True))
+        return 0
     if args.install_robinhood_token_from is not None:
         try:
             payload = _install_robinhood_token(

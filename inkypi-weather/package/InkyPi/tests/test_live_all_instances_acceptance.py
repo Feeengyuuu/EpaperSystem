@@ -4,7 +4,9 @@ import hashlib
 from importlib.util import module_from_spec, spec_from_file_location
 from io import BytesIO
 import json
+import os
 from pathlib import Path
+import stat
 import sys
 from types import SimpleNamespace
 
@@ -14,6 +16,7 @@ import pytest
 
 
 SCRIPT_PATH = Path(__file__).resolve().parents[4] / "tools" / "live_all_instances_acceptance.py"
+SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
 
 
 @pytest.fixture(scope="module")
@@ -62,6 +65,30 @@ def _png_bytes(color=(10, 20, 30), size=(800, 480)):
     buffer = BytesIO()
     Image.new("RGB", size, color).save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+def _snapshot_config_payload(*, revision, secret):
+    document = _config()
+    document.update({
+        "schema_version": 1,
+        "config_revision": revision,
+        "private_api_token": secret,
+    })
+    return (json.dumps(document, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _snapshot_store_factory(config_path):
+    if str(SRC_ROOT) not in sys.path:
+        sys.path.insert(0, str(SRC_ROOT))
+    from config_store import ConfigStore
+
+    return ConfigStore(config_path)
+
+
+def _logical_config_bytes(payload):
+    document = json.loads(payload.decode("utf-8"))
+    document.pop("config_revision", None)
+    return document
 
 
 def _instance(acceptance):
@@ -1819,6 +1846,877 @@ def test_systemd_controller_waits_out_the_manual_refresh_ceiling(acceptance):
     controller = acceptance.SystemdController()
 
     assert controller.timeout_seconds == 240
+
+
+class _SnapshotController:
+    def __init__(self, events, *, on_stop=None):
+        self.events = events
+        self.on_stop = on_stop
+
+    def stop(self):
+        self.events.append("stop")
+        if self.on_stop is not None:
+            callback = self.on_stop
+            self.on_stop = None
+            callback()
+
+    def start(self):
+        self.events.append("start")
+
+
+def test_runtime_config_backup_is_private_atomic_and_same_sha_idempotent(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    secret = "never-print-this-api-secret"
+    payload = _snapshot_config_payload(revision=41, secret=secret)
+    config_path.write_bytes(payload)
+    snapshot_root = tmp_path / "snapshots"
+
+    first = acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "before-cadence-a",
+        snapshot_root=snapshot_root,
+    )
+    snapshot_path = snapshot_root / "before-cadence-a.json"
+    first_stat = snapshot_path.stat()
+    second = acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "before-cadence-a",
+        snapshot_root=snapshot_root,
+    )
+
+    assert first == second == {
+        "snapshot_id": "before-cadence-a",
+        "snapshot_path": str(snapshot_path),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "config_revision": 41,
+    }
+    assert snapshot_path.read_bytes() == payload
+    if os.name != "nt":
+        assert stat.S_IMODE(snapshot_path.stat().st_mode) == 0o600
+        assert stat.S_IMODE(snapshot_root.stat().st_mode) == 0o700
+    assert snapshot_path.stat().st_ino == first_stat.st_ino
+    assert snapshot_path.stat().st_mtime_ns == first_stat.st_mtime_ns
+    assert secret not in json.dumps(first, sort_keys=True)
+
+
+def test_runtime_config_backup_rejects_existing_id_with_different_sha(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    original = _snapshot_config_payload(revision=41, secret="old-secret")
+    config_path.write_bytes(original)
+    snapshot_root = tmp_path / "snapshots"
+    acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "before-cadence-a",
+        snapshot_root=snapshot_root,
+    )
+    config_path.write_bytes(
+        _snapshot_config_payload(revision=42, secret="new-secret")
+    )
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.backup_runtime_config_snapshot(
+            config_path,
+            "before-cadence-a",
+            snapshot_root=snapshot_root,
+        )
+
+    assert captured.value.code == "config_snapshot_id_conflict"
+    assert (snapshot_root / "before-cadence-a.json").read_bytes() == original
+
+
+def test_runtime_config_backup_rejects_existing_hardlinked_snapshot(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    config_path.write_bytes(
+        _snapshot_config_payload(revision=41, secret="source-secret")
+    )
+    snapshot_root = tmp_path / "snapshots"
+    acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "before-cadence-a",
+        snapshot_root=snapshot_root,
+    )
+    snapshot_path = snapshot_root / "before-cadence-a.json"
+    os.link(snapshot_path, snapshot_root / "unexpected-hardlink.json")
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.backup_runtime_config_snapshot(
+            config_path,
+            "before-cadence-a",
+            snapshot_root=snapshot_root,
+        )
+
+    assert captured.value.code == "config_snapshot_link_count_invalid"
+
+
+def test_runtime_config_backup_bounds_source_reads(
+    acceptance,
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "device.json"
+    config_path.write_bytes(
+        _snapshot_config_payload(revision=1, secret="oversized-secret")
+    )
+    monkeypatch.setattr(acceptance, "MAX_RUNTIME_CONFIG_BYTES", 32)
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.backup_runtime_config_snapshot(
+            config_path,
+            "bounded",
+            snapshot_root=tmp_path / "snapshots",
+        )
+
+    assert captured.value.code == "config_snapshot_source_too_large"
+
+
+@pytest.mark.parametrize(
+    "snapshot_id",
+    ("", ".", "..", "../escape", "nested/name", "with space", "x" * 65),
+)
+def test_runtime_config_backup_rejects_non_allowlisted_snapshot_ids(
+    acceptance,
+    tmp_path,
+    snapshot_id,
+):
+    config_path = tmp_path / "device.json"
+    config_path.write_bytes(
+        _snapshot_config_payload(revision=1, secret="private")
+    )
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.backup_runtime_config_snapshot(
+            config_path,
+            snapshot_id,
+            snapshot_root=tmp_path / "snapshots",
+        )
+
+    assert captured.value.code == "config_snapshot_id_invalid"
+
+
+def _symlink_or_skip(source, link):
+    try:
+        link.symlink_to(source)
+    except OSError as error:
+        pytest.skip(f"symlinks unavailable: {error}")
+
+
+def test_runtime_config_backup_rejects_symlink_source(acceptance, tmp_path):
+    real_config = tmp_path / "real-device.json"
+    real_config.write_bytes(
+        _snapshot_config_payload(revision=7, secret="symlink-secret")
+    )
+    config_link = tmp_path / "device.json"
+    _symlink_or_skip(real_config, config_link)
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.backup_runtime_config_snapshot(
+            config_link,
+            "safe-id",
+            snapshot_root=tmp_path / "snapshots",
+        )
+
+    assert captured.value.code == "config_snapshot_source_not_regular"
+    assert not (tmp_path / "snapshots" / "safe-id.json").exists()
+
+
+def test_runtime_config_backup_rejects_existing_snapshot_symlink(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    config_path.write_bytes(
+        _snapshot_config_payload(revision=7, secret="source-secret")
+    )
+    snapshot_root = tmp_path / "snapshots"
+    snapshot_root.mkdir(mode=0o700)
+    if os.name != "nt":
+        snapshot_root.chmod(0o700)
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(config_path.read_bytes())
+    _symlink_or_skip(outside, snapshot_root / "safe-id.json")
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.backup_runtime_config_snapshot(
+            config_path,
+            "safe-id",
+            snapshot_root=snapshot_root,
+        )
+
+    assert captured.value.code == "config_snapshot_not_regular"
+    assert outside.read_bytes() == config_path.read_bytes()
+
+
+def test_runtime_config_backup_rejects_snapshot_root_symlink(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    config_path.write_bytes(
+        _snapshot_config_payload(revision=0, secret="source-secret")
+    )
+    real_root = tmp_path / "real-snapshots"
+    real_root.mkdir(mode=0o700)
+    snapshot_root = tmp_path / "snapshots"
+    _symlink_or_skip(real_root, snapshot_root)
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.backup_runtime_config_snapshot(
+            config_path,
+            "safe-id",
+            snapshot_root=snapshot_root,
+        )
+
+    assert captured.value.code == "config_snapshot_root_not_directory"
+    assert list(real_root.iterdir()) == []
+
+
+def test_runtime_config_restore_rejects_snapshot_symlink_before_stop(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    payload = _snapshot_config_payload(revision=4, secret="current-secret")
+    config_path.write_bytes(payload)
+    snapshot_root = tmp_path / "snapshots"
+    snapshot_root.mkdir(mode=0o700)
+    if os.name != "nt":
+        snapshot_root.chmod(0o700)
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(
+        _snapshot_config_payload(revision=3, secret="snapshot-secret")
+    )
+    if os.name != "nt":
+        outside.chmod(0o600)
+    _symlink_or_skip(outside, snapshot_root / "unsafe.json")
+    events = []
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.restore_runtime_config_snapshot(
+            config_path,
+            "unsafe",
+            expected_current_sha256=hashlib.sha256(payload).hexdigest(),
+            expected_snapshot_sha256=hashlib.sha256(outside.read_bytes()).hexdigest(),
+            snapshot_root=snapshot_root,
+            controller=_SnapshotController(events),
+            ready_check=lambda: events.append("ready"),
+            config_store_factory=_snapshot_store_factory,
+        )
+
+    assert captured.value.code == "config_snapshot_not_regular"
+    assert events == []
+
+
+def test_runtime_config_restore_uses_both_hash_gates_and_waits_ready(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    snapshot_payload = _snapshot_config_payload(
+        revision=41,
+        secret="snapshot-secret",
+    )
+    current_payload = _snapshot_config_payload(
+        revision=43,
+        secret="current-secret",
+    )
+    config_path.write_bytes(snapshot_payload)
+    snapshot_root = tmp_path / "snapshots"
+    snapshot = acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "before-cadence-a",
+        snapshot_root=snapshot_root,
+    )
+    config_path.write_bytes(current_payload)
+    higher_lkg_payload = _snapshot_config_payload(
+        revision=80,
+        secret="higher-lkg-secret",
+    )
+    config_path.with_name("device.lkg.1.json").write_bytes(higher_lkg_payload)
+    events = []
+    controller = _SnapshotController(events)
+
+    result = acceptance.restore_runtime_config_snapshot(
+        config_path,
+        "before-cadence-a",
+        expected_current_sha256=hashlib.sha256(current_payload).hexdigest(),
+        expected_snapshot_sha256=snapshot["sha256"],
+        snapshot_root=snapshot_root,
+        controller=controller,
+        ready_check=lambda: events.append("ready"),
+        config_store_factory=_snapshot_store_factory,
+    )
+
+    persisted = config_path.read_bytes()
+    assert result == {
+        "snapshot_id": snapshot["snapshot_id"],
+        "snapshot_path": snapshot["snapshot_path"],
+        "sha256": hashlib.sha256(persisted).hexdigest(),
+        "config_revision": 81,
+    }
+    assert _logical_config_bytes(persisted) == _logical_config_bytes(
+        snapshot_payload
+    )
+    assert json.loads(persisted)["config_revision"] == 81
+    assert json.loads(
+        config_path.with_name("device.lkg.1.json").read_bytes()
+    )["config_revision"] == 81
+    assert json.loads(
+        config_path.with_name("device.lkg.2.json").read_bytes()
+    )["config_revision"] == 80
+    assert events == ["stop", "start", "ready"]
+
+
+@pytest.mark.parametrize(
+    ("current_hash", "snapshot_hash", "expected_code"),
+    (
+        ("0" * 64, None, "config_snapshot_current_sha_mismatch"),
+        (None, "f" * 64, "config_snapshot_sha_mismatch"),
+    ),
+)
+def test_runtime_config_restore_rejects_hash_drift_before_stop(
+    acceptance,
+    tmp_path,
+    current_hash,
+    snapshot_hash,
+    expected_code,
+):
+    config_path = tmp_path / "device.json"
+    snapshot_payload = _snapshot_config_payload(revision=1, secret="before")
+    current_payload = _snapshot_config_payload(revision=2, secret="current")
+    config_path.write_bytes(snapshot_payload)
+    snapshot_root = tmp_path / "snapshots"
+    snapshot = acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "rollback-point",
+        snapshot_root=snapshot_root,
+    )
+    config_path.write_bytes(current_payload)
+    events = []
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.restore_runtime_config_snapshot(
+            config_path,
+            "rollback-point",
+            expected_current_sha256=(
+                current_hash or hashlib.sha256(current_payload).hexdigest()
+            ),
+            expected_snapshot_sha256=snapshot_hash or snapshot["sha256"],
+            snapshot_root=snapshot_root,
+            controller=_SnapshotController(events),
+            ready_check=lambda: events.append("ready"),
+            config_store_factory=_snapshot_store_factory,
+        )
+
+    assert captured.value.code == expected_code
+    assert config_path.read_bytes() == current_payload
+    assert events == []
+
+
+def test_runtime_config_restore_revalidates_current_hash_after_stop(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    snapshot_payload = _snapshot_config_payload(revision=1, secret="before")
+    current_payload = _snapshot_config_payload(revision=2, secret="current")
+    drift_payload = _snapshot_config_payload(revision=3, secret="stop-drift")
+    config_path.write_bytes(snapshot_payload)
+    snapshot_root = tmp_path / "snapshots"
+    snapshot = acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "rollback-point",
+        snapshot_root=snapshot_root,
+    )
+    config_path.write_bytes(current_payload)
+    events = []
+    controller = _SnapshotController(
+        events,
+        on_stop=lambda: config_path.write_bytes(drift_payload),
+    )
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.restore_runtime_config_snapshot(
+            config_path,
+            "rollback-point",
+            expected_current_sha256=hashlib.sha256(current_payload).hexdigest(),
+            expected_snapshot_sha256=snapshot["sha256"],
+            snapshot_root=snapshot_root,
+            controller=controller,
+            ready_check=lambda: events.append("ready"),
+            config_store_factory=_snapshot_store_factory,
+        )
+
+    assert captured.value.code == "config_snapshot_current_sha_mismatch_after_stop"
+    assert config_path.read_bytes() == drift_payload
+    assert events == ["stop", "start", "ready"]
+
+
+def test_runtime_config_restore_import_failure_aborts_before_stop(
+    acceptance,
+    tmp_path,
+    monkeypatch,
+):
+    config_path = tmp_path / "device.json"
+    snapshot_payload = _snapshot_config_payload(revision=1, secret="before")
+    current_payload = _snapshot_config_payload(revision=2, secret="current")
+    config_path.write_bytes(snapshot_payload)
+    snapshot_root = tmp_path / "snapshots"
+    snapshot = acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "rollback-point",
+        snapshot_root=snapshot_root,
+    )
+    config_path.write_bytes(current_payload)
+    events = []
+
+    def fail_import():
+        raise acceptance.AuditAbort("config_snapshot_store_import_failed")
+
+    monkeypatch.setattr(
+        acceptance,
+        "_load_runtime_config_store_class",
+        fail_import,
+    )
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.restore_runtime_config_snapshot(
+            config_path,
+            "rollback-point",
+            expected_current_sha256=hashlib.sha256(current_payload).hexdigest(),
+            expected_snapshot_sha256=snapshot["sha256"],
+            snapshot_root=snapshot_root,
+            controller=_SnapshotController(events),
+            ready_check=lambda: events.append("ready"),
+        )
+
+    assert captured.value.code == "config_snapshot_store_import_failed"
+    assert config_path.read_bytes() == current_payload
+    assert events == []
+
+
+def test_runtime_config_store_loader_is_pinned_to_current_source_tree(
+    acceptance,
+    monkeypatch,
+):
+    _snapshot_store_factory(Path("unused-device.json"))
+    monkeypatch.setattr(
+        acceptance,
+        "DEFAULT_PLUGIN_ROOT",
+        str(SRC_ROOT / "plugins"),
+    )
+
+    loaded = acceptance._load_runtime_config_store_class()
+
+    assert Path(sys.modules[loaded.__module__].__file__).resolve() == (
+        SRC_ROOT / "config_store.py"
+    ).resolve()
+    assert Path(sys.modules["utils.atomic_file"].__file__).resolve() == (
+        SRC_ROOT / "utils" / "atomic_file.py"
+    ).resolve()
+
+
+def test_runtime_config_restore_commit_failure_restarts_original(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    snapshot_payload = _snapshot_config_payload(revision=1, secret="before")
+    current_payload = _snapshot_config_payload(revision=2, secret="current")
+    config_path.write_bytes(snapshot_payload)
+    snapshot_root = tmp_path / "snapshots"
+    snapshot = acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "rollback-point",
+        snapshot_root=snapshot_root,
+    )
+    config_path.write_bytes(current_payload)
+    events = []
+
+    class _FailedCommitStore:
+        def __init__(self, path):
+            self.real = _snapshot_store_factory(path)
+
+        def load(self):
+            return self.real.load()
+
+        def commit(self, _version, _candidate):
+            raise OSError("injected commit failure")
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.restore_runtime_config_snapshot(
+            config_path,
+            "rollback-point",
+            expected_current_sha256=hashlib.sha256(current_payload).hexdigest(),
+            expected_snapshot_sha256=snapshot["sha256"],
+            snapshot_root=snapshot_root,
+            controller=_SnapshotController(events),
+            ready_check=lambda: events.append("ready"),
+            config_store_factory=_FailedCommitStore,
+        )
+
+    assert captured.value.code == "config_snapshot_restore_failed_rolled_back"
+    assert config_path.read_bytes() == current_payload
+    assert events == ["stop", "stop", "start", "ready"]
+
+
+def test_runtime_config_restore_failure_rolls_back_current_and_restarts(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    snapshot_payload = _snapshot_config_payload(revision=1, secret="before")
+    current_payload = _snapshot_config_payload(revision=2, secret="current")
+    config_path.write_bytes(snapshot_payload)
+    snapshot_root = tmp_path / "snapshots"
+    snapshot = acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "rollback-point",
+        snapshot_root=snapshot_root,
+    )
+    config_path.write_bytes(current_payload)
+    events = []
+    ready_calls = 0
+
+    def fail_first_ready():
+        nonlocal ready_calls
+        ready_calls += 1
+        events.append(f"ready:{ready_calls}")
+        if ready_calls == 1:
+            raise acceptance.AuditAbort("injected_not_ready")
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.restore_runtime_config_snapshot(
+            config_path,
+            "rollback-point",
+            expected_current_sha256=hashlib.sha256(current_payload).hexdigest(),
+            expected_snapshot_sha256=snapshot["sha256"],
+            snapshot_root=snapshot_root,
+            controller=_SnapshotController(events),
+            ready_check=fail_first_ready,
+            config_store_factory=_snapshot_store_factory,
+        )
+
+    assert captured.value.code == "config_snapshot_restore_failed_rolled_back"
+    persisted = config_path.read_bytes()
+    assert _logical_config_bytes(persisted) == _logical_config_bytes(
+        current_payload
+    )
+    assert json.loads(persisted)["config_revision"] == 4
+    assert events == [
+        "stop",
+        "start",
+        "ready:1",
+        "stop",
+        "start",
+        "ready:2",
+    ]
+
+
+def test_runtime_config_restore_reload_failure_forward_commits_rollback(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    snapshot_payload = _snapshot_config_payload(revision=1, secret="before")
+    current_payload = _snapshot_config_payload(revision=2, secret="current")
+    config_path.write_bytes(snapshot_payload)
+    snapshot_root = tmp_path / "snapshots"
+    snapshot = acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "rollback-point",
+        snapshot_root=snapshot_root,
+    )
+    config_path.write_bytes(current_payload)
+    events = []
+    factory_calls = 0
+
+    class _FailedReloadStore:
+        def load(self):
+            raise OSError("injected reload failure")
+
+    def fail_first_reload_factory(path):
+        nonlocal factory_calls
+        factory_calls += 1
+        if factory_calls == 2:
+            return _FailedReloadStore()
+        return _snapshot_store_factory(path)
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.restore_runtime_config_snapshot(
+            config_path,
+            "rollback-point",
+            expected_current_sha256=hashlib.sha256(current_payload).hexdigest(),
+            expected_snapshot_sha256=snapshot["sha256"],
+            snapshot_root=snapshot_root,
+            controller=_SnapshotController(events),
+            ready_check=lambda: events.append("ready"),
+            config_store_factory=fail_first_reload_factory,
+        )
+
+    assert captured.value.code == "config_snapshot_restore_failed_rolled_back"
+    assert _logical_config_bytes(config_path.read_bytes()) == _logical_config_bytes(
+        current_payload
+    )
+    assert json.loads(config_path.read_bytes())["config_revision"] == 4
+    assert factory_calls == 4
+    assert events == ["stop", "stop", "start", "ready"]
+
+
+def test_runtime_config_restore_reports_failed_rollback_and_stops_service(
+    acceptance,
+    tmp_path,
+):
+    config_path = tmp_path / "device.json"
+    snapshot_payload = _snapshot_config_payload(revision=1, secret="before")
+    current_payload = _snapshot_config_payload(revision=2, secret="current")
+    config_path.write_bytes(snapshot_payload)
+    snapshot_root = tmp_path / "snapshots"
+    snapshot = acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "rollback-point",
+        snapshot_root=snapshot_root,
+    )
+    config_path.write_bytes(current_payload)
+    events = []
+
+    def never_ready():
+        events.append("ready")
+        raise acceptance.AuditAbort("injected_not_ready")
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        acceptance.restore_runtime_config_snapshot(
+            config_path,
+            "rollback-point",
+            expected_current_sha256=hashlib.sha256(current_payload).hexdigest(),
+            expected_snapshot_sha256=snapshot["sha256"],
+            snapshot_root=snapshot_root,
+            controller=_SnapshotController(events),
+            ready_check=never_ready,
+            config_store_factory=_snapshot_store_factory,
+        )
+
+    assert captured.value.code == "config_snapshot_restore_rollback_failed"
+    assert captured.value.safe_details == {"service_left_stopped": True}
+    assert _logical_config_bytes(config_path.read_bytes()) == _logical_config_bytes(
+        current_payload
+    )
+    assert events == [
+        "stop",
+        "start",
+        "ready",
+        "stop",
+        "start",
+        "ready",
+        "stop",
+    ]
+
+
+def test_runtime_config_snapshot_cli_prints_only_safe_metadata(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    snapshot_root = tmp_path / "snapshots"
+    monkeypatch.setattr(acceptance, "CONFIG_SNAPSHOT_ROOT", snapshot_root)
+    config_path = tmp_path / "device.json"
+    secret = "stdout-must-never-contain-this"
+    payload = _snapshot_config_payload(revision=19, secret=secret)
+    config_path.write_bytes(payload)
+
+    exit_code = acceptance.main([
+        "--config", str(config_path),
+        "--backup-config-snapshot", "pre-a",
+    ])
+
+    printed = capsys.readouterr().out
+    result = json.loads(printed)
+    assert exit_code == 0
+    assert result == {
+        "snapshot_id": "pre-a",
+        "snapshot_path": str(snapshot_root / "pre-a.json"),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "config_revision": 19,
+    }
+    assert secret not in printed
+    assert "private_api_token" not in printed
+
+
+def test_runtime_config_restore_cli_uses_config_store_and_prints_no_secrets(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    snapshot_root = tmp_path / "snapshots"
+    monkeypatch.setattr(acceptance, "CONFIG_SNAPSHOT_ROOT", snapshot_root)
+    monkeypatch.setattr(
+        acceptance,
+        "_load_runtime_config_store_class",
+        lambda: _snapshot_store_factory,
+    )
+    config_path = tmp_path / "device.json"
+    snapshot_secret = "snapshot-cli-secret"
+    current_secret = "current-cli-secret"
+    snapshot_payload = _snapshot_config_payload(
+        revision=7,
+        secret=snapshot_secret,
+    )
+    current_payload = _snapshot_config_payload(
+        revision=8,
+        secret=current_secret,
+    )
+    config_path.write_bytes(snapshot_payload)
+    snapshot = acceptance.backup_runtime_config_snapshot(
+        config_path,
+        "cli-restore",
+        snapshot_root=snapshot_root,
+    )
+    config_path.write_bytes(current_payload)
+    events = []
+    monkeypatch.setattr(
+        acceptance,
+        "SystemdController",
+        lambda: _SnapshotController(events),
+    )
+    monkeypatch.setattr(
+        acceptance,
+        "wait_for_service_ready",
+        lambda _base_url: events.append("ready"),
+    )
+
+    exit_code = acceptance.main([
+        "--config", str(config_path),
+        "--restore-config-snapshot", "cli-restore",
+        "--expected-current-config-sha256",
+        hashlib.sha256(current_payload).hexdigest(),
+        "--expected-snapshot-sha256", snapshot["sha256"],
+    ])
+
+    printed = capsys.readouterr().out
+    result = json.loads(printed)
+    assert exit_code == 0
+    assert set(result) == {
+        "snapshot_id",
+        "snapshot_path",
+        "sha256",
+        "config_revision",
+    }
+    assert result["config_revision"] == 9
+    assert result["sha256"] == hashlib.sha256(config_path.read_bytes()).hexdigest()
+    assert _logical_config_bytes(config_path.read_bytes()) == _logical_config_bytes(
+        snapshot_payload
+    )
+    assert events == ["stop", "start", "ready"]
+    assert snapshot_secret not in printed
+    assert current_secret not in printed
+    assert "private_api_token" not in printed
+
+
+@pytest.mark.parametrize("reported_status", ("ready", "degraded"))
+def test_snapshot_ready_gate_accepts_http_200_operational_states(
+    acceptance,
+    reported_status,
+):
+    class _Response:
+        status_code = 200
+
+        def json(self):
+            return {"status": reported_status, "private": "never-print"}
+
+    class _Session:
+        def get(self, _url, *, timeout):
+            assert timeout == acceptance.HTTP_TIMEOUT_SECONDS
+            return _Response()
+
+    acceptance.wait_for_service_ready(
+        "http://127.0.0.1",
+        session=_Session(),
+    )
+
+
+def test_print_refresh_cadences_is_allowlisted_and_never_prints_settings(
+    acceptance,
+    tmp_path,
+    capsys,
+    monkeypatch,
+):
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    config = _config(count=2)
+    config.update({
+        "schema_version": 1,
+        "config_revision": 52,
+        "background_cache_refresh_min_available_mb": 175,
+        "runtime_migrations": {
+            "runtime_balance_cadence_v1": True,
+            "runtime_balance_soft_threshold_v1": True,
+            "secret_marker": "marker-secret",
+        },
+        "private_api_token": "top-level-secret",
+    })
+    plugins = config["playlist_config"]["playlists"][0]["plugins"]
+    plugins[0]["refresh"]["interval"] = 900
+    plugins[0]["plugin_settings"]["api_key"] = "plugin-secret"
+    original_uuid = plugins[0]["instance_uuid"]
+    config_path = tmp_path / "device.json"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    exit_code = acceptance.main([
+        "--config", str(config_path),
+        "--print-refresh-cadences",
+    ])
+
+    printed = capsys.readouterr().out
+    payload = json.loads(printed)
+    assert exit_code == 0
+    assert payload == {
+        "config_revision": 52,
+        "background_cache_refresh_min_available_mb": 175,
+        "runtime_balance_markers": {
+            "runtime_balance_cadence_v1": True,
+            "runtime_balance_soft_threshold_v1": True,
+        },
+        "instances": [
+            {
+                "plugin_id": "plugin_00",
+                "name": "Private instance 0",
+                "instance_uuid_hash": acceptance.hash_identifier(original_uuid),
+                "structural_generation": 2,
+                "settings_revision": 3,
+                "refresh_interval_seconds": 900,
+            },
+            {
+                "plugin_id": "plugin_01",
+                "name": "Private instance 1",
+                "instance_uuid_hash": acceptance.hash_identifier(
+                    plugins[1]["instance_uuid"]
+                ),
+                "structural_generation": 2,
+                "settings_revision": 3,
+                "refresh_interval_seconds": 300,
+            },
+        ],
+    }
+    for forbidden in (
+        original_uuid,
+        "plugin_settings",
+        "plugin-secret",
+        "top-level-secret",
+        "marker-secret",
+        "secret_marker",
+    ):
+        assert forbidden not in printed
 
 
 def test_print_summary_flag_prints_existing_summary(
