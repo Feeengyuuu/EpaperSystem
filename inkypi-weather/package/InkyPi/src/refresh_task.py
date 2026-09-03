@@ -174,6 +174,7 @@ DEFAULT_SPORTS_ISOLATED_ABORT_MAX_SWAP_PERCENT = 75
 DEFAULT_SPORTS_ISOLATED_LIVENESS_STARVATION_SECONDS = 30 * 60
 DEFAULT_SPORTS_ISOLATED_LIVENESS_WINDOW_SECONDS = 90
 DEFAULT_SPORTS_ISOLATED_LIVENESS_COOLDOWN_SECONDS = 5 * 60
+DEFAULT_SPORTS_BACKGROUND_LIVE_MIN_INTERVAL_SECONDS = 5 * 60
 MAX_RESOURCE_PRESSURE_DEFERRAL_SECONDS = 5 * 60
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
 DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS = 60
@@ -3102,6 +3103,7 @@ class RefreshTask:
                     self._admission_state = replace(
                         self._admission_state,
                         consecutive_data_admissions=0,
+                        consecutive_background_live_admissions=0,
                     )
                     return self._playlist_command(
                         active.name,
@@ -3531,6 +3533,20 @@ class RefreshTask:
             )
             if not live_state:
                 continue
+            interval_seconds = live_state["interval_seconds"]
+            if (
+                not is_displayed
+                and instance.plugin_id == "sports_dashboard"
+            ):
+                configured_floor = self._config_float(
+                    "sports_background_live_min_interval_seconds",
+                    DEFAULT_SPORTS_BACKGROUND_LIVE_MIN_INTERVAL_SECONDS,
+                )
+                if not math.isfinite(configured_floor) or configured_floor < 1:
+                    configured_floor = (
+                        DEFAULT_SPORTS_BACKGROUND_LIVE_MIN_INTERVAL_SECONDS
+                    )
+                interval_seconds = max(interval_seconds, configured_floor)
             runtime = runtime_instances.get(
                 instance.instance_uuid,
                 InstanceRuntimeState(),
@@ -3544,7 +3560,7 @@ class RefreshTask:
             else:
                 last_success = self._align_datetime_tz(last_success, current_dt)
                 due_since = datetime.fromtimestamp(
-                    last_success.timestamp() + live_state["interval_seconds"],
+                    last_success.timestamp() + interval_seconds,
                     tz=current_dt.tzinfo,
                 )
             wake_at = max(
@@ -3565,6 +3581,7 @@ class RefreshTask:
                     reason=DueReason.LIVE,
                     last_attempt_at=last_attempt,
                     requires_displayed_instance=requires_displayed_instance,
+                    is_displayed_instance=is_displayed,
                 )
             )
         return candidates

@@ -56,6 +56,7 @@ class DueCandidate:
     reason: DueReason
     last_attempt_at: datetime | None
     requires_displayed_instance: bool = False
+    is_displayed_instance: bool = False
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,7 @@ class AdmissionState:
     consecutive_data_admissions: int = 0
     last_soft_data_admitted_monotonic: float | None = None
     last_soft_renderer_admitted_monotonic: float | None = None
+    consecutive_background_live_admissions: int = 0
 
 
 @dataclass(frozen=True)
@@ -185,6 +187,19 @@ def choose_refresh_candidate(
         key=lambda candidate: candidate.lane is not RefreshLane.LIVE,
     )
     live = [candidate for candidate in auxiliary if candidate.lane is RefreshLane.LIVE]
+    displayed_live = [
+        candidate
+        for candidate in live
+        if candidate.is_displayed_instance or candidate.requires_displayed_instance
+    ]
+    background_live = [
+        candidate
+        for candidate in live
+        if not (
+            candidate.is_displayed_instance
+            or candidate.requires_displayed_instance
+        )
+    ]
 
     if tier is ResourceTier.HARD:
         return AdmissionDecision(None, state)
@@ -200,12 +215,43 @@ def choose_refresh_candidate(
             thresholds,
         ):
             return AdmissionDecision(None, state)
-        if live:
+        if displayed_live:
             return AdmissionDecision(
-                live[0],
+                displayed_live[0],
                 replace(
                     state,
                     consecutive_data_admissions=0,
+                    last_soft_renderer_admitted_monotonic=now_monotonic,
+                ),
+            )
+        if background_live and (
+            not data or state.consecutive_background_live_admissions < 1
+        ):
+            return AdmissionDecision(
+                background_live[0],
+                replace(
+                    state,
+                    consecutive_data_admissions=0,
+                    consecutive_background_live_admissions=1,
+                    last_soft_renderer_admitted_monotonic=now_monotonic,
+                ),
+            )
+        if background_live and data:
+            fairness_data = (
+                presentation_required_data[0]
+                if presentation_required_data
+                else data[0]
+            )
+            return AdmissionDecision(
+                fairness_data,
+                replace(
+                    state,
+                    consecutive_data_admissions=min(
+                        3,
+                        max(0, state.consecutive_data_admissions) + 1,
+                    ),
+                    consecutive_background_live_admissions=0,
+                    last_soft_data_admitted_monotonic=now_monotonic,
                     last_soft_renderer_admitted_monotonic=now_monotonic,
                 ),
             )
@@ -227,6 +273,7 @@ def choose_refresh_candidate(
                         3,
                         max(0, state.consecutive_data_admissions) + 1,
                     ),
+                    consecutive_background_live_admissions=0,
                     last_soft_data_admitted_monotonic=now_monotonic,
                     last_soft_renderer_admitted_monotonic=now_monotonic,
                 ),
@@ -242,6 +289,7 @@ def choose_refresh_candidate(
                         3,
                         max(0, state.consecutive_data_admissions) + 1,
                     ),
+                    consecutive_background_live_admissions=0,
                     last_soft_data_admitted_monotonic=now_monotonic,
                     last_soft_renderer_admitted_monotonic=now_monotonic,
                 ),
@@ -255,10 +303,38 @@ def choose_refresh_candidate(
             ),
         )
 
-    if live:
+    if displayed_live:
         return AdmissionDecision(
-            live[0],
+            displayed_live[0],
             replace(state, consecutive_data_admissions=0),
+        )
+    if background_live and (
+        not data or state.consecutive_background_live_admissions < 1
+    ):
+        return AdmissionDecision(
+            background_live[0],
+            replace(
+                state,
+                consecutive_data_admissions=0,
+                consecutive_background_live_admissions=1,
+            ),
+        )
+    if background_live and data:
+        fairness_data = (
+            presentation_required_data[0]
+            if presentation_required_data
+            else data[0]
+        )
+        return AdmissionDecision(
+            fairness_data,
+            replace(
+                state,
+                consecutive_data_admissions=min(
+                    3,
+                    max(0, state.consecutive_data_admissions) + 1,
+                ),
+                consecutive_background_live_admissions=0,
+            ),
         )
     if urgent_presentation:
         return AdmissionDecision(
@@ -274,6 +350,7 @@ def choose_refresh_candidate(
                     3,
                     max(0, state.consecutive_data_admissions) + 1,
                 ),
+                consecutive_background_live_admissions=0,
             ),
         )
     if data and (
@@ -287,6 +364,7 @@ def choose_refresh_candidate(
                     3,
                     max(0, state.consecutive_data_admissions) + 1,
                 ),
+                consecutive_background_live_admissions=0,
             ),
         )
     if auxiliary:

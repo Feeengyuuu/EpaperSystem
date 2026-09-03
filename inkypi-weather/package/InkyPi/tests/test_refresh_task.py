@@ -12759,7 +12759,12 @@ def test_background_max_per_pass_above_one_is_compatibly_clamped_without_config_
     assert device_config.write_count == 0
 
 
-def _sports_live_runtime(name, *, background_value="missing"):
+def _sports_live_runtime(
+    name,
+    *,
+    background_value="missing",
+    live_age_seconds=300,
+):
     tmp_path = make_test_dir(name)
     current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
     plugin_data = _runtime_plugin_data(
@@ -12821,7 +12826,7 @@ def _sports_live_runtime(name, *, background_value="missing"):
     )
     task.runtime_state.record_success(
         instance.instance_uuid,
-        (current_dt - timedelta(minutes=2)).isoformat(),
+        (current_dt - timedelta(seconds=live_age_seconds)).isoformat(),
         lane=RefreshLane.LIVE,
     )
     task.runtime_state.set_display_state(
@@ -12839,6 +12844,30 @@ def _sports_live_runtime(name, *, background_value="missing"):
         image_hash="old",
     )
     return task, device_config, playlist, instance, current_dt, anchor
+
+
+def _install_sports_live_snapshot(monkeypatch, task, *, interval_seconds=60):
+    background_probe = SimpleNamespace(
+        wants_background_live_refresh=lambda _settings, _current_dt: True,
+    )
+    monkeypatch.setattr(
+        task,
+        "_get_plugin_for_snapshot",
+        lambda _instance, require_live_refresh=False: background_probe,
+    )
+    monkeypatch.setattr(
+        task,
+        "_snapshot_live_refresh_state",
+        lambda _instance, _current_dt, plugin=None: {
+            "active": True,
+            "interval_seconds": interval_seconds,
+        },
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
 
 
 def _assert_sports_normal_selected(monkeypatch, background_value):
@@ -12888,27 +12917,7 @@ def test_sports_live_cache_refresh_is_background_only_when_master_setting_is_mis
     task, _device_config, _playlist, _instance, current_dt, _anchor = (
         _sports_live_runtime("sports-live-master-missing")
     )
-    background_probe = SimpleNamespace(
-        wants_background_live_refresh=lambda _settings, _current_dt: True,
-    )
-    monkeypatch.setattr(
-        task,
-        "_get_plugin_for_snapshot",
-        lambda _instance, require_live_refresh=False: background_probe,
-    )
-    monkeypatch.setattr(
-        task,
-        "_snapshot_live_refresh_state",
-        lambda _instance, _current_dt, plugin=None: {
-            "active": True,
-            "interval_seconds": 60,
-        },
-    )
-    monkeypatch.setattr(
-        task,
-        "_resource_sample",
-        lambda: ResourceSample(available_mb=512, swap_percent=0),
-    )
+    _install_sports_live_snapshot(monkeypatch, task)
 
     command = task._select_independent_refresh_command(current_dt)
 
@@ -12916,6 +12925,144 @@ def test_sports_live_cache_refresh_is_background_only_when_master_setting_is_mis
     assert command.intent is RefreshIntent.LIVE_REFRESH
     assert command.payload["background_live_refresh"] is True
     assert command.payload.get("expected_displayed_instance_uuid") is None
+
+
+def test_sports_background_live_defaults_to_a_300_second_interval_floor(monkeypatch):
+    task, _device_config, _playlist, instance, current_dt, _anchor = (
+        _sports_live_runtime(
+            "sports-background-live-default-floor",
+            background_value=True,
+            live_age_seconds=120,
+        )
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid="different-instance",
+        changed_at=current_dt.isoformat(),
+    )
+    _install_sports_live_snapshot(monkeypatch, task)
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is None
+
+
+def test_sports_displayed_live_keeps_its_hook_interval(monkeypatch):
+    task, _device_config, _playlist, _instance, current_dt, _anchor = (
+        _sports_live_runtime(
+            "sports-displayed-live-hook-interval",
+            background_value=True,
+            live_age_seconds=120,
+        )
+    )
+    _install_sports_live_snapshot(monkeypatch, task)
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is not None
+    assert command.intent is RefreshIntent.LIVE_REFRESH
+    assert command.payload["background_live_refresh"] is True
+
+
+def test_sports_background_live_interval_floor_is_configurable(monkeypatch):
+    task, device_config, _playlist, instance, current_dt, _anchor = (
+        _sports_live_runtime(
+            "sports-background-live-configured-floor",
+            background_value=True,
+            live_age_seconds=120,
+        )
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid="different-instance",
+        changed_at=current_dt.isoformat(),
+    )
+    device_config.config["sports_background_live_min_interval_seconds"] = 90
+    _install_sports_live_snapshot(monkeypatch, task)
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is not None
+    assert command.intent is RefreshIntent.LIVE_REFRESH
+    assert command.payload["background_live_refresh"] is True
+
+
+def test_sports_background_live_yields_next_command_to_overdue_data(monkeypatch):
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    sports_data = _runtime_plugin_data(
+        "sports_dashboard",
+        "Sports",
+        interval=3600,
+    )
+    sports_data["instance_uuid"] = "00000000000000000000000000000001"
+    sports_data["plugin_settings"]["backgroundCacheRefreshEnabled"] = True
+    ordinary_data = _runtime_plugin_data("ordinary", "Ordinary", interval=60)
+    ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
+    playlist = _runtime_playlist(sports_data, ordinary_data)
+    task, device_config, _clock = _make_runtime_task(
+        make_test_dir("sports-background-live-data-yield"),
+        playlists=[playlist],
+        cycle_seconds=300,
+    )
+    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    sports_manifest = PluginManifest(
+        schema_version=2,
+        id="sports_dashboard",
+        class_name="SportsDashboard",
+        display_name="Sports Dashboard",
+        refresh_on_display=False,
+        capabilities=PluginCapabilities(supports_live_refresh=True),
+        raw={},
+    )
+    device_config.get_plugin = lambda plugin_id: {
+        "id": plugin_id,
+        "_manifest": sports_manifest if plugin_id == "sports_dashboard" else None,
+    }
+    sports, ordinary = [instance.snapshot() for instance in playlist.plugins]
+    for instance in (sports, ordinary):
+        _write_runtime_cache(task, instance)
+    task.runtime_state.record_success(
+        sports.instance_uuid,
+        current_dt.isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(minutes=20)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task.runtime_state.record_success(
+        sports.instance_uuid,
+        (current_dt - timedelta(minutes=5)).isoformat(),
+        lane=RefreshLane.LIVE,
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid=ordinary.instance_uuid,
+        changed_at=current_dt.isoformat(),
+    )
+    device_config.refresh_info = RefreshInfo(
+        refresh_type="Playlist",
+        playlist=playlist.name,
+        plugin_id=ordinary.plugin_id,
+        plugin_instance=ordinary.name,
+        refresh_time=current_dt.isoformat(),
+        image_hash="ordinary",
+    )
+    _install_sports_live_snapshot(monkeypatch, task)
+
+    first = task._select_independent_refresh_command(current_dt)
+    second = task._select_independent_refresh_command(current_dt)
+
+    assert first is not None and second is not None
+    assert (first.plugin_id, first.intent) == (
+        "sports_dashboard",
+        RefreshIntent.LIVE_REFRESH,
+    )
+    assert (second.plugin_id, second.intent) == (
+        "ordinary",
+        RefreshIntent.DATA_REFRESH,
+    )
 
 
 @pytest.mark.parametrize(

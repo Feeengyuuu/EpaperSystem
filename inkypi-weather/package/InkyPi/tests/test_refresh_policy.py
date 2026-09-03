@@ -993,11 +993,15 @@ def test_displayed_live_wins_auxiliary_turn_over_older_presentation():
         reason=DueReason.PRESENTATION,
         due_since=datetime(2026, 7, 15, 19, 0, tzinfo=UTC),
     )
-    displayed_live = _candidate(
-        "displayed-live",
-        lane=RefreshLane.LIVE,
-        reason=DueReason.LIVE,
-        due_since=datetime(2026, 7, 15, 20, 0, tzinfo=UTC),
+    displayed_live = replace(
+        _candidate(
+            "displayed-live",
+            lane=RefreshLane.LIVE,
+            reason=DueReason.LIVE,
+            due_since=datetime(2026, 7, 15, 20, 0, tzinfo=UTC),
+        ),
+        requires_displayed_instance=True,
+        is_displayed_instance=True,
     )
 
     for tier in (ResourceTier.SOFT, ResourceTier.HEALTHY):
@@ -1005,12 +1009,62 @@ def test_displayed_live_wins_auxiliary_turn_over_older_presentation():
             [_candidate("ordinary-data")],
             [older_presentation, displayed_live],
             tier=tier,
-            state=AdmissionState(),
+            state=AdmissionState(consecutive_background_live_admissions=1),
             now_monotonic=1000.0,
             thresholds=ResourceThresholds(soft_spacing_seconds=60.0),
         )
 
         assert decision.candidate == displayed_live
+
+
+def test_background_live_yields_to_due_data_after_one_logical_refresh():
+    data = _candidate("overdue-data")
+    background_live = _candidate(
+        "background-sports-live",
+        lane=RefreshLane.LIVE,
+        reason=DueReason.LIVE,
+    )
+
+    thresholds = ResourceThresholds(soft_spacing_seconds=60.0)
+    for tier in (ResourceTier.HEALTHY, ResourceTier.SOFT):
+        state = AdmissionState()
+        selected = []
+        for step in range(4):
+            decision = choose_refresh_candidate(
+                [data],
+                [background_live],
+                tier=tier,
+                state=state,
+                now_monotonic=1000.0 + (step * 60.0),
+                thresholds=thresholds,
+            )
+            selected.append(decision.candidate)
+            state = decision.state
+
+        assert selected == [background_live, data, background_live, data]
+
+
+def test_displayed_cache_only_live_remains_above_due_data():
+    data = _candidate("overdue-data")
+    displayed_cache_only_live = replace(
+        _candidate(
+            "displayed-sports-live",
+            lane=RefreshLane.LIVE,
+            reason=DueReason.LIVE,
+        ),
+        is_displayed_instance=True,
+    )
+
+    decision = choose_refresh_candidate(
+        [data],
+        [displayed_cache_only_live],
+        tier=ResourceTier.HEALTHY,
+        state=AdmissionState(consecutive_background_live_admissions=1),
+        now_monotonic=1000.0,
+        thresholds=ResourceThresholds(),
+    )
+
+    assert decision.candidate == displayed_cache_only_live
 
 
 def test_hard_admits_no_presentation():
