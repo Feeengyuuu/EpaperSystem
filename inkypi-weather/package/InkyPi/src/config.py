@@ -158,13 +158,25 @@ class Config:
         self._write_lock = threading.RLock()
         self._env_file_mtimes = None
         self._config_store = ConfigStore(self.config_file)
-        self._require_readable_state(self._config_store.load())
+        initial_state = self._config_store.load()
+        self._require_readable_state(initial_state)
+        initial_migrations = (
+            {}
+            if initial_state.snapshot is None
+            else initial_state.snapshot.data.get(_RUNTIME_MIGRATIONS_KEY, {})
+        )
+        cadence_marker_preexisting = (
+            isinstance(initial_migrations, Mapping)
+            and initial_migrations.get(_RUNTIME_BALANCE_CADENCE_MIGRATION) is True
+        )
         self.plugins_list = self.read_plugins_list()
         self.playlist_manager = self.load_playlist_manager()
         self.refresh_info = self.load_refresh_info()
         self._apply_release_bound_nasapics_migration()
         self._migrate_runtime_balance_cadences()
-        self._migrate_runtime_balance_soft_threshold()
+        self._migrate_runtime_balance_soft_threshold(
+            cadence_marker_preexisting=cadence_marker_preexisting,
+        )
         self._repair_legacy_sports_live_refresh_settings()
         self._migrate_missing_sports_background_live_refresh_setting()
         self._migrate_rotating_newspapers_to_hourly_refill()
@@ -288,8 +300,11 @@ class Config:
                 migrated_instances,
             )
 
-    def _migrate_runtime_balance_soft_threshold(self):
+    def _migrate_runtime_balance_soft_threshold(self, *, cadence_marker_preexisting):
         """Apply the separately releasable 200-to-175 MiB admission canary."""
+
+        if cadence_marker_preexisting is not True:
+            return
 
         migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
         if (

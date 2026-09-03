@@ -15,6 +15,8 @@ from runtime.runtime_state import InstanceRuntimeState  # noqa: E402
 
 
 MIGRATION_ID = "runtime_balance_cadence_v1"
+SOFT_THRESHOLD_MIGRATION_ID = "runtime_balance_soft_threshold_v1"
+SOFT_THRESHOLD_KEY = "background_cache_refresh_min_available_mb"
 TARGETS = (
     ("d45cd9dc716240bea25e3eb77aef406d", "weather", "AwesomeWeather", 1, 900),
     (
@@ -61,8 +63,8 @@ def _instance(plugin_id, name, *, interval=300, revision=1, instance_uuid=None):
     }
 
 
-def _document(*, migrations=None):
-    return {
+def _document(*, migrations=None, soft_threshold=None):
+    document = {
         "schema_version": 1,
         "config_revision": 40,
         "resolution": [800, 480],
@@ -97,6 +99,9 @@ def _document(*, migrations=None):
             ],
         },
     }
+    if soft_threshold is not None:
+        document[SOFT_THRESHOLD_KEY] = soft_threshold
+    return document
 
 
 def _write_and_load(monkeypatch, tmp_path, document):
@@ -154,6 +159,58 @@ def test_startup_migrates_only_exact_legacy_300_second_cadences(monkeypatch, tmp
     assert custom["settings_revision"] == 20
     unrelated = _instance_by_identity(saved, "unrelated", "KeepMe")
     assert unrelated == _instance_by_identity(original, "unrelated", "KeepMe")
+
+
+def test_direct_soft_release_from_pre_cadence_config_stages_across_two_starts(
+    monkeypatch,
+    tmp_path,
+):
+    original = _document(soft_threshold=200)
+
+    first_config, config_path = _write_and_load(monkeypatch, tmp_path, original)
+    first_saved = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert first_saved["config_revision"] == 41
+    assert first_saved["runtime_migrations"][MIGRATION_ID] is True
+    assert SOFT_THRESHOLD_MIGRATION_ID not in first_saved["runtime_migrations"]
+    assert first_saved[SOFT_THRESHOLD_KEY] == 200
+    assert first_config.get_config(SOFT_THRESHOLD_KEY) == 200
+    for _uuid, plugin_id, name, _revision, target_interval in TARGETS:
+        assert _instance_by_identity(first_saved, plugin_id, name)["refresh"][
+            "interval"
+        ] == target_interval
+
+    second_config = Config()
+    second_saved = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert second_saved["config_revision"] == 42
+    assert second_saved["runtime_migrations"][MIGRATION_ID] is True
+    assert second_saved["runtime_migrations"][SOFT_THRESHOLD_MIGRATION_ID] is True
+    assert second_saved[SOFT_THRESHOLD_KEY] == 175
+    assert second_config.get_config(SOFT_THRESHOLD_KEY) == 175
+
+
+def test_soft_release_after_persisted_cadence_stage_applies_on_first_start(
+    monkeypatch,
+    tmp_path,
+):
+    staged = _document(
+        migrations={MIGRATION_ID: True},
+        soft_threshold=200,
+    )
+    for _uuid, plugin_id, name, _revision, target_interval in TARGETS:
+        _instance_by_identity(staged, plugin_id, name)["refresh"][
+            "interval"
+        ] = target_interval
+
+    config, config_path = _write_and_load(monkeypatch, tmp_path, staged)
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+
+    assert saved["config_revision"] == 41
+    assert saved["runtime_migrations"][MIGRATION_ID] is True
+    assert saved["runtime_migrations"][SOFT_THRESHOLD_MIGRATION_ID] is True
+    assert saved[SOFT_THRESHOLD_KEY] == 175
+    assert config.get_config(SOFT_THRESHOLD_KEY) == 175
 
 
 def test_cadence_marker_makes_restart_zero_write_and_preserves_later_choices(
