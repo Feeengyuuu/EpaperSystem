@@ -3026,6 +3026,10 @@ class RefreshTask:
                 if concession.candidate is not None:
                     self._admission_state = concession.state
                     candidate = concession.candidate
+                    self._finish_weather_liveness_for_runnable_alternative(
+                        candidate,
+                        resource_sample,
+                    )
                     return self._playlist_command(
                         active.name,
                         candidate.instance,
@@ -3079,6 +3083,10 @@ class RefreshTask:
                         consecutive_data_admissions=0,
                         consecutive_background_live_admissions=0,
                     )
+                    self._finish_weather_liveness_for_runnable_alternative(
+                        data_candidate,
+                        resource_sample,
+                    )
                     return self._playlist_command(
                         active.name,
                         presentation_instance,
@@ -3094,6 +3102,10 @@ class RefreshTask:
             self._admission_state = replace(
                 self._admission_state,
                 consecutive_data_admissions=0,
+            )
+            self._finish_weather_liveness_for_runnable_alternative(
+                presentation_candidate,
+                resource_sample,
             )
             return self._playlist_command(
                 active.name,
@@ -3209,14 +3221,10 @@ class RefreshTask:
                 thresholds=thresholds,
             ).candidate
             if runnable_weather_alternative is not None:
-                if self._weather_liveness_window is not None:
-                    self._finish_weather_liveness_window(
-                        reason="runnable_alternative",
-                        resource_sample=resource_sample,
-                        yield_to_ordinary=(
-                            runnable_weather_alternative.lane is RefreshLane.DATA
-                        ),
-                    )
+                self._finish_weather_liveness_for_runnable_alternative(
+                    runnable_weather_alternative,
+                    resource_sample,
+                )
             else:
                 (
                     weather_liveness_candidate,
@@ -5158,6 +5166,20 @@ class RefreshTask:
             return
         self._burst_liveness_yield_ordinary_pending = False
         self._burst_liveness_yield_deadline_monotonic = 0.0
+
+    def _finish_weather_liveness_for_runnable_alternative(
+        self,
+        candidate,
+        resource_sample,
+    ):
+        """Retire the Weather wait without reselecting the chosen alternative."""
+        if candidate.instance.plugin_id == "weather":
+            return
+        self._finish_weather_liveness_window(
+            reason="runnable_alternative",
+            resource_sample=resource_sample,
+            yield_to_ordinary=(candidate.lane is RefreshLane.DATA),
+        )
 
     def _finish_weather_liveness_window(
         self,

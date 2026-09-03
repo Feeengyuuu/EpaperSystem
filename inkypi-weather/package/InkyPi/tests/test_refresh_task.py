@@ -21061,6 +21061,146 @@ def test_weather_quiet_window_yields_runnable_auxiliary_work(monkeypatch):
     assert command.intent is RefreshIntent.LIVE_REFRESH
 
 
+def test_rotation_starved_data_does_not_reuse_weather_window_deadline(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, ordinary = _weather_margin_runtime(
+        "weather-window-yields-rotation-starved-data",
+        current_dt,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=50),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(task, "_get_rotation_wait_seconds", lambda: 600)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    manager = task.device_config.playlist_manager
+    active = manager.snapshot_active_playlist(current_dt)
+    assert active is not None
+    reserved = manager.reserve_next_active_instance(
+        current_dt + timedelta(seconds=1),
+        latest_refresh=None,
+        interval_seconds=0,
+        eligible_instance_uuids={ordinary.instance_uuid},
+    )
+    assert reserved is not None
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    clock.advance(1)
+
+    command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+    assert command is not None
+    assert command.instance_uuid == ordinary.instance_uuid
+    assert command.intent is RefreshIntent.DATA_REFRESH
+
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt + timedelta(seconds=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    manager.release_rotation_reservation(
+        ordinary.instance_uuid,
+        expected_playlist_name=active.name,
+    )
+    clock.advance(90)
+
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=91)
+        )
+        is None
+    )
+
+
+def test_reserved_presentation_does_not_reuse_weather_window_deadline(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    sample = {"value": ResourceSample(available_mb=146, swap_percent=50)}
+    task, clock, weather, presentation = _weather_margin_runtime(
+        "weather-window-yields-reserved-presentation",
+        current_dt,
+        alternative_plugin_id="presentation_plugin",
+    )
+    manifest = _presentation_manifest(presentation.plugin_id)
+    task.device_config.config["display_triggered_refresh_enabled"] = True
+    task.device_config.get_plugin = lambda plugin_id: (
+        {
+            "id": plugin_id,
+            "refresh_on_display": True,
+            "_manifest": manifest,
+        }
+        if plugin_id == presentation.plugin_id
+        else {"id": plugin_id}
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: sample["value"],
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(task, "_get_rotation_wait_seconds", lambda: 600)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    manager = task.device_config.playlist_manager
+    active = manager.snapshot_active_playlist(current_dt)
+    assert active is not None
+    reserved = manager.reserve_next_active_instance(
+        current_dt + timedelta(seconds=1),
+        latest_refresh=None,
+        interval_seconds=0,
+        eligible_instance_uuids={presentation.instance_uuid},
+    )
+    assert reserved is not None
+    request = _seed_presentation_request(
+        task,
+        presentation,
+        requested_at=current_dt + timedelta(seconds=1),
+    )
+    clock.advance(1)
+
+    command = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+    assert command is not None
+    assert command.instance_uuid == presentation.instance_uuid
+    assert command.intent is RefreshIntent.PRESENTATION_REFRESH
+
+    assert task.runtime_state.satisfy_presentation_no_change(
+        presentation.instance_uuid,
+        request.request_id,
+        (current_dt + timedelta(seconds=1)).isoformat(),
+    )
+    manager.release_rotation_reservation(
+        presentation.instance_uuid,
+        expected_playlist_name=active.name,
+    )
+    clock.advance(90)
+
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=91)
+        )
+        is None
+    )
+
+    sample["value"] = ResourceSample(available_mb=160, swap_percent=50)
+    clock.advance(60)
+    recovered = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=151)
+    )
+
+    assert recovered is not None
+    assert recovered.instance_uuid == weather.instance_uuid
+    assert recovered.intent is RefreshIntent.DATA_REFRESH
+    assert recovered.payload.get("weather_liveness_concession") is not True
+
+
 def test_rotation_deadline_guard_does_not_cancel_weather_quiet_window(monkeypatch):
     current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
     task, clock, weather, ordinary = _weather_margin_runtime(
