@@ -707,7 +707,10 @@ class WorldCupRenderMixin:
             if source:
                 status_text = f"{source} {status_text}"
         status_text, status_font = self._fit_text(draw, status_text, x2 - x1 - 42, 16, bold=True, min_size=10)
-        self._draw_centered(draw, ((x1 + x2) / 2, y1 + 41), status_text, status_font, COLORS["text"])
+        status_y = y1 + 41
+        if main_mode == "next" and (presentation or {}).get("competition") == "club":
+            status_y += 7
+        self._draw_centered(draw, ((x1 + x2) / 2, status_y), status_text, status_font, COLORS["text"])
 
         center_x = (x1 + x2) / 2
         flag_h, flag_cap = 27, 54
