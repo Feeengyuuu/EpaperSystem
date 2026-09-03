@@ -38,6 +38,7 @@ export class VehicleAuthState extends DurableObject<Env> {
         env.VEHICLE_SUMMARY_MAX_STALE_SECONDS,
         86_400,
       ),
+      diagnostic: (event) => console.log(JSON.stringify(event)),
     });
   }
 

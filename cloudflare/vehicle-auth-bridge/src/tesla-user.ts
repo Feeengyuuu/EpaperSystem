@@ -218,13 +218,13 @@ export type TeslaClientError = {
 };
 
 export type TeslaTokenResult =
-  | { ok: true; tokens: TeslaTokens }
+  | { ok: true; tokens: TeslaTokens; http_status?: number }
   | (TeslaClientError & { rotated_tokens?: TeslaTokens });
 export type TeslaVehicleListResult =
-  | { ok: true; vehicles: VehicleInventory[] }
+  | { ok: true; vehicles: VehicleInventory[]; http_status?: number }
   | TeslaClientError;
 export type TeslaSnapshotResult =
-  | { ok: true; snapshot: StoredVehicleSnapshot }
+  | { ok: true; snapshot: StoredVehicleSnapshot; http_status?: number }
   | TeslaClientError;
 
 export type TeslaUserClient = {
@@ -276,7 +276,7 @@ export function createTeslaUserClient(
       if (!response.ok) {
         return response;
       }
-      return parseTokenResponse(response.data, config.requiredScopes);
+      return { ...parseTokenResponse(response.data, config.requiredScopes), http_status: response.http_status };
     },
 
     async refreshTokens(refreshToken) {
@@ -301,7 +301,7 @@ export function createTeslaUserClient(
       if (!response.ok) {
         return response;
       }
-      return parseTokenResponse(response.data, config.requiredScopes);
+      return { ...parseTokenResponse(response.data, config.requiredScopes), http_status: response.http_status };
     },
 
     async listVehicles(accessToken) {
@@ -321,7 +321,7 @@ export function createTeslaUserClient(
       const root = asRecord(response.data);
       const rows = Array.isArray(root?.response) ? root.response : null;
       if (!rows) {
-        return { ok: false, error: "invalid_vehicle_list_response" };
+        return { ok: false, error: "invalid_vehicle_list_response", http_status: response.http_status };
       }
       const vehicles: VehicleInventory[] = [];
       for (const row of rows) {
@@ -338,7 +338,7 @@ export function createTeslaUserClient(
           in_service: item?.in_service === true,
         });
       }
-      return { ok: true, vehicles };
+      return { ok: true, vehicles, http_status: response.http_status };
     },
 
     async fetchVehicleSnapshot(accessToken, vehicle, nowMs, includeLocation = false) {
@@ -371,11 +371,12 @@ export function createTeslaUserClient(
       const root = asRecord(response.data);
       const data = asRecord(root?.response);
       if (!data) {
-        return { ok: false, error: "invalid_vehicle_data_response" };
+        return { ok: false, error: "invalid_vehicle_data_response", http_status: response.http_status };
       }
       return {
         ok: true,
         snapshot: sanitizeVehicleSnapshot(data, vehicle, nowMs, includeLocation),
+        http_status: response.http_status,
       };
     },
   };

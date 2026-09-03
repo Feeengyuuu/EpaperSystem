@@ -14,10 +14,31 @@ import type {
   StoredVehicleSnapshotDetails,
   TeslaTokens,
   TeslaUserClient,
+  TeslaVehicleListResult,
   VehicleInventory,
 } from "./tesla-user";
 
 const ACCESS_REFRESH_MARGIN_MS = 60_000;
+const DIAGNOSTIC_ERRORS = [
+  "provider_network_error", "provider_redirect_blocked", "provider_response_too_large",
+  "provider_http_error", "provider_invalid_json", "invalid_vehicle_list_response",
+  "invalid_vehicle_identifier", "invalid_vehicle_data_response", "invalid_token_response",
+  "missing_required_scope", "vehicle_data_temporarily_unavailable", "tesla_reauthorization_required",
+] as const;
+const DIAGNOSTIC_STATES = ["online", "offline", "asleep", "unknown", "unavailable"] as const;
+
+export type VehicleSourceDiagnostic = {
+  event: "vehicle_source_check";
+  stage: "cache_hit" | "token_refresh" | "inventory" | "vehicle_data" | "fallback";
+  outcome: "success" | "error" | "fresh_cache" | "stale_cache";
+  actual_checked_at: string | null;
+  cache_checked_at: string | null;
+  cache_age_seconds: number | null;
+  http_status: number | null;
+  error: (typeof DIAGNOSTIC_ERRORS)[number] | "unknown_provider_error" | null;
+  vehicle_count: number | null;
+  selected_state: (typeof DIAGNOSTIC_STATES)[number] | null;
+};
 
 export type StoredAuthorization = {
   generation: number;
@@ -57,6 +78,7 @@ type VehicleSessionCoreOptions = {
   tesla: TeslaUserClient;
   now?: () => number;
   maxStaleSeconds: number;
+  diagnostic?: (event: VehicleSourceDiagnostic) => void;
 };
 
 export class VehicleSessionCore {
@@ -64,6 +86,7 @@ export class VehicleSessionCore {
   readonly #tesla: TeslaUserClient;
   readonly #now: () => number;
   readonly #maxStaleMs: number;
+  readonly #diagnostic?: (event: VehicleSourceDiagnostic) => void;
   #exclusiveTail: Promise<void> = Promise.resolve();
 
   constructor(options: VehicleSessionCoreOptions) {
@@ -71,6 +94,7 @@ export class VehicleSessionCore {
     this.#tesla = options.tesla;
     this.#now = options.now ?? Date.now;
     this.#maxStaleMs = options.maxStaleSeconds * 1_000;
+    this.#diagnostic = options.diagnostic;
   }
 
   async createOAuthLaunch(
@@ -168,6 +192,9 @@ export class VehicleSessionCore {
         nowMs - cached.snapshot.checked_at_ms < cacheTtlMs &&
         (!includeLocation || cached.snapshot.location !== undefined)
       ) {
+        this.#recordDiagnostic("cache_hit", cached.stale ? "stale_cache" : "fresh_cache", nowMs, cached, {
+          selectedState: cached.snapshot.vehicle_connectivity,
+        });
         return {
           ok: true,
           summary: toSummary(
@@ -184,6 +211,7 @@ export class VehicleSessionCore {
         authorization,
         nowMs,
         false,
+        cached,
       );
       if (!access.ok) {
         return this.#fallbackOrError(cached, nowMs, access.error, schemaVersion);
@@ -193,11 +221,13 @@ export class VehicleSessionCore {
       let vehicles = await this.#tesla.listVehicles(
         authorization.tokens.access_token,
       );
+      this.#recordInventory(vehicles, preferredVehicleId, nowMs, cached);
       if (!vehicles.ok && vehicles.http_status === 401) {
         const refreshed = await this.#ensureAccessToken(
           authorization,
           nowMs,
           true,
+          cached,
         );
         if (!refreshed.ok) {
           return this.#fallbackOrError(
@@ -211,6 +241,7 @@ export class VehicleSessionCore {
         vehicles = await this.#tesla.listVehicles(
           authorization.tokens.access_token,
         );
+        this.#recordInventory(vehicles, preferredVehicleId, nowMs, cached);
       }
 
       if (!vehicles.ok) {
@@ -281,11 +312,16 @@ export class VehicleSessionCore {
             vehicle,
             nowMs,
           );
+      this.#recordDiagnostic("vehicle_data", snapshot.ok ? "success" : "error", nowMs, cached, {
+        httpStatus: snapshot.http_status,
+        error: snapshot.ok ? undefined : snapshot.error,
+      });
       if (!snapshot.ok && snapshot.http_status === 401) {
         const refreshed = await this.#ensureAccessToken(
           authorization,
           nowMs,
           true,
+          cached,
         );
         if (!refreshed.ok) {
           return this.#fallbackOrError(
@@ -308,6 +344,10 @@ export class VehicleSessionCore {
               vehicle,
               nowMs,
             );
+        this.#recordDiagnostic("vehicle_data", snapshot.ok ? "success" : "error", nowMs, cached, {
+          httpStatus: snapshot.http_status,
+          error: snapshot.ok ? undefined : snapshot.error,
+        });
       }
 
       if (!snapshot.ok) {
@@ -363,6 +403,7 @@ export class VehicleSessionCore {
     authorization: StoredAuthorization,
     nowMs: number,
     force: boolean,
+    cached: CachedVehicleSnapshot | null,
   ): Promise<
     | { ok: true; authorization: StoredAuthorization }
     | {
@@ -383,6 +424,10 @@ export class VehicleSessionCore {
     const refreshed = await this.#tesla.refreshTokens(
       authorization.tokens.refresh_token,
     );
+    this.#recordDiagnostic("token_refresh", refreshed.ok ? "success" : "error", nowMs, cached, {
+      httpStatus: refreshed.http_status,
+      error: refreshed.ok ? undefined : refreshed.error,
+    });
     if (!refreshed.ok) {
       if (refreshed.error === "missing_required_scope") {
         if (refreshed.rotated_tokens) {
@@ -438,6 +483,10 @@ export class VehicleSessionCore {
         nowMs,
       );
       await this.#repository.putCachedSnapshot(stale);
+      this.#recordDiagnostic("fallback", "stale_cache", nowMs, stale, {
+        error,
+        selectedState: stale.snapshot.vehicle_connectivity,
+      });
       return {
         ok: true,
         summary: toSummary(
@@ -449,6 +498,7 @@ export class VehicleSessionCore {
         ),
       };
     }
+    this.#recordDiagnostic("fallback", "error", nowMs, cached, { error });
     return { ok: false, error };
   }
 
@@ -465,6 +515,60 @@ export class VehicleSessionCore {
       release();
     }
   }
+
+  #recordInventory(
+    result: TeslaVehicleListResult,
+    preferredVehicleId: string | undefined,
+    nowMs: number,
+    cached: CachedVehicleSnapshot | null,
+  ): void {
+    this.#recordDiagnostic("inventory", result.ok ? "success" : "error", nowMs, cached, {
+      httpStatus: result.http_status,
+      error: result.ok ? undefined : result.error,
+      vehicleCount: result.ok ? result.vehicles.length : undefined,
+      selectedState: result.ok ? selectVehicle(result.vehicles, preferredVehicleId)?.state : undefined,
+    });
+  }
+
+  #recordDiagnostic(
+    stage: VehicleSourceDiagnostic["stage"],
+    outcome: VehicleSourceDiagnostic["outcome"],
+    nowMs: number,
+    cached: CachedVehicleSnapshot | null,
+    details: { httpStatus?: number; error?: string; vehicleCount?: number; selectedState?: string } = {},
+  ): void {
+    if (!this.#diagnostic) return;
+    const capturedAt = cached?.snapshot.captured_at_ms;
+    const checkedAt = cached?.snapshot.checked_at_ms;
+    const knownError = DIAGNOSTIC_ERRORS.find((value) => value === details.error);
+    const knownState = DIAGNOSTIC_STATES.find((value) => value === details.selectedState);
+    // Only these primitives cross the logging boundary; never spread provider objects.
+    const event: VehicleSourceDiagnostic = {
+      event: "vehicle_source_check",
+      stage,
+      outcome,
+      actual_checked_at: stage === "cache_hit" || stage === "fallback" ? null : diagnosticTimestamp(this.#now()),
+      cache_checked_at: diagnosticTimestamp(checkedAt),
+      cache_age_seconds: typeof capturedAt === "number" && Number.isFinite(capturedAt)
+        ? Math.max(0, Math.floor((nowMs - capturedAt) / 1_000)) : null,
+      http_status: Number.isInteger(details.httpStatus) && details.httpStatus! >= 100 && details.httpStatus! <= 599
+        ? details.httpStatus! : null,
+      error: details.error ? knownError ?? "unknown_provider_error" : null,
+      vehicle_count: Number.isSafeInteger(details.vehicleCount) && details.vehicleCount! >= 0
+        ? details.vehicleCount! : null,
+      selected_state: details.selectedState ? knownState ?? "unknown" : null,
+    };
+    try {
+      this.#diagnostic(event);
+    } catch {
+      // Observability must not affect token rotation, cache persistence, or reads.
+    }
+  }
+}
+
+function diagnosticTimestamp(value: number | undefined): string | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 8.64e15
+    ? new Date(value).toISOString() : null;
 }
 
 function accountGenerationOf(authorization: StoredAuthorization): number {

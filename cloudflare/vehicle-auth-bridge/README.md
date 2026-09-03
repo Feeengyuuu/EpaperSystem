@@ -63,6 +63,15 @@ Automatic invocation logs are disabled because OAuth codes and state arrive in
 the callback query string. Unexpected errors return only
 `{"error":"internal_error"}` and are not logged with request details.
 
+Summary reads emit fixed-shape custom `vehicle_source_check` logs. They distinguish
+cache hits, token refreshes, inventory checks, vehicle-data requests, and stale
+fallbacks using only stage/outcome enums, HTTP status, allowlisted error and
+connectivity values, vehicle count, and cache timing. `actual_checked_at` is null
+for cache hits and fallback events; `cache_checked_at` records the cache's last
+check rather than a new Tesla request. These logs never include identifiers,
+provider URLs or bodies, credentials, vehicle values, locations, or exception
+messages. Automatic invocation logs remain disabled.
+
 ## Summary schemas
 
 Schema v1 remains shape-compatible with existing InkyPi releases. Schema v2 is

@@ -30,6 +30,18 @@ function accessToken(
 }
 
 describe("Tesla third-party user boundary", () => {
+  test("retains successful HTTP status when inventory or vehicle payloads are invalid", async () => {
+    const client = createTeslaUserClient(CONFIG, async () => Response.json({ response: null }));
+    expect(await client.listVehicles("test-token")).toEqual({
+      ok: false, error: "invalid_vehicle_list_response", http_status: 200,
+    });
+    expect(await client.fetchVehicleSnapshot("test-token", {
+      vin: "5YJ3E1EA7KF000001", display_name: "Vehicle", state: "online", access_type: "OWNER", in_service: false,
+    }, 1_800_000_000_000)).toEqual({
+      ok: false, error: "invalid_vehicle_data_response", http_status: 200,
+    });
+  });
+
   test("exchanges an authorization code only at Tesla's server token host", async () => {
     const requests: Request[] = [];
     const fetcher: typeof fetch = async (input, init) => {
@@ -50,6 +62,7 @@ describe("Tesla third-party user boundary", () => {
 
     expect(result).toEqual({
       ok: true,
+      http_status: 200,
       tokens: {
         access_token: accessToken(),
         refresh_token: "rotating-refresh-token",
@@ -154,6 +167,7 @@ describe("Tesla third-party user boundary", () => {
 
     expect(result).toEqual({
       ok: true,
+      http_status: 200,
       vehicles: [
         {
           vin: "5YJ3E1EA7KF000001",

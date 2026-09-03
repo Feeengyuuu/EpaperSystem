@@ -308,6 +308,179 @@ function createCore(
 }
 
 describe("vehicle session coordination", () => {
+  test.each(["token_refresh", "vehicle_data"] as const)(
+    "logs %s failures and cache fallback using only whitelisted error values",
+    async (failedStage) => {
+      const repository = new MemoryRepository();
+      repository.authorization = {
+        generation: 1, account_generation: 1, reauthorization_required: false,
+        tokens: { ...TOKENS, access_expires_at: NOW },
+      };
+      repository.cachedSnapshot = {
+        account_generation: 1, snapshot: { ...SNAPSHOT, checked_at_ms: NOW - 1_800_000 }, stale: false,
+      };
+      const unsafeError = `https://provider.example/${VEHICLE.vin}?token=${TOKENS.access_token}`;
+      const failure = { ok: false as const, error: unsafeError, http_status: 503 };
+      const tesla = createTesla(failedStage === "token_refresh"
+        ? { refreshTokens: vi.fn(async () => failure) }
+        : { fetchVehicleSnapshot: vi.fn(async () => failure) });
+      const events: unknown[] = [];
+      const core = new VehicleSessionCore({
+        repository, tesla, now: () => NOW, maxStaleSeconds: 86_400,
+        diagnostic: (event) => events.push(event),
+      });
+
+      expect(await core.getVehicleSummary(NOW, 900)).toMatchObject({
+        ok: true, summary: { snapshot: { freshness: "stale_cache", vehicle_connectivity: "unavailable" } },
+      });
+      expect(events).toContainEqual(expect.objectContaining({
+        stage: failedStage, outcome: "error", http_status: 503, error: "unknown_provider_error",
+      }));
+      expect(events.at(-1)).toMatchObject({
+        stage: "fallback", outcome: "stale_cache", error: "vehicle_data_temporarily_unavailable",
+        actual_checked_at: null, cache_checked_at: new Date(NOW).toISOString(), cache_age_seconds: 60,
+      });
+      expect(JSON.stringify(events)).not.toContain(unsafeError);
+      expect(JSON.stringify(events)).not.toContain(VEHICLE.vin);
+      expect(JSON.stringify(events)).not.toContain(TOKENS.access_token);
+    },
+  );
+
+  test("bounds inventory state in diagnostics and keeps reads available if the sink fails", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1, account_generation: 1, reauthorization_required: false, tokens: TOKENS,
+    };
+    const events: unknown[] = [];
+    const core = new VehicleSessionCore({
+      repository,
+      tesla: createTesla({ listVehicles: vi.fn(async () => ({
+        ok: true, vehicles: [{ ...VEHICLE, state: `private-${VEHICLE.vin}` }],
+      })) }),
+      now: () => NOW, maxStaleSeconds: 86_400,
+      diagnostic: (event) => { events.push(event); throw new Error("private-sink-exception"); },
+    });
+
+    expect((await core.getVehicleSummary(NOW, 900)).ok).toBe(true);
+    expect((await core.getVehicleSummary(NOW + 1_000, 900)).ok).toBe(true);
+    expect(events).toMatchObject([
+      { stage: "inventory", selected_state: "unknown" },
+      { stage: "cache_hit", selected_state: "unknown" },
+    ]);
+    expect(JSON.stringify(events)).not.toContain(VEHICLE.vin);
+  });
+
+  test("distinguishes token refresh and live data from a later fresh cache hit", async () => {
+    const repository = new MemoryRepository();
+    repository.authorization = {
+      generation: 1, account_generation: 1, reauthorization_required: false,
+      tokens: { ...TOKENS, access_expires_at: NOW },
+    };
+    const tesla = createTesla({
+      refreshTokens: vi.fn(async () => ({ ok: true, tokens: TOKENS, http_status: 200 })),
+      listVehicles: vi.fn(async () => ({ ok: true, vehicles: [VEHICLE], http_status: 200 })),
+      fetchVehicleSnapshot: vi.fn(async () => ({
+        ok: true, snapshot: { ...SNAPSHOT, captured_at_ms: NOW, checked_at_ms: NOW }, http_status: 200,
+      })),
+    });
+    const events: unknown[] = [];
+    const core = new VehicleSessionCore({
+      repository, tesla, now: () => NOW, maxStaleSeconds: 86_400,
+      diagnostic: (event) => events.push(event),
+    });
+
+    expect(await core.getVehicleSummary(NOW, 900)).toMatchObject({
+      ok: true, summary: { snapshot: { freshness: "live" } },
+    });
+    expect(await core.getVehicleSummary(NOW + 60_000, 900)).toMatchObject({
+      ok: true, summary: { snapshot: { freshness: "fresh_cache" } },
+    });
+    expect(events).toMatchObject([
+      { stage: "token_refresh", outcome: "success", http_status: 200, error: null },
+      { stage: "inventory", outcome: "success", selected_state: "online" },
+      { stage: "vehicle_data", outcome: "success", http_status: 200, error: null },
+      { stage: "cache_hit", outcome: "fresh_cache", actual_checked_at: null,
+        cache_checked_at: new Date(NOW).toISOString(), cache_age_seconds: 60 },
+    ]);
+  });
+
+  test.each(["offline", "provider_failure"] as const)(
+    "diagnoses %s separately from a subsequent stale cache hit without exposing vehicle data",
+    async (sourceState) => {
+      const repository = new MemoryRepository();
+      repository.authorization = {
+        generation: 1,
+        account_generation: 1,
+        reauthorization_required: false,
+        tokens: TOKENS,
+      };
+      repository.cachedSnapshot = {
+        account_generation: 1,
+        selected_vehicle_id: VEHICLE.vin,
+        snapshot: {
+          ...SNAPSHOT,
+          captured_at_ms: NOW - 7_200_000,
+          checked_at_ms: NOW - 1_800_000,
+          location: { captured_at_ms: NOW - 60_000, latitude: 12.345678, longitude: 23.456789 },
+        },
+        stale: false,
+      };
+      const events: unknown[] = [];
+      const tesla = createTesla({
+        listVehicles: vi.fn(async () => sourceState === "offline"
+          ? { ok: true, vehicles: [{ ...VEHICLE, state: "offline" }], http_status: 200 }
+          : { ok: false, error: "provider_http_error", http_status: 503 }),
+      });
+      const core = new VehicleSessionCore({
+        repository,
+        tesla,
+        now: () => NOW,
+        maxStaleSeconds: 86_400,
+        diagnostic: (event) => events.push(event),
+      });
+
+      const first = await core.getVehicleSummary(NOW, 900);
+      const second = await core.getVehicleSummary(NOW + 60_000, 900);
+
+      expect(first).toMatchObject({ ok: true, summary: { snapshot: {
+        freshness: "stale_cache",
+        vehicle_connectivity: sourceState === "offline" ? "offline" : "unavailable",
+      } } });
+      expect(second).toMatchObject({ ok: true, summary: { snapshot: { freshness: "stale_cache" } } });
+      expect(events[0]).toEqual({
+        event: "vehicle_source_check",
+        stage: "inventory",
+        outcome: sourceState === "offline" ? "success" : "error",
+        actual_checked_at: new Date(NOW).toISOString(),
+        cache_checked_at: new Date(NOW - 1_800_000).toISOString(),
+        cache_age_seconds: 7200,
+        http_status: sourceState === "offline" ? 200 : 503,
+        error: sourceState === "offline" ? null : "provider_http_error",
+        vehicle_count: sourceState === "offline" ? 1 : null,
+        selected_state: sourceState === "offline" ? "offline" : null,
+      });
+      expect(events.at(-1)).toEqual({
+        event: "vehicle_source_check",
+        stage: "cache_hit",
+        outcome: "stale_cache",
+        actual_checked_at: null,
+        cache_checked_at: new Date(NOW).toISOString(),
+        cache_age_seconds: 7260,
+        http_status: null,
+        error: null,
+        vehicle_count: null,
+        selected_state: sourceState === "offline" ? "offline" : "unavailable",
+      });
+      expect(tesla.listVehicles).toHaveBeenCalledTimes(1);
+      expect(tesla.fetchVehicleSnapshot).not.toHaveBeenCalled();
+      const serialized = JSON.stringify(events);
+      for (const sensitive of [VEHICLE.vin, VEHICLE.display_name, TOKENS.access_token,
+        TOKENS.refresh_token, "12.345678", "23.456789"]) {
+        expect(serialized).not.toContain(sensitive);
+      }
+    },
+  );
+
   test("requires renewed vehicle-location consent before serving schema three", async () => {
     const repository = new MemoryRepository();
     repository.authorization = {
