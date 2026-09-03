@@ -597,6 +597,7 @@ class RefreshTask:
         self._oldest_data_overdue_seconds = None
         self._refresh_progress = RefreshProgressTracker(clock=clock)
         self._lightweight_followup_remaining = 0
+        self._background_scheduler_recheck_pending = False
         self._rotation_deadline_guard_active = False
         self._rotation_cache_starved_since = None
         self._display_transactions_enabled = False
@@ -1394,9 +1395,19 @@ class RefreshTask:
     def _schedule_if_due(self):
         now = self._clock()
         scheduler = self.scheduler_state.snapshot()
+        completion_recheck = bool(
+            self._background_scheduler_recheck_pending
+            and not self.stop_event.is_set()
+            and self._restart_request is None
+            and not self._ian_retained_entries
+            and self.refresh_queue.snapshot().accepting
+            and self.retry_registry.next_delay(RetryRegistry.GLOBAL_KEY, now) <= 0
+        )
+        self._background_scheduler_recheck_pending = False
         if (
             scheduler.next_attempt_monotonic is not None
             and now < scheduler.next_attempt_monotonic
+            and not completion_recheck
         ):
             return None
 
@@ -1408,6 +1419,7 @@ class RefreshTask:
             disk_tier = self._sample_disk_pressure()
             current_dt = self._get_current_datetime()
             self._observe_refresh_progress(current_dt)
+            refresh_command = None
             command = self._select_prepared_display_retry_command(current_dt)
             if command is None:
                 command = self._select_cached_display_command(current_dt)
@@ -1457,7 +1469,19 @@ class RefreshTask:
                     next_delay,
                     max(0.05, self._memory_watchdog_next_check_seconds),
                 )
-            self.scheduler_state.set_next_attempt(now + next_delay)
+            next_attempt = now + next_delay
+            if (
+                completion_recheck
+                and not restart_requested
+                and command is None
+                and refresh_command is None
+                and scheduler.next_attempt_monotonic is not None
+                and scheduler.next_attempt_monotonic > now
+            ):
+                # An early probe must not push the existing idle/spacing poll
+                # later when admission is currently blocked or there is no work.
+                next_attempt = min(next_attempt, scheduler.next_attempt_monotonic)
+            self.scheduler_state.set_next_attempt(next_attempt)
             return command
         except Exception as error:
             self.scheduler_state.record_failure(error)
@@ -1546,6 +1570,44 @@ class RefreshTask:
         current = self.refresh_queue.get_entry(entry.job.id)
         if current is None or current.job.status is not JobStatus.SUCCEEDED:
             self._lightweight_followup_remaining = 0
+
+    def _note_background_scheduler_terminal(self, command, finished):
+        """Recheck admission when a reviewed background renderer frees the worker."""
+        if (
+            finished.status is not JobStatus.SUCCEEDED
+            or command.kind is not CommandKind.CACHE_REFRESH
+            or command.source is not CommandSource.BACKGROUND
+            or command.intent is not RefreshIntent.DATA_REFRESH
+            or plugin_execution_class(command.plugin_id) not in {
+                ExecutionClass.PARALLEL_IMAGE, ExecutionClass.NESTED_IO,
+                ExecutionClass.SERIAL_HEAVY,
+            }
+            or self._ian_retained_entries
+            or self.stop_event.is_set()
+            or self._restart_request is not None
+            or not self.refresh_queue.snapshot().accepting
+        ):
+            return
+        now = self._clock()
+        if self.retry_registry.next_delay(RetryRegistry.GLOBAL_KEY, now) > 0:
+            return
+        next_attempt = self.scheduler_state.snapshot().next_attempt_monotonic
+        if next_attempt is None or next_attempt <= now:
+            return
+        if classify_resource_tier(
+            self._resource_sample(), self._resource_thresholds(),
+        ) is not ResourceTier.HEALTHY:
+            # Completion alone is no reason to add probes under pressure.
+            return
+        # This wakes the normal selector, not a renderer. Queue priority, disk,
+        # memory spacing, rotation reservations and provider backoff still apply.
+        self._background_scheduler_recheck_pending = True
+        logger.info(
+            "Background renderer completed; requesting one scheduler recheck. | "
+            "plugin_id: %s | idle_poll_remaining_seconds: %.3f",
+            command.plugin_id,
+            next_attempt - now,
+        )
 
     def _rotation_presentation_wait_seconds(self):
         configured_wait = max(
@@ -3659,6 +3721,9 @@ class RefreshTask:
         )
 
     def _process_queue_entry(self, entry: QueueEntry):
+        # Work already queued (including manual work or an IAN continuation)
+        # owns this turn and consumes an unused completion recheck.
+        self._background_scheduler_recheck_pending = False
         if (
             self._lightweight_followup_remaining > 0
             and entry.command.payload.get("scheduler_lightweight_followup")
@@ -4626,6 +4691,7 @@ class RefreshTask:
                     except Exception:
                         logger.exception("Refresh success bookkeeping failed")
             self._note_lightweight_scheduler_terminal(command, finished)
+            self._note_background_scheduler_terminal(command, finished)
             self._signal_completion(finished.id)
         finally:
             self._cleanup_transient_uploads(entry.job.id, entry.command)
