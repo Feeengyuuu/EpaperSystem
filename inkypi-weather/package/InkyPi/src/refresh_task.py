@@ -3569,10 +3569,11 @@ class RefreshTask:
             if not live_state:
                 continue
             interval_seconds = live_state["interval_seconds"]
-            if (
+            is_offscreen_sports = (
                 not is_displayed
                 and instance.plugin_id == "sports_dashboard"
-            ):
+            )
+            if is_offscreen_sports:
                 configured_floor = self._config_float(
                     "sports_background_live_min_interval_seconds",
                     DEFAULT_SPORTS_BACKGROUND_LIVE_MIN_INTERVAL_SECONDS,
@@ -3590,12 +3591,22 @@ class RefreshTask:
             if next_retry is not None:
                 next_retry = self._align_datetime_tz(next_retry, current_dt)
             last_success = self._parse_iso_datetime(runtime.last_success_at)
-            if last_success is None:
+            if last_success is not None:
+                last_success = self._align_datetime_tz(last_success, current_dt)
+            last_attempt = self._parse_iso_datetime(runtime.last_attempt_at)
+            if last_attempt is not None:
+                last_attempt = self._align_datetime_tz(last_attempt, current_dt)
+            cadence_anchor = last_success
+            if is_offscreen_sports and last_attempt is not None:
+                cadence_anchor = max(
+                    (value for value in (last_success, last_attempt) if value is not None),
+                    key=lambda value: value.timestamp(),
+                )
+            if cadence_anchor is None:
                 due_since = current_dt
             else:
-                last_success = self._align_datetime_tz(last_success, current_dt)
                 due_since = datetime.fromtimestamp(
-                    last_success.timestamp() + interval_seconds,
+                    cadence_anchor.timestamp() + interval_seconds,
                     tz=current_dt.tzinfo,
                 )
             wake_at = max(
@@ -3605,9 +3616,6 @@ class RefreshTask:
             self._note_scheduler_due_at(wake_at, current_dt)
             if current_dt.timestamp() < wake_at.timestamp():
                 continue
-            last_attempt = self._parse_iso_datetime(runtime.last_attempt_at)
-            if last_attempt is not None:
-                last_attempt = self._align_datetime_tz(last_attempt, current_dt)
             candidates.append(
                 DueCandidate(
                     instance=instance,

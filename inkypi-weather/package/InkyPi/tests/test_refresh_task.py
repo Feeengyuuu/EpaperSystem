@@ -12764,6 +12764,8 @@ def _sports_live_runtime(
     *,
     background_value="missing",
     live_age_seconds=300,
+    clock=None,
+    sports_renderer=None,
 ):
     tmp_path = make_test_dir(name)
     current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
@@ -12785,6 +12787,8 @@ def _sports_live_runtime(
 
     def isolated_renderer(**kwargs):
         isolated_calls.append(kwargs)
+        if sports_renderer is not None:
+            return sports_renderer(**kwargs)
         return attach_source_provenance(
             Image.new("RGB", (1, 1), "white"),
             SourceProvenance.LIVE,
@@ -12793,6 +12797,7 @@ def _sports_live_runtime(
     task, device_config, _clock = _make_runtime_task(
         tmp_path,
         playlists=[playlist],
+        clock=clock,
         cycle_seconds=300,
         sports_isolated_renderer=isolated_renderer,
     )
@@ -12947,13 +12952,77 @@ def test_sports_background_live_defaults_to_a_300_second_interval_floor(monkeypa
     assert command is None
 
 
+def test_sports_background_live_waits_300_seconds_after_non_promoted_attempt(
+    monkeypatch,
+):
+    current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
+
+    def non_promoted_renderer(**_kwargs):
+        image = attach_source_provenance(
+            Image.new("RGB", (1, 1), "white"),
+            SourceProvenance.LOCAL_FALLBACK,
+        )
+        image.info[refresh_task_module.SKIP_CACHE_IMAGE_INFO_KEY] = True
+        return image
+
+    task, _device_config, _playlist, instance, current_dt, _anchor = (
+        _sports_live_runtime(
+            "sports-background-live-attempt-floor",
+            background_value=True,
+            live_age_seconds=600,
+            clock=clock,
+            sports_renderer=non_promoted_renderer,
+        )
+    )
+    task.runtime_state.set_display_state(
+        "committed",
+        instance_uuid="different-instance",
+        changed_at=current_dt.isoformat(),
+    )
+    _install_sports_live_snapshot(monkeypatch, task)
+
+    command = task._select_independent_refresh_command(current_dt)
+    assert command is not None
+    prior_success = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].live.last_success_at
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+    assert entry is not None
+    task._process_queue_entry(entry)
+
+    job = task.refresh_queue.get_entry(submitted.id).job
+    live_runtime = task.runtime_state.snapshot().instances[
+        instance.instance_uuid
+    ].live
+    before_floor = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=299)
+    )
+    at_floor = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=300)
+    )
+
+    assert job.status is JobStatus.SUCCEEDED
+    assert live_runtime.last_success_at == prior_success
+    assert live_runtime.last_attempt_at == current_dt.isoformat()
+    assert before_floor is None
+    assert at_floor is not None
+    assert at_floor.intent is RefreshIntent.LIVE_REFRESH
+
+
 def test_sports_displayed_live_keeps_its_hook_interval(monkeypatch):
-    task, _device_config, _playlist, _instance, current_dt, _anchor = (
+    task, _device_config, _playlist, instance, current_dt, _anchor = (
         _sports_live_runtime(
             "sports-displayed-live-hook-interval",
             background_value=True,
             live_age_seconds=120,
         )
+    )
+    task.runtime_state.record_attempt(
+        instance.instance_uuid,
+        (current_dt - timedelta(seconds=10)).isoformat(),
+        lane=RefreshLane.LIVE,
     )
     _install_sports_live_snapshot(monkeypatch, task)
 
@@ -12987,8 +13056,11 @@ def test_sports_background_live_interval_floor_is_configurable(monkeypatch):
     assert command.payload["background_live_refresh"] is True
 
 
-def test_sports_background_live_yields_next_command_to_overdue_data(monkeypatch):
+def test_sports_background_live_yields_to_data_after_checkpointed_logical_job(
+    monkeypatch,
+):
     current_dt = datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
+    clock = RuntimeClock(wall=current_dt.timestamp())
     sports_data = _runtime_plugin_data(
         "sports_dashboard",
         "Sports",
@@ -12999,12 +13071,40 @@ def test_sports_background_live_yields_next_command_to_overdue_data(monkeypatch)
     ordinary_data = _runtime_plugin_data("ordinary", "Ordinary", interval=60)
     ordinary_data["instance_uuid"] = "11111111111111111111111111111111"
     playlist = _runtime_playlist(sports_data, ordinary_data)
+    region_calls = []
+
+    def checkpointing_renderer(**kwargs):
+        region_calls.append(kwargs)
+        if len(region_calls) < 3:
+            completed = (
+                ("esports",)
+                if len(region_calls) == 1
+                else ("esports", "football")
+            )
+            raise SportsIsolatedCheckpointPending(
+                fingerprint="f" * 64,
+                completed_regions=completed,
+                next_region="football" if len(region_calls) == 1 else "lower",
+            )
+        return attach_source_provenance(
+            Image.new("RGB", (1, 1), "white"),
+            SourceProvenance.LIVE,
+        )
+
     task, device_config, _clock = _make_runtime_task(
         make_test_dir("sports-background-live-data-yield"),
         playlists=[playlist],
+        clock=clock,
         cycle_seconds=300,
+        sports_isolated_renderer=checkpointing_renderer,
     )
-    device_config.config.update({"theme_mode": "day", "active_theme": "day"})
+    device_config.config.update(
+        {
+            "theme_mode": "day",
+            "active_theme": "day",
+            "sports_background_live_min_interval_seconds": 1,
+        }
+    )
     sports_manifest = PluginManifest(
         schema_version=2,
         id="sports_dashboard",
@@ -13051,15 +13151,38 @@ def test_sports_background_live_yields_next_command_to_overdue_data(monkeypatch)
     )
     _install_sports_live_snapshot(monkeypatch, task)
 
-    first = task._select_independent_refresh_command(current_dt)
-    second = task._select_independent_refresh_command(current_dt)
-
-    assert first is not None and second is not None
-    assert (first.plugin_id, first.intent) == (
+    live = task._select_independent_refresh_command(current_dt)
+    assert live is not None
+    assert (live.plugin_id, live.intent) == (
         "sports_dashboard",
         RefreshIntent.LIVE_REFRESH,
     )
-    assert (second.plugin_id, second.intent) == (
+    submitted = task.refresh_queue.submit(live)
+
+    # Region continuations remain one logical LIVE admission. Ordinary DATA
+    # is not required to interleave before that admitted job is complete.
+    for expected_calls in (1, 2):
+        checkpoint = task.refresh_queue.take(timeout=0)
+        assert checkpoint is not None
+        assert checkpoint.job.id == submitted.id
+        task._process_queue_entry(checkpoint)
+        assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.QUEUED
+        assert len(region_calls) == expected_calls
+
+    final_region = task.refresh_queue.take(timeout=0)
+    assert final_region is not None
+    assert final_region.job.id == submitted.id
+    task._process_queue_entry(final_region)
+    assert task.refresh_queue.get_entry(submitted.id).job.status is JobStatus.SUCCEEDED
+    assert len(region_calls) == 3
+
+    clock.advance(1)
+    after_logical_live = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=1)
+    )
+
+    assert after_logical_live is not None
+    assert (after_logical_live.plugin_id, after_logical_live.intent) == (
         "ordinary",
         RefreshIntent.DATA_REFRESH,
     )
