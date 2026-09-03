@@ -29,6 +29,7 @@ _VEHICLE_STATUS_THREE_HOUR_REFRESH_MIGRATION = (
 )
 _MAGAZINE_HISTORICAL_LIBRARY_MIGRATION = "magazine_historical_library_v1"
 _RUNTIME_BALANCE_CADENCE_MIGRATION = "runtime_balance_cadence_v1"
+_RUNTIME_BALANCE_SOFT_THRESHOLD_MIGRATION = "runtime_balance_soft_threshold_v1"
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_LEGACY_REFRESH_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_REFRESH_INTERVAL_SECONDS = 3 * 60 * 60
@@ -49,6 +50,9 @@ _MAGAZINE_HISTORICAL_DEFAULTS = {
     "latestRefreshHours": "6",
 }
 _RUNTIME_BALANCE_LEGACY_INTERVAL_SECONDS = 5 * 60
+_RUNTIME_BALANCE_SOFT_THRESHOLD_KEY = "background_cache_refresh_min_available_mb"
+_RUNTIME_BALANCE_LEGACY_SOFT_THRESHOLD_MB = 200
+_RUNTIME_BALANCE_SOFT_THRESHOLD_MB = 175
 _RUNTIME_BALANCE_CADENCE_TARGETS = (
     (
         "d45cd9dc716240bea25e3eb77aef406d",
@@ -160,6 +164,7 @@ class Config:
         self.refresh_info = self.load_refresh_info()
         self._apply_release_bound_nasapics_migration()
         self._migrate_runtime_balance_cadences()
+        self._migrate_runtime_balance_soft_threshold()
         self._repair_legacy_sports_live_refresh_settings()
         self._migrate_missing_sports_background_live_refresh_setting()
         self._migrate_rotating_newspapers_to_hourly_refill()
@@ -282,6 +287,45 @@ class Config:
                 "| instances: %s",
                 migrated_instances,
             )
+
+    def _migrate_runtime_balance_soft_threshold(self):
+        """Apply the separately releasable 200-to-175 MiB admission canary."""
+
+        migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
+        if (
+            not isinstance(migrations, Mapping)
+            or migrations.get(_RUNTIME_BALANCE_CADENCE_MIGRATION) is not True
+        ):
+            return
+        if (
+            migrations.get(_RUNTIME_BALANCE_SOFT_THRESHOLD_MIGRATION) is True
+        ):
+            return
+        current = self.get_config(_RUNTIME_BALANCE_SOFT_THRESHOLD_KEY, default=None)
+        if (
+            type(current) is not int
+            or current != _RUNTIME_BALANCE_LEGACY_SOFT_THRESHOLD_MB
+        ):
+            return
+
+        migration_state = (
+            _detach_json(migrations) if isinstance(migrations, Mapping) else {}
+        )
+        migration_state[_RUNTIME_BALANCE_SOFT_THRESHOLD_MIGRATION] = True
+        self.update_config(
+            {
+                _RUNTIME_BALANCE_SOFT_THRESHOLD_KEY: (
+                    _RUNTIME_BALANCE_SOFT_THRESHOLD_MB
+                ),
+                _RUNTIME_MIGRATIONS_KEY: migration_state,
+            }
+        )
+        logger.warning(
+            "Migrated the background refresh soft threshold. "
+            "| previous_mb: %s | current_mb: %s",
+            current,
+            _RUNTIME_BALANCE_SOFT_THRESHOLD_MB,
+        )
 
     def _repair_legacy_sports_live_refresh_settings(self):
         """Repair the old blanket-disabled SportsDashboard bundle exactly once.
