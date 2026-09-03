@@ -20877,7 +20877,13 @@ def test_nasapics_display_now_is_provider_free_and_forces_one_hardware_write(
     assert display.calls[0]["force_hardware_write"] is True
 
 
-def _weather_margin_runtime(name, current_dt, *, ordinary_due=False):
+def _weather_margin_runtime(
+    name,
+    current_dt,
+    *,
+    ordinary_due=False,
+    alternative_plugin_id="ordinary",
+):
     weather_data = _runtime_plugin_data(
         "weather",
         "AwesomeWeather",
@@ -20885,7 +20891,7 @@ def _weather_margin_runtime(name, current_dt, *, ordinary_due=False):
     )
     weather_data["instance_uuid"] = "00000000000000000000000000000001"
     ordinary_data = _runtime_plugin_data(
-        "ordinary",
+        alternative_plugin_id,
         "Ordinary",
         interval=3600,
     )
@@ -21053,6 +21059,149 @@ def test_weather_quiet_window_yields_runnable_auxiliary_work(monkeypatch):
     assert command is not None
     assert command.instance_uuid == ordinary.instance_uuid
     assert command.intent is RefreshIntent.LIVE_REFRESH
+
+
+def test_rotation_deadline_guard_does_not_cancel_weather_quiet_window(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, ordinary = _weather_margin_runtime(
+        "weather-window-survives-rotation-deadline-guard",
+        current_dt,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task._rotation_deadline_guard_active = True
+    monkeypatch.setattr(task, "_get_rotation_wait_seconds", lambda: 60)
+    clock.advance(1)
+
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=1)
+        )
+        is None
+    )
+
+    task.runtime_state.record_success(
+        ordinary.instance_uuid,
+        (current_dt + timedelta(seconds=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task._rotation_deadline_guard_active = False
+    monkeypatch.setattr(task, "_get_rotation_wait_seconds", lambda: 600)
+    clock.advance(89)
+
+    concession = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=90)
+    )
+    assert concession is not None
+    assert concession.instance_uuid == weather.instance_uuid
+    assert concession.payload["weather_liveness_concession"] is True
+
+
+def test_ready_rotation_filter_does_not_cancel_weather_for_heavy_data(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, heavy = _weather_margin_runtime(
+        "weather-window-survives-ready-rotation-heavy-filter",
+        current_dt,
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=146, swap_percent=75.3),
+    )
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    monkeypatch.setattr(task, "_get_rotation_wait_seconds", lambda: 60)
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    task.runtime_state.record_success(
+        heavy.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task._rotation_has_ready_candidates = True
+    clock.advance(1)
+
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=1)
+        )
+        is None
+    )
+
+    task.runtime_state.record_success(
+        heavy.instance_uuid,
+        (current_dt + timedelta(seconds=1)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    task._rotation_has_ready_candidates = False
+    monkeypatch.setattr(task, "_get_rotation_wait_seconds", lambda: 600)
+    clock.advance(89)
+
+    concession = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=90)
+    )
+    assert concession is not None
+    assert concession.instance_uuid == weather.instance_uuid
+    assert concession.payload["weather_liveness_concession"] is True
+
+
+def test_low_margin_offscreen_sports_does_not_cancel_weather_window(monkeypatch):
+    current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    sample = {"value": ResourceSample(available_mb=146, swap_percent=50)}
+    task, clock, weather, sports = _weather_margin_runtime(
+        "weather-window-survives-low-margin-offscreen-sports",
+        current_dt,
+        alternative_plugin_id="sports_dashboard",
+    )
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    live_candidates = {"value": []}
+    monkeypatch.setattr(
+        task,
+        "_live_due_candidates",
+        lambda *_args: live_candidates["value"],
+    )
+
+    assert task._select_independent_refresh_command(current_dt) is None
+    sample["value"] = ResourceSample(available_mb=100, swap_percent=50)
+    live_candidates["value"] = [
+        DueCandidate(
+            instance=sports,
+            lane=RefreshLane.LIVE,
+            due_since=current_dt,
+            reason=DueReason.LIVE,
+            last_attempt_at=None,
+        )
+    ]
+    clock.advance(1)
+
+    assert (
+        task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=1)
+        )
+        is None
+    )
+
+    sample["value"] = ResourceSample(available_mb=146, swap_percent=50)
+    live_candidates["value"] = []
+    clock.advance(89)
+    concession = task._select_independent_refresh_command(
+        current_dt + timedelta(seconds=90)
+    )
+
+    assert concession is not None
+    assert concession.instance_uuid == weather.instance_uuid
+    assert concession.payload["weather_liveness_concession"] is True
 
 
 def test_weather_with_normal_margin_keeps_ordinary_data_ordering(monkeypatch):

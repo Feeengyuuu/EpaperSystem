@@ -2823,6 +2823,7 @@ class RefreshTask:
             )
         }
         eligible_data_candidates = list(data_candidates)
+        weather_liveness_data_candidates = list(data_candidates)
         ticketmaster_liveness_candidate = None
         ticketmaster_liveness_holds_independent = False
         sports_liveness_candidate = None
@@ -2831,52 +2832,10 @@ class RefreshTask:
         weather_liveness_candidate = None
         weather_liveness_holds_independent = False
         weather_liveness_concession = False
-        runnable_weather_alternative = None
-        if self._weather_liveness_window is not None or any(
-            candidate.instance.plugin_id == "weather"
-            for candidate in data_candidates
-        ):
-            # AdmissionState is immutable. This dry decision deliberately drops
-            # the returned state so probing an alternative cannot consume its
-            # fairness or SOFT-spacing turn.
-            runnable_weather_alternative = choose_refresh_candidate(
-                [
-                    candidate
-                    for candidate in eligible_data_candidates
-                    if candidate.instance.plugin_id
-                    not in {"sports_dashboard", "ticketmaster_events", "weather"}
-                ],
-                [
-                    candidate
-                    for candidate in auxiliary_candidates
-                    if candidate.instance.plugin_id != "weather"
-                ],
-                tier=tier,
-                state=self._admission_state,
-                now_monotonic=self._clock(),
-                thresholds=thresholds,
-            ).candidate
         if self._weather_liveness_window is not None:
-            if runnable_weather_alternative is not None:
-                self._finish_weather_liveness_window(
-                    reason="runnable_alternative",
-                    resource_sample=resource_sample,
-                    yield_to_ordinary=(
-                        runnable_weather_alternative.lane is RefreshLane.DATA
-                    ),
-                )
-            else:
-                (
-                    weather_liveness_candidate,
-                    weather_liveness_holds_independent,
-                    weather_liveness_concession,
-                ) = self._weather_liveness_decision(
-                    active,
-                    data_candidates,
-                    runtime_instances,
-                    current_dt,
-                    resource_sample,
-                )
+            # Weather is evaluated after every generic eligibility and display
+            # guard below, so only work that can really run may end this window.
+            pass
         elif self._ticketmaster_liveness_window is not None:
             (
                 ticketmaster_liveness_candidate,
@@ -2923,26 +2882,6 @@ class RefreshTask:
                     ticketmaster_liveness_candidate,
                     ticketmaster_liveness_holds_independent,
                 ) = self._ticketmaster_liveness_decision(
-                    active,
-                    data_candidates,
-                    runtime_instances,
-                    current_dt,
-                    resource_sample,
-                )
-            if (
-                sports_liveness_candidate is None
-                and not sports_liveness_holds_independent
-                and self._sports_liveness_window is None
-                and ticketmaster_liveness_candidate is None
-                and not ticketmaster_liveness_holds_independent
-                and self._ticketmaster_liveness_window is None
-                and runnable_weather_alternative is None
-            ):
-                (
-                    weather_liveness_candidate,
-                    weather_liveness_holds_independent,
-                    weather_liveness_concession,
-                ) = self._weather_liveness_decision(
                     active,
                     data_candidates,
                     runtime_instances,
@@ -3176,8 +3115,7 @@ class RefreshTask:
         # display commit.
         if (
             (reserved_instance_uuids or self._rotation_deadline_guard_active)
-            and
-            self._get_rotation_wait_seconds()
+            and self._get_rotation_wait_seconds()
             <= DEFAULT_ROTATION_BACKGROUND_GUARD_SECONDS
         ):
             return None
@@ -3213,6 +3151,84 @@ class RefreshTask:
             weather_liveness_candidate = None
             sports_liveness_candidate = None
             ticketmaster_liveness_candidate = None
+
+        weather_liveness_allowed = bool(
+            self._weather_liveness_window is not None
+            or (
+                not self._burst_liveness_yield_ordinary_pending
+                and sports_liveness_candidate is None
+                and not sports_liveness_holds_independent
+                and self._sports_liveness_window is None
+                and ticketmaster_liveness_candidate is None
+                and not ticketmaster_liveness_holds_independent
+                and self._ticketmaster_liveness_window is None
+            )
+        )
+        weather_work_pending = bool(
+            self._weather_liveness_window is not None
+            or any(
+                candidate.instance.plugin_id == "weather"
+                for candidate in weather_liveness_data_candidates
+            )
+        )
+        if weather_liveness_allowed and weather_work_pending:
+            sports_start_margin_available, _, _ = (
+                self._sports_isolated_start_margin(resource_sample)
+            )
+
+            def has_dedicated_start_margin(candidate):
+                return (
+                    candidate.instance.plugin_id != "sports_dashboard"
+                    or candidate.lane
+                    not in {RefreshLane.DATA, RefreshLane.LIVE}
+                    or sports_start_margin_available
+                )
+
+            # AdmissionState is immutable. This dry decision deliberately drops
+            # the returned state so probing an alternative cannot consume its
+            # fairness or SOFT-spacing turn. Both lists have already passed the
+            # same generic resource and display-window filters used by normal
+            # admission. The dedicated Sports child-process start gate mirrors
+            # the executor check without duplicating its threshold policy.
+            runnable_weather_alternative = choose_refresh_candidate(
+                [
+                    candidate
+                    for candidate in eligible_data_candidates
+                    if candidate.instance.plugin_id
+                    not in {"sports_dashboard", "ticketmaster_events", "weather"}
+                ],
+                [
+                    candidate
+                    for candidate in auxiliary_candidates
+                    if candidate.instance.plugin_id != "weather"
+                    and has_dedicated_start_margin(candidate)
+                ],
+                tier=tier,
+                state=self._admission_state,
+                now_monotonic=self._clock(),
+                thresholds=thresholds,
+            ).candidate
+            if runnable_weather_alternative is not None:
+                if self._weather_liveness_window is not None:
+                    self._finish_weather_liveness_window(
+                        reason="runnable_alternative",
+                        resource_sample=resource_sample,
+                        yield_to_ordinary=(
+                            runnable_weather_alternative.lane is RefreshLane.DATA
+                        ),
+                    )
+            else:
+                (
+                    weather_liveness_candidate,
+                    weather_liveness_holds_independent,
+                    weather_liveness_concession,
+                ) = self._weather_liveness_decision(
+                    active,
+                    weather_liveness_data_candidates,
+                    runtime_instances,
+                    current_dt,
+                    resource_sample,
+                )
 
         if weather_liveness_candidate is not None:
             liveness_admission = choose_refresh_candidate(
@@ -5161,6 +5177,20 @@ class RefreshTask:
         )
         self._weather_liveness_window = None
         self._weather_liveness_cooldown_until_monotonic = now + cooldown_seconds
+        probe_started = self._scheduler_probe_monotonic
+        if (
+            probe_started is not None
+            and window.deadline_monotonic > probe_started
+            and window.deadline_monotonic <= now
+        ):
+            # A resource/retry persistence hook may consume the last seconds of
+            # the window. Preserve the elapsed wake observed by this probe so
+            # its handoff is eligible on the next worker turn, not one idle poll
+            # later. A window canceled before its deadline carries no wake.
+            self._note_scheduler_deadline(
+                window.deadline_monotonic,
+                allow_elapsed=True,
+            )
         if yield_to_ordinary:
             self._request_burst_liveness_ordinary_yield()
         handoff = (
