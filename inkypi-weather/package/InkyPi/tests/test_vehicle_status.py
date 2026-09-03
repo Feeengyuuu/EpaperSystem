@@ -1673,6 +1673,7 @@ def test_manifest_and_settings_keep_secret_out_of_playlist_config():
         "supports_live_refresh": False,
         "supports_presentation_refresh": False,
         "supports_day_night_theme": True,
+        "supports_cached_display_redraw": True,
     }
     assert manifest["refresh_on_display"] is False
     assert manifest["recommended_refresh"]["interval"] == 10800

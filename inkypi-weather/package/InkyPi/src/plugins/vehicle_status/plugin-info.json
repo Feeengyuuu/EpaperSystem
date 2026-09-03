@@ -3,7 +3,8 @@
   "capabilities": {
     "supports_live_refresh": false,
     "supports_presentation_refresh": false,
-    "supports_day_night_theme": true
+    "supports_day_night_theme": true,
+    "supports_cached_display_redraw": true
   },
   "theme": {
     "presentation": "ui",

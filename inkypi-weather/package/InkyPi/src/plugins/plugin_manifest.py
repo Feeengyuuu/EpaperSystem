@@ -27,6 +27,7 @@ class PluginCapabilities:
     presentation_refresh_is_provider_free: bool = False
     supports_day_night_theme: bool = False
     allows_display_triggered_provider_refresh: bool = False
+    supports_cached_display_redraw: bool = False
 
 
 @dataclass(frozen=True)
@@ -276,6 +277,14 @@ class PluginManifest:
                     "allows_display_triggered_provider_refresh requires "
                     "supports_presentation_refresh"
                 )
+            supports_cached_display_redraw = raw_capabilities.get(
+                "supports_cached_display_redraw", False,
+            )
+            if type(supports_cached_display_redraw) is not bool:
+                raise TypeError(
+                    "plugin manifest capabilities.supports_cached_display_redraw "
+                    "must be a boolean"
+                )
             capabilities = PluginCapabilities(
                 supports_live_refresh=supports_live_refresh,
                 supports_presentation_refresh=supports_presentation_refresh,
@@ -286,6 +295,7 @@ class PluginManifest:
                     allows_display_triggered_provider_refresh
                 ),
                 supports_day_night_theme=supports_day_night_theme,
+                supports_cached_display_redraw=supports_cached_display_redraw,
             )
             if supports_day_night_theme:
                 raw_theme = payload.get("theme")

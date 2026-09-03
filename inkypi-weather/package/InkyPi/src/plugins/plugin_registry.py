@@ -40,6 +40,13 @@ def plugin_supports_day_night_theme(plugin_config):
     return bool(getattr(capabilities, "supports_day_night_theme", False))
 
 
+def plugin_supports_cached_display_redraw(plugin_config):
+    """Opt in to audited local-only redraws of time-sensitive cached values."""
+    manifest = plugin_config.get("_manifest") if plugin_config else None
+    capabilities = getattr(manifest, "capabilities", None)
+    return bool(getattr(capabilities, "supports_cached_display_redraw", False))
+
+
 def plugin_supports_presentation_refresh(plugin_config):
     """Read the opt-in presentation capability without importing plugin code."""
 

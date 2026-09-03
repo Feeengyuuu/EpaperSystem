@@ -821,6 +821,16 @@ class VehicleStatus(BasePlugin):
                     _log_location_cache_failure("write", exc)
             return image
 
+    def render_cached_display(self, settings, device_config, *, resolved_theme_context):
+        # Re-evaluate age/offline status at the actual display time. The theme-only
+        # path never obtains credentials, requests providers, or writes caches.
+        return self.render_themed_image(
+            settings,
+            device_config,
+            theme_render_only=True,
+            resolved_theme_context=resolved_theme_context,
+        )
+
     def _theme_only_image(self, settings, dimensions, theme):
         language = _language(settings)
         with _CACHE_LOCK:

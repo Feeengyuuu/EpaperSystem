@@ -82,6 +82,28 @@ def _load_builtin_manifests():
     ]
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_cached_display_redraw_is_explicit_without_import(tmp_path, monkeypatch, enabled):
+    path = _write_plugin(tmp_path)
+    payload = json.loads(path.read_text())
+    payload["capabilities"]["supports_cached_display_redraw"] = enabled
+    path.write_text(json.dumps(payload))
+    imported = []
+    monkeypatch.setattr(importlib, "import_module", lambda name: imported.append(name))
+    assert PluginManifest.from_path(path).capabilities.supports_cached_display_redraw is enabled
+    assert imported == []
+
+
+@pytest.mark.parametrize("invalid", ["true", 1, None])
+def test_cached_display_redraw_rejects_non_boolean(tmp_path, invalid):
+    path = _write_plugin(tmp_path)
+    payload = json.loads(path.read_text())
+    payload["capabilities"]["supports_cached_display_redraw"] = invalid
+    path.write_text(json.dumps(payload))
+    with pytest.raises(TypeError, match="supports_cached_display_redraw"):
+        PluginManifest.from_path(path)
+
+
 def test_v2_manifest_declares_live_refresh_without_import(tmp_path, monkeypatch):
     manifest_path = _write_plugin(tmp_path, supports_live_refresh=True)
     imported = []

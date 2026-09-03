@@ -19,6 +19,7 @@ from plugins.plugin_registry import (
     get_plugin_instance,
     plugin_allows_display_triggered_provider_refresh,
     plugin_presentation_refresh_is_provider_free,
+    plugin_supports_cached_display_redraw,
     plugin_supports_day_night_theme,
     plugin_supports_live_refresh,
     plugin_supports_presentation_refresh,
@@ -1859,6 +1860,15 @@ class RefreshTask:
             return candidates
         states = self.runtime_state.snapshot().instances
         for instance in active.plugins:
+            plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            if plugin_supports_cached_display_redraw(plugin_config):
+                # This audited local renderer also handles absent/expired source
+                # caches. It must not depend on an obsolete formal PNG existing.
+                _config, _context, local_theme = self._latest_presentation_theme(instance)
+                candidates[instance.instance_uuid] = _RotationDisplayCandidate(
+                    instance.instance_uuid, instance.structural_generation,
+                    instance.settings_revision, local_theme,
+                )
             state = states.get(instance.instance_uuid, InstanceRuntimeState())
             request = state.presentation_request
             if request is None or request.prepared_at is None:
@@ -2119,6 +2129,9 @@ class RefreshTask:
         if (
             allow_display_triggered
             and candidate.presentation_request_id is None
+            and not plugin_supports_cached_display_redraw(
+                self.device_config.get_plugin(selection.instance.plugin_id)
+            )
             and not self._snapshot_background_cache_disabled(selection.instance)
             and self._snapshot_should_refresh(selection.instance, current_dt)
             and not self._snapshot_retry_delayed(selection.instance, current_dt)
@@ -4482,6 +4495,13 @@ class RefreshTask:
                     error=str(error),
                 )
             except _CacheUnavailable as error:
+                if (
+                    command.intent is RefreshIntent.DISPLAY_CACHE
+                    and plugin_supports_cached_display_redraw(
+                        self.device_config.get_plugin(command.plugin_id)
+                    )
+                ):
+                    self._record_rotation_deadline_failure_safely(command, error)
                 finished = self.refresh_queue.finish(
                     entry.job.id,
                     JobStatus.CANCELED,
@@ -5816,14 +5836,25 @@ class RefreshTask:
                     raise _StaleSelection(
                         "live display follow-up is disabled"
                     )
-                image, prepared_selection = self._load_catalog_display_image(
-                    command,
-                    resolved,
-                )
+                plugin_config = self.device_config.get_plugin(command.plugin_id)
+                if (
+                    plugin_supports_cached_display_redraw(plugin_config)
+                    and not (
+                        command.allow_prepared_presentation
+                        and plugin_supports_presentation_refresh(plugin_config)
+                    )
+                ):
+                    image = self._redraw_cached_display(command, resolved, context, plugin_config)
+                    prepared_selection = None
+                else:
+                    image, prepared_selection = self._load_catalog_display_image(
+                        command,
+                        resolved,
+                    )
                 self._set_render_metadata(
                     False,
                     False,
-                    self.device_config.get_plugin(command.plugin_id),
+                    plugin_config,
                 )
                 try:
                     return self._commit_command_result(
@@ -5904,6 +5935,43 @@ class RefreshTask:
         self._capture_effective_theme_context(command, image)
         self._set_render_metadata(True, False, getattr(plugin, "config", plugin_config))
         return self._commit_command_result(command, None, image, self._get_current_datetime())
+
+    def _redraw_cached_display(self, command, resolved, context, plugin_config):
+        """Re-evaluate explicitly opted-in local data just before a display write."""
+        with self.render_arbiter.lease(command.plugin_id, context):
+            self._require_fresh_selection(command, context)
+            _config, _theme_context, current_theme = self._latest_presentation_theme(resolved.instance)
+            if current_theme != _resolved_theme_mode(command.payload):
+                raise _StaleSelection("local cached display theme changed")
+            sample = self._resource_sample()
+            if classify_resource_tier(sample, self._resource_thresholds()) is ResourceTier.HARD:
+                # A frozen status image is unsafe here; leave this display turn
+                # for another instance instead of falling back to old values.
+                raise _CacheUnavailable("local cached display redraw deferred under hard pressure")
+            started = self._clock()
+            plugin = get_plugin_instance(plugin_config)
+            image = plugin.render_cached_display(
+                thaw_payload(resolved.instance.settings),
+                self.device_config,
+                resolved_theme_context=thaw_payload(command.payload.get("resolved_theme_context")),
+            )
+            try:
+                self._require_fresh_selection(command, context)
+                _config, _theme_context, current_theme = self._latest_presentation_theme(resolved.instance)
+                if current_theme != _resolved_theme_mode(command.payload):
+                    raise _StaleSelection("local cached display theme changed during redraw")
+                if image is None or image.info.get("inkypi_theme_mode") != current_theme:
+                    raise _CacheUnavailable("local cached display redraw returned an invalid theme")
+            except BaseException:
+                if image is not None:
+                    image.close()
+                raise
+            logger.info(
+                "Local cached display redrawn. | plugin_id: %s | elapsed_seconds: %.3f | provenance: %s",
+                command.plugin_id, max(0.0, self._clock() - started),
+                getattr(read_source_provenance(image), "value", "none"),
+            )
+            return image
 
     def _load_catalog_display_image(self, command, resolved):
         """Load prepared or authoritative bytes without plugin execution."""
@@ -7750,6 +7818,16 @@ class RefreshTask:
         return None
 
     def _record_command_failure(self, command, error):
+        if (
+            command.intent is RefreshIntent.DISPLAY_CACHE
+            and plugin_supports_cached_display_redraw(
+                self.device_config.get_plugin(command.plugin_id)
+            )
+        ):
+            # Local rendering/panel failure says nothing about vehicle DATA.
+            if not self._record_rotation_deadline_failure_safely(command, error):
+                self.scheduler_state.record_failure(error)
+            return
         if command.intent is RefreshIntent.THEME_CATCHUP:
             current_dt = self._get_current_datetime()
             target_mode = _resolved_theme_mode(command.payload)

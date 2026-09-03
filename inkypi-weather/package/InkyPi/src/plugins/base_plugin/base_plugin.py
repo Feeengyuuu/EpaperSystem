@@ -98,6 +98,14 @@ class BasePlugin:
         """Return live refresh state for scheduler cache refresh, or None when inactive."""
         return None
 
+    def render_cached_display(self, settings, device_config, *, resolved_theme_context):
+        """Redraw local cached values without providers, credentials or cache writes.
+
+        Only explicitly audited manifest opt-ins may run on DISPLAY_CACHE.
+        This does not attest DATA success or replace the last-good image.
+        """
+        raise NotImplementedError("local cached display redraw is not supported")
+
     def generate_image(self, settings, device_config):
         raise NotImplementedError("generate_image must be implemented by subclasses")
 
