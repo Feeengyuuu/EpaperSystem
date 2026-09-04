@@ -5306,6 +5306,106 @@ def test_select_msi_events_ignores_live_show_placeholder_for_next_match():
     assert selected["main"]["team_b"] == "KC"
     assert selected["upcoming"] == [next_match]
 
+
+def test_select_lck_events_ignores_live_show_placeholder_for_real_upcoming():
+    now = datetime(2026, 9, 4, 7, 50, 58, tzinfo=timezone.utc)
+    league = {"name": "LCK", "slug": "lck"}
+    payload = {
+        "data": {
+            "schedule": {
+                "events": [
+                    {
+                        "startTime": "2026-09-04T07:12:51.464Z",
+                        "state": "inProgress",
+                        "type": "show",
+                        "league": league,
+                    },
+                    {
+                        "startTime": "2026-09-04T08:00:00Z",
+                        "state": "unstarted",
+                        "type": "match",
+                        "blockName": "Playoffs",
+                        "league": league,
+                        "match": {
+                            "strategy": {"type": "bestOf", "count": 5},
+                            "teams": [
+                                {"name": "kt Rolster", "code": "KT"},
+                                {"name": "Dplus KIA", "code": "DK"},
+                            ],
+                        },
+                    },
+                ]
+            }
+        }
+    }
+
+    events = SportsDashboard._parse_lpl_events(payload, timezone.utc)
+    selected = SportsDashboard._select_lck_events(events, now)
+
+    assert selected["live"] == []
+    assert selected["recent"] == []
+    assert selected["upcoming"] == [events[1]]
+    assert selected["main"] is events[1]
+    assert (selected["main"]["team_a"], selected["main"]["team_b"]) == ("KT", "DK")
+    assert selected["main"]["best_of"] == 5
+    assert selected["main"]["block"] == "Playoffs"
+    assert SportsDashboard._lpl_focus_tag(bool(selected["live"])) == "NEXT MATCH"
+
+
+@pytest.mark.parametrize(
+    ("placeholder_team_a", "placeholder_team_b"),
+    [(None, None), ("TBA", "To Be Announced")],
+)
+def test_select_lck_events_ignores_double_placeholder_without_source_match_id_after_start(
+    placeholder_team_a,
+    placeholder_team_b,
+):
+    now = datetime(2026, 9, 4, 7, 50, 58, tzinfo=timezone.utc)
+    league = {"name": "LCK", "slug": "lck"}
+    payload = {
+        "data": {
+            "schedule": {
+                "events": [
+                    {
+                        "id": "unresolved-lck-slot",
+                        "startTime": "2026-09-04T07:15:00Z",
+                        "state": "unstarted",
+                        "type": "match",
+                        "league": league,
+                        "match": {
+                            "teams": [
+                                {"code": placeholder_team_a},
+                                {"code": placeholder_team_b},
+                            ]
+                        },
+                    },
+                    {
+                        "startTime": "2026-09-04T08:00:00Z",
+                        "state": "unstarted",
+                        "type": "match",
+                        "league": league,
+                        "match": {
+                            "teams": [
+                                {"name": "kt Rolster", "code": "KT"},
+                                {"name": "Dplus KIA", "code": "DK"},
+                            ]
+                        },
+                    },
+                ]
+            }
+        }
+    }
+
+    events = SportsDashboard._parse_lpl_events(payload, timezone.utc)
+    selected = SportsDashboard._select_lck_events(events, now)
+
+    assert selected["live"] == []
+    assert selected["recent"] == []
+    assert selected["upcoming"] == [events[1]]
+    assert selected["main"] is events[1]
+    assert (selected["main"]["team_a"], selected["main"]["team_b"]) == ("KT", "DK")
+
+
 def test_select_msi_events_uses_featured_page_only_without_matches():
     now = datetime(2026, 6, 24, 12, 0, tzinfo=timezone.utc)
     featured = SportsDashboard._lpl_msi_featured_event(now)

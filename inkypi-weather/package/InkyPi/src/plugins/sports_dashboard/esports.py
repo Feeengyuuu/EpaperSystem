@@ -5205,14 +5205,16 @@ class EsportsMixin:
         return sorted(events, key=lambda item: item["start"])
 
     @staticmethod
-    def _is_msi_displayable_match_event(event):
+    def _is_lol_displayable_match_event(event):
         event = event or {}
         if str(event.get("event_type") or "").strip().lower() == "show":
             return False
         source_match_id = str(event.get("source_match_id") or "").strip()
-        team_a = str(event.get("team_a") or "").strip().upper()
-        team_b = str(event.get("team_b") or "").strip().upper()
-        if not source_match_id and team_a in {"", "TBD"} and team_b in {"", "TBD"}:
+        team_a = str(event.get("team_a") or "").strip()
+        team_b = str(event.get("team_b") or "").strip()
+        team_a_is_placeholder = not team_a or SportsDashboard._is_tbd_team_label(team_a)
+        team_b_is_placeholder = not team_b or SportsDashboard._is_tbd_team_label(team_b)
+        if not source_match_id and team_a_is_placeholder and team_b_is_placeholder:
             return False
         return True
 
@@ -5222,11 +5224,12 @@ class EsportsMixin:
 
     @staticmethod
     def _select_lck_events(events, now):
+        events = [event for event in (events or []) if SportsDashboard._is_lol_displayable_match_event(event)]
         return SportsDashboard._select_lol_events(events, now, include_lpl_featured=False)
 
     @staticmethod
     def _select_msi_events(events, now, featured_event=None):
-        events = [event for event in (events or []) if SportsDashboard._is_msi_displayable_match_event(event)]
+        events = [event for event in (events or []) if SportsDashboard._is_lol_displayable_match_event(event)]
         selected = SportsDashboard._select_lol_events(events, now, include_lpl_featured=False)
         if (
             featured_event
