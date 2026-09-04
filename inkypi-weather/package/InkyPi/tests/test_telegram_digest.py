@@ -21,7 +21,12 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
     read_source_provenance,
 )
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
-from plugins.telegram_digest.telegram_digest import CHAT_FEED_MAX_ROWS, STATE_VERSION, TelegramDigest  # noqa: E402
+from plugins.telegram_digest.telegram_digest import (  # noqa: E402
+    CHAT_FEED_MAX_ROWS,
+    RENDERED_VISIBLE_KEYS_IMAGE_INFO_KEY,
+    STATE_VERSION,
+    TelegramDigest,
+)
 
 
 TEST_TMP_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "telegram_digest_tests"
@@ -681,6 +686,90 @@ def test_telegram_day_page_surfaces_are_solid_native_white(tmp_path):
     } == {(255, 255, 255)}
 
 
+def test_telegram_render_fills_right_column_with_three_media_cards(tmp_path):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 9, 4, 2, 40, tzinfo=timezone.utc)
+    colors = (
+        (171, 32, 47),
+        (23, 139, 81),
+        (37, 79, 183),
+        (188, 92, 24),
+    )
+    captions = (
+        "主图说明",
+        "",
+        "第二张媒体的文字说明会保留并根据空间换行。",
+        "第三张媒体的文字说明也必须保留，不能留下大块空白。",
+    )
+    messages = []
+    for index, (color, caption) in enumerate(zip(colors, captions), start=1):
+        media_path = tmp_path / f"media-{index}.png"
+        Image.new("RGB", (320, 180), color).save(media_path)
+        messages.append(
+            {
+                "key": f"media-{index}",
+                "message_id": index,
+                "date": int(now.timestamp()) - index,
+                "chat_title": f"Channel {index}",
+                "title": caption or f"Media {index}",
+                "summary": caption,
+                "raw_text": caption,
+                "media_kind": "photo",
+                "media_path": str(media_path),
+            }
+        )
+    state = {
+        "schema": STATE_VERSION,
+        "messages": messages,
+        "stats": {"message_count": len(messages)},
+        "status": {
+            "source_state": "live",
+            "generated_at": now.isoformat(),
+            "account_api": True,
+        },
+    }
+    (tmp_path / "state.json").write_text(
+        json.dumps(state),
+        encoding="utf-8",
+    )
+
+    image = plugin.generate_image(
+        {
+            "_theme_render_only": True,
+            "_inkypi_theme": _theme_context("day", requested_mode="day"),
+        },
+        DummyDeviceConfig(),
+    )
+
+    assert image.info[RENDERED_VISIBLE_KEYS_IMAGE_INFO_KEY] == (
+        "media-1",
+        "media-2",
+        "media-3",
+        "media-4",
+    )
+    right_column = (498, 44, 786, 449)
+    for color in colors[1:]:
+        assert any(
+            image.getpixel((x, y)) == color
+            for y in range(right_column[1], right_column[3])
+            for x in range(right_column[0], right_column[2])
+        )
+    third_image_rows = [
+        y
+        for y in range(right_column[1], right_column[3])
+        if any(
+            image.getpixel((x, y)) == colors[3]
+            for x in range(right_column[0], right_column[2])
+        )
+    ]
+    assert max(third_image_rows) >= 415
+    assert any(
+        image.getpixel((x, y)) == (29, 33, 38)
+        for y in range(max(third_image_rows) + 1, 444)
+        for x in range(514, 770)
+    )
+
+
 def test_telegram_day_dim_text_has_small_text_contrast_on_all_surfaces(tmp_path):
     plugin = _plugin(tmp_path)
     palette = plugin._palette(_theme_context("day", requested_mode="day"))
@@ -1052,7 +1141,7 @@ def test_account_mode_skips_text_only_unread_messages(
     assert len(FakeTelegramClient.download_calls) == 1
 
 
-def test_account_mode_downloads_visible_media_plus_one_prefetch_with_hard_cap(tmp_path, monkeypatch):
+def test_account_mode_downloads_four_visible_media_with_hard_cap(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     now = datetime(2026, 6, 27, 18, 42, tzinfo=timezone.utc)
     session_base = tmp_path / "telegram_account"
@@ -1098,8 +1187,13 @@ def test_account_mode_downloads_visible_media_plus_one_prefetch_with_hard_cap(tm
     visible_keys = plugin._displayed_message_keys(payload["messages"])
     cached_keys = [item["key"] for item in payload["messages"] if item["media_path"]]
 
-    assert visible_keys == ["-100123:60", "-100123:59", "-100123:58"]
-    assert cached_keys == [*visible_keys, "-100123:57"]
+    assert visible_keys == [
+        "-100123:60",
+        "-100123:59",
+        "-100123:58",
+        "-100123:57",
+    ]
+    assert cached_keys == visible_keys
     assert len(FakeTelegramClient.download_calls) == 4
     assert payload["stats"]["media_cached_count"] == 4
     assert payload["stats"]["media_missing_count"] == 2

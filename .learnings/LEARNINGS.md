@@ -6,6 +6,38 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260903-002] correction
+
+**Logged**: 2026-09-03T20:14:04-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Telegram media cards must adapt to the available panel height instead of leaving a large blank region after fixed-height rows.
+
+### Details
+The right column had enough total height for a third media item, but fixed 86-pixel thumbnails plus up to three caption lines made the first two rows consume an uneven amount of space. The renderer then rejected the third row even when four media files were already cached. The user clarified that the page should maximize information density and avoid large unused regions while still preserving media captions.
+
+### Suggested Action
+For the 800x480 Telegram layout, render at most three right-column media cards, divide the content height across the actual card count, grow each thumbnail into its assigned slot, and reserve at least one caption line when a caption exists. Keep the existing four-download hard cap aligned with the one featured plus three secondary visible items.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/telegram_digest/telegram_digest.py, inkypi-weather/package/InkyPi/tests/test_telegram_digest.py
+- Tags: telegram-digest, adaptive-layout, media-cards, captions, whitespace, e-paper
+- Pattern-Key: telegram_digest.media_rows_fill_available_height
+- Recurrence-Count: 1
+- First-Seen: 2026-09-03
+- Last-Seen: 2026-09-03
+
+### Resolution
+- **Resolved**: 2026-09-03T20:14:04-07:00
+- **Commit/PR**: codex/telegram-third-card-20260903
+- **Notes**: The public 800x480 render now proves one featured item plus three right-column media cards, visible compact captions, and third-row media extending into the former blank region.
+
+---
+
 ## [LRN-20260903-001] best_practice
 
 **Logged**: 2026-09-03T19:07:00-07:00

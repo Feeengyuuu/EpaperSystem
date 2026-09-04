@@ -36,6 +36,8 @@ DEFAULT_DIALOG_LIMIT = 30
 DEFAULT_MESSAGES_PER_DIALOG = 4
 MAX_MESSAGE_CACHE = 30
 CHAT_FEED_MAX_ROWS = 14
+CHAT_FEED_MAX_MEDIA_ITEMS = 3
+CHAT_FEED_MIN_MEDIA_ROW_HEIGHT = 112
 ACCOUNT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS = 7
 DEFAULT_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = 4
 MAX_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = 4
@@ -1160,11 +1162,16 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         return visible
 
     def _chat_feed_messages(self, messages, max_rows=CHAT_FEED_MAX_ROWS):
+        candidates = [
+            item
+            for item in messages or []
+            if isinstance(item, dict) and item
+        ]
+        if candidates and all(self._chat_item_is_media(item) for item in candidates):
+            return candidates[:CHAT_FEED_MAX_MEDIA_ITEMS]
         feed = []
         used_rows = 0
-        for item in messages or []:
-            if not isinstance(item, dict) or not item:
-                continue
+        for item in candidates:
             weight = self._chat_item_row_weight(item)
             if feed and used_rows + weight > max_rows:
                 break
@@ -1431,6 +1438,41 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
             self._draw_empty_chat_state(draw, (x0, top, x1, bottom), fonts, scale, ink, dim)
             return []
 
+        if all(self._chat_item_is_media(item) for item in display):
+            gap = int(2 * scale)
+            available = max(0, bottom - top - gap * (len(display) - 1))
+            row_height, remainder = divmod(available, len(display))
+            cursor_y = top
+            drawn = []
+            for row_index, item in enumerate(display):
+                item_h = row_height + (1 if row_index < remainder else 0)
+                item_box_x0 = x0 + int(6 * scale)
+                item_box_x1 = x1 - int(6 * scale)
+                item_box = (
+                    item_box_x0,
+                    cursor_y,
+                    item_box_x1,
+                    cursor_y + item_h,
+                )
+                fill = row_alt if row_index % 2 else row_bg
+                self._draw_chat_media_item(
+                    image,
+                    draw,
+                    item,
+                    item_box,
+                    fonts,
+                    p,
+                    scale,
+                    fill,
+                    rule,
+                    ink,
+                    dim,
+                    fill_box=True,
+                )
+                drawn.append(item)
+                cursor_y += item_h + gap
+            return drawn
+
         cursor_y = top
         row_index = 0
         drawn = []
@@ -1466,10 +1508,21 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         x0, y0, x1, y1 = content_box
         remaining = y1 - y0
         gap = int(2 * scale)
+        candidates = [
+            item
+            for item in messages or []
+            if isinstance(item, dict) and item
+        ]
+        if candidates and all(self._chat_item_is_media(item) for item in candidates):
+            max_items = min(CHAT_FEED_MAX_MEDIA_ITEMS, len(candidates))
+            minimum_height = int(CHAT_FEED_MIN_MEDIA_ROW_HEIGHT * scale)
+            for item_count in range(max_items, 0, -1):
+                usable = remaining - gap * (item_count - 1)
+                if usable // item_count >= minimum_height:
+                    return candidates[:item_count]
+            return candidates[:1]
         display = []
-        for item in messages or []:
-            if not isinstance(item, dict) or not item:
-                continue
+        for item in candidates:
             item_h = self._chat_item_height(draw, item, fonts, scale, x1 - x0)
             extra_gap = gap if display else 0
             if item_h + extra_gap <= remaining:
@@ -1526,7 +1579,22 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
             self._draw_text(draw, (text_x, text_y), self._clip_text(draw, line, fonts["chat"], max_width), fonts["chat"], ink)
             text_y += int(15 * scale)
 
-    def _draw_chat_media_item(self, image, draw, item, box, fonts, p, scale, fill, rule, ink, dim):
+    def _draw_chat_media_item(
+        self,
+        image,
+        draw,
+        item,
+        box,
+        fonts,
+        p,
+        scale,
+        fill,
+        rule,
+        ink,
+        dim,
+        *,
+        fill_box=False,
+    ):
         x0, y0, x1, y1 = box
         draw.rectangle((x0, y0, x1, y1 - 1), fill=fill)
         draw.line((x0, y1 - 1, x1, y1 - 1), fill=rule, width=1)
@@ -1547,17 +1615,62 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
                 )
 
         media_top = y0 + int(22 * scale)
-        media_box = (x0 + int(10 * scale), media_top, x1 - int(10 * scale), media_top + int(86 * scale))
-        self._draw_media(image, draw, item, media_box, p, featured=False)
         caption = self._chat_line_text(item)
-        if caption:
-            caption_y = media_box[3] + int(3 * scale)
+        caption_lines = []
+        if fill_box:
+            line_height = max(1, int(15 * scale))
+            bottom_pad = max(2, int(6 * scale))
+            caption_gap = max(1, int(3 * scale))
+            minimum_media_height = max(36, int(64 * scale))
+            available_caption_height = max(
+                0,
+                y1 - media_top - bottom_pad - minimum_media_height,
+            )
+            max_caption_lines = min(
+                3,
+                max(0, (available_caption_height - caption_gap) // line_height),
+            )
+            if caption and max_caption_lines:
+                caption_lines = self._wrap_text(
+                    draw,
+                    caption,
+                    fonts["chat"],
+                    x1 - x0 - int(20 * scale),
+                    max_caption_lines,
+                )
+            caption_height = len(caption_lines) * line_height
+            caption_space = caption_height + (caption_gap if caption_lines else 0)
+            media_bottom = max(
+                media_top + 1,
+                y1 - bottom_pad - caption_space,
+            )
+        else:
+            media_bottom = media_top + int(86 * scale)
+            if caption:
+                caption_lines = self._wrap_text(
+                    draw,
+                    caption,
+                    fonts["chat"],
+                    x1 - x0 - int(20 * scale),
+                    3,
+                )
+            caption_gap = int(3 * scale)
+            line_height = int(15 * scale)
+        media_box = (
+            x0 + int(10 * scale),
+            media_top,
+            x1 - int(10 * scale),
+            media_bottom,
+        )
+        self._draw_media(image, draw, item, media_box, p, featured=False)
+        if caption_lines:
+            caption_y = media_box[3] + caption_gap
             caption_width = media_box[2] - media_box[0]
-            for line in self._wrap_text(draw, caption, fonts["chat"], caption_width, 3):
+            for line in caption_lines:
                 if caption_y + int(13 * scale) > y1:
                     break
                 self._draw_text(draw, (media_box[0], caption_y), self._clip_text(draw, line, fonts["chat"], caption_width), fonts["chat"], ink)
-                caption_y += int(15 * scale)
+                caption_y += line_height
 
     def _draw_chat_prefix(self, draw, item, x0, y, fonts, scale, color, dim):
         time_text = self._relative_time(item.get("date"))
