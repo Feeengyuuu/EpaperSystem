@@ -703,15 +703,15 @@ def test_save_recovery_fails_closed_on_unsafe_child_without_removing_protected(
     with Image.new("RGB", (8, 8), "red") as image:
         cache.save(protected, image)
         cache.save(unsafe, image)
-    real_lstat = presentation_cache_module.os.lstat
+    stat_child = cache._stat_child
 
-    def report_unsafe_child(target):
-        result = real_lstat(target)
-        if Path(target) == Path(unsafe.cache_path):
+    def report_unsafe_child(name, bound_root):
+        result = stat_child(name, bound_root)
+        if name == Path(unsafe.cache_path).name:
             return _clone_stat(result, st_mode=stat.S_IFLNK | 0o777)
         return result
 
-    monkeypatch.setattr(presentation_cache_module.os, "lstat", report_unsafe_child)
+    monkeypatch.setattr(cache, "_stat_child", report_unsafe_child)
 
     with Image.new("RGB", (8, 8), "blue") as image:
         with pytest.raises(OSError):

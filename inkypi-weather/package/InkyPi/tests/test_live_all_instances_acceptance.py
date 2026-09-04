@@ -38,6 +38,23 @@ def trusted_privileged_helper(acceptance, monkeypatch):
     )
 
 
+def _simulate_privileged_snapshot_cli(acceptance, monkeypatch):
+    actual_geteuid = getattr(acceptance.os, "geteuid", lambda: 0)
+    open_root = acceptance._open_restricted_snapshot_root
+
+    def open_test_owned_root(snapshot_root):
+        # CLI authorization is privileged, but tmp_path is owned by the test
+        # runner. Keep real descriptor, mode, and owner validation for its files.
+        with monkeypatch.context() as filesystem_identity:
+            filesystem_identity.setattr(
+                acceptance.os, "geteuid", actual_geteuid, raising=False
+            )
+            return open_root(snapshot_root)
+
+    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(acceptance, "_open_restricted_snapshot_root", open_test_owned_root)
+
+
 def _config(count=27, *, duplicate_uuid=False):
     plugins = []
     for index in range(count):
@@ -2547,7 +2564,7 @@ def test_runtime_config_snapshot_cli_prints_only_safe_metadata(
     monkeypatch,
     trusted_privileged_helper,
 ):
-    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    _simulate_privileged_snapshot_cli(acceptance, monkeypatch)
     snapshot_root = tmp_path / "snapshots"
     monkeypatch.setattr(acceptance, "CONFIG_SNAPSHOT_ROOT", snapshot_root)
     config_path = tmp_path / "device.json"
@@ -3104,7 +3121,7 @@ def test_runtime_config_restore_cli_uses_config_store_and_prints_no_secrets(
     monkeypatch,
     trusted_privileged_helper,
 ):
-    monkeypatch.setattr(acceptance.os, "geteuid", lambda: 0, raising=False)
+    _simulate_privileged_snapshot_cli(acceptance, monkeypatch)
     snapshot_root = tmp_path / "snapshots"
     monkeypatch.setattr(acceptance, "CONFIG_SNAPSHOT_ROOT", snapshot_root)
     monkeypatch.setattr(

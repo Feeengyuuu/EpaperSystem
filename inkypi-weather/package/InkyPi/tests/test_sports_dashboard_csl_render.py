@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -757,7 +757,17 @@ def test_competition_source_timestamp_uses_the_passed_device_timezone():
     assert label == "CSL ESPN DATA 12:30 AM"
 
 
-def test_worldcup_without_profile_matches_pre_profile_pixels():
+def test_worldcup_without_profile_matches_pre_profile_pixels(monkeypatch):
+    font_path = Path(__file__).resolve().parents[1] / "src/static/fonts/NotoSansSC-VF.ttf"
+
+    def baseline_font(size, bold=False):
+        # Keep the original BASIC-layout baseline independent of whether the
+        # platform's Pillow wheel includes RAQM text shaping.
+        font = ImageFont.truetype(str(font_path), int(size), layout_engine=ImageFont.Layout.BASIC)
+        font.set_variation_by_axes([700 if bold else 400])
+        return font
+
+    monkeypatch.setattr(SportsDashboard, "_font", staticmethod(baseline_font))
     plugin = _plugin()
 
     image = plugin._render_worldcup_api_panel(

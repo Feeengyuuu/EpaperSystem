@@ -1552,7 +1552,7 @@ def test_newspaper_remote_image_rejects_disallowed_bmp():
         plugin._decode_remote_image(buffer.getvalue())
 
 
-def test_newspaper_media_root_symlink_never_touches_external_file(tmp_path):
+def test_newspaper_media_root_symlink_never_touches_external_file(tmp_path, monkeypatch):
     plugin = make_plugin("media-root-link")
     settings = bound_settings(mediaSources="Paper A|newspaper|chi_cd")
     outside = tmp_path / "outside"
@@ -1564,17 +1564,25 @@ def test_newspaper_media_root_symlink_never_touches_external_file(tmp_path):
         media_root.symlink_to(outside, target_is_directory=True)
     except (OSError, NotImplementedError):
         pytest.skip("directory symlink unavailable")
-    monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(
         plugin,
         "_fetch_source_image",
         lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"),
     )
-    try:
+    sources = plugin._sources_for_settings(settings)
+    bank = plugin._presentation_bank(settings, sources, (800, 480))
+    _document, profile = bank.load_for_data()
+    monkeypatch.setattr(
+        newspaper_bank.NewspaperPresentationBank,
+        "_write_media",
+        lambda *_args, **_kwargs: pytest.fail("unsafe root reached media write"),
+    )
+    with Image.new("RGB", (800, 480), "white") as source_image:
         with pytest.raises(RuntimeError, match="safe|link|root|directory"):
-            plugin.generate_image(settings, DeviceConfig())
-    finally:
-        monkeypatch.undo()
+            bank.ingest(profile, sources[0], source_image, transaction=bank.transaction())
+    image = plugin.generate_image(settings, DeviceConfig())
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+    assert list(outside.iterdir()) == [sentinel]
     assert sentinel.read_text(encoding="utf-8") == "unchanged"
 
 
