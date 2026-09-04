@@ -20425,6 +20425,142 @@ def test_data_source_provenance_controls_success_without_blocking_image_promotio
     assert state.presentation.last_success_at == legacy_success
 
 
+def test_vehicle_degraded_data_result_uses_thirty_minute_retry_floor():
+    SourceProvenance, attach, _read = _task6_provenance_api()
+    tmp_path = make_test_dir("task6-vehicle-degraded-retry-floor")
+    current = datetime(2026, 7, 12, 8, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "vehicle_status",
+            "Vehicle Status",
+            latest_refresh_time="2026-07-12T07:30:00+00:00",
+            interval=10_800,
+        )
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        retry_registry=RetryRegistry(jitter=lambda delay: delay),
+    )
+    instance = playlist.plugins[0].snapshot()
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current,
+    )
+    resolved = task._resolve_playlist_command(command)
+    image = attach(
+        Image.new("RGB", (32, 16), "white"),
+        SourceProvenance.STALE_CACHE,
+        detail="vehicle_bridge_stale",
+    )
+    task._set_render_metadata(True, False, {})
+
+    task._commit_command_result(command, resolved, image, current)
+
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert state.data.last_failure_at == current.isoformat()
+    assert state.data.next_retry_at == (current + timedelta(minutes=30)).isoformat()
+
+
+def test_vehicle_degraded_retry_floor_never_exceeds_custom_refresh_interval():
+    SourceProvenance, attach, _read = _task6_provenance_api()
+    tmp_path = make_test_dir("task6-vehicle-custom-cadence-retry-floor")
+    current = datetime(2026, 7, 12, 8, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "vehicle_status",
+            "Vehicle Status",
+            latest_refresh_time="2026-07-12T07:30:00+00:00",
+            interval=60,
+        )
+    )
+    task, device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        retry_registry=RetryRegistry(jitter=lambda delay: delay),
+    )
+    device_config.config["vehicle_status_degraded_retry_seconds"] = 3_600
+    instance = playlist.plugins[0].snapshot()
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current,
+    )
+    resolved = task._resolve_playlist_command(command)
+    image = attach(
+        Image.new("RGB", (32, 16), "white"),
+        SourceProvenance.LOCAL_FALLBACK,
+        detail="vehicle_bridge_unavailable",
+    )
+    task._set_render_metadata(True, False, {})
+
+    for attempt in range(3):
+        attempted_at = current + timedelta(minutes=attempt)
+        task._commit_command_result(command, resolved, image, attempted_at)
+        state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+        assert state.data.next_retry_at == (
+            attempted_at + timedelta(minutes=1)
+        ).isoformat()
+
+
+@pytest.mark.parametrize("configured", [True, -1, float("nan"), "invalid"])
+def test_vehicle_invalid_degraded_retry_config_uses_safe_default(configured):
+    tmp_path = make_test_dir("task6-vehicle-invalid-degraded-retry")
+    task, device_config, _clock = _make_runtime_task(tmp_path)
+    device_config.config["vehicle_status_degraded_retry_seconds"] = configured
+    command = SimpleNamespace(
+        plugin_id="vehicle_status",
+        payload={"refresh": {"interval": 10_800}},
+    )
+
+    assert task._degraded_data_retry_minimum_seconds(command) == 1_800
+
+
+def test_non_vehicle_degraded_data_result_keeps_generic_retry_backoff():
+    tmp_path = make_test_dir("task6-non-vehicle-degraded-retry")
+    current = datetime(2026, 7, 12, 8, 0, tzinfo=timezone.utc)
+    playlist = _runtime_playlist(
+        _runtime_plugin_data(
+            "runtime_plugin",
+            "Runtime Plugin",
+            latest_refresh_time="2026-07-12T07:30:00+00:00",
+        )
+    )
+    task, _device_config, _clock = _make_runtime_task(
+        tmp_path,
+        playlists=[playlist],
+        retry_registry=RetryRegistry(jitter=lambda delay: delay),
+    )
+    instance = playlist.plugins[0].snapshot()
+    command = task._playlist_command(
+        playlist.name,
+        instance,
+        source=CommandSource.BACKGROUND,
+        intent=RefreshIntent.DATA_REFRESH,
+        display_cached_only=False,
+        kind=CommandKind.CACHE_REFRESH,
+        current_dt=current,
+    )
+
+    task._record_degraded_data_result(
+        command,
+        SourceProvenance.STALE_CACHE,
+        current,
+    )
+
+    state = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert state.data.next_retry_at == (current + timedelta(seconds=30)).isoformat()
+
+
 @pytest.mark.parametrize(
     ("intent", "lane"),
     [

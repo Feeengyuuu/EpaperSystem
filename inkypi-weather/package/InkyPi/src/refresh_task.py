@@ -175,6 +175,11 @@ DEFAULT_SPORTS_ISOLATED_LIVENESS_STARVATION_SECONDS = 30 * 60
 DEFAULT_SPORTS_ISOLATED_LIVENESS_WINDOW_SECONDS = 90
 DEFAULT_SPORTS_ISOLATED_LIVENESS_COOLDOWN_SECONDS = 5 * 60
 DEFAULT_SPORTS_BACKGROUND_LIVE_MIN_INTERVAL_SECONDS = 15 * 60
+# A stale Vehicle Bridge response is commonly the intentional no-wake path.
+# Probe it faster than the normal three-hour cadence without occupying the
+# background lane every five minutes for an indefinitely sleeping vehicle.
+DEFAULT_VEHICLE_STATUS_DEGRADED_RETRY_SECONDS = 30 * 60
+MAX_DEGRADED_DATA_RETRY_SECONDS = 24 * 60 * 60
 MAX_RESOURCE_PRESSURE_DEFERRAL_SECONDS = 5 * 60
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
 DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS = 60
@@ -6116,12 +6121,23 @@ class RefreshTask:
             self._lane_retry_key(command.instance_uuid, lane)
         )
 
-    def _record_intent_failure(self, command, error, current_dt):
+    def _record_intent_failure(
+        self,
+        command,
+        error,
+        current_dt,
+        *,
+        minimum_delay_seconds=0,
+        maximum_delay_seconds=None,
+    ):
         lane = self._lane_for_intent(command.intent)
         if lane is None or command.instance_uuid is None:
             return None
         retry_key = self._lane_retry_key(command.instance_uuid, lane)
         delay = self.retry_registry.mark_failure(retry_key, self._clock())
+        delay = max(delay, float(minimum_delay_seconds))
+        if maximum_delay_seconds is not None:
+            delay = min(delay, float(maximum_delay_seconds))
         self.runtime_state.record_failure(
             command.instance_uuid,
             current_dt.isoformat(),
@@ -6141,10 +6157,58 @@ class RefreshTask:
             f"DATA source is display-safe but unhealthy: {provenance_value}"
         )
         self.scheduler_state.record_failure(error)
-        self._record_intent_failure(command, error, current_dt)
+        retry_floor = self._degraded_data_retry_minimum_seconds(command)
+        retry_ceiling = self._degraded_data_retry_maximum_seconds(command)
+        retry_delay = self._record_intent_failure(
+            command,
+            error,
+            current_dt,
+            minimum_delay_seconds=retry_floor,
+            maximum_delay_seconds=retry_ceiling,
+        )
+        if retry_delay is not None and retry_floor > 0:
+            logger.info(
+                "Degraded DATA retry floor applied. | plugin_id: %s | "
+                "minimum_seconds: %.1f | retry_seconds: %.1f",
+                command.plugin_id,
+                retry_floor,
+                retry_delay,
+            )
         self.scheduler_state.set_next_attempt(
             self._clock() + self._scheduler_poll_seconds()
         )
+
+    def _degraded_data_retry_minimum_seconds(self, command):
+        if command.plugin_id != "vehicle_status":
+            return 0.0
+        delay = self._config_float(
+            "vehicle_status_degraded_retry_seconds",
+            DEFAULT_VEHICLE_STATUS_DEGRADED_RETRY_SECONDS,
+        )
+        if not math.isfinite(delay) or delay < 0:
+            delay = float(DEFAULT_VEHICLE_STATUS_DEGRADED_RETRY_SECONDS)
+        delay = min(delay, float(MAX_DEGRADED_DATA_RETRY_SECONDS))
+
+        interval = self._degraded_data_retry_maximum_seconds(command)
+        if interval is not None:
+            delay = min(delay, interval)
+        return delay
+
+    @staticmethod
+    def _degraded_data_retry_maximum_seconds(command):
+        if command.plugin_id != "vehicle_status":
+            return None
+        refresh = command.payload.get("refresh")
+        raw_interval = refresh.get("interval") if isinstance(refresh, Mapping) else None
+        if isinstance(raw_interval, bool):
+            return None
+        try:
+            interval = float(raw_interval)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        if not math.isfinite(interval) or interval <= 0:
+            return None
+        return interval
 
     def _record_runtime_success(self, instance_uuid, succeeded_at):
         try:
