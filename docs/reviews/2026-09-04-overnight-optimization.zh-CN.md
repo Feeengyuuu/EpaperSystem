@@ -73,7 +73,7 @@
 
 发布准备中还核实并修复了现有 CI 问题：
 
-- edbd9081 的完整测试与 clean archive 串行任务触及 20 分钟上限；改成两个独立的矩阵任务，分别保留 20 分钟预算。
+- edbd9081 的完整测试先出现两个失败，随后约 9% 进度处停滞至 20 分钟上限，clean archive 未启动。两项测试改成独立矩阵任务，并在首次失败时输出结果、长时间无返回时输出调用栈；拆分任务本身不代替修复具体失败，最终仍需 Linux CI 通过。
 - 运行锁中 Pillow 12.2.0、cryptography 49.0.0、pi-heif 1.2.0 被审计报告命中，更新至 12.3.0、50.0.1、1.3.0。开发锁中的 pip 更新至 26.2.1。重建哈希锁后，运行与开发依赖审计均无已知漏洞；其余锁定版本保持不变。变更依据见 [Pillow 安全修复](https://pillow.readthedocs.io/en/stable/releasenotes/12.3.0.html)、[cryptography 变更记录](https://cryptography.io/en/stable/changelog/)、[pi-heif 发布元数据](https://pypi.org/project/pi-heif/1.3.0/) 与 [pip 发布元数据](https://pypi.org/project/pip/26.2.1/)。
 - 新版本均有实机 aarch64 / Python 3.13 对应二进制包，已按锁文件哈希下载验证；发布仍需确认设备中的实际安装版本。
 - 秘密扫描的五个历史命中经逐项核实：四项为可从公开测试参数复算的缓存哈希，一项为车辆气候字段允许集合。仅添加精确的提交／路径／规则／行号排除。候选发布历史扫描通过，未扩大规则或目录豁免。

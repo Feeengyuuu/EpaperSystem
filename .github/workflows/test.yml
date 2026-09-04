@@ -53,10 +53,10 @@ jobs:
       - name: Run complete Python 3.11 suite
         if: matrix.suite == 'full'
         working-directory: inkypi-weather/package/InkyPi
-        run: python -m pytest tests -q --no-header -p no:cacheprovider
+        run: python -m pytest tests -q --no-header -p no:cacheprovider --maxfail=1 -o faulthandler_timeout=180
       - name: Run tracked-only clean archive suite
         if: matrix.suite == 'clean-archive'
-        run: python tools/verify_clean_archive.py --pytest-args=-q
+        run: python tools/verify_clean_archive.py --pytest-args="-q --maxfail=1 -o faulthandler_timeout=180"
 
   quality:
     runs-on: ubuntu-latest
