@@ -6,6 +6,38 @@ Corrections, insights, and knowledge gaps captured during development.
 
 ---
 
+## [LRN-20260903-001] best_practice
+
+**Logged**: 2026-09-03T19:07:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+One-off startup migrations for a saved plugin instance must verify an exact, privacy-safe instance fingerprint before parsing or mutating legacy settings.
+
+### Details
+A migration that matched only playlist, plugin, and instance names could encounter another valid LiveRadar configuration whose optional `roomsJson` used a different supported shape or was empty. Strictly parsing that non-target configuration during startup would turn a narrow room-list update into a service availability risk. Hashing the stable instance UUID and combining it with structural generation, settings revision, and refresh cadence scopes the migration to the previously audited device state without embedding the UUID itself.
+
+### Suggested Action
+For future saved-instance migrations, put the exact identity guard before format-specific validation, skip non-matching instances without writing a marker, and commit the setting change plus marker in one full configuration CAS transaction.
+
+### Metadata
+- Source: correction
+- Related Files: inkypi-weather/package/InkyPi/src/config.py, inkypi-weather/package/InkyPi/tests/test_config_env_key_aliases.py
+- Tags: startup-migration, config, fingerprint, privacy, atomicity, fail-closed
+- Pattern-Key: config.saved_instance_migration_exact_fingerprint
+- Recurrence-Count: 1
+- First-Seen: 2026-09-03
+- Last-Seen: 2026-09-03
+
+### Resolution
+- **Resolved**: 2026-09-03T19:07:00-07:00
+- **Commit/PR**: codex/telegram-media-liveradar-20260903
+- **Notes**: LiveRadar room migration now verifies the hashed UUID and expected instance revisions before strict parsing, then persists settings and marker atomically.
+
+---
+
 ## [LRN-20260826-002] correction
 
 **Logged**: 2026-08-26T23:22:00-07:00

@@ -444,6 +444,17 @@ class FakeTelegramClient:
     def iter_messages(self, entity, limit=None, **kwargs):
         type(self).message_calls.append({"entity": entity, "limit": limit, **kwargs})
         messages = list(type(self).messages_by_entity.get(id(entity), []))
+        if kwargs.get("filter"):
+            messages = [
+                message
+                for message in messages
+                if getattr(message, "photo", None)
+                or getattr(message, "video", None)
+                or getattr(message, "gif", None)
+            ]
+        min_id = kwargs.get("min_id")
+        if min_id is not None:
+            messages = [message for message in messages if int(message.id) > int(min_id)]
         if kwargs.get("reverse") is True:
             messages = list(reversed(messages))
         return async_items(messages[:limit])
@@ -628,13 +639,46 @@ def test_telegram_renderer_uses_injected_palette_for_day_night_and_weather_auto(
     )
 
     assert day.size == night.size == auto.size == (800, 480)
-    assert day.getpixel((0, 479)) == (246, 242, 232)
+    assert day.getpixel((0, 479)) == (255, 255, 255)
     assert night.getpixel((0, 479)) == night_theme["palette"]["background"]
-    assert day.getpixel((20, 60)) == (255, 252, 242)
+    assert day.getpixel((20, 60)) == (255, 255, 255)
     assert night.getpixel((20, 60)) == night_theme["palette"]["panel"]
     assert auto.getpixel((0, 479)) == auto_theme["palette"]["background"]
     assert auto.getpixel((20, 60)) == auto_theme["palette"]["panel"]
     assert day.tobytes() != night.tobytes()
+
+
+def test_telegram_day_page_surfaces_are_solid_native_white(tmp_path):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 7, 13, 18, 0, tzinfo=timezone.utc)
+    payload = plugin._sample_payload({}, now, "sample")
+
+    image = plugin._render_page(
+        (800, 480),
+        payload,
+        {"_inkypi_theme": _theme_context("day", requested_mode="day")},
+        now,
+    )
+
+    gutter_colors = {
+        image.getpixel((x, y))
+        for x in range(14)
+        for y in range(44, 449)
+    }
+    assert gutter_colors == {(255, 255, 255)}
+    palette = plugin._palette(_theme_context("day", requested_mode="day"))
+    assert {
+        palette[key]
+        for key in (
+            "background",
+            "panel",
+            "chip",
+            "chat_background",
+            "chat_header",
+            "chat_row",
+            "chat_row_alt",
+        )
+    } == {(255, 255, 255)}
 
 
 def test_telegram_day_dim_text_has_small_text_contrast_on_all_surfaces(tmp_path):
@@ -737,6 +781,10 @@ def test_photo_message_uses_largest_photo_and_caches_media(tmp_path, monkeypatch
     assert payload["status"]["source_state"] == "live"
     assert payload["status"]["bot_api"] is True
     assert payload["messages"][0]["title"] == "模型发布更新"
+    assert payload["messages"][0]["summary"] == "频道中的图片与视频封面优先展示"
+    assert payload["messages"][0]["raw_text"] == (
+        "模型发布更新 频道中的图片与视频封面优先展示"
+    )
     assert payload["messages"][0]["media_kind"] == "photo"
     assert payload["messages"][0]["media_file_id"] == "large-photo"
     assert Path(payload["messages"][0]["media_path"]).is_file()
@@ -785,6 +833,8 @@ def test_video_message_uses_thumbnail_as_display_media(tmp_path, monkeypatch):
 
     message = payload["messages"][0]
     assert message["media_kind"] == "video"
+    assert message["title"] == "项目部署完成"
+    assert message["summary"] == "视频里有完整过程"
     assert message["media_file_id"] == "video-thumb"
     assert message["duration"] == 138
     assert Path(message["media_path"]).is_file()
@@ -856,11 +906,12 @@ def test_account_mode_requests_newest_unread_message_first(tmp_path, monkeypatch
         date=now,
         raw_text="Newest unread\nThis should be visited first",
         message="Newest unread\nThis should be visited first",
-        photo=None,
+        photo=SimpleNamespace(w=1280, h=720),
         video=None,
         gif=None,
         document=None,
         out=False,
+        media_bytes=image_chunks(color=(50, 110, 90))[0],
     )
     middle = SimpleNamespace(
         id=51,
@@ -908,6 +959,97 @@ def test_account_mode_requests_newest_unread_message_first(tmp_path, monkeypatch
     assert [item["key"] for item in payload["messages"]] == ["-100123:52"]
     assert payload["messages"][0]["title"] == "Newest unread"
     assert FakeTelegramClient.message_calls[0]["reverse"] is False
+
+
+@pytest.mark.parametrize("unread_only", [True, False])
+def test_account_mode_skips_text_only_unread_messages(
+    tmp_path,
+    monkeypatch,
+    unread_only,
+):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 6, 27, 18, 42, tzinfo=timezone.utc)
+    session_base = tmp_path / "telegram_account"
+    session_base.with_suffix(".session").write_text("authorized", encoding="utf-8")
+    entity = SimpleNamespace(id=-100123, username="daily_signal", title="Daily Signal")
+    dialog = SimpleNamespace(
+        entity=entity,
+        id=-100123,
+        title="Daily Signal",
+        unread_count=2,
+        dialog=SimpleNamespace(read_inbox_max_id=50),
+    )
+    text_only = SimpleNamespace(
+        id=53,
+        date=now,
+        raw_text="Newest unread text",
+        message="Newest unread text",
+        photo=None,
+        video=None,
+        gif=None,
+        document=None,
+        out=False,
+    )
+    outgoing_photo = SimpleNamespace(
+        id=52,
+        date=now,
+        raw_text="Outgoing photo",
+        message="Outgoing photo",
+        photo=SimpleNamespace(w=1280, h=720),
+        video=None,
+        gif=None,
+        document=None,
+        out=True,
+        media_bytes=image_chunks(color=(120, 80, 70))[0],
+    )
+    photo = SimpleNamespace(
+        id=51,
+        date=now,
+        raw_text="Photo caption",
+        message="Photo caption",
+        photo=SimpleNamespace(w=1280, h=720),
+        video=None,
+        gif=None,
+        document=None,
+        out=False,
+        media_bytes=image_chunks(color=(70, 120, 90))[0],
+    )
+    FakeTelegramClient.dialogs = [dialog]
+    FakeTelegramClient.messages_by_entity = {
+        id(entity): [text_only, outgoing_photo, photo]
+    }
+    FakeTelegramClient.download_calls = []
+    FakeTelegramClient.message_calls = []
+    FakeTelegramClient.instances = []
+    FakeTelegramClient.authorized = True
+    monkeypatch.setattr(plugin, "_telethon_client_class", lambda: FakeTelegramClient)
+
+    payload = plugin._payload(
+        {
+            "accessMode": "account",
+            "telegramApiId": "12345",
+            "telegramApiHash": "hash-value",
+            "telegramSessionPath": str(session_base),
+            "dialogFilter": "@daily_signal",
+            "messagesPerDialog": "1",
+            "unreadOnly": unread_only,
+        },
+        DummyDeviceConfig(),
+        now,
+    )
+
+    assert [item["key"] for item in payload["messages"]] == ["-100123:51"]
+    assert payload["messages"][0]["media_kind"] == "photo"
+    assert Path(payload["messages"][0]["media_path"]).is_file()
+    assert FakeTelegramClient.message_calls[0]["limit"] == 4
+    assert FakeTelegramClient.message_calls[0]["filter"].__name__ == (
+        "InputMessagesFilterPhotoVideo"
+    )
+    if unread_only:
+        assert FakeTelegramClient.message_calls[0]["min_id"] == 50
+    else:
+        assert "min_id" not in FakeTelegramClient.message_calls[0]
+    assert len(FakeTelegramClient.download_calls) == 1
 
 
 def test_account_mode_downloads_visible_media_plus_one_prefetch_with_hard_cap(tmp_path, monkeypatch):
@@ -1300,11 +1442,12 @@ def test_account_mode_skips_plugin_read_messages_and_scans_next_unread(tmp_path,
         date=now,
         raw_text="Next unread\nThis should be displayed",
         message="Next unread\nThis should be displayed",
-        photo=None,
+        photo=SimpleNamespace(w=1280, h=720),
         video=None,
         gif=None,
         document=None,
         out=False,
+        media_bytes=image_chunks(color=(70, 130, 100))[0],
     )
     FakeTelegramClient.dialogs = [dialog]
     FakeTelegramClient.messages_by_entity = {id(entity): [displayed_message, next_message]}
@@ -1329,7 +1472,7 @@ def test_account_mode_skips_plugin_read_messages_and_scans_next_unread(tmp_path,
     assert [item["key"] for item in payload["messages"]] == ["-100123:43"]
     assert payload["messages"][0]["title"] == "Next unread"
     assert payload["display_read"]["keys"] == ["-100123:44"]
-    assert FakeTelegramClient.download_calls == []
+    assert len(FakeTelegramClient.download_calls) == 1
 
 def test_account_mode_without_authorized_session_renders_setup_sample(tmp_path):
     plugin = _plugin(tmp_path)
@@ -1395,7 +1538,7 @@ def test_featured_message_defaults_to_newest_when_no_photo(tmp_path):
     assert [item["key"] for item in secondary] == ["video-old"]
 
 
-def test_text_only_message_becomes_link_card_without_media_download(tmp_path, monkeypatch):
+def test_text_only_bot_message_is_skipped_without_media_download(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     now = datetime(2026, 6, 27, 18, 42, tzinfo=timezone.utc)
     updates = [
@@ -1414,10 +1557,45 @@ def test_text_only_message_becomes_link_card_without_media_download(tmp_path, mo
 
     payload = plugin._payload({"botToken": "token-123", "chatFilter": "daily_signal"}, DummyDeviceConfig(), now)
 
-    assert payload["messages"][0]["media_kind"] == "link"
-    assert payload["messages"][0]["media_path"] == ""
-    assert payload["messages"][0]["url"] == "https://core.telegram.org/bots/api"
+    assert payload["messages"] == []
+    assert payload["last_update_id"] == 9
+    assert payload["stats"]["message_count"] == 0
     assert len(session.get_calls) == 1
+
+
+def test_bot_force_refresh_still_confirms_skipped_text_update_cursor(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 6, 27, 18, 42, tzinfo=timezone.utc)
+    updates = [
+        {
+            "update_id": 9,
+            "channel_post": {
+                "message_id": 12,
+                "date": int(now.timestamp()),
+                "chat": {"id": -100123, "username": "daily_signal"},
+                "text": "Text-only update",
+            },
+        }
+    ]
+    session = FakeSession(
+        [
+            FakeResponse({"ok": True, "result": updates}),
+            FakeResponse({"ok": True, "result": []}),
+        ]
+    )
+    monkeypatch.setattr(telegram_mod, "get_http_session", lambda: session)
+
+    plugin._payload({"botToken": "token-123"}, DummyDeviceConfig(), now)
+    payload = plugin._payload(
+        {"botToken": "token-123", "forceRefresh": True},
+        DummyDeviceConfig(),
+        now,
+    )
+
+    assert "offset" not in session.get_calls[0]["params"]
+    assert session.get_calls[1]["params"]["offset"] == 10
+    assert payload["last_update_id"] == 9
+    assert payload["messages"] == []
 
 
 
@@ -1448,7 +1626,8 @@ def test_live_failure_uses_stale_message_cache(tmp_path, monkeypatch):
 
     assert payload["status"]["source_state"] == "cache"
     assert payload["status"]["live_error"] == "network down"
-    assert payload["messages"][0]["title"] == "Cached item"
+    assert payload["messages"] == []
+    assert payload["stats"]["message_count"] == 0
 
 
 

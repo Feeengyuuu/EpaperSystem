@@ -1,3 +1,4 @@
+import hashlib
 import os
 import json
 import logging
@@ -30,6 +31,16 @@ _VEHICLE_STATUS_THREE_HOUR_REFRESH_MIGRATION = (
 _MAGAZINE_HISTORICAL_LIBRARY_MIGRATION = "magazine_historical_library_v1"
 _RUNTIME_BALANCE_CADENCE_MIGRATION = "runtime_balance_cadence_v1"
 _RUNTIME_BALANCE_SOFT_THRESHOLD_MIGRATION = "runtime_balance_soft_threshold_v1"
+_LIVERADAR_DOUYU_CAKE_MIGRATION = "liveradar_douyu_4067868_v1"
+_LIVERADAR_DOUYU_CAKE_UUID_SHA256_PREFIX = "14c36f0ef259f0b5"
+_LIVERADAR_DOUYU_CAKE_STRUCTURAL_GENERATION = 1
+_LIVERADAR_DOUYU_CAKE_SETTINGS_REVISION = 2
+_LIVERADAR_DOUYU_CAKE_REFRESH_INTERVAL_SECONDS = 5 * 60
+_LIVERADAR_DOUYU_CAKE_ROOM = {
+    "platform": "douyu",
+    "id": "4067868",
+    "isFav": False,
+}
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_LEGACY_REFRESH_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_REFRESH_INTERVAL_SECONDS = 3 * 60 * 60
@@ -173,6 +184,7 @@ class Config:
         self.playlist_manager = self.load_playlist_manager()
         self.refresh_info = self.load_refresh_info()
         self._apply_release_bound_nasapics_migration()
+        self._migrate_liveradar_douyu_cake_room()
         self._migrate_runtime_balance_cadences()
         self._migrate_runtime_balance_soft_threshold(
             cadence_marker_preexisting=cadence_marker_preexisting,
@@ -200,6 +212,143 @@ class Config:
             self,
             expectation_path=_nasapics_expectation_path(),
             release_id=release_id,
+        )
+
+    def _migrate_liveradar_douyu_cake_room(self):
+        """Append the requested Douyu room to the exact saved LiveRadar instance."""
+
+        migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
+        if (
+            isinstance(migrations, Mapping)
+            and migrations.get(_LIVERADAR_DOUYU_CAKE_MIGRATION) is True
+        ):
+            return
+
+        (
+            expected_config_version,
+            authoritative_config,
+            authoritative_playlist,
+            detached_manager,
+        ) = self.capture_detached_playlist_transaction()
+        migrations = authoritative_config.get(_RUNTIME_MIGRATIONS_KEY, {})
+        if isinstance(migrations, Mapping) and (
+            migrations.get(_LIVERADAR_DOUYU_CAKE_MIGRATION) is True
+        ):
+            return
+
+        selection = detached_manager.resolve_plugin_instance_snapshot(
+            "DailyDoseOfDay",
+            "live_radar",
+            "LiveRadar",
+        )
+        if selection is None:
+            return
+        before = selection.instance
+        instance_fingerprint = hashlib.sha256(
+            before.instance_uuid.encode("utf-8")
+        ).hexdigest()[:16]
+        if (
+            instance_fingerprint != _LIVERADAR_DOUYU_CAKE_UUID_SHA256_PREFIX
+            or before.structural_generation
+            != _LIVERADAR_DOUYU_CAKE_STRUCTURAL_GENERATION
+            or before.settings_revision
+            != _LIVERADAR_DOUYU_CAKE_SETTINGS_REVISION
+            or before.refresh.get("interval")
+            != _LIVERADAR_DOUYU_CAKE_REFRESH_INTERVAL_SECONDS
+        ):
+            logger.info(
+                "Skipped the release-specific LiveRadar room migration because "
+                "the saved instance identity did not match."
+            )
+            return
+        if not isinstance(migrations, Mapping):
+            raise ConfigLoadError("runtime migration state is malformed")
+        settings = _detach_json(before.settings)
+        rooms_text = settings.get("roomsText")
+        rooms_json = settings.get("roomsJson")
+        if not isinstance(rooms_text, str) or not isinstance(rooms_json, str):
+            raise ConfigLoadError("LiveRadar room settings are malformed")
+        try:
+            room_document = json.loads(rooms_json)
+        except (TypeError, ValueError) as error:
+            raise ConfigLoadError("LiveRadar roomsJson is malformed") from error
+        if not isinstance(room_document, dict) or not isinstance(
+            room_document.get("rooms"),
+            list,
+        ):
+            raise ConfigLoadError("LiveRadar roomsJson is malformed")
+        if any(not isinstance(room, Mapping) for room in room_document["rooms"]):
+            raise ConfigLoadError("LiveRadar roomsJson is malformed")
+
+        def is_target(platform, room_id):
+            return (
+                str(platform or "").strip().casefold() == "douyu"
+                and str(room_id or "").strip() == "4067868"
+            )
+
+        json_target_count = sum(
+            1
+            for room in room_document["rooms"]
+            if is_target(room.get("platform"), room.get("id"))
+        )
+        text_target_count = 0
+        for line in rooms_text.splitlines():
+            fields = [field.strip() for field in line.split("|")]
+            if len(fields) >= 2 and is_target(fields[0], fields[1]):
+                text_target_count += 1
+        if (json_target_count, text_target_count) not in {(0, 0), (1, 1)}:
+            raise ConfigLoadError("LiveRadar room lists disagree")
+
+        settings_changed = json_target_count == 0
+        if settings_changed:
+            updated_document = _detach_json(room_document)
+            updated_document["rooms"].append(dict(_LIVERADAR_DOUYU_CAKE_ROOM))
+            updated_settings = dict(settings)
+            separator = "" if not rooms_text or rooms_text.endswith(("\n", "\r")) else "\n"
+            updated_settings["roomsText"] = (
+                rooms_text + separator + "douyu|4067868"
+            )
+            updated_settings["roomsJson"] = json.dumps(
+                updated_document,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            mutation = detached_manager.update_plugin_instance_atomic(
+                before.instance_uuid,
+                settings=updated_settings,
+                expected_generation=before.structural_generation,
+                expected_settings_revision=before.settings_revision,
+            )
+            if mutation is None or mutation.new_snapshot is None:
+                raise ConfigConflictError(
+                    before.settings_revision,
+                    before.settings_revision,
+                )
+            if (
+                mutation.new_snapshot.structural_generation
+                != before.structural_generation
+                or mutation.new_snapshot.settings_revision
+                != before.settings_revision + 1
+            ):
+                raise ConfigLoadError("LiveRadar room migration changed identity")
+
+        migration_state = _detach_json(migrations)
+        migration_state[_LIVERADAR_DOUYU_CAKE_MIGRATION] = True
+        self.commit_detached_playlist_transaction(
+            expected_config_version=expected_config_version,
+            expected_config_data=authoritative_config,
+            expected_playlist_config=authoritative_playlist,
+            playlist_manager=detached_manager,
+            config_updates={_RUNTIME_MIGRATIONS_KEY: migration_state},
+        )
+        logger.warning(
+            "Migrated the saved LiveRadar instance to include Douyu room 4067868. "
+            "| settings_changed: %s | room_count: %s | previous_settings_revision: %s "
+            "| current_settings_revision: %s",
+            settings_changed,
+            len(room_document["rooms"]) + int(settings_changed),
+            before.settings_revision,
+            before.settings_revision + int(settings_changed),
         )
 
     def _migrate_runtime_balance_cadences(self):

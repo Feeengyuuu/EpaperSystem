@@ -239,6 +239,22 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         if not self._valid_state(cache):
             return None
         stale = dict(cache)
+        messages = self._image_messages(stale.get("messages"))
+        stale["messages"] = messages
+        stats = dict(stale.get("stats") or {})
+        photo_count = sum(1 for item in messages if item.get("media_kind") == "photo")
+        video_count = sum(1 for item in messages if item.get("media_kind") == "video")
+        cached_media_count = sum(1 for item in messages if self._media_path_exists(item))
+        stats.update(
+            {
+                "message_count": len(messages),
+                "photo_count": photo_count,
+                "video_count": video_count,
+                "media_cached_count": cached_media_count,
+                "media_missing_count": max(0, len(messages) - cached_media_count),
+            }
+        )
+        stale["stats"] = stats
         stale["status"] = dict(stale.get("status") or {})
         stale["status"]["source_state"] = "cache"
         stale["status"]["generated_at"] = now.isoformat()
@@ -254,7 +270,7 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
             "allowed_updates": json.dumps(["message", "channel_post", "edited_channel_post"]),
         }
         last_update_id = self._optional_int(cache.get("last_update_id"))
-        if last_update_id is not None and not self._enabled(settings.get("forceRefresh"), default=False):
+        if last_update_id is not None:
             params["offset"] = last_update_id + 1
 
         with provider_io_lease(
@@ -383,7 +399,28 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
                 if fetch_limit <= 0:
                     continue
                 kept_for_dialog = 0
-                async for message in self._aiter(client.iter_messages(entity, limit=fetch_limit, reverse=False)):
+                message_query = {
+                    # The server has already removed text-only messages.  When
+                    # outgoing media is excluded locally, use bounded overfetch
+                    # to reduce the chance it hides a later incoming media item.
+                    "limit": (
+                        fetch_limit
+                        if include_outgoing
+                        else min(
+                            ACCOUNT_SCAN_LIMIT_CAP,
+                            max(fetch_limit, messages_per_dialog * 4),
+                        )
+                    ),
+                    "reverse": False,
+                    "filter": self._telethon_media_filter(),
+                }
+                if unread_only:
+                    read_inbox_max_id = self._account_read_inbox_max_id(dialog)
+                    if read_inbox_max_id is not None:
+                        message_query["min_id"] = read_inbox_max_id
+                async for message in self._aiter(
+                    client.iter_messages(entity, **message_query)
+                ):
                     if message is None:
                         continue
                     if not include_outgoing and bool(getattr(message, "out", False)):
@@ -438,6 +475,8 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         text = self._clean_text(raw_text)
         title, summary = self._split_title_summary(raw_text)
         media = self._account_media_candidate(message, chat)
+        if not media or str(media.get("kind") or "").lower() not in {"photo", "video"}:
+            return None
         cached_media_path = self._existing_media_path(existing_messages.get(key), media)
 
         if not title:
@@ -642,6 +681,13 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
             raise RuntimeError("Telethon is required for Telegram account mode") from exc
         return TelegramClient
 
+    def _telethon_media_filter(self):
+        try:
+            from telethon import types
+        except ImportError as exc:
+            raise RuntimeError("Telethon is required for Telegram account mode") from exc
+        return types.InputMessagesFilterPhotoVideo
+
     async def _aiter(self, values):
         if values is None:
             return
@@ -682,6 +728,10 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         if chat_id is None:
             chat_id = getattr(dialog, "id", "")
         return {"id": chat_id, "title": title, "username": username}
+
+    def _account_read_inbox_max_id(self, dialog):
+        raw_dialog = getattr(dialog, "dialog", None)
+        return self._optional_int(getattr(raw_dialog, "read_inbox_max_id", None))
 
     def _account_media_candidate(self, message, chat):
         message_id = self._optional_int(getattr(message, "id", None)) or 0
@@ -756,6 +806,8 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         text = self._clean_text(raw_text)
         title, summary = self._split_title_summary(raw_text)
         media = self._media_candidate(message)
+        if not media or str(media.get("kind") or "").lower() not in {"photo", "video"}:
+            return None
         cached_media_path = self._existing_media_path(existing_messages.get(key), media)
         if media and not cached_media_path:
             try:
@@ -912,6 +964,7 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         unread_total=0,
         matched_dialogs=0,
     ):
+        messages = self._image_messages(messages)
         photo_count = sum(1 for item in messages if item.get("media_kind") == "photo")
         video_count = sum(1 for item in messages if item.get("media_kind") == "video")
         media_messages = [
@@ -943,6 +996,15 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
                 "media_cache": "partial" if missing_media_count else "ok",
             },
         }
+
+    @staticmethod
+    def _image_messages(messages):
+        return [
+            item
+            for item in messages or []
+            if isinstance(item, dict)
+            and str(item.get("media_kind") or "").lower() in {"photo", "video"}
+        ]
 
     def _sample_payload(self, settings, now, source_state, error_message=""):
         messages = [
@@ -1929,19 +1991,19 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         night = mode == "night"
         if not night:
             return {
-                "background": (246, 242, 232),
-                "panel": (255, 252, 242),
-                "chip": (239, 235, 224),
+                "background": (255, 255, 255),
+                "panel": (255, 255, 255),
+                "chip": (255, 255, 255),
                 "rule": (206, 198, 181),
                 "ink": (29, 33, 38),
                 "muted": (78, 85, 91),
                 "dim": (125, 128, 126),
                 "cyan": (0, 135, 170),
                 "amber": (188, 116, 32),
-                "chat_background": (239, 235, 224),
-                "chat_header": (233, 232, 222),
-                "chat_row": (243, 239, 229),
-                "chat_row_alt": (236, 233, 223),
+                "chat_background": (255, 255, 255),
+                "chat_header": (255, 255, 255),
+                "chat_row": (255, 255, 255),
+                "chat_row_alt": (255, 255, 255),
                 "channel_colors": (
                     (17, 82, 130),
                     (31, 111, 70),

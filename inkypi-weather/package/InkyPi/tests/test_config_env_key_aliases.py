@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import sys
@@ -1325,3 +1326,163 @@ def test_magazine_covers_migration_ignores_non_target_instances(
         "runtime_migrations",
         default={},
     )
+
+
+def _live_radar_room_config(*, rooms_text, rooms_json, migrations=None):
+    payload = {
+        "schema_version": 1,
+        "config_revision": 1,
+        "resolution": [800, 480],
+        "playlist_config": {
+            "playlists": [
+                {
+                    "name": "DailyDoseOfDay",
+                    "start_time": "00:00",
+                    "end_time": "24:00",
+                    "plugins": [
+                        {
+                            "plugin_id": "live_radar",
+                            "name": "LiveRadar",
+                            "plugin_settings": {
+                                "roomsText": rooms_text,
+                                "roomsJson": rooms_json,
+                                "apiBaseUrl": "http://aggregator.invalid",
+                                "requestTimeoutSeconds": "18",
+                            },
+                            "refresh": {"interval": 300},
+                            "instance_uuid": "6ce0a56e6ddd4feaa1006be9394daf10",
+                            "structural_generation": 1,
+                            "settings_revision": 2,
+                        }
+                    ],
+                }
+            ],
+            "active_playlist": "DailyDoseOfDay",
+        },
+    }
+    if migrations is not None:
+        payload["runtime_migrations"] = dict(migrations)
+    return payload
+
+
+def test_startup_appends_douyu_cake_to_live_radar_once(monkeypatch, tmp_path):
+    rooms_text = "douyu|6979222|fav\nbilibili|545318|fav"
+    rooms_document = {
+        "version": "3.1.1",
+        "timestamp": 1_786_000_000,
+        "rooms": [
+            {"platform": "douyu", "id": "6979222", "isFav": True},
+            {"platform": "bilibili", "id": "545318", "isFav": True},
+        ],
+    }
+    original = _live_radar_room_config(
+        rooms_text=rooms_text,
+        rooms_json=json.dumps(rooms_document, ensure_ascii=False),
+        migrations={"existing_migration_v1": True},
+    )
+    monkeypatch.setattr(
+        config_module,
+        "_LIVERADAR_DOUYU_CAKE_UUID_SHA256_PREFIX",
+        hashlib.sha256(
+            b"6ce0a56e6ddd4feaa1006be9394daf10"
+        ).hexdigest()[:16],
+    )
+
+    config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    instance = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    settings = instance["plugin_settings"]
+    migrated_document = json.loads(settings["roomsJson"])
+    assert settings["roomsText"].splitlines() == [
+        "douyu|6979222|fav",
+        "bilibili|545318|fav",
+        "douyu|4067868",
+    ]
+    assert migrated_document == {
+        **rooms_document,
+        "rooms": [
+            *rooms_document["rooms"],
+            {"platform": "douyu", "id": "4067868", "isFav": False},
+        ],
+    }
+    assert {
+        key: value
+        for key, value in settings.items()
+        if key not in {"roomsText", "roomsJson"}
+    } == {
+        "apiBaseUrl": "http://aggregator.invalid",
+        "requestTimeoutSeconds": "18",
+    }
+    assert instance["structural_generation"] == 1
+    assert instance["settings_revision"] == 3
+    assert instance["refresh"] == {"interval": 300}
+    assert saved["runtime_migrations"]["liveradar_douyu_4067868_v1"] is True
+    assert saved["runtime_migrations"]["existing_migration_v1"] is True
+    assert config.get_playlist_manager().find_plugin(
+        "live_radar",
+        "LiveRadar",
+    ).settings == settings
+
+    first_revision = saved["config_revision"]
+    restarted = Config()
+    restarted_saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert restarted_saved["config_revision"] == first_revision
+    assert restarted.get_playlist_manager().find_plugin(
+        "live_radar",
+        "LiveRadar",
+    ).settings == settings
+
+
+def test_live_radar_room_migration_rejects_one_sided_target(
+    monkeypatch,
+    tmp_path,
+):
+    rooms_document = {
+        "version": "3.1.1",
+        "timestamp": 1_786_000_000,
+        "rooms": [
+            {"platform": "douyu", "id": "6979222", "isFav": True},
+        ],
+    }
+    original = _live_radar_room_config(
+        rooms_text="douyu|6979222|fav\ndouyu|4067868",
+        rooms_json=json.dumps(rooms_document),
+    )
+    monkeypatch.setattr(
+        config_module,
+        "_LIVERADAR_DOUYU_CAKE_UUID_SHA256_PREFIX",
+        hashlib.sha256(
+            b"6ce0a56e6ddd4feaa1006be9394daf10"
+        ).hexdigest()[:16],
+    )
+    config_path = tmp_path / "device.json"
+    config_path.write_text(json.dumps(original), encoding="utf-8")
+    monkeypatch.setattr(Config, "config_file", str(config_path))
+
+    with pytest.raises(ConfigLoadError, match="LiveRadar room lists disagree"):
+        Config()
+
+    assert json.loads(config_path.read_text(encoding="utf-8")) == original
+
+
+def test_live_radar_room_migration_skips_other_valid_instance_formats(
+    monkeypatch,
+    tmp_path,
+):
+    original = _live_radar_room_config(
+        rooms_text="douyu|6979222|fav",
+        rooms_json="",
+    )
+
+    config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    instance = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    assert instance["plugin_settings"]["roomsText"] == "douyu|6979222|fav"
+    assert instance["plugin_settings"]["roomsJson"] == ""
+    assert instance["settings_revision"] == 2
+    assert config.get_playlist_manager().find_plugin(
+        "live_radar",
+        "LiveRadar",
+    ).settings == instance["plugin_settings"]

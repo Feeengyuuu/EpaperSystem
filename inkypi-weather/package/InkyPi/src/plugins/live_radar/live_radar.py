@@ -100,6 +100,7 @@ DEFAULT_ROOMS_TEXT = "\n".join(
         "bilibili|173551",
         "twitch|jie_220",
         "twitch|ludwig",
+        "douyu|4067868",
     ]
 )
 CACHE_SCHEMA_VERSION = "live-radar-card-wall-v1"
