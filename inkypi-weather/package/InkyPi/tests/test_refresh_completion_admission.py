@@ -184,7 +184,7 @@ def test_next_admission_preserves_soft_spacing(tmp_path, monkeypatch):
 def test_manual_command_still_takes_priority_after_background_success(tmp_path, monkeypatch):
     case = _completion_case(tmp_path, monkeypatch)
     manual_calls = []
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: CapturePlugin(manual_calls))
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: CapturePlugin(manual_calls))
     case.task._run_one_iteration_for_test()
     manual = case.task._command_from_refresh_action(
         ManualRefresh("live_radar", {"id": "urgent-manual"}),

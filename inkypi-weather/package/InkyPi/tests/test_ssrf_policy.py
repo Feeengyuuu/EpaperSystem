@@ -2,7 +2,7 @@ import socket
 
 import pytest
 
-from src.security.ssrf import SSRFPolicy, UnsafeTarget
+from security.ssrf import SSRFPolicy, UnsafeTarget
 
 
 class Resolver:

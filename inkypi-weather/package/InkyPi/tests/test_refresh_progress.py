@@ -4,9 +4,9 @@ from types import MappingProxyType
 
 import pytest
 
-from src.model import PluginInstanceSnapshot
-from src.runtime.refresh_progress import RefreshProgressTracker
-from src.runtime.runtime_state import (
+from model import PluginInstanceSnapshot
+from runtime.refresh_progress import RefreshProgressTracker
+from runtime.runtime_state import (
     InstanceRuntimeState,
     PresentationCommitReceipt,
     PresentationRequestState,

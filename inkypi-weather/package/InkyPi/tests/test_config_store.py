@@ -69,7 +69,7 @@ def _versioned(payload, revision):
 
 
 def _store(path):
-    from src.config_store import ConfigStore
+    from config_store import ConfigStore
 
     return ConfigStore(path)
 
@@ -126,7 +126,7 @@ class _IntSubclass(int):
     ],
 )
 def test_commit_rejects_non_json_values_without_touching_disk(tmp_path, bad_value):
-    from src.config_store import ConfigValidationError
+    from config_store import ConfigValidationError
 
     path = tmp_path / "device.json"
     original = _config("legacy")
@@ -144,7 +144,7 @@ def test_commit_rejects_non_json_values_without_touching_disk(tmp_path, bad_valu
 
 
 def test_commit_rejects_non_string_keys_and_cycles(tmp_path):
-    from src.config_store import ConfigValidationError
+    from config_store import ConfigValidationError
 
     path = tmp_path / "device.json"
     _write(path, _config())
@@ -164,7 +164,7 @@ def test_commit_rejects_non_string_keys_and_cycles(tmp_path):
 
 @pytest.mark.parametrize("bad_string", ["\ud800", "\udfff"])
 def test_commit_rejects_non_utf8_unicode_scalars_before_persistence(tmp_path, bad_string):
-    from src.config_store import ConfigValidationError
+    from config_store import ConfigValidationError
 
     path = tmp_path / "device.json"
     _write(path, _config())
@@ -198,7 +198,7 @@ def test_missing_resolution_can_bootstrap_before_hardware_detection(tmp_path):
     [None, [], [800], [800, 480, 1], [0, 480], [-1, 480], [800, True], "800x480"],
 )
 def test_resolution_is_strict_when_present(tmp_path, resolution):
-    from src.config_store import ConfigValidationError
+    from config_store import ConfigValidationError
 
     store = _store(tmp_path / "device.json")
     store.load()
@@ -221,7 +221,7 @@ def test_resolution_is_strict_when_present(tmp_path, resolution):
     ],
 )
 def test_v1_commit_rejects_invalid_optional_root_fields(tmp_path, field, value):
-    from src.config_store import ConfigValidationError
+    from config_store import ConfigValidationError
 
     path = tmp_path / "device.json"
     _write(path, _config())
@@ -236,7 +236,7 @@ def test_v1_commit_rejects_invalid_optional_root_fields(tmp_path, field, value):
 
 @pytest.mark.parametrize("bad_value", [True, "1.0", None])
 def test_v1_commit_rejects_non_numeric_image_adjustments(tmp_path, bad_value):
-    from src.config_store import ConfigValidationError
+    from config_store import ConfigValidationError
 
     path = tmp_path / "device.json"
     _write(path, _config())
@@ -289,7 +289,7 @@ def test_v1_commit_rejects_non_numeric_image_adjustments(tmp_path, bad_value):
     ],
 )
 def test_v1_commit_rejects_invalid_playlist_runtime_shape(tmp_path, mutate):
-    from src.config_store import ConfigValidationError
+    from config_store import ConfigValidationError
 
     path = tmp_path / "device.json"
     _write(path, _config())
@@ -313,7 +313,7 @@ def test_v1_commit_rejects_invalid_playlist_runtime_shape(tmp_path, mutate):
     ],
 )
 def test_v1_commit_rejects_invalid_instance_identity_revision_and_refresh(tmp_path, mutate):
-    from src.config_store import ConfigValidationError
+    from config_store import ConfigValidationError
 
     path = tmp_path / "device.json"
     _write(path, _config())
@@ -327,7 +327,7 @@ def test_v1_commit_rejects_invalid_instance_identity_revision_and_refresh(tmp_pa
 
 
 def test_v1_commit_rejects_globally_duplicate_instance_uuids(tmp_path):
-    from src.config_store import ConfigValidationError
+    from config_store import ConfigValidationError
 
     path = tmp_path / "device.json"
     _write(path, _config())
@@ -348,7 +348,7 @@ def test_v1_commit_rejects_globally_duplicate_instance_uuids(tmp_path):
     ids=["empty-plugin-id", "empty-name", "settings-type"],
 )
 def test_v1_commit_rejects_invalid_plugin_runtime_shape(tmp_path, mutate):
-    from src.config_store import ConfigValidationError
+    from config_store import ConfigValidationError
 
     path = tmp_path / "device.json"
     _write(path, _config())
@@ -362,7 +362,7 @@ def test_v1_commit_rejects_invalid_plugin_runtime_shape(tmp_path, mutate):
 
 
 def test_v1_commit_rejects_globally_duplicate_legacy_plugin_identity(tmp_path):
-    from src.config_store import ConfigValidationError
+    from config_store import ConfigValidationError
 
     path = tmp_path / "device.json"
     _write(path, _config())
@@ -529,7 +529,7 @@ def test_revision_floor_never_decreases_after_observed_files_disappear(tmp_path)
 
 
 def test_same_store_two_writer_cas_allows_exactly_one_commit(tmp_path):
-    from src.config_store import ConfigConflictError
+    from config_store import ConfigConflictError
 
     path = tmp_path / "device.json"
     _write(path, _config())
@@ -556,8 +556,8 @@ def test_same_store_two_writer_cas_allows_exactly_one_commit(tmp_path):
 
 
 def test_every_pre_replace_main_failure_preserves_primary_published_state_and_lkgs(tmp_path, monkeypatch):
-    from src import config_store
-    from src.utils.atomic_file import AtomicWriteError
+    import config_store
+    from utils.atomic_file import AtomicWriteError
 
     path = tmp_path / "device.json"
     lkg1 = tmp_path / "device.lkg.1.json"
@@ -586,8 +586,8 @@ def test_every_pre_replace_main_failure_preserves_primary_published_state_and_lk
 
 
 def test_uncertain_main_write_keeps_old_snapshot_fences_then_reconciles(tmp_path, monkeypatch):
-    from src import config_store
-    from src.utils.atomic_file import AtomicCommitUncertainError
+    import config_store
+    from utils.atomic_file import AtomicCommitUncertainError
 
     path = tmp_path / "device.json"
     _write(path, _versioned(_config("old"), 4))
@@ -623,8 +623,8 @@ def test_uncertain_main_write_keeps_old_snapshot_fences_then_reconciles(tmp_path
 
 
 def test_uncertain_reconcile_requires_successful_directory_fsync(tmp_path, monkeypatch):
-    from src import config_store
-    from src.utils.atomic_file import AtomicCommitUncertainError
+    import config_store
+    from utils.atomic_file import AtomicCommitUncertainError
 
     path = tmp_path / "device.json"
     _write(path, _versioned(_config("old"), 1))
@@ -656,8 +656,8 @@ def test_uncertain_reconcile_reads_primary_before_retrying_directory_fsync(
     tmp_path,
     monkeypatch,
 ):
-    from src import config_store
-    from src.utils.atomic_file import AtomicCommitUncertainError
+    import config_store
+    from utils.atomic_file import AtomicCommitUncertainError
 
     path = tmp_path / "device.json"
     _write(path, _versioned(_config("old"), 1))
@@ -696,7 +696,7 @@ def test_uncertain_reconcile_reads_primary_before_retrying_directory_fsync(
 
 
 def test_reads_do_not_wait_for_writer_lock_or_persistence(tmp_path, monkeypatch):
-    from src import config_store
+    import config_store
 
     path = tmp_path / "device.json"
     _write(path, _versioned(_config("old"), 1))
@@ -724,7 +724,7 @@ def test_reads_do_not_wait_for_writer_lock_or_persistence(tmp_path, monkeypatch)
 
 
 def test_candidate_deep_validation_and_copy_finish_before_writer_lock(tmp_path, monkeypatch):
-    from src import config_store
+    import config_store
 
     path = tmp_path / "device.json"
     _write(path, _versioned(_config("old"), 1))
@@ -746,7 +746,7 @@ def test_candidate_deep_validation_and_copy_finish_before_writer_lock(tmp_path, 
 
 
 def test_unwrapped_pre_replace_oserror_is_exposed_as_persistence_failure(tmp_path, monkeypatch):
-    from src import config_store
+    import config_store
 
     path = tmp_path / "device.json"
     _write(path, _versioned(_config("old"), 1))
@@ -767,8 +767,8 @@ def test_unwrapped_pre_replace_oserror_is_exposed_as_persistence_failure(tmp_pat
 
 
 def test_lkg_failure_after_main_commit_still_publishes_writable_degraded_state(tmp_path, monkeypatch):
-    from src import config_store
-    from src.utils.atomic_file import AtomicWriteError
+    import config_store
+    from utils.atomic_file import AtomicWriteError
 
     path = tmp_path / "device.json"
     _write(path, _versioned(_config("old"), 1))
@@ -807,7 +807,7 @@ def test_lkg_rotation_writes_old_primary_to_lkg2_then_new_primary_to_lkg1(tmp_pa
 
 
 def test_commit_persistence_order_is_primary_then_lkg2_then_lkg1(tmp_path, monkeypatch):
-    from src import config_store
+    import config_store
 
     path = tmp_path / "device.json"
     _write(path, _versioned(_config("old-primary"), 4))
@@ -829,8 +829,8 @@ def test_commit_persistence_order_is_primary_then_lkg2_then_lkg1(tmp_path, monke
 
 
 def test_lkg1_failure_keeps_lkg2_old_history_and_does_not_fail_commit(tmp_path, monkeypatch):
-    from src import config_store
-    from src.utils.atomic_file import AtomicWriteError
+    import config_store
+    from utils.atomic_file import AtomicWriteError
 
     path = tmp_path / "device.json"
     _write(path, _versioned(_config("old-primary"), 4))
@@ -854,8 +854,8 @@ def test_lkg1_failure_keeps_lkg2_old_history_and_does_not_fail_commit(tmp_path, 
 
 
 def test_lkg2_failure_preserves_the_only_valid_old_lkg1(tmp_path, monkeypatch):
-    from src import config_store
-    from src.utils.atomic_file import AtomicWriteError
+    import config_store
+    from utils.atomic_file import AtomicWriteError
 
     path = tmp_path / "device.json"
     lkg1 = tmp_path / "device.lkg.1.json"
@@ -919,7 +919,7 @@ def test_primary_read_failure_never_quarantines_or_restores_stale_lkg(
     tmp_path,
     monkeypatch,
 ):
-    from src import config_store
+    import config_store
 
     path = tmp_path / "device.json"
     lkg1 = tmp_path / "device.lkg.1.json"
@@ -988,7 +988,7 @@ def test_lkg_read_failure_fences_commit_until_all_history_is_observable(
     tmp_path,
     monkeypatch,
 ):
-    from src import config_store
+    import config_store
 
     path = tmp_path / "device.json"
     lkg1 = tmp_path / "device.lkg.1.json"
@@ -1103,7 +1103,7 @@ def test_clean_first_boot_commit_creates_lkg1_without_fake_lkg2_history(tmp_path
 
 
 def test_commit_before_explicit_load_is_fenced_and_cannot_overwrite_primary(tmp_path):
-    from src.config_store import ConfigStoreFencedError
+    from config_store import ConfigStoreFencedError
 
     path = tmp_path / "device.json"
     _write(path, _versioned(_config("existing"), 8))
@@ -1149,7 +1149,7 @@ def test_quarantine_rename_failure_does_not_overwrite_bad_primary(tmp_path, monk
     assert state.status.writable is False
     with pytest.raises(Exception) as caught:
         store.commit(2, _config("must-not-overwrite"))
-    from src.config_store import ConfigStoreFencedError
+    from config_store import ConfigStoreFencedError
 
     assert isinstance(caught.value, ConfigStoreFencedError)
 
@@ -1173,7 +1173,7 @@ def test_windows_held_primary_handle_prevents_unsafe_quarantine(tmp_path):
 
 
 def test_quarantine_directory_fsync_failure_fences_without_restore(tmp_path, monkeypatch):
-    from src import config_store
+    import config_store
 
     path = tmp_path / "device.json"
     path.write_text("{bad", encoding="utf-8")
@@ -1194,8 +1194,8 @@ def test_quarantine_directory_fsync_failure_fences_without_restore(tmp_path, mon
 
 
 def test_restore_pre_replace_failure_loads_lkg_in_memory_and_fences(tmp_path, monkeypatch):
-    from src import config_store
-    from src.utils.atomic_file import AtomicWriteError
+    import config_store
+    from utils.atomic_file import AtomicWriteError
 
     path = tmp_path / "device.json"
     _write(tmp_path / "device.lkg.1.json", _versioned(_config("backup"), 2))
@@ -1218,8 +1218,8 @@ def test_restore_pre_replace_failure_loads_lkg_in_memory_and_fences(tmp_path, mo
 
 
 def test_uncertain_restore_loads_lkg_in_memory_and_fences(tmp_path, monkeypatch):
-    from src import config_store
-    from src.utils.atomic_file import AtomicCommitUncertainError
+    import config_store
+    from utils.atomic_file import AtomicCommitUncertainError
 
     path = tmp_path / "device.json"
     _write(tmp_path / "device.lkg.1.json", _versioned(_config("backup"), 6))
@@ -1256,8 +1256,8 @@ def test_valid_primary_with_corrupt_lkg_is_started_and_repaired_in_isolation(tmp
 
 
 def test_valid_primary_survives_failed_corrupt_lkg_repair_as_writable_degraded(tmp_path, monkeypatch):
-    from src import config_store
-    from src.utils.atomic_file import AtomicWriteError
+    import config_store
+    from utils.atomic_file import AtomicWriteError
 
     path = tmp_path / "device.json"
     lkg1 = tmp_path / "device.lkg.1.json"
@@ -1279,7 +1279,7 @@ def test_valid_primary_survives_failed_corrupt_lkg_repair_as_writable_degraded(t
 
 
 def test_unexpected_lkg_exception_never_reports_the_durable_main_commit_as_failed(tmp_path, monkeypatch):
-    from src import config_store
+    import config_store
 
     path = tmp_path / "device.json"
     _write(path, _versioned(_config("old"), 1))
@@ -1346,7 +1346,7 @@ def test_primary_and_lkg_files_use_owner_only_mode_on_posix(tmp_path):
 
 
 def test_every_atomic_config_write_requests_owner_only_mode(tmp_path, monkeypatch):
-    from src import config_store
+    import config_store
 
     path = tmp_path / "device.json"
     _write(path, _versioned(_config("old"), 1))

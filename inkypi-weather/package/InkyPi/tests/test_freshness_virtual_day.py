@@ -89,7 +89,7 @@ def test_actual_28_cadences_complete_a_virtual_day(tmp_path, monkeypatch, pressu
     monkeypatch.setattr(task, "_memory_watchdog_should_restart", lambda: False)
     monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
     monkeypatch.setattr(task, "_run_cache_lifecycle_maintenance", lambda *_a, **_k: False)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda *_a: pytest.fail("real plugin was loaded"))
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda *_a: pytest.fail("real plugin was loaded"))
 
     def resource():
         elapsed = clock.monotonic()

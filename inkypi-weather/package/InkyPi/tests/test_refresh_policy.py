@@ -7,9 +7,9 @@ from zoneinfo import ZoneInfo
 
 import pytz
 
-import src.runtime.refresh_policy as refresh_policy
-from src.model import PluginInstanceSnapshot
-from src.runtime.refresh_policy import (
+import runtime.refresh_policy as refresh_policy
+from model import PluginInstanceSnapshot
+from runtime.refresh_policy import (
     AdmissionState,
     DueCandidate,
     DueReason,
@@ -21,7 +21,7 @@ from src.runtime.refresh_policy import (
     classify_resource_tier,
     evaluate_data_due,
 )
-from src.runtime.runtime_state import (
+from runtime.runtime_state import (
     InstanceRuntimeState,
     LastGoodCacheState,
     PresentationCommitReceipt,

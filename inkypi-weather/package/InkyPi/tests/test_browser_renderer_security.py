@@ -4,9 +4,9 @@ import time
 
 from PIL import Image
 
-from src.runtime.refresh_contracts import TaskContext
-from src.security.ssrf import ApprovedTarget, UnsafeTarget
-from src.utils.browser_renderer import BrowserRenderer
+from runtime.refresh_contracts import TaskContext
+from security.ssrf import ApprovedTarget, UnsafeTarget
+from utils.browser_renderer import BrowserRenderer
 
 
 def _context():

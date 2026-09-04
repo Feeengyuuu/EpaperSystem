@@ -17,20 +17,12 @@ from types import MappingProxyType
 from typing import Mapping
 from uuid import uuid4
 
-try:
-    from ..runtime.cache_lifecycle import (
-        CleanupBudget,
-        LifecycleAggregate,
-        LifecycleAllowance,
-        LifecycleBudget,
-    )
-except ImportError:  # pragma: no cover - production imports modules from src/
-    from runtime.cache_lifecycle import (
-        CleanupBudget,
-        LifecycleAggregate,
-        LifecycleAllowance,
-        LifecycleBudget,
-    )
+from runtime.cache_lifecycle import (
+    CleanupBudget,
+    LifecycleAggregate,
+    LifecycleAllowance,
+    LifecycleBudget,
+)
 from utils.atomic_file import atomic_write_bytes, atomic_write_image, atomic_write_json
 from utils.image_utils import compute_image_hash
 from utils.safe_image import safe_open_image

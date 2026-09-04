@@ -5,10 +5,10 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from src.display import display_manager as display_manager_module
-from src.display.display_manager import DisplayManager, DisplayUnavailableError
-from src.runtime.refresh_contracts import TaskCancelled, TaskContext
-from src.runtime.runtime_state import RuntimeStateStore
+from display import display_manager as display_manager_module
+from display.display_manager import DisplayManager, DisplayUnavailableError
+from runtime.refresh_contracts import TaskCancelled, TaskContext
+from runtime.runtime_state import RuntimeStateStore
 
 
 class FakeDeviceConfig:

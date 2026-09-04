@@ -1,0 +1,2 @@
+# Development-only checks for the extracted architecture boundaries.
+mypy==1.20.1

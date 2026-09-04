@@ -5,7 +5,7 @@ from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
-from src.runtime.refresh_contracts import (
+from runtime.refresh_contracts import (
     CommandKind,
     CommandSource,
     JobStatus,
@@ -15,7 +15,7 @@ from src.runtime.refresh_contracts import (
     TaskContext,
     thaw_payload,
 )
-from src.runtime.refresh_queue import (
+from runtime.refresh_queue import (
     DuplicateCommandConflictError,
     IdempotencyConflictError,
     InvalidRefreshCommandError,

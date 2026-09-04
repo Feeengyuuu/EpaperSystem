@@ -45,7 +45,7 @@ def test_requirement_sources_exist_and_layer_base_pi_and_dev():
 
 
 def test_compiled_requirement_locks_are_self_contained_exact_and_hashed():
-    for name in ("requirements-base.txt", "requirements.txt", "requirements-dev.txt"):
+    for name in ("requirements-base.txt", "requirements.txt", "requirements-dev.txt", "requirements-quality.txt"):
         path = INSTALL_ROOT / name
         text = path.read_text(encoding="utf-8")
         requirements = [

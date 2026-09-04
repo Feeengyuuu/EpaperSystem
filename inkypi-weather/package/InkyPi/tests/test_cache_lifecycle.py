@@ -5,13 +5,13 @@ import stat
 
 import pytest
 
-from src.model import PluginInstance
-from src.runtime import cache_lifecycle as cache_lifecycle_module
-from src.runtime.cache_catalog import (
+from model import PluginInstance
+from runtime import cache_lifecycle as cache_lifecycle_module
+from runtime.cache_catalog import (
     authoritative_cache_path,
     cache_identity_prefix,
 )
-from src.runtime.cache_lifecycle import (
+from runtime.cache_lifecycle import (
     ArtifactClass,
     CacheLifecycleManager,
     CleanupBudget,
@@ -23,8 +23,8 @@ from src.runtime.cache_lifecycle import (
     build_cache_retention,
     classify_disk_pressure,
 )
-from src.runtime.presentation_cache import prepared_presentation_path
-from src.runtime.runtime_state import (
+from runtime.presentation_cache import prepared_presentation_path
+from runtime.runtime_state import (
     InstanceRuntimeState,
     LastGoodCacheState,
     PresentationCommitReceipt,

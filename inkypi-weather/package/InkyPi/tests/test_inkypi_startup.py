@@ -101,7 +101,8 @@ def test_factory_uses_one_injected_paths_identity_and_canonical_secret(tmp_path,
             events.append(("display", device_config))
 
     class FakeRefreshTask:
-        def __init__(self, device_config, display_manager):
+        def __init__(self, device_config, display_manager, *, plugin_registry):
+            self.plugin_registry = plugin_registry
             events.append(("refresh", device_config, display_manager))
 
     monkeypatch.setattr(inkypi, "Config", FakeConfig)
@@ -120,7 +121,7 @@ def test_factory_uses_one_injected_paths_identity_and_canonical_secret(tmp_path,
     monkeypatch.setattr(
         inkypi,
         "load_plugins",
-        lambda plugins: events.append(("load_plugins", plugins)),
+        lambda plugins, **kwargs: events.append(("load_plugins", plugins)),
     )
     monkeypatch.setattr(
         inkypi,
@@ -130,6 +131,7 @@ def test_factory_uses_one_injected_paths_identity_and_canonical_secret(tmp_path,
 
     app = inkypi.build_application(dev_mode=True, runtime_paths=paths)
 
+    assert app.config["REFRESH_TASK"].plugin_registry is app.extensions["plugin_registry"]
     assert app.config["RUNTIME_PATHS"] is paths
     assert app.config["DEVICE_CONFIG"].runtime_paths is paths
     assert app.config["DEV_MODE"] is True
@@ -157,7 +159,8 @@ def test_factory_constructs_runtime_paths_exactly_once_when_not_injected(tmp_pat
             pass
 
     class FakeRefreshTask:
-        def __init__(self, _device_config, _display_manager):
+        def __init__(self, _device_config, _display_manager, *, plugin_registry):
+            self.plugin_registry = plugin_registry
             pass
 
     def build_paths(*, dev_mode):
@@ -168,13 +171,14 @@ def test_factory_constructs_runtime_paths_exactly_once_when_not_injected(tmp_pat
     monkeypatch.setattr(inkypi, "Config", FakeConfig)
     monkeypatch.setattr(inkypi, "DisplayManager", FakeDisplayManager)
     monkeypatch.setattr(inkypi, "RefreshTask", FakeRefreshTask)
-    monkeypatch.setattr(inkypi, "load_plugins", lambda _plugins: None)
+    monkeypatch.setattr(inkypi, "load_plugins", lambda _plugins, **kwargs: None)
     monkeypatch.setattr(inkypi, "register_plugin_blueprints", lambda _app: None)
     monkeypatch.setattr(inkypi, "load_or_create_secret_key", lambda _path: "secret")
 
     app = inkypi.build_application(dev_mode=True)
 
     assert calls == [True]
+    assert app.config["REFRESH_TASK"].plugin_registry is app.extensions["plugin_registry"]
     assert app.config["RUNTIME_PATHS"] is paths
     assert app.config["DEVICE_CONFIG"].runtime_paths is paths
 
@@ -197,13 +201,14 @@ def test_factory_marks_hardware_initialization_failure_degraded(tmp_path, monkey
             self.initialization_error = OSError("panel unavailable")
 
     class FakeRefreshTask:
-        def __init__(self, _device_config, _display_manager):
+        def __init__(self, _device_config, _display_manager, *, plugin_registry):
+            self.plugin_registry = plugin_registry
             pass
 
     monkeypatch.setattr(inkypi, "Config", FakeConfig)
     monkeypatch.setattr(inkypi, "DisplayManager", DegradedDisplayManager)
     monkeypatch.setattr(inkypi, "RefreshTask", FakeRefreshTask)
-    monkeypatch.setattr(inkypi, "load_plugins", lambda _plugins: None)
+    monkeypatch.setattr(inkypi, "load_plugins", lambda _plugins, **kwargs: None)
     monkeypatch.setattr(inkypi, "register_plugin_blueprints", lambda _app: None)
     monkeypatch.setattr(inkypi, "load_or_create_secret_key", lambda _path: "secret")
 

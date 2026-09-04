@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from PIL import Image
 import pytest
 
-from src.runtime.cache_lifecycle import (
+from runtime.cache_lifecycle import (
     CleanupBudget,
     LifecycleAggregate,
     LifecycleAllowance,
@@ -22,8 +22,8 @@ from runtime.long_task_executor import (
     bind_long_task_runtime,
     current_task_context,
 )
-from src.utils import browser_renderer as browser_renderer_module
-from src.utils.browser_renderer import BrowserRenderer
+from utils import browser_renderer as browser_renderer_module
+from utils.browser_renderer import BrowserRenderer
 
 
 def _context(seconds=2):
@@ -606,7 +606,7 @@ def test_html_render_inherits_bound_task_context_without_leaking_it(
         context,
         InstanceIdentity("weather-instance", 1, 1),
     ):
-        caplog.set_level("WARNING", logger="src.utils.browser_renderer")
+        caplog.set_level("WARNING", logger="utils.browser_renderer")
         result = renderer.render_html(
             "<p>weather</p>",
             viewport=(80, 48),
@@ -683,7 +683,7 @@ def test_html_retry_cancellation_after_first_launch_does_not_poison_cache(
         cancel_event,
         time.monotonic() + 60,
     )
-    caplog.set_level("WARNING", logger="src.utils.browser_renderer")
+    caplog.set_level("WARNING", logger="utils.browser_renderer")
 
     with bind_long_task_runtime(
         context,
@@ -905,7 +905,7 @@ def test_html_retry_once_skips_second_launch_under_resource_pressure(
     )
     _route_fake_process_group_signals(monkeypatch, lambda: (first,))
 
-    caplog.set_level("WARNING", logger="src.utils.browser_renderer")
+    caplog.set_level("WARNING", logger="utils.browser_renderer")
     result = renderer.render_html(
         "<p>weather</p>",
         viewport=(80, 48),
@@ -1034,7 +1034,7 @@ def test_html_render_aborts_running_chromium_when_pressure_becomes_hard(
     )
     _route_fake_process_group_signals(monkeypatch, lambda: (process,))
 
-    with caplog.at_level("WARNING", logger="src.utils.browser_renderer"):
+    with caplog.at_level("WARNING", logger="utils.browser_renderer"):
         with pytest.raises(ResourcePressureDeferred) as deferred:
             renderer.render_html(
                 "<p>weather</p>",
@@ -2168,7 +2168,7 @@ def test_url_deadline_timeout_does_not_poison_negative_cache(
         clock=lambda: now["value"],
     )
 
-    with caplog.at_level("WARNING", logger="src.utils.browser_renderer"):
+    with caplog.at_level("WARNING", logger="utils.browser_renderer"):
         timed_out = renderer.render_url(
             "https://example.test/page",
             viewport=(80, 48),

@@ -6,8 +6,8 @@ from types import SimpleNamespace
 from PIL import Image
 import pytest
 
-from src.runtime import cache_catalog as cache_catalog_module
-from src.runtime.cache_catalog import (
+from runtime import cache_catalog as cache_catalog_module
+from runtime.cache_catalog import (
     CachePathIdentity,
     CacheCatalog,
     DisplayCacheCandidate,
@@ -15,7 +15,7 @@ from src.runtime.cache_catalog import (
     cache_identity_prefix,
     parse_authoritative_cache_filename,
 )
-from src.runtime.runtime_state import InstanceRuntimeState, LastGoodCacheState
+from runtime.runtime_state import InstanceRuntimeState, LastGoodCacheState
 
 
 def _instance(*, generation=2, revision=5):

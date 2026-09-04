@@ -14,6 +14,7 @@ import threading
 import time
 import warnings
 from collections.abc import Sequence
+from pathlib import Path
 
 from flask import Flask
 from jinja2 import ChoiceLoader, FileSystemLoader
@@ -29,6 +30,7 @@ from config import Config
 from display.display_manager import DisplayManager
 from health import HealthCollector, HealthPublisher, ReadinessEvaluator
 from plugins.plugin_registry import load_plugins, register_plugin_blueprints
+from plugins.registry import PluginRegistry
 from refresh_task import RefreshTask
 from runtime.long_task_executor import shutdown_long_task_executors
 from runtime_paths import RuntimePaths
@@ -141,13 +143,15 @@ def build_application(
     # refresh service, then plugin registration.
     device_config = Config(runtime_paths=paths)
     display_manager = DisplayManager(device_config)
-    refresh_task = RefreshTask(device_config, display_manager)
+    plugin_registry = PluginRegistry(Path(__file__).parent / "plugins")
+    app.extensions["plugin_registry"] = plugin_registry
+    refresh_task = RefreshTask(device_config, display_manager, plugin_registry=plugin_registry)
     runtime_plugins = getattr(
         device_config,
         "get_runtime_plugins",
         device_config.get_plugins,
     )()
-    load_plugins(runtime_plugins)
+    load_plugins(runtime_plugins, registry=plugin_registry)
 
     app.config["RUNTIME_PATHS"] = paths
     app.config["DEV_MODE"] = dev_mode

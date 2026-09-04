@@ -9,8 +9,8 @@ from types import MappingProxyType
 
 import pytest
 
-from src.runtime import refresh_contracts as refresh_contracts_module
-from src.runtime.refresh_contracts import (
+from runtime import refresh_contracts as refresh_contracts_module
+from runtime.refresh_contracts import (
     CommandKind,
     CommandSource,
     JobRecord,

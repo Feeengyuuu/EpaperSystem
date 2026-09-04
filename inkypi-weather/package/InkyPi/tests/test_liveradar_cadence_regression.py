@@ -217,7 +217,7 @@ def _with_prepared_and_background_sports(task, monkeypatch, clock):
         return original_get_plugin(key)
 
     monkeypatch.setattr(config, "get_plugin", get_plugin)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda item: plugins[item["id"]])
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda item: plugins[item["id"]])
     original_select = task._select_independent_refresh_command
 
     def select(*args, **kwargs):

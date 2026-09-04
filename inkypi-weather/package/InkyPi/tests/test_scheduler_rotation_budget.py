@@ -41,7 +41,7 @@ def test_unreserved_rotation_runs_short_data_then_displays_before_heavy_refresh(
         def wants_background_live_refresh(self, settings, current_dt):
             return True
 
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: SportsLive())
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: SportsLive())
     for plugin in case.playlist.plugins:
         instance = plugin.snapshot()
         cache_path = _write_runtime_cache(case.task, instance)

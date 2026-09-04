@@ -13,10 +13,7 @@ import time
 from types import MappingProxyType
 from typing import Iterable, Mapping
 
-try:
-    from ..utils.atomic_file import atomic_write_json
-except ImportError:  # pragma: no cover - top-level runtime import in production
-    from utils.atomic_file import atomic_write_json
+from utils.atomic_file import atomic_write_json
 
 
 logger = logging.getLogger(__name__)

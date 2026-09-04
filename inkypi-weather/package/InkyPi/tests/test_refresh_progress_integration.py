@@ -5,7 +5,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 from runtime.runtime_state import RefreshLane
-import src.refresh_task as refresh_task_module
+import refresh_task as refresh_task_module
 from tests.test_machine_progress_soak import START, _make_machine
 
 

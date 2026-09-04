@@ -111,7 +111,12 @@ from runtime.refresh_policy import (
     soft_spacing_deadline,
 )
 from runtime.refresh_progress import RefreshProgressTracker
-from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
+from runtime.long_task_executor import InstanceIdentity
+from runtime.plugin_execution import PluginExecutionContext
+from runtime.refresh_planning import (
+    InstanceDueInput, RefreshPlan, align_datetime_tz, collect_due_candidates,
+    plan_candidate, plan_reserved_presentation,
+)
 from runtime.bounded_parallel_stage import BoundedParallelStageRunner
 from runtime.execution_policy import ExecutionClass, plugin_execution_class
 from runtime.resource_governor import RuntimeResourceGovernor
@@ -529,7 +534,9 @@ class RefreshTask:
         ian_retained_limit=None,
         resource_governor=None,
         parallel_image_runner=None,
+        plugin_registry=None,
     ):
+        self._plugin_registry = plugin_registry
         self.device_config = device_config
         self.display_manager = display_manager
         self._clock = clock
@@ -2671,6 +2678,57 @@ class RefreshTask:
             ),
         )
 
+    def _get_plugin_instance(self, plugin_config):
+        registry = getattr(self, "_plugin_registry", None)
+        return registry.get(plugin_config) if registry is not None else get_plugin_instance(plugin_config)
+
+    def _collect_due_refresh_candidates(self, active, runtime_instances, cache_candidates, first_due_since, current_dt):
+        inputs = []
+        for instance in active.plugins:
+            plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            presentation_enabled = (
+                _presentation_refresh_enabled(self.device_config, plugin_config)
+                and plugin_supports_presentation_refresh(plugin_config)
+            )
+            resolved_theme = (
+                _resolved_theme_context_for_instance(
+                    instance, plugin_config, self.device_config, current_dt=current_dt,
+                ) if presentation_enabled else None
+            )
+            inputs.append(InstanceDueInput(
+                instance=instance,
+                state=runtime_instances.get(instance.instance_uuid, InstanceRuntimeState()),
+                has_cache=instance.instance_uuid in cache_candidates,
+                first_due_since=first_due_since.get(instance.instance_uuid),
+                presentation_enabled=presentation_enabled,
+                provider_presentation=plugin_allows_display_triggered_provider_refresh(plugin_config),
+                theme_mode=resolved_theme.get("mode") if isinstance(resolved_theme, Mapping) else None,
+            ))
+        due = collect_due_candidates(inputs, now=current_dt)
+        for wakeup in due.wakeups:
+            self._note_scheduler_due_at(wakeup, current_dt)
+        for plugin_id, invalid_fields in due.invalid_fields:
+            logger.warning(
+                "Ignoring invalid refresh cadence fields. | plugin_id: %s | fields: %s",
+                plugin_id, ",".join(invalid_fields),
+            )
+        return list(due.data), list(due.presentations)
+
+    def _command_for_refresh_plan(self, playlist_name, plan: RefreshPlan | None, current_dt, theme_context=None):
+        if plan is None:
+            return None
+        return self._playlist_command(
+            playlist_name, plan.instance, source=plan.source, intent=plan.intent,
+            force=False, display_cached_only=False, priority=plan.priority,
+            kind=CommandKind.CACHE_REFRESH, current_dt=current_dt,
+            theme_context=theme_context if plan.theme_render_only else None,
+            theme_render_only=plan.theme_render_only,
+            expected_displayed_instance_uuid=plan.expected_displayed_instance_uuid,
+            background_live_refresh=plan.background_live_refresh,
+            presentation_request_id=plan.presentation_request_id,
+            automatic_rotation=plan.automatic_rotation,
+        )
+
     def _select_independent_refresh_command(
         self,
         current_dt,
@@ -2706,70 +2764,9 @@ class RefreshTask:
         first_due_since = self._first_data_due.observe(
             active.plugins, runtime_instances, now=current_dt, now_monotonic=self._clock(),
         )
-        data_candidates = []
-        presentation_candidates = []
-        for instance in active.plugins:
-            runtime_instance = runtime_instances.get(
-                instance.instance_uuid,
-                InstanceRuntimeState(),
-            )
-            data_evaluation = evaluate_data_due(
-                instance,
-                runtime_instance,
-                instance.instance_uuid in cache_candidates,
-                current_dt,
-                first_due_since=first_due_since.get(instance.instance_uuid),
-            )
-            self._note_scheduler_due_at(data_evaluation.next_due_at, current_dt)
-            if data_evaluation.invalid_fields:
-                logger.warning(
-                    "Ignoring invalid refresh cadence fields. | plugin_id: %s | fields: %s",
-                    instance.plugin_id,
-                    ",".join(data_evaluation.invalid_fields),
-                )
-            plugin_config = self.device_config.get_plugin(instance.plugin_id)
-            provider_presentation_due = False
-            if (
-                _presentation_refresh_enabled(
-                    self.device_config,
-                    plugin_config,
-                )
-                and plugin_supports_presentation_refresh(plugin_config)
-            ):
-                resolved_theme_context = _resolved_theme_context_for_instance(
-                    instance,
-                    plugin_config,
-                    self.device_config,
-                    current_dt=current_dt,
-                )
-                resolved_theme_mode = (
-                    resolved_theme_context.get("mode")
-                    if isinstance(resolved_theme_context, Mapping)
-                    else None
-                )
-                presentation = evaluate_presentation_due(
-                    instance,
-                    runtime_instance,
-                    instance.instance_uuid in cache_candidates,
-                    resolved_theme_mode,
-                    current_dt,
-                )
-                self._note_scheduler_due_at(presentation.next_due_at, current_dt)
-                if presentation.candidate is not None:
-                    presentation_candidates.append(presentation.candidate)
-                    provider_presentation_due = (
-                        plugin_allows_display_triggered_provider_refresh(
-                            plugin_config
-                        )
-                    )
-            # An opted-in provider presentation performs the same fresh fetch
-            # and promotes its prepared image after the hardware commit. Avoid
-            # admitting a second DATA request for the same pending display.
-            if (
-                data_evaluation.candidate is not None
-                and not provider_presentation_due
-            ):
-                data_candidates.append(data_evaluation.candidate)
+        data_candidates, presentation_candidates = self._collect_due_refresh_candidates(
+            active, runtime_instances, cache_candidates, first_due_since, current_dt,
+        )
 
         thresholds = self._resource_thresholds()
         resource_sample = self._resource_sample()
@@ -3084,83 +3081,25 @@ class RefreshTask:
                         resource_sample,
                     )
 
-        # A presentation request for the reserved next rotation member is part
-        # of the display critical path.  Give the exact same instance one due
-        # data attempt first so a NO_CHANGE presentation cannot bless an old
-        # cache as ready.  Once that attempt has started, presentation wins
-        # over all ordinary background work and cannot be starved by a short
-        # data interval.
-        data_by_instance_uuid = {
-            candidate.instance.instance_uuid: candidate
-            for candidate in data_candidates
+        # Reserved display gets one due DATA attempt, then its exact presentation.
+        # Resource sampling stays here; the pure planner receives lane-specific facts.
+        blocked_reserved = {
+            (candidate.instance.plugin_id, candidate.lane)
+            for candidate in (*data_candidates, *presentation_candidates)
+            if not has_sports_start_margin(candidate)
         }
-        for presentation_candidate in presentation_candidates:
-            presentation_instance = presentation_candidate.instance
-            if presentation_instance.instance_uuid not in reserved_instance_uuids:
-                continue
-            request = runtime_instances[
-                presentation_instance.instance_uuid
-            ].presentation_request
-            if request is None:
-                continue
-            data_candidate = data_by_instance_uuid.get(
-                presentation_instance.instance_uuid
-            )
-            if (
-                data_candidate is not None
-                and tier is not ResourceTier.HARD
-                and has_sports_start_margin(data_candidate)
-                and (
-                    presentation_instance.plugin_id != "ticketmaster_events"
-                    or ticketmaster_margin_available
-                )
-            ):
-                data_attempt = data_candidate.last_attempt_at
-                presentation_due = presentation_candidate.due_since
-                if data_attempt is None or (
-                    self._align_datetime_tz(data_attempt, presentation_due)
-                    <= presentation_due
-                ):
-                    self._admission_state = replace(
-                        self._admission_state,
-                        consecutive_data_admissions=0,
-                        consecutive_background_live_admissions=0,
-                    )
-                    return self._finish_weather_liveness_for_selected_alternative(
-                        self._playlist_command(
-                            active.name,
-                            presentation_instance,
-                            source=CommandSource.BACKGROUND,
-                            intent=RefreshIntent.DATA_REFRESH,
-                            force=False,
-                            display_cached_only=False,
-                            priority=95,
-                            kind=CommandKind.CACHE_REFRESH,
-                            current_dt=current_dt,
-                            automatic_rotation=True,
-                        ),
-                        resource_sample,
-                    )
-            if not has_sports_start_margin(presentation_candidate):
-                continue
-            self._admission_state = replace(
-                self._admission_state,
-                consecutive_data_admissions=0,
-            )
+        if not ticketmaster_margin_available:
+            blocked_reserved.add(("ticketmaster_events", RefreshLane.DATA))
+        reserved = plan_reserved_presentation(
+            data=data_candidates, presentations=presentation_candidates,
+            runtime_instances=runtime_instances,
+            reserved_instance_uuids=frozenset(reserved_instance_uuids),
+            state=self._admission_state, tier=tier, blocked=frozenset(blocked_reserved),
+        )
+        if reserved is not None:
+            self._admission_state = reserved.state
             return self._finish_weather_liveness_for_selected_alternative(
-                self._playlist_command(
-                    active.name,
-                    presentation_instance,
-                    source=CommandSource.BACKGROUND,
-                    intent=RefreshIntent.PRESENTATION_REFRESH,
-                    force=False,
-                    display_cached_only=False,
-                    priority=90,
-                    kind=CommandKind.CACHE_REFRESH,
-                    current_dt=current_dt,
-                    presentation_request_id=request.request_id,
-                    automatic_rotation=True,
-                ),
+                self._command_for_refresh_plan(active.name, reserved.plan, current_dt),
                 resource_sample,
             )
 
@@ -3414,77 +3353,9 @@ class RefreshTask:
                 ),
                 resource_sample,
             )
-        if candidate.lane is RefreshLane.THEME:
-            return self._finish_weather_liveness_for_selected_alternative(
-                self._playlist_command(
-                    active.name,
-                    candidate.instance,
-                    source=CommandSource.SCHEDULER,
-                    intent=RefreshIntent.THEME_REDRAW,
-                    force=False,
-                    display_cached_only=False,
-                    priority=80,
-                    kind=CommandKind.CACHE_REFRESH,
-                    theme_context=theme_context,
-                    theme_render_only=True,
-                    current_dt=current_dt,
-                    expected_displayed_instance_uuid=(
-                        candidate.instance.instance_uuid
-                    ),
-                ),
-                resource_sample,
-            )
-        if candidate.lane is RefreshLane.LIVE:
-            return self._finish_weather_liveness_for_selected_alternative(
-                self._playlist_command(
-                    active.name,
-                    candidate.instance,
-                    source=CommandSource.LIVE,
-                    intent=RefreshIntent.LIVE_REFRESH,
-                    force=False,
-                    display_cached_only=False,
-                    priority=70,
-                    kind=CommandKind.CACHE_REFRESH,
-                    current_dt=current_dt,
-                    expected_displayed_instance_uuid=(
-                        candidate.instance.instance_uuid
-                        if candidate.requires_displayed_instance
-                        else None
-                    ),
-                    background_live_refresh=not candidate.requires_displayed_instance,
-                ),
-                resource_sample,
-            )
-        if candidate.lane is RefreshLane.PRESENTATION:
-            request = runtime_instances[candidate.instance.instance_uuid].presentation_request
-            if request is None:
-                return None
-            return self._finish_weather_liveness_for_selected_alternative(
-                self._playlist_command(
-                    active.name,
-                    candidate.instance,
-                    source=CommandSource.BACKGROUND,
-                    intent=RefreshIntent.PRESENTATION_REFRESH,
-                    force=False,
-                    display_cached_only=False,
-                    priority=20,
-                    kind=CommandKind.CACHE_REFRESH,
-                    current_dt=current_dt,
-                    presentation_request_id=request.request_id,
-                ),
-                resource_sample,
-            )
         return self._finish_weather_liveness_for_selected_alternative(
-            self._playlist_command(
-                active.name,
-                candidate.instance,
-                source=CommandSource.BACKGROUND,
-                intent=RefreshIntent.DATA_REFRESH,
-                force=False,
-                display_cached_only=False,
-                priority=10,
-                kind=CommandKind.CACHE_REFRESH,
-                current_dt=current_dt,
+            self._command_for_refresh_plan(
+                active.name, plan_candidate(candidate, runtime_instances), current_dt, theme_context,
             ),
             resource_sample,
         )
@@ -3900,7 +3771,7 @@ class RefreshTask:
         if require_live_refresh and not plugin_supports_live_refresh(plugin_config):
             return None
         try:
-            return get_plugin_instance(plugin_config)
+            return self._get_plugin_instance(plugin_config)
         except Exception:
             logger.exception("Plugin '%s' could not be loaded.", instance.plugin_id)
             return None
@@ -4673,12 +4544,11 @@ class RefreshTask:
                         candidate,
                     )
                 )
-                with bind_long_task_runtime(
-                    context,
-                    identity,
-                    identity_validator=identity_validator,
+                execution = PluginExecutionContext(
+                    context, identity, identity_validator,
                     parallel_image_runner=self._parallel_image_runner,
-                ):
+                )
+                with execution.activate():
                     self._execute_command(command)
             except SportsIsolatedCheckpointPending as pending:
                 try:
@@ -6390,17 +6260,18 @@ class RefreshTask:
         plugin_config = self.device_config.get_plugin(command.plugin_id)
         if plugin_config is None:
             raise LookupError(f"Plugin config not found for '{command.plugin_id}'.")
-        plugin = get_plugin_instance(plugin_config)
+        plugin = self._get_plugin_instance(plugin_config)
         settings = thaw_payload(command.payload.get("settings", {}))
         with self.render_arbiter.lease(command.plugin_id, context):
             context.raise_if_cancelled()
-            image = plugin.render_themed_image(
+            image = self._render_plugin_image(plugin,
                 _settings_with_force_refresh(
                     settings,
                     command.force,
                     display_render=command.kind is CommandKind.DISPLAY,
                 ),
                 self.device_config,
+                command=command, context=context,
                 resolved_theme_context=command.payload.get(
                     "resolved_theme_context"
                 ),
@@ -6423,7 +6294,7 @@ class RefreshTask:
                 # for another instance instead of falling back to old values.
                 raise _CacheUnavailable("local cached display redraw deferred under hard pressure")
             started = self._clock()
-            plugin = get_plugin_instance(plugin_config)
+            plugin = self._get_plugin_instance(plugin_config)
             image = plugin.render_cached_display(
                 thaw_payload(resolved.instance.settings),
                 self.device_config,
@@ -6833,7 +6704,7 @@ class RefreshTask:
             )
         if not plugin_supports_presentation_refresh(plugin_config):
             raise _StaleSelection("presentation capability is no longer enabled")
-        plugin = get_plugin_instance(plugin_config)
+        plugin = self._get_plugin_instance(plugin_config)
         settings = bind_presentation_instance_identity(
             thaw_payload(instance.settings),
             instance.instance_uuid,
@@ -7040,6 +6911,24 @@ class RefreshTask:
         )
         return self.refresh_queue.submit(followup)
 
+    def _render_plugin_image(self, plugin, settings, device_config, *, command, context, **options):
+        def validate_identity(identity):
+            if not self._isolated_instance_identity_is_current(command, identity):
+                raise _StaleSelection("plugin instance changed during execution")
+            return True
+
+        execution = PluginExecutionContext(
+            task=context,
+            identity=InstanceIdentity(command.instance_uuid, command.structural_generation, command.settings_revision),
+            identity_validator=validate_identity if command.instance_uuid is not None else None,
+            parallel_image_runner=self._parallel_image_runner,
+        )
+        renderer = getattr(plugin, "render_with_context", None)
+        if callable(renderer):
+            return renderer(settings, device_config, execution_context=execution, **options)
+        # Compatibility for standalone integrations that do not inherit BasePlugin.
+        return execution.run(lambda: plugin.render_themed_image(settings, device_config, **options))
+
     def _render_playlist_command(self, command, resolved, context):
         instance = resolved.instance
         plugin_config = self.device_config.get_plugin(command.plugin_id)
@@ -7050,7 +6939,7 @@ class RefreshTask:
         plugin = (
             None
             if isolated_sports_refresh
-            else get_plugin_instance(plugin_config)
+            else self._get_plugin_instance(plugin_config)
         )
         if plugin_supports_presentation_refresh(plugin_config):
             settings = bind_presentation_instance_identity(
@@ -7257,13 +7146,14 @@ class RefreshTask:
                             instance.name,
                         )
                         try:
-                            image = plugin.render_themed_image(
+                            image = self._render_plugin_image(plugin,
                                 _settings_with_force_refresh(
                                     settings,
                                     command.force,
                                     display_render=True,
                                 ),
                                 self.device_config,
+                                command=command, context=context,
                                 resolved_theme_context=resolved_theme_context,
                             )
                             generated = True
@@ -7277,13 +7167,14 @@ class RefreshTask:
                             )
                             image = self._placeholder_for_snapshot(instance)
                 elif not theme_render_only and should_generate:
-                    image = plugin.render_themed_image(
+                    image = self._render_plugin_image(plugin,
                         _settings_with_force_refresh(
                             settings,
                             command.force,
                             display_render=command.kind is CommandKind.DISPLAY,
                         ),
                         self.device_config,
+                        command=command, context=context,
                         resolved_theme_context=resolved_theme_context,
                     )
                     generated = True
@@ -9849,7 +9740,7 @@ class RefreshTask:
                     )
                     continue
 
-                plugin = get_plugin_instance(plugin_config)
+                plugin = self._get_plugin_instance(plugin_config)
                 image = plugin.render_themed_image(
                     _settings_with_force_refresh(plugin_instance.settings, force),
                     self.device_config,
@@ -9975,7 +9866,7 @@ class RefreshTask:
         if require_live_refresh and not plugin_supports_live_refresh(plugin_config):
             return None
         try:
-            return get_plugin_instance(plugin_config)
+            return self._get_plugin_instance(plugin_config)
         except Exception:
             logger.exception(f"Plugin '{plugin_instance.plugin_id}' could not be loaded.")
             return None
@@ -10075,14 +9966,7 @@ class RefreshTask:
 
     @staticmethod
     def _align_datetime_tz(value, reference):
-        if value.tzinfo is None and reference.tzinfo is not None:
-            localize = getattr(reference.tzinfo, "localize", None)
-            return localize(value) if localize else value.replace(tzinfo=reference.tzinfo)
-        if value.tzinfo is not None and reference.tzinfo is not None:
-            return value.astimezone(reference.tzinfo)
-        if value.tzinfo is not None and reference.tzinfo is None:
-            return value.replace(tzinfo=None)
-        return value
+        return align_datetime_tz(value, reference)
 
     def _is_same_plugin_instance(self, plugin_instance, other_plugin_instance):
         if not plugin_instance or not other_plugin_instance:

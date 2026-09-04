@@ -6,18 +6,18 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from src.display import display_transaction as transaction_module
-from src.display.display_transaction import (
+from display import display_transaction as transaction_module
+from display.display_transaction import (
     DisplayCommitUnknownError,
     DisplayTransaction,
 )
-from src.runtime.cache_lifecycle import (
+from runtime.cache_lifecycle import (
     CleanupBudget,
     LifecycleAggregate,
     LifecycleAllowance,
 )
-from src.runtime.refresh_contracts import TaskContext
-from src.runtime.runtime_state import RuntimeStateStore
+from runtime.refresh_contracts import TaskContext
+from runtime.runtime_state import RuntimeStateStore
 
 
 def _image(color):

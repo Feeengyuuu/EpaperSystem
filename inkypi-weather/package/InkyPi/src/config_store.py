@@ -21,20 +21,12 @@ from types import MappingProxyType
 from typing import Any, Mapping, TypeAlias
 from uuid import UUID
 
-try:  # Support both ``src.config_store`` tests and the installed flat module.
-    from .utils.atomic_file import (
-        AtomicCommitUncertainError,
-        AtomicWriteError,
-        atomic_write_json,
-        fsync_directory,
-    )
-except ImportError:  # pragma: no cover - exercised by the installed runtime
-    from utils.atomic_file import (
-        AtomicCommitUncertainError,
-        AtomicWriteError,
-        atomic_write_json,
-        fsync_directory,
-    )
+from utils.atomic_file import (
+    AtomicCommitUncertainError,
+    AtomicWriteError,
+    atomic_write_json,
+    fsync_directory,
+)
 
 
 Pathish: TypeAlias = str | os.PathLike[str]

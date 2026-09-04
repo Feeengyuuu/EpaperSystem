@@ -4,8 +4,8 @@ from types import MappingProxyType, SimpleNamespace
 
 import pytest
 
-from src.health import HealthCollector, HealthPublisher, ReadinessEvaluator
-import src.health as health_module
+from health import HealthCollector, HealthPublisher, ReadinessEvaluator
+import health as health_module
 
 
 class FakeClock:

@@ -1,6 +1,6 @@
 import subprocess
 
-from src.utils import network_utils
+from utils import network_utils
 
 
 def test_wireless_interfaces_returns_only_wireless_names(monkeypatch):

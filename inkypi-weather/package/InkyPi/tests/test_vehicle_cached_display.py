@@ -18,8 +18,8 @@ from plugins.vehicle_status import vehicle_status as vehicle_module
 from runtime.refresh_contracts import CommandSource, JobStatus, RefreshIntent
 from runtime.refresh_policy import ResourceSample
 from runtime.runtime_state import RefreshLane
-from src.refresh_task import RefreshTask
-import src.refresh_task as refresh_task_module
+from refresh_task import RefreshTask
+import refresh_task as refresh_task_module
 from tests.test_refresh_task import (
     PresentationTransactionDisplayManager,
     RuntimeClock,

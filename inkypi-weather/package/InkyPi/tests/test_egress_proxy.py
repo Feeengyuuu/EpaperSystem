@@ -1,8 +1,8 @@
 import socket
 import threading
 
-from src.security.egress_proxy import EgressProxy
-from src.security.ssrf import ApprovedTarget, UnsafeTarget
+from security.egress_proxy import EgressProxy
+from security.ssrf import ApprovedTarget, UnsafeTarget
 
 
 class SequencePolicy:

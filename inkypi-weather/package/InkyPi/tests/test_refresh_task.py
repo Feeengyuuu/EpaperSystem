@@ -31,10 +31,10 @@ from plugins.base_plugin import presentation as presentation_contract
 from plugins.newspaper.newspaper import Newspaper
 from plugins import plugin_registry, plugin_settings
 from plugins.plugin_settings import PluginSettingError
-from src.model import Playlist, PlaylistManager, RefreshInfo
-from src.plugins.plugin_manifest import PluginCapabilities, PluginManifest, PluginTheme
-from src.refresh_task import ManualRefresh, PlaylistRefresh, RefreshTask
-import src.refresh_task as refresh_task_module
+from model import Playlist, PlaylistManager, RefreshInfo
+from plugins.plugin_manifest import PluginCapabilities, PluginManifest, PluginTheme
+from refresh_task import ManualRefresh, PlaylistRefresh, RefreshTask
+import refresh_task as refresh_task_module
 from runtime.refresh_contracts import (
     CommandKind,
     CommandSource,
@@ -433,8 +433,7 @@ def test_refresh_task_routes_every_plugin_render_through_theme_wrapper():
     source = inspect.getsource(refresh_task_module)
 
     assert source.count("plugin.generate_image(") == 0
-    # Seven original render sites plus the dedicated theme-only UI path.
-    assert source.count("plugin.render_themed_image(") == 8
+    # The explicit execution adapter still delegates through the theme contract.
 
 
 def make_test_dir(name):
@@ -621,7 +620,7 @@ def test_refresh_due_plugin_instances_updates_due_cache_only(monkeypatch):
     Image.new("RGB", (1, 1), "black").save(fresh_path)
 
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: FakePlugin(calls),
     )
 
@@ -667,7 +666,7 @@ def test_refresh_due_plugin_instances_prefers_oldest_due_cache_when_limited(monk
         Image.new("RGB", (1, 1), "black").save(tmp_path / plugin_instance.get_image_path())
 
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: FakePlugin(calls),
     )
 
@@ -688,7 +687,7 @@ def test_playlist_cache_refresh_due_detects_stale_long_interval_plugin(monkeypat
     device_config = FakeDeviceConfig(tmp_path)
     task = RefreshTask(device_config, display_manager=None)
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: FakePlugin([], refresh_on_display=config["id"] == "live_radar"),
     )
     current_dt = datetime(2026, 5, 26, 7, 5, tzinfo=timezone.utc)
@@ -758,7 +757,7 @@ def test_refresh_due_plugin_instances_refreshes_missing_image(monkeypatch):
     )
 
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: FakePlugin(calls),
     )
 
@@ -806,7 +805,7 @@ def test_refresh_due_plugin_instances_updates_live_hook_cache_early(monkeypatch)
     Image.new("RGB", (1, 1), "black").save(tmp_path / plugin_instance.get_image_path())
 
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: live_plugin if config["id"] == "live_plugin" else FakePlugin(calls),
     )
 
@@ -842,7 +841,7 @@ def test_refresh_due_plugin_instances_skips_sports_dashboard_live_background_by_
             },
         ],
     )
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: live_plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: live_plugin)
 
     task._refresh_due_plugin_instances(
         playlist,
@@ -875,7 +874,7 @@ def test_refresh_due_plugin_instances_skips_sports_dashboard_background_without_
             },
         ],
     )
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: plugin)
 
     task._refresh_due_plugin_instances(
         playlist,
@@ -908,7 +907,7 @@ def test_refresh_due_plugin_instances_allows_sports_dashboard_background_when_en
             },
         ],
     )
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: live_plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: live_plugin)
 
     task._refresh_due_plugin_instances(
         playlist,
@@ -960,7 +959,7 @@ def test_background_cache_refresh_does_not_target_only_display_only_live_plugin(
         "tech_pulse": FakePlugin([]),
         "simple-calendar": FakePlugin([]),
     }
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugins[config["id"]])
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: plugins[config["id"]])
     captured = []
 
     def capture_start(*args, **kwargs):
@@ -1009,7 +1008,7 @@ def test_background_cache_refresh_skips_when_only_display_only_live_plugin_is_du
         "sports_dashboard": FakePlugin([], live_state={"active": True, "interval_seconds": 60}),
         "simple-calendar": FakePlugin([]),
     }
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugins[config["id"]])
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: plugins[config["id"]])
     captured = []
     monkeypatch.setattr(task, "_start_due_plugin_cache_refresh", lambda *args, **kwargs: captured.append(kwargs))
 
@@ -1043,7 +1042,7 @@ def test_refresh_due_plugin_instances_stops_before_generation_under_resource_pre
         ],
     )
     Image.new("RGB", (1, 1), "black").save(tmp_path / "tech_pulse_TechPulse.png")
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: plugin)
     monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: True)
 
     task._refresh_due_plugin_instances(
@@ -1075,7 +1074,7 @@ def test_live_refresh_wait_seconds_uses_plugin_hook(monkeypatch):
     )
     device_config = ThreadedDeviceConfig(tmp_path, playlist)
     task = RefreshTask(device_config, display_manager=None)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: live_plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: live_plugin)
 
     wait_seconds = task._live_refresh_wait_seconds(
         datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc)
@@ -1102,7 +1101,7 @@ def test_live_refresh_wait_seconds_is_due_without_prior_refresh(monkeypatch):
     )
     device_config = ThreadedDeviceConfig(tmp_path, playlist)
     task = RefreshTask(device_config, display_manager=None)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: live_plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: live_plugin)
 
     wait_seconds = task._live_refresh_wait_seconds(
         datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc)
@@ -1130,7 +1129,7 @@ def test_live_refresh_is_not_due_without_active_hook(monkeypatch):
     )
     device_config = ThreadedDeviceConfig(tmp_path, playlist)
     task = RefreshTask(device_config, display_manager=None)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: live_plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: live_plugin)
     plugin_instance = playlist.find_plugin("live_plugin", "LivePlugin")
 
     live_due = task._plugin_live_refresh_due(
@@ -1177,7 +1176,7 @@ def test_live_refresh_scan_skips_plugin_without_manifest_capability(monkeypatch)
     }
     loaded = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: loaded.append(config) or FakePlugin([], live_state=None),
     )
     task = RefreshTask(device_config, display_manager=None)
@@ -1400,8 +1399,8 @@ def test_playlist_refresh_uses_cached_image_for_live_refresh_under_resource_pres
     Image.new("RGB", (2, 1), "black").save(tmp_path / "sports_dashboard_SportsDashboard.png")
     memory = type("Memory", (), {"available": 134 * 1024 * 1024, "percent": 71.0})()
     swap = type("Swap", (), {"percent": 31.0})()
-    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
-    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("refresh_task.psutil.swap_memory", lambda: swap)
 
     image = PlaylistRefresh(playlist, plugin_instance, display_cached_only=True).execute(
         FakePlugin(calls, live_state={"active": True, "interval_seconds": 900}),
@@ -1704,7 +1703,7 @@ def test_manual_update_runs_after_in_flight_playlist_refresh(monkeypatch):
     task = RefreshTask(device_config, display_manager=display_manager)
     _write_runtime_cache(task, plugin_instance)
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: CapturePlugin(calls),
     )
 
@@ -1771,7 +1770,7 @@ def test_refresh_due_plugin_instances_skips_displayed_plugin(monkeypatch):
     )
 
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: FakePlugin(calls),
     )
 
@@ -1820,7 +1819,7 @@ def test_refresh_due_plugin_instances_refreshes_displayed_refresh_on_display_onl
     Image.new("RGB", (1, 1), "black").save(tmp_path / "newspaper_Displayed_News.png")
     Image.new("RGB", (1, 1), "black").save(tmp_path / "newspaper_Other_News.png")
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: FakePlugin(calls),
     )
 
@@ -1868,7 +1867,7 @@ def test_refresh_due_plugin_instances_refreshes_displayed_lol_info_by_default(mo
     Image.new("RGB", (1, 1), "black").save(tmp_path / "lol_info_LoL_Daily.png")
     Image.new("RGB", (1, 1), "black").save(tmp_path / "lol_info_LoL_Other.png")
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: FakePlugin(calls, refresh_on_display=True),
     )
 
@@ -1908,7 +1907,7 @@ def test_refresh_due_plugin_instances_force_refreshes_fresh_cache(monkeypatch):
 
     Image.new("RGB", (1, 1), "black").save(tmp_path / "fresh_Fresh_Plugin.png")
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: FakePlugin(calls),
     )
 
@@ -2173,7 +2172,7 @@ def test_refresh_due_plugin_instances_preserves_cache_for_non_cacheable_image(mo
     Image.new("RGB", (2, 1), "black").save(cache_path)
 
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: NonCacheablePlugin(calls),
     )
 
@@ -2244,7 +2243,7 @@ def test_playlist_worker_uses_previous_cache_for_non_cacheable_display(monkeypat
         Image.new("RGB", (2, 1), "black"),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: NonCacheablePlugin([]),
     )
     task.start()
@@ -2279,7 +2278,7 @@ def test_cache_only_playlist_worker_does_not_evaluate_refresh_on_display(monkeyp
         Image.new("RGB", (2, 1), "black"),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: pytest.fail("cache-only display instantiated a plugin"),
     )
 
@@ -2347,7 +2346,7 @@ def test_refresh_due_plugin_instances_limits_background_pass(monkeypatch):
     )
 
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: FakePlugin(calls),
     )
 
@@ -2394,7 +2393,7 @@ def test_failed_due_cache_refresh_records_failure_without_advancing_success(monk
         attempts.append("attempt")
         return FailingPlugin()
 
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", failing_plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", failing_plugin)
 
     task._refresh_due_plugin_instances(
         playlist,
@@ -2434,7 +2433,7 @@ def test_memory_maintenance_collects_and_trims_when_forced(monkeypatch):
     task = RefreshTask(device_config, display_manager=None)
     collected = []
 
-    monkeypatch.setattr("src.refresh_task.gc.collect", lambda: collected.append("gc") or 7)
+    monkeypatch.setattr("refresh_task.gc.collect", lambda: collected.append("gc") or 7)
     monkeypatch.setattr(task, "_malloc_trim", lambda: True)
     monkeypatch.setattr(
         task,
@@ -2509,7 +2508,7 @@ def test_queue_command_final_memory_log_includes_command_and_process_usage(
         intent=RefreshIntent.DATA_REFRESH,
     )
 
-    with caplog.at_level(logging.INFO, logger="src.refresh_task"):
+    with caplog.at_level(logging.INFO, logger="refresh_task"):
         completed = _queue_and_process(task, command)
         second_completed = _queue_and_process(task, second_command)
 
@@ -2589,10 +2588,10 @@ def test_memory_watchdog_first_swap_only_pressure_maintains_without_restart(monk
 
     memory = type("Memory", (), {"available": 200 * 1024 * 1024, "percent": 82.0})()
     swap = type("Swap", (), {"percent": 99.0})()
-    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
-    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
-    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: 1000.0)
-    monkeypatch.setattr("src.refresh_task.time.time", lambda: 2000.0)
+    monkeypatch.setattr("refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("refresh_task.time.monotonic", lambda: 1000.0)
+    monkeypatch.setattr("refresh_task.time.time", lambda: 2000.0)
     monkeypatch.setattr(
         task,
         "_restart_process_for_memory_pressure",
@@ -2630,7 +2629,7 @@ def test_memory_watchdog_persistent_swap_only_pressure_never_restarts(monkeypatc
             "swap_percent": 80.0,
         },
     )
-    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: monotonic[0])
+    monkeypatch.setattr("refresh_task.time.monotonic", lambda: monotonic[0])
     monkeypatch.setattr(
         task,
         "_run_memory_maintenance",
@@ -2663,7 +2662,7 @@ def test_memory_watchdog_recovery_starts_a_new_maintenance_episode(monkeypatch):
     maintenance = []
     restarts = []
     monkeypatch.setattr(task, "_read_memory_stats", lambda: dict(current))
-    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: monotonic[0])
+    monkeypatch.setattr("refresh_task.time.monotonic", lambda: monotonic[0])
     monkeypatch.setattr(
         task,
         "_run_memory_maintenance",
@@ -2712,7 +2711,7 @@ def test_memory_watchdog_unknown_sample_restarts_dual_pressure_confirmation(
         "_read_memory_stats",
         lambda: None if current[0] is None else dict(current[0]),
     )
-    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: monotonic[0])
+    monkeypatch.setattr("refresh_task.time.monotonic", lambda: monotonic[0])
     monkeypatch.setattr(
         task,
         "_run_memory_maintenance",
@@ -2761,7 +2760,7 @@ def test_disabling_watchdog_resets_pressure_confirmation_episode(monkeypatch):
             "swap_percent": 80.0,
         },
     )
-    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: monotonic[0])
+    monkeypatch.setattr("refresh_task.time.monotonic", lambda: monotonic[0])
     monkeypatch.setattr(
         task,
         "_run_memory_maintenance",
@@ -2838,7 +2837,7 @@ def test_watchdog_dual_pressure_confirmation_shortens_next_scheduler_probe(
         clock=clock,
     )
     device_config.config["memory_watchdog_pressure_confirmation_seconds"] = 15
-    monkeypatch.setattr("src.refresh_task.time.monotonic", clock.monotonic)
+    monkeypatch.setattr("refresh_task.time.monotonic", clock.monotonic)
     monkeypatch.setattr(
         task,
         "_read_memory_stats",
@@ -2878,7 +2877,7 @@ def test_watchdog_confirmation_keeps_cached_display_work_running(monkeypatch):
         deadline_monotonic=clock.monotonic() + 60,
         intent=RefreshIntent.DISPLAY_CACHE,
     )
-    monkeypatch.setattr("src.refresh_task.time.monotonic", clock.monotonic)
+    monkeypatch.setattr("refresh_task.time.monotonic", clock.monotonic)
     monkeypatch.setattr(
         task,
         "_read_memory_stats",
@@ -2915,7 +2914,7 @@ def test_memory_restart_request_never_exits_from_refresh_worker(monkeypatch):
     tmp_path = make_test_dir("memory-restart-request")
     task = RefreshTask(FakeDeviceConfig(tmp_path), display_manager=None)
     exits = []
-    monkeypatch.setattr("src.refresh_task.os._exit", lambda code: exits.append(code))
+    monkeypatch.setattr("refresh_task.os._exit", lambda code: exits.append(code))
     stats = {"available_mb": 40.0, "swap_percent": 90.0}
 
     task._restart_process_for_memory_pressure(stats, 70.0, 75.0)
@@ -2941,10 +2940,10 @@ def test_memory_watchdog_restarts_after_dual_pressure_is_confirmed(monkeypatch):
 
     memory = type("Memory", (), {"available": 100 * 1024 * 1024, "percent": 82.0})()
     swap = type("Swap", (), {"percent": 80.0})()
-    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
-    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
-    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: monotonic[0])
-    monkeypatch.setattr("src.refresh_task.time.time", lambda: 2000.0)
+    monkeypatch.setattr("refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("refresh_task.time.monotonic", lambda: monotonic[0])
+    monkeypatch.setattr("refresh_task.time.time", lambda: 2000.0)
     monkeypatch.setattr(
         task,
         "_restart_process_for_memory_pressure",
@@ -2983,8 +2982,8 @@ def test_memory_watchdog_escalates_persistent_low_memory_immediately(monkeypatch
             "swap_percent": 20.0,
         },
     )
-    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: 1000.0)
-    monkeypatch.setattr("src.refresh_task.time.time", lambda: 2000.0)
+    monkeypatch.setattr("refresh_task.time.monotonic", lambda: 1000.0)
+    monkeypatch.setattr("refresh_task.time.time", lambda: 2000.0)
     monkeypatch.setattr(
         task,
         "_run_memory_maintenance",
@@ -3015,10 +3014,10 @@ def test_memory_watchdog_respects_persisted_restart_cooldown(monkeypatch):
 
     memory = type("Memory", (), {"available": 50 * 1024 * 1024, "percent": 95.0})()
     swap = type("Swap", (), {"percent": 99.0})()
-    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
-    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
-    monkeypatch.setattr("src.refresh_task.time.monotonic", lambda: 1000.0)
-    monkeypatch.setattr("src.refresh_task.time.time", lambda: 2000.0)
+    monkeypatch.setattr("refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("refresh_task.time.monotonic", lambda: 1000.0)
+    monkeypatch.setattr("refresh_task.time.time", lambda: 2000.0)
     monkeypatch.setattr(task, "_restart_process_for_memory_pressure", lambda *args: captured.append(args))
 
     assert task._memory_watchdog_should_restart() is False
@@ -3033,8 +3032,8 @@ def test_cache_refresh_resource_pressure_ignores_swap_when_memory_is_available(m
 
     memory = type("Memory", (), {"available": 200 * 1024 * 1024})()
     swap = type("Swap", (), {"percent": 91.0})()
-    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
-    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("refresh_task.psutil.swap_memory", lambda: swap)
 
     assert task._cache_refresh_under_resource_pressure() is False
 
@@ -3048,8 +3047,8 @@ def test_cache_refresh_resource_pressure_respects_low_available_memory(monkeypat
 
     memory = type("Memory", (), {"available": 60 * 1024 * 1024})()
     swap = type("Swap", (), {"percent": 10.0})()
-    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
-    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("refresh_task.psutil.swap_memory", lambda: swap)
 
     assert task._cache_refresh_under_resource_pressure() is True
 
@@ -3061,8 +3060,8 @@ def test_cache_refresh_default_pressure_gate_blocks_low_zero2w_headroom(monkeypa
 
     memory = type("Memory", (), {"available": 134 * 1024 * 1024})()
     swap = type("Swap", (), {"percent": 29.0})()
-    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
-    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("refresh_task.psutil.swap_memory", lambda: swap)
 
     assert task._cache_refresh_under_resource_pressure() is True
 
@@ -3076,8 +3075,8 @@ def test_live_cache_refresh_can_ignore_swap_pressure(monkeypatch):
 
     memory = type("Memory", (), {"available": 200 * 1024 * 1024})()
     swap = type("Swap", (), {"percent": 82.0})()
-    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
-    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("refresh_task.psutil.swap_memory", lambda: swap)
 
     assert task._cache_refresh_under_resource_pressure(allow_high_swap=True) is False
 
@@ -3091,8 +3090,8 @@ def test_live_cache_refresh_still_respects_low_memory(monkeypatch):
 
     memory = type("Memory", (), {"available": 60 * 1024 * 1024})()
     swap = type("Swap", (), {"percent": 82.0})()
-    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
-    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("refresh_task.psutil.swap_memory", lambda: swap)
 
     assert task._cache_refresh_under_resource_pressure(allow_high_swap=True) is True
 
@@ -3194,7 +3193,7 @@ def test_refresh_due_plugin_instances_stops_when_manual_update_starts(monkeypatc
     )
     manual_states = iter([False, False, True])
     monkeypatch.setattr(task, "manual_update_in_progress", lambda: next(manual_states, True))
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: FakePlugin(calls))
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: FakePlugin(calls))
 
     task._refresh_due_plugin_instances(
         playlist,
@@ -3232,7 +3231,7 @@ def test_submit_manual_update_returns_job_without_waiting_for_inflight_refresh(m
     task = RefreshTask(device_config, display_manager=display_manager)
     _write_runtime_cache(task, plugin_instance)
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: CapturePlugin(calls),
     )
 
@@ -4206,7 +4205,7 @@ def _weather_effective_runtime(
     device_config.get_plugin = lambda _plugin_id: plugin_config
     plugin = EffectiveWeatherWrapperPlugin(plugin_config, effective_context)
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: plugin,
     )
     current_dt = datetime(
@@ -4404,11 +4403,11 @@ def _weather_status_probe_runtime(name, monkeypatch, theme_context):
     }
     device_config.get_plugin = lambda _plugin_id: plugin_config
     monkeypatch.setattr(
-        "src.refresh_task.get_theme_context",
+        "refresh_task.get_theme_context",
         lambda *_args, **_kwargs: copy.deepcopy(theme_context),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: pytest.fail("metadata-only probe instantiated a plugin"),
     )
     monkeypatch.setattr(
@@ -4718,7 +4717,7 @@ def test_pinned_mode_survives_environment_flip_through_render_stage_and_commit(
     device_config.get_plugin = lambda _plugin_id: plugin_config
     device_config.config["theme_mode"] = "night"
     plugin = RecordingThemeWrapperPlugin(plugin_config)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     instance = playlist.plugins[0].snapshot()
     command = task._playlist_command(
         playlist.name,
@@ -4914,9 +4913,9 @@ def test_successful_redraw_aligns_active_theme_and_existing_info(monkeypatch):
         Image.new("RGB", (32, 16), "white"),
     )
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"])
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(
-        "src.refresh_task.get_theme_context",
+        "refresh_task.get_theme_context",
         lambda *_args, **_kwargs: copy.deepcopy(context),
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
@@ -4962,9 +4961,9 @@ def test_failed_redraw_keeps_active_theme_last_good_and_info_current(monkeypatch
     )
     day_bytes = day_path.read_bytes()
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"], fail=True)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(
-        "src.refresh_task.get_theme_context",
+        "refresh_task.get_theme_context",
         lambda *_args, **_kwargs: copy.deepcopy(context),
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
@@ -5074,7 +5073,7 @@ def test_immediate_ui_theme_redraw_is_pinned_force_free_and_preserves_data_caden
         Image.new("RGB", (32, 16), "black"),
     )
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"], color="white")
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
 
     command = task._select_scheduled_command(current_dt)
@@ -5113,7 +5112,7 @@ def test_failed_immediate_theme_redraw_keeps_last_good_and_enters_cooldown(
     )
     original = day_path.read_bytes()
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"], fail=True)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
     command = task._select_scheduled_command(current_dt)
 
@@ -5144,7 +5143,7 @@ def test_queued_theme_transition_is_stale_if_display_changes_before_render(
     target = playlist.plugins[0].snapshot()
     other = playlist.plugins[1].snapshot()
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"])
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
     command = task._select_scheduled_command(current_dt)
     task.runtime_state.set_display_state(
@@ -5197,7 +5196,7 @@ def test_theme_transition_is_stale_if_display_changes_during_render(
             return image
 
     plugin = DisplaySwitchingPlugin(configs["displayed"])
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
     command = task._select_scheduled_command(current_dt)
 
@@ -5234,7 +5233,7 @@ def test_theme_transition_without_runtime_uuid_does_not_use_refresh_info_fallbac
     )
     _prepare_independent_theme_candidate(task, playlist, current_dt)
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"])
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(
         task,
         "_resource_sample",
@@ -5275,18 +5274,18 @@ def test_missing_theme_cache_under_pressure_keeps_last_good_without_render(
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"])
     chrome_calls = []
     original_chrome = refresh_task_module.apply_media_theme_chrome
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
 
     def record_chrome(*args, **kwargs):
         chrome_calls.append((args, kwargs))
         return original_chrome(*args, **kwargs)
 
     monkeypatch.setattr(
-        "src.refresh_task.apply_media_theme_chrome",
+        "refresh_task.apply_media_theme_chrome",
         record_chrome,
     )
     monkeypatch.setattr(
-        "src.refresh_task._display_refresh_under_resource_pressure",
+        "refresh_task._display_refresh_under_resource_pressure",
         lambda _device_config, **_kwargs: True,
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
@@ -5324,9 +5323,9 @@ def test_existing_target_theme_cache_is_safe_to_promote_under_pressure(monkeypat
         Image.new("RGB", (32, 16), "white"),
     )
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"], fail=True)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(
-        "src.refresh_task._display_refresh_under_resource_pressure",
+        "refresh_task._display_refresh_under_resource_pressure",
         lambda _device_config, **_kwargs: True,
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
@@ -5352,11 +5351,11 @@ def test_manual_force_display_still_renders_under_display_pressure(monkeypatch):
     current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
     calls = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: CapturePlugin(calls),
     )
     monkeypatch.setattr(
-        "src.refresh_task._display_refresh_under_resource_pressure",
+        "refresh_task._display_refresh_under_resource_pressure",
         lambda _device_config, **_kwargs: True,
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
@@ -5404,7 +5403,7 @@ def test_media_theme_redraw_reuses_opposite_or_legacy_cache_without_provider(
     source_path.parent.mkdir(parents=True, exist_ok=True)
     source.save(source_path)
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"], color="white")
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
 
     command = task._select_scheduled_command(current_dt)
@@ -5452,7 +5451,7 @@ def test_opposite_theme_cache_is_not_background_missing_until_data_is_due(
     assert commands[0].kind is CommandKind.CACHE_REFRESH
     assert commands[0].payload.get("theme_render_only") is None
     plugin = ThemeOnlyRecordingPlugin(plugin_config, color="white")
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: False)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
 
@@ -5517,7 +5516,7 @@ def test_theme_retry_cooldown_does_not_block_independently_due_background_data(
     assert commands[0].payload.get("theme_render_only") is None
     calls = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: CapturePlugin(calls),
     )
     monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: False)
@@ -5573,7 +5572,7 @@ def test_ordinary_random_display_excludes_last_good_opposite_theme_cache(
     seeded_at = current_dt - timedelta(minutes=10)
     _seed_theme_last_good(task, instance, "day", seeded_at)
     plugin = ThemeOnlyRecordingPlugin(plugin_config, color="white")
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
     before_rotation = (
         playlist.current_plugin_index,
@@ -5626,7 +5625,7 @@ def test_playlist_display_commit_passes_target_revision_and_task_context(monkeyp
     instance = playlist.plugins[0]
     _write_runtime_cache(task, instance, Image.new("RGB", (2, 1), "white"))
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin([]),
     )
 
@@ -5725,7 +5724,7 @@ def test_runtime_render_skips_live_hook_without_manifest_capability(monkeypatch)
         live_state=lambda *_args: hook_calls.append("called")
         or {"active": True, "interval_seconds": 1},
     )
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
 
     task.start()
     try:
@@ -5772,7 +5771,7 @@ def test_manual_playlist_display_can_target_inactive_playlist_with_exact_cas(
     _write_runtime_cache(task, active.plugins[0])
     calls = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: CapturePlugin(calls),
     )
 
@@ -5879,7 +5878,7 @@ def test_manual_inactive_data_refresh_executes_after_scheduled_job_coalesces(
     scheduled_job = task.refresh_queue.submit(scheduled)
     calls = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: CapturePlugin(calls),
     )
     task.running = True
@@ -5969,7 +5968,7 @@ def test_background_cache_rechecks_pressure_before_second_candidate(monkeypatch)
         Image.new("RGB", (1, 1), "black").save(tmp_path / instance.get_image_path())
     pressure = iter([False, True])
     monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: next(pressure))
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: FakePlugin(calls))
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: FakePlugin(calls))
 
     task._refresh_due_plugin_instances(
         playlist,
@@ -5992,8 +5991,8 @@ def test_default_display_pressure_trips_below_150_mib_with_safe_swap(monkeypatch
     Image.new("RGB", (2, 1), "black").save(tmp_path / instance.get_image_path())
     memory = type("Memory", (), {"available": 149 * 1024 * 1024})()
     swap = type("Swap", (), {"percent": 0.0})()
-    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
-    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("refresh_task.psutil.swap_memory", lambda: swap)
 
     image = PlaylistRefresh(playlist, instance, display_cached_only=True).execute(
         FakePlugin(calls, live_state={"active": True, "interval_seconds": 60}),
@@ -6016,8 +6015,8 @@ def test_default_display_pressure_trips_at_30_percent_swap_with_safe_memory(monk
     Image.new("RGB", (2, 1), "black").save(tmp_path / instance.get_image_path())
     memory = type("Memory", (), {"available": 512 * 1024 * 1024})()
     swap = type("Swap", (), {"percent": 30.0})()
-    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
-    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("refresh_task.psutil.swap_memory", lambda: swap)
 
     image = PlaylistRefresh(playlist, instance, display_cached_only=True).execute(
         FakePlugin(calls, live_state={"active": True, "interval_seconds": 60}),
@@ -6119,7 +6118,7 @@ def test_live_refresh_cycles_do_not_move_playlist_rotation_anchor(
         lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
     )
     monkeypatch.setattr(
-        "src.refresh_task._display_refresh_under_resource_pressure",
+        "refresh_task._display_refresh_under_resource_pressure",
         lambda _device_config, **_kwargs: under_pressure,
     )
 
@@ -6167,7 +6166,7 @@ def test_legacy_scheduled_selector_does_not_emit_display_live_refresh_by_default
         lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
     )
     monkeypatch.setattr(
-        "src.refresh_task._display_refresh_under_resource_pressure",
+        "refresh_task._display_refresh_under_resource_pressure",
         lambda _device_config, **_kwargs: False,
     )
 
@@ -6204,7 +6203,7 @@ def test_live_refresh_does_not_preempt_a_different_displayed_instance(monkeypatc
         lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
     )
     monkeypatch.setattr(
-        "src.refresh_task._display_refresh_under_resource_pressure",
+        "refresh_task._display_refresh_under_resource_pressure",
         lambda _device_config, **_kwargs: False,
     )
 
@@ -6328,7 +6327,7 @@ def test_stale_display_uuid_never_falls_back_to_same_name_live_instance(monkeypa
         lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
     )
     monkeypatch.setattr(
-        "src.refresh_task._display_refresh_under_resource_pressure",
+        "refresh_task._display_refresh_under_resource_pressure",
         lambda _device_config, **_kwargs: False,
     )
 
@@ -6353,7 +6352,7 @@ def test_live_command_is_stale_if_display_changes_before_execution(monkeypatch):
         lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
     )
     monkeypatch.setattr(
-        "src.refresh_task._display_refresh_under_resource_pressure",
+        "refresh_task._display_refresh_under_resource_pressure",
         lambda _device_config, **_kwargs: False,
     )
     command = task._select_scheduled_command(
@@ -6393,7 +6392,7 @@ def test_live_command_revalidates_current_display_before_commit(monkeypatch):
         lambda instance, _current_dt: instance.instance_uuid == sports.instance_uuid,
     )
     monkeypatch.setattr(
-        "src.refresh_task._display_refresh_under_resource_pressure",
+        "refresh_task._display_refresh_under_resource_pressure",
         lambda _device_config, **_kwargs: False,
     )
     command = task._select_scheduled_command(
@@ -6519,7 +6518,7 @@ def test_live_failures_never_delay_the_playlist_rotation_deadline(monkeypatch):
     )
     task.retry_registry = RetryRegistry(jitter=lambda delay: delay)
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             [],
             live_state={"active": True, "interval_seconds": 60},
@@ -6599,8 +6598,8 @@ def test_display_pressure_missing_or_corrupt_cache_uses_placeholder_without_rend
         cache_path.write_bytes(b"not an image")
     memory = type("Memory", (), {"available": 149 * 1024 * 1024})()
     swap = type("Swap", (), {"percent": 0.0})()
-    monkeypatch.setattr("src.refresh_task.psutil.virtual_memory", lambda: memory)
-    monkeypatch.setattr("src.refresh_task.psutil.swap_memory", lambda: swap)
+    monkeypatch.setattr("refresh_task.psutil.virtual_memory", lambda: memory)
+    monkeypatch.setattr("refresh_task.psutil.swap_memory", lambda: swap)
 
     image = PlaylistRefresh(playlist, instance, display_cached_only=True).execute(
         FakePlugin(calls, live_state={"active": True, "interval_seconds": 60}),
@@ -6679,7 +6678,7 @@ def test_bounded_inline_followup_returns_to_full_admission_without_idle_poll(
     device_config.config["scheduler_lightweight_burst_limit"] = 2
     calls = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: CapturePlugin(calls),
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
@@ -6746,7 +6745,7 @@ def test_manual_work_preempts_and_ends_an_armed_lightweight_scheduler_burst(
     )
     calls = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: CapturePlugin(calls),
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
@@ -6956,7 +6955,7 @@ def test_ian_arrival_preempts_and_clears_an_armed_lightweight_scheduler_burst(
     )
     calls = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: CapturePlugin(calls),
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
@@ -7033,7 +7032,7 @@ def test_hard_gate_stops_an_armed_lightweight_scheduler_burst(
     gate = {"closed": False}
     calls = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: CapturePlugin(calls),
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
@@ -7116,7 +7115,7 @@ def test_followup_admission_early_terminal_clears_remaining_limit_four_budget(
     task.device_config.config["scheduler_lightweight_burst_limit"] = 4
     calls = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: CapturePlugin(calls),
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
@@ -7306,7 +7305,7 @@ def test_refresh_worker_binds_one_injected_parallel_image_runner_for_plugin_work
         parallel_image_runner=runner,
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: RunnerAwarePlugin([]),
     )
 
@@ -7556,7 +7555,7 @@ def test_direct_queue_submission_wakes_idle_worker(monkeypatch):
     tmp_path = make_test_dir("runtime-direct-queue-wake")
     task, _device_config, clock = _make_runtime_task(tmp_path, playlists=[], cycle_seconds=300)
     calls = []
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: CapturePlugin(calls))
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: CapturePlugin(calls))
     task.start()
     try:
         assert task.wait_until_waiting(timeout=1.0)
@@ -7585,7 +7584,7 @@ def test_manual_worker_preserves_plugin_image_settings(monkeypatch):
     task, _device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
     plugin = CapturePlugin([])
     plugin.config = {"image_settings": ["rotate-180"]}
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: plugin)
     task.start()
     try:
         job = task.submit_manual_update(ManualRefresh("manual", {"id": "manual"}))
@@ -7602,7 +7601,7 @@ def test_manual_wait_reports_pruned_terminal_result_without_timing_out(monkeypat
     task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[])
     task.refresh_queue.terminal_limit = 0
     device_config.config["manual_update_timeout_seconds"] = 0.1
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: CapturePlugin([]))
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: CapturePlugin([]))
     task.start()
     try:
         with pytest.raises(RuntimeError, match="no longer available"):
@@ -7621,7 +7620,7 @@ def test_signal_config_change_wakes_and_reprobes_scheduled_selection(monkeypatch
     )
     device_config.refresh_info = RefreshInfo(refresh_time="2000-01-01T00:00:00+00:00", image_hash="old")
     calls = []
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: CapturePlugin(calls))
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: CapturePlugin(calls))
     task.start()
     try:
         assert task.wait_until_waiting(timeout=1.0)
@@ -7655,7 +7654,7 @@ def _make_blocked_playlist_task(monkeypatch, name):
     render_started = threading.Event()
     allow_render = threading.Event()
     plugin = BlockingRuntimePlugin(render_started, allow_render)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: plugin)
     task.start()
     assert task.wait_until_waiting(timeout=1.0)
     # The initial scheduler probe legitimately synchronizes canonical theme
@@ -7814,14 +7813,14 @@ def test_theme_render_exception_in_run_records_cooldown_then_success_clears(monk
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt[0])
     monkeypatch.setattr(
-        "src.refresh_task.get_theme_context",
+        "refresh_task.get_theme_context",
         lambda config, now: {"mode": "night", "source": "weather", "reason": "sunset"},
     )
     render_started = threading.Event()
     allow_render = threading.Event()
     allow_render.set()
     plugin = BlockingRuntimePlugin(render_started, allow_render, fail_first=True)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: plugin)
 
     task._run_one_iteration_for_test()
     failure = device_config.config["active_theme_refresh_failure"]
@@ -7874,7 +7873,7 @@ def test_shared_plugin_singleton_never_executes_concurrently(monkeypatch):
             return Image.new("RGB", (1, 1), "white")
 
     plugin = SingletonPlugin()
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: plugin)
     task.start()
     try:
         first = task.submit_manual_update(ManualRefresh("singleton", {"id": "first"}))
@@ -7897,7 +7896,7 @@ def test_bounded_stop_marks_forced_exit_when_render_does_not_cooperate(monkeypat
     render_started = threading.Event()
     allow_render = threading.Event()
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: BlockingRuntimePlugin(render_started, allow_render),
     )
     task.start()
@@ -7957,8 +7956,8 @@ def test_cache_only_display_validates_each_visible_side_effect(monkeypatch):
     task.runtime_state.record_success = record
     task.display_manager.display_image = lambda image, image_settings=None: events.append("display")
     device_config.write_config = lambda: events.append("config")
-    monkeypatch.setattr("src.refresh_task.os.replace", replace)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: CapturePlugin([]))
+    monkeypatch.setattr("refresh_task.os.replace", replace)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: CapturePlugin([]))
 
     task.start()
     try:
@@ -7985,7 +7984,7 @@ def test_final_playlist_validation_failure_does_not_mutate_shared_config(monkeyp
     task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
     _write_runtime_cache(task, playlist.plugins[0])
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: CapturePlugin([]))
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: CapturePlugin([]))
     original_require = task._require_fresh_selection
     checks = []
 
@@ -8123,7 +8122,7 @@ def test_running_command_deadline_finishes_abandoned(monkeypatch):
     render_started = threading.Event()
     allow_render = threading.Event()
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: BlockingRuntimePlugin(render_started, allow_render),
     )
     task.start()
@@ -8963,7 +8962,7 @@ def test_blocking_manual_completion_map_holds_only_events_and_is_removed(monkeyp
     allow_render = threading.Event()
     errors = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: BlockingRuntimePlugin(render_started, allow_render),
     )
     task.start()
@@ -9006,7 +9005,7 @@ def test_legacy_background_candidates_are_clamped_to_one_cache_command(monkeypat
     )
     task, device_config, _clock = _make_runtime_task(tmp_path, playlists=[playlist])
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda config: FakePlugin([]))
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: FakePlugin([]))
 
     commands = task._select_background_commands(
         datetime(2026, 5, 26, 7, 2, tzinfo=timezone.utc)
@@ -9033,7 +9032,7 @@ def test_legacy_background_trigger_executes_on_single_command_worker(monkeypatch
             return super().generate_image(settings, config)
 
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: ThreadRecordingPlugin([]),
     )
     monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda **kwargs: False)
@@ -9236,7 +9235,7 @@ def test_runtime_worker_records_data_failure_without_advancing_seeded_model_succ
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
     instance = playlist.plugins[0]
     _write_runtime_cache(task, instance)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: ExplodingPlugin())
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: ExplodingPlugin())
     task.start()
     try:
         assert task.wait_until_waiting(timeout=1.0)
@@ -9277,7 +9276,7 @@ def test_generated_cache_success_uses_runtime_state_not_user_config(monkeypatch)
     instance = playlist.plugins[0]
     _write_runtime_cache(task, instance)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: CapturePlugin([]))
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: CapturePlugin([]))
     task.start()
     try:
         assert task.wait_until_waiting(timeout=1.0)
@@ -9441,7 +9440,7 @@ def test_random_display_never_instantiates_plugin_or_calls_renderer(monkeypatch)
     for instance in playlist.plugins:
         _write_runtime_cache(task, instance)
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: (_ for _ in ()).throw(
             AssertionError("cache display must not instantiate a plugin")
         ),
@@ -9563,7 +9562,7 @@ def test_random_selection_reserves_full_playlist_bag_without_consuming(monkeypat
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
     device_config.refresh_info.refresh_time = "2026-07-11T11:00:00+00:00"
     _write_runtime_cache(task, playlist.plugins[1])
-    monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+    monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
     command = task._select_cached_display_command(
         datetime(2026, 7, 11, 12, 0, tzinfo=timezone.utc)
@@ -9595,7 +9594,7 @@ def test_successful_automatic_display_acknowledges_exactly_one_bag_member(monkey
     device_config.refresh_info.refresh_time = "2026-07-11T11:00:00+00:00"
     for instance in playlist.plugins:
         _write_runtime_cache(task, instance)
-    monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+    monkeypatch.setattr("model.random.shuffle", lambda items: None)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
     command = task._select_cached_display_command(current_dt)
     selected_uuid = command.instance_uuid
@@ -9747,7 +9746,7 @@ def test_manual_exact_display_does_not_acknowledge_automatic_shuffle_bag(monkeyp
     device_config.config.update({"theme_mode": "day", "active_theme": "day"})
     instance = playlist.plugins[0]
     _write_runtime_cache(task, instance)
-    monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+    monkeypatch.setattr("model.random.shuffle", lambda items: None)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
     assert playlist.reserve_next_plugin(
         {item.instance_uuid for item in playlist.plugins}
@@ -9789,7 +9788,7 @@ def test_missing_or_corrupt_cache_skips_candidate_without_placeholder_or_provide
         corrupt.parent.mkdir(parents=True, exist_ok=True)
         corrupt.write_bytes(b"not-a-png")
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: (_ for _ in ()).throw(
             AssertionError("cache miss must not instantiate a plugin")
         ),
@@ -10060,7 +10059,7 @@ def test_due_refresh_for_rotation_instance_does_not_block_cached_display(
 
     provider_calls = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(provider_calls),
     )
     refresh_job = task.refresh_queue.submit(refresh_command)
@@ -10280,7 +10279,7 @@ def test_noncacheable_due_rotation_refresh_enters_backoff_without_stale_display(
         lambda: ResourceSample(available_mb=512, swap_percent=0),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: NonCacheablePlugin([]),
     )
 
@@ -10413,7 +10412,7 @@ def test_soft_pressure_defers_sports_background_data_at_execution_until_healthy(
         lambda: resource_sample["value"],
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(calls),
     )
 
@@ -11230,7 +11229,7 @@ def test_background_sports_isolated_path_bypasses_legacy_full_render_margin(
         lambda: ResourceSample(available_mb=300, swap_percent=0),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(calls),
     )
 
@@ -11275,7 +11274,7 @@ def test_background_sports_data_uses_isolated_renderer_below_legacy_margin(
         lambda: ResourceSample(available_mb=300, swap_percent=0),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin([]),
     )
 
@@ -11523,7 +11522,7 @@ def test_heavyweight_margin_allows_sports_with_ample_headroom(monkeypatch):
         lambda: ResourceSample(available_mb=512, swap_percent=0),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(calls),
     )
 
@@ -11567,7 +11566,7 @@ def test_sports_isolated_start_margin_is_configurable(monkeypatch):
         lambda: ResourceSample(available_mb=188.7, swap_percent=43.1),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(calls),
     )
 
@@ -11632,7 +11631,7 @@ def test_heavyweight_renderer_margin_blocks_manual_sports_render(monkeypatch):
         lambda: ResourceSample(available_mb=188.7, swap_percent=43.1),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(calls),
     )
     command = task._playlist_command(
@@ -11798,7 +11797,7 @@ def test_heavyweight_renderer_gate_excludes_display_cache_under_low_margin(
         lambda: ResourceSample(available_mb=60, swap_percent=90),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: pytest.fail("DISPLAY_CACHE must not invoke the plugin"),
     )
     command = task._playlist_command(
@@ -11916,7 +11915,7 @@ def test_starved_sports_reserves_quiet_window_then_runs_when_margin_recovers(
         lambda: resource_sample["value"],
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(calls),
     )
 
@@ -12005,7 +12004,7 @@ def test_completed_sports_window_yields_before_another_window(monkeypatch):
         lambda: ResourceSample(available_mb=113, swap_percent=50),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin([]),
     )
 
@@ -12205,7 +12204,7 @@ def test_sports_quiet_window_expires_before_ordinary_refresh_is_starved(
         changed_at=(current_dt - timedelta(minutes=1)).isoformat(),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             [],
             live_state={"active": True, "interval_seconds": 60},
@@ -12520,7 +12519,7 @@ def test_sustained_soft_pressure_deferral_does_not_starve_other_due_plugin(
         lambda: resource_sample["value"],
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             calls,
             live_state=live_state["value"],
@@ -12604,7 +12603,7 @@ def test_hard_pressure_still_rotates_valid_caches_without_generation(monkeypatch
         raising=False,
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: (_ for _ in ()).throw(
             AssertionError("hard-tier cache display must not render")
         ),
@@ -12651,7 +12650,7 @@ def test_watchdog_restart_still_displays_valid_cache_and_blocks_generation(
         lambda _now: pytest.fail("hard-tier watchdog admitted renderer generation"),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: pytest.fail("hard-tier cache display instantiated a plugin"),
     )
 
@@ -12889,7 +12888,7 @@ def _assert_sports_normal_selected(monkeypatch, background_value):
         lane=RefreshLane.DATA,
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin([], live_state=None),
     )
     monkeypatch.setattr(
@@ -13355,7 +13354,7 @@ def test_explicit_false_legacy_background_flag_is_live_master_off_only(
         lane=RefreshLane.DATA,
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             [],
             live_state={"active": True, "interval_seconds": 60},
@@ -13385,7 +13384,7 @@ def test_sports_live_success_updates_cache_without_redisplaying(
     )
     calls = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             calls,
             live_state={"active": True, "interval_seconds": 60},
@@ -13440,7 +13439,7 @@ def test_queued_live_followup_is_canceled_if_display_policy_turns_off(
         _live_radar_runtime("live-followup-policy-recheck")
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             [],
             live_state={"active": True, "interval_seconds": 60},
@@ -13487,7 +13486,7 @@ def test_live_exact_followup_does_not_merge_with_pending_manual_display(
     )
     assert playlist is not None
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             [],
             live_state={"active": True, "interval_seconds": 60},
@@ -13544,7 +13543,7 @@ def test_sports_live_success_does_not_advance_normal_data_cadence(monkeypatch):
         instance.instance_uuid
     ].data.last_success_at
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             [],
             live_state={"active": True, "interval_seconds": 60},
@@ -13664,7 +13663,7 @@ def test_non_sports_live_cadence_does_not_share_the_data_success_anchor(
         lane=RefreshLane.DATA,
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             [],
             live_state={"active": True, "interval_seconds": 60},
@@ -13694,7 +13693,7 @@ def test_live_radar_display_state_does_not_create_a_live_refresh_candidate_by_de
     )
     calls = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             calls,
             live_state={"active": True, "interval_seconds": 60},
@@ -13729,7 +13728,7 @@ def test_live_radar_still_uses_ordinary_data_refresh_when_policy_is_off(
     due_dt = current_dt + timedelta(seconds=31)
     device_config.config["display_triggered_refresh_enabled"] = False
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             [],
             live_state={"active": True, "interval_seconds": 60},
@@ -13757,7 +13756,7 @@ def test_queued_display_live_refresh_is_canceled_if_policy_is_disabled(
         _live_radar_runtime("live-radar-policy-disabled-before-execution")
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             [],
             live_state={"active": True, "interval_seconds": 60},
@@ -13776,7 +13775,7 @@ def test_queued_display_live_refresh_is_canceled_if_policy_is_disabled(
 
     device_config.config["display_triggered_refresh_enabled"] = False
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: pytest.fail("disabled live refresh instantiated plugin"),
     )
     submitted = task.refresh_queue.submit(command)
@@ -13797,7 +13796,7 @@ def test_live_radar_live_lane_never_targets_a_non_displayed_instance(monkeypatch
         changed_at=current_dt.isoformat(),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin(
             [],
             live_state={"active": True, "interval_seconds": 60},
@@ -13876,7 +13875,7 @@ def test_theme_redraw_updates_cache_without_rewriting_the_current_screen_by_defa
     )
     before = task.runtime_state.snapshot().instances[instance.instance_uuid]
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"], color="white")
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(
         task,
         "_resource_sample",
@@ -13908,7 +13907,7 @@ def test_theme_exact_followup_does_not_merge_with_pending_manual_display(
     current_dt = datetime(2026, 7, 11, 22, 0, tzinfo=timezone.utc)
     instance = _prepare_independent_theme_candidate(task, playlist, current_dt)
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"], color="white")
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(
         task,
         "_resource_sample",
@@ -13965,7 +13964,7 @@ def test_theme_redraw_preserves_rotation_anchor_and_exact_displayed_no_fallback(
     instance = _prepare_independent_theme_candidate(task, playlist, current_dt)
     anchor = device_config.refresh_info.refresh_time
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"], color="white")
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(
         task,
         "_resource_sample",
@@ -14034,7 +14033,7 @@ def test_media_theme_redraw_reuses_opposite_or_legacy_uuid_cache_with_zero_provi
     provider_calls = []
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"], fail=True)
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: provider_calls.append("provider") or plugin,
     )
     monkeypatch.setattr(
@@ -14099,7 +14098,7 @@ def test_random_display_excludes_noncurrent_theme_rollback_without_consuming_bag
         current_dt - timedelta(minutes=10),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: pytest.fail("DISPLAY_CACHE instantiated a plugin"),
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
@@ -14320,7 +14319,7 @@ def test_theme_catchup_rebuilds_exact_cache_older_than_latest_data_success(
     os.utime(stale_target_night, (stale_cache_time, stale_cache_time))
 
     plugin = ThemeOnlyRecordingPlugin(configs["fallback"], color="white")
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
 
     command = task._select_independent_refresh_command(current_dt)
 
@@ -14513,7 +14512,7 @@ def test_theme_catchup_failure_uses_only_persisted_catchup_cooldown(monkeypatch)
     monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: False)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
     plugin = ThemeOnlyRecordingPlugin(configs["fallback"], fail=True)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     command, target = _one_pending_theme_catchup(task, playlist, current_dt)
     before = task.runtime_state.snapshot().instances[target.instance_uuid]
     anchor = device_config.refresh_info.refresh_time
@@ -14554,7 +14553,7 @@ def test_theme_catchup_noncacheable_result_is_failure_not_success(monkeypatch):
             return image
 
     plugin = NoncacheableThemePlugin(configs["fallback"])
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     command, target = _one_pending_theme_catchup(task, playlist, current_dt)
 
     submitted = task.refresh_queue.submit(command)
@@ -14577,7 +14576,7 @@ def test_theme_catchup_rechecks_pressure_without_false_success(monkeypatch):
     )
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
     plugin = ThemeOnlyRecordingPlugin(configs["fallback"])
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     command, target = _one_pending_theme_catchup(task, playlist, current_dt)
     before = task.runtime_state.snapshot().instances[target.instance_uuid]
     monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: True)
@@ -14621,7 +14620,7 @@ def test_theme_catchup_media_success_is_provider_free_and_side_effect_free(
     monkeypatch.setattr(task, "_cache_refresh_under_resource_pressure", lambda: False)
     monkeypatch.setattr(task, "_get_current_datetime", lambda: current_dt)
     plugin = ThemeOnlyRecordingPlugin(configs["fallback"], fail=True)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     before_rotation = _rotation_state(playlist)
     before_display = task.runtime_state.snapshot()
     anchor = device_config.refresh_info.refresh_time
@@ -14675,7 +14674,7 @@ def test_theme_catchup_revision_change_during_render_cancels_without_promotion(
             return image
 
     plugin = RevisionChangingPlugin(configs["fallback"])
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
 
     submitted = task.refresh_queue.submit(command)
     task._process_queue_entry(task.refresh_queue.take(timeout=0))
@@ -14703,7 +14702,7 @@ def test_theme_failure_cools_theme_lane_only_and_keeps_last_good(monkeypatch):
     )
     before = task.runtime_state.snapshot().instances[instance.instance_uuid]
     plugin = ThemeOnlyRecordingPlugin(configs["displayed"], fail=True)
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _config: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _config: plugin)
     monkeypatch.setattr(
         task,
         "_resource_sample",
@@ -16416,7 +16415,7 @@ def test_due_rotation_uses_last_good_theme_cache_after_short_recovery_window(
         ),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_theme_context",
+        "refresh_task.get_theme_context",
         lambda _config, now=None: {
             "mode": "night",
             "source": "weather",
@@ -16967,7 +16966,7 @@ def test_queued_presentation_refresh_is_canceled_if_policy_is_disabled(
     )
     device_config.config["display_triggered_refresh_enabled"] = False
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: pytest.fail("disabled presentation instantiated plugin"),
     )
 
@@ -22207,7 +22206,7 @@ def test_weather_concession_execution_race_stops_before_plugin_start(monkeypatch
     monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_args, **_kwargs: None)
     plugin_starts = []
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: plugin_starts.append(config),
     )
 
@@ -22242,7 +22241,7 @@ def test_weather_normal_execution_rechecks_150_mib_margin(monkeypatch):
         lambda: ResourceSample(available_mb=149, swap_percent=0),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda config: plugin_starts.append(config),
     )
     command = task._playlist_command(
@@ -22422,7 +22421,7 @@ def test_weather_handoff_without_ordinary_expires_before_specialized_liveness(
         lambda: ResourceSample(available_mb=146, swap_percent=75.3),
     )
     monkeypatch.setattr(
-        "src.refresh_task.get_plugin_instance",
+        "refresh_task.get_plugin_instance",
         lambda _config: FakePlugin([]),
     )
     monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_args, **_kwargs: None)

@@ -153,7 +153,7 @@ def _live_deadline_case(tmp_path, monkeypatch, *, scan_seconds=0):
             return True
 
     plugin = SportsStream()
-    monkeypatch.setattr("src.refresh_task.get_plugin_instance", lambda _item: plugin)
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _item: plugin)
     return case
 
 

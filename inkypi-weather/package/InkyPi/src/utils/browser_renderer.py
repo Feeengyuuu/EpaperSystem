@@ -22,20 +22,12 @@ import weakref
 
 import psutil
 
-try:
-    from ..runtime.cache_lifecycle import (
-        CleanupBudget,
-        LifecycleAggregate,
-        LifecycleAllowance,
-        LifecycleBudget,
-    )
-except ImportError:  # pragma: no cover - production imports modules from src/
-    from runtime.cache_lifecycle import (
-        CleanupBudget,
-        LifecycleAggregate,
-        LifecycleAllowance,
-        LifecycleBudget,
-    )
+from runtime.cache_lifecycle import (
+    CleanupBudget,
+    LifecycleAggregate,
+    LifecycleAllowance,
+    LifecycleBudget,
+)
 from runtime.refresh_contracts import TaskCancelled, TaskContext
 from runtime.resource_deferral import ResourcePressureDeferred
 from runtime.long_task_executor import (

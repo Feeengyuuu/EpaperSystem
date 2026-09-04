@@ -21,7 +21,7 @@ import pytest
     ],
 )
 def test_refresh_parser_rejects_invalid_config_with_stable_error_payload(value):
-    from src.utils.refresh_validation import (
+    from utils.refresh_validation import (
         RefreshValidationError,
         parse_refresh_config,
         validation_error_payload,
@@ -40,7 +40,7 @@ def test_refresh_parser_rejects_invalid_config_with_stable_error_payload(value):
 
 
 def test_refresh_parser_normalizes_positive_interval_and_preserves_request_fields():
-    from src.utils.refresh_validation import parse_refresh_config
+    from utils.refresh_validation import parse_refresh_config
 
     parsed = parse_refresh_config(json.dumps({
         "playlist": "Default",
@@ -56,7 +56,7 @@ def test_refresh_parser_normalizes_positive_interval_and_preserves_request_field
 
 
 def test_refresh_parser_accepts_strict_scheduled_time():
-    from src.utils.refresh_validation import parse_refresh_config
+    from utils.refresh_validation import parse_refresh_config
 
     parsed = parse_refresh_config({
         "refreshType": "scheduled",

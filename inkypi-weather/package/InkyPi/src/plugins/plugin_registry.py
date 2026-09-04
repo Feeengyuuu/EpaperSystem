@@ -1,19 +1,21 @@
-# app_registry.py
+"""Compatibility facade; production plugin ownership lives on the Flask app."""
 
-import importlib
 import logging
-import threading
 from pathlib import Path
+from flask import current_app, has_app_context
 
 from utils.app_utils import resolve_path
+from plugins.registry import PluginRegistry, construct_plugin
 
 logger = logging.getLogger(__name__)
 PLUGINS_DIR = "plugins"
-PLUGIN_CONFIGS = {}
-PLUGIN_CLASSES = {}
-# Serializes lazy plugin construction so concurrent first renders of the same
-# plugin cannot build two instances
-_REGISTRY_LOCK = threading.Lock()
+# Mutable views are retained only for older standalone integrations and fixtures.
+# Every production app owns a different registry through app.extensions.
+_DEFAULT_REGISTRY = PluginRegistry(
+    Path(resolve_path(PLUGINS_DIR)), factory=lambda config: _load_plugin_instance(config),
+)
+PLUGIN_CONFIGS = _DEFAULT_REGISTRY._configs
+PLUGIN_CLASSES = _DEFAULT_REGISTRY._instances
 
 
 def plugin_supports_live_refresh(plugin_config):
@@ -91,79 +93,27 @@ def plugin_allows_display_triggered_provider_refresh(plugin_config):
     )
 
 
-def load_plugins(plugins_config):
-    """Register plugin metadata without importing plugin modules."""
-    PLUGIN_CONFIGS.clear()
-    PLUGIN_CLASSES.clear()
-    plugins_module_path = Path(resolve_path(PLUGINS_DIR))
-    for plugin in plugins_config:
-        plugin_id = plugin.get("id")
-        if plugin.get("disabled", False):
-            logger.info(f"Plugin {plugin_id} is disabled, skipping.")
-            continue
-
-        plugin_dir = plugins_module_path / plugin_id
-        if not plugin_dir.is_dir():
-            logger.error(f"Could not find plugin directory {plugin_dir} for '{plugin_id}', skipping.")
-            continue
-
-        module_path = plugin_dir / f"{plugin_id}.py"
-        if not module_path.is_file():
-            logger.error(f"Could not find module path {module_path} for '{plugin_id}', skipping.")
-            continue
-
-        PLUGIN_CONFIGS[plugin_id] = dict(plugin)
+def load_plugins(plugins_config, *, registry=None):
+    """Register metadata in the explicitly supplied or standalone registry."""
+    target = registry if registry is not None else _DEFAULT_REGISTRY
+    if registry is None:
+        # Legacy tests/launchers may set SRC_DIR after importing this module.
+        target._root = Path(resolve_path(PLUGINS_DIR))
+    target.load(plugins_config)
 
 
 def _load_plugin_instance(plugin_config):
-    plugin_id = plugin_config.get("id")
-    module_name = f"plugins.{plugin_id}.{plugin_id}"
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError as exc:
-        logger.error(f"Failed to import plugin module {module_name}: {exc}")
-        raise
-
-    plugin_class = getattr(module, plugin_config.get("class"), None)
-    if not plugin_class:
-        raise ValueError(f"Plugin '{plugin_id}' class '{plugin_config.get('class')}' is not registered.")
-    return plugin_class(plugin_config)
+    """Compatibility construction hook; the implementation has one authority."""
+    return construct_plugin(plugin_config)
 
 
 def register_plugin_blueprints(app):
-    """Register optional Flask blueprints for plugins that declare startup routes."""
-    for plugin_id, plugin_config in PLUGIN_CONFIGS.items():
-        if not plugin_config.get("has_blueprint", False):
-            continue
-        try:
-            plugin_instance = get_plugin_instance(plugin_config)
-            if not hasattr(plugin_instance, "get_blueprint"):
-                continue
-
-            blueprint = plugin_instance.get_blueprint()
-            if blueprint:
-                app.register_blueprint(blueprint)
-                logger.info(f"Registered blueprint for plugin '{plugin_id}'")
-        except Exception as e:
-            logger.warning(f"Failed to register blueprint for plugin '{plugin_id}': {e}")
+    registry = app.extensions.get("plugin_registry", _DEFAULT_REGISTRY)
+    registry.register_blueprints(app)
 
 
 def get_plugin_instance(plugin_config):
-    plugin_id = plugin_config.get("id")
-    if plugin_id not in PLUGIN_CONFIGS:
-        raise ValueError(f"Plugin '{plugin_id}' is not registered.")
-
-    plugin_class = PLUGIN_CLASSES.get(plugin_id)
-    if plugin_class:
-        return plugin_class
-
-    with _REGISTRY_LOCK:
-        plugin_class = PLUGIN_CLASSES.get(plugin_id)
-        if plugin_class:
-            return plugin_class
-
-        registered_config = dict(PLUGIN_CONFIGS[plugin_id])
-        registered_config.update(plugin_config)
-        plugin_class = _load_plugin_instance(registered_config)
-        PLUGIN_CLASSES[plugin_id] = plugin_class
-        return plugin_class
+    registry = _DEFAULT_REGISTRY
+    if has_app_context():
+        registry = current_app.extensions.get("plugin_registry", registry)
+    return registry.get(plugin_config)

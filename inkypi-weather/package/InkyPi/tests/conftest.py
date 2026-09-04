@@ -1,8 +1,12 @@
 import re
+import sys
 import uuid
 from pathlib import Path
 
 import pytest
+
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 
 TEST_TMP_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "pytest-fixtures"

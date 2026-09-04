@@ -3,8 +3,8 @@ import time
 from flask import Flask
 import pytest
 
-from src.blueprints.health import health_bp
-from src.health import HealthPublisher, ReadinessEvaluator
+from blueprints.health import health_bp
+from health import HealthPublisher, ReadinessEvaluator
 
 
 def _app_with_health():

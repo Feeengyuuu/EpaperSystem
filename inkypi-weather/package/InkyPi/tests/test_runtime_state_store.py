@@ -5,8 +5,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.runtime import runtime_state
-from src.runtime.runtime_state import (
+from runtime import runtime_state
+from runtime.runtime_state import (
     LastGoodCacheState,
     RefreshLane,
     RuntimeStateStore,
@@ -881,7 +881,7 @@ def test_clear_prepared_presentation_noops_do_not_publish_or_persist(
     def record_write(path, payload, *, mode=0o600):
         writes.append((path, payload, mode))
 
-    monkeypatch.setattr("src.runtime.runtime_state.atomic_write_json", record_write)
+    monkeypatch.setattr("runtime.runtime_state.atomic_write_json", record_write)
 
     missing = RuntimeStateStore(
         tmp_path / "missing.json",
@@ -1050,7 +1050,7 @@ def test_persistence_is_debounced_to_five_seconds_and_flush_is_synchronous(
     def record_write(path, payload, *, mode=0o600):
         writes.append((path, payload, mode))
 
-    monkeypatch.setattr("src.runtime.runtime_state.atomic_write_json", record_write)
+    monkeypatch.setattr("runtime.runtime_state.atomic_write_json", record_write)
     store = RuntimeStateStore(
         tmp_path / "runtime.json",
         clock=clock.monotonic_time,

@@ -4,7 +4,7 @@ import tempfile
 import pytest
 from PIL import Image
 
-from src.utils import image_loader
+from utils import image_loader
 
 
 def _png_bytes(size=(4, 3)):

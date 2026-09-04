@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.model import (
+from model import (
     Playlist,
     PlaylistManager,
     PluginInstance,
@@ -82,7 +82,7 @@ class TestPlaylist:
         def fake_shuffle(items):
             items[:] = [items[1], items[2], items[0]]
 
-        monkeypatch.setattr("src.model.random.shuffle", fake_shuffle)
+        monkeypatch.setattr("model.random.shuffle", fake_shuffle)
 
         plugin = playlist.get_next_plugin()
 
@@ -123,7 +123,7 @@ class TestPlaylist:
             ],
         )
 
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: items.reverse())
+        monkeypatch.setattr("model.random.shuffle", lambda items: items.reverse())
 
         first_round = [playlist.get_next_plugin().name for _ in range(4)]
         second_round_first = playlist.get_next_plugin().name
@@ -144,7 +144,7 @@ class TestPlaylist:
             ],
         )
 
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: items.reverse())
+        monkeypatch.setattr("model.random.shuffle", lambda items: items.reverse())
 
         selected_before_write = playlist.get_next_plugin().name
         restored = Playlist.from_dict(playlist.to_dict())
@@ -176,7 +176,7 @@ class TestPlaylist:
             playlist._plugin_rotation_key(playlist.plugins[5]),
         ]
 
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
         plugin = playlist.get_next_plugin()
 
@@ -222,7 +222,7 @@ class TestPlaylist:
                 playlist._plugin_rotation_key(playlist.plugins[0]),
             ]
 
-        monkeypatch.setattr("src.model.random.shuffle", fake_shuffle)
+        monkeypatch.setattr("model.random.shuffle", fake_shuffle)
 
         plugin = playlist.get_next_plugin()
 
@@ -462,7 +462,7 @@ class TestPlaylistManagerIdentity:
             "plugin_rotation_pool": list(legacy_keys),
             "plugin_rotation_recent_history": list(reversed(legacy_keys)),
         })
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
         selected = playlist.get_next_plugin()
         uuid_keys = [plugin.instance_uuid for plugin in playlist.plugins]
@@ -963,7 +963,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 ],
             )
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
         selected = manager.select_next_active_instance(
             datetime(2026, 7, 9, 12, 0),
@@ -1045,7 +1045,7 @@ class TestPlaylistManagerSchedulerSnapshots:
             )
         )
         eligible = {"one-uuid", "three-uuid", "four-uuid"}
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
         selected = [
             playlist.get_next_plugin(eligible).instance_uuid for _ in range(4)
@@ -1070,7 +1070,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 ],
             )
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
         first = playlist.get_next_plugin({"one-uuid", "two-uuid"})
         second = playlist.get_next_plugin(
@@ -1096,7 +1096,7 @@ class TestPlaylistManagerSchedulerSnapshots:
             )
         )
         eligible = {"two-uuid", "three-uuid"}
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
         assert playlist.get_next_plugin(eligible).instance_uuid == "two-uuid"
         restored = Playlist.from_dict(playlist.to_dict())
@@ -1118,7 +1118,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 ],
             )
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
         reserved = playlist.reserve_next_plugin({"two-uuid"})
 
@@ -1158,7 +1158,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 plugin_rotation_recent_history=["two-uuid"],
             )
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
         before = playlist.to_dict()
 
         assert playlist.reserve_next_plugin({"two-uuid"}) is None
@@ -1187,7 +1187,7 @@ class TestPlaylistManagerSchedulerSnapshots:
         monkeypatch,
     ):
         manager = self._starving_rotation_manager()
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
         start = datetime(2026, 7, 14, 10, 0)
         anchor = start - timedelta(seconds=600)
         eligible = {"two-uuid", "three-uuid"}
@@ -1228,7 +1228,7 @@ class TestPlaylistManagerSchedulerSnapshots:
         monkeypatch,
     ):
         manager = self._starving_rotation_manager()
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
         start = datetime(2026, 7, 14, 10, 0)
         anchor = start - timedelta(seconds=600)
         eligible = {"two-uuid", "three-uuid"}
@@ -1299,7 +1299,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 ],
             )
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
         assert playlist.reserve_next_plugin({"two-uuid"}).instance_uuid == "two-uuid"
         restarted = Playlist.from_dict(playlist.to_dict())
@@ -1327,7 +1327,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 ],
             )
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
         assert playlist.reserve_next_plugin().instance_uuid == "one-uuid"
         assert playlist.defer_rotation_reservation("one-uuid") is True
@@ -1354,7 +1354,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 ],
             )
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
         first_round = []
         for _ in range(3):
@@ -1409,7 +1409,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 items.reverse()
 
         monkeypatch.setattr(
-            "src.model.random.shuffle",
+            "model.random.shuffle",
             adversarial_round_boundary,
         )
 
@@ -1443,7 +1443,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 plugin_rotation_recent_history=["one-uuid"],
             )
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
         reserved = playlist.reserve_next_plugin(
             {"one-uuid", "two-uuid", "three-uuid"}
@@ -1473,7 +1473,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 plugin_rotation_recent_history=["one-uuid"],
             )
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
         playlist.plugins = [
             plugin for plugin in playlist.plugins if plugin.instance_uuid != "two-uuid"
         ]
@@ -1510,7 +1510,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 ],
             )
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: items.reverse())
+        monkeypatch.setattr("model.random.shuffle", lambda items: items.reverse())
         eligible = set(instance_uuids)
 
         displayed = []
@@ -1772,7 +1772,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 [self._plugin("Night")],
             ),
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
 
         selected = manager.select_next_active_instance(
             datetime(2026, 7, 10, 0, 30),
@@ -1797,7 +1797,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 ],
             )
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
         barrier = threading.Barrier(3)
         results = []
         failures = []
@@ -2127,7 +2127,7 @@ class TestPlaylistManagerSchedulerSnapshots:
             rotation_uuids.append(candidate.instance_uuid)
             return candidate
 
-        monkeypatch.setattr("src.model.random.shuffle", refill_after_partial_queue)
+        monkeypatch.setattr("model.random.shuffle", refill_after_partial_queue)
         playlist.get_next_plugin = counted_get_next
 
         selected = manager.select_theme_instance(
@@ -2176,7 +2176,7 @@ class TestPlaylistManagerSchedulerSnapshots:
             assert len(rotation_uuids) <= 2 * len(playlist.plugins)
             return candidate
 
-        monkeypatch.setattr("src.model.random.shuffle", refill_after_partial_queue)
+        monkeypatch.setattr("model.random.shuffle", refill_after_partial_queue)
         playlist.get_next_plugin = bounded_get_next
 
         selected = manager.select_theme_instance(
@@ -2261,7 +2261,7 @@ class TestPlaylistManagerSchedulerSnapshots:
         assert manager.delete_plugin_instance(old_uuid) is not None
         generated_uuids = iter((old_uuid, "fresh-manager-uuid"))
         monkeypatch.setattr(
-            "src.model.uuid4",
+            "model.uuid4",
             lambda: SimpleNamespace(hex=next(generated_uuids)),
         )
         explicit_recreate = self._plugin(
@@ -2849,7 +2849,7 @@ class TestPlaylistManagerSchedulerSnapshots:
                 ],
             )
         )
-        monkeypatch.setattr("src.model.random.shuffle", lambda items: None)
+        monkeypatch.setattr("model.random.shuffle", lambda items: None)
         before = manager.snapshot_instance("one-uuid")
         barrier = threading.Barrier(4)
         completed = [threading.Event() for _ in range(3)]
@@ -3155,7 +3155,7 @@ def test_from_dict_normalizes_legacy_nonpositive_interval_once(
     legacy_interval,
     caplog,
 ):
-    caplog.set_level("WARNING", logger="src.model")
+    caplog.set_level("WARNING", logger="model")
 
     plugin = PluginInstance.from_dict({
         "plugin_id": "legacy",

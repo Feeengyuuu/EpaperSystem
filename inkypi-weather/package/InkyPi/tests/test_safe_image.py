@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 from PIL import Image, JpegImagePlugin
 
-from src.utils import safe_image
-from src.utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
+from utils import safe_image
+from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]

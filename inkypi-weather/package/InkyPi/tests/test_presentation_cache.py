@@ -8,8 +8,8 @@ from types import SimpleNamespace
 from PIL import Image
 import pytest
 
-from src.runtime import presentation_cache as presentation_cache_module
-from src.runtime.presentation_cache import (
+from runtime import presentation_cache as presentation_cache_module
+from runtime.presentation_cache import (
     PreparedPresentationCandidate,
     PresentationCache,
     PresentationPathIdentity,

@@ -43,7 +43,7 @@ def _temp_files(directory: Path, target_name: str) -> list[Path]:
 
 
 def test_atomic_write_uses_same_directory_and_durable_operation_order(tmp_path, monkeypatch):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     target = tmp_path / "state.bin"
     events = []
@@ -89,7 +89,7 @@ def test_atomic_write_uses_same_directory_and_durable_operation_order(tmp_path, 
 
 
 def test_missing_parent_fails_before_creating_temp(tmp_path, monkeypatch):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     target = tmp_path / "missing" / "state.bin"
     monkeypatch.setattr(
@@ -124,7 +124,7 @@ def test_pre_replace_failures_preserve_old_target_and_remove_temp(
     stage,
     fail_operation,
 ):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     target = tmp_path / "state.bin"
     target.write_bytes(b"old-state")
@@ -200,7 +200,7 @@ def test_pre_replace_failures_preserve_old_target_and_remove_temp(
 
 
 def test_replace_permission_error_never_falls_back_to_direct_write(tmp_path, monkeypatch):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     target = tmp_path / "state.bin"
     target.write_bytes(b"old-state")
@@ -221,7 +221,7 @@ def test_replace_permission_error_never_falls_back_to_direct_write(tmp_path, mon
 
 
 def test_post_replace_directory_failure_is_commit_uncertain_with_new_target_visible(tmp_path, monkeypatch):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     target = tmp_path / "state.bin"
     target.write_bytes(b"old-state")
@@ -244,7 +244,7 @@ def test_post_replace_directory_failure_is_commit_uncertain_with_new_target_visi
 
 
 def test_fsync_directory_closes_descriptor_when_fsync_raises(tmp_path, monkeypatch):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     primary = OSError("fsync failed")
     closed = []
@@ -262,7 +262,7 @@ def test_fsync_directory_closes_descriptor_when_fsync_raises(tmp_path, monkeypat
 
 
 def test_fsync_directory_preserves_fsync_error_when_close_also_fails(tmp_path, monkeypatch):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     primary = OSError("primary fsync failed")
     monkeypatch.setattr(atomic_file, "_WINDOWS", False)
@@ -288,7 +288,7 @@ def test_cleanup_failures_preserve_primary_baseexception_and_note_residual_temp(
     monkeypatch,
     primary,
 ):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     target = tmp_path / "state.bin"
     target.write_bytes(b"old-state")
@@ -321,7 +321,7 @@ def test_cleanup_failures_preserve_primary_baseexception_and_note_residual_temp(
 
 
 def test_cleanup_failures_do_not_replace_wrapped_primary_error(tmp_path, monkeypatch):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     target = tmp_path / "state.bin"
     target.write_bytes(b"old-state")
@@ -354,7 +354,7 @@ def test_cleanup_failures_do_not_replace_wrapped_primary_error(tmp_path, monkeyp
 
 
 def test_windows_seam_skips_fchmod_and_directory_open(tmp_path, monkeypatch):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     target = tmp_path / "state.bin"
     real_open = atomic_file.os.open
@@ -381,7 +381,7 @@ def test_windows_seam_skips_fchmod_and_directory_open(tmp_path, monkeypatch):
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits are not available on Windows")
 def test_posix_mode_0600_survives_umask(tmp_path):
-    from src.utils.atomic_file import atomic_write_bytes
+    from utils.atomic_file import atomic_write_bytes
 
     target = tmp_path / "state.bin"
     old_umask = os.umask(0)
@@ -394,7 +394,7 @@ def test_posix_mode_0600_survives_umask(tmp_path):
 
 
 def test_json_is_strict_utf8_with_trailing_newline(tmp_path):
-    from src.utils.atomic_file import atomic_write_json
+    from utils.atomic_file import atomic_write_json
 
     target = tmp_path / "state.json"
     payload = {"message": "你好", "enabled": True}
@@ -419,7 +419,7 @@ def test_json_rejects_non_string_mapping_keys_before_temp(
     monkeypatch,
     payload,
 ):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     target = tmp_path / "state.json"
     monkeypatch.setattr(
@@ -442,7 +442,7 @@ def test_json_rejects_non_string_mapping_keys_before_temp(
     ],
 )
 def test_json_encode_failure_happens_before_temp_creation(tmp_path, monkeypatch, payload, error_type):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     target = tmp_path / "state.json"
     target.write_bytes(b"old-json")
@@ -459,7 +459,7 @@ def test_json_encode_failure_happens_before_temp_creation(tmp_path, monkeypatch,
 
 
 def test_invalid_payload_and_mode_fail_before_temp_creation(tmp_path, monkeypatch):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     target = tmp_path / "state.bin"
     monkeypatch.setattr(
@@ -475,7 +475,7 @@ def test_invalid_payload_and_mode_fail_before_temp_creation(tmp_path, monkeypatc
 
 
 def test_png_round_trip(tmp_path):
-    from src.utils.atomic_file import atomic_write_image
+    from utils.atomic_file import atomic_write_image
 
     target = tmp_path / "image.png"
     image = Image.new("RGB", (3, 2), (12, 34, 56))
@@ -490,7 +490,7 @@ def test_png_round_trip(tmp_path):
 
 
 def test_image_encode_failure_preserves_old_target_and_creates_no_temp(tmp_path, monkeypatch):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     class BrokenImage:
         def save(self, _stream, *, format):
@@ -511,7 +511,7 @@ def test_image_encode_failure_preserves_old_target_and_creates_no_temp(tmp_path,
 
 
 def test_concurrent_writers_publish_one_complete_payload_and_leave_no_temp(tmp_path_factory, monkeypatch):
-    from src.utils import atomic_file
+    from utils import atomic_file
 
     tmp_path = tmp_path_factory.mktemp("atomic-concurrent")
     target = tmp_path / "state.bin"

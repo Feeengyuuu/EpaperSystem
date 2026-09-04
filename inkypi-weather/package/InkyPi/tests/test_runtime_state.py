@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from src.runtime.refresh_contracts import (
+from runtime.refresh_contracts import (
     CommandKind,
     CommandSource,
     JobStatus,
@@ -16,9 +16,9 @@ from src.runtime.refresh_contracts import (
     TaskContext,
     TaskDeadlineExceeded,
 )
-from src.runtime.refresh_queue import QueueStoppingError, RefreshQueue
-from src.runtime.render_arbiter import RenderArbiter, ReentrantPluginLeaseError
-from src.runtime.scheduler_state import (
+from runtime.refresh_queue import QueueStoppingError, RefreshQueue
+from runtime.render_arbiter import RenderArbiter, ReentrantPluginLeaseError
+from runtime.scheduler_state import (
     InvalidLifecycleTransition,
     LifecycleController,
     RetryRegistry,
@@ -949,7 +949,7 @@ def test_retry_registry_accepts_jitter_bounds_and_hard_cap():
 
 def test_retry_registry_default_jitter_respects_bounds_and_cap(monkeypatch):
     monkeypatch.setattr(
-        "src.runtime.scheduler_state.random.uniform",
+        "runtime.scheduler_state.random.uniform",
         lambda _low, _high: 1.1,
     )
     retry = RetryRegistry()

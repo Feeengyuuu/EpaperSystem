@@ -109,6 +109,17 @@ class BasePlugin:
     def generate_image(self, settings, device_config):
         raise NotImplementedError("generate_image must be implemented by subclasses")
 
+    def render_with_context(self, settings, device_config, *, execution_context, **render_options):
+        """Explicit runtime boundary; existing plugins keep their theme renderer.
+
+        New plugins may override this entry point to use the supplied task,
+        instance identity and parent-owned image runner directly. The context
+        rejects canceled or superseded results before they reach a commit.
+        """
+        return execution_context.run(
+            lambda: self.render_themed_image(settings, device_config, **render_options)
+        )
+
     def resolve_theme(self, settings, device_config, now=None, astronomy=None):
         """Resolve this plugin's theme using any manifest palette seeds."""
         manifest = self.config.get("_manifest")

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.utils import theme_utils
+from utils import theme_utils
 
 
 NOON = datetime(2026, 5, 27, 12, 0)

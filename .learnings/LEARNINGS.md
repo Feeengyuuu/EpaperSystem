@@ -2860,3 +2860,27 @@ Before counting display rounds, require a prepared `presentation_request`. For e
 - **Notes**: The tracked acceptance tool now sends the explicit presentation request flag, and the live Magazine sequence verifies exact request-to-receipt linkage across counted displays.
 
 ---
+
+## [LRN-20260904-002] canonical_import_and_execution_boundaries
+
+**Logged**: 2026-09-04
+**Priority**: high
+**Status**: resolved
+**Area**: architecture
+
+### Summary
+Use one installed Python namespace and distinguish manual commands from playlist instance identities at explicit execution boundaries.
+
+### Details
+Importing the same runtime module as runtime.* and src.runtime.* creates different enum and dataclass identities. Migrating tests with the production namespace removes that false separation. A manual command has no playlist UUID, so applying the playlist CAS validator to it cancels valid work before rendering. A superseded playlist render must retain the existing stale_selection error code.
+
+### Suggested Action
+Keep canonical imports under the architecture CI gate. Pass app-owned PluginRegistry and PluginExecutionContext explicitly. Apply instance revision validation only to commands with a playlist UUID, preserve cancellation/deadline checks for every command, and retain final transaction validation.
+
+### Metadata
+- Source: code review and regression tests
+- Related Files: src/runtime/plugin_execution.py, src/runtime/refresh_planning.py, src/plugins/registry.py, src/refresh_task.py, tools/check_architecture.py
+- Pattern-Key: runtime.explicit_context_preserves_manual_and_playlist_identity
+- Tests: 595 context/RefreshTask tests passed after preserving manual and stale-selection behavior
+
+---

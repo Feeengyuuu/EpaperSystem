@@ -9,13 +9,13 @@ from PIL import Image
 
 import display.display_manager as display_manager_module
 import display.display_transaction as display_transaction_module
-import src.refresh_task as refresh_task_module
+import refresh_task as refresh_task_module
 from display.display_manager import DisplayManager
 from runtime.refresh_contracts import JobStatus
 from runtime.long_task_executor import current_task_context
 from runtime.presentation_cache import PreparedPresentationCandidate, prepared_presentation_path
 from runtime.runtime_state import PresentationRequestState, RefreshLane
-from src.refresh_task import RefreshTask
+from refresh_task import RefreshTask
 from tests.test_refresh_task import (
     PresentationBankPlugin,
     RuntimeClock,
