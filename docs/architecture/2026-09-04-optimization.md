@@ -74,7 +74,7 @@ import plugins, configuration or the coordinator. It evaluates due work, prevent
 duplicate provider presentation fetches, selects reserved presentation work, and
 maps admitted lanes to command intent/priority. Starvation concession remains
 before reserved presentation, which remains before the rotation deadline guard.
-The selection method shrank from 818 to 630 physical lines; CI caps it at 650.
+The selection method shrank from 818 to 634 physical lines; CI caps it at 650.
 The remaining coordinator is deliberately a staged extraction, not a completed
 rewrite of every scheduling policy.
 
@@ -122,3 +122,9 @@ their existing adapters; the pure domain does not import them.
 Mypy import handling follows its [official documentation](https://mypy.readthedocs.io/en/stable/running_mypy.html).
 The initial type-check scope is the new planner, execution context and registry;
 it is not a claim that all legacy plugins are statically typed.
+
+The [overnight analysis](../reviews/2026-09-04-overnight-optimization.zh-CN.md)
+adds two evidence-based corrections: local cached-display redraw capabilities
+exclude unnecessary theme catch-up; an existing Weather quiet window may recover
+at its ordinary memory margin even when another ordinary candidate becomes due.
+A new provider failure closes that window and preserves provider retry backoff.

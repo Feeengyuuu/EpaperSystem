@@ -569,18 +569,19 @@ def test_application_factory_installs_request_limits(tmp_path, monkeypatch):
             pass
 
     class FakeRefreshTask:
-        def __init__(self, _device_config, _display_manager):
-            pass
+        def __init__(self, _device_config, _display_manager, *, plugin_registry):
+            self.plugin_registry = plugin_registry
 
     monkeypatch.setattr(inkypi, "Config", FakeConfig)
     monkeypatch.setattr(inkypi, "DisplayManager", FakeDisplayManager)
     monkeypatch.setattr(inkypi, "RefreshTask", FakeRefreshTask)
-    monkeypatch.setattr(inkypi, "load_plugins", lambda _plugins: None)
+    monkeypatch.setattr(inkypi, "load_plugins", lambda _plugins, *, registry: None)
     monkeypatch.setattr(inkypi, "register_plugin_blueprints", lambda _app: None)
     monkeypatch.setattr(inkypi, "load_or_create_secret_key", lambda _path: "secret")
 
     app = inkypi.build_application(dev_mode=True, runtime_paths=paths)
     app.config["TESTING"] = True
+    assert app.config["REFRESH_TASK"].plugin_registry is app.extensions["plugin_registry"]
     response = app.test_client().post(
         "/update_now",
         data=b"x" * (MAX_REQUEST_BYTES + 1),

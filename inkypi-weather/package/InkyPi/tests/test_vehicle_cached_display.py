@@ -49,9 +49,9 @@ def _forbidden(*_args, **_kwargs):
     pytest.fail("cached display must not use a provider, credentials, or source writes")
 
 
-def _vehicle_display(tmp_path, monkeypatch, *, source_age=72_000, redraw=True, theme="day"):
+def _vehicle_display(tmp_path, monkeypatch, *, source_age=72_000, redraw=True, theme="day", automatic=False):
     data = _runtime_plugin_data("vehicle_status", "Vehicle", latest_refresh_time=None)
-    data["plugin_settings"].update({"language": "en", "cacheSeconds": 900, "themeMode": theme})
+    data["plugin_settings"].update({"language": "en", "cacheSeconds": 900, "themeMode": "auto" if automatic else theme})
     playlist = _runtime_playlist(data)
     device = RuntimeDeviceConfig(tmp_path / "display", [playlist])
     device.config.update({"theme_mode": theme, "active_theme": theme})
@@ -217,10 +217,11 @@ def test_display_cache_without_redraw_capability_never_instantiates_plugin(tmp_p
 
 
 @pytest.mark.parametrize("theme,missing_source", [("day", False), ("night", False), ("night", True)])
+@pytest.mark.parametrize("automatic", [False, True])
 def test_vehicle_rotation_without_formal_png_uses_local_view_or_warning(
-    tmp_path, monkeypatch, theme, missing_source,
+    tmp_path, monkeypatch, theme, missing_source, automatic,
 ):
-    case = _vehicle_display(tmp_path, monkeypatch, theme=theme)
+    case = _vehicle_display(tmp_path, monkeypatch, theme=theme, automatic=automatic)
     case.formal_path.unlink()
     case.formal_bytes = None
     if missing_source:

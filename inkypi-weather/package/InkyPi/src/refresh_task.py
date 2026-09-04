@@ -255,6 +255,7 @@ class _WeatherLivenessWindow:
     started_monotonic: float
     deadline_monotonic: float
     candidate: DueCandidate
+    last_failure_at: str | None = None
 
 
 class _StaleSelection(TaskCancelled):
@@ -3122,10 +3123,11 @@ class RefreshTask:
                 "plugin_cycle_interval_seconds", DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
             ) / 2,
         )
-        if (
+        ordinary_rotation_blocked = (
             self._rotation_has_ready_candidates
             and self._get_rotation_wait_seconds() <= ordinary_rotation_guard
-        ):
+        )
+        if ordinary_rotation_blocked:
             # A ready rotation need not have a reservation yet. Keep long
             # renderer classes out of its write window while shorter ordinary
             # work can still use the worker. Due ages and retries are unchanged.
@@ -3158,7 +3160,7 @@ class RefreshTask:
                 and self._ticketmaster_liveness_window is None
             )
         )
-        if weather_liveness_allowed and weather_work_pending:
+        if not ordinary_rotation_blocked and weather_liveness_allowed and weather_work_pending:
             # AdmissionState is immutable. This dry decision deliberately drops
             # the returned state so probing an alternative cannot consume its
             # fairness or SOFT-spacing turn. Both lists have already passed the
@@ -3182,7 +3184,10 @@ class RefreshTask:
                 now_monotonic=self._clock(),
                 thresholds=thresholds,
             ).candidate
-            if runnable_weather_alternative is None:
+            # Recover an existing window before its own resource retry hides it.
+            if runnable_weather_alternative is None or (
+                self._weather_liveness_window is not None and weather_margin_available
+            ):
                 (
                     weather_liveness_candidate,
                     weather_liveness_holds_independent,
@@ -3388,6 +3393,9 @@ class RefreshTask:
             if self._snapshot_background_cache_disabled(instance):
                 continue
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            if plugin_supports_cached_display_redraw(plugin_config):
+                # These views resolve theme and source age at display time.
+                continue
             resolved_theme = _resolved_theme_context_for_instance(
                 instance,
                 plugin_config,
@@ -5284,6 +5292,11 @@ class RefreshTask:
                 window.instance_uuid,
                 InstanceRuntimeState(),
             ).data
+            if runtime.last_failure_at != window.last_failure_at:
+                self._finish_weather_liveness_window(
+                    reason="provider_failed", resource_sample=resource_sample,
+                )
+                return None, False, False
             last_success = self._parse_iso_datetime(runtime.last_success_at)
             if last_success is not None:
                 last_success = self._align_datetime_tz(last_success, current_dt)
@@ -5369,6 +5382,9 @@ class RefreshTask:
             started_monotonic=now,
             deadline_monotonic=now + window_seconds,
             candidate=target,
+            last_failure_at=runtime_instances.get(
+                target.instance.instance_uuid, InstanceRuntimeState(),
+            ).data.last_failure_at,
         )
         logger.warning(
             "Reserving bounded quiet window for due Weather data. | "

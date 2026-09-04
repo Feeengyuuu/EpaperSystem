@@ -2884,3 +2884,25 @@ Keep canonical imports under the architecture CI gate. Pass app-owned PluginRegi
 - Tests: 595 context/RefreshTask tests passed after preserving manual and stale-selection behavior
 
 ---
+## [LRN-20260904-003] overnight_runtime_evidence
+
+**Logged**: 2026-09-04
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Analyze embedded application severity and per-process intervals before assigning overnight failures to a release or scheduler.
+
+### Details
+Python WARNING and ERROR messages on this device appear as journal priority 6. A journal priority filter would hide the relevant failures. Weather normal start margin in these logs is 150 MB; the generic background cache threshold of 175 MB is a different gate. DATA started counts are admissions and Sports checkpoint segments, not successful refresh counts. Vehicle theme catch-up failed five times because display-safe stale local redraws correctly cannot become formal caches. Weather window recovery was skipped when an ordinary candidate appeared after memory recovered while its own resource retry remained active.
+
+### Suggested Action
+Keep log export hashes, timezone and PID boundaries. Test recovery with a newly due competing task and preserve new provider failure backoff. Skip formal theme catch-up for audited local-redraw capabilities without changing freshness or DATA state.
+
+### Metadata
+- Source: live journal and red-green regression
+- Related Files: docs/reviews/2026-09-04-overnight-optimization.zh-CN.md, inkypi-weather/package/InkyPi/src/refresh_task.py
+- Pattern-Key: runtime.history_evidence_distinguishes_admission_freshness_and_display
+
+---

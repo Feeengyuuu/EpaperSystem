@@ -6,6 +6,7 @@ import inspect
 import logging
 import os
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
@@ -30,6 +31,7 @@ from plugins.base_plugin.presentation import (
 from plugins.base_plugin import presentation as presentation_contract
 from plugins.newspaper.newspaper import Newspaper
 from plugins import plugin_registry, plugin_settings
+from plugins import registry as plugin_registry_impl
 from plugins.plugin_settings import PluginSettingError
 from model import Playlist, PlaylistManager, RefreshInfo
 from plugins.plugin_manifest import PluginCapabilities, PluginManifest, PluginTheme
@@ -401,7 +403,7 @@ def test_presentation_capability_lookup_is_metadata_only(monkeypatch):
         lambda *_args, **_kwargs: pytest.fail("capability lookup instantiated plugin"),
     )
     monkeypatch.setattr(
-        plugin_registry.importlib,
+        plugin_registry_impl.importlib,
         "import_module",
         lambda *_args, **_kwargs: pytest.fail("capability lookup imported plugin"),
     )
@@ -14139,6 +14141,45 @@ def _rotation_state(playlist):
     )
 
 
+@pytest.mark.parametrize("previous_failure", [False, True])
+def test_local_redraw_skips_theme_catchup_without_consuming_admission(
+    monkeypatch, previous_failure,
+):
+    task, _device, playlist, configs, now = _prepare_theme_catchup_runtime(
+        "local-redraw-catchup"
+    )
+    monkeypatch.setattr(
+        task, "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+    target = playlist.plugins[1].snapshot()
+    _write_runtime_theme_cache(task, playlist.plugins[0].snapshot(), "night")
+    manifest = configs["fallback"]["_manifest"]
+    configs["fallback"]["_manifest"] = replace(
+        manifest,
+        capabilities=replace(manifest.capabilities, supports_cached_display_redraw=True),
+    )
+    if previous_failure:
+        task.runtime_state.record_theme_catchup_failure(
+            target.instance_uuid, "night",
+            (now - timedelta(minutes=20)).isoformat(),
+            "theme catch-up did not produce an exact cacheable image",
+            (now - timedelta(minutes=10)).isoformat(),
+        )
+    before = task.runtime_state.snapshot()
+    assert task._select_independent_refresh_command(now) is None
+    after = task.runtime_state.snapshot()
+    assert after.instances[target.instance_uuid] == before.instances[target.instance_uuid]
+    assert after.theme_catchup_admissions == before.theme_catchup_admissions
+
+    # Ordinary plugins still receive their missing exact-theme cache admission.
+    configs["fallback"]["_manifest"] = manifest
+    command = task._select_independent_refresh_command(now)
+    assert command.intent is RefreshIntent.THEME_CATCHUP
+    assert command.instance_uuid == target.instance_uuid
+    assert len(task.runtime_state.snapshot().theme_catchup_admissions) == 1
+
+
 def test_theme_catchup_waits_for_exact_displayed_transition_then_uses_no_rotation(
     monkeypatch,
 ):
@@ -21907,11 +21948,12 @@ def test_weather_with_normal_margin_keeps_ordinary_data_ordering(monkeypatch):
     assert command.priority == 10
 
 
+@pytest.mark.parametrize("ordinary_becomes_due", [False, True])
 def test_weather_window_starts_immediately_when_normal_margin_recovers(
-    monkeypatch,
+    monkeypatch, ordinary_becomes_due,
 ):
     current_dt = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
-    task, clock, weather, _ordinary = _weather_margin_runtime(
+    task, clock, weather, ordinary = _weather_margin_runtime(
         "weather-window-early-margin-recovery",
         current_dt,
     )
@@ -21923,6 +21965,11 @@ def test_weather_window_starts_immediately_when_normal_margin_recovers(
     state = task.runtime_state.snapshot().instances[weather.instance_uuid].data
     assert state.next_retry_at == (current_dt + timedelta(seconds=60)).isoformat()
 
+    if ordinary_becomes_due:
+        task.runtime_state.record_success(
+            ordinary.instance_uuid, (current_dt - timedelta(hours=2)).isoformat(),
+            lane=RefreshLane.DATA,
+        )
     sample["value"] = ResourceSample(available_mb=150, swap_percent=0)
     clock.advance(1)
     recovered = task._select_independent_refresh_command(
@@ -21932,6 +21979,69 @@ def test_weather_window_starts_immediately_when_normal_margin_recovers(
     assert recovered is not None
     assert recovered.instance_uuid == weather.instance_uuid
     assert "weather_liveness_concession" not in recovered.payload
+
+    if ordinary_becomes_due:
+        task.runtime_state.record_success(
+            weather.instance_uuid, (current_dt + timedelta(seconds=1)).isoformat(),
+            lane=RefreshLane.DATA,
+        )
+        clock.advance(1)
+        following = task._select_independent_refresh_command(
+            current_dt + timedelta(seconds=2)
+        )
+        assert following.instance_uuid == ordinary.instance_uuid
+
+
+def test_weather_recovery_does_not_bypass_new_provider_failure(monkeypatch):
+    now = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, weather, _ordinary = _weather_margin_runtime(
+        "weather-window-provider-backoff", now,
+    )
+    sample = {"value": ResourceSample(available_mb=149, swap_percent=0)}
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    assert task._select_independent_refresh_command(now) is None
+    retry_at = (now + timedelta(minutes=15)).isoformat()
+    task.runtime_state.record_failure(
+        weather.instance_uuid, (now + timedelta(seconds=1)).isoformat(),
+        "provider unavailable", next_retry_at=retry_at, lane=RefreshLane.DATA,
+    )
+    sample["value"] = ResourceSample(available_mb=160, swap_percent=0)
+    clock.advance(2)
+    assert task._select_independent_refresh_command(now + timedelta(seconds=2)) is None
+    assert task.runtime_state.snapshot().instances[weather.instance_uuid].data.next_retry_at == retry_at
+
+
+@pytest.mark.parametrize("elapsed,available_mb", [(1, 160), (91, 146)])
+@pytest.mark.parametrize("ordinary_due", [False, True])
+def test_weather_recovery_keeps_ready_rotation_window_for_short_work(
+    monkeypatch, elapsed, available_mb, ordinary_due,
+):
+    now = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
+    task, clock, _weather, ordinary = _weather_margin_runtime(
+        "weather-recovery-ready-rotation", now,
+        alternative_plugin_id="steam_profile_dashboard",
+    )
+    sample = {"value": ResourceSample(available_mb=149, swap_percent=0)}
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample["value"])
+    monkeypatch.setattr(task, "_run_memory_maintenance", lambda *_a, **_k: None)
+    assert task._select_independent_refresh_command(now) is None
+    if ordinary_due:
+        task.runtime_state.record_success(
+            ordinary.instance_uuid, (now - timedelta(hours=2)).isoformat(),
+            lane=RefreshLane.DATA,
+        )
+    task._rotation_has_ready_candidates = True
+    monkeypatch.setattr(task, "_get_rotation_wait_seconds", lambda: 60)
+    sample["value"] = ResourceSample(available_mb=available_mb, swap_percent=0)
+    clock.advance(elapsed)
+    command = task._select_independent_refresh_command(now + timedelta(seconds=elapsed))
+    if ordinary_due:
+        assert command is not None
+        assert command.instance_uuid == ordinary.instance_uuid
+    else:
+        assert command is None
+        assert task._weather_liveness_window is not None
 
 
 def test_weather_typed_pressure_ends_window_and_yields_retry_turn_to_ordinary(
