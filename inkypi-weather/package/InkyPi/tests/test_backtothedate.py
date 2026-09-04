@@ -1027,7 +1027,7 @@ def test_symlink_managed_media_is_rejected_before_namespace_read(monkeypatch):
         reject_symlink_read,
     )
 
-    with pytest.raises(RuntimeError, match="regular|missing"):
+    with pytest.raises(RuntimeError, match="regular|missing|cannot traverse symlinks"):
         plugin.prepare_presentation(
             settings,
             DeviceConfig(),

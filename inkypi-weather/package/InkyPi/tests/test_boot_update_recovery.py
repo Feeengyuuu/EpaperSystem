@@ -152,6 +152,7 @@ def test_recover_only_cli_is_exact_and_cannot_be_combined_with_update_inputs(
     monkeypatch,
 ):
     module = _load_updater_module()
+    monkeypatch.setattr(module.os, "geteuid", lambda: 0, raising=False)
     calls = []
     monkeypatch.setattr(module, "run_recovery", lambda: calls.append("recover") or 0)
     monkeypatch.setattr(

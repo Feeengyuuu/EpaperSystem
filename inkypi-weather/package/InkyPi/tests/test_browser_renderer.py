@@ -17,6 +17,7 @@ from runtime.refresh_contracts import TaskContext
 from runtime.refresh_policy import ResourceSample
 from runtime.resource_deferral import ResourcePressureDeferred
 from runtime.resource_governor import CHROMIUM, RuntimeResourceGovernor
+from runtime import resource_governor as resource_governor_module
 from runtime.long_task_executor import (
     InstanceIdentity,
     bind_long_task_runtime,
@@ -24,6 +25,25 @@ from runtime.long_task_executor import (
 )
 from utils import browser_renderer as browser_renderer_module
 from utils.browser_renderer import BrowserRenderer
+
+
+@pytest.fixture(autouse=True)
+def isolate_fake_processes_and_capacity(monkeypatch):
+    # Fake Popen PIDs must never query or signal the host process table. Tests
+    # with live fake children replace killpg with their explicit lifecycle.
+    def absent_group(_pid, _signal):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(browser_renderer_module.os, "getpgid", lambda pid: pid, raising=False)
+    monkeypatch.setattr(browser_renderer_module.os, "getpgrp", lambda: 900000, raising=False)
+    monkeypatch.setattr(browser_renderer_module.os, "killpg", absent_group, raising=False)
+    monkeypatch.setattr(browser_renderer_module.signal, "SIGKILL", 9, raising=False)
+    monkeypatch.setattr(browser_renderer_module, "_GLOBAL_BROWSER_SLOT", threading.Semaphore(1))
+    monkeypatch.setattr(
+        resource_governor_module,
+        "_GLOBAL_CAPACITY_REGISTRY",
+        resource_governor_module._GlobalCapacityRegistry(),
+    )
 
 
 def _context(seconds=2):
@@ -34,9 +54,6 @@ def _context(seconds=2):
 
 def _route_fake_process_group_signals(monkeypatch, processes):
     """Keep fake PIDs away from the host while exercising POSIX cleanup."""
-
-    if os.name == "nt":
-        return
 
     def killpg(pid, signal_number):
         process = next(
@@ -157,10 +174,13 @@ class TimeoutProcess:
         return self.returncode
 
 
+@pytest.mark.parametrize("posix", [False, True])
 def test_timeout_terminates_kills_waits_and_removes_all_temp_paths(
     tmp_path,
     monkeypatch,
+    posix,
 ):
+    monkeypatch.setattr(browser_renderer_module, "_is_posix_platform", lambda: posix)
     process = TimeoutProcess()
     renderer = BrowserRenderer(
         binary="chromium",
@@ -179,7 +199,8 @@ def test_timeout_terminates_kills_waits_and_removes_all_temp_paths(
     assert result is None
     assert process.terminated
     assert process.killed
-    assert process.wait_calls == 3
+    assert 3 <= process.wait_calls <= 5
+    assert process.poll() is not None
     assert renderer.active_processes == ()
     assert list(tmp_path.iterdir()) == []
 
@@ -1156,6 +1177,11 @@ def test_delayed_pressure_kill_does_not_poison_next_request(
     tmp_path,
     monkeypatch,
 ):
+    # Nested workers own the session; their direct-child stop can remain pending
+    # for another poll. Standalone groups quarantine immediately if unreaped.
+    monkeypatch.setattr(
+        browser_renderer_module, "long_task_child_process_group_active", lambda: True
+    )
     launches = []
     sample_calls = 0
 
@@ -1389,6 +1415,9 @@ def test_pressure_stop_waits_for_late_process_exit_without_caching_failure(
     tmp_path,
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        browser_renderer_module, "long_task_child_process_group_active", lambda: True
+    )
     class LateExitProcess:
         returncode = None
         pid = 2474
