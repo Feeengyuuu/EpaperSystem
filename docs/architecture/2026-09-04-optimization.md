@@ -46,7 +46,7 @@ a second implementation. New resource capabilities remain fail-closed.
 - Baseline Python suite: 6215 passed, 54 skipped, 21 warnings (Python 3.11.9).
 - Integrated scheduling/F1 regression: 1549 passed. Explicit execution-context
   regression: 595 passed. Registry/application regression: 33 passed.
-- Vehicle service: locked install, type check, 89 tests, and Wrangler dry-run build passed.
+- Vehicle service: locked install, type check, 96 tests, and Wrangler dry-run build passed.
 - Architecture gate: 436 Python files checked. Mypy checks the three new typed
   boundaries; imported annotations are analyzed with `follow_imports=silent`.
 - Final full/clean-archive and device acceptance are release gates, recorded with
@@ -128,3 +128,10 @@ adds two evidence-based corrections: local cached-display redraw capabilities
 exclude unnecessary theme catch-up; an existing Weather quiet window may recover
 at its ordinary memory margin even when another ordinary candidate becomes due.
 A new provider failure closes that window and preserves provider retry backoff.
+
+Release preparation also fixes the existing CI timeout by running full and clean
+archive suites in separate matrix jobs. The security audit identified three
+runtime updates (Pillow 12.3.0, cryptography 50.0.1, pi-heif 1.3.0) and the
+development pip 26.2.1 update; regenerated locks preserve all other versions.
+Five historical secret-scan findings were verified as deterministic test cache
+keys or a schema field set and excluded only by exact historical fingerprints.

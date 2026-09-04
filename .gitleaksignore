@@ -3,3 +3,11 @@
 3e33ff6441b6714a64abd3c936667e172c791150:inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/common.py:generic-api-key:273
 74c362575e1471b568db22c0b7a1437f76820ced:tools/download_lck_team_logos.py:generic-api-key:17
 eee057a57bab0e1f23db191c31ccf08fd80d4c0b:inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/sports_dashboard.py:generic-api-key:76
+
+# Deterministic cache migration fixture hashes, recomputed from public test inputs.
+3f2247f9296f54f121352efa830223ef5871dca9:inkypi-weather/package/InkyPi/tests/test_daily_wiki_page.py:generic-api-key:520
+3f2247f9296f54f121352efa830223ef5871dca9:inkypi-weather/package/InkyPi/tests/test_daily_wiki_page.py:generic-api-key:571
+be855a9618d58d0151fe5d0f16467439d0551491:inkypi-weather/package/InkyPi/tests/test_daily_word_poem.py:generic-api-key:576
+f94c2b1064494ec4f0fc4bf47aaa09e19d099332:inkypi-weather/package/InkyPi/tests/test_daily_word_poem.py:generic-api-key:576
+# A schema field-name set, not an authentication value.
+82275ae8273b6d96ff6ca5c2e0e8e5c370ee0b84:inkypi-weather/package/InkyPi/src/plugins/vehicle_status/vehicle_status.py:generic-api-key:132
