@@ -30,6 +30,7 @@ def _load_updater_module(name="inkypi_update_gpu_memory_canary_test_module"):
 
 def test_gpu_memory_canary_cli_accepts_only_fixed_actions(monkeypatch):
     module = _load_updater_module()
+    monkeypatch.setattr(module.os, "geteuid", lambda: 0, raising=False)
     actions = []
     monkeypatch.setattr(
         module,

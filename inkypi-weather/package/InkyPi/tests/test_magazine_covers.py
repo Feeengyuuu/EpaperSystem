@@ -2938,7 +2938,9 @@ def test_magazine_state_parent_symlink_is_rejected_and_atomic_mode_is_private(tm
         date_key="2026-07-12",
     )
     document, _profile = linked_bank.load_for_data()
-    with pytest.raises(RuntimeError, match="root|parent|directory|reparse|unsafe"):
+    with pytest.raises(
+        RuntimeError, match="root|parent|directory|reparse|unsafe|could not be written safely"
+    ):
         linked_bank.save(document)
     assert not (outside / "presentation-state.json").exists()
 
