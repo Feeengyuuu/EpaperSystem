@@ -1769,7 +1769,9 @@ def test_presentation_state_parent_symlink_is_rejected_when_target_does_not_exis
     )
     document, _profile = bank.load_for_data()
 
-    with pytest.raises(RuntimeError, match="root|parent|directory|reparse|unsafe"):
+    with pytest.raises(
+        RuntimeError, match="root|parent|directory|reparse|unsafe|could not be written safely"
+    ):
         bank.save(document)
     assert not (outside / "presentation-state.json").exists()
 
