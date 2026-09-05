@@ -55,6 +55,12 @@ counter/redaction/exception-path cases. Required final CI and deployment
 evidence are recorded in the accompanying acceptance report after completion.
 Architecture check: 446 files, zero violations at the first integrated gate.
 
+Full regression caught an adapter compatibility error in the extracted APOD
+gate: the previous check treated an absent optional error field as no error.
+Restore that behavior without changing rejection of cached states or present
+errors. The added regression and APOD/network recovery suite pass (279 tests);
+retain the initial failed full-suite evidence and require fresh final CI.
+
 Independent cold-process benchmarks of the production patch, three repeats
 per actual bundled asset, preserve pixel hashes:
 

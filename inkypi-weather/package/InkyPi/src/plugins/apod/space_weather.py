@@ -1092,11 +1092,12 @@ def require_current_core(*results: SourceResult) -> None:
 
     failures = []
     for result in results:
-        if result.state == "live" and result.error is None:
+        error = getattr(result, "error", None)
+        if result.state == "live" and error is None:
             continue
         envelope = result.envelope
         observed = envelope.observed_at_utc if envelope is not None else None
-        detail = redact_sensitive_text(str(result.error or "source is not live"))
+        detail = redact_sensitive_text(str(error or "source is not live"))
         detail = " ".join(detail.split())[:240]
         failures.append(
             f"{result.name} [state={result.state}, "

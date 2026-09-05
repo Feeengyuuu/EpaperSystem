@@ -58,3 +58,7 @@ def test_core_failure_details_are_bounded_and_redacted():
 def test_cached_core_never_passes_current_cycle_admission(state):
     with pytest.raises(RuntimeError, match='scales'):
         require_current_core(SourceResult(name='scales', state=state, envelope=None))
+
+
+def test_live_core_preserves_optional_error_contract_for_snapshot_adapters():
+    require_current_core(SimpleNamespace(state='live'), SimpleNamespace(state='live'))
