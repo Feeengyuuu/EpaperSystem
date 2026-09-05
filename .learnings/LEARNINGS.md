@@ -2906,3 +2906,49 @@ Keep log export hashes, timezone and PID boundaries. Test recovery with a newly 
 - Pattern-Key: runtime.history_evidence_distinguishes_admission_freshness_and_display
 
 ---
+
+## [LRN-20260904-004] best_practice
+
+**Logged**: 2026-09-04T23:30:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Keep resource-recovery eligibility independent of a quiet window and consume it at an actual DATA attempt.
+
+### Details
+With ordinary backlog, Weather admission deferrals at 118, 135 and 149 MB did not open or retain a quiet window. At 160 MB recovery, older ordinary candidates still won. A receipt bound to instance revision and the exact DATA lane state preserves one normal-margin opportunity without lowering resource thresholds. Queue rejection and display-only submission are not DATA attempts and must not consume it.
+
+### Suggested Action
+Replay low-memory admission followed by recovered memory with competing due work. Verify failure/retry/revision/rotation/SOFT guards and rejected queue submissions. Let a new DATA attempt or result invalidate the receipt.
+
+### Metadata
+- Source: red-green regression and independent QA review
+- Related Files: inkypi-weather/package/InkyPi/src/runtime/weather_admission.py, inkypi-weather/package/InkyPi/tests/test_weather_pressure_recovery.py
+- Pattern-Key: runtime.recovery_receipt_survives_backlog_until_real_attempt
+
+---
+
+## [LRN-20260904-005] best_practice
+
+**Logged**: 2026-09-04T23:30:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: performance
+
+### Summary
+Measure native image-buffer peaks and explicitly release pixel storage before the next large transform.
+
+### Details
+Pillow exif_transpose already returns a detached copy. Copying again retained three full frames during safe decoding. The remote sports logo path also retained source and pre-crop pixels across RGBA resampling. Image context exit manages file ownership; explicit Image.close releases pixel storage. Removing the redundant copy and releasing owned intermediates lowered the fresh-process Windows 2048px-logo benchmark from about 48 MB to 32 MB extra RSS with identical output pixels. This benchmark does not prove the cause of every live resource-guard stop.
+
+### Suggested Action
+Preserve format/byte/pixel limits, EXIF and first-frame behavior, and caller-stream ownership. Compare fresh-process RSS plus a fixed output pixel hash; do not use tracemalloc alone for Pillow native memory. Treat RSS budgets as platform-specific profiling checks.
+
+### Metadata
+- Source: native-memory benchmark and Pillow ownership contracts
+- Related Files: inkypi-weather/package/InkyPi/src/utils/safe_image.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/common.py, tools/benchmark_sports_logo_memory.py
+- Pattern-Key: image.explicit_owned_buffer_release_before_resample
+
+---

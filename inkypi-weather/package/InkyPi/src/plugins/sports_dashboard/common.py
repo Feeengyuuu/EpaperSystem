@@ -3977,11 +3977,22 @@ class SportsDashboardCommonMixin:
             source = safe_open_image(data, limits=TEAM_LOGO_IMAGE_LIMITS)
         except Exception:
             return None
-        logo = SportsDashboard._logo_with_transparent_background(source)
-        bbox = logo.getbbox()
-        if bbox:
-            logo = logo.crop(bbox)
-        return ImageOps.contain(logo, (size, size), Image.LANCZOS)
+        try:
+            logo = SportsDashboard._logo_with_transparent_background(source)
+        finally:
+            source.close()
+        try:
+            bbox = logo.getbbox()
+            if bbox:
+                cropped = logo.crop(bbox)
+                logo.close()
+                try:
+                    return ImageOps.contain(cropped, (size, size), Image.LANCZOS)
+                finally:
+                    cropped.close()
+            return ImageOps.contain(logo, (size, size), Image.LANCZOS)
+        finally:
+            logo.close()
 
     @staticmethod
     def _team_logo_disk_cache_path(cache_dir, logo_url):

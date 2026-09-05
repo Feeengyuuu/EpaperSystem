@@ -159,12 +159,15 @@ def safe_open_image(
                 if draft_size is not None and str(opened.format or "").upper() == "JPEG":
                     opened.draft("RGB", draft_size)
                 normalized = ImageOps.exif_transpose(opened)
-                if normalized is not opened:
-                    stack.callback(normalized.close)
-                normalized.load()
-                detached = normalized.copy()
-                detached.load()
-                return detached
+                # exif_transpose returns an independent image, even when no
+                # orientation is present. Copying it again retains three full
+                # pixel buffers during decode on memory-constrained devices.
+                try:
+                    normalized.load()
+                except BaseException:
+                    normalized.close()
+                    raise
+                return normalized
     except (Image.DecompressionBombWarning, Image.DecompressionBombError) as error:
         raise ImageLimitError("image decompression bomb protection triggered") from error
 
