@@ -1449,7 +1449,9 @@ class MagazinePresentationBank:
         selected = self.selection_records(
             profile,
             pending,
-            load_media=True,
+            # The receipt confirms a completed display. DATA may need to restore
+            # media evicted since that display before it can be rendered again.
+            load_media=False,
             now=receipt.committed_at,
         )
         records = [record for record, _image in selected]

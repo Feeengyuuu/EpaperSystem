@@ -2274,6 +2274,58 @@ def test_magazine_failed_foreign_canceled_and_replayed_receipts_are_byte_noops(
     assert plugin._presentation_state_path().read_bytes() == committed
 
 
+@pytest.mark.parametrize("media_failure", ["missing", "corrupt"])
+def test_magazine_committed_receipt_survives_lost_media_and_data_recovers(
+    tmp_path, monkeypatch, media_failure,
+):
+    plugin = make_banked_plugin(tmp_path)
+    settings = bound_magazine_settings()
+    hydrate_magazine_bank(plugin, monkeypatch, settings, runs=3)
+    request = magazine_request("7" * 32)
+    plugin.prepare_presentation(
+        settings, DummyDeviceConfig(), request=request, resolved_theme_context=None,
+    )
+    state = magazine_presentation_state(plugin)
+    profile = magazine_profile(state)
+    selected_key = profile["pending_selection"]["record_keys"][0]
+    selected_record = next(record for record in profile["records"] if record["record_key"] == selected_key)
+    bank = plugin._presentation_bank_for_receipt("magazine-test-instance", request.request_id)
+    original_image = bank.load_media(selected_record, now=plugin._now_utc())
+    recovered_urls = []
+
+    def download(candidate, *_args, **_kwargs):
+        recovered_urls.append(candidate["url"])
+        return original_image.copy()
+
+    monkeypatch.setattr(plugin, "_download_candidate_image", download)
+    media_path = bank.media.path(selected_record["media_key"], suffix=".png")
+    if media_failure == "missing":
+        media_path.unlink()
+    else:
+        media_path.write_bytes(b"corrupt cached media")
+    with pytest.raises(RuntimeError):
+        bank.load_media(selected_record, now=plugin._now_utc())
+
+    receipt = magazine_receipt(request.request_id)
+    plugin.reconcile_presentation_receipt(settings, receipt)
+    committed_bytes = plugin._presentation_state_path().read_bytes()
+    committed = magazine_profile(magazine_presentation_state(plugin))
+    assert committed["pending_selection"] is None
+    assert committed["last_applied_request_id"] == request.request_id
+    plugin.reconcile_presentation_receipt(settings, receipt)
+    assert plugin._presentation_state_path().read_bytes() == committed_bytes
+
+    image = plugin.generate_image(settings, DummyDeviceConfig())
+    assert image.size == (800, 480)
+    recovered = magazine_profile(magazine_presentation_state(plugin))
+    assert selected_key in recovered["current_selection"]["record_keys"]
+    assert recovered_urls == [selected_record["image_url"]]
+    restored = next(record for record in recovered["records"] if record["record_key"] == selected_key)
+    with bank.load_media(restored, now=plugin._now_utc()) as restored_image:
+        assert restored_image.tobytes() == original_image.tobytes()
+    original_image.close()
+
+
 def test_magazine_instances_are_isolated_and_raw_identity_spoof_is_stateless(
     tmp_path,
     monkeypatch,

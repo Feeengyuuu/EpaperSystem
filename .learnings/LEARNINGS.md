@@ -2998,3 +2998,26 @@ Keep the generated source in the tracked asset directory, test header selection,
 - Pattern-Key: image.generated_wordmark_tracks_renderer_and_release
 
 ---
+
+## [LRN-20260905-003] best_practice
+
+**Logged**: 2026-09-05T00:39:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Reconcile a completed display receipt without requiring its evicted source media to decode again.
+
+### Details
+Live acceptance found repeated Magazine DATA failures before its existing protected-media recovery could run. Receipt reconciliation decoded a PNG referenced by the already completed display, but that cache file was missing. Reconciliation now validates the selected metadata at receipt time while preserving request, origin and idempotency checks. Subsequent DATA still restores the exact protected cover, and new renders still enforce media integrity.
+
+### Suggested Action
+Test prepare, media loss or corruption, receipt application and replay, then DATA exact recovery as one sequence. Keep provider failure and integrity rejection behavior; do not silently replace a committed cover to hide recovery failure.
+
+### Metadata
+- Source: actual device acceptance logs and red-green regression
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/magazine_covers/presentation_bank.py, inkypi-weather/package/InkyPi/tests/test_magazine_covers.py
+- Pattern-Key: presentation.receipt_reconciliation_does_not_block_media_recovery
+
+---
