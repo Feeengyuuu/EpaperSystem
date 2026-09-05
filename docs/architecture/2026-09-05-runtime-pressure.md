@@ -61,6 +61,13 @@ Restore that behavior without changing rejection of cached states or present
 errors. The added regression and APOD/network recovery suite pass (279 tests);
 retain the initial failed full-suite evidence and require fresh final CI.
 
+The next full suites passed (Linux 6,346; Windows 6,299), but clean-archive CI
+exposed an existing 100 ms thread-start race in the pruned manual-result test.
+Run real queue execution and pruning synchronously at its submission seam;
+retain the missing-result assertion and verify display completion plus waiter
+cleanup. This removes OS scheduling from that test without changing production
+waiting behavior. The complete scheduler suite passes (599 tests).
+
 Independent cold-process benchmarks of the production patch, three repeats
 per actual bundled asset, preserve pixel hashes:
 

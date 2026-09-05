@@ -7604,12 +7604,22 @@ def test_manual_wait_reports_pruned_terminal_result_without_timing_out(monkeypat
     task.refresh_queue.terminal_limit = 0
     device_config.config["manual_update_timeout_seconds"] = 0.1
     monkeypatch.setattr("refresh_task.get_plugin_instance", lambda config: CapturePlugin([]))
-    task.start()
-    try:
-        with pytest.raises(RuntimeError, match="no longer available"):
-            task.manual_update(ManualRefresh("manual", {"id": "manual"}))
-    finally:
-        task.stop(join_timeout=1.0)
+    submit = task.refresh_queue.submit
+
+    def submit_and_complete(command):
+        job = submit(command)
+        # Exercise real execution and pruning without racing thread startup
+        # against the caller's 100 ms timeout on a busy CI runner.
+        assert task._run_one_iteration_for_test() is not None
+        assert task.refresh_queue.get_job(job.id) is None
+        return job
+
+    monkeypatch.setattr(task.refresh_queue, "submit", submit_and_complete)
+    monkeypatch.setattr(task, "running", True)
+    with pytest.raises(RuntimeError, match="no longer available"):
+        task.manual_update(ManualRefresh("manual", {"id": "manual"}))
+    assert len(task.display_manager.calls) == 1
+    assert not task._completion_events
 
 
 def test_signal_config_change_wakes_and_reprobes_scheduled_selection(monkeypatch):
