@@ -20,6 +20,7 @@ from runtime.refresh_contracts import (
 )
 from utils.atomic_file import atomic_write_json
 from utils.http_client import HttpClient
+from utils.secret_redaction import redact_sensitive_text
 
 
 SCALES_ENDPOINT = "https://services.swpc.noaa.gov/products/noaa-scales.json"
@@ -1086,12 +1087,33 @@ class SpaceWeatherRepository:
         )
 
 
+def require_current_core(*results: SourceResult) -> None:
+    """Reject unhealthy mandatory products with bounded, redacted evidence."""
+
+    failures = []
+    for result in results:
+        if result.state == "live" and result.error is None:
+            continue
+        envelope = result.envelope
+        observed = envelope.observed_at_utc if envelope is not None else None
+        detail = redact_sensitive_text(str(result.error or "source is not live"))
+        detail = " ".join(detail.split())[:240]
+        failures.append(
+            f"{result.name} [state={result.state}, "
+            f"observed_at={observed.isoformat() if observed else 'unknown'}, "
+            f"reason={detail}]"
+        )
+    if failures:
+        raise RuntimeError("APOD current-cycle core admission failed: " + "; ".join(failures))
+
+
 def refresh_space_weather(
     repository: SpaceWeatherRepository,
     *,
     nasa_api_key: str,
     now_utc: datetime,
     context: TaskContext | None,
+    require_live_core: bool = False,
 ) -> SpaceWeatherSnapshot:
     """Refresh independent sources and project them into one display snapshot."""
 
@@ -1099,6 +1121,8 @@ def refresh_space_weather(
     now = _as_utc(now_utc)
     scales, kp = repository.refresh_core(now_utc=now, context=context)
     _task_checkpoint(context)
+    if require_live_core:
+        require_current_core(scales, kp)
     wind_speed, wind_magnetic = repository.refresh_wind(
         now_utc=now, context=context
     )

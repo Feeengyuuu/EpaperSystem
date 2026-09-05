@@ -16,7 +16,9 @@ from plugins.apod.apod_page import (
     measure_apod_page,
     render_apod_page,
 )
-from plugins.apod.space_weather import SpaceWeatherRepository, refresh_space_weather
+from plugins.apod.space_weather import (
+    SpaceWeatherRepository, refresh_space_weather, require_current_core,
+)
 from runtime.long_task_executor import current_instance_identity, current_task_context
 from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 from utils.atomic_file import atomic_write_json
@@ -1879,18 +1881,10 @@ class Apod(BasePlugin):
             nasa_api_key=api_key,
             now_utc=rendered_at,
             context=context,
+            require_live_core=True,
         )
         _task_checkpoint(context)
-        failed_core = [
-            name
-            for name, result in (("scales", weather.scales), ("kp", weather.kp))
-            if result.state != "live" or getattr(result, "error", None) is not None
-        ]
-        if failed_core:
-            raise RuntimeError(
-                "APOD current-cycle core admission failed: "
-                + ", ".join(failed_core)
-            )
+        require_current_core(weather.scales, weather.kp)
 
         if selection.mode == "random" and selection.provisional:
             (

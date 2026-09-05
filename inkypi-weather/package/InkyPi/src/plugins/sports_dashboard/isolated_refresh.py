@@ -257,6 +257,16 @@ def prefetch_ewc_detail_task(payload, cancel_event):
 
 
 def render_sports_region_task(payload, cancel_event):
+    """Render one region and return bounded counters with its image receipt."""
+    from runtime.sports_asset_metrics import capture_asset_metrics
+
+    with capture_asset_metrics() as metrics:
+        result = _render_sports_region_task(payload, cancel_event)
+        result["asset_metrics"] = dict(metrics)
+        return result
+
+
+def _render_sports_region_task(payload, cancel_event):
     """Render exactly one provider region and return bounded PNG bytes."""
 
     worker_oom_score_adj = _require_worker_oom_preference()

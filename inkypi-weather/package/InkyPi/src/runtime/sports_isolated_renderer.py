@@ -15,6 +15,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from runtime.long_task_executor import LongTaskExecutor
+from runtime.sports_asset_metrics import asset_metric_summary
 from runtime.refresh_contracts import TaskCancelled, thaw_payload
 from runtime.sports_region_checkpoint import (
     SPORTS_REGION_ORDER,
@@ -259,6 +260,7 @@ def _wait_for_result(
     abort_min_available_mb,
     abort_max_swap_percent,
     poll_seconds,
+    region="unknown",
 ):
     while True:
         try:
@@ -287,8 +289,9 @@ def _wait_for_result(
             swap_percent = _finite_metric(getattr(sample, "swap_percent", None))
             logger.warning(
                 "Sports Dashboard isolated resource guard tripped. | "
-                "available_mb: %s | swap_percent: %s | minimum_available_mb: %s "
+                "region: %s | available_mb: %s | swap_percent: %s | minimum_available_mb: %s "
                 "| maximum_swap_percent: %s",
+                region,
                 "unknown" if available_mb is None else f"{available_mb:.1f}",
                 "unknown" if swap_percent is None else f"{swap_percent:.1f}",
                 abort_min_available_mb,
@@ -428,6 +431,7 @@ def render_sports_dashboard_isolated(
             abort_min_available_mb=abort_min_available_mb,
             abort_max_swap_percent=abort_max_swap_percent,
             poll_seconds=DEFAULT_RESOURCE_POLL_SECONDS,
+            region=region,
         )
         if result.status != "succeeded":
             raise RuntimeError(
@@ -439,6 +443,10 @@ def render_sports_dashboard_isolated(
             raise RuntimeError("isolated Sports Dashboard returned an invalid result")
         if value.get("region") != region:
             raise RuntimeError("isolated Sports Dashboard returned the wrong region")
+        logger.info(
+            "Sports asset cache summary. | region: %s | %s",
+            region, asset_metric_summary(value.get("asset_metrics")),
+        )
         if os.name == "posix":
             worker_pid, worker_oom_score_adj = _require_worker_isolation_evidence(
                 value

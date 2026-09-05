@@ -1,5 +1,6 @@
 from collections.abc import Mapping, MutableMapping
 from contextvars import ContextVar
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 import html as html_lib
 import hashlib
@@ -22,6 +23,7 @@ from plugins.base_plugin.render_provenance import (
     read_source_provenance,
 )
 from plugins.sports_dashboard.cache_io import read_json_file, write_json_file
+from runtime.sports_asset_metrics import record_asset_metric
 from utils.app_utils import get_base_ui_font, resolve_path
 from utils.cache_manager import (
     CacheBudget,
@@ -3869,11 +3871,14 @@ class SportsDashboardCommonMixin:
         for path in candidates:
             cache_key = (path, size)
             if cache_key in TEAM_LOGO_CACHE:
-                return TEAM_LOGO_CACHE[cache_key]
+                cached = TEAM_LOGO_CACHE[cache_key]
+                record_asset_metric("memory_hits" if cached is not None else "negative_hits")
+                return cached
             if not os.path.exists(path):
                 continue
             try:
-                with safe_open_image(path, limits=LOCAL_TEAM_LOGO_IMAGE_LIMITS) as source:
+                record_asset_metric("local_decodes")
+                with closing(safe_open_image(path, limits=LOCAL_TEAM_LOGO_IMAGE_LIMITS)) as source:
                     working_size = min(512, max(64, int(size) * 4))
                     source.thumbnail((working_size, working_size), Image.LANCZOS)
                     logo = SportsDashboard._logo_with_transparent_background(source)
@@ -3884,6 +3889,7 @@ class SportsDashboardCommonMixin:
                 TEAM_LOGO_CACHE[cache_key] = logo
                 return logo
             except Exception as exc:
+                record_asset_metric("load_failures")
                 logger.warning("Failed to load local team logo %s: %s", path, exc)
                 TEAM_LOGO_CACHE[cache_key] = None
         return None
@@ -3904,26 +3910,32 @@ class SportsDashboardCommonMixin:
             return None
         cache_key = (path, tuple(size), alpha_threshold)
         if cache_key in TEAM_LOGO_CACHE:
-            return TEAM_LOGO_CACHE[cache_key]
+            cached = TEAM_LOGO_CACHE[cache_key]
+            record_asset_metric("memory_hits" if cached is not None else "negative_hits")
+            return cached
         try:
+            record_asset_metric("local_decodes")
             limits = SportsDashboard._local_logo_image_limits(path)
-            with safe_open_image(path, limits=limits) as source:
+            with closing(safe_open_image(path, limits=limits)) as source:
                 logo = SportsDashboard._logo_with_transparent_background(source)
-            if alpha_threshold > 1:
-                pixels = logo.load()
-                width, height = logo.size
-                for y in range(height):
-                    for x in range(width):
-                        red, green, blue, alpha = pixels[x, y]
-                        if alpha < alpha_threshold:
-                            pixels[x, y] = (red, green, blue, 0)
-            bbox = logo.getbbox()
-            if bbox:
-                logo = logo.crop(bbox)
-            logo = ImageOps.contain(logo, size, Image.LANCZOS)
+            try:
+                if alpha_threshold > 1:
+                    with closing(logo.getchannel("A")) as alpha:
+                        with closing(alpha.point(lambda value: 0 if value < alpha_threshold else value)) as mask:
+                            logo.putalpha(mask)
+                bbox = logo.getbbox()
+                if bbox:
+                    cropped = logo.crop(bbox)
+                    logo.close()
+                    logo = cropped
+                fitted = ImageOps.contain(logo, size, Image.LANCZOS)
+            finally:
+                logo.close()
+            logo = fitted
             TEAM_LOGO_CACHE[cache_key] = logo
             return logo
         except Exception as exc:
+            record_asset_metric("load_failures")
             logger.warning("Failed to load local logo %s: %s", path, exc)
             return None
 
@@ -3943,7 +3955,9 @@ class SportsDashboardCommonMixin:
             return None
         cache_key = (logo_url, size) if cache_dir is None else (logo_url, size, str(cache_dir))
         if cache_key in TEAM_LOGO_CACHE:
-            return TEAM_LOGO_CACHE[cache_key]
+            cached = TEAM_LOGO_CACHE[cache_key]
+            record_asset_metric("memory_hits" if cached is not None else "negative_hits")
+            return cached
         try:
             disk_path = SportsDashboard._team_logo_disk_cache_path(cache_dir, logo_url)
             data = SportsDashboard._read_team_logo_disk_cache(disk_path, validate_image=False)
@@ -3951,12 +3965,18 @@ class SportsDashboardCommonMixin:
             if data is not None:
                 logo = SportsDashboard._team_logo_from_bytes(data, size)
                 if logo is None:
+                    record_asset_metric("invalid_disk_entries")
                     SportsDashboard._remove_team_logo_disk_cache(disk_path)
                     data = None
+                else:
+                    record_asset_metric("disk_hits")
             if data is None:
                 data = SportsDashboard._fetch_remote_image_bytes(logo_url, TEAM_LOGO_FETCH_TIMEOUT_SECONDS)
+                record_asset_metric("downloads")
+                record_asset_metric("downloaded_bytes", len(data))
                 logo = SportsDashboard._team_logo_from_bytes(data, size)
                 if logo is None:
+                    record_asset_metric("load_failures")
                     logger.warning("Skipping invalid or oversized team logo %s", logo_url)
                     TEAM_LOGO_CACHE[cache_key] = None
                     return None
@@ -3968,6 +3988,7 @@ class SportsDashboardCommonMixin:
             TEAM_LOGO_CACHE[cache_key] = logo
             return logo
         except Exception as exc:
+            record_asset_metric("load_failures")
             logger.warning("Failed to load team logo %s: %s", logo_url, _safe_exception_text(exc))
             TEAM_LOGO_CACHE[cache_key] = None
             return None
@@ -4022,6 +4043,7 @@ class SportsDashboardCommonMixin:
             return None
         try:
             if path.stat().st_size > TEAM_LOGO_DISK_CACHE_MAX_BYTES:
+                record_asset_metric("invalid_disk_entries")
                 SportsDashboard._remove_team_logo_disk_cache(path)
                 return None
             namespace = cache_namespace_for_directory(
@@ -4032,7 +4054,10 @@ class SportsDashboardCommonMixin:
         except (OSError, CacheError) as exc:
             logger.warning("Failed to read team logo disk cache %s: %s", path, exc)
             return None
+        if data is None:
+            return None
         if not data or len(data) > TEAM_LOGO_DISK_CACHE_MAX_BYTES:
+            record_asset_metric("invalid_disk_entries")
             SportsDashboard._remove_team_logo_disk_cache(path)
             return None
         if validate_image and not SportsDashboard._team_logo_data_is_safe_to_decode(data):

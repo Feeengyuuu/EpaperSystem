@@ -5370,6 +5370,14 @@ class RefreshTask:
         if window_seconds <= 0:
             return None, False, False
         self._run_memory_maintenance("weather-liveness-window", force=True)
+        # A detached-image cleanup can restore the browser margin immediately.
+        # Use the post-maintenance sample instead of spending a quiet window
+        # waiting on memory that the scheduler has already reclaimed.
+        resource_sample = self._resource_sample()
+        if self._weather_background_start_margin(resource_sample)[0]:
+            return target, False, False
+        if not self._weather_concession_margin(resource_sample)[0]:
+            return None, False, False
         due_since = self._align_datetime_tz(target.due_since, current_dt)
         self._weather_liveness_window = _WeatherLivenessWindow(
             instance_uuid=target.instance.instance_uuid,
