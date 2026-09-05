@@ -1306,7 +1306,7 @@ class EsportsRenderMixin:
         name = str((event or {}).get("team_a" if side == "a" else "team_b") or "TBD").strip() or "TBD"
         team_id = (event or {}).get("team_a_id" if side == "a" else "team_b_id")
         series = str((event or {}).get("series") or "").strip().upper()
-        logo = self._load_team_logo(logo_url, int(size)) if logo_url else None
+        logo = self._load_team_logo_for_render(logo_url, int(size)) if logo_url else None
         if not logo:
             logo = self._load_valve_local_team_logo(name, team_id, int(size), series)
         if logo:

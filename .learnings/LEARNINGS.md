@@ -2952,3 +2952,26 @@ Preserve format/byte/pixel limits, EXIF and first-frame behavior, and caller-str
 - Pattern-Key: image.explicit_owned_buffer_release_before_resample
 
 ---
+
+## [LRN-20260905-001] best_practice
+
+**Logged**: 2026-09-05T00:04:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+Check every image-rendering entry point before assuming an existing disk cache prevents repeated downloads.
+
+### Details
+CS/TI team icons called the low-level logo loader without its optional cache directory, unlike other sports cards. The memory cache hid the omission until isolated workers exited. Routing through the existing render loader preserves bounded persistent URL-keyed caching. Red-green tests recreate renderers and clear memory between draws: two downloads before the fix, one after, with identical pixels.
+
+### Suggested Action
+Audit callers for bypasses and verify cache reuse after memory is gone. Reuse the shared cache policy instead of adding another cache, and confirm directory permissions and reuse in separate processes during device acceptance.
+
+### Metadata
+- Source: user request and red-green regression
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/esports_render.py, inkypi-weather/package/InkyPi/tests/test_sports_logo_persistence.py
+- Pattern-Key: image.persistent_cache_entrypoint_survives_isolated_workers
+
+---
