@@ -2975,3 +2975,26 @@ Audit callers for bypasses and verify cache reuse after memory is gone. Reuse th
 - Pattern-Key: image.persistent_cache_entrypoint_survives_isolated_workers
 
 ---
+
+## [LRN-20260905-002] best_practice
+
+**Logged**: 2026-09-05T00:32:00-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: ui
+
+### Summary
+Bundle a generated title with its renderer branch and verify the real small-size header.
+
+### Details
+The user reported that NFL title art had returned to plain text, then explicitly requested a new minimalist wordmark. Available history showed other sports wordmarks and an NFL shield/cutout, but did not establish the original NFL artwork or its regression date. The new transparent asset uses the existing local logo cache and NFL header branch, with plain-text fallback when loading fails.
+
+### Suggested Action
+Keep the generated source in the tracked asset directory, test header selection, load failure and decoded-cache reuse, and inspect both the rendered header and deployed current image. Verify the asset hash in the clean release and live runtime.
+
+### Metadata
+- Source: user clarification and generated-asset integration
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/offseason_render.py, inkypi-weather/package/InkyPi/tests/test_nfl_title_wordmark.py
+- Pattern-Key: image.generated_wordmark_tracks_renderer_and_release
+
+---

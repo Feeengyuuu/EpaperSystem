@@ -48,6 +48,21 @@ class OffseasonRenderMixin:
         self._draw_pga_event_card(image, draw, left, card, now)
         self._draw_pga_leaderboard_column(image, draw, right, card, now)
 
+    def _draw_nfl_title_wordmark(self, image, x, y, max_width, max_height):
+        wordmark = self._load_local_logo(
+            LOCAL_NFL_TITLE_WORDMARK_PATH,
+            (int(max_width), int(max_height)),
+            alpha_threshold=8,
+        )
+        if not wordmark:
+            return False
+        image.paste(
+            wordmark,
+            (int(x), int(y + (int(max_height) - wordmark.height) / 2)),
+            wordmark,
+        )
+        return True
+
     def _draw_nfl_standalone_panel(self, image, draw, bounds, card, source_state, now):
         x1, y1, x2, y2 = [int(value) for value in bounds]
         draw.rectangle((x1, y1, x2, y2), fill=COLORS["panel"])

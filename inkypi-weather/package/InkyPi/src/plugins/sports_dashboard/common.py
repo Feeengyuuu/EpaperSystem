@@ -388,6 +388,7 @@ LOCAL_MLB_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_header_cutout.
 LOCAL_WNBA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_header_cutout.png")
 LOCAL_PGA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_header_cutout.png")
 LOCAL_NFL_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "nfl_header_cutout.png")
+LOCAL_NFL_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "nfl_title_wordmark.png")
 LOCAL_NCAA_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "ncaa_header_cutout.png")
 SPORT_HEADER_CUTOUT_SCALE = 1.24
 SPORT_HEADER_CUTOUT_LEFT_BIAS = 0.45
@@ -3552,6 +3553,8 @@ class SportsDashboardCommonMixin:
             title_drawn = self._draw_wnba_title_wordmark(image, title_x, header_y - 1, 154, 24)
         elif sport == "PGA":
             title_drawn = self._draw_pga_title_wordmark(image, title_x, header_y - 1, 154, 24)
+        elif sport == "NFL":
+            title_drawn = self._draw_nfl_title_wordmark(image, title_x, header_y - 1, 154, 24)
         if not title_drawn:
             title, title_font = self._fit_text(draw, title_text, 134, 22, bold=True, min_size=15)
             draw.text((title_x, header_y), title, font=title_font, fill=COLORS["text"])
