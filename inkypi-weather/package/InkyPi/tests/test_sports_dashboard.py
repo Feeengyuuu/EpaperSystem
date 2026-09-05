@@ -11449,6 +11449,23 @@ def test_ncaa_main_card_live_drive_uses_down_and_field_chips():
     assert icon_calls[-3:] == ["DOWN", "DOWN", "FIELD"]
 
 
+@pytest.mark.parametrize("label", ["PLAY", "VENUE"])
+def test_football_info_long_value_preserves_label_and_neighbor_pixels(label):
+    plugin = _plugin()
+    images = []
+    for value in ("Short", "(10:10) T. Hughes pass complete short middle to #3 D. DeBlanc caught at WYO 36, for 6 yards " * 3):
+        image = Image.new("RGB", (800, 480), COLORS["panel"])
+        plugin._draw_football_info_section(
+            ImageDraw.Draw(image), 337, 540, 270, "COLLEGE DRIVE",
+            [(label, value)], COLORS["text"],
+        )
+        images.append(image)
+
+    # The value may change only its own column, preserving the label and score card.
+    assert images[0].crop((0, 294, 400, 312)).tobytes() == images[1].crop((0, 294, 400, 312)).tobytes()
+    assert images[0].crop((400, 294, 540, 312)).tobytes() != images[1].crop((400, 294, 540, 312)).tobytes()
+
+
 def test_ncaa_main_card_live_drive_draws_last_play_strip_when_available():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")

@@ -1536,7 +1536,10 @@ class OffseasonRenderMixin:
             self._draw_sport_info_icon(draw, label, x1 + 3, top + 1, accent)
             label, label_font = self._fit_text(draw, label, 40, 8, bold=True, min_size=6)
             draw.text((x1 + 17, top), label, font=label_font, fill=COLORS["muted"])
-            value, value_font = self._fit_text(draw, value, x2 - x1 - 70, 10, bold=True, min_size=7)
+            value_width = x2 - x1 - 70
+            value, value_font = self._fit_text(draw, value, value_width, 10, bold=True, min_size=7)
+            if self._text_width(draw, value, value_font) > value_width:
+                value, value_font = self._fit_text_ellipsis(draw, value, value_width, 7, bold=True, min_size=7)
             value_fill = accent if str(label).upper() == "WIN" else COLORS["text"]
             self._draw_right_aligned(draw, (x2 - 3, top), value, value_font, value_fill)
 

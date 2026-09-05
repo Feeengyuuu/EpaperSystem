@@ -76,3 +76,12 @@ per actual bundled asset, preserve pixel hashes:
 | NFL | 20.39 / 13.90 | 151 / 22 |
 | World Cup | 23.16 / 19.51 | 218 / 21 |
 | NBA | 32.50 / 18.24 | 126 / 23 |
+
+The first live acceptance also exposed an existing NCAA layout defect: a long
+last-play description still exceeded the information column at minimum font
+size and was right-aligned over the neighboring score card. Bound overlong
+football information values using the existing ellipsis fitter, retaining the
+normal fit for short values. Two raster regressions reproduce the overflow
+before the fix and protect the label and neighboring pixels for PLAY and VENUE.
+The original live image is retained; this follow-up requires a fresh release,
+CI, and real-device DATA/display acceptance before publication.
