@@ -1,0 +1,37 @@
+{
+  "mode": "built-in image_gen",
+  "date": "2026-09-05",
+  "scope": "NBA and NCAA active lower-panel titles; Formula 1 retained renderer artwork only, not added to production rotation.",
+  "assets": [
+    {
+      "key": "nba",
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/decor/nba_title_wordmark.png",
+      "prompt": "Use case: logo-brand. Create ONE finished transparent PNG title wordmark for a small sports information screen. Exact text: \"NBA\" (N B A), no other text. Extremely minimalist custom basketball typography: confident, slightly forward-moving geometric athletic block letters, broad clean counters, one tiny burnt-orange basketball-seam arc integrated into the lower part of the A or its terminal. The letters must remain immediately legible at about 80 x 24 pixels. Solid warm white letter fill with a continuous deep navy outline, plus only one basketball-orange accent, so the same image reads on cream and dark navy backgrounds. Flat crisp vector-like edges, restrained professional sports editorial style, no gradients, texture, shadows, 3D, players, ball illustrations, surrounding badge, shield, border, or subtitle. Compact horizontal wordmark roughly 3.2:1 in its visible content, centered with modest transparent padding on a wide canvas. Actual transparent background and transparent holes in letters, NOT a checkerboard drawing. This is a bespoke title treatment beside an existing league logo; do not add another official logo. Render exactly one wordmark."
+    },
+    {
+      "key": "ncaa",
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/decor/ncaa_title_wordmark.png",
+      "prompt": "Use case: logo-brand. Create ONE finished transparent PNG title wordmark for a small college football information screen. Exact text: \"NCAA FB\" on ONE horizontal line, no other words. Extremely minimalist American collegiate varsity lettering: strong squared slab-serif forms, disciplined rhythm, slightly chamfered corners, a single subtle short football-lace motif embedded in the F or an understated terminal. All letters including FB should be the same cap height, immediately legible at about 104 x 22 pixels. Solid warm white fill with a continuous deep navy outline and one restrained blue accent. No fine internal stripes. Flat crisp vector-like graphic, refined compact varsity sports typography, no gradients, texture, shadows, 3D, players, standalone football, crest, badge, border, or subtitle. Visible wordmark ratio approximately 4.8:1, centered with modest transparent padding on a wide canvas. Actual transparent background and transparent letter counters, NOT a checkerboard drawing. This is a bespoke title beside an existing NCAA logo, so do not add a separate official logo. Render exactly one wordmark."
+    },
+    {
+      "key": "f1",
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/decor/f1_title_wordmark.png",
+      "prompt": "Use case: logo-brand. Create ONE finished transparent PNG title wordmark for a small Formula 1 motorsport information screen. Exact text: \"FORMULA 1\" on ONE horizontal line, no other text. Extremely minimalist custom motorsport typography: precise slightly forward-leaning monoline geometric block letters with broad clean counters, two carefully placed diagonal terminal cuts suggesting speed, and a single short racing-red terminal on the numeral 1. Make FORMULA and 1 one coherent high-legibility wordmark readable at approximately 110 x 20 pixels. Solid warm white letters with a continuous deep navy outline; only the small red accent. Flat crisp vector-like graphic, premium restrained racing editorial style, no gradients, texture, shadows, 3D, cars, chequered flags, track drawings, surrounding badge, border, or subtitle. Visible wordmark ratio approximately 5.5:1, centered with modest transparent padding on a wide canvas. Actual transparent background and transparent holes, NOT a checkerboard drawing. It will sit beside an existing F1 logo; do not add another logo. Render exactly one wordmark."
+    }
+  ],
+  "header_slots": {
+    "nba": {
+      "width": 86,
+      "height": 22
+    },
+    "ncaa": {
+      "width": 96,
+      "height": 24
+    },
+    "f1": {
+      "width": 142,
+      "height": 20,
+      "track_start_offset": 250
+    }
+  }
+}

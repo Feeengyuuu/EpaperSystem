@@ -2149,8 +2149,9 @@ class NBAMixin:
         self._draw_halftone(draw, (x1, y1, x2, y2), COLORS["nba_accent"], COLORS["panel"], 22, 1)
         header_y = y1 + 8
         self._draw_nba_logo(image, draw, x1 + 14, header_y - 2, 30, 34)
-        title, title_font = self._fit_text(draw, "NBA", 86, 22, bold=True, min_size=17)
-        draw.text((x1 + 52, header_y), title, font=title_font, fill=COLORS["text"])
+        if not self._draw_local_wordmark(image, LOCAL_NBA_TITLE_WORDMARK_PATH, x1 + 52, header_y - 1, 86, 22):
+            title, title_font = self._fit_text(draw, "NBA", 86, 22, bold=True, min_size=17)
+            draw.text((x1 + 52, header_y), title, font=title_font, fill=COLORS["text"])
         source_label = self._source_label(source_state)
         source_label, source_font = self._fit_text(draw, source_label, 96, 10, bold=True, min_size=7)
         draw.text((x1 + 52, header_y + 22), source_label, font=source_font, fill=COLORS["muted"])

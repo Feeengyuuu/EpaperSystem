@@ -365,6 +365,9 @@ LOCAL_CSL_2026_TITLE_WORDMARK_PATH = os.path.join(
 LOCAL_PGA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_tour_title_wordmark.png")
 LOCAL_MLB_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_title_wordmark.png")
 LOCAL_WNBA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_title_wordmark.png")
+LOCAL_NBA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_title_wordmark.png")
+LOCAL_NCAA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "ncaa_title_wordmark.png")
+LOCAL_F1_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "f1_title_wordmark.png")
 LOCAL_CLUB_LEAGUE_ICON_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "club_leagues")
 LOCAL_CLUB_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "club_teams")
 LOCAL_CLUB_LEAGUE_ICON_PATHS = {
@@ -3557,6 +3560,11 @@ class SportsDashboardCommonMixin:
             title_drawn = self._draw_pga_title_wordmark(image, title_x, header_y - 1, 154, 24)
         elif sport == "NFL":
             title_drawn = self._draw_nfl_title_wordmark(image, title_x, header_y - 1, 154, 24)
+        elif sport == "NCAA":
+            title_drawn = self._draw_local_wordmark(
+                image, LOCAL_NCAA_TITLE_WORDMARK_PATH, title_x, header_y - 1,
+                SPORT_HEADER_CUTOUT_TITLE_GAP - 8, 24,
+            )
         if not title_drawn:
             title, title_font = self._fit_text(draw, title_text, 134, 22, bold=True, min_size=15)
             draw.text((title_x, header_y), title, font=title_font, fill=COLORS["text"])

@@ -12427,13 +12427,21 @@ def test_f1_compact_panel_draws_core_labels():
     selected = SportsDashboard._select_f1_events(data, datetime(2026, 6, 14, 6, 45, tzinfo=la))
     selected["leaderboard"] = SportsDashboard._parse_f1_openf1_snapshot(_sample_openf1_snapshot())["leaderboard"]
     seen_texts = []
+    seen_wordmarks = []
     original_fit_text = plugin._fit_text
+    original_wordmark = plugin._draw_local_wordmark
 
     def record_fit_text(draw_arg, text, max_width, size, bold=False, min_size=11):
         seen_texts.append(str(text))
         return original_fit_text(draw_arg, text, max_width, size, bold=bold, min_size=min_size)
 
+    def record_wordmark(image_arg, path, *args, **kwargs):
+        drawn = original_wordmark(image_arg, path, *args, **kwargs)
+        seen_wordmarks.append((Path(path).name, drawn))
+        return drawn
+
     plugin._fit_text = record_fit_text
+    plugin._draw_local_wordmark = record_wordmark
 
     plugin._draw_f1_compact_panel(
         image,
@@ -12444,7 +12452,8 @@ def test_f1_compact_panel_draws_core_labels():
         datetime(2026, 6, 14, 6, 45, tzinfo=la),
     )
 
-    assert "FORMULA 1" in seen_texts
+    assert ("f1_title_wordmark.png", True) in seen_wordmarks
+    assert "FORMULA 1" not in seen_texts
     assert "Barcelona-Catalunya Grand Prix" in seen_texts
     assert "\u6bd4\u8d5b\u4e2d" in seen_texts
     assert "RACE LIVE" in seen_texts

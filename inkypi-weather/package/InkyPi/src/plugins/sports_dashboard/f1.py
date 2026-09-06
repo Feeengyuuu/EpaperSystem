@@ -11,6 +11,7 @@ from .common import (
     F1_LIVE_STATE_VERSION,
     F1_OPENF1_STATE_VERSION,
     LOCAL_F1_LOGO_PATH,
+    LOCAL_F1_TITLE_WORDMARK_PATH,
     datetime,
     get_http_session,
     logger,
@@ -519,12 +520,13 @@ class F1Mixin:
         self._draw_halftone(draw, (x1, y1, x2, y2), COLORS["f1_accent"], COLORS["panel"], 22, 1)
         header_y = y1 + 8
         self._draw_f1_logo(image, draw, x1 + 15, header_y - 2, 74, 34)
-        title, title_font = self._fit_text(draw, "FORMULA 1", 142, 17, bold=True, min_size=12)
-        draw.text((x1 + 96, header_y + 1), title, font=title_font, fill=COLORS["text"])
+        if not self._draw_local_wordmark(image, LOCAL_F1_TITLE_WORDMARK_PATH, x1 + 96, header_y, 142, 20):
+            title, title_font = self._fit_text(draw, "FORMULA 1", 142, 17, bold=True, min_size=12)
+            draw.text((x1 + 96, header_y + 1), title, font=title_font, fill=COLORS["text"])
         source_label = self._f1_source_label(selected, source_state)
         source_label, source_font = self._fit_text(draw, source_label, 124, 10, bold=True, min_size=7)
         draw.text((x1 + 97, header_y + 22), source_label, font=source_font, fill=COLORS["muted"])
-        self._draw_f1_header_track_strip(draw, x1 + 214, header_y + 2, x2 - 92, y1 + 47)
+        self._draw_f1_header_track_strip(draw, x1 + 250, header_y + 2, x2 - 92, y1 + 47)
 
         status = str((selected or {}).get("status") or "BREAK").upper()
         pill_text = "LIVE" if status == "LIVE" else ("NEXT" if status == "NEXT" else ("RESULT" if status == "RECENT" else "BREAK"))
