@@ -226,7 +226,7 @@ def _event(item, tz, now, settings):
 
 
 def parse_cs2_card(payload, tz, now, settings=None, *, game_logo_path=""):
-    """Select the earliest live/next followed-team fixture and its own event rows."""
+    """Select a focus event and retain followed teams' upcoming fixtures across events."""
     if not isinstance(payload, list):
         return None
     now = utc_datetime(now) or datetime.now(timezone.utc)
@@ -254,7 +254,8 @@ def parse_cs2_card(payload, tz, now, settings=None, *, game_logo_path=""):
     ]
     live = sorted([event for event in same_event if event["state"] == "inProgress"], key=lambda event: event["start"])
     upcoming = sorted(
-        [event for event in same_event if event["state"] == "unstarted"], key=lambda event: event["start"]
+        [event for event in events if event["state"] == "unstarted"],
+        key=lambda event: (not event["feed_fresh"], event["start"], event["match_id"]),
     )
     recent = sorted(
         [event for event in same_event if event["state"] == "completed"], key=lambda event: event["start"], reverse=True

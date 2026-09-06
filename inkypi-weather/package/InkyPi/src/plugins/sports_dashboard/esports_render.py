@@ -957,8 +957,19 @@ class EsportsRenderMixin:
     @staticmethod
     def _valve_sidebar_secondary_sections(primary):
         primary = primary or {}
+        if primary.get("auto_follow"):
+            main = primary.get("main") or {}
+            upcoming = [
+                event for event in primary.get("upcoming") or []
+                if event is not main and event.get("match_id") != main.get("match_id")
+            ]
+            recent = [
+                event for event in primary.get("recent") or []
+                if event is not main and event.get("match_id") != main.get("match_id")
+            ]
+            return [("UPCOMING", upcoming[:1]), ("RECENT", recent[:1])]
         title, rows = SportsDashboard._valve_sidebar_secondary_section(primary)
-        if not primary.get("auto_follow") and str(primary.get("sport") or "").strip().casefold() != "blast open":
+        if str(primary.get("sport") or "").strip().casefold() != "blast open":
             return [(title, rows)]
         main = primary.get("main")
         recent = [event for event in primary.get("recent") or [] if event is not main]
@@ -1401,9 +1412,16 @@ class EsportsRenderMixin:
         return palette[seed % len(palette)]
 
     def _draw_valve_esports_recent_rows(self, image, draw, right_x, right_w, y, events, primary, accent, title="RECENT"):
+        cs2_upcoming = bool(primary.get("auto_follow") and title == "UPCOMING")
+        if cs2_upcoming:
+            accent = COLORS["valve_cs_accent"]
         self._draw_section_header(draw, right_x, right_w, y, title, accent)
         if not events:
             empty_text = "No more scheduled matches" if title != "RECENT" else "No more Valve results"
+            if primary.get("auto_follow") and title == "UPCOMING":
+                source = str(primary.get("source_state") or "").upper()
+                unavailable = any(state in source for state in ("STALE", "PARTIAL", "AUTH", "LIMIT", "NO KEY"))
+                empty_text = "Schedule unavailable" if unavailable else "No further listed matches"
             draw.text((right_x + 18, y + 36), empty_text, font=self._font(14, True), fill=COLORS["muted"])
             self._draw_valve_ti_empty_slot_filler(
                 image,
@@ -1417,8 +1435,11 @@ class EsportsRenderMixin:
         row_y = y + 29
         visible_events = events[:3]
         for index, event in enumerate(visible_events):
-            top = row_y + index * 55
-            self._draw_valve_esports_recent_row(image, draw, right_x, right_w, top, event, accent)
+            top = row_y + index * (63 if cs2_upcoming else 55)
+            if cs2_upcoming:
+                self._draw_valve_esports_recent_row(image, draw, right_x, right_w, top, event, accent, show_event=True)
+            else:
+                self._draw_valve_esports_recent_row(image, draw, right_x, right_w, top, event, accent)
         self._draw_valve_ti_empty_slot_filler(
             image,
             right_x + 14,
@@ -1441,10 +1462,10 @@ class EsportsRenderMixin:
         if filler:
             image.paste(filler, (x1, y2 - height + 1), filler)
 
-    def _draw_valve_esports_recent_row(self, image, draw, right_x, right_w, y, event, accent):
+    def _draw_valve_esports_recent_row(self, image, draw, right_x, right_w, y, event, accent, *, show_event=False):
         row_x1 = right_x + 14
         row_x2 = right_x + right_w - 14
-        row_h = 50
+        row_h = 58 if show_event else 50
         draw.rounded_rectangle((row_x1, y, row_x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
         draw.rectangle((row_x1 + 1, y + 1, row_x1 + 5, y + row_h - 1), fill=accent)
         date_label, time_label = self._valve_match_datetime_labels(event)
@@ -1474,6 +1495,8 @@ class EsportsRenderMixin:
             min_size=11,
         )
         score = self._valve_score_label(event)
+        if show_event and not event.get("feed_fresh", True):
+            score = "STALE"
         score, score_font = self._fit_text_ellipsis(draw, score, 40, 13, bold=True, min_size=9)
         self._draw_centered_in_box(draw, (row_x1 + 91, y + 4, row_x2 - 91, y + 20), score, score_font, COLORS["text"])
         icon_size = 17
@@ -1488,9 +1511,18 @@ class EsportsRenderMixin:
         team_b, team_b_font = self._fit_text_ellipsis(draw, self._valve_team_display_name(event, "b"), right_name_box[2] - right_name_box[0], 10, bold=True, min_size=7)
         self._draw_text_in_box(draw, left_name_box, team_a, team_a_font, COLORS["text"])
         self._draw_text_in_box(draw, right_name_box, team_b, team_b_font, COLORS["text"], align="right")
-        detail = self._valve_match_detail_label(event, compact=True)
-        detail, detail_font = self._fit_text_ellipsis(draw, detail, row_x2 - row_x1 - 22, 7, bold=True, min_size=6)
-        self._draw_centered_in_box(draw, (row_x1 + 10, y + 38, row_x2 - 10, y + row_h - 1), detail, detail_font, COLORS["muted"])
+        if show_event:
+            from .cs2_cards import event_caption
+
+            logo_drawn = self._draw_valve_focus_event_logo(image, (row_x1 + 10, y + 39, row_x1 + 33, y + 56), event)
+            self._draw_cs2_event_caption(
+                draw, (row_x1 + (38 if logo_drawn else 10), y + 38, row_x2 - 10, y + row_h - 1),
+                event_caption(event.get("event_name") or "CS2"),
+            )
+        else:
+            detail = self._valve_match_detail_label(event, compact=True)
+            detail, detail_font = self._fit_text_ellipsis(draw, detail, row_x2 - row_x1 - 22, 7, bold=True, min_size=6)
+            self._draw_centered_in_box(draw, (row_x1 + 10, y + 38, row_x2 - 10, y + row_h - 1), detail, detail_font, COLORS["muted"])
 
     @staticmethod
     def _valve_match_datetime_labels(event, fallback_start=None):

@@ -1,0 +1,106 @@
+from datetime import datetime, timezone
+
+from PIL import Image, ImageDraw
+import pytest
+
+from plugins.sports_dashboard import common
+from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+from tests.test_sports_cs2_follow import cs_match
+
+
+def test_live_cs2_keeps_visible_upcoming_heading_even_when_no_further_fixture_is_listed(monkeypatch):
+    now = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
+    card = SportsDashboard._parse_pandascore_cs2_card(
+        [cs_match(now, status="running", offset=-1)], timezone.utc, now, {}
+    )
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    monkeypatch.setattr(plugin, "_load_team_logo_for_render", lambda *args: None)
+    original = ImageDraw.ImageDraw.text
+    visible_text = []
+
+    def record_text(draw, xy, text, *args, **kwargs):
+        visible_text.append(str(text))
+        return original(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+    with Image.new("RGB", (800, 480), "white") as canvas:
+        plugin._draw_valve_esports_sidebar(canvas, 552, {"primary": card}, "PANDASCORE LIVE", now)
+    assert "UPCOMING" in visible_text
+    assert "RECENT" in visible_text
+    assert "No further listed matches" in visible_text
+
+
+@pytest.mark.parametrize("palette", [common.DAY_COLORS, common.DEEP_NIGHT_COLORS])
+def test_upcoming_row_shows_its_own_event_and_both_team_logos(monkeypatch, palette):
+    now = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
+    live = cs_match(now, status="running", offset=-1, event="Current Cup")
+    future = cs_match(now, match_id=502, offset=24, event="Future Cup")
+    future["serie"]["id"] = 1002
+    future["tournament"]["image_url"] = "https://cdn-api.pandascore.co/future.png"
+    future["opponents"][0]["opponent"]["image_url"] = "https://cdn-api.pandascore.co/left.png"
+    future["opponents"][1]["opponent"]["image_url"] = "https://cdn-api.pandascore.co/right.png"
+    colors = {
+        future["tournament"]["image_url"]: (47, 170, 187),
+        future["opponents"][0]["opponent"]["image_url"]: (255, 51, 119),
+        future["opponents"][1]["opponent"]["image_url"]: (102, 170, 51),
+    }
+    logos = {url: Image.new("RGBA", (16, 16), color + (255,)) for url, color in colors.items()}
+    card = SportsDashboard._parse_pandascore_cs2_card([live, future], timezone.utc, now, {})
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    monkeypatch.setattr(plugin, "_load_team_logo_for_render", lambda url, size: logos.get(url))
+    token = common._ACTIVE_COLORS.set(palette)
+    try:
+        with Image.new("RGB", (800, 480), palette["paper"]) as canvas:
+            plugin._draw_valve_esports_sidebar(canvas, 552, {"primary": card}, "PANDASCORE LIVE", now)
+            with canvas.crop((570, 311, 787, 373)) as upcoming:
+                pixels = {upcoming.getpixel((x, y)) for x in range(upcoming.width) for y in range(upcoming.height)}
+                assert all(color in pixels for color in colors.values()), "Upcoming needs its own event and team logos"
+    finally:
+        common._ACTIVE_COLORS.reset(token)
+        for logo in logos.values():
+            logo.close()
+
+
+def test_next_focus_match_is_not_repeated_in_upcoming_after_deserialization():
+    now = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
+    card = SportsDashboard._parse_pandascore_cs2_card([cs_match(now)], timezone.utc, now, {})
+    card["main"] = dict(card["main"])
+    assert SportsDashboard._valve_sidebar_secondary_sections(card) == [("UPCOMING", []), ("RECENT", [])]
+
+
+def test_fresh_cross_event_schedule_is_preferred_to_earlier_stale_fixture():
+    now = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
+    live = cs_match(now, status="running", offset=-1)
+    stale = cs_match(now, match_id=502, offset=1)
+    stale["_cs2_feed_fresh"] = False
+    fresh = cs_match(now, match_id=503, offset=24, event="Next Cup")
+    fresh["serie"]["id"] = 1002
+    card = SportsDashboard._parse_pandascore_cs2_card([live, stale, fresh], timezone.utc, now, {})
+    assert card["main"]["match_id"] == "501"
+    assert SportsDashboard._valve_sidebar_secondary_sections(card)[0][1][0]["match_id"] == "503"
+
+
+@pytest.mark.parametrize("with_stale_fixture", [False, True])
+def test_failed_upcoming_feed_does_not_present_unavailable_schedule_as_fresh(monkeypatch, with_stale_fixture):
+    now = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
+    rows = [cs_match(now, status="running", offset=-1)]
+    if with_stale_fixture:
+        upcoming = cs_match(now, match_id=502)
+        upcoming["_cs2_feed_fresh"] = False
+        rows.append(upcoming)
+    card = SportsDashboard._parse_pandascore_cs2_card(rows, timezone.utc, now, {})
+    card["source_state"] = "PANDASCORE CACHE PARTIAL"
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    monkeypatch.setattr(plugin, "_load_team_logo_for_render", lambda *args: None)
+    original = ImageDraw.ImageDraw.text
+    visible_text = []
+
+    def record_text(draw, xy, text, *args, **kwargs):
+        visible_text.append(str(text))
+        return original(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+    with Image.new("RGB", (800, 480), "white") as canvas:
+        plugin._draw_valve_esports_sidebar(canvas, 552, {"primary": card}, card["source_state"], now)
+    assert ("STALE" if with_stale_fixture else "Schedule unavailable") in visible_text
+    assert "No further listed matches" not in visible_text

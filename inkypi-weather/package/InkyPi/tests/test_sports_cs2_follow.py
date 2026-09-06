@@ -51,6 +51,23 @@ def test_cs2_follows_next_top_team_event_after_porto_without_manual_ids():
     assert card["event_logo_url"] == "https://cdn.pandascore.co/images/league/fissure.png"
 
 
+def test_live_card_retains_cross_event_upcoming_with_each_matches_own_branding():
+    now = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
+    live = cs_match(now, status="running", offset=-1, event="Current Cup")
+    next_match = cs_match(now, match_id=502, offset=24, event="Next Cup", team_a="G2", team_b="Vitality")
+    next_match["serie"]["id"] = 1002
+    next_match["tournament"]["image_url"] = "https://cdn-api.pandascore.co/images/next-cup.png"
+    next_match["opponents"][0]["opponent"]["image_url"] = "https://cdn-api.pandascore.co/images/g2.png"
+    later = cs_match(now, match_id=503, offset=48)
+    card = SportsDashboard._parse_pandascore_cs2_card([later, live, next_match], timezone.utc, now, {})
+    assert card["main"]["match_id"] == "501" and card["event_id"] == "series:1001"
+    assert [event["match_id"] for event in card["upcoming"]] == ["502", "503"]
+    assert card["upcoming"][0]["event_name"] == "FISSURE Next Cup"
+    assert card["upcoming"][0]["event_logo_url"] == next_match["tournament"]["image_url"]
+    assert card["upcoming"][0]["team_a_logo"] == next_match["opponents"][0]["opponent"]["image_url"]
+    assert all(event["event_id"] == card["event_id"] for event in card["events"])
+
+
 def test_current_provider_cdn_and_series_name_contract_preserve_branding():
     # PandaScore's documented match payload uses cdn-api and a serie.full_name
     # that does not contain its league name (for example, PGL / Astana 2026).
