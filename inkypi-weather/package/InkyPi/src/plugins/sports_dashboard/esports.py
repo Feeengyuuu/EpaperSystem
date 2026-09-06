@@ -2926,6 +2926,18 @@ class EsportsMixin:
         return selected, source_state
 
     def _load_pandascore_cs2_card(
+        self, settings, device_config, timezone_info, now,
+    ):
+        if self._bool_setting(settings or {}, "pandaScoreCs2AutoFollow", True):
+            from .cs2_follow import load_cs2_follow_card
+
+            return load_cs2_follow_card(
+                self, settings or {}, device_config, timezone_info, now,
+                session=get_http_session(), game_logo_path=LOCAL_CS_MAJOR_LOGO_PATH,
+            )
+        return self._load_pandascore_cs2_fixed_card(settings, device_config, timezone_info, now)
+
+    def _load_pandascore_cs2_fixed_card(
         self,
         settings,
         device_config,
@@ -2951,7 +2963,7 @@ class EsportsMixin:
         )
 
         def cached_card(source_state):
-            card = self._parse_pandascore_cs2_card(
+            card = self._parse_pandascore_cs2_fixed_card(
                 cached_matches,
                 timezone_info,
                 now_value,
@@ -3068,7 +3080,7 @@ class EsportsMixin:
                 cached_matches_by_tournament=cached_matches_by_tournament,
                 cached_stage_fetched_at=cache.get("stage_fetched_at"),
             )
-            card = self._parse_pandascore_cs2_card(
+            card = self._parse_pandascore_cs2_fixed_card(
                 payload["matches"],
                 timezone_info,
                 now_value,
@@ -3706,6 +3718,13 @@ class EsportsMixin:
 
     @staticmethod
     def _parse_pandascore_cs2_card(payload, timezone_info, now, settings=None):
+        from .cs2_cards import parse_cs2_card
+
+        return parse_cs2_card(payload, timezone_info, now, settings,
+                              game_logo_path=LOCAL_CS_MAJOR_LOGO_PATH)
+
+    @staticmethod
+    def _parse_pandascore_cs2_fixed_card(payload, timezone_info, now, settings=None):
         if not isinstance(payload, list):
             return None
         now_value = now if isinstance(now, datetime) else datetime.now(timezone_info)

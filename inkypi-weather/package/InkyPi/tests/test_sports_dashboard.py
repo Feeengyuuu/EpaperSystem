@@ -18204,7 +18204,7 @@ def _sample_pandascore_blast_matches(now):
 def test_pandascore_blast_parser_distributes_live_upcoming_and_recent():
     now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
 
-    card = SportsDashboard._parse_pandascore_cs2_card(
+    card = SportsDashboard._parse_pandascore_cs2_fixed_card(
         _sample_pandascore_blast_matches(now),
         timezone.utc,
         now,
@@ -18242,7 +18242,7 @@ def test_pandascore_parser_rejects_impossible_lifecycle_times():
     impossible_live = _sample_pandascore_blast_matches(now)[1]
     impossible_live["begin_at"] = (now + timedelta(minutes=31)).isoformat()
 
-    card = SportsDashboard._parse_pandascore_cs2_card(
+    card = SportsDashboard._parse_pandascore_cs2_fixed_card(
         [expired_next, impossible_live],
         timezone.utc,
         now,
@@ -18256,7 +18256,7 @@ def test_pandascore_confirmed_running_outlives_stale_retry_window(tmp_path):
     now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
     delayed_live = _sample_pandascore_blast_matches(now)[1]
     delayed_live["begin_at"] = (now - timedelta(hours=13)).isoformat()
-    card = SportsDashboard._parse_pandascore_cs2_card(
+    card = SportsDashboard._parse_pandascore_cs2_fixed_card(
         [delayed_live],
         timezone.utc,
         now,
@@ -18286,7 +18286,7 @@ def test_pandascore_parser_drops_series_scores_above_best_of():
     match = _sample_pandascore_blast_matches(now)[1]
     match["results"][0]["score"] = 9
 
-    card = SportsDashboard._parse_pandascore_cs2_card(
+    card = SportsDashboard._parse_pandascore_cs2_fixed_card(
         [match],
         timezone.utc,
         now,
@@ -18310,7 +18310,7 @@ def test_pandascore_cs2_loader_requires_private_env_key_without_network(
         lambda *_args, **_kwargs: pytest.fail("missing key must not issue a request"),
     )
 
-    card, source_state = plugin._load_pandascore_cs2_card(
+    card, source_state = plugin._load_pandascore_cs2_fixed_card(
         {},
         FakeDeviceConfig(timezone="UTC"),
         timezone.utc,
@@ -18398,20 +18398,20 @@ def test_pandascore_cs2_loader_uses_bearer_auth_and_last_good_cache(
         "pandaScoreCs2CacheSeconds": "180",
     }
 
-    live_card, live_state = plugin._load_pandascore_cs2_card(
+    live_card, live_state = plugin._load_pandascore_cs2_fixed_card(
         settings,
         device_config,
         timezone.utc,
         now,
     )
-    cached_card, cached_state = plugin._load_pandascore_cs2_card(
+    cached_card, cached_state = plugin._load_pandascore_cs2_fixed_card(
         settings,
         device_config,
         timezone.utc,
         now + timedelta(seconds=60),
     )
     should_fail["value"] = True
-    stale_card, stale_state = plugin._load_pandascore_cs2_card(
+    stale_card, stale_state = plugin._load_pandascore_cs2_fixed_card(
         settings,
         device_config,
         timezone.utc,
@@ -18472,7 +18472,7 @@ def test_pandascore_cs2_loader_keeps_successful_stages_when_one_stage_fails(
         lambda: FakeSession(),
     )
 
-    card, source_state = plugin._load_pandascore_cs2_card(
+    card, source_state = plugin._load_pandascore_cs2_fixed_card(
         {"pandaScoreCs2TournamentIds": "21714,21715,21716"},
         device_config,
         timezone.utc,
@@ -18548,7 +18548,7 @@ def test_pandascore_cs2_partial_refresh_keeps_failed_live_stage_stale(
         lambda: FakeSession(),
     )
 
-    card, source_state = plugin._load_pandascore_cs2_card(
+    card, source_state = plugin._load_pandascore_cs2_fixed_card(
         settings,
         device_config,
         timezone.utc,
@@ -18622,7 +18622,7 @@ def test_pandascore_partial_nonretryable_main_stage_stops_fast_polling(
         lambda: FakeSession(),
     )
 
-    card, source_state = plugin._load_pandascore_cs2_card(
+    card, source_state = plugin._load_pandascore_cs2_fixed_card(
         settings,
         device_config,
         timezone.utc,
@@ -18683,7 +18683,7 @@ def test_pandascore_partial_limit_outside_main_stage_blocks_fast_polling(
         lambda: FakeSession(),
     )
 
-    card, source_state = plugin._load_pandascore_cs2_card(
+    card, source_state = plugin._load_pandascore_cs2_fixed_card(
         settings,
         device_config,
         timezone.utc,
@@ -18735,7 +18735,7 @@ def test_pandascore_cs2_loader_respects_daily_budget_with_stale_cache(
         lambda *_args, **_kwargs: pytest.fail("daily budget must prevent requests"),
     )
 
-    card, source_state = plugin._load_pandascore_cs2_card(
+    card, source_state = plugin._load_pandascore_cs2_fixed_card(
         settings,
         device_config,
         timezone.utc,
@@ -18814,7 +18814,7 @@ def test_pandascore_cs2_all_finished_snapshot_can_discover_later_round(
         fetch_with_new_round,
     )
 
-    card, source_state = plugin._load_pandascore_cs2_card(
+    card, source_state = plugin._load_pandascore_cs2_fixed_card(
         settings,
         device_config,
         timezone.utc,
@@ -18857,7 +18857,7 @@ def test_pandascore_cs2_safety_cutoff_archives_unfinished_cache_without_network(
         ),
     )
 
-    card, source_state = plugin._load_pandascore_cs2_card(
+    card, source_state = plugin._load_pandascore_cs2_fixed_card(
         settings,
         device_config,
         timezone.utc,
@@ -18925,7 +18925,7 @@ def test_pandascore_cs2_loader_uses_live_ttl_only_near_next_match(
     far_match["begin_at"] = (now + timedelta(hours=2)).isoformat()
     write_cache(far_match)
 
-    far_card, far_state = plugin._load_pandascore_cs2_card(
+    far_card, far_state = plugin._load_pandascore_cs2_fixed_card(
         settings,
         device_config,
         timezone.utc,
@@ -18934,7 +18934,7 @@ def test_pandascore_cs2_loader_uses_live_ttl_only_near_next_match(
     near_match = _sample_pandascore_blast_matches(now)[2]
     near_match["begin_at"] = (now + timedelta(minutes=20)).isoformat()
     write_cache(near_match)
-    near_card, near_state = plugin._load_pandascore_cs2_card(
+    near_card, near_state = plugin._load_pandascore_cs2_fixed_card(
         settings,
         device_config,
         timezone.utc,
@@ -19054,7 +19054,7 @@ def test_pandascore_long_retry_after_becomes_nonretryable_stale_limit(
         lambda *_args: recorded.append(True),
     )
 
-    card, source_state = plugin._load_pandascore_cs2_card(
+    card, source_state = plugin._load_pandascore_cs2_fixed_card(
         settings,
         device_config,
         timezone.utc,
@@ -19078,7 +19078,7 @@ def test_valve_loader_merges_preloaded_pandascore_card():
     plugin = _plugin()
     now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
     upcoming_match = _sample_pandascore_blast_matches(now)[2]
-    card = SportsDashboard._parse_pandascore_cs2_card(
+    card = SportsDashboard._parse_pandascore_cs2_fixed_card(
         [upcoming_match],
         timezone.utc,
         now,
@@ -19105,7 +19105,7 @@ def test_right_esports_prefetches_pandascore_and_uses_earlier_match(monkeypatch)
     now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
     panda_match = _sample_pandascore_blast_matches(now)[2]
     panda_match["begin_at"] = (now + timedelta(hours=1)).isoformat()
-    panda_card = SportsDashboard._parse_pandascore_cs2_card(
+    panda_card = SportsDashboard._parse_pandascore_cs2_fixed_card(
         [panda_match],
         timezone.utc,
         now,
@@ -19573,7 +19573,7 @@ def test_right_esports_live_state_tracks_nonprimary_pandascore_during_rotation(
     plugin = _plugin()
     plugin._sports_dashboard_cache_dir = lambda: tmp_path
     now = datetime(2026, 8, 26, 12, 30, tzinfo=timezone.utc)
-    panda_card = SportsDashboard._parse_pandascore_cs2_card(
+    panda_card = SportsDashboard._parse_pandascore_cs2_fixed_card(
         [_sample_pandascore_blast_matches(now)[1]],
         timezone.utc,
         now,
@@ -19634,7 +19634,7 @@ def test_right_esports_live_state_tracks_nonprimary_pandascore_during_rotation(
 def test_pandascore_sidebar_renders_required_source_attribution(monkeypatch):
     plugin = _plugin()
     now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
-    card = SportsDashboard._parse_pandascore_cs2_card(
+    card = SportsDashboard._parse_pandascore_cs2_fixed_card(
         [_sample_pandascore_blast_matches(now)[1]],
         timezone.utc,
         now,
@@ -20161,7 +20161,7 @@ def test_blast_live_secondary_sections_keep_up_next_and_recent():
 def test_blast_sidebar_places_up_next_and_recent_inside_480px(monkeypatch):
     plugin = _plugin()
     now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
-    card = SportsDashboard._parse_pandascore_cs2_card(
+    card = SportsDashboard._parse_pandascore_cs2_fixed_card(
         _sample_pandascore_blast_matches(now),
         timezone.utc,
         now,
@@ -20276,7 +20276,7 @@ def test_valve_match_datetime_labels_preserve_local_start_time():
 def test_blast_match_times_use_legible_hierarchy_on_both_themes(monkeypatch, palette):
     plugin = _plugin()
     now = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
-    card = SportsDashboard._parse_pandascore_cs2_card(
+    card = SportsDashboard._parse_pandascore_cs2_fixed_card(
         _sample_pandascore_blast_matches(now),
         timezone.utc,
         now,

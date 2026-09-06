@@ -879,22 +879,19 @@ class EsportsRenderMixin:
             badge_width = 58
             badge_x = panel_right - badge_width
             self._draw_valve_esports_logo(image, draw, logo_x, logo_y, logo_size, logo_size, primary)
-            title_text, title_font = self._fit_text_ellipsis(
-                draw,
-                header_title,
-                max(1, panel_right - title_left),
-                15,
-                bold=True,
-                min_size=10,
+            title_drawn = series == "CS" and self._draw_local_wordmark(
+                image, LOCAL_CS2_TITLE_WORDMARK_PATH, title_left, header_y + 2,
+                min(140, panel_right - title_left), 24,
             )
-            self._draw_text_in_box(
-                draw,
-                (title_left, header_y + 4, panel_right, header_y + 25),
-                title_text,
-                title_font,
-                COLORS["text"],
-                align="left",
-            )
+            if not title_drawn:
+                title_text, title_font = self._fit_text_ellipsis(
+                    draw, header_title, max(1, panel_right - title_left), 15,
+                    bold=True, min_size=10,
+                )
+                self._draw_text_in_box(
+                    draw, (title_left, header_y + 4, panel_right, header_y + 25),
+                    title_text, title_font, COLORS["text"], align="left",
+                )
             source_label = self._source_label(source_state)
             source_label, source_font = self._fit_text_ellipsis(
                 draw,
@@ -961,7 +958,7 @@ class EsportsRenderMixin:
     def _valve_sidebar_secondary_sections(primary):
         primary = primary or {}
         title, rows = SportsDashboard._valve_sidebar_secondary_section(primary)
-        if str(primary.get("sport") or "").strip().casefold() != "blast open":
+        if not primary.get("auto_follow") and str(primary.get("sport") or "").strip().casefold() != "blast open":
             return [(title, rows)]
         main = primary.get("main")
         recent = [event for event in primary.get("recent") or [] if event is not main]
@@ -1171,22 +1168,15 @@ class EsportsRenderMixin:
             )
             caption = str(primary.get("event_logo_caption") or "").strip()
             caption_box = (meta_x1, y + 36, meta_x2, y + 60)
-            caption, caption_font = self._fit_text_ellipsis(
-                draw,
-                caption,
-                caption_box[2] - caption_box[0],
-                12,
-                bold=True,
-                min_size=9,
-            )
-            self._draw_text_in_box(
-                draw,
-                caption_box,
-                caption,
-                caption_font,
-                COLORS["text"],
-                align="center",
-            )
+            if primary.get("auto_follow"):
+                self._draw_cs2_event_caption(draw, caption_box, caption)
+            else:
+                caption, caption_font = self._fit_text_ellipsis(
+                    draw, caption, caption_box[2] - caption_box[0], 12,
+                    bold=True, min_size=9,
+                )
+                self._draw_text_in_box(draw, caption_box, caption, caption_font,
+                                       COLORS["text"], align="center")
             subtitle = self._valve_source_attribution(
                 event.get("source") or primary.get("source") or "Valve"
             )
@@ -1264,27 +1254,46 @@ class EsportsRenderMixin:
         logo_path = str(primary.get("event_logo_path") or "").strip()
         if sum(COLORS["panel"]) < sum(COLORS["text"]):
             logo_path = str(primary.get("event_logo_path_dark") or logo_path).strip()
-        if not logo_path:
-            return False
         x1, y1, x2, y2 = (int(value) for value in box)
         width = max(1, x2 - x1 + 1)
         height = max(1, y2 - y1 + 1)
-        logo = self._load_local_logo(
-            logo_path,
-            (width, height),
-            alpha_threshold=8,
-        )
+        resized = None
+        logo = self._load_local_logo(logo_path, (width, height), alpha_threshold=8) if logo_path else None
+        if logo is None:
+            from .cs2_cards import safe_logo_url
+
+            logo_url = primary.get("event_logo_url")
+            if sum(COLORS["panel"]) < sum(COLORS["text"]):
+                logo_url = primary.get("event_logo_url_dark") or logo_url
+            logo = self._load_team_logo_for_render(safe_logo_url(logo_url), max(width, height))
+            if logo:
+                resized = ImageOps.contain(logo, (width, height), Image.LANCZOS)
+                logo = resized
         if not logo:
             return False
-        image.paste(
-            logo,
-            (
-                x1 + (width - logo.width) // 2,
-                y1 + (height - logo.height) // 2,
-            ),
-            logo,
-        )
+        try:
+            image.paste(logo, (x1 + (width - logo.width) // 2, y1 + (height - logo.height) // 2), logo)
+        finally:
+            if resized is not None:
+                resized.close()
         return True
+
+    def _draw_cs2_event_caption(self, draw, box, caption):
+        width = max(1, box[2] - box[0])
+        words = str(caption).split()
+        candidates = [(" ".join(words[:i]), " ".join(words[i:])) for i in range(1, len(words))]
+        if not candidates:
+            candidates = [(caption, "")]
+        for size in (11, 10, 9, 8):
+            font = self._font(size, True)
+            lines = min(candidates, key=lambda pair: max(draw.textlength(line, font=font) for line in pair))
+            if max(draw.textlength(line, font=font) for line in lines) <= width:
+                break
+        middle = (box[1] + box[3]) // 2
+        boxes = ((box[0], box[1], box[2], middle), (box[0], middle, box[2], box[3]))
+        for line, row_box in zip(lines, boxes):
+            text, font = self._fit_text_ellipsis(draw, line, width, size, bold=True, min_size=8)
+            self._draw_text_in_box(draw, row_box, text, font, COLORS["text"], align="center")
 
     @staticmethod
     def _valve_source_attribution(source):

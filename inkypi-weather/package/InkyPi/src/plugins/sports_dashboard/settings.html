@@ -374,9 +374,30 @@
 <div class="form-group">
     <label class="form-label">
         <input type="checkbox" id="pandaScoreCs2Enabled" name="pandaScoreCs2Enabled" value="true">
-        Include BLAST Premier Open Porto 2026 live / upcoming matches
+        Include CS2 live / upcoming matches
     </label>
     <small>Source: PandaScore. Configure the private <code>PANDASCORE_API_KEY</code> in InkyPi API Keys; the free Fixtures plan provides schedules, running status, and series results.</small>
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="pandaScoreCs2AutoFollow" name="pandaScoreCs2AutoFollow" value="true" checked>
+        Automatically follow well-known CS2 teams across tournaments
+    </label>
+    <small>Follows the next 14 days of scheduled matches, prioritizing live matches. Existing tournament IDs apply only to the legacy Porto mode when this is disabled.</small>
+</div>
+
+<div class="form-group">
+    <label for="pandaScoreCs2FollowedTeams" class="form-label">Followed CS2 teams (optional):</label>
+    <input type="text" id="pandaScoreCs2FollowedTeams" name="pandaScoreCs2FollowedTeams" placeholder="MOUZ, Spirit, Vitality, Natus Vincere, G2, FaZe" class="form-input">
+    <small>Leave blank for the built-in senior-team list. Comma-separated exact team names replace that list; academy teams are not included automatically.</small>
+</div>
+
+<div class="form-group">
+    <label class="form-label">
+        <input type="checkbox" id="pandaScoreCs2HltvLogos" name="pandaScoreCs2HltvLogos" value="true" checked>
+        Match tournament logos from HLTV and reuse them locally
+    </label>
 </div>
 
 <div class="form-group">
@@ -627,6 +648,9 @@
             document.getElementById('nbaOddsDailyLimit').value = pluginSettings.nbaOddsDailyLimit || '';
             document.getElementById('valveEsportsEnabled').checked = pluginSettings.valveEsportsEnabled !== 'false';
             document.getElementById('pandaScoreCs2Enabled').checked = pluginSettings.pandaScoreCs2Enabled !== 'false';
+            document.getElementById('pandaScoreCs2AutoFollow').checked = pluginSettings.pandaScoreCs2AutoFollow !== 'false';
+            document.getElementById('pandaScoreCs2HltvLogos').checked = pluginSettings.pandaScoreCs2HltvLogos !== 'false';
+            document.getElementById('pandaScoreCs2FollowedTeams').value = pluginSettings.pandaScoreCs2FollowedTeams || '';
             document.getElementById('pandaScoreCs2TournamentIds').value = pluginSettings.pandaScoreCs2TournamentIds || '';
             document.getElementById('pandaScoreCs2CacheSeconds').value = pluginSettings.pandaScoreCs2CacheSeconds || '';
             document.getElementById('pandaScoreCs2ScheduleCacheSeconds').value = pluginSettings.pandaScoreCs2ScheduleCacheSeconds || '';

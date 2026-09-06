@@ -1,0 +1,11 @@
+{
+  "mode": "built-in image_gen",
+  "intent": "generate",
+  "text": "CS2",
+  "prompt": "Use case: logo-brand.\nCreate ONE original minimalist Counter-Strike 2 themed title wordmark for a small color e-paper sports sidebar.\nText (verbatim): \"CS2\". Three characters only, no other text.\nBold condensed angular tactical stencil lettering with a slight forward lean. C and S have off-white faces and a clean very dark navy outline; the 2 uses Counter-Strike-like amber orange with the same dark outline. A few large deliberate stencil cuts suggest precision and competitive FPS movement. Restrained, professional, immediately readable at only 24 pixels tall on both cream and dark backgrounds. Match the clarity of flat sports broadcast title marks, not a poster.\nHorizontal compact lockup roughly 3.5:1. Artwork tightly composed, modest transparent margins, isolated on a genuinely transparent background with preserved alpha. Flat opaque letter fills, crisp edges. No surrounding badge, no rectangle, no backdrop, no shadow, no glow, no gradients, no texture, no extra symbols, no tiny details, no player illustration, no weapon illustration, no watermark. Exactly one wordmark.",
+  "asset": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/decor/cs2_title_wordmark.png",
+  "max_display_size": [
+    140,
+    24
+  ]
+}

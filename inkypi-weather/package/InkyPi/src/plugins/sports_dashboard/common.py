@@ -368,6 +368,7 @@ LOCAL_WNBA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "wnba_title_wordm
 LOCAL_NBA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_title_wordmark.png")
 LOCAL_NCAA_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "ncaa_title_wordmark.png")
 LOCAL_F1_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "f1_title_wordmark.png")
+LOCAL_CS2_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "cs2_title_wordmark.png")
 LOCAL_CLUB_LEAGUE_ICON_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "club_leagues")
 LOCAL_CLUB_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "club_teams")
 LOCAL_CLUB_LEAGUE_ICON_PATHS = {
