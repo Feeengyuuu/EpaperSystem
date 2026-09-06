@@ -99,7 +99,8 @@ def safe_logo_url(value):
         parsed = urlparse(text)
         valid = (
             parsed.scheme == "https"
-            and parsed.hostname in {"cdn.pandascore.co", "cdn.pandascore.net", "img-cdn.hltv.org"}
+            and parsed.hostname
+            in {"cdn-api.pandascore.co", "cdn.pandascore.co", "cdn.pandascore.net", "img-cdn.hltv.org"}
             and not parsed.username
             and not parsed.password
             and parsed.port in {None, 443}
@@ -123,6 +124,9 @@ def _integer(value):
 def event_identity(item, start):
     league, serie, tournament = (_mapping(item.get(k)) for k in ("league", "serie", "tournament"))
     name = str(serie.get("full_name") or "").strip()
+    league_name = str(league.get("name") or "").strip()
+    if name and league_name and normalized_name(league_name) not in normalized_name(name):
+        name = league_name + " " + name
     if not name:
         name = " ".join(str(value).strip() for value in (league.get("name"), serie.get("name")) if value)
         year = str(serie.get("year") or start.year)
@@ -134,22 +138,29 @@ def event_identity(item, start):
     identity = (
         "series:" + series_id if series_id.isdigit() else "event:" + normalized_name(name) + ":" + str(start.year)
     )
+    branding = next((entity for entity in (tournament, serie, league) if safe_logo_url(entity.get("image_url"))), {})
     return {
         "event_id": identity,
         "event_name": name[:140],
         "event_start": utc_datetime(serie.get("begin_at")),
         "event_end": utc_datetime(serie.get("end_at")),
-        "event_logo_url": next(
-            (
-                url
-                for value in (tournament.get("image_url"), serie.get("image_url"), league.get("image_url"))
-                if (url := safe_logo_url(value))
-            ),
-            "",
-        ),
+        "event_logo_url": safe_logo_url(branding.get("image_url")),
+        "event_logo_url_dark": safe_logo_url(branding.get("dark_mode_image_url")),
         "league_name": str(league.get("name") or "")[:100],
         "tier": str(tournament.get("tier") or "").casefold(),
     }
+
+
+def event_caption(name):
+    caption = str(name)
+    for pattern, replacement in (
+        (r"\bEurope(?:an)?\b", "EU"),
+        (r"\bNorth America(?:n)?\b", "NA"),
+        (r"\bSouth America(?:n)?\b", "SA"),
+        (r"\bQualifier\s*#?\s*(\d+)\b", r"Q\1"),
+    ):
+        caption = re.sub(pattern, replacement, caption, flags=re.IGNORECASE)
+    return caption
 
 
 def _event(item, tz, now, settings):
@@ -268,7 +279,8 @@ def parse_cs2_card(payload, tz, now, settings=None, *, game_logo_path=""):
         "latest": latest,
         "logo_path": game_logo_path,
         "event_logo_url": main["event_logo_url"],
-        "event_logo_caption": main["event_name"],
+        "event_logo_url_dark": main["event_logo_url_dark"],
+        "event_logo_caption": event_caption(main["event_name"]),
         "source": "PandaScore",
         "source_state": "PANDASCORE DATA",
         "order": 0,

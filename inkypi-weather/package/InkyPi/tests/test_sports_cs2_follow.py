@@ -51,6 +51,38 @@ def test_cs2_follows_next_top_team_event_after_porto_without_manual_ids():
     assert card["event_logo_url"] == "https://cdn.pandascore.co/images/league/fissure.png"
 
 
+def test_current_provider_cdn_and_series_name_contract_preserve_branding():
+    # PandaScore's documented match payload uses cdn-api and a serie.full_name
+    # that does not contain its league name (for example, PGL / Astana 2026).
+    now = datetime(2026, 9, 6, tzinfo=timezone.utc)
+    match = cs_match(now, event="Bucharest: European Open Qualifier #2 2026", team_a="HEROIC", team_b="1win")
+    match["league"] = {
+        "id": 5365,
+        "name": "PGL",
+        "image_url": "https://cdn-api.pandascore.co/images/league/image/5365/800px-pgl_allmode-png-png",
+    }
+    match["opponents"][0]["opponent"]["image_url"] = "https://cdn-api.pandascore.co/images/team/image/7175/heroic.png"
+    card = SportsDashboard._parse_pandascore_cs2_card([match], timezone.utc, now, {})
+    assert card["event_logo_url"] == match["league"]["image_url"]
+    assert card["main"]["team_a_logo"] == match["opponents"][0]["opponent"]["image_url"]
+    assert card["event_name"] == "PGL Bucharest: European Open Qualifier #2 2026"
+    assert card["event_logo_caption"] == "PGL Bucharest: EU Open Q2 2026"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://cdn-api.pandascore.co.evil.example/logo.png",
+        "https://cdn-api.pandascore.co@evil.example/logo.png",
+        "http://cdn-api.pandascore.co/logo.png",
+    ],
+)
+def test_provider_logo_host_validation_remains_exact(url):
+    from plugins.sports_dashboard.cs2_cards import safe_logo_url
+
+    assert safe_logo_url(url) == ""
+
+
 class FeedResponse:
     headers = {}
     status_code = 200

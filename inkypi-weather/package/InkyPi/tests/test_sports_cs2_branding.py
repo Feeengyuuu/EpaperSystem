@@ -68,8 +68,10 @@ def test_branding_is_persisted_and_does_not_refetch_for_a_new_plugin(monkeypatch
 
     monkeypatch.setattr(cs2_branding, "_text", response)
     original = branding_card(now)
+    original["event_logo_url_dark"] = "https://cdn-api.pandascore.co/images/league/generic-dark.png"
     first = cs2_branding.enrich_event_branding(plugin, dict(original), {}, now, SimpleNamespace())
     assert first["event_logo_source"] == "HLTV" and len(calls) == 2
+    assert first["event_logo_url_dark"] == "", "A specific event's day logo must not inherit generic league night art"
     restarted = SportsDashboard({"id": "sports_dashboard"})
     restarted._sports_dashboard_cache_dir = lambda: tmp_path
     cached = cs2_branding.enrich_event_branding(restarted, dict(original), {}, now, SimpleNamespace())

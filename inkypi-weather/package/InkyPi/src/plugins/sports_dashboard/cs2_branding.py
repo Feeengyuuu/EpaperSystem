@@ -147,7 +147,7 @@ def enrich_event_branding(plugin, card, settings, now, session, *, allow_network
                 "valid_until": valid_until,
                 "updated_at": now.isoformat(),
             }
-            card.update(logos, event_logo_source="HLTV")
+            card.update(logos, event_logo_url_dark=logos.get("event_logo_url_dark", ""), event_logo_source="HLTV")
             changed = True
         else:
             # A missing exact match is normal; do not fetch the catalog every render.
