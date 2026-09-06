@@ -48,6 +48,7 @@ from utils.theme_utils import (
     resolve_plugin_theme,
 )
 from model import RefreshInfo, PlaylistManager
+from runtime.background_live import background_live_plugin
 from runtime.refresh_contracts import (
     CommandKind,
     CommandSource,
@@ -3501,32 +3502,10 @@ class RefreshTask:
                 continue
             plugin = None
             if not requires_displayed_instance:
-                if instance.plugin_id not in {"sports_dashboard", "box_office_top_movies"}:
-                    continue
-                if instance.plugin_id == "box_office_top_movies" and self._snapshot_background_cache_disabled(instance):
-                    continue
-                plugin = self._get_plugin_for_snapshot(
-                    instance,
-                    require_live_refresh=True,
+                plugin = background_live_plugin(
+                    instance, current_dt, self._get_plugin_for_snapshot,
                 )
-                background_hook = getattr(
-                    plugin,
-                    "wants_background_live_refresh",
-                    None,
-                ) if plugin is not None else None
-                if not callable(background_hook):
-                    continue
-                try:
-                    background_enabled = bool(
-                        background_hook(thaw_payload(instance.settings), current_dt)
-                    )
-                except Exception:
-                    logger.exception(
-                        "Plugin '%s' background live-refresh hook failed.",
-                        instance.plugin_id,
-                    )
-                    continue
-                if not background_enabled:
+                if plugin is None:
                     continue
             live_state = self._snapshot_live_refresh_state(
                 instance,
