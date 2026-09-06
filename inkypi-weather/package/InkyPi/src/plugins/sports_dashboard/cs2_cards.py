@@ -300,6 +300,12 @@ def apply_event_schedule(card, snapshot, tz, now, ttl):
     usable = bool(stamp and timedelta(0) <= now - stamp <= timedelta(days=2))
     fresh = bool(usable and now - stamp < timedelta(seconds=ttl) and not snapshot.get("failure_kind"))
     rows = snapshot.get("rows")
+    started_ids = {
+        event["match_id"]
+        for event in card["events"]
+        if event["feed_fresh"] and event["state"] in {"inProgress", "completed"}
+    }
+    excluded_ids = started_ids | {card["main"]["match_id"]}
     events = {}
     for row in rows if usable and isinstance(rows, list) else []:
         if not isinstance(row, Mapping):
@@ -311,7 +317,7 @@ def apply_event_schedule(card, snapshot, tz, now, ttl):
         if "series:" + (nested_id or top_id) != card["event_id"]:
             continue
         event = _event({**row, "_cs2_feed_fresh": fresh, "_cs2_feed": "event_schedule"}, tz, now, {})
-        if event and event["state"] == "unstarted" and event["match_id"] != card["main"]["match_id"]:
+        if event and event["state"] == "unstarted" and event["match_id"] not in excluded_ids:
             events.setdefault(event["match_id"], event)
     card.update(
         upcoming=sorted(events.values(), key=lambda event: (event["start"], event["match_id"])),

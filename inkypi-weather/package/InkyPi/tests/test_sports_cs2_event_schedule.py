@@ -149,3 +149,51 @@ def test_schedule_failures_are_unavailable_and_bounded(monkeypatch, tmp_path, fa
     plugin._load_pandascore_cs2_card(SETTINGS, device, timezone.utc, now + timedelta(seconds=30))
     assert len(session.calls) == count
     assert plugin._pandascore_cs2_calls_left(SETTINGS, now) == 720 - count
+
+
+def test_newly_running_event_match_cannot_survive_as_cached_upcoming(monkeypatch, tmp_path):
+    now = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
+    live = cs_match(now, status="running", offset=-1)
+    starting = cs_match(now, match_id=503, offset=0, team_a="Small A", team_b="Small B")
+    later = cs_match(now, match_id=504)
+    plugin, device, session = loader(
+        monkeypatch,
+        tmp_path,
+        {
+            "running": [live],
+            "upcoming": [],
+            "past": [],
+            "series:1001": [starting, later],
+        },
+    )
+    plugin._load_pandascore_cs2_card(SETTINGS, device, timezone.utc, now)
+    session.feeds["running"] = [live, {**starting, "status": "running"}]
+    # Even if the scoped endpoint lags, the confirmed running match must be excluded.
+    card, _ = plugin._load_pandascore_cs2_card(SETTINGS, device, timezone.utc, now + timedelta(minutes=4))
+    assert [row["match_id"] for row in card["upcoming"]] == ["504"]
+
+
+def test_cache_only_keeps_current_event_schedule_failure_provenance(monkeypatch, tmp_path):
+    now = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
+    error = FeedResponse({}, "https://api.pandascore.co/series/1001/matches/upcoming")
+    error.status_code = 401
+    plugin, device, session = loader(
+        monkeypatch,
+        tmp_path,
+        {
+            "running": [cs_match(now, status="running", offset=-1)],
+            "upcoming": [],
+            "past": [],
+            "series:1001": error,
+        },
+    )
+    plugin._load_pandascore_cs2_card(SETTINGS, device, timezone.utc, now)
+    card, source = plugin._load_pandascore_cs2_card(
+        {**SETTINGS, "_inkypi_ewc_cache_only": True},
+        device,
+        timezone.utc,
+        now + timedelta(seconds=30),
+    )
+    assert "PARTIAL" in source
+    assert card["polling_blocked"] and card["polling_failure_kind"] == "AUTH"
+    assert card["schedule_state"] == "unavailable" and len(session.calls) == 4

@@ -221,7 +221,8 @@ def load_cs2_follow_card(plugin, settings, device_config, tz, now, *, session, g
     if plugin._bool_setting(settings, "_inkypi_ewc_cache_only", False):
         card = parse_cs2_card(_merge_snapshots(snapshots, ttls, now), tz, now, settings, game_logo_path=game_logo_path)
         card = apply_event_schedule(card, schedule, tz, now, schedule_ttl)
-        source = _state(card, snapshots, set())
+        current_schedule = schedule if card and schedule.get("event_id") == card["event_id"] else {}
+        source = _state(card, {**snapshots, "event_schedule": current_schedule}, set())
         return enrich_event_branding(plugin, card, settings, now, session, allow_network=False), source
     api_key = plugin._pandascore_api_key(device_config)
     if not api_key:
