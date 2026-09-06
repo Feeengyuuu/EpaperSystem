@@ -164,7 +164,7 @@ def event_caption(name):
 
 
 def _event(item, tz, now, settings):
-    if not isinstance(item, Mapping) or not has_followed_team(item, settings):
+    if not isinstance(item, Mapping) or not match_teams(item):
         return None
     match_id = str(item.get("id") or "").strip()
     start = utc_datetime(item.get("begin_at") or item.get("scheduled_at") or item.get("original_scheduled_at"))
@@ -210,6 +210,7 @@ def _event(item, tz, now, settings):
         "feed": str(item.get("_cs2_feed") or ""),
         "feed_fresh": item.get("_cs2_feed_fresh", True),
         "feed_failure": str(item.get("_cs2_feed_failure") or ""),
+        "followed_team": has_followed_team(item, settings),
     }
     for side, team in zip(("a", "b"), teams):
         team_id = _integer(team.get("id"))
@@ -226,7 +227,7 @@ def _event(item, tz, now, settings):
 
 
 def parse_cs2_card(payload, tz, now, settings=None, *, game_logo_path=""):
-    """Select a focus event and retain followed teams' upcoming fixtures across events."""
+    """Discover a followed-team event, then keep its own matches together."""
     if not isinstance(payload, list):
         return None
     now = utc_datetime(now) or datetime.now(timezone.utc)
@@ -236,10 +237,11 @@ def parse_cs2_card(payload, tz, now, settings=None, *, game_logo_path=""):
         if event and event["match_id"] not in events_by_id:
             events_by_id[event["match_id"]] = event
     events = list(events_by_id.values())
-    if not events:
+    candidates = [event for event in events if event["followed_team"]]
+    if not candidates:
         return None
     # A failed live feed must not hide a usable upcoming fixture from another feed.
-    viable = [event for event in events if event["feed_fresh"]] or events
+    viable = [event for event in candidates if event["feed_fresh"]] or candidates
     phase = {"inProgress": 0, "unstarted": 1, "completed": 2}
     main = min(
         viable,
@@ -254,7 +256,7 @@ def parse_cs2_card(payload, tz, now, settings=None, *, game_logo_path=""):
     ]
     live = sorted([event for event in same_event if event["state"] == "inProgress"], key=lambda event: event["start"])
     upcoming = sorted(
-        [event for event in events if event["state"] == "unstarted"],
+        [event for event in events if event["event_id"] == main["event_id"] and event["state"] == "unstarted"],
         key=lambda event: (not event["feed_fresh"], event["start"], event["match_id"]),
     )
     recent = sorted(
@@ -287,3 +289,32 @@ def parse_cs2_card(payload, tz, now, settings=None, *, game_logo_path=""):
         "order": 0,
         "auto_follow": True,
     }
+
+
+def apply_event_schedule(card, snapshot, tz, now, ttl):
+    """Replace UPCOMING with the selected series' independently cached schedule."""
+    if not card:
+        return card
+    snapshot = snapshot if snapshot.get("event_id") == card["event_id"] else {}
+    stamp = utc_datetime(snapshot.get("fetched_at"))
+    usable = bool(stamp and timedelta(0) <= now - stamp <= timedelta(days=2))
+    fresh = bool(usable and now - stamp < timedelta(seconds=ttl) and not snapshot.get("failure_kind"))
+    rows = snapshot.get("rows")
+    events = {}
+    for row in rows if usable and isinstance(rows, list) else []:
+        if not isinstance(row, Mapping):
+            continue
+        nested_id = str(_mapping(row.get("serie")).get("id") or "")
+        top_id = str(row.get("serie_id") or "")
+        if nested_id and top_id and nested_id != top_id:
+            continue
+        if "series:" + (nested_id or top_id) != card["event_id"]:
+            continue
+        event = _event({**row, "_cs2_feed_fresh": fresh, "_cs2_feed": "event_schedule"}, tz, now, {})
+        if event and event["state"] == "unstarted" and event["match_id"] != card["main"]["match_id"]:
+            events.setdefault(event["match_id"], event)
+    card.update(
+        upcoming=sorted(events.values(), key=lambda event: (event["start"], event["match_id"])),
+        schedule_state="fresh" if fresh else "stale" if usable else "unavailable",
+    )
+    return card

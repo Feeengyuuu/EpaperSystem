@@ -1421,7 +1421,9 @@ class EsportsRenderMixin:
             if primary.get("auto_follow") and title == "UPCOMING":
                 source = str(primary.get("source_state") or "").upper()
                 unavailable = any(state in source for state in ("STALE", "PARTIAL", "AUTH", "LIMIT", "NO KEY"))
-                empty_text = "Schedule unavailable" if unavailable else "No further listed matches"
+                if "schedule_state" in primary:
+                    unavailable = primary["schedule_state"] != "fresh"
+                empty_text = "Schedule unavailable" if unavailable else "No further event matches"
             draw.text((right_x + 18, y + 36), empty_text, font=self._font(14, True), fill=COLORS["muted"])
             self._draw_valve_ti_empty_slot_filler(
                 image,

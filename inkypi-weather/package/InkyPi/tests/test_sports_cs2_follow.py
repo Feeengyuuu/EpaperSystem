@@ -51,20 +51,18 @@ def test_cs2_follows_next_top_team_event_after_porto_without_manual_ids():
     assert card["event_logo_url"] == "https://cdn.pandascore.co/images/league/fissure.png"
 
 
-def test_live_card_retains_cross_event_upcoming_with_each_matches_own_branding():
+def test_upcoming_uses_current_event_schedule_including_unfollowed_teams():
     now = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
-    live = cs_match(now, status="running", offset=-1, event="Current Cup")
-    next_match = cs_match(now, match_id=502, offset=24, event="Next Cup", team_a="G2", team_b="Vitality")
-    next_match["serie"]["id"] = 1002
-    next_match["tournament"]["image_url"] = "https://cdn-api.pandascore.co/images/next-cup.png"
-    next_match["opponents"][0]["opponent"]["image_url"] = "https://cdn-api.pandascore.co/images/g2.png"
-    later = cs_match(now, match_id=503, offset=48)
-    card = SportsDashboard._parse_pandascore_cs2_card([later, live, next_match], timezone.utc, now, {})
+    live = cs_match(now, status="running", offset=-1)
+    other = cs_match(now, match_id=502, offset=1, event="Another Cup")
+    other["serie"]["id"] = 1002
+    local = cs_match(now, match_id=503, offset=2, team_a="Small A", team_b="Small B", tournament_id=23002)
+    local["opponents"][0]["opponent"]["image_url"] = "https://cdn-api.pandascore.co/images/small-a.png"
+    card = SportsDashboard._parse_pandascore_cs2_card([other, local, live], timezone.utc, now, {})
     assert card["main"]["match_id"] == "501" and card["event_id"] == "series:1001"
-    assert [event["match_id"] for event in card["upcoming"]] == ["502", "503"]
-    assert card["upcoming"][0]["event_name"] == "FISSURE Next Cup"
-    assert card["upcoming"][0]["event_logo_url"] == next_match["tournament"]["image_url"]
-    assert card["upcoming"][0]["team_a_logo"] == next_match["opponents"][0]["opponent"]["image_url"]
+    assert [event["match_id"] for event in card["upcoming"]] == ["503"]
+    assert card["upcoming"][0]["team_a"] == "Small A"
+    assert card["upcoming"][0]["team_a_logo"] == local["opponents"][0]["opponent"]["image_url"]
     assert all(event["event_id"] == card["event_id"] for event in card["events"])
 
 
@@ -126,8 +124,10 @@ class FeedSession:
         assert headers["Authorization"] == "Bearer test-token"
         assert "test-token" not in url
         feed = url.rsplit("/", 1)[-1]
+        if "/series/" in url:
+            feed = "series:" + url.split("/series/", 1)[1].split("/", 1)[0]
         self.calls.append((feed, params))
-        result = self.feeds[feed]
+        result = self.feeds.get(feed, [])
         if isinstance(result, Exception):
             raise result
         if callable(result):
@@ -153,11 +153,11 @@ def test_automatic_loader_discovers_and_caches_matches_after_old_cutoff(monkeypa
     first, source = plugin._load_pandascore_cs2_card(settings, device, timezone.utc, now)
     assert first and first["main"]["match_id"] == "501"
     assert source == "PANDASCORE LIVE"
-    assert {feed for feed, params in session.calls} == {"running", "upcoming", "past"}
+    assert {feed for feed, params in session.calls} == {"running", "upcoming", "past", "series:1001"}
     cached, source = plugin._load_pandascore_cs2_card(settings, device, timezone.utc, now + timedelta(seconds=30))
     assert cached["event_name"] == "FISSURE Playground 3"
     assert source == "PANDASCORE CACHE"
-    assert len(session.calls) == 3
+    assert len(session.calls) == 4
 
 
 @pytest.mark.parametrize(
@@ -214,7 +214,7 @@ def test_empty_running_refresh_retires_live_and_fetches_schedule_immediately(mon
     card, source = plugin._load_pandascore_cs2_card(settings, device, timezone.utc, now + timedelta(minutes=4))
     assert card["status"] == "NEXT" and card["main"]["match_id"] == "502"
     assert card["recent"][0]["state"] == "completed"
-    assert source == "PANDASCORE LIVE" and len(session.calls) == 6
+    assert source == "PANDASCORE LIVE" and len(session.calls) == 8
 
 
 def test_partial_network_failure_does_not_mark_old_running_as_live(monkeypatch, tmp_path):
@@ -260,7 +260,7 @@ def test_cached_render_and_legacy_opt_out_use_their_existing_contracts(monkeypat
     card, source = plugin._load_pandascore_cs2_card(
         {**settings, "_inkypi_ewc_cache_only": True}, device, timezone.utc, now + timedelta(hours=2)
     )
-    assert card and "STALE" in source and len(session.calls) == 3
+    assert card and "STALE" in source and len(session.calls) == 4
     monkeypatch.setattr(plugin, "_load_pandascore_cs2_fixed_card", lambda *args: ("legacy", "source"))
     assert plugin._load_pandascore_cs2_card({"pandaScoreCs2AutoFollow": "false"}, device, timezone.utc, now) == (
         "legacy",
@@ -289,4 +289,4 @@ def test_shared_retry_adapter_is_replaced_with_owned_no_retry_transport(monkeypa
     monkeypatch.setattr(cs2_follow, "create_single_attempt_http_client", owned)
     card, _ = plugin._load_pandascore_cs2_card({"pandaScoreCs2HltvLogos": "false"}, device, timezone.utc, now)
     assert card and lifecycle == ["open", "close"]
-    assert not shared.calls and len(isolated.calls) == 3
+    assert not shared.calls and len(isolated.calls) == 4
