@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import requests
+from PIL import Image, ImageDraw
 
 from plugins.sports_dashboard.cs2_branding import match_event, parse_catalog, parse_event_logos
 
@@ -95,3 +96,26 @@ def test_hltv_failure_retains_match_and_provider_branding_without_changing_fresh
     assert cs2_branding.enrich_event_branding(plugin, card, {}, now, SimpleNamespace()) == original
     assert cs2_branding.enrich_event_branding(plugin, card, {}, now, SimpleNamespace()) == original
     assert len(calls) == 1
+
+
+def test_day_only_black_event_logo_stays_visible_at_night_without_mutating_cached_pixels(monkeypatch):
+    from plugins.sports_dashboard import common
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    with Image.new("RGBA", (32, 32), (0, 0, 0, 0)) as logo:
+        ImageDraw.Draw(logo).rectangle((8, 8, 23, 23), fill=(0, 0, 0, 255))
+        original = logo.tobytes()
+        monkeypatch.setattr(plugin, "_load_team_logo_for_render", lambda *args: logo)
+        token = common._ACTIVE_COLORS.set(common.DEEP_NIGHT_COLORS)
+        try:
+            with Image.new("RGB", (48, 48), common.DEEP_NIGHT_COLORS["panel"]) as canvas:
+                assert plugin._draw_valve_focus_event_logo(
+                    canvas, (8, 8, 39, 39), {"event_logo_url": "https://cdn.pandascore.co/event/black.png"}
+                )
+                assert sum(canvas.getpixel((12, 12))) > 600, "Transparent margins need a contrasting backing"
+                assert canvas.getpixel((24, 24)) == (0, 0, 0), "Brand pixels must keep their original color"
+                assert canvas.getpixel((2, 2)) == common.DEEP_NIGHT_COLORS["panel"]
+                assert logo.tobytes() == original
+        finally:
+            common._ACTIVE_COLORS.reset(token)

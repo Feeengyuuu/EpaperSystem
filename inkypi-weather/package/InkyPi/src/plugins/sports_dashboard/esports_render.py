@@ -1272,6 +1272,12 @@ class EsportsRenderMixin:
         if not logo:
             return False
         try:
+            if self._club_icon_contrast_ratio(logo, COLORS["panel"]) < 3.0:
+                backing = max(
+                    (DAY_COLORS["panel"], DEEP_NIGHT_COLORS["panel"]),
+                    key=lambda color: self._club_icon_contrast_ratio(logo, color),
+                )
+                ImageDraw.Draw(image).rounded_rectangle((x1, y1, x2, y2), radius=3, fill=backing)
             image.paste(logo, (x1 + (width - logo.width) // 2, y1 + (height - logo.height) // 2), logo)
         finally:
             if resized is not None:
