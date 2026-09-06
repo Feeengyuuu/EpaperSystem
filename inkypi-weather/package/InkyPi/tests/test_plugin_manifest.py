@@ -607,6 +607,7 @@ def test_all_builtin_manifests_are_v2_and_only_audited_plugins_are_live():
     assert manifests
     assert all(item.schema_version == 2 for item in manifests)
     assert {item.id for item in manifests if item.capabilities.supports_live_refresh} == {
+        "box_office_top_movies",
         "live_radar",
         "sports_dashboard",
     }

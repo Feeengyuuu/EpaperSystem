@@ -27,7 +27,8 @@ from plugins.box_office_top_movies.china_source import (
 from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.app_utils import bounded_int, get_base_ui_font
 from utils.http_client import get_http_session
-from utils.safe_image import safe_open_image, safe_open_image_response
+from utils.safe_image import safe_open_image_response
+from plugins.box_office_top_movies.poster_store import PosterStore
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,72 @@ class _TableParser(HTMLParser):
 
 
 class BoxOfficeTopMovies(BasePlugin):
+    def get_live_refresh_state(self, settings, current_dt):
+        """Offer a bounded media repair only while matching source data is fresh."""
+        if str((settings or {}).get("sourceMode") or "").lower() != "official_china":
+            return None
+        cache = self._read_cache(quiet=True)
+        media = cache.get("poster_status")
+        if not isinstance(media, dict):
+            return None
+        if media.get("settings_key") != self._poster_repair_key(settings):
+            return None
+        if not media.get("retry_at") or not media.get("repair_possible"):
+            return None
+        retry_at = self._parse_datetime(media["retry_at"])
+        generated = self._parse_datetime(cache.get("generated_at"))
+        hours = self._bounded_int(settings.get("cacheHours"), 6, 1, 48)
+        if not retry_at or not generated or current_dt < retry_at:
+            return None
+        if current_dt - generated >= timedelta(hours=hours):
+            return None
+        if (cache.get("source_metadata") or {}).get("statistic_date") != current_dt.astimezone(SHANGHAI).date().isoformat():
+            return None
+        return {"active": True, "interval_seconds": 300}
+
+    def wants_background_live_refresh(self, settings, current_dt):
+        """Complete posters offscreen through the existing governed live lane."""
+        return self.get_live_refresh_state(settings, current_dt) is not None
+
+    @staticmethod
+    def _poster_repair_key(settings):
+        fields = ("sourceMode", "itemsCount", "cacheHours", "chartUrl", "mainlandRealtimeUrl",
+                  "tmdbLanguage", "tmdbRegion", "localizedLanguage", "showLocalizedTitles")
+        payload = {key: settings.get(key) for key in fields}
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+    def _poster_store(self):
+        root = (self.data_dir(leaf="posters", create=False) if os.getenv("INKYPI_DATA_DIR", "").strip()
+                else self._cache_dir() / "retained-posters")
+        return PosterStore(root)
+
+    def _legacy_poster_cache_path(self, movie):
+        key = hashlib.sha256((movie.poster_url or movie.title).encode("utf-8")).hexdigest()[:18]
+        return self._cache_dir() / "posters" / f"{key}.jpg"
+
+    def _protected_poster_urls(self):
+        return [movie.poster_url for movie in getattr(self, "_poster_movies", []) if movie.poster_url]
+
+    def _record_poster_status(self, movies, settings, device_config):
+        cache = self._read_cache()
+        ready = sum(bool(movie.poster_path) for movie in movies)
+        previous = cache.get("poster_status")
+        previous = previous if isinstance(previous, dict) else {}
+        attempts = min(self._bounded_int(previous.get("attempts"), 0, 0, 4) + 1, 4) if ready < len(movies) else 0
+        retry = self._source_now() + timedelta(seconds=min(1800, 300 * 2 ** max(0, attempts - 1)))
+        status = {"ready": ready, "total": len(movies), "attempts": attempts,
+                  "settings_key": self._poster_repair_key(settings),
+                  "repair_possible": bool(self._tmdb_auth(settings, device_config) or any(m.poster_url for m in movies)),
+                  "retry_at": retry.isoformat() if attempts else None}
+        if cache.get("movies"):
+            self._write_cache({**cache, "movies": [movie.to_dict() for movie in movies], "poster_status": status})
+        try:
+            self._poster_store().cleanup(protected_urls=self._protected_poster_urls())
+        except (OSError, ValueError) as error:
+            logger.warning("Retained poster cleanup deferred. | error=%s", type(error).__name__)
+        logger.info("Movie poster completeness. | ready=%s total=%s next_repair_at=%s", ready, len(movies), status["retry_at"])
+        return ready
+
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = False
@@ -208,6 +275,10 @@ class BoxOfficeTopMovies(BasePlugin):
         if str(settings.get("sourceMode") or "").strip().lower() == "official_china":
             cached_source_date = (cache.get("source_metadata") or {}).get("statistic_date")
             cache_is_fresh = cache_is_fresh and cached_source_date == self._source_now().astimezone(SHANGHAI).date().isoformat()
+        if settings.get("_movie_media_only"):
+            if not source_cache_ready or not cache_is_fresh or str(settings.get("sourceMode") or "").lower() != "official_china":
+                raise TaskCancelled("Movie media repair source expired or changed; await DATA refresh")
+            force_refresh = False
         provenance = SourceProvenance.LOCAL_FALLBACK
 
         if theme_render_only and not source_cache_ready:
@@ -275,6 +346,14 @@ class BoxOfficeTopMovies(BasePlugin):
             )
 
         movies = movies[:items_count]
+        self._poster_movies = movies
+        if not theme_render_only and provenance in {SourceProvenance.LIVE, SourceProvenance.FRESH_CACHE}:
+            for movie in movies:
+                if movie.poster_url:
+                    self._restore_local_poster(movie)
+            media_ready = self._record_poster_status(movies, settings, device_config)
+        else:
+            media_ready = sum(bool(movie.poster_path and Path(movie.poster_path).is_file()) for movie in movies)
         if provenance is not SourceProvenance.LOCAL_FALLBACK:
             self._write_box_office_context(movies, source_label, generated_at, stale)
         image = self._render_chart(
@@ -285,6 +364,8 @@ class BoxOfficeTopMovies(BasePlugin):
             generated_at,
             stale,
         )
+        image.info["inkypi_media_ready"] = media_ready
+        image.info["inkypi_media_total"] = len(movies)
         if provenance in {
             SourceProvenance.STALE_CACHE,
             SourceProvenance.LOCAL_FALLBACK,
@@ -314,6 +395,7 @@ class BoxOfficeTopMovies(BasePlugin):
         if str(settings.get("sourceMode") or "").strip().lower() == "official_china":
             with ChinaFetchBudget() as budget:
                 movies, label = self._load_movies(settings, items_count)
+                self._poster_movies = movies
                 cache = self._read_cache()
                 if (cache.get("version") == STATE_VERSION
                         and cache.get("cache_key") == self._cache_key(settings, None, items_count, device_config)):
@@ -321,6 +403,7 @@ class BoxOfficeTopMovies(BasePlugin):
                 self._complete_official_posters(movies, settings, device_config, budget)
                 return movies, label
         movies, label = self._load_movies(settings, items_count)
+        self._poster_movies = movies
         self._enrich_with_tmdb(movies, settings, device_config)
         self._download_posters(movies)
         return movies, label
@@ -358,16 +441,15 @@ class BoxOfficeTopMovies(BasePlugin):
         movie.poster_path = ""
         if not movie.poster_url:
             return False
-        path = self._poster_cache_path(movie)
-        try:
-            with safe_open_image(path):
-                pass
-        except (OSError, ValueError):
+        path = self._poster_store().resolve(movie.poster_url, legacy=self._legacy_poster_cache_path(movie),
+                                            protected_urls=self._protected_poster_urls())
+        if path is None:
             return False
         movie.poster_path = str(path)
         return True
 
     def _complete_official_posters(self, movies, settings, device_config, budget):
+        self._poster_movies = movies
         # Reattach local files even when the chart has used the network budget.
         missing = [movie for movie in movies if not self._restore_local_poster(movie)]
         auth = self._tmdb_auth(settings, device_config)
@@ -1140,7 +1222,6 @@ class BoxOfficeTopMovies(BasePlugin):
             if not movie.poster_url:
                 continue
             try:
-                path = self._poster_cache_path(movie)
                 if self._restore_local_poster(movie):
                     continue
                 if isinstance(session, ChinaFetchBudget) and session.remaining_seconds() <= 0:
@@ -1152,10 +1233,7 @@ class BoxOfficeTopMovies(BasePlugin):
                     stream=True,
                 )
                 with safe_open_image_response(response) as decoded, decoded.convert("RGB") as image:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    temporary = path.with_suffix(".tmp")
-                    image.save(temporary, format="JPEG", quality=88)
-                    os.replace(temporary, path)
+                    path = self._poster_store().save(movie.poster_url, image, protected_urls=self._protected_poster_urls())
                 movie.poster_path = str(path)
             except TaskCancelled:
                 raise
@@ -1555,13 +1633,14 @@ class BoxOfficeTopMovies(BasePlugin):
     def _cache_state_version(self):
         return STATE_VERSION
 
-    def _read_cache(self):
+    def _read_cache(self, *, quiet=False):
         path = self._cache_path()
         try:
             if path.is_file():
                 return json.loads(path.read_text(encoding="utf-8"))
         except Exception as exc:
-            logger.warning("Could not read box office cache: %s", exc)
+            if not quiet:
+                logger.warning("Could not read box office cache: %s", exc)
         return {}
 
     def _write_cache(self, payload):
@@ -1592,11 +1671,10 @@ class BoxOfficeTopMovies(BasePlugin):
         return self._cache_dir() / "box_office_cache.json"
 
     def _cache_dir(self):
-        return self.cache_dir(env_var="INKYPI_BOX_OFFICE_CACHE", leaf=".box_office_top_movies_cache", create=True)
+        return self.cache_dir(env_var="INKYPI_BOX_OFFICE_CACHE", leaf=".box_office_top_movies_cache", create=False)
 
     def _poster_cache_path(self, movie):
-        key = hashlib.sha256((movie.poster_url or movie.title).encode("utf-8")).hexdigest()[:18]
-        return self._cache_dir() / "posters" / f"{key}.jpg"
+        return self._poster_store().path(movie.poster_url or movie.title)
 
     def _updated_text(self, generated_at, source_label, stale):
         when = generated_at.strftime("%m/%d %H:%M") if isinstance(generated_at, datetime) else ""

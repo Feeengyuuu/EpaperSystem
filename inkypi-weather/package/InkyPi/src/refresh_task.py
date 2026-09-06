@@ -3501,7 +3501,9 @@ class RefreshTask:
                 continue
             plugin = None
             if not requires_displayed_instance:
-                if instance.plugin_id != "sports_dashboard":
+                if instance.plugin_id not in {"sports_dashboard", "box_office_top_movies"}:
+                    continue
+                if instance.plugin_id == "box_office_top_movies" and self._snapshot_background_cache_disabled(instance):
                     continue
                 plugin = self._get_plugin_for_snapshot(
                     instance,
@@ -6954,6 +6956,8 @@ class RefreshTask:
         if plugin_config is None:
             raise LookupError(f"Plugin config not found for '{command.plugin_id}'.")
         settings = thaw_payload(instance.settings)
+        if command.plugin_id == "box_office_top_movies":
+            settings["_movie_media_only"] = command.intent is RefreshIntent.LIVE_REFRESH
         isolated_sports_refresh = self._is_isolated_sports_refresh_command(command)
         plugin = (
             None
@@ -7398,7 +7402,7 @@ class RefreshTask:
                 command.source is CommandSource.LIVE
                 and command.intent is RefreshIntent.LIVE_REFRESH
                 and command.kind is CommandKind.CACHE_REFRESH
-                and command.plugin_id == "sports_dashboard"
+                and command.plugin_id in {"sports_dashboard", "box_office_top_movies"}
                 and command.payload.get("expected_displayed_instance_uuid") is None
             )
         expected_displayed_uuid = command.payload.get(
