@@ -226,6 +226,21 @@ def _event(item, tz, now, settings):
     return event
 
 
+def _set_display_window(card, tz, now):
+    """Keep discovery cached; only live or today's fresh fixtures claim the slot."""
+    today = now.astimezone(tz).date()
+    events = [card["main"], *card["live"], *card["upcoming"]]
+    card["window_active"] = any(
+        event["feed_fresh"]
+        and (
+            event["state"] == "inProgress"
+            or (event["state"] == "unstarted" and event["start"].astimezone(tz).date() == today)
+        )
+        for event in events
+    )
+    return card
+
+
 def parse_cs2_card(payload, tz, now, settings=None, *, game_logo_path=""):
     """Discover a followed-team event, then keep its own matches together."""
     if not isinstance(payload, list):
@@ -264,13 +279,12 @@ def parse_cs2_card(payload, tz, now, settings=None, *, game_logo_path=""):
     )
     latest = max(event["start"] for event in same_event)
     end = main["event_end"] or latest + timedelta(hours=12)
-    return {
+    card = {
         "series": "CS",
         "sport": "CS2",
         "event_name": main["event_name"],
         "event_id": main["event_id"],
         "status": {"inProgress": "LIVE", "unstarted": "NEXT", "completed": "RECENT"}[main["state"]],
-        "window_active": main["state"] != "completed",
         "main": main,
         "live": live,
         "upcoming": upcoming,
@@ -289,6 +303,7 @@ def parse_cs2_card(payload, tz, now, settings=None, *, game_logo_path=""):
         "order": 0,
         "auto_follow": True,
     }
+    return _set_display_window(card, tz, now)
 
 
 def apply_event_schedule(card, snapshot, tz, now, ttl):
@@ -323,4 +338,4 @@ def apply_event_schedule(card, snapshot, tz, now, ttl):
         upcoming=sorted(events.values(), key=lambda event: (event["start"], event["match_id"])),
         schedule_state="fresh" if fresh else "stale" if usable else "unavailable",
     )
-    return card
+    return _set_display_window(card, tz, now)

@@ -2666,8 +2666,15 @@ class EsportsMixin:
     def _valve_sidebar_main_timestamp(card, default):
         card = card or {}
         event = card.get("main") or {}
-        if card.get("upcoming"):
-            event = card["upcoming"][0]
+        upcoming = [row for row in card.get("upcoming") or [] if row.get("feed_fresh", True)]
+        # Event-local UPCOMING excludes the featured match. Both still compete
+        # on their earliest trusted start in the shared esports sidebar.
+        if str(card.get("status") or "").upper() == "NEXT" or event.get("state") == "unstarted":
+            if event.get("feed_fresh", True):
+                upcoming.append(event)
+        starts = [row["start"].timestamp() for row in upcoming if isinstance(row.get("start"), datetime)]
+        if starts:
+            return min(starts)
         start = event.get("start")
         if isinstance(start, datetime):
             return start.timestamp()
