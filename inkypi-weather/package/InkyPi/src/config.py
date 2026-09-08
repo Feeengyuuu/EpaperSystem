@@ -195,6 +195,12 @@ class Config:
         self._migrate_legacy_daily_art_gallery_decor()
         self._migrate_legacy_vehicle_status_refresh_interval()
         self._migrate_magazine_covers_historical_library()
+        self._migrate_saved_apple_calendar_follow()
+
+    def _migrate_saved_apple_calendar_follow(self):
+        from apple_calendar_migration import apply_saved_apple_calendar_migration
+
+        apply_saved_apple_calendar_migration(self)
 
     @staticmethod
     def _is_explicit_false(value):
