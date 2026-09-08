@@ -84,6 +84,7 @@ def _run_command(command, timeout=8):
 
 
 def _wifi_is_connected(interface="wlan0", iw_path=None, nmcli_path=None):
+    link_state = None
     iw_bin = iw_path or _find_iw()
     if iw_bin:
         result = _run_command([iw_bin, "dev", interface, "link"], timeout=5)
@@ -91,7 +92,7 @@ def _wifi_is_connected(interface="wlan0", iw_path=None, nmcli_path=None):
             if "Connected to" in result.stdout:
                 return True
             if "Not connected" in result.stdout:
-                return False
+                link_state = False
 
     nmcli_bin = nmcli_path or _find_command("nmcli", ("/usr/bin/nmcli", "/bin/nmcli"))
     if nmcli_bin:
@@ -107,7 +108,7 @@ def _wifi_is_connected(interface="wlan0", iw_path=None, nmcli_path=None):
                         return None
                     return parts[1] == "wifi" and parts[2] == "connected"
 
-    return None
+    return link_state
 
 
 def _default_gateway(interface="wlan0", ip_path=None):

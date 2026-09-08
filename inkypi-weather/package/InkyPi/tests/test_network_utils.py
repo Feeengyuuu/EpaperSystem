@@ -82,6 +82,15 @@ def test_ping_tool_error_is_not_gateway_packet_loss(monkeypatch):
     assert network_utils._gateway_is_reachable(gateway="192.168.1.1", ping_path="/bin/ping") is None
 
 
+def test_networkmanager_activation_is_allowed_to_finish(monkeypatch):
+    def run(command, **kwargs):
+        output = "Not connected.\n" if command[0] == "/bin/iw" else "wlan0:wifi:connecting (getting IP configuration)\n"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    monkeypatch.setattr(network_utils, "_run_command", run)
+    assert network_utils._wifi_is_connected(iw_path="/bin/iw", nmcli_path="/bin/nmcli") is None
+
+
 def test_wireless_interfaces_returns_only_wireless_names(monkeypatch):
     class FakeEntry:
         def __init__(self, name):
