@@ -250,9 +250,10 @@ def test_add_plugin_rejects_invalid_refresh_before_any_effect(
     assert playlist_env.events == []
 
 
-def test_new_game_calendar_normalizes_cadence_on_create(playlist_env):
+@pytest.mark.parametrize("enabled_setting", ["showGameEvents", "showAppleEvents"])
+def test_new_game_calendar_normalizes_cadence_on_create(playlist_env, enabled_setting):
     response = playlist_env.client.post("/add_plugin", data={
-        "plugin_id": "simple_calendar", "showGameEvents": "true",
+        "plugin_id": "simple_calendar", enabled_setting: "true",
         "refresh_settings": json.dumps({"playlist": "Other", "instance_name": "Calendar", "refreshType": "scheduled", "refreshTime": "08:00"}),
     })
     assert response.status_code == 200

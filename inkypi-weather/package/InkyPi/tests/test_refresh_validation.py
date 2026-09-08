@@ -74,8 +74,9 @@ def test_refresh_parser_accepts_strict_scheduled_time():
     ({"interval": 7200}, {"interval": 3600}),
     ({"scheduled": "08:05"}, {"interval": 3600}),
 ])
-def test_game_calendar_refresh_uses_hourly_or_faster_divisor(refresh, expected):
+@pytest.mark.parametrize("enabled_setting", ["showGameEvents", "showAppleEvents"])
+def test_game_calendar_refresh_uses_hourly_or_faster_divisor(refresh, expected, enabled_setting):
     from utils.refresh_validation import normalize_plugin_refresh
-    assert normalize_plugin_refresh("simple_calendar", {"showGameEvents": "true"}, refresh) == expected
+    assert normalize_plugin_refresh("simple_calendar", {enabled_setting: "true"}, refresh) == expected
     assert normalize_plugin_refresh("simple_calendar", {}, refresh) == refresh
-    assert normalize_plugin_refresh("weather", {"showGameEvents": "true"}, refresh) == refresh
+    assert normalize_plugin_refresh("weather", {enabled_setting: "true"}, refresh) == refresh

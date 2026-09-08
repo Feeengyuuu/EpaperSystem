@@ -95,11 +95,11 @@ def validation_error_payload(error: RefreshValidationError) -> dict[str, Any]:
 
 
 def normalize_plugin_refresh(plugin_id, settings, refresh):
-    """Align an opted-in game calendar with its three-hour provider checks."""
+    """Align optional announcement calendars with their three-hour checks."""
     result = dict(refresh or {})
-    opted_in = str((settings or {}).get("showGameEvents", "")).strip().lower() in {
+    opted_in = any(str((settings or {}).get(key, "")).strip().lower() in {
         "1", "true", "on", "yes",
-    }
+    } for key in ("showGameEvents", "showAppleEvents"))
     if plugin_id != "simple_calendar" or not opted_in:
         return result
     interval = result.get("interval")

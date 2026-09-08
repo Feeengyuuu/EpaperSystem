@@ -27,6 +27,7 @@ from plugins.base_plugin.render_provenance import (
 )
 from plugins.context_cache import read_contexts
 from plugins.simple_calendar.game_events import GameEventProvider, enabled as game_events_enabled
+from plugins.simple_calendar.apple_events import AppleEventProvider
 from plugins.simple_calendar.game_event_sources import SERIES as GAME_EVENT_SERIES
 from utils.app_utils import get_base_ui_font, get_font
 from utils.atomic_file import atomic_write_json
@@ -592,6 +593,7 @@ class SimpleCalendar(BasePlugin):
 
     def __init__(self, config, **dependencies):
         self.game_events = dependencies.pop("game_event_provider", None) or GameEventProvider()
+        self.apple_events = dependencies.pop("apple_event_provider", None) or AppleEventProvider()
         super().__init__(config, **dependencies)
 
     def generate_settings_template(self):
@@ -599,6 +601,7 @@ class SimpleCalendar(BasePlugin):
         template_params['style_settings'] = False
         template_params['game_event_series'] = GAME_EVENT_SERIES
         template_params['game_event_status'] = self.game_events.read
+        template_params['apple_event_status'] = self.apple_events.read
         return template_params
 
     def presentation_mode(self, settings):
@@ -643,7 +646,7 @@ class SimpleCalendar(BasePlugin):
             image=image,
             changed=True,
         )
-        # generate_image already attests the merged base + optional game data.
+        # generate_image already attests the merged base + optional event data.
         return preparation
 
     def generate_image(self, settings, device_config):
@@ -684,21 +687,23 @@ class SimpleCalendar(BasePlugin):
                 selected_date,
                 tz,
             )
-        if game_events_enabled(settings.get("showGameEvents")):
-            game_result = (
-                self.game_events.read(settings)
+        for enabled_key, provider in (("showGameEvents", self.game_events), ("showAppleEvents", self.apple_events)):
+            if not game_events_enabled(settings.get(enabled_key)):
+                continue
+            event_result = (
+                provider.read(settings)
                 if cached_events is not None or theme_render_only or display_render
-                else self.game_events.refresh(settings)
+                else provider.refresh(settings)
             )
-            game_calendar_events = self.game_events.calendar_events(
-                game_result, selected_date, tz
+            calendar_events = provider.calendar_events(
+                event_result, selected_date, tz
             )
             if theme_palette:
-                for event in game_calendar_events:
+                for event in calendar_events:
                     event["color"] = theme_palette["accent"]
-            holiday_events = list(holiday_events) + game_calendar_events
+            holiday_events = list(holiday_events) + calendar_events
             provenance = self._worst_source_provenance([
-                provenance or SourceProvenance.LIVE, game_result.provenance
+                provenance or SourceProvenance.LIVE, event_result.provenance
             ])
         weather_panel_background_path = self._get_weather_panel_background_path(settings, device_config, selected_date)
         date_hero_overlay_enabled = self._date_hero_overlay_enabled(settings)

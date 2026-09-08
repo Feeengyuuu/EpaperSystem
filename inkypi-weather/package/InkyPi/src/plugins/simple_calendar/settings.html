@@ -131,6 +131,33 @@
     {% endif %}
 </fieldset>
 
+<fieldset class="form-group" style="border:1px solid var(--border-color); padding:12px;">
+    <legend>苹果发布会</legend>
+    <input type="hidden" name="showAppleEvents" value="false">
+    <label class="form-label">
+        <input type="checkbox" id="showAppleEvents" name="showAppleEvents" value="true">
+        自动同步苹果发布会（每三小时检查）
+    </label>
+    <p class="form-help">收录苹果官网公布的 Apple Event 和 WWDC 主题演讲，按设备时区显示。官方改期后自动更新；访问失败保留日程并标注“待核验”。启用后日历数据每小时刷新，已有更快且可整除一小时的频率会保留。</p>
+    {% set apple_status = apple_event_status(plugin_settings|default({})) %}
+    {% if apple_status.sources %}
+    <details>
+        <summary>苹果官方来源状态（UTC）</summary>
+        {% for source, status in apple_status.sources.items() %}
+        <p>最近核验：{{ status.last_success_at or '尚未成功检查' }}
+            {% if status.error %}<br>待核验：{{ status.error }}{% endif %}
+            {% if status.next_check_at %}<br>下次检查：{{ status.next_check_at }}{% endif %}
+        </p>
+        {% endfor %}
+        {% for event in apple_status.events %}
+        <p>{{ event.event_date }} · {{ event.title }}{% if event.pending_verification %} · 待核验{% endif %}
+            <br><a href="{{ event.source_url }}" target="_blank" rel="noopener noreferrer">查看苹果官方活动页</a>
+        </p>
+        {% endfor %}
+    </details>
+    {% endif %}
+</fieldset>
+
 <script>
 	const defaultHolidayCalendars = [
 		{
@@ -216,6 +243,7 @@
 		const gameSettings = typeof pluginSettings === 'object' ? pluginSettings : {};
 		const isEnabled = value => value === true || ['1', 'true', 'on', 'yes'].includes(String(value).toLowerCase());
 		document.getElementById('showGameEvents').checked = isEnabled(gameSettings.showGameEvents);
+		document.getElementById('showAppleEvents').checked = isEnabled(gameSettings.showAppleEvents);
 		document.getElementById('allowGameEventMedia').checked = gameSettings.allowGameEventMedia === undefined || isEnabled(gameSettings.allowGameEventMedia);
 		let chosenSeries = gameSettings['gameEventSeries[]'];
 		if (chosenSeries !== undefined) {

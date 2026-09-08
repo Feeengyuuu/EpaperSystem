@@ -69,9 +69,21 @@ class GameEventResult:
 class GameEventProvider:
     """Poll at most once per three hours and replay state without provider IO."""
 
+    enabled_setting = "showGameEvents"
+    state_subdir = "game_events"
+    series = SERIES
+    source_families = SOURCE_FAMILIES
+    default_timezones = DEFAULT_TIMEZONES
+    selected_series = staticmethod(selected_series)
+    selected_sources = staticmethod(selected_sources)
+    fetch_source = staticmethod(fetch_source)
+    valid_source_url = staticmethod(valid_source_url)
+    event_label = "GAME"
+    event_color = (93, 45, 121)
+
     def __init__(self, directory=None, *, fetch_text=None):
         base = Path(os.environ.get("INKYPI_DATA_DIR", "/var/lib/inkypi/data"))
-        self.directory = Path(directory) if directory is not None else base / "plugins/simple_calendar/game_events"
+        self.directory = Path(directory) if directory is not None else base / "plugins/simple_calendar" / self.state_subdir
         self.path = self.directory / "state.json"
         self.fetch_text = fetch_text
 
@@ -93,12 +105,11 @@ class GameEventProvider:
             empty["cache_error"] = "game event cache unreadable"
             return empty
 
-    @staticmethod
-    def _validate_state(state):
+    def _validate_state(self, state):
         if not isinstance(state, dict) or state.get("version") != 1 or not isinstance(state.get("sources"), dict):
             raise ValueError("invalid game state")
         for name, source in state["sources"].items():
-            if name not in SOURCE_FAMILIES or not isinstance(source, dict):
+            if name not in self.source_families or not isinstance(source, dict):
                 raise ValueError("invalid game source")
             items = source.get("items")
             if not isinstance(items, list) or len(items) > MAX_SOURCE_ITEMS:
@@ -109,14 +120,14 @@ class GameEventProvider:
             if not isinstance(source.get("error", ""), str):
                 raise ValueError("invalid source error")
             for item in items:
-                if not isinstance(item, dict) or item.get("source_id") != name or item.get("family") not in SERIES:
+                if not isinstance(item, dict) or item.get("source_id") != name or item.get("family") not in self.series:
                     raise ValueError("invalid game event")
                 for key in ("id", "title", "event_date", "edition", "external_id", "source_url", "official_url"):
                     if not isinstance(item.get(key), str) or len(item[key]) > 2048:
                         raise ValueError("invalid event field")
-                if not re.fullmatch(r"[0-9a-f]{24}", item["id"]) or not valid_source_url(item["source_url"]):
+                if not re.fullmatch(r"[0-9a-f]{24}", item["id"]) or not self.valid_source_url(item["source_url"]):
                     raise ValueError("invalid event identity")
-                if item["official_url"] and not valid_source_url(item["official_url"]):
+                if item["official_url"] and not self.valid_source_url(item["official_url"]):
                     raise ValueError("invalid evidence URL")
                 date.fromisoformat(item["event_date"])
                 if item.get("previous_date") is not None:
@@ -147,7 +158,7 @@ class GameEventProvider:
 
         def fetch(url):
             for _ in range(4):
-                if not valid_source_url(url):
+                if not self.valid_source_url(url):
                     raise ValueError("untrusted game source URL")
                 with provider_io_lease(url, context=context), DeadlineRetry.for_context(context):
                     response = get_http_session().get(
@@ -177,12 +188,12 @@ class GameEventProvider:
     def refresh(self, settings, *, now=None):
         """DATA-only synchronization; failures also advance the durable poll gate."""
         now = now or datetime.now(timezone.utc)
-        if not enabled(settings.get("showGameEvents")):
+        if not enabled(settings.get(self.enabled_setting)):
             return GameEventResult([], {}, SourceProvenance.FRESH_CACHE)
         with _REFRESH_LOCK:
             state = self._load()
             fetch = self.fetch_text or self._network_reader()
-            for source_id in selected_sources(settings):
+            for source_id in self.selected_sources(settings):
                 source = state["sources"].setdefault(source_id, {"items": []})
                 due = _instant(source.get("next_check_at"))
                 if due and now < due <= now + timedelta(seconds=CHECK_INTERVAL_SECONDS):
@@ -190,7 +201,7 @@ class GameEventProvider:
                 source.update(last_attempt_at=now.isoformat(), next_check_at=(now + timedelta(seconds=CHECK_INTERVAL_SECONDS)).isoformat(), error="check interrupted")
                 self._save(state)
                 known = [item["source_url"] for item in source.get("items", []) if str(item.get("event_date", "")) >= now.date().isoformat()]
-                batch = fetch_source(source_id, fetch, known, now)
+                batch = self.fetch_source(source_id, fetch, known, now)
                 self._merge_source(state, source_id, batch.announcements, now)
                 source["error"] = "; ".join(batch.errors)[:500]
                 if not batch.errors:
@@ -201,7 +212,7 @@ class GameEventProvider:
     def read(self, settings, *, now=None):
         """No network, directory creation or writes; safe for presentation and UI."""
         now = now or datetime.now(timezone.utc)
-        if not enabled(settings.get("showGameEvents")):
+        if not enabled(settings.get(self.enabled_setting)):
             return GameEventResult([], {}, SourceProvenance.FRESH_CACHE)
         return self._result(self._load(), settings, now)
 
@@ -239,8 +250,8 @@ class GameEventProvider:
             key=lambda item: item["event_date"],
         )[:MAX_SOURCE_ITEMS]
 
-    @staticmethod
-    def _same_event(left, right):
+    @classmethod
+    def _same_event(cls, left, right):
         if left.get("family") != right.get("family") or left.get("edition") != right.get("edition"):
             return False
         if left.get("external_id") and left.get("external_id") == right.get("external_id"):
@@ -251,10 +262,10 @@ class GameEventProvider:
             return True
         if left.get("official_url") == right.get("source_url") or right.get("official_url") == left.get("source_url"):
             return True
-        return left.get("event_date") == right.get("event_date") or GameEventProvider._dates_agree(left, right)
+        return left.get("event_date") == right.get("event_date") or cls._dates_agree(left, right)
 
     def _result(self, state, settings, now):
-        families, sources = set(selected_series(settings)), selected_sources(settings)
+        families, sources = set(self.selected_series(settings)), self.selected_sources(settings)
         groups, diagnostics = {}, {}
         for source_id in sources:
             source = state["sources"].get(source_id, {})
@@ -310,20 +321,20 @@ class GameEventProvider:
             provenance = SourceProvenance.LOCAL_FALLBACK
         return GameEventResult(events, diagnostics, provenance)
 
-    @staticmethod
-    def _agree(left, right):
+    @classmethod
+    def _agree(cls, left, right):
         if left.get("status") != right.get("status"):
             return False
-        return GameEventProvider._dates_agree(left, right)
+        return cls._dates_agree(left, right)
 
-    @staticmethod
-    def _dates_agree(left, right):
+    @classmethod
+    def _dates_agree(cls, left, right):
         left_time, right_time = _instant(left.get("starts_at")), _instant(right.get("starts_at"))
         if left_time and right_time:
             return left_time == right_time
         if left_time or right_time:
             date_only, instant = (right, left_time) if left_time else (left, right_time)
-            zone = date_only.get("event_timezone") or DEFAULT_TIMEZONES[date_only["family"]]
+            zone = date_only.get("event_timezone") or cls.default_timezones[date_only["family"]]
             return instant.astimezone(ZoneInfo(zone)).date().isoformat() == date_only["event_date"]
         return left.get("event_date") == right.get("event_date")
 
@@ -340,7 +351,7 @@ class GameEventProvider:
             if item["pending_verification"]:
                 title = "[待核验] " + title
             time_label = local.strftime("%H:%M") if local else "时间待定"
-            event = {"date": event_date, "title": title, "label": "GAME", "color": (93, 45, 121), "kind": "personal", "time": time_label}
+            event = {"date": event_date, "title": title, "label": self.event_label, "color": self.event_color, "kind": "personal", "time": time_label}
             if local:
                 event["starts_at"] = local
             events.append(event)
