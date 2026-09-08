@@ -245,12 +245,8 @@ class GcdComicCovers(BasePlugin):
             remember=False,
         )
 
-    def _generate_banked_image(self, settings, device_config):
-        self._device_config = device_config
-        dimensions = self._display_dimensions(device_config)
-        today = self._current_date(device_config)
-        bank = self._presentation_bank(settings, dimensions, today)
-        document, profile = bank.load_for_data()
+    def _recover_protected_media(self, bank, profile):
+        changed = False
         for protected_record in bank.protected_records(profile):
             if protected_record.get("render_kind") == "metadata":
                 continue
@@ -264,6 +260,7 @@ class GcdComicCovers(BasePlugin):
                         protected_record,
                     )
                     bank.recover_media(profile, protected_record, recovered_image)
+                    changed = True
                 except Exception as recovery_error:
                     raise RuntimeError(
                         "GCD protected cover exact recovery failed"
@@ -273,6 +270,15 @@ class GcdComicCovers(BasePlugin):
                     protected_record.get("issue_id"),
                     media_error,
                 )
+        return changed
+
+    def _generate_banked_image(self, settings, device_config):
+        self._device_config = device_config
+        dimensions = self._display_dimensions(device_config)
+        today = self._current_date(device_config)
+        bank = self._presentation_bank(settings, dimensions, today)
+        document, profile = bank.load_for_data()
+        self._recover_protected_media(bank, profile)
         ready = bank.ready_records(profile, prune=True)
         ready_keys = {record["record_key"] for record in ready}
         live_record_keys = set()
@@ -452,6 +458,28 @@ class GcdComicCovers(BasePlugin):
             image=image,
             changed=True,
         )
+
+    def reconcile_presentation_receipt_for_data(self, settings, receipt, device_config):
+        """Repair exact saved media before the DATA lane's strict reconciliation."""
+        if receipt is None:
+            return None
+        settings = settings or {}
+        instance_uuid = get_presentation_instance_uuid(settings)
+        if instance_uuid is None:
+            raise RuntimeError("GCD receipt reconciliation requires trusted instance identity")
+        bank = self._presentation_bank_for_receipt(settings, instance_uuid)
+        document, profile = bank.load_warm()
+        pending = bank.pending_for_request(profile, receipt.request_id)
+        if (
+            pending is None
+            or pending.get("origin_display_commit_id") == receipt.display_commit_id
+            or profile.get("last_applied_request_id") == receipt.request_id
+        ):
+            return None
+        self._device_config = device_config
+        if self._recover_protected_media(bank, profile):
+            bank.save(document)
+        return self.reconcile_presentation_receipt(settings, receipt)
 
     def reconcile_presentation_receipt(self, settings, receipt):
         if receipt is None:

@@ -81,6 +81,10 @@ class BasePlugin:
         """Idempotent default for plugins without committed presentation state."""
         return None
 
+    def reconcile_presentation_receipt_for_data(self, settings, receipt, device_config) -> None:
+        """DATA may repair provider media before reconciling a committed receipt."""
+        return self.reconcile_presentation_receipt(settings, receipt)
+
     def prepare_presentation(
         self,
         settings,

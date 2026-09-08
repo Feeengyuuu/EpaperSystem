@@ -18803,8 +18803,9 @@ def test_display_cache_never_instantiates_plugin_with_pending_presentation(
     assert task.runtime_state.snapshot().instances[instance.instance_uuid].presentation_request == request
 
 
+@pytest.mark.parametrize('data_recovery_hook', [False, True])
 def test_data_due_wins_same_instance_and_cannot_record_presentation_success(
-    monkeypatch,
+    monkeypatch, data_recovery_hook,
 ):
     task, device_config, _clock, playlist, _display = _make_presentation_task(
         "presentation-data-wins",
@@ -18845,6 +18846,13 @@ def test_data_due_wins_same_instance_and_cannot_record_presentation_success(
     )
     request = _seed_presentation_request(task, instance)
     plugin = BaseCopyIdentityPlugin()
+    repaired_receipts = []
+    if data_recovery_hook:
+        def repair(settings, receipt, device):
+            assert device is device_config
+            repaired_receipts.append(receipt)
+            plugin.reconcile_presentation_receipt(settings, receipt)
+        plugin.reconcile_presentation_receipt_for_data = repair
     monkeypatch.setattr(
         refresh_task_module,
         "get_plugin_instance",
@@ -18875,6 +18883,7 @@ def test_data_due_wins_same_instance_and_cannot_record_presentation_success(
     state = task.runtime_state.snapshot().instances[instance.instance_uuid]
 
     assert state.data.last_success_at is not None
+    assert repaired_receipts == ([prior_receipt] if data_recovery_hook else [])
     assert state.presentation.last_success_at == prior_receipt.committed_at
     assert state.presentation_request == request
     assert [event[0] for event in plugin.events] == [

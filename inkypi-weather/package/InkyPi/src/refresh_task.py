@@ -6989,7 +6989,11 @@ class RefreshTask:
                     .presentation_receipt
                 )
                 if receipt is not None:
-                    plugin.reconcile_presentation_receipt(settings, receipt)
+                    reconcile_for_data = getattr(plugin, "reconcile_presentation_receipt_for_data", None)
+                    if callable(reconcile_for_data):
+                        reconcile_for_data(settings, receipt, self.device_config)
+                    else:
+                        plugin.reconcile_presentation_receipt(settings, receipt)
             display_under_pressure = (
                 command.kind is CommandKind.DISPLAY
                 and display_cached_only

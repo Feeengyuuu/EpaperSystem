@@ -936,6 +936,51 @@ def test_gcd_missing_prepared_media_fails_closed_and_keeps_pending_metadata(tmp_
     assert _profile_for(_state_json(plugin))["pending_selection"] == pending
 
 
+@pytest.mark.parametrize('failure_at', [None, 1, 2])
+def test_gcd_data_receipt_recovers_exact_pending_before_commit(tmp_path, monkeypatch, failure_at):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    settings = _bound_settings(fit_mode='triptych')
+    _fill_presentation_bank(plugin, monkeypatch, settings)
+    request = _request('e1' * 16)
+    plugin.prepare_presentation(settings, DeviceConfig(), request=request, resolved_theme_context=None)
+    profile = _profile_for(_state_json(plugin))
+    pending = dict(profile['pending_selection'])
+    records = {record['record_key']: record for record in profile['records']}
+    record = records[pending['record_keys'][0]]
+    bank = plugin._presentation_bank(settings, DeviceConfig().get_resolution(), date(2026, 7, 12))
+    missing = [records[key] for key in pending['record_keys'][:2 if failure_at == 2 else 1]]
+    for missing_record in missing:
+        bank.media.path(missing_record['media_key'], suffix='.png').unlink()
+    before = plugin._state_path().read_bytes()
+    calls = []
+
+    def recover(url, candidate, detail):
+        calls.append(url)
+        if failure_at == len(calls):
+            raise RuntimeError('exact recovery unavailable')
+        return Image.new('RGB', (220, 360), 'teal')
+
+    monkeypatch.setattr(plugin, '_download_cover_image', recover)
+    receipt = _receipt(request.request_id)
+    plugin.reconcile_presentation_receipt_for_data(settings, _receipt('ff' * 16), DeviceConfig())
+    assert calls == [] and plugin._state_path().read_bytes() == before
+    if failure_at is not None:
+        with pytest.raises(RuntimeError, match='protected|exact recovery'):
+            plugin.reconcile_presentation_receipt_for_data(settings, receipt, DeviceConfig())
+        assert calls == [item['cover_url'] for item in missing]
+        assert plugin._state_path().read_bytes() == before
+        return
+    plugin.reconcile_presentation_receipt_for_data(settings, receipt, DeviceConfig())
+    assert calls == [record['cover_url']]
+    committed = _state_json(plugin)
+    assert _profile_for(committed)['pending_selection'] is None
+    assert _profile_for(committed)['current_selection']['record_keys'] == pending['record_keys']
+    assert committed['date_buckets']['07-12']['last_selection_issue_ids'] == [records[key]['issue_id'] for key in pending['record_keys']]
+    after = plugin._state_path().read_bytes()
+    plugin.reconcile_presentation_receipt_for_data(settings, receipt, DeviceConfig())
+    assert calls == [record['cover_url']] and plugin._state_path().read_bytes() == after
+
+
 def test_gcd_identical_settings_instances_keep_independent_pending_receipts(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path, monkeypatch)
     settings_a = _bound_settings(instance_uuid="gcd-instance-a")
