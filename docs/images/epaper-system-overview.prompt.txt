@@ -1,0 +1,72 @@
+Create exactly ONE complete, publication-ready vertical README product overview image for the real open-source project EpaperSystem. This is one coherent designed poster, not several images or slides. Target 1536 x 3584 pixels, tall 3:7 aspect ratio, high-resolution crisp text readable when displayed at 900 px wide on GitHub.
+
+Use case: infographic-diagram / editorial product overview.
+Audience: Simplified-Chinese Raspberry Pi and e-paper enthusiasts. Explain the product and its real content areas, with tasteful, professional visual hierarchy.
+Art direction: refined editorial technology print design; warm near-white paper, dark charcoal typography, restrained ink red and muted blue accents, generous outer margins, precise baseline grid, thin dividers, small restrained module illustrations, elegant whitespace. Clear large Simplified Chinese sans-serif type, typographic confidence, no glossy neon, no generic dashboard-card wall, no exaggerated marketing badges. Make the entire composition feel like a complete beautiful README in a single image.
+
+Layout:
+A. Strong brand opening with EpaperSystem logotype and Chinese title, a tasteful small editorial hardware illustration of a thin landscape 5:3 matte-black e-paper frame alongside a Raspberry Pi board, visually connected. The illustrated frame face contains ONLY paper texture and the EpaperSystem wordmark; it must not contain fake app UI, fake data, pretend screenshots, sports scores or calendar entries. The actual software interfaces are documented separately in the README. Keep this hardware illustration subordinate to useful content, not a huge empty device picture.
+B. Eight readable feature entries, in a disciplined two-column editorial layout (four rows), each with one distinctive small pictogram, a strong short title and its exact descriptive line. Use pictograms as illustrations, not as fabricated screenshots.
+C. Four clearly separated operating-principle rows explaining rotation, fresh weather, image caching and recovery. Concise and readable, not tiny paragraphs.
+D. A simple four-step path from hardware to everyday use and a clean footer. Keep all sections on the same canvas with no cut-off content.
+
+Use the following Chinese copy VERBATIM. Preserve English product/source names and the multiplication sign. Do not invent capabilities, performance promises, prices, uptime guarantees, battery claims, extra taglines or plugin counts. Do not include an installation shell command or QR code inside the image.
+
+Opening:
+"EpaperSystem"
+"彩色墨水屏信息站"
+"把天气、日程和关注的内容，放进每天看得见的一块屏幕。"
+"OPEN SOURCE · RASPBERRY PI · E-PAPER"
+
+Feature section:
+"01  一块屏幕，多种内容"
+"天气"
+"展示前更新 · 逐小时与多日预报"
+"日历"
+"节日与个人日程 · 苹果及游戏发布会"
+"体育"
+"直播优先 · 同赛事赛程 · 队徽缓存"
+"新闻与科技"
+"每日新闻 · AI 动态 · Telegram 摘要"
+"游戏与影视"
+"Steam 动态 · 电影海报 · 漫画与杂志"
+"艺术与知识"
+"每日艺术 · 历史今天 · 词句与百科"
+"太空与天文"
+"NASA 影像 · 空间天气 · 轨道信息"
+"生活与设备"
+"行情信息 · 直播雷达 · Bambu 与车辆状态"
+
+Operation section:
+"02  为日常展示设计"
+"有序轮播"
+"按计划轮换页面，支持主题切换。"
+"需要时更新"
+"天气在展示前取数，其他内容按各自节奏刷新。"
+"常用图片本地缓存"
+"队徽、赛事标识与电影封面下载后复用。"
+"持续运行与恢复"
+"健康检查、异常重试与版本回退。"
+
+Getting started:
+"03  从安装到上屏"
+"准备硬件"
+"中文引导安装"
+"Web 配置内容"
+"开始轮播"
+"默认配置：Waveshare 7.3 英寸 · 800 × 480"
+"部分内容需要配置第三方服务或 API Key。"
+
+Footer:
+"Built on InkyPi · GPL-3.0 · 可自行扩展插件"
+"图中为功能与硬件示意，真实界面见项目截图。"
+
+Use meaningful illustrative iconography across the eight categories: sun/cloud, calendar, sports ball, newspaper, gamepad/film, art/book, planet/satellite, home/device. No illegible microtext, no irrelevant text in the graphics. All Chinese glyphs must be correct, consistent, non-overlapping, and fully within the canvas. Prioritize large readable exact copy and a beautiful unified composition over ornament. Output the single finished image.
+
+Final technical correction (built-in image_gen edit of the generated poster):
+Edit this existing EpaperSystem README product infographic to correct a technical transparency defect only. Preserve the complete composition, Chinese and English text, typography, illustrations, dimensions/aspect ratio, section order and content. Make the entire final image FULLY OPAQUE, including every background pixel and every edge: a solid warm-white paper background with crisp charcoal text and the same restrained blue/red accents. NO transparency anywhere, NO semitransparent pixels, NO alpha fades, NO transparent margins. Remove accidental noisy colored halos around text caused by transparency. All final pixels must have alpha 255 (or output an RGB PNG without an alpha channel). This is one final complete publication-ready infographic, not a mockup or alternative design. Preserve readability of all Chinese text. Do not add facts, labels, screens, decorative slogans, borders or new content.
+
+Final artifact: epaper-system-overview.png
+Tool: built-in image_gen (backend model identifier is not exposed).
+Actual output: 821 x 1915 pixels, RGB PNG, fully opaque, 1623075 bytes.
+SHA-256: bd1530fcd94cfaa225b30c6981cf7e5ef8a4e0e7600b79ca096a32f781457a83
