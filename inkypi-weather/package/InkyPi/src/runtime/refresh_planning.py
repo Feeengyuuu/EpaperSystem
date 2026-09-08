@@ -50,6 +50,7 @@ class InstanceDueInput:
     presentation_enabled: bool = False
     provider_presentation: bool = False
     theme_mode: str | None = None
+    refresh_data_before_display: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,10 @@ def collect_due_candidates(inputs: Sequence[InstanceDueInput], *, now: datetime)
     """Evaluate each immutable input without importing or invoking any plugin."""
     data, presentations, wakeups, invalid = [], [], [], []
     for item in inputs:
+        if item.refresh_data_before_display:
+            # The display transaction owns this provider request, including a
+            # cold start. A saved interval must not also schedule background I/O.
+            continue
         evaluation = evaluate_data_due(
             item.instance, item.state, item.has_cache, now,
             first_due_since=item.first_due_since,

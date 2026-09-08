@@ -19,6 +19,7 @@ from plugins.plugin_registry import (
     get_plugin_instance,
     plugin_allows_display_triggered_provider_refresh,
     plugin_presentation_refresh_is_provider_free,
+    plugin_refreshes_data_before_display,
     plugin_supports_cached_display_redraw,
     plugin_supports_day_night_theme,
     plugin_supports_live_refresh,
@@ -49,6 +50,7 @@ from utils.theme_utils import (
 )
 from model import RefreshInfo, PlaylistManager
 from runtime.background_live import background_live_plugin
+from runtime.display_preflight import filter_display_preflight_candidates
 from runtime.refresh_contracts import (
     CommandKind,
     CommandSource,
@@ -1751,6 +1753,8 @@ class RefreshTask:
             if active is not None:
                 for instance in active.plugins:
                     plugin_config = self.device_config.get_plugin(instance.plugin_id)
+                    if plugin_refreshes_data_before_display(plugin_config):
+                        continue
                     resolved_theme = _resolved_theme_context_for_instance(
                         instance,
                         plugin_config,
@@ -1896,6 +1900,8 @@ class RefreshTask:
             if self._snapshot_background_cache_disabled(instance):
                 continue
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            if plugin_refreshes_data_before_display(plugin_config):
+                continue
             resolved_theme = _resolved_theme_context_for_instance(
                 instance,
                 plugin_config,
@@ -2010,9 +2016,10 @@ class RefreshTask:
         states = self.runtime_state.snapshot().instances
         for instance in active.plugins:
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
-            if plugin_supports_cached_display_redraw(plugin_config):
-                # This audited local renderer also handles absent/expired source
-                # caches. It must not depend on an obsolete formal PNG existing.
+            if (plugin_supports_cached_display_redraw(plugin_config)
+                    or plugin_refreshes_data_before_display(plugin_config)):
+                # These views prepare their image at display time, including
+                # cold starts without a previously generated PNG.
                 _config, _context, local_theme = self._latest_presentation_theme(instance)
                 candidates[instance.instance_uuid] = _RotationDisplayCandidate(
                     instance.instance_uuid, instance.structural_generation,
@@ -2111,44 +2118,12 @@ class RefreshTask:
         candidates,
         current_dt,
     ):
-        """Honor retry backoff only for opted-in presentation work."""
-
-        instances = {
-            instance.instance_uuid: instance
-            for instance in active.plugins
-        }
-        runtime_instances = self.runtime_state.snapshot().instances
-        eligible = {}
-        for instance_uuid, candidate in candidates.items():
-            instance = instances.get(instance_uuid)
-            if instance is None:
-                eligible[instance_uuid] = candidate
-                continue
-            plugin_config = self.device_config.get_plugin(instance.plugin_id)
-            if (
-                not _presentation_refresh_enabled(
-                    self.device_config,
-                    plugin_config,
-                )
-                or not plugin_supports_presentation_refresh(plugin_config)
-            ):
-                eligible[instance_uuid] = candidate
-                continue
-            try:
-                refresh_before_display = resolve_refresh_on_display_for_config(
-                    thaw_payload(instance.settings),
-                    plugin_config,
-                )
-            except Exception:
-                refresh_before_display = False
-            if not refresh_before_display:
-                eligible[instance_uuid] = candidate
-                continue
-            state = runtime_instances.get(instance_uuid, InstanceRuntimeState())
-            if self._presentation_request_in_retry_backoff(state, current_dt):
-                continue
-            eligible[instance_uuid] = candidate
-        return eligible
+        return filter_display_preflight_candidates(
+            active, candidates, self.runtime_state.snapshot().instances, current_dt,
+            plugin_config_for=self.device_config.get_plugin,
+            presentation_enabled=lambda config: _presentation_refresh_enabled(self.device_config, config),
+            presentation_retry_delayed=self._presentation_request_in_retry_backoff,
+        )
 
     def _select_cached_display_command(self, current_dt) -> RefreshCommand | None:
         """Select one random eligible cache without loading plugin code."""
@@ -2194,14 +2169,9 @@ class RefreshTask:
                 candidates,
                 current_dt,
             )
-        else:
-            candidates = (
-                self._rotation_cache_candidates_outside_opt_in_presentation_backoff(
-                    active,
-                    candidates,
-                    current_dt,
-                )
-            )
+        candidates = self._rotation_cache_candidates_outside_opt_in_presentation_backoff(
+            active, candidates, current_dt,
+        )
         candidates = self._rotation_cache_candidates_outside_display_backoff(
             candidates
         )
@@ -2227,14 +2197,9 @@ class RefreshTask:
                         current_dt,
                     )
                 )
-            else:
-                fallback_candidates = (
-                    self._rotation_cache_candidates_outside_opt_in_presentation_backoff(
-                        active,
-                        fallback_candidates,
-                        current_dt,
-                    )
-                )
+            fallback_candidates = self._rotation_cache_candidates_outside_opt_in_presentation_backoff(
+                active, fallback_candidates, current_dt,
+            )
             fallback_candidates = (
                 self._rotation_cache_candidates_outside_display_backoff(
                     fallback_candidates
@@ -2279,6 +2244,9 @@ class RefreshTask:
 
         if (
             allow_display_triggered
+            and not plugin_refreshes_data_before_display(
+                self.device_config.get_plugin(selection.instance.plugin_id)
+            )
             and candidate.presentation_request_id is None
             and not plugin_supports_cached_display_redraw(
                 self.device_config.get_plugin(selection.instance.plugin_id)
@@ -2706,6 +2674,7 @@ class RefreshTask:
                 first_due_since=first_due_since.get(instance.instance_uuid),
                 presentation_enabled=presentation_enabled,
                 provider_presentation=plugin_allows_display_triggered_provider_refresh(plugin_config),
+                refresh_data_before_display=plugin_refreshes_data_before_display(plugin_config),
                 theme_mode=resolved_theme.get("mode") if isinstance(resolved_theme, Mapping) else None,
             ))
         due = collect_due_candidates(inputs, now=current_dt)
@@ -3409,7 +3378,8 @@ class RefreshTask:
             if self._snapshot_background_cache_disabled(instance):
                 continue
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
-            if plugin_supports_cached_display_redraw(plugin_config):
+            if (plugin_supports_cached_display_redraw(plugin_config)
+                    or plugin_refreshes_data_before_display(plugin_config)):
                 # These views resolve theme and source age at display time.
                 continue
             resolved_theme = _resolved_theme_context_for_instance(
@@ -3609,6 +3579,10 @@ class RefreshTask:
         if active is not None:
             for instance in active.plugins:
                 plugin_config = self.device_config.get_plugin(instance.plugin_id)
+                if plugin_refreshes_data_before_display(plugin_config):
+                    # Its next display resolves the current theme with fresh
+                    # weather; a theme-only job must not fetch off-screen.
+                    continue
                 resolved_theme = _resolved_theme_context_for_instance(
                     instance,
                     plugin_config,
@@ -4898,11 +4872,14 @@ class RefreshTask:
             )
 
     def _record_resource_pressure_deferral(self, command, *, minimum_seconds=0):
-        return self._record_lane_resource_pressure_deferral(
+        retry_at = self._record_lane_resource_pressure_deferral(
             command.instance_uuid,
             command.intent,
             minimum_seconds=minimum_seconds,
         )
+        if command.payload.get("fresh_display") is True:
+            self._release_failed_rotation_reservation(command)
+        return retry_at
 
     def _record_plugin_refresh_deferral(self, command, *, minimum_seconds):
         lane = self._lane_for_intent(command.intent)
@@ -5005,8 +4982,8 @@ class RefreshTask:
     def _is_weather_background_data_command(command):
         return (
             command.plugin_id == "weather"
-            and command.kind is CommandKind.CACHE_REFRESH
-            and command.source is CommandSource.BACKGROUND
+            and ((command.kind is CommandKind.CACHE_REFRESH and command.source is CommandSource.BACKGROUND)
+                 or command.payload.get("fresh_display") is True)
             and command.intent is RefreshIntent.DATA_REFRESH
             and bool(command.payload.get("playlist_name"))
         )
@@ -6543,6 +6520,7 @@ class RefreshTask:
             or command.payload.get("automatic_rotation") is not True
             or (
                 command.intent is RefreshIntent.DATA_REFRESH
+                and command.payload.get("fresh_display") is not True
                 and (
                     command.source
                     not in {CommandSource.BACKGROUND, CommandSource.MANUAL}
@@ -6935,6 +6913,8 @@ class RefreshTask:
         if plugin_config is None:
             raise LookupError(f"Plugin config not found for '{command.plugin_id}'.")
         settings = thaw_payload(instance.settings)
+        if command.payload.get("fresh_display") is True:
+            settings["_inkypiFreshDisplay"] = True
         if command.plugin_id == "box_office_top_movies":
             settings["_movie_media_only"] = command.intent is RefreshIntent.LIVE_REFRESH
         isolated_sports_refresh = self._is_isolated_sports_refresh_command(command)
@@ -7187,6 +7167,12 @@ class RefreshTask:
                 elif not theme_render_only:
                     image = _load_image_copy(cache_path)
                 cacheable = generated and _image_allows_cache(image)
+                if command.payload.get("fresh_display") is True and (
+                    not cacheable or read_source_provenance(image) is not SourceProvenance.LIVE
+                ):
+                    if image is not None:
+                        image.close()
+                    raise RuntimeError("Display requires fresh provider data; keeping the previous screen")
                 if (
                     command.kind is CommandKind.DISPLAY
                     and generated
@@ -8442,6 +8428,15 @@ class RefreshTask:
     ):
         now = self._clock()
         normalized_intent = RefreshIntent(intent)
+        fresh_display = (
+            kind is CommandKind.DISPLAY and normalized_intent is RefreshIntent.DISPLAY_CACHE
+            and plugin_refreshes_data_before_display(self.device_config.get_plugin(instance.plugin_id))
+        )
+        if fresh_display:
+            # One bounded transaction: fetch, validate, promote, then write.
+            # Other plugins retain the ordinary cache-only display contract.
+            intent = normalized_intent = RefreshIntent.DATA_REFRESH
+            force, display_cached_only, allow_prepared_presentation = True, False, False
         if deadline_monotonic is None:
             deadline_monotonic = now + self._manual_update_timeout_seconds()
         if (
@@ -8481,6 +8476,8 @@ class RefreshTask:
             "display_cached_only": bool(display_cached_only),
             "require_active": bool(require_active),
         }
+        if fresh_display:
+            payload["fresh_display"] = True
         if theme_context:
             payload["theme_context"] = theme_context
         if theme_render_only:
@@ -9814,6 +9811,8 @@ class RefreshTask:
 
     def _plugin_instance_background_cache_refresh_due(self, plugin_instance, current_dt, displayed_plugin_instance=None):
         if plugin_instance is None or self._plugin_background_cache_refresh_disabled(plugin_instance):
+            return False
+        if plugin_refreshes_data_before_display(self.device_config.get_plugin(plugin_instance.plugin_id)):
             return False
         return self._plugin_instance_cache_refresh_due(
             plugin_instance,

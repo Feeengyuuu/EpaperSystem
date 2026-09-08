@@ -49,6 +49,12 @@ def plugin_supports_cached_display_redraw(plugin_config):
     return bool(getattr(capabilities, "supports_cached_display_redraw", False))
 
 
+def plugin_refreshes_data_before_display(plugin_config):
+    """Opt in to fresh provider data for every display, with no periodic fetch."""
+    manifest = plugin_config.get("_manifest") if plugin_config else None
+    return getattr(getattr(manifest, "capabilities", None), "refresh_data_before_display", False) is True
+
+
 def plugin_supports_presentation_refresh(plugin_config):
     """Read the opt-in presentation capability without importing plugin code."""
 

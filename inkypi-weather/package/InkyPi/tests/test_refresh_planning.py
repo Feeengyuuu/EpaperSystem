@@ -133,6 +133,21 @@ def test_due_collection_reports_the_next_wakeup_without_starting_any_work():
     assert result.wakeups == (NOW + timedelta(seconds=200),)
 
 
+@pytest.mark.parametrize("has_cache", [False, True])
+def test_display_driven_data_has_no_periodic_or_bootstrap_fetch(has_cache):
+    from runtime.refresh_planning import InstanceDueInput, collect_due_candidates
+
+    item = InstanceDueInput(
+        instance=candidate().instance, state=InstanceRuntimeState(),
+        has_cache=has_cache, refresh_data_before_display=True,
+    )
+    result = collect_due_candidates([item], now=NOW)
+    assert result.data == ()
+    assert result.wakeups == ()
+    ordinary = collect_due_candidates([replace(item, refresh_data_before_display=False)], now=NOW)
+    assert len(ordinary.data) == 1
+
+
 @pytest.mark.parametrize("blocked_lane,intent", [
     (RefreshLane.DATA, RefreshIntent.PRESENTATION_REFRESH),
     (RefreshLane.PRESENTATION, RefreshIntent.DATA_REFRESH),

@@ -134,7 +134,10 @@ class Weather(BasePlugin):
         return self._generate_image_in_process(settings, device_config)
 
     def _generate_image_in_process(self, settings, device_config):
-        self._openweather_force_refresh = self._force_refresh_requested(settings)
+        self._openweather_display_refresh = settings.get("_inkypiFreshDisplay") is True
+        self._openweather_force_refresh = (
+            self._force_refresh_requested(settings) and not self._openweather_display_refresh
+        )
         self._openweather_cache_hits = set()
         lat = float(settings.get('latitude'))
         long = float(settings.get('longitude'))
@@ -256,12 +259,22 @@ class Weather(BasePlugin):
             time_format,
         )
 
-        # Add last refresh time before atomically publishing the canonical facts.
+        # Show when the provider was fetched, including in cached previews.
+        fetched_at = self._openweather_request_metadata.get("onecall", {}).get("fetched_at")
+        source_time = now
+        if fetched_at:
+            try:
+                source_time = datetime.fromisoformat(fetched_at).astimezone(effective_tz)
+            except (TypeError, ValueError):
+                pass
         if time_format == "24h":
-            last_refresh_time = now.strftime("%Y-%m-%d %H:%M")
+            last_refresh_time = source_time.strftime("%Y-%m-%d %H:%M")
         else:
-            last_refresh_time = now.strftime("%Y-%m-%d %I:%M %p")
+            last_refresh_time = source_time.strftime("%Y-%m-%d %I:%M %p")
         template_params["last_refresh_time"] = last_refresh_time
+
+        if self._openweather_display_refresh and source_stale:
+            raise RuntimeError("Display requires fresh provider weather and air quality data")
 
         if not source_stale and not self._write_weather_context(template_params, now):
             raise RuntimeError("Weather context publication failed.")
@@ -298,7 +311,7 @@ class Weather(BasePlugin):
             provenance = SourceProvenance.LIVE
         elif source_stale:
             provenance = SourceProvenance.STALE_CACHE
-        elif self._openweather_cache_hits:
+        elif self._openweather_cache_hits - {"geocoding"}:
             provenance = SourceProvenance.FRESH_CACHE
         else:
             provenance = SourceProvenance.LIVE
@@ -1159,9 +1172,12 @@ class Weather(BasePlugin):
         cache_path = self._cache_path_for_url(cache_dir, namespace, url)
         cache_entry = self._read_cache_entry(cache_path)
         now = datetime.now(timezone.utc)
-        force_refresh = bool(getattr(self, "_openweather_force_refresh", False))
+        administrator_force = bool(getattr(self, "_openweather_force_refresh", False))
+        force_refresh = administrator_force or (
+            bool(getattr(self, "_openweather_display_refresh", False)) and namespace != "geocoding"
+        )
 
-        if cache_entry and not force_refresh:
+        if cache_entry and not cache_entry.get("stale") and not force_refresh:
             age_seconds = self._cache_entry_age_seconds(cache_entry, now)
             if age_seconds is not None and age_seconds < min_seconds:
                 logger.info(f"Using cached OpenWeather {namespace} data.")
@@ -1178,7 +1194,7 @@ class Weather(BasePlugin):
             # An explicit administrator force refresh is also the live-acceptance
             # path: keep accounting the call, but do not let the local safety
             # threshold turn that request into a stale-cache false positive.
-            if state["onecall_requests"] >= daily_limit and not force_refresh:
+            if state["onecall_requests"] >= daily_limit and not administrator_force:
                 message = f"OpenWeather One Call daily safety limit reached ({daily_limit})."
                 return self._use_stale_cache_or_raise(
                     cache_path,

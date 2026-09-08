@@ -28,6 +28,7 @@ class PluginCapabilities:
     supports_day_night_theme: bool = False
     allows_display_triggered_provider_refresh: bool = False
     supports_cached_display_redraw: bool = False
+    refresh_data_before_display: bool = False
 
 
 @dataclass(frozen=True)
@@ -296,7 +297,14 @@ class PluginManifest:
                 ),
                 supports_day_night_theme=supports_day_night_theme,
                 supports_cached_display_redraw=supports_cached_display_redraw,
+                refresh_data_before_display=raw_capabilities.get("refresh_data_before_display", False),
             )
+            if type(capabilities.refresh_data_before_display) is not bool:
+                raise TypeError("plugin manifest capabilities.refresh_data_before_display must be a boolean")
+            if capabilities.refresh_data_before_display and (
+                supports_live_refresh or supports_presentation_refresh or supports_cached_display_redraw
+            ):
+                raise ValueError("refresh_data_before_display requires exclusive display-driven data scheduling")
             if supports_day_night_theme:
                 raw_theme = payload.get("theme")
                 if type(raw_theme) is not dict:

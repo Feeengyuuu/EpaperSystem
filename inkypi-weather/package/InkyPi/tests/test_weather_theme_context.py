@@ -1002,6 +1002,15 @@ def test_force_refresh_aliases_bypass_fresh_openweather_source_cache(
 
     assert sorted(calls) == sorted(["onecall", "air_quality", "geocoding"] * 2)
 
+    # Display-triggered refresh fetches changing facts while reusing the place
+    # name. It still reports LIVE even when that stable metadata was cached.
+    calls.clear()
+    image = plugin.generate_image(
+        {**settings, "forceRefresh": True, "_inkypiFreshDisplay": True}, FakeDeviceConfig(),
+    )
+    assert calls == ["onecall", "air_quality"]
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+
 
 def test_force_refresh_bypasses_openweather_daily_safety_limit(
     monkeypatch,
@@ -1053,6 +1062,14 @@ def test_force_refresh_bypasses_openweather_daily_safety_limit(
     assert plugin._read_json_file(str(tmp_path / "onecall_usage.json"), {})[
         "onecall_requests"
     ] == 2
+
+    # Automatic display never overrides the quota as an administrator would.
+    calls.clear()
+    plugin._openweather_force_refresh = False
+    plugin._openweather_display_refresh = True
+    plugin._request_openweather_json(url, "onecall", 3600, daily_limit=1)
+    assert calls == []
+    assert plugin._openweather_request_metadata["onecall"]["stale"] is True
 
 
 def test_openweather_stale_auxiliary_cache_marks_whole_render_stale(monkeypatch):

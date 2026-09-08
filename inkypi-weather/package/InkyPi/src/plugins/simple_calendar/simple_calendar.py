@@ -753,7 +753,7 @@ class SimpleCalendar(BasePlugin):
             holiday_events,
             selected_date,
             reference_dt=reference_dt,
-            limit=3,
+            limit=6,
         )
 
         # Colours
@@ -958,11 +958,17 @@ class SimpleCalendar(BasePlugin):
             fill=divider,
             width=max(int(W * 0.0018), 1),
         )
-        event_list_h = int(cal_h * 0.19) if upcoming_event_rows else 0
-        available_grid_h = c_bottom - grid_top_y - int(cal_h * 0.015) - event_list_h
-
         cal_grid = calendar.Calendar(firstweekday=6).monthdayscalendar(selected_date.year, selected_date.month)
         num_weeks = len(cal_grid)
+        # Spend vertical whitespace on individual events without shrinking any
+        # font. Six-week months keep enough space for dates and their markers.
+        agenda_row_h = max(int(cal_w * 0.032), 14) + 4
+        grid_gap = int(cal_h * 0.015)
+        agenda_budget = max(0, c_bottom - grid_top_y - grid_gap - num_weeks * (day_font_size + 7))
+        agenda_capacity = max(0, int((agenda_budget - 12) // agenda_row_h))
+        upcoming_event_rows = upcoming_event_rows[:agenda_capacity]
+        event_list_h = 12 + agenda_row_h * len(upcoming_event_rows) if upcoming_event_rows else 0
+        available_grid_h = c_bottom - grid_top_y - grid_gap - event_list_h
         row_h = available_grid_h / num_weeks
 
         today_circle_r = int(min(col_w, row_h) * 0.46)
@@ -2739,13 +2745,14 @@ class SimpleCalendar(BasePlugin):
             if event.get("date") == selected_date and self._event_is_upcoming(event, selected_date, reference_dt)
         ]
 
-    def _upcoming_event_rows(self, events, selected_date, reference_dt=None, limit=3):
+    def _upcoming_event_rows(self, events, selected_date, reference_dt=None, limit=6):
         upcoming = [
             event
             for event in events
             if self._event_is_upcoming(event, selected_date, reference_dt)
         ]
-        return self._merge_same_day_events(upcoming)[:limit]
+        ordered = sorted(upcoming, key=lambda event: (event["date"], self._same_day_event_sort_key(event)))
+        return [{**event, "title": self._event_display_title(event)} for event in ordered[:limit]]
 
     def _draw_focus_holiday(
         self,
@@ -2870,24 +2877,33 @@ class SimpleCalendar(BasePlugin):
         line_y = top + 2
         draw.line([(left + int(width * 0.04), line_y), (right - int(width * 0.04), line_y)], fill=divider, width=1)
 
-        grouped = upcoming_event_rows
-
         date_font_size = max(int(width * 0.032), 14)
         label_font_size = max(int(width * 0.025), 11)
         title_font_size = max(int(width * 0.032), 14)
         date_font = self._get_calendar_ui_font(date_font_size, bold=True)
         label_font = self._get_calendar_ui_font(label_font_size, bold=True)
         title_font = self._get_holiday_title_font(title_font_size)
-        row_h = (bottom - top - 12) / 3
+        row_h = title_font_size + 4
         x0 = left + int(width * 0.055)
-        for index, event in enumerate(grouped):
-            row_y = top + 12 + row_h * index + row_h / 2
+        label_x = x0 + max(self._text_width(draw, "12/31", date_font) + 14, width * 0.12)
+        label_w = max(self._text_width(draw, event.get("label", ""), label_font) for event in upcoming_event_rows)
+        # Cap unusually long custom labels so the content column remains useful.
+        label_w = min(label_w, width * 0.20)
+        title_x = label_x + label_w + 10
+        last_date = None
+        for index, event in enumerate(upcoming_event_rows):
+            row_y = top + 10 + row_h * index + row_h / 2
+            if row_y + row_h / 2 > bottom:
+                break
             date_text = f"{event['date'].month}/{event['date'].day}"
-            draw.text((x0, row_y), date_text, fill=text_color, font=date_font, anchor="lm")
-            label_x = x0 + int(width * 0.145)
+            if event["date"] != last_date:
+                if last_date is not None:
+                    draw.line([(x0, row_y - row_h / 2 - 1), (right - int(width * 0.04), row_y - row_h / 2 - 1)], fill=divider, width=1)
+                draw.text((x0, row_y), date_text, fill=text_color, font=date_font, anchor="lm")
+                last_date = event["date"]
             self._draw_source_label(
                 draw,
-                event["label"],
+                self._fit_text(draw, event.get("label", ""), label_font, label_w),
                 label_x,
                 row_y,
                 label_font,
@@ -2895,7 +2911,6 @@ class SimpleCalendar(BasePlugin):
                 separator_color=muted_text,
                 anchor="lm",
             )
-            title_x = label_x + int(width * 0.105)
             title = self._fit_text(draw, event["title"], title_font, right - title_x - int(width * 0.05))
             draw.text(
                 (title_x, row_y),

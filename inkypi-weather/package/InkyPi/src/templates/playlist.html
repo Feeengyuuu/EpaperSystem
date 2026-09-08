@@ -449,7 +449,11 @@
                                     <img src="{{ url_for('static', filename='icons/edit.png') }}" alt="edit plugin" class="action-icon">
                                 </a>
                                 <button class="edit-button refresh-settings-btn"
+                                        {% if plugins.get(plugin_instance.plugin_id, {}).get('capabilities', {}).get('refresh_data_before_display') %}
+                                        title="Updates before each display" disabled
+                                        {% else %}
                                         title="Edit Refresh Settings"
+                                        {% endif %}
                                         data-playlist="{{ playlist.name }}"
                                         data-plugin-id="{{ plugin_instance.plugin_id }}"
                                         data-instance="{{ plugin_instance.name }}"

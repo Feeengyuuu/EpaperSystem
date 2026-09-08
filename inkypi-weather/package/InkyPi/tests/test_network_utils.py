@@ -1,6 +1,85 @@
 import subprocess
+import logging
 
 from utils import network_utils
+
+
+def run_probes(monkeypatch, samples):
+    """Run the actual watchdog with deterministic probe results and elapsed time."""
+    samples = iter(samples)
+    clock = [0.0]
+    attempts, waits = [], []
+
+    class Stop:
+        stopped = False
+
+        def is_set(self):
+            return self.stopped
+
+        def wait(self, seconds):
+            waits.append(seconds)
+            clock[0] += seconds
+            return self.stopped
+
+    stop = Stop()
+
+    def connected(_interface):
+        try:
+            return next(samples)
+        except StopIteration:
+            stop.stopped = True
+            return None
+
+    monkeypatch.setattr(network_utils, "_wifi_is_connected", connected)
+    monkeypatch.setattr(network_utils, "_default_gateway", lambda *_: "192.168.1.1")
+    monkeypatch.setattr(network_utils, "_gateway_is_reachable", lambda *_: True)
+    monkeypatch.setattr(network_utils, "disable_wifi_powersave", lambda *_: True)
+    monkeypatch.setattr(network_utils, "reconnect_wifi", lambda *_: attempts.append(clock[0]) or True)
+    monkeypatch.setattr(network_utils.time, "monotonic", lambda: clock[0])
+    network_utils.wifi_reconnect_watchdog_loop(stop_event=stop)
+    return attempts, waits
+
+
+def test_transient_disconnect_recovers_without_reconnecting(monkeypatch, caplog):
+    with caplog.at_level(logging.INFO):
+        attempts, waits = run_probes(monkeypatch, [True, False, False, True])
+    assert attempts == []
+    assert waits[:4] == [60, 15, 15, 60]
+    assert "without intervention" in caplog.text
+
+
+def test_confirmed_disconnect_reconnects_then_checks_the_result(monkeypatch, caplog):
+    with caplog.at_level(logging.INFO):
+        attempts, _ = run_probes(monkeypatch, [False, False, False, True])
+    assert attempts == [30]
+    assert "after reconnect" in caplog.text
+
+
+def test_unknown_probe_breaks_failure_streak_without_claiming_recovery(monkeypatch, caplog):
+    with caplog.at_level(logging.INFO):
+        attempts, _ = run_probes(monkeypatch, [False, False, None, False, True])
+    assert attempts == []
+    assert caplog.text.count("watchdog recovered") == 1
+
+
+def test_sustained_outage_backs_off_reconnect_attempts(monkeypatch):
+    attempts, _ = run_probes(monkeypatch, [False] * 150)
+    assert len(attempts) >= 4
+    assert attempts[1] - attempts[0] >= 180
+    assert attempts[2] - attempts[1] >= 360
+    assert attempts[3] - attempts[2] >= 720
+
+
+def test_missing_probe_tools_are_unknown_not_disconnected(monkeypatch):
+    monkeypatch.setattr(network_utils, "_find_iw", lambda: None)
+    monkeypatch.setattr(network_utils, "_find_command", lambda *_: None)
+    assert network_utils._wifi_is_connected() is None
+    assert network_utils._gateway_is_reachable(gateway="192.168.1.1") is None
+
+
+def test_ping_tool_error_is_not_gateway_packet_loss(monkeypatch):
+    monkeypatch.setattr(network_utils, "_run_command", lambda *a, **k: subprocess.CompletedProcess([], 2, "", "permission denied"))
+    assert network_utils._gateway_is_reachable(gateway="192.168.1.1", ping_path="/bin/ping") is None
 
 
 def test_wireless_interfaces_returns_only_wireless_names(monkeypatch):

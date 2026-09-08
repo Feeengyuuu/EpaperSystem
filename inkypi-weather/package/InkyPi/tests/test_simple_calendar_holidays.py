@@ -1393,7 +1393,7 @@ def test_same_day_personal_event_row_orders_titles_by_start_time():
     )
 
     assert [event["title"] for event in rows] == [
-        "12p Lunch Appointment / 3p Quest Diagnostics Appointment",
+        "12p Lunch Appointment", "3p Quest Diagnostics Appointment",
     ]
 
 
@@ -1429,7 +1429,7 @@ def test_same_day_event_row_sorts_cross_day_projection_by_visible_time():
     )
 
     assert [event["title"] for event in rows] == [
-        "12p Lunch Appointment / 10p Overnight Event",
+        "12p Lunch Appointment", "10p Overnight Event",
     ]
 
 

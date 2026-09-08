@@ -99,6 +99,7 @@ _WEATHER_SETTING_KEYS = frozenset(
         "forceRefresh",
         "force_refresh",
         "_inkypiDisplayRender",
+        "_inkypiFreshDisplay",
         "_inkypi_theme",
         "_theme_render_only",
     }
