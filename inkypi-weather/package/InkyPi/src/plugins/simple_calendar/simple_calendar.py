@@ -753,7 +753,7 @@ class SimpleCalendar(BasePlugin):
             holiday_events,
             selected_date,
             reference_dt=reference_dt,
-            limit=6,
+            limit=12,
         )
 
         # Colours
@@ -966,6 +966,8 @@ class SimpleCalendar(BasePlugin):
         grid_gap = int(cal_h * 0.015)
         agenda_budget = max(0, c_bottom - grid_top_y - grid_gap - num_weeks * (day_font_size + 7))
         agenda_capacity = max(0, int((agenda_budget - 12) // agenda_row_h))
+        agenda_capacity = min(6, agenda_capacity)
+        following_event_rows = upcoming_event_rows[agenda_capacity:]
         upcoming_event_rows = upcoming_event_rows[:agenda_capacity]
         event_list_h = 12 + agenda_row_h * len(upcoming_event_rows) if upcoming_event_rows else 0
         available_grid_h = c_bottom - grid_top_y - grid_gap - event_list_h
@@ -1018,6 +1020,7 @@ class SimpleCalendar(BasePlugin):
             text_color,
             muted_text,
             divider,
+            following_event_rows=following_event_rows,
         )
         return img
 
@@ -2869,7 +2872,7 @@ class SimpleCalendar(BasePlugin):
             cx = start_x + gap * index
             draw.ellipse([cx - radius, y - radius, cx + radius, y + radius], fill=color)
 
-    def _draw_holiday_list(self, draw, events, selected_date, upcoming_event_rows, left, top, right, bottom, text_color, muted_text, divider):
+    def _draw_holiday_list(self, draw, events, selected_date, upcoming_event_rows, left, top, right, bottom, text_color, muted_text, divider, following_event_rows=None):
         if not upcoming_event_rows or bottom <= top:
             return
 
@@ -2890,15 +2893,27 @@ class SimpleCalendar(BasePlugin):
         # Cap unusually long custom labels so the content column remains useful.
         label_w = min(label_w, width * 0.20)
         title_x = label_x + label_w + 10
+        split_x = left + width * 0.58
+        # Keep the nearest date and every long title at full width. Only a
+        # contiguous unused tail of the agenda can host a second column.
+        preview_start = 0
+        for index, event in enumerate(upcoming_event_rows):
+            if (event["date"] == upcoming_event_rows[0]["date"]
+                    or title_x + self._text_width(draw, event["title"], title_font) > split_x - 12):
+                preview_start = index + 1
+        preview_rows = (following_event_rows or [])[:max(0, len(upcoming_event_rows) - preview_start - 1)]
+        if width < 440:
+            preview_rows = []
         last_date = None
         for index, event in enumerate(upcoming_event_rows):
+            row_right = split_x - 12 if preview_rows and index >= preview_start else right - int(width * 0.04)
             row_y = top + 10 + row_h * index + row_h / 2
             if row_y + row_h / 2 > bottom:
                 break
             date_text = f"{event['date'].month}/{event['date'].day}"
             if event["date"] != last_date:
                 if last_date is not None:
-                    draw.line([(x0, row_y - row_h / 2 - 1), (right - int(width * 0.04), row_y - row_h / 2 - 1)], fill=divider, width=1)
+                    draw.line([(x0, row_y - row_h / 2 - 1), (row_right, row_y - row_h / 2 - 1)], fill=divider, width=1)
                 draw.text((x0, row_y), date_text, fill=text_color, font=date_font, anchor="lm")
                 last_date = event["date"]
             self._draw_source_label(
@@ -2919,6 +2934,27 @@ class SimpleCalendar(BasePlugin):
                 font=title_font,
                 anchor="lm",
             )
+        if preview_rows:
+            preview_top = top + 10 + preview_start * row_h
+            preview_right = right - int(width * 0.04)
+            preview_x = split_x + 12
+            draw.line([(split_x, preview_top), (split_x, bottom - 4)], fill=divider, width=1)
+            draw.text((preview_x, preview_top + row_h / 2), "NEXT", font=label_font, fill=muted_text, anchor="lm")
+            next_date_w = max(self._text_width(draw, f"{e['date'].month}/{e['date'].day}", date_font) for e in preview_rows)
+            next_label_x = preview_x + next_date_w + 7
+            next_label_w = min(max(self._text_width(draw, e.get("label", ""), label_font) for e in preview_rows), width * 0.08)
+            next_title_x = next_label_x + next_label_w + 7
+            last_date = None
+            for index, event in enumerate(preview_rows):
+                row_y = preview_top + row_h * (index + 1.5)
+                if event["date"] != last_date:
+                    draw.text((preview_x, row_y), f"{event['date'].month}/{event['date'].day}", font=date_font, fill=text_color, anchor="lm")
+                    last_date = event["date"]
+                self._draw_source_label(draw, self._fit_text(draw, event.get("label", ""), label_font, next_label_w),
+                                        next_label_x, row_y, label_font, event.get("color", muted_text),
+                                        separator_color=muted_text, anchor="lm")
+                title = self._fit_text(draw, event["title"], title_font, preview_right - next_title_x)
+                draw.text((next_title_x, row_y), title, font=title_font, fill=text_color, anchor="lm")
 
     def _draw_source_label(self, draw, label, x, y, font, default_color, separator_color=None, anchor="lm"):
         parts = self._source_label_parts(label)
