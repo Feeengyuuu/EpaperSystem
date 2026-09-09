@@ -4,6 +4,7 @@ This plugin fetches the Astronomy Picture of the Day (APOD) from NASA's API
 and displays it on the InkyPi device. It supports optional manual date selection or random dates.
 For the API key, set `NASA_SECRET={API_KEY}` in your .env file.
 """
+from utils.resource_cache import record_resource_event
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.render_provenance import (
@@ -1248,6 +1249,7 @@ def _resolve_media_url_blob(
                 raise ApodMediaUnavailable("APOD media cache miss")
             _probe_media_blob(cached_path, minimum_size)
             _task_checkpoint(context)
+            record_resource_event("nasa_media", disk_hits=1)
             return cached_path
         except _ABORT_EXCEPTIONS:
             raise
@@ -1270,6 +1272,7 @@ def _resolve_media_url_blob(
         _task_checkpoint(context)
         _probe_media_blob(candidate, minimum_size)
         _task_checkpoint(context)
+        record_resource_event("nasa_media", downloads=1, downloaded_bytes=candidate.stat().st_size)
         target = namespace.publish_file(
             digest,
             candidate,

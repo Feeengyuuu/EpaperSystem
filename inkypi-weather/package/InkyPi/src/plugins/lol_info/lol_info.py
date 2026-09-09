@@ -1,4 +1,5 @@
 from __future__ import annotations
+from utils.resource_cache import cached_resource_image, measured_image_response, prune_resource_images
 
 import hashlib
 import json
@@ -1696,30 +1697,19 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
     def _image_from_url(self, url, label=""):
         if not url:
             return None
-        cache_path = self._image_cache_path(url)
-        try:
-            cache_fresh = (
-                cache_path.exists()
-                and time.time() - cache_path.stat().st_mtime < 30 * 24 * 60 * 60
-            )
-            if cache_path.exists() and (
-                cache_fresh or not _ALLOW_PROVIDER_MEDIA.get()
-            ):
-                raw = safe_open_image(cache_path)
-            elif not _ALLOW_PROVIDER_MEDIA.get():
-                return None
-            else:
-                session = get_http_session()
-                if not session:
-                    return None
-                response = session.get(url, timeout=25, stream=True)
-                raw = safe_open_image_response(response)
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-                raw.save(cache_path)
-            return raw
-        except Exception as exc:
-            logger.warning("LoL splash art unavailable for %s: %s", label, exc)
-            return None
+        path = self._image_cache_path(url)
+
+        def fetch():
+            response = get_http_session().get(url, timeout=25, stream=True)
+            return measured_image_response(response)
+
+        image = cached_resource_image(path, fetch, ttl=30 * 24 * 3600,
+                                      label="lol_images", read_only=not _ALLOW_PROVIDER_MEDIA.get())
+        if _ALLOW_PROVIDER_MEDIA.get():
+            prune_resource_images(path.parent, prefixes=("image_",), max_files=256,
+                                  max_bytes=64 * 1024 * 1024, max_age=90 * 24 * 3600,
+                                  label="lol_images", protected=(path,))
+        return image
 
     def _placeholder_splash(self, width, height, label=""):
         image = Image.new("RGB", (width, height), (12, 14, 22))

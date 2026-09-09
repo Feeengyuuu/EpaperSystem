@@ -1,4 +1,5 @@
 from __future__ import annotations
+from utils.resource_cache import record_resource_event, measured_image_response
 
 import asyncio
 import hashlib
@@ -528,6 +529,7 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
             }
             cached_media_path = self._existing_media_path((existing_messages or {}).get(key), media)
             if cached_media_path:
+                record_resource_event("telegram_media", disk_hits=1)
                 item["media_path"] = str(cached_media_path)
                 continue
             if downloaded >= media_download_limit:
@@ -760,6 +762,7 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         media_dir.mkdir(parents=True, exist_ok=True)
         target = media_dir / f"{self._safe_media_id(media)}.jpg"
         if target.is_file():
+            record_resource_event("telegram_media", disk_hits=1)
             return target
 
         kwargs = {"file": bytes}
@@ -778,6 +781,7 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
             return ""
         if not isinstance(data, (bytes, bytearray, memoryview)):
             return ""
+        record_resource_event("telegram_media", downloads=1, downloaded_bytes=len(data))
         self._cache_image_bytes(data, target)
         return target
 
@@ -915,6 +919,7 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         safe_id = self._safe_media_id(media)
         target = media_dir / f"{safe_id}.jpg"
         if target.is_file():
+            record_resource_event("telegram_media", disk_hits=1)
             return target
 
         with provider_io_lease(
@@ -946,10 +951,11 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
                 timeout=REQUEST_TIMEOUT,
                 stream=True,
             )
-            image = safe_open_image_response(
+            image = measured_image_response(
                 response,
                 limits=TELEGRAM_MEDIA_IMAGE_LIMITS,
             ).convert("RGB")
+            record_resource_event("telegram_media", downloads=1, downloaded_bytes=image.info["resource_downloaded_bytes"])
         image.thumbnail(self._media_thumbnail_size(image.size), RESAMPLE)
         image.save(target, format="JPEG", quality=88)
         return target

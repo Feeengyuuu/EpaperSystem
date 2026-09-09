@@ -1,4 +1,5 @@
 from __future__ import annotations
+from utils.resource_cache import cached_resource_image, measured_image_response, prune_resource_images
 
 import hashlib
 import html
@@ -936,38 +937,32 @@ class DailyWikiPage(BasePlugin):
         draw.line((cx, cy - radius, cx, cy + radius), fill=palette["rule"], width=1)
 
     def _download_image(self, image_url, target_size, settings):
-        theme_render_only = self._enabled(
-            settings.get("_theme_render_only"),
-            default=False,
-        )
-        cache_path = self._media_cache_path(image_url)
-        if theme_render_only or self._cached_media_is_fresh(cache_path, settings):
-            cached = self._open_cached_media(cache_path)
-            if cached is not None:
-                cached.thumbnail((target_size[0] * 3, target_size[1] * 3), RESAMPLE)
-                return cached
-        if theme_render_only:
-            return None
+        theme_only = self._enabled(settings.get("_theme_render_only"), default=False)
+        path = self._media_cache_path(image_url)
+        cache_hours = self._int(settings.get("imageCacheHours"), DEFAULT_IMAGE_CACHE_HOURS, 1, MAX_IMAGE_CACHE_HOURS)
 
-        max_bytes = self._int(settings.get("maxImageBytes"), 10_000_000, 1_000_000, 20_000_000)
-        try:
+        def fetch():
             response = get_http_session().get(
-                image_url,
-                headers=IMAGE_HEADERS,
-                timeout=(5, self._int(settings.get("imageTimeoutSeconds"), 12, 4, 30)),
-                stream=True,
+                image_url, headers=IMAGE_HEADERS,
+                timeout=(5, self._int(settings.get("imageTimeoutSeconds"), 12, 4, 30)), stream=True,
             )
-            loaded = safe_open_image_response(
+            image = measured_image_response(
                 response,
-                limits=ImageLimits(max_bytes=max_bytes),
+                limits=ImageLimits(max_bytes=self._int(settings.get("maxImageBytes"), 10_000_000, 1_000_000, 20_000_000)),
                 draft_size=(target_size[0] * 3, target_size[1] * 3),
             ).convert("RGB")
-            loaded.thumbnail((target_size[0] * 3, target_size[1] * 3), RESAMPLE)
-            self._write_cached_media(cache_path, loaded)
-            return loaded
-        except Exception as exc:
-            logger.warning("DailyWikiPage image download failed: %s", exc)
-            return None
+            image.thumbnail((target_size[0] * 3, target_size[1] * 3), RESAMPLE)
+            return image
+
+        image = cached_resource_image(path, fetch, ttl=cache_hours * 3600,
+                                      label="wiki_images", read_only=theme_only)
+        if image is not None:
+            image.thumbnail((target_size[0] * 3, target_size[1] * 3), RESAMPLE)
+        if not theme_only:
+            prune_resource_images(path.parent, prefixes=("",), max_files=256,
+                                  max_bytes=50 * 1024 * 1024, max_age=30 * 24 * 3600,
+                                  label="wiki_images", protected=(path,))
+        return image
 
     def _media_cache_path(self, image_url):
         digest = hashlib.sha256(str(image_url).encode("utf-8")).hexdigest()

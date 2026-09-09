@@ -127,3 +127,48 @@ def test_later_preview_yields_space_to_long_primary_titles(monkeypatch):
     assert "NEXT" not in drawn and "体检" not in drawn
     assert sum("Detailed appointment" in t for t in drawn) == 6
     result.close()
+
+
+@pytest.mark.parametrize("selected,following", [(date(2026, 9, 9), date(2026, 10, 1)), (date(2026, 12, 9), date(2027, 1, 1))])
+def test_next_month_uses_remaining_preview_space_after_this_month(monkeypatch, selected, following):
+    records = []
+    original = ImageDraw.ImageDraw.text
+    def text(draw, xy, value, *args, **kwargs):
+        records.append((str(value), draw.textbbox(xy, value, font=kwargs.get("font"), anchor=kwargs.get("anchor")), kwargs.get("font")))
+        return original(draw, xy, value, *args, **kwargs)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", text)
+    current = [{"date": selected.replace(day=10 + index), "label": "ME", "title": f"Item {index}"} for index in range(7)]
+    future = [
+        {"date": following, "label": "ME", "title": "Future A"},
+        {"date": following.replace(day=2), "label": "ME", "title": "Future B"},
+        {"date": following.replace(day=3), "label": "ME", "title": "Future C"},
+        {"date": following.replace(day=4), "label": "ME", "title": "Future D"},
+    ]
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    result = plugin._render_calendar((800, 480), selected, (30, 80, 110), (180, 20, 20),
+                                    LOCALE_DATA["en"], "en", holiday_events=current + list(reversed(future)))
+    words = [text for text, _, _ in records]
+    assert words.index("NEXT") < words.index("Item 6") < words.index("NEXT MONTH") < words.index("Future A") < words.index("Future B")
+    assert "Future D" not in words
+    entries = [(text, box, font) for text, box, font in records if text.startswith(("Item ", "Future ", "NEXT"))]
+    for i, (text, a, font) in enumerate(entries):
+        assert 0 <= a[0] < a[2] <= 800 and 0 <= a[1] < a[3] <= 480
+        assert font.size == (12 if text.startswith("NEXT") else 15)
+        for _, b, _ in entries[i + 1:]:
+            assert a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1]
+    result.close()
+
+
+def test_next_month_can_be_shown_after_all_current_events_have_elapsed(monkeypatch):
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+    def text(draw, xy, value, *args, **kwargs):
+        drawn.append(str(value))
+        return original(draw, xy, value, *args, **kwargs)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", text)
+    plugin = SimpleCalendar({"id": "simple_calendar"})
+    result = plugin._render_calendar((800, 480), date(2026, 9, 30), (30, 80, 110), (180, 20, 20),
+        LOCALE_DATA["en"], "en", holiday_events=[{"date": date(2026, 10, 1), "label": "ME", "title": "Next appointment"}])
+    assert "NEXT MONTH" in drawn and any(word.startswith("Next app") for word in drawn)
+    assert "NEXT" not in drawn
+    result.close()

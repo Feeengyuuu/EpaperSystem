@@ -596,6 +596,8 @@ def test_data_refresh_writes_current_and_next_month_snapshots(tmp_path, monkeypa
     assert [event["date"] for event in events] == [
         date(2026, 7, 4),
         date(2026, 7, 4),
+        date(2026, 8, 4),
+        date(2026, 8, 4),
     ]
     assert provenance is SourceProvenance.LIVE
     payloads = [

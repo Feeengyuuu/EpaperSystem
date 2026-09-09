@@ -1,4 +1,5 @@
 from __future__ import annotations
+from utils.resource_cache import record_resource_event, measured_image_response
 
 import hashlib
 import json
@@ -443,6 +444,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                         cached_size = 0
                     if cached_size > 0:
                         event.poster_path = str(cached_path)
+                        record_resource_event("event_posters", disk_hits=1)
                         continue
                     namespace.remove(key, suffix=".jpg")
                 response = get_http_session().get(
@@ -451,10 +453,11 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                     headers=IMAGE_HEADERS,
                     stream=True,
                 )
-                image = safe_open_image_response(
+                image = measured_image_response(
                     response,
                     draft_size=poster_size,
                 )
+                record_resource_event("event_posters", downloads=1, downloaded_bytes=image.info["resource_downloaded_bytes"])
                 try:
                     image.thumbnail(poster_size, Image.Resampling.LANCZOS)
                     if image.mode != "RGB":

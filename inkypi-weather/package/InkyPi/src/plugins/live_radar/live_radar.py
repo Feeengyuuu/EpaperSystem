@@ -1,4 +1,5 @@
 from __future__ import annotations
+from utils.resource_cache import cached_resource_image, measured_image_response, prune_resource_images
 
 from contextvars import ContextVar
 from datetime import datetime, timezone
@@ -363,6 +364,8 @@ class LiveRadar(BasePlugin):
                     warning,
                     layout,
                 )
+                if not theme_render_only:
+                    self._maintain_resource_images(cards)
                 return attach_source_provenance(image, provenance)
             finally:
                 _THEME_RENDER_ONLY_MEDIA.reset(media_token)
@@ -2821,60 +2824,44 @@ class LiveRadar(BasePlugin):
         if not url:
             return None
 
-        cache_path = self._cover_cache_path(url)
-        cached = self._open_cached_cover(cache_path) if cache_path.exists() else None
-        if cached and (
-            _THEME_RENDER_ONLY_MEDIA.get()
-            or time.time() - cache_path.stat().st_mtime < max(30, int(cache_seconds or 90))
-        ):
-            return cached
-        if _THEME_RENDER_ONLY_MEDIA.get():
-            return None
-
-        try:
-            session = get_http_session()
-            response = session.get(url, timeout=12, headers=self._cover_headers(url), stream=True)
-            cover = safe_open_image_response(
-                response,
-                limits=ImageLimits(max_bytes=COVER_MAX_BYTES),
-            ).convert("RGB")
+        def fetch():
+            response = get_http_session().get(url, timeout=12, headers=self._cover_headers(url), stream=True)
+            cover = measured_image_response(response, limits=ImageLimits(max_bytes=COVER_MAX_BYTES)).convert("RGB")
             cover.thumbnail(COVER_MAX_SIZE, self._resampling_filter())
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            cover.save(cache_path, "PNG")
-            return cover.copy()
-        except Exception as exc:
-            logger.warning("LiveRadar cover unavailable for %s: %s", url, exc)
-            return cached
+            return cover
+
+        return cached_resource_image(
+            self._cover_cache_path(url), fetch,
+            ttl=max(30, int(cache_seconds or 90)), label="live_snapshots",
+            read_only=_THEME_RENDER_ONLY_MEDIA.get(), max_stale=10 * 60, retry_seconds=60,
+        )
 
     def _load_avatar_source(self, url, cache_seconds=AVATAR_CACHE_SECONDS):
         url = str(url or "").strip()
         if not url:
             return None
 
-        cache_path = self._avatar_cache_path(url)
-        cached = self._open_cached_avatar(cache_path) if cache_path.exists() else None
-        if cached and (
-            _THEME_RENDER_ONLY_MEDIA.get()
-            or time.time() - cache_path.stat().st_mtime < max(300, int(cache_seconds or AVATAR_CACHE_SECONDS))
-        ):
-            return cached
-        if _THEME_RENDER_ONLY_MEDIA.get():
-            return None
-
-        try:
-            session = get_http_session()
-            response = session.get(url, timeout=12, headers=self._cover_headers(url), stream=True)
-            avatar = safe_open_image_response(
-                response,
-                limits=ImageLimits(max_bytes=AVATAR_MAX_BYTES),
-            ).convert("RGB")
+        def fetch():
+            response = get_http_session().get(url, timeout=12, headers=self._cover_headers(url), stream=True)
+            avatar = measured_image_response(response, limits=ImageLimits(max_bytes=AVATAR_MAX_BYTES)).convert("RGB")
             avatar.thumbnail(AVATAR_MAX_SIZE, self._resampling_filter())
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            avatar.save(cache_path, "PNG")
-            return avatar.copy()
-        except Exception as exc:
-            logger.warning("LiveRadar avatar unavailable for %s: %s", url, exc)
-            return cached
+            return avatar
+
+        return cached_resource_image(
+            self._avatar_cache_path(url), fetch,
+            ttl=max(300, int(cache_seconds or AVATAR_CACHE_SECONDS)), label="live_avatars",
+            read_only=_THEME_RENDER_ONLY_MEDIA.get(),
+        )
+
+    def _maintain_resource_images(self, cards):
+        cover_paths = [self._cover_cache_path(card["cover"]) for card in cards if card.get("cover")]
+        avatar_paths = [self._avatar_cache_path(card["avatar"]) for card in cards if card.get("avatar")]
+        prune_resource_images(self._cache_dir(), prefixes=("cover_",),
+                              max_files=96, max_bytes=48 * 1024 * 1024,
+                              max_age=6 * 3600, label="live_snapshots", protected=cover_paths)
+        prune_resource_images(self._cache_dir(), prefixes=("avatar_",),
+                              max_files=256, max_bytes=24 * 1024 * 1024,
+                              max_age=90 * 24 * 3600, label="live_avatars", protected=avatar_paths)
 
     @staticmethod
     def _open_cached_cover(path):

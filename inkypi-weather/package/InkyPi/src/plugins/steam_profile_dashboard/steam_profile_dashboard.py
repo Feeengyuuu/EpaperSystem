@@ -1,3 +1,5 @@
+from utils.resource_cache import cached_resource_image, measured_image_response, prune_resource_images
+from pathlib import Path
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.render_provenance import (
     SourceProvenance,
@@ -1289,26 +1291,30 @@ class SteamProfileDashboard(BasePlugin):
         url = self._normalize_steam_image_url(url)
         if not url or size <= 0:
             return None
-
-        icon = None
-        icon_cache_path = self._badge_icon_cache_path(url)
-        try:
-            if os.path.exists(icon_cache_path) and time.time() - os.path.getmtime(icon_cache_path) < 30 * 24 * 60 * 60:
-                icon = safe_open_image(icon_cache_path).convert("RGBA")
-            else:
-                session = get_http_session()
-                response = session.get(url, timeout=25, stream=True)
-                icon = safe_open_image_response(response).convert("RGBA")
-                os.makedirs(os.path.dirname(icon_cache_path), exist_ok=True)
-                icon.save(icon_cache_path)
-        except Exception as e:
-            logger.warning(
-                "Steam badge icon unavailable: %s",
-                redact_sensitive_text(e),
-            )
+        icon = self._cached_profile_media(url, self._badge_icon_cache_path(url), 30 * 24 * 3600, "RGBA")
+        if icon is None:
             return None
+        try:
+            return ImageOps.fit(icon, (size, size), method=Image.Resampling.LANCZOS)
+        finally:
+            icon.close()
 
-        return ImageOps.fit(icon, (size, size), method=Image.Resampling.LANCZOS)
+    def _cached_profile_media(self, url, path, ttl, mode):
+        def fetch():
+            response = get_http_session().get(url, timeout=25, stream=True)
+            if int(getattr(response, "status_code", 0) or 0) == 404:
+                self._remember_optional_media_negative(url)
+                close = getattr(response, "close", None)
+                if callable(close):
+                    close()
+                raise RuntimeError("Optional Steam resource returned 404")
+            return measured_image_response(response).convert(mode)
+
+        image = cached_resource_image(path, fetch, ttl=ttl, label="steam_profile_media")
+        prune_resource_images(Path(path).parent, prefixes=("avatar_", "gameicon_", "badgeicon_"),
+                              max_files=384, max_bytes=32 * 1024 * 1024,
+                              max_age=90 * 24 * 3600, label="steam_profile_media", protected=(path,))
+        return image
 
     def _draw_game_backdrop(self, image, x, y, width, height):
         if width <= 0 or height <= 0:
@@ -1648,38 +1654,15 @@ class SteamProfileDashboard(BasePlugin):
         url = self._game_icon_url(data, appid)
         if not url:
             return None
-
-        icon = None
-        icon_cache_path = self._game_icon_cache_path(url)
-        try:
-            if os.path.exists(icon_cache_path) and time.time() - os.path.getmtime(icon_cache_path) < 14 * 24 * 60 * 60:
-                icon = safe_open_image(icon_cache_path).convert("RGB")
-            else:
-                if self._optional_media_negative_hit(url):
-                    return None
-                session = get_http_session()
-                response = session.get(url, timeout=25, stream=True)
-                if int(getattr(response, "status_code", 0) or 0) == 404:
-                    self._remember_optional_media_negative(url)
-                    close = getattr(response, "close", None)
-                    if callable(close):
-                        close()
-                    return None
-                icon = safe_open_image_response(response).convert("RGB")
-                os.makedirs(os.path.dirname(icon_cache_path), exist_ok=True)
-                icon.save(icon_cache_path)
-        except Exception as e:
-            logger.warning(
-                "Steam game icon unavailable: %s",
-                redact_sensitive_text(e),
-            )
+        icon = self._cached_profile_media(url, self._game_icon_cache_path(url), 14 * 24 * 3600, "RGB")
+        if icon is None:
             return None
-
-        icon = ImageOps.fit(icon, (size, size), method=Image.Resampling.LANCZOS)
+        fitted = ImageOps.fit(icon, (size, size), method=Image.Resampling.LANCZOS)
+        icon.close()
         result = Image.new("RGBA", (size, size), (255, 255, 255, 0))
-        result.paste(icon, (0, 0))
-        outline = ImageDraw.Draw(result)
-        outline.rectangle((0, 0, size - 1, size - 1), outline=(255, 255, 255, 190), width=1)
+        result.paste(fitted, (0, 0))
+        fitted.close()
+        ImageDraw.Draw(result).rectangle((0, 0, size - 1, size - 1), outline=(255, 255, 255, 190), width=1)
         return result
 
     def _optional_media_negative_hit(self, url):
@@ -1736,23 +1719,9 @@ class SteamProfileDashboard(BasePlugin):
         return {}
 
     def _avatar_image(self, url, size):
-        avatar = None
-        if url:
-            avatar_cache_path = self._avatar_cache_path(url)
-            try:
-                if os.path.exists(avatar_cache_path) and time.time() - os.path.getmtime(avatar_cache_path) < 7 * 24 * 60 * 60:
-                    avatar = safe_open_image(avatar_cache_path).convert("RGB")
-                else:
-                    session = get_http_session()
-                    response = session.get(url, timeout=25, stream=True)
-                    avatar = safe_open_image_response(response).convert("RGB")
-                    os.makedirs(os.path.dirname(avatar_cache_path), exist_ok=True)
-                    avatar.save(avatar_cache_path)
-            except Exception as e:
-                logger.warning(
-                    "Steam avatar unavailable: %s",
-                    redact_sensitive_text(e),
-                )
+        avatar = self._cached_profile_media(
+            url, self._avatar_cache_path(url), 7 * 24 * 3600, "RGB",
+        ) if url else None
 
         if avatar is None:
             avatar = Image.new("RGB", (size, size), (0, 0, 0))

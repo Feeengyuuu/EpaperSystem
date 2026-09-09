@@ -1,3 +1,4 @@
+from utils.resource_cache import cached_resource_image, prune_resource_images
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import (
     PresentationMode,
@@ -945,16 +946,25 @@ class SteamDailyArt(BasePlugin):
         ).convert("RGB")
 
     def _download_logo(self, url):
-        payload = self._download_media_bytes(url, max_bytes=MAX_MEDIA_BYTES, timeout=30)
-        return safe_open_image(
-            BytesIO(payload),
-            limits=ImageLimits(
-                max_bytes=MAX_MEDIA_BYTES,
-                max_width=8192,
-                max_height=8192,
+        path = Path(self._cache_dir()) / ("logo_" + hashlib.sha256(url.encode("utf-8")).hexdigest() + ".png")
+
+        def fetch():
+            payload = self._download_media_bytes(url, max_bytes=MAX_MEDIA_BYTES, timeout=30)
+            image = safe_open_image(BytesIO(payload), limits=ImageLimits(
+                max_bytes=MAX_MEDIA_BYTES, max_width=8192, max_height=8192,
                 max_pixels=32_000_000,
-            ),
-        ).convert("RGBA")
+            )).convert("RGBA")
+            image.thumbnail((1600, 900), Image.Resampling.LANCZOS)
+            image.info["resource_downloaded_bytes"] = len(payload)
+            return image
+
+        image = cached_resource_image(path, fetch, ttl=14 * 24 * 3600, label="steam_logos")
+        prune_resource_images(path.parent, prefixes=("logo_",), max_files=128,
+                              max_bytes=24 * 1024 * 1024, max_age=60 * 24 * 3600,
+                              label="steam_logos", protected=(path,))
+        if image is None:
+            raise RuntimeError("Optional Steam logo is unavailable or in retry backoff")
+        return image
 
     def _download_media_bytes(self, url, *, max_bytes, timeout):
         policy = get_ssrf_policy()

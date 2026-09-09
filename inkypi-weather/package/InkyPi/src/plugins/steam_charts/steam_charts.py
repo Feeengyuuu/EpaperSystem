@@ -1,3 +1,5 @@
+from utils.resource_cache import cached_resource_image, prune_resource_images
+import hashlib
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
 from utils.app_utils import (
@@ -1918,24 +1920,36 @@ class SteamCharts(BasePlugin):
 
         return results
 
-    @staticmethod
-    @lru_cache(maxsize=STEAM_CAPSULE_CACHE_SIZE)
-    def _get_cached_capsule_image(app_id):
-        return SteamCharts._image_url_to_data_uri(STEAM_CAPSULE_URL.format(appid=app_id))
+    def _get_cached_capsule_image(self, app_id):
+        return self._image_url_to_data_uri(STEAM_CAPSULE_URL.format(appid=app_id))
 
-    @staticmethod
-    @lru_cache(maxsize=STEAM_CAPSULE_CACHE_SIZE)
-    def _image_url_to_data_uri(image_url):
+    def _image_url_to_data_uri(self, image_url):
         if not image_url:
             return ""
-        image_bytes = get_http_client().request_bytes(
-            "GET",
-            image_url,
-            timeout=STEAM_CAPSULE_TIMEOUT,
-            max_bytes=STEAM_CAPSULE_IMAGE_LIMITS.max_bytes,
-        ).data
-        encoded_image = base64.b64encode(image_bytes).decode("ascii")
-        return f"data:image/jpeg;base64,{encoded_image}"
+        path = self.cache_dir(leaf="media") / ("capsule_" + hashlib.sha256(image_url.encode("utf-8")).hexdigest() + ".png")
+
+        def fetch():
+            payload = get_http_client().request_bytes(
+                "GET", image_url, timeout=STEAM_CAPSULE_TIMEOUT,
+                max_bytes=STEAM_CAPSULE_IMAGE_LIMITS.max_bytes,
+            ).data
+            image = safe_open_image(payload, limits=STEAM_CAPSULE_IMAGE_LIMITS)
+            image.thumbnail((800, 480), Image.Resampling.LANCZOS)
+            image.info["resource_downloaded_bytes"] = len(payload)
+            return image
+
+        image = cached_resource_image(path, fetch, ttl=7 * 24 * 3600, label="steam_capsules")
+        prune_resource_images(path.parent, prefixes=("capsule_",), max_files=256,
+                              max_bytes=32 * 1024 * 1024, max_age=30 * 24 * 3600,
+                              label="steam_capsules", protected=(path,))
+        if image is None:
+            return ""
+        try:
+            output = BytesIO()
+            image.save(output, format="PNG")
+            return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
+        finally:
+            image.close()
 
     @staticmethod
     def _clean_game_name(name):

@@ -1,3 +1,4 @@
+from utils.resource_cache import resource_cache_metrics
 import logging
 import os
 from copy import deepcopy
@@ -163,7 +164,7 @@ class BasePlugin:
             render_settings.pop("forceRefresh", None)
             render_settings.pop("force_refresh", None)
 
-        with pinned_theme_context(theme):
+        with resource_cache_metrics(self.get_plugin_id()), pinned_theme_context(theme):
             image = self.generate_image(render_settings, device_config)
 
         effective = getattr(image, "info", {}).get(

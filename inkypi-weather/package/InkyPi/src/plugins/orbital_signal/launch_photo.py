@@ -1,4 +1,5 @@
 from __future__ import annotations
+from utils.resource_cache import record_resource_event, measured_image_response
 
 import hashlib
 import logging
@@ -140,7 +141,7 @@ def _download_candidate(candidate, session):
                 continue
             if not 200 <= status < 300:
                 raise RuntimeError(f"launch photo request returned HTTP {status}")
-            return safe_open_image_response(
+            return measured_image_response(
                 response,
                 limits=PHOTO_LIMITS,
                 draft_size=(339, 741),
@@ -234,6 +235,7 @@ def load_or_acquire_photo(launch, namespace, *, allow_network, session=None):
     for candidate in candidates:
         cached = _cached_photo(namespace, candidate)
         if cached is not None:
+            record_resource_event("launch_photos", disk_hits=1)
             return cached
     if not allow_network:
         return None
@@ -241,6 +243,9 @@ def load_or_acquire_photo(launch, namespace, *, allow_network, session=None):
     for candidate in candidates:
         try:
             image = _download_candidate(candidate, active_session)
+            record_resource_event("launch_photos", downloads=1, **(
+                {"downloaded_bytes": image.info["resource_downloaded_bytes"]}
+                if "resource_downloaded_bytes" in image.info else {"unmeasured_downloads": 1}))
             key = photo_cache_key(candidate.url)
             namespace.put_bytes(key, _encode_png(image), suffix=PHOTO_SUFFIX)
             return CachedLaunchPhoto(
