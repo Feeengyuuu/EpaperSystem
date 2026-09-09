@@ -197,6 +197,27 @@ def test_metrics_distinguish_actual_network_bytes_and_disk_hits(tmp_path):
         assert counts["downloaded_bytes"] == 123
 
 
+def test_measured_response_counts_stream_bytes_and_closes_response():
+    payload = BytesIO()
+    picture().save(payload, format="PNG")
+    data = payload.getvalue()
+    class Response:
+        headers = {}
+        closed = False
+        def raise_for_status(self):
+            pass
+        def iter_content(self, chunk_size):
+            yield data[:11]
+            yield data[11:]
+        def close(self):
+            self.closed = True
+    response = Response()
+    image = cache.measured_image_response(response)
+    assert image.info["resource_downloaded_bytes"] == len(data)
+    assert image.size == (12, 8) and response.closed
+    image.close()
+
+
 def test_steam_capsules_survive_plugin_recreation_and_keep_query_identity(tmp_path, monkeypatch):
     from plugins.steam_charts import steam_charts as module
     payload = BytesIO()

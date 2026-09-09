@@ -1,5 +1,5 @@
 from __future__ import annotations
-from utils.resource_cache import record_resource_event, measured_image_response
+from utils.resource_cache import record_resource_event, measured_image_response as safe_open_image_response
 
 import hashlib
 import json
@@ -24,7 +24,6 @@ from plugins.base_plugin.render_provenance import (
 from plugins.context_cache import write_context
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_client, get_http_session
-from utils.safe_image import safe_open_image_response
 
 logger = logging.getLogger(__name__)
 
@@ -453,11 +452,13 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                     headers=IMAGE_HEADERS,
                     stream=True,
                 )
-                image = measured_image_response(
+                image = safe_open_image_response(
                     response,
                     draft_size=poster_size,
                 )
-                record_resource_event("event_posters", downloads=1, downloaded_bytes=image.info["resource_downloaded_bytes"])
+                downloaded = image.info.get("resource_downloaded_bytes")
+                record_resource_event("event_posters", downloads=1, **(
+                    {"downloaded_bytes": downloaded} if downloaded is not None else {"unmeasured_downloads": 1}))
                 try:
                     image.thumbnail(poster_size, Image.Resampling.LANCZOS)
                     if image.mode != "RGB":
