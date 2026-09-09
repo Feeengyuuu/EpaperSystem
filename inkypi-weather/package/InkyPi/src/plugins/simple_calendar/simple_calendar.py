@@ -2894,12 +2894,11 @@ class SimpleCalendar(BasePlugin):
         label_w = min(label_w, width * 0.20)
         title_x = label_x + label_w + 10
         split_x = left + width * 0.58
-        # Keep the nearest date and every long title at full width. Only a
-        # contiguous unused tail of the agenda can host a second column.
+        # Align the second column at the top when titles fit. Only long titles
+        # need full width and push the preview into the unused agenda tail.
         preview_start = 0
         for index, event in enumerate(upcoming_event_rows):
-            if (event["date"] == upcoming_event_rows[0]["date"]
-                    or title_x + self._text_width(draw, event["title"], title_font) > split_x - 12):
+            if title_x + self._text_width(draw, event["title"], title_font) > split_x - 12:
                 preview_start = index + 1
         preview_rows = (following_event_rows or [])[:max(0, len(upcoming_event_rows) - preview_start - 1)]
         if width < 440:
