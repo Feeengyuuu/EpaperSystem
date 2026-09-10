@@ -62,3 +62,13 @@ def test_cached_core_never_passes_current_cycle_admission(state):
 
 def test_live_core_preserves_optional_error_contract_for_snapshot_adapters():
     require_current_core(SimpleNamespace(state='live'), SimpleNamespace(state='live'))
+
+
+@pytest.mark.parametrize('product_key', ['-1', '0'])
+def test_missing_noaa_scale_identifies_product_without_accepting_incomplete_core(product_key):
+    from plugins.apod.space_weather import normalize_scales
+
+    raw = json.loads((Path(__file__).parent / 'fixtures/apod/noaa_scales.json').read_text())
+    raw[product_key]['G']['Scale'] = ''
+    with pytest.raises(ValueError, match=f'product_key={product_key}.*G scale is missing'):
+        normalize_scales(raw, now_utc=datetime(2026, 7, 22, 12, 20, tzinfo=timezone.utc))

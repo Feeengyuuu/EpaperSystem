@@ -114,6 +114,7 @@ from runtime.refresh_policy import (
     soft_spacing_deadline,
 )
 from runtime.refresh_progress import RefreshProgressTracker
+from runtime.retry_policy import source_retry_policy
 from runtime.long_task_executor import InstanceIdentity
 from runtime.plugin_execution import PluginExecutionContext
 from runtime.refresh_planning import (
@@ -5981,7 +5982,9 @@ class RefreshTask:
         if lane is None or command.instance_uuid is None:
             return None
         retry_key = self._lane_retry_key(command.instance_uuid, lane)
-        delay = self.retry_registry.mark_failure(retry_key, self._clock())
+        delay = self.retry_registry.mark_failure(
+            retry_key, self._clock(), policy=source_retry_policy(command),
+        )
         delay = max(delay, float(minimum_delay_seconds))
         if maximum_delay_seconds is not None:
             delay = min(delay, float(maximum_delay_seconds))

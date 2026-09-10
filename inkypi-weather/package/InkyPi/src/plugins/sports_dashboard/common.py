@@ -23,6 +23,7 @@ from plugins.base_plugin.render_provenance import (
     read_source_provenance,
 )
 from plugins.sports_dashboard.cache_io import read_json_file, write_json_file
+from plugins.sports_dashboard.render_fonts import render_font, render_font_scope
 from runtime.sports_asset_metrics import record_asset_metric
 from utils.app_utils import get_base_ui_font, resolve_path
 from utils.cache_manager import (
@@ -2278,6 +2279,7 @@ SportsDashboard = None
 
 
 class SportsDashboardCommonMixin:
+    @render_font_scope()
     def generate_image(self, settings, device_config):
         dimensions = self._display_dimensions(device_config)
         timezone_info = self._timezone(settings, device_config)
@@ -2796,6 +2798,7 @@ class SportsDashboardCommonMixin:
             primary_live_override=primary_live_override,
         )
 
+    @render_font_scope()
     def render_isolated_region(
         self,
         settings,
@@ -3006,15 +3009,14 @@ class SportsDashboardCommonMixin:
         )
         return self._sports_source_state_provenance(nba_source_state)
 
-    def _draw_right_esports_region(
+    def _prepare_right_esports_panel(
         self,
-        image,
         settings,
         device_config,
         timezone_info,
         now,
-        left_width,
     ):
+        """Finish discovery and tracking before allocating fonts and images."""
         lol_cards = self._load_lol_esports_sidebar_cards(settings, device_config, timezone_info, now)
         lol_sidebar_override = self._lol_esports_sidebar_override(settings)
         tracked_valve_selected = None
@@ -3198,6 +3200,21 @@ class SportsDashboardCommonMixin:
                 now,
                 tracked_valve_source_state,
             )
+
+        # Selection includes all Valve candidates for priority/live tracking.
+        # Drawing consumes only the primary card; release the other candidate
+        # graphs (and local LoL lists) when this preparation frame returns.
+        if esports_choice.get("kind") == "valve":
+            return {
+                **esports_choice,
+                "selected": {"primary": esports_choice["selected"].get("primary")},
+            }
+        return esports_choice
+
+    def _draw_right_esports_region(
+        self, image, settings, device_config, timezone_info, now, left_width,
+    ):
+        esports_choice = self._prepare_right_esports_panel(settings, device_config, timezone_info, now)
 
         if esports_choice.get("kind") == "valve":
             valve_selected = esports_choice["selected"]
@@ -4198,7 +4215,7 @@ class SportsDashboardCommonMixin:
 
     @staticmethod
     def _font(size, bold=False):
-        return get_base_ui_font(int(size), bold=bool(bold))
+        return render_font(get_base_ui_font, size, bold)
 
     @staticmethod
     def _text_width(draw, text, font):

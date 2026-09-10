@@ -3021,3 +3021,27 @@ Test prepare, media loss or corruption, receipt application and replay, then DAT
 - Pattern-Key: presentation.receipt_reconciliation_does_not_block_media_recovery
 
 ---
+
+## [LRN-20260910-001] best_practice
+
+**Logged**: 2026-09-10T14:34:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: runtime
+
+### Summary
+End provider-selection ownership before drawing, and share only fonts that callers still own.
+
+### Details
+The September 10 runtime audit found 14 esports resource-guard stops. A red-green ownership test showed that the combined selection/drawing frame kept unselected league payloads alive during Pillow allocations. Separating preparation from drawing releases those payloads after complete live tracking. A render-scoped weak font lookup reduced a fixed CS2 sample from 43 font creations to 34 with identical pixels, without retaining fonts after their callers release them. Windows RSS changed too little to establish a meaningful device-memory improvement.
+
+### Suggested Action
+Test object lifetime at the production drawing boundary, preserve full candidate tracking before pruning, and measure native RSS independently on the device. Keep source retry timing separate from registry state; extended DATA backoff must retain stale provenance, original success timestamps, manual bypass and unrelated lane timing.
+
+### Metadata
+- Source: simplify-and-harden
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/common.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/render_fonts.py, inkypi-weather/package/InkyPi/src/runtime/retry_policy.py, docs/reviews/2026-09-10-runtime-structure-optimization.zh-CN.md
+- Tags: ownership, native-fonts, retry, freshness
+- Pattern-Key: runtime.release_selection_payload_before_drawing
+
+---

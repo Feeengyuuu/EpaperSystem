@@ -7,6 +7,7 @@ import threading
 import time
 
 from .refresh_contracts import LifecycleState
+from .retry_policy import DEFAULT_RETRY_POLICY, RetryPolicy
 
 
 _UNSET = object()
@@ -236,28 +237,32 @@ class _RetryState:
     failure_count: int
     deadline_monotonic: float
     manual_bypass_available: bool
+    maximum_delay: float = DEFAULT_RETRY_POLICY.maximum_delay
 
 
 class RetryRegistry:
     """Track bounded per-instance retry streaks under one short lock."""
 
     GLOBAL_KEY = "__scheduler__"
-    DELAYS = (30.0, 60.0, 120.0, 300.0)
-    MAX_DELAY = 300.0
+    DELAYS = DEFAULT_RETRY_POLICY.delays
+    MAX_DELAY = DEFAULT_RETRY_POLICY.maximum_delay
 
     def __init__(self, jitter=None):
         self._jitter = self._default_jitter if jitter is None else jitter
+        self._uses_default_jitter = jitter is None
         self._lock = threading.Lock()
         self._entries: dict[str, _RetryState] = {}
 
-    def mark_failure(self, key, now_monotonic) -> float:
+    def mark_failure(self, key, now_monotonic, *, policy=DEFAULT_RETRY_POLICY) -> float:
+        if not isinstance(policy, RetryPolicy):
+            raise TypeError("policy must be a RetryPolicy")
         canonical_key = self._canonical_key(key)
         now = self._finite_monotonic(now_monotonic)
         with self._lock:
             previous = self._entries.get(canonical_key)
             failure_count = 1 if previous is None else previous.failure_count + 1
-            base_delay = self.DELAYS[min(failure_count - 1, len(self.DELAYS) - 1)]
-            delay = self._validated_jitter(base_delay)
+            base_delay = policy.delay_for_failure(failure_count)
+            delay = self._validated_jitter(base_delay, policy.maximum_delay)
             deadline = now + delay
             if not math.isfinite(deadline):
                 raise ValueError("retry deadline must be finite")
@@ -266,6 +271,7 @@ class RetryRegistry:
                 failure_count=failure_count,
                 deadline_monotonic=deadline,
                 manual_bypass_available=manual_bypass_available,
+                maximum_delay=policy.maximum_delay,
             )
             return delay
 
@@ -279,7 +285,7 @@ class RetryRegistry:
             remaining = entry.deadline_monotonic - now
             if remaining <= 0:
                 return 0.0
-            return min(self.MAX_DELAY, remaining)
+            return min(entry.maximum_delay, remaining)
 
     def mark_success(self, key) -> None:
         canonical_key = self._canonical_key(key)
@@ -315,21 +321,25 @@ class RetryRegistry:
                 for key, entry in sorted(self._entries.items())
             )
 
-    def _validated_jitter(self, base_delay: float) -> float:
+    def _validated_jitter(self, base_delay: float, maximum_delay: float) -> float:
         candidate = self._jitter(base_delay)
         try:
             delay = float(candidate)
         except (TypeError, ValueError, OverflowError) as error:
             raise ValueError("retry jitter must be a finite number") from error
+        if not math.isfinite(delay):
+            raise ValueError("retry jitter must be a finite number")
         lower = base_delay * 0.9
-        upper = min(base_delay * 1.1, self.MAX_DELAY)
+        upper = min(base_delay * 1.1, maximum_delay)
+        if self._uses_default_jitter:
+            delay = min(delay, maximum_delay)
         if not math.isfinite(delay) or delay < lower or delay > upper:
             raise ValueError(f"retry jitter must be between {lower} and {upper} seconds")
         return delay
 
     @classmethod
     def _default_jitter(cls, base_delay: float) -> float:
-        return min(cls.MAX_DELAY, base_delay * random.uniform(0.9, 1.1))
+        return base_delay * random.uniform(0.9, 1.1)
 
     @staticmethod
     def _canonical_key(key) -> str:

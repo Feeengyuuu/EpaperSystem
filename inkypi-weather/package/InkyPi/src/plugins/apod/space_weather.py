@@ -120,14 +120,19 @@ def normalize_scales(
         entry = raw.get(product_key)
         if not isinstance(entry, Mapping):
             raise ValueError(f"NOAA scales key {product_key} is missing or invalid")
-        provider_time = _parse_utc_parts(entry.get("DateStamp"), entry.get("TimeStamp"))
-        normalized_entry = {
-            "product_key": product_key,
-            "valid_at_utc": _format_utc(provider_time),
-            "g": _scale_value(entry, "G", required=product_key in {"-1", "0"}),
-            "r": _scale_value(entry, "R", required=product_key in {"-1", "0"}),
-            "s": _scale_value(entry, "S", required=product_key in {"-1", "0"}),
-        }
+        try:
+            provider_time = _parse_utc_parts(entry.get("DateStamp"), entry.get("TimeStamp"))
+            normalized_entry = {
+                "product_key": product_key,
+                "valid_at_utc": _format_utc(provider_time),
+                "g": _scale_value(entry, "G", required=product_key in {"-1", "0"}),
+                "r": _scale_value(entry, "R", required=product_key in {"-1", "0"}),
+                "s": _scale_value(entry, "S", required=product_key in {"-1", "0"}),
+            }
+        except ValueError as error:
+            # The key is fixed above; never add the raw response or URL here.
+            # Yesterday and current missing-scale failures used to be identical.
+            raise ValueError(f"NOAA scales product_key={product_key}: {error}") from error
         normalized_entries[product_key] = normalized_entry
         entries[product_key] = (provider_time, entry)
 
