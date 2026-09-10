@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from PIL import Image, ImageDraw, ImageOps
 
+from .club_football_localization import contains_chinese
 from .common import (
     CLUB_LEAGUE_MONOCHROME_ICON_CODES,
     COLORS,
@@ -115,11 +116,11 @@ class ClubFootballRenderMixin:
         if not isinstance(event, Mapping):
             return "待定球队"
         localized = str(event.get(f"{side}_name_zh") or "").strip()
-        if localized:
+        if contains_chinese(localized):
             return localized
         return self._club_team_zh_name(
             event.get("league_code"),
-            event.get(f"{side}_name"),
+            event.get(f"{side}_name") or localized,
             team_id=event.get(f"{side}_team_id"),
         )
 

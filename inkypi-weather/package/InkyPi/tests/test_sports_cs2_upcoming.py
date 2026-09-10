@@ -54,7 +54,7 @@ def test_empty_upcoming_uses_own_schedule_status_independent_of_discovery(monkey
 
 
 @pytest.mark.parametrize("palette", [common.DAY_COLORS, common.DEEP_NIGHT_COLORS])
-def test_upcoming_row_shows_its_own_event_and_both_team_logos(monkeypatch, palette):
+def test_upcoming_row_keeps_both_teams_without_repeating_event_branding(monkeypatch, palette):
     now = datetime(2026, 9, 6, 12, tzinfo=timezone.utc)
     live = cs_match(now, status="running", offset=-1, event="Current Cup")
     future = cs_match(now, match_id=502, offset=24, event="Current Cup")
@@ -71,13 +71,22 @@ def test_upcoming_row_shows_its_own_event_and_both_team_logos(monkeypatch, palet
     card = SportsDashboard._parse_pandascore_cs2_card([live, future], timezone.utc, now, {})
     plugin = SportsDashboard({"id": "sports_dashboard"})
     monkeypatch.setattr(plugin, "_load_team_logo_for_render", lambda url, size: logos.get(url))
+    captions = []
+    original_caption = plugin._draw_cs2_event_caption
+    def record_caption(draw, box, caption):
+        captions.append((box, caption))
+        return original_caption(draw, box, caption)
+    monkeypatch.setattr(plugin, "_draw_cs2_event_caption", record_caption)
     token = common._ACTIVE_COLORS.set(palette)
     try:
         with Image.new("RGB", (800, 480), palette["paper"]) as canvas:
             plugin._draw_valve_esports_sidebar(canvas, 552, {"primary": card}, "PANDASCORE LIVE", now)
             with canvas.crop((570, 311, 787, 373)) as upcoming:
                 pixels = {upcoming.getpixel((x, y)) for x in range(upcoming.width) for y in range(upcoming.height)}
-                assert all(color in pixels for color in colors.values()), "Upcoming needs its own event and team logos"
+                team_colors = [colors[entry['opponent']['image_url']] for entry in future['opponents']]
+                assert all(color in pixels for color in team_colors), "Upcoming keeps both team logos"
+                assert colors[future['tournament']['image_url']] not in pixels, "Event logo is already above"
+                assert all(box[1] < 311 for box, caption in captions), "Event caption must appear only in the focus card"
     finally:
         common._ACTIVE_COLORS.reset(token)
         for logo in logos.values():

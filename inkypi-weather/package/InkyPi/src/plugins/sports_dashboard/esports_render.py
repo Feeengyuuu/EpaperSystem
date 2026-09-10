@@ -1,3 +1,5 @@
+from PIL import ImageFilter
+
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 
@@ -1283,13 +1285,21 @@ class EsportsRenderMixin:
         if not logo:
             return False
         try:
+            position = (x1 + (width - logo.width) // 2, y1 + (height - logo.height) // 2)
             if self._club_icon_contrast_ratio(logo, COLORS["panel"]) < 3.0:
-                backing = max(
+                outline_color = max(
                     (DAY_COLORS["panel"], DEEP_NIGHT_COLORS["panel"]),
                     key=lambda color: self._club_icon_contrast_ratio(logo, color),
                 )
-                ImageDraw.Draw(image).rounded_rectangle((x1, y1, x2, y2), radius=3, fill=backing)
-            image.paste(logo, (x1 + (width - logo.width) // 2, y1 + (height - logo.height) // 2), logo)
+                # A one-pixel contour keeps the brand legible while its margins
+                # stay transparent. Never alter a shared cached logo's pixels.
+                with Image.new("L", (logo.width + 2, logo.height + 2)) as mask:
+                    with logo.getchannel("A") as alpha:
+                        mask.paste(alpha, (1, 1))
+                    with mask.filter(ImageFilter.MaxFilter(3)) as contour:
+                        with Image.new("RGB", mask.size, outline_color) as backing:
+                            image.paste(backing, (position[0] - 1, position[1] - 1), contour)
+            image.paste(logo, position, logo)
         finally:
             if resized is not None:
                 resized.close()
@@ -1437,11 +1447,8 @@ class EsportsRenderMixin:
         row_y = y + 29
         visible_events = events[:3]
         for index, event in enumerate(visible_events):
-            top = row_y + index * (63 if cs2_upcoming else 55)
-            if cs2_upcoming:
-                self._draw_valve_esports_recent_row(image, draw, right_x, right_w, top, event, accent, show_event=True)
-            else:
-                self._draw_valve_esports_recent_row(image, draw, right_x, right_w, top, event, accent)
+            top = row_y + index * 55
+            self._draw_valve_esports_recent_row(image, draw, right_x, right_w, top, event, accent)
         self._draw_valve_ti_empty_slot_filler(
             image,
             right_x + 14,
@@ -1464,10 +1471,10 @@ class EsportsRenderMixin:
         if filler:
             image.paste(filler, (x1, y2 - height + 1), filler)
 
-    def _draw_valve_esports_recent_row(self, image, draw, right_x, right_w, y, event, accent, *, show_event=False):
+    def _draw_valve_esports_recent_row(self, image, draw, right_x, right_w, y, event, accent):
         row_x1 = right_x + 14
         row_x2 = right_x + right_w - 14
-        row_h = 58 if show_event else 50
+        row_h = 50
         draw.rounded_rectangle((row_x1, y, row_x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
         draw.rectangle((row_x1 + 1, y + 1, row_x1 + 5, y + row_h - 1), fill=accent)
         date_label, time_label = self._valve_match_datetime_labels(event)
@@ -1497,7 +1504,7 @@ class EsportsRenderMixin:
             min_size=11,
         )
         score = self._valve_score_label(event)
-        if show_event and not event.get("feed_fresh", True):
+        if not event.get("feed_fresh", True):
             score = "STALE"
         score, score_font = self._fit_text_ellipsis(draw, score, 40, 13, bold=True, min_size=9)
         self._draw_centered_in_box(draw, (row_x1 + 91, y + 4, row_x2 - 91, y + 20), score, score_font, COLORS["text"])
@@ -1513,18 +1520,9 @@ class EsportsRenderMixin:
         team_b, team_b_font = self._fit_text_ellipsis(draw, self._valve_team_display_name(event, "b"), right_name_box[2] - right_name_box[0], 10, bold=True, min_size=7)
         self._draw_text_in_box(draw, left_name_box, team_a, team_a_font, COLORS["text"])
         self._draw_text_in_box(draw, right_name_box, team_b, team_b_font, COLORS["text"], align="right")
-        if show_event:
-            from .cs2_cards import event_caption
-
-            logo_drawn = self._draw_valve_focus_event_logo(image, (row_x1 + 10, y + 39, row_x1 + 33, y + 56), event)
-            self._draw_cs2_event_caption(
-                draw, (row_x1 + (38 if logo_drawn else 10), y + 38, row_x2 - 10, y + row_h - 1),
-                event_caption(event.get("event_name") or "CS2"),
-            )
-        else:
-            detail = self._valve_match_detail_label(event, compact=True)
-            detail, detail_font = self._fit_text_ellipsis(draw, detail, row_x2 - row_x1 - 22, 7, bold=True, min_size=6)
-            self._draw_centered_in_box(draw, (row_x1 + 10, y + 38, row_x2 - 10, y + row_h - 1), detail, detail_font, COLORS["muted"])
+        detail = self._valve_match_detail_label(event, compact=True)
+        detail, detail_font = self._fit_text_ellipsis(draw, detail, row_x2 - row_x1 - 22, 7, bold=True, min_size=6)
+        self._draw_centered_in_box(draw, (row_x1 + 10, y + 38, row_x2 - 10, y + row_h - 1), detail, detail_font, COLORS["muted"])
 
     @staticmethod
     def _valve_match_datetime_labels(event, fallback_start=None):

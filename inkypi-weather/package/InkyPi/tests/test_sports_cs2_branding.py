@@ -115,9 +115,33 @@ def test_day_only_black_event_logo_stays_visible_at_night_without_mutating_cache
                 assert plugin._draw_valve_focus_event_logo(
                     canvas, (8, 8, 39, 39), {"event_logo_url": "https://cdn.pandascore.co/event/black.png"}
                 )
-                assert sum(canvas.getpixel((12, 12))) > 600, "Transparent margins need a contrasting backing"
+                assert canvas.getpixel((12, 12)) == common.DEEP_NIGHT_COLORS["panel"], "Transparent margins must reveal the panel"
+                assert sum(canvas.getpixel((15, 24))) > 600, "Only the logo contour needs contrast"
                 assert canvas.getpixel((24, 24)) == (0, 0, 0), "Brand pixels must keep their original color"
                 assert canvas.getpixel((2, 2)) == common.DEEP_NIGHT_COLORS["panel"]
+                assert logo.tobytes() == original
+        finally:
+            common._ACTIVE_COLORS.reset(token)
+
+
+def test_low_contrast_gold_logo_has_no_solid_backing_in_daylight(monkeypatch):
+    from plugins.sports_dashboard import common
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    with Image.new("RGBA", (32, 32), (0, 0, 0, 0)) as logo:
+        ImageDraw.Draw(logo).rectangle((8, 8, 23, 23), fill=(202, 165, 85, 255))
+        original = logo.tobytes()
+        monkeypatch.setattr(plugin, "_load_team_logo_for_render", lambda *args: logo)
+        token = common._ACTIVE_COLORS.set(common.DAY_COLORS)
+        try:
+            with Image.new("RGB", (48, 48), common.DAY_COLORS["panel"]) as canvas:
+                assert plugin._draw_valve_focus_event_logo(
+                    canvas, (8, 8, 39, 39), {"event_logo_url": "https://cdn.pandascore.co/event/gold.png"}
+                )
+                assert canvas.getpixel((12, 12)) == common.DAY_COLORS["panel"]
+                assert canvas.getpixel((24, 24)) == (202, 165, 85)
+                assert sum(canvas.getpixel((15, 24))) < 100
                 assert logo.tobytes() == original
         finally:
             common._ACTIVE_COLORS.reset(token)
