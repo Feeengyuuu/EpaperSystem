@@ -3060,7 +3060,7 @@ Sports identity fixes must cover actual provider HTML and roster IDs, plus previ
 HLTV ongoing cards nest the true name inside text-ellipsis and place LAN in a sibling. Small future cards use event-col rather than the old selectors, and one-day events may have only one timestamp. Read only event-logo URLs, retain publisher-signed srcset URLs, and do not let a missing event impose a global retry delay. ESPN site teams ignores the tested groups query and includes 762 records across levels; the 2026 core FBS/FCS lists identify the relevant schools but also include all-star and placeholder records. UT Rio Grande Valley appears in the actual schedule even though the site roster omits it. Old NCAA _zh fields may contain English, and SDSU requires ID or school-name disambiguation.
 
 ### Suggested Action
-Audit current provider samples and real schedules. Bundle verified persistent art once, reuse the bounded image cache, and localize at the render boundary without rewriting source identities. Measure warm cache decoding/download counters separately from match-data freshness.
+Audit current provider samples and real schedules. Bundle verified persistent art once, reuse the bounded image cache, and localize at the render boundary without rewriting source identities. Measure warm cache decoding/download counters separately from match-data freshness. The first live deployment exposed a cross-provider name mismatch: PandaScore called HLTV's Exort Fiesta Series 2 "Exort Fiesta Season 2 2026". Testing all bundled catalog names against themselves did not catch it. Add an edition-specific alias and a test using the actual feed label with no provider logo, retaining date and qualifier rejection.
 
 ### Metadata
 - Source: conversation

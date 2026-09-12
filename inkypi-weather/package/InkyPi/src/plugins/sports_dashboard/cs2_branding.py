@@ -22,11 +22,15 @@ RETRY_DELAY = timedelta(hours=1)
 MAX_RECORDS = 64
 CATALOG_VERSION = 2
 LOCAL_EVENT_DIR = Path(__file__).parent / "assets" / "logos" / "cs2_events"
+# PandaScore's current match feed calls HLTV event 9392 "Season 2".
+# Keep this alias edition-specific; qualifiers and other seasons stay distinct.
+EVENT_NAME_ALIASES = {"exortfiestaseason2": "exortfiestaseries2"}
 
 
 def _canonical(name):
     # Only strip a calendar year; edition/season numbers remain significant.
-    return normalized_name(re.sub(r"\b20\d{2}\b", "", str(name or "")))
+    name = normalized_name(re.sub(r"\b20\d{2}\b", "", str(name or "")))
+    return EVENT_NAME_ALIASES.get(name, name)
 
 
 def parse_catalog(html):

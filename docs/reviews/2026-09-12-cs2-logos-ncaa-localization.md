@@ -1,6 +1,6 @@
 # CS2 赛事标志与 NCAA 中文队名
 
-本次只修正 SportsDashboard 的赛事身份展示，并复用现有缓存。基线为设备当前对应的 `78616996`。修改位于独立工作区，主目录中的未完成工作保留。当前为本地完成状态，未部署、未重启服务、未触发写屏。
+本次只修正 SportsDashboard 的赛事身份展示，并复用现有缓存。初始基线为 `78616996`，修改位于独立工作区，主目录中的未完成工作保留。用户已授权部署；首轮版本 `9088dd3b` 的实机数据刷新和写屏完成，但当前赛事暴露了下面的跨源名称差异，因此补充精确别名后再发布验收。最终版本、终态日志和设备图片记录在项目 `.tmp/cs2-logos-ncaa-zh-20260912/` 下。
 
 ## CS2
 
@@ -9,6 +9,7 @@
 - 修复小型赛事 `.event-col .text-ellipsis` 漏读、进行中赛事把 `LAN` 拼入名称、单日赛事被过滤三处目录解析缺口。读取赛事自身的 logo，排除参赛队队标与横幅。
 - 目录本身已有图标时直接复用，避免每场追加请求详情页。单一赛事未匹配不会阻止其他赛事使用目录缓存。
 - IEM 与 ESL Challenger 的目录使用通用 ESL 图标，因此改用 ESL 官网发布的对应系列标志。部分赛事沿用系列或主办方标志，不声称每届都有独立图形。
+- 实机当前数据源标签 `Exort Fiesta Season 2 2026` 对应 [HLTV 的 Exort Fiesta Series 2](https://www.hltv.org/events/9392/exort-fiesta-series-2)，参赛队和日期一致。增加只针对第 2 届的精确别名，保留日期、届数、资格赛隔离，并验证缺少上游图标时日夜主题都直接读取本地资源。
 - 目录来源：[HLTV Events](https://www.hltv.org/events)。IEM 与 ESL Challenger 素材来源：[ESL 赛事页面](https://pro.eslgaming.com/tour/cs/iem/)。资产清单位于 `assets/logos/cs2_events/manifest.json`。
 
 ## NCAA

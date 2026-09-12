@@ -53,6 +53,46 @@ def test_hltv_detail_ignores_related_event_logos_and_preserves_theme_variants():
     }
 
 
+def test_live_exort_provider_alias_uses_bundled_logo_without_crossing_editions():
+    from pathlib import Path
+    from plugins.sports_dashboard.cs2_branding import local_event_branding
+
+    card = {
+        "event_name": "Exort Fiesta Season 2 2026",
+        "main": {"start": datetime(2026, 9, 12, 17, 9, tzinfo=timezone.utc)},
+    }
+    logo = local_event_branding(card)
+    assert Path(logo["event_logo_path"]).name == "84e762f29baae2c7fb9e.png"
+    assert Path(logo["event_logo_path"]).is_file()
+    for name in ("Exort Fiesta Season 1 2026", "Exort Fiesta Season 2 Closed Qualifier 2026"):
+        assert not local_event_branding({**card, "event_name": name})
+    assert not local_event_branding({
+        **card, "main": {"start": datetime(2027, 9, 12, tzinfo=timezone.utc)},
+    })
+
+
+def test_live_exort_alias_renders_with_no_provider_logo_or_network(monkeypatch):
+    from plugins.sports_dashboard import common
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    def no_network(*args, **kwargs):
+        raise AssertionError("Live Exort card must use its bundled event logo")
+    monkeypatch.setattr(plugin, "_load_team_logo_for_render", no_network)
+    card = {
+        "series": "CS", "event_name": "Exort Fiesta Season 2 2026",
+        "event_logo_url": "",
+        "main": {"start": datetime(2026, 9, 12, 17, 9, tzinfo=timezone.utc)},
+    }
+    for palette in (common.DAY_COLORS, common.DEEP_NIGHT_COLORS):
+        token = common._ACTIVE_COLORS.set(palette)
+        try:
+            with Image.new("RGB", (200, 65), palette["panel"]) as canvas:
+                assert plugin._draw_valve_focus_event_logo(canvas, (0, 0, 199, 64), card)
+        finally:
+            common._ACTIVE_COLORS.reset(token)
+
+
 def test_branding_is_persisted_and_does_not_refetch_for_a_new_plugin(monkeypatch, tmp_path):
     from plugins.sports_dashboard import cs2_branding
     from plugins.sports_dashboard.sports_dashboard import SportsDashboard
