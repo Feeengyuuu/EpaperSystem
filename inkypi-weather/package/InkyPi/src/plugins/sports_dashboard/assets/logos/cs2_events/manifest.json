@@ -1,0 +1,1661 @@
+{
+  "source": "https://www.hltv.org/events",
+  "retrieved_at": "2026-09-12",
+  "events": [
+    {
+      "id": "8266",
+      "name": "FISSURE Playground 3",
+      "path": "/events/8266/fissure-playground-3",
+      "start": "2026-09-08T10:00:00+00:00",
+      "end": "2026-09-13T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/hkl56DmvKjTx6MTiYElX6E.png?ixlib=java-2.1.0&w=100&s=f870455a23c35dee03d9104fdecf2ecb",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/yb6nmz3G3THGfQCYnAgO19.png?ixlib=java-2.1.0&w=100&s=b1119580fdd2d32f924616e72bc6b687",
+      "event_logo_path": "901dc54c2cbdcee4dcf3.png",
+      "event_logo_path_dark": "57f04bfc4d61c6c838e9.png"
+    },
+    {
+      "id": "9366",
+      "name": "ESEA Advanced Season 58 North America",
+      "path": "/events/9366/esea-advanced-season-58-north-america",
+      "start": "2026-09-10T10:00:00+00:00",
+      "end": "2026-09-11T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/b75aNG0i4UVPNQHX_Tq-Zq.png?ixlib=java-2.1.0&w=100&s=fdba63dd889455c0a7b9ef343c782c09",
+      "event_logo_path": "713cdee1c6ec7393695e.png"
+    },
+    {
+      "id": "9362",
+      "name": "European Pro League Series 9",
+      "path": "/events/9362/european-pro-league-series-9",
+      "start": "2026-09-12T10:00:00+00:00",
+      "end": "2026-09-30T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/bLbZhWtpMVCIuFkfoKdQ9V.png?ixlib=java-2.1.0&w=100&s=e196485220212132df09ab16651252ed",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/ETBmLxbaHSdcy4_rAaZA2a.png?ixlib=java-2.1.0&w=100&s=2f7a1dcbed50c9224add2a3366d7c025",
+      "event_logo_path": "1f9b78eca2c0d747a958.png",
+      "event_logo_path_dark": "685374adabcebad325de.png"
+    },
+    {
+      "id": "9284",
+      "name": "Radio Popular Roman Imperium Cup VIII",
+      "path": "/events/9284/radio-popular-roman-imperium-cup-viii",
+      "start": "2026-09-11T10:00:00+00:00",
+      "end": "2026-09-13T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/q4xasNcWg5V4PG3CzIPEOx.png?ixlib=java-2.1.0&w=100&s=cdfe832ab31d95ace429978d363807b3",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/q4xasNcWg5V4PG3CzIPEOx.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=4e5ea2790c2912391fac20382c1e0f76",
+      "event_logo_path": "f56c5a814d9b830f4bf1.png",
+      "event_logo_path_dark": "54303327e45c22a0dcb7.png"
+    },
+    {
+      "id": "9242",
+      "name": "PGL Masters Bucharest 2026 South America Closed Qualifier",
+      "path": "/events/9242/pgl-masters-bucharest-2026-south-america-closed-qualifier",
+      "start": "2026-09-09T10:00:00+00:00",
+      "end": "2026-09-12T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/p_BRMRwmdTNzRE7I5Gto__.png?ixlib=java-2.1.0&w=100&s=cc5b04af5802e28a356a6a58ada04e7c",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/HfO1AaoorhHJB28TVcymQ_.png?ixlib=java-2.1.0&w=100&s=75ef84bda51ca16938347fc09d0c0497",
+      "event_logo_path": "8f29e4ad803731f14136.png",
+      "event_logo_path_dark": "a1037c646e271dbf4a14.png"
+    },
+    {
+      "id": "9308",
+      "name": "Thunderpick World Championship 2026 Closed Qualifier",
+      "path": "/events/9308/thunderpick-world-championship-2026-closed-qualifier",
+      "start": "2026-09-09T10:00:00+00:00",
+      "end": "2026-09-13T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/hfziQY5I_Kt-PM4LpjHWaQ.png?ixlib=java-2.1.0&w=100&s=7e7bca5c57c09ec15f4c014eaae46e3e",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/yk2zL5wHnG080pBJ9BQS-E.png?ixlib=java-2.1.0&w=100&s=8e278b0756fbd9d11394d9ddbf9f8ec5",
+      "event_logo_path": "cd84755df21b5521faed.png",
+      "event_logo_path_dark": "077eba3dbc2bc5d0dd04.png"
+    },
+    {
+      "id": "9372",
+      "name": "CCT 2026 Contenders Europe Series 9",
+      "path": "/events/9372/cct-2026-contenders-europe-series-9",
+      "start": "2026-09-10T10:00:00+00:00",
+      "end": "2026-09-13T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/hlzSsCONdMFN17D4sfVgcW.png?ixlib=java-2.1.0&w=100&s=1fbe009639053e70c8e3b32a3e6646ce",
+      "event_logo_path": "72ea4b1187cf119243e3.png"
+    },
+    {
+      "id": "9411",
+      "name": "TipiLAN 2026",
+      "path": "/events/9411/tipilan-2026",
+      "start": "2026-09-12T10:00:00+00:00",
+      "end": "2026-09-13T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/fxGXrYbzcxgUStGb27HFv8.png?ixlib=java-2.1.0&w=100&s=9afe276001aa2bf3e1df9b2ab1f02b55",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/Q1zkR5C1YiFx-_uECikTd9.png?ixlib=java-2.1.0&w=100&s=1a30aefdd4fc6532e76951bdd21dbce9",
+      "event_logo_path": "b218dc1bd4cf2eba36b0.png",
+      "event_logo_path_dark": "188a4eee6886adbdec17.png"
+    },
+    {
+      "id": "9392",
+      "name": "Exort Fiesta Series 2",
+      "path": "/events/9392/exort-fiesta-series-2",
+      "start": "2026-09-11T10:00:00+00:00",
+      "end": "2026-09-23T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/sBZOfTLOR9HgHp6uzufJqV.png?ixlib=java-2.1.0&w=100&s=ac8fec58040d61d01bb5e3d3bc9a88d1",
+      "event_logo_path": "84e762f29baae2c7fb9e.png"
+    },
+    {
+      "id": "9403",
+      "name": "CCT 2026 Europe Series 9 Closed Qualifier",
+      "path": "/events/9403/cct-2026-europe-series-9-closed-qualifier",
+      "start": "2026-09-09T10:00:00+00:00",
+      "end": "2026-09-14T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/CZYxFG_CfcWYpUqP22qBsg.png?ixlib=java-2.1.0&w=100&s=174c742e8741e68791c652587d535b26",
+      "event_logo_path": "5ad150a4f98986d0f79a.png"
+    },
+    {
+      "id": "9243",
+      "name": "PGL Masters Bucharest 2026 North America Closed Qualifier",
+      "path": "/events/9243/pgl-masters-bucharest-2026-north-america-closed-qualifier",
+      "start": "2026-09-09T10:00:00+00:00",
+      "end": "2026-09-12T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/p_BRMRwmdTNzRE7I5Gto__.png?ixlib=java-2.1.0&w=100&s=cc5b04af5802e28a356a6a58ada04e7c",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/HfO1AaoorhHJB28TVcymQ_.png?ixlib=java-2.1.0&w=100&s=75ef84bda51ca16938347fc09d0c0497",
+      "event_logo_path": "8f29e4ad803731f14136.png",
+      "event_logo_path_dark": "a1037c646e271dbf4a14.png"
+    },
+    {
+      "id": "9352",
+      "name": "CCT 2026 Europe Series 8",
+      "path": "/events/9352/cct-2026-europe-series-8",
+      "start": "2026-09-02T10:00:00+00:00",
+      "end": "2026-09-14T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/CZYxFG_CfcWYpUqP22qBsg.png?ixlib=java-2.1.0&w=100&s=174c742e8741e68791c652587d535b26",
+      "event_logo_path": "5ad150a4f98986d0f79a.png"
+    },
+    {
+      "id": "9373",
+      "name": "CCT 2026 Challengers Europe Series 6",
+      "path": "/events/9373/cct-2026-challengers-europe-series-6",
+      "start": "2026-09-05T10:00:00+00:00",
+      "end": "2026-09-13T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/s5us9UiZDA4-ZIkmyAFAzA.png?ixlib=java-2.1.0&w=100&s=163fda0a31a5f373b84cdbc23c922cde",
+      "event_logo_path": "a92853c4a3de6456dccf.png"
+    },
+    {
+      "id": "9363",
+      "name": "NODWIN Clutch Series 12 Closed Qualifier",
+      "path": "/events/9363/nodwin-clutch-series-12-closed-qualifier",
+      "start": "2026-09-07T10:00:00+00:00",
+      "end": "2026-09-13T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/Dt38ClGIBtrp2kGp2GOoK1.png?ixlib=java-2.1.0&w=100&s=25720a27332cf6f6dd26ec624af5eda3",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/Ont-nkd9Kpqqm_1CjGcVTh.png?ixlib=java-2.1.0&w=100&s=63c9d2f18fa66b9c057cd534cbd0c867",
+      "event_logo_path": "8160914b74b7f49293f3.png",
+      "event_logo_path_dark": "f4e7ec787e5f2453bd3e.png"
+    },
+    {
+      "id": "9365",
+      "name": "ESEA Advanced Season 58 Europe",
+      "path": "/events/9365/esea-advanced-season-58-europe",
+      "start": "2026-09-05T10:00:00+00:00",
+      "end": "2026-09-11T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/b75aNG0i4UVPNQHX_Tq-Zq.png?ixlib=java-2.1.0&w=100&s=fdba63dd889455c0a7b9ef343c782c09",
+      "event_logo_path": "713cdee1c6ec7393695e.png"
+    },
+    {
+      "id": "9389",
+      "name": "NSTLGA League Season 2",
+      "path": "/events/9389/nstlga-league-season-2",
+      "start": "2026-09-03T10:00:00+00:00",
+      "end": "2026-09-13T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/HIbYvDKdPMO1C9d1fc93dk.png?ixlib=java-2.1.0&w=100&s=0f95ff89baace5e85d9c23152edfaa3e",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/HIbYvDKdPMO1C9d1fc93dk.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=dc76c1efb60676cece183736f385b5fc",
+      "event_logo_path": "84c0171d52ead1cf7f69.png",
+      "event_logo_path_dark": "6287626e821f0851436c.png"
+    },
+    {
+      "id": "9391",
+      "name": "ESEA Open Season 58 Asia",
+      "path": "/events/9391/esea-open-season-58-asia",
+      "start": "2026-09-10T10:00:00+00:00",
+      "end": "2026-09-20T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/b75aNG0i4UVPNQHX_Tq-Zq.png?ixlib=java-2.1.0&w=100&s=fdba63dd889455c0a7b9ef343c782c09",
+      "event_logo_path": "713cdee1c6ec7393695e.png"
+    },
+    {
+      "id": "9390",
+      "name": "ESEA Intermediate Season 58 Oceania",
+      "path": "/events/9390/esea-intermediate-season-58-oceania",
+      "start": "2026-09-03T10:00:00+00:00",
+      "end": "2026-09-16T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/b75aNG0i4UVPNQHX_Tq-Zq.png?ixlib=java-2.1.0&w=100&s=fdba63dd889455c0a7b9ef343c782c09",
+      "event_logo_path": "713cdee1c6ec7393695e.png"
+    },
+    {
+      "id": "8057",
+      "name": "StarLadder StarSeries Fall 2026",
+      "path": "/events/8057/starladder-starseries-fall-2026",
+      "start": "2026-09-17T10:00:00+00:00",
+      "end": "2026-09-20T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/bIYhaEw1Y1M2dRFAEx8Mue.png?ixlib=java-2.1.0&s=b1857b2ce2886417800afb3eac7022c7",
+      "event_logo_path": "017c7afb1e8ba03b88be.png"
+    },
+    {
+      "id": "9345",
+      "name": "WINLINE MPKBK CIS LAN Season 7",
+      "path": "/events/9345/winline-mpkbk-cis-lan-season-7",
+      "start": "2026-09-13T10:00:00+00:00",
+      "end": "2026-09-16T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/TFsi19jz4ia4lvTpNlcg8J.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=16716bd59efa28cf3b52e2912b3d6ade",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/TFsi19jz4ia4lvTpNlcg8J.png?ixlib=java-2.1.0&w=100&s=a55baceb222d6c0ddb036796d9c53edb",
+      "event_logo_path": "b42d8dd7fbbcb894a498.png",
+      "event_logo_path_dark": "9d4a3c900165a5140b83.png"
+    },
+    {
+      "id": "9244",
+      "name": "PGL Masters Bucharest 2026 Asia Closed Qualifier",
+      "path": "/events/9244/pgl-masters-bucharest-2026-asia-closed-qualifier",
+      "start": "2026-09-13T10:00:00+00:00",
+      "end": "2026-09-13T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/p_BRMRwmdTNzRE7I5Gto__.png?ixlib=java-2.1.0&w=100&s=cc5b04af5802e28a356a6a58ada04e7c",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/HfO1AaoorhHJB28TVcymQ_.png?ixlib=java-2.1.0&w=100&s=75ef84bda51ca16938347fc09d0c0497",
+      "event_logo_path": "8f29e4ad803731f14136.png",
+      "event_logo_path_dark": "a1037c646e271dbf4a14.png"
+    },
+    {
+      "id": "9404",
+      "name": "CCT 2026 Europe Series 9",
+      "path": "/events/9404/cct-2026-europe-series-9",
+      "start": "2026-09-15T10:00:00+00:00",
+      "end": "2026-09-27T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/CZYxFG_CfcWYpUqP22qBsg.png?ixlib=java-2.1.0&w=100&s=174c742e8741e68791c652587d535b26",
+      "event_logo_path": "5ad150a4f98986d0f79a.png"
+    },
+    {
+      "id": "9364",
+      "name": "NODWIN Clutch Series 12",
+      "path": "/events/9364/nodwin-clutch-series-12",
+      "start": "2026-09-15T10:00:00+00:00",
+      "end": "2026-09-28T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/Dt38ClGIBtrp2kGp2GOoK1.png?ixlib=java-2.1.0&w=100&s=25720a27332cf6f6dd26ec624af5eda3",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/Ont-nkd9Kpqqm_1CjGcVTh.png?ixlib=java-2.1.0&w=100&s=63c9d2f18fa66b9c057cd534cbd0c867",
+      "event_logo_path": "8160914b74b7f49293f3.png",
+      "event_logo_path_dark": "f4e7ec787e5f2453bd3e.png"
+    },
+    {
+      "id": "9410",
+      "name": "CROSSFIRE Season 6",
+      "path": "/events/9410/crossfire-season-6",
+      "start": "2026-09-16T10:00:00+00:00",
+      "end": "2026-10-11T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/8IElR1Z1r1cSzAB9ukvrKy.png?ixlib=java-2.1.0&w=100&s=ad610e0a17b31818c2d7868864be72a0",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/8IElR1Z1r1cSzAB9ukvrKy.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=466e78a648c0227cb6e3b0a7b593b2cd",
+      "event_logo_path": "4644dc62cfb277b6eafd.png",
+      "event_logo_path_dark": "f77fa6dfef0c0831a0ca.png"
+    },
+    {
+      "id": "9335",
+      "name": "Circuit X Curitiba Fall 2026",
+      "path": "/events/9335/circuit-x-curitiba-fall-2026",
+      "start": "2026-09-16T10:00:00+00:00",
+      "end": "2026-09-20T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/XCdXUGBlukeAZKcweK10vg.png?ixlib=java-2.1.0&w=100&s=84ba80fc9d9b8197de0fd9324e099355",
+      "event_logo_path": "9dabe6c6ada0b60448ed.png"
+    },
+    {
+      "id": "9405",
+      "name": "CCT 2026 Challengers South America Series 3",
+      "path": "/events/9405/cct-2026-challengers-south-america-series-3",
+      "start": "2026-09-17T10:00:00+00:00",
+      "end": "2026-09-20T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/q5xvv1q5Yt3mXnSxAQRWl5.png?ixlib=java-2.1.0&w=100&s=f93f31034ef9a12c27e7c9b4419d802a",
+      "event_logo_path": "2e1ab82129a2f9e6c44a.png"
+    },
+    {
+      "id": "9341",
+      "name": "HyperX Retake Season 12",
+      "path": "/events/9341/hyperx-retake-season-12",
+      "start": "2026-09-17T10:00:00+00:00",
+      "end": "2026-09-20T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/1z24-QPBBIUHl6Onjjbdz_.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=b05286988e3fcb9f773d45ce2a1efd7c",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/1z24-QPBBIUHl6Onjjbdz_.png?ixlib=java-2.1.0&w=100&s=af865611279aade76f03e3e7ae7c0f67",
+      "event_logo_path": "f5f21a7fc3229c1dc2ad.png",
+      "event_logo_path_dark": "136ffe6effef5e246e69.png"
+    },
+    {
+      "id": "9266",
+      "name": "Logitech G Play Connect 2026",
+      "path": "/events/9266/logitech-g-play-connect-2026",
+      "start": "2026-09-17T10:00:00+00:00",
+      "end": "2026-09-23T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/mjSsvrhSY0eA1CwFhtn-2z.png?ixlib=java-2.1.0&w=100&s=4cd8281b045d7aa28df6938ffdd2b016",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/5BntIUcITLUvB95HSlDrkM.png?ixlib=java-2.1.0&w=100&s=fd3912dd4491d320598e88cabf05bad2",
+      "event_logo_path": "98eb5899be0dd5b9b7b4.png",
+      "event_logo_path_dark": "65a91fe6731900694275.png"
+    },
+    {
+      "id": "9317",
+      "name": "UKIC Masters Fall 2026 Finals",
+      "path": "/events/9317/ukic-masters-fall-2026-finals",
+      "start": "2026-09-19T10:00:00+00:00",
+      "end": "2026-09-19T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/4EjZAuq6gLKuYleVVtv9d2.png?ixlib=java-2.1.0&w=100&s=34cc4736cb568e9dc335d847f12831e8",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/01htKw-AvR1ncIok0or2R6.png?ixlib=java-2.1.0&w=100&s=26ffec5d48fe302165b6d2989df66b8a",
+      "event_logo_path": "23162bc74a1c004c5c34.png",
+      "event_logo_path_dark": "f959503f990ffdc14372.png"
+    },
+    {
+      "id": "9222",
+      "name": "Stake Pulse Beat II",
+      "path": "/events/9222/stake-pulse-beat-ii",
+      "start": "2026-09-21T10:00:00+00:00",
+      "end": "2026-09-26T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/TCoj0-5b_HJoefX6W1qpXL.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=1e960fd53cf25773bb488fc9e73caf5d",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/TCoj0-5b_HJoefX6W1qpXL.png?ixlib=java-2.1.0&w=100&s=4939db740a2d33b039560a03dddd6446",
+      "event_logo_path": "3832e674beeddc14fcbd.png",
+      "event_logo_path_dark": "9fe9c5d5d5ebee622aff.png"
+    },
+    {
+      "id": "9356",
+      "name": "ESL Challenger League Season 52 North America Cup 2",
+      "path": "/events/9356/esl-challenger-league-season-52-north-america-cup-2",
+      "start": "2026-09-22T10:00:00+00:00",
+      "end": "2026-09-29T10:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9355",
+      "name": "ESL Challenger League Season 52 South America Cup 2",
+      "path": "/events/9355/esl-challenger-league-season-52-south-america-cup-2",
+      "start": "2026-09-22T10:00:00+00:00",
+      "end": "2026-09-29T10:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9354",
+      "name": "ESL Challenger League Season 52 Asia-Pacific Cup 2",
+      "path": "/events/9354/esl-challenger-league-season-52-asia-pacific-cup-2",
+      "start": "2026-09-22T10:00:00+00:00",
+      "end": "2026-09-29T10:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9353",
+      "name": "ESL Challenger League Season 52 Oceania Cup 2",
+      "path": "/events/9353/esl-challenger-league-season-52-oceania-cup-2",
+      "start": "2026-09-22T10:00:00+00:00",
+      "end": "2026-09-29T10:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9338",
+      "name": "ESL Challenger League Season 52 Europe Cup 7",
+      "path": "/events/9338/esl-challenger-league-season-52-europe-cup-7",
+      "start": "2026-09-22T10:00:00+00:00",
+      "end": "2026-09-24T10:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9346",
+      "name": "FERJEE In House Season 2",
+      "path": "/events/9346/ferjee-in-house-season-2",
+      "start": "2026-09-23T10:00:00+00:00",
+      "end": "2026-09-27T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/DeQggjEBZGUIdPM9eC94xy.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=21895f04e87f11981da0c8617aa72e76",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/DeQggjEBZGUIdPM9eC94xy.png?ixlib=java-2.1.0&w=100&s=cd8d273bdc5b1edf2905a00efc607f74",
+      "event_logo_path": "731eaa10b0097d290bd2.png",
+      "event_logo_path_dark": "a747197bc1287d682e81.png"
+    },
+    {
+      "id": "9272",
+      "name": "Tipsport Open Cup 2",
+      "path": "/events/9272/tipsport-open-cup-2",
+      "start": "2026-09-23T10:00:00+00:00",
+      "end": "2026-09-27T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/VZyFf5Sg04HmGuzbuMr8zm.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=9f48c0fc94378ea7a9ec211d9311c19f",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/VZyFf5Sg04HmGuzbuMr8zm.png?ixlib=java-2.1.0&w=100&s=ecb377c93c42070b9bdf8f75e8fb429c",
+      "event_logo_path": "4bb01f5706e8369e2934.png",
+      "event_logo_path_dark": "18cbe587bb53b30910f2.png"
+    },
+    {
+      "id": "9342",
+      "name": "Stake Ranked Episode 5 Closed Qualifier",
+      "path": "/events/9342/stake-ranked-episode-5-closed-qualifier",
+      "start": "2026-09-24T10:00:00+00:00",
+      "end": "2026-09-27T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/NGotrt8Qjg3Ny35uN_LqqV.png?ixlib=java-2.1.0&w=100&s=b1ebd7c3f9a43d9ad78ca2be434b4fca",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/6e4NTWGjF4FdoBAalqUg7-.png?ixlib=java-2.1.0&w=100&s=39b6563c2557e9bbd7b6c0bf53d698c0",
+      "event_logo_path": "170a929c99adc75ba3a0.png",
+      "event_logo_path_dark": "f4ceb1b6101f7d850819.png"
+    },
+    {
+      "id": "9255",
+      "name": "LeonBet Masters Season 1",
+      "path": "/events/9255/leonbet-masters-season-1",
+      "start": "2026-09-24T10:00:00+00:00",
+      "end": "2026-09-27T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/-IJju5OujjYcAMbiNOMAc6.png?ixlib=java-2.1.0&w=100&s=0e192c27aa6d7312e1321c1397161c3c",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/u_6VEqZyTH34T-PYw9D_rk.png?ixlib=java-2.1.0&w=100&s=dfe6c306af2974ea82b62ac6ded29223",
+      "event_logo_path": "475541aaedd4a2beae37.png",
+      "event_logo_path_dark": "eca6705212ea842604da.png"
+    },
+    {
+      "id": "9396",
+      "name": "ESEA Season 58 North America Finals",
+      "path": "/events/9396/esea-season-58-north-america-finals",
+      "start": "2026-09-25T10:00:00+00:00",
+      "end": "2026-09-27T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/b75aNG0i4UVPNQHX_Tq-Zq.png?ixlib=java-2.1.0&w=100&s=fdba63dd889455c0a7b9ef343c782c09",
+      "event_logo_path": "713cdee1c6ec7393695e.png"
+    },
+    {
+      "id": "9395",
+      "name": "ESEA Season 58 Europe Finals",
+      "path": "/events/9395/esea-season-58-europe-finals",
+      "start": "2026-09-25T10:00:00+00:00",
+      "end": "2026-09-27T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/b75aNG0i4UVPNQHX_Tq-Zq.png?ixlib=java-2.1.0&w=100&s=fdba63dd889455c0a7b9ef343c782c09",
+      "event_logo_path": "713cdee1c6ec7393695e.png"
+    },
+    {
+      "id": "9327",
+      "name": "1win Private Club Season 1",
+      "path": "/events/9327/1win-private-club-season-1",
+      "start": "2026-09-25T10:00:00+00:00",
+      "end": "2026-09-28T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/P0mfD5pUOWgdo948M_Kxvo.png?ixlib=java-2.1.0&w=100&s=c4c2f14e0a37c7d1d73d3aec6de1d4b6",
+      "event_logo_path": "e51752285b21738e984a.png"
+    },
+    {
+      "id": "9187",
+      "name": "iBUYPOWER Masters FML 2026",
+      "path": "/events/9187/ibuypower-masters-fml-2026",
+      "start": "2026-09-25T10:00:00+00:00",
+      "end": "2026-09-27T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/ujec2YDT8tjfCBErU9PApu.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=e29b77af96a52299e505be069f72a6df",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/ujec2YDT8tjfCBErU9PApu.png?ixlib=java-2.1.0&w=100&s=8aa658fbc0a3ebb852092003d7b558d6",
+      "event_logo_path": "8a0d50e1e53b6c1a1a1d.png",
+      "event_logo_path_dark": "4e3265c6c8b0ec3de00c.png"
+    },
+    {
+      "id": "9361",
+      "name": "WINLINE MPKBK CIS LAN Season 8",
+      "path": "/events/9361/winline-mpkbk-cis-lan-season-8",
+      "start": "2026-09-29T10:00:00+00:00",
+      "end": "2026-10-02T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/TFsi19jz4ia4lvTpNlcg8J.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=16716bd59efa28cf3b52e2912b3d6ade",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/TFsi19jz4ia4lvTpNlcg8J.png?ixlib=java-2.1.0&w=100&s=a55baceb222d6c0ddb036796d9c53edb",
+      "event_logo_path": "b42d8dd7fbbcb894a498.png",
+      "event_logo_path_dark": "9d4a3c900165a5140b83.png"
+    },
+    {
+      "id": "9339",
+      "name": "Urban Riga Open Season 7",
+      "path": "/events/9339/urban-riga-open-season-7",
+      "start": "2026-09-29T10:00:00+00:00",
+      "end": "2026-09-30T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/OdMo5ex5BIHBLmarBkyrwz.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=39f4060ba426da34c01bc2bf82c5b824",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/OdMo5ex5BIHBLmarBkyrwz.png?ixlib=java-2.1.0&w=100&s=428a20483f610afad64cefbe3fc5c17b",
+      "event_logo_path": "bf945cd302a2c5541397.png",
+      "event_logo_path_dark": "eae91f46a7e696c18644.png"
+    },
+    {
+      "id": "8244",
+      "name": "ESL Pro League Season 24",
+      "path": "/events/8244/esl-pro-league-season-24",
+      "start": "2026-10-03T10:00:00+00:00",
+      "end": "2026-10-11T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/PhVPy7kXO_J_nfTng7a87h.png?ixlib=java-2.1.0&w=400&s=c0aedfdc29d3c83494b063e81e987cf6",
+      "event_logo_path": "50d4d0ea7104174a4f9a.png"
+    },
+    {
+      "id": "8050",
+      "name": "PGL Masters Bucharest 2026",
+      "path": "/events/8050/pgl-masters-bucharest-2026",
+      "start": "2026-10-24T10:00:00+00:00",
+      "end": "2026-10-31T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/p_BRMRwmdTNzRE7I5Gto__.png?ixlib=java-2.1.0&w=400&s=50aec3237e8343402ad17fc82161b88a",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/HfO1AaoorhHJB28TVcymQ_.png?ixlib=java-2.1.0&w=400&s=e35077084deaf8c8c09e643c3a0e6b05",
+      "event_logo_path": "5491678b55404dd61609.png",
+      "event_logo_path_dark": "f65df2e29a4867f7d072.png"
+    },
+    {
+      "id": "9336",
+      "name": "FOX Legacy Season 1",
+      "path": "/events/9336/fox-legacy-season-1",
+      "start": "2026-10-01T10:00:00+00:00",
+      "end": "2026-10-04T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/rKhw3fKBJUJYIpf2yV4bNm.png?ixlib=java-2.1.0&w=100&s=33eda41664c88d4cd604105fe623af13",
+      "event_logo_path": "ac3707821ae65bebb072.png"
+    },
+    {
+      "id": "9256",
+      "name": "Stake Ranked Episode 4",
+      "path": "/events/9256/stake-ranked-episode-4",
+      "start": "2026-10-01T10:00:00+00:00",
+      "end": "2026-10-04T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/NGotrt8Qjg3Ny35uN_LqqV.png?ixlib=java-2.1.0&w=100&s=b1ebd7c3f9a43d9ad78ca2be434b4fca",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/6e4NTWGjF4FdoBAalqUg7-.png?ixlib=java-2.1.0&w=100&s=39b6563c2557e9bbd7b6c0bf53d698c0",
+      "event_logo_path": "170a929c99adc75ba3a0.png",
+      "event_logo_path_dark": "f4ceb1b6101f7d850819.png"
+    },
+    {
+      "id": "9253",
+      "name": "ROG JOURNEY Autumn 2026",
+      "path": "/events/9253/rog-journey-autumn-2026",
+      "start": "2026-10-02T10:00:00+00:00",
+      "end": "2026-10-04T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/Ych9NShBPvN4rNgic74Fxu.png?ixlib=java-2.1.0&w=100&s=e476cd01afc782f1c3f652f6efa19e71",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/nBJErD4F57HhwYIJRrIu3w.png?ixlib=java-2.1.0&w=100&s=1395160691d9a4c1f4c4d46cc1c0838d",
+      "event_logo_path": "d263873037683aab90f1.png",
+      "event_logo_path_dark": "0cae4e45eb3f2c686064.png"
+    },
+    {
+      "id": "9408",
+      "name": "1win Private Club Season 2 Closed Qualifier",
+      "path": "/events/9408/1win-private-club-season-2-closed-qualifier",
+      "start": "2026-10-07T10:00:00+00:00",
+      "end": "2026-10-10T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/P0mfD5pUOWgdo948M_Kxvo.png?ixlib=java-2.1.0&w=100&s=c4c2f14e0a37c7d1d73d3aec6de1d4b6",
+      "event_logo_path": "e51752285b21738e984a.png"
+    },
+    {
+      "id": "9387",
+      "name": "ESL Challenger League Season 52 North America Cup 3",
+      "path": "/events/9387/esl-challenger-league-season-52-north-america-cup-3",
+      "start": "2026-10-07T10:00:00+00:00",
+      "end": "2026-10-14T10:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9385",
+      "name": "ESL Challenger League Season 52 South America Cup 3",
+      "path": "/events/9385/esl-challenger-league-season-52-south-america-cup-3",
+      "start": "2026-10-07T10:00:00+00:00",
+      "end": "2026-10-14T10:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9383",
+      "name": "ESL Challenger League Season 52 Asia-Pacific Cup 3",
+      "path": "/events/9383/esl-challenger-league-season-52-asia-pacific-cup-3",
+      "start": "2026-10-07T10:00:00+00:00",
+      "end": "2026-10-14T10:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9381",
+      "name": "ESL Challenger League Season 52 Oceania Cup 3",
+      "path": "/events/9381/esl-challenger-league-season-52-oceania-cup-3",
+      "start": "2026-10-07T10:00:00+00:00",
+      "end": "2026-10-14T10:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9374",
+      "name": "ESL Challenger League Season 52 Europe Cup 8",
+      "path": "/events/9374/esl-challenger-league-season-52-europe-cup-8",
+      "start": "2026-10-07T10:00:00+00:00",
+      "end": "2026-10-10T10:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9318",
+      "name": "Roman Imperium Cup IX",
+      "path": "/events/9318/roman-imperium-cup-ix",
+      "start": "2026-10-07T10:00:00+00:00",
+      "end": "2026-10-10T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/q4xasNcWg5V4PG3CzIPEOx.png?ixlib=java-2.1.0&w=100&s=cdfe832ab31d95ace429978d363807b3",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/q4xasNcWg5V4PG3CzIPEOx.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=4e5ea2790c2912391fac20382c1e0f76",
+      "event_logo_path": "f56c5a814d9b830f4bf1.png",
+      "event_logo_path_dark": "54303327e45c22a0dcb7.png"
+    },
+    {
+      "id": "9223",
+      "name": "Stake Pulse Beat III",
+      "path": "/events/9223/stake-pulse-beat-iii",
+      "start": "2026-10-12T10:00:00+00:00",
+      "end": "2026-10-17T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/TCoj0-5b_HJoefX6W1qpXL.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=1e960fd53cf25773bb488fc9e73caf5d",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/TCoj0-5b_HJoefX6W1qpXL.png?ixlib=java-2.1.0&w=100&s=4939db740a2d33b039560a03dddd6446",
+      "event_logo_path": "3832e674beeddc14fcbd.png",
+      "event_logo_path_dark": "9fe9c5d5d5ebee622aff.png"
+    },
+    {
+      "id": "8932",
+      "name": "Thunderpick World Championship 2026",
+      "path": "/events/8932/thunderpick-world-championship-2026",
+      "start": "2026-10-14T10:00:00+00:00",
+      "end": "2026-10-18T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/hfziQY5I_Kt-PM4LpjHWaQ.png?ixlib=java-2.1.0&w=100&s=7e7bca5c57c09ec15f4c014eaae46e3e",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/yk2zL5wHnG080pBJ9BQS-E.png?ixlib=java-2.1.0&w=100&s=8e278b0756fbd9d11394d9ddbf9f8ec5",
+      "event_logo_path": "cd84755df21b5521faed.png",
+      "event_logo_path_dark": "077eba3dbc2bc5d0dd04.png"
+    },
+    {
+      "id": "9332",
+      "name": "Elisa BreakOut Series 2",
+      "path": "/events/9332/elisa-breakout-series-2",
+      "start": "2026-10-15T10:00:00+00:00",
+      "end": "2026-10-17T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/GFlgh44zejBpn2baoEGZAw.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=4b3b5dce8b5e4106273974ae49f633cf",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/GFlgh44zejBpn2baoEGZAw.png?ixlib=java-2.1.0&w=100&s=105f4ac85bb3f8368a517da9e9390a1c",
+      "event_logo_path": "c48648826dab6530f303.png",
+      "event_logo_path_dark": "d9ecb2d363da991cec70.png"
+    },
+    {
+      "id": "9407",
+      "name": "1win Private Club Season 2",
+      "path": "/events/9407/1win-private-club-season-2",
+      "start": "2026-10-19T10:00:00+00:00",
+      "end": "2026-10-22T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/P0mfD5pUOWgdo948M_Kxvo.png?ixlib=java-2.1.0&w=100&s=c4c2f14e0a37c7d1d73d3aec6de1d4b6",
+      "event_logo_path": "e51752285b21738e984a.png"
+    },
+    {
+      "id": "9399",
+      "name": "Stake Ranked Episode 6 Closed Qualifier",
+      "path": "/events/9399/stake-ranked-episode-6-closed-qualifier",
+      "start": "2026-10-19T10:00:00+00:00",
+      "end": "2026-10-22T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/NGotrt8Qjg3Ny35uN_LqqV.png?ixlib=java-2.1.0&w=100&s=b1ebd7c3f9a43d9ad78ca2be434b4fca",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/6e4NTWGjF4FdoBAalqUg7-.png?ixlib=java-2.1.0&w=100&s=39b6563c2557e9bbd7b6c0bf53d698c0",
+      "event_logo_path": "170a929c99adc75ba3a0.png",
+      "event_logo_path_dark": "f4ceb1b6101f7d850819.png"
+    },
+    {
+      "id": "9312",
+      "name": "Digital Crusade DraculaN Season 7",
+      "path": "/events/9312/digital-crusade-draculan-season-7",
+      "start": "2026-10-19T10:00:00+00:00",
+      "end": "2026-10-23T10:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/9CDH4T-w6u6qf-lp_c3qs1.png?ixlib=java-2.1.0&w=100&s=d15fc62ba3afbd7a264f797fbb27dd57",
+      "event_logo_path": "65b6bb43d275c8fb3c73.png"
+    },
+    {
+      "id": "9375",
+      "name": "ESL Challenger League Season 52 Europe Cup 9",
+      "path": "/events/9375/esl-challenger-league-season-52-europe-cup-9",
+      "start": "2026-10-21T10:00:00+00:00",
+      "end": "2026-10-23T10:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9257",
+      "name": "Stake Ranked Episode 5",
+      "path": "/events/9257/stake-ranked-episode-5",
+      "start": "2026-10-27T11:00:00+00:00",
+      "end": "2026-10-30T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/NGotrt8Qjg3Ny35uN_LqqV.png?ixlib=java-2.1.0&w=100&s=b1ebd7c3f9a43d9ad78ca2be434b4fca",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/6e4NTWGjF4FdoBAalqUg7-.png?ixlib=java-2.1.0&w=100&s=39b6563c2557e9bbd7b6c0bf53d698c0",
+      "event_logo_path": "170a929c99adc75ba3a0.png",
+      "event_logo_path_dark": "f4ceb1b6101f7d850819.png"
+    },
+    {
+      "id": "9406",
+      "name": "XSE Pro League Luoyang 2026",
+      "path": "/events/9406/xse-pro-league-luoyang-2026",
+      "start": "2026-10-29T11:00:00+00:00",
+      "end": "2026-11-01T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/5SsN3ChVd0GFO22F8H3o6c.png?ixlib=java-2.1.0&w=100&s=89294b74f26e3539e384f2833976ff14",
+      "event_logo_path": "1fb417230c493c215c33.png"
+    },
+    {
+      "id": "9292",
+      "name": "Gamers Club Masters VII",
+      "path": "/events/9292/gamers-club-masters-vii",
+      "start": "2026-10-29T11:00:00+00:00",
+      "end": "2026-11-01T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/-gDC1JCEktsEfHEYheOpZS.png?ixlib=java-2.1.0&w=100&s=4764452e7decda5106efa1fd6e92e517",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/-gDC1JCEktsEfHEYheOpZS.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=3fe6aa2ac08c7d0362d8472172a89b94",
+      "event_logo_path": "4a31c8ecbd9ce3b6ebc8.png",
+      "event_logo_path_dark": "8284ce0d6cdf08436e29.png"
+    },
+    {
+      "id": "9344",
+      "name": "GLuck Moscow Cyber Games 2026",
+      "path": "/events/9344/gluck-moscow-cyber-games-2026",
+      "start": "2026-10-31T11:00:00+00:00",
+      "end": "2026-11-01T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/AgLR78SmWaC3nD3hvezTo1.png?ixlib=java-2.1.0&w=100&s=e8b07287b924aaacc5f14512448fb4a9",
+      "event_logo_path": "f5b21e9cd775ec2814bb.png"
+    },
+    {
+      "id": "8245",
+      "name": "IEM Beijing 2026",
+      "path": "/events/8245/iem-beijing-2026",
+      "start": "2026-11-02T11:00:00+00:00",
+      "end": "2026-11-08T11:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2022/05/brand-logo-iem-vertical-light.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2022/05/brand-logo-iem-vertical-light.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "3551298a471e531f702f.webp",
+      "event_logo_path_dark": "3551298a471e531f702f.webp"
+    },
+    {
+      "id": "8251",
+      "name": "BLAST Rivals 2026 Season 2",
+      "path": "/events/8251/blast-rivals-2026-season-2",
+      "start": "2026-11-09T11:00:00+00:00",
+      "end": "2026-11-15T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/pOBDGt1pvBDx2B2Fe6htMp.png?ixlib=java-2.1.0&w=400&s=74619cb4088a1e84add4cafab2fb3dc2",
+      "event_logo_path": "3530e66040f93fadae1e.png"
+    },
+    {
+      "id": "9303",
+      "name": "PGL Major Singapore 2026 Stage 1",
+      "path": "/events/9303/pgl-major-singapore-2026-stage-1",
+      "start": "2026-11-24T11:00:00+00:00",
+      "end": "2026-11-27T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/u-4VdjFWGYz_GwBxLGrr11.png?ixlib=java-2.1.0&w=400&s=c70762c42a45bdfc27329277202ba2d1",
+      "event_logo_path": "96e1f5f4c812ce480724.png"
+    },
+    {
+      "id": "9304",
+      "name": "PGL Major Singapore 2026 Stage 2",
+      "path": "/events/9304/pgl-major-singapore-2026-stage-2",
+      "start": "2026-11-28T11:00:00+00:00",
+      "end": "2026-12-01T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/u-4VdjFWGYz_GwBxLGrr11.png?ixlib=java-2.1.0&w=400&s=c70762c42a45bdfc27329277202ba2d1",
+      "event_logo_path": "96e1f5f4c812ce480724.png"
+    },
+    {
+      "id": "9376",
+      "name": "ESL Challenger League Season 52 Europe Cup 10",
+      "path": "/events/9376/esl-challenger-league-season-52-europe-cup-10",
+      "start": "2026-11-03T11:00:00+00:00",
+      "end": "2026-11-05T11:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9377",
+      "name": "ESL Challenger League Season 52 Europe Cup 11",
+      "path": "/events/9377/esl-challenger-league-season-52-europe-cup-11",
+      "start": "2026-11-07T11:00:00+00:00",
+      "end": "2026-11-09T11:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9393",
+      "name": "PGL Cluj-Napoca 2027 Open Qualifier 1",
+      "path": "/events/9393/pgl-cluj-napoca-2027-open-qualifier-1",
+      "start": "2026-11-10T11:00:00+00:00",
+      "end": "2026-11-11T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/u-4VdjFWGYz_GwBxLGrr11.png?ixlib=java-2.1.0&w=100&s=d720c0ce81fe5b3e760c5b545c22e819",
+      "event_logo_path": "691195300e3c03bfcbc4.png"
+    },
+    {
+      "id": "9394",
+      "name": "PGL Cluj-Napoca 2027 Open Qualifier 2",
+      "path": "/events/9394/pgl-cluj-napoca-2027-open-qualifier-2",
+      "start": "2026-11-12T11:00:00+00:00",
+      "end": "2026-11-13T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/u-4VdjFWGYz_GwBxLGrr11.png?ixlib=java-2.1.0&w=100&s=d720c0ce81fe5b3e760c5b545c22e819",
+      "event_logo_path": "691195300e3c03bfcbc4.png"
+    },
+    {
+      "id": "9378",
+      "name": "ESL Challenger League Season 52 Europe Cup 12",
+      "path": "/events/9378/esl-challenger-league-season-52-europe-cup-12",
+      "start": "2026-11-12T11:00:00+00:00",
+      "end": "2026-11-14T11:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9347",
+      "name": "Austin LAN 2026",
+      "path": "/events/9347/austin-lan-2026",
+      "start": "2026-11-13T11:00:00+00:00",
+      "end": "2026-11-15T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/MbiNbAfBoKZybIk6ob2T92.png?ixlib=java-2.1.0&w=100&s=f829bd329a5044af480349c17394d8ff",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/MbiNbAfBoKZybIk6ob2T92.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=36772458d42d7cc155378369e6c86739",
+      "event_logo_path": "2bc68fb105b232e8babc.png",
+      "event_logo_path_dark": "2cb648e068bd23349d4f.png"
+    },
+    {
+      "id": "9135",
+      "name": "PGL Cluj-Napoca 2027 Closed Qualifier",
+      "path": "/events/9135/pgl-cluj-napoca-2027-closed-qualifier",
+      "start": "2026-11-15T11:00:00+00:00",
+      "end": "2026-11-18T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/u-4VdjFWGYz_GwBxLGrr11.png?ixlib=java-2.1.0&w=100&s=d720c0ce81fe5b3e760c5b545c22e819",
+      "event_logo_path": "691195300e3c03bfcbc4.png"
+    },
+    {
+      "id": "9258",
+      "name": "Stake Ranked Episode 6",
+      "path": "/events/9258/stake-ranked-episode-6",
+      "start": "2026-11-17T11:00:00+00:00",
+      "end": "2026-11-20T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/NGotrt8Qjg3Ny35uN_LqqV.png?ixlib=java-2.1.0&w=100&s=b1ebd7c3f9a43d9ad78ca2be434b4fca",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/6e4NTWGjF4FdoBAalqUg7-.png?ixlib=java-2.1.0&w=100&s=39b6563c2557e9bbd7b6c0bf53d698c0",
+      "event_logo_path": "170a929c99adc75ba3a0.png",
+      "event_logo_path_dark": "f4ceb1b6101f7d850819.png"
+    },
+    {
+      "id": "9273",
+      "name": "Tipsport RUSH Brno 2026",
+      "path": "/events/9273/tipsport-rush-brno-2026",
+      "start": "2026-11-20T11:00:00+00:00",
+      "end": "2026-11-22T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/VZyFf5Sg04HmGuzbuMr8zm.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=9f48c0fc94378ea7a9ec211d9311c19f",
+      "event_logo_url_dark": "https://img-cdn.hltv.org/eventlogo/VZyFf5Sg04HmGuzbuMr8zm.png?ixlib=java-2.1.0&w=100&s=ecb377c93c42070b9bdf8f75e8fb429c",
+      "event_logo_path": "4bb01f5706e8369e2934.png",
+      "event_logo_path_dark": "18cbe587bb53b30910f2.png"
+    },
+    {
+      "id": "8302",
+      "name": "PGL Major Singapore 2026",
+      "path": "/events/8302/pgl-major-singapore-2026",
+      "start": "2026-12-03T11:00:00+00:00",
+      "end": "2026-12-13T11:00:00+00:00",
+      "event_logo_url": "https://img-cdn.hltv.org/eventlogo/u-4VdjFWGYz_GwBxLGrr11.png?ixlib=java-2.1.0&w=400&s=c70762c42a45bdfc27329277202ba2d1",
+      "event_logo_path": "96e1f5f4c812ce480724.png"
+    },
+    {
+      "id": "9388",
+      "name": "ESL Challenger League Season 52 North America Cup 4",
+      "path": "/events/9388/esl-challenger-league-season-52-north-america-cup-4",
+      "start": "2026-12-03T11:00:00+00:00",
+      "end": "2026-12-10T11:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9386",
+      "name": "ESL Challenger League Season 52 South America Cup 4",
+      "path": "/events/9386/esl-challenger-league-season-52-south-america-cup-4",
+      "start": "2026-12-03T11:00:00+00:00",
+      "end": "2026-12-10T11:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9384",
+      "name": "ESL Challenger League Season 52 Asia-Pacific Cup 4",
+      "path": "/events/9384/esl-challenger-league-season-52-asia-pacific-cup-4",
+      "start": "2026-12-03T11:00:00+00:00",
+      "end": "2026-12-10T11:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9382",
+      "name": "ESL Challenger League Season 52 Oceania Cup 4",
+      "path": "/events/9382/esl-challenger-league-season-52-oceania-cup-4",
+      "start": "2026-12-03T11:00:00+00:00",
+      "end": "2026-12-10T11:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9379",
+      "name": "ESL Challenger League Season 52 Europe Cup 13",
+      "path": "/events/9379/esl-challenger-league-season-52-europe-cup-13",
+      "start": "2026-12-03T11:00:00+00:00",
+      "end": "2026-12-05T11:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9380",
+      "name": "ESL Challenger League Season 52 Europe Cup 14",
+      "path": "/events/9380/esl-challenger-league-season-52-europe-cup-14",
+      "start": "2026-12-07T11:00:00+00:00",
+      "end": "2026-12-09T11:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    },
+    {
+      "id": "9285",
+      "name": "ESL Challenger League Season 52 Europe Finals",
+      "path": "/events/9285/esl-challenger-league-season-52-europe-finals",
+      "start": "2026-12-14T11:00:00+00:00",
+      "end": "2026-12-18T11:00:00+00:00",
+      "event_logo_url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "event_logo_url_dark": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png",
+      "asset_source": "https://pro.eslgaming.com/tour/cs/iem/",
+      "asset_scope": "Official series mark; the catalog currently supplies the generic ESL organizer icon",
+      "event_logo_path": "df893254334970fb21ee.png",
+      "event_logo_path_dark": "df893254334970fb21ee.png"
+    }
+  ],
+  "assets": [
+    {
+      "file": "3551298a471e531f702f.webp",
+      "sha256": "3551298a471e531f702f61731603e47f921817e4e94d98be132f2c93f16257a4",
+      "bytes": 12012,
+      "size": [
+        600,
+        333
+      ],
+      "url": "https://esl.com/wp-content/uploads/2022/05/brand-logo-iem-vertical-light.png"
+    },
+    {
+      "file": "df893254334970fb21ee.png",
+      "sha256": "df893254334970fb21ee3d89f805d8faa4f072a132d5ee623c6a20bb186fef5b",
+      "bytes": 14240,
+      "size": [
+        768,
+        465
+      ],
+      "url": "https://esl.com/wp-content/uploads/2025/08/brand-ecl-logo-neg-colored.png"
+    },
+    {
+      "file": "475541aaedd4a2beae37.png",
+      "sha256": "475541aaedd4a2beae3751fbfc7aa5fbef47113b3d056ee0651338df6d541ea3",
+      "bytes": 3219,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/-IJju5OujjYcAMbiNOMAc6.png?ixlib=java-2.1.0&w=100&s=0e192c27aa6d7312e1321c1397161c3c"
+    },
+    {
+      "file": "8284ce0d6cdf08436e29.png",
+      "sha256": "8284ce0d6cdf08436e292502ce0a4a7e48a44e4e7ab82cb9a8d095c6e909298c",
+      "bytes": 6333,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/-gDC1JCEktsEfHEYheOpZS.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=3fe6aa2ac08c7d0362d8472172a89b94"
+    },
+    {
+      "file": "4a31c8ecbd9ce3b6ebc8.png",
+      "sha256": "4a31c8ecbd9ce3b6ebc878408276466e17891a58acf26c88cbe29d6943081b58",
+      "bytes": 6309,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/-gDC1JCEktsEfHEYheOpZS.png?ixlib=java-2.1.0&w=100&s=4764452e7decda5106efa1fd6e92e517"
+    },
+    {
+      "file": "f959503f990ffdc14372.png",
+      "sha256": "f959503f990ffdc14372b11af462fde02cf01582110bbd9563616464df0d549d",
+      "bytes": 4743,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/01htKw-AvR1ncIok0or2R6.png?ixlib=java-2.1.0&w=100&s=26ffec5d48fe302165b6d2989df66b8a"
+    },
+    {
+      "file": "f5f21a7fc3229c1dc2ad.png",
+      "sha256": "f5f21a7fc3229c1dc2adc4caf18891288142e01edc7bb08a58557cfd0d417ca8",
+      "bytes": 2730,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/1z24-QPBBIUHl6Onjjbdz_.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=b05286988e3fcb9f773d45ce2a1efd7c"
+    },
+    {
+      "file": "136ffe6effef5e246e69.png",
+      "sha256": "136ffe6effef5e246e692f5604e0dcffecf4ca3a1c029bfbb9edaefe4761b441",
+      "bytes": 3141,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/1z24-QPBBIUHl6Onjjbdz_.png?ixlib=java-2.1.0&w=100&s=af865611279aade76f03e3e7ae7c0f67"
+    },
+    {
+      "file": "23162bc74a1c004c5c34.png",
+      "sha256": "23162bc74a1c004c5c34a52d493714660f76ff6575c4effb8c1b593fac8fc21b",
+      "bytes": 4642,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/4EjZAuq6gLKuYleVVtv9d2.png?ixlib=java-2.1.0&w=100&s=34cc4736cb568e9dc335d847f12831e8"
+    },
+    {
+      "file": "65a91fe6731900694275.png",
+      "sha256": "65a91fe67319006942759775b7d3a05e703d7b26b796dd17799ef2b31c5cfd22",
+      "bytes": 2931,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/5BntIUcITLUvB95HSlDrkM.png?ixlib=java-2.1.0&w=100&s=fd3912dd4491d320598e88cabf05bad2"
+    },
+    {
+      "file": "1fb417230c493c215c33.png",
+      "sha256": "1fb417230c493c215c3315479ce42dbf1ec56167de65fb77d08236d5e79fe25f",
+      "bytes": 5476,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/5SsN3ChVd0GFO22F8H3o6c.png?ixlib=java-2.1.0&w=100&s=89294b74f26e3539e384f2833976ff14"
+    },
+    {
+      "file": "f4ceb1b6101f7d850819.png",
+      "sha256": "f4ceb1b6101f7d850819da04ae26552826bade5c5eac28984c36f395ac243034",
+      "bytes": 3379,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/6e4NTWGjF4FdoBAalqUg7-.png?ixlib=java-2.1.0&w=100&s=39b6563c2557e9bbd7b6c0bf53d698c0"
+    },
+    {
+      "file": "f77fa6dfef0c0831a0ca.png",
+      "sha256": "f77fa6dfef0c0831a0ca348164e6f573a3367e50ace5b4892ca81c2503a012ac",
+      "bytes": 3706,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/8IElR1Z1r1cSzAB9ukvrKy.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=466e78a648c0227cb6e3b0a7b593b2cd"
+    },
+    {
+      "file": "4644dc62cfb277b6eafd.png",
+      "sha256": "4644dc62cfb277b6eafd404e5c6091242eb67abd67d6cd2a9318bc2c8aaac824",
+      "bytes": 3122,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/8IElR1Z1r1cSzAB9ukvrKy.png?ixlib=java-2.1.0&w=100&s=ad610e0a17b31818c2d7868864be72a0"
+    },
+    {
+      "file": "65b6bb43d275c8fb3c73.png",
+      "sha256": "65b6bb43d275c8fb3c730db18a81173d766632d04ec5ac110ed526ea7a7e4d7e",
+      "bytes": 5715,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/9CDH4T-w6u6qf-lp_c3qs1.png?ixlib=java-2.1.0&w=100&s=d15fc62ba3afbd7a264f797fbb27dd57"
+    },
+    {
+      "file": "f5b21e9cd775ec2814bb.png",
+      "sha256": "f5b21e9cd775ec2814bbbd296f2b3a53c792566a1e7458f46ac8fbefa91d825d",
+      "bytes": 2148,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/AgLR78SmWaC3nD3hvezTo1.png?ixlib=java-2.1.0&w=100&s=e8b07287b924aaacc5f14512448fb4a9"
+    },
+    {
+      "file": "5ad150a4f98986d0f79a.png",
+      "sha256": "5ad150a4f98986d0f79a20a0cb9dbe3461b50aa22054d70d90112e20c4356c74",
+      "bytes": 3105,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/CZYxFG_CfcWYpUqP22qBsg.png?ixlib=java-2.1.0&w=100&s=174c742e8741e68791c652587d535b26"
+    },
+    {
+      "file": "731eaa10b0097d290bd2.png",
+      "sha256": "731eaa10b0097d290bd2e43647c1cf2f1b29bfcc9f7e364004995a8bb0fbe39d",
+      "bytes": 3020,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/DeQggjEBZGUIdPM9eC94xy.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=21895f04e87f11981da0c8617aa72e76"
+    },
+    {
+      "file": "a747197bc1287d682e81.png",
+      "sha256": "a747197bc1287d682e81bd17435f04ca958a63cb4735a897f997f6b06d0e961e",
+      "bytes": 2389,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/DeQggjEBZGUIdPM9eC94xy.png?ixlib=java-2.1.0&w=100&s=cd8d273bdc5b1edf2905a00efc607f74"
+    },
+    {
+      "file": "8160914b74b7f49293f3.png",
+      "sha256": "8160914b74b7f49293f34519f7d420313b1c93d21c51158ae26ba61ce6100a78",
+      "bytes": 5374,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/Dt38ClGIBtrp2kGp2GOoK1.png?ixlib=java-2.1.0&w=100&s=25720a27332cf6f6dd26ec624af5eda3"
+    },
+    {
+      "file": "685374adabcebad325de.png",
+      "sha256": "685374adabcebad325de416fad362da63ab1c27512cc63bf26247bf3c83f6aa9",
+      "bytes": 1088,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/ETBmLxbaHSdcy4_rAaZA2a.png?ixlib=java-2.1.0&w=100&s=2f7a1dcbed50c9224add2a3366d7c025"
+    },
+    {
+      "file": "c48648826dab6530f303.png",
+      "sha256": "c48648826dab6530f30362184f52c9594a81351f100ebabf39fb756a2f2b4cba",
+      "bytes": 2003,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/GFlgh44zejBpn2baoEGZAw.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=4b3b5dce8b5e4106273974ae49f633cf"
+    },
+    {
+      "file": "d9ecb2d363da991cec70.png",
+      "sha256": "d9ecb2d363da991cec705d1422e728b9b779ea1cd577c540bd6d02ad70d58276",
+      "bytes": 2612,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/GFlgh44zejBpn2baoEGZAw.png?ixlib=java-2.1.0&w=100&s=105f4ac85bb3f8368a517da9e9390a1c"
+    },
+    {
+      "file": "6287626e821f0851436c.png",
+      "sha256": "6287626e821f0851436c1741faee21b0932b8937fce8ef25949c223178cedcda",
+      "bytes": 2814,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/HIbYvDKdPMO1C9d1fc93dk.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=dc76c1efb60676cece183736f385b5fc"
+    },
+    {
+      "file": "84c0171d52ead1cf7f69.png",
+      "sha256": "84c0171d52ead1cf7f6973576e71bef7ce630c6d6542755ce6acadb1057ea8f4",
+      "bytes": 2506,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/HIbYvDKdPMO1C9d1fc93dk.png?ixlib=java-2.1.0&w=100&s=0f95ff89baace5e85d9c23152edfaa3e"
+    },
+    {
+      "file": "a1037c646e271dbf4a14.png",
+      "sha256": "a1037c646e271dbf4a1462031317e96b38fff83074c39e74ec8a75a3052d48d6",
+      "bytes": 3591,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/HfO1AaoorhHJB28TVcymQ_.png?ixlib=java-2.1.0&w=100&s=75ef84bda51ca16938347fc09d0c0497"
+    },
+    {
+      "file": "f65df2e29a4867f7d072.png",
+      "sha256": "f65df2e29a4867f7d072d41ec26bff784b3e3cb1c828b838ec16ec6617487b84",
+      "bytes": 18268,
+      "size": [
+        400,
+        400
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/HfO1AaoorhHJB28TVcymQ_.png?ixlib=java-2.1.0&w=400&s=e35077084deaf8c8c09e643c3a0e6b05"
+    },
+    {
+      "file": "2cb648e068bd23349d4f.png",
+      "sha256": "2cb648e068bd23349d4f0f72b2e37796c3d09143316c4bb301796b799943adeb",
+      "bytes": 9570,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/MbiNbAfBoKZybIk6ob2T92.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=36772458d42d7cc155378369e6c86739"
+    },
+    {
+      "file": "2bc68fb105b232e8babc.png",
+      "sha256": "2bc68fb105b232e8babc423f4787a5b2f032ff3ce09c280a12a92317cc52331c",
+      "bytes": 6738,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/MbiNbAfBoKZybIk6ob2T92.png?ixlib=java-2.1.0&w=100&s=f829bd329a5044af480349c17394d8ff"
+    },
+    {
+      "file": "170a929c99adc75ba3a0.png",
+      "sha256": "170a929c99adc75ba3a057a191dd222b90ed40aa1f60e57f2b719c03333b8a58",
+      "bytes": 4805,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/NGotrt8Qjg3Ny35uN_LqqV.png?ixlib=java-2.1.0&w=100&s=b1ebd7c3f9a43d9ad78ca2be434b4fca"
+    },
+    {
+      "file": "bf945cd302a2c5541397.png",
+      "sha256": "bf945cd302a2c5541397a9dd540feecc8cdb7250fff86e53d0344c131e4151ed",
+      "bytes": 3031,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/OdMo5ex5BIHBLmarBkyrwz.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=39f4060ba426da34c01bc2bf82c5b824"
+    },
+    {
+      "file": "eae91f46a7e696c18644.png",
+      "sha256": "eae91f46a7e696c186444e2eacdabe8be582fc3f7029b939e078aa01a3322bc5",
+      "bytes": 3076,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/OdMo5ex5BIHBLmarBkyrwz.png?ixlib=java-2.1.0&w=100&s=428a20483f610afad64cefbe3fc5c17b"
+    },
+    {
+      "file": "f4e7ec787e5f2453bd3e.png",
+      "sha256": "f4e7ec787e5f2453bd3e5e4a5d0f8a9b1a4a0a41be6e105cea51f5682645ea9a",
+      "bytes": 3943,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/Ont-nkd9Kpqqm_1CjGcVTh.png?ixlib=java-2.1.0&w=100&s=63c9d2f18fa66b9c057cd534cbd0c867"
+    },
+    {
+      "file": "e51752285b21738e984a.png",
+      "sha256": "e51752285b21738e984a0edeb14cbb6392cb3c82ce3a5017bfce4d88d0175201",
+      "bytes": 2489,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/P0mfD5pUOWgdo948M_Kxvo.png?ixlib=java-2.1.0&w=100&s=c4c2f14e0a37c7d1d73d3aec6de1d4b6"
+    },
+    {
+      "file": "50d4d0ea7104174a4f9a.png",
+      "sha256": "50d4d0ea7104174a4f9a05b46959ecc6c61353d4f7ca1ee5b5c6758832ec35f6",
+      "bytes": 62571,
+      "size": [
+        400,
+        400
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/PhVPy7kXO_J_nfTng7a87h.png?ixlib=java-2.1.0&w=400&s=c0aedfdc29d3c83494b063e81e987cf6"
+    },
+    {
+      "file": "188a4eee6886adbdec17.png",
+      "sha256": "188a4eee6886adbdec1761ec2a718ee8bd3a1fcbbd0622a375db8e2d7e955800",
+      "bytes": 1353,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/Q1zkR5C1YiFx-_uECikTd9.png?ixlib=java-2.1.0&w=100&s=1a30aefdd4fc6532e76951bdd21dbce9"
+    },
+    {
+      "file": "3832e674beeddc14fcbd.png",
+      "sha256": "3832e674beeddc14fcbd281c9c98695597d75b34a1e59d0fc9918345bf8bda51",
+      "bytes": 2469,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/TCoj0-5b_HJoefX6W1qpXL.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=1e960fd53cf25773bb488fc9e73caf5d"
+    },
+    {
+      "file": "9fe9c5d5d5ebee622aff.png",
+      "sha256": "9fe9c5d5d5ebee622aff6d14f12867d8a75fd0c114184c7a80701183184b22c4",
+      "bytes": 3136,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/TCoj0-5b_HJoefX6W1qpXL.png?ixlib=java-2.1.0&w=100&s=4939db740a2d33b039560a03dddd6446"
+    },
+    {
+      "file": "b42d8dd7fbbcb894a498.png",
+      "sha256": "b42d8dd7fbbcb894a49816891de4ef0d08592fd2bb9db70f4355f480dfda2146",
+      "bytes": 5022,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/TFsi19jz4ia4lvTpNlcg8J.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=16716bd59efa28cf3b52e2912b3d6ade"
+    },
+    {
+      "file": "9d4a3c900165a5140b83.png",
+      "sha256": "9d4a3c900165a5140b832ead89a4d39a0a8a24c769e439bf67042dece2c73bff",
+      "bytes": 5662,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/TFsi19jz4ia4lvTpNlcg8J.png?ixlib=java-2.1.0&w=100&s=a55baceb222d6c0ddb036796d9c53edb"
+    },
+    {
+      "file": "4bb01f5706e8369e2934.png",
+      "sha256": "4bb01f5706e8369e29341f661f68af51c61a86d6f2015f2abc8dd466d7314826",
+      "bytes": 1976,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/VZyFf5Sg04HmGuzbuMr8zm.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=9f48c0fc94378ea7a9ec211d9311c19f"
+    },
+    {
+      "file": "18cbe587bb53b30910f2.png",
+      "sha256": "18cbe587bb53b30910f2ea8001e1a02dc5038bfafadf405c1f47dfce35937d99",
+      "bytes": 2693,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/VZyFf5Sg04HmGuzbuMr8zm.png?ixlib=java-2.1.0&w=100&s=ecb377c93c42070b9bdf8f75e8fb429c"
+    },
+    {
+      "file": "9dabe6c6ada0b60448ed.png",
+      "sha256": "9dabe6c6ada0b60448ed4b8cc4c47bf536a9b49f8b3a849be24e0513090ddecb",
+      "bytes": 8044,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/XCdXUGBlukeAZKcweK10vg.png?ixlib=java-2.1.0&w=100&s=84ba80fc9d9b8197de0fd9324e099355"
+    },
+    {
+      "file": "d263873037683aab90f1.png",
+      "sha256": "d263873037683aab90f1b342144f0bd213a7559f0176c4eecc7273ed95c3f05c",
+      "bytes": 4342,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/Ych9NShBPvN4rNgic74Fxu.png?ixlib=java-2.1.0&w=100&s=e476cd01afc782f1c3f652f6efa19e71"
+    },
+    {
+      "file": "713cdee1c6ec7393695e.png",
+      "sha256": "713cdee1c6ec7393695e018d798d3e84270b1603da0e36f784b06d4a01808c79",
+      "bytes": 2038,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/b75aNG0i4UVPNQHX_Tq-Zq.png?ixlib=java-2.1.0&w=100&s=fdba63dd889455c0a7b9ef343c782c09"
+    },
+    {
+      "file": "017c7afb1e8ba03b88be.png",
+      "sha256": "017c7afb1e8ba03b88be8275a0f5b7247a4a67ac0c4e32bb830451d1baba17cd",
+      "bytes": 2576,
+      "size": [
+        320,
+        320
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/bIYhaEw1Y1M2dRFAEx8Mue.png?ixlib=java-2.1.0&s=b1857b2ce2886417800afb3eac7022c7"
+    },
+    {
+      "file": "1f9b78eca2c0d747a958.png",
+      "sha256": "1f9b78eca2c0d747a958d9086d29dc268a86f4cc31401a00d39887aa1a4529ed",
+      "bytes": 1104,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/bLbZhWtpMVCIuFkfoKdQ9V.png?ixlib=java-2.1.0&w=100&s=e196485220212132df09ab16651252ed"
+    },
+    {
+      "file": "b218dc1bd4cf2eba36b0.png",
+      "sha256": "b218dc1bd4cf2eba36b0e0aeaf9bea803189d02888a09ea81c143d4bbbc72117",
+      "bytes": 1245,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/fxGXrYbzcxgUStGb27HFv8.png?ixlib=java-2.1.0&w=100&s=9afe276001aa2bf3e1df9b2ab1f02b55"
+    },
+    {
+      "file": "cd84755df21b5521faed.png",
+      "sha256": "cd84755df21b5521faed15c29410aff122363a246a5fbca2b0f7ba71e9c98b85",
+      "bytes": 3616,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/hfziQY5I_Kt-PM4LpjHWaQ.png?ixlib=java-2.1.0&w=100&s=7e7bca5c57c09ec15f4c014eaae46e3e"
+    },
+    {
+      "file": "901dc54c2cbdcee4dcf3.png",
+      "sha256": "901dc54c2cbdcee4dcf33b1939a11ea23a45a7b6677c848dc36faf7e9e7fc098",
+      "bytes": 821,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/hkl56DmvKjTx6MTiYElX6E.png?ixlib=java-2.1.0&w=100&s=f870455a23c35dee03d9104fdecf2ecb"
+    },
+    {
+      "file": "72ea4b1187cf119243e3.png",
+      "sha256": "72ea4b1187cf119243e3f7b8b25edc92c61216d1dcced4f4146d8b8343ef48a4",
+      "bytes": 2535,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/hlzSsCONdMFN17D4sfVgcW.png?ixlib=java-2.1.0&w=100&s=1fbe009639053e70c8e3b32a3e6646ce"
+    },
+    {
+      "file": "98eb5899be0dd5b9b7b4.png",
+      "sha256": "98eb5899be0dd5b9b7b437976b20f93e8eca631516974d4fffc8ff2c2909d425",
+      "bytes": 3221,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/mjSsvrhSY0eA1CwFhtn-2z.png?ixlib=java-2.1.0&w=100&s=4cd8281b045d7aa28df6938ffdd2b016"
+    },
+    {
+      "file": "0cae4e45eb3f2c686064.png",
+      "sha256": "0cae4e45eb3f2c6860643d25dd64a57065d6ddceeb58aa6378533dee6b5775b7",
+      "bytes": 4248,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/nBJErD4F57HhwYIJRrIu3w.png?ixlib=java-2.1.0&w=100&s=1395160691d9a4c1f4c4d46cc1c0838d"
+    },
+    {
+      "file": "3530e66040f93fadae1e.png",
+      "sha256": "3530e66040f93fadae1e61762bc692b969183fb8ff9f700c288fe0806339df71",
+      "bytes": 11687,
+      "size": [
+        400,
+        400
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/pOBDGt1pvBDx2B2Fe6htMp.png?ixlib=java-2.1.0&w=400&s=74619cb4088a1e84add4cafab2fb3dc2"
+    },
+    {
+      "file": "8f29e4ad803731f14136.png",
+      "sha256": "8f29e4ad803731f141368fa01f9ede82ae6f14f90b82326211bd959d19fe03d0",
+      "bytes": 3544,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/p_BRMRwmdTNzRE7I5Gto__.png?ixlib=java-2.1.0&w=100&s=cc5b04af5802e28a356a6a58ada04e7c"
+    },
+    {
+      "file": "5491678b55404dd61609.png",
+      "sha256": "5491678b55404dd61609616a533653cb47fadbe2168a1aac2bd362fc7d84e9a2",
+      "bytes": 18159,
+      "size": [
+        400,
+        400
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/p_BRMRwmdTNzRE7I5Gto__.png?ixlib=java-2.1.0&w=400&s=50aec3237e8343402ad17fc82161b88a"
+    },
+    {
+      "file": "54303327e45c22a0dcb7.png",
+      "sha256": "54303327e45c22a0dcb72565efdc76b914f1a342c7bba90aa3bc12d39426487b",
+      "bytes": 2304,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/q4xasNcWg5V4PG3CzIPEOx.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=4e5ea2790c2912391fac20382c1e0f76"
+    },
+    {
+      "file": "f56c5a814d9b830f4bf1.png",
+      "sha256": "f56c5a814d9b830f4bf16d634bda0443823faa20bebe618c9231e143341b22ce",
+      "bytes": 2097,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/q4xasNcWg5V4PG3CzIPEOx.png?ixlib=java-2.1.0&w=100&s=cdfe832ab31d95ace429978d363807b3"
+    },
+    {
+      "file": "2e1ab82129a2f9e6c44a.png",
+      "sha256": "2e1ab82129a2f9e6c44a32c4b10ba748b63ff72077d120ffcea3e3116d35004a",
+      "bytes": 2379,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/q5xvv1q5Yt3mXnSxAQRWl5.png?ixlib=java-2.1.0&w=100&s=f93f31034ef9a12c27e7c9b4419d802a"
+    },
+    {
+      "file": "ac3707821ae65bebb072.png",
+      "sha256": "ac3707821ae65bebb07250561633991a7ee7370c5484a4d48704a18b942f6e01",
+      "bytes": 10640,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/rKhw3fKBJUJYIpf2yV4bNm.png?ixlib=java-2.1.0&w=100&s=33eda41664c88d4cd604105fe623af13"
+    },
+    {
+      "file": "a92853c4a3de6456dccf.png",
+      "sha256": "a92853c4a3de6456dccf951a3a44f1b0891d4b81aa69607d698727a167a7f3a4",
+      "bytes": 2466,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/s5us9UiZDA4-ZIkmyAFAzA.png?ixlib=java-2.1.0&w=100&s=163fda0a31a5f373b84cdbc23c922cde"
+    },
+    {
+      "file": "84e762f29baae2c7fb9e.png",
+      "sha256": "84e762f29baae2c7fb9e42a27ddc9b6dd5670dcdb26017773356fd7f5a428574",
+      "bytes": 5846,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/sBZOfTLOR9HgHp6uzufJqV.png?ixlib=java-2.1.0&w=100&s=ac8fec58040d61d01bb5e3d3bc9a88d1"
+    },
+    {
+      "file": "691195300e3c03bfcbc4.png",
+      "sha256": "691195300e3c03bfcbc4a871b2d7c9552a82dc28697fbdf08fbf6e4402c7b550",
+      "bytes": 1432,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/u-4VdjFWGYz_GwBxLGrr11.png?ixlib=java-2.1.0&w=100&s=d720c0ce81fe5b3e760c5b545c22e819"
+    },
+    {
+      "file": "96e1f5f4c812ce480724.png",
+      "sha256": "96e1f5f4c812ce480724385ada265868e89bd9752cbeeefcd4381ebd2d4bad79",
+      "bytes": 2154,
+      "size": [
+        400,
+        400
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/u-4VdjFWGYz_GwBxLGrr11.png?ixlib=java-2.1.0&w=400&s=c70762c42a45bdfc27329277202ba2d1"
+    },
+    {
+      "file": "eca6705212ea842604da.png",
+      "sha256": "eca6705212ea842604dac46373e96db93d843c4bf8958232ddf035a50272b599",
+      "bytes": 3359,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/u_6VEqZyTH34T-PYw9D_rk.png?ixlib=java-2.1.0&w=100&s=dfe6c306af2974ea82b62ac6ded29223"
+    },
+    {
+      "file": "8a0d50e1e53b6c1a1a1d.png",
+      "sha256": "8a0d50e1e53b6c1a1a1df45e545900d6a5329657b59950d7a2bdd1ad7488b6c7",
+      "bytes": 2372,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/ujec2YDT8tjfCBErU9PApu.png?invert=true&ixlib=java-2.1.0&sat=-100&w=100&s=e29b77af96a52299e505be069f72a6df"
+    },
+    {
+      "file": "4e3265c6c8b0ec3de00c.png",
+      "sha256": "4e3265c6c8b0ec3de00cdd5ae7de5612aed9672e2f0d3c35f16cf685a03fae2a",
+      "bytes": 2379,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/ujec2YDT8tjfCBErU9PApu.png?ixlib=java-2.1.0&w=100&s=8aa658fbc0a3ebb852092003d7b558d6"
+    },
+    {
+      "file": "57f04bfc4d61c6c838e9.png",
+      "sha256": "57f04bfc4d61c6c838e9f6a541b03797658d284d5daf2ea724fb53a7a1e0f24b",
+      "bytes": 1714,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/yb6nmz3G3THGfQCYnAgO19.png?ixlib=java-2.1.0&w=100&s=b1119580fdd2d32f924616e72bc6b687"
+    },
+    {
+      "file": "077eba3dbc2bc5d0dd04.png",
+      "sha256": "077eba3dbc2bc5d0dd04d1dad2efa9de854219c64293a26bb84462d97fed8c0b",
+      "bytes": 2848,
+      "size": [
+        100,
+        100
+      ],
+      "url": "https://img-cdn.hltv.org/eventlogo/yk2zL5wHnG080pBJ9BQS-E.png?ixlib=java-2.1.0&w=100&s=8e278b0756fbd9d11394d9ddbf9f8ec5"
+    }
+  ]
+}

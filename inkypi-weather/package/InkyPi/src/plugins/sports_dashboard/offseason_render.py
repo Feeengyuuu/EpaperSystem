@@ -1381,20 +1381,17 @@ class OffseasonRenderMixin:
     def _ncaa_school_label(event, side, include_rank=False, full=False):
         prefix = "team_a" if side == "a" else "team_b"
         raw_event = event or {}
-        school = str(raw_event.get(f"{prefix}_zh") or "").strip()
         code = str(raw_event.get(f"{prefix}_code") or raw_event.get(prefix) or "TBD").strip()
-        fallback = str(raw_event.get(prefix) or raw_event.get(f"{prefix}_name") or code or "TBD").strip()
+        fallback = str(raw_event.get(f"{prefix}_zh") or raw_event.get(prefix) or raw_event.get(f"{prefix}_name") or code or "TBD").strip()
         aliases = [
             raw_event.get(f"{prefix}_name"),
             raw_event.get(prefix),
             code,
         ]
-        if full:
-            full_school = SportsDashboard._ncaa_display_school_name(code, fallback=fallback, aliases=aliases, full=True)
-            if full_school and full_school != "TBD":
-                school = full_school
-        if not school:
-            school = SportsDashboard._ncaa_display_school_name(code, fallback=fallback, aliases=aliases)
+        school = SportsDashboard._ncaa_display_school_name(
+            code, fallback=fallback, aliases=aliases, full=full,
+            team_id=raw_event.get(f"{prefix}_id"),
+        )
         if include_rank:
             rank = (event or {}).get(f"{prefix}_rank")
             if rank:
@@ -1784,17 +1781,8 @@ class OffseasonRenderMixin:
             raw_event.get(prefix),
             code,
         ]
-        rank = (event or {}).get(f"{prefix}_rank")
         if sport == "NCAA":
-            if full:
-                team = SportsDashboard._ncaa_display_school_name(code, fallback=fallback, aliases=aliases, full=True)
-            else:
-                team = str(raw_event.get(f"{prefix}_zh") or "").strip()
-            if not team or team == "TBD":
-                team = SportsDashboard._ncaa_display_school_name(code, fallback=fallback, aliases=aliases)
-            if rank:
-                return f"#{rank} {team}"
-            return team
+            return SportsDashboard._ncaa_school_label(raw_event, side, include_rank=True, full=full)
         if sport == "NFL":
             team = str(raw_event.get(f"{prefix}_zh") or "").strip()
             if full:

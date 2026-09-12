@@ -1264,6 +1264,10 @@ class EsportsRenderMixin:
 
     def _draw_valve_focus_event_logo(self, image, box, primary):
         primary = primary or {}
+        if str(primary.get("series") or "").upper() == "CS":
+            from .cs2_branding import local_event_branding
+
+            primary = {**primary, **local_event_branding(primary)}
         logo_path = str(primary.get("event_logo_path") or "").strip()
         if sum(COLORS["panel"]) < sum(COLORS["text"]):
             logo_path = str(primary.get("event_logo_path_dark") or logo_path).strip()

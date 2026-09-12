@@ -389,6 +389,8 @@ class OffseasonHubMixin:
             "team_b": home_info["display"],
             "team_a_code": away_info["code"],
             "team_b_code": home_info["code"],
+            "team_a_id": away_info["id"],
+            "team_b_id": home_info["id"],
             "team_a_zh": away_info["zh"],
             "team_b_zh": home_info["zh"],
             "team_a_name": away_info["name"],
@@ -436,12 +438,14 @@ class OffseasonHubMixin:
             team.get("nickname"),
         ]
         code = SportsDashboard._football_normalized_team_code(raw_code, aliases, sport)
+        if sport == "NCAA":
+            code = NCAA_ESPN_ID_TO_CODE.get(str(team.get("id") or ""), code)
         score = SportsDashboard._lpl_int_value((competitor or {}).get("score")) if show_score else None
         rank = SportsDashboard._football_rank(competitor)
         display = SportsDashboard._football_display_team_name(code, name, sport, aliases)
         zh = ""
         if sport == "NCAA":
-            zh = SportsDashboard._ncaa_display_school_name(code, name, aliases)
+            zh = SportsDashboard._ncaa_display_school_name(code, name, aliases, team_id=team.get("id"))
             display = zh
         return {
             "id": str(team.get("id") or (competitor or {}).get("id") or "").strip(),
@@ -516,19 +520,36 @@ class OffseasonHubMixin:
         return str(fallback or normalized or "TBD").strip() or "TBD"
 
     @staticmethod
-    def _ncaa_display_school_name(code, fallback="", aliases=None, full=False):
+    def _ncaa_display_school_name(code, fallback="", aliases=None, full=False, team_id=""):
         normalized = str(code or "").strip().upper()
+        identity_code = NCAA_ESPN_ID_TO_CODE.get(str(team_id or ""))
+        if not identity_code:
+            # Old parsed caches do not carry IDs. A named school disambiguates
+            # a reused abbreviation (for example the two SDSU programs).
+            for value in [*(aliases or []), fallback]:
+                if _normalize_country_alias(value) == _normalize_country_alias(code):
+                    continue
+                identity_code = NCAA_TEAM_ALIAS_TO_CODE.get(_normalize_country_alias(value))
+                if identity_code:
+                    break
+        normalized = identity_code or normalized
         if full and normalized in NCAA_TEAM_ZH_FULL_NAMES:
             return NCAA_TEAM_ZH_FULL_NAMES[normalized]
         if normalized in NCAA_TEAM_ZH_NAMES:
             return NCAA_TEAM_ZH_NAMES[normalized]
-        for value in aliases or []:
+        for value in [fallback, code, *(aliases or [])]:
             alias_code = NCAA_TEAM_ALIAS_TO_CODE.get(_normalize_country_alias(value))
             if full and alias_code and alias_code in NCAA_TEAM_ZH_FULL_NAMES:
                 return NCAA_TEAM_ZH_FULL_NAMES[alias_code]
             if alias_code and alias_code in NCAA_TEAM_ZH_NAMES:
                 return NCAA_TEAM_ZH_NAMES[alias_code]
-        return str(fallback or normalized or "TBD").strip() or "TBD"
+        for value in [fallback, *(aliases or [])]:
+            text = str(value or "").strip()
+            if any("\u4e00" <= char <= "\u9fff" for char in text):
+                return text
+        if str(fallback or normalized).strip().upper() in {"", "TBD", "TBA", "UNKNOWN"}:
+            return "待定"
+        return str(fallback or normalized).strip()
 
     @staticmethod
     def _football_rank(competitor):
@@ -1563,9 +1584,6 @@ class OffseasonHubMixin:
             logger.warning("Failed to load PGA fairway strip %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
-
-
 
 
 

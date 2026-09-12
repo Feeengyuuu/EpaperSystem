@@ -3045,3 +3045,27 @@ Test object lifetime at the production drawing boundary, preserve full candidate
 - Pattern-Key: runtime.release_selection_payload_before_drawing
 
 ---
+
+## [LRN-20260912-001] knowledge_gap
+
+**Logged**: 2026-09-12T00:00:00Z
+**Priority**: medium
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Sports identity fixes must cover actual provider HTML and roster IDs, plus previously cached display fields.
+
+### Details
+HLTV ongoing cards nest the true name inside text-ellipsis and place LAN in a sibling. Small future cards use event-col rather than the old selectors, and one-day events may have only one timestamp. Read only event-logo URLs, retain publisher-signed srcset URLs, and do not let a missing event impose a global retry delay. ESPN site teams ignores the tested groups query and includes 762 records across levels; the 2026 core FBS/FCS lists identify the relevant schools but also include all-star and placeholder records. UT Rio Grande Valley appears in the actual schedule even though the site roster omits it. Old NCAA _zh fields may contain English, and SDSU requires ID or school-name disambiguation.
+
+### Suggested Action
+Audit current provider samples and real schedules. Bundle verified persistent art once, reuse the bounded image cache, and localize at the render boundary without rewriting source identities. Measure warm cache decoding/download counters separately from match-data freshness.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/cs2_branding.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/ncaa_localization.py, inkypi-weather/package/InkyPi/tests/test_sports_identity_coverage.py
+- Tags: sports, provider-markup, identity, cache, localization
+- Pattern-Key: sports.audit_provider_identity_and_cached_labels
+
+---

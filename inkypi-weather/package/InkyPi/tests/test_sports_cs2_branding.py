@@ -57,6 +57,8 @@ def test_branding_is_persisted_and_does_not_refetch_for_a_new_plugin(monkeypatch
     from plugins.sports_dashboard import cs2_branding
     from plugins.sports_dashboard.sports_dashboard import SportsDashboard
 
+    monkeypatch.setattr(cs2_branding, "_local_events", lambda: [])
+
     now = datetime(2026, 9, 10, tzinfo=timezone.utc)
     plugin = SportsDashboard({"id": "sports_dashboard"})
     plugin._sports_dashboard_cache_dir = lambda: tmp_path
@@ -81,6 +83,8 @@ def test_branding_is_persisted_and_does_not_refetch_for_a_new_plugin(monkeypatch
 def test_hltv_failure_retains_match_and_provider_branding_without_changing_freshness(monkeypatch, tmp_path):
     from plugins.sports_dashboard import cs2_branding
     from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    monkeypatch.setattr(cs2_branding, "_local_events", lambda: [])
 
     now = datetime(2026, 9, 10, tzinfo=timezone.utc)
     plugin = SportsDashboard({"id": "sports_dashboard"})

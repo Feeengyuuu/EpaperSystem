@@ -23,6 +23,7 @@ from plugins.base_plugin.render_provenance import (
     read_source_provenance,
 )
 from plugins.sports_dashboard.cache_io import read_json_file, write_json_file
+from plugins.sports_dashboard.ncaa_localization import NCAA_ADDITIONAL_SCHOOLS
 from plugins.sports_dashboard.render_fonts import render_font, render_font_scope
 from runtime.sports_asset_metrics import record_asset_metric
 from utils.app_utils import get_base_ui_font, resolve_path
@@ -2267,6 +2268,17 @@ for _team_code, _aliases in NFL_TEAM_NAME_ALIASES.items():
         if _normalized_alias:
             NFL_TEAM_ALIAS_TO_CODE[_normalized_alias] = _team_code
 
+for _team_id, _team_code, _short_zh, _full_zh, _aliases in NCAA_ADDITIONAL_SCHOOLS:
+    NCAA_ESPN_LOGO_IDS[_team_code] = _team_id
+    NCAA_TEAM_ZH_NAMES[_team_code] = _short_zh
+    NCAA_TEAM_ZH_FULL_NAMES[_team_code] = _full_zh
+    NCAA_TEAM_NAME_ALIASES[_team_code] = _aliases
+
+NCAA_TEAM_ZH_FULL_NAMES.update({
+    "TCU": "德克萨斯基督教角蛙",
+    "UCLA": "加州洛杉矶棕熊",
+})
+NCAA_ESPN_ID_TO_CODE = {team_id: code for code, team_id in NCAA_ESPN_LOGO_IDS.items()}
 NCAA_TEAM_ALIAS_TO_CODE = {}
 for _team_code, _aliases in NCAA_TEAM_NAME_ALIASES.items():
     for _alias in (_team_code, *_aliases):
