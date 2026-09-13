@@ -3069,3 +3069,29 @@ Audit current provider samples and real schedules. Bundle verified persistent ar
 - Pattern-Key: sports.audit_provider_identity_and_cached_labels
 
 ---
+
+## [LRN-20260912-001] best_practice
+
+**Logged**: 2026-09-12T17:14:31.6205473-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Exercise Linux installers from Windows using explicit LF fixtures and byte-based subprocess stdin.
+
+### Details
+Git Bash interprets CR characters literally in shell reads. Python text-mode subprocess input and default text-file writes on Windows translated LF to CRLF, making a yes response and a release identity mismatch even though the Linux script was correct. Installer tests now write LF-only release identities, send input as bytes and normalise the Windows Python test-double stdout to Linux newlines. Host mutations are stubbed while the real Bash entry points and orchestration run.
+
+Fresh Pimoroni and other auto-sized screens must omit inherited Waveshare dimensions; the isolated release probe supplies mock-only dimensions while preserving the real configuration for hardware detection.
+
+### Suggested Action
+Keep behavioral coverage for piped invocation, terminal-less errors, display selection, preservation of existing data and readiness identity. Do not weaken runtime checks to accommodate Windows-only test fixture conversions.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/tests/test_beginner_install.py, inkypi-weather/package/InkyPi/install/bootstrap.sh, inkypi-weather/package/InkyPi/install/preflight.py
+- Tags: windows, bash, installer, newline, preflight
+- Pattern-Key: tests.linux_shell_lf_fixtures_on_windows
+
+---

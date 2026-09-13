@@ -329,6 +329,9 @@ def prepare_config_copy(source, destination) -> Path:
     copied = json.loads(json.dumps(document))
     copied["display_type"] = "mock"
     copied["startup"] = False
+    # Fresh hardware installs may defer dimensions to the real driver. The
+    # isolated mock probe needs dimensions without persisting them to the Pi.
+    copied.setdefault("resolution", [800, 480])
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     destination_path.write_text(
         json.dumps(copied, ensure_ascii=False, indent=2) + "\n",

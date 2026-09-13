@@ -15,6 +15,7 @@ RUNTIME_ENV_FILE="/etc/inkypi/inkypi.env"
 FAILURES=0
 WARNINGS=0
 LANG_MODE="${INKYPI_LANG:-en}"
+WAIT_SECONDS=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -27,8 +28,14 @@ while [[ $# -gt 0 ]]; do
       LANG_MODE="zh-CN"
       shift
       ;;
+    --wait)
+      [[ $# -ge 2 && "$2" =~ ^[0-9]{1,3}$ ]] || { echo "--wait requires 0..600 seconds" >&2; exit 1; }
+      WAIT_SECONDS=$((10#$2))
+      [[ "$WAIT_SECONDS" -le 600 ]] || { echo "--wait requires 0..600 seconds" >&2; exit 1; }
+      shift 2
+      ;;
     -h|--help)
-      echo "Usage: bash install/healthcheck.sh [--lang en|zh-CN]"
+      echo "Usage: sudo bash install/healthcheck.sh [--lang en|zh-CN] [--wait 0..600]"
       exit 0
       ;;
     *)
@@ -68,85 +75,108 @@ check_path() {
   fi
 }
 
-echo "InkyPi health check ($LANG_MODE)"
-check_command python3
-check_command curl
-check_path "$INSTALL_DIR/src/inkypi.py" "Release source"
-check_path "$INSTALL_DIR/install/inkypi-update" "Release updater"
-check_path "$INSTALL_DIR/venv_inkypi/bin/python" "Release virtualenv"
-check_path "$INSTALL_DIR/.release-id" "Release identity"
-check_path "/usr/local/bin/inkypi" "Launcher"
-check_path "/usr/local/sbin/inkypi-update" "Update command"
-check_path "/var/lib/inkypi/config/device.json" "Device configuration"
+main() {
+  echo "InkyPi health check ($LANG_MODE)"
+  check_command python3
+  check_command curl
+  check_path "$INSTALL_DIR/src/inkypi.py" "Release source"
+  check_path "$INSTALL_DIR/install/inkypi-update" "Release updater"
+  check_path "$INSTALL_DIR/venv_inkypi/bin/python" "Release virtualenv"
+  check_path "$INSTALL_DIR/.release-id" "Release identity"
+  check_path "/usr/local/bin/inkypi" "Launcher"
+  check_path "/usr/local/sbin/inkypi-update" "Update command"
+  check_path "/var/lib/inkypi/config/device.json" "Device configuration"
 
-if [[ -f "$RUNTIME_ENV_FILE" ]]; then
-  ok "Runtime environment exists: $RUNTIME_ENV_FILE"
-else
-  warn "Runtime environment is absent; optional provider keys are unavailable."
-fi
-
-if [[ -x "$INSTALL_DIR/venv_inkypi/bin/python" && -f "$INSTALL_DIR/install/configure_api_keys.py" ]]; then
-  if ! "$INSTALL_DIR/venv_inkypi/bin/python" \
-    "$INSTALL_DIR/install/configure_api_keys.py" \
-    --env-file "$RUNTIME_ENV_FILE" \
-    --check \
-    --lang "$LANG_MODE"; then
-    warn "API key diagnostics failed."
-  fi
-fi
-
-if command -v systemctl >/dev/null 2>&1; then
-  if systemctl is-enabled --quiet "$SERVICE_NAME"; then
-    ok "systemd service is enabled"
+  if [[ -f "$RUNTIME_ENV_FILE" ]]; then
+    ok "Runtime environment exists: $RUNTIME_ENV_FILE"
   else
-    warn "systemd service is not enabled"
+    warn "Runtime environment is absent; optional provider keys are unavailable."
   fi
-  if systemctl is-active --quiet "$SERVICE_NAME"; then
-    ok "systemd service is active"
-  else
-    fail "systemd service is not active"
-  fi
-  if systemctl is-active --quiet inkypi-privileged.socket; then
-    ok "privileged broker socket is active"
-  else
-    fail "privileged broker socket is not active"
-  fi
-else
-  warn "systemctl is unavailable; service checks skipped"
-fi
 
-EXPECTED_RELEASE=""
-if [[ -f "$INSTALL_DIR/.release-id" ]]; then
-  IFS= read -r EXPECTED_RELEASE < "$INSTALL_DIR/.release-id"
-fi
+  if [[ -x "$INSTALL_DIR/venv_inkypi/bin/python" && -f "$INSTALL_DIR/install/configure_api_keys.py" ]]; then
+    if ! "$INSTALL_DIR/venv_inkypi/bin/python" \
+      "$INSTALL_DIR/install/configure_api_keys.py" \
+      --env-file "$RUNTIME_ENV_FILE" \
+      --check \
+      --lang "$LANG_MODE"; then
+      warn "API key diagnostics failed."
+    fi
+  fi
 
-if ready_json=$(curl --max-time 5 --fail --silent http://127.0.0.1/readyz); then
-  if ready_values=$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d.get("release_id", "")); print(d.get("status", ""))' <<< "$ready_json"); then
-    READY_RELEASE=$(sed -n '1p' <<< "$ready_values")
-    READY_STATUS=$(sed -n '2p' <<< "$ready_values")
-    if [[ -n "$EXPECTED_RELEASE" && "$READY_RELEASE" == "$EXPECTED_RELEASE" && ( "$READY_STATUS" == "ready" || "$READY_STATUS" == "degraded" ) ]]; then
-      ok "readyz matches release $EXPECTED_RELEASE ($READY_STATUS)"
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl is-enabled --quiet "$SERVICE_NAME"; then
+      ok "systemd service is enabled"
     else
-      fail "readyz release/status mismatch: expected=$EXPECTED_RELEASE actual=$READY_RELEASE status=$READY_STATUS"
+      warn "systemd service is not enabled"
+    fi
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+      ok "systemd service is active"
+    else
+      fail "systemd service is not active"
+    fi
+    if systemctl is-active --quiet inkypi-privileged.socket; then
+      ok "privileged broker socket is active"
+    else
+      fail "privileged broker socket is not active"
     fi
   else
-    fail "readyz returned invalid JSON"
+    warn "systemctl is unavailable; service checks skipped"
   fi
-else
-  fail "readyz did not respond"
-fi
 
-if curl --max-time 5 --fail --silent http://127.0.0.1/api/current_image >/dev/null; then
-  ok "Current-image endpoint responded"
-else
-  warn "Current-image endpoint has no committed image yet"
-fi
+  EXPECTED_RELEASE=""
+  if [[ -f "$INSTALL_DIR/.release-id" ]]; then
+    IFS= read -r EXPECTED_RELEASE < "$INSTALL_DIR/.release-id"
+  fi
 
-if [[ "$FAILURES" -eq 0 ]]; then
-  ok "Health check passed with $WARNINGS warning(s)."
-  exit 0
-fi
+  ready_matches() {
+    python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if sys.argv[1] and d.get("release_id") == sys.argv[1] and d.get("status") in ("ready", "degraded") else 1)' "$EXPECTED_RELEASE"
+  }
 
-echo "Health check failed: $FAILURES failure(s), $WARNINGS warning(s)." >&2
-echo "Inspect with: sudo journalctl -u $SERVICE_NAME -n 120 --no-pager" >&2
-exit 1
+  # Wait for the expected release, not just any service listening on port 80.
+  deadline=$((SECONDS + WAIT_SECONDS))
+  ready_json=""
+  while :; do
+    if ready_json=$(curl --max-time 5 --fail --silent http://127.0.0.1/readyz) && ready_matches <<< "$ready_json" 2>/dev/null; then
+      break
+    fi
+    if [[ "$SECONDS" -ge "$deadline" ]]; then
+      break
+    fi
+    sleep 2
+  done
+
+  if [[ -n "$ready_json" ]]; then
+    if ready_values=$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read()); print(d.get("release_id", "")); print(d.get("status", ""))' <<< "$ready_json"); then
+      READY_RELEASE=$(sed -n '1p' <<< "$ready_values")
+      READY_STATUS=$(sed -n '2p' <<< "$ready_values")
+      if [[ -n "$EXPECTED_RELEASE" && "$READY_RELEASE" == "$EXPECTED_RELEASE" && ( "$READY_STATUS" == "ready" || "$READY_STATUS" == "degraded" ) ]]; then
+        ok "readyz matches release $EXPECTED_RELEASE ($READY_STATUS)"
+      else
+        fail "readyz release/status mismatch: expected=$EXPECTED_RELEASE actual=$READY_RELEASE status=$READY_STATUS"
+      fi
+    else
+      fail "readyz returned invalid JSON"
+    fi
+  else
+    fail "readyz did not respond"
+  fi
+
+  if curl --max-time 5 --fail --silent http://127.0.0.1/api/current_image >/dev/null; then
+    ok "Current-image endpoint responded"
+  else
+    warn "Current-image endpoint has no committed image yet"
+  fi
+
+  if [[ "$FAILURES" -eq 0 ]]; then
+    ok "Health check passed with $WARNINGS warning(s)."
+    exit 0
+  fi
+
+  echo "Health check failed: $FAILURES failure(s), $WARNINGS warning(s)." >&2
+  echo "Inspect with: sudo journalctl -u $SERVICE_NAME -n 120 --no-pager" >&2
+  exit 1
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main
+fi

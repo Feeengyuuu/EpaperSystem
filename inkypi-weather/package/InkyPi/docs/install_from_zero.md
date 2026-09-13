@@ -1,192 +1,109 @@
-# Install From Zero
+# Install from zero and make it your own
 
-This guide starts with a blank Raspberry Pi and ends with the InkyPi web UI
-running on your network.
+Run these commands on the Raspberry Pi after connecting over SSH.
 
-## What You Need
+## Prepare the Pi
 
-- Raspberry Pi with Wi-Fi or Ethernet.
-- MicroSD card, 16 GB or larger recommended.
-- E-paper display.
-- A computer on the same network as the Pi.
-- Raspberry Pi Imager: <https://www.raspberrypi.com/software/>
+Use a Raspberry Pi, suitable power supply, networking, a matching Waveshare or Pimoroni Inky display, and a microSD card (16 GB or larger recommended). Keep at least 2 GiB free under `/opt` and 512 MiB under `/var`.
 
-The default beginner installer assumes a Waveshare 7.3 inch color display using
-driver model `epd7in3e`. Other Waveshare and Pimoroni displays are still
-supported.
+Write Raspberry Pi OS Lite (preferably 64-bit) using [Raspberry Pi Imager](https://www.raspberrypi.com/software/). Python 3.11 or newer is required. Customise the hostname, username, password, network, locale and timezone, and enable SSH under remote access. Follow the [official setup guide](https://www.raspberrypi.com/documentation/computers/getting-started.html). Connect the display with power off, then boot.
 
-## 1. Flash Raspberry Pi OS
-
-1. Open Raspberry Pi Imager on your computer.
-2. Choose your Raspberry Pi model.
-3. Choose Raspberry Pi OS Lite 64-bit when available.
-4. Choose the target microSD card.
-5. Click the settings gear or "Edit Settings".
-6. Set:
-   - Hostname, for example `inkypi`.
-   - Username and password.
-   - Wi-Fi SSID and password.
-   - Locale/time zone.
-7. Enable SSH.
-8. Write the card, eject it, insert it into the Pi, and power on the Pi.
-
-Wait 2-5 minutes for the first boot.
-
-## 2. SSH Into The Pi
-
-From your computer:
+From your computer terminal or Windows PowerShell:
 
 ```bash
-ssh <username>@inkypi.local
+ssh <your-username>@inkypi.local
 ```
 
-If `.local` name lookup does not work, find the Pi IP address in your router and
-use:
+If the hostname does not resolve, substitute the IP address shown by your router.
+
+## One-command installation
+
+Paste this in the Pi SSH terminal:
 
 ```bash
-ssh <username>@<pi-ip-address>
+curl -fsSL https://raw.githubusercontent.com/Feeengyuuu/EpaperSystem/main/install.sh | sudo bash -s -- --lang en
 ```
 
-## 3. Install Git
+If curl is missing, first run `sudo apt-get update && sudo apt-get install -y curl ca-certificates`.
+
+The wizard downloads to `/opt/EpaperSystem`, asks for the screen, checks prerequisites, installs dependencies and the startup service, offers optional API keys, and waits for readiness. Press Enter to skip keys. Wait for completion; download speed and Pi performance affect duration. After the first installation, run `sudo reboot` to activate SPI/I2C changes. The installer never reboots automatically.
+
+The default is Waveshare 7.3-inch colour HAT E, `epd7in3e`, 800 × 480. Append `-W epd7in5_V2` for that model, or `--pimoroni` for Inky automatic detection. Choose the exact model and revision; packaged drivers have not all been physically tested.
+
+Unattended tasks require `--non-interactive --skip-keys`; explicitly select your display or the default will be used. Interactive mode without a terminal stops with guidance; use `ssh -t` for a terminal.
+
+### Inspect first or check prerequisites only
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y git
-```
-
-## 4. Download This Project
-
-```bash
+sudo apt-get update && sudo apt-get install -y git
 git clone https://github.com/Feeengyuuu/EpaperSystem.git
 cd EpaperSystem
+bash install.sh --list-displays
+bash install.sh --check
+sudo bash install.sh --lang en
 ```
 
-If this project is published with `InkyPi` as the repository root, use:
+In a local checkout, `--check` reads prerequisites without installing software or changing services/configuration. Add a display option to check a different model. It does not test physical output; full installation needs internet access.
+
+## First login and personal setup
+
+Open the printed LAN address. First-time visitors reach `/auth/setup`. Read the pairing token in SSH:
 
 ```bash
-cd <your-repo>
+sudo cat /var/lib/inkypi/data/security/bootstrap_admin.token
 ```
 
-## 5. Run The Beginner Installer
+Enter the token in the browser and choose your administrator password. Existing users use `/auth/login`. For an expired token, run `sudo inkypi admin bootstrap` and read the replacement. Keep tokens and keys private.
 
-For the default Waveshare 7.3 inch color panel:
+1. Set your device name, timezone and orientation in Settings.
+2. Add a page requiring no key, such as an image or Weather using Open-Meteo; configure your location and units.
+3. Preview and display it to check the actual screen.
+4. Add more plugins and configure their sources.
+5. Create a playlist with your pages and rotation intervals.
+
+A new installation can have no committed image yet. Display a page before assessing the screen. Application readiness does not prove every third-party source is available.
+
+Add optional keys at `/api-keys` or run from any directory:
 
 ```bash
-sudo bash install.sh
-```
-
-For Simplified Chinese prompts:
-
-```bash
-sudo bash install.sh --lang zh-CN
-```
-
-For a different Waveshare model:
-
-```bash
-sudo bash install.sh -W epd7in5_V2
-```
-
-For Pimoroni Inky displays:
-
-```bash
-sudo bash install.sh --pimoroni
-```
-
-The installer will:
-
-1. Install Linux packages.
-2. Enable SPI and I2C.
-3. Create `/usr/local/inkypi`.
-4. Create the Python virtual environment.
-5. Install and enable the `inkypi` systemd service.
-6. Create `.env` if it does not exist.
-7. Offer optional API key setup.
-8. Start the service and run a health check.
-
-API keys are optional. Press Enter to skip them during install. Add them later
-from the web UI or command line.
-
-## 6. Reboot Once
-
-Fresh Pi installs should reboot once so SPI/I2C changes are fully active:
-
-```bash
-sudo reboot now
-```
-
-Wait 1-2 minutes, then SSH back in:
-
-```bash
-ssh <username>@inkypi.local
-cd EpaperSystem
-```
-
-## 7. Verify
-
-```bash
-bash inkypi-weather/package/InkyPi/install/healthcheck.sh
-```
-
-If the health check passes, open one of these in your browser:
-
-```text
-http://inkypi.local
-http://<pi-ip-address>
-```
-
-## 8. Add API Keys Later
-
-Web UI:
-
-```text
-http://<pi-ip-address>/api-keys
-```
-
-Command line:
-
-```bash
-cd inkypi-weather/package/InkyPi
-python3 install/configure_api_keys.py --env-file .env
-```
-
-Simplified Chinese prompts:
-
-```bash
-cd inkypi-weather/package/InkyPi
-python3 install/configure_api_keys.py --env-file .env --lang zh-CN
-```
-
-List registration URLs:
-
-```bash
-cd inkypi-weather/package/InkyPi
-python3 install/configure_api_keys.py --list
-python3 install/configure_api_keys.py --list --lang zh-CN
-```
-
-After changing keys:
-
-```bash
+sudo python3 /opt/inkypi/current/install/configure_api_keys.py --env-file /etc/inkypi/inkypi.env --lang en
 sudo systemctl restart inkypi
 ```
 
-Full API key details are in [api_keys.md](./api_keys.md) and
-[api_keys.zh-CN.md](./api_keys.zh-CN.md).
+See [API keys](api_keys.md). Runtime keys live in `/etc/inkypi/inkypi.env`, not a new source-checkout `.env`.
 
-## 9. Debugging Commands
+## Updates and data
 
-Run these and copy the output into a GitHub issue:
+Online installations can rerun the same command. A different repository or uncommitted local changes stop automatic updates; commit or preserve personal source changes first. Manual clones should run `git pull --ff-only`, then `sudo bash install.sh --lang en`.
+
+Reinstallation preserves existing device/display configuration, passwords and API keys. Display arguments do not overwrite an existing model. To correct a wrong model, stop the service, edit `/var/lib/inkypi/config/device.json` with sudoedit, change `display_type`, remove the old `resolution` for automatic detection, then start the service. Rerun installation and reboot if the model needs SPI enabled.
+
+| Contents | Location |
+| --- | --- |
+| Current and previous application | `/opt/inkypi/current`, `/opt/inkypi/previous` |
+| Releases | `/opt/inkypi/releases`; current plus one previous after completed updates |
+| Device and playlist configuration | `/var/lib/inkypi/config` |
+| Images and administrator data | `/var/lib/inkypi/data` |
+| Runtime cache | `/var/cache/inkypi` |
+| Credentials | `/etc/inkypi/inkypi.env` |
+
+Temporary ZIPs live in `/opt/inkypi/.tmp` and are cleaned on exit. For a personal fork, set `EPAPERSYSTEM_REPO_URL` and a separate `EPAPERSYSTEM_CHECKOUT_DIR`. A local clone uses its own source directly.
+
+## Troubleshooting
+
+Run from any directory:
 
 ```bash
-bash inkypi-weather/package/InkyPi/install/healthcheck.sh
+sudo bash /opt/inkypi/current/install/healthcheck.sh --lang en --wait 120
 sudo systemctl status inkypi --no-pager
 sudo journalctl -u inkypi -n 120 --no-pager
 ```
 
-Common fixes:
+- Browser unavailable: check the LAN, use the IP address, then inspect the service.
+- Forgotten password: run `sudo inkypi admin recover`, read the recovery token as instructed, then visit `/auth/recover`.
+- Blank screen: check wiring/model, reboot after first install, and display a page.
+- Missing key: configure that provider at `/api-keys`; unused providers can stay blank.
+- Download failure: check network, clock, GitHub access and package mirrors, then retry.
+- Readiness `degraded`: the app is running with a degraded feature/source; inspect logs.
 
-- Web UI does not open: run `sudo systemctl restart inkypi`, then `bash inkypi-weather/package/InkyPi/install/healthcheck.sh`.
-- Display stays blank after first install: run `sudo reboot now`.
-- API plugin says missing key: open `/api-keys` or run `cd inkypi-weather/package/InkyPi && python3 install/configure_api_keys.py --list`.
-- Wrong Waveshare model: rerun `sudo bash install.sh -W <model>`.
+The default web interface is for a trusted LAN. Configure a private VPN or HTTPS access separately for remote use.

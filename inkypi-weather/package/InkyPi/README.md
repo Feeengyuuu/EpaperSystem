@@ -68,30 +68,29 @@ See [the wiki](https://github.com/fatihak/InkyPi/wiki) for a list of community-m
 For a fresh Raspberry Pi, use the beginner installer:
 
 ```bash
-git clone https://github.com/Feeengyuuu/EpaperSystem.git
-cd EpaperSystem
-sudo bash install.sh
+curl -fsSL https://raw.githubusercontent.com/Feeengyuuu/EpaperSystem/main/install.sh | sudo bash -s -- --lang en
 ```
 
 简体中文安装：
 
 ```bash
-sudo bash install.sh --lang zh-CN
+curl -fsSL https://raw.githubusercontent.com/Feeengyuuu/EpaperSystem/main/install.sh | sudo bash -s -- --lang zh-CN
 ```
 
 The root installer delegates to this package's `install/bootstrap.sh`, runs the
-base install, creates `.env`, offers optional API key setup with registration
-URLs, starts the service, and runs a health check. It defaults to the Waveshare
+base install, preserves runtime settings in `/var/lib/inkypi/config` and optional
+keys in `/etc/inkypi/inkypi.env`, waits for service readiness, and prints first-login
+pairing instructions. It defaults to the Waveshare
 `epd7in3e` 7.3 inch color display. For a different Waveshare display:
 
 ```bash
-sudo bash install.sh -W epd7in5_V2
+curl -fsSL https://raw.githubusercontent.com/Feeengyuuu/EpaperSystem/main/install.sh | sudo bash -s -- -W epd7in5_V2
 ```
 
 For Pimoroni Inky displays:
 
 ```bash
-sudo bash install.sh --pimoroni
+curl -fsSL https://raw.githubusercontent.com/Feeengyuuu/EpaperSystem/main/install.sh | sudo bash -s -- --pimoroni
 ```
 
 Full zero-to-working guide:

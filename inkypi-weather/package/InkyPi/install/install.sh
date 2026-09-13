@@ -105,7 +105,7 @@ ensure_service_user() {
     useradd --system --user-group --home-dir /var/lib/inkypi --create-home \
       --shell /usr/sbin/nologin "$APPNAME"
   fi
-  for group in gpio spi video render; do
+  for group in gpio spi i2c video render; do
     if getent group "$group" >/dev/null 2>&1; then
       usermod -a -G "$group" "$APPNAME"
     fi
@@ -208,8 +208,8 @@ install_config() {
     fi
   done
   install -o inkypi -g inkypi -m 0600 "$source" "$target"
-  if [[ -n "$WS_TYPE" ]]; then
-    python3 - "$target" "$WS_TYPE" <<'PY'
+  if [[ "$source" == "$SCRIPT_DIR/config_base/device.json" ]]; then
+    python3 - "$target" "${WS_TYPE:-inky}" <<'PY'
 import json
 import os
 from pathlib import Path
@@ -220,6 +220,7 @@ path = Path(sys.argv[1])
 model = sys.argv[2]
 document = json.loads(path.read_text(encoding="utf-8"))
 document["display_type"] = model
+document.pop("resolution", None)  # Let other models report their real dimensions.
 defaults = {
     "epd7in3e": {"resolution": [800, 480], "orientation": "horizontal"},
     "epd7in5_V2": {"resolution": [800, 480], "orientation": "horizontal"},
@@ -262,6 +263,9 @@ install_privileged_broker() {
 }
 
 build_release_artifact() {
+  # Keep transient release archives inside the application installation root.
+  install -d -o root -g root -m 0700 "$INSTALL_ROOT/.tmp"
+  export TMPDIR="$INSTALL_ROOT/.tmp"
   TEMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/inkypi-install.XXXXXX")
   local artifact="$TEMP_ROOT/inkypi-release.zip"
   python3 "$SCRIPT_DIR/lib/release_archive.py" "$PROJECT_DIR" "$artifact"
@@ -291,13 +295,19 @@ ask_for_reboot() {
   fi
 }
 
-parse_arguments "$@"
-check_permissions
-ensure_service_user
-validate_packaged_driver
-enable_interfaces
-install_system_dependencies
-install_config
-install_privileged_broker
-build_release_artifact
-ask_for_reboot
+main() {
+  parse_arguments "$@"
+  check_permissions
+  validate_packaged_driver
+  ensure_service_user
+  enable_interfaces
+  install_system_dependencies
+  install_config
+  install_privileged_broker
+  build_release_artifact
+  ask_for_reboot
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

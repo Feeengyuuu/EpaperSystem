@@ -121,6 +121,8 @@ jobs:
       - name: Parse release shell entry points
         run: >-
           python tools/check_shell_syntax.py
+          install.sh
+          inkypi-weather/package/install_on_pi.sh
           inkypi-weather/package/InkyPi/install/bootstrap.sh
           inkypi-weather/package/InkyPi/install/healthcheck.sh
           inkypi-weather/package/InkyPi/install/install.sh
@@ -132,6 +134,8 @@ jobs:
       - name: ShellCheck release entry points
         run: >-
           shellcheck --severity=error
+          install.sh
+          inkypi-weather/package/install_on_pi.sh
           inkypi-weather/package/InkyPi/install/bootstrap.sh
           inkypi-weather/package/InkyPi/install/healthcheck.sh
           inkypi-weather/package/InkyPi/install/install.sh
@@ -146,6 +150,7 @@ jobs:
           python -m pytest -q --no-header -p no:cacheprovider
           tests/test_release_state.py
           tests/test_install_update.py
+          tests/test_beginner_install.py
           tests/test_uninstall_preserves_data.py
 
   lock-contract:
