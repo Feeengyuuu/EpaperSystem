@@ -118,6 +118,42 @@ def test_low_memory_defers_weather_without_starting_a_provider(tmp_path, monkeyp
     assert not task.display_manager.calls
 
 
+@pytest.mark.parametrize("manual", [False, True])
+def test_weather_display_reclaims_memory_before_deciding_to_skip_its_turn(tmp_path, monkeypatch, manual):
+    task, _, instance, now = weather_runtime(tmp_path, monkeypatch, cached=True)
+    sample = [ResourceSample(available_mb=136, swap_percent=24)]
+    monkeypatch.setattr(task, "_resource_sample", lambda: sample[0])
+
+    def reclaim(_reason, force=False, **_kwargs):
+        if force:
+            sample[0] = ResourceSample(available_mb=172, swap_percent=24)
+
+    monkeypatch.setattr(task, "_run_memory_maintenance", reclaim)
+
+    class WeatherProvider:
+        config = {"id": "weather"}
+
+        def render_themed_image(self, settings, _device, **_kwargs):
+            assert settings["_inkypiFreshDisplay"] is True
+            return attach_source_provenance(
+                Image.new("RGB", (800, 480), "white"), SourceProvenance.LIVE,
+            )
+
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _: WeatherProvider())
+    if manual:
+        task.running = True
+        job = task.submit_playlist_display(instance.instance_uuid)
+        command = task.refresh_queue.get_entry(job["id"]).command
+    else:
+        command = task._select_cached_display_command(now)
+        task.refresh_queue.submit(command)
+    task._execute_queue_entry(task.refresh_queue.take(timeout=0))
+
+    assert task.refresh_queue.get_entry(command.id).job.status is JobStatus.SUCCEEDED
+    assert task.runtime_state.snapshot().displayed_instance_uuid == instance.instance_uuid
+    assert task.display_manager.calls
+
+
 def test_expired_weather_turn_releases_its_reservation_and_backs_off(tmp_path, monkeypatch):
     task, device, instance, now = weather_runtime(tmp_path, monkeypatch)
     command = task._select_cached_display_command(now)

@@ -4337,6 +4337,15 @@ class RefreshTask:
                     self._signal_completion(finished.id)
                     return
             if self._is_weather_background_data_command(command):
+                if command.payload.get("fresh_display") is True:
+                    # Display-time Weather bypasses the background admission
+                    # path that normally reclaims allocator pages first. Free
+                    # those pages before sampling and before adding a worker
+                    # plus Chromium; keep the same browser safety margins.
+                    self._run_memory_maintenance(
+                        "weather-display-preflight", force=True, command=command,
+                    )
+                    context.raise_if_cancelled()
                 resource_sample = self._resource_sample()
                 concession = bool(
                     command.payload.get("weather_liveness_concession")
