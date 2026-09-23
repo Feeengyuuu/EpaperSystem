@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from .common import *
 from .common import _normalize_country_alias, _safe_exception_text
+from .football_espn import fetch_scoreboard
 from .club_football_localization import (
     CLUB_FOOTBALL_TEAM_LOCALIZATIONS,
     contains_chinese,
@@ -33,10 +34,8 @@ CLUB_FOOTBALL_DATA_LIVE_CACHE_SECONDS = 5 * 60
 CLUB_FOOTBALL_LIVE_CONFIRMATION_MAX_AGE = timedelta(minutes=5)
 CLUB_FOOTBALL_ESPN_LOOKBACK = timedelta(days=30)
 CLUB_FOOTBALL_ESPN_LOOKAHEAD = timedelta(days=120)
-CLUB_FOOTBALL_ESPN_EVENT_LIMIT = 250
 CLUB_FOOTBALL_ESPN_LIVE_LOOKBACK = timedelta(days=1)
 CLUB_FOOTBALL_ESPN_LIVE_LOOKAHEAD = timedelta(days=1)
-CLUB_FOOTBALL_ESPN_LIVE_EVENT_LIMIT = 100
 CLUB_FOOTBALL_PREGAME_WINDOW = timedelta(minutes=15)
 CLUB_FOOTBALL_DEFAULT_MATCH_WINDOW = timedelta(hours=2)
 CLUB_FOOTBALL_ROTATION_STATE_VERSION = "sports-dashboard-club-football-rotation-v1"
@@ -971,6 +970,8 @@ class ClubFootballMixin:
         if not isinstance(now, datetime):
             return CLUB_FOOTBALL_NORMAL_CACHE_SECONDS
         for event in events or []:
+            if event.get("status") == "FINAL":
+                continue
             start = (event or {}).get("start_utc")
             if (
                 event.get("status") == "LIVE"
@@ -1109,18 +1110,21 @@ class ClubFootballMixin:
         return league_code
 
     @staticmethod
-    def _club_espn_scoreboard_params(league_code, now_utc):
+    def _club_espn_scoreboard_bounds(league_code, now_utc):
         league = CLUB_FOOTBALL_LEAGUES[league_code]
         lookback_days = int(league.get("espn_lookback_days") or 0)
         lookahead_days = int(league.get("espn_lookahead_days") or 0)
         if lookback_days <= 0 and lookahead_days <= 0:
-            return None
+            lookback_days = CLUB_FOOTBALL_ESPN_LOOKBACK.days
+            lookahead_days = CLUB_FOOTBALL_ESPN_LOOKAHEAD.days
         current = SportsDashboard._club_parse_utc(now_utc)
         if current is None:
-            return None
-        start = (current - timedelta(days=max(0, lookback_days))).strftime("%Y%m%d")
-        end = (current + timedelta(days=max(0, lookahead_days))).strftime("%Y%m%d")
-        return {"dates": f"{start}-{end}", "limit": "100"}
+            raise ValueError("Invalid football scoreboard time")
+        midnight = current.replace(hour=0, minute=0, second=0, microsecond=0)
+        return (
+            midnight - timedelta(days=max(0, lookback_days)),
+            midnight + timedelta(days=max(0, lookahead_days) + 1),
+        )
 
     def _club_football_cache_path(self, provider, league_code):
         safe_provider = str(provider).replace("-", "_")
@@ -1258,45 +1262,20 @@ class ClubFootballMixin:
         *,
         live_window=False,
     ):
-        if self._club_espn_calls_left(settings, now_utc) <= 0:
-            raise RuntimeError("club football ESPN daily request limit reached")
-        event_limit = (
-            CLUB_FOOTBALL_ESPN_LIVE_EVENT_LIMIT
-            if live_window
-            else CLUB_FOOTBALL_ESPN_EVENT_LIMIT
-        )
+        if self._bool_setting(settings, "_inkypi_ewc_cache_only", False):
+            raise RuntimeError("football ESPN cache-only fetch is disabled")
         if live_window:
             window_start, window_end = self._club_espn_live_window_bounds(now_utc)
-            start = window_start.strftime("%Y%m%d")
-            end = (window_end - timedelta(microseconds=1)).strftime("%Y%m%d")
-            params = {
-                "dates": f"{start}-{end}",
-                "limit": str(event_limit),
-            }
         else:
-            params = self._club_espn_scoreboard_params(league_code, now_utc)
-            if not params:
-                start = (now_utc - CLUB_FOOTBALL_ESPN_LOOKBACK).strftime("%Y%m%d")
-                end = (now_utc + CLUB_FOOTBALL_ESPN_LOOKAHEAD).strftime("%Y%m%d")
-                params = {
-                    "dates": f"{start}-{end}",
-                    "limit": str(event_limit),
-                }
-        headers = {
-            "Accept": "application/json",
-            "User-Agent": "InkyPi/1.0",
-        }
-        try:
-            response = get_http_session().get(
-                self._club_espn_scoreboard_url(league_code),
-                headers=headers,
-                params=params,
-                timeout=15,
+            window_start, window_end = self._club_espn_scoreboard_bounds(
+                league_code, now_utc
             )
-            response.raise_for_status()
-            payload = response.json()
-        finally:
-            self._record_club_espn_call(now_utc)
+        payload = fetch_scoreboard(
+            get_http_session(), self._club_espn_scoreboard_url(league_code),
+            window_start, window_end,
+            can_request=lambda: self._club_espn_calls_left(settings, now_utc) > 0,
+            record_request=lambda: self._record_club_espn_call(now_utc),
+        )
         return self._validate_club_espn_payload(payload)
 
     def _load_club_espn_league_payload(
@@ -1343,7 +1322,7 @@ class ClubFootballMixin:
             and live_fetched_utc is not None
             and (
                 base_fetched_utc is None
-                or live_fetched_utc > base_fetched_utc
+                or live_fetched_utc >= base_fetched_utc
             )
         )
         combined_payload = (
@@ -1375,6 +1354,12 @@ class ClubFootballMixin:
         combined_fetched_at = live_fetched_at if live_is_newer else fetched_at
         source_state = "ESPN CACHE" if wide_cache_fresh else "ESPN STALE"
         wide_fetch_failed = False
+        if self._bool_setting(settings, "_inkypi_ewc_cache_only", False):
+            if needs_overlay_refresh and not (
+                live_is_newer and self._club_cache_fresh(live_cache, overlay_cache_seconds, now_utc)
+            ):
+                source_state = "ESPN STALE"
+            return combined_payload, source_state, combined_fetched_at
 
         def fetch_wide_payload():
             payload = self._fetch_club_espn_payload(

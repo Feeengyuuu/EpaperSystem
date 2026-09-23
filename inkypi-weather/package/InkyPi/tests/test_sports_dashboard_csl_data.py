@@ -442,7 +442,7 @@ def test_csl_loader_returns_compatible_fresh_cache_without_network(tmp_path):
         "cache_key": (
             "sports-dashboard-csl-scoreboard-v1|"
             "https://site.web.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard|"
-            "2026-07-18|2026-08-01|America/Los_Angeles|100"
+            "2026-07-18|2026-08-01|America/Los_Angeles|1000"
         ),
         "fetched_at": "2026-07-25T11:59:30+00:00",
         "scoreboard": scoreboard,
@@ -486,8 +486,8 @@ def test_csl_loader_fetches_only_bounded_window_and_persists_current_last_good_a
             "https://site.web.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard",
             {
                 "params": {
-                    "dates": "20260718-20260801",
-                    "limit": "100",
+                    "dates": token,
+                    "limit": "1000",
                 },
                 "headers": {
                     "Accept": "application/json",
@@ -496,6 +496,7 @@ def test_csl_loader_fetches_only_bounded_window_and_persists_current_last_good_a
                 "timeout": 20,
             },
         )
+        for token in ("202607", "202608")
     ]
     current = json.loads((tmp_path / "csl_espn.json").read_text(encoding="utf-8"))
     last_good = json.loads((tmp_path / "csl_espn.last_good.json").read_text(encoding="utf-8"))
@@ -505,7 +506,7 @@ def test_csl_loader_fetches_only_bounded_window_and_persists_current_last_good_a
     assert request_state == {
         "version": "sports-dashboard-csl-requests-v1",
         "date": "2026-07-25",
-        "count": 1,
+        "count": 2,
         "updated_at": "2026-07-25T12:00:00+00:00",
     }
 

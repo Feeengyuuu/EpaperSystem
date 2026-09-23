@@ -22113,7 +22113,7 @@ def test_fetch_club_espn_payload_requests_recent_history_and_future_schedule(
 ):
     plugin = _plugin()
     now = datetime(2026, 8, 15, 18, tzinfo=timezone.utc)
-    captured = {}
+    captured = {"calls": []}
 
     class FakeResponse:
         @staticmethod
@@ -22128,6 +22128,7 @@ def test_fetch_club_espn_payload_requests_recent_history_and_future_schedule(
         @staticmethod
         def get(url, **kwargs):
             captured.update(url=url, kwargs=kwargs)
+            captured["calls"].append(kwargs["params"])
             return FakeResponse()
 
     monkeypatch.setattr(
@@ -22141,10 +22142,11 @@ def test_fetch_club_espn_payload_requests_recent_history_and_future_schedule(
     payload = plugin._fetch_club_espn_payload("PL", {}, now)
 
     assert payload == {"events": []}
-    assert captured["kwargs"]["params"] == {
-        "dates": "20260716-20261213",
-        "limit": "250",
-    }
+    assert captured["calls"] == [
+        {"dates": token, "limit": "1000"}
+        for token in ['202607', '202608', '202609', '202610', '202611', '202612']
+    ]
+    captured["calls"].clear()
     assert captured["kwargs"]["headers"] == {
         "Accept": "application/json",
         "User-Agent": "InkyPi/1.0",
@@ -22152,10 +22154,7 @@ def test_fetch_club_espn_payload_requests_recent_history_and_future_schedule(
 
     plugin._fetch_club_espn_payload("PL", {}, now, live_window=True)
 
-    assert captured["kwargs"]["params"] == {
-        "dates": "20260814-20260816",
-        "limit": "100",
-    }
+    assert captured["calls"] == [{"dates": "202608", "limit": "1000"}]
 
 
 def test_fetch_club_espn_payload_counts_connection_failures(monkeypatch):
@@ -22700,7 +22699,7 @@ def test_club_espn_mls_fetch_uses_bounded_recent_and_upcoming_window(
 ):
     plugin = _plugin()
     plugin._sports_dashboard_cache_dir = lambda: tmp_path
-    captured = {}
+    captured = {"calls": []}
 
     class FakeResponse:
         @staticmethod
@@ -22715,6 +22714,7 @@ def test_club_espn_mls_fetch_uses_bounded_recent_and_upcoming_window(
         @staticmethod
         def get(url, **kwargs):
             captured.update(url=url, kwargs=kwargs)
+            captured["calls"].append(kwargs["params"])
             return FakeResponse()
 
     monkeypatch.setattr(
@@ -22733,10 +22733,11 @@ def test_club_espn_mls_fetch_uses_bounded_recent_and_upcoming_window(
 
     assert payload == {"events": []}
     assert captured["url"].endswith("/soccer/usa.1/scoreboard")
-    assert captured["kwargs"]["params"] == {
-        "dates": "20260815-20260905",
-        "limit": "100",
-    }
+    assert captured["calls"] == [
+        {"dates": token, "limit": "1000"}
+        for token in ['202608', '202609']
+    ]
+    captured["calls"].clear()
     assert captured["kwargs"]["headers"] == {
         "Accept": "application/json",
         "User-Agent": "InkyPi/1.0",
@@ -22745,10 +22746,7 @@ def test_club_espn_mls_fetch_uses_bounded_recent_and_upcoming_window(
 
     plugin._fetch_club_espn_payload("MLS", {}, now, live_window=True)
 
-    assert captured["kwargs"]["params"] == {
-        "dates": "20260821-20260823",
-        "limit": "100",
-    }
+    assert captured["calls"] == [{"dates": "202608", "limit": "1000"}]
 
 
 def test_club_loader_keeps_football_data_when_espn_fails(monkeypatch, tmp_path):

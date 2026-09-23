@@ -3,12 +3,13 @@ from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 
 from .common import ESPN_SITE_API_BASE_URL, get_http_session
+from .football_espn import FOOTBALL_EVENT_LIMIT, fetch_scoreboard
 
 
 CSL_SCOREBOARD_LOOKBACK_DAYS = 7
 CSL_SCOREBOARD_LOOKAHEAD_DAYS = 7
 CSL_VISIBLE_MATCH_LIMIT = 4
-CSL_SCOREBOARD_EVENT_LIMIT = 100
+CSL_SCOREBOARD_EVENT_LIMIT = FOOTBALL_EVENT_LIMIT
 CSL_SCOREBOARD_URL = f"{ESPN_SITE_API_BASE_URL}/sports/soccer/chn.1/scoreboard"
 CSL_SCOREBOARD_STATE_VERSION = "sports-dashboard-csl-scoreboard-v1"
 CSL_REQUEST_STATE_VERSION = "sports-dashboard-csl-requests-v1"
@@ -160,38 +161,28 @@ class CSLMixin:
         cache_key,
         fallback_cache,
     ):
-        if self._csl_calls_left(settings, now_utc) <= 0:
+        cache_only = (settings or {}).get("_inkypi_ewc_cache_only") is True
+        if cache_only or self._csl_calls_left(settings, now_utc) <= 0:
             if fallback_cache is not None:
                 return (
                     fallback_cache["scoreboard"],
                     "CSL ESPN STALE",
                     fallback_cache.get("fetched_at"),
                 )
-            return {}, "CSL ESPN LIMIT", None
+            return {}, "CSL NO DATA" if cache_only else "CSL ESPN LIMIT", None
 
         start_date, end_date = self._csl_scoreboard_date_range(
             timezone_info,
             now_utc,
         )
         try:
-            session = self._csl_http_session()
-            try:
-                response = session.get(
-                    CSL_SCOREBOARD_URL,
-                    params={
-                        "dates": (f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}"),
-                        "limit": str(CSL_SCOREBOARD_EVENT_LIMIT),
-                    },
-                    headers={
-                        "Accept": "application/json",
-                        "User-Agent": "InkyPi/1.0",
-                    },
-                    timeout=20,
-                )
-                response.raise_for_status()
-                scoreboard = response.json()
-            finally:
-                self._record_csl_call(now_utc)
+            window_start = datetime.combine(start_date, datetime.min.time(), tzinfo=timezone_info)
+            window_end = datetime.combine(end_date + timedelta(days=1), datetime.min.time(), tzinfo=timezone_info)
+            scoreboard = fetch_scoreboard(
+                self._csl_http_session(), CSL_SCOREBOARD_URL, window_start, window_end,
+                can_request=lambda: self._csl_calls_left(settings, now_utc) > 0,
+                record_request=lambda: self._record_csl_call(now_utc), timeout=20,
+            )
             if not self._csl_scoreboard_payload_is_valid(scoreboard):
                 raise ValueError("CSL ESPN scoreboard response has no valid events list")
         except Exception:
