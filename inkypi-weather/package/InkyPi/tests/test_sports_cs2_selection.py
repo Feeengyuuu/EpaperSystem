@@ -1,4 +1,4 @@
-"""Discovery must not reserve the shared esports sidebar between match days."""
+"""Fresh live/upcoming fixtures outrank results without a local-date gate."""
 
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -29,7 +29,7 @@ def lol_card(now, hours=1, league="LPL", live=False):
     }
 
 
-def test_future_discovery_is_cached_without_reserving_sidebar(monkeypatch, tmp_path):
+def test_future_discovery_is_cached_and_replaces_empty_or_finished_sidebar(monkeypatch, tmp_path):
     now = datetime(2026, 9, 6, 20, tzinfo=TZ)
     main = cs_match(now, offset=11)
     own_next = cs_match(now, match_id=502, offset=5, team_a="Small A", team_b="Small B")
@@ -39,15 +39,15 @@ def test_future_discovery_is_cached_without_reserving_sidebar(monkeypatch, tmp_p
     assert card["upcoming"][0]["match_id"] == "502"
     assert (tmp_path / "pandascore_cs2_follow.json").exists()
     choice = select(plugin, card, source, now)
-    assert choice["kind"] == "lol" and choice["choice"]["league_key"] == "LPL"
+    assert choice["kind"] == "valve"
     count = len(session.calls)
     cached, source = plugin._load_pandascore_cs2_card(SETTINGS, device, TZ, now + timedelta(seconds=30))
     assert len(session.calls) == count
-    assert not cached["window_active"]
+    assert cached["window_active"]
 
 
-@pytest.mark.parametrize("minutes,expected", [(0, "lol"), (2, "valve")])
-def test_cached_discovery_enters_on_local_match_day(monkeypatch, tmp_path, minutes, expected):
+@pytest.mark.parametrize("minutes", [0, 2])
+def test_cached_discovery_stays_eligible_across_local_midnight(monkeypatch, tmp_path, minutes):
     now = datetime(2026, 9, 6, 23, 59, tzinfo=TZ)
     plugin, device, session = loader(monkeypatch, tmp_path, {"upcoming": [cs_match(now)]})
     plugin._load_pandascore_cs2_card(SETTINGS, device, TZ, now)
@@ -57,7 +57,7 @@ def test_cached_discovery_enters_on_local_match_day(monkeypatch, tmp_path, minut
         {**SETTINGS, "_inkypi_ewc_cache_only": True}, device, TZ, current
     )
     assert len(session.calls) == count
-    assert select(plugin, card, source, current)["kind"] == expected
+    assert select(plugin, card, source, current)["kind"] == "valve"
 
 
 def test_own_schedule_can_make_today_active_before_followed_match(monkeypatch, tmp_path):
@@ -93,7 +93,7 @@ def test_cross_module_next_time_includes_main_and_event_schedule(monkeypatch, tm
     assert select(plugin, card, source, now, [lol_card(now, hours=2)])["kind"] == expected
 
 
-def test_finished_event_releases_slot_with_next_event_kept_for_tomorrow(monkeypatch, tmp_path):
+def test_finished_event_yields_to_tomorrows_next_event(monkeypatch, tmp_path):
     now = datetime(2026, 9, 6, 20, tzinfo=TZ)
     future = cs_match(now, match_id=502, offset=11)
     future["serie"]["id"] = 1002
@@ -102,7 +102,7 @@ def test_finished_event_releases_slot_with_next_event_kept_for_tomorrow(monkeypa
     })
     card, source = plugin._load_pandascore_cs2_card(SETTINGS, device, TZ, now)
     assert card["event_id"] == "series:1002"
-    assert select(plugin, card, source, now)["kind"] == "lol"
+    assert select(plugin, card, source, now)["kind"] == "valve"
 
 
 def test_stale_own_schedule_cannot_beat_earlier_trusted_lpl(monkeypatch, tmp_path):
@@ -120,7 +120,7 @@ def test_stale_own_schedule_cannot_beat_earlier_trusted_lpl(monkeypatch, tmp_pat
     assert select(plugin, card, source, current, [lol_card(now, hours=2)])["kind"] == "lol"
 
 
-def test_successful_empty_schedule_releases_today_without_erasing_future_main(monkeypatch, tmp_path):
+def test_successful_empty_schedule_keeps_independently_fresh_future_main(monkeypatch, tmp_path):
     now = datetime(2026, 9, 6, 12, tzinfo=TZ)
     plugin, device, session = loader(monkeypatch, tmp_path, {
         "upcoming": [cs_match(now, offset=24)],
@@ -132,7 +132,7 @@ def test_successful_empty_schedule_releases_today_without_erasing_future_main(mo
     current = now + timedelta(minutes=16)
     card, source = plugin._load_pandascore_cs2_card(SETTINGS, device, TZ, current)
     assert card["main"]["match_id"] == "501" and card["upcoming"] == []
-    assert select(plugin, card, source, current)["kind"] == "lol"
+    assert select(plugin, card, source, current)["kind"] == "valve"
 
 
 @pytest.mark.parametrize("status,offset", [("not_started", -2), ("finished", -0.25)])

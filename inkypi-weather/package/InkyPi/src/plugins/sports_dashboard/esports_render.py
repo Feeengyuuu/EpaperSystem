@@ -1665,7 +1665,7 @@ class EsportsRenderMixin:
         elif featured_event_page:
             pill_text = self._lpl_featured_event_pill_text(featured_event)
         else:
-            pill_text = "NEXT"
+            pill_text = self._lpl_focus_status(main_event, now, False)
         self._draw_status_pill(draw, right_x + right_w - 88, header_y + 8, pill_text, bool(live))
         draw.line((right_x + 14, 66, right_x + right_w - 14, 66), fill=COLORS["border"], width=1)
 
@@ -1884,8 +1884,17 @@ class EsportsRenderMixin:
             draw.text((card_x1 + 20, y + 58), config["empty_schedule"], font=self._font(19, True), fill=COLORS["text"])
             return
 
-        tag = self._lpl_focus_tag(is_live)
-        tag_w = 112 if is_live else 86
+        is_recent = self._lpl_focus_status(event, now, is_live) == "RECENT"
+        is_final = (
+            is_recent
+            and self._is_lpl_finished_event(event, now)
+            and not self._lpl_score_is_unresolved(event)
+            and not self._lpl_series_is_unfinished(event)
+        )
+        tag = "FINAL RESULT" if is_final else (
+            "LAST MATCH" if is_recent else self._lpl_focus_tag(is_live)
+        )
+        tag_w = 112 if is_live or is_recent else 86
         tag_text, tag_font = self._fit_text(draw, tag, tag_w - 10, 12, bold=True, min_size=8)
         tag_fill = COLORS[config["live"]] if is_live else COLORS[config["tag"]]
         draw.rectangle((card_x1 + 16, y + 12, card_x1 + 16 + tag_w, y + 31), fill=tag_fill, outline=COLORS["border"], width=1)
@@ -1895,7 +1904,11 @@ class EsportsRenderMixin:
         self._draw_right_aligned(draw, (card_x2 - 12, y + 13), date_text, date_font, COLORS["muted"])
 
         center_x = right_x + right_w / 2
-        time_text = "IN PROGRESS" if is_live else self._format_time(event["start"])
+        time_text = "IN PROGRESS" if is_live else (
+            "FINAL" if is_final else (
+                "RESULT PENDING" if is_recent else self._format_time(event["start"])
+            )
+        )
         time_text, time_font = self._fit_text(draw, time_text, card_x2 - card_x1 - 58, 19, bold=True, min_size=13)
         self._draw_centered(draw, (center_x, y + 44), time_text, time_font, COLORS["text"])
 
@@ -1908,7 +1921,7 @@ class EsportsRenderMixin:
         self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, logo_y, logo_size, event["team_a"])
         self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, logo_y, logo_size, event["team_b"])
         score_text = self._score_label(event).upper()
-        center_score = score_text if is_live and score_text != "VS" else "VS"
+        center_score = score_text if (is_live or is_recent) and score_text != "VS" else "VS"
         team_a_label = self._lpl_display_team_from_event(event, "a", league_key=league_key)
         team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
 
@@ -1944,7 +1957,7 @@ class EsportsRenderMixin:
             )
 
         odds = event.get("odds") or {}
-        has_odds = bool(odds.get("team_a") and odds.get("team_b"))
+        has_odds = not is_recent and bool(odds.get("team_a") and odds.get("team_b"))
         if has_odds:
             self._draw_lpl_odds_text(draw, (left_area[0], y + 132, left_area[1], y + 144), odds.get("team_a"), max_size=11)
             self._draw_lpl_odds_text(draw, (right_area[0], y + 132, right_area[1], y + 144), odds.get("team_b"), max_size=11)
@@ -1967,6 +1980,17 @@ class EsportsRenderMixin:
     @staticmethod
     def _lpl_focus_tag(is_live):
         return "NOW PLAYING" if is_live else "NEXT MATCH"
+
+    @staticmethod
+    def _lpl_focus_status(event, now, is_live):
+        if is_live:
+            return "LIVE"
+        if not event:
+            return "WAITING"
+        start = event.get("start")
+        if isinstance(start, datetime) and start < now:
+            return "RECENT"
+        return "NEXT"
 
     def _draw_lpl_next_rows(self, image, draw, right_x, right_w, y, events, now, is_live, msi_next_filler=False, msi_next_start=None, league_key="LPL"):
         config = self._lol_sidebar_config(league_key)

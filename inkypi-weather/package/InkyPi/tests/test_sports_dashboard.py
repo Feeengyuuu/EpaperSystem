@@ -17075,8 +17075,12 @@ def test_forced_night_theme_uses_deep_night_palette_without_leaking():
         FakeDeviceConfig(timezone="UTC"),
     )
 
-    assert max(image.getpixel((620, 120))) < 90
-    assert image.getpixel((620, 120)) != DAY_COLORS["paper"]
+    # Captions change with match state; inspect the dominant card background
+    # instead of a pixel that may now belong to RESULT PENDING text.
+    card_colors = image.crop((590, 110, 780, 220)).getcolors(190 * 110)
+    background = max(card_colors, key=lambda item: item[0])[1]
+    assert max(background) < 90
+    assert background != DAY_COLORS["paper"]
     assert DEEP_NIGHT_COLORS["paper"] != DAY_COLORS["paper"]
     assert COLORS["paper"] == DAY_COLORS["paper"]
 

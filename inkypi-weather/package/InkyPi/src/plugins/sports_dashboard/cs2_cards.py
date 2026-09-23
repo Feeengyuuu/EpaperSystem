@@ -227,14 +227,13 @@ def _event(item, tz, now, settings):
 
 
 def _set_display_window(card, tz, now):
-    """Keep discovery cached; only live or today's fresh fixtures claim the slot."""
-    today = now.astimezone(tz).date()
+    """Let fresh live/upcoming fixtures outrank results across local midnight."""
     events = [card["main"], *card["live"], *card["upcoming"]]
     card["window_active"] = any(
         event["feed_fresh"]
         and (
             event["state"] == "inProgress"
-            or (event["state"] == "unstarted" and event["start"].astimezone(tz).date() == today)
+            or (event["state"] == "unstarted" and event["start"] >= now)
         )
         for event in events
     )
