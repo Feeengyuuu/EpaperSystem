@@ -1,5 +1,6 @@
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
+from .nba_calendar import load_calendar
 
 SportsDashboard = None
 
@@ -9,11 +10,10 @@ class NBAMixin:
         try:
             payload, source_state, _fetched_at = self._load_nba_scoreboard(settings, timezone_info)
             events = self._parse_nba_espn_events(payload, timezone_info)
-            if events:
-                return events, source_state
+            return events, source_state
         except Exception as exc:
             logger.warning("NBA scoreboard fetch failed: %s", exc)
-        return self._fallback_nba_events(timezone_info), "NBA FALLBACK"
+        return [], "NBA NO DATA"
 
     @staticmethod
     def _wnba_scoreboard_url(settings):
@@ -100,36 +100,24 @@ class NBAMixin:
                 return cache["scoreboard"], "ESPN STALE", cache.get("fetched_at")
             raise
 
+        if payload.get("source_state") == "NBA NO DATA":
+            if has_compatible_cache:
+                return cache["scoreboard"], "ESPN STALE", cache.get("fetched_at")
+            return {}, "NBA NO DATA", None
         try:
-            self._write_json_file(cache_path, payload)
+            if not self._bool_setting(settings, "_inkypi_ewc_cache_only", False):
+                self._write_json_file(cache_path, payload)
         except OSError as exc:
             logger.warning("Failed to write NBA scoreboard cache: %s", exc)
-        return payload["scoreboard"], "ESPN LIVE", payload.get("fetched_at")
+        return payload["scoreboard"], payload.get("source_state", "ESPN LIVE"), payload.get("fetched_at")
 
     def _fetch_nba_scoreboard_payload(self, settings, timezone_info, cache_key, now_utc):
-        start_date, end_date = self._nba_scoreboard_date_range(settings, timezone_info, now_utc)
-        url = self._nba_scoreboard_url(settings)
-        session = get_http_session()
-        try:
-            response = session.get(
-                url,
-                params={
-                    "dates": f"{start_date.strftime('%Y%m%d')}-{end_date.strftime('%Y%m%d')}",
-                    "limit": "100",
-                },
-                headers={"Accept": "application/json", "User-Agent": "InkyPi/1.0"},
-                timeout=20,
-            )
-        finally:
-            self._record_nba_scoreboard_call(settings, now_utc)
-        response.raise_for_status()
+        payload = load_calendar(self, settings, timezone_info, now_utc, get_http_session())
         return {
+            **payload,
             "version": NBA_SCOREBOARD_STATE_VERSION,
             "cache_key": cache_key,
             "fetched_at": now_utc.isoformat(),
-            "range_start": start_date.isoformat(),
-            "range_end": end_date.isoformat(),
-            "scoreboard": response.json(),
         }
 
     @staticmethod
@@ -686,6 +674,8 @@ class NBAMixin:
         return self._sports_dashboard_cache_dir() / "nba_scoreboard_state.json"
 
     def _nba_scoreboard_cache_is_fresh(self, cache, settings, timezone_info, now_utc):
+        if cache.get("source_state") in {"ESPN STALE", "NBA NO DATA"}:
+            return False
         cache_hours = self._int_setting(settings, "nbaCacheHours", DEFAULT_NBA_CACHE_HOURS, 1, 12)
         if not self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
             return False

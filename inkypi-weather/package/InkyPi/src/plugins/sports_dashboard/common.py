@@ -114,7 +114,7 @@ EWC_CLUB_LOGO_FALLBACKS = {
     "2068035497854242816": "https://tds-cdn.ewc.efg.gg/assets/clubs/2068035497854242816/LOGO_LIGHT.thumb.webp",
     "2069127996567982080": "https://teamapexgaming.com/assets/tag-logo.webp",
 }
-NBA_SCOREBOARD_STATE_VERSION = "sports-dashboard-nba-scoreboard-v1"
+NBA_SCOREBOARD_STATE_VERSION = "sports-dashboard-nba-scoreboard-v2"
 NBA_LIVE_STATE_VERSION = "sports-dashboard-nba-live-v1"
 NBA_ODDS_STATE_VERSION = "sports-dashboard-nba-odds-v1"
 F1_JOLPICA_STATE_VERSION = "sports-dashboard-f1-jolpica-v1"
