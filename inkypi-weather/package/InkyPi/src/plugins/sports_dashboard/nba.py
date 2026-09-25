@@ -2431,6 +2431,11 @@ class NBAMixin:
         if has_series_score:
             self._draw_nba_main_series_score(draw, left_area, right_area, center_x, team_y + (32 if has_odds else 21), event)
 
+        artwork_top = team_y + (30 if has_odds else 18)
+        if has_series_score:
+            artwork_top = team_y + (32 if has_odds else 21) + 28
+        self._draw_nba_card_placeholder(image, x1 + 15, artwork_top, x2 - 12, y2 - 24)
+
         bottom_label = SportsDashboard._nba_main_footer_label(event, max_period_parts=2)
         block = str(event.get("block") or "NBA").upper()
         block_width = x2 - x1 - (152 if bottom_label else 88)
@@ -2439,6 +2444,21 @@ class NBAMixin:
         if bottom_label:
             bottom_label, bottom_font = self._fit_text(draw, bottom_label, 128, 8, bold=True, min_size=6)
             self._draw_right_aligned(draw, (x2 - 14, y2 - 17), bottom_label, bottom_font, COLORS["muted"])
+
+    def _draw_nba_card_placeholder(self, image, x1, y1, x2, y2):
+        width, height = int(x2 - x1 + 1), int(y2 - y1 + 1)
+        # Dense cards keep their match information; decoration only uses slack.
+        if width < 80 or height < 24:
+            return
+        artwork = self._load_local_logo(
+            LOCAL_NBA_CARD_PLACEHOLDER_PATH, (width, height), alpha_threshold=8
+        )
+        if artwork is not None:
+            position = (
+                int(x1 + (width - artwork.width) / 2),
+                int(y1 + (height - artwork.height) / 2),
+            )
+            image.paste(artwork, position, artwork)
 
     def _draw_nba_main_series_score(self, draw, left_area, right_area, center_x, y, event):
         left_score = str(event.get("series_wins_a"))

@@ -403,6 +403,7 @@ SPORT_HEADER_CUTOUT_LEFT_BIAS = 0.45
 SPORT_HEADER_CUTOUT_TITLE_GAP = 104
 PGA_HEADER_CUTOUT_X_OFFSET = 22
 LOCAL_NBA_EMPTY_SLOT_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_empty_slot_filler.png")
+LOCAL_NBA_CARD_PLACEHOLDER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_card_placeholder.png")
 LOCAL_NBA_OFFSEASON_FILLER_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_offseason_filler.png")
 LOCAL_NBA_OFFSEASON_ACCENT_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_offseason_accent.png")
 LOCAL_PGA_FAIRWAY_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "pga_fairway_strip.png")
