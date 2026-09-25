@@ -264,6 +264,41 @@ def test_parent_resource_guard_terminates_child_before_hard_pressure(caplog):
     assert "minimum_available_mb: 150" in caplog.text
 
 
+@pytest.mark.parametrize("abort", ["pressure", "deadline"])
+@pytest.mark.parametrize("cleanup", ["timeout", "leaked"])
+def test_unconfirmed_child_cleanup_requires_process_recovery(abort, cleanup):
+    class UnreapedHandle(_BlockingHandle):
+        def result(self, timeout=None):
+            if cleanup == "leaked":
+                return LongTaskResult("failed", error_code="child_process_leaked")
+            raise TimeoutError("coordinator did not finish cleanup")
+
+    handle = UnreapedHandle()
+    with pytest.raises(sports_isolated_renderer.SportsIsolatedCleanupFailed):
+        sports_isolated_renderer._wait_for_result(
+            handle,
+            context=_context(-1 if abort == "deadline" else 10),
+            resource_sampler=lambda: SimpleNamespace(available_mb=50, swap_percent=10),
+            abort_min_available_mb=70,
+            abort_max_swap_percent=75,
+            poll_seconds=0.01,
+        )
+    assert handle.canceled
+
+
+def test_terminal_child_leak_requires_recovery_even_without_resource_pressure():
+    handle = _CompletedHandle(LongTaskResult("failed", error_code="child_process_leaked"))
+    with pytest.raises(sports_isolated_renderer.SportsIsolatedCleanupFailed):
+        sports_isolated_renderer._wait_for_result(
+            handle,
+            context=_context(),
+            resource_sampler=lambda: SimpleNamespace(available_mb=240, swap_percent=10),
+            abort_min_available_mb=70,
+            abort_max_swap_percent=75,
+            poll_seconds=0.01,
+        )
+
+
 @pytest.mark.parametrize(
     "sample",
     [

@@ -601,6 +601,46 @@ def test_memory_restart_interrupts_waitress_with_platform_safe_signal(
     assert events == expected_events
 
 
+def test_isolation_recovery_exits_even_when_child_shutdown_is_stuck():
+    child_program = f"""
+import sys, threading
+sys.path.insert(0, {str(SRC_DIR)!r})
+import inkypi, waitress
+from flask import Flask
+
+inkypi.RESTART_REQUEST_POLL_SECONDS = 0.01
+inkypi.ISOLATION_RECOVERY_EXIT_TIMEOUT_SECONDS = 0.3
+interrupted = threading.Event()
+inkypi._interrupt_waitress_for_restart = interrupted.set
+class Config:
+    def get_config(self, key, default=None):
+        return False if key == 'startup' else default
+class Task:
+    restart_request = {{'reason': 'isolated_worker_cleanup_failed'}}
+    def start(self): pass
+    def stop(self, join_timeout=None): return True
+app = Flask(__name__)
+app.config.update(DEVICE_CONFIG=Config(), DISPLAY_MANAGER=object(), REFRESH_TASK=Task())
+def serve(*args, **kwargs):
+    assert interrupted.wait(1)
+waitress.serve = serve
+def stuck_cleanup(**kwargs):
+    print('cleanup-entered', flush=True)
+    threading.Event().wait()
+inkypi.shutdown_long_task_executors = stuck_cleanup
+raise SystemExit(inkypi.run(app, dev_mode=False, port=80))
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", child_program],
+            capture_output=True, text=True, timeout=4, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("isolation recovery hung behind the same stuck child cleanup")
+    assert result.returncode == 75, result.stderr
+    assert "cleanup-entered" in result.stdout
+
+
 def test_memory_restart_force_exits_after_cleanup_when_worker_will_not_stop():
     child_program = f"""
 import sys

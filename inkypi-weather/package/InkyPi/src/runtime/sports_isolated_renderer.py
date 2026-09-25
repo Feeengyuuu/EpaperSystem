@@ -33,6 +33,7 @@ SPORTS_REGIONS = SPORTS_REGION_ORDER
 # when the previous region becomes the next child payload.
 SPORTS_RESULT_MAX_BYTES = 1536 * 1024
 DEFAULT_RESOURCE_POLL_SECONDS = 0.25
+CHILD_CLEANUP_TIMEOUT_SECONDS = 5.0
 MIN_POSIX_WORKER_OOM_SCORE_ADJ = 800
 _FORCE_REFRESH_SETTING_KEYS = (
     "forceRefresh",
@@ -48,6 +49,10 @@ logger = logging.getLogger(__name__)
 
 class SportsIsolatedResourcePressure(TaskCancelled):
     """The child was stopped before system pressure could threaten the parent."""
+
+
+class SportsIsolatedCleanupFailed(RuntimeError):
+    """Child cleanup is unconfirmed and may still own global provider capacity."""
 
 
 class SportsIsolatedCheckpointPending(TaskCancelled):
@@ -252,6 +257,25 @@ def _checkpoint_fingerprint(
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _require_child_cleanup(result):
+    if result.error_code == "child_process_leaked":
+        raise SportsIsolatedCleanupFailed(
+            "isolated Sports Dashboard child could not be reaped"
+        )
+    return result
+
+
+def _cancel_and_confirm_child_cleanup(handle):
+    handle.cancel()
+    try:
+        result = handle.result(timeout=CHILD_CLEANUP_TIMEOUT_SECONDS)
+    except TimeoutError as error:
+        raise SportsIsolatedCleanupFailed(
+            "isolated Sports Dashboard cleanup did not finish before its deadline"
+        ) from error
+    _require_child_cleanup(result)
+
+
 def _wait_for_result(
     handle,
     *,
@@ -270,11 +294,7 @@ def _wait_for_result(
             # terminate/kill/join path.  Wait briefly for that coordinator so
             # a canceled permit cannot leave a Sports worker overlapping the
             # next one.
-            handle.cancel()
-            try:
-                handle.result(timeout=2)
-            except TimeoutError:
-                pass
+            _cancel_and_confirm_child_cleanup(handle)
             raise
         try:
             sample = resource_sampler()
@@ -297,16 +317,12 @@ def _wait_for_result(
                 abort_min_available_mb,
                 abort_max_swap_percent,
             )
-            handle.cancel()
-            try:
-                handle.result(timeout=2)
-            except TimeoutError:
-                pass
+            _cancel_and_confirm_child_cleanup(handle)
             raise SportsIsolatedResourcePressure(
                 "isolated Sports Dashboard worker stopped at the resource guard"
             )
         try:
-            return handle.result(timeout=poll_seconds)
+            return _require_child_cleanup(handle.result(timeout=poll_seconds))
         except TimeoutError:
             continue
 

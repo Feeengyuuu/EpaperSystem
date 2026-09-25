@@ -60,6 +60,7 @@ logger = logging.getLogger(__name__)
 MEMORY_PRESSURE_RESTART_EXIT_CODE = 75
 RESTART_REQUEST_POLL_SECONDS = 0.25
 MEMORY_PRESSURE_WORKER_STOP_TIMEOUT_SECONDS = 5.0
+ISOLATION_RECOVERY_EXIT_TIMEOUT_SECONDS = 15.0
 PLATFORM_OS_NAME = os.name
 
 
@@ -76,14 +77,33 @@ def _monitor_restart_request(refresh_task, stop_event: threading.Event) -> None:
         if not request:
             continue
         logger.error(
-            "Memory pressure restart request reached the process supervisor. | "
+            "Runtime restart request reached the process supervisor. | "
             "reason: %s | available_mb: %s | swap_percent: %s",
             request.get("reason", "unknown"),
             request.get("available_mb", "unknown"),
             request.get("swap_percent", "unknown"),
         )
+        if request.get("reason") == "isolated_worker_cleanup_failed":
+            # Try normal shutdown first, but its child cleanup can encounter
+            # the same stuck coordinator. Keep the recovery bound outside it.
+            # systemd owns the complete service cgroup and reaps its children.
+            watchdog = threading.Timer(
+                ISOLATION_RECOVERY_EXIT_TIMEOUT_SECONDS,
+                _force_exit_after_isolation_cleanup_failure,
+            )
+            watchdog.daemon = True
+            watchdog.start()
         _interrupt_waitress_for_restart()
         return
+
+
+def _force_exit_after_isolation_cleanup_failure():
+    logger.critical(
+        "Isolated worker recovery exceeded its shutdown deadline; forcing "
+        "supervised process replacement. | exit_code: %s",
+        MEMORY_PRESSURE_RESTART_EXIT_CODE,
+    )
+    os._exit(MEMORY_PRESSURE_RESTART_EXIT_CODE)
 
 
 def _mark_startup_degraded(app: Flask, stage: str, error: Exception) -> None:

@@ -8728,6 +8728,49 @@ def test_process_queue_entry_binds_context_and_immutable_instance_identity(monke
     assert current_instance_identity_validator() is None
 
 
+def test_unreaped_sports_child_finishes_job_and_requests_recovery(monkeypatch):
+    from runtime import sports_isolated_renderer
+
+    task, _config, clock = _make_runtime_task(
+        make_test_dir("unreaped-child-recovery"), playlists=[], clock=RuntimeClock()
+    )
+    command = RefreshCommand.create(
+        kind=CommandKind.CACHE_REFRESH,
+        source=CommandSource.MANUAL,
+        plugin_id="sports_dashboard",
+        intent=RefreshIntent.DATA_REFRESH,
+        payload={"refresh_type": "Playlist"},
+        now_monotonic=clock.monotonic(),
+        deadline_monotonic=clock.monotonic() + 60,
+    )
+    submitted = task.refresh_queue.submit(command)
+    entry = task.refresh_queue.take(timeout=0)
+
+    class UnreapedHandle:
+        def cancel(self):
+            return True
+
+        def result(self, timeout=None):
+            raise TimeoutError("cleanup stalled with provider capacity held")
+
+    def execute(_command):
+        sports_isolated_renderer._wait_for_result(
+            UnreapedHandle(),
+            context=TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 10),
+            resource_sampler=lambda: SimpleNamespace(available_mb=50, swap_percent=10),
+            abort_min_available_mb=70,
+            abort_max_swap_percent=75,
+            poll_seconds=0.01,
+        )
+
+    monkeypatch.setattr(task, "_execute_command", execute)
+    task._process_queue_entry(entry)
+    finished = task.refresh_queue.get_entry(submitted.id).job
+    assert finished.status is JobStatus.FAILED
+    assert finished.error_code == "isolated_worker_cleanup_failed"
+    assert task.restart_request == {"reason": "isolated_worker_cleanup_failed"}
+
+
 def test_failure_bookkeeping_error_cannot_leave_queue_job_running(monkeypatch):
     tmp_path = make_test_dir("runtime-failure-bookkeeping")
     task, _device_config, clock = _make_runtime_task(tmp_path, playlists=[], clock=RuntimeClock())

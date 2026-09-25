@@ -127,6 +127,7 @@ from runtime.resource_governor import RuntimeResourceGovernor
 from runtime.render_arbiter import RenderArbiter
 from runtime.sports_isolated_renderer import (
     SportsIsolatedCheckpointPending,
+    SportsIsolatedCleanupFailed,
     SportsIsolatedResourcePressure,
     render_sports_dashboard_isolated,
 )
@@ -4600,6 +4601,23 @@ class RefreshTask:
                 if yielded.status is not JobStatus.QUEUED:
                     self._signal_completion(yielded.id)
                 return
+            except SportsIsolatedCleanupFailed as error:
+                # Continuing would leave unrelated providers waiting on the
+                # canceled child's exclusive capacity. Finish the job before
+                # asking the supervisor to replace this inconsistent process.
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.FAILED,
+                    error_code="isolated_worker_cleanup_failed",
+                    error=str(error),
+                )
+                logger.error(
+                    "Requesting supervised recovery after isolated worker cleanup "
+                    "failed. | plugin_id: %s",
+                    command.plugin_id,
+                )
+                self._restart_request = {"reason": "isolated_worker_cleanup_failed"}
+                self.refresh_queue.wake()
             except SportsIsolatedResourcePressure as error:
                 next_retry_at = self._record_resource_pressure_deferral(command)
                 logger.warning(
