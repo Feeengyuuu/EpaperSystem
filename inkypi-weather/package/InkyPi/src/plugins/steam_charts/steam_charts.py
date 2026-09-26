@@ -2,6 +2,7 @@ from utils.resource_cache import cached_resource_image, prune_resource_images
 import hashlib
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
+from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import (
     font_file_uri,
     get_base_ui_font,
@@ -15,6 +16,8 @@ import base64
 import concurrent.futures
 from io import BytesIO
 from functools import lru_cache
+from bs4 import BeautifulSoup
+from urllib.parse import urlsplit
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from datetime import datetime
@@ -69,6 +72,7 @@ STEAM_CAPSULE_URL = "https://cdn.akamai.steamstatic.com/steam/apps/{appid}/capsu
 STEAM_CAPSULE_TIMEOUT = 15
 STEAM_CAPSULE_CACHE_SIZE = 128
 STEAM_STORE_TIMEOUT = 20
+STEAM_STORE_METADATA_TTL = 6 * 3600
 STEAM_PRIMARY_GAME_LANGUAGE = "schinese"
 STEAM_SECONDARY_GAME_LANGUAGE = "english"
 STEAMCHARTS_REQUESTS_PER_SECOND = 2
@@ -1668,18 +1672,73 @@ class SteamCharts(BasePlugin):
             if not include_images:
                 continue
 
-            image_url = (
-                primary.get("capsule_image")
-                or secondary.get("capsule_image")
-                or primary.get("header_image")
-                or secondary.get("header_image")
-                or STEAM_CAPSULE_URL.format(appid=app_id)
+            game["image"] = self._resolve_cover_image(app_id, primary, secondary)
+
+    def _resolve_cover_image(self, app_id, primary, secondary):
+        """Try real store assets before the legacy CDN path, which newer apps lack."""
+        attempted = set()
+
+        def try_images(urls):
+            for url in urls:
+                if not url or url in attempted:
+                    continue
+                attempted.add(url)
+                try:
+                    image = self._image_url_to_data_uri(url)
+                    # The disk cache also signals download/negative-cache misses
+                    # with an empty string, not just exceptions.
+                    if image:
+                        return image
+                except TaskCancelled:
+                    raise
+                except Exception as error:
+                    logger.debug("Steam cover candidate failed for app %s: %s", app_id, error)
+            return ""
+
+        image = try_images((
+            primary.get("capsule_image"), secondary.get("capsule_image"),
+            primary.get("header_image"), secondary.get("header_image"),
+        ))
+        if image:
+            return image
+        try:
+            urls = self._fetch_store_page_images(
+                str(app_id), int(time.monotonic() // STEAM_STORE_METADATA_TTL)
             )
-            try:
-                game["image"] = self._image_url_to_data_uri(image_url)
-            except Exception as e:
-                logger.warning(f"Failed to cache cover image for app {app_id}: {e}")
-                game["image"] = ""
+        except TaskCancelled:
+            raise
+        except Exception as error:
+            logger.debug("Steam store page unavailable for app %s: %s", app_id, error)
+            urls = ()
+        image = try_images(urls) or try_images((STEAM_CAPSULE_URL.format(appid=app_id),))
+        if not image:
+            logger.warning("No usable Steam cover found for app %s", app_id)
+        return image
+
+    @staticmethod
+    @lru_cache(maxsize=STEAM_CAPSULE_CACHE_SIZE)
+    def _fetch_store_page_images(appid, cache_epoch):
+        """Cache only successful, AppID-verified official storefront image URLs."""
+        if not appid.isdigit():
+            raise ValueError("Invalid Steam app ID for cover lookup")
+        page = get_http_client().request_text(
+            "GET", f"https://store.steampowered.com/app/{appid}/",
+            params={"l": STEAM_PRIMARY_GAME_LANGUAGE}, timeout=STEAM_STORE_TIMEOUT,
+            max_bytes=4 * 1024 * 1024,
+        ).data
+        soup = BeautifulSoup(page, "html.parser")
+        urls = []
+        for selector, attribute in (("img.game_header_image_full", "src"), ("meta[property='og:image']", "content")):
+            for node in soup.select(selector):
+                url = str(node.get(attribute) or "").strip()
+                parsed = urlsplit(url)
+                host = (parsed.hostname or "").lower()
+                if (parsed.scheme == "https" and host.endswith(".steamstatic.com")
+                        and f"/steam/apps/{appid}/" in parsed.path and url not in urls):
+                    urls.append(url)
+        if not urls:
+            raise ValueError(f"Steam page has no verified cover for app {appid}")
+        return tuple(urls)
 
     def _apply_cached_images(self, games):
         for game in games:
@@ -1697,28 +1756,36 @@ class SteamCharts(BasePlugin):
                 game["image"] = ""
 
     @staticmethod
-    @lru_cache(maxsize=STEAM_CAPSULE_CACHE_SIZE)
     def _fetch_store_appdetails(app_id, language):
         appid = str(app_id or "").strip()
         if not appid.isdigit():
             return {}
         try:
-            response = get_http_client().request_json(
-                "GET",
-                STEAM_STORE_APPDETAILS,
-                params={
-                    "appids": appid,
-                    "l": language,
-                },
-                timeout=STEAM_STORE_TIMEOUT,
+            return SteamCharts._fetch_store_appdetails_cached(
+                appid, language, int(time.monotonic() // STEAM_STORE_METADATA_TTL)
             )
-            payload = response.data
-            entry = payload.get(appid, {}) if isinstance(payload, dict) else {}
-            data = entry.get("data") if entry.get("success") else None
-            return data if isinstance(data, dict) else {}
+        except TaskCancelled:
+            raise
         except Exception as e:
             logger.warning(f"Steam store appdetails unavailable for {appid} ({language}): {e}")
             return {}
+
+    @staticmethod
+    @lru_cache(maxsize=STEAM_CAPSULE_CACHE_SIZE)
+    def _fetch_store_appdetails_cached(appid, language, cache_epoch):
+        # Exceptions are deliberately outside the cached result: one transient or
+        # mismatched response must not pin missing metadata for the process lifetime.
+        payload = get_http_client().request_json(
+            "GET", STEAM_STORE_APPDETAILS,
+            params={"appids": appid, "l": language}, timeout=STEAM_STORE_TIMEOUT,
+        ).data
+        entry = payload.get(appid) if isinstance(payload, dict) else None
+        data = entry.get("data") if isinstance(entry, dict) and entry.get("success") else None
+        if not isinstance(data, dict) or not data:
+            raise ValueError(f"Steam response has no successful data for app {appid}")
+        if str(data.get("steam_appid", appid)) != appid:
+            raise ValueError(f"Steam response app ID does not match {appid}")
+        return data
 
     def _fetch_homepage(self, failure_message):
         """Return SteamCharts homepage HTML or raise a descriptive runtime error."""
