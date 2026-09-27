@@ -12955,7 +12955,10 @@ def test_nba_mini_match_row_renders_moneyline_odds():
         return original_draw_odds_text(draw, box, text, max_size=max_size, align=align)
 
     def record_fit_text(draw_arg, text, max_width, size, bold=False, min_size=11):
-        if text in {event["team_a"], event["team_b"]}:
+        if text in {
+            plugin._nba_display_team_from_event(event, "a", full=True),
+            plugin._nba_display_team_from_event(event, "b", full=True),
+        }:
             team_sizes.append(size)
         return original_fit_text(draw_arg, text, max_width, size, bold=bold, min_size=min_size)
 
