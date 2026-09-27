@@ -415,7 +415,14 @@ def test_serial_and_parallel_normalization_have_identical_png_hashes(tmp_path):
     assert Path(serial[0].path).read_bytes() == Path(parallel[0].path).read_bytes()
 
 
-def test_soft_pressure_pauses_new_dispatch_until_resources_recover(tmp_path):
+def _slow_parallel_child_start(*args):
+    # Exercise startup jitter explicitly instead of relying on a warm machine.
+    time.sleep(1.2)
+    stage_module._parallel_child_main(*args)
+
+
+def test_soft_pressure_pauses_new_dispatch_until_resources_recover(tmp_path, monkeypatch):
+    monkeypatch.setattr(stage_module, "_parallel_child_main", _slow_parallel_child_start)
     sources = tuple(
         _png_bytes((2600, 1800), (index * 20, 40, 80))
         for index in range(4)
@@ -449,15 +456,21 @@ def test_soft_pressure_pauses_new_dispatch_until_resources_recover(tmp_path):
     )
     runner = BoundedParallelStageRunner(
         governor=RuntimeResourceGovernor(snapshot_provider=snapshot),
+        # This test exercises recovery during a pause. Startup/rendering and
+        # the assertions must fit inside that pause; the production 1-second
+        # grace intentionally switches to serial work on a slower machine.
+        # Separate tests below cover the short-grace serial fallback.
+        soft_pause_grace_seconds=10,
     )
     outcome = queue.Queue()
+    context = _context(20)
 
     def run_stage():
         try:
             outcome.put(
                 runner.run_parallel_only(
                     workset,
-                    _context(10),
+                    context,
                     lambda value: value == identity,
                 )
             )
@@ -466,24 +479,28 @@ def test_soft_pressure_pauses_new_dispatch_until_resources_recover(tmp_path):
 
     thread = threading.Thread(target=run_stage)
     thread.start()
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        if len(tuple(tmp_path.glob("image-stage-*.png"))) >= 2:
-            break
-        time.sleep(0.01)
-    assert len(tuple(tmp_path.glob("image-stage-*.png"))) == 2
-    time.sleep(0.15)
-    assert len(tuple(tmp_path.glob("image-stage-*.png"))) == 2
-    assert thread.is_alive()
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            if len(tuple(tmp_path.glob("image-stage-*.png"))) >= 2:
+                break
+            time.sleep(0.01)
+        assert len(tuple(tmp_path.glob("image-stage-*.png"))) == 2
+        time.sleep(0.15)
+        assert len(tuple(tmp_path.glob("image-stage-*.png"))) == 2
+        assert thread.is_alive()
 
-    state["recovered"] = True
-    thread.join(timeout=10)
+        state["recovered"] = True
+        thread.join(timeout=10)
 
-    assert not thread.is_alive()
-    result = outcome.get_nowait()
-    assert not isinstance(result, BaseException)
-    assert tuple(item.ordinal for item in result) == (0, 1, 2, 3)
-    assert runner.active_processes == ()
+        assert not thread.is_alive()
+        result = outcome.get_nowait()
+        assert not isinstance(result, BaseException)
+        assert tuple(item.ordinal for item in result) == (0, 1, 2, 3)
+        assert runner.active_processes == ()
+    finally:
+        context.cancel_event.set()
+        thread.join(timeout=5)
 
 
 def test_two_worker_runtime_threshold_keeps_dispatching_at_exactly_150_mb(tmp_path):

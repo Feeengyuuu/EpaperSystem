@@ -3119,3 +3119,27 @@ Keep forced cleanup independent of child-owned locks. Preserve fail-closed quara
 - Pattern-Key: runtime.forced_cleanup_avoids_child_owned_locks
 
 ---
+
+## [LRN-20260927-SOFT-PAUSE] best_practice
+
+**Logged**: 2026-09-27T21:00:00Z
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+A pause-recovery test must allow child startup within its chosen grace window.
+
+### Details
+The full suite repeated the historical soft-pressure test failure. Injecting a 1.2-second spawned-child startup delay deterministically made the default 1-second soft-pause grace expire, starting the intentional serial fallback and producing four staged images while the test expected two. The recovery scenario now sets an explicit 10-second test-only grace, keeps the slow-start injection and assertions, and cancels/joins its worker in finally. Separate short-grace tests continue checking serial fallback. Production thresholds are unchanged; initial failed and red reproduction logs are retained.
+
+### Suggested Action
+Choose timing windows explicitly for the scenario under test and distinguish expected fallback from a pause-recovery violation. Always clean up test workers after assertions fail.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/tests/test_bounded_parallel_stage.py
+- Tags: testing, multiprocessing, startup-jitter, resource-pressure
+- Pattern-Key: tests.pause_recovery_window_includes_child_startup
+
+---
