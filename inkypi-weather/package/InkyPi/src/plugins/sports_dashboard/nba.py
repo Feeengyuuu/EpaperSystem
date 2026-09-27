@@ -1,4 +1,5 @@
 from .common import *
+from .nba_free_odds import attach_free_odds
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 from .nba_calendar import load_calendar
 
@@ -744,7 +745,7 @@ class NBAMixin:
         provider = self._nba_odds_provider(settings, device_config)
         api_key = self._nba_odds_api_key(settings, device_config, provider)
         if not api_key:
-            return events
+            return attach_free_odds(self, events, settings)
         try:
             odds_events, _source_state, _fetched_at = self._load_nba_odds(settings, api_key, provider)
             if not odds_events:
