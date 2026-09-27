@@ -51,6 +51,10 @@ def test_status_distinguishes_recovered_failures_and_display_owned_policy(tmp_pa
     assert "secret-token" not in encoded and '"lat"' not in encoded and "private-key" not in encoded
     result["instances"].clear()
     assert len(observer.snapshot()["instances"]) == 1
+    # Another location/account in an inactive playlist must not be attributed here.
+    observer.observe([item], {item.instance_uuid: state}, {}, now=now,
+                     known_instances=[item, replace(item, instance_uuid="inactive-weather")])
+    assert observer.snapshot()["instances"][0]["source"] is None
 
 
 def test_vehicle_offline_source_age_is_not_replaced_by_success_time(tmp_path):

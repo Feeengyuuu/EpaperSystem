@@ -146,9 +146,9 @@ class RuntimeStatusObserver:
         source["age_seconds"] = max(0, (now - observed).total_seconds()) if observed and observed <= now else None
         return source
 
-    def observe(self, instances, states, plugin_configs, *, now):
+    def observe(self, instances, states, plugin_configs, *, now, known_instances=None):
         rows = []
-        counts = Counter(item.plugin_id for item in instances)
+        counts = Counter(item.plugin_id for item in (instances if known_instances is None else known_instances))
         for item in instances[:256]:
             state = states.get(item.instance_uuid, InstanceRuntimeState())
             lane = state.data

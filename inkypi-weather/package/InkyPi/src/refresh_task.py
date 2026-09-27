@@ -2533,7 +2533,7 @@ class RefreshTask:
             )
         observer.observe(instances, runtime_instances,
                          {item.plugin_id: self.device_config.get_plugin(item.plugin_id) for item in instances},
-                         now=current_dt)
+                         now=current_dt, known_instances=manager.snapshot_all_instances())
 
     def _get_plugin_instance(self, plugin_config):
         registry = getattr(self, "_plugin_registry", None)
