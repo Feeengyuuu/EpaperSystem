@@ -1,6 +1,6 @@
 """Public liveness and readiness routes backed by immutable snapshots."""
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, render_template
 
 from health import health_jsonable
 
@@ -67,3 +67,24 @@ def readyz():
         body["error_codes"] = list(result.error_codes)
     status_code = 200 if result.status in {"ready", "degraded"} else 503
     return _response(body, status_code)
+
+
+@health_bp.get("/status")
+def status_page():
+    return render_template("runtime_status.html")
+
+
+@health_bp.get("/api/runtime-status")
+def runtime_status():
+    if not _detail_allowed():
+        return _response({"error": "authentication_required"}, 401)
+    publisher = current_app.config["HEALTH_PUBLISHER"]
+    snapshot = publisher.snapshot()
+    now = publisher.now_monotonic()
+    result = current_app.config["READINESS_EVALUATOR"].evaluate(snapshot, now_monotonic=now)
+    body = _public_body(snapshot, now, result.status)
+    body["error_codes"] = list(result.error_codes)
+    body["components"] = health_jsonable(snapshot.components)
+    task = current_app.config.get("REFRESH_TASK")
+    body["runtime"] = task.runtime_status_snapshot() if task else {"observed_at": None, "instances": [], "recoveries": []}
+    return _response(body, 200)

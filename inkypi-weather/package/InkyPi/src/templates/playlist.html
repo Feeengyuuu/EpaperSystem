@@ -396,6 +396,7 @@
                     <img src="{{ url_for('static', filename='icons/playlist.png') }}" alt="playlist icon" class="app-icon">
                     <h1 class="app-title">Playlists</h1>
                 </div>
+                <a class="header-button" href="/status">运行状态</a>
                 <button class="header-button" onclick="openCreateModal()">New Playlist</button>
             </div>
         </div>
@@ -438,6 +439,9 @@
 
                             </div>
                             <div class="plugin-actions">
+                                {% if plugins.get(plugin_instance.plugin_id, {}).get('capabilities', {}).get('refresh_data_before_display') %}
+                                    <span class="latest-refresh" title="每次轮播到此页面时取数；不按保存的间隔在后台取数">显示前更新</span>
+                                {% endif %}
                                 {% if plugin_instance.latest_refresh_time %}
                                     {% set refresh_time = plugin_instance.latest_refresh_time | format_relative_time %}
                                     <span class="latest-refresh" title="{{plugin_instance.latest_refresh_time}}">

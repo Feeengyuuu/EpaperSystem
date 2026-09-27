@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from utils.atomic_file import atomic_write_json
+from utils.atomic_file import atomic_write_json_streaming
 from utils.plugin_cache import read_json
 
 
@@ -11,4 +11,4 @@ def read_json_file(path):
 def write_json_file(path, payload):
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(target, payload)
+    atomic_write_json_streaming(target, payload)

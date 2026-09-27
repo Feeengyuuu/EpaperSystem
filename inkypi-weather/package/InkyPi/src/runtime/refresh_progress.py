@@ -80,6 +80,7 @@ class RefreshProgressTracker:
         presentation_instance_uuids,
         now,
         rotation_cycle_seconds,
+        display_owned_instance_uuids=(),
     ):
         active = tuple(instances or ())
         result = self._empty(observed=True)
@@ -112,6 +113,11 @@ class RefreshProgressTracker:
                         presentation_ages.append(pending_age)
                         if pending_age >= presentation_grace:
                             result["presentation_stalled_count"] += 1
+            # A display-owned provider has no background deadline. Its saved
+            # interval must not create a stall that the scheduler cannot service.
+            # Presentation/display failures remain observable independently.
+            if instance.instance_uuid in display_owned_instance_uuids:
+                continue
             diagnostic = replace(state, data=replace(
                 state.data,
                 last_success_at=(state.data.last_success_at

@@ -93,6 +93,8 @@ def _monitor_restart_request(refresh_task, stop_event: threading.Event) -> None:
             )
             watchdog.daemon = True
             watchdog.start()
+        from runtime.runtime_status import record_supervised_recovery
+        record_supervised_recovery(getattr(refresh_task, "device_config", None), request.get("reason"))
         _interrupt_waitress_for_restart()
         return
 

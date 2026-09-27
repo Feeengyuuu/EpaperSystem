@@ -3095,3 +3095,27 @@ Keep behavioral coverage for piped invocation, terminal-less errors, display sel
 - Pattern-Key: tests.linux_shell_lf_fixtures_on_windows
 
 ---
+
+## [LRN-20260927-CANCEL] best_practice
+
+**Logged**: 2026-09-27T20:50:00Z
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+Forced child termination must not first wait on a child-owned synchronization lock.
+
+### Details
+A public LongTaskExecutor cancellation test reproduces a parent hang when the child holds the multiprocessing cancellation event condition. Event.set acquires that condition before termination can run, retaining parent-owned provider and child leases. Direct bounded OS termination and reaping avoids that lock; real spawned-child and permit-release regressions cover the behavior. This proves the specific flaw, not that every historical cleanup failure had the same cause.
+
+### Suggested Action
+Keep forced cleanup independent of child-owned locks. Preserve fail-closed quarantine if reaping cannot be proven, and validate long-duration incident frequency separately. Treat display-owned refresh policy as distinct from periodic DATA due health; keep display progress monitoring active.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/runtime/long_task_executor.py, inkypi-weather/package/InkyPi/tests/test_long_task_executor.py, inkypi-weather/package/InkyPi/src/runtime/refresh_progress.py
+- Tags: cancellation, multiprocessing, resource-permits, freshness
+- Pattern-Key: runtime.forced_cleanup_avoids_child_owned_locks
+
+---

@@ -161,3 +161,41 @@ def test_expired_weather_turn_releases_its_reservation_and_backs_off(tmp_path, m
     manager = device.get_playlist_manager()
     assert not manager.validate_rotation_reservation(instance.instance_uuid, expected_playlist_name=command.payload["playlist_name"])
     assert task._select_cached_display_command(now) is None
+
+
+def test_low_memory_weather_does_not_starve_the_next_cached_page(tmp_path, monkeypatch):
+    task, device, weather, now = weather_runtime(tmp_path, monkeypatch, cached=True)
+    manager = device.get_playlist_manager()
+    active = manager.snapshot_active_playlist(now)
+    assert manager.add_plugin_to_playlist_snapshot(active.name, _runtime_plugin_data("cached_page", "Cached Page"))
+    cached = manager.snapshot_active_playlist(now).plugins[1]
+    manifest = replace(_theme_manifest("weather"), capabilities=replace(
+        _theme_manifest("weather").capabilities, refresh_data_before_display=True))
+    device.get_plugin = lambda name: {"id": name, "_manifest": manifest if name == "weather" else _theme_manifest(name)}
+    _write_runtime_theme_cache(task, cached, "day")
+    # A selected Weather turn must relinquish its reservation on resource deferral.
+    playlist = manager.playlists[0]
+    playlist.plugin_rotation_pool = [weather.instance_uuid, cached.instance_uuid]
+    playlist.plugin_rotation_queue = [weather.instance_uuid, cached.instance_uuid]
+    playlist.plugin_rotation_recent_history = []
+    selected = task._select_cached_display_command(now)
+    assert selected.instance_uuid == weather.instance_uuid
+    monkeypatch.setattr(task, "_resource_sample", lambda: ResourceSample(available_mb=120, swap_percent=0))
+    monkeypatch.setattr("refresh_task.get_plugin_instance", lambda _: pytest.fail("unexpected provider call"))
+    task.refresh_queue.submit(selected)
+    task._execute_queue_entry(task.refresh_queue.take(timeout=0))
+    following = task._select_cached_display_command(now)
+    assert following is not None and following.instance_uuid == cached.instance_uuid
+    task.refresh_queue.submit(following)
+    task._execute_queue_entry(task.refresh_queue.take(timeout=0))
+    assert task.refresh_queue.get_entry(following.id).job.status is JobStatus.SUCCEEDED
+    assert task.display_manager.calls
+
+
+def test_display_owned_weather_is_not_reported_as_background_data_stall(tmp_path, monkeypatch):
+    task, _, weather, now = weather_runtime(tmp_path, monkeypatch, cached=True)
+    task.runtime_state.record_success(weather.instance_uuid, (now - timedelta(days=1)).isoformat())
+    task._observe_refresh_progress(now)
+    progress = task.refresh_health_snapshot()["progress"]
+    assert progress["data_stalled_count"] == 0
+    assert task.runtime_status_snapshot()["instances"][0]["policy"] == "before_display"

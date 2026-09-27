@@ -1220,7 +1220,7 @@ class OffseasonHubMixin:
             return "live"
         if state in NBA_FINISHED_STATES or state in {"completed", "post", "finished"}:
             return "final"
-        if state in {"pre", "preview"}:
+        if state in {"pre", "preview", "unstarted", "not_started", "not-started"}:
             return "scheduled"
         return state or "scheduled"
 

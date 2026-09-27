@@ -46,6 +46,34 @@ def _ignores_cancel_task(_payload, _cancel_event):
         time.sleep(0.02)
 
 
+def _owns_cancel_lock_task(payload, cancel_event):
+    # Simulate an interrupted library call owning the OS-shared semaphore.
+    with cancel_event._cond:
+        Path(payload["ready"]).write_text("ready", encoding="ascii")
+        while not Path(payload["release"]).exists():
+            time.sleep(0.01)
+
+
+def test_real_child_holding_event_lock_is_killed_and_provider_capacity_returns(tmp_path):
+    governor = _TrackingGovernor()
+    executor = LongTaskExecutor({"blocked": _owns_cancel_lock_task}, resource_governor=governor)
+    ready, release = tmp_path / "ready", tmp_path / "release"
+    try:
+        handle = executor.submit("blocked", {"ready": str(ready), "release": str(release)},
+                                 context=_context(10), instance_identity=InstanceIdentity("real-lock", 1, 1))
+        deadline = time.monotonic() + 4
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert ready.exists()
+        assert handle.cancel()
+        assert handle.result(timeout=2).status == "canceled"
+        assert not executor.active_processes
+        assert all(lease.release_calls == 1 for lease in governor.leases)
+    finally:
+        release.write_text("release", encoding="ascii")
+        executor.shutdown(deadline_monotonic=time.monotonic() + 3)
+
+
 def _overlap_probe_task(payload, _cancel_event):
     root = Path(payload["root"])
     ready = root / payload["ready"]
@@ -207,6 +235,41 @@ def _wait_for_active(executor, timeout=2.0):
             return
         time.sleep(0.01)
     raise AssertionError("isolated process did not start")
+
+
+def test_forced_cancel_does_not_wait_on_a_child_owned_cancellation_lock():
+    """A wedged shared Event must not block process cleanup or provider reuse."""
+    release = threading.Event()
+
+    class ContendedEvent:
+        def set(self):
+            release.wait(3)
+
+        def is_set(self):
+            return False
+
+    class Context(_NeverExitProcessContext):
+        def Event(self):
+            return ContendedEvent()
+
+    governor = _TrackingGovernor()
+    context = Context(process=_DirectSignalStopsProcess())
+    executor = LongTaskExecutor(
+        {"blocked": _blocking_task}, multiprocessing_context=context,
+        resource_governor=governor, poll_interval_seconds=0.01,
+        terminate_grace_seconds=0.01,
+    )
+    try:
+        handle = executor.submit("blocked", {}, context=_context(5),
+                                 instance_identity=InstanceIdentity("cancel-lock", 1, 1))
+        _wait_for_active(executor)
+        assert handle.cancel()
+        assert handle.result(timeout=0.5).status == "canceled"
+        assert all(lease.release_calls == 1 for lease in governor.leases)
+        assert not executor.active_processes
+    finally:
+        release.set()
+        executor.shutdown(deadline_monotonic=time.monotonic() + 2)
 
 
 def test_capacity_is_one_running_plus_one_queued_and_deadline_reclaims_process():

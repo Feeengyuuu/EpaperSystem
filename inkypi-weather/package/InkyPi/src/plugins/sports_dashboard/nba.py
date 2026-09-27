@@ -94,16 +94,28 @@ class NBAMixin:
                 return cache["scoreboard"], "ESPN STALE", cache.get("fetched_at")
             return {}, "ESPN LIMIT", None
 
+        # The merged scoreboard duplicates the calendar's object graph. Keep
+        # the durable fallback on disk while loading/updating that calendar.
+        # In a small worker, holding both can trip the system resource guard.
+        cache = None
+
+        def fallback_cache():
+            old = self._read_json_file(cache_path)
+            return old if (old.get("cache_key") == cache_key
+                           and isinstance(old.get("scoreboard"), dict)) else {}
+
         try:
             payload = self._fetch_nba_scoreboard_payload(settings, timezone_info, cache_key, now_utc)
         except Exception:
-            if has_compatible_cache:
-                return cache["scoreboard"], "ESPN STALE", cache.get("fetched_at")
+            old = fallback_cache() if has_compatible_cache else {}
+            if old:
+                return old["scoreboard"], "ESPN STALE", old.get("fetched_at")
             raise
 
         if payload.get("source_state") == "NBA NO DATA":
-            if has_compatible_cache:
-                return cache["scoreboard"], "ESPN STALE", cache.get("fetched_at")
+            old = fallback_cache() if has_compatible_cache else {}
+            if old:
+                return old["scoreboard"], "ESPN STALE", old.get("fetched_at")
             return {}, "NBA NO DATA", None
         try:
             if not self._bool_setting(settings, "_inkypi_ewc_cache_only", False):

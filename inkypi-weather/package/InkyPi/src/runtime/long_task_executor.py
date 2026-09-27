@@ -665,7 +665,11 @@ class LongTaskExecutor:
             while True:
                 aborted = self._abort_result(job)
                 if aborted is not None:
-                    cancel_event.set()
+                    # Cancellation here is forced process termination. A child
+                    # can be stopped while holding a multiprocessing.Event's
+                    # semaphore; setting that event first can block forever
+                    # and retain every parent-owned provider/resource permit.
+                    # Signal the OS process directly, without a child-owned lock.
                     self._terminate_process(
                         job,
                         process,

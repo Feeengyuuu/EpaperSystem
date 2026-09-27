@@ -40,6 +40,18 @@ class ESPN:
         return Response()
 
 
+def test_calendar_compaction_preserves_display_fields_without_analytics():
+    import json
+    event = deepcopy(_sample_nba_scoreboard_payload()["events"][0])
+    for competitor in event["competitions"][0]["competitors"]:
+        competitor["statistics"] = [{"name": "unused", "value": "x" * 10000} for _ in range(8)]
+        competitor["team"]["links"] = [{"href": "https://example.org/" + "x" * 10000}]
+    expected = SportsDashboard._parse_nba_espn_events({"events": [event]}, timezone.utc)
+    compact = calendar_module._compact(event)
+    assert SportsDashboard._parse_nba_espn_events({"events": [compact]}, timezone.utc) == expected
+    assert len(json.dumps(compact)) < 10000
+
+
 def test_month_queries_preserve_more_than_one_hundred_matches(monkeypatch, tmp_path):
     plugin = SportsDashboard({"id": "sports_dashboard"})
     plugin._sports_dashboard_cache_dir = lambda: tmp_path

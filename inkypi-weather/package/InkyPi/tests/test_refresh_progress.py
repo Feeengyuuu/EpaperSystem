@@ -76,6 +76,22 @@ def test_tracker_starts_unobserved_and_empty_playlist_is_not_stalled():
     assert tracker.snapshot()["data_stalled_count"] == 0
 
 
+def test_display_owned_refresh_is_not_a_stalled_background_interval():
+    tracker = RefreshProgressTracker(clock=Clock())
+    weather, feed = instance("weather", interval=900), instance("feed", interval=300)
+    states = {item.instance_uuid: InstanceRuntimeState(data=RefreshLaneState(
+        last_success_at=(NOW - timedelta(hours=3)).isoformat(),
+    )) for item in (weather, feed)}
+    result = tracker.observe(
+        instances=[weather, feed], runtime_instances=states,
+        cache_instance_uuids=set(states), presentation_instance_uuids=set(),
+        display_owned_instance_uuids={"weather"}, now=NOW, rotation_cycle_seconds=300,
+    )
+    assert result["active_instances"] == 2
+    assert result["data_stalled_count"] == 1
+    assert result["data_overdue_count"] == 1
+
+
 def test_overdue_data_in_backoff_is_stalled_but_daily_data_not_due_is_healthy():
     tracker = RefreshProgressTracker(clock=Clock())
     frequent, daily = instance(), instance("daily", interval=86400)

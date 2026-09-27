@@ -459,6 +459,16 @@ class SteamCharts(BasePlugin):
     def _css_scale(value):
         return f"{value:.3f}"
 
+    @staticmethod
+    def _source_diagnostics(games):
+        return {
+            "items": len(games),
+            "metadata_missing": sum(game.get("_metadata_missing", 0) for game in games),
+            "metadata_checked": sum(game.get("_metadata_checked", 0) for game in games),
+            "covers_requested": sum(bool(game.get("_cover_requested")) for game in games),
+            "covers_available": sum(bool(game.get("image")) for game in games),
+        }
+
     def _write_combined_context(self, mode_config, chart_groups, updated_at_text):
         label = str(mode_config.get("label") or "Steam Charts").strip()
         context_groups = []
@@ -503,6 +513,9 @@ class SteamCharts(BasePlugin):
                     {"label": "updated", "value": updated_at_text},
                 ],
                 "groups": context_groups,
+                "diagnostics": self._source_diagnostics([
+                    game for group in chart_groups for game in group.get("games", [])[:MAX_ITEMS]
+                ]),
                 "table_variant": "combined",
             },
             generated_at=datetime.now(),
@@ -541,6 +554,7 @@ class SteamCharts(BasePlugin):
                     {"label": "updated", "value": updated_at_text},
                 ],
                 "items": items,
+                "diagnostics": self._source_diagnostics(games[:MAX_ITEMS]),
                 "table_variant": table_variant,
             },
             generated_at=datetime.now(),
@@ -1656,6 +1670,9 @@ class SteamCharts(BasePlugin):
 
             primary = self._fetch_store_appdetails(app_id, STEAM_PRIMARY_GAME_LANGUAGE)
             secondary = self._fetch_store_appdetails(app_id, STEAM_SECONDARY_GAME_LANGUAGE)
+            game["_metadata_checked"] = 2
+            game["_metadata_missing"] = int(not primary) + int(not secondary)
+            game["_cover_requested"] = include_images
 
             localized_name = self._clean_game_name(primary.get("name"))
             english_name = self._clean_game_name(secondary.get("name"))

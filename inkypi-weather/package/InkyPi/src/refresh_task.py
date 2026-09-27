@@ -114,6 +114,8 @@ from runtime.refresh_policy import (
     soft_spacing_deadline,
 )
 from runtime.refresh_progress import RefreshProgressTracker
+from runtime.runtime_status import RuntimeStatusObserver
+from runtime.parallel_health import parallel_runtime_health_snapshot
 from runtime.retry_policy import source_retry_policy
 from runtime.long_task_executor import InstanceIdentity
 from runtime.plugin_execution import PluginExecutionContext
@@ -1100,143 +1102,7 @@ class RefreshTask:
         return self._active_operation
 
     def _parallel_runtime_health_snapshot(self):
-        """Return bounded aggregate metrics without child or instance identity."""
-
-        try:
-            sample = dict(self._resource_governor.last_snapshot)
-        except Exception:
-            sample = {}
-        try:
-            run = dict(self._parallel_image_runner.last_run_snapshot)
-        except Exception:
-            run = {}
-        try:
-            cumulative = dict(self._parallel_image_runner.cumulative_snapshot)
-        except Exception:
-            cumulative = {}
-        try:
-            active_child_count = len(self._parallel_image_runner.active_processes)
-        except Exception:
-            active_child_count = 0
-        try:
-            throttling = dict(self._resource_governor.cpu_throttling_snapshot())
-        except Exception:
-            throttling = {}
-
-        def optional_number(value):
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                return None
-            converted = float(value)
-            return converted if math.isfinite(converted) and converted >= 0 else None
-
-        def nonnegative_int(value, default=0, maximum=None):
-            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                return default
-            return value if maximum is None else min(value, maximum)
-
-        known_reasons = {
-            "not_run",
-            "resource_snapshot_unavailable",
-            "serial_requested",
-            "cpu_quota_below_parallel_threshold",
-            "memory_below_parallel_threshold",
-            "swap_above_parallel_threshold",
-            "parallel_threshold_not_met",
-            "parallel_batch_busy",
-        }
-        reason = run.get("reason")
-        degrade_reason = reason if reason in known_reasons else None
-        raw_admission_counts = cumulative.get("admission_tier_counts", {})
-        if not isinstance(raw_admission_counts, Mapping):
-            raw_admission_counts = {}
-        raw_reason_counts = cumulative.get(
-            "serial_fallback_reason_counts",
-            {},
-        )
-        if not isinstance(raw_reason_counts, Mapping):
-            raw_reason_counts = {}
-        serial_reason_counts = {
-            known_reason: nonnegative_int(raw_reason_counts.get(known_reason))
-            for known_reason in sorted(known_reasons)
-            if nonnegative_int(raw_reason_counts.get(known_reason)) > 0
-        }
-        status = run.get("status")
-        if status not in {"not_run", "succeeded", "failed", "canceled"}:
-            status = "unknown"
-
-        worker_count = nonnegative_int(run.get("worker_count"), default=1, maximum=3)
-        if worker_count < 1:
-            worker_count = 1
-        selected_tier = {
-            1: "serial",
-            2: "2_worker",
-            3: "3_worker",
-        }[worker_count]
-        return {
-            "resource_sample": {
-                "available_mb": optional_number(sample.get("available_mb")),
-                "swap_percent": optional_number(sample.get("swap_percent")),
-                "cpu_quota_cores": optional_number(sample.get("cpu_quota_cores")),
-            },
-            "selected_tier": selected_tier,
-            "worker_count": worker_count,
-            "degrade_reason": degrade_reason,
-            "status": status,
-            "batch_duration_ms": optional_number(run.get("batch_duration_ms")) or 0.0,
-            "worker_thread_count": nonnegative_int(
-                run.get("worker_thread_count"),
-                maximum=3,
-            ),
-            "child_peak_rss_bytes": nonnegative_int(
-                run.get("child_peak_rss_bytes"),
-                default=None,
-            ),
-            "cancellation_count": nonnegative_int(run.get("cancellation_count")),
-            "active_child_count": nonnegative_int(active_child_count, maximum=1),
-            "cumulative": {
-                "admission_tier_counts": {
-                    "serial": nonnegative_int(
-                        raw_admission_counts.get("serial")
-                    ),
-                    "2_worker": nonnegative_int(
-                        raw_admission_counts.get("2_worker")
-                    ),
-                    "3_worker": nonnegative_int(
-                        raw_admission_counts.get("3_worker")
-                    ),
-                },
-                "serial_fallback_reason_counts": serial_reason_counts,
-                "batch_count": nonnegative_int(cumulative.get("batch_count")),
-                "batch_duration_ms_total": (
-                    optional_number(cumulative.get("batch_duration_ms_total"))
-                    or 0.0
-                ),
-                "normalized_work_pixels_total": nonnegative_int(
-                    cumulative.get("normalized_work_pixels_total")
-                ),
-                "child_peak_rss_bytes": nonnegative_int(
-                    cumulative.get("child_peak_rss_bytes"),
-                    default=None,
-                ),
-                "cancellation_count": nonnegative_int(
-                    cumulative.get("cancellation_count")
-                ),
-            },
-            "cpu_throttling": {
-                "nr_periods": nonnegative_int(
-                    throttling.get("nr_periods"),
-                    default=None,
-                ),
-                "nr_throttled": nonnegative_int(
-                    throttling.get("nr_throttled"),
-                    default=None,
-                ),
-                "throttled_usec": nonnegative_int(
-                    throttling.get("throttled_usec"),
-                    default=None,
-                ),
-            },
-        }
+        return parallel_runtime_health_snapshot(self._resource_governor, self._parallel_image_runner)
 
     def refresh_health_snapshot(self):
         """Return aggregate refresh diagnostics without instance-owned details."""
@@ -1253,6 +1119,10 @@ class RefreshTask:
             "ian_retry_not_before_monotonic": self._ian_retry_not_before,
             "parallel_runtime": self._parallel_runtime_health_snapshot(),
         }
+
+    def runtime_status_snapshot(self):
+        observer = getattr(self, "_runtime_status_observer", None)
+        return observer.snapshot() if observer else {"observed_at": None, "instances": [], "recoveries": []}
 
     @property
     def restart_request(self):
@@ -2627,8 +2497,11 @@ class RefreshTask:
             instances, runtime_instances, now=current_dt, now_monotonic=self._clock(),
         )
         presentation_instance_uuids = set()
+        display_owned_instance_uuids = set()
         for instance in instances:
             plugin_config = self.device_config.get_plugin(instance.plugin_id)
+            if plugin_refreshes_data_before_display(plugin_config):
+                display_owned_instance_uuids.add(instance.instance_uuid)
             if (
                 _presentation_refresh_enabled(self.device_config, plugin_config)
                 and plugin_supports_presentation_refresh(plugin_config)
@@ -2645,12 +2518,22 @@ class RefreshTask:
             runtime_instances=runtime_instances,
             cache_instance_uuids=cache_candidates,
             presentation_instance_uuids=presentation_instance_uuids,
+            display_owned_instance_uuids=display_owned_instance_uuids,
             now=current_dt,
             rotation_cycle_seconds=self._config_float(
                 "plugin_cycle_interval_seconds",
                 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
             ),
         )
+        observer = getattr(self, "_runtime_status_observer", None)
+        if observer is None:
+            paths = getattr(self.device_config, "runtime_paths", None)
+            observer = self._runtime_status_observer = RuntimeStatusObserver(
+                cache_dir=getattr(paths, "cache_dir", None), data_dir=getattr(paths, "data_dir", None),
+            )
+        observer.observe(instances, runtime_instances,
+                         {item.plugin_id: self.device_config.get_plugin(item.plugin_id) for item in instances},
+                         now=current_dt)
 
     def _get_plugin_instance(self, plugin_config):
         registry = getattr(self, "_plugin_registry", None)

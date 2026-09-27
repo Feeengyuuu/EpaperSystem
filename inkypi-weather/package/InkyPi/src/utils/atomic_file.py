@@ -93,6 +93,24 @@ def atomic_write_json(path: Pathish, payload: object, *, mode: int = 0o600) -> N
     atomic_write_bytes(path, encoded, mode=mode)
 
 
+def atomic_write_json_streaming(path: Pathish, payload: object, *, mode: int = 0o600) -> None:
+    """Publish large cache documents without a second complete encoded copy.
+
+    The same fsync/replace protocol protects the old target if encoding fails
+    midway. Individual JSON strings remain bounded by the provider's input cap.
+    """
+    _validate_json_mapping_keys(payload)
+    normalized_mode = _validate_mode(mode)
+    target, parent = _validate_target(path)
+
+    def chunks():
+        for text in json.JSONEncoder(ensure_ascii=False, allow_nan=False).iterencode(payload):
+            yield text.encode("utf-8")
+        yield b"\n"
+
+    _atomic_write_chunks(target, parent, chunks(), normalized_mode)
+
+
 def atomic_write_image(
     path: Pathish,
     image: SupportsImageSave,
@@ -149,6 +167,10 @@ def _validate_target(path: Pathish) -> tuple[Path, Path]:
 
 
 def _atomic_write_encoded(target: Path, parent: Path, payload: bytes, mode: int) -> None:
+    _atomic_write_chunks(target, parent, (payload,), mode)
+
+
+def _atomic_write_chunks(target: Path, parent: Path, chunks, mode: int) -> None:
     raw_fd: int | None = None
     stream: BinaryIO | None = None
     temp_path: Path | None = None
@@ -172,9 +194,10 @@ def _atomic_write_encoded(target: Path, parent: Path, payload: bytes, mode: int)
         raw_fd = None
 
         stage = "write"
-        written = stream.write(payload)
-        if written != len(payload):
-            raise OSError("temporary file write was incomplete")
+        for payload in chunks:
+            written = stream.write(payload)
+            if written != len(payload):
+                raise OSError("temporary file write was incomplete")
         stream.flush()
 
         stage = "file_fsync"

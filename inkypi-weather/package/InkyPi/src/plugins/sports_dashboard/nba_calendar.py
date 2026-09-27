@@ -45,6 +45,18 @@ def _compact(event):
         {key: item[key] for key in competition_keys if key in item}
         for item in event.get("competitions", [])[:1]
     ]
+    competitor_keys = ("id", "uid", "type", "order", "homeAway", "score", "winner",
+                       "linescores", "lineScores", "records", "record", "team")
+    team_keys = ("id", "uid", "abbreviation", "shortDisplayName", "displayName",
+                 "name", "location", "logo", "logos")
+    for competition in result["competitions"]:
+        competitors = []
+        for item in competition.get("competitors", []):
+            competitor = {key: item[key] for key in competitor_keys if key in item}
+            team = item.get("team") or {}
+            competitor["team"] = {key: team[key] for key in team_keys if key in team}
+            competitors.append(competitor)
+        competition["competitors"] = competitors
     return result
 
 
@@ -60,6 +72,13 @@ def load_calendar(plugin, settings, tz, now, session):
     cache = plugin._read_json_file(path)
     snapshots = cache.get("snapshots", {}) if cache.get("version") == VERSION and cache.get("url") == url else {}
     snapshots = dict(snapshots) if isinstance(snapshots, dict) else {}
+    storage_upgrade = cache.get("compact_format") != 2
+    if storage_upgrade:
+        # Upgrade legacy caches in memory, keeping every fixture, score and
+        # provenance timestamp. No network success is invented by this rewrite.
+        for record in snapshots.values():
+            if isinstance(record, dict) and isinstance(record.get("events"), list):
+                record["events"] = [_compact(event) for event in record["events"]]
     force = plugin._force_refresh_requested(settings)
     cache_only = plugin._bool_setting(settings, "_inkypi_ewc_cache_only", False)
     deadline = time.monotonic() + 50
@@ -179,7 +198,7 @@ def load_calendar(plugin, settings, tz, now, session):
     source = "ESPN LIVE" if updated else "ESPN CACHE"
     if not all(fresh for _record, fresh in used.values()):
         source = "ESPN STALE" if successful else "NBA NO DATA"
-    next_cache = {"version": VERSION, "url": url,
+    next_cache = {"version": VERSION, "url": url, "compact_format": 2,
                   "snapshots": {token: snapshots[token] for token in used if token in snapshots}}
     if not cache_only and next_cache != cache:
         # Retain only this horizon and at most the relevant recent match days.
