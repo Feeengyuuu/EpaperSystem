@@ -20,7 +20,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlsplit
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import logging
 import html
@@ -518,7 +518,7 @@ class SteamCharts(BasePlugin):
                 ]),
                 "table_variant": "combined",
             },
-            generated_at=datetime.now(),
+            generated_at=datetime.now(timezone.utc),
             ttl_seconds=2 * 60 * 60,
         )
 
@@ -557,7 +557,7 @@ class SteamCharts(BasePlugin):
                 "diagnostics": self._source_diagnostics(games[:MAX_ITEMS]),
                 "table_variant": table_variant,
             },
-            generated_at=datetime.now(),
+            generated_at=datetime.now(timezone.utc),
             ttl_seconds=2 * 60 * 60,
         )
 

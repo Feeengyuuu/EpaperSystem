@@ -13,6 +13,11 @@ reports missing store metadata language queries and available requested covers.
 These media counters describe fetched render inputs, not physical display proof.
 The display commit remains a separate observation.
 
+Live acceptance also exposed Steam context writers passing a naive local time to
+a cache API that interprets naive values as UTC. Both chart modes now write an
+aware UTC instant. A non-UTC clock regression covers the stored timestamp and
+freshness calculation; local display labels keep their existing timezone.
+
 Plugins whose manifest owns refresh before display are excluded from periodic
 DATA overdue health calculations. Display progress monitoring stays enabled.
 Their saved refresh interval is retained, but is not presented as an effective
