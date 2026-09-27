@@ -44,3 +44,15 @@ Long-duration natural operation must be evaluated separately from bounded tests
 and deployment acceptance. The target remains at least 48 hours without a child
 cleanup recovery, with display gaps assessed outside deployment and explicit
 manual-pause windows.
+
+Release auditing found five published advisories in the existing dependency
+locks. AnyIO is pinned to 4.14.2 and Soup Sieve to 2.9, including PyPI SHA-256
+hashes in the base, Pi, and development locks. No other package versions change.
+Runtime and development locks must both pass the strict dependency audit, and
+ARM64 distribution resolution and full clean-archive tests must pass before
+release acceptance. These dependency advisories are separate from the confirmed
+multiprocessing event-lock flaw described above.
+
+Primary release notes:
+- https://github.com/agronholm/anyio/releases/tag/4.14.2
+- https://github.com/facelessuser/soupsieve/releases/tag/2.9

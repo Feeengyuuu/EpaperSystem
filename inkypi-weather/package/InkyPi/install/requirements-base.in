@@ -1,5 +1,8 @@
 # Direct runtime dependencies shared by development and Raspberry Pi releases.
 astral==3.2
+# Security fixes for transitive async I/O and CSS selector parsing.
+anyio==4.14.2
+soupsieve==2.9
 # Security floor for the transitive authentication dependency.
 cryptography==50.0.1
 feedparser==6.0.11
