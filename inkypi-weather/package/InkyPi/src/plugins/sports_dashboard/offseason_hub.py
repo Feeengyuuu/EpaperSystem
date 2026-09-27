@@ -1,4 +1,5 @@
 from .common import *
+from .espn_date_range import fetch_scoreboard
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 
 SportsDashboard = None
@@ -124,14 +125,7 @@ class OffseasonHubMixin:
         try:
             for key, url, params in endpoints:
                 try:
-                    response = session.get(
-                        url,
-                        params=params,
-                        headers={"Accept": "application/json", "User-Agent": "InkyPi/1.0"},
-                        timeout=20,
-                    )
-                    response.raise_for_status()
-                    payloads[key] = response.json()
+                    payloads[key] = fetch_scoreboard(session, url, params)
                 except Exception as exc:
                     errors[key] = _safe_exception_text(exc)
                     payloads[key] = {}
@@ -332,11 +326,18 @@ class OffseasonHubMixin:
     @staticmethod
     def _parse_pga_scoreboard(payload, timezone_info, now):
         events = []
+        skipped_team_event = False
         for event in (payload or {}).get("events") or []:
+            competitors = [competitor for competition in event.get("competitions") or []
+                           for competitor in competition.get("competitors") or []]
+            if any(competitor.get("type") == "team" for competitor in competitors):
+                # Team match-play points cannot be ranked as individual stroke totals.
+                skipped_team_event = True
+                continue
             parsed = SportsDashboard._parse_pga_event(event, timezone_info, now)
             if parsed:
                 events.append(parsed)
-        if not events:
+        if not events and not skipped_team_event:
             events.extend(SportsDashboard._parse_pga_calendar((payload or {}).get("leagues") or [], timezone_info, now))
         events.sort(key=lambda item: item.get("start") or datetime.max.replace(tzinfo=timezone.utc))
         return {"events": events}
@@ -1584,7 +1585,6 @@ class OffseasonHubMixin:
             logger.warning("Failed to load PGA fairway strip %s: %s", path, exc)
             TEAM_LOGO_CACHE[cache_key] = None
             return None
-
 
 
 
