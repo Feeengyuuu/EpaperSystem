@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import requests
+import pytest
 from PIL import Image, ImageDraw
 
 from plugins.sports_dashboard.cs2_branding import match_event, parse_catalog, parse_event_logos
@@ -91,6 +92,79 @@ def test_live_exort_alias_renders_with_no_provider_logo_or_network(monkeypatch):
                 assert plugin._draw_valve_focus_event_logo(canvas, (0, 0, 199, 64), card)
         finally:
             common._ACTIVE_COLORS.reset(token)
+
+
+def test_onewin_provider_name_resolves_only_the_matching_edition_and_date():
+    from pathlib import Path
+    from plugins.sports_dashboard.cs2_branding import local_event_branding
+
+    card = {
+        "event_name": "1win Private Club #1 2026",
+        "main": {"start": datetime(2026, 9, 28, 11, tzinfo=timezone.utc)},
+    }
+    logo = local_event_branding(card)
+    assert Path(logo["event_logo_path"]).name == "e51752285b21738e984a.png"
+    assert Path(logo["event_logo_path"]).is_file()
+    for name in ("1win Private Club #2 2026", "1win Private Club #1 Closed Qualifier 2026", "1win"):
+        assert not local_event_branding({**card, "event_name": name})
+    assert not local_event_branding({
+        **card, "main": {"start": datetime(2027, 9, 28, tzinfo=timezone.utc)},
+    })
+
+
+@pytest.mark.parametrize("theme", ["DAY_COLORS", "DEEP_NIGHT_COLORS"])
+def test_onewin_persisted_card_renders_offline_in_both_themes(monkeypatch, theme):
+    from plugins.sports_dashboard import common
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    def no_network(*args, **kwargs):
+        raise AssertionError("Persisted 1win cards must resolve their local event asset")
+    monkeypatch.setattr(plugin, "_load_team_logo_for_render", no_network)
+    palette = getattr(common, theme)
+    token = common._ACTIVE_COLORS.set(palette)
+    try:
+        with Image.new("RGB", (100, 65), palette["panel"]) as canvas:
+            assert plugin._draw_valve_focus_event_logo(canvas, (5, 5, 94, 59), {
+                "series": "CS", "event_name": "1win Private Club #1 2026",
+                "event_logo_url": "", "main": {"start": datetime(2026, 9, 28, tzinfo=timezone.utc)},
+            })
+            assert len(canvas.getcolors(10000)) > 1
+            assert canvas.getpixel((0, 0)) == palette["panel"]
+    finally:
+        common._ACTIVE_COLORS.reset(token)
+
+
+@pytest.mark.parametrize("theme", ["DAY_COLORS", "DEEP_NIGHT_COLORS"])
+def test_official_cs2_header_preserves_transparency_and_night_contrast(theme):
+    from plugins.sports_dashboard import common
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    palette = getattr(common, theme)
+    logo = plugin._load_local_logo(common.LOCAL_CS2_TITLE_WORDMARK_PATH, (180, 36), alpha_threshold=8)
+    original = logo.tobytes()
+    token = common._ACTIVE_COLORS.set(palette)
+    try:
+        with Image.new("RGB", (200, 50), palette["panel"]) as canvas:
+            assert plugin._draw_cs2_title_wordmark(canvas, 10, 5, 180, 36)
+            assert canvas.getpixel((0, 0)) == palette["panel"]
+            y = 5 + (36 - logo.height) // 2
+            opaque = transparent = 0
+            for row in range(logo.height):
+                for col in range(logo.width):
+                    pixel = canvas.getpixel((10 + col, y + row))
+                    alpha = logo.getpixel((col, row))[3]
+                    if alpha == 0:
+                        assert pixel == palette["panel"]
+                        transparent += 1
+                    elif alpha == 255:
+                        assert abs(sum(pixel) - sum(palette["panel"])) > 400
+                        opaque += 1
+            assert opaque > 500 and transparent > 500
+            assert logo.tobytes() == original, "Rendering must not recolor the shared asset cache"
+    finally:
+        common._ACTIVE_COLORS.reset(token)
 
 
 def test_branding_is_persisted_and_does_not_refetch_for_a_new_plugin(monkeypatch, tmp_path):

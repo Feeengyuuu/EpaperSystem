@@ -3143,3 +3143,27 @@ Choose timing windows explicitly for the scenario under test and distinguish exp
 - Pattern-Key: tests.pause_recovery_window_includes_child_startup
 
 ---
+
+## [LRN-20260927-004] correction
+
+**Logged**: 2026-09-28T05:28:00Z
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+CS2 game identity must use the supplied official wordmark; event branding must match the provider's exact edition name as well as its date.
+
+### Details
+The live 1win card was named "1win Private Club #1 2026" and its PandaScore image_url was null. The bundled HLTV event was named "1win Private Club Season 1", so neither live enrichment nor persisted-card rendering found the existing logo. An explicit #1-to-Season-1 alias restores the dated event asset without matching other editions or qualifiers. The CS2 header now uses the supplied PNG bytes and preserves its alpha silhouette with light ink at night. Day/night previews and offline cached-card tests cover both corrections.
+
+### Suggested Action
+For missing event logos, inspect provider name, provider image field, catalog identity and final rendered pixels. Do not infer coverage from an asset merely existing in the bundle. Keep supplied brand assets exact and source-traceable.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/cs2_branding.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/esports_render.py
+- Tags: cs2, event-branding, provider-alias, official-logo
+- Pattern-Key: sports.event_logo_provider_identity_and_visible_acceptance
+
+---

@@ -24,7 +24,12 @@ CATALOG_VERSION = 2
 LOCAL_EVENT_DIR = Path(__file__).parent / "assets" / "logos" / "cs2_events"
 # PandaScore's current match feed calls HLTV event 9392 "Season 2".
 # Keep this alias edition-specific; qualifiers and other seasons stay distinct.
-EVENT_NAME_ALIASES = {"exortfiestaseason2": "exortfiestaseries2"}
+EVENT_NAME_ALIASES = {
+    "exortfiestaseason2": "exortfiestaseries2",
+    # PandaScore/Liquipedia use "#1" for HLTV event 9327 (Sep 25-28, 2026).
+    # Exact aliases retain the edition and never absorb qualifier suffixes.
+    "1winprivateclub1": "1winprivateclubseason1",
+}
 
 
 def _canonical(name):
