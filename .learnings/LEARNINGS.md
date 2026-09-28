@@ -3167,3 +3167,28 @@ For missing event logos, inspect provider name, provider image field, catalog id
 - Pattern-Key: sports.event_logo_provider_identity_and_visible_acceptance
 
 ---
+
+## [LRN-20260927-005] correction
+
+**Logged**: 2026-09-28T05:33:00Z
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Replacing the generated CS2 wordmark must preserve the adjacent original pictorial game logo.
+
+### Details
+The user clarified that the supplied official text logo replaces only the previously generated text component. Removing the separate yellow/navy pictorial mark expanded the requested replacement incorrectly. The corrected header retains its original icon and source/status layout, substitutes the text asset only, and has day/night pixel assertions for both separate header components. The superseded artifact was uploaded for staging only and never activated.
+
+### Suggested Action
+Treat neighboring graphic marks and wordmarks as separate assets. Replace only the identified generated component and preserve the other mark unless explicitly asked to remove it.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/esports_render.py, inkypi-weather/package/InkyPi/tests/test_sports_cs2_branding.py
+- Tags: cs2, logo, wordmark, scope
+- Pattern-Key: visual.replace_wordmark_preserve_adjacent_pictorial_logo
+- See Also: LRN-20260927-004
+
+---

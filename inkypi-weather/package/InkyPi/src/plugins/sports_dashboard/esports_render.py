@@ -873,30 +873,7 @@ class EsportsRenderMixin:
         series = str(primary.get("series") or "").upper()
         header_title = {"CS": "Counter-Strike 2", "TI": "Dota 2"}.get(series, "")
         status_text = self._valve_status_pill_text(primary)
-        if series == "CS":
-            title_left = panel_left + 2
-            title_drawn = self._draw_cs2_title_wordmark(
-                image, title_left, header_y - 6, panel_right - title_left, 36,
-            )
-            if not title_drawn:
-                title, font = self._fit_text_ellipsis(
-                    draw, header_title, panel_right - title_left, 20, bold=True, min_size=12,
-                )
-                self._draw_text_in_box(
-                    draw, (title_left, header_y, panel_right, header_y + 30),
-                    title, font, COLORS["text"], align="left",
-                )
-            badge_x = panel_right - 58
-            source_label, source_font = self._fit_text_ellipsis(
-                draw, self._source_label(source_state), badge_x - title_left - 6,
-                8, bold=True, min_size=6,
-            )
-            self._draw_text_in_box(
-                draw, (title_left, header_y + 30, badge_x - 6, header_y + 46),
-                source_label, source_font, COLORS["muted"], align="left",
-            )
-            self._draw_valve_status_badge(draw, badge_x, header_y + 29, 58, 18, status_text, status == "LIVE")
-        elif header_title:
+        if header_title:
             logo_size = 40
             logo_x = panel_left + 2
             logo_y = header_y + 3
@@ -904,14 +881,19 @@ class EsportsRenderMixin:
             badge_width = 58
             badge_x = panel_right - badge_width
             self._draw_valve_esports_logo(image, draw, logo_x, logo_y, logo_size, logo_size, primary)
-            title_text, title_font = self._fit_text_ellipsis(
-                draw, header_title, max(1, panel_right - title_left), 15,
-                bold=True, min_size=10,
+            title_drawn = series == "CS" and self._draw_cs2_title_wordmark(
+                image, title_left, header_y - 1,
+                min(160, panel_right - title_left), 28,
             )
-            self._draw_text_in_box(
-                draw, (title_left, header_y + 4, panel_right, header_y + 25),
-                title_text, title_font, COLORS["text"], align="left",
-            )
+            if not title_drawn:
+                title_text, title_font = self._fit_text_ellipsis(
+                    draw, header_title, max(1, panel_right - title_left), 15,
+                    bold=True, min_size=10,
+                )
+                self._draw_text_in_box(
+                    draw, (title_left, header_y + 4, panel_right, header_y + 25),
+                    title_text, title_font, COLORS["text"], align="left",
+                )
             source_label = self._source_label(source_state)
             source_label, source_font = self._fit_text_ellipsis(
                 draw,

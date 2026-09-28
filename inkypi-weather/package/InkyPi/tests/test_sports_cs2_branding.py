@@ -167,6 +167,37 @@ def test_official_cs2_header_preserves_transparency_and_night_contrast(theme):
         common._ACTIVE_COLORS.reset(token)
 
 
+@pytest.mark.parametrize("theme", ["DAY_COLORS", "DEEP_NIGHT_COLORS"])
+def test_cs2_sidebar_keeps_original_game_icon_beside_official_wordmark(theme):
+    from plugins.sports_dashboard import common
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    palette = getattr(common, theme)
+    primary = {"series": "CS", "logo_path": common.LOCAL_CS_MAJOR_LOGO_PATH, "status": "NEXT"}
+    icon = plugin._load_local_logo(common.LOCAL_CS_MAJOR_LOGO_PATH, (40, 40), alpha_threshold=8)
+    title = plugin._load_local_logo(common.LOCAL_CS2_TITLE_WORDMARK_PATH, (160, 28), alpha_threshold=8)
+    token = common._ACTIVE_COLORS.set(palette)
+    try:
+        with Image.new("RGB", (800, 480), palette["paper"]) as canvas:
+            plugin._draw_valve_esports_sidebar(
+                canvas, 552, {"primary": primary}, "PANDASCORE CACHE", datetime(2026, 9, 28, tzinfo=timezone.utc),
+            )
+            # Keep both identities visible in their separate original header slots.
+            # Compare solid asset pixels, excluding antialiasing and halftone gaps.
+            for logo, x, y, recolor in ((icon, 570, 13, False), (title, 619, 9, theme == "DEEP_NIGHT_COLORS")):
+                checked = 0
+                for row in range(logo.height):
+                    for col in range(logo.width):
+                        pixel = logo.getpixel((col, row))
+                        if pixel[3] == 255:
+                            assert canvas.getpixel((x + col, y + row)) == (palette["text"] if recolor else pixel[:3])
+                            checked += 1
+                assert checked > 100
+    finally:
+        common._ACTIVE_COLORS.reset(token)
+
+
 def test_branding_is_persisted_and_does_not_refetch_for_a_new_plugin(monkeypatch, tmp_path):
     from plugins.sports_dashboard import cs2_branding
     from plugins.sports_dashboard.sports_dashboard import SportsDashboard
