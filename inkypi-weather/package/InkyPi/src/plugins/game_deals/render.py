@@ -1,11 +1,13 @@
 """Pillow recreation of the approved six-offer, two-column design."""
 
 from datetime import datetime, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw
 
 from utils.app_utils import get_base_ui_font
+from utils.local_wordmark import paste_local_wordmark
 
 
 SIZE = (800, 480)
@@ -65,11 +67,14 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
     green = (20, 108, 58)
     image = Image.new("RGB", SIZE, background)
     draw = ImageDraw.Draw(image)
-    draw.text((14, 10), "游戏优惠", font=_font(43, True), fill=ink, anchor="lt")
+    assets = Path(__file__).with_name("assets")
+    if not paste_local_wordmark(image, assets / "title_wordmark.png", (14, 8, 197, 58)):
+        draw.text((14, 10), "游戏优惠", font=_font(43, True), fill=ink, anchor="lt")
     draw.line((207, 17, 207, 56), fill=ink, width=2)
     draw.text((220, 30), "STEAM ‧ 美国区", font=_font(20, True), fill=ink, anchor="lt")
-    draw.rectangle((619, 20, 680, 52), outline=ink, width=2)
-    draw.text((626, 25), "USD", font=_font(24, True), fill=ink, anchor="lt")
+    if not paste_local_wordmark(image, assets / "usd_wordmark.png", (587, 18, 680, 54)):
+        draw.rectangle((619, 20, 680, 52), outline=ink, width=2)
+        draw.text((626, 25), "USD", font=_font(24, True), fill=ink, anchor="lt")
     draw.text((694, 19), now.strftime("%m.%d"), font=_font(31, True), fill=ink, anchor="lt")
     draw.line((14, 67, 785, 67), fill=ink, width=2)
 

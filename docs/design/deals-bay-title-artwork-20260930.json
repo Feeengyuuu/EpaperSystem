@@ -1,0 +1,46 @@
+{
+  "mode": "built-in image_gen",
+  "date": "2026-09-30",
+  "scope": "Only Game Deals title and USD label, and Bay Commute title; retain current page body and data settings.",
+  "reference": "inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/assets/decor/nba_title_wordmark.png",
+  "assets": [
+    {
+      "key": "game",
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/game_deals/assets/title_wordmark.png",
+      "generated_source": "G:/PersonalProjects/AIWriter/.codex/generated_images/01a0f0ce-80b0-7123-8ee3-a87feadd3b52/exec-cb570eec-556b-4d85-9c8d-eda1d37a35fe.png",
+      "prompt": "Use case: logo-brand. Make ONE finished transparent PNG title wordmark for an 800x480 color e-paper information page. The attached NBA artwork is a STYLE REFERENCE ONLY: match its minimal flat warm-white letter faces, continuous deep-navy outlines, restrained tiny color accent, crisp geometric edges, and readability on both cream and dark navy. Do not copy NBA lettering or any basketball motif. Exact text: \"游戏优惠\" — four simplified Chinese characters 游 戏 优 惠, in precisely this order, in ONE horizontal line. Create bespoke confident slightly forward-leaning Chinese display lettering, dense but readable strokes with broad open counters and subtly pixel-cut terminals suited to PC game deals. One very small emerald-green pixel-notch accent integrated into the last character or its terminal. Every Chinese character must remain correct and immediately legible when the total visible artwork is reduced to 183 x 48 pixels. Aim for a compact visible ratio around 4:1 with minimal modest transparent padding. Flat solid warm white fill and deep navy outlines; only the small green accent. No subtitle, Latin letters, numbers, logo, separate icon, badge, enclosing border, controller illustration, shadows, gradients, glow, distressed texture, 3D, checkerboard or background rectangle. Actual transparent alpha background and transparent gaps/counters. Render exactly this one professional title, large on the canvas, fully within bounds."
+    },
+    {
+      "key": "bay",
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/bay_commute/assets/title_wordmark.png",
+      "generated_source": "G:/PersonalProjects/AIWriter/.codex/generated_images/01a0f0ce-80b0-7123-8ee3-a87feadd3b52/exec-9fc9f318-173e-46f2-8477-90612da82cc8.png",
+      "prompt": "Use case: logo-brand. Make ONE finished transparent PNG title wordmark for a small Bay Area roads-and-tides information page. The attached NBA artwork is a STYLE REFERENCE ONLY: match minimal flat warm-white letter faces, continuous deep-navy outlines, one restrained small color accent, crisp geometry, and clear readability on cream and dark navy. No NBA text or basketball motif. Exact text: \"湾区出行\" — four simplified Chinese characters 湾 区 出 行, precisely this order, ONE horizontal line. Bespoke sturdy architectural Chinese block lettering, upright with subtle forward-flowing terminals and broad readable counters, calm and precise. Integrate one tiny coastal-blue wave-like terminal stroke below the last character, subordinate to and part of the typography rather than a separate icon. Preserve the correct Chinese glyphs. It must remain immediately readable when the total visible artwork is reduced to 184 x 48 pixels. Compact visible content about 4:1 with modest transparent padding. Solid warm white letters with a continuous deep navy outline and just the tiny blue accent. No subtitle, English words, map, bridge drawing, separate icon, badge, enclosing frame, shield, shadows, glow, gradients, texture, 3D or checkerboard. Actual transparent background and transparent letter gaps. One title only, fully inside canvas."
+    },
+    {
+      "key": "usd",
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/game_deals/assets/usd_wordmark.png",
+      "generated_source": "G:/PersonalProjects/AIWriter/.codex/generated_images/01a0f0ce-80b0-7123-8ee3-a87feadd3b52/exec-e6c1cdee-24fe-437c-b03e-e523d099d95b.png",
+      "prompt": "Use case: logo-brand. Create ONE compact transparent PNG micro-wordmark with exact text \"USD\" — uppercase U S D, no other text. The attached NBA artwork is a STYLE REFERENCE ONLY: minimal slightly forward-leaning geometric block lettering, solid warm-white face, continuous deep-navy outline and a tiny emerald-green angular terminal on the D. Do not include NBA letters or a basketball motif. This will label US-dollar pricing beside a date on an e-paper page. Design all three letters as a cohesive bespoke currency wordmark with broad open counters and strong stroke clarity, readable at only 61 x 32 pixels. Visible ratio around 2.2:1, tightly balanced with modest transparent margins. Flat crisp vector-like graphic. No dollar sign, coin, banknote, extra symbol, icon, badge, surrounding box or border, shadow, gradient, texture, 3D, glow, background rectangle or checkerboard. Preserve actual transparent alpha behind and within letters. Output exactly one USD wordmark, fully inside the canvas."
+    }
+  ],
+  "header_slots": {
+    "game": [
+      14,
+      8,
+      197,
+      58
+    ],
+    "bay": [
+      17,
+      8,
+      201,
+      56
+    ],
+    "usd": [
+      587,
+      18,
+      680,
+      54
+    ]
+  }
+}

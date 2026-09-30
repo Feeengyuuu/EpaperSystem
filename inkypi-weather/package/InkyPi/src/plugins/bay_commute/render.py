@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
 from utils.app_utils import get_base_ui_font, get_font
+from utils.local_wordmark import paste_local_wordmark
 from utils.safe_image import ImageLimits, safe_open_image
 
 from .sources import PACIFIC, local_now, next_tides, parse_time, rank_roads, road_state, select_roads
@@ -213,7 +214,9 @@ def draw_tides(canvas, payload, settings, now):
 def render_page(dimensions, payload, settings, now):
     now = local_now(now)
     canvas = Canvas(settings)
-    canvas.text((17, 8), "湾区出行", 38)
+    if not paste_local_wordmark(canvas.image, Path(__file__).with_name("assets") / "title_wordmark.png",
+                                (17, 8, 201, 56)):
+        canvas.text((17, 8), "湾区出行", 38)
     canvas.rule((211,17,211,52), "ink")
     canvas.text((228, 23), "道路封闭 ‧ 潮汐预测", 19)
     weekday = "一二三四五六日"[now.weekday()]
