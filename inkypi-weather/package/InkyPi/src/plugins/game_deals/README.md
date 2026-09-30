@@ -34,8 +34,10 @@ claim a successful provider refresh.
 
 Covers use approved HTTPS Steam/CheapShark hosts, no redirects, a 512 KiB byte
 limit and at most 1024 by 1024 decoded pixels. Saved thumbnails are at most
-320 by 180. The display proportionally center-crops each cover to fill its frame
-without padding or stretching. Versioned cover keys replace earlier smaller
+320 by 180. The display preserves each complete cover at its original aspect
+ratio, only shrinking it when needed to fit the artwork column. Smaller sources
+are never enlarged; uncovered space uses the page background with no added frame
+or black padding. Versioned cover keys replace earlier smaller
 thumbnails on the next data refresh. The media namespace retains at most
 4 MiB/48 files for 14 days.
 Rendering is Pillow-only at the installed screen's 800 by 480 resolution.

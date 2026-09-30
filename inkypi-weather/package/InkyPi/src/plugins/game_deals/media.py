@@ -28,7 +28,7 @@ def load_covers(deals, cache_dir, *, http, context=None, cached_only=False):
         url = safe_thumbnail_url(deal.get("thumbnail_url"))
         if not url:
             continue
-        # v2 preserves small official capsules for the full-height cropped layout.
+        # v2 preserves small official capsules without reducing them prematurely.
         key = "v2-" + sha256(url.encode("utf-8")).hexdigest() + ".png"
         path = directory / key
         try:

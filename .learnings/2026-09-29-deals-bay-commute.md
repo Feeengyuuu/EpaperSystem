@@ -30,18 +30,18 @@ Check sys.version and actual imports of PIL.Image, pytest, requests and Flask. S
 **Area**: frontend
 
 ### Summary
-The six-game Steam deals page should use filled, undistorted cover crops; road shields should use standard transparent source assets.
+The six-game Steam deals page must preserve complete cover art without enlargement, cropping or added black borders; road shields should use standard transparent source assets.
 
 ### Details
-The user requested more games and then explicitly rejected the dark padding around cover thumbnails. The final six-card layout uses aspect-preserving centre crops and real cover art. For Bay Commute the user rejected hand-drawn road shields; public-domain standard-design SVGs and transparent PNGs for I-680, I-880 and California 84 are now bundled with provenance. Map locations use actual Caltrans coordinates over a single USGS export, with source extent retained for projection and no runtime basemap requests.
+The user requested more games and rejected the dark padding around cover thumbnails. Interpreting this as permission to zoom and centre-crop was wrong: the user then explicitly requested the complete image without forced enlargement. Preserve the source aspect ratio and every edge, only shrink oversized images, and let surrounding space use the page theme background. Adapt the layout to the artwork instead of cropping artwork to fill a fixed frame. For Bay Commute the user rejected hand-drawn road shields; public-domain standard-design SVGs and transparent PNGs for I-680, I-880 and California 84 are bundled with provenance. Map locations use actual Caltrans coordinates over a single USGS export, with source extent retained for projection and no runtime basemap requests.
 
 ### Suggested Action
-Keep these visual requirements when adjusting the two plugins. Prefer traceable standard road symbols. Avoid using the standard OpenStreetMap tile service for offline bundled maps; check the actual provider's policy before choosing a static-map source.
+Keep these visual requirements when adjusting the two plugins. Removing image padding does not authorize cropping. Preview complete real covers before deployment. Prefer traceable standard road symbols. Avoid using the standard OpenStreetMap tile service for offline bundled maps; check the actual provider's policy before choosing a static-map source.
 
 ### Metadata
 - Source: user_feedback
 - Related Files: inkypi-weather/package/InkyPi/src/plugins/game_deals/render.py, inkypi-weather/package/InkyPi/src/plugins/bay_commute/assets/credits.json, inkypi-weather/package/InkyPi/src/plugins/bay_commute/map_view.py
 - Tags: epaper, covers, standard-shields, static-map, source-attribution
-- Pattern-Key: epaper.source_graphics_and_filled_cover_slots
+- Pattern-Key: epaper.complete_artwork_and_standard_source_graphics
 
 ---

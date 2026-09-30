@@ -46,20 +46,42 @@ def test_empty_and_unavailable_have_different_messages_and_no_invented_cards():
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_wide_cover_fills_frame_without_padding_and_preserves_square_proportions(mode):
-    # A square painted on a 6:1 source detects distortion as well as letterboxing.
+def test_wide_cover_is_complete_proportional_and_surrounded_by_page_background(mode):
+    # Edge colors prove the complete 6:1 source survives; the square detects stretch.
     cover = Image.new("RGB", (600, 100), (0, 0, 255))
-    ImageDraw.Draw(cover).rectangle((250, 0, 349, 99), fill=(255, 0, 0))
+    source = ImageDraw.Draw(cover)
+    source.rectangle((0, 0, 39, 99), fill=(0, 255, 0))
+    source.rectangle((250, 0, 349, 99), fill=(255, 0, 0))
+    source.rectangle((560, 0, 599, 99), fill=(255, 255, 0))
     snapshot = DealSnapshot(offers()[:1], NOW, "live", "steam")
     result = render_page(snapshot, {"0": cover}, theme={"mode": mode}, now=NOW)
     frame = result.crop((14, 83, 164, 184))
     assert frame.size == (150, 101)
-    # All frame pixels originate in the red/blue source, including every edge.
-    assert frame.getchannel("G").getextrema() == (0, 0)
-    assert ImageChops.add(frame.getchannel("R"), frame.getchannel("B")).getextrema()[0] >= 250
-    mask = frame.getchannel("R").point(lambda value: 255 if value > 200 else 0)
+    background = result.getpixel((0, 0))
+    visible = ImageChops.difference(frame, Image.new("RGB", frame.size, background)).getbbox()
+    assert visible == (0, 38, 150, 63)
+    artwork = frame.crop(visible)
+    assert artwork.getpixel((0, 12)) == (0, 255, 0)
+    assert artwork.getpixel((149, 12)) == (255, 255, 0)
+    assert artwork.getpixel((35, 0)) == artwork.getpixel((35, 24)) == (0, 0, 255)
+    # Subtract green so the yellow right edge does not count as the red square.
+    mask = ImageChops.subtract(artwork.getchannel("R"), artwork.getchannel("G")).point(
+        lambda value: 255 if value > 200 else 0)
     left, top, right, bottom = mask.getbbox()
     assert abs((right - left) - (bottom - top)) <= 2
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_small_cover_is_not_enlarged_and_keeps_every_source_pixel(mode):
+    cover = Image.new("RGB", (60, 20), (27, 144, 233))
+    ImageDraw.Draw(cover).rectangle((0, 0, 5, 19), fill=(200, 25, 40))
+    snapshot = DealSnapshot(offers()[:1], NOW, "live", "steam")
+    result = render_page(snapshot, {"0": cover}, theme={"mode": mode}, now=NOW)
+    frame = result.crop((14, 83, 164, 184))
+    background = Image.new("RGB", frame.size, result.getpixel((0, 0)))
+    visible = ImageChops.difference(frame, background).getbbox()
+    assert visible == (45, 40, 105, 60)
+    assert ImageChops.difference(frame.crop(visible), cover).getbbox() is None
 
 
 class Device:

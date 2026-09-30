@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw
 
 from utils.app_utils import get_base_ui_font
 
@@ -79,10 +79,12 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         art_box = (x0, y0 + 3, x0 + 150, y0 + 104)
         cover = covers.get(deal["game_id"])
         if cover is not None:
-            # Fill the approved artwork frame by proportional, centered cropping.
-            fitted = ImageOps.fit(cover, (150, 101), Image.Resampling.LANCZOS,
-                                  centering=(0.5, 0.5))
-            image.paste(fitted, (x0, y0 + 3))
+            # Preserve the complete capsule and never enlarge a small source.
+            # Unused space is the page itself: no frame or added black padding.
+            fitted = cover.copy()
+            fitted.thumbnail((150, 101), Image.Resampling.LANCZOS)
+            image.paste(fitted, (x0 + (150 - fitted.width) // 2,
+                                 y0 + 3 + (101 - fitted.height) // 2))
             fitted.close()
         else:
             draw.rectangle(art_box, fill=(22, 41, 52))
