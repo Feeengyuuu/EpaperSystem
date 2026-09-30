@@ -143,7 +143,7 @@ def render_map(rows, size=DEFAULT_SIZE, night=False):
 
     # Attribution is drawn before points so a real edge location is never hidden.
     draw.rectangle((0, size[1] - 16, size[0], size[1]), fill=paper)
-    attribution = "USGS · The National Map"
+    attribution = "USGS ‧ The National Map"
     attr_font = get_base_ui_font(11, bold=True)
     draw.text((3, size[1] - 14), attribution, font=attr_font, fill=ink, anchor="lt")
     markers = []

@@ -67,7 +67,7 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
     draw = ImageDraw.Draw(image)
     draw.text((14, 10), "游戏优惠", font=_font(43, True), fill=ink, anchor="lt")
     draw.line((207, 17, 207, 56), fill=ink, width=2)
-    draw.text((220, 30), "STEAM · 美国区", font=_font(20, True), fill=ink, anchor="lt")
+    draw.text((220, 30), "STEAM ‧ 美国区", font=_font(20, True), fill=ink, anchor="lt")
     draw.rectangle((619, 20, 680, 52), outline=ink, width=2)
     draw.text((626, 25), "USD", font=_font(24, True), fill=ink, anchor="lt")
     draw.text((694, 19), now.strftime("%m.%d"), font=_font(31, True), fill=ink, anchor="lt")
@@ -121,14 +121,14 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         draw.text((80, 245), detail, font=_font(23), fill=muted, anchor="lt")
 
     draw.line((14, 445, 785, 445), fill=ink, width=2)
-    draw.text((14, 455), "CheapShark · Steam 美元报价", font=_font(15, True), fill=ink, anchor="lt")
+    draw.text((14, 455), "CheapShark ‧ Steam 美元报价", font=_font(15, True), fill=ink, anchor="lt")
     stamp = snapshot.fetched_at.astimezone(LOCAL_ZONE).strftime("%m/%d %H:%M") if snapshot.fetched_at else "暂无数据"
     if snapshot.state == "stale":
-        status, status_color = f"缓存已过期 · {stamp}", (226, 79, 59) if night else (166, 35, 24)
+        status, status_color = f"缓存已过期 ‧ {stamp}", (226, 79, 59) if night else (166, 35, 24)
     elif snapshot.state == "unavailable":
-        status, status_color = "连接暂不可用 · 等待更新", (226, 79, 59) if night else (166, 35, 24)
+        status, status_color = "连接暂不可用 ‧ 等待更新", (226, 79, 59) if night else (166, 35, 24)
     else:
-        status, status_color = f"更新 {stamp} · 每 2 小时", ink
+        status, status_color = f"更新 {stamp} ‧ 每 2 小时", ink
     footer_font = _fitted_font(status, 390, 15, 14, True)
     draw.text((785 - footer_font.getlength(status), 455), status, font=footer_font, fill=status_color, anchor="lt")
     image.info["game_deals_layout"] = layout

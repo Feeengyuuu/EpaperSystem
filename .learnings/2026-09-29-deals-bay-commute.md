@@ -45,3 +45,27 @@ Keep these visual requirements when adjusting the two plugins. Removing image pa
 - Pattern-Key: epaper.complete_artwork_and_standard_source_graphics
 
 ---
+
+## [LRN-20260929-DB3] best_practice
+
+**Logged**: 2026-09-30T07:10:00Z
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Use the device's actual regular and bold font files for local e-paper acceptance previews.
+
+### Details
+Local previews fell back to bundled Noto Sans SC, which supports U+00B7. The device prefers its durable Microsoft YaHei files, and the retained YaHei Bold file renders U+00B7 as a missing-glyph box although its regular face supports it. U+2027 is present in both faces. The two new pages use that supported separator in fixed interface text; provider titles and shared font selection remain unchanged.
+
+### Suggested Action
+Resolve and record the actual regular/bold font paths when producing day/night acceptance previews. Check glyph coverage with those files, especially symbols and separators, rather than treating a visually successful fallback-font preview as device proof. Keep font and data identity separate from layout correctness.
+
+### Metadata
+- Source: runtime_verification
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/game_deals/render.py, inkypi-weather/package/InkyPi/src/plugins/bay_commute/render.py, inkypi-weather/package/InkyPi/src/plugins/bay_commute/map_view.py
+- Tags: epaper, fonts, glyph-coverage, acceptance-preview
+- Pattern-Key: epaper.preview_with_device_font_files
+
+---

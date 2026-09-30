@@ -99,7 +99,7 @@ def draw_roads(canvas, payload, now):
     ranked = rank_roads(data.get("items", []), now)
     rows = select_roads(ranked, now, 3)
     canvas.text((18, 77), "道路封闭", 29)
-    canvas.text((171, 90), "CALTRANS · D4", 13, "muted")
+    canvas.text((171, 90), "CALTRANS ‧ D4", 13, "muted")
     map_image = render_map(rows, size=(184, 282), night=canvas.palette is NIGHT)
     canvas.image.paste(map_image, (18, 124))
     canvas.image.info["bay_map_markers"] = map_image.info.get("markers", [])
@@ -137,11 +137,11 @@ def draw_roads(canvas, payload, now):
         if index < len(rows)-1:
             canvas.rule((214,y+91,450,y+91))
     if source["state"] == "stale_cache":
-        detail = "来源过期 · 缓存位置"
+        detail = "来源过期 ‧ 缓存位置"
     elif source["state"] == "unavailable":
         detail = "等待道路数据"
     else:
-        detail = f"每小时更新 · 共 {len(ranked)} 项"
+        detail = f"每小时更新 ‧ 共 {len(ranked)} 项"
     canvas.text((214, 418), detail, 12, "orange" if source["state"] in {"stale_cache", "unavailable"} else "muted", width=236)
 
 
@@ -201,11 +201,11 @@ def draw_tides(canvas, payload, settings, now):
             canvas.text((x,240), "等待预测", 14, "muted")
     canvas.rule((631,155,631,265))
     draw_chart(canvas, data, now)
-    label = "NOAA · MLLW · 英尺"
+    label = "NOAA ‧ MLLW ‧ 英尺"
     if source["state"] == "stale_cache":
-        label = "过期预测缓存 · " + data.get("prediction_date", "")
+        label = "过期预测缓存 ‧ " + data.get("prediction_date", "")
     elif source["state"] == "unavailable":
-        label = "潮汐数据暂不可用 · 道路独立更新"
+        label = "潮汐数据暂不可用 ‧ 道路独立更新"
     canvas.text((783, 418), label, 12,
                 "orange" if source["state"] in {"stale_cache", "unavailable"} else "muted", anchor="rt")
 
@@ -215,7 +215,7 @@ def render_page(dimensions, payload, settings, now):
     canvas = Canvas(settings)
     canvas.text((17, 8), "湾区出行", 38)
     canvas.rule((211,17,211,52), "ink")
-    canvas.text((228, 23), "道路封闭 · 潮汐预测", 19)
+    canvas.text((228, 23), "道路封闭 ‧ 潮汐预测", 19)
     weekday = "一二三四五六日"[now.weekday()]
     canvas.text((784, 22), now.strftime("%m.%d") + f" 周{weekday}", 23, anchor="rt")
     canvas.rule((10,66,790,66), "ink", 2)
@@ -229,7 +229,7 @@ def render_page(dimensions, payload, settings, now):
     if recorded and fetched:
         prefix = "道路缓存 " if roads["state"] == "stale_cache" else "道路来源 "
         road_footer = (prefix + recorded.astimezone(PACIFIC).strftime("%m/%d %H:%M")
-                       + " · 获取 " + fetched.astimezone(PACIFIC).strftime("%H:%M"))
+                       + " ‧ 获取 " + fetched.astimezone(PACIFIC).strftime("%H:%M"))
     else:
         road_footer = "道路 " + source_label(roads, now)
     canvas.text((18,451), road_footer, 12, width=427)
@@ -237,7 +237,7 @@ def render_page(dimensions, payload, settings, now):
     prediction_date = tide_source.get("data", {}).get("prediction_date", "—").replace("-", "/")[-5:]
     fetched = parse_time(tide_source.get("fetched_at"))
     fetched_text = fetched.astimezone(PACIFIC).strftime("%m/%d %H:%M") if fetched else "—"
-    canvas.text((489,451), "预测 " + prediction_date + " · 获取 " + fetched_text, 12, width=295)
+    canvas.text((489,451), "预测 " + prediction_date + " ‧ 获取 " + fetched_text, 12, width=295)
     result = canvas.image
     if tuple(dimensions) != (800,480):
         result = result.resize(tuple(dimensions), Image.Resampling.LANCZOS)
