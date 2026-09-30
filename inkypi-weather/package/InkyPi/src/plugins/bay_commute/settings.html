@@ -1,0 +1,42 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <label class="form-label" for="routes">关注路线</label>
+  <input class="form-control" name="routes" id="routes" value="I-880, I-680, SR-84" maxlength="100">
+  <small>逗号分隔，最多 8 条。显示 Caltrans 湾区施工和封闭计划，每小时更新。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="windowDays">显示未来几天的封闭计划</label>
+  <input class="form-control" type="number" name="windowDays" id="windowDays" value="7" min="1" max="7">
+  <small>进行中的项目优先；默认涵盖未来 7 天。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="tideStation">NOAA 潮汐站编号</label>
+  <input class="form-control" name="tideStation" id="tideStation" value="9414523" pattern="[0-9]{7}" maxlength="7">
+  <small>默认 Redwood City（9414523）。请选择支持连续潮汐预测的站点；每日获取今明两天预测。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="stationName">潮汐站显示名称</label>
+  <input class="form-control" name="stationName" id="stationName" value="Redwood City" maxlength="48">
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取道路数据</label>
+  <small>潮汐仍复用当天预测。轮播使用本地缓存，不请求网络。时间统一为美国太平洋时间。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  for (const key of ['routes', 'windowDays', 'tideStation', 'stationName', 'fontFamily', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    const value = typeof pluginSettings !== 'undefined' ? pluginSettings[key] : undefined;
+    if (value !== undefined) {
+      if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(value);
+      else el.value = value;
+    } else if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+  }
+});
+</script>

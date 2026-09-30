@@ -50,6 +50,11 @@ def test_species_radar_stays_inline_to_preserve_optional_media_isolation():
     assert plugin_execution_class("species_radar") is ExecutionClass.INLINE
 
 
+def test_public_information_pages_preserve_serial_memory_admission():
+    for plugin_id in ("game_deals", "bay_commute"):
+        assert plugin_execution_class(plugin_id) is ExecutionClass.INLINE
+
+
 def test_nested_provider_plugins_do_not_create_more_than_four_local_workers():
     daily_ai_news = (
         PLUGIN_ROOT / "daily_ai_news" / "daily_ai_news.py"

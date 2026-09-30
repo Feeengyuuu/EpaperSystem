@@ -1,0 +1,18 @@
+{
+    "schema_version": 2,
+    "capabilities": {
+        "supports_live_refresh": false,
+        "supports_day_night_theme": true,
+        "supports_cached_display_redraw": true
+    },
+    "theme": {
+        "presentation": "ui",
+        "day": {"background": "#f6f3e8", "accent": "#255d45"},
+        "night": {"background": "#102018", "accent": "#a4d4ac"}
+    },
+    "display_name": "游戏优惠 · Game Deals",
+    "id": "game_deals",
+    "class": "GameDeals",
+    "refresh_on_display": false,
+    "recommended_refresh": {"interval": 7200}
+}

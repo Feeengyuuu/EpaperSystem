@@ -1,0 +1,70 @@
+{
+  "assets": [
+    {
+      "route": "I-680",
+      "description_page": "https://commons.wikimedia.org/wiki/File:I-680.svg",
+      "author": "SPUI; current SVG revision by Ltljltlj",
+      "license": "Public domain (PD-MUTCD)",
+      "standard": "FHWA Standard Highway Signs 2004, M1-1",
+      "note": "Standard-design vector reproduction hosted on Wikimedia Commons; not claimed to be a file published by Caltrans/FHWA. Interstate shield trademark notice on description page retained.",
+      "modifications": "SVG trailing whitespace normalized only; transparent Wikimedia PNG unchanged.",
+      "files": [
+        {
+          "file": "I-680.svg",
+          "url": "https://upload.wikimedia.org/wikipedia/commons/3/39/I-680.svg?utm_source=commons.wikimedia.org&utm_campaign=index&utm_content=original",
+          "sha256": "f84a118c2d681f7e0fccc992df657b2c98fcaf7f87184e031b45cd9577642a13",
+          "source_sha256": "ba91a1b6ca5e06203326e334461e057a8148f9b0d68aa03a89706deabfcd2bd7"
+        },
+        {
+          "file": "I-680.png",
+          "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/39/I-680.svg/330px-I-680.svg.png",
+          "sha256": "36aac67105af291a1704a9a86c88b52b0bb7e28d48f2ea63855d1c7dde60ba6a"
+        }
+      ]
+    },
+    {
+      "route": "I-880",
+      "description_page": "https://commons.wikimedia.org/wiki/File:I-880.svg",
+      "author": "SPUI; current SVG revision by Ltljltlj",
+      "license": "Public domain (PD-MUTCD)",
+      "standard": "FHWA Standard Highway Signs 2004, M1-1",
+      "note": "Standard-design vector reproduction hosted on Wikimedia Commons; not claimed to be a file published by Caltrans/FHWA. Interstate shield trademark notice on description page retained.",
+      "modifications": "SVG trailing whitespace normalized only; transparent Wikimedia PNG unchanged.",
+      "files": [
+        {
+          "file": "I-880.svg",
+          "url": "https://upload.wikimedia.org/wikipedia/commons/c/c6/I-880.svg?utm_source=commons.wikimedia.org&utm_campaign=index&utm_content=original",
+          "sha256": "873e567c68c40eca6b4bfdb0b8979ce1ddb822018b9d067df836249e8a157059",
+          "source_sha256": "abad2fe8f7332f3685b4cb34fee2e953f8da98574913da0c30cf2ff599ef7b2c"
+        },
+        {
+          "file": "I-880.png",
+          "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/I-880.svg/330px-I-880.svg.png",
+          "sha256": "15d064ae5222f3b503f7b47e994b09a908b4b451d084ba6c5c727e9399c1d84d"
+        }
+      ]
+    },
+    {
+      "route": "SR-84",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_84.svg",
+      "author": "SPUI",
+      "license": "Public domain (PD-CAMUTCD)",
+      "standard": "Caltrans sign drawing G28-2 (CA), 1971",
+      "note": "Standard-design vector reproduction hosted on Wikimedia Commons; not claimed to be a file published by Caltrans.",
+      "modifications": "SVG trailing whitespace normalized only; transparent Wikimedia PNG unchanged.",
+      "files": [
+        {
+          "file": "SR-84.svg",
+          "url": "https://upload.wikimedia.org/wikipedia/commons/0/0c/California_84.svg?utm_source=commons.wikimedia.org&utm_campaign=index&utm_content=original",
+          "sha256": "a2701625dab9333e1fefd4fc341808d95ab37dd6cae64bebea58d5475535ef72",
+          "source_sha256": "e7e58b3c580eae9ba7ec092186863f89c79d54fb3e961271d9f3f95ca95114bf"
+        },
+        {
+          "file": "SR-84.png",
+          "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0c/California_84.svg/330px-California_84.svg.png",
+          "sha256": "cd653149c522030069f7b69a772fafb9557999ee13cf50c6516b6b21162d3e51"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "id": "bay_commute",
+  "class": "BayCommute",
+  "display_name": "湾区出行与潮汐",
+  "refresh_on_display": false,
+  "recommended_refresh": {"interval": 3600},
+  "capabilities": {
+    "supports_live_refresh": false,
+    "supports_presentation_refresh": false,
+    "supports_day_night_theme": true,
+    "supports_cached_display_redraw": true
+  },
+  "theme": {
+    "presentation": "ui",
+    "day": {"background": "#f7f4ec", "accent": "#176e78"},
+    "night": {"background": "#101b26", "accent": "#7bd1cc"}
+  }
+}
