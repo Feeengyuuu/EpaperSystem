@@ -8,7 +8,9 @@ logger = logging.getLogger(__name__)
 
 def background_live_plugin(instance, current_dt, lookup):
     """Resolve only approved providers that currently request offscreen work."""
-    if instance.plugin_id not in {"sports_dashboard", "box_office_top_movies"}:
+    if instance.plugin_id not in {
+        "sports_dashboard", "box_office_top_movies", "china_box_office_top_movies",
+    }:
         return None
     plugin = lookup(instance, require_live_refresh=True)
     hook = getattr(plugin, "wants_background_live_refresh", None)

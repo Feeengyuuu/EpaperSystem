@@ -6828,7 +6828,7 @@ class RefreshTask:
         settings = thaw_payload(instance.settings)
         if command.payload.get("fresh_display") is True:
             settings["_inkypiFreshDisplay"] = True
-        if command.plugin_id == "box_office_top_movies":
+        if command.plugin_id in {"box_office_top_movies", "china_box_office_top_movies"}:
             settings["_movie_media_only"] = command.intent is RefreshIntent.LIVE_REFRESH
         isolated_sports_refresh = self._is_isolated_sports_refresh_command(command)
         plugin = (
@@ -7284,7 +7284,9 @@ class RefreshTask:
                 command.source is CommandSource.LIVE
                 and command.intent is RefreshIntent.LIVE_REFRESH
                 and command.kind is CommandKind.CACHE_REFRESH
-                and command.plugin_id in {"sports_dashboard", "box_office_top_movies"}
+                and command.plugin_id in {
+                    "sports_dashboard", "box_office_top_movies", "china_box_office_top_movies",
+                }
                 and command.payload.get("expected_displayed_instance_uuid") is None
             )
         expected_displayed_uuid = command.payload.get(

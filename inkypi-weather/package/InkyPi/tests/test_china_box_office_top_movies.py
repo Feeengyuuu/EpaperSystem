@@ -202,21 +202,17 @@ def test_china_box_office_theme_only_opposite_palette_reuses_warm_source_cache(
 ):
     monkeypatch.setenv("INKYPI_CHINA_BOX_OFFICE_CACHE", str(tmp_path))
     plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
-    calls = {"load": 0, "enrich": 0, "posters": 0}
+    calls = {"load": 0, "media": 0}
 
     def fake_load_movies(_settings, _items_count):
         calls["load"] += 1
         return [BoxOfficeMovie(rank=1, title="Theme Test Movie")], "The Numbers"
 
-    def fake_enrich(*_args, **_kwargs):
-        calls["enrich"] += 1
-
-    def fake_download(*_args, **_kwargs):
-        calls["posters"] += 1
+    def fake_complete(*_args, **_kwargs):
+        calls["media"] += 1
 
     monkeypatch.setattr(plugin, "_load_movies", fake_load_movies)
-    monkeypatch.setattr(plugin, "_enrich_with_tmdb", fake_enrich)
-    monkeypatch.setattr(plugin, "_download_posters", fake_download)
+    monkeypatch.setattr(plugin, "_complete_movie_posters", fake_complete)
     monkeypatch.setattr(plugin, "_write_box_office_context", lambda *_args: None)
 
     day = plugin.generate_image(
@@ -232,7 +228,7 @@ def test_china_box_office_theme_only_opposite_palette_reuses_warm_source_cache(
         DummyDeviceConfig(),
     )
 
-    assert calls == {"load": 1, "enrich": 1, "posters": 1}
+    assert calls == {"load": 1, "media": 1}
     assert image_digest(day) != image_digest(night)
 
 
@@ -322,14 +318,14 @@ def test_north_america_weekly_copy():
 
     assert plugin._title_for_source("The Numbers") == "北美本周票房榜"
     assert plugin._subtitle_for_source("The Numbers", 5) == "北美本周票房 TOP 5"
-    assert plugin._footer_for_source("The Numbers", []) == "Data: The Numbers | Posters pending TMDb"
+    assert plugin._footer_for_source("The Numbers", []) == "Data: The Numbers | Posters pending"
 
 
 def test_north_america_enrichment_forces_us_english_poster_settings(monkeypatch):
     plugin = ChinaBoxOfficeTopMovies({"id": "china_box_office_top_movies"})
     captured = {}
 
-    def fake_enrich(self, movies, settings, device_config=None):
+    def fake_enrich(self, movies, settings, device_config=None, *, session=None):
         captured.update(settings)
 
     monkeypatch.setattr(BoxOfficeTopMovies, "_enrich_with_tmdb", fake_enrich)

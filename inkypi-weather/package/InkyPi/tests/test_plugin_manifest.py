@@ -1,4 +1,5 @@
 import importlib
+import inspect
 import json
 import sys
 import threading
@@ -608,14 +609,26 @@ def test_all_builtin_manifests_are_v2_and_only_audited_plugins_are_live():
     assert all(item.schema_version == 2 for item in manifests)
     assert {item.id for item in manifests if item.capabilities.supports_live_refresh} == {
         "box_office_top_movies",
+        "china_box_office_top_movies",
         "live_radar",
         "sports_dashboard",
     }
     assert all(
         inspect_v1_capabilities(PLUGIN_SOURCE_ROOT / item.id / f"{item.id}.py").supports_live_refresh
         for item in manifests
-        if item.capabilities.supports_live_refresh
+        if item.capabilities.supports_live_refresh and item.id != "china_box_office_top_movies"
     )
+    # The v1 AST probe does not traverse the MRO; North America shares the
+    # audited movie LIVE hooks and supplies its own bounded media-repair hooks.
+    from plugins.box_office_top_movies.box_office_top_movies import BoxOfficeTopMovies
+    from plugins.china_box_office_top_movies.china_box_office_top_movies import ChinaBoxOfficeTopMovies
+
+    for hook in ("get_live_refresh_state", "wants_background_live_refresh"):
+        assert callable(getattr(ChinaBoxOfficeTopMovies, hook))
+        assert getattr(ChinaBoxOfficeTopMovies, hook) is getattr(BoxOfficeTopMovies, hook)
+        assert tuple(inspect.signature(getattr(ChinaBoxOfficeTopMovies, hook)).parameters) == (
+            "self", "settings", "current_dt",
+        )
 
 
 def test_live_radar_manifest_declares_live_and_presentation_refresh_capabilities():

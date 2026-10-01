@@ -24,6 +24,10 @@ from plugins.box_office_top_movies.box_office_top_movies import (
     _contains_cjk,
 )
 from plugins.context_cache import write_context
+from plugins.box_office_top_movies.china_source import ChinaFetchBudget
+from .north_america_media import (
+    complete_posters, matches_tmdb, movie_identity, reuse_posters,
+)
 from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
@@ -87,6 +91,44 @@ class _ReportLinkParser(HTMLParser):
 
 
 class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
+    def _supports_movie_media_repair(self, settings):
+        mode = str((settings or {}).get("sourceMode") or "the_numbers").strip().lower()
+        return LEGACY_CHINA_SOURCE_MAP.get(mode) is None
+
+    def _movie_media_source_is_current(self, cache, settings, current_dt):
+        return bool(self._supports_movie_media_repair(settings)
+                    and cache.get("version") == STATE_VERSION
+                    and cache.get("source_label") == "The Numbers"
+                    and cache.get("movies")
+                    and all(isinstance(row, dict) and movie_identity(row.get("chart_url"))
+                            for row in cache["movies"]))
+
+    def _poster_repair_possible(self, movies, settings, device_config):
+        if self._supports_movie_media_repair(settings):
+            return any(movie_identity(movie.chart_url) for movie in movies)
+        return super()._poster_repair_possible(movies, settings, device_config)
+
+    def _complete_movie_posters(self, movies, settings, device_config, budget):
+        complete_posters(self, movies, settings, device_config, budget)
+
+    def _load_and_enrich_movies(self, settings, items_count, device_config):
+        if not self._supports_movie_media_repair(settings):
+            return super()._load_and_enrich_movies(settings, items_count, device_config)
+        movies, label = self._load_movies(settings, items_count)
+        self._poster_movies = movies
+        cache = self._read_cache()
+        if (cache.get("version") == STATE_VERSION and cache.get("source_label") == "The Numbers"
+                and cache.get("cache_key") == self._cache_key(settings, None, items_count, device_config)):
+            reuse_posters(self, movies, cache.get("movies") or [])
+        with ChinaFetchBudget() as budget:
+            self._complete_movie_posters(movies, settings, device_config, budget)
+        return movies, label
+
+    def _select_tmdb_search_result(self, movie, results):
+        if movie_identity(movie.chart_url):
+            return next((item for item in results if matches_tmdb(movie, item)), None)
+        return super()._select_tmdb_search_result(movie, results)
+
     def generate_image(self, settings, device_config):
         self._device_config_for_source = device_config
         try:
@@ -157,7 +199,7 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
             movie.extra.setdefault("metric_label", "本周票房")
             movie.extra.setdefault("total_label", "累计票房")
 
-    def _enrich_with_tmdb(self, movies, settings, device_config=None):
+    def _enrich_with_tmdb(self, movies, settings, device_config=None, *, session=None):
         settings = settings or {}
         source_mode = (settings.get("sourceMode") or "the_numbers").strip().lower()
         if LEGACY_CHINA_SOURCE_MAP.get(source_mode) is None:
@@ -165,8 +207,8 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
             north_america_settings["tmdbLanguage"] = "en-US"
             north_america_settings["tmdbRegion"] = "US"
             north_america_settings.setdefault("localizedLanguage", "zh-CN")
-            return super()._enrich_with_tmdb(movies, north_america_settings, device_config)
-        return super()._enrich_with_tmdb(movies, settings, device_config)
+            return super()._enrich_with_tmdb(movies, north_america_settings, device_config, session=session)
+        return super()._enrich_with_tmdb(movies, settings, device_config, session=session)
 
     def _load_zgdypw_weekly(self, settings, items_count):
         reports_url = settings.get("reportsUrl") or DEFAULT_REPORTS_URL
@@ -664,9 +706,11 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
         if source_label == "Demo Fallback":
             return "Demo fallback: upstream data unavailable"
         if source_label == "The Numbers":
-            if any(movie.poster_url for movie in movies):
-                return "Data: The Numbers | Posters: TMDb"
-            return "Data: The Numbers | Posters pending TMDb"
+            sources = {"The Numbers" if (movie.extra or {}).get("poster_source") == "the_numbers" else "TMDb"
+                       for movie in movies if movie.poster_url and movie.poster_path}
+            if sources:
+                return "Data: The Numbers | Posters: " + " / ".join(sorted(sources))
+            return "Data: The Numbers | Posters pending"
         if any(movie.poster_url for movie in movies):
             return "Data: official/TMDb | Posters: TMDb"
         return "Data: official/TMDb | Posters pending TMDb"
@@ -738,13 +782,14 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
     def _cache_state_version(self):
         return STATE_VERSION
 
-    def _read_cache(self):
+    def _read_cache(self, *, quiet=False):
         path = self._cache_path()
         try:
             if path.is_file():
                 return json.loads(path.read_text(encoding="utf-8"))
         except Exception as exc:
-            logger.warning("Could not read China movie chart cache: %s", exc)
+            if not quiet:
+                logger.warning("Could not read China movie chart cache: %s", exc)
         return {}
 
     def _write_cache(self, payload):

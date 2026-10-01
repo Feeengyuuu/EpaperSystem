@@ -178,9 +178,21 @@ class _TableParser(HTMLParser):
 
 
 class BoxOfficeTopMovies(BasePlugin):
+    def _supports_movie_media_repair(self, settings):
+        return str((settings or {}).get("sourceMode") or "").strip().lower() == "official_china"
+
+    def _movie_media_source_is_current(self, cache, settings, current_dt):
+        return (cache.get("source_metadata") or {}).get("statistic_date") == current_dt.astimezone(SHANGHAI).date().isoformat()
+
+    def _complete_movie_posters(self, movies, settings, device_config, budget):
+        self._complete_official_posters(movies, settings, device_config, budget)
+
+    def _poster_repair_possible(self, movies, settings, device_config):
+        return bool(self._tmdb_auth(settings, device_config) or any(movie.poster_url for movie in movies))
+
     def get_live_refresh_state(self, settings, current_dt):
         """Offer a bounded media repair only while matching source data is fresh."""
-        if str((settings or {}).get("sourceMode") or "").lower() != "official_china":
+        if not self._supports_movie_media_repair(settings):
             return None
         cache = self._read_cache(quiet=True)
         media = cache.get("poster_status")
@@ -197,7 +209,7 @@ class BoxOfficeTopMovies(BasePlugin):
             return None
         if current_dt - generated >= timedelta(hours=hours):
             return None
-        if (cache.get("source_metadata") or {}).get("statistic_date") != current_dt.astimezone(SHANGHAI).date().isoformat():
+        if not self._movie_media_source_is_current(cache, settings, current_dt):
             return None
         return {"active": True, "interval_seconds": 300}
 
@@ -233,7 +245,7 @@ class BoxOfficeTopMovies(BasePlugin):
         retry = self._source_now() + timedelta(seconds=min(1800, 300 * 2 ** max(0, attempts - 1)))
         status = {"ready": ready, "total": len(movies), "attempts": attempts,
                   "settings_key": self._poster_repair_key(settings),
-                  "repair_possible": bool(self._tmdb_auth(settings, device_config) or any(m.poster_url for m in movies)),
+                  "repair_possible": self._poster_repair_possible(movies, settings, device_config),
                   "retry_at": retry.isoformat() if attempts else None}
         if cache.get("movies"):
             self._write_cache({**cache, "movies": [movie.to_dict() for movie in movies], "poster_status": status})
@@ -276,7 +288,9 @@ class BoxOfficeTopMovies(BasePlugin):
             cached_source_date = (cache.get("source_metadata") or {}).get("statistic_date")
             cache_is_fresh = cache_is_fresh and cached_source_date == self._source_now().astimezone(SHANGHAI).date().isoformat()
         if settings.get("_movie_media_only"):
-            if not source_cache_ready or not cache_is_fresh or str(settings.get("sourceMode") or "").lower() != "official_china":
+            if (not source_cache_ready or not cache_is_fresh
+                    or not self._supports_movie_media_repair(settings)
+                    or not self._movie_media_source_is_current(cache, settings, self._source_now())):
                 raise TaskCancelled("Movie media repair source expired or changed; await DATA refresh")
             force_refresh = False
         provenance = SourceProvenance.LOCAL_FALLBACK
@@ -297,10 +311,10 @@ class BoxOfficeTopMovies(BasePlugin):
             else:
                 provenance = SourceProvenance.STALE_CACHE
                 stale = True
-            if not theme_render_only and str(settings.get("sourceMode") or "").strip().lower() == "official_china":
+            if not theme_render_only and self._supports_movie_media_repair(settings):
                 # Media repair does not fetch a chart or advance its freshness.
                 with ChinaFetchBudget() as budget:
-                    self._complete_official_posters(movies, settings, device_config, budget)
+                    self._complete_movie_posters(movies, settings, device_config, budget)
                 repaired = [movie.to_dict() for movie in movies]
                 if repaired != cache.get("movies"):
                     self._write_cache({**cache, "movies": repaired})
