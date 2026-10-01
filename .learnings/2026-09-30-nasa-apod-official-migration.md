@@ -21,3 +21,6 @@ The APOD, core-admission, shared safe-image, plugin-resource and HTTP-contract s
 - https://github.com/nasa/apod-api/blob/master/application.py
 - https://science.nasa.gov/wp-json/wp/v2/apod-basic/260930
 - Task evidence: outputs/nasa-recovery-20260930/
+
+### CI follow-up
+The initial focused suite omitted the shared `test_network_failure_regression.py`. Clean-archive CI exposed 13 failures because its fake providers still read a `params.date` query and asserted the old bare endpoint. The complete file reproduced the same 13 failures locally; production code was not changed to accommodate stale mocks. Its fake providers now validate the official date-suffixed route, no query credentials, and disabled redirects, while all original cancellation, transaction, fallback, cache reuse and zero-network assertions remain. The combined APOD, official API, core admission, network failure, safe-image, resource and HTTP-contract suite then passed all 334 tests. Provider migrations require a search across the entire test tree for request mock contracts, followed by the shared network regression suite, rather than only plugin-specific tests.

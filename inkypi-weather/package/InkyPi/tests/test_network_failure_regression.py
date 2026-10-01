@@ -1,7 +1,7 @@
 import sys
 import json
 from io import BytesIO
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -151,6 +151,20 @@ def _network_weather():
         kp=SimpleNamespace(state="live"),
         aggregate_state=SourceProvenance.LIVE,
     )
+
+
+def _requested_apod_date(url, kwargs):
+    """Decode the strict official route for fixture dates in APOD's 1995–2094 era."""
+
+    prefix = "https://science.nasa.gov/wp-json/wp/v2/apod-basic/"
+    assert url.startswith(prefix)
+    suffix = url[len(prefix):]
+    assert len(suffix) == 6 and suffix.isascii() and suffix.isdigit()
+    assert "params" not in kwargs  # APOD no longer sends either date or key as a query.
+    assert kwargs["allow_redirects"] is False
+    short_year = int(suffix[:2])
+    year = short_year + (1900 if short_year >= 95 else 2000)
+    return date(year, int(suffix[2:4]), int(suffix[4:])).isoformat()
 
 
 def test_apod_secret_provider_failure_is_wrapped_without_raw_body_or_query(
@@ -328,7 +342,7 @@ def test_apod_weather_abort_does_not_persist_state_render_or_context(monkeypatch
 
     class Http:
         def request_json(self, _method, url, **kwargs):
-            requested = kwargs["params"]["date"]
+            requested = _requested_apod_date(url, kwargs)
             return SimpleNamespace(
                 data={
                     "date": requested,
@@ -389,7 +403,7 @@ def test_apod_cancellation_after_decode_precedes_state_render_and_context(
 
     class Http:
         def request_json(self, _method, url, **kwargs):
-            requested = kwargs["params"]["date"]
+            requested = _requested_apod_date(url, kwargs)
             return SimpleNamespace(
                 data={
                     "date": requested,
@@ -454,7 +468,7 @@ def test_apod_render_transaction_failure_does_not_publish_state_or_context(
 
     class Http:
         def request_json(self, _method, url, **kwargs):
-            requested = kwargs["params"]["date"]
+            requested = _requested_apod_date(url, kwargs)
             return SimpleNamespace(
                 data={
                     "date": requested,
@@ -541,7 +555,7 @@ def test_apod_same_day_state_and_complete_blob_reuse_has_zero_network_or_dns(
             self.media_urls = []
 
         def request_json(self, _method, url, **kwargs):
-            requested = kwargs["params"]["date"]
+            requested = _requested_apod_date(url, kwargs)
             self.apod_dates.append(requested)
             return SimpleNamespace(
                 data={
@@ -684,8 +698,7 @@ def test_apod_provisional_media_retries_current_each_cadence_reuses_fallback_and
 
         def request_json(self, method, url, **kwargs):
             assert method == "GET"
-            assert url == "https://api.nasa.gov/planetary/apod"
-            requested = kwargs["params"]["date"]
+            requested = _requested_apod_date(url, kwargs)
             self.apod_dates.append(requested)
             return SimpleNamespace(
                 status=200,
@@ -825,7 +838,7 @@ def test_apod_video_fallback_never_crosses_requested_day_minus_seven(
             self.download_urls = []
 
         def request_json(self, _method, url, **kwargs):
-            requested = kwargs["params"]["date"]
+            requested = _requested_apod_date(url, kwargs)
             self.apod_dates.append(requested)
             if requested == "2026-07-22" or requested >= "2026-07-16":
                 payload = {
@@ -918,7 +931,7 @@ def test_apod_video_fallback_continues_past_decode_failure_to_newest_usable_day(
             self.download_urls = []
 
         def request_json(self, _method, url, **kwargs):
-            requested = kwargs["params"]["date"]
+            requested = _requested_apod_date(url, kwargs)
             self.apod_dates.append(requested)
             if requested == "2026-07-22":
                 payload = {
@@ -1019,7 +1032,7 @@ def test_apod_random_mode_skips_layout_failure_and_uses_next_candidate(
             self.download_urls = []
 
         def request_json(self, _method, url, **kwargs):
-            requested = kwargs["params"]["date"]
+            requested = _requested_apod_date(url, kwargs)
             self.apod_dates.append(requested)
             return SimpleNamespace(
                 data={
@@ -1105,8 +1118,7 @@ def test_apod_random_mode_advances_persisted_candidates_until_media_decodes(
 
         def request_json(self, method, url, **kwargs):
             assert method == "GET"
-            assert url == apod_module.APOD_ENDPOINT
-            requested = kwargs["params"]["date"]
+            requested = _requested_apod_date(url, kwargs)
             self.apod_dates.append(requested)
             if requested == candidates[0]:
                 raise RuntimeError("temporary APOD metadata failure")
@@ -1238,8 +1250,7 @@ def test_apod_random_mode_stops_at_five_unique_dates_and_reuses_sequence(
 
         def request_json(self, method, url, **kwargs):
             assert method == "GET"
-            assert url == apod_module.APOD_ENDPOINT
-            requested = kwargs["params"]["date"]
+            requested = _requested_apod_date(url, kwargs)
             self.apod_dates.append(requested)
             return SimpleNamespace(
                 status=200,
@@ -1315,10 +1326,8 @@ def test_apod_today_uses_device_timezone_and_sends_an_explicit_date(
     class Http:
         def request_json(self, method, url, **kwargs):
             assert method == "GET"
-            assert url == apod_module.APOD_ENDPOINT
-            params = dict(kwargs["params"])
-            calls.append(params)
-            requested = params["date"]
+            requested = _requested_apod_date(url, kwargs)
+            calls.append(url)
             return SimpleNamespace(
                 status=200,
                 data={
@@ -1369,8 +1378,8 @@ def test_apod_today_uses_device_timezone_and_sends_an_explicit_date(
     )
 
     assert calls == [
-        {"api_key": "nasa-key", "date": "2026-07-22"},
-        {"api_key": "nasa-key", "date": "2026-07-23"},
+        "https://science.nasa.gov/wp-json/wp/v2/apod-basic/260722",
+        "https://science.nasa.gov/wp-json/wp/v2/apod-basic/260723",
     ]
 
 
