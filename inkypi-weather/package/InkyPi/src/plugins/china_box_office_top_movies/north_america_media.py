@@ -190,7 +190,8 @@ def _official_fallback(plugin, movie, budget):
 
 def _download_official_poster(plugin, movie, budget, identity, poster):
     # There is deliberately no guessed poster URL and no cross-host redirect.
-    with closing(budget.get(poster, headers=IMAGE_HEADERS, stream=True, allow_redirects=False)) as response:
+    response = budget.get(poster, headers=IMAGE_HEADERS, stream=True, allow_redirects=False)
+    with closing(response):
         if response.status_code != 200 or not official_poster_url(response.url, identity[0]):
             return
         with safe_open_image_response(response, limits=POSTER_LIMITS) as image:
