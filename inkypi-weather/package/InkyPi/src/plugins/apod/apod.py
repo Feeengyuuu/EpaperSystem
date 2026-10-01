@@ -17,6 +17,7 @@ from plugins.apod.apod_page import (
     measure_apod_page,
     render_apod_page,
 )
+from plugins.apod.apod_payload import normalize_official_payload
 from plugins.apod.space_weather import (
     SpaceWeatherRepository, refresh_space_weather, require_current_core,
 )
@@ -24,7 +25,10 @@ from runtime.long_task_executor import current_instance_identity, current_task_c
 from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 from utils.atomic_file import atomic_write_json
 from PIL import Image
-from utils.http_client import HttpClient, get_http_client, provider_io_lease
+from utils.http_client import (
+    HttpClient, HttpClientError, HttpDecodeError, HttpStatusError, ResponseTooLarge,
+    get_http_client, provider_io_lease,
+)
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -47,7 +51,7 @@ import time
 logger = logging.getLogger(__name__)
 
 RANDOM_APOD_MAX_ATTEMPTS = 5
-APOD_ENDPOINT = "https://api.nasa.gov/planetary/apod"
+APOD_ENDPOINT = "https://science.nasa.gov/wp-json/wp/v2/apod-basic"
 OPENAI_TRANSLATION_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 GROQ_TRANSLATION_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 SELECTION_CACHE_SCHEMA = 1
@@ -1054,24 +1058,31 @@ def _fetch_apod_record(
 ) -> ApodRecord:
     """Fetch one bounded, validated APOD response without exposing credentials."""
 
+    reason = "request"
     try:
         _task_checkpoint(context)
-        requested = date.fromisoformat(str(requested_date)).isoformat()
+        requested_day = date.fromisoformat(str(requested_date))
+        requested = requested_day.isoformat()
         response = http.request_json(
             "GET",
-            APOD_ENDPOINT,
-            params={"api_key": str(api_key), "date": requested},
+            f"{APOD_ENDPOINT}/{requested_day.strftime('%y%m%d')}",
             context=context,
             timeout=APOD_TIMEOUT_SECONDS,
             max_bytes=MAX_APOD_JSON_BYTES,
+            allow_redirects=False,
         )
         _task_checkpoint(context)
+        reason = "invalid_response"
         raw = response.data
         if not isinstance(raw, Mapping):
             raise ValueError("APOD response is not an object")
+        reason = "invalid_date"
         record_date = date.fromisoformat(str(raw.get("date") or "")).isoformat()
         if record_date != requested:
+            reason = "date_mismatch"
             raise ValueError("APOD response date does not match the request")
+        reason = "invalid_fields"
+        raw = normalize_official_payload(raw)
         media_type = _required_text(
             raw.get("media_type"), label="media type", maximum=32
         ).casefold()
@@ -1082,14 +1093,23 @@ def _fetch_apod_record(
         url = _safe_media_candidate(raw.get("url"))
         hdurl = _safe_media_candidate(raw.get("hdurl"))
         if media_type == "image" and url is None and hdurl is None:
+            reason = "missing_safe_media"
             raise ValueError("APOD image response has no safe media URL")
         copyright_text = _optional_text(raw.get("copyright"), maximum=500)
     except _ABORT_EXCEPTIONS:
         raise
-    except Exception:
+    except Exception as error:
         _task_checkpoint(context)
+        if isinstance(error, HttpStatusError):
+            reason = f"http_status_{error.status}"
+        elif isinstance(error, ResponseTooLarge):
+            reason = "response_too_large"
+        elif isinstance(error, HttpDecodeError):
+            reason = "invalid_json"
+        elif isinstance(error, HttpClientError):
+            reason = "transport_error"
         raise RuntimeError(
-            f"NASA APOD request failed for {str(requested_date)}"
+            f"NASA APOD request failed for {str(requested_date)} [{reason}]"
         ) from None
 
     return ApodRecord(

@@ -4902,7 +4902,9 @@ def test_apod_orchestration_same_day_refreshes_weather_without_apod_or_media_net
     second = plugin.generate_image({"forceRefresh": "true"}, config)
 
     assert len(http.json_calls) == 1
-    assert http.json_calls[0]["url"] == "https://api.nasa.gov/planetary/apod"
+    assert http.json_calls[0]["url"] == (
+        "https://science.nasa.gov/wp-json/wp/v2/apod-basic/260722"
+    )
     assert len(http.downloads) == 1
     assert len(weather_calls) == 2
     assert read_source_provenance(first) is SourceProvenance.LIVE
