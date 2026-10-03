@@ -97,21 +97,35 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         text_x = x0 + 161
         available = x1 - text_x
         lines, title_font = _title_lines(deal["title"], available)
-        for number, line in enumerate(lines):
-            draw.text((text_x, y0 + 2 + number * 20), line, font=title_font, fill=ink, anchor="lt")
         sale = "$" + deal["sale_price"]
         price_font = _fitted_font(sale, available - 67, 29, 17, True)
-        draw.text((text_x, y0 + 65), sale, font=price_font, fill=ink, anchor="lt")
         original = "$" + deal["normal_price"]
         original_font = _fitted_font(original, available - 67, 16)
-        draw.text((text_x, y0 + 96), original, font=original_font, fill=muted, anchor="lt")
-        draw.line((text_x, y0 + 103, text_x + int(original_font.getlength(original)), y0 + 103),
+
+        # Center the title and prices as one compact group beside the cover.
+        title_height = max((number * 20 + title_font.getbbox(line, anchor="lt")[3]
+                            for number, line in enumerate(lines)), default=0)
+        sale_height = price_font.getbbox(sale, anchor="lt")[3]
+        original_height = original_font.getbbox(original, anchor="lt")[3]
+        prices_height = sale_height + 2 + original_height
+        group_height = title_height + 4 + prices_height
+        title_y = y0 + 3 + (101 - group_height) // 2
+        price_y = title_y + title_height + 4
+        original_y = price_y + sale_height + 2
+        for number, line in enumerate(lines):
+            draw.text((text_x, title_y + number * 20), line, font=title_font, fill=ink, anchor="lt")
+        draw.text((text_x, price_y), sale, font=price_font, fill=ink, anchor="lt")
+        draw.text((text_x, original_y), original, font=original_font, fill=muted, anchor="lt")
+        strike_y = original_y + original_height // 2
+        draw.line((text_x, strike_y, text_x + int(original_font.getlength(original)), strike_y),
                   fill=muted, width=1)
-        badge = (x1 - 62, y0 + 72, x1, y0 + 105)
+        badge_y = price_y + (prices_height - 33) // 2
+        badge = (x1 - 62, badge_y, x1, badge_y + 33)
         draw.rectangle(badge, fill=green)
         discount = f"-{deal['discount_percent']}%"
         badge_font = _fitted_font(discount, 56, 22, 16, True)
-        draw.text((badge[0] + (62 - badge_font.getlength(discount)) / 2, y0 + 79),
+        badge_text_y = badge_y + (33 - badge_font.getbbox(discount, anchor="lt")[3]) // 2
+        draw.text((badge[0] + (62 - badge_font.getlength(discount)) / 2, badge_text_y),
                   discount, font=badge_font, fill="white", anchor="lt")
         layout.append({"title": deal["title"], "lines": lines, "text_width": available,
                        "title_widths": [title_font.getlength(line) for line in lines]})
