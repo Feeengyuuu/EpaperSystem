@@ -80,33 +80,6 @@ def test_generate_image_redacts_api_key_from_logs_error_and_traceback(
     assert caught.value.__cause__ is None
 
 
-def test_missing_optional_game_icon_is_negatively_cached(tmp_path, monkeypatch):
-    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
-    plugin._game_icon_url = lambda _data, _appid: "https://cdn.example.test/missing.jpg"
-    plugin._game_icon_cache_path = lambda _url: str(tmp_path / "missing.jpg")
-    calls = []
-
-    class Response:
-        status_code = 404
-
-    class Session:
-        def get(self, url, **kwargs):
-            calls.append((url, kwargs))
-            return Response()
-
-    monkeypatch.setattr(steam_profile_module, "get_http_session", lambda: Session())
-    monkeypatch.setattr(
-        steam_profile_module,
-        "safe_open_image_response",
-        lambda _response: (_ for _ in ()).throw(RuntimeError("not found")),
-    )
-
-    assert plugin._game_square_icon({}, "7", 20) is None
-    assert plugin._game_square_icon({}, "7", 20) is None
-
-    assert len(calls) == 1
-
-
 def test_offline_web_api_state_is_corrected_by_live_community_presence(monkeypatch):
     plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
     requests = []
@@ -488,38 +461,6 @@ def test_section_wordmark_draws_with_configured_offset():
     assert diff.crop((0, 0, 19, image.height)).getbbox() is None
 
 
-def test_dashboard_render_uses_section_wordmarks_for_lower_titles():
-    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
-    plugin._avatar_image = lambda _url, size: Image.new("RGBA", (size, size), (80, 90, 100, 255))
-    plugin._game_square_icon = lambda _data, _appid, size: Image.new("RGBA", (size, size), (0, 0, 0, 255))
-    calls = []
-    original_wordmark = plugin._draw_section_wordmark
-
-    def capture_wordmark(image, key, x, y):
-        calls.append((key, int(x), int(y)))
-        return original_wordmark(image, key, x, y)
-
-    plugin._draw_section_wordmark = capture_wordmark
-    data = {
-        "profile": {"personaname": "Player", "personastate": 1, "avatarfull": ""},
-        "level": 1,
-        "friend_count": 0,
-        "online_friend_count": 0,
-        "recent_games": [],
-        "owned_games": [],
-        "friends": [],
-        "app_details": {},
-        "updated_at": "2026-06-26 14:35",
-        "api_calls": 0,
-        "refresh_mode": "cache",
-        "warnings": [],
-    }
-
-    image = plugin._render_dashboard(data, (800, 480), {"mode": "day"})
-
-    assert image.size == (800, 480)
-    assert [key for key, _x, _y in calls] == ["recent_live", "library_friends"]
-
 def test_game_backdrop_asset_is_exact_dashboard_slot_size():
     plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
     backdrop = plugin._game_backdrop_image((800, 232))
@@ -581,42 +522,6 @@ def test_dashboard_render_does_not_draw_dark_backdrop_behind_avatar():
     image = plugin._render_dashboard(data, (800, 480), {"mode": "day"})
 
     assert image.size == (800, 480)
-
-
-def test_dashboard_render_draws_simple_white_avatar_decoration_frame():
-    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
-    plugin._avatar_image = lambda _url, size: Image.new("RGBA", (size, size), (80, 90, 100, 255))
-    plugin._game_square_icon = lambda _data, _appid, size: Image.new("RGBA", (size, size), (0, 0, 0, 255))
-    calls = []
-
-    def capture_frame(_draw, avatar_box, outline, muted, fonts):
-        calls.append((avatar_box, outline, muted, sorted(fonts.keys())))
-
-    plugin._draw_avatar_gamepad_frame = capture_frame
-    data = {
-        "profile": {"personaname": "Player", "personastate": 1, "avatarfull": ""},
-        "level": 1,
-        "friend_count": 0,
-        "online_friend_count": 0,
-        "recent_games": [],
-        "owned_games": [],
-        "friends": [],
-        "app_details": {},
-        "updated_at": "2026-06-18 20:35",
-        "api_calls": 0,
-        "refresh_mode": "cache",
-        "warnings": [],
-    }
-
-    image = plugin._render_dashboard(data, (800, 480), {"mode": "day"})
-
-    assert image.size == (800, 480)
-    assert len(calls) == 1
-    avatar_box, outline, muted, font_keys = calls[0]
-    assert avatar_box == (36, 36, 199, 199)
-    assert outline == (255, 255, 255)
-    assert all(channel >= 232 for channel in muted)
-    assert "title" in font_keys
 
 
 def test_dashboard_render_does_not_draw_horizontal_game_strip():

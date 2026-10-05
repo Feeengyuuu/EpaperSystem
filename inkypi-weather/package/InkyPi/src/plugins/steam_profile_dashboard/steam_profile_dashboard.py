@@ -1,5 +1,7 @@
 from utils.resource_cache import cached_resource_image, measured_image_response, prune_resource_images
 from pathlib import Path
+from plugins.steam_profile_dashboard.console_renderer import render_console
+from plugins.steam_profile_dashboard.game_assets import SteamGameAssets
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.render_provenance import (
     SourceProvenance,
@@ -34,7 +36,7 @@ STEAM_COMMUNITY_BADGES_URL = "https://steamcommunity.com/profiles/{steam_id}/bad
 STEAM_COMMUNITY_PROFILE_URL = "https://steamcommunity.com/profiles/{steam_id}/"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "avatar-clean-coverwall-allgameicons-badgerice-v35"
+STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-official-assets-v36"
 STEAM_BACKGROUND_DAY_IMAGE = "background_day.png"
 STEAM_BACKGROUND_NIGHT_IMAGE = "background_night.png"
 STEAM_GAME_BACKDROP_IMAGE = "game_backdrop.png"
@@ -138,6 +140,7 @@ class SteamProfileDashboard(BasePlugin):
                 full_cache_minutes,
                 force_refresh=force_refresh,
             )
+            self._apply_friend_remarks(data, settings)
             image = self._render_dashboard(data, dimensions, theme_context)
             image_path = self._cache_image_path(cache_key)
             os.makedirs(os.path.dirname(image_path), exist_ok=True)
@@ -730,215 +733,40 @@ class SteamProfileDashboard(BasePlugin):
         return get_theme_palette(theme_context)
 
     def _render_dashboard(self, data, dimensions, theme_context=None):
-        width, height = dimensions
-        palette = self._render_palette(theme_context)
-        bg = palette["background"]
-        panel = palette["panel"]
-        panel_border = palette["border"]
-        ink = palette["ink"]
-        gray = palette["muted"]
-        light = palette["rule"]
-        accent = palette["accent"]
-        accent_online = palette["green"]
-        image = self._dashboard_background((width, height), bg, theme_mode=(theme_context or {}).get("mode", "day"))
-        draw = ImageDraw.Draw(image)
+        # One bounded acquisition budget is shared by all visible game slots.
+        self._game_assets = None
+        try:
+            image = render_console(self, data, dimensions, theme_context)
+            assets = self._game_assets
+            data["game_media"] = {"stats": dict(assets.diagnostics) if assets else {},
+                                  "sources": dict(assets.sources) if assets else {}}
+            logger.info("Steam console game media: %s", data["game_media"]["stats"])
+            return image
+        finally:
+            if self._game_assets is not None:
+                self._game_assets.close()
 
-        fonts = self._fonts(width, height)
+    def _official_game_assets(self):
+        if getattr(self, "_game_assets", None) is None:
+            self._game_assets = SteamGameAssets(Path(self._cache_dir()) / "official_games")
+        return self._game_assets
 
-        margin = 26
-        avatar_size = min(170, max(120, int(height * 0.34)))
-        panel_x = margin + avatar_size + 38
-        panel_y = 34
-        panel_w = width - panel_x - margin
-        panel_h = 176
-        online_avatar_friends = self._online_friends_for_avatars(data)
-        friend_avatar_size = max(30, min(32, panel_h // 5))
-        friend_avatar_gap = 6
-        friend_text_line_h = self._line_height(draw, fonts["tiny"])
-        friend_text_group_h = friend_text_line_h * 2 + 1
-        friend_row_h = max(friend_avatar_size, friend_text_group_h)
-        friend_row_count = min(4, len(online_avatar_friends))
-        friend_group_h = friend_row_count * friend_row_h + max(0, friend_row_count - 1) * friend_avatar_gap
-        friend_panel_w = min(220, max(190, int(panel_w * 0.41)))
-        friend_panel_x = panel_x + panel_w - 18 - friend_panel_w
-        friend_panel_y = panel_y + max(0, (panel_h - friend_group_h) // 2)
-        top_text_right = friend_panel_x - 22 if online_avatar_friends else panel_x + panel_w - 18
-        lower_y = panel_y + panel_h + 38
+    def _game_background(self, data, appid, size):
+        appid = self._normalize_appid(appid)
+        return self._official_game_assets().get_background(
+            appid, size, record=self._game_record(data, appid),
+        ) if appid else None
 
-        avatar_box = (margin + 10, panel_y + 2, margin + 10 + avatar_size, panel_y + 2 + avatar_size)
-        avatar = self._avatar_image(data["profile"].get("avatarfull"), avatar_size)
-        image.paste(avatar, (avatar_box[0], avatar_box[1]), avatar if avatar.mode == "RGBA" else None)
-        self._draw_avatar_gamepad_frame(draw, avatar_box, (255, 255, 255), (232, 238, 246), fonts)
-        self._rounded_rect(
-            draw,
-            (panel_x, panel_y, panel_x + panel_w, panel_y + panel_h),
-            radius=0,
-            outline=panel_border,
-            width=3,
-            fill=panel,
-        )
-        self._draw_badge_icon_scatter(
-            image,
-            data,
-            anchor_box=avatar_box,
-            avoid_boxes=[
-                (avatar_box[0] - 3, avatar_box[1] - 3, avatar_box[2] + 3, avatar_box[3] + 3),
-                (panel_x, panel_y, panel_x + panel_w, panel_y + panel_h),
-            ],
-        )
-
-        profile = data["profile"]
-        status_text, status_color = self._persona_text(profile)
-        self._draw_wrapped_text(
-            draw,
-            (panel_x + 18, panel_y + 10),
-            profile.get("personaname", "Steam User"),
-            fonts["title"],
-            ink,
-            max(160, top_text_right - (panel_x + 18)),
-        )
-
-        y = panel_y + 50
-        top_line_width = max(220, top_text_right - (panel_x + 18))
-        has_current_game = profile.get("gameid") or profile.get("gameextrainfo")
-        if has_current_game:
-            current_game = self._display_game_name(data, profile.get("gameid"), profile.get("gameextrainfo"))
-            y, _ = self._draw_current_game_line(
-                image,
-                draw,
-                (panel_x + 18, y),
-                current_game,
-                profile.get("gameid"),
-                fonts["body"],
-                ink,
-                top_line_width,
-                data,
-                label_fill=accent_online,
-            )
-        else:
-            y, _ = self._draw_status_line(draw, (panel_x + 18, y), "状态：", status_text, fonts["body"], ink, status_color, top_line_width)
-        y += 7
-
-        owned_count = len(data.get("owned_games", []))
-        total_hours = self._minutes_to_hours(sum(game.get("playtime_forever", 0) for game in data.get("owned_games", [])))
-        recent_hours = self._minutes_to_hours(sum(game.get("playtime_2weeks", 0) for game in data.get("recent_games", [])))
-        level = self._display_value(data.get("level"))
-        friend_count = self._display_value(data.get("friend_count"))
-        online_count = self._display_value(data.get("online_friend_count"))
-        y, _ = self._draw_wrapped_text(draw, (panel_x + 18, y), f"等级 {level}  |  游戏 {owned_count or '-'}  |  好友 {online_count}/{friend_count}", fonts["small"], ink, top_line_width)
-        y += 5
-        y, _ = self._draw_wrapped_text(draw, (panel_x + 18, y), f"近2周 {recent_hours} 小时  |  总计 {total_hours} 小时", fonts["small"], ink, top_line_width)
-        y += 5
-        self._draw_wrapped_text(draw, (panel_x + 18, y), self._last_seen(profile), fonts["small"], gray, top_line_width)
-
-        if online_avatar_friends:
-            self._draw_online_friend_activity(
-                image,
-                draw,
-                online_avatar_friends,
-                friend_panel_x,
-                friend_panel_y,
-                friend_panel_w,
-                friend_row_h,
-                friend_avatar_size,
-                friend_avatar_gap,
-                fonts,
-                data,
-                ink,
-            )
-
-
-        lower_h = height - lower_y - 28
-        self._rounded_rect(
-            draw,
-            (margin, lower_y, width - margin, lower_y + lower_h),
-            radius=0,
-            outline=panel_border,
-            width=3,
-            fill=panel,
-        )
-
-        col_gap = 18
-        col_w = (width - margin * 2 - col_gap) // 2
-        left_x = margin + 18
-        right_x = margin + 18 + col_w + col_gap
-        content_y = lower_y + 18
-
-        draw.line((left_x + col_w, lower_y + 14, left_x + col_w, lower_y + lower_h - 14), fill=light, width=2)
-
-        if self._draw_section_wordmark(image, "recent_live", left_x, content_y) is None:
-            self._text(draw, (left_x, content_y), "最近 / 实时", fonts["section"], ink)
-        y = content_y + 29
-        left_line_width = col_w - 22
-        self._draw_recent_grid(
-            image,
-            draw,
-            self._recent_items(data)[:STEAM_LEFT_GAME_ITEM_TARGET],
-            left_x,
-            y,
-            left_line_width,
-            lower_y + lower_h - 14,
-            fonts["recent"],
-            ink,
-            accent_online,
-            light,
-            data,
-            gray,
-        )
-        if self._draw_section_wordmark(image, "library_friends", right_x, content_y) is None:
-            self._text(draw, (right_x, content_y), "游戏库 / 好友", fonts["section"], ink)
-        y = content_y + 31
-        right_line_width = width - margin - (right_x + 18) - 12
-        top_game_items = self._top_game_items(data)
-        if top_game_items:
-            self._text(draw, (right_x + 18, y), "\u5e38\u73a9 TOP 3", fonts["tiny"], gray)
-            y += 21
-            for item in top_game_items:
-                next_y, fits = self._draw_top_game_item(
-                    image,
-                    draw,
-                    item,
-                    right_x + 18,
-                    y,
-                    fonts["small"],
-                    ink,
-                    right_line_width,
-                    lower_y + lower_h - 18,
-                    data,
-                )
-                if not fits:
-                    break
-                y = next_y + 5
-
-            if y <= lower_y + lower_h - 44:
-                draw.line((right_x + 18, y - 3, width - margin - 18, y - 3), fill=light, width=1)
-                y += 9
-
-        for item in self._library_items(data):
-            next_y, fits = self._draw_library_item(
-                image,
-                draw,
-                item,
-                right_x,
-                y,
-                fonts["small"],
-                ink,
-                accent,
-                right_line_width,
-                lower_y + lower_h - 18,
-                data,
-            )
-            if not fits:
-                break
-            y = next_y + 5
-
-        refresh_mode = self._refresh_mode_label(data.get("refresh_mode", "full"))
-        footer = f"更新 {data.get('updated_at')}  |  Steam 请求 {data.get('api_calls', 0)} 次（{refresh_mode}）"
-        warnings = data.get("warnings") or []
-        if warnings:
-            footer += f"  |  {len(warnings)} 项隐私/缺失"
-        self._text(draw, (margin, height - 19), footer, fonts["tiny"], gray)
-        return image
+    def _profile_avatar_image(self, url, size):
+        source = self._cached_profile_media(
+            url, self._avatar_cache_path(url), 7 * 24 * 3600, "RGB",
+        ) if url else None
+        if source is None:
+            return self._avatar_image(None, size).convert("RGB")
+        try:
+            return ImageOps.fit(source, (size, size), method=Image.Resampling.LANCZOS)
+        finally:
+            source.close()
 
     def _draw_avatar_gamepad_frame(self, draw, avatar_box, outline, muted, fonts):
         x0, y0, x1, y1 = avatar_box
@@ -1629,8 +1457,39 @@ class SteamProfileDashboard(BasePlugin):
                     min_size=8,
                 )
 
+    @staticmethod
+    def _friend_remarks(settings):
+        """Parse user-provided remarks; stable SteamIDs survive persona changes."""
+        raw = settings.get("friendRemarks") or {}
+        if isinstance(raw, str):
+            value = raw.strip()
+            if value.startswith("{"):
+                try:
+                    raw = json.loads(value)
+                except (ValueError, TypeError):
+                    return {}
+            else:
+                raw = dict(line.split("=", 1) for line in value.splitlines()
+                           if "=" in line and not line.lstrip().startswith("#"))
+        if not isinstance(raw, dict):
+            return {}
+        return {str(key).strip(): " ".join(value.split())[:80]
+                for key, value in raw.items()
+                if re.fullmatch(r"[0-9]{17}", str(key).strip())
+                and isinstance(value, str) and value.strip()}
+
+    def _apply_friend_remarks(self, data, settings):
+        remarks = self._friend_remarks(settings)
+        for friend in data.get("friends") or []:
+            friend.pop("_inkypi_friend_remark", None)
+            remark = remarks.get(str(friend.get("steamid") or ""))
+            if remark:
+                friend["_inkypi_friend_remark"] = remark
+
     def _friend_display_id(self, friend):
-        return self._clean_game_name(friend.get("personaname")) or str(friend.get("steamid") or "好友")
+        return (self._clean_game_name(friend.get("_inkypi_friend_remark"))
+                or self._clean_game_name(friend.get("personaname"))
+                or str(friend.get("steamid") or "好友"))
 
     def _friend_live_text(self, data, friend):
         if friend.get("gameid") or friend.get("gameextrainfo"):
@@ -1651,19 +1510,10 @@ class SteamProfileDashboard(BasePlugin):
         return (120, 132, 146)
 
     def _game_square_icon(self, data, appid, size):
-        url = self._game_icon_url(data, appid)
-        if not url:
-            return None
-        icon = self._cached_profile_media(url, self._game_icon_cache_path(url), 14 * 24 * 3600, "RGB")
-        if icon is None:
-            return None
-        fitted = ImageOps.fit(icon, (size, size), method=Image.Resampling.LANCZOS)
-        icon.close()
-        result = Image.new("RGBA", (size, size), (255, 255, 255, 0))
-        result.paste(fitted, (0, 0))
-        fitted.close()
-        ImageDraw.Draw(result).rectangle((0, 0, size - 1, size - 1), outline=(255, 255, 255, 190), width=1)
-        return result
+        appid = self._normalize_appid(appid)
+        return self._official_game_assets().get_icon(
+            appid, (size, size), record=self._game_record(data, appid),
+        ) if appid else None
 
     def _optional_media_negative_hit(self, url):
         now = float(getattr(self, "_optional_media_clock", time.monotonic)())
@@ -1700,12 +1550,7 @@ class SteamProfileDashboard(BasePlugin):
                 return icon_hash
             return STEAM_APP_ICON_URL.format(appid=appid, icon_hash=icon_hash)
 
-        details = data.get("app_details") or {}
-        for key in ("capsule_image", "header_image"):
-            url = str(details.get(key) or "").strip()
-            if url.startswith("http://") or url.startswith("https://"):
-                return url
-        return STEAM_APP_CAPSULE_URL.format(appid=appid)
+        return ""
 
     def _game_record(self, data, appid):
         game = data.get("spotlight_game") or {}
@@ -2506,6 +2351,7 @@ class SteamProfileDashboard(BasePlugin):
             str(settings.get("includeBans", "true")),
             str(settings.get("language", "schinese")),
             str(settings.get("_theme_mode", "day")),
+            json.dumps(self._friend_remarks(settings), sort_keys=True, ensure_ascii=False),
         ]
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:24]
 
