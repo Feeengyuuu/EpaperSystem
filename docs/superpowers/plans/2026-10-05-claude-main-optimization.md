@@ -17,7 +17,7 @@
 
 ## 迭代
 
-### 迭代 1：取消语义与卡死兜底（本分支）
+### 迭代 1：取消语义与卡死兜底（已完成第 1-3 项）
 
 1. 插件 HTTP 跟随任务截止：`TimeoutSession` 与 `HttpClient` 在没有显式上下文时继承当前绑定的任务上下文。截止后立即拒绝新请求，单次超时不超过剩余时间。显式上下文仍然优先。
 2. 超时升级：新增 `runtime/overrun_recovery.py`，由重启监控线程判断。当前命令超过截止时间加 240 秒宽限（`refresh_overrun_grace_seconds`）后，请求受监督的进程替换，复用 exit 75、15 秒强制退出和恢复账本。账本限定 1 小时内最多一次（`refresh_overrun_min_interval_seconds`），防止陷入重启循环。
@@ -28,16 +28,17 @@
 
 ### 迭代 2：调度核心瘦身
 
-- 把 weather、sports、ticketmaster 的 liveness 判断合并为一个由 manifest 声明的策略接口；执行类别和后台实时刷新名单也改由 manifest 声明。
-- 拆分 `_select_independent_refresh_command` 与 `_execute_queue_entry`，在 `runtime/` 下按 80 行函数上限组织。
-- 把插件迁移逻辑收进一个带版本号的迁移注册表。
-- 每拆一步就下调 `refresh_task.py` 的行数上限。
+- 已完成：Sports 与 Ticketmaster 的 quiet window 状态机合并为 `runtime/liveness_window.py`。
+- 已完成：`_select_independent_refresh_command` 拆出 burst liveness 决策、两处资源余量不足时的延后，以及原先重复 5 次的后台 DATA 命令构造；函数从 647 行降到 459 行，门禁收紧为 480 行。
+- 结果：`refresh_task.py` 从 10,173 行降到 9,939 行，文件上限收紧为 10,040 行。
+- 待做：Weather 的 quiet window 及其让步逻辑（约 300 行，与资源采样、内存维护、调度唤醒耦合较深）；`_execute_queue_entry`（613 行，目前没有上限）。
+- 不做：`runtime/execution_policy.py` 的插件名单是刻意集中审核、失败即关闭的设计，保持原样。
 
 ### 迭代 3：运维与验收工具化
 
-- 验收工具按 playlist 动态枚举实例，支持只显示不取数。
-- 只读审计自动做两次观测，区分取数、渲染和写屏三个阶段。
-- 公开 readyz 只返回错误码，不暴露配置。
+- 已完成：两个验收工具都按当前 playlist 的实际实例数执行（`--expected-instances` 可选，用于锁定已审阅的数量），新增 `--display-only`。
+- 待做：只读审计自动做两次观测，区分取数、渲染和写屏三个阶段。
+- 待决定：公开 readyz 是否只返回错误码（不暴露配置）。
 
 ### 迭代 4：内存（以设备实测为准）
 
