@@ -135,6 +135,7 @@ from runtime.sports_isolated_renderer import (
     render_sports_dashboard_isolated,
 )
 from runtime.weather_admission import WeatherPressureRecovery, weather_start_margin
+from runtime.weather_liveness import WeatherQuietWindow
 from runtime.liveness_window import LivenessOutcome, LivenessSettings, StarvationLiveness
 from runtime.runtime_state import (
     InstanceRuntimeState,
@@ -258,16 +259,6 @@ _TICKETMASTER_LIVENESS = LivenessSettings(
     cooldown_key="ticketmaster_liveness_cooldown_seconds",
     cooldown_default=DEFAULT_TICKETMASTER_LIVENESS_COOLDOWN_SECONDS,
 )
-
-
-@dataclass(frozen=True)
-class _WeatherLivenessWindow:
-    instance_uuid: str
-    due_since: datetime
-    started_monotonic: float
-    deadline_monotonic: float
-    candidate: DueCandidate
-    last_failure_at: str | None = None
 
 
 class _StaleSelection(TaskCancelled):
@@ -706,9 +697,14 @@ class RefreshTask:
             _TICKETMASTER_LIVENESS, clock=lambda: self._clock(), seconds=self._liveness_seconds,
         )
         self._ticketmaster_bootstrap_due_since = {}
-        self._weather_liveness_window = None
+        self._weather_quiet_window = WeatherQuietWindow(
+            clock=lambda: self._clock(),
+            seconds=self._liveness_seconds,
+            window_default=DEFAULT_WEATHER_LIVENESS_WINDOW_SECONDS,
+            cooldown_default=DEFAULT_WEATHER_LIVENESS_COOLDOWN_SECONDS,
+            on_finish=self._after_weather_window_finished,
+        )
         self._weather_pressure_recovery = WeatherPressureRecovery()
-        self._weather_liveness_cooldown_until_monotonic = 0.0
         self._burst_liveness_yield_ordinary_pending = False
         self._burst_liveness_yield_deadline_monotonic = 0.0
         self._sports_isolated_renderer = (
@@ -1134,6 +1130,14 @@ class RefreshTask:
     @property
     def restart_request(self):
         return None if self._restart_request is None else dict(self._restart_request)
+
+    @property
+    def _weather_liveness_window(self):
+        return self._weather_quiet_window.window
+
+    @property
+    def _weather_liveness_cooldown_until_monotonic(self):
+        return self._weather_quiet_window.cooldown_until_monotonic
 
     @property
     def _sports_liveness_window(self):
@@ -5043,17 +5047,13 @@ class RefreshTask:
         resource_sample,
         yield_to_ordinary=True,
     ):
-        window = self._weather_liveness_window
-        if window is None:
-            return
-        now = self._clock()
-        cooldown_seconds = self._liveness_seconds(
-            "weather_liveness_cooldown_seconds",
-            DEFAULT_WEATHER_LIVENESS_COOLDOWN_SECONDS,
-            60 * 60,
+        self._weather_quiet_window.finish(
+            reason=reason,
+            resource_sample=resource_sample,
+            yield_to_ordinary=yield_to_ordinary,
         )
-        self._weather_liveness_window = None
-        self._weather_liveness_cooldown_until_monotonic = now + cooldown_seconds
+
+    def _after_weather_window_finished(self, window, now, yield_to_ordinary):
         probe_started = self._scheduler_probe_monotonic
         if (
             probe_started is not None
@@ -5070,23 +5070,6 @@ class RefreshTask:
             )
         if yield_to_ordinary:
             self._request_burst_liveness_ordinary_yield()
-        handoff = (
-            "ordinary background data gets the next bounded admission turn"
-            if yield_to_ordinary
-            else "runnable auxiliary background work may proceed"
-        )
-        logger.warning(
-            "Weather quiet window ended; %s. | reason: %s | instance_uuid_hash: %s | "
-            "window_seconds: %.1f | cooldown_seconds: %.1f | available_mb: %s | "
-            "swap_percent: %s",
-            handoff,
-            reason,
-            hashlib.sha256(window.instance_uuid.encode("utf-8")).hexdigest()[:16],
-            max(0.0, window.deadline_monotonic - window.started_monotonic),
-            cooldown_seconds,
-            getattr(resource_sample, "available_mb", None),
-            getattr(resource_sample, "swap_percent", None),
-        )
 
     def _submit_independent_refresh_command(self, command):
         if command.payload.get("weather_liveness_concession") is not True:
@@ -5146,156 +5129,30 @@ class RefreshTask:
     ):
         """Reserve one bounded quiet window for a due Weather browser start."""
 
-        now = self._clock()
-        candidates_by_uuid = {
-            candidate.instance.instance_uuid: candidate
-            for candidate in data_candidates
-            if candidate.instance.plugin_id == "weather"
-        }
-        active_weather = {
-            instance.instance_uuid: instance
-            for instance in active.plugins
-            if instance.plugin_id == "weather"
-        }
-        normal_margin, required_mb, max_swap = (
-            self._weather_background_start_margin(resource_sample)
-        )
-        concession_margin, _ = self._weather_concession_margin(
-            resource_sample
-        )
-        window = self._weather_liveness_window
-        if window is not None:
-            active_instance = active_weather.get(window.instance_uuid)
-            original_instance = window.candidate.instance
-            identity_current = bool(
-                active_instance is not None
-                and active_instance.structural_generation
-                == original_instance.structural_generation
-                and active_instance.settings_revision
-                == original_instance.settings_revision
-            )
-            runtime = runtime_instances.get(
-                window.instance_uuid,
-                InstanceRuntimeState(),
-            ).data
-            if runtime.last_failure_at != window.last_failure_at:
-                self._finish_weather_liveness_window(
-                    reason="provider_failed", resource_sample=resource_sample,
-                )
-                return None, False, False
-            last_success = self._parse_iso_datetime(runtime.last_success_at)
-            if last_success is not None:
-                last_success = self._align_datetime_tz(last_success, current_dt)
-            if not identity_current or (
-                last_success is not None and last_success >= window.due_since
-            ):
-                self._finish_weather_liveness_window(
-                    reason=("target_changed" if not identity_current else "completed"),
-                    resource_sample=resource_sample,
-                )
-                return None, False, False
+        def maintained_sample():
+            self._run_memory_maintenance("weather-liveness-window", force=True)
+            return self._resource_sample()
 
-            target = candidates_by_uuid.get(window.instance_uuid)
-            next_retry = self._parse_iso_datetime(runtime.next_retry_at)
-            retry_pending = False
-            if next_retry is not None:
-                next_retry = self._align_datetime_tz(next_retry, current_dt)
-                retry_pending = current_dt < next_retry
-            if target is None and not retry_pending:
-                self._finish_weather_liveness_window(
-                    reason="no_longer_due",
-                    resource_sample=resource_sample,
-                )
-                return None, False, False
-
-            if now >= window.deadline_monotonic:
-                if not concession_margin:
-                    self._finish_weather_liveness_window(
-                        reason="margin_unavailable",
-                        resource_sample=resource_sample,
-                    )
-                    return None, False, False
-                # The retry gate can hide a candidate created by this window's
-                # own pressure deferral. Rebuild it with the currently active,
-                # identity-checked snapshot before issuing the single concession.
-                target = target or replace(
-                    window.candidate,
-                    instance=active_instance,
-                )
-                return target, False, True
-            if normal_margin:
-                if target is None and retry_pending:
-                    target = replace(
-                        window.candidate,
-                        instance=active_instance,
-                    )
-                return target, False, False
-            return None, True, False
-
-        weather_candidates = sorted(
-            candidates_by_uuid.values(),
-            key=lambda candidate: (
-                self._align_datetime_tz(candidate.due_since, current_dt),
-                candidate.instance.instance_uuid,
-            ),
+        return self._weather_quiet_window.decide(
+            active_weather={
+                instance.instance_uuid: instance
+                for instance in active.plugins
+                if instance.plugin_id == "weather"
+            },
+            candidates_by_uuid={
+                candidate.instance.instance_uuid: candidate
+                for candidate in data_candidates
+                if candidate.instance.plugin_id == "weather"
+            },
+            runtime_data=lambda uuid: runtime_instances.get(uuid, InstanceRuntimeState()).data,
+            current_dt=current_dt,
+            resource_sample=resource_sample,
+            start_margin=self._weather_background_start_margin,
+            concession_margin=self._weather_concession_margin,
+            parse_time=self._parse_iso_datetime,
+            align=self._align_datetime_tz,
+            before_window=maintained_sample,
         )
-        target = weather_candidates[0] if weather_candidates else None
-        if target is None:
-            return None, False, False
-        if normal_margin:
-            # With no quiet window, Weather participates in the ordinary DATA
-            # ordering. The liveness path must not grant an unnecessary
-            # priority boost merely because its start margin is healthy.
-            return None, False, False
-        if now < self._weather_liveness_cooldown_until_monotonic:
-            return None, False, False
-        # A quiet window is useful only when a bounded start could eventually
-        # be safe. Unknown metrics or less than 140 MiB never hold other work.
-        if not concession_margin:
-            return None, False, False
-        window_seconds = self._liveness_seconds(
-            "weather_liveness_window_seconds",
-            DEFAULT_WEATHER_LIVENESS_WINDOW_SECONDS,
-            90,
-        )
-        if window_seconds <= 0:
-            return None, False, False
-        self._run_memory_maintenance("weather-liveness-window", force=True)
-        # A detached-image cleanup can restore the browser margin immediately.
-        # Use the post-maintenance sample instead of spending a quiet window
-        # waiting on memory that the scheduler has already reclaimed.
-        resource_sample = self._resource_sample()
-        if self._weather_background_start_margin(resource_sample)[0]:
-            return target, False, False
-        if not self._weather_concession_margin(resource_sample)[0]:
-            return None, False, False
-        due_since = self._align_datetime_tz(target.due_since, current_dt)
-        self._weather_liveness_window = _WeatherLivenessWindow(
-            instance_uuid=target.instance.instance_uuid,
-            due_since=due_since,
-            started_monotonic=now,
-            deadline_monotonic=now + window_seconds,
-            candidate=target,
-            last_failure_at=runtime_instances.get(
-                target.instance.instance_uuid, InstanceRuntimeState(),
-            ).data.last_failure_at,
-        )
-        logger.warning(
-            "Reserving bounded quiet window for due Weather data. | "
-            "instance_uuid_hash: %s | overdue_seconds: %.1f | window_seconds: %.1f | "
-            "available_mb: %s | swap_percent: %s | required_available_mb: %s | "
-            "max_swap_percent: %s",
-            hashlib.sha256(
-                target.instance.instance_uuid.encode("utf-8")
-            ).hexdigest()[:16],
-            max(0.0, (current_dt - due_since).total_seconds()),
-            window_seconds,
-            resource_sample.available_mb,
-            resource_sample.swap_percent,
-            required_mb,
-            max_swap,
-        )
-        return None, True, False
 
     @staticmethod
     def _is_ticketmaster_background_data_command(command):
