@@ -416,12 +416,9 @@ class _Console:
             appid = item.get("appid")
             self.art((x, 399, x + 192, 459), appid, strength=145)
             rank_color = ((249, 202, 77), (181, 205, 223), (210, 153, 88))[index]
-            # A compact cut-corner medal stays inside the original rank column.
-            self.draw.polygon(((x + 4, 417), (x + 16, 417), (x + 19, 420),
-                               (x + 19, 438), (x + 16, 441), (x + 4, 441),
-                               (x + 1, 438), (x + 1, 420)), fill=rank_color)
-            self.text((x + 2, 418, x + 19, 440), item.get("rank", index + 1),
-                      15, NAVY, bold=True, align="center")
+            self.draw.polygon(((x, 399), (x + 19, 399), (x + 12, 459), (x, 459)), fill=rank_color)
+            self.text((x + 2, 400, x + 15, 459), item.get("rank", index + 1),
+                      17, NAVY, bold=True, align="center")
             self.icon(appid, x + 23, 412, 33)
             title = self._text_bitmap(item.get("name"), 124, 29, 13, WHITE, True, 2, 11)
             hours = item.get("suffix") or _hours(_game_minutes(self.data, appid, "playtime_forever"))
