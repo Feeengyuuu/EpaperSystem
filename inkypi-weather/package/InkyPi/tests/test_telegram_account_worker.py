@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 import time
@@ -146,6 +147,27 @@ def test_account_fetch_runs_in_a_child_process_by_default(tmp_path, monkeypatch)
     assert requests[0]["now"] == "2026-10-06T20:00:00+00:00"
     assert requests[0]["max_messages"] == 8
     assert requests[0]["config"]["session_path"] == str(runtime_data / "telegram_account")
+
+
+def test_account_fetch_request_omits_runtime_objects_that_json_cannot_carry(tmp_path, monkeypatch):
+    # The runtime injects trusted identity objects into plugin settings.
+    plugin, _cache_dir, _runtime_data = _session_plugin(tmp_path, monkeypatch)
+    requests = []
+    monkeypatch.setattr(
+        account_worker,
+        "run_account_fetch_in_child",
+        lambda request, context=None: requests.append(json.dumps(request)) or {"status": {"source_state": "live"}},
+    )
+
+    plugin._fetch_account_payload(
+        {"unreadOnly": False, "_inkypi_theme": {"mode": "day"}, "_trusted_identity": object()},
+        DummyDeviceConfig({"TELEGRAM_API_ID": "12345", "TELEGRAM_API_HASH": "hash-value"}),
+        {"messages": []},
+        datetime(2026, 10, 6, 20, 0, tzinfo=timezone.utc),
+        8,
+    )
+
+    assert json.loads(requests[0])["settings"] == {"unreadOnly": False, "_inkypi_theme": {"mode": "day"}}
 
 
 def test_account_fetch_lets_task_cancellation_through(tmp_path, monkeypatch):

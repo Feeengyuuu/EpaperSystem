@@ -55,6 +55,19 @@ TELEGRAM_MEDIA_IMAGE_LIMITS = ImageLimits(max_bytes=25 * 1024 * 1024)
 MAX_MEDIA_PIXELS = 1_200_000
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 
+
+def _json_safe_settings(settings):
+    """Drop runtime-injected objects (trusted identities); the account fetch never reads them."""
+    safe = {}
+    for key, value in (settings or {}).items():
+        try:
+            json.dumps(value)
+        except (TypeError, ValueError):
+            continue
+        safe[key] = value
+    return safe
+
+
 class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
     # Telethon stays out of the long-lived service; see account_worker.
     ACCOUNT_FETCH_IN_CHILD_PROCESS = True
@@ -361,7 +374,7 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         if not self.ACCOUNT_FETCH_IN_CHILD_PROCESS:
             return asyncio.run(self._fetch_account_payload_async(settings, cache, now, max_messages, config))
         request = {
-            "settings": settings,
+            "settings": _json_safe_settings(settings),
             "cache": cache,
             "now": now.isoformat(),
             "max_messages": max_messages,
