@@ -15,6 +15,8 @@ from urllib.parse import unquote, urlsplit
 
 from PIL import Image, ImageOps
 
+from plugins.steam_profile_dashboard.focal_crop import focused_cover_fit
+
 from runtime.long_task_executor import current_task_context
 from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 from utils.atomic_file import atomic_write_image, atomic_write_json
@@ -89,12 +91,16 @@ class SteamGameAssets:
     ``record`` may contain the exact AppID's ``img_icon_url`` hash from Steam's
     owned/recent games API. Otherwise the official AppHub page supplies the icon.
     Diagnostics distinguish downloaded, disk, memory, missing and budget cases.
-    A zero network budget makes this a cache-only provider.
+    A zero network budget skips HTTP. ``read_only=True`` additionally prohibits
+    metadata writes, directory creation and eviction, even for new API hashes.
     """
 
-    def __init__(self, cache_dir, session=None, *, budget_seconds=12, max_games=7, context=None):
+    def __init__(self, cache_dir, session=None, *, budget_seconds=12, max_games=7, context=None, read_only=False):
         self.cache_dir = Path(cache_dir)
-        self.client = HttpClient(session=session, max_attempts=1) if session is not None else create_single_attempt_http_client()
+        self.read_only = bool(read_only)
+        self.client = None if self.read_only else (
+            HttpClient(session=session, max_attempts=1) if session is not None else create_single_attempt_http_client()
+        )
         context = context if context is not None else current_task_context()
         self._deadline = time.monotonic() + max(0, float(budget_seconds))
         self.context = TaskContext(
@@ -113,11 +119,12 @@ class SteamGameAssets:
 
     def close(self):
         try:
-            if self._cache_writes:
+            if self._cache_writes and not self.read_only:
                 self._prune_cache()
                 self._cache_writes = False
         finally:
-            self.client.close()
+            if self.client is not None:
+                self.client.close()
             for source in self._sources.values():
                 if source is not None:
                     source.close()
@@ -224,7 +231,9 @@ class SteamGameAssets:
             if source is None:
                 return None
             if kind == "background":
-                return ImageOps.fit(source, size, method=Image.Resampling.LANCZOS)
+                fitted, crop = focused_cover_fit(source, size, appid)
+                self.sources.setdefault(f"{appid}:{kind}", {})["crop"] = crop
+                return fitted
             # Independent square icon; never crop a header into a fake logo.
             return ImageOps.pad(source, size, method=Image.Resampling.LANCZOS, color=(16, 30, 43, 255))
 
@@ -245,6 +254,8 @@ class SteamGameAssets:
         return meta
 
     def _save_metadata(self, meta):
+        if self.read_only:
+            return
         try:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             atomic_write_json(self.cache_dir / f"{meta['appid']}.json", meta)
@@ -258,6 +269,8 @@ class SteamGameAssets:
         return float(value) if type(value) in (int, float) else 0
 
     def _available(self):
+        if self.read_only:
+            return False
         if self.context.remaining_seconds() <= 0:
             self.diagnostics["budget_skips"] += 1
             return False
@@ -265,6 +278,8 @@ class SteamGameAssets:
         return True
 
     def _request(self, url, max_bytes, **kwargs):
+        if self.read_only:
+            raise RuntimeError("Steam artwork is read-only during cached display")
         self.diagnostics["requests"] += 1
         return self.client.request_bytes(
             "GET", url, context=self.context, timeout=3, max_bytes=max_bytes,
@@ -296,6 +311,8 @@ class SteamGameAssets:
                 self.sources[f"{appid}:{kind}"] = {"source": "disk", "url": old_url}
             except (OSError, ValueError):
                 pass
+        if self.read_only:
+            return source
         url = self._resolve_url(appid, kind, record, meta, now)
         if not url:
             return source

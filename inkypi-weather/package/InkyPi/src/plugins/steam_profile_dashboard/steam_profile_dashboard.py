@@ -36,7 +36,8 @@ STEAM_COMMUNITY_BADGES_URL = "https://steamcommunity.com/profiles/{steam_id}/bad
 STEAM_COMMUNITY_PROFILE_URL = "https://steamcommunity.com/profiles/{steam_id}/"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-official-assets-v36"
+STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-black-base-aligned-v37"
+STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES = ("midnight-console-official-assets-v36",)
 STEAM_BACKGROUND_DAY_IMAGE = "background_day.png"
 STEAM_BACKGROUND_NIGHT_IMAGE = "background_night.png"
 STEAM_GAME_BACKDROP_IMAGE = "game_backdrop.png"
@@ -84,6 +85,10 @@ class SteamProfileDashboard(BasePlugin):
         return template_params
 
     def generate_image(self, settings, device_config):
+        # Native DISPLAY_CACHE and theme redraws never obtain credentials or
+        # attest a new DATA fetch. They recompose only this account's saved data.
+        if settings.get("_theme_render_only") is True:
+            return self._render_cached_snapshot(settings, device_config)
         dimensions = self.get_dimensions(device_config)
 
         api_key = device_config.load_env_key("STEAM_API_KEY")
@@ -178,6 +183,79 @@ class SteamProfileDashboard(BasePlugin):
         # Raise after leaving the handler so the private requests exception is
         # not retained in __context__ for callers that inspect exception objects.
         raise public_error
+
+    def render_cached_display(self, settings, device_config, *, resolved_theme_context):
+        return self.render_themed_image(
+            settings, device_config, theme_render_only=True,
+            resolved_theme_context=resolved_theme_context,
+        )
+
+    def _compatible_display_cache(self, settings, dimensions, steam_id, theme_context):
+        """Read only exact owner/settings keys for this style and the v36 upgrade.
+
+        Day/night is a presentation choice. Both exact theme keys have identical
+        source settings; using either avoids provider work on a theme transition.
+        No directory scan or unrelated account/configuration fallback is allowed.
+        """
+        root = self.cache_dir(leaf=".steam_profile_dashboard_cache", create=False)
+        modes = [str(theme_context.get("mode") or "day")]
+        modes.append("day" if modes[0] == "night" else "night")
+        candidates = []
+        now = time.time()
+        for style in (STEAM_DASHBOARD_STYLE_VERSION, *STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES):
+            for mode in modes:
+                cache_settings = dict(settings, _theme_mode=mode)
+                key = self._cache_key(cache_settings, dimensions, steam_id, style_version=style)
+                path = root / f"{key}.json"
+                try:
+                    if path.is_symlink() or path.stat().st_size > 8 * 1024 * 1024:
+                        continue
+                    entry = json.loads(path.read_text(encoding="utf-8"))
+                    if not isinstance(entry, dict) or str(entry.get("steam_id") or "") != steam_id:
+                        continue
+                    data = entry.get("data")
+                    if not isinstance(data, dict) or not isinstance(data.get("profile"), dict):
+                        continue
+                    if str(data["profile"].get("steamid") or "") != steam_id:
+                        continue
+                    stamps = [entry.get(name) for name in ("status_updated_at", "full_updated_at")]
+                    if any(type(stamp) not in (int, float) or not math.isfinite(stamp)
+                           or stamp <= 0 or stamp > now + 300 for stamp in stamps):
+                        continue
+                    candidates.append(entry)
+                except (OSError, ValueError):
+                    continue
+        return max(candidates, key=lambda item: (item["status_updated_at"], item["full_updated_at"]), default=None)
+
+    def _render_cached_snapshot(self, settings, device_config):
+        dimensions = self.get_dimensions(device_config)
+        theme = get_theme_context(device_config)
+        steam_id = str(settings.get("steamId") or DEFAULT_STEAM_ID).strip()
+        entry = self._compatible_display_cache(settings, dimensions, steam_id, theme)
+        if entry is None:
+            # DISPLAY_CACHE failure preserves the already displayed last-good
+            # image; it must never silently fetch or invent a fresh account view.
+            raise RuntimeError("没有与当前 Steam 账号及设置匹配的资料缓存，保留原显示。")
+        status_seconds = self._int_setting(settings, "statusCacheSeconds", 60, 30, 3600)
+        full_minutes = self._int_setting(
+            settings, "fullCacheMinutes", self._int_setting(settings, "cacheMinutes", 30, 5, 1440), 5, 1440,
+        )
+        fresh = self._cache_is_fresh(entry, time.time(), status_seconds, full_minutes)
+        data = self._clone_data(entry["data"])
+        data.update(_status_updated_at=entry["status_updated_at"], _full_updated_at=entry["full_updated_at"],
+                    _cached_source_stale=not fresh, refresh_mode="cache", api_calls=0)
+        self._apply_friend_remarks(data, settings)
+        previous_read_only = getattr(self, "_media_read_only", False)
+        self._media_read_only = True
+        try:
+            image = self._render_dashboard(data, dimensions, theme)
+        finally:
+            self._media_read_only = previous_read_only
+        image.info["steam_profile_status_updated_at"] = entry["status_updated_at"]
+        image.info["steam_profile_full_updated_at"] = entry["full_updated_at"]
+        if not fresh:
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, SourceProvenance.FRESH_CACHE if fresh else SourceProvenance.STALE_CACHE)
 
     def _write_steam_profile_context(self, data, generated_at):
         if not isinstance(data, dict):
@@ -748,7 +826,10 @@ class SteamProfileDashboard(BasePlugin):
 
     def _official_game_assets(self):
         if getattr(self, "_game_assets", None) is None:
-            self._game_assets = SteamGameAssets(Path(self._cache_dir()) / "official_games")
+            self._game_assets = SteamGameAssets(
+                Path(self._cache_dir()) / "official_games",
+                read_only=bool(getattr(self, "_media_read_only", False)),
+            )
         return self._game_assets
 
     def _game_background(self, data, appid, size):
@@ -1138,10 +1219,12 @@ class SteamProfileDashboard(BasePlugin):
                 raise RuntimeError("Optional Steam resource returned 404")
             return measured_image_response(response).convert(mode)
 
-        image = cached_resource_image(path, fetch, ttl=ttl, label="steam_profile_media")
-        prune_resource_images(Path(path).parent, prefixes=("avatar_", "gameicon_", "badgeicon_"),
-                              max_files=384, max_bytes=32 * 1024 * 1024,
-                              max_age=90 * 24 * 3600, label="steam_profile_media", protected=(path,))
+        read_only = bool(getattr(self, "_media_read_only", False))
+        image = cached_resource_image(path, fetch, ttl=ttl, label="steam_profile_media", read_only=read_only)
+        if not read_only:
+            prune_resource_images(Path(path).parent, prefixes=("avatar_", "gameicon_", "badgeicon_"),
+                                  max_files=384, max_bytes=32 * 1024 * 1024,
+                                  max_age=90 * 24 * 3600, label="steam_profile_media", protected=(path,))
         return image
 
     def _draw_game_backdrop(self, image, x, y, width, height):
@@ -2314,7 +2397,8 @@ class SteamProfileDashboard(BasePlugin):
         )
 
     def _cache_dir(self):
-        return self.cache_dir(leaf=".steam_profile_dashboard_cache", create=True)
+        return self.cache_dir(leaf=".steam_profile_dashboard_cache",
+                              create=not bool(getattr(self, "_media_read_only", False)))
 
     def _cache_path(self, cache_key):
         return os.path.join(self._cache_dir(), f"{cache_key}.json")
@@ -2334,9 +2418,9 @@ class SteamProfileDashboard(BasePlugin):
         digest = hashlib.sha256(str(url).encode("utf-8")).hexdigest()[:24]
         return os.path.join(self._cache_dir(), f"badgeicon_{digest}.png")
 
-    def _cache_key(self, settings, dimensions, steam_id):
+    def _cache_key(self, settings, dimensions, steam_id, *, style_version=None):
         parts = [
-            STEAM_DASHBOARD_STYLE_VERSION,
+            style_version or STEAM_DASHBOARD_STYLE_VERSION,
             STEAM_NAME_DISPLAY_VERSION,
             steam_id,
             str(dimensions),

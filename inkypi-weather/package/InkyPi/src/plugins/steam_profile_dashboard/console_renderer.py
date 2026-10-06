@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageOps
 
 
 SIZE = (800, 480)
+CANVAS = (0, 0, 0)
 NAVY = (6, 21, 34)
 PANEL = (9, 28, 44)
 HEADER = (19, 49, 70)
@@ -95,7 +96,7 @@ class _Console:
     def __init__(self, plugin, data):
         self.plugin = plugin
         self.data = data
-        self.image = Image.new("RGB", SIZE, NAVY)
+        self.image = Image.new("RGB", SIZE, CANVAS)
         self.draw = ImageDraw.Draw(self.image)
         self.fonts = {}
 
@@ -106,45 +107,61 @@ class _Console:
         return self.fonts[key]
 
     def text(self, box, value, size=14, color=WHITE, bold=False,
-             lines=1, min_size=None, align="left"):
-        """Fit text into an explicit rectangle, preserving two-line titles.
+             lines=1, min_size=None, align="left", prepared=None):
+        """Center visible glyphs in their box, including mixed Latin/CJK titles.
 
-        Glyph-top anchoring avoids the large ascender offset of CJK fonts.  All
-        text is clipped to its own box, so an unusually long display name cannot
-        paint over neighbouring counts or a different card.
+        Cropping the actual glyph alpha bounds removes font ascender/descent
+        padding.  One-line text and two-line text therefore share the same visual
+        center as their neighbouring icon, regardless of font metrics.
         """
         text = " ".join(str(value or "").split())
         x, y, right, bottom = (int(v) for v in box)
         width, height = right - x, bottom - y
         if not text or width <= 0 or height <= 0:
             return
+        block = prepared if prepared is not None else self._text_bitmap(
+            text, width, height, size, color, bold, lines, min_size, align)
+        top = y + max(0, (height - block.height) // 2)
+        self.image.paste(block, (x, top), block)
+
+    def _text_bitmap(self, text, width, height, size=14, color=WHITE,
+                     bold=False, lines=1, min_size=None, align="left"):
+        """Prepare a bounded, tightly cropped text block for group alignment."""
+        text = " ".join(str(text or "").split())
         min_size = size if min_size is None else min_size
-        wrapped = []
+
+        def glyph(line, font):
+            left, top, right, bottom = self.draw.textbbox((0, 0), line, font=font, anchor="lt")
+            bitmap = Image.new("RGBA", (max(1, right - left), max(1, bottom - top)))
+            ImageDraw.Draw(bitmap).text((-left, -top), line, font=font,
+                                        fill=color, anchor="lt")
+            bounds = bitmap.getbbox()
+            return bitmap.crop(bounds) if bounds else bitmap
+
         for font_size in range(size, min_size - 1, -1):
             font = self.font(font_size, bold)
             wrapped = self._wrap(text, font, width)
-            glyph_h = max(self.draw.textbbox((0, 0), line, font=font, anchor="lt")[3]
-                          for line in wrapped)
-            line_h = glyph_h + 1
-            if len(wrapped) <= lines and len(wrapped) * line_h - 1 <= height:
-                break
+            if len(wrapped) <= lines:
+                glyphs = [glyph(line, font) for line in wrapped]
+                if sum(part.height for part in glyphs) + len(glyphs) - 1 <= height:
+                    break
         if len(wrapped) > lines:
             wrapped = wrapped[:lines]
             last = wrapped[-1]
             while last and self.draw.textlength(last + "…", font=font) > width:
                 last = last[:-1]
             wrapped[-1] = last.rstrip() + "…"
-        # A small transparent tile provides a hard boundary for font overshoots.
-        tile = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-        painter = ImageDraw.Draw(tile)
-        for index, line in enumerate(wrapped):
-            line_width = painter.textlength(line, font=font)
-            offset = max(0, (width - line_width) / 2) if align == "center" else 0
+        glyphs = [glyph(line, font) for line in wrapped]
+        block_height = min(height, sum(part.height for part in glyphs) + len(glyphs) - 1)
+        tile = Image.new("RGBA", (width, max(1, block_height)))
+        top = 0
+        for part in glyphs:
+            offset = max(0, (width - part.width) // 2) if align == "center" else 0
             if align == "right":
-                offset = max(0, width - line_width)
-            painter.text((offset, index * line_h), line, font=font, fill=color,
-                         anchor="lt", stroke_width=0)
-        self.image.paste(tile, (x, y), tile)
+                offset = max(0, width - part.width)
+            tile.alpha_composite(part, (offset, top))
+            top += part.height + 1
+        return tile
 
     def _wrap(self, text, font, width):
         result, line = [], ""
@@ -176,7 +193,7 @@ class _Console:
             self.draw.rectangle((x, y + header - 4, right, y + header), fill=HEADER)
 
     def art(self, box, appid, strength=145):
-        """Darken original artwork enough for e-paper text to stay legible."""
+        """Keep original game artwork separate from the flat page canvas."""
         x, y, right, bottom = box
         size = (right - x, bottom - y)
         source = self.plugin._game_background(self.data, appid, size) if appid else None
@@ -186,8 +203,7 @@ class _Console:
         fitted = ImageOps.fit(source.convert("RGB"), size, method=Image.Resampling.LANCZOS)
         veil = Image.new("RGBA", size)
         painter = ImageDraw.Draw(veil)
-        # The right half remains recognisable; the text column has a stable dark
-        # backing even for very bright original game art.
+        # Preserve the approved art shading regardless of the page canvas colour.
         for column in range(size[0]):
             alpha = int(strength + 45 * (1 - column / max(1, size[0] - 1)))
             painter.line((column, 0, column, size[1]), fill=(*NAVY, min(225, alpha)))
@@ -228,7 +244,7 @@ class _Console:
 
     def rail(self):
         data, profile = self.data, self.data.get("profile") or {}
-        self.draw.rectangle((0, 0, 181, 479), fill=(10, 30, 47))
+        self.draw.rectangle((0, 0, 181, 479), fill=CANVAS)
         self.draw.line((181, 0, 181, 480), fill=BORDER, width=2)
         url = profile.get("avatarfull") or profile.get("avatarmedium") or profile.get("avatar")
         avatar_method = getattr(self.plugin, "_profile_avatar_image", self.plugin._avatar_image)
@@ -285,27 +301,33 @@ class _Console:
         heading = "正在玩" if playing else ("游戏精选" if favorite else "最近游玩")
         english = "NOW PLAYING" if playing else ("LIBRARY FAVORITES" if favorite else "RECENT ACTIVITY")
         self.panel((194, 10, 583, 205), header=32)
-        self.small_symbol("game", 204, 18, GREEN if playing else CYAN)
-        self.text((233, 17, 359, 42), heading,
+        self.small_symbol("game", 204, 17, GREEN if playing else CYAN)
+        self.text((233, 10, 359, 42), heading,
                   22, GREEN if playing else CYAN, bold=True)
-        self.text((369, 23, 574, 36), english, 9, MUTED)
+        self.text((369, 10, 574, 42), english, 9, MUTED)
         self.art((195, 43, 583, 205), appid, strength=80)
-        self.icon(appid, 206, 71, 44)
-        self.text((205, 123, 573, 179), name, 27, bold=True, lines=2, min_size=21)
         if playing:
             status = "游戏中"
         else:
             status, _ = self.plugin._persona_text(profile)
         detail = f"{status} · AppID {appid}" if appid else status
-        self.text((205, 183, 573, 202), detail, 15, CYAN, min_size=12)
+        title = self._text_bitmap(name, 290, 72, 25, WHITE, True, 2, 19)
+        status_line = self._text_bitmap(detail, 290, 24, 15, CYAN, min_size=12)
+        group_height = title.height + 13 + status_line.height
+        group_y = 43 + (162 - group_height) // 2
+        self.icon(appid, 209, 96, 56)
+        self.text((281, group_y, 571, group_y + title.height), name, prepared=title)
+        status_y = group_y + title.height + 13
+        self.text((281, status_y, 571, status_y + status_line.height), detail,
+                  prepared=status_line)
 
     def friends(self):
         data = self.data
         self.panel((594, 10, 790, 205), header=32)
         self.small_symbol("people", 605, 19)
-        self.text((630, 19, 710, 40), "在线好友", 18, CYAN, bold=True)
+        self.text((630, 10, 710, 42), "在线好友", 18, CYAN, bold=True)
         counter = f"{_value(data.get('online_friend_count'))}/{_value(data.get('friend_count'))}"
-        self.text((711, 21, 783, 40), counter, 15, CYAN, min_size=11, align="right")
+        self.text((711, 10, 783, 42), counter, 15, CYAN, min_size=11, align="right")
         friends = [friend for friend in data.get("friends", []) or []
                    if _number(friend.get("personastate")) > 0]
         if not friends:
@@ -338,11 +360,11 @@ class _Console:
                             for item in items)
         self.panel((194, 215, 790, 361), header=28)
         self.small_symbol("clock", 205, 221)
-        self.text((231, 220, 359, 242), "最近 / 常玩" if has_favorites else "最近游玩",
+        self.text((231, 215, 359, 243), "最近 / 常玩" if has_favorites else "最近游玩",
                   20, CYAN, bold=True, min_size=18)
-        self.text((369, 227, 568, 240), "RECENT / FAVORITES" if has_favorites else "RECENTLY PLAYED", 9, MUTED)
-        self.text((599, 222, 678, 242), "近2周", 14, CYAN, align="center")
-        self.text((701, 222, 780, 242), "总计", 14, CYAN, align="center")
+        self.text((369, 215, 568, 243), "RECENT / FAVORITES" if has_favorites else "RECENTLY PLAYED", 9, MUTED)
+        self.text((599, 215, 678, 243), "近2周", 14, CYAN, align="center")
+        self.text((701, 215, 780, 243), "总计", 14, CYAN, align="center")
         if not items:
             self.text((211, 285, 773, 314), "没有公开的近期游戏数据", 17, MUTED)
             return
@@ -353,14 +375,14 @@ class _Console:
             self.icon(appid, 206, y + 2, 24)
             playing = bool(current_appid and _appid(appid) == current_appid)
             right = 537 if playing else 588
-            self.text((243, y + 2, right, y + 28), item.get("name"), 14,
+            self.text((243, y, right, y + 28), item.get("name"), 14,
                       bold=True, lines=2, min_size=11)
             if playing:
-                self.draw.rounded_rectangle((541, y + 5, 586, y + 24), radius=3,
+                self.draw.rounded_rectangle((541, y + 4, 586, y + 24), radius=3,
                                             fill=NAVY, outline=GREEN)
-                self.text((545, y + 8, 584, y + 23), "正在玩", 11, GREEN, bold=True)
-            for field, box in (("playtime_2weeks", (599, y + 6, 678, y + 25)),
-                               ("playtime_forever", (701, y + 6, 780, y + 25))):
+                self.text((545, y + 4, 584, y + 24), "正在玩", 11, GREEN, bold=True)
+            for field, box in (("playtime_2weeks", (599, y, 678, y + 28)),
+                               ("playtime_forever", (701, y, 780, y + 28))):
                 self.text(box, _hours(_game_minutes(self.data, appid, field)),
                           15, bold=True, min_size=12, align="center")
             if index < 3:
@@ -369,8 +391,8 @@ class _Console:
     def top(self):
         self.panel((194, 370, 790, 463), header=27)
         self.small_symbol("chart", 205, 375)
-        self.text((231, 375, 388, 397), "常玩 TOP 3", 20, CYAN, bold=True)
-        self.text((399, 382, 565, 396), "TOP GAMES", 9, MUTED)
+        self.text((231, 370, 388, 397), "常玩 TOP 3", 20, CYAN, bold=True)
+        self.text((399, 370, 565, 397), "TOP GAMES", 9, MUTED)
         items = self.plugin._top_game_items(self.data)[:3]
         if not items:
             self.text((212, 420, 777, 444), "暂无公开的累计游玩记录", 16, MUTED)
@@ -381,14 +403,18 @@ class _Console:
             self.art((x, 399, x + 192, 459), appid, strength=145)
             rank_color = ((249, 202, 77), (181, 205, 223), (210, 153, 88))[index]
             self.draw.polygon(((x, 399), (x + 19, 399), (x + 12, 459), (x, 459)), fill=rank_color)
-            self.text((x + 2, 422, x + 15, 443), item.get("rank", index + 1),
+            self.text((x + 2, 400, x + 15, 459), item.get("rank", index + 1),
                       17, NAVY, bold=True, align="center")
             self.icon(appid, x + 23, 412, 33)
-            self.text((x + 63, 405, x + 187, 433), item.get("name"),
-                      13, bold=True, lines=2, min_size=11)
-            self.text((x + 63, 437, x + 187, 459), item.get("suffix") or
-                      _hours(_game_minutes(self.data, appid, "playtime_forever")),
-                      20, bold=True, min_size=15)
+            title = self._text_bitmap(item.get("name"), 124, 29, 13, WHITE, True, 2, 11)
+            hours = item.get("suffix") or _hours(_game_minutes(self.data, appid, "playtime_forever"))
+            hours_line = self._text_bitmap(hours, 124, 23, 20, WHITE, True, min_size=15)
+            group_y = 399 + (60 - title.height - hours_line.height - 5) // 2
+            self.text((x + 63, group_y, x + 187, group_y + title.height),
+                      item.get("name"), prepared=title)
+            hours_y = group_y + title.height + 5
+            self.text((x + 63, hours_y, x + 187, hours_y + hours_line.height),
+                      hours, prepared=hours_line)
             self.draw.rounded_rectangle((x, 399, x + 192, 459), radius=3, outline=BORDER)
 
 

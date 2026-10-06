@@ -3,11 +3,13 @@
 from collections import Counter
 from copy import deepcopy
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 import pytest
 
 from plugins.steam_profile_dashboard.console_renderer import (
     _Console,
+    CANVAS,
+    PANEL,
     render_console,
 )
 from plugins.steam_profile_dashboard.steam_profile_dashboard import SteamProfileDashboard
@@ -80,7 +82,7 @@ def displayed(monkeypatch):
     return records
 
 
-def test_all_visible_games_get_own_art_and_icon_without_fetching_entire_library(plugin, data):
+def test_game_art_and_icons_are_preserved_over_a_solid_page_canvas(plugin, data):
     data["owned_games"].append({"appid": 99999, "name": "Not on screen", "playtime_forever": 1})
     image = render_console(plugin, data, (800, 480))
     assert image.mode == "RGB"
@@ -98,8 +100,16 @@ def test_all_visible_games_get_own_art_and_icon_without_fetching_entire_library(
                         if kind == "avatar"]
     game_positions = [index for index, (kind, _, _) in enumerate(plugin.asset_calls)
                       if kind in {"background", "icon"}]
-    # Slow friend avatars cannot consume the shared game-art network deadline.
+    # Slow friend avatars cannot consume the shared game-icon network deadline.
     assert max(game_positions) < avatar_positions[1]
+    # The requested flat colour belongs to the page underneath the game cards.
+    # The game artwork itself remains present, with the existing navy shading.
+    for box in ((183, 0, 193, 480), (791, 0, 800, 480), (0, 0, 12, 480)):
+        crop = image.crop(box)
+        assert ImageChops.difference(crop, Image.new("RGB", crop.size, CANVAS)).getbbox() is None
+    assert image.getpixel((200, 50)) != PANEL
+    assert image.getpixel((235, 250)) != PANEL
+    assert image.getpixel((259, 450)) != PANEL
 
 
 def test_game_rows_use_per_game_hours_and_global_stats_remain_account_totals(plugin, data, displayed):
@@ -127,9 +137,59 @@ def test_same_game_has_consistent_rounded_hours_in_recent_and_top_cards(plugin, 
     data["recent_games"][0]["playtime_forever"] = 39035
     data["owned_games"][-1]["playtime_forever"] = 39035
     render_console(plugin, data, (800, 480))
-    assert any(text == "651h" and box[0] == 701 and box[1] == 250
+    assert any(text == "651h" and box[0] == 701 and 244 <= box[1] < 273
                for box, text in displayed)
-    assert any(text == "651h" and box[1] == 437 for box, text in displayed)
+    assert any(text == "651h" and box[1] >= 400 for box, text in displayed)
+
+
+@pytest.mark.parametrize("name", ["Project Zomboid", "未来新游戏中文标题与世界探索之旅全新完整版"])
+def test_recent_visible_glyphs_and_hours_share_icon_vertical_center(plugin, data, name):
+    data["recent_games"][0]["name"] = name
+    image = render_console(plugin, data, (800, 480))
+    row_top, row_bottom = 244, 272
+    for left, right in ((243, 537), (599, 678), (701, 780)):
+        crop = image.crop((left, row_top, right, row_bottom))
+        bounds = _text_bounds(crop)
+        assert bounds is not None
+        ink_center = row_top + (bounds[1] + bounds[3] - 1) / 2
+        icon_center = 246 + (24 - 1) / 2
+        assert abs(ink_center - icon_center) <= 1
+
+
+@pytest.mark.parametrize("name", ["Project Zomboid", "The Blood of Dawnwalker 黎明行者之血"])
+def test_hero_icon_centers_on_the_visible_title_and_status_group(plugin, data, name, displayed):
+    data["profile"]["gameextrainfo"] = name
+    data["recent_games"][0]["name"] = name
+    image = render_console(plugin, data, (800, 480))
+    title_box = next(box for box, text in displayed if text == name and box[0] == 281)
+    status_box = next(box for box, text in displayed if text == "游戏中 · AppID 108600")
+    assert title_box[3] < status_box[1]
+    assert title_box[0] > 209 + 56
+    crop = image.crop((281, 43, 571, 205))
+    bounds = _text_bounds(crop)
+    assert bounds is not None
+    glyph_group_center = 43 + (bounds[1] + bounds[3] - 1) / 2
+    icon_center = 96 + (56 - 1) / 2
+    assert abs(glyph_group_center - icon_center) <= 1
+
+
+def test_top_game_title_and_hours_group_centers_on_each_independent_icon(plugin, data):
+    image = render_console(plugin, data, (800, 480))
+    for x in (199, 396, 593):
+        crop = image.crop((x + 63, 400, x + 187, 459))
+        bounds = _text_bounds(crop)
+        assert bounds is not None
+        text_group_center = 400 + (bounds[1] + bounds[3] - 1) / 2
+        icon_center = 412 + (33 - 1) / 2
+        assert abs(text_group_center - icon_center) <= 1
+
+
+def _text_bounds(crop):
+    # The fixture's artwork stays below this level after shading.  This mask
+    # measures the real white/cyan glyph pixels independently of restored art.
+    channels = crop.split()
+    bright = ImageChops.lighter(ImageChops.lighter(channels[0], channels[1]), channels[2])
+    return bright.point(lambda value: 255 if value > 190 else 0).getbbox()
 
 
 def test_long_names_are_contained_and_do_not_replace_hour_columns(plugin, data, displayed, monkeypatch):
