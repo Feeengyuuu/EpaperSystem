@@ -4154,232 +4154,10 @@ class RefreshTask:
         if busy_lock is not None:
             busy_lock.acquire()
         try:
-            if self._renderer_blocked_by_disk_pressure(command):
-                finished = self.refresh_queue.finish(
-                    entry.job.id,
-                    JobStatus.CANCELED,
-                    error_code="disk_pressure_hard",
-                    error="renderer blocked while disk pressure remains hard",
-                )
-                self._signal_completion(finished.id)
-                return
-            if self._is_ticketmaster_background_data_command(command):
-                if self._resolve_playlist_command(command) is None:
-                    finished = self.refresh_queue.finish(
-                        entry.job.id,
-                        JobStatus.CANCELED,
-                        error_code="stale_selection",
-                        error=(
-                            "playlist selection changed before Ticketmaster "
-                            "resource admission"
-                        ),
-                    )
-                    self._signal_completion(finished.id)
-                    return
-                resource_sample = self._resource_sample()
-                (
-                    margin_available,
-                    required_available_mb,
-                    max_swap_percent,
-                ) = self._ticketmaster_background_start_margin(resource_sample)
-                if not margin_available:
-                    next_retry_at = self._record_resource_pressure_deferral(command)
-                    logger.warning(
-                        "Deferring Ticketmaster background data refresh until "
-                        "its memory reserve is available. | plugin_id: %s | "
-                        "source: %s | intent: %s | available_mb: %s | "
-                        "required_available_mb: %s | swap_percent: %s | "
-                        "max_swap_percent: %s | next_retry_at: %s",
-                        command.plugin_id,
-                        command.source.value,
-                        command.intent.value,
-                        resource_sample.available_mb,
-                        required_available_mb,
-                        resource_sample.swap_percent,
-                        max_swap_percent,
-                        next_retry_at,
-                    )
-                    finished = self.refresh_queue.finish(
-                        entry.job.id,
-                        JobStatus.CANCELED,
-                        error_code="plugin_resource_reserve",
-                        error=(
-                            "Ticketmaster background data refresh deferred "
-                            "until its memory reserve is available"
-                        ),
-                    )
-                    self._signal_completion(finished.id)
-                    return
-            if self._is_weather_background_data_command(command):
-                if command.payload.get("fresh_display") is True:
-                    # Display-time Weather bypasses the background admission
-                    # path that normally reclaims allocator pages first. Free
-                    # those pages before sampling and before adding a worker
-                    # plus Chromium; keep the same browser safety margins.
-                    self._run_memory_maintenance(
-                        "weather-display-preflight", force=True, command=command,
-                    )
-                    context.raise_if_cancelled()
-                resource_sample = self._resource_sample()
-                concession = bool(
-                    command.payload.get("weather_liveness_concession")
-                )
-                if concession:
-                    margin_available, required_available_mb = (
-                        self._weather_concession_margin(resource_sample)
-                    )
-                    max_swap_percent = None
-                else:
-                    (
-                        margin_available,
-                        required_available_mb,
-                        max_swap_percent,
-                    ) = self._weather_background_start_margin(resource_sample)
-                if not margin_available:
-                    next_retry_at = self._record_resource_pressure_deferral(command)
-                    logger.warning(
-                        "Deferring Weather background data refresh until its "
-                        "browser start margin is available. | plugin_id: %s | "
-                        "source: %s | intent: %s | concession: %s | "
-                        "available_mb: %s | required_available_mb: %s | "
-                        "swap_percent: %s | max_swap_percent: %s | next_retry_at: %s",
-                        command.plugin_id,
-                        command.source.value,
-                        command.intent.value,
-                        concession,
-                        resource_sample.available_mb,
-                        required_available_mb,
-                        resource_sample.swap_percent,
-                        max_swap_percent,
-                        next_retry_at,
-                    )
-                    finished = self.refresh_queue.finish(
-                        entry.job.id,
-                        JobStatus.CANCELED,
-                        error_code="weather_browser_start_margin",
-                        error=(
-                            "Weather background data refresh deferred until its "
-                            "browser start margin is available"
-                        ),
-                    )
-                    self._signal_completion(finished.id)
-                    return
-            if (
-                not ian_admitted
-                and
-                command.plugin_id in _HEAVYWEIGHT_RENDERER_PLUGIN_IDS
-                and command.intent in _RENDERER_INTENTS
+            if self._reject_before_execution(
+                entry, command, context, ian_admitted=ian_admitted,
             ):
-                isolated_sports_refresh = self._is_isolated_sports_refresh_command(
-                    command
-                )
-                resource_sample = self._resource_sample()
-                resource_tier = classify_resource_tier(
-                    resource_sample,
-                    self._resource_thresholds(),
-                )
-                self._resource_tier = resource_tier
-                if (
-                    resource_tier is ResourceTier.HARD
-                    or (
-                        not isolated_sports_refresh
-                        and resource_tier is not ResourceTier.HEALTHY
-                    )
-                ):
-                    next_retry_at = self._record_resource_pressure_deferral(command)
-                    logger.warning(
-                        "Deferring heavyweight renderer due to resource pressure. | "
-                        "plugin_id: %s | intent: %s | tier: %s | "
-                        "available_mb: %s | swap_percent: %s | next_retry_at: %s",
-                        command.plugin_id,
-                        command.intent.value,
-                        resource_tier.value,
-                        resource_sample.available_mb,
-                        resource_sample.swap_percent,
-                        next_retry_at,
-                    )
-                    finished = self.refresh_queue.finish(
-                        entry.job.id,
-                        JobStatus.CANCELED,
-                        error_code=f"resource_pressure_{resource_tier.value}",
-                        error=(
-                            "heavyweight renderer deferred under "
-                            f"{resource_tier.value} resource pressure"
-                        ),
-                    )
-                    self._signal_completion(finished.id)
-                    return
-                if isolated_sports_refresh:
-                    (
-                        margin_available,
-                        required_available_mb,
-                        max_swap_percent,
-                    ) = self._sports_isolated_start_margin(resource_sample)
-                    if not margin_available:
-                        next_retry_at = self._record_resource_pressure_deferral(
-                            command
-                        )
-                        logger.warning(
-                            "Deferring isolated Sports Dashboard data refresh "
-                            "until its child-process start margin is available. | "
-                            "available_mb: %s | swap_percent: %s | "
-                            "required_available_mb: %s | max_swap_percent: %s | "
-                            "next_retry_at: %s",
-                            resource_sample.available_mb,
-                            resource_sample.swap_percent,
-                            required_available_mb,
-                            max_swap_percent,
-                            next_retry_at,
-                        )
-                        finished = self.refresh_queue.finish(
-                            entry.job.id,
-                            JobStatus.CANCELED,
-                            error_code=(
-                                "resource_pressure_soft"
-                                if resource_tier is ResourceTier.SOFT
-                                else "sports_isolated_start_margin"
-                            ),
-                            error=(
-                                "isolated Sports Dashboard data refresh deferred "
-                                "until its start margin is available"
-                            ),
-                        )
-                        self._signal_completion(finished.id)
-                        return
-                else:
-                    (
-                        margin_available,
-                        required_available_mb,
-                        max_swap_percent,
-                    ) = self._heavyweight_renderer_resource_margin(resource_sample)
-                    if not margin_available:
-                        next_retry_at = self._record_resource_pressure_deferral(command)
-                        logger.warning(
-                            "Deferring heavyweight renderer because "
-                            "the dedicated resource margin is unavailable. | "
-                            "plugin_id: %s | intent: %s | available_mb: %s | "
-                            "swap_percent: %s | "
-                            "required_available_mb: %s | max_swap_percent: %s | "
-                            "next_retry_at: %s",
-                            command.plugin_id,
-                            command.intent.value,
-                            resource_sample.available_mb,
-                            resource_sample.swap_percent,
-                            required_available_mb,
-                            max_swap_percent,
-                            next_retry_at,
-                        )
-                        finished = self.refresh_queue.finish(
-                            entry.job.id,
-                            JobStatus.CANCELED,
-                            error_code="heavyweight_renderer_margin",
-                            error=(
-                                "heavyweight renderer deferred until "
-                                "its dedicated resource margin is available"
-                            ),
-                        )
-                        self._signal_completion(finished.id)
-                        return
+                return
             instance_uuid_hash = (
                 hashlib.sha256(command.instance_uuid.encode("utf-8")).hexdigest()[:16]
                 if command.instance_uuid
@@ -4395,327 +4173,9 @@ class RefreshTask:
             )
             self._command_peak_meter.start()
             self._record_runtime_attempt(command)
-            try:
-                identity = InstanceIdentity(
-                    command.instance_uuid,
-                    command.structural_generation,
-                    command.settings_revision,
-                )
-                identity_validator = (
-                    lambda candidate: self._isolated_instance_identity_is_current(
-                        command,
-                        candidate,
-                    )
-                )
-                execution = PluginExecutionContext(
-                    context, identity, identity_validator,
-                    parallel_image_runner=self._parallel_image_runner,
-                )
-                with execution.activate():
-                    self._execute_command(command)
-            except SportsIsolatedCheckpointPending as pending:
-                try:
-                    context.raise_if_cancelled()
-                except (TaskDeadlineExceeded, TaskCancelled) as abort_error:
-                    status, error_code, abort_message = self._abort_details(
-                        abort_error
-                    )
-                    if (
-                        isinstance(abort_error, TaskDeadlineExceeded)
-                        and not entry.cancel_event.is_set()
-                    ):
-                        self._record_rotation_deadline_failure_safely(
-                            command,
-                            abort_error,
-                        )
-                    finished = self.refresh_queue.finish(
-                        entry.job.id,
-                        status,
-                        error_code=error_code,
-                        error=abort_message,
-                    )
-                    self._signal_completion(finished.id)
-                    return
-                try:
-                    yielded = self.refresh_queue.yield_running(entry.job.id)
-                except Exception as error:
-                    logger.exception(
-                        "Sports Dashboard checkpoint could not return its queue permit"
-                    )
-                    finished = self.refresh_queue.finish(
-                        entry.job.id,
-                        JobStatus.FAILED,
-                        error_code="sports_checkpoint_yield_failed",
-                        error=str(error),
-                    )
-                    self._signal_completion(finished.id)
-                    return
-                logger.info(
-                    "Isolated Sports Dashboard returned its queue permit after "
-                    "one durable region. | completed_regions: %s | "
-                    "next_region: %s | queue_status: %s",
-                    ",".join(pending.completed_regions),
-                    pending.next_region,
-                    yielded.status.value,
-                )
-                if (
-                    yielded.error_code == "deadline_expired"
-                    and yielded.cancel_requested_at is None
-                    and not self.stop_event.is_set()
-                ):
-                    # The deadline can cross between the context check and the
-                    # queue's atomic yield. Recover the same exact rotation
-                    # failure/release bookkeeping used by direct aborts.
-                    self._record_rotation_deadline_failure_safely(
-                        command,
-                        TaskDeadlineExceeded(
-                            "Sports Dashboard checkpoint deadline expired"
-                        ),
-                    )
-                if yielded.status is not JobStatus.QUEUED:
-                    self._signal_completion(yielded.id)
+            finished = self._execute_and_finish(entry, command, context)
+            if finished is None:
                 return
-            except SportsIsolatedCleanupFailed as error:
-                # Continuing would leave unrelated providers waiting on the
-                # canceled child's exclusive capacity. Finish the job before
-                # asking the supervisor to replace this inconsistent process.
-                finished = self.refresh_queue.finish(
-                    entry.job.id,
-                    JobStatus.FAILED,
-                    error_code="isolated_worker_cleanup_failed",
-                    error=str(error),
-                )
-                logger.error(
-                    "Requesting supervised recovery after isolated worker cleanup "
-                    "failed. | plugin_id: %s",
-                    command.plugin_id,
-                )
-                self._restart_request = {"reason": "isolated_worker_cleanup_failed"}
-                self.refresh_queue.wake()
-            except SportsIsolatedResourcePressure as error:
-                next_retry_at = self._record_resource_pressure_deferral(command)
-                logger.warning(
-                    "Isolated Sports Dashboard worker stopped before resource "
-                    "pressure could threaten the service. | next_retry_at: %s",
-                    next_retry_at,
-                )
-                finished = self.refresh_queue.finish(
-                    entry.job.id,
-                    JobStatus.CANCELED,
-                    error_code="sports_isolated_resource_pressure",
-                    error=str(error),
-                )
-            except PluginRefreshDeferred as error:
-                next_retry_at = self._record_plugin_refresh_deferral(
-                    command,
-                    minimum_seconds=error.minimum_seconds,
-                )
-                logger.warning(
-                    "Deferring plugin-requested refresh. | plugin_id: %s | "
-                    "intent: %s | reason: %s | phase: %s | "
-                    "minimum_seconds: %s | next_retry_at: %s",
-                    command.plugin_id,
-                    command.intent.value if command.intent is not None else "none",
-                    error.reason,
-                    error.phase,
-                    error.minimum_seconds,
-                    next_retry_at,
-                )
-                finished = self.refresh_queue.finish(
-                    entry.job.id,
-                    JobStatus.CANCELED,
-                    error_code="plugin_refresh_deferred",
-                    error="plugin requested a bounded refresh retry",
-                )
-            except ResourcePressureDeferred as error:
-                weather_background_data = self._is_weather_background_data_command(
-                    command
-                )
-                next_retry_at = self._record_resource_pressure_deferral(
-                    command,
-                    minimum_seconds=(
-                        MIN_WEATHER_RESOURCE_PRESSURE_DEFERRAL_SECONDS
-                        if weather_background_data
-                        else 0
-                    ),
-                )
-                weather_window = self._weather_liveness_window
-                if (
-                    weather_background_data
-                    and weather_window is not None
-                    and weather_window.instance_uuid == command.instance_uuid
-                    and weather_window.candidate.instance.structural_generation
-                    == command.structural_generation
-                    and weather_window.candidate.instance.settings_revision
-                    == command.settings_revision
-                ):
-                    self._finish_weather_liveness_window(
-                        reason="resource_pressure",
-                        resource_sample=ResourceSample(
-                            available_mb=error.available_mb,
-                            swap_percent=error.swap_percent,
-                        ),
-                    )
-                logger.warning(
-                    "Deferring refresh after typed resource pressure. | "
-                    "plugin_id: %s | intent: %s | reason: %s | phase: %s | "
-                    "available_mb: %s | swap_percent: %s | next_retry_at: %s",
-                    command.plugin_id,
-                    command.intent.value if command.intent is not None else "none",
-                    error.reason,
-                    error.phase,
-                    error.available_mb,
-                    error.swap_percent,
-                    next_retry_at,
-                )
-                finished = self.refresh_queue.finish(
-                    entry.job.id,
-                    JobStatus.CANCELED,
-                    error_code="resource_pressure_deferred",
-                    error=str(error),
-                )
-            except TaskDeadlineExceeded as error:
-                if not entry.cancel_event.is_set():
-                    self._record_rotation_deadline_failure_safely(command, error)
-                finished = self.refresh_queue.finish(
-                    entry.job.id,
-                    JobStatus.ABANDONED,
-                    error_code="deadline_expired",
-                    error=str(error),
-                )
-            except _CacheUnavailable as error:
-                if (
-                    command.intent is RefreshIntent.DISPLAY_CACHE
-                    and plugin_supports_cached_display_redraw(
-                        self.device_config.get_plugin(command.plugin_id)
-                    )
-                ):
-                    self._record_rotation_deadline_failure_safely(command, error)
-                finished = self.refresh_queue.finish(
-                    entry.job.id,
-                    JobStatus.CANCELED,
-                    error_code="cache_unavailable",
-                    error=str(error),
-                )
-            except _StaleSelection as error:
-                finished = self.refresh_queue.finish(
-                    entry.job.id,
-                    JobStatus.CANCELED,
-                    error_code="stale_selection",
-                    error=str(error),
-                )
-            except _PreparedDisplayFailure as error:
-                try:
-                    self._record_presentation_failure(
-                        command,
-                        error.original_error,
-                        self._get_current_datetime(),
-                    )
-                except Exception:
-                    logger.exception(
-                        "Prepared display failure bookkeeping also failed"
-                    )
-                    self._defer_scheduler_after_bookkeeping_error()
-                finished = self.refresh_queue.finish(
-                    entry.job.id,
-                    JobStatus.FAILED,
-                    error_code="presentation_display_failed",
-                    error=str(error.original_error),
-                )
-            except TaskCancelled as error:
-                finished = self.refresh_queue.finish(
-                    entry.job.id,
-                    JobStatus.CANCELED,
-                    error_code="task_canceled",
-                    error=str(error),
-                )
-            except Exception as error:
-                logger.exception(
-                    "Refresh command failed. | source: %s | intent: %s | plugin_id: %s",
-                    command.source,
-                    command.intent,
-                    command.plugin_id,
-                )
-                abort = self._classify_command_abort(command, context)
-                if abort is None:
-                    try:
-                        self._record_command_failure(command, error)
-                    except (TaskDeadlineExceeded, _StaleSelection, TaskCancelled) as abort_error:
-                        abort = self._abort_details(abort_error)
-                    except Exception:
-                        logger.exception("Refresh failure bookkeeping also failed")
-                        self._defer_scheduler_after_bookkeeping_error()
-                if abort is None:
-                    abort = self._classify_command_abort(command, context)
-                if abort is None:
-                    finished = self.refresh_queue.finish(
-                        entry.job.id,
-                        JobStatus.FAILED,
-                        error_code="refresh_failed",
-                        error=str(error),
-                    )
-                else:
-                    status, error_code, abort_error = abort
-                    if (
-                        error_code == "deadline_expired"
-                        and not entry.cancel_event.is_set()
-                    ):
-                        self._record_rotation_deadline_failure_safely(
-                            command,
-                            TaskDeadlineExceeded(abort_error),
-                        )
-                    finished = self.refresh_queue.finish(
-                        entry.job.id,
-                        status,
-                        error_code=error_code,
-                        error=abort_error,
-                    )
-            else:
-                try:
-                    context.raise_if_cancelled()
-                except (TaskDeadlineExceeded, TaskCancelled) as abort_error:
-                    status, error_code, abort_message = self._abort_details(abort_error)
-                    finished = self.refresh_queue.finish(
-                        entry.job.id,
-                        status,
-                        error_code=error_code,
-                        error=abort_message,
-                    )
-                else:
-                    degraded_data_result = bool(
-                        getattr(
-                            self._execution_local,
-                            "degraded_data_result",
-                            False,
-                        )
-                    )
-                    if degraded_data_result:
-                        finished = self.refresh_queue.finish(
-                            entry.job.id,
-                            JobStatus.FAILED,
-                            error_code="degraded_result",
-                            error=(
-                                "Refresh produced a display-safe result that was "
-                                "not promoted."
-                            ),
-                        )
-                    else:
-                        finished = self.refresh_queue.finish(
-                            entry.job.id,
-                            JobStatus.SUCCEEDED,
-                        )
-                    try:
-                        if not degraded_data_result:
-                            lane = self._lane_for_intent(command.intent)
-                            retry_key = (
-                                self._lane_retry_key(command.instance_uuid, lane)
-                                if command.instance_uuid is not None and lane is not None
-                                else command.instance_uuid or RetryRegistry.GLOBAL_KEY
-                            )
-                            self.retry_registry.mark_success(retry_key)
-                            self.scheduler_state.record_success()
-                    except Exception:
-                        logger.exception("Refresh success bookkeeping failed")
             self._note_lightweight_scheduler_terminal(command, finished)
             self._signal_completion(finished.id)
         finally:
@@ -4741,6 +4201,577 @@ class RefreshTask:
                 )
             except Exception:
                 logger.exception("Refresh memory maintenance failed")
+
+    def _reject_before_execution(self, entry, command, context, *, ian_admitted):
+        """Finish the job as canceled when an admission gate rejects it; True if so."""
+        if self._renderer_blocked_by_disk_pressure(command):
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.CANCELED,
+                error_code="disk_pressure_hard",
+                error="renderer blocked while disk pressure remains hard",
+            )
+            self._signal_completion(finished.id)
+            return True
+        if self._is_ticketmaster_background_data_command(command) and self._reject_ticketmaster_admission(
+            entry, command,
+        ):
+            return True
+        if self._is_weather_background_data_command(command) and self._reject_weather_admission(
+            entry, command, context,
+        ):
+            return True
+        if (
+            not ian_admitted
+            and
+            command.plugin_id in _HEAVYWEIGHT_RENDERER_PLUGIN_IDS
+            and command.intent in _RENDERER_INTENTS
+        ):
+            return self._reject_heavyweight_admission(entry, command)
+        return False
+
+    def _reject_ticketmaster_admission(self, entry, command):
+        if self._resolve_playlist_command(command) is None:
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.CANCELED,
+                error_code="stale_selection",
+                error=(
+                    "playlist selection changed before Ticketmaster "
+                    "resource admission"
+                ),
+            )
+            self._signal_completion(finished.id)
+            return True
+        resource_sample = self._resource_sample()
+        (
+            margin_available,
+            required_available_mb,
+            max_swap_percent,
+        ) = self._ticketmaster_background_start_margin(resource_sample)
+        if not margin_available:
+            next_retry_at = self._record_resource_pressure_deferral(command)
+            logger.warning(
+                "Deferring Ticketmaster background data refresh until "
+                "its memory reserve is available. | plugin_id: %s | "
+                "source: %s | intent: %s | available_mb: %s | "
+                "required_available_mb: %s | swap_percent: %s | "
+                "max_swap_percent: %s | next_retry_at: %s",
+                command.plugin_id,
+                command.source.value,
+                command.intent.value,
+                resource_sample.available_mb,
+                required_available_mb,
+                resource_sample.swap_percent,
+                max_swap_percent,
+                next_retry_at,
+            )
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.CANCELED,
+                error_code="plugin_resource_reserve",
+                error=(
+                    "Ticketmaster background data refresh deferred "
+                    "until its memory reserve is available"
+                ),
+            )
+            self._signal_completion(finished.id)
+            return True
+        return False
+
+    def _reject_weather_admission(self, entry, command, context):
+        if command.payload.get("fresh_display") is True:
+            # Display-time Weather bypasses the background admission
+            # path that normally reclaims allocator pages first. Free
+            # those pages before sampling and before adding a worker
+            # plus Chromium; keep the same browser safety margins.
+            self._run_memory_maintenance(
+                "weather-display-preflight", force=True, command=command,
+            )
+            context.raise_if_cancelled()
+        resource_sample = self._resource_sample()
+        concession = bool(
+            command.payload.get("weather_liveness_concession")
+        )
+        if concession:
+            margin_available, required_available_mb = (
+                self._weather_concession_margin(resource_sample)
+            )
+            max_swap_percent = None
+        else:
+            (
+                margin_available,
+                required_available_mb,
+                max_swap_percent,
+            ) = self._weather_background_start_margin(resource_sample)
+        if not margin_available:
+            next_retry_at = self._record_resource_pressure_deferral(command)
+            logger.warning(
+                "Deferring Weather background data refresh until its "
+                "browser start margin is available. | plugin_id: %s | "
+                "source: %s | intent: %s | concession: %s | "
+                "available_mb: %s | required_available_mb: %s | "
+                "swap_percent: %s | max_swap_percent: %s | next_retry_at: %s",
+                command.plugin_id,
+                command.source.value,
+                command.intent.value,
+                concession,
+                resource_sample.available_mb,
+                required_available_mb,
+                resource_sample.swap_percent,
+                max_swap_percent,
+                next_retry_at,
+            )
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.CANCELED,
+                error_code="weather_browser_start_margin",
+                error=(
+                    "Weather background data refresh deferred until its "
+                    "browser start margin is available"
+                ),
+            )
+            self._signal_completion(finished.id)
+            return True
+        return False
+
+    def _reject_heavyweight_admission(self, entry, command):
+        isolated_sports_refresh = self._is_isolated_sports_refresh_command(
+            command
+        )
+        resource_sample = self._resource_sample()
+        resource_tier = classify_resource_tier(
+            resource_sample,
+            self._resource_thresholds(),
+        )
+        self._resource_tier = resource_tier
+        if (
+            resource_tier is ResourceTier.HARD
+            or (
+                not isolated_sports_refresh
+                and resource_tier is not ResourceTier.HEALTHY
+            )
+        ):
+            next_retry_at = self._record_resource_pressure_deferral(command)
+            logger.warning(
+                "Deferring heavyweight renderer due to resource pressure. | "
+                "plugin_id: %s | intent: %s | tier: %s | "
+                "available_mb: %s | swap_percent: %s | next_retry_at: %s",
+                command.plugin_id,
+                command.intent.value,
+                resource_tier.value,
+                resource_sample.available_mb,
+                resource_sample.swap_percent,
+                next_retry_at,
+            )
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.CANCELED,
+                error_code=f"resource_pressure_{resource_tier.value}",
+                error=(
+                    "heavyweight renderer deferred under "
+                    f"{resource_tier.value} resource pressure"
+                ),
+            )
+            self._signal_completion(finished.id)
+            return True
+        if isolated_sports_refresh:
+            (
+                margin_available,
+                required_available_mb,
+                max_swap_percent,
+            ) = self._sports_isolated_start_margin(resource_sample)
+            if not margin_available:
+                next_retry_at = self._record_resource_pressure_deferral(
+                    command
+                )
+                logger.warning(
+                    "Deferring isolated Sports Dashboard data refresh "
+                    "until its child-process start margin is available. | "
+                    "available_mb: %s | swap_percent: %s | "
+                    "required_available_mb: %s | max_swap_percent: %s | "
+                    "next_retry_at: %s",
+                    resource_sample.available_mb,
+                    resource_sample.swap_percent,
+                    required_available_mb,
+                    max_swap_percent,
+                    next_retry_at,
+                )
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.CANCELED,
+                    error_code=(
+                        "resource_pressure_soft"
+                        if resource_tier is ResourceTier.SOFT
+                        else "sports_isolated_start_margin"
+                    ),
+                    error=(
+                        "isolated Sports Dashboard data refresh deferred "
+                        "until its start margin is available"
+                    ),
+                )
+                self._signal_completion(finished.id)
+                return True
+        else:
+            (
+                margin_available,
+                required_available_mb,
+                max_swap_percent,
+            ) = self._heavyweight_renderer_resource_margin(resource_sample)
+            if not margin_available:
+                next_retry_at = self._record_resource_pressure_deferral(command)
+                logger.warning(
+                    "Deferring heavyweight renderer because "
+                    "the dedicated resource margin is unavailable. | "
+                    "plugin_id: %s | intent: %s | available_mb: %s | "
+                    "swap_percent: %s | "
+                    "required_available_mb: %s | max_swap_percent: %s | "
+                    "next_retry_at: %s",
+                    command.plugin_id,
+                    command.intent.value,
+                    resource_sample.available_mb,
+                    resource_sample.swap_percent,
+                    required_available_mb,
+                    max_swap_percent,
+                    next_retry_at,
+                )
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.CANCELED,
+                    error_code="heavyweight_renderer_margin",
+                    error=(
+                        "heavyweight renderer deferred until "
+                        "its dedicated resource margin is available"
+                    ),
+                )
+                self._signal_completion(finished.id)
+                return True
+        return False
+
+    def _execute_and_finish(self, entry, command, context):
+        """Run the command and finish its job; None when a checkpoint already signaled."""
+        try:
+            identity = InstanceIdentity(
+                command.instance_uuid,
+                command.structural_generation,
+                command.settings_revision,
+            )
+            identity_validator = (
+                lambda candidate: self._isolated_instance_identity_is_current(
+                    command,
+                    candidate,
+                )
+            )
+            execution = PluginExecutionContext(
+                context, identity, identity_validator,
+                parallel_image_runner=self._parallel_image_runner,
+            )
+            with execution.activate():
+                self._execute_command(command)
+        except SportsIsolatedCheckpointPending as pending:
+            try:
+                context.raise_if_cancelled()
+            except (TaskDeadlineExceeded, TaskCancelled) as abort_error:
+                status, error_code, abort_message = self._abort_details(
+                    abort_error
+                )
+                if (
+                    isinstance(abort_error, TaskDeadlineExceeded)
+                    and not entry.cancel_event.is_set()
+                ):
+                    self._record_rotation_deadline_failure_safely(
+                        command,
+                        abort_error,
+                    )
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    status,
+                    error_code=error_code,
+                    error=abort_message,
+                )
+                self._signal_completion(finished.id)
+                return None
+            try:
+                yielded = self.refresh_queue.yield_running(entry.job.id)
+            except Exception as error:
+                logger.exception(
+                    "Sports Dashboard checkpoint could not return its queue permit"
+                )
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.FAILED,
+                    error_code="sports_checkpoint_yield_failed",
+                    error=str(error),
+                )
+                self._signal_completion(finished.id)
+                return None
+            logger.info(
+                "Isolated Sports Dashboard returned its queue permit after "
+                "one durable region. | completed_regions: %s | "
+                "next_region: %s | queue_status: %s",
+                ",".join(pending.completed_regions),
+                pending.next_region,
+                yielded.status.value,
+            )
+            if (
+                yielded.error_code == "deadline_expired"
+                and yielded.cancel_requested_at is None
+                and not self.stop_event.is_set()
+            ):
+                # The deadline can cross between the context check and the
+                # queue's atomic yield. Recover the same exact rotation
+                # failure/release bookkeeping used by direct aborts.
+                self._record_rotation_deadline_failure_safely(
+                    command,
+                    TaskDeadlineExceeded(
+                        "Sports Dashboard checkpoint deadline expired"
+                    ),
+                )
+            if yielded.status is not JobStatus.QUEUED:
+                self._signal_completion(yielded.id)
+            return None
+        except SportsIsolatedCleanupFailed as error:
+            # Continuing would leave unrelated providers waiting on the
+            # canceled child's exclusive capacity. Finish the job before
+            # asking the supervisor to replace this inconsistent process.
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.FAILED,
+                error_code="isolated_worker_cleanup_failed",
+                error=str(error),
+            )
+            logger.error(
+                "Requesting supervised recovery after isolated worker cleanup "
+                "failed. | plugin_id: %s",
+                command.plugin_id,
+            )
+            self._restart_request = {"reason": "isolated_worker_cleanup_failed"}
+            self.refresh_queue.wake()
+        except SportsIsolatedResourcePressure as error:
+            next_retry_at = self._record_resource_pressure_deferral(command)
+            logger.warning(
+                "Isolated Sports Dashboard worker stopped before resource "
+                "pressure could threaten the service. | next_retry_at: %s",
+                next_retry_at,
+            )
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.CANCELED,
+                error_code="sports_isolated_resource_pressure",
+                error=str(error),
+            )
+        except PluginRefreshDeferred as error:
+            next_retry_at = self._record_plugin_refresh_deferral(
+                command,
+                minimum_seconds=error.minimum_seconds,
+            )
+            logger.warning(
+                "Deferring plugin-requested refresh. | plugin_id: %s | "
+                "intent: %s | reason: %s | phase: %s | "
+                "minimum_seconds: %s | next_retry_at: %s",
+                command.plugin_id,
+                command.intent.value if command.intent is not None else "none",
+                error.reason,
+                error.phase,
+                error.minimum_seconds,
+                next_retry_at,
+            )
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.CANCELED,
+                error_code="plugin_refresh_deferred",
+                error="plugin requested a bounded refresh retry",
+            )
+        except ResourcePressureDeferred as error:
+            weather_background_data = self._is_weather_background_data_command(
+                command
+            )
+            next_retry_at = self._record_resource_pressure_deferral(
+                command,
+                minimum_seconds=(
+                    MIN_WEATHER_RESOURCE_PRESSURE_DEFERRAL_SECONDS
+                    if weather_background_data
+                    else 0
+                ),
+            )
+            weather_window = self._weather_liveness_window
+            if (
+                weather_background_data
+                and weather_window is not None
+                and weather_window.instance_uuid == command.instance_uuid
+                and weather_window.candidate.instance.structural_generation
+                == command.structural_generation
+                and weather_window.candidate.instance.settings_revision
+                == command.settings_revision
+            ):
+                self._finish_weather_liveness_window(
+                    reason="resource_pressure",
+                    resource_sample=ResourceSample(
+                        available_mb=error.available_mb,
+                        swap_percent=error.swap_percent,
+                    ),
+                )
+            logger.warning(
+                "Deferring refresh after typed resource pressure. | "
+                "plugin_id: %s | intent: %s | reason: %s | phase: %s | "
+                "available_mb: %s | swap_percent: %s | next_retry_at: %s",
+                command.plugin_id,
+                command.intent.value if command.intent is not None else "none",
+                error.reason,
+                error.phase,
+                error.available_mb,
+                error.swap_percent,
+                next_retry_at,
+            )
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.CANCELED,
+                error_code="resource_pressure_deferred",
+                error=str(error),
+            )
+        except TaskDeadlineExceeded as error:
+            if not entry.cancel_event.is_set():
+                self._record_rotation_deadline_failure_safely(command, error)
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.ABANDONED,
+                error_code="deadline_expired",
+                error=str(error),
+            )
+        except _CacheUnavailable as error:
+            if (
+                command.intent is RefreshIntent.DISPLAY_CACHE
+                and plugin_supports_cached_display_redraw(
+                    self.device_config.get_plugin(command.plugin_id)
+                )
+            ):
+                self._record_rotation_deadline_failure_safely(command, error)
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.CANCELED,
+                error_code="cache_unavailable",
+                error=str(error),
+            )
+        except _StaleSelection as error:
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.CANCELED,
+                error_code="stale_selection",
+                error=str(error),
+            )
+        except _PreparedDisplayFailure as error:
+            try:
+                self._record_presentation_failure(
+                    command,
+                    error.original_error,
+                    self._get_current_datetime(),
+                )
+            except Exception:
+                logger.exception(
+                    "Prepared display failure bookkeeping also failed"
+                )
+                self._defer_scheduler_after_bookkeeping_error()
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.FAILED,
+                error_code="presentation_display_failed",
+                error=str(error.original_error),
+            )
+        except TaskCancelled as error:
+            finished = self.refresh_queue.finish(
+                entry.job.id,
+                JobStatus.CANCELED,
+                error_code="task_canceled",
+                error=str(error),
+            )
+        except Exception as error:
+            logger.exception(
+                "Refresh command failed. | source: %s | intent: %s | plugin_id: %s",
+                command.source,
+                command.intent,
+                command.plugin_id,
+            )
+            abort = self._classify_command_abort(command, context)
+            if abort is None:
+                try:
+                    self._record_command_failure(command, error)
+                except (TaskDeadlineExceeded, _StaleSelection, TaskCancelled) as abort_error:
+                    abort = self._abort_details(abort_error)
+                except Exception:
+                    logger.exception("Refresh failure bookkeeping also failed")
+                    self._defer_scheduler_after_bookkeeping_error()
+            if abort is None:
+                abort = self._classify_command_abort(command, context)
+            if abort is None:
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    JobStatus.FAILED,
+                    error_code="refresh_failed",
+                    error=str(error),
+                )
+            else:
+                status, error_code, abort_error = abort
+                if (
+                    error_code == "deadline_expired"
+                    and not entry.cancel_event.is_set()
+                ):
+                    self._record_rotation_deadline_failure_safely(
+                        command,
+                        TaskDeadlineExceeded(abort_error),
+                    )
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    status,
+                    error_code=error_code,
+                    error=abort_error,
+                )
+        else:
+            try:
+                context.raise_if_cancelled()
+            except (TaskDeadlineExceeded, TaskCancelled) as abort_error:
+                status, error_code, abort_message = self._abort_details(abort_error)
+                finished = self.refresh_queue.finish(
+                    entry.job.id,
+                    status,
+                    error_code=error_code,
+                    error=abort_message,
+                )
+            else:
+                degraded_data_result = bool(
+                    getattr(
+                        self._execution_local,
+                        "degraded_data_result",
+                        False,
+                    )
+                )
+                if degraded_data_result:
+                    finished = self.refresh_queue.finish(
+                        entry.job.id,
+                        JobStatus.FAILED,
+                        error_code="degraded_result",
+                        error=(
+                            "Refresh produced a display-safe result that was "
+                            "not promoted."
+                        ),
+                    )
+                else:
+                    finished = self.refresh_queue.finish(
+                        entry.job.id,
+                        JobStatus.SUCCEEDED,
+                    )
+                try:
+                    if not degraded_data_result:
+                        lane = self._lane_for_intent(command.intent)
+                        retry_key = (
+                            self._lane_retry_key(command.instance_uuid, lane)
+                            if command.instance_uuid is not None and lane is not None
+                            else command.instance_uuid or RetryRegistry.GLOBAL_KEY
+                        )
+                        self.retry_registry.mark_success(retry_key)
+                        self.scheduler_state.record_success()
+                except Exception:
+                    logger.exception("Refresh success bookkeeping failed")
+        return finished
 
     def _current_task_context(self, command):
         context = getattr(self._execution_local, "context", None)

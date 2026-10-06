@@ -38,6 +38,13 @@ def test_gate_rejects_an_extracted_function_growing_back_into_a_coordinator():
     assert gate.check_source(source, "runtime/refresh_planning.py")
 
 
+def test_gate_keeps_queue_entry_orchestration_small():
+    oversized = "class RefreshTask:\n    def _execute_queue_entry(self):\n" + "        x = 1\n" * 125
+    allowed = "class RefreshTask:\n    def _execute_queue_entry(self):\n" + "        x = 1\n" * 100
+    assert gate.check_source(oversized, "refresh_task.py")
+    assert not gate.check_source(allowed, "refresh_task.py")
+
+
 def test_cancellation_swallow_count_ignores_guarded_and_reraising_handlers():
     guarded = (
         "try:\n    fetch()\nexcept TaskCancelled:\n    raise\n"
