@@ -124,6 +124,7 @@ from runtime.refresh_planning import (
     plan_candidate, plan_reserved_presentation,
 )
 from runtime.bounded_parallel_stage import BoundedParallelStageRunner
+from runtime.command_memory import CommandPeakMeter
 from runtime.execution_policy import ExecutionClass, plugin_execution_class
 from runtime.resource_governor import RuntimeResourceGovernor
 from runtime.render_arbiter import RenderArbiter
@@ -691,6 +692,7 @@ class RefreshTask:
         self.refresh_result = {}
         self._last_cache_pressure_log_monotonic = 0.0
         self._last_memory_maintenance_monotonic = 0.0
+        self._command_peak_meter = CommandPeakMeter()
         self._last_memory_pressure_restart_monotonic = 0.0
         self._memory_watchdog_pressure_episode_active = False
         self._memory_watchdog_pressure_since_monotonic = None
@@ -4391,6 +4393,7 @@ class RefreshTask:
                 command.plugin_id,
                 instance_uuid_hash,
             )
+            self._command_peak_meter.start()
             self._record_runtime_attempt(command)
             try:
                 identity = InstanceIdentity(
@@ -8963,22 +8966,14 @@ class RefreshTask:
             memory_info = psutil.Process(os.getpid()).memory_info()
         except Exception:
             logger.debug("Could not read process memory stats.", exc_info=True)
-            return {"rss_mb": None, "hwm_mb": None}
+            return {"rss_mb": None, "hwm_mb": None, "command_peak_mb": None}
 
         rss_bytes = getattr(memory_info, "rss", None)
         hwm_bytes = getattr(memory_info, "peak_wset", None)
-        if hwm_bytes is None and os.name == "posix":
-            try:
-                with open("/proc/self/status", "r", encoding="ascii") as handle:
-                    for line in handle:
-                        if line.startswith("VmHWM:"):
-                            hwm_bytes = int(line.split()[1]) * 1024
-                            break
-            except (OSError, ValueError, IndexError):
-                logger.debug(
-                    "Could not read process high-water memory.",
-                    exc_info=True,
-                )
+        if hwm_bytes is None:
+            # VmHWM is reset per command; the meter carries the lifetime peak.
+            lifetime_mb = self._command_peak_meter.lifetime_peak_mb()
+            hwm_bytes = None if lifetime_mb is None else lifetime_mb * 1024 * 1024
 
         def as_mb(value):
             try:
@@ -8989,7 +8984,13 @@ class RefreshTask:
         return {
             "rss_mb": as_mb(rss_bytes),
             "hwm_mb": as_mb(hwm_bytes),
+            "command_peak_mb": self._command_peak_meter.command_peak_mb(),
         }
+
+    @staticmethod
+    def _command_peak_field(process_memory):
+        peak = process_memory.get("command_peak_mb")
+        return None if peak is None else round(peak, 1)
 
     def _log_skipped_command_memory_maintenance(self, reason, command, skip_reason):
         if command is None:
@@ -9000,7 +9001,7 @@ class RefreshTask:
         logger.info(
             "Memory maintenance skipped for command. | reason: %s | "
             "skip_reason: %s | plugin_id: %s | source: %s | intent: %s | "
-            "process_rss_mb: %s | process_hwm_mb: %s",
+            "process_rss_mb: %s | process_hwm_mb: %s | command_peak_mb: %s",
             reason,
             skip_reason,
             getattr(command, "plugin_id", None),
@@ -9016,6 +9017,7 @@ class RefreshTask:
                 if process_memory["hwm_mb"] is None
                 else round(process_memory["hwm_mb"], 1)
             ),
+            self._command_peak_field(process_memory),
         )
 
     def _run_memory_maintenance(self, reason, force=False, *, command=None):
@@ -9061,7 +9063,7 @@ class RefreshTask:
             "source: %s | intent: %s | process_rss_mb: %s | "
             "process_hwm_mb: %s | collected_objects: %s | "
             "malloc_trim: %s | available_mb_before: %s | available_mb_after: %s | "
-            "swap_percent_after: %s",
+            "swap_percent_after: %s | command_peak_mb: %s",
             reason,
             getattr(command, "plugin_id", None),
             getattr(source, "value", source),
@@ -9081,6 +9083,7 @@ class RefreshTask:
             None if before is None else round(before.get("available_mb", 0.0), 1),
             None if after is None else round(after.get("available_mb", 0.0), 1),
             None if after is None else round(after.get("swap_percent", 0.0), 1),
+            self._command_peak_field(process_memory),
         )
         return {
             "collected_objects": collected_objects,

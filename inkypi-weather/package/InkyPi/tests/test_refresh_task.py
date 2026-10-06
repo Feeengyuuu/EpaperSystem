@@ -2510,12 +2510,20 @@ def test_queue_command_final_memory_log_includes_command_and_process_usage(
         intent=RefreshIntent.DATA_REFRESH,
     )
 
+    meter_starts = []
+    task._command_peak_meter = SimpleNamespace(
+        start=lambda: meter_starts.append(True),
+        command_peak_mb=lambda: 77.04,
+        lifetime_peak_mb=lambda: None,
+    )
+
     with caplog.at_level(logging.INFO, logger="refresh_task"):
         completed = _queue_and_process(task, command)
         second_completed = _queue_and_process(task, second_command)
 
     assert completed.job.status is JobStatus.SUCCEEDED
     assert second_completed.job.status is JobStatus.SUCCEEDED
+    assert len(meter_starts) == 2
     memory_logs = [
         record.getMessage()
         for record in caplog.records
@@ -2528,6 +2536,7 @@ def test_queue_command_final_memory_log_includes_command_and_process_usage(
         assert "intent: data_refresh" in memory_log
         assert "process_rss_mb: 42.0" in memory_log
         assert "process_hwm_mb: 64.0" in memory_log
+        assert "command_peak_mb: 77.0" in memory_log
 
 
 @pytest.mark.parametrize(

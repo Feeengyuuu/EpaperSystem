@@ -23,6 +23,9 @@ BOUNDARIES = {
     "runtime/liveness_window.py": {
         "__future__", "dataclasses", "datetime", "enum", "hashlib", "logging", "typing",
     },
+    "runtime/command_memory.py": {
+        "__future__", "logging", "pathlib",
+    },
     "runtime/overrun_recovery.py": {
         "__future__", "dataclasses", "datetime", "logging", "math", "time", "typing",
         "runtime.runtime_status",
