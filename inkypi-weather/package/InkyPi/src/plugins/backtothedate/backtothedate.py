@@ -59,11 +59,23 @@ DEFAULT_MAX_PAGE = 141
 MAX_PAGE_CACHE_TTL = timedelta(days=7)
 POSTER_PATH_RE = re.compile(r"^/posters/(?!posters(?:$|\?))[-a-z0-9]+/?$", re.I)
 THEME_PATH_RE = re.compile(r"^/themes/[-a-z0-9]+/?$", re.I)
-IMAGE_PATH_RE = re.compile(r"/sites/default/files/images/[^\"'\s<>]+\.(?:jpg|jpeg|png)", re.I)
+# Poster scans live under images/ or, for newer uploads, one dated YYYY-MM
+# folder. Other files/ folders hold site artwork, not posters.
+IMAGE_PATH_RE = re.compile(
+    r"/sites/default/files/(?:images/[^\"'\s<>]+|\d{4}-\d{2}/[^/\"'\s<>]+)\.(?:jpg|jpeg|png)",
+    re.I,
+)
+# "-detail" files are partial crops shown beside the full poster scan.
+DETAIL_CROP_RE = re.compile(r"-detail\.(?:jpg|jpeg|png)$", re.I)
 REQUEST_HEADERS = {
     "User-Agent": "InkyPi BacktotheDate/1.0 (+https://chineseposters.net/)"
 }
 POSTER_DETAIL_CANDIDATE_LIMIT = 8
+# Once every usable poster has been shown, unseen links can all be unusable.
+# Probe a few shown links per page so the scan still finds a reusable poster,
+# and stop after a couple of sources/pages instead of spending the budget.
+SHOWN_FALLBACK_CANDIDATE_LIMIT = 2
+FALLBACK_SCAN_LIMIT = 2
 THEME_PAGE_SAMPLE_LIMIT = 4
 DEFAULT_FIT_MODE = "triptych"
 TRIPTYCH_POSTER_COUNT = 3
@@ -716,21 +728,17 @@ class BacktotheDate(BasePlugin):
         max_page = self._get_max_page(settings)
         seen_fallbacks = []
 
-        for _ in range(8):
+        for attempt in range(8):
             _checkpoint()
+            if seen_fallbacks and attempt >= FALLBACK_SCAN_LIMIT:
+                break
             page = random.randint(0, max_page)
             list_html = self._fetch_text(POSTERS_URL, params={"page": page})
             links = self._extract_poster_links(list_html)
             if not links:
                 continue
 
-            candidates = [
-                link
-                for link in links
-                if self._normalize_history_url(link.get("url")) not in discarded_page_urls
-            ] or links
-            random.shuffle(candidates)
-            for link in candidates[:POSTER_DETAIL_CANDIDATE_LIMIT]:
+            for link in self._detail_candidates(links, discarded_page_urls):
                 _checkpoint()
                 detail_html = self._fetch_text(link["url"])
                 poster = self._extract_poster_data(detail_html, link["url"])
@@ -755,8 +763,10 @@ class BacktotheDate(BasePlugin):
         sources = list(theme_urls)
         random.shuffle(sources)
 
-        for source_url in sources:
+        for scanned, source_url in enumerate(sources):
             _checkpoint()
+            if seen_fallbacks and scanned >= FALLBACK_SCAN_LIMIT:
+                break
             try:
                 first_html = self._fetch_text(source_url)
                 max_page = self._discover_max_page(first_html) or 0
@@ -768,13 +778,7 @@ class BacktotheDate(BasePlugin):
                     links = self._extract_poster_links(html_text)
                     if not links:
                         continue
-                    candidates = [
-                        link
-                        for link in links
-                        if self._normalize_history_url(link.get("url")) not in discarded_page_urls
-                    ] or links
-                    random.shuffle(candidates)
-                    for link in candidates[:POSTER_DETAIL_CANDIDATE_LIMIT]:
+                    for link in self._detail_candidates(links, discarded_page_urls):
                         _checkpoint()
                         detail_html = self._fetch_text(link["url"])
                         poster = self._extract_poster_data(detail_html, link["url"])
@@ -797,6 +801,20 @@ class BacktotheDate(BasePlugin):
             logger.info("BacktotheDate target theme sources only found displayed posters; reusing one fallback.")
             return random.choice(seen_fallbacks)
         return None
+
+    def _detail_candidates(self, links, discarded_page_urls):
+        """Unseen links first, then a few shown links as exhausted-pool fallbacks."""
+        unseen = []
+        shown = []
+        for link in links:
+            key = self._normalize_history_url(link.get("url"))
+            (shown if key in discarded_page_urls else unseen).append(link)
+        random.shuffle(unseen)
+        random.shuffle(shown)
+        return (
+            unseen[:POSTER_DETAIL_CANDIDATE_LIMIT]
+            + shown[:SHOWN_FALLBACK_CANDIDATE_LIMIT]
+        )
 
     def _source_theme_urls(self, settings):
         mode = str(settings.get("sourceMode") or DEFAULT_SOURCE_MODE).strip().lower()
@@ -850,10 +868,17 @@ class BacktotheDate(BasePlugin):
         if configured_page is not None:
             return configured_page
 
+        # The archive uses a mini pager that only links the next page, so a
+        # discovered count is a lower bound and never shrinks the known range.
         state = self._read_state()
         cached = self._safe_int(state.get("max_page"), None, minimum=0, maximum=10000)
         checked_at = self._parse_datetime(state.get("max_page_checked_at"))
-        if cached is not None and checked_at and datetime.now(timezone.utc) - checked_at < MAX_PAGE_CACHE_TTL:
+        if (
+            cached is not None
+            and cached >= DEFAULT_MAX_PAGE
+            and checked_at
+            and datetime.now(timezone.utc) - checked_at < MAX_PAGE_CACHE_TTL
+        ):
             return cached
 
         try:
@@ -865,9 +890,9 @@ class BacktotheDate(BasePlugin):
             logger.warning("Could not discover Chinese Posters page count: %s", exc)
             discovered = None
 
-        max_page = discovered if discovered is not None else cached
-        if max_page is None:
-            max_page = DEFAULT_MAX_PAGE
+        max_page = max(
+            value for value in (discovered, cached, DEFAULT_MAX_PAGE) if value is not None
+        )
 
         state["max_page"] = max_page
         state["max_page_checked_at"] = datetime.now(timezone.utc).isoformat()
@@ -907,9 +932,12 @@ class BacktotheDate(BasePlugin):
         for image in parser.images:
             src = image.get("src") or ""
             try:
-                image_url = self._canonical_provider_url(src, kind="image")
+                candidate = self._canonical_provider_url(src, kind="image")
             except RuntimeError:
                 continue
+            if DETAIL_CROP_RE.search(urlparse(candidate).path):
+                continue
+            image_url = candidate
             image_alt = image.get("alt") or ""
             break
 

@@ -2476,3 +2476,182 @@ def test_backtothedate_prepared_triptych_parallel_stage_is_pixel_equivalent(
     assert runner.last_run_snapshot["parallel"] is True
     assert runner.last_run_snapshot["worker_count"] == 2
     assert not list(tmp_path.glob(".parallel-image-stage-*"))
+
+
+# --- 2026-10-06 live regression: provider image layout and exhausted history ---
+
+DATED_MAIN_DETAIL_HTML = """
+<h1>Braving the wind and the waves, each reveals their remarkable abilities</h1>
+<img src="/sites/default/files/2020-06/pc-1958-024.jpg" alt="">
+<img src="../sites/default/files/sitepics/eight-immortals.jpg">
+<img src="../sites/default/files/images/pc-1958-024-detail.jpg">
+<img src="https://chineseposters.net/sites/default/files/sitepics/flick.png">
+"""
+
+
+def test_extract_poster_data_uses_dated_upload_main_image_not_detail_crop():
+    plugin = make_plugin("dated-main-image")
+
+    poster = plugin._extract_poster_data(
+        DATED_MAIN_DETAIL_HTML,
+        "https://chineseposters.net/posters/pc-1958-024",
+    )
+
+    assert poster["image_url"] == (
+        "https://chineseposters.net/sites/default/files/2020-06/pc-1958-024.jpg"
+    )
+
+
+def test_extract_poster_data_skips_detail_crop_when_it_is_the_only_controlled_image():
+    plugin = make_plugin("detail-crop-only")
+
+    poster = plugin._extract_poster_data(
+        '<h1>Crop only</h1><img src="/sites/default/files/images/x-1-detail.jpg">',
+        "https://chineseposters.net/posters/x-1",
+    )
+
+    assert poster["image_url"] is None
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/sites/default/files/sitepics/eight-immortals.jpg",
+        "/sites/default/files/2020-6/short-month.jpg",
+        "/sites/default/files/2020-06/nested/escape.jpg",
+        "/sites/default/files/styles/thumb/2020-06/thumb.jpg",
+        "/foo/sites/default/files/2020-06/prefixed.jpg",
+    ],
+)
+def test_provider_image_paths_stay_limited_to_poster_upload_folders(path):
+    plugin = make_plugin("image-path-boundary")
+
+    with pytest.raises(RuntimeError):
+        plugin._canonical_provider_url(f"https://chineseposters.net{path}", kind="image")
+
+
+def _exhausted_history_fetch(list_url_marker):
+    seen = "https://chineseposters.net/posters/seen"
+    unparseable = "https://chineseposters.net/posters/dated-only"
+
+    def fake_fetch(url, params=None):
+        if list_url_marker in url:
+            return '<a href="/posters/dated-only">Unseen</a><a href="/posters/seen">Seen</a>'
+        if url == unparseable:
+            return '<h1>Unseen</h1><img src="/sites/default/files/sitepics/banner.jpg">'
+        assert url == seen
+        return '<h1>Seen</h1><img src="/sites/default/files/images/seen.jpg">'
+
+    return seen, fake_fetch
+
+
+def test_theme_scan_reuses_shown_poster_when_every_unseen_candidate_is_unusable(monkeypatch):
+    plugin = make_plugin("theme-exhausted-history")
+    seen, fake_fetch = _exhausted_history_fetch("/themes/")
+    plugin._write_state({"discarded_page_urls": [seen]})
+    monkeypatch.setattr(plugin, "_fetch_text", fake_fetch)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.shuffle", lambda items: None)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.choice", lambda items: items[0])
+
+    poster = plugin._select_random_poster({"sourceMode": "custom", "themeUrls": "/themes/one"})
+
+    assert poster["page_url"] == seen
+
+
+def test_archive_scan_reuses_shown_poster_when_every_unseen_candidate_is_unusable(monkeypatch):
+    plugin = make_plugin("archive-exhausted-history")
+    seen, fake_fetch = _exhausted_history_fetch("/posters/posters")
+    plugin._write_state({"discarded_page_urls": [seen]})
+    monkeypatch.setattr(plugin, "_fetch_text", fake_fetch)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.randint", lambda low, high: 0)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.shuffle", lambda items: None)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.choice", lambda items: items[0])
+
+    poster = plugin._select_random_poster({"maxPage": 0, "sourceMode": "all_archive"})
+
+    assert poster["page_url"] == seen
+
+
+def test_unseen_usable_poster_still_wins_over_shown_fallback(monkeypatch):
+    plugin = make_plugin("unseen-still-preferred")
+    plugin._write_state({"discarded_page_urls": ["https://chineseposters.net/posters/seen"]})
+
+    def fake_fetch(url, params=None):
+        if "/themes/" in url:
+            return '<a href="/posters/seen">Seen</a><a href="/posters/fresh">Fresh</a>'
+        if url.endswith("/fresh"):
+            return '<h1>Fresh</h1><img src="/sites/default/files/2021-03/fresh.jpg">'
+        return '<h1>Seen</h1><img src="/sites/default/files/images/seen.jpg">'
+
+    monkeypatch.setattr(plugin, "_fetch_text", fake_fetch)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.shuffle", lambda items: None)
+
+    poster = plugin._select_random_poster({"sourceMode": "custom", "themeUrls": "/themes/one"})
+
+    assert poster["page_url"] == "https://chineseposters.net/posters/fresh"
+
+
+MINI_PAGER_HTML = (
+    '<nav class="pager"><ul><li class="is-active">Page 1</li>'
+    '<li class="pager__item--next"><a href="/posters/posters?page=1" rel="next">Next</a></li>'
+    "</ul></nav>"
+)
+
+
+def test_mini_pager_does_not_shrink_archive_page_range(monkeypatch):
+    plugin = make_plugin("mini-pager")
+    monkeypatch.setattr(plugin, "_fetch_text", lambda url, params=None: MINI_PAGER_HTML)
+
+    assert plugin._get_max_page({}) == backtothedate_module.DEFAULT_MAX_PAGE
+    assert plugin._read_state()["max_page"] == backtothedate_module.DEFAULT_MAX_PAGE
+
+
+def test_cached_mini_pager_page_count_is_not_trusted(monkeypatch):
+    plugin = make_plugin("cached-mini-pager")
+    plugin._write_state({
+        "max_page": 1,
+        "max_page_checked_at": datetime.now(timezone.utc).isoformat(),
+    })
+    monkeypatch.setattr(plugin, "_fetch_text", lambda url, params=None: MINI_PAGER_HTML)
+
+    assert plugin._get_max_page({}) == backtothedate_module.DEFAULT_MAX_PAGE
+
+
+def test_full_pager_can_extend_archive_page_range(monkeypatch):
+    plugin = make_plugin("full-pager")
+    monkeypatch.setattr(
+        plugin, "_fetch_text",
+        lambda url, params=None: '<a href="?page=1">2</a><a href="?page=397">Last</a>',
+    )
+
+    assert plugin._get_max_page({}) == 397
+
+
+def test_configured_max_page_is_still_respected(monkeypatch):
+    plugin = make_plugin("configured-max-page")
+    monkeypatch.setattr(plugin, "_fetch_text", lambda url, params=None: pytest.fail("no discovery"))
+
+    assert plugin._get_max_page({"maxPage": 3}) == 3
+
+
+def test_exhausted_theme_pool_reuses_fallback_without_scanning_every_source(monkeypatch):
+    plugin = make_plugin("bounded-exhausted-scan")
+    themes = [f"/themes/t{index}" for index in range(6)]
+    plugin._write_state({"discarded_page_urls": [f"https://chineseposters.net/posters/t{i}" for i in range(6)]})
+    fetched_themes = []
+
+    def fake_fetch(url, params=None):
+        if "/themes/" in url:
+            fetched_themes.append(url)
+            name = url.rsplit("/", 1)[1]
+            return f'<a href="/posters/{name}">Shown</a>'
+        return f'<h1>Shown</h1><img src="/sites/default/files/images/{url.rsplit("/", 1)[1]}.jpg">'
+
+    monkeypatch.setattr(plugin, "_fetch_text", fake_fetch)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.shuffle", lambda items: None)
+    monkeypatch.setattr("plugins.backtothedate.backtothedate.random.choice", lambda items: items[0])
+
+    poster = plugin._select_random_poster({"sourceMode": "custom", "themeUrls": " ".join(themes)})
+
+    assert poster["page_url"] == "https://chineseposters.net/posters/t0"
+    assert len(fetched_themes) == backtothedate_module.FALLBACK_SCAN_LIMIT
