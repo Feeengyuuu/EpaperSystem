@@ -48,7 +48,11 @@
   - 第一名 telegram_digest：进程内首次运行时 RSS 最多上涨 116 MB（其中 Telethon 导入 33 MB），之后常驻约 45 MB 不释放。已改为在短命子进程中执行账号抓取，主进程不再导入 Telethon。
   - daily_wiki_page 的峰值只出现在每个进程首次运行时（约 43 MB）；设备上用真实字体和测试数据渲染只需 12～15 MB，原因未能从现有日志定位。
   - 其余排名不可靠：VmHWM 是进程级的只增不减值，加上内存维护按间隔执行，峰值会被算到碰巧之后上报的插件头上（例如 Steam 被算上了 daily_ai_news 留下的 RSS）。
-  - 为此新增 `runtime/command_memory.py`：每条命令开始时通过 `/proc/self/clear_refs` 重置 VmHWM，日志新增 `command_peak_mb`。下一步：部署后积累数小时 `command_peak_mb`，用 `tools/runtime_audit.py` 或按插件汇总，按准确排名处理第二、三名。
+  - 为此新增 `runtime/command_memory.py`：每条命令开始时通过 `/proc/self/clear_refs` 重置 VmHWM，日志新增 `command_peak_mb`。
+  - 部署后验证（2026-10-06）：telegram 在子进程中抓取成功，跑完后主进程 RSS 80 MB（以前首次运行后停在约 150 MB）。首次部署漏了一个问题：运行时会往 settings 注入不能 JSON 序列化的身份对象，已在 729ecc6d 修复。
+  - daily_wiki_page：在设备上用真实 payload 复现，每次渲染 +53～63 MB，但几乎全是文件映射。`NotoSansSC-VF.ttf`（17.7 MB 可变字体）每个 (字号, 字重) 实例单独映射一次，每个实例 RssFile +6.7 MB、RssAnon 只 +0.4 MB。这些页在物理上共享、可回收，不构成真实内存压力，不改代码。
+  - 解读 `command_peak_mb` 要注意：VmHWM 包含文件映射，用中文字体多的插件会被高估；判断真实压力看 RssAnon 和系统 MemAvailable。
+  - bambu_monitor：`_attach_camera_frame` 为了校验摄像头帧做了一次完整解码再丢弃，可改为小尺寸 draft 解码校验，收益只有几 MB，暂不处理。
 
 ### 持续项
 
