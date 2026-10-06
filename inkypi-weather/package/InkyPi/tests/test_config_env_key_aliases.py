@@ -911,6 +911,41 @@ def test_completed_newspaper_refill_migration_preserves_later_user_schedule(
     ).refresh == {"scheduled": "15:00"}
 
 
+def test_startup_replaces_luoyang_newspaper_with_chinese_editions_once(
+    monkeypatch,
+    tmp_path,
+):
+    payload = _newspaper_config(refresh={"interval": 3600})
+    settings = payload["playlist_config"]["playlists"][0]["plugins"][0]["plugin_settings"]
+    settings["mediaSources"] = "People's Daily|newspaper|chi_pd\nLuoyang Evening News|lywb|A01"
+
+    config, config_path = _device_config(monkeypatch, tmp_path, payload)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    sources = saved["playlist_config"]["playlists"][0]["plugins"][0]["plugin_settings"]["mediaSources"]
+    assert "|lywb|" not in sources
+    assert "Lianhe Zaobao|newspaper|sing_lz" in sources
+    assert "Guangming Daily|epaper|gmrb" in sources
+    assert saved["runtime_migrations"]["newspaper_chinese_editions_v1"] is True
+
+
+def test_completed_chinese_editions_migration_preserves_later_user_sources(
+    monkeypatch,
+    tmp_path,
+):
+    payload = _newspaper_config(
+        refresh={"interval": 3600},
+        migrations={"newspaper_hourly_refill_v1": True, "newspaper_chinese_editions_v1": True},
+    )
+
+    config, _ = _device_config(monkeypatch, tmp_path, payload)
+
+    assert config.get_playlist_manager().find_plugin(
+        "newspaper",
+        "ChinaDaily",
+    ).settings["mediaSources"] == "A|newspaper|A\nB|newspaper|B"
+
+
 def _daily_art_config(settings, *, migrations=None):
     payload = {
         "resolution": [800, 480],

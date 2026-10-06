@@ -7,6 +7,7 @@ from plugins.base_plugin.presentation import (
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.plugin_settings import resolve_refresh_on_display
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import html
 from html.parser import HTMLParser
@@ -23,7 +24,7 @@ from security.ssrf import get_ssrf_policy
 from utils.app_utils import get_font
 from utils.browser_renderer import get_browser_renderer
 from utils.image_utils import resize_image, text_width
-from runtime.refresh_contracts import TaskContext
+from runtime.refresh_contracts import TaskCancelled, TaskContext
 from PIL import Image, ImageDraw, ImageFont
 import hashlib
 import json
@@ -52,6 +53,65 @@ _PROVIDER_FAILURE_STATE_LOCK = threading.RLock()
 
 FREEDOM_FORUM_URL = "https://cdn.freedomforum.org/dfp/jpg{}/lg/{}.jpg"
 LYWB_A01_PDF_URL = "https://lywb.lyd.com.cn/images2/2/{year_month}/{day}/A01/{stamp}A01_pdf.pdf"
+
+
+class ProviderOutsideAllowlist(RuntimeError):
+    """A provider URL or redirect left the hosts approved for that source."""
+
+
+@dataclass(frozen=True)
+class EpaperEdition:
+    name: str
+    layout_url: str
+    host: str
+    scan_suffix: str
+    # Hosts the page-one scan may redirect to (object storage behind the site).
+    scan_hosts: tuple = ()
+
+
+# Chinese digital editions that share the "layout/node" e-paper platform and
+# were reachable from the device network in October 2026. Page one's scan is
+# the first pic/ or res/ image; each suffix selects a variant close to the
+# display width without a multi-megabyte download.
+EPAPER_EDITIONS = {
+    "GMRB": EpaperEdition(
+        "Guangming Daily",
+        "https://epaper.gmw.cn/gmrb/html/layout/{year_month}/{day}/node_01.html",
+        "epaper.gmw.cn",
+        ".jpg.1",
+    ),
+    "JJRB": EpaperEdition(
+        "Economic Daily",
+        "http://paper.ce.cn/pc/layout/{year_month}/{day}/node_01.html",
+        "paper.ce.cn",
+        ".jpg.1",
+    ),
+    "ZGQNB": EpaperEdition(
+        "China Youth Daily",
+        "https://zqb.cyol.com/pc/layout/{year_month}/{day}/node_01.html",
+        "zqb.cyol.com",
+        ".jpg.1",
+    ),
+    "NFRB": EpaperEdition(
+        "Nanfang Daily",
+        "https://epaper.southcn.com/nfdaily/html/{year_month}/{day}/node_A01.html",
+        "epaper.southcn.com",
+        ".jpg.1",
+    ),
+    "YZWB": EpaperEdition(
+        "Yangtse Evening Post",
+        "https://epaper.yzwb.net/pc/layout/{year_month}/{day}/node_A01.html",
+        "epaper.yzwb.net",
+        ".jpg",
+        ("doss.xhby.net",),
+    ),
+}
+EPAPER_SCAN_RE = re.compile(
+    r"""src=["']([^"']*/(?:pic|res)/\d{6}/\d{2}/"""
+    r"""[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.jpg(?:\.\d)?)["']""",
+    re.I,
+)
+MAX_EPAPER_LAYOUT_BYTES = 512 * 1024
 NEWS_FRONTPAGE_ROTATION_VERSION = "news-frontpage-rotation-v1"
 MAX_DATA_SECONDS = 90.0
 MAX_BROWSER_SECONDS = 40.0
@@ -85,9 +145,11 @@ DEFAULT_MEDIA_SOURCES = """BBC News|url|https://www.bbc.com/news
 CNN|url|https://www.cnn.com
 CCTV News|url|https://news.cctv.com/index.shtml
 Xinhua|url|https://www.xinhuanet.com/
-Luoyang Evening News|lywb|A01
 China Daily|newspaper|chi_cd
 People's Daily|newspaper|chi_pd
+Lianhe Zaobao|newspaper|sing_lz
+Guangming Daily|epaper|gmrb
+Economic Daily|epaper|jjrb
 The New York Times|newspaper|ny_nyt
 The Washington Post|newspaper|dc_wp
 USA Today|newspaper|usat"""
@@ -1026,7 +1088,9 @@ class Newspaper(BasePlugin):
                 source_type = "lywb"
             if source_type in {"paper", "slug", "frontpage"}:
                 source_type = "newspaper"
-            if source_type not in {"url", "headlines", "lywb", "newspaper"} or not value:
+            if source_type in {"digital", "digital_edition"}:
+                source_type = "epaper"
+            if source_type not in {"url", "headlines", "lywb", "newspaper", "epaper"} or not value:
                 logger.warning("Ignoring invalid media source line: %s", line)
                 continue
 
@@ -1039,6 +1103,13 @@ class Newspaper(BasePlugin):
             elif source_type == "lywb":
                 value = value.upper()
                 default_name = "Luoyang Evening News"
+                identity_value = value
+            elif source_type == "epaper":
+                value = value.upper()
+                if value not in EPAPER_EDITIONS:
+                    logger.warning("Ignoring unknown digital edition: %s", line)
+                    continue
+                default_name = EPAPER_EDITIONS[value].name
                 identity_value = value
             else:
                 value = value.upper()
@@ -1112,6 +1183,13 @@ class Newspaper(BasePlugin):
                 deadline=deadline,
                 force_refresh=force_refresh,
             )
+        elif source["type"] == "epaper":
+            image = self._fetch_epaper_cover(
+                source["value"],
+                device_config,
+                deadline=deadline,
+                force_refresh=force_refresh,
+            )
         else:
             image = self._fetch_newspaper_cover(
                 source["value"],
@@ -1121,7 +1199,7 @@ class Newspaper(BasePlugin):
             )
 
         if image is None:
-            if force_refresh and source["type"] in {"lywb", "newspaper"}:
+            if force_refresh and source["type"] in {"lywb", "newspaper", "epaper"}:
                 raise RuntimeError(
                     f"Forced newspaper provider refresh returned no image: {source['name']}"
                 )
@@ -1505,18 +1583,9 @@ class Newspaper(BasePlugin):
         newspaper_slug = newspaper_slug.upper()
         deadline = deadline or self._monotonic() + MAX_HTTP_SECONDS
 
-        current = self._now_utc()
-        if current.tzinfo is None:
-            current = current.replace(tzinfo=timezone.utc)
-        today = current.astimezone(self._device_timezone(device_config)).date()
-
-        # Asian editions can arrive one day ahead of the device, but an older
-        # edition must never be downloaded and relabelled as today's paper.
-        days = [today + timedelta(days=1), today]
-
         image = None
         edition_date = None
-        for date in days:
+        for date in self._edition_candidate_dates(device_config):
             _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
             image_url = FREEDOM_FORUM_URL.format(date.day, newspaper_slug)
             failure_key = (
@@ -1608,6 +1677,95 @@ class Newspaper(BasePlugin):
             return prepared
 
         return None
+
+    def _edition_candidate_dates(self, device_config):
+        current = self._now_utc()
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+        today = current.astimezone(self._device_timezone(device_config)).date()
+        # Asian editions can arrive one day ahead of the device, but an older
+        # edition must never be downloaded and relabelled as today's paper.
+        return [today + timedelta(days=1), today]
+
+    def _fetch_epaper_cover(
+        self,
+        code,
+        device_config,
+        *,
+        deadline=None,
+        force_refresh=False,
+    ):
+        edition = EPAPER_EDITIONS.get(str(code or "").upper())
+        if edition is None:
+            return None
+        deadline = deadline or self._monotonic() + MAX_HTTP_SECONDS
+        for date in self._edition_candidate_dates(device_config):
+            _remaining_timeout(deadline, self._monotonic, MAX_HTTP_SECONDS)
+            layout_url = edition.layout_url.format(
+                year_month=date.strftime("%Y%m"),
+                day=date.strftime("%d"),
+            )
+            failure_key = f"epaper:{str(code).upper()}:{date.strftime('%Y-%m-%d')}"
+            if not force_refresh and self._provider_failure_is_cooling_down(failure_key):
+                logger.info("Skipping cooled-down digital edition %s", layout_url)
+                continue
+            try:
+                layout, final_url, _headers = self._download_provider_bytes(
+                    layout_url,
+                    allowed_hosts=(edition.host,),
+                    max_bytes=MAX_EPAPER_LAYOUT_BYTES,
+                    timeout=MAX_HTTP_SECONDS,
+                    deadline=deadline,
+                    headers={**REQUEST_HEADERS, "Referer": layout_url},
+                )
+                scan_url = self._epaper_scan_url(layout, final_url or layout_url, edition)
+                if scan_url is None:
+                    logger.info("Digital edition has no page-one scan: %s", layout_url)
+                    continue
+                payload, _final_url, _headers = self._download_provider_bytes(
+                    scan_url,
+                    allowed_hosts=(edition.host, *edition.scan_hosts),
+                    max_bytes=MAX_PNG_BYTES,
+                    timeout=MAX_HTTP_SECONDS,
+                    deadline=deadline,
+                    headers={**REQUEST_HEADERS, "Referer": layout_url},
+                )
+                image = self._decode_remote_image(payload, deadline=deadline)
+            except ProviderOutsideAllowlist:
+                # Unpublished editions redirect to the site's home page.
+                self._remember_provider_failure(failure_key, 404)
+                logger.info("Digital edition is not published yet: %s", layout_url)
+                continue
+            except TaskCancelled:
+                raise
+            except HttpStatusError as exc:
+                if exc.status in (403, 404):
+                    self._remember_provider_failure(failure_key, exc.status)
+                log = logger.info if exc.status in (404, 500) else logger.warning
+                log("Could not fetch digital edition %s: %s", layout_url, exc)
+                continue
+            except Exception as exc:
+                logger.warning("Could not fetch digital edition %s: %s", layout_url, exc)
+                continue
+            self._forget_provider_failure(failure_key)
+            logger.info("Found %s front page for %s", edition.name, date.strftime("%Y-%m-%d"))
+            prepared = self._prepare_frontpage_image(image, device_config)
+            prepared.info["inkypi_newspaper_edition_date"] = date.strftime("%Y-%m-%d")
+            return prepared
+        return None
+
+    @staticmethod
+    def _epaper_scan_url(layout, page_url, edition):
+        text = layout.decode("utf-8", "replace") if isinstance(layout, bytes) else str(layout)
+        match = EPAPER_SCAN_RE.search(text)
+        if match is None:
+            return None
+        scan_url = urljoin(page_url, html.unescape(match.group(1)))
+        parsed = urlparse(scan_url)
+        if (parsed.hostname or "").lower() != edition.host or parsed.query or parsed.fragment:
+            return None
+        base = re.sub(r"\.jpg(?:\.\d)?$", "", scan_url, flags=re.I)
+        return base + edition.scan_suffix
 
     def _lywb_candidate_dates(self):
         # Luoyang is UTC+8; use source-local date instead of the device timezone.
@@ -1776,7 +1934,7 @@ class Newspaper(BasePlugin):
         host = str(approved.hostname or "").rstrip(".").lower()
         normalized = tuple(str(value).rstrip(".").lower() for value in allowed_hosts)
         if host not in normalized:
-            raise RuntimeError("Newspaper provider authority is outside its allowlist")
+            raise ProviderOutsideAllowlist("Newspaper provider authority is outside its allowlist")
         if approved.scheme not in {"http", "https"}:
             raise RuntimeError("Newspaper provider scheme is not allowed")
         expected_port = 443 if approved.scheme == "https" else 80

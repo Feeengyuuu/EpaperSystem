@@ -265,12 +265,13 @@ def test_parse_media_sources_accepts_luoyang_evening_news_source():
     ]
 
 
-def test_default_media_sources_include_luoyang_evening_news():
-    plugin = make_plugin("default-lywb")
+def test_default_media_sources_replace_blocked_luoyang_with_chinese_editions():
+    plugin = make_plugin("default-chinese-editions")
 
-    sources = plugin._parse_media_sources(DEFAULT_MEDIA_SOURCES)
+    ids = {source["id"] for source in plugin._parse_media_sources(DEFAULT_MEDIA_SOURCES)}
 
-    assert any(source["id"] == "lywb:A01" for source in sources)
+    assert "lywb:A01" not in ids
+    assert {"newspaper:SING_LZ", "epaper:GMRB", "epaper:JJRB"} <= ids
 
 
 def test_newspaper_fingerprint_defaults_and_source_universe():
@@ -2512,3 +2513,193 @@ def test_newspaper_deadline_after_quarantine_delete_rolls_back_everything(monkey
     assert deleted["value"] is True
     assert tree_snapshot(plugin.get_plugin_dir()) == before_tree
     assert not list(plugin._presentation_media_dir().glob("*.quarantine"))
+
+
+
+# --- Chinese digital editions (epaper) -------------------------------------
+
+EPAPER_SCAN = "2bc06809-5e39-4c1d-9fb1-ecec4b93660b"
+
+
+def _jpeg_payload(size=(100, 160)):
+    buffer = BytesIO()
+    Image.new("RGB", size, "white").save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+def _epaper_layout(day="06", src=None):
+    src = src or f"../../../pic/202610/{day}/{EPAPER_SCAN}.jpg.2"
+    return (
+        '<html><img src="../../../../../../template/images/logo.png">'
+        f'<img src="{src}"><a href="../../../attachment/202610/{day}/x.pdf">PDF</a></html>'
+    ).encode("utf-8")
+
+
+def test_parse_media_sources_accepts_known_epaper_editions(caplog):
+    plugin = make_plugin("parse-epaper")
+
+    sources = plugin._parse_media_sources("Guangming Daily|epaper|gmrb\nUnknown|epaper|nope")
+
+    assert sources == [
+        {"id": "epaper:GMRB", "name": "Guangming Daily", "type": "epaper", "value": "GMRB"}
+    ]
+    assert "Ignoring unknown digital edition" in caplog.text
+
+
+def test_epaper_cover_reads_page_one_scan_from_the_layout(monkeypatch):
+    plugin = make_plugin("epaper-page-one")
+    monkeypatch.setattr(plugin, "_now_utc", lambda: datetime(2026, 10, 6, 17, tzinfo=timezone.utc))
+    requests = []
+
+    def download(url, **kwargs):
+        requests.append((url, kwargs["allowed_hosts"]))
+        if url.endswith("/202610/07/node_01.html"):
+            raise newspaper_module.HttpStatusError("GET", url, 404)
+        if url.endswith("/202610/06/node_01.html"):
+            return _epaper_layout(), url, {}
+        return _jpeg_payload(), url, {"content-type": "image/jpeg"}
+
+    monkeypatch.setattr(plugin, "_download_provider_bytes", download)
+
+    image = plugin._fetch_epaper_cover("jjrb", DeviceConfig())
+
+    assert image is not None
+    assert image.info["inkypi_newspaper_edition_date"] == "2026-10-06"
+    assert requests == [
+        ("http://paper.ce.cn/pc/layout/202610/07/node_01.html", ("paper.ce.cn",)),
+        ("http://paper.ce.cn/pc/layout/202610/06/node_01.html", ("paper.ce.cn",)),
+        (f"http://paper.ce.cn/pc/pic/202610/06/{EPAPER_SCAN}.jpg.1", ("paper.ce.cn",)),
+    ]
+
+
+def test_epaper_cover_uses_the_full_scan_when_configured(monkeypatch):
+    plugin = make_plugin("epaper-full-scan")
+    monkeypatch.setattr(plugin, "_now_utc", lambda: datetime(2026, 10, 6, 17, tzinfo=timezone.utc))
+    requested = []
+
+    def download(url, **_kwargs):
+        requested.append(url)
+        if url.endswith("node_A01.html"):
+            return _epaper_layout(day="07", src=f"../../../pic/202610/07/{EPAPER_SCAN}.jpg.1"), url, {}
+        return _jpeg_payload(), url, {}
+
+    monkeypatch.setattr(plugin, "_download_provider_bytes", download)
+
+    image = plugin._fetch_epaper_cover("YZWB", DeviceConfig())
+
+    assert image.info["inkypi_newspaper_edition_date"] == "2026-10-07"
+    assert requested[-1] == f"https://epaper.yzwb.net/pc/pic/202610/07/{EPAPER_SCAN}.jpg"
+
+
+def test_epaper_cover_rejects_scans_outside_its_host(monkeypatch):
+    plugin = make_plugin("epaper-host")
+    monkeypatch.setattr(plugin, "_now_utc", lambda: datetime(2026, 10, 6, 17, tzinfo=timezone.utc))
+    requested = []
+
+    def download(url, **_kwargs):
+        requested.append(url)
+        return _epaper_layout(src=f"https://evil.example/pic/202610/06/{EPAPER_SCAN}.jpg"), url, {}
+
+    monkeypatch.setattr(plugin, "_download_provider_bytes", download)
+
+    assert plugin._fetch_epaper_cover("GMRB", DeviceConfig()) is None
+    assert all("evil.example" not in url for url in requested)
+
+
+def test_epaper_cover_never_falls_back_to_an_older_edition(monkeypatch):
+    plugin = make_plugin("epaper-no-old")
+    monkeypatch.setattr(plugin, "_now_utc", lambda: datetime(2026, 10, 6, 17, tzinfo=timezone.utc))
+    requested = []
+
+    def download(url, **_kwargs):
+        requested.append(url)
+        raise newspaper_module.HttpStatusError("GET", url, 404)
+
+    monkeypatch.setattr(plugin, "_download_provider_bytes", download)
+
+    assert plugin._fetch_epaper_cover("NFRB", DeviceConfig()) is None
+    assert requested == [
+        "https://epaper.southcn.com/nfdaily/html/202610/07/node_A01.html",
+        "https://epaper.southcn.com/nfdaily/html/202610/06/node_A01.html",
+    ]
+
+
+def test_presentation_bank_accepts_epaper_sources():
+    plugin = make_plugin("epaper-bank")
+    sources = plugin._parse_media_sources("Guangming Daily|epaper|GMRB")
+    bank = plugin._presentation_bank(bound_settings(), sources, (800, 480), device_config=DeviceConfig())
+
+    assert bank.normalize_source(sources[0])["type"] == "epaper"
+
+
+def test_source_migration_replaces_luoyang_with_chinese_editions():
+    from newspaper_source_migration import migrate_media_sources
+
+    saved = "\n".join([
+        "China Daily|newspaper|chi_cd",
+        "People's Daily|newspaper|chi_pd",
+        "Luoyang Evening News|lywb|A01",
+        "The New York Times|newspaper|ny_nyt",
+    ])
+
+    migrated, changed = migrate_media_sources(saved)
+
+    lines = migrated.splitlines()
+    assert changed is True
+    assert not any("|lywb|" in line for line in lines)
+    assert lines[:3] == ["China Daily|newspaper|chi_cd", "People's Daily|newspaper|chi_pd",
+                         "Lianhe Zaobao|newspaper|sing_lz"]
+    assert "Guangming Daily|epaper|gmrb" in lines and lines[-1] == "The New York Times|newspaper|ny_nyt"
+    assert migrate_media_sources(migrated) == (migrated, False)
+
+
+def test_source_migration_keeps_existing_entries_without_duplicates():
+    from newspaper_source_migration import migrate_media_sources
+
+    saved = "Zaobao|newspaper|SING_LZ\nGMRB|epaper|GMRB\nCustom|url|https://example.com"
+
+    migrated, changed = migrate_media_sources(saved)
+
+    assert changed is True
+    assert migrated.count("sing_lz") + migrated.count("SING_LZ") == 1
+    assert migrated.lower().count("|epaper|gmrb") == 1
+    assert migrated.splitlines()[-1].endswith("|epaper|yzwb")
+
+
+def test_epaper_unpublished_redirect_is_treated_as_missing_edition(monkeypatch, caplog):
+    plugin = make_plugin("epaper-unpublished-redirect")
+    monkeypatch.setattr(plugin, "_now_utc", lambda: datetime(2026, 10, 6, 17, tzinfo=timezone.utc))
+
+    def download(url, **_kwargs):
+        if "/202610/07/" in url:
+            raise newspaper_module.ProviderOutsideAllowlist("redirected to the home page")
+        if url.endswith("node_A01.html"):
+            return _epaper_layout(src=f"../../../res/202610/06/{EPAPER_SCAN}.jpg.2"), url, {}
+        return _jpeg_payload(), url, {}
+
+    monkeypatch.setattr(plugin, "_download_provider_bytes", download)
+
+    with caplog.at_level("INFO"):
+        image = plugin._fetch_epaper_cover("NFRB", DeviceConfig())
+
+    assert image.info["inkypi_newspaper_edition_date"] == "2026-10-06"
+    assert "not published yet" in caplog.text
+    assert not any(record.levelname == "WARNING" for record in caplog.records)
+
+
+def test_epaper_scan_may_follow_its_declared_storage_host(monkeypatch):
+    plugin = make_plugin("epaper-scan-host")
+    monkeypatch.setattr(plugin, "_now_utc", lambda: datetime(2026, 10, 6, 17, tzinfo=timezone.utc))
+    allowed = []
+
+    def download(url, **kwargs):
+        allowed.append(kwargs["allowed_hosts"])
+        if url.endswith("node_A01.html"):
+            return _epaper_layout(day="07", src=f"../../../pic/202610/07/{EPAPER_SCAN}.jpg.1"), url, {}
+        return _jpeg_payload(), url, {}
+
+    monkeypatch.setattr(plugin, "_download_provider_bytes", download)
+
+    plugin._fetch_epaper_cover("YZWB", DeviceConfig())
+
+    assert allowed == [("epaper.yzwb.net",), ("epaper.yzwb.net", "doss.xhby.net")]

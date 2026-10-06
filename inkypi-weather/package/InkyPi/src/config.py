@@ -196,6 +196,12 @@ class Config:
         self._migrate_legacy_vehicle_status_refresh_interval()
         self._migrate_magazine_covers_historical_library()
         self._migrate_saved_apple_calendar_follow()
+        self._migrate_newspaper_chinese_editions()
+
+    def _migrate_newspaper_chinese_editions(self):
+        from newspaper_source_migration import apply_newspaper_chinese_editions_migration
+
+        apply_newspaper_chinese_editions_migration(self)
 
     def _migrate_saved_apple_calendar_follow(self):
         from apple_calendar_migration import apply_saved_apple_calendar_migration

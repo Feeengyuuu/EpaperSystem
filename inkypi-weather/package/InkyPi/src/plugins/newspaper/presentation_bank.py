@@ -576,7 +576,7 @@ class NewspaperPresentationBank:
         if not isinstance(source, dict):
             raise RuntimeError("Newspaper source metadata is invalid")
         source_type = str(source.get("type") or "")
-        if source_type not in {"url", "headlines", "lywb", "newspaper"}:
+        if source_type not in {"url", "headlines", "lywb", "newspaper", "epaper"}:
             raise RuntimeError("Newspaper source type is invalid")
         source_id = str(source.get("id") or "").strip()[:8192]
         value = str(source.get("value") or "").strip()[:8192]
