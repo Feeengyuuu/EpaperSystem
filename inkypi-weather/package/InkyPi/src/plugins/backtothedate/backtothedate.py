@@ -19,6 +19,7 @@ from plugins.backtothedate.presentation_bank import (
     MAX_HISTORY_URLS,
     READY_TARGET,
     REFILL_THRESHOLD,
+    POSTER_IMAGE_PATH_RE,
     PosterPresentationBank,
     instance_profile_fingerprint,
     read_bounded_json_object,
@@ -59,12 +60,6 @@ DEFAULT_MAX_PAGE = 141
 MAX_PAGE_CACHE_TTL = timedelta(days=7)
 POSTER_PATH_RE = re.compile(r"^/posters/(?!posters(?:$|\?))[-a-z0-9]+/?$", re.I)
 THEME_PATH_RE = re.compile(r"^/themes/[-a-z0-9]+/?$", re.I)
-# Poster scans live under images/ or, for newer uploads, one dated YYYY-MM
-# folder. Other files/ folders hold site artwork, not posters.
-IMAGE_PATH_RE = re.compile(
-    r"/sites/default/files/(?:images/[^\"'\s<>]+|\d{4}-\d{2}/[^/\"'\s<>]+)\.(?:jpg|jpeg|png)",
-    re.I,
-)
 # "-detail" files are partial crops shown beside the full poster scan.
 DETAIL_CROP_RE = re.compile(r"-detail\.(?:jpg|jpeg|png)$", re.I)
 REQUEST_HEADERS = {
@@ -686,7 +681,7 @@ class BacktotheDate(BasePlugin):
         ):
             raise RuntimeError("BacktotheDate provider URL authority is invalid")
         if kind == "image":
-            valid_path = IMAGE_PATH_RE.fullmatch(parsed.path) is not None
+            valid_path = POSTER_IMAGE_PATH_RE.fullmatch(parsed.path) is not None
         elif kind == "page":
             valid_path = POSTER_PATH_RE.match(parsed.path) is not None
         else:

@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 import json
 import random
+import re
 import stat
 
 from PIL import Image, ImageOps
@@ -20,6 +21,12 @@ from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
 
 SCHEMA_VERSION = 1
 READY_TARGET = 24
+# Poster scans live under images/ or, for newer uploads, one dated YYYY-MM
+# folder. Other files/ folders hold site artwork, not posters.
+POSTER_IMAGE_PATH_RE = re.compile(
+    r"/sites/default/files/(?:images/[^\"'\s<>]+|\d{4}-\d{2}/[^/\"'\s<>]+)\.(?:jpg|jpeg|png)",
+    re.I,
+)
 REFILL_THRESHOLD = 8
 DATA_REFRESH_HORIZON_SECONDS = 26 * 60 * 60
 MAX_PROFILES = 64
@@ -727,13 +734,11 @@ class PosterPresentationBank:
         ):
             raise RuntimeError("BacktotheDate poster URL is outside chineseposters.net")
         path = parsed.path
+        poster_image = POSTER_IMAGE_PATH_RE.fullmatch(path) is not None
         if media:
-            if not path.lower().startswith("/sites/default/files/images/"):
+            if not poster_image:
                 raise RuntimeError("BacktotheDate media URL is outside the poster image path")
-        elif not (
-            path.lower().startswith("/posters/")
-            or path.lower().startswith("/sites/default/files/images/")
-        ):
+        elif not (path.lower().startswith("/posters/") or poster_image):
             raise RuntimeError("BacktotheDate page URL is outside the poster path")
         return urlunparse(("https", "chineseposters.net", path, "", parsed.query, ""))
 

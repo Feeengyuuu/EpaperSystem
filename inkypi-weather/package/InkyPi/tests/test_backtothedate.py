@@ -2655,3 +2655,55 @@ def test_exhausted_theme_pool_reuses_fallback_without_scanning_every_source(monk
 
     assert poster["page_url"] == "https://chineseposters.net/posters/t0"
     assert len(fetched_themes) == backtothedate_module.FALLBACK_SCAN_LIMIT
+
+
+def _dated_poster(index):
+    return {
+        "page_url": f"https://chineseposters.net/posters/e13-{index}",
+        "image_url": f"https://chineseposters.net/sites/default/files/2020-06/e13-{index}.jpg",
+        "title": f"Dated upload poster {index}",
+    }
+
+
+def test_data_refill_ingests_dated_upload_posters_into_the_bank(monkeypatch):
+    # 2026-10-06 live regression: selection accepted dated uploads, but the
+    # bank still rejected them, so DATA "succeeded" without adding a poster.
+    plugin = make_plugin("dated-bank-ingest")
+    posters = [_dated_poster(index) for index in range(30)]
+    candidates = iter(posters)
+    loader = FakeImageLoader([Image.new("RGB", (200, 400), (index, 40, 80)) for index in range(30)])
+    _use_image_loader(plugin, loader)
+    monkeypatch.setattr(plugin, "_select_random_poster", lambda _settings: next(candidates))
+    settings = bind_presentation_instance_identity(
+        {"fitMode": "contain", "sourceMode": "all_archive", "maxPage": 0},
+        "dated-bank-instance",
+    )
+
+    plugin.generate_image(settings, DeviceConfig())
+
+    bank = plugin._presentation_bank(settings, DeviceConfig().get_resolution())
+    document, profile = bank.load_for_data()
+    urls = {record["image_url"] for record in bank.ready_records(document, profile, prune=False)}
+    assert len(urls) == backtothedate_module.READY_TARGET
+    assert all("/sites/default/files/2020-06/" in url for url in urls)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/sites/default/files/sitepics/eight-immortals.jpg",
+        "/sites/default/files/2020-06/nested/escape.jpg",
+        "/sites/default/files/styles/thumb/2020-06/thumb.jpg",
+    ],
+)
+def test_bank_still_rejects_media_outside_poster_folders(path):
+    plugin = make_plugin("bank-media-boundary")
+    settings = bind_presentation_instance_identity({"sourceMode": "all_archive"}, "bank-boundary")
+    bank = plugin._presentation_bank(settings, DeviceConfig().get_resolution())
+
+    with pytest.raises(RuntimeError):
+        bank.normalize_poster({
+            "page_url": "https://chineseposters.net/posters/x-1",
+            "image_url": f"https://chineseposters.net{path}",
+            "title": "Boundary",
+        })
