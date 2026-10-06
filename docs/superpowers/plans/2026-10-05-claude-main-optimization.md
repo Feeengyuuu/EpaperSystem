@@ -31,18 +31,24 @@
 - 已完成：Sports 与 Ticketmaster 的 quiet window 状态机合并为 `runtime/liveness_window.py`。
 - 已完成：`_select_independent_refresh_command` 拆出 burst liveness 决策、两处资源余量不足时的延后，以及原先重复 5 次的后台 DATA 命令构造；函数从 647 行降到 459 行，门禁收紧为 480 行。
 - 结果：`refresh_task.py` 从 10,173 行降到 9,939 行，文件上限收紧为 10,040 行。
-- 待做：Weather 的 quiet window 及其让步逻辑（约 300 行，与资源采样、内存维护、调度唤醒耦合较深）；`_execute_queue_entry`（613 行，目前没有上限）。
+- 已完成（2026-10-06）：`_execute_queue_entry` 拆为四道准入关卡（`_reject_before_execution` 及三个插件专用方法）和执行与结果分类（`_execute_and_finish`），协调函数从 614 行降到 74 行，新增 120 行门禁。
+- 已完成（2026-10-06）：Weather quiet window 移入 `runtime/weather_liveness.py` 的 `WeatherQuietWindow`，资源余量、时间解析、内存维护和调度唤醒通过回调注入。`refresh_task.py` 降到 9,830 行，文件上限收紧为 9,930 行。
 - 不做：`runtime/execution_policy.py` 的插件名单是刻意集中审核、失败即关闭的设计，保持原样。
 
 ### 迭代 3：运维与验收工具化
 
 - 已完成：两个验收工具都按当前 playlist 的实际实例数执行（`--expected-instances` 可选，用于锁定已审阅的数量），新增 `--display-only`。
-- 待做：只读审计自动做两次观测，区分取数、渲染和写屏三个阶段。
+- 已完成（2026-10-06）：`tools/runtime_audit.py` 自动做两次观测（默认间隔 330 秒），按取数（data 通道）、渲染（presentation 通道）、写屏（显示提交与日志写屏次数）三个阶段给出结论，并汇总失败命令和单条命令内存峰值。首次在设备上运行结论为 ok。
 - 待决定：公开 readyz 是否只返回错误码（不暴露配置）。
 
 ### 迭代 4：内存（以设备实测为准）
 
 - 先测出各插件的峰值 RSS 并排名，再处理前三名。候选方向：Weather 的 Chromium 渲染路径、Sports 各联赛的数据准备与绘制分离、JPEG `draft` 解码。
+- 2026-10-06 实测（设备日志 26.6 小时、14 个进程，`outputs/memory-ranking-20261006/`）：
+  - 第一名 telegram_digest：进程内首次运行时 RSS 最多上涨 116 MB（其中 Telethon 导入 33 MB），之后常驻约 45 MB 不释放。已改为在短命子进程中执行账号抓取，主进程不再导入 Telethon。
+  - daily_wiki_page 的峰值只出现在每个进程首次运行时（约 43 MB）；设备上用真实字体和测试数据渲染只需 12～15 MB，原因未能从现有日志定位。
+  - 其余排名不可靠：VmHWM 是进程级的只增不减值，加上内存维护按间隔执行，峰值会被算到碰巧之后上报的插件头上（例如 Steam 被算上了 daily_ai_news 留下的 RSS）。
+  - 为此新增 `runtime/command_memory.py`：每条命令开始时通过 `/proc/self/clear_refs` 重置 VmHWM，日志新增 `command_peak_mb`。下一步：部署后积累数小时 `command_peak_mb`，用 `tools/runtime_audit.py` 或按插件汇总，按准确排名处理第二、三名。
 
 ### 持续项
 
