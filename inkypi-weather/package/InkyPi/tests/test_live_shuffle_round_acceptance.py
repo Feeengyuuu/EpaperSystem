@@ -136,10 +136,24 @@ def test_prepare_rotation_config_builds_full_uuid_bag_and_future_gate(acceptance
     assert config == original, "preparation must not mutate the caller's document"
 
 
-def test_prepare_rotation_config_requires_exactly_27_unique_instances(acceptance):
+def test_prepare_rotation_config_follows_the_active_playlist_size(acceptance):
+    prepared = acceptance.prepare_rotation_config(
+        _config(30),
+        current_manifest=None,
+        now=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+        test_interval_seconds=1,
+        startup_window_seconds=30,
+        shuffle=_reverse,
+    )
+
+    assert len(prepared.plan) == 30
+    assert len(set(prepared.initial_queue)) == 30
+
+
+def test_prepare_rotation_config_requires_two_unique_instances(acceptance):
     with pytest.raises(acceptance.AuditAbort) as captured:
         acceptance.prepare_rotation_config(
-            _config(26),
+            _config(1),
             current_manifest=None,
             now=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
             test_interval_seconds=1,
@@ -184,8 +198,9 @@ def test_tracker_counts_only_one_member_removal_and_ignores_followup(acceptance)
     assert tracker.ignored_same_uuid_followups == 1
 
 
-def test_tracker_proves_full_first_round_and_next_round_boundary(acceptance):
-    configured = tuple(f"{index + 1:032x}" for index in range(27))
+@pytest.mark.parametrize("count", [27, 30])
+def test_tracker_proves_full_first_round_and_next_round_boundary(acceptance, count):
+    configured = tuple(f"{index + 1:032x}" for index in range(count))
     tracker = acceptance.ShuffleRoundTracker(
         configured_uuids=configured,
         initial_queue=configured,
@@ -215,13 +230,13 @@ def test_tracker_proves_full_first_round_and_next_round_boundary(acceptance):
     )
 
     assert all(event is not None for event in events)
-    assert len({event.instance_uuid for event in events}) == 27
+    assert len({event.instance_uuid for event in events}) == count
     assert events[-1].instance_uuid == configured[-1]
     assert events[-1].queue_remaining == 0
     assert boundary is not None
     assert boundary.round_number == 2
     assert boundary.round_index == 1
-    assert boundary.slot == 28
+    assert boundary.slot == count + 1
     assert boundary.instance_uuid != events[-1].instance_uuid
     assert tracker.complete is True
 

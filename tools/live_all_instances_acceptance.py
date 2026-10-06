@@ -35,7 +35,6 @@ from PIL import Image, UnidentifiedImageError
 import requests
 
 
-EXPECTED_INSTANCE_COUNT = 27
 EXPECTED_IMAGE_SIZE = (800, 480)
 ORDINARY_TIMEOUT_SECONDS = 240
 HEAVY_TIMEOUT_SECONDS = 600
@@ -394,6 +393,7 @@ def build_acceptance_plan(
     *,
     now: datetime | None = None,
     plugin_root=DEFAULT_PLUGIN_ROOT,
+    expected_instances: int | None = None,
 ) -> tuple[InstancePlan, ...]:
     """Resolve the same current priority winner as PlaylistManager, then gate it."""
 
@@ -421,10 +421,15 @@ def build_acceptance_plan(
     plugins = playlist.get("plugins")
     if not isinstance(plugins, list):
         raise AuditAbort("config_plugins_structure")
-    if len(plugins) != EXPECTED_INSTANCE_COUNT:
+    # The active playlist defines the run. An operator may still pin the
+    # count they reviewed; config drift during the run is caught separately
+    # by the plan fingerprint.
+    if not plugins or (
+        expected_instances is not None and len(plugins) != expected_instances
+    ):
         raise AuditAbort(
             "config_instance_count",
-            safe_details={"expected": EXPECTED_INSTANCE_COUNT, "actual": len(plugins)},
+            safe_details={"expected": expected_instances, "actual": len(plugins)},
         )
 
     plan = []
@@ -2524,6 +2529,8 @@ class AcceptanceRunner:
         plugin_root=DEFAULT_PLUGIN_ROOT,
         selected_plugin_ids=(),
         verify_post_display_presentation=True,
+        expected_instances=None,
+        display_only=False,
         utcnow=lambda: datetime.now(timezone.utc),
         monotonic=time.monotonic,
         sleep=time.sleep,
@@ -2538,9 +2545,13 @@ class AcceptanceRunner:
         self.data_root = Path(data_root)
         self.plugin_root = Path(plugin_root)
         self.selected_plugin_ids = frozenset(selected_plugin_ids or ())
+        self.expected_instances = expected_instances
+        self.display_only = bool(display_only)
+        # Display-only acceptance proves the physical write of cached content;
+        # it never triggers provider work, including a post-display refresh.
         self.verify_post_display_presentation = bool(
             verify_post_display_presentation
-        )
+        ) and not self.display_only
         self.utcnow = utcnow
         self.monotonic = monotonic
         self.sleep = sleep
@@ -2665,6 +2676,7 @@ class AcceptanceRunner:
             config,
             now=self.utcnow(),
             plugin_root=self.plugin_root,
+            expected_instances=self.expected_instances,
         )
 
     def _assert_config_stable(self, expected_fingerprint: str) -> None:
@@ -2887,12 +2899,7 @@ class AcceptanceRunner:
         plugin = _SAFE_FILE_TOKEN.sub("_", instance.plugin_id).strip("._") or "plugin"
         return f"{instance.index:02d}-{plugin}-{instance.uuid_hash}"
 
-    def _run_instance(self, instance: InstancePlan) -> dict:
-        timeout_seconds = timeout_for(instance)
-        started_at = self.utcnow()
-        if started_at.tzinfo is None:
-            started_at = started_at.replace(tzinfo=timezone.utc)
-
+    def _run_data_refresh(self, instance, started_at, timeout_seconds):
         data_job = submit_job(
             self.session,
             self.base_url,
@@ -2919,6 +2926,21 @@ class AcceptanceRunner:
             )
         except EvidenceFailure as error:
             raise _with_job_context(error, data_job=data_job) from error
+        return data_job, data_evidence
+
+    def _run_instance(self, instance: InstancePlan) -> dict:
+        timeout_seconds = timeout_for(instance)
+        started_at = self.utcnow()
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+
+        if self.display_only:
+            data_job = None
+            data_evidence = {"mode": "display_only"}
+        else:
+            data_job, data_evidence = self._run_data_refresh(
+                instance, started_at, timeout_seconds,
+            )
 
         display_job = None
         try:
@@ -2976,7 +2998,11 @@ class AcceptanceRunner:
                     data_evidence=data_evidence,
                     display_evidence=display_evidence,
                     presentation_evidence={
-                        "completion": "not_required_after_fresh_data",
+                        "completion": (
+                            "not_required_display_only"
+                            if self.display_only
+                            else "not_required_after_fresh_data"
+                        ),
                         "request_origin": "suppressed",
                     },
                     artifacts=artifacts,
@@ -3167,7 +3193,10 @@ def _default_output_dir() -> Path:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run exact 27-instance live internet/display acceptance on InkyPi",
+        description=(
+            "Run live internet/display acceptance for every instance in the "
+            "active InkyPi playlist"
+        ),
     )
     parser.add_argument("--base-url", default="http://127.0.0.1")
     parser.add_argument("--config", default="/var/lib/inkypi/config/device.json")
@@ -3183,6 +3212,20 @@ def _parser() -> argparse.ArgumentParser:
         help=(
             "Comma-separated plugin ids to rerun in configured playlist order; "
             "the complete playlist remains stability-checked"
+        ),
+    )
+    parser.add_argument(
+        "--expected-instances",
+        type=int,
+        default=None,
+        help="Abort unless the active playlist has exactly this many instances",
+    )
+    parser.add_argument(
+        "--display-only",
+        action="store_true",
+        help=(
+            "Skip provider DATA refreshes and prove only the physical display "
+            "of each selected instance's cached content"
         ),
     )
     parser.add_argument("--output-dir", default=None)
@@ -4357,6 +4400,8 @@ def main(argv=None) -> int:
             verify_post_display_presentation=(
                 args.verify_post_display_presentation
             ),
+            expected_instances=args.expected_instances,
+            display_only=args.display_only,
         )
         if args.freeze_cycle_interval_seconds is not None:
             orchestrator = CycleIntervalFreezeAcceptance(

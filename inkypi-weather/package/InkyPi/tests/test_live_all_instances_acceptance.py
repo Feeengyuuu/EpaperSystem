@@ -220,21 +220,24 @@ def _manifest(instance, pixel_hash, timestamp, *, commit_id="a" * 32, hardware=T
 
 
 @pytest.mark.parametrize(
-    ("config", "expected_code"),
+    ("config", "expected_instances", "expected_code"),
     [
-        (_config(26), "config_instance_count"),
-        (_config(27, duplicate_uuid=True), "config_duplicate_uuid"),
+        (_config(26), 27, "config_instance_count"),
+        (_config(0), None, "config_instance_count"),
+        (_config(27, duplicate_uuid=True), None, "config_duplicate_uuid"),
     ],
 )
-def test_plan_has_strict_27_instance_and_unique_uuid_gate(
+def test_plan_has_instance_count_and_unique_uuid_gate(
     acceptance,
     config,
+    expected_instances,
     expected_code,
 ):
     with pytest.raises(acceptance.AuditAbort) as captured:
         acceptance.build_acceptance_plan(
             config,
             now=datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+            expected_instances=expected_instances,
         )
 
     assert captured.value.code == expected_code
@@ -3937,3 +3940,93 @@ def test_stocktracker_history_migration_merges_latest_daily_records_without_chan
     printed = json.dumps(result, sort_keys=True)
     assert "100.0" not in printed
     assert "220.0" not in printed
+
+
+def test_plan_accepts_the_active_playlist_size_without_a_fixed_count(acceptance):
+    now = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
+
+    plan = acceptance.build_acceptance_plan(_config(30), now=now)
+    pinned = acceptance.build_acceptance_plan(_config(30), now=now, expected_instances=30)
+
+    assert len(plan) == len(pinned) == 30
+
+
+def test_cli_accepts_expected_instance_count_and_display_only(acceptance):
+    args = acceptance._parser().parse_args(["--expected-instances", "30", "--display-only"])
+
+    assert args.expected_instances == 30
+    assert args.display_only is True
+    assert acceptance._parser().parse_args([]).expected_instances is None
+
+
+def test_runner_applies_expected_instance_count_to_its_plan(acceptance, tmp_path):
+    config_path = tmp_path / "device.json"
+    config_path.write_text(json.dumps(_config(30)), encoding="utf-8")
+    runner = acceptance.AcceptanceRunner(
+        session=None,
+        base_url="http://127.0.0.1",
+        config_path=config_path,
+        runtime_state_path=tmp_path / "runtime.json",
+        display_manifest_path=tmp_path / "manifest.json",
+        output_dir=tmp_path / "evidence",
+        expected_instances=29,
+        utcnow=lambda: datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc),
+    )
+
+    with pytest.raises(acceptance.AuditAbort) as captured:
+        runner._config_plan()
+
+    assert captured.value.code == "config_instance_count"
+    assert captured.value.safe_details == {"expected": 29, "actual": 30}
+
+
+def test_display_only_run_skips_data_refresh_and_presentation(acceptance, tmp_path, monkeypatch):
+    instance = _instance(acceptance)
+    timestamp = datetime(2026, 7, 13, 19, 1, tzinfo=timezone.utc).isoformat()
+    runtime_path = tmp_path / "runtime.json"
+    runtime_path.write_text(json.dumps(_runtime(instance, timestamp)), encoding="utf-8")
+    submitted = []
+
+    def submit(_session, _base_url, endpoint, _instance, **kwargs):
+        submitted.append((endpoint, kwargs))
+        return {"id": "job-1", "status": "queued"}
+
+    monkeypatch.setattr(acceptance, "submit_job", submit)
+    monkeypatch.setattr(
+        acceptance,
+        "poll_job",
+        lambda *_args, **_kwargs: {"id": "job-1", "status": "succeeded"},
+    )
+    runner = acceptance.AcceptanceRunner(
+        session=None,
+        base_url="http://127.0.0.1",
+        config_path=tmp_path / "unused-config.json",
+        runtime_state_path=runtime_path,
+        display_manifest_path=tmp_path / "missing-manifest.json",
+        output_dir=tmp_path / "evidence",
+        display_only=True,
+        verify_post_display_presentation=True,
+    )
+    monkeypatch.setattr(
+        runner,
+        "_wait_for_data_evidence",
+        lambda *_args: pytest.fail("display-only acceptance must not wait for DATA"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_capture_display",
+        lambda *_args, **_kwargs: ({}, {"commit_id": "c" * 32}, {"pixel_hash": "p"}, {"image": "i.png"}),
+    )
+
+    result = runner._run_instance(instance)
+
+    assert submitted == [
+        ("/display_plugin_instance", {"extra_payload": {"request_presentation": False}}),
+    ]
+    assert result["status"] == "passed"
+    assert result["data_evidence"] == {"mode": "display_only"}
+    assert "data_job" not in result
+    assert result["presentation_evidence"] == {
+        "completion": "not_required_display_only",
+        "request_origin": "suppressed",
+    }

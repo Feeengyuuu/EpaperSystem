@@ -54,7 +54,6 @@ AuditAbort = _shared.AuditAbort
 AuditFailure = _shared.AuditFailure
 EvidenceFailure = _shared.EvidenceFailure
 InstancePlan = _shared.InstancePlan
-EXPECTED_INSTANCE_COUNT = _shared.EXPECTED_INSTANCE_COUNT
 build_acceptance_plan = _shared.build_acceptance_plan
 hash_identifier = _shared.hash_identifier
 inspect_png = _shared.inspect_png
@@ -169,6 +168,8 @@ def prepare_rotation_config(
 
     document = copy.deepcopy(config)
     plan = build_acceptance_plan(document, now=now)
+    if len(plan) < 2:
+        raise AuditAbort("config_instance_count")
     playlist_name = plan[0].playlist_name
     playlist = _active_playlist(document, playlist_name)
     configured_uuids = tuple(item.instance_uuid for item in plan)
@@ -341,15 +342,18 @@ class ShuffleRoundTracker:
     ):
         self.configured_uuids = tuple(configured_uuids)
         self._configured_set = set(self.configured_uuids)
+        # The active playlist defines the round. A boundary without a repeat
+        # needs at least two distinct members.
+        self.instance_count = len(self.configured_uuids)
         if (
-            len(self.configured_uuids) != EXPECTED_INSTANCE_COUNT
-            or len(self._configured_set) != EXPECTED_INSTANCE_COUNT
+            self.instance_count < 2
+            or len(self._configured_set) != self.instance_count
         ):
             raise AuditAbort("config_instance_count")
         self._validate_pool(initial_pool)
         initial_queue = tuple(initial_queue)
         if (
-            len(initial_queue) != EXPECTED_INSTANCE_COUNT
+            len(initial_queue) != self.instance_count
             or set(initial_queue) != self._configured_set
             or len(set(initial_queue)) != len(initial_queue)
         ):
@@ -414,9 +418,9 @@ class ShuffleRoundTracker:
         queue = tuple(queue) if isinstance(queue, (tuple, list)) else ()
         if queue == self._expected_queue:
             return None
-        if self.first_round_count < EXPECTED_INSTANCE_COUNT:
+        if self.first_round_count < self.instance_count:
             return self._single_removed(self._expected_queue, queue)
-        if self._expected_queue or len(queue) != EXPECTED_INSTANCE_COUNT - 1:
+        if self._expected_queue or len(queue) != self.instance_count - 1:
             return None
         if len(set(queue)) != len(queue) or not set(queue) < self._configured_set:
             return None
@@ -441,7 +445,7 @@ class ShuffleRoundTracker:
         if self.complete:
             raise EvidenceFailure("rotation_changed_after_acceptance")
 
-        if self.first_round_count < EXPECTED_INSTANCE_COUNT:
+        if self.first_round_count < self.instance_count:
             removed = self._single_removed(self._expected_queue, queue)
             if removed is None:
                 raise EvidenceFailure("rotation_queue_not_single_ack")
@@ -467,7 +471,7 @@ class ShuffleRoundTracker:
         if self._expected_queue:
             raise EvidenceFailure("rotation_first_round_not_empty")
         if (
-            len(queue) != EXPECTED_INSTANCE_COUNT - 1
+            len(queue) != self.instance_count - 1
             or len(set(queue)) != len(queue)
             or not set(queue) < self._configured_set
         ):
@@ -488,7 +492,7 @@ class ShuffleRoundTracker:
         self._boundary_ack = RotationAck(
             round_number=2,
             round_index=1,
-            slot=EXPECTED_INSTANCE_COUNT + 1,
+            slot=self.instance_count + 1,
             instance_uuid=removed,
             commit_id=commit_id,
             queue_remaining=len(queue),
@@ -531,7 +535,7 @@ class SystemdController:
 
 
 class ShuffleRoundAcceptance:
-    """Safely orchestrate the real scheduler and capture 27 physical commits."""
+    """Safely orchestrate the real scheduler and capture one physical commit per instance."""
 
     def __init__(
         self,
@@ -890,10 +894,10 @@ class ShuffleRoundAcceptance:
 
         first_round = [record for record in evidence_records if record["round"] == 1]
         if (
-            len(first_round) != EXPECTED_INSTANCE_COUNT
+            len(first_round) != tracker.instance_count
             or len({record["uuid_hash"] for record in first_round})
-            != EXPECTED_INSTANCE_COUNT
-            or len(evidence_records) != EXPECTED_INSTANCE_COUNT + 1
+            != tracker.instance_count
+            or len(evidence_records) != tracker.instance_count + 1
         ):
             raise EvidenceFailure("rotation_evidence_count")
         if any(record["hardware_written"] is not True for record in evidence_records):
@@ -914,8 +918,8 @@ class ShuffleRoundAcceptance:
         summary = {
             "schema_version": 1,
             "status": "failed",
-            "expected_instances": EXPECTED_INSTANCE_COUNT,
-            "expected_slots": EXPECTED_INSTANCE_COUNT + 1,
+            "expected_instances": None,
+            "expected_slots": None,
             "accepted_slots": 0,
             "service_ready_restored": False,
             "service_left_stopped": False,
@@ -949,6 +953,8 @@ class ShuffleRoundAcceptance:
             summary.update({
                 "playlist_hash": hash_identifier(prepared.playlist_name),
                 "configured_instances": len(prepared.plan),
+                "expected_instances": len(prepared.plan),
+                "expected_slots": len(prepared.plan) + 1,
                 "test_cycle_interval_seconds": self.test_interval_seconds,
                 "startup_window_seconds": self.startup_window_seconds,
             })
@@ -1032,7 +1038,7 @@ def _default_output_dir() -> Path:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Prove one real 27-instance automatic shuffle round plus the next "
+            "Prove one real automatic shuffle round of the active playlist plus the next "
             "round's first physical display"
         ),
     )
