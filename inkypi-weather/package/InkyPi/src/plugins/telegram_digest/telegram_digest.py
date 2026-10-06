@@ -18,7 +18,9 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
+from plugins.telegram_digest import account_worker
 from runtime.long_task_executor import current_task_context
+from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import bounded_int, coerce_bool, get_base_ui_font
 from utils.http_client import get_http_session, provider_io_lease
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
@@ -54,6 +56,9 @@ MAX_MEDIA_PIXELS = 1_200_000
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 
 class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
+    # Telethon stays out of the long-lived service; see account_worker.
+    ACCOUNT_FETCH_IN_CHILD_PROCESS = True
+
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = False
@@ -344,19 +349,26 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
                     context=current_task_context(),
                     timeout=REQUEST_TIMEOUT,
                 ):
-                    return asyncio.run(
-                        self._fetch_account_payload_async(
-                            settings,
-                            cache,
-                            now,
-                            max_messages,
-                            candidate,
-                        )
-                    )
+                    return self._run_account_fetch(settings, cache, now, max_messages, candidate)
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 errors.append(str(exc))
         detail = errors[-1] if errors else "no usable session file"
         raise RuntimeError(f"Telegram account session is not authorized yet: {detail}")
+
+    def _run_account_fetch(self, settings, cache, now, max_messages, config):
+        if not self.ACCOUNT_FETCH_IN_CHILD_PROCESS:
+            return asyncio.run(self._fetch_account_payload_async(settings, cache, now, max_messages, config))
+        request = {
+            "settings": settings,
+            "cache": cache,
+            "now": now.isoformat(),
+            "max_messages": max_messages,
+            "config": {key: config[key] for key in ("session_path", "api_id", "api_hash")},
+            "cache_dir": str(self._cache_dir()),
+        }
+        return account_worker.run_account_fetch_in_child(request, context=current_task_context())
 
     async def _fetch_account_payload_async(self, settings, cache, now, max_messages, config):
         client_class = self._telethon_client_class()

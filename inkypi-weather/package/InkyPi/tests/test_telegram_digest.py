@@ -32,6 +32,13 @@ from plugins.telegram_digest.telegram_digest import (  # noqa: E402
 TEST_TMP_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "telegram_digest_tests"
 
 
+@pytest.fixture(autouse=True)
+def _account_fetch_in_process(monkeypatch):
+    # These tests drive Telethon through in-process fakes; the child-process
+    # boundary is covered in test_telegram_account_worker.py.
+    monkeypatch.setattr(TelegramDigest, "ACCOUNT_FETCH_IN_CHILD_PROCESS", False)
+
+
 class DummyDeviceConfig:
     def __init__(self, resolution=(800, 480), token="", env=None):
         self.resolution = resolution

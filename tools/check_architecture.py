@@ -80,7 +80,7 @@ def check_source(source: str, module: str) -> list[str]:
 # cooperative cancellation and keep the single refresh worker busy past its
 # deadline. Existing debt is ratcheted: guard new handlers with
 # ``except TaskCancelled: raise`` (or re-raise) and lower this ceiling.
-PLUGIN_CANCELLATION_SWALLOW_CEILING = 716
+PLUGIN_CANCELLATION_SWALLOW_CEILING = 715
 _CANCELLATION_TYPES = {"TaskCancelled", "TaskDeadlineExceeded"}
 _CANCELLATION_CATCHERS = {"BaseException", "Exception", "RuntimeError"}
 
