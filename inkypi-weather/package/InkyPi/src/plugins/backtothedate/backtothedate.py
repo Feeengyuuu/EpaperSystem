@@ -1,3 +1,4 @@
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from html import unescape
 from html.parser import HTMLParser
@@ -27,7 +28,11 @@ from plugins.backtothedate.presentation_bank import (
     validate_state_shape,
 )
 from utils.atomic_file import atomic_write_json
-from utils.http_client import get_http_session
+from utils.http_client import get_http_client
+from utils.safe_image import ImageLimits, safe_open_image
+from runtime.long_task_executor import current_task_context, task_context_or_default
+from runtime.plugin_deferral import PluginRefreshDeferred
+from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 import logging
 import random
 import re
@@ -64,6 +69,20 @@ DEFAULT_FIT_MODE = "triptych"
 TRIPTYCH_POSTER_COUNT = 3
 STATELESS_PREVIEW_SETTING = "_inkypiStatelessPreview"
 PLUGIN_ID = "backtothedate"
+REFILL_BUDGET_SECONDS = 60.0
+POSTER_IMAGE_LIMITS = ImageLimits(max_bytes=12 * 1024 * 1024)
+_REFILL_CONTEXT = ContextVar("backtothedate_refill_context", default=None)
+
+
+def _provider_context():
+    return _REFILL_CONTEXT.get() or task_context_or_default(REFILL_BUDGET_SECONDS)
+
+
+def _checkpoint():
+    parent = current_task_context()
+    if parent is not None:
+        parent.raise_if_cancelled()
+    _provider_context().raise_if_cancelled()
 
 
 class _PosterLinkParser(HTMLParser):
@@ -138,6 +157,32 @@ def _clean_text(value):
 
 class BacktotheDate(BasePlugin):
     def generate_image(self, settings, device_config):
+        parent = task_context_or_default()
+        parent.raise_if_cancelled()
+        context = TaskContext(
+            parent.cancel_event,
+            min(parent.deadline_monotonic, parent.clock() + REFILL_BUDGET_SECONDS),
+            parent.clock,
+        )
+        token = _REFILL_CONTEXT.set(context)
+        try:
+            image = self._generate_image(settings, device_config)
+            parent.raise_if_cancelled()
+            return image
+        except TaskDeadlineExceeded as exc:
+            # The optional bank fill may expire before the command does. Keep
+            # completed media, but leave DATA freshness/cache unchanged so the
+            # scheduler retries instead of waiting another full daily cadence.
+            parent.raise_if_cancelled()
+            raise PluginRefreshDeferred(
+                reason="backtothedate_refill_budget",
+                phase="poster_bank",
+                minimum_seconds=300,
+            ) from exc
+        finally:
+            _REFILL_CONTEXT.reset(token)
+
+    def _generate_image(self, settings, device_config):
         logger.info("=== BacktotheDate Plugin: Starting image generation ===")
         settings = settings or {}
         dimensions = self._display_dimensions(device_config)
@@ -168,8 +213,12 @@ class BacktotheDate(BasePlugin):
 
         protected_missing = bank.missing_protected_records(profile, ready)
         for record in protected_missing:
+            _checkpoint()
             try:
                 image = self._load_poster_image(record["image_url"], dimensions)
+                _checkpoint()
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 raise RuntimeError(
                     "Could not rehydrate protected BacktotheDate media"
@@ -179,6 +228,7 @@ class BacktotheDate(BasePlugin):
                     "Could not rehydrate protected BacktotheDate current/pending media"
                 )
             bank.ingest(profile, record, image)
+            self._save_data_progress(bank, document)
         if protected_missing:
             bank.save(document)
             hard_ready = bank.ready_records(document, profile, prune=True)
@@ -206,9 +256,11 @@ class BacktotheDate(BasePlugin):
             (force_attempt_pending or (refill_bank and len(ready) < target))
             and tries < maximum_attempts
         ):
+            _checkpoint()
             tries += 1
             try:
                 poster = forced_poster or self._select_random_poster(settings)
+                _checkpoint()
                 if force_attempt_pending:
                     force_attempt_pending = False
                     provider_status = "success"
@@ -218,16 +270,20 @@ class BacktotheDate(BasePlugin):
                         break
                     continue
                 image = self._load_poster_image(poster["image_url"], dimensions)
+                _checkpoint()
                 if image is not None:
                     record = bank.ingest(profile, poster, image)
                     live_media_keys.add(record["media_key"])
                     ready.append(record)
+                    self._save_data_progress(bank, document)
                     if len(ready) >= target:
                         break
                     continue
                 errors.append(f"{poster.get('title') or poster['page_url']}: image load failed")
                 if force_refresh:
                     provider_status = "error"
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 if force_attempt_pending:
                     force_attempt_pending = False
@@ -236,14 +292,11 @@ class BacktotheDate(BasePlugin):
                 logger.warning("BacktotheDate poster attempt failed: %s", exc)
                 errors.append(str(exc))
 
-        latest = self._read_state()
-        for key in ("max_page", "max_page_checked_at"):
-            if key in latest:
-                document[key] = latest[key]
+        _checkpoint()
         if force_refresh:
             profile["last_provider_attempt_at"] = provider_attempted_at
             profile["last_provider_status"] = provider_status or "empty"
-        bank.save(document)
+        self._save_data_progress(bank, document)
         ready = bank.ready_records(document, profile, prune=True)
         if not ready:
             detail = "; ".join(errors[-3:])
@@ -276,6 +329,15 @@ class BacktotheDate(BasePlugin):
             provenance = SourceProvenance.STALE_CACHE
             image.info["inkypi_skip_cache"] = True
         return attach_source_provenance(image, provenance)
+
+    def _save_data_progress(self, bank, document):
+        # Discovery can update provider metadata while this document is loaded.
+        # Persist each decoded poster without advancing current/pending choices.
+        latest = self._read_state()
+        for key in ("max_page", "max_page_checked_at"):
+            if key in latest:
+                document[key] = latest[key]
+        bank.save(document)
 
     def presentation_mode(self, settings):
         return PresentationMode.PREPARED_BANK
@@ -490,6 +552,8 @@ class BacktotheDate(BasePlugin):
                     attempts,
                     remember=False,
                 )
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 logger.warning(
                     "BacktotheDate stateless triptych preview failed; falling back: %s",
@@ -498,6 +562,7 @@ class BacktotheDate(BasePlugin):
                 errors.append(str(exc))
 
         for _ in range(attempts):
+            _checkpoint()
             try:
                 poster = self._select_random_poster(preview_settings)
                 image = self._load_poster_image(poster["image_url"], dimensions)
@@ -509,6 +574,8 @@ class BacktotheDate(BasePlugin):
                         preview_settings,
                     )[0]
                 errors.append(f"{poster.get('title') or poster['page_url']}: image load failed")
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 logger.warning("BacktotheDate stateless preview attempt failed: %s", exc)
                 errors.append(str(exc))
@@ -529,6 +596,7 @@ class BacktotheDate(BasePlugin):
         max_attempts = max(attempts * 3, TRIPTYCH_POSTER_COUNT * 3)
 
         for _ in range(max_attempts):
+            _checkpoint()
             poster = self._select_random_poster(settings)
             page_key = self._normalize_history_url(poster.get("page_url"))
             image_key = self._normalize_history_url(poster.get("image_url"))
@@ -621,6 +689,7 @@ class BacktotheDate(BasePlugin):
         return self.get_dimensions(device_config)
 
     def _select_random_poster(self, settings):
+        _checkpoint()
         state = self._read_state()
         discarded_page_urls = self._discarded_url_keys(
             state,
@@ -636,6 +705,7 @@ class BacktotheDate(BasePlugin):
         theme_urls = self._source_theme_urls(settings)
         if theme_urls:
             poster = self._select_random_theme_poster(theme_urls, discarded_page_urls, discarded_image_urls)
+            _checkpoint()
             if poster:
                 return poster
             logger.warning("No target-era poster found in configured theme sources; falling back to full poster archive.")
@@ -647,6 +717,7 @@ class BacktotheDate(BasePlugin):
         seen_fallbacks = []
 
         for _ in range(8):
+            _checkpoint()
             page = random.randint(0, max_page)
             list_html = self._fetch_text(POSTERS_URL, params={"page": page})
             links = self._extract_poster_links(list_html)
@@ -660,6 +731,7 @@ class BacktotheDate(BasePlugin):
             ] or links
             random.shuffle(candidates)
             for link in candidates[:POSTER_DETAIL_CANDIDATE_LIMIT]:
+                _checkpoint()
                 detail_html = self._fetch_text(link["url"])
                 poster = self._extract_poster_data(detail_html, link["url"])
                 if link.get("title") and not poster.get("title"):
@@ -684,12 +756,14 @@ class BacktotheDate(BasePlugin):
         random.shuffle(sources)
 
         for source_url in sources:
+            _checkpoint()
             try:
                 first_html = self._fetch_text(source_url)
                 max_page = self._discover_max_page(first_html) or 0
                 pages = list(range(max_page + 1))
                 random.shuffle(pages)
                 for page in pages[:THEME_PAGE_SAMPLE_LIMIT]:
+                    _checkpoint()
                     html_text = first_html if page == 0 else self._fetch_text(source_url, params={"page": page})
                     links = self._extract_poster_links(html_text)
                     if not links:
@@ -701,6 +775,7 @@ class BacktotheDate(BasePlugin):
                     ] or links
                     random.shuffle(candidates)
                     for link in candidates[:POSTER_DETAIL_CANDIDATE_LIMIT]:
+                        _checkpoint()
                         detail_html = self._fetch_text(link["url"])
                         poster = self._extract_poster_data(detail_html, link["url"])
                         if link.get("title") and not poster.get("title"):
@@ -713,6 +788,8 @@ class BacktotheDate(BasePlugin):
                             seen_fallbacks.append(poster)
                             continue
                         return poster
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 logger.warning("BacktotheDate target theme source failed %s: %s", source_url, exc)
 
@@ -782,6 +859,8 @@ class BacktotheDate(BasePlugin):
         try:
             html_text = self._fetch_text(POSTERS_URL)
             discovered = self._discover_max_page(html_text)
+        except TaskCancelled:
+            raise
         except Exception as exc:
             logger.warning("Could not discover Chinese Posters page count: %s", exc)
             discovered = None
@@ -851,16 +930,22 @@ class BacktotheDate(BasePlugin):
         return self._fit_image(image, dimensions, settings)
 
     def _load_poster_image(self, image_url, dimensions):
-        image = self.image_loader.from_url(
-            image_url,
-            dimensions,
-            timeout_ms=40000,
-            resize=False,
+        _checkpoint()
+        result = get_http_client().request_bytes(
+            "GET",
+            self._canonical_provider_url(image_url, kind="image"),
+            context=_provider_context(),
+            timeout=20,
+            max_bytes=POSTER_IMAGE_LIMITS.max_bytes,
             headers=REQUEST_HEADERS,
         )
-        if not image:
-            return None
-
+        _checkpoint()
+        image = safe_open_image(result.data, limits=POSTER_IMAGE_LIMITS)
+        try:
+            _checkpoint()
+        except BaseException:
+            image.close()
+            raise
         return image
 
     def _normalize_image(self, image):
@@ -972,12 +1057,14 @@ class BacktotheDate(BasePlugin):
         return Image.new("RGB", (1, 1), (255, 255, 255))
 
     def _fetch_text(self, url, params=None):
-        session = get_http_session()
-        response = session.get(url, params=params, timeout=20, headers=REQUEST_HEADERS)
-        response.raise_for_status()
-        if not response.encoding:
-            response.encoding = "utf-8"
-        return response.text
+        _checkpoint()
+        result = get_http_client().request_text(
+            "GET", url, context=_provider_context(), params=params,
+            timeout=20, headers=REQUEST_HEADERS, max_bytes=2 * 1024 * 1024,
+            errors="replace",
+        )
+        _checkpoint()
+        return result.data
 
     def _state_path(self):
         return self.data_dir() / ".backtothedate_state.json"

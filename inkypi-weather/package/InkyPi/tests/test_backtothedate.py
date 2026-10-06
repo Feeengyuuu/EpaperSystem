@@ -6,6 +6,8 @@ import sys
 import time
 import uuid
 import zlib
+from io import BytesIO
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -31,8 +33,10 @@ from plugins.base_plugin.render_provenance import SourceProvenance, read_source_
 from runtime.runtime_state import PresentationCommitReceipt
 from runtime.bounded_parallel_stage import BoundedParallelStageRunner
 from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
-from runtime.refresh_contracts import TaskContext
+from runtime.plugin_deferral import PluginRefreshDeferred
+from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 from runtime.resource_governor import RuntimeResourceGovernor
+from utils.http_client import HttpClient
 
 
 TEST_STATE_ROOT = Path(__file__).resolve().parents[4] / ".tmp" / "backtothedate_tests"
@@ -65,6 +69,16 @@ class FakeImageLoader:
         return self.images[index].copy()
 
 
+def _use_image_loader(plugin, loader):
+    # Bank/layout tests fake the provider download seam. Dedicated transport
+    # tests below exercise the real bounded HTTP and safe decoding path.
+    plugin.image_loader = loader
+    plugin._load_poster_image = lambda url, dimensions: plugin.image_loader.from_url(
+        url, dimensions, timeout_ms=40000, resize=False,
+        headers=backtothedate_module.REQUEST_HEADERS,
+    )
+
+
 def make_plugin(name, base=None):
     plugin = BacktotheDate({"id": "backtothedate"})
     base = Path(base) if base is not None else TEST_STATE_ROOT / f"{name}-{uuid.uuid4().hex}"
@@ -85,6 +99,180 @@ def _poster(index):
     }
 
 
+@pytest.mark.parametrize("cancelled", [False, True, "at_refill_deadline"])
+def test_data_refill_propagates_shared_deadline_without_search_fallback(monkeypatch, tmp_path, cancelled):
+    plugin = make_plugin("expired-refill", base=tmp_path)
+    settings = bind_presentation_instance_identity(
+        {"sourceMode": "mao_era", "maxPage": 0, "attempts": 1},
+        "deadline-instance",
+    )
+    now = [0.0]
+    deadline = 300.0 if cancelled == "at_refill_deadline" else 10.0
+    context = TaskContext.never_cancelled(deadline_monotonic=deadline, clock=lambda: now[0])
+    fetches = []
+
+    def expire_during_fetch(url, params=None):
+        fetches.append(url)
+        if cancelled:
+            context.cancel_event.set()
+            if cancelled == "at_refill_deadline":
+                now[0] = backtothedate_module.REFILL_BUDGET_SECONDS
+        else:
+            now[0] = 10.0
+        context.raise_if_cancelled()
+
+    monkeypatch.setattr(plugin, "_fetch_text", expire_during_fetch)
+    with bind_long_task_runtime(context, InstanceIdentity("deadline-instance", 1, 1)):
+        expected = TaskCancelled if cancelled else TaskDeadlineExceeded
+        with pytest.raises(expected) as caught:
+            plugin.generate_image(settings, DeviceConfig())
+    assert type(caught.value) is expected
+    assert len(fetches) == 1
+
+
+def test_refill_budget_saves_completed_media_and_preserves_current_pending(monkeypatch, tmp_path):
+    plugin = make_plugin("partial-refill", base=tmp_path)
+    settings, _posters, _loader, _image = _hydrate_bank(plugin, monkeypatch)
+    plugin.prepare_presentation(
+        settings, DeviceConfig(), request=_request("d" * 32), resolved_theme_context=None,
+    )
+    state = _state_json(plugin)
+    profile = _active_profile(state)
+    current = json.loads(json.dumps(profile["current_selection"]))
+    pending = json.loads(json.dumps(profile["pending_selection"]))
+    protected = set(current["media_keys"]) | set(pending["media_keys"])
+    profile["records"] = [item for item in profile["records"] if item["media_key"] in protected]
+    plugin._write_state(state)
+    count_before = len(profile["records"])
+    now = [0.0]
+    context = TaskContext.never_cancelled(deadline_monotonic=300.0, clock=lambda: now[0])
+    calls = []
+
+    def slow_select(_settings):
+        calls.append(len(calls) + 100)
+        now[0] += backtothedate_module.REFILL_BUDGET_SECONDS / 2
+        return _poster(calls[-1])
+
+    monkeypatch.setattr(plugin, "_select_random_poster", slow_select)
+    with bind_long_task_runtime(context, InstanceIdentity(get_presentation_instance_uuid(settings), 1, 1)):
+        with pytest.raises(PluginRefreshDeferred) as caught:
+            plugin.generate_image(settings, DeviceConfig())
+
+    assert caught.value.reason == "backtothedate_refill_budget"
+    assert caught.value.minimum_seconds == 300
+    after = _active_profile(_state_json(plugin))
+    assert len(calls) == 2
+    assert len(after["records"]) == count_before + 1
+    assert after["current_selection"] == current
+    assert after["pending_selection"] == pending
+    assert after.get("last_provider_status") == profile.get("last_provider_status")
+    assert now[0] == backtothedate_module.REFILL_BUDGET_SECONDS
+
+
+def test_refill_budget_allows_observed_slow_theme_fallback_to_make_progress(monkeypatch, tmp_path):
+    plugin = make_plugin("slow-theme-progress", base=tmp_path)
+    settings = bind_presentation_instance_identity(
+        {"sourceMode": "mao_era", "maxPage": 0}, "slow-theme-instance",
+    )
+    now = [0.0]
+    context = TaskContext.never_cancelled(deadline_monotonic=300.0, clock=lambda: now[0])
+    calls = []
+
+    def fetch(url, params=None):
+        calls.append(url)
+        if "/themes/" in url:
+            now[0] += 45.0 / len(backtothedate_module.MAO_ERA_THEME_URLS)
+            return "<p>No candidate poster</p>"
+        now[0] += 1
+        if url.endswith("/posters/posters"):
+            return '<a href="/posters/bank-0">Poster</a>'
+        return '<h1>Poster</h1><img src="/sites/default/files/images/bank-0.jpg">'
+
+    monkeypatch.setattr(plugin, "_fetch_text", fetch)
+    _use_image_loader(plugin, FakeImageLoader(Image.new("RGB", (200, 400), "blue")))
+    with bind_long_task_runtime(context, InstanceIdentity("slow-theme-instance", 1, 1)):
+        with pytest.raises(PluginRefreshDeferred):
+            plugin.generate_image(settings, DeviceConfig())
+
+    profile = _active_profile(_state_json(plugin))
+    assert len(profile["records"]) == 1
+    assert profile["current_selection"] is None
+    assert profile["pending_selection"] is None
+    assert any(url.endswith("/posters/posters") for url in calls)
+    assert now[0] < backtothedate_module.REFILL_BUDGET_SECONDS + 5
+
+
+def test_poster_transport_shares_deadline_and_decodes_jpeg_orientation(monkeypatch, tmp_path):
+    plugin = make_plugin("bounded-transport", base=tmp_path)
+    stream = BytesIO()
+    exif = Image.Exif()
+    exif[274] = 6
+    Image.new("RGB", (40, 20), "red").save(stream, "JPEG", exif=exif)
+    requests = []
+    context = TaskContext.never_cancelled(deadline_monotonic=100.0, clock=lambda: 0.0)
+
+    class Client:
+        def request_text(self, method, url, **kwargs):
+            requests.append((method, url, kwargs))
+            return SimpleNamespace(data="example")
+
+        def request_bytes(self, method, url, **kwargs):
+            requests.append((method, url, kwargs))
+            return SimpleNamespace(data=stream.getvalue())
+
+    monkeypatch.setattr(backtothedate_module, "get_http_client", Client)
+    with bind_long_task_runtime(context, InstanceIdentity("transport-instance", 1, 1)):
+        assert plugin._fetch_text(backtothedate_module.POSTERS_URL) == "example"
+        image = plugin._load_poster_image(_poster(0)["image_url"], (800, 480))
+    assert image.size == (20, 40)
+    assert image.mode == "RGB"
+    assert all(item[2]["context"] is context for item in requests)
+    assert requests[0][2]["max_bytes"] == 2 * 1024 * 1024
+    assert requests[1][2]["max_bytes"] == 12 * 1024 * 1024
+
+
+@pytest.mark.parametrize("media", [False, True])
+def test_refill_deadline_closes_real_http_stream_without_retry(monkeypatch, tmp_path, media):
+    plugin = make_plugin("stream-deadline", base=tmp_path)
+    now = [0.0]
+    context = TaskContext.never_cancelled(deadline_monotonic=300.0, clock=lambda: now[0])
+    requests = []
+
+    class Response:
+        status_code = 200
+        headers = {}
+        closed = False
+
+        def iter_content(self, chunk_size):
+            now[0] = backtothedate_module.REFILL_BUDGET_SECONDS
+            yield b"slow provider response"
+
+        def close(self):
+            self.closed = True
+
+    response = Response()
+
+    class Session:
+        def request(self, method, url, **kwargs):
+            requests.append((method, url, kwargs))
+            return response
+
+    client = HttpClient(session=Session())
+    monkeypatch.setattr(backtothedate_module, "get_http_client", lambda: client)
+    settings = {"sourceMode": "mao_era", "maxPage": 0}
+    if media:
+        settings["posterImageUrl"] = _poster(0)["image_url"]
+    settings = bind_presentation_instance_identity(settings, "stream-instance")
+    with bind_long_task_runtime(context, InstanceIdentity("stream-instance", 1, 1)):
+        with pytest.raises(PluginRefreshDeferred):
+            plugin.generate_image(settings, DeviceConfig())
+
+    assert response.closed
+    assert len(requests) == 1
+    assert requests[0][2]["stream"] is True
+    assert now[0] == backtothedate_module.REFILL_BUDGET_SECONDS
+
+
 def _hydrate_bank(
     plugin,
     monkeypatch,
@@ -100,7 +288,7 @@ def _hydrate_bank(
     loader = FakeImageLoader(
         [Image.new("RGB", size, (index, 40, 80)) for index, size in enumerate(sizes)]
     )
-    plugin.image_loader = loader
+    _use_image_loader(plugin, loader)
     monkeypatch.setattr(plugin, "_select_random_poster", lambda _settings: next(candidates))
     settings = bind_presentation_instance_identity(
         {
@@ -244,7 +432,7 @@ def test_force_refresh_attempts_provider_for_full_bank_without_consuming_selecti
         "_select_random_poster",
         lambda _settings: calls.append("provider") or forced_poster,
     )
-    plugin.image_loader = FakeImageLoader(Image.new("RGB", (200, 400), "purple"))
+    _use_image_loader(plugin, FakeImageLoader(Image.new("RGB", (200, 400), "purple")))
 
     image = plugin.generate_image({**settings, force_key: "true"}, DeviceConfig())
 
@@ -340,7 +528,7 @@ def test_prepare_empty_warm_bank_returns_no_change_without_provider(monkeypatch)
         lambda *_args, **_kwargs: pytest.fail("cold presentation must not fetch HTML"),
     )
     monkeypatch.setattr(
-        "plugins.backtothedate.backtothedate.get_http_session",
+        "plugins.backtothedate.backtothedate.get_http_client",
         lambda: pytest.fail("cold presentation must not open an HTTP session"),
     )
     monkeypatch.setattr(
@@ -378,7 +566,7 @@ def test_prepare_all_expired_warm_bank_returns_no_change_without_provider(monkey
         lambda *_args, **_kwargs: pytest.fail("cold presentation must not fetch HTML"),
     )
     monkeypatch.setattr(
-        "plugins.backtothedate.backtothedate.get_http_session",
+        "plugins.backtothedate.backtothedate.get_http_client",
         lambda: pytest.fail("cold presentation must not open an HTTP session"),
     )
     monkeypatch.setattr(
@@ -408,14 +596,14 @@ def test_prepare_corrupt_state_still_fails_before_provider(monkeypatch):
     )
     plugin._state_path().write_text('{"profiles": [', encoding="utf-8")
     before = plugin._state_path().read_bytes()
-    plugin.image_loader = FakeImageLoader(Image.new("RGB", (200, 400), "red"))
+    _use_image_loader(plugin, FakeImageLoader(Image.new("RGB", (200, 400), "red")))
     monkeypatch.setattr(
         plugin,
         "_fetch_text",
         lambda *_args, **_kwargs: pytest.fail("corrupt state must not fetch HTML"),
     )
     monkeypatch.setattr(
-        "plugins.backtothedate.backtothedate.get_http_session",
+        "plugins.backtothedate.backtothedate.get_http_client",
         lambda: pytest.fail("corrupt state must not open an HTTP session"),
     )
     monkeypatch.setattr(
@@ -570,7 +758,7 @@ def test_restart_reuses_pending_selection_without_choosing_another(monkeypatch):
     monkeypatch.setattr(bank_type, "ready_records", lambda *_a, **_k: pytest.fail("pending retry must not decode the whole bank"))
 
     restarted = make_plugin("restart-pending", base=plugin.get_plugin_dir())
-    restarted.image_loader = FakeImageLoader(Image.new("RGB", (1, 1), "red"))
+    _use_image_loader(restarted, FakeImageLoader(Image.new("RGB", (1, 1), "red")))
     monkeypatch.setattr(
         restarted,
         "_fetch_text",
@@ -651,7 +839,7 @@ def test_missing_pending_media_fails_closed_without_provider_calls(monkeypatch):
         lambda *_args, **_kwargs: pytest.fail("cold presentation must not fetch HTML"),
     )
     monkeypatch.setattr(
-        "plugins.backtothedate.backtothedate.get_http_session",
+        "plugins.backtothedate.backtothedate.get_http_client",
         lambda: pytest.fail("cold presentation must not open an HTTP session"),
     )
     monkeypatch.setattr(
@@ -680,7 +868,7 @@ def test_data_rehydrates_exact_missing_current_without_rotating_selection(monkey
     for poster in current_posters:
         bank.media.path(poster["media_key"], suffix=".png").unlink()
     loader = FakeImageLoader(Image.new("RGB", (200, 400), "blue"))
-    plugin.image_loader = loader
+    _use_image_loader(plugin, loader)
     monkeypatch.setattr(
         plugin,
         "_select_random_poster",
@@ -786,7 +974,7 @@ def test_data_renews_media_that_cannot_survive_next_cadence_without_rotating(
     ]
     candidates = iter(due_unprotected)
     loader = FakeImageLoader(Image.new("RGB", (200, 400), "blue"))
-    plugin.image_loader = loader
+    _use_image_loader(plugin, loader)
     monkeypatch.setattr(
         plugin,
         "_select_random_poster",
@@ -1121,7 +1309,7 @@ def test_mixed_triptych_selection_preserves_legacy_scan_order(
 def test_legacy_forced_image_only_setting_remains_supported(monkeypatch, setting_name):
     plugin = make_plugin(f"legacy-forced-{setting_name}")
     source_url = "https://chineseposters.net/sites/default/files/images/legacy-preview.jpg"
-    plugin.image_loader = FakeImageLoader(Image.new("RGB", (500, 260), (20, 120, 220)))
+    _use_image_loader(plugin, FakeImageLoader(Image.new("RGB", (500, 260), (20, 120, 220))))
 
     image = plugin.generate_image(
         _preview_settings({"fitMode": "landscape", setting_name: source_url}),
@@ -1139,7 +1327,7 @@ def test_stateless_preview_normalizes_invalid_max_page_without_state_write(
     invalid_max_page,
 ):
     plugin = make_plugin("stateless-invalid-max-page")
-    plugin.image_loader = FakeImageLoader(Image.new("RGB", (200, 400), "red"))
+    _use_image_loader(plugin, FakeImageLoader(Image.new("RGB", (200, 400), "red")))
 
     def fake_fetch(url, params=None):
         if url.endswith("/posters/posters"):
@@ -1327,7 +1515,7 @@ def test_prepare_reads_discard_history_once(monkeypatch):
 def test_forced_provider_http_urls_are_canonicalized_before_image_load():
     plugin = make_plugin("forced-provider-https")
     loader = FakeImageLoader(Image.new("RGB", (200, 400), "red"))
-    plugin.image_loader = loader
+    _use_image_loader(plugin, loader)
 
     plugin.generate_image(
         _preview_settings(
@@ -1588,7 +1776,7 @@ def test_bad_state_json_fails_closed_without_provider_or_history_overwrite(monke
     plugin = make_plugin("bad-state-json")
     plugin._state_path().write_text('{"discarded_page_urls": [', encoding="utf-8")
     before = plugin._state_path().read_bytes()
-    plugin.image_loader = FakeImageLoader(Image.new("RGB", (200, 400), "red"))
+    _use_image_loader(plugin, FakeImageLoader(Image.new("RGB", (200, 400), "red")))
     monkeypatch.setattr(
         plugin.image_loader,
         "from_url",
@@ -1855,7 +2043,7 @@ def test_select_random_poster_prefers_target_theme_sources(monkeypatch):
 def test_generate_image_rotates_portrait_poster_by_default(monkeypatch):
     plugin = make_plugin("generate")
     loader = FakeImageLoader(Image.new("RGB", (200, 400), (220, 0, 0)))
-    plugin.image_loader = loader
+    _use_image_loader(plugin, loader)
     rendered_sizes = []
 
     monkeypatch.setattr(
@@ -1892,7 +2080,7 @@ def test_generate_image_keeps_landscape_poster_orientation(monkeypatch):
     plugin = make_plugin("generate-landscape")
     source = Image.new("RGB", (500, 260), (20, 120, 220))
     loader = FakeImageLoader(source)
-    plugin.image_loader = loader
+    _use_image_loader(plugin, loader)
     rendered_sizes = []
 
     monkeypatch.setattr(
@@ -1931,7 +2119,7 @@ def test_generate_image_triptych_loads_three_posters_without_marking_displayed(m
         Image.new("RGB", (210, 400), (0, 160, 0)),
         Image.new("RGB", (220, 400), (0, 0, 220)),
     ])
-    plugin.image_loader = loader
+    _use_image_loader(plugin, loader)
     posters = iter([
         {
             "page_url": "https://chineseposters.net/posters/one",
@@ -1966,7 +2154,7 @@ def test_generate_image_triptych_displays_landscape_poster_as_single_full_image(
     plugin = make_plugin("triptych-landscape-single")
     source = Image.new("RGB", (500, 260), (20, 120, 220))
     loader = FakeImageLoader(source)
-    plugin.image_loader = loader
+    _use_image_loader(plugin, loader)
     rendered_sizes = []
 
     poster = {
@@ -1997,7 +2185,7 @@ def test_generate_image_forced_landscape_preview_uses_single_full_image(monkeypa
     plugin = make_plugin("forced-landscape-preview")
     source = Image.new("RGB", (500, 260), (20, 120, 220))
     loader = FakeImageLoader(source)
-    plugin.image_loader = loader
+    _use_image_loader(plugin, loader)
     rendered_sizes = []
 
     def fake_fit_landscape(image, dimensions, settings):
@@ -2029,7 +2217,7 @@ def test_generate_image_triptych_does_not_use_landscape_as_fallback_column(monke
         Image.new("RGB", (210, 400), (0, 160, 0)),
         Image.new("RGB", (500, 260), (20, 120, 220)),
     ])
-    plugin.image_loader = loader
+    _use_image_loader(plugin, loader)
     rendered_sizes = []
     landscape = {
         "page_url": "https://chineseposters.net/posters/landscape",
@@ -2108,7 +2296,7 @@ def test_generate_image_can_preserve_plain_full_poster(monkeypatch):
     plugin = make_plugin("generate-contain")
     source = Image.new("RGB", (200, 400), (220, 0, 0))
     loader = FakeImageLoader(source)
-    plugin.image_loader = loader
+    _use_image_loader(plugin, loader)
 
     monkeypatch.setattr(
         plugin,
