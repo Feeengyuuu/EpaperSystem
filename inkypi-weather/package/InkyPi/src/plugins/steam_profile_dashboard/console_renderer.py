@@ -20,6 +20,7 @@ WHITE = (242, 248, 253)
 CYAN = (129, 213, 246)
 MUTED = (138, 169, 191)
 GREEN = (129, 237, 105)
+FRIEND_GAME_ICON = 14
 
 
 def _appid(value):
@@ -348,7 +349,15 @@ class _Console:
             message = "好友列表暂不可用" if data.get("friend_count") is None else "目前没有在线好友"
             self.text((607, 110, 780, 148), message, 15, MUTED, lines=2)
             return
-        for index, friend in enumerate(friends[:4]):
+        visible = friends[:4]
+        # Friend avatars can be slow; resolve every visible friend's game icon
+        # first so they cannot spend the shared game-media network budget.
+        game_icons = {}
+        for friend in visible:
+            appid = _appid(friend.get("gameid"))
+            if appid and appid not in game_icons:
+                game_icons[appid] = self.plugin._game_square_icon(data, appid, FRIEND_GAME_ICON)
+        for index, friend in enumerate(visible):
             y = 48 + index * 39
             url = friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar")
             avatar = self.plugin._avatar_image(url, 32, decorative_outline=False)
@@ -358,14 +367,23 @@ class _Console:
                       14, bold=True, min_size=11)
             state, color = self.plugin._persona_text(friend)
             has_game = bool(friend.get("gameid") or friend.get("gameextrainfo"))
-            if has_game:
-                state, color = "游戏中", GREEN
-            self.draw.ellipse((646, y + 23, 652, y + 29), fill=color)
-            if has_game:
-                name = self.plugin._display_game_name(data, friend.get("gameid"), friend.get("gameextrainfo"))
-                self.text((658, y + 21, 783, y + 35), name or state, 11, CYAN)
-            else:
+            if not has_game:
+                self.draw.ellipse((646, y + 23, 652, y + 29), fill=color)
                 self.text((658, y + 21, 783, y + 35), state, 12, color)
+                continue
+            name = self.plugin._display_game_name(data, friend.get("gameid"), friend.get("gameextrainfo"))
+            icon = game_icons.get(_appid(friend.get("gameid")))
+            if icon is None:
+                # Without an official icon keep the in-game status dot; never
+                # draw a placeholder that could read as a different game.
+                self.draw.ellipse((646, y + 23, 652, y + 29), fill=GREEN)
+                text_x = 658
+            else:
+                # The green frame keeps the in-game status cue the dot carried.
+                self.draw.rounded_rectangle((645, y + 20, 660, y + 35), radius=2, outline=GREEN)
+                self.image.paste(icon, (646, y + 21), icon if icon.mode == "RGBA" else None)
+                text_x = 665
+            self.text((text_x, y + 21, 783, y + 35), name or "游戏中", 11, CYAN)
 
     def recent(self, items):
         recent_ids = {_appid(game.get("appid")) for game in self.data.get("recent_games") or []}

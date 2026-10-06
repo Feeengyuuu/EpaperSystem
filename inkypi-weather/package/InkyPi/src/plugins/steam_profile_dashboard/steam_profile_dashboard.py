@@ -62,6 +62,9 @@ STEAM_PRIMARY_GAME_LANGUAGE = "schinese"
 STEAM_SECONDARY_GAME_LANGUAGE = "english"
 STEAM_RECENT_GAME_LIMIT = 6
 STEAM_LEFT_GAME_ITEM_TARGET = 4
+# Distinct games one console render may load: hero 1, recent rows 4, top three 3
+# and the games of four visible online friends.
+STEAM_CONSOLE_GAME_ASSET_LIMIT = 12
 STEAM_BADGE_ICON_LIMIT = 48
 OPTIONAL_MEDIA_NEGATIVE_TTL_SECONDS = 6 * 60 * 60
 OPTIONAL_MEDIA_NEGATIVE_CACHE_LIMIT = 256
@@ -832,6 +835,7 @@ class SteamProfileDashboard(BasePlugin):
         if getattr(self, "_game_assets", None) is None:
             self._game_assets = SteamGameAssets(
                 Path(self._cache_dir()) / "official_games",
+                max_games=STEAM_CONSOLE_GAME_ASSET_LIMIT,
                 read_only=bool(getattr(self, "_media_read_only", False)),
             )
         return self._game_assets

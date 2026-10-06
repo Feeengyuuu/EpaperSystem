@@ -9,6 +9,7 @@ import pytest
 from plugins.steam_profile_dashboard.console_renderer import (
     _Console,
     CANVAS,
+    GREEN,
     PANEL,
     render_console,
 )
@@ -264,7 +265,7 @@ def test_friend_remark_and_game_activity_use_provider_display_names(plugin, data
     friend_names = [text for box, text in displayed if box[0] == 646]
     assert "城" in friend_names
     assert "Friend 0" not in friend_names
-    assert any(text == "Project Zomboid" and box[0] == 658 for box, text in displayed)
+    assert any(text == "Project Zomboid" and box[0] == 665 for box, text in displayed)
 
 
 def test_selected_navy_design_is_stable_across_themes_and_scales_to_device(plugin, data):
@@ -274,3 +275,53 @@ def test_selected_navy_design_is_stable_across_themes_and_scales_to_device(plugi
     assert day.tobytes() == night.tobytes()
     assert render_console(plugin, data, (1600, 960)).size == (1600, 960)
     assert data == original
+
+
+def _friend_row_y(index):
+    return 48 + index * 39
+
+
+def test_friend_game_activity_shows_the_game_icon_before_its_name(plugin, data, displayed):
+    data["friends"][0].update(gameid="1172470", gameextrainfo="Company of Heroes 3")
+    image = render_console(plugin, data, (800, 480))
+    y = _friend_row_y(0)
+
+    assert ("icon", "1172470", 14) in plugin.asset_calls
+    # The fixture icon is a solid colour; the status dot is replaced by the icon.
+    assert image.getpixel((652, y + 27)) == (200, 80, 40)
+    assert image.getpixel((645, y + 27)) == GREEN
+    assert any(text == "Company of Heroes 3" and box[0] == 665 for box, text in displayed)
+
+
+def test_friend_game_without_icon_keeps_the_status_dot(plugin, data, displayed, monkeypatch):
+    original = plugin._game_square_icon
+    monkeypatch.setattr(
+        plugin, "_game_square_icon",
+        lambda game_data, appid, size: None if str(appid) == "1172470" else original(game_data, appid, size),
+    )
+    data["friends"][0].update(gameid="1172470", gameextrainfo="Company of Heroes 3")
+    image = render_console(plugin, data, (800, 480))
+    y = _friend_row_y(0)
+
+    assert image.getpixel((649, y + 26)) == GREEN
+    assert any(text == "Company of Heroes 3" and box[0] == 658 for box, text in displayed)
+
+
+def test_friend_game_icons_are_fetched_before_any_friend_avatar(plugin, data):
+    for index, appid in enumerate(("1172470", "2868840", "570")):
+        data["friends"][index].update(gameid=appid, gameextrainfo=f"Game {appid}")
+    render_console(plugin, data, (800, 480))
+
+    friend_icons = [index for index, (kind, appid, size) in enumerate(plugin.asset_calls)
+                    if kind == "icon" and size == 14]
+    avatars = [index for index, (kind, _, _) in enumerate(plugin.asset_calls) if kind == "avatar"]
+    assert len(friend_icons) == 3
+    # Avatars after the profile photo are friend avatars; game media keeps priority.
+    assert max(friend_icons) < avatars[1]
+
+
+def test_official_asset_budget_covers_main_panels_and_four_friend_games(tmp_path):
+    plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
+    plugin._cache_dir = lambda: tmp_path
+    # Hero 1 + recent rows 4 + top three 3 + visible online friends 4.
+    assert plugin._official_game_assets().max_games >= 12
