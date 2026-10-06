@@ -76,7 +76,11 @@ DEFAULT_QUERY_TERMS = (
     "hokusai",
 )
 
-MET_SEARCH_URL = "https://collectionapi.metmuseum.org/public/collection/v1/search"
+# /v1/search was retired on 2026-10-01. /v1.1/search is paginated and only
+# serves the first 10,000 results (offset + limit must stay within the window).
+MET_SEARCH_URL = "https://collectionapi.metmuseum.org/public/collection/v1.1/search"
+MET_SEARCH_WINDOW = 10_000
+MET_SEARCH_PAGE_SIZE = 100
 MET_OBJECT_URL = "https://collectionapi.metmuseum.org/public/collection/v1/objects/{object_id}"
 ARTIC_SEARCH_URL = "https://api.artic.edu/api/v1/artworks/search"
 ARTIC_IIIF_BASE_URL = "https://www.artic.edu/iiif/2"
@@ -811,10 +815,31 @@ class DailyArt(BasePlugin):
 
         return self._dedupe_candidates(candidates)
 
+    def _met_search_page(self, term, offset):
+        payload = self._get_json(
+            MET_SEARCH_URL,
+            {"hasImages": "true", "q": term, "offset": offset, "limit": MET_SEARCH_PAGE_SIZE},
+            headers=REQUEST_HEADERS,
+        )
+        if not isinstance(payload, dict):
+            return 0, []
+        object_ids = payload.get("objectIDs")
+        total = payload.get("total")
+        return (
+            total if isinstance(total, int) and total > 0 else 0,
+            object_ids if isinstance(object_ids, list) else [],
+        )
+
     def _fetch_met_candidates(self, term, limit, rng):
-        payload = self._get_json(MET_SEARCH_URL, {"hasImages": "true", "q": term}, headers=REQUEST_HEADERS)
-        object_ids = payload.get("objectIDs") if isinstance(payload, dict) else []
-        if not isinstance(object_ids, list):
+        total, object_ids = self._met_search_page(term, 0)
+        # Sample a random page of the reachable window, as the retired search
+        # sampled from every match rather than only the top-ranked results.
+        reachable = min(total, MET_SEARCH_WINDOW)
+        if reachable > MET_SEARCH_PAGE_SIZE:
+            offset = rng.randrange(1, reachable - MET_SEARCH_PAGE_SIZE + 1)
+            _total, page_ids = self._met_search_page(term, offset)
+            object_ids = page_ids or object_ids
+        if not object_ids:
             return []
         rng.shuffle(object_ids)
 

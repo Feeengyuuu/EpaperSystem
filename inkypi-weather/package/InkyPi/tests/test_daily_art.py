@@ -2233,3 +2233,69 @@ def test_daily_art_prepared_gallery_parallel_stage_is_pixel_equivalent(
     assert runner.last_run_snapshot["parallel"] is True
     assert runner.last_run_snapshot["worker_count"] == 2
     assert not list(tmp_path.glob(".parallel-image-stage-*"))
+
+
+def _met_detail(object_id, *, public=True, image=True):
+    return {
+        "objectID": object_id,
+        "title": f"Met work {object_id}",
+        "artistDisplayName": "Example Artist",
+        "objectDate": "1880",
+        "medium": "Oil on canvas",
+        "isPublicDomain": public,
+        "primaryImageSmall": f"https://images.metmuseum.org/{object_id}.jpg" if image else "",
+        "objectURL": f"https://www.metmuseum.org/art/collection/search/{object_id}",
+        "department": "European Paintings",
+    }
+
+
+def test_met_candidates_use_paginated_search_within_result_window(tmp_path, monkeypatch):
+    # The Met retired /v1/search on 2026-10-01; /v1.1/search pages through an
+    # Elastic window where offset + limit must stay within 10,000 results.
+    plugin = make_plugin(tmp_path)
+    searches = []
+
+    def fake_get_json(url, params, headers=None):
+        if url.endswith("/v1.1/search"):
+            searches.append(dict(params))
+            offset = int(params["offset"])
+            assert offset + int(params["limit"]) <= daily_art_module.MET_SEARCH_WINDOW
+            ids = list(range(offset + 1, offset + int(params["limit"]) + 1))
+            return {"total": 61211, "objectIDs": ids}
+        assert "/v1/objects/" in url
+        return _met_detail(int(url.rsplit("/", 1)[1]))
+
+    monkeypatch.setattr(plugin, "_get_json", fake_get_json)
+
+    candidates = plugin._fetch_met_candidates("painting", 3, __import__("random").Random(4))
+
+    assert len(candidates) == 3
+    assert searches[0]["offset"] == 0 and searches[0]["q"] == "painting"
+    assert searches[0]["hasImages"] == "true"
+    assert len(searches) == 2 and searches[1]["offset"] > 0
+    assert all(candidate.source == "met" for candidate in candidates)
+
+
+def test_met_candidates_stay_on_first_page_for_small_result_sets(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    searches = []
+
+    def fake_get_json(url, params, headers=None):
+        if url.endswith("/v1.1/search"):
+            searches.append(dict(params))
+            return {"total": 2, "objectIDs": [7, 8]}
+        return _met_detail(int(url.rsplit("/", 1)[1]), public=url.endswith("/7"))
+
+    monkeypatch.setattr(plugin, "_get_json", fake_get_json)
+
+    candidates = plugin._fetch_met_candidates("rare", 5, __import__("random").Random(1))
+
+    assert [candidate.artwork_id for candidate in candidates] == ["met:7"]
+    assert len(searches) == 1
+
+
+def test_met_candidates_handle_empty_search(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    monkeypatch.setattr(plugin, "_get_json", lambda url, params, headers=None: {"total": 0, "objectIDs": None})
+
+    assert plugin._fetch_met_candidates("none", 5, __import__("random").Random(1)) == []
