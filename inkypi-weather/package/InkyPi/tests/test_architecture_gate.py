@@ -34,3 +34,39 @@ def test_canonical_import_gate_detects_duplicate_module_identity_in_any_file():
 def test_gate_rejects_an_extracted_function_growing_back_into_a_coordinator():
     source = "def oversized():\n" + "    x = 1\n" * 85
     assert gate.check_source(source, "runtime/refresh_planning.py")
+
+
+def test_cancellation_swallow_count_ignores_guarded_and_reraising_handlers():
+    guarded = (
+        "try:\n    fetch()\nexcept TaskCancelled:\n    raise\n"
+        "except Exception:\n    pass\n"
+    )
+    reraised = "try:\n    fetch()\nexcept Exception:\n    cleanup()\n    raise\n"
+    narrow = "try:\n    fetch()\nexcept (OSError, ValueError):\n    pass\n"
+    assert gate.cancellation_swallowing_handlers(guarded) == 0
+    assert gate.cancellation_swallowing_handlers(reraised) == 0
+    assert gate.cancellation_swallowing_handlers(narrow) == 0
+
+
+def test_cancellation_swallow_count_flags_handlers_that_catch_task_cancelled():
+    source = (
+        "try:\n    fetch()\nexcept Exception:\n    pass\n"
+        "try:\n    fetch()\nexcept RuntimeError as error:\n    log(error)\n"
+        "try:\n    fetch()\nexcept:\n    pass\n"
+        "try:\n    fetch()\nexcept (ValueError, BaseException):\n    pass\n"
+    )
+    assert gate.cancellation_swallowing_handlers(source) == 4
+
+
+def test_plugin_cancellation_swallowing_cannot_grow(tmp_path):
+    plugin = tmp_path / "plugins" / "example"
+    plugin.mkdir(parents=True)
+    (plugin / "example.py").write_text("try:\n    x()\nexcept Exception:\n    pass\n", encoding="utf-8")
+    (tmp_path / "plugins" / "base_plugin").mkdir()
+    (tmp_path / "plugins" / "base_plugin" / "base.py").write_text(
+        "try:\n    x()\nexcept Exception:\n    pass\n", encoding="utf-8",
+    )
+
+    assert gate.plugin_cancellation_swallowing(tmp_path) == 1
+    assert gate.check_cancellation_ratchet(tmp_path, ceiling=1) == []
+    assert gate.check_cancellation_ratchet(tmp_path, ceiling=0)

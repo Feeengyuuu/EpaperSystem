@@ -66,6 +66,74 @@ def check_source(source: str, module: str) -> list[str]:
     return errors
 
 
+# TaskCancelled derives from RuntimeError, so broad handlers in plugins swallow
+# cooperative cancellation and keep the single refresh worker busy past its
+# deadline. Existing debt is ratcheted: guard new handlers with
+# ``except TaskCancelled: raise`` (or re-raise) and lower this ceiling.
+PLUGIN_CANCELLATION_SWALLOW_CEILING = 716
+_CANCELLATION_TYPES = {"TaskCancelled", "TaskDeadlineExceeded"}
+_CANCELLATION_CATCHERS = {"BaseException", "Exception", "RuntimeError"}
+
+
+def _handler_names(handler: ast.ExceptHandler) -> set[str]:
+    if handler.type is None:
+        return {"BaseException"}
+    nodes = handler.type.elts if isinstance(handler.type, ast.Tuple) else [handler.type]
+    names = set()
+    for node in nodes:
+        if isinstance(node, ast.Name):
+            names.add(node.id)
+        elif isinstance(node, ast.Attribute):
+            names.add(node.attr)
+    return names
+
+
+def _reraises(handler: ast.ExceptHandler) -> bool:
+    for node in ast.walk(ast.Module(body=handler.body, type_ignores=[])):
+        if isinstance(node, ast.Raise) and (
+            node.exc is None
+            or (isinstance(node.exc, ast.Name) and handler.name and node.exc.id == handler.name)
+        ):
+            return True
+    return False
+
+
+def cancellation_swallowing_handlers(source: str) -> int:
+    """Count handlers that would silently absorb TaskCancelled."""
+    count = 0
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Try):
+            continue
+        guarded = False
+        for handler in node.handlers:
+            names = _handler_names(handler)
+            if names & _CANCELLATION_TYPES:
+                guarded = True
+            elif names & _CANCELLATION_CATCHERS and not guarded and not _reraises(handler):
+                count += 1
+    return count
+
+
+def plugin_cancellation_swallowing(src_root: Path) -> int:
+    total = 0
+    for path in (src_root / "plugins").rglob("*.py"):
+        relative = path.relative_to(src_root / "plugins").parts
+        if relative[0] == "base_plugin":
+            continue
+        total += cancellation_swallowing_handlers(path.read_text(encoding="utf-8"))
+    return total
+
+
+def check_cancellation_ratchet(src_root: Path, ceiling: int = PLUGIN_CANCELLATION_SWALLOW_CEILING) -> list[str]:
+    count = plugin_cancellation_swallowing(src_root)
+    if count > ceiling:
+        return [
+            f"plugins: {count} broad handlers swallow TaskCancelled (ceiling {ceiling}); "
+            "add `except TaskCancelled: raise` before new broad handlers"
+        ]
+    return []
+
+
 def main() -> int:
     errors = []
     count = 0
@@ -76,6 +144,7 @@ def main() -> int:
                 continue
             count += 1
             errors.extend(check_source(path.read_text(encoding="utf-8"), path.relative_to(directory).as_posix()))
+    errors.extend(check_cancellation_ratchet(PACKAGE / "src"))
     for error in errors:
         print(error)
     print(f"Architecture checks: {count} files, {len(errors)} violations")
