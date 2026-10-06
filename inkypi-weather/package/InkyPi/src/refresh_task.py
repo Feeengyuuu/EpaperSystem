@@ -2724,70 +2724,18 @@ class RefreshTask:
                 for candidate in weather_liveness_data_candidates
             )
         )
-        ticketmaster_liveness_candidate = None
-        ticketmaster_liveness_holds_independent = False
-        sports_liveness_candidate = None
-        sports_liveness_holds_independent = False
-        sports_liveness_excluded_uuids = frozenset()
+        (
+            ticketmaster_liveness_candidate,
+            ticketmaster_liveness_holds_independent,
+            sports_liveness_candidate,
+            sports_liveness_holds_independent,
+            sports_liveness_excluded_uuids,
+        ) = self._burst_liveness_decisions(
+            active, data_candidates, runtime_instances, current_dt, resource_sample,
+        )
         weather_liveness_candidate = None
         weather_liveness_holds_independent = False
         weather_liveness_concession = False
-        if self._weather_liveness_window is not None:
-            # Weather is evaluated after every generic eligibility and display
-            # guard below, so only work that can really run may end this window.
-            pass
-        elif self._ticketmaster_liveness_window is not None:
-            (
-                ticketmaster_liveness_candidate,
-                ticketmaster_liveness_holds_independent,
-            ) = self._ticketmaster_liveness_decision(
-                active,
-                data_candidates,
-                runtime_instances,
-                current_dt,
-                resource_sample,
-            )
-            # One expired/completed window must yield a scheduler turn before a
-            # different burst renderer can reserve another quiet window.
-        elif self._sports_liveness_window is not None:
-            (
-                sports_liveness_candidate,
-                sports_liveness_holds_independent,
-                sports_liveness_excluded_uuids,
-            ) = self._sports_liveness_decision(
-                active,
-                data_candidates,
-                runtime_instances,
-                current_dt,
-                resource_sample,
-            )
-        elif not self._burst_liveness_yield_ordinary_pending:
-            (
-                sports_liveness_candidate,
-                sports_liveness_holds_independent,
-                sports_liveness_excluded_uuids,
-            ) = self._sports_liveness_decision(
-                active,
-                data_candidates,
-                runtime_instances,
-                current_dt,
-                resource_sample,
-            )
-            if (
-                sports_liveness_candidate is None
-                and not sports_liveness_holds_independent
-                and self._sports_liveness_window is None
-            ):
-                (
-                    ticketmaster_liveness_candidate,
-                    ticketmaster_liveness_holds_independent,
-                ) = self._ticketmaster_liveness_decision(
-                    active,
-                    data_candidates,
-                    runtime_instances,
-                    current_dt,
-                    resource_sample,
-                )
         sports_isolated_start_margin_available, _, _ = (
             self._sports_isolated_start_margin(resource_sample)
         )
@@ -2818,33 +2766,12 @@ class RefreshTask:
             and ticketmaster_liveness_candidate is None
             and not ticketmaster_liveness_holds_independent
         ):
-            eligible_data_candidates = []
-            for candidate in data_candidates:
-                instance = candidate.instance
-                if instance.plugin_id == "ticketmaster_events":
-                    next_retry_at = (
-                        self._record_lane_resource_pressure_deferral(
-                            instance.instance_uuid,
-                            RefreshIntent.DATA_REFRESH,
-                        )
-                    )
-                    logger.warning(
-                        "Deferring ordinary Ticketmaster background data at "
-                        "scheduler admission until its memory reserve is "
-                        "available. | plugin_id: %s | source: %s | intent: %s | "
-                        "available_mb: %s | required_available_mb: %s | "
-                        "swap_percent: %s | max_swap_percent: %s | next_retry_at: %s",
-                        instance.plugin_id,
-                        CommandSource.BACKGROUND.value,
-                        RefreshIntent.DATA_REFRESH.value,
-                        resource_sample.available_mb,
-                        ticketmaster_required_available_mb,
-                        resource_sample.swap_percent,
-                        ticketmaster_max_swap_percent,
-                        next_retry_at,
-                    )
-                    continue
-                eligible_data_candidates.append(candidate)
+            eligible_data_candidates = self._defer_ticketmaster_data_without_margin(
+                data_candidates,
+                resource_sample,
+                ticketmaster_required_available_mb,
+                ticketmaster_max_swap_percent,
+            )
         (
             weather_margin_available,
             weather_required_available_mb,
@@ -2854,46 +2781,15 @@ class RefreshTask:
             not weather_margin_available
             and weather_liveness_candidate is None
         ):
-            weather_excluded_uuids = set()
-            filtered_candidates = []
-            for candidate in eligible_data_candidates:
-                instance = candidate.instance
-                if instance.plugin_id != "weather":
-                    filtered_candidates.append(candidate)
-                    continue
-                weather_excluded_uuids.add(instance.instance_uuid)
-                next_retry_at = self._record_lane_resource_pressure_deferral(
-                    instance.instance_uuid,
-                    RefreshIntent.DATA_REFRESH,
-                )
-                if next_retry_at is not None:
-                    self._weather_pressure_recovery.remember(
-                        candidate,
-                        self.runtime_state.snapshot().instances[instance.instance_uuid].data,
-                    )
-                logger.warning(
-                    "Deferring ordinary Weather background data at scheduler "
-                    "admission until its browser start margin is available. | "
-                    "plugin_id: %s | source: %s | intent: %s | available_mb: %s | "
-                    "required_available_mb: %s | swap_percent: %s | "
-                    "max_swap_percent: %s | next_retry_at: %s",
-                    instance.plugin_id,
-                    CommandSource.BACKGROUND.value,
-                    RefreshIntent.DATA_REFRESH.value,
-                    resource_sample.available_mb,
+            eligible_data_candidates, data_candidates = (
+                self._defer_weather_data_without_margin(
+                    eligible_data_candidates,
+                    data_candidates,
+                    resource_sample,
                     weather_required_available_mb,
-                    resource_sample.swap_percent,
                     weather_max_swap_percent,
-                    next_retry_at,
                 )
-            eligible_data_candidates = filtered_candidates
-            if weather_excluded_uuids:
-                data_candidates = [
-                    candidate
-                    for candidate in data_candidates
-                    if candidate.instance.instance_uuid
-                    not in weather_excluded_uuids
-                ]
+            )
         if sports_liveness_excluded_uuids:
             data_candidates = [
                 candidate
@@ -2961,20 +2857,8 @@ class RefreshTask:
                 )
                 if concession.candidate is not None:
                     self._admission_state = concession.state
-                    candidate = concession.candidate
-                    return self._finish_weather_liveness_for_selected_alternative(
-                        self._playlist_command(
-                            active.name,
-                            candidate.instance,
-                            source=CommandSource.BACKGROUND,
-                            intent=RefreshIntent.DATA_REFRESH,
-                            force=False,
-                            display_cached_only=False,
-                            priority=96,
-                            kind=CommandKind.CACHE_REFRESH,
-                            current_dt=current_dt,
-                        ),
-                        resource_sample,
+                    return self._background_data_command(
+                        active, concession.candidate, current_dt, resource_sample, priority=96,
                     )
 
         # Reserved display gets one due DATA attempt, then its exact presentation.
@@ -3104,32 +2988,14 @@ class RefreshTask:
                 )
 
         if weather_liveness_candidate is not None:
-            liveness_admission = choose_refresh_candidate(
-                [weather_liveness_candidate],
-                [],
-                tier=tier,
-                state=self._admission_state,
-                now_monotonic=self._clock(),
-                thresholds=thresholds,
+            candidate = self._admit_liveness_candidate(
+                weather_liveness_candidate, tier=tier, thresholds=thresholds,
             )
-            self._admission_state = liveness_admission.state
-            candidate = liveness_admission.candidate
             if candidate is None:
                 return None
-            return self._finish_weather_liveness_for_selected_alternative(
-                self._playlist_command(
-                    active.name,
-                    candidate.instance,
-                    source=CommandSource.BACKGROUND,
-                    intent=RefreshIntent.DATA_REFRESH,
-                    force=False,
-                    display_cached_only=False,
-                    priority=98,
-                    kind=CommandKind.CACHE_REFRESH,
-                    current_dt=current_dt,
-                    weather_liveness_concession=weather_liveness_concession,
-                ),
-                resource_sample,
+            return self._background_data_command(
+                active, candidate, current_dt, resource_sample, priority=98,
+                weather_liveness_concession=weather_liveness_concession,
             )
         if weather_liveness_holds_independent:
             return None
@@ -3165,74 +3031,20 @@ class RefreshTask:
                 return None
             self._burst_liveness_yield_ordinary_pending = False
             self._burst_liveness_yield_deadline_monotonic = 0.0
-            return self._finish_weather_liveness_for_selected_alternative(
-                self._playlist_command(
-                    active.name,
-                    candidate.instance,
-                    source=CommandSource.BACKGROUND,
-                    intent=RefreshIntent.DATA_REFRESH,
-                    force=False,
-                    display_cached_only=False,
-                    priority=98,
-                    kind=CommandKind.CACHE_REFRESH,
-                    current_dt=current_dt,
-                ),
-                resource_sample,
+            return self._background_data_command(
+                active, candidate, current_dt, resource_sample, priority=98,
             )
 
-        if sports_liveness_candidate is not None:
-            liveness_admission = choose_refresh_candidate(
-                [sports_liveness_candidate],
-                [],
-                tier=tier,
-                state=self._admission_state,
-                now_monotonic=self._clock(),
-                thresholds=thresholds,
+        for liveness_candidate in (sports_liveness_candidate, ticketmaster_liveness_candidate):
+            if liveness_candidate is None:
+                continue
+            candidate = self._admit_liveness_candidate(
+                liveness_candidate, tier=tier, thresholds=thresholds,
             )
-            self._admission_state = liveness_admission.state
-            candidate = liveness_admission.candidate
             if candidate is None:
                 return None
-            return self._finish_weather_liveness_for_selected_alternative(
-                self._playlist_command(
-                    active.name,
-                    candidate.instance,
-                    source=CommandSource.BACKGROUND,
-                    intent=RefreshIntent.DATA_REFRESH,
-                    force=False,
-                    display_cached_only=False,
-                    priority=97,
-                    kind=CommandKind.CACHE_REFRESH,
-                    current_dt=current_dt,
-                ),
-                resource_sample,
-            )
-        if ticketmaster_liveness_candidate is not None:
-            liveness_admission = choose_refresh_candidate(
-                [ticketmaster_liveness_candidate],
-                [],
-                tier=tier,
-                state=self._admission_state,
-                now_monotonic=self._clock(),
-                thresholds=thresholds,
-            )
-            self._admission_state = liveness_admission.state
-            candidate = liveness_admission.candidate
-            if candidate is None:
-                return None
-            return self._finish_weather_liveness_for_selected_alternative(
-                self._playlist_command(
-                    active.name,
-                    candidate.instance,
-                    source=CommandSource.BACKGROUND,
-                    intent=RefreshIntent.DATA_REFRESH,
-                    force=False,
-                    display_cached_only=False,
-                    priority=97,
-                    kind=CommandKind.CACHE_REFRESH,
-                    current_dt=current_dt,
-                ),
-                resource_sample,
+            return self._background_data_command(
+                active, candidate, current_dt, resource_sample, priority=97,
             )
         if sports_liveness_holds_independent:
             return None
@@ -3264,6 +3076,149 @@ class RefreshTask:
         return self._finish_weather_liveness_for_selected_alternative(
             self._command_for_refresh_plan(
                 active.name, plan_candidate(candidate, runtime_instances), current_dt, theme_context,
+            ),
+            resource_sample,
+        )
+
+    def _burst_liveness_decisions(
+        self, active, data_candidates, runtime_instances, current_dt, resource_sample,
+    ):
+        """Evaluate at most one burst renderer quiet window for this probe."""
+        ticketmaster = (None, False)
+        sports = (None, False, frozenset())
+        if self._weather_liveness_window is not None:
+            # Weather is evaluated after every generic eligibility and display
+            # guard, so only work that can really run may end this window.
+            pass
+        elif self._ticketmaster_liveness_window is not None:
+            # One expired/completed window must yield a scheduler turn before a
+            # different burst renderer can reserve another quiet window.
+            ticketmaster = self._ticketmaster_liveness_decision(
+                active, data_candidates, runtime_instances, current_dt, resource_sample,
+            )
+        elif self._sports_liveness_window is not None:
+            sports = self._sports_liveness_decision(
+                active, data_candidates, runtime_instances, current_dt, resource_sample,
+            )
+        elif not self._burst_liveness_yield_ordinary_pending:
+            sports = self._sports_liveness_decision(
+                active, data_candidates, runtime_instances, current_dt, resource_sample,
+            )
+            if sports[0] is None and not sports[1] and self._sports_liveness_window is None:
+                ticketmaster = self._ticketmaster_liveness_decision(
+                    active, data_candidates, runtime_instances, current_dt, resource_sample,
+                )
+        return (*ticketmaster, *sports)
+
+    def _defer_ticketmaster_data_without_margin(
+        self, data_candidates, resource_sample, required_available_mb, max_swap_percent,
+    ):
+        """Persist a pressure retry for ordinary Ticketmaster DATA and drop it."""
+        eligible = []
+        for candidate in data_candidates:
+            instance = candidate.instance
+            if instance.plugin_id != "ticketmaster_events":
+                eligible.append(candidate)
+                continue
+            next_retry_at = self._record_lane_resource_pressure_deferral(
+                instance.instance_uuid,
+                RefreshIntent.DATA_REFRESH,
+            )
+            logger.warning(
+                "Deferring ordinary Ticketmaster background data at "
+                "scheduler admission until its memory reserve is "
+                "available. | plugin_id: %s | source: %s | intent: %s | "
+                "available_mb: %s | required_available_mb: %s | "
+                "swap_percent: %s | max_swap_percent: %s | next_retry_at: %s",
+                instance.plugin_id,
+                CommandSource.BACKGROUND.value,
+                RefreshIntent.DATA_REFRESH.value,
+                resource_sample.available_mb,
+                required_available_mb,
+                resource_sample.swap_percent,
+                max_swap_percent,
+                next_retry_at,
+            )
+        return eligible
+
+    def _defer_weather_data_without_margin(
+        self,
+        eligible_data_candidates,
+        data_candidates,
+        resource_sample,
+        required_available_mb,
+        max_swap_percent,
+    ):
+        """Persist a pressure retry for ordinary Weather DATA and drop it."""
+        excluded_uuids = set()
+        eligible = []
+        for candidate in eligible_data_candidates:
+            instance = candidate.instance
+            if instance.plugin_id != "weather":
+                eligible.append(candidate)
+                continue
+            excluded_uuids.add(instance.instance_uuid)
+            next_retry_at = self._record_lane_resource_pressure_deferral(
+                instance.instance_uuid,
+                RefreshIntent.DATA_REFRESH,
+            )
+            if next_retry_at is not None:
+                self._weather_pressure_recovery.remember(
+                    candidate,
+                    self.runtime_state.snapshot().instances[instance.instance_uuid].data,
+                )
+            logger.warning(
+                "Deferring ordinary Weather background data at scheduler "
+                "admission until its browser start margin is available. | "
+                "plugin_id: %s | source: %s | intent: %s | available_mb: %s | "
+                "required_available_mb: %s | swap_percent: %s | "
+                "max_swap_percent: %s | next_retry_at: %s",
+                instance.plugin_id,
+                CommandSource.BACKGROUND.value,
+                RefreshIntent.DATA_REFRESH.value,
+                resource_sample.available_mb,
+                required_available_mb,
+                resource_sample.swap_percent,
+                max_swap_percent,
+                next_retry_at,
+            )
+        if excluded_uuids:
+            data_candidates = [
+                candidate
+                for candidate in data_candidates
+                if candidate.instance.instance_uuid not in excluded_uuids
+            ]
+        return eligible, data_candidates
+
+    def _admit_liveness_candidate(self, candidate, *, tier, thresholds):
+        """Run one liveness candidate through the ordinary admission state."""
+        admission = choose_refresh_candidate(
+            [candidate],
+            [],
+            tier=tier,
+            state=self._admission_state,
+            now_monotonic=self._clock(),
+            thresholds=thresholds,
+        )
+        self._admission_state = admission.state
+        return admission.candidate
+
+    def _background_data_command(
+        self, active, candidate, current_dt, resource_sample, *, priority, **options,
+    ):
+        """Build one admitted background DATA command and retire Weather waits."""
+        return self._finish_weather_liveness_for_selected_alternative(
+            self._playlist_command(
+                active.name,
+                candidate.instance,
+                source=CommandSource.BACKGROUND,
+                intent=RefreshIntent.DATA_REFRESH,
+                force=False,
+                display_cached_only=False,
+                priority=priority,
+                kind=CommandKind.CACHE_REFRESH,
+                current_dt=current_dt,
+                **options,
             ),
             resource_sample,
         )

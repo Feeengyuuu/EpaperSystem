@@ -66,10 +66,10 @@ def check_source(source: str, module: str) -> list[str]:
             if node.end_lineno - node.lineno + 1 > 80:
                 errors.append(f"{module}:{node.lineno}: extracted functions are limited to 80 physical lines")
         if module == "refresh_task.py" and isinstance(node, ast.FunctionDef):
-            if node.name == "_select_independent_refresh_command" and node.end_lineno - node.lineno + 1 > 650:
-                errors.append(f"{module}:{node.lineno}: selection exceeds the reduced 650-line ceiling")
-    if module == "refresh_task.py" and len(source.splitlines()) > 10080:
-        errors.append(f"{module}: coordinator exceeds the reduced 10080-line ceiling; extract a responsibility")
+            if node.name == "_select_independent_refresh_command" and node.end_lineno - node.lineno + 1 > 480:
+                errors.append(f"{module}:{node.lineno}: selection exceeds the reduced 480-line ceiling")
+    if module == "refresh_task.py" and len(source.splitlines()) > 10040:
+        errors.append(f"{module}: coordinator exceeds the reduced 10040-line ceiling; extract a responsibility")
     return errors
 
 
