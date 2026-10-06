@@ -12,7 +12,6 @@ import plugins.stocktracker.stocktracker as stocktracker_module  # noqa: E402
 from plugins.stocktracker.stocktracker import (  # noqa: E402
     ACCENT_BLUE,
     ACCENT_GOLD,
-    ACCENT_ORANGE,
     CINNABAR,
     INK,
     MALACHITE,
@@ -23,6 +22,7 @@ from plugins.stocktracker.stocktracker import (  # noqa: E402
     SECTION_WORDMARK_IMAGES,
     StockTracker,
 )
+from PIL import Image, ImageDraw  # noqa: E402
 from utils.massive_market_data import MassiveBar  # noqa: E402
 from plugins.base_plugin.presentation import PresentationMode  # noqa: E402
 from plugins.base_plugin.render_provenance import (  # noqa: E402
@@ -264,8 +264,6 @@ def test_stock_tracker_loads_img2_holding_logo_assets():
         assert abs(((bbox[1] + bbox[3]) / 2) - 10) <= 2.5
 
 
-
-
 def test_stock_tracker_loads_img2_section_wordmark_assets():
     plugin = StockTracker({"id": "stocktracker"})
 
@@ -411,17 +409,64 @@ def test_stock_dashboard_draws_hidden_holdings_as_horizontal_day_ticker():
     assert _region_near_color_count(image, WHITE, ticker_region, tolerance=18) < 150
 
 
-def test_stock_tracker_chart_bounds_and_smoothing_keep_endpoints():
-    low, high = StockTracker._chart_value_bounds([100.0, 110.0])
-    flat_low, flat_high = StockTracker._chart_value_bounds([100.0, 100.0])
-    curve = StockTracker._smooth_curve_points([(0, 10), (10, 0), (20, 10)])
+TREND_BOX = (304, 60, 776, 204)
+DIP_THEN_RISE = [100.0, 96.0, 92.0, 95.0, 101.0, 106.0, 104.0, 109.0, 112.0]
 
-    assert low < 100.0
-    assert high > 110.0
-    assert flat_low < 100.0 < flat_high
-    assert curve[0] == (0, 10)
-    assert curve[-1] == (20, 10)
-    assert len(curve) > 3
+
+def _trend_panel(values, theme_context=None):
+    plugin = StockTracker({"id": "stocktracker"})
+    colors = stocktracker_module._stock_render_colors(theme_context)
+    token = stocktracker_module._ACTIVE_STOCK_COLORS.set(colors)
+    try:
+        image = Image.new("RGB", (800, 480), colors["paper"])
+        plugin._draw_sparkline(image, ImageDraw.Draw(image), TREND_BOX, values)
+    finally:
+        stocktracker_module._ACTIVE_STOCK_COLORS.reset(token)
+    return image, colors
+
+
+def test_trend_panel_splits_gain_and_loss_around_the_start_baseline():
+    image, colors = _trend_panel(DIP_THEN_RISE)
+    # Plot inner box (328, 106, 750, 186); the start value 100 sits at y=152.
+    dip_below = (332, 155, 520, 188)
+    rise_above = (560, 104, 748, 150)
+
+    assert _region_near_color_count(image, colors["cinnabar"], dip_below, tolerance=12) > 80
+    assert _region_near_color_count(image, colors["malachite"], dip_below, tolerance=12) == 0
+    assert _region_near_color_count(image, colors["malachite"], rise_above, tolerance=12) > 300
+    assert _region_near_color_count(image, colors["muted"], (330, 152, 740, 153), tolerance=6) > 120
+    assert image.getpixel((750, 115)) == colors["malachite"]
+
+
+def test_trend_panel_dip_leaves_no_gain_tint_above_the_baseline():
+    # Screenshot-shaped series: the start baseline lands on a fractional row (157.65).
+    values = [262350, 260900, 258851, 260400, 263900, 266200, 265100, 264300, 265800, 267400, 270006.65]
+    image, _colors = _trend_panel(values)
+    chart_bg = image.getpixel((345, 120))
+
+    for y in range(150, 158):
+        assert [image.getpixel((x, y)) for x in range(345, 385)] == [chart_bg] * 40, y
+
+
+def test_trend_panel_ending_below_start_is_mostly_loss_colored():
+    image, colors = _trend_panel([100.0, 103.0, 99.0, 95.0, 92.0, 90.0, 88.0])
+    plot = (320, 100, 760, 192)
+
+    assert _region_near_color_count(image, colors["cinnabar"], plot, tolerance=12) > _region_near_color_count(
+        image, colors["malachite"], plot, tolerance=12
+    )
+    assert image.getpixel((750, 177)) == colors["cinnabar"]
+
+
+def test_trend_panel_handles_two_points_flat_series_and_night_theme():
+    _trend_panel([5000.0, 5100.0])
+    flat, flat_colors = _trend_panel([5000.0, 5000.0, 5000.0])
+    night, night_colors = _trend_panel(DIP_THEN_RISE, _canonical_theme("night"))
+
+    assert flat.getpixel((750, 146)) == flat_colors["malachite"]
+    assert night.getpixel((750, 115)) == night_colors["malachite"]
+    assert night_colors["malachite"] != stocktracker_module.MALACHITE
+
 
 def test_stock_dashboard_uses_color_theme_and_us_change_colors():
     plugin = StockTracker({"id": "stocktracker"})
@@ -445,38 +490,6 @@ def test_stock_dashboard_uses_color_theme_and_us_change_colors():
     assert _near_color_count(image, PAPER, tolerance=5) > 10_000
     assert _near_color_count(image, MALACHITE, tolerance=12) > 500
     assert _near_color_count(image, CINNABAR, tolerance=12) > 500
-
-
-def test_stock_tracker_history_markers_decorate_portfolio_curve_coordinates():
-    plugin = StockTracker({"id": "stocktracker"})
-    curve_points = [(318, 102), (540, 185), (762, 188)]
-    history_points = [
-        {"date": "2026-05-30", "timestamp": "2026-05-30T05:30:00", "value": 4500.0},
-        {"date": "2026-05-31", "timestamp": "2026-05-31T05:30:00", "value": 4900.0},
-        {"date": "2026-06-01", "timestamp": "2026-06-01T05:30:00", "value": 4700.0},
-    ]
-
-    marker_points = plugin._history_marker_points(curve_points, history_points)
-
-    assert [marker["point"] for marker in marker_points] == curve_points
-    assert [marker["fill"] for marker in marker_points] == [ACCENT_ORANGE, MALACHITE, CINNABAR]
-
-
-def test_stock_tracker_supplemental_history_markers_stay_on_curve_prefix():
-    plugin = StockTracker({"id": "stocktracker"})
-    curve_points = [(318, 140), (360, 130), (440, 110), (540, 120), (762, 100)]
-    supplemental_history = [
-        {"date": "2026-06-01", "timestamp": "2026-06-01T18:00:00", "value": 4500.0},
-        {"date": "2026-06-02", "timestamp": "2026-06-02T18:00:00", "value": 4600.0},
-    ]
-
-    marker_points = plugin._history_marker_points(
-        curve_points,
-        supplemental_history,
-        curve_prefix=True,
-    )
-
-    assert [marker["point"] for marker in marker_points] == curve_points[:2]
 
 
 def test_stock_tracker_labels_last_week_tracking_window():

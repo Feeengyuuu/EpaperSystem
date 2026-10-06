@@ -85,6 +85,7 @@ from utils.massive_market_data import (
 )
 from utils.robinhood_mcp import RobinhoodMCPClient
 from utils.theme_utils import get_theme_palette
+from plugins.stocktracker import trend_chart
 import csv
 import hashlib
 import io
@@ -1451,6 +1452,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		history_points=None,
 		history_markers_on_prefix=False,
 	):
+		# Local snapshots are already merged into values; they are no longer marked separately.
 		colors = _active_stock_colors()
 		left, top, right, bottom = box
 		self._draw_box(
@@ -1461,7 +1463,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			fill=colors["panel_blue"],
 			canvas=img,
 		)
-		plot = (left + 14, top + 42, right - 14, bottom - 16)
+		plot = (left + 16, top + 40, right - 16, bottom - 12)
 		chart_bg = self._blend(colors["panel"], colors["paper"], 0.78)
 		draw.rounded_rectangle(
 			plot,
@@ -1470,123 +1472,83 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			outline=self._blend(colors["grid"], colors["panel_blue"], 0.65),
 			width=1,
 		)
-		for i in range(1, 5):
-			y = plot[1] + (plot[3] - plot[1]) * i / 5
-			draw.line(
-				(plot[0] + 8, y, plot[2] - 8, y),
-				fill=self._blend(colors["grid"], chart_bg, 0.38),
-				width=1,
-			)
-		for i in range(1, 5):
-			x = plot[0] + (plot[2] - plot[0]) * i / 5
-			draw.line(
-				(x, plot[1] + 4, x, plot[3] - 4),
-				fill=self._blend(colors["grid"], chart_bg, 0.18),
-				width=1,
-			)
-		history_points = [
-			point
-			for point in (self._normalize_portfolio_history_entry(item) for item in (history_points or []))
-			if point
-		]
 		values = [float(value) for value in values]
 		if len(values) < 2:
 			return
 
-		raw_vmin = min(values)
-		raw_vmax = max(values)
-		vmin, vmax = self._chart_value_bounds(values)
-		line_color = self._change_color(values[-1] - values[0])
-		if line_color == colors["muted"]:
-			line_color = colors["accent_blue"]
+		start = values[0]
+		vmin, vmax = trend_chart.value_bounds(values)
+		inner = (plot[0] + 8, plot[1] + 6, plot[2] - 10, plot[3] - 6)
+		points = trend_chart.plot_points(inner, values, vmin, vmax)
+		curve = trend_chart.monotone_curve(points)
+		base_y = points[0][1]
+		gain, loss = colors["malachite"], colors["cinnabar"]
 
-		points = self._plot_series_points(plot, values, vmin, vmax)
-		curve_points = self._smooth_curve_points(points)
-
-		area = [(plot[0], plot[3])] + curve_points + [(plot[2], plot[3])]
-		if len(curve_points) >= 2:
-			draw.polygon(area, fill=self._blend(line_color, chart_bg, 0.11))
-			draw.line(curve_points, fill=self._blend(line_color, chart_bg, 0.30), width=5)
-			draw.line(curve_points, fill=line_color, width=3)
-			draw.ellipse((points[0][0] - 3, points[0][1] - 3, points[0][0] + 3, points[0][1] + 3), fill=chart_bg, outline=line_color, width=2)
-		if len(points) >= 2:
-			self._draw_latest_value_marker(draw, points[-1], line_color)
-		self._draw_history_markers(
-			draw,
-			history_points,
-			points,
-			curve_prefix=history_markers_on_prefix,
+		self._fill_against_baseline(img, plot, curve, base_y, chart_bg)
+		self._draw_dashed_line(draw, plot[0] + 4, plot[2] - 4, round(base_y), colors["muted"])
+		for run, above in trend_chart.split_at_baseline(curve, base_y):
+			draw.line(
+				[(round(x), round(y)) for x, y in run],
+				fill=gain if above else loss,
+				width=3,
+				joint="curve",
+			)
+		start_x, start_y = round(points[0][0]), round(base_y)
+		draw.ellipse(
+			(start_x - 3, start_y - 3, start_x + 3, start_y + 3),
+			fill=chart_bg,
+			outline=colors["muted"],
+			width=2,
 		)
-
-		self._draw_chart_label(
+		ended_up = values[-1] >= start
+		self._draw_latest_value_marker(
 			draw,
-			(plot[0] + 6, plot[1] + 6),
-			self._money(raw_vmax, 0),
-			colors["ink"],
-			chart_bg,
+			(round(points[-1][0]), round(points[-1][1])),
+			gain if ended_up else loss,
 		)
-		self._draw_chart_label(
-			draw,
-			(plot[0] + 6, plot[3] - 20),
-			self._money(raw_vmin, 0),
-			colors["muted"],
-			chart_bg,
-		)
+		self._draw_baseline_label(draw, plot, base_y, self._money(start, 0), chart_bg, below=ended_up)
 
-	@staticmethod
-	def _chart_value_bounds(values):
-		vmin = min(values)
-		vmax = max(values)
-		span = vmax - vmin
-		if abs(span) < 0.0001:
-			padding = max(abs(vmax) * 0.01, 1.0)
-		else:
-			padding = span * 0.12
-		return vmin - padding, vmax + padding
-
-	@staticmethod
-	def _smooth_curve_points(points, subdivisions=8):
-		if len(points) < 3:
-			return points
-		curve = [points[0]]
-		last_index = len(points) - 1
-		for idx in range(last_index):
-			p0 = points[max(idx - 1, 0)]
-			p1 = points[idx]
-			p2 = points[idx + 1]
-			p3 = points[min(idx + 2, last_index)]
-			for step in range(1, subdivisions + 1):
-				t = step / subdivisions
-				t2 = t * t
-				t3 = t2 * t
-				x = 0.5 * (
-					(2 * p1[0])
-					+ (-p0[0] + p2[0]) * t
-					+ (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2
-					+ (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3
-				)
-				y = 0.5 * (
-					(2 * p1[1])
-					+ (-p0[1] + p2[1]) * t
-					+ (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2
-					+ (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3
-				)
-				curve.append((int(round(x)), int(round(y))))
-		return curve
-
-	def _draw_chart_label(self, draw, position, text, fill, chart_bg):
+	def _fill_against_baseline(self, img, plot, curve, base_y, chart_bg):
+		"""Tint the area between the curve and the start baseline: gain above, loss below."""
 		colors = _active_stock_colors()
-		x, y = [int(v) for v in position]
+		# Close the area on the whole baseline row; that row belongs to the dashed line, so a
+		# fractional baseline never spills one tint into the other side.
+		split = int(round(base_y))
+		area = Image.new("L", img.size, 0)
+		ImageDraw.Draw(area).polygon(
+			[(curve[0][0], split), *curve, (curve[-1][0], split)],
+			fill=255,
+		)
+		for color, region in (
+			(colors["malachite"], (plot[0], plot[1], plot[2], split)),
+			(colors["cinnabar"], (plot[0], split + 1, plot[2], plot[3])),
+		):
+			if region[3] <= region[1]:
+				continue
+			tint = Image.new(
+				"RGB",
+				(region[2] - region[0], region[3] - region[1]),
+				self._blend(color, chart_bg, 0.22),
+			)
+			img.paste(tint, region[:2], area.crop(region))
+
+	@staticmethod
+	def _draw_dashed_line(draw, x0, x1, y, fill, dash=5, gap=4):
+		x = x0
+		while x < x1:
+			draw.line((x, y, min(x + dash, x1), y), fill=fill, width=1)
+			x += dash + gap
+
+	def _draw_baseline_label(self, draw, plot, base_y, text, chart_bg, below):
+		"""Start value on the side of the baseline away from the latest point."""
+		colors = _active_stock_colors()
 		font = self._font(11, True)
 		width = self._text_width(draw, text, font)
-		draw.rounded_rectangle(
-			(x - 2, y - 1, x + width + 6, y + 14),
-			radius=3,
-			fill=self._blend(chart_bg, colors["white"], 0.72),
-			outline=self._blend(colors["grid"], chart_bg, 0.45),
-			width=1,
-		)
-		draw.text((x + 2, y), text, fill=fill, font=font)
+		x = plot[2] - width - 14
+		y = round(base_y) + 4 if below else round(base_y) - 18
+		y = min(max(y, plot[1] + 2), plot[3] - 16)
+		draw.rounded_rectangle((x - 3, y - 1, x + width + 3, y + 14), radius=3, fill=chart_bg)
+		draw.text((x, y), text, fill=colors["muted"], font=font)
 
 	def _draw_latest_value_marker(self, draw, point, color=None):
 		colors = _active_stock_colors()
@@ -1598,75 +1560,6 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			width=1,
 		)
 		draw.ellipse((point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3), fill=color)
-
-	@staticmethod
-	def _plot_series_points(plot, values, vmin, vmax):
-		points = []
-		for idx, value in enumerate(values):
-			x = plot[0] + (plot[2] - plot[0]) * idx / max(len(values) - 1, 1)
-			y = plot[3] - (plot[3] - plot[1]) * (float(value) - vmin) / (vmax - vmin)
-			points.append((int(round(x)), int(round(y))))
-		return points
-
-	@staticmethod
-	def _sample_curve_points(curve_points, count):
-		if not curve_points or count <= 0:
-			return []
-		if count == 1:
-			return [curve_points[-1]]
-		max_index = len(curve_points) - 1
-		sampled_points = []
-		for idx in range(count):
-			position = max_index * idx / (count - 1)
-			left_index = int(math.floor(position))
-			right_index = min(left_index + 1, max_index)
-			ratio = position - left_index
-			left_point = curve_points[left_index]
-			right_point = curve_points[right_index]
-			x = left_point[0] + (right_point[0] - left_point[0]) * ratio
-			y = left_point[1] + (right_point[1] - left_point[1]) * ratio
-			sampled_points.append((int(round(x)), int(round(y))))
-		return sampled_points
-
-	def _history_marker_points(self, curve_points, history_points, curve_prefix=False):
-		colors = _active_stock_colors()
-		if not history_points:
-			return []
-		ordered_points = sorted(history_points, key=lambda point: str(point.get("timestamp") or point["date"]))
-		if curve_prefix:
-			coords = list(curve_points[: len(ordered_points)])
-		else:
-			coords = self._sample_curve_points(curve_points, len(ordered_points))
-		previous_value = None
-		marker_points = []
-		for idx, point in enumerate(ordered_points):
-			value = float(point["value"])
-			if previous_value is None:
-				fill = colors["accent_orange"]
-			else:
-				fill = colors["malachite"] if value >= previous_value else colors["cinnabar"]
-			previous_value = value
-			marker_points.append({"point": coords[idx], "fill": fill, "history": point})
-		return marker_points
-
-	def _draw_history_markers(self, draw, history_points, curve_points, curve_prefix=False):
-		colors = _active_stock_colors()
-		marker_points = self._history_marker_points(
-			curve_points,
-			history_points,
-			curve_prefix=curve_prefix,
-		)
-		if not marker_points:
-			return
-		radius = 4 if len(marker_points) <= 36 else 3
-		for marker in marker_points:
-			x, y = marker["point"]
-			fill = marker["fill"]
-			draw.ellipse(
-				(x - radius - 1, y - radius - 1, x + radius + 1, y + radius + 1),
-				fill=colors["ink"],
-			)
-			draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=fill)
 
 	def _ordered_holdings(self, stock_data, pin_symbols=None, sink_symbols=None):
 		configured_pins = self._symbols_setting(pin_symbols)
