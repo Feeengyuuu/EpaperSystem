@@ -1,9 +1,23 @@
 {
   "schema_version": 2,
-  "capabilities": {"supports_live_refresh": false, "supports_presentation_refresh": true, "supports_day_night_theme": true},
-  "theme": {"presentation": "ui", "day": {"background": "#f4f0e6", "accent": "#385f8f"}, "night": {"background": "#10151b", "accent": "#79aee6"}},
+  "capabilities": {
+    "supports_live_refresh": false,
+    "supports_presentation_refresh": true,
+    "supports_day_night_theme": true
+  },
+  "theme": {
+    "presentation": "ui",
+    "day": {
+      "background": "#ffffff",
+      "accent": "#0052ff"
+    },
+    "night": {
+      "background": "#000000",
+      "accent": "#5c9eff"
+    }
+  },
   "display_name": "Daily Wiki Page",
   "id": "daily_wiki_page",
   "class": "DailyWikiPage",
-    "refresh_on_display": true
+  "refresh_on_display": true
 }

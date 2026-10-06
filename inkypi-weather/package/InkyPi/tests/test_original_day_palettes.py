@@ -91,13 +91,14 @@ def test_daily_ai_news_day_uses_original_global_day_palette():
     assert DailyAINews._render_palette(_theme()) == get_theme_palette("day")
 
 
-def test_daily_wiki_day_uses_original_paper_palette():
+def test_daily_wiki_day_uses_selected_swiss_palette():
     colors = DailyWikiPage.__new__(DailyWikiPage)._palette(
         {"_inkypi_theme": _theme()}
     )
-    assert colors["background"] == (232, 226, 214)
-    assert colors["panel"] == (222, 215, 200)
-    assert colors["accent"] == (102, 56, 24)
+    assert colors["background"] == (255, 255, 255)
+    assert colors["panel"] == (255, 255, 255)
+    assert colors["ink"] == (0, 0, 0)
+    assert colors["accent"] == (0, 82, 255)
 
 
 def test_daily_word_day_ignores_canonical_override():
