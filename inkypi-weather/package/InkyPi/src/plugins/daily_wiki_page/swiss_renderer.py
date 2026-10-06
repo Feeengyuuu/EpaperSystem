@@ -3,13 +3,16 @@ from __future__ import annotations
 
 from datetime import datetime
 import math
+from pathlib import Path
 import re
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 MIN_BODY_FONT_SIZE = 13
+SWISS_FONT_PATH = Path(__file__).resolve().parents[2] / "static" / "fonts" / "NotoSansSC-VF.ttf"
+TITLE_ASSET_PATH = Path(__file__).resolve().parent / "assets" / "daily_image_wordmark.png"
 
 
 class LayoutOverflowError(ValueError):
@@ -90,16 +93,33 @@ class _Page:
                 "history": {"bounds": [self.history_left, self.top, self.right, self.bottom]},
             },
             "header": {},
+            "typography": {
+                "family": "Noto Sans SC",
+                "font_file": SWISS_FONT_PATH.name,
+                "weights": {"heading": 900, "body": 500, "year": 900, "date_rail": 900, "date": 800},
+                "year_horizontal_scale": 0.77,
+                "fallback_used": False,
+            },
         }
 
     def px(self, value):
         return max(1, round(value * self.scale))
 
-    def font(self, text, size, bold=False):
-        family = "__cjk__" if re.search(r"[\u3400-\u9fff]", text) else self.family
-        key = (family, size, bold)
+    def font(self, text, size, bold=False, weight=None):
+        weight = weight if weight is not None else 900 if bold else 500
+        key = (size, weight)
         if key not in self.fonts:
-            self.fonts[key] = self.plugin._font(family, size, "bold" if bold else "normal")
+            try:
+                font = ImageFont.truetype(str(SWISS_FONT_PATH), size)
+                axes = font.get_variation_axes()
+                values = [weight if axis["name"] == b"Weight" else axis["default"] for axis in axes]
+                font.set_variation_by_axes(values)
+                self.fonts[key] = font
+            except (OSError, ValueError, AttributeError) as exc:
+                family = "__cjk__" if re.search(r"[\u3400-\u9fff]", text) else self.family
+                self.fonts[key] = self.plugin._font(family, size, "bold" if weight >= 700 else "normal")
+                self.audit["typography"]["fallback_used"] = True
+                self.audit["typography"]["fallback_reason"] = type(exc).__name__
         return self.fonts[key]
 
     def width_of(self, text, font):
@@ -171,21 +191,58 @@ class _Page:
         return {"bounds": [x, y, x + fitted.width, y + fitted.height],
                 "slot_bounds": list(box), "source_size": list(source.size), "fit": "contain"}
 
+    def title_asset(self, title, available):
+        if not self.cjk:
+            return None
+        try:
+            with Image.open(TITLE_ASSET_PATH) as original:
+                source_size = list(original.size)
+                alpha = original.convert("RGBA").getchannel("A")
+            bbox = alpha.getbbox()
+            if bbox is None:
+                return None
+            mask = ImageOps.contain(alpha.crop(bbox),
+                                    (min(self.px(248), available), self.rule_y - self.px(12)),
+                                    method=RESAMPLE)
+            y = self.rule_y - self.px(6) - mask.height
+            self.image.paste(self.palette["ink"], (self.margin, y), mask)
+            return {"text": title, "bounds": [self.margin, y, self.margin + mask.width, y + mask.height],
+                    "asset": TITLE_ASSET_PATH.name, "asset_used": True, "fit": "contain",
+                    "source_size": source_size, "alpha_source_bounds": list(bbox)}
+        except (OSError, ValueError):
+            return None
+
+    def year_ink(self, text, x, y, font):
+        if not re.fullmatch(r"-?\d+", text):
+            return self.ink(text, x, y, font)
+        bbox = self.draw.textbbox((0, 0), text, font=font)
+        mask = Image.new("L", (bbox[2] - bbox[0], bbox[3] - bbox[1]), 0)
+        ImageDraw.Draw(mask).text((-bbox[0], -bbox[1]), text, font=font, fill=255)
+        width = min(self.px(62), max(1, round(mask.width * 0.77)))
+        mask = mask.resize((width, mask.height), RESAMPLE)
+        self.image.paste(self.palette["ink"], (x, y), mask)
+        return {"text": text, "bounds": [x, y, x + mask.width, y + mask.height],
+                "font_size": getattr(font, "size", 34), "font_weight": 900, "condensed": True}
+
     def header(self):
         title = "每日图片" if self.cjk else "DAILY IMAGE"
         date_text = self.date.strftime("%Y.%m.%d")
-        date_font = self.font(date_text, max(self.minimum_font, self.px(17)), bold=True)
+        date_font = self.font(date_text, max(self.minimum_font, self.px(17)), weight=800)
         date_width = math.ceil(self.width_of(date_text, date_font))
         date_x = self.right - date_width
         available = date_x - self.margin - self.px(24)
-        for size in range(self.px(48), self.minimum_font - 1, -1):
-            title_font = self.font(title, size, bold=True)
-            if self.width_of(title, title_font) <= available:
-                break
-        else:
-            raise LayoutOverflowError("The page title and source date cannot fit the header.")
-        title_y = self.rule_y - self.px(11) - self.glyph_height(title, title_font)
-        self.audit["header"]["title"] = self.ink(title, self.margin, title_y, title_font)
+        title_record = self.title_asset(title, available)
+        if title_record is None:
+            for size in range(self.px(48), self.minimum_font - 1, -1):
+                title_font = self.font(title, size, bold=True)
+                if self.width_of(title, title_font) <= available:
+                    break
+            else:
+                raise LayoutOverflowError("The page title and source date cannot fit the header.")
+            title_y = self.rule_y - self.px(11) - self.glyph_height(title, title_font)
+            title_record = self.ink(title, self.margin, title_y, title_font)
+            title_record.update(asset_used=False, font_weight=900)
+        self.audit["header"]["title"] = title_record
         date_y = self.rule_y - self.px(11) - self.glyph_height(date_text, date_font)
         self.audit["header"]["date"] = self.ink(date_text, date_x, date_y, date_font)
         self.draw.line((self.margin, self.rule_y, self.right, self.rule_y),
@@ -265,10 +322,10 @@ class _Page:
         if any(not isinstance(event, dict) for event in raw_events):
             raise LayoutOverflowError("History content must consist of complete event records.")
         title = "历史上的今天" if self.cjk else "ON THIS DAY"
-        title_font = self.font(title, self.px(29), bold=True)
+        title_font = self.font(title, self.px(35), bold=True)
         title_x = self.history_left + self.px(36)
         while self.width_of(title, title_font) > self.right - title_x:
-            size = getattr(title_font, "size", self.px(29)) - 1
+            size = getattr(title_font, "size", self.px(35)) - 1
             if size < self.minimum_font:
                 raise LayoutOverflowError("The complete history heading cannot fit.")
             title_font = self.font(title, size, bold=True)
@@ -282,7 +339,9 @@ class _Page:
             font = self.font(label, self.minimum_font)
             label_y = heading_bottom - self.px(3) - self.glyph_height(label, font)
             title_bottom = self.audit["header"]["history"]["bounds"][3]
-            if label_y >= title_bottom + self.px(2) and self.width_of(label, font) <= self.right - title_x:
+            if self.width_of(label, font) <= self.right - title_x:
+                label_y = max(label_y, title_bottom + self.px(2))
+                heading_bottom = max(heading_bottom, label_y + self.glyph_height(label, font) + self.px(3))
                 self.audit["regions"]["history_image_status"] = self.ink(
                     label, title_x, label_y, font, self.palette["muted"]
                 )
@@ -318,7 +377,7 @@ class _Page:
         for index, row in enumerate(selected):
             height = row["height"] + extra + (1 if index < remainder else 0)
             top = y + self.px(4)
-            year_text = self.ink(row["year"], self.history_left, top, row["year_font"])
+            year_text = self.year_ink(row["year"], self.history_left, top, row["year_font"])
             rule_x = row["text_x"] - self.px(9)
             self.draw.line((rule_x, top, rule_x, top + row["content_height"]),
                            fill=self.palette["rule"], width=self.px(1))
@@ -358,9 +417,9 @@ class _Page:
                     return full_width - image_size[0] - self.px(8)
                 return full_width
             lines = self.wrap(text, font, line_width)
-            year_font_size = self.px(27)
+            year_font_size = self.px(34)
             year_font = self.font(year, year_font_size, bold=True)
-            while self.width_of(year, year_font) > self.px(62):
+            while not re.fullmatch(r"-?\d+", year) and self.width_of(year, year_font) > self.px(62):
                 year_font_size -= 1
                 if year_font_size < self.minimum_font:
                     raise LayoutOverflowError("The complete event year cannot fit its label.")

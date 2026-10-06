@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+from copy import deepcopy
 from datetime import datetime
 from html.parser import HTMLParser
 from io import BytesIO
@@ -24,7 +25,7 @@ from plugins.base_plugin.render_provenance import (
 )
 from plugins.context_cache import write_context
 from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
-from utils.cache_manager import CacheBudget
+from utils.cache_manager import CacheBudget, CachePathError
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
@@ -127,6 +128,8 @@ class DailyWikiPage(BasePlugin):
         settings["_inkypi_theme"] = settings.get(
             "_inkypi_theme"
         ) or self.resolve_theme(settings, device_config)
+        if settings.get("_daily_wiki_cached_display") and settings.get("_theme_render_only"):
+            return self._render_cached_snapshot(settings, device_config)
         now = self._now_for_device(device_config)
         payload = self._daily_payload(settings, now)
         if not settings.get("_theme_render_only"):
@@ -141,6 +144,64 @@ class DailyWikiPage(BasePlugin):
             image,
             payload.get("_source_provenance", SourceProvenance.LOCAL_FALLBACK),
             detail="daily_wiki_page",
+        )
+
+    def render_cached_display(self, settings, device_config, *, resolved_theme_context):
+        """Redraw the current UI from an exact local source snapshot, without DATA."""
+        return self.render_themed_image(
+            {**(settings or {}), "_daily_wiki_cached_display": True}, device_config,
+            theme_render_only=True, resolved_theme_context=resolved_theme_context,
+        )
+
+    def _cached_display_source(self, settings, now):
+        path = self._cache_path(create=False).absolute()
+        try:
+            if any(part.is_symlink() for part in (path, *path.parents)):
+                raise ValueError("source cache traverses a symlink")
+            if path.stat().st_size > 8 * 1024 * 1024:
+                raise ValueError("source cache exceeds the size limit")
+            entry = self._read_cache(create=False)
+            payload = entry.get("payload")
+            if entry.get("schema") != CACHE_SCHEMA_VERSION or not isinstance(payload, dict):
+                raise ValueError("source schema or payload is invalid")
+            source_date = datetime.strptime(str(payload.get("date", "")), "%Y-%m-%d").date()
+            if source_date.isoformat() != payload.get("date"):
+                raise ValueError("source date is invalid")
+            generated_at = entry.get("generated_at")
+            generated = datetime.fromisoformat(generated_at)
+            clock = now if now.tzinfo is not None else now.replace(tzinfo=ZoneInfo(DEFAULT_TIMEZONE))
+            if generated.tzinfo is None:
+                generated = generated.replace(tzinfo=clock.tzinfo)
+            if (generated.timestamp() <= 0 or generated.timestamp() > clock.timestamp() + 300
+                    or source_date > clock.date()
+                    or generated.date() != source_date):
+                raise ValueError("source timestamp or date is inconsistent")
+            language = self._language(settings)
+            fallback = self._fallback_language(settings, language)
+            expected = self._cache_key(source_date.isoformat(), settings, language, fallback)
+            if entry.get("cache_key") != expected or payload.get("cache_key", expected) != expected:
+                raise ValueError("source cache does not match the current settings")
+        except (OSError, TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError("Daily Wiki cached display requires a valid matching local source snapshot.") from exc
+        return deepcopy(payload), generated_at, source_date == clock.date()
+
+    def _render_cached_snapshot(self, settings, device_config):
+        now = self._now_for_device(device_config)
+        payload, generated_at, fresh = self._cached_display_source(settings, now)
+        payload["source_state"] = "cache"
+        image = self._render_page(self.get_dimensions(device_config), payload, settings, now)
+        complete = image.info.get("daily_wiki_layout", {}).get("complete", False)
+        image.info.update(
+            daily_wiki_cached_display=True,
+            daily_wiki_source_date=payload["date"],
+            daily_wiki_source_generated_at=generated_at,
+        )
+        if not fresh or not complete:
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(
+            image,
+            SourceProvenance.FRESH_CACHE if fresh and complete else SourceProvenance.STALE_CACHE,
+            detail="daily_wiki_page_cached_display",
         )
 
     def _now_for_device(self, device_config):
@@ -328,7 +389,7 @@ class DailyWikiPage(BasePlugin):
 
     def _download_image(self, image_url, target_size, settings):
         theme_only = self._enabled(settings.get("_theme_render_only"), default=False)
-        path = self._media_cache_path(image_url)
+        path = self._media_cache_path(image_url, read_only=theme_only)
         cache_hours = self._int(settings.get("imageCacheHours"), DEFAULT_IMAGE_CACHE_HOURS, 1, MAX_IMAGE_CACHE_HOURS)
 
         def fetch():
@@ -354,8 +415,15 @@ class DailyWikiPage(BasePlugin):
                                   label="wiki_images", protected=(path,))
         return image
 
-    def _media_cache_path(self, image_url):
+    def _media_cache_path(self, image_url, *, read_only=False):
         digest = hashlib.sha256(str(image_url).encode("utf-8")).hexdigest()
+        if read_only:
+            # Namespace registration can create directories and prune entries.
+            # DISPLAY/PRESENTATION may only resolve the exact URL object path.
+            path = (self._cache_dir(create=False) / "media" / f"{digest}.png").absolute()
+            if any(part.is_symlink() for part in (path, *path.parents)):
+                raise CachePathError("Daily Wiki read-only media cache must not traverse symlinks")
+            return path
         return self._media_cache_namespace().path(digest, ".png")
 
     def _media_cache_namespace(self):

@@ -1,8 +1,9 @@
 import hashlib
+import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -14,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from plugins.daily_wiki_page import daily_wiki_page as wiki_module  # noqa: E402
 from plugins.daily_wiki_page.daily_wiki_page import DailyWikiPage, DEFAULT_FONT  # noqa: E402
 from plugins.base_plugin.presentation import PresentationMode  # noqa: E402
-from plugins.base_plugin.render_provenance import read_source_provenance  # noqa: E402
+from plugins.base_plugin.render_provenance import SourceProvenance, read_source_provenance  # noqa: E402
 from utils import cache_manager  # noqa: E402
 from utils.cache_manager import CacheBudget, CachePathError  # noqa: E402
 
@@ -1306,3 +1307,266 @@ def test_daily_wiki_cold_theme_render_does_not_create_cache_tree(
     assert (
         cache_root / "plugins" / "daily_wiki_page" / "cache" / "daily.json"
     ).is_file()
+
+
+CACHED_DISPLAY_SETTINGS = {
+    "language": "zh-cn",
+    "fallbackLanguage": "en",
+    "showImage": "true",
+    "showOnThisDay": "true",
+    "forceRefresh": "true",
+}
+
+
+def cached_display_snapshot(root):
+    return {
+        "files": {
+            str(path.relative_to(root)): (
+                hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns,
+            )
+            for path in root.rglob("*") if path.is_file()
+        },
+        "directories": sorted(str(path.relative_to(root)) for path in root.rglob("*") if path.is_dir()),
+    }
+
+
+def seed_cached_daily_display(plugin, source_time):
+    root = plugin._cache_dir()
+    settings = dict(CACHED_DISPLAY_SETTINGS)
+    payload = media_payload(plugin, source_time, "en", settings)
+    payload["language"] = settings["language"]
+    payload["source_state"] = "live"
+    key = plugin._cache_key(payload["date"], settings, "zh-cn", "en")
+    payload["cache_key"] = key
+    source = {
+        "schema": wiki_module.CACHE_SCHEMA_VERSION,
+        "cache_key": key,
+        "generated_at": source_time.isoformat(),
+        "payload": payload,
+    }
+    plugin._write_cache(source)
+    media = root / "media"
+    media.mkdir(exist_ok=True)
+    for url, color in ((DAILY_MEDIA_URL, (30, 90, 160)), (HISTORY_MEDIA_URL, (180, 120, 45))):
+        path = media_cache_path(root, url)
+        path.write_bytes(png_bytes(color))
+        # Cache age must not trigger acquisition or extend age on a DISPLAY.
+        old_time = time.time() - 40 * 24 * 60 * 60
+        os.utime(path, (old_time, old_time))
+    return source
+
+
+def forbid_cached_daily_writes(plugin, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("cached DISPLAY must not fetch, generate DATA, write context/source, or prune media")
+
+    for name in ("_daily_payload", "_fetch_live_payload", "_write_cache", "_write_context", "_write_cached_media"):
+        monkeypatch.setattr(plugin, name, forbidden)
+    monkeypatch.setattr(wiki_module, "get_http_session", forbidden)
+    monkeypatch.setattr(wiki_module, "prune_resource_images", forbidden)
+    return forbidden
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+@pytest.mark.parametrize("age_days,expected", [(0, SourceProvenance.FRESH_CACHE), (1, SourceProvenance.STALE_CACHE)])
+def test_cached_display_redraw_is_local_preserves_source_and_uses_current_swiss_style(
+    tmp_path, monkeypatch, mode, age_days, expected,
+):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 10, 6, 10, 0, tzinfo=timezone.utc)
+    source = seed_cached_daily_display(plugin, now - timedelta(days=age_days))
+    before = cached_display_snapshot(tmp_path)
+    forbid_cached_daily_writes(plugin, monkeypatch)
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+
+    image = plugin.render_cached_display(
+        CACHED_DISPLAY_SETTINGS, FakeDeviceConfig(), resolved_theme_context=canonical_theme(mode),
+    )
+
+    assert image.size == (800, 480)
+    assert image.info["inkypi_theme_mode"] == mode
+    assert read_source_provenance(image) is expected
+    assert image.info["daily_wiki_cached_display"] is True
+    assert image.info["daily_wiki_source_date"] == source["payload"]["date"]
+    assert image.info["daily_wiki_source_generated_at"] == source["generated_at"]
+    if age_days:
+        assert image.info["inkypi_skip_cache"] is True
+    audit = image.info["daily_wiki_layout"]
+    assert audit["complete"] is True
+    assert audit["date"] == source["payload"]["date"]
+    assert audit["header"]["title"]["asset_used"] is True
+    assert len(audit["events"]) == len(source["payload"]["on_this_day"])
+    assert audit["media_available"] == {"daily_image": True, "history_image": True}
+    assert "LIVE" not in audit["source"]["source_text"].upper()
+    assert cached_display_snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("invalid", ["schema", "cache_key", "payload_date", "future_date", "future_generated", "language"])
+def test_cached_display_rejects_incompatible_or_future_source_without_mutations(tmp_path, monkeypatch, invalid):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 10, 6, 10, 0, tzinfo=timezone.utc)
+    source = seed_cached_daily_display(plugin, now)
+    settings = dict(CACHED_DISPLAY_SETTINGS)
+    if invalid == "schema":
+        source["schema"] = "daily-wiki-page-v6"
+    elif invalid == "cache_key":
+        source["cache_key"] = "wrong-settings-key"
+    elif invalid == "payload_date":
+        source["payload"]["date"] = "invalid-date"
+    elif invalid == "future_date":
+        source["payload"]["date"] = "2026-10-07"
+        source["cache_key"] = plugin._cache_key("2026-10-07", settings, "zh-cn", "en")
+        source["payload"]["cache_key"] = source["cache_key"]
+    elif invalid == "future_generated":
+        source["generated_at"] = (now + timedelta(minutes=6)).isoformat()
+    elif invalid == "language":
+        settings["language"] = "en"
+    plugin._write_cache(source)
+    before = cached_display_snapshot(tmp_path)
+    forbid_cached_daily_writes(plugin, monkeypatch)
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+
+    with pytest.raises(RuntimeError):
+        plugin.render_cached_display(settings, FakeDeviceConfig(), resolved_theme_context=canonical_theme("day"))
+
+    assert cached_display_snapshot(tmp_path) == before
+
+
+def test_cold_cached_display_does_not_create_a_cache_tree(tmp_path, monkeypatch):
+    root = tmp_path / "cold-cache"
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(root))
+    plugin = DailyWikiPage({"id": "daily_wiki_page"})
+    forbid_cached_daily_writes(plugin, monkeypatch)
+
+    with pytest.raises(RuntimeError):
+        plugin.render_cached_display(
+            CACHED_DISPLAY_SETTINGS, FakeDeviceConfig(), resolved_theme_context=canonical_theme("day"),
+        )
+
+    assert not root.exists()
+
+
+@pytest.mark.parametrize("missing", ["daily_image", "history_image", "corrupt_history_image"])
+def test_cached_display_missing_media_is_readonly_and_never_claims_complete_fresh_source(tmp_path, monkeypatch, missing):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 10, 6, 10, 0, tzinfo=timezone.utc)
+    seed_cached_daily_display(plugin, now)
+    url = DAILY_MEDIA_URL if missing == "daily_image" else HISTORY_MEDIA_URL
+    path = media_cache_path(tmp_path, url)
+    if missing == "corrupt_history_image":
+        path.write_bytes(b"not a valid PNG")
+    else:
+        path.unlink()
+    before = cached_display_snapshot(tmp_path)
+    forbid_cached_daily_writes(plugin, monkeypatch)
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+
+    image = plugin.render_cached_display(
+        CACHED_DISPLAY_SETTINGS, FakeDeviceConfig(), resolved_theme_context=canonical_theme("day"),
+    )
+
+    assert image.info["daily_wiki_layout"]["complete"] is False
+    assert image.info["daily_wiki_layout"]["text_complete"] is True
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
+    assert cached_display_snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize("missing_source", [False, True])
+def test_native_daily_display_redraw_replaces_old_pixels_without_advancing_data(
+    tmp_path, monkeypatch, caplog, missing_source,
+):
+    import refresh_task as runtime_module
+    from plugins.plugin_manifest import PluginManifest
+    from refresh_task import RefreshTask
+    from runtime.refresh_contracts import CommandSource, JobStatus, RefreshIntent
+    from runtime.refresh_policy import ResourceSample
+    from runtime.runtime_state import RefreshLane
+    from tests.test_refresh_task import (
+        PresentationTransactionDisplayManager, RuntimeClock, RuntimeDeviceConfig,
+        _queue_and_process, _runtime_playlist, _runtime_plugin_data, _write_runtime_theme_cache,
+    )
+
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    plugin = make_plugin(source_root)
+    now = datetime(2026, 10, 6, 10, 0, tzinfo=timezone.utc)
+    seed_cached_daily_display(plugin, now - timedelta(days=1))
+    if missing_source:
+        plugin._cache_path().unlink()
+    before_source = cached_display_snapshot(source_root)
+    forbid_cached_daily_writes(plugin, monkeypatch)
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+
+    data = _runtime_plugin_data("daily_wiki_page", "DailyWiki", latest_refresh_time=None)
+    data["plugin_settings"].update({**CACHED_DISPLAY_SETTINGS, "themeMode": "day"})
+    playlist = _runtime_playlist(data)
+    device = RuntimeDeviceConfig(tmp_path / "display", [playlist])
+    device.config.update({"theme_mode": "day", "active_theme": "day"})
+    device.get_resolution = lambda: (800, 480)
+    manifest = PluginManifest.from_path(Path(wiki_module.__file__).with_name("plugin-info.json"))
+    assert manifest.capabilities.supports_cached_display_redraw is True
+    plugin.config = {"id": "daily_wiki_page", "_manifest": manifest}
+    device.get_plugin = lambda _plugin_id: plugin.config
+    clock = RuntimeClock(wall=now.timestamp())
+    display = PresentationTransactionDisplayManager()
+    task = RefreshTask(device, display, clock=clock.monotonic, wall_clock=clock.wall_time)
+    monkeypatch.setattr(task, "_get_current_datetime", lambda: now)
+    monkeypatch.setattr(task, "_resource_sample", lambda: ResourceSample(available_mb=512, swap_percent=0))
+    monkeypatch.setattr(runtime_module, "get_plugin_instance", lambda _config: plugin)
+    instance = playlist.plugins[0].snapshot()
+    old_image = _write_runtime_theme_cache(task, instance, "day", Image.new("RGB", (800, 480), (232, 226, 214)))
+    old_bytes = old_image.read_bytes()
+    task.runtime_state.record_attempt(instance.instance_uuid, (now - timedelta(minutes=2)).isoformat(), lane=RefreshLane.DATA)
+    task.runtime_state.record_failure(
+        instance.instance_uuid, (now - timedelta(minutes=1)).isoformat(),
+        "pre-existing DATA source failure", lane=RefreshLane.DATA,
+    )
+    before = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    command = task._playlist_command(
+        playlist.name, instance, source=CommandSource.SCHEDULER,
+        intent=RefreshIntent.DISPLAY_CACHE, force=False, display_cached_only=True,
+        cache_theme_mode="day", current_dt=now,
+    )
+    with caplog.at_level("INFO", logger="refresh_task"):
+        result = _queue_and_process(task, command)
+
+    if missing_source:
+        assert result.job.status is JobStatus.FAILED
+        assert display.calls == []
+    else:
+        assert result.job.status is JobStatus.SUCCEEDED
+        displayed = display.calls[-1]["image"]
+        assert displayed.getpixel((0, 0)) == (255, 255, 255)
+        assert displayed.info["daily_wiki_layout"]["header"]["title"]["asset_used"] is True
+        assert "Local cached display redrawn." in caplog.text
+    after = task.runtime_state.snapshot().instances[instance.instance_uuid]
+    assert after.data == before.data
+    assert after.last_good_cache == before.last_good_cache
+    assert after.presentation_request == before.presentation_request
+    assert old_image.read_bytes() == old_bytes
+    assert cached_display_snapshot(source_root) == before_source
+
+
+def test_cached_display_keeps_original_source_date_after_device_timezone_changes(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    source_time = datetime.fromisoformat("2026-10-05T23:30:00-07:00")
+    now = datetime.fromisoformat("2026-10-06T08:00:00+00:00")
+    source = seed_cached_daily_display(plugin, source_time)
+    before = cached_display_snapshot(tmp_path)
+    forbid_cached_daily_writes(plugin, monkeypatch)
+    monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
+
+    image = plugin.render_cached_display(
+        CACHED_DISPLAY_SETTINGS,
+        FakeDeviceConfig(timezone="UTC"),
+        resolved_theme_context=canonical_theme("day"),
+    )
+
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+    assert image.info["inkypi_skip_cache"] is True
+    assert image.info["daily_wiki_source_date"] == "2026-10-05"
+    assert image.info["daily_wiki_source_generated_at"] == source["generated_at"] == "2026-10-05T23:30:00-07:00"
+    assert image.info["daily_wiki_layout"]["date"] == "2026-10-05"
+    assert image.info["daily_wiki_layout"]["complete"] is True
+    assert cached_display_snapshot(tmp_path) == before

@@ -1,17 +1,19 @@
 """Content and image fidelity requirements for the selected Swiss page."""
 
+import hashlib
 import json
 import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.daily_wiki_page.daily_wiki_page import DailyWikiPage  # noqa: E402
+from plugins.daily_wiki_page import swiss_renderer  # noqa: E402
 from plugins.daily_wiki_page.swiss_renderer import LayoutOverflowError  # noqa: E402
 
 
@@ -167,7 +169,11 @@ def test_native_page_draws_all_five_events_and_complete_caption(plugin, payload,
             for line in event["lines"]:
                 assert_disjoint(line["bounds"], event["image"]["bounds"])
     assert_complete_text(audit["caption"], payload["image_caption"], drawn_text)
-    assert "每日图片" in drawn_text
+    title = audit["header"]["title"]
+    assert title["text"] == "每日图片"
+    assert title["asset_used"] is True
+    title_pixels = image.crop(title["bounds"]).convert("L")
+    assert title_pixels.getextrema()[1] - title_pixels.getextrema()[0] >= 200
     assert "历史上的今天" in drawn_text
     assert "2026.10.05" in drawn_text
     assert "2026.10.06" not in drawn_text
@@ -351,3 +357,92 @@ def test_disabled_media_and_history_do_not_download_or_draw_hidden_content(plugi
     assert audit["events"] == []
     assert audit["media_requested"] == {"daily_image": False, "history_image": False}
     assert audit["complete"] is True
+
+
+def test_native_wordmark_alpha_is_preserved_and_day_night_shapes_match(plugin, payload):
+    asset_path = swiss_renderer.TITLE_ASSET_PATH
+    before = hashlib.sha256(asset_path.read_bytes()).hexdigest()
+    with Image.open(asset_path) as native:
+        assert native.mode == "RGBA"
+        source_size = native.size
+        alpha = native.getchannel("A")
+        assert alpha.getextrema() == (0, 255)
+        alpha_bounds = alpha.getbbox()
+        assert alpha_bounds is not None
+        assert alpha_bounds[0] > 0 and alpha_bounds[1] > 0
+        assert alpha_bounds[2] < source_size[0] and alpha_bounds[3] < source_size[1]
+
+    day = plugin._render_page((800, 480), payload, settings("day"), NOW)
+    night = plugin._render_page((800, 480), payload, settings("night"), NOW)
+    day_title = day.info["daily_wiki_layout"]["header"]["title"]
+    night_title = night.info["daily_wiki_layout"]["header"]["title"]
+    assert day_title["asset_used"] is night_title["asset_used"] is True
+    assert day_title["bounds"] == night_title["bounds"]
+    assert tuple(day_title["source_size"]) == source_size
+    assert tuple(day_title["alpha_source_bounds"]) == alpha_bounds
+    day_mask = ImageOps.invert(day.crop(day_title["bounds"]).convert("L"))
+    night_mask = night.crop(night_title["bounds"]).convert("L")
+    assert ImageChops.difference(day_mask, night_mask).getbbox() is None
+    # Both glyphs and internal transparent counters remain distinguishable.
+    assert day_mask.getextrema()[0] <= 5
+    assert day_mask.getextrema()[1] >= 245
+    assert hashlib.sha256(asset_path.read_bytes()).hexdigest() == before
+
+
+def test_swiss_typography_uses_real_noto_variable_weights(plugin, payload, monkeypatch):
+    assert swiss_renderer.SWISS_FONT_PATH.is_file()
+    original_set_axes = ImageFont.FreeTypeFont.set_variation_by_axes
+    applied_weights = []
+
+    def record_axes(self, axes):
+        for axis, value in zip(self.get_variation_axes(), axes):
+            if axis["name"] == b"Weight":
+                applied_weights.append(value)
+        return original_set_axes(self, axes)
+
+    monkeypatch.setattr(ImageFont.FreeTypeFont, "set_variation_by_axes", record_axes)
+    image = plugin._render_page((800, 480), payload, settings(), NOW)
+    typography = image.info["daily_wiki_layout"]["typography"]
+    assert typography["family"] == "Noto Sans SC"
+    assert typography["font_file"] == "NotoSansSC-VF.ttf"
+    assert typography["weights"]["heading"] == 900
+    assert typography["weights"]["body"] == 500
+    assert typography["fallback_used"] is False
+    assert {500, 800, 900}.issubset(applied_weights)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_missing_wordmark_uses_visible_real_heavy_font(plugin, payload, monkeypatch, tmp_path, mode):
+    monkeypatch.setattr(swiss_renderer, "TITLE_ASSET_PATH", tmp_path / "missing-wordmark.png")
+    drawn_titles = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def record_text(self, xy, text, *args, **kwargs):
+        if text == "每日图片":
+            drawn_titles.append(kwargs.get("font"))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+    image = plugin._render_page((800, 480), payload, settings(mode), NOW)
+    audit = image.info["daily_wiki_layout"]
+    title = audit["header"]["title"]
+    assert title["asset_used"] is False
+    assert title["font_weight"] == 900
+    assert audit["typography"]["fallback_used"] is False
+    assert len(drawn_titles) == 1
+    assert isinstance(drawn_titles[0], ImageFont.FreeTypeFont)
+    assert Path(drawn_titles[0].path).name == "NotoSansSC-VF.ttf"
+    pixels = image.crop(title["bounds"]).convert("L")
+    assert pixels.getextrema()[1] - pixels.getextrema()[0] >= 200
+    assert audit["complete"] is True
+
+
+def test_missing_swiss_font_uses_shared_fallback_without_losing_content(plugin, payload, monkeypatch, tmp_path):
+    monkeypatch.setattr(swiss_renderer, "SWISS_FONT_PATH", tmp_path / "missing-font.ttf")
+    image = plugin._render_page((800, 480), payload, settings(), NOW)
+    audit = image.info["daily_wiki_layout"]
+    assert audit["typography"]["fallback_used"] is True
+    assert audit["complete"] is True
+    assert len(audit["events"]) == len(payload["on_this_day"]) == 5
+    for event, source in zip(audit["events"], payload["on_this_day"]):
+        assert compact("".join(line["text"] for line in event["lines"])) == compact(source["text"])
