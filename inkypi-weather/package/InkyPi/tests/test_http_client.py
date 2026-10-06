@@ -8,7 +8,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from utils import http_client
-from runtime.refresh_contracts import TaskContext, TaskDeadlineExceeded
+from runtime.long_task_executor import InstanceIdentity, bind_long_task_runtime
+from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 
 
 class FakeResponse:
@@ -348,6 +349,104 @@ def test_request_timeout_is_capped_by_context_deadline():
     timeout = session.calls[0][2]["timeout"]
     assert 0 < timeout[0] <= 0.5
     assert 0 < timeout[1] <= 0.5
+
+
+def _bound(context):
+    return bind_long_task_runtime(context, InstanceIdentity("http-client", 1, 1))
+
+
+def _recording_shared_session(monkeypatch):
+    http_client.close_http_session()
+    for name in http_client._PROXY_ENV_NAMES:
+        monkeypatch.delenv(name, raising=False)
+    calls = []
+
+    def fake_request(self, method, url, **kwargs):
+        calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr("requests.Session.request", fake_request)
+    return http_client.get_http_session(), calls
+
+
+def test_shared_session_caps_timeout_by_bound_task_deadline(monkeypatch):
+    session, calls = _recording_shared_session(monkeypatch)
+
+    with _bound(_context(0.5)):
+        session.get("https://example.com", timeout=(10, 20))
+        session.get("https://example.com")
+
+    assert all(0 < item <= 0.5 for item in calls[0]["timeout"])
+    assert 0 < calls[1]["timeout"] <= 0.5
+    http_client.close_http_session()
+
+
+def test_shared_session_refuses_request_after_bound_task_deadline(monkeypatch):
+    session, calls = _recording_shared_session(monkeypatch)
+    expired = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() - 1)
+
+    with _bound(expired), pytest.raises(TaskDeadlineExceeded):
+        session.get("https://example.com", timeout=10)
+
+    assert calls == []
+    http_client.close_http_session()
+
+
+def test_shared_session_refuses_request_for_canceled_task(monkeypatch):
+    session, calls = _recording_shared_session(monkeypatch)
+    context = _context()
+    context.cancel_event.set()
+
+    with _bound(context), pytest.raises(TaskCancelled):
+        session.post("https://example.com", json={})
+
+    assert calls == []
+    http_client.close_http_session()
+
+
+def test_shared_session_outside_task_keeps_default_timeout(monkeypatch):
+    session, calls = _recording_shared_session(monkeypatch)
+
+    session.get("https://example.com")
+
+    assert calls[0]["timeout"] == http_client.DEFAULT_TIMEOUT_SECONDS
+    http_client.close_http_session()
+
+
+def test_client_without_context_inherits_bound_task_deadline():
+    session = FakeSession([FakeResponse(200, b"ok")])
+    client = http_client.HttpClient(session=session)
+    expired = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() - 1)
+
+    with _bound(expired), pytest.raises(TaskDeadlineExceeded):
+        client.request_bytes("GET", "https://example.test/image", timeout=30)
+
+    assert session.calls == []
+
+
+def test_client_without_context_keeps_its_shorter_request_budget():
+    session = FakeSession([FakeResponse(200, b"ok")])
+    client = http_client.HttpClient(session=session)
+
+    with _bound(_context(60)):
+        client.request_bytes("GET", "https://example.test/image", timeout=0.5)
+
+    assert 0 < session.calls[0][2]["timeout"] <= 0.5
+
+
+def test_client_with_explicit_context_ignores_bound_task_context():
+    session = FakeSession([FakeResponse(200, b"ok")])
+    client = http_client.HttpClient(session=session)
+    expired = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() - 1)
+
+    with _bound(expired):
+        result = client.request_bytes(
+            "GET",
+            "https://example.test/image",
+            context=_context(),
+        )
+
+    assert result.data == b"ok"
 
 
 def test_stream_to_file_is_atomic_and_closes_response(tmp_path):

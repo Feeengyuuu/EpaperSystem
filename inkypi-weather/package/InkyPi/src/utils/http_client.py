@@ -20,6 +20,7 @@ from urllib.parse import urlparse, urlsplit, urlunsplit
 import requests
 from urllib3.util.retry import Retry
 
+from runtime.long_task_executor import current_task_context
 from runtime.refresh_contracts import TaskContext, TaskDeadlineExceeded
 from runtime.resource_governor import RuntimeResourceGovernor
 from utils.atomic_file import fsync_directory
@@ -69,11 +70,38 @@ class HttpResult(Generic[T]):
 
 
 class TimeoutSession(requests.Session):
-    """Compatibility Session that always applies a finite timeout."""
+    """Compatibility Session that always applies a finite timeout.
+
+    Inside a bound refresh task, direct session calls also honor that task's
+    cancellation and deadline. HttpClient requests already carry their own
+    bounded context and pass through unchanged.
+    """
 
     def request(self, method, url, **kwargs):
-        kwargs.setdefault("timeout", DEFAULT_TIMEOUT_SECONDS)
-        return super().request(method, url, **kwargs)
+        context = None if _OWNED_REQUEST.active else current_task_context()
+        if context is None:
+            kwargs.setdefault("timeout", DEFAULT_TIMEOUT_SECONDS)
+            return super().request(method, url, **kwargs)
+        kwargs["timeout"] = _bounded_timeout(kwargs.get("timeout"), context)
+        with DeadlineRetry.for_context(context):
+            return super().request(method, url, **kwargs)
+
+
+class _OwnedRequestState(threading.local):
+    active = False
+
+
+_OWNED_REQUEST = _OwnedRequestState()
+
+
+@contextmanager
+def _owned_request():
+    previous = _OWNED_REQUEST.active
+    _OWNED_REQUEST.active = True
+    try:
+        yield
+    finally:
+        _OWNED_REQUEST.active = previous
 
 
 class DeadlineRetry(Retry):
@@ -403,7 +431,7 @@ class HttpClient:
                 else nullcontext()
             )
             try:
-                with retry_scope:
+                with retry_scope, _owned_request():
                     response = self.session.request(method, url, **request_kwargs)
             except requests.RequestException as error:
                 raise HttpClientError(
@@ -497,8 +525,16 @@ def _request_context(context, timeout):
     else:
         seconds = float(timeout)
     seconds = max(0.001, min(900.0, seconds))
-    return TaskContext.never_cancelled(
-        deadline_monotonic=time.monotonic() + seconds,
+    task = current_task_context()
+    if task is None:
+        return TaskContext.never_cancelled(
+            deadline_monotonic=time.monotonic() + seconds,
+        )
+    # Keep the per-request budget, but never outlive the bound refresh task.
+    return TaskContext(
+        task.cancel_event,
+        min(task.deadline_monotonic, task.clock() + seconds),
+        task.clock,
     )
 
 
