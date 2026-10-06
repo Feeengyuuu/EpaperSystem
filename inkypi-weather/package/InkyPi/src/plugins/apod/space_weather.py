@@ -125,10 +125,15 @@ def normalize_scales(
             normalized_entry = {
                 "product_key": product_key,
                 "valid_at_utc": _format_utc(provider_time),
-                "g": _scale_value(entry, "G", required=product_key in {"-1", "0"}),
-                "r": _scale_value(entry, "R", required=product_key in {"-1", "0"}),
-                "s": _scale_value(entry, "S", required=product_key in {"-1", "0"}),
+                "g": _scale_value(entry, "G", required=False),
+                "r": _scale_value(entry, "R", required=False),
+                "s": _scale_value(entry, "S", required=False),
             }
+            # NOAA can leave one observed scale null for hours. Keep it
+            # unknown (rendered as "G—") instead of zero, but a yesterday or
+            # current row without any scale is not a usable product.
+            if product_key in {"-1", "0"}:
+                _require_some_scale(normalized_entry)
         except ValueError as error:
             # The key is fixed above; never add the raw response or URL here.
             # Yesterday and current missing-scale failures used to be identical.
@@ -1644,10 +1649,16 @@ def _required_text(payload: Mapping[str, Any], key: str) -> str:
     return value
 
 
+def _require_some_scale(row: Mapping[str, Any]) -> None:
+    if all(row[key] is None for key in ("g", "r", "s")):
+        raise ValueError("NOAA G, R and S scales are all missing")
+
+
 def _validate_cached_scales(payload: Mapping[str, Any]) -> None:
     current = _required_mapping(payload, "current")
     for key in ("g", "r", "s"):
-        _cached_scale(current[key], required=True)
+        _cached_scale(current[key], required=False)
+    _require_some_scale(current)
 
     forecast = _required_sequence(payload, "forecast_g")
     forecast_times = []
@@ -1667,7 +1678,9 @@ def _validate_cached_scales(payload: Mapping[str, Any]) -> None:
         product_keys.append(item["product_key"])
         _parse_utc(item["valid_at_utc"])
         for key in ("g", "r", "s"):
-            _cached_scale(item[key], required=item["product_key"] in {"-1", "0"})
+            _cached_scale(item[key], required=False)
+        if item["product_key"] in {"-1", "0"}:
+            _require_some_scale(item)
     if set(product_keys) != {"-1", "0", "1", "2", "3"}:
         raise ValueError("cached scales timeline has invalid product keys")
 

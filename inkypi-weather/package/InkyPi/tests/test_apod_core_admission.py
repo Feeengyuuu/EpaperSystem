@@ -65,10 +65,44 @@ def test_live_core_preserves_optional_error_contract_for_snapshot_adapters():
 
 
 @pytest.mark.parametrize('product_key', ['-1', '0'])
-def test_missing_noaa_scale_identifies_product_without_accepting_incomplete_core(product_key):
+def test_single_missing_noaa_scale_is_unknown_not_zero_and_keeps_the_rest(product_key):
+    # 2026-10-05: NOAA served a null current G scale for about 12 hours, which
+    # rejected the whole APOD refresh. One missing scale is now unknown.
     from plugins.apod.space_weather import normalize_scales
 
     raw = json.loads((Path(__file__).parent / 'fixtures/apod/noaa_scales.json').read_text())
-    raw[product_key]['G']['Scale'] = ''
-    with pytest.raises(ValueError, match=f'product_key={product_key}.*G scale is missing'):
+    raw[product_key]['G']['Scale'] = None
+    payload = normalize_scales(raw, now_utc=datetime(2026, 7, 22, 12, 20, tzinfo=timezone.utc))
+
+    row = next(item for item in payload['timeline'] if item['product_key'] == product_key)
+    assert row['g'] is None
+    assert isinstance(row['r'], int) and isinstance(row['s'], int)
+    if product_key == '0':
+        assert payload['current']['g'] is None
+
+
+@pytest.mark.parametrize('product_key', ['-1', '0'])
+def test_all_missing_noaa_scales_still_reject_the_product(product_key):
+    from plugins.apod.space_weather import normalize_scales
+
+    raw = json.loads((Path(__file__).parent / 'fixtures/apod/noaa_scales.json').read_text())
+    for letter in ('G', 'R', 'S'):
+        raw[product_key][letter]['Scale'] = ''
+    with pytest.raises(ValueError, match=f'product_key={product_key}.*all missing'):
         normalize_scales(raw, now_utc=datetime(2026, 7, 22, 12, 20, tzinfo=timezone.utc))
+
+
+def test_cached_scales_accept_one_unknown_current_scale_but_not_all():
+    from plugins.apod.space_weather import _validate_cached_scales, normalize_scales
+
+    raw = json.loads((Path(__file__).parent / 'fixtures/apod/noaa_scales.json').read_text())
+    raw['0']['G']['Scale'] = None
+    payload = json.loads(json.dumps(
+        normalize_scales(raw, now_utc=datetime(2026, 7, 22, 12, 20, tzinfo=timezone.utc)),
+        default=dict,
+    ))
+    _validate_cached_scales(payload)
+
+    payload['current'] = {'g': None, 'r': None, 's': None}
+    with pytest.raises(ValueError, match='all missing'):
+        _validate_cached_scales(payload)
