@@ -61,6 +61,7 @@ MEMORY_PRESSURE_RESTART_EXIT_CODE = 75
 RESTART_REQUEST_POLL_SECONDS = 0.25
 MEMORY_PRESSURE_WORKER_STOP_TIMEOUT_SECONDS = 5.0
 ISOLATION_RECOVERY_EXIT_TIMEOUT_SECONDS = 15.0
+FORCED_EXIT_RECOVERY_REASONS = frozenset({"isolated_worker_cleanup_failed", "refresh_worker_overrun"})
 PLATFORM_OS_NAME = os.name
 
 
@@ -72,8 +73,13 @@ def _interrupt_waitress_for_restart() -> None:
 
 
 def _monitor_restart_request(refresh_task, stop_event: threading.Event) -> None:
+    from runtime.overrun_recovery import guard_for_refresh_task, stage_worker_overrun
+
+    overrun_guard = guard_for_refresh_task(refresh_task)
     while not stop_event.wait(RESTART_REQUEST_POLL_SECONDS):
         request = getattr(refresh_task, "restart_request", None)
+        if not request:
+            request = stage_worker_overrun(overrun_guard, refresh_task)
         if not request:
             continue
         logger.error(
@@ -83,9 +89,10 @@ def _monitor_restart_request(refresh_task, stop_event: threading.Event) -> None:
             request.get("available_mb", "unknown"),
             request.get("swap_percent", "unknown"),
         )
-        if request.get("reason") == "isolated_worker_cleanup_failed":
+        if request.get("reason") in FORCED_EXIT_RECOVERY_REASONS:
             # Try normal shutdown first, but its child cleanup can encounter
-            # the same stuck coordinator. Keep the recovery bound outside it.
+            # the same stuck coordinator, and an overrunning worker will not
+            # stop. Keep the recovery bound outside both.
             # systemd owns the complete service cgroup and reaps its children.
             watchdog = threading.Timer(
                 ISOLATION_RECOVERY_EXIT_TIMEOUT_SECONDS,

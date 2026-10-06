@@ -15,6 +15,7 @@ from utils.atomic_file import atomic_write_json
 
 logger = logging.getLogger(__name__)
 HISTORY_NAME = "supervised-recoveries.json"
+RECOVERY_REASONS = frozenset({"isolated_worker_cleanup_failed", "memory_pressure", "refresh_worker_overrun"})
 SOURCE_LIMIT = 128 * 1024
 ISSUE_MARKERS = (("stale_cache", "source_stale"), ("deadline", "deadline"),
                  ("resource", "resource_pressure"), ("cleanup", "worker_cleanup"))
@@ -61,7 +62,7 @@ def recovery_events(data_dir):
     if data_dir is None:
         return []
     rows = _read_small_json(Path(data_dir) / HISTORY_NAME).get("events", [])
-    allowed = {"isolated_worker_cleanup_failed", "memory_pressure", "unknown"}
+    allowed = RECOVERY_REASONS | {"unknown"}
     return [{"at": _safe_stamp(item.get("at")),
              "reason": item.get("reason") if item.get("reason") in allowed else "unknown",
              "release_id": str(item.get("release_id") or "unknown")[:128]}
@@ -76,7 +77,7 @@ def record_supervised_recovery(device_config, reason):
     try:
         events = recovery_events(data_dir)
         events.append({"at": datetime.now(timezone.utc).isoformat(),
-                       "reason": reason if reason in {"isolated_worker_cleanup_failed", "memory_pressure"} else "unknown",
+                       "reason": reason if reason in RECOVERY_REASONS else "unknown",
                        "release_id": str(getattr(paths, "release_id", "unknown"))[:128]})
         atomic_write_json(Path(data_dir) / HISTORY_NAME, {"version": 1, "events": events[-32:]})
     except Exception as error:

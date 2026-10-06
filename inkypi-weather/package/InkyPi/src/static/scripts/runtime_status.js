@@ -8,6 +8,7 @@
         source_stale: '来源缓存已过期', deadline: '任务超时', resource_pressure: '资源不足，等待重试',
         worker_cleanup: '子任务回收异常', provider_failure: '最近取数未成功', retry_wait: '已延期，等待重试',
         isolated_worker_cleanup_failed: '子任务回收异常触发恢复', memory_pressure: '持续内存压力触发恢复',
+        refresh_worker_overrun: '刷新任务严重超时触发恢复',
         data_progress_stalled: '后台数据更新进度落后', presentation_progress_stalled: '显示内容更新进度落后',
         display_progress_stalled: '轮播写屏进度落后', stale_cache: '过期缓存', fresh_cache: '有效缓存',
         live: '实时来源', cached: '已缓存', offline: '离线', asleep: '休眠', online: '在线', unknown: '未知',

@@ -1128,6 +1128,18 @@ class RefreshTask:
     def restart_request(self):
         return None if self._restart_request is None else dict(self._restart_request)
 
+    def active_operation_overrun_seconds(self):
+        """Seconds the active command has run past its deadline, on the task clock."""
+        active = self._active_operation
+        return None if active is None else self._clock() - active.deadline_monotonic
+
+    def stage_restart_request(self, request):
+        """Stage supervised replacement unless another recovery already owns it."""
+        if self._restart_request is None:
+            self._restart_request = dict(request)
+            self.refresh_queue.wake()
+        return self.restart_request
+
     def start(self):
         """Start exactly one non-daemon command worker."""
         with self._start_lock:

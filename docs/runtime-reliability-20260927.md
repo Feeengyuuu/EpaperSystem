@@ -28,6 +28,17 @@ Automatic recovery requests append a bounded 32-event ledger at
 `$INKYPI_DATA_DIR/supervised-recoveries.json`. It survives release switches. Events
 start with this feature; ordinary deployment restarts are not counted or inferred.
 
+Cooperative cancellation cannot stop plugin code that ignores its deadline. The
+restart monitor therefore requests the same supervised replacement when the
+active command runs more than `refresh_overrun_grace_seconds` (default 240,
+bounded 60-3600) past its deadline, records `refresh_worker_overrun` in the
+ledger, and arms the 15-second forced exit. A second overrun recovery within
+`refresh_overrun_min_interval_seconds` (default 3600) is suppressed and only
+logged, so a deterministic hang cannot become a restart loop. Set
+`refresh_overrun_recovery_enabled` to `false` to disable it. Inside a bound
+refresh task, the shared HTTP session and `HttpClient` calls without an explicit
+context also inherit that task's cancellation and deadline.
+
 Forced isolated-task cancellation no longer sets a multiprocessing event before
 terminating the child. A child can own that event's semaphore indefinitely, so
 setting it can block the parent and retain provider permits. The parent instead
