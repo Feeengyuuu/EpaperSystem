@@ -18,6 +18,7 @@ files = [
     "inkypi-weather/package/InkyPi/src/runtime/refresh_planning.py",
     "inkypi-weather/package/InkyPi/src/runtime/plugin_execution.py",
     "inkypi-weather/package/InkyPi/src/runtime/overrun_recovery.py",
+    "inkypi-weather/package/InkyPi/src/runtime/liveness_window.py",
     "inkypi-weather/package/InkyPi/src/plugins/registry.py",
 ]
 # Analyze imported annotations without making this pilot a legacy-wide migration.

@@ -20,6 +20,13 @@ BOUNDARIES = {
     "plugins/registry.py": {
         "__future__", "importlib", "logging", "pathlib", "threading", "typing",
     },
+    "runtime/liveness_window.py": {
+        "__future__", "dataclasses", "datetime", "enum", "hashlib", "logging", "typing",
+    },
+    "runtime/overrun_recovery.py": {
+        "__future__", "dataclasses", "datetime", "logging", "math", "time", "typing",
+        "runtime.runtime_status",
+    },
     "plugins/sports_dashboard/f1_domain.py": {
         "__future__", "collections.abc", "datetime", "typing",
     },
@@ -61,8 +68,8 @@ def check_source(source: str, module: str) -> list[str]:
         if module == "refresh_task.py" and isinstance(node, ast.FunctionDef):
             if node.name == "_select_independent_refresh_command" and node.end_lineno - node.lineno + 1 > 650:
                 errors.append(f"{module}:{node.lineno}: selection exceeds the reduced 650-line ceiling")
-    if module == "refresh_task.py" and len(source.splitlines()) > 10260:
-        errors.append(f"{module}: coordinator exceeds the reduced 10260-line ceiling; extract a responsibility")
+    if module == "refresh_task.py" and len(source.splitlines()) > 10080:
+        errors.append(f"{module}: coordinator exceeds the reduced 10080-line ceiling; extract a responsibility")
     return errors
 
 

@@ -134,6 +134,7 @@ from runtime.sports_isolated_renderer import (
     render_sports_dashboard_isolated,
 )
 from runtime.weather_admission import WeatherPressureRecovery, weather_start_margin
+from runtime.liveness_window import LivenessOutcome, LivenessSettings, StarvationLiveness
 from runtime.runtime_state import (
     InstanceRuntimeState,
     LastGoodCacheState,
@@ -240,20 +241,22 @@ class ActiveOperationSnapshot:
     deadline_monotonic: float
 
 
-@dataclass(frozen=True)
-class _SportsLivenessWindow:
-    instance_uuid: str
-    due_since: datetime
-    started_monotonic: float
-    deadline_monotonic: float
-
-
-@dataclass(frozen=True)
-class _TicketmasterLivenessWindow:
-    instance_uuid: str
-    due_since: datetime
-    started_monotonic: float
-    deadline_monotonic: float
+_SPORTS_LIVENESS = LivenessSettings(
+    label="Sports Dashboard",
+    reserve_subject="Sports Dashboard",
+    window_key="sports_isolated_liveness_window_seconds",
+    window_default=DEFAULT_SPORTS_ISOLATED_LIVENESS_WINDOW_SECONDS,
+    cooldown_key="sports_isolated_liveness_cooldown_seconds",
+    cooldown_default=DEFAULT_SPORTS_ISOLATED_LIVENESS_COOLDOWN_SECONDS,
+)
+_TICKETMASTER_LIVENESS = LivenessSettings(
+    label="Ticketmaster",
+    reserve_subject="Ticketmaster data",
+    window_key="ticketmaster_liveness_window_seconds",
+    window_default=DEFAULT_TICKETMASTER_LIVENESS_WINDOW_SECONDS,
+    cooldown_key="ticketmaster_liveness_cooldown_seconds",
+    cooldown_default=DEFAULT_TICKETMASTER_LIVENESS_COOLDOWN_SECONDS,
+)
 
 
 @dataclass(frozen=True)
@@ -694,10 +697,12 @@ class RefreshTask:
         self._memory_watchdog_next_check_seconds = None
         self._libc = None
         self._restart_request = None
-        self._sports_liveness_window = None
-        self._sports_liveness_cooldown_until_monotonic = 0.0
-        self._ticketmaster_liveness_window = None
-        self._ticketmaster_liveness_cooldown_until_monotonic = 0.0
+        self._sports_liveness = StarvationLiveness(
+            _SPORTS_LIVENESS, clock=lambda: self._clock(), seconds=self._liveness_seconds,
+        )
+        self._ticketmaster_liveness = StarvationLiveness(
+            _TICKETMASTER_LIVENESS, clock=lambda: self._clock(), seconds=self._liveness_seconds,
+        )
         self._ticketmaster_bootstrap_due_since = {}
         self._weather_liveness_window = None
         self._weather_pressure_recovery = WeatherPressureRecovery()
@@ -1127,6 +1132,22 @@ class RefreshTask:
     @property
     def restart_request(self):
         return None if self._restart_request is None else dict(self._restart_request)
+
+    @property
+    def _sports_liveness_window(self):
+        return self._sports_liveness.window
+
+    @property
+    def _sports_liveness_cooldown_until_monotonic(self):
+        return self._sports_liveness.cooldown_until_monotonic
+
+    @property
+    def _ticketmaster_liveness_window(self):
+        return self._ticketmaster_liveness.window
+
+    @property
+    def _ticketmaster_liveness_cooldown_until_monotonic(self):
+        return self._ticketmaster_liveness.cooldown_until_monotonic
 
     def active_operation_overrun_seconds(self):
         """Seconds the active command has run past its deadline, on the task clock."""
@@ -4943,14 +4964,14 @@ class RefreshTask:
             min_available_mb,
         )
 
-    def _weather_liveness_seconds(self, key, default, maximum):
+    def _liveness_seconds(self, key, default, maximum):
         value = self._config_float(key, default)
         if not math.isfinite(value) or value < 0:
             value = float(default)
         return min(float(maximum), value)
 
     def _request_burst_liveness_ordinary_yield(self):
-        configured_seconds = self._weather_liveness_seconds(
+        configured_seconds = self._liveness_seconds(
             "burst_liveness_ordinary_yield_seconds",
             DEFAULT_BURST_LIVENESS_ORDINARY_YIELD_SECONDS,
             90,
@@ -4967,7 +4988,7 @@ class RefreshTask:
         now = self._clock()
         deadline = self._burst_liveness_yield_deadline_monotonic
         if deadline <= 0:
-            duration = self._weather_liveness_seconds(
+            duration = self._liveness_seconds(
                 "burst_liveness_ordinary_yield_seconds",
                 DEFAULT_BURST_LIVENESS_ORDINARY_YIELD_SECONDS,
                 90,
@@ -5037,7 +5058,7 @@ class RefreshTask:
         if window is None:
             return
         now = self._clock()
-        cooldown_seconds = self._weather_liveness_seconds(
+        cooldown_seconds = self._liveness_seconds(
             "weather_liveness_cooldown_seconds",
             DEFAULT_WEATHER_LIVENESS_COOLDOWN_SECONDS,
             60 * 60,
@@ -5243,7 +5264,7 @@ class RefreshTask:
         # be safe. Unknown metrics or less than 140 MiB never hold other work.
         if not concession_margin:
             return None, False, False
-        window_seconds = self._weather_liveness_seconds(
+        window_seconds = self._liveness_seconds(
             "weather_liveness_window_seconds",
             DEFAULT_WEATHER_LIVENESS_WINDOW_SECONDS,
             90,
@@ -5296,14 +5317,8 @@ class RefreshTask:
             and command.intent is RefreshIntent.DATA_REFRESH
         )
 
-    def _ticketmaster_liveness_seconds(self, key, default, maximum):
-        value = self._config_float(key, default)
-        if not math.isfinite(value) or value < 0:
-            value = float(default)
-        return min(float(maximum), value)
-
     def _ticketmaster_liveness_target(self, data_candidates, current_dt):
-        starvation_seconds = self._ticketmaster_liveness_seconds(
+        starvation_seconds = self._liveness_seconds(
             "ticketmaster_liveness_starvation_seconds",
             DEFAULT_TICKETMASTER_LIVENESS_STARVATION_SECONDS,
             7 * 24 * 60 * 60,
@@ -5357,7 +5372,6 @@ class RefreshTask:
     ):
         """Reserve bounded idle time for persistently stale Ticketmaster data."""
 
-        now = self._clock()
         candidates_by_uuid = {
             candidate.instance.instance_uuid: candidate
             for candidate in data_candidates
@@ -5387,133 +5401,31 @@ class RefreshTask:
         margin_available, required_mb, max_swap = (
             self._ticketmaster_background_start_margin(resource_sample)
         )
-        window = self._ticketmaster_liveness_window
-        if (
-            window is not None
-            and window.instance_uuid not in active_ticketmaster_uuids
-        ):
-            logger.info(
-                "Canceling Ticketmaster quiet window because its target left "
-                "the active playlist. | instance_uuid_hash: %s",
-                hashlib.sha256(
-                    window.instance_uuid.encode("utf-8")
-                ).hexdigest()[:16],
-            )
-            self._ticketmaster_liveness_window = None
-            return None, False
-
-        if window is not None:
-            target = candidates_by_uuid.get(window.instance_uuid)
-            retry_pending = False
-            if target is None:
-                runtime = runtime_instances.get(
-                    window.instance_uuid,
-                    InstanceRuntimeState(),
-                ).data
-                next_retry = self._parse_iso_datetime(runtime.next_retry_at)
-                if next_retry is not None:
-                    next_retry = self._align_datetime_tz(next_retry, current_dt)
-                    retry_pending = current_dt < next_retry
-                if not retry_pending:
-                    logger.info(
-                        "Canceling Ticketmaster quiet window because its target "
-                        "is no longer due. | instance_uuid_hash: %s",
-                        hashlib.sha256(
-                            window.instance_uuid.encode("utf-8")
-                        ).hexdigest()[:16],
-                    )
-                    self._ticketmaster_liveness_window = None
-                    self._ticketmaster_bootstrap_due_since.pop(
-                        window.instance_uuid,
-                        None,
-                    )
-                    return None, False
-
-        if window is not None:
-            target = candidates_by_uuid.get(window.instance_uuid)
-            if now >= window.deadline_monotonic:
-                cooldown_seconds = self._ticketmaster_liveness_seconds(
-                    "ticketmaster_liveness_cooldown_seconds",
-                    DEFAULT_TICKETMASTER_LIVENESS_COOLDOWN_SECONDS,
-                    60 * 60,
-                )
-                self._ticketmaster_liveness_window = None
-                self._ticketmaster_liveness_cooldown_until_monotonic = (
-                    now + cooldown_seconds
-                )
-                logger.warning(
-                    "Ticketmaster quiet window expired before a refresh "
-                    "completed; ordinary refreshes resume. | "
-                    "instance_uuid_hash: %s | window_seconds: %.1f | "
-                    "cooldown_seconds: %.1f | available_mb: %s | "
-                    "swap_percent: %s",
-                    hashlib.sha256(
-                        window.instance_uuid.encode("utf-8")
-                    ).hexdigest()[:16],
-                    max(
-                        0.0,
-                        window.deadline_monotonic - window.started_monotonic,
-                    ),
-                    cooldown_seconds,
-                    resource_sample.available_mb,
-                    resource_sample.swap_percent,
-                )
-                return None, False
-            if target is not None and margin_available:
-                return target, False
-            return None, True
-
-        target, due_since = self._ticketmaster_liveness_target(
-            data_candidates,
-            current_dt,
+        decision = self._ticketmaster_liveness.decide(
+            current_dt=current_dt,
+            active_uuids=active_ticketmaster_uuids,
+            candidates_by_uuid=candidates_by_uuid,
+            retry_pending=lambda instance_uuid: self._liveness_retry_pending(
+                runtime_instances, instance_uuid, current_dt,
+            ),
+            margin_available=margin_available,
+            select_target=lambda: self._ticketmaster_liveness_target(
+                data_candidates, current_dt,
+            ),
+            resource_sample=resource_sample,
+            required_mb=required_mb,
+            max_swap=max_swap,
+            # This is intentionally one bounded maintenance pass. The next
+            # scheduler poll re-samples resources while ordinary background work
+            # is held, and execution still applies the same 115 MiB / swap gate.
+            before_window=lambda: self._run_memory_maintenance(
+                "ticketmaster-liveness-window",
+                force=True,
+            ),
         )
-        if target is not None and margin_available:
-            return target, False
-        if (
-            not margin_available
-            and now < self._ticketmaster_liveness_cooldown_until_monotonic
-        ):
-            return None, False
-        if target is None:
-            return None, False
-
-        window_seconds = self._ticketmaster_liveness_seconds(
-            "ticketmaster_liveness_window_seconds",
-            DEFAULT_TICKETMASTER_LIVENESS_WINDOW_SECONDS,
-            5 * 60,
-        )
-        if window_seconds <= 0:
-            return None, False
-
-        # This is intentionally one bounded maintenance pass. The next
-        # scheduler poll re-samples resources while ordinary background work is
-        # held, and execution still applies the same 115 MiB / swap gate.
-        self._run_memory_maintenance(
-            "ticketmaster-liveness-window",
-            force=True,
-        )
-        self._ticketmaster_liveness_window = _TicketmasterLivenessWindow(
-            instance_uuid=target.instance.instance_uuid,
-            due_since=due_since,
-            started_monotonic=now,
-            deadline_monotonic=now + window_seconds,
-        )
-        logger.warning(
-            "Reserving bounded quiet window for starved Ticketmaster data. | "
-            "instance_uuid_hash: %s | overdue_seconds: %.1f | "
-            "window_seconds: %.1f | available_mb: %s | swap_percent: %s | "
-            "required_available_mb: %s | max_swap_percent: %s",
-            hashlib.sha256(
-                target.instance.instance_uuid.encode("utf-8")
-            ).hexdigest()[:16],
-            max(0.0, (current_dt - due_since).total_seconds()),
-            window_seconds,
-            resource_sample.available_mb,
-            resource_sample.swap_percent,
-            required_mb,
-            max_swap,
-        )
-        return None, True
+        if decision.outcome is LivenessOutcome.NO_LONGER_DUE:
+            self._ticketmaster_bootstrap_due_since.pop(decision.instance_uuid, None)
+        return decision.target, decision.holds_independent
 
     def _ticketmaster_background_start_margin(self, sample):
         min_available_mb = self._config_float(
@@ -5558,12 +5470,6 @@ class RefreshTask:
             and bool(command.payload.get("playlist_name"))
         )
 
-    def _sports_liveness_seconds(self, key, default, maximum):
-        value = self._config_float(key, default)
-        if not math.isfinite(value) or value < 0:
-            value = float(default)
-        return min(float(maximum), value)
-
     def _sports_liveness_anchor(
         self,
         candidate,
@@ -5591,7 +5497,7 @@ class RefreshTask:
         runtime_instances,
         current_dt,
     ):
-        starvation_seconds = self._sports_liveness_seconds(
+        starvation_seconds = self._liveness_seconds(
             "sports_isolated_liveness_starvation_seconds",
             DEFAULT_SPORTS_ISOLATED_LIVENESS_STARVATION_SECONDS,
             7 * 24 * 60 * 60,
@@ -5627,7 +5533,6 @@ class RefreshTask:
         resource_sample,
     ):
         """Reserve a bounded idle window for a persistently overdue Sports render."""
-        now = self._clock()
         candidates_by_uuid = {
             candidate.instance.instance_uuid: candidate
             for candidate in data_candidates
@@ -5659,132 +5564,38 @@ class RefreshTask:
         margin_available, required_mb, max_swap = (
             self._sports_isolated_start_margin(resource_sample)
         )
-        window = self._sports_liveness_window
-        if window is not None and window.instance_uuid not in active_sports_uuids:
-            logger.info(
-                "Canceling Sports Dashboard quiet window because its target "
-                "left the active playlist. | instance_uuid_hash: %s",
-                hashlib.sha256(
-                    window.instance_uuid.encode("utf-8")
-                ).hexdigest()[:16],
-            )
-            self._sports_liveness_window = None
-            return None, False, active_sports_uuids
-
-        if window is not None:
-            target = candidates_by_uuid.get(window.instance_uuid)
-            retry_pending = False
-            if target is None:
-                runtime = runtime_instances.get(
-                    window.instance_uuid,
-                    InstanceRuntimeState(),
-                ).data
-                next_retry = self._parse_iso_datetime(runtime.next_retry_at)
-                if next_retry is not None:
-                    next_retry = self._align_datetime_tz(next_retry, current_dt)
-                    retry_pending = current_dt < next_retry
-                if not retry_pending:
-                    logger.info(
-                        "Canceling Sports Dashboard quiet window because its "
-                        "target is no longer due. | instance_uuid_hash: %s",
-                        hashlib.sha256(
-                            window.instance_uuid.encode("utf-8")
-                        ).hexdigest()[:16],
-                    )
-                    self._sports_liveness_window = None
-                    return None, False, active_sports_uuids
-
-        if window is not None:
-            target = candidates_by_uuid.get(window.instance_uuid)
-            if now >= window.deadline_monotonic:
-                cooldown_seconds = self._sports_liveness_seconds(
-                    "sports_isolated_liveness_cooldown_seconds",
-                    DEFAULT_SPORTS_ISOLATED_LIVENESS_COOLDOWN_SECONDS,
-                    60 * 60,
-                )
-                self._sports_liveness_window = None
-                self._sports_liveness_cooldown_until_monotonic = (
-                    now + cooldown_seconds
-                )
-                logger.warning(
-                    "Sports Dashboard quiet window expired before a refresh "
-                    "completed; ordinary refreshes resume. | "
-                    "instance_uuid_hash: %s | window_seconds: %.1f | "
-                    "cooldown_seconds: %.1f | available_mb: %s | "
-                    "swap_percent: %s",
-                    hashlib.sha256(
-                        window.instance_uuid.encode("utf-8")
-                    ).hexdigest()[:16],
-                    max(
-                        0.0,
-                        window.deadline_monotonic
-                        - window.started_monotonic,
-                    ),
-                    cooldown_seconds,
-                    resource_sample.available_mb,
-                    resource_sample.swap_percent,
-                )
-                return None, False, active_sports_uuids
-            if target is not None and margin_available:
-                # Keep the window until execution has actually completed.
-                # The child-process gate samples resources again; retaining the
-                # original deadline makes a scheduler/execution margin race
-                # expire into cooldown instead of silently starting over.
-                return target, False, frozenset()
-            return None, True, active_sports_uuids
-
-        target, due_since = self._sports_liveness_target(
-            data_candidates,
-            runtime_instances,
-            current_dt,
+        decision = self._sports_liveness.decide(
+            current_dt=current_dt,
+            active_uuids=active_sports_uuids,
+            candidates_by_uuid=candidates_by_uuid,
+            retry_pending=lambda instance_uuid: self._liveness_retry_pending(
+                runtime_instances, instance_uuid, current_dt,
+            ),
+            margin_available=margin_available,
+            select_target=lambda: self._sports_liveness_target(
+                data_candidates, runtime_instances, current_dt,
+            ),
+            resource_sample=resource_sample,
+            required_mb=required_mb,
+            max_swap=max_swap,
         )
-        if target is not None and margin_available:
-            return target, False, frozenset()
-        if (
-            not margin_available
-            and now < self._sports_liveness_cooldown_until_monotonic
-        ):
-            return None, False, active_sports_uuids
-        if target is None:
-            return (
-                None,
-                False,
-                (
-                    unproven_attempted_uuids
-                    if not margin_available
-                    else frozenset()
-                ),
-            )
+        if decision.outcome in {
+            LivenessOutcome.RUN_WINDOW_TARGET,
+            LivenessOutcome.RUN_TARGET,
+        }:
+            excluded = frozenset()
+        elif decision.outcome is LivenessOutcome.NO_TARGET:
+            excluded = unproven_attempted_uuids if not margin_available else frozenset()
+        else:
+            excluded = active_sports_uuids
+        return decision.target, decision.holds_independent, excluded
 
-        window_seconds = self._sports_liveness_seconds(
-            "sports_isolated_liveness_window_seconds",
-            DEFAULT_SPORTS_ISOLATED_LIVENESS_WINDOW_SECONDS,
-            5 * 60,
-        )
-        if window_seconds <= 0:
-            return None, False, active_sports_uuids
-        self._sports_liveness_window = _SportsLivenessWindow(
-            instance_uuid=target.instance.instance_uuid,
-            due_since=due_since,
-            started_monotonic=now,
-            deadline_monotonic=now + window_seconds,
-        )
-        logger.warning(
-            "Reserving bounded quiet window for starved Sports Dashboard. | "
-            "instance_uuid_hash: %s | overdue_seconds: %.1f | "
-            "window_seconds: %.1f | available_mb: %s | swap_percent: %s | "
-            "required_available_mb: %s | max_swap_percent: %s",
-            hashlib.sha256(
-                target.instance.instance_uuid.encode("utf-8")
-            ).hexdigest()[:16],
-            max(0.0, (current_dt - due_since).total_seconds()),
-            window_seconds,
-            resource_sample.available_mb,
-            resource_sample.swap_percent,
-            required_mb,
-            max_swap,
-        )
-        return None, True, active_sports_uuids
+    def _liveness_retry_pending(self, runtime_instances, instance_uuid, current_dt):
+        runtime = runtime_instances.get(instance_uuid, InstanceRuntimeState()).data
+        next_retry = self._parse_iso_datetime(runtime.next_retry_at)
+        if next_retry is None:
+            return False
+        return current_dt < self._align_datetime_tz(next_retry, current_dt)
 
     def _sports_isolated_start_margin(self, sample):
         min_available_mb = self._config_float(
