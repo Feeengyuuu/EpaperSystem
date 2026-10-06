@@ -58,7 +58,7 @@ def plugin(monkeypatch):
         plugin.asset_calls.append(("icon", str(appid), size))
         return Image.new("RGB", (size, size), (200, 80, 40))
 
-    def avatar(_url, size):
+    def avatar(_url, size, **_kwargs):
         plugin.asset_calls.append(("avatar", "", size))
         return Image.new("RGB", (size, size), (105, 120, 90))
 

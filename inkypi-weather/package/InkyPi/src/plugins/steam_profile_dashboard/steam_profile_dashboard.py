@@ -36,8 +36,9 @@ STEAM_COMMUNITY_BADGES_URL = "https://steamcommunity.com/profiles/{steam_id}/bad
 STEAM_COMMUNITY_PROFILE_URL = "https://steamcommunity.com/profiles/{steam_id}/"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-sidebar-generated-icons-v38"
+STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-avatar-rank-polish-v39"
 STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES = (
+    "midnight-console-sidebar-generated-icons-v38",
     "midnight-console-black-base-aligned-v37",
     "midnight-console-official-assets-v36",
 )
@@ -1649,7 +1650,7 @@ class SteamProfileDashboard(BasePlugin):
                     return game
         return {}
 
-    def _avatar_image(self, url, size):
+    def _avatar_image(self, url, size, *, decorative_outline=True):
         avatar = self._cached_profile_media(
             url, self._avatar_cache_path(url), 7 * 24 * 3600, "RGB",
         ) if url else None
@@ -1668,8 +1669,9 @@ class SteamProfileDashboard(BasePlugin):
         result = Image.new("RGBA", (size, size), (255, 255, 255, 0))
         result.paste(avatar, (0, 0), mask)
 
-        outline = ImageDraw.Draw(result)
-        outline.ellipse((2, 2, size - 3, size - 3), outline=(255, 255, 255), width=4)
+        if decorative_outline:
+            outline = ImageDraw.Draw(result)
+            outline.ellipse((2, 2, size - 3, size - 3), outline=(255, 255, 255), width=4)
         return result
 
     def _persona_text(self, profile):

@@ -62,7 +62,7 @@ def test_generated_assets_change_only_sidebar_and_level_stays_dynamic(monkeypatc
     plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
     monkeypatch.setattr(plugin, "_game_background", lambda *_args: None)
     monkeypatch.setattr(plugin, "_game_square_icon", lambda *_args: None)
-    monkeypatch.setattr(plugin, "_avatar_image", lambda *_args: None)
+    monkeypatch.setattr(plugin, "_avatar_image", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(plugin, "_profile_avatar_image", lambda *_args: None)
     data = {"profile": {"personaname": "Player"}, "level": 103,
             "friends": [], "recent_games": [], "owned_games": [], "badges": {}}
