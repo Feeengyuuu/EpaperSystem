@@ -30,6 +30,9 @@ BOUNDARIES = {
     "plugins/sports_dashboard/f1_domain.py": {
         "__future__", "collections.abc", "datetime", "typing",
     },
+    "plugins/stocktracker/trend_chart.py": {
+        "__future__", "collections.abc",
+    },
 }
 
 

@@ -15,6 +15,8 @@ def test_domain_rejects_a_provider_dependency_and_wildcard():
     assert gate.check_source("from .common import *\n", "plugins/sports_dashboard/f1_domain.py")
     assert gate.check_source("import requests\n", "plugins/sports_dashboard/f1_domain.py")
     assert not gate.check_source("from datetime import datetime\n", "plugins/sports_dashboard/f1_domain.py")
+    assert gate.check_source("from PIL import Image\n", "plugins/stocktracker/trend_chart.py")
+    assert not gate.check_source("from collections.abc import Sequence\n", "plugins/stocktracker/trend_chart.py")
 
 
 def test_scheduler_planning_rejects_device_access_and_runtime_model_import():
