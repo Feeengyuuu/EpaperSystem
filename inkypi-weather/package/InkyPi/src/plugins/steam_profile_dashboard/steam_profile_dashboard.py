@@ -36,8 +36,11 @@ STEAM_COMMUNITY_BADGES_URL = "https://steamcommunity.com/profiles/{steam_id}/bad
 STEAM_COMMUNITY_PROFILE_URL = "https://steamcommunity.com/profiles/{steam_id}/"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-black-base-aligned-v37"
-STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES = ("midnight-console-official-assets-v36",)
+STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-sidebar-generated-icons-v38"
+STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES = (
+    "midnight-console-black-base-aligned-v37",
+    "midnight-console-official-assets-v36",
+)
 STEAM_BACKGROUND_DAY_IMAGE = "background_day.png"
 STEAM_BACKGROUND_NIGHT_IMAGE = "background_night.png"
 STEAM_GAME_BACKDROP_IMAGE = "game_backdrop.png"

@@ -99,11 +99,12 @@ def tree_snapshot(root):
 
 @pytest.mark.parametrize("age,provenance", [(5, SourceProvenance.FRESH_CACHE), (4000, SourceProvenance.STALE_CACHE)])
 @pytest.mark.parametrize("source_theme,display_theme", [("day", "day"), ("night", "day"), ("day", "night")])
-def test_v36_recomposes_with_readonly_media_and_original_timestamps(
-    tmp_path, monkeypatch, age, provenance, source_theme, display_theme,
+@pytest.mark.parametrize("source_style", [OLD_STYLE, "midnight-console-black-base-aligned-v37"])
+def test_compatible_styles_recompose_with_readonly_media_and_original_timestamps(
+    tmp_path, monkeypatch, age, provenance, source_theme, display_theme, source_style,
 ):
     plugin = subject(tmp_path, monkeypatch)
-    root, entry = seed(plugin, mode=source_theme, age=age)
+    root, entry = seed(plugin, mode=source_theme, age=age, style=source_style)
     before = tree_snapshot(root)
     captured = []
     original = plugin._render_dashboard

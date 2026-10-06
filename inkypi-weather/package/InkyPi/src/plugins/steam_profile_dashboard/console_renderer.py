@@ -7,6 +7,8 @@ does not contain game-specific images, names, or network requests.
 
 from PIL import Image, ImageDraw, ImageOps
 
+from plugins.steam_profile_dashboard.sidebar_assets import sidebar_asset
+
 
 SIZE = (800, 480)
 CANVAS = (0, 0, 0)
@@ -256,8 +258,12 @@ class _Console:
                   29, bold=True, min_size=18)
         self.text((15, 209, 166, 222), "STEAM PLAYER", 10, MUTED)
         self.draw.line((14, 230, 167, 230), fill=BORDER)
-        self.draw.polygon(((36, 240), (57, 252), (57, 276), (36, 288), (15, 276), (15, 252)),
-                          outline=CYAN, width=2)
+        level_frame = sidebar_asset("level_frame", 54)
+        if level_frame is not None:
+            self.image.paste(level_frame, (9, 237), level_frame)
+        else:
+            self.draw.polygon(((36, 240), (57, 252), (57, 276), (36, 288), (15, 276), (15, 252)),
+                              outline=CYAN, width=2)
         self.text((17, 254, 56, 277), _value(data.get("level")), 23,
                   bold=True, min_size=17, align="center")
         self.text((67, 248, 167, 265), "等级", 14, MUTED)
@@ -268,21 +274,29 @@ class _Console:
         if game_count is None:
             game_count = len(owned)
         metrics = (
-            ("game", "游戏", _value(game_count)),
-            ("people", "好友", f"{_value(data.get('online_friend_count'))}/{_value(data.get('friend_count'))}"),
-            ("clock", "近2周", _hours(sum(_number(g.get("playtime_2weeks")) for g in recent))),
-            ("clock", "总计", _hours(sum(_number(g.get("playtime_forever")) for g in owned))),
+            ("games", "game", "游戏", _value(game_count), 20),
+            ("friends", "people", "好友", f"{_value(data.get('online_friend_count'))}/{_value(data.get('friend_count'))}", 20),
+            ("recent", "clock", "近2周", _hours(sum(_number(g.get("playtime_2weeks")) for g in recent)), 18),
+            ("total", "clock", "总计", _hours(sum(_number(g.get("playtime_forever")) for g in owned)), 18),
         )
-        for index, (symbol, label, number) in enumerate(metrics):
+        for index, (asset, symbol, label, number, size) in enumerate(metrics):
             y = 299 + index * 25
-            self.small_symbol(symbol, 17, y)
+            icon = sidebar_asset(asset, size)
+            if icon is not None:
+                self.image.paste(icon, (16 + (20 - size) // 2, y + 1 + (20 - size) // 2), icon)
+            else:
+                self.small_symbol(symbol, 17, y)
             self.text((43, y + 1, 90, y + 19), label, 13, MUTED)
             self.text((91, y, 168, y + 22), number, 18, bold=True, min_size=13, align="right")
         self.draw.line((14, 405, 167, 405), fill=BORDER)
         badges = data.get("badges") or {}
         badge_count = len(badges.get("badges", [])) if badges else None
-        for y, label, number in ((416, "徽章", badge_count), (444, "XP", badges.get("player_xp"))):
-            self.draw.ellipse((17, y, 34, y + 17), outline=CYAN, width=2)
+        for y, asset, label, number in ((416, "badges", "徽章", badge_count), (444, "xp", "XP", badges.get("player_xp"))):
+            icon = sidebar_asset(asset, 20)
+            if icon is not None:
+                self.image.paste(icon, (16, y + 1), icon)
+            else:
+                self.draw.ellipse((17, y, 34, y + 17), outline=CYAN, width=2)
             self.text((43, y + 1, 86, y + 20), label, 14, MUTED)
             self.text((87, y, 168, y + 23), _value(number), 20, bold=True, min_size=14, align="right")
 

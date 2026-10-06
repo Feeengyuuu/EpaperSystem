@@ -104,7 +104,9 @@ def test_game_art_and_icons_are_preserved_over_a_solid_page_canvas(plugin, data)
     assert max(game_positions) < avatar_positions[1]
     # The requested flat colour belongs to the page underneath the game cards.
     # The game artwork itself remains present, with the existing navy shading.
-    for box in ((183, 0, 193, 480), (791, 0, 800, 480), (0, 0, 12, 480)):
+    # The generated 54 px level frame reaches x=9; the canvas around it stays black.
+    for box in ((183, 0, 193, 480), (791, 0, 800, 480), (0, 0, 9, 480),
+                (0, 0, 12, 237), (0, 292, 12, 480)):
         crop = image.crop(box)
         assert ImageChops.difference(crop, Image.new("RGB", crop.size, CANVAS)).getbbox() is None
     assert image.getpixel((200, 50)) != PANEL
