@@ -79,8 +79,8 @@ def check_source(source: str, module: str) -> list[str]:
                 errors.append(f"{module}:{node.lineno}: selection exceeds the reduced 480-line ceiling")
             if node.name == "_execute_queue_entry" and node.end_lineno - node.lineno + 1 > 120:
                 errors.append(f"{module}:{node.lineno}: queue-entry orchestration exceeds its 120-line ceiling")
-    if module == "refresh_task.py" and len(source.splitlines()) > 10040:
-        errors.append(f"{module}: coordinator exceeds the reduced 10040-line ceiling; extract a responsibility")
+    if module == "refresh_task.py" and len(source.splitlines()) > 9930:
+        errors.append(f"{module}: coordinator exceeds the reduced 9930-line ceiling; extract a responsibility")
     return errors
 
 
