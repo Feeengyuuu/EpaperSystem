@@ -147,7 +147,7 @@ def _sample_csl_scoreboard():
     }
 
 
-def test_csl_scoreboard_window_uses_local_today_minus_seven_through_plus_seven():
+def test_csl_scoreboard_window_keeps_results_across_international_breaks():
     now = datetime(2026, 7, 25, 6, 30, tzinfo=timezone.utc)
 
     start_date, end_date = CSLMixin._csl_scoreboard_date_range(
@@ -155,8 +155,23 @@ def test_csl_scoreboard_window_uses_local_today_minus_seven_through_plus_seven()
         now,
     )
 
-    assert start_date.isoformat() == "2026-07-17"
+    assert start_date.isoformat() == "2026-06-24"
     assert end_date.isoformat() == "2026-07-31"
+
+
+def test_csl_result_before_break_is_recent_without_reactivating_auto_route():
+    now = datetime(2026, 10, 7, 21, 0, tzinfo=timezone.utc)
+    before_break = {
+        "event_id": "round-28",
+        "start": datetime(2026, 9, 27, 11, 35, tzinfo=timezone.utc),
+        "state": "FT",
+    }
+
+    selected = CSLMixin._select_csl_event_sections([before_break], now)
+    summary = CSLMixin._csl_schedule_summary([before_break], now)
+
+    assert selected["recent"] == [before_break]
+    assert summary["active"] is False
 
 
 def test_csl_espn_adapter_emits_worldcup_contract_with_chinese_names_and_badge_fallback():
@@ -442,7 +457,7 @@ def test_csl_loader_returns_compatible_fresh_cache_without_network(tmp_path):
         "cache_key": (
             "sports-dashboard-csl-scoreboard-v1|"
             "https://site.web.api.espn.com/apis/site/v2/sports/soccer/chn.1/scoreboard|"
-            "2026-07-18|2026-08-01|America/Los_Angeles|1000"
+            "2026-06-25|2026-08-01|America/Los_Angeles|1000"
         ),
         "fetched_at": "2026-07-25T11:59:30+00:00",
         "scoreboard": scoreboard,
@@ -496,7 +511,7 @@ def test_csl_loader_fetches_only_bounded_window_and_persists_current_last_good_a
                 "timeout": 20,
             },
         )
-        for token in ("202607", "202608")
+        for token in ("202606", "202607", "202608")
     ]
     current = json.loads((tmp_path / "csl_espn.json").read_text(encoding="utf-8"))
     last_good = json.loads((tmp_path / "csl_espn.last_good.json").read_text(encoding="utf-8"))
@@ -506,7 +521,7 @@ def test_csl_loader_fetches_only_bounded_window_and_persists_current_last_good_a
     assert request_state == {
         "version": "sports-dashboard-csl-requests-v1",
         "date": "2026-07-25",
-        "count": 2,
+        "count": 3,
         "updated_at": "2026-07-25T12:00:00+00:00",
     }
 

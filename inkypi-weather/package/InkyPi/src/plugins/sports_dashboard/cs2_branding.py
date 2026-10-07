@@ -26,15 +26,17 @@ LOCAL_EVENT_DIR = Path(__file__).parent / "assets" / "logos" / "cs2_events"
 # Keep this alias edition-specific; qualifiers and other seasons stay distinct.
 EVENT_NAME_ALIASES = {
     "exortfiestaseason2": "exortfiestaseries2",
-    # PandaScore/Liquipedia use "#1" for HLTV event 9327 (Sep 25-28, 2026).
-    # Exact aliases retain the edition and never absorb qualifier suffixes.
-    "1winprivateclub1": "1winprivateclubseason1",
 }
+# PandaScore/Liquipedia number 1win Private Club editions "#N" where HLTV says
+# "Season N" (#1 = HLTV 9327, #2 Closed Qualifier = 9408). The edition number
+# and any stage suffix are kept, so qualifiers and other seasons stay distinct.
+ONEWIN_EDITION = re.compile(r"^1winprivateclub(\d+)")
 
 
 def _canonical(name):
     # Only strip a calendar year; edition/season numbers remain significant.
     name = normalized_name(re.sub(r"\b20\d{2}\b", "", str(name or "")))
+    name = ONEWIN_EDITION.sub(r"1winprivateclubseason\1", name)
     return EVENT_NAME_ALIASES.get(name, name)
 
 

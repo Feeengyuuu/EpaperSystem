@@ -112,6 +112,30 @@ def test_onewin_provider_name_resolves_only_the_matching_edition_and_date():
     })
 
 
+def test_onewin_numbered_editions_match_hltv_season_names_and_stage():
+    def entry(event_id, name, start, end):
+        return {"id": event_id, "name": name, "start": start, "end": end}
+
+    catalog = [
+        entry("9408", "1win Private Club Season 2 Closed Qualifier",
+              "2026-10-07T10:00:00+00:00", "2026-10-10T10:00:00+00:00"),
+        entry("9407", "1win Private Club Season 2",
+              "2026-10-19T10:00:00+00:00", "2026-10-22T10:00:00+00:00"),
+    ]
+    qualifier_day = datetime(2026, 10, 8, 2, tzinfo=timezone.utc)
+    main_day = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+
+    def matched(name, start):
+        found = match_event(catalog, {"event_name": name, "start": start})
+        return found and found["id"]
+
+    assert matched("1win Private Club #2: Closed Qualifier", qualifier_day) == "9408"
+    assert matched("1win Private Club #2 2026", main_day) == "9407"
+    assert matched("1win Private Club #3: Closed Qualifier", qualifier_day) is None
+    assert matched("1win Private Club #2", qualifier_day) is None
+    assert matched("1win Private Club #2: Closed Qualifier", main_day) is None
+
+
 @pytest.mark.parametrize("theme", ["DAY_COLORS", "DEEP_NIGHT_COLORS"])
 def test_onewin_persisted_card_renders_offline_in_both_themes(monkeypatch, theme):
     from plugins.sports_dashboard import common

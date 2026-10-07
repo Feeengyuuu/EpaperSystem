@@ -2607,8 +2607,8 @@ class NBAMixin:
         self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y, logo_size, event["team_a"])
         team_a_box = (left_logo_x + logo_size + 4, y - 1, center_x - score_w / 2 - 3, team_bottom)
         team_b_box = (center_x + score_w / 2 + 3, y - 1, right_logo_x - 4, team_bottom)
-        team_a_label = self._nba_display_team_from_event(event, "a", full=True) if center_text == "VS" else event["team_a"]
-        team_b_label = self._nba_display_team_from_event(event, "b", full=True) if center_text == "VS" else event["team_b"]
+        team_a_label = self._nba_display_team_from_event(event, "a", full=True)
+        team_b_label = self._nba_display_team_from_event(event, "b", full=True)
         team_a, font_a = self._fit_text(draw, team_a_label, max(24, team_a_box[2] - team_a_box[0]), team_font_size, bold=True, min_size=7)
         team_a_fill = COLORS[SportsDashboard._nba_team_side_fill_key(event, "a")]
         team_b_fill = COLORS[SportsDashboard._nba_team_side_fill_key(event, "b")]
@@ -2875,8 +2875,8 @@ class NBAMixin:
         logo_size = NBA_INLINE_LOGO_SIZE
         left_logo_x = x1 + 8
         right_logo_x = x2 - 8 - logo_size
-        team_a_label = self._nba_display_team_from_event(event, "a", full=True) if center_text == "VS" else event["team_a"]
-        team_b_label = self._nba_display_team_from_event(event, "b", full=True) if center_text == "VS" else event["team_b"]
+        team_a_label = self._nba_display_team_from_event(event, "a", full=True)
+        team_b_label = self._nba_display_team_from_event(event, "b", full=True)
         self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y, logo_size, event["team_a"])
         team_a, font_a = self._fit_text(
             draw,

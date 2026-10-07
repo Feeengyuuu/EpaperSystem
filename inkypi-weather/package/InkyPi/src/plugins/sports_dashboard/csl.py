@@ -7,6 +7,9 @@ from .football_espn import FOOTBALL_EVENT_LIMIT, fetch_scoreboard
 
 
 CSL_SCOREBOARD_LOOKBACK_DAYS = 7
+# The fetched window keeps the last round across international breaks; live
+# detection and auto-route activity still use the 7-day lookback above.
+CSL_RECENT_RESULTS_LOOKBACK_DAYS = 30
 CSL_SCOREBOARD_LOOKAHEAD_DAYS = 7
 CSL_VISIBLE_MATCH_LIMIT = 4
 CSL_SCOREBOARD_EVENT_LIMIT = FOOTBALL_EVENT_LIMIT
@@ -83,7 +86,7 @@ class CSLMixin:
     def _csl_scoreboard_date_range(timezone_info, now_utc):
         local_date = now_utc.astimezone(timezone_info).date()
         return (
-            local_date - timedelta(days=CSL_SCOREBOARD_LOOKBACK_DAYS),
+            local_date - timedelta(days=CSL_RECENT_RESULTS_LOOKBACK_DAYS),
             local_date + timedelta(days=CSL_SCOREBOARD_LOOKAHEAD_DAYS),
         )
 

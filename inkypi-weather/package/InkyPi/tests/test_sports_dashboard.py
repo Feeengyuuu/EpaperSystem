@@ -12978,6 +12978,34 @@ def test_nba_mini_match_row_renders_moneyline_odds():
     assert team_sizes == [NBA_MINI_LINEUP_ODDS_TEAM_FONT_SIZE, NBA_MINI_LINEUP_ODDS_TEAM_FONT_SIZE]
 
 
+@pytest.mark.parametrize("layout", ["mini", "full"])
+def test_nba_result_rows_use_full_team_names(layout):
+    plugin = _plugin()
+    image = Image.new("RGB", (420, 60), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    event = SportsDashboard._parse_nba_espn_events(
+        _sample_nba_scoreboard_payload(), ZoneInfo("America/Los_Angeles")
+    )[1]
+    full_names = {plugin._nba_display_team_from_event(event, side, full=True) for side in ("a", "b")}
+    assert full_names.isdisjoint({event["team_a"], event["team_b"]})
+    fitted = []
+    original_fit_text = plugin._fit_text
+
+    def record_fit_text(draw_arg, text, max_width, size, bold=False, min_size=11):
+        fitted.append(text)
+        return original_fit_text(draw_arg, text, max_width, size, bold=bold, min_size=min_size)
+
+    plugin._fit_text = record_fit_text
+    plugin._draw_team_logo = lambda *_args, **_kwargs: None
+
+    if layout == "mini":
+        plugin._draw_nba_mini_match_row(image, draw, 4, 260, 4, event, "98-124", show_date=True)
+    else:
+        plugin._draw_nba_teams_inline(image, draw, 4, 416, 4, event, "98-124")
+
+    assert full_names <= set(fitted)
+
+
 def test_nba_focus_card_renders_larger_moneyline_odds():
     plugin = _plugin()
     image = Image.new("RGB", (300, 190), COLORS["paper"])
