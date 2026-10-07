@@ -117,7 +117,27 @@ def _safe_text(value: str, label: str, maximum: int = 160) -> str:
     return cleaned
 
 
+def _refresh_interval(value: object) -> int | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        refresh_document = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    interval = refresh_document.get("interval") if isinstance(refresh_document, dict) else None
+    if isinstance(interval, int) and not isinstance(interval, bool) and interval > 0:
+        return max(_MINIMUM_REFRESH_INTERVAL_SECONDS, min(_MAXIMUM_REFRESH_INTERVAL_SECONDS, interval))
+    return None
+
+
 class _PlaylistParser(HTMLParser):
+    """Read the device /playlist page.
+
+    Two layouts are accepted: the legacy list (``div.playlist-item`` /
+    ``div.plugin-item``) and the 2026-10 Now Playing page, whose playlist
+    panels and instance cards carry the same facts as ``data-*`` attributes.
+    """
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.playlists: list[_Playlist] = []
@@ -125,12 +145,53 @@ class _PlaylistParser(HTMLParser):
         self._plugin: _Plugin | None = None
         self._stack: list[tuple[str, str | None]] = []
         self._capture: tuple[str, list[str]] | None = None
+        self._tab: str | None = None
+        self._live_tabs: set[str] = set()
+        self._card_image: str | None = None
+
+    def _start_card_markup(self, tag: str, attributes: dict[str, str | None], classes: set[str]) -> str | None:
+        """Handle the Now Playing layout; return a stack marker or None."""
+        if tag == "button" and "data-playlist-tab" in attributes:
+            self._tab = attributes.get("data-playlist-tab") or ""
+            return "tab"
+        if tag == "span" and self._tab is not None and "live-dot" in classes:
+            self._live_tabs.add(self._tab)
+            return None
+        if tag == "div" and "data-playlist-panel" in attributes:
+            if self._playlist is not None:
+                raise SyncPortalError("capture_invalid", "device playlists are malformed")
+            name = attributes.get("data-playlist-panel") or ""
+            active = attributes.get("data-playlist-active") == "true" or name in self._live_tabs
+            self._playlist = _Playlist(name=name, active=active)
+            return "playlist"
+        if tag == "article" and "data-instance-card" in attributes:
+            if self._playlist is None or self._plugin is not None:
+                raise SyncPortalError("capture_invalid", "device plugins are malformed")
+            if attributes.get("data-playlist") != self._playlist.name:
+                raise SyncPortalError("capture_invalid", "device card playlist disagrees")
+            self._plugin = _Plugin(
+                name=(attributes.get("data-instance") or "").strip(),
+                plugin_id=(attributes.get("data-plugin-id") or "").strip(),
+                refresh_interval_seconds=_refresh_interval(attributes.get("data-refresh")),
+            )
+            image = attributes.get("data-image-url")
+            self._card_image = image.strip() if isinstance(image, str) and image.strip() else None
+            return "plugin"
+        if tag == "span" and self._plugin is not None and "data-relative-time" in attributes:
+            # Like the legacy page, only an instance that has rendered offers its thumbnail.
+            value = attributes.get("data-relative-time")
+            if isinstance(value, str) and value.strip():
+                self._plugin.source_updated_at = value.strip()
+                self._plugin.thumbnail = self._card_image
+        return None
 
     def handle_starttag(self, tag: str, attrs) -> None:
         attributes = {str(key): value for key, value in attrs}
         classes = _classes(attributes)
-        marker: str | None = None
-        if tag == "div" and "playlist-item" in classes:
+        marker: str | None = self._start_card_markup(tag, attributes, classes)
+        if marker is not None:
+            pass
+        elif tag == "div" and "playlist-item" in classes:
             if self._playlist is not None:
                 raise SyncPortalError("capture_invalid", "device playlists are malformed")
             self._playlist = _Playlist(active="active" in classes)
@@ -157,18 +218,9 @@ class _PlaylistParser(HTMLParser):
                 if self._plugin.name and self._plugin.name != instance_name:
                     raise SyncPortalError("capture_invalid", "device instance names disagree")
                 self._plugin.name = instance_name
-            refresh = attributes.get("data-refresh")
-            if isinstance(refresh, str):
-                try:
-                    refresh_document = json.loads(refresh)
-                except json.JSONDecodeError:
-                    refresh_document = None
-                interval = refresh_document.get("interval") if isinstance(refresh_document, dict) else None
-                if isinstance(interval, int) and not isinstance(interval, bool) and interval > 0:
-                    self._plugin.refresh_interval_seconds = max(
-                        _MINIMUM_REFRESH_INTERVAL_SECONDS,
-                        min(_MAXIMUM_REFRESH_INTERVAL_SECONDS, interval),
-                    )
+            interval = _refresh_interval(attributes.get("data-refresh"))
+            if interval is not None:
+                self._plugin.refresh_interval_seconds = interval
         elif tag == "img" and self._plugin is not None and "plugin-thumbnail" in classes:
             source = attributes.get("src")
             if isinstance(source, str) and source.strip():
@@ -200,7 +252,9 @@ class _PlaylistParser(HTMLParser):
             elif target == "plugin" and self._plugin is not None:
                 self._plugin.name = value
             self._capture = None
-        if marker == "plugin":
+        if marker == "tab":
+            self._tab = None
+        elif marker == "plugin":
             assert self._playlist is not None and self._plugin is not None
             self._plugin.name = _safe_text(self._plugin.name, "instance name")
             self._plugin.plugin_id = _safe_text(self._plugin.plugin_id, "plugin id", 128)

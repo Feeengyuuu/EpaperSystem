@@ -122,6 +122,53 @@ def _playlist_html(
     """.encode("utf-8")
 
 
+def _now_playing_html(
+    *,
+    image_source: str = IMAGE_PATH,
+    source_updated_at: str | None = "2026-08-03T03:28:00Z",
+    live_tab: str = "Drive",
+    active_attribute: str = "",
+) -> bytes:
+    """The 2026-10 Now Playing page: playlist tabs, panels and instance cards."""
+    stamp = (
+        ""
+        if source_updated_at is None
+        else f'<span> · </span><span data-relative-time="{source_updated_at}"></span>'
+    )
+
+    def tab(name: str) -> str:
+        dot = '<span class="live-dot" title="Active now"></span>' if name == live_tab else ""
+        return f'<button type="button" class="tab" role="tab" data-playlist-tab="{name}">{dot}<span>{name}</span></button>'
+
+    return f"""
+    <!doctype html><html><head><meta name="inkypi-csrf-token" content="csrf-value-must-not-persist"></head><body>
+      <nav class="app-nav"><a class="nav-link" href="/"><span class="nav-icon"><svg viewBox="0 0 24 24"><path d="M3 4h18"/></svg></span><span>Now Playing</span></a></nav>
+      <section class="hero card" id="hero"><img src="/api/current_image" alt="Current Image"></section>
+      <div class="tabs" role="tablist">{tab("Night")}{tab("Drive")}</div>
+      <div class="playlist-panel" data-playlist-panel="Night" hidden>
+        <article class="preview-card" data-instance-card data-playlist="Night" data-plugin-id="calendar"
+                 data-instance="Inactive Item" data-refresh='{{"interval": 30}}'
+                 data-image-url="/plugin_instance_image/Night/calendar/Inactive%20Item">
+          <button type="button" class="preview-media"><img loading="lazy" alt="" data-preview-image src="/plugin_instance_image/Night/calendar/Inactive%20Item"></button>
+        </article>
+      </div>
+      <div class="playlist-panel" data-playlist-panel="Drive"{active_attribute}>
+        <div class="preview-grid" data-preview-grid>
+          <article class="preview-card is-current" data-instance-card data-playlist="Drive" data-plugin-id="weather"
+                   data-instance="Fremont Weather" data-refresh='{{"interval": 120}}'
+                   data-before-display="true" data-image-url="{image_source}">
+            <button type="button" class="preview-media" data-action="preview"><img loading="lazy" alt="" data-preview-image src="{image_source}"></button>
+            <div class="preview-body">
+              <img class="plugin-glyph" src="/images/weather/icon.png" alt="">
+              <div class="preview-meta truncate"><span data-refresh-label>Every 2 minutes</span>{stamp}</div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </body></html>
+    """.encode("utf-8")
+
+
 def _playlist_html_with_pixiv() -> bytes:
     return f"""
     <!doctype html><html><body>
@@ -351,6 +398,56 @@ class SyncDevicePortalTests(unittest.TestCase):
         self.assertNotIn(TEST_KEY.encode("utf-8"), persisted)
         self.assertNotIn(b"csrf-value-must-not-persist", persisted)
         self.assertEqual(remaining_names, {"state.json", "sync.lock"})
+
+    def test_now_playing_page_publishes_the_same_bundle_as_the_legacy_page(self) -> None:
+        bundles = []
+        for page in (_playlist_html(), _now_playing_html()):
+            with tempfile.TemporaryDirectory() as temporary:
+                state_dir = Path(temporary) / "state"
+                opener = _Opener(page, _png())
+                push = _PushRecorder()
+
+                with mock.patch.dict(os.environ, {"EPAPER_PUBLISH_KEY": TEST_KEY}, clear=True):
+                    report = _sync(state_dir, opener, push)
+
+            self.assertEqual(report.outcome, "published")
+            self.assertEqual(
+                [request["url"] for request in opener.requests],
+                [f"{DEVICE_ORIGIN}/playlist", IMAGE_URL],
+            )
+            bundles.append(push.calls[0]["bundle"])
+
+        self.assertEqual(bundles[0], bundles[1])
+
+    def test_now_playing_page_marks_the_active_playlist_by_attribute_or_live_tab(self) -> None:
+        for page in (
+            _now_playing_html(live_tab="Drive"),
+            _now_playing_html(live_tab="", active_attribute=' data-playlist-active="true"'),
+        ):
+            parser = sync_device_portal._PlaylistParser()
+            parser.feed(page.decode("utf-8"))
+            active = parser.finish()
+
+            self.assertEqual([playlist.name for playlist in active], ["Drive"])
+            self.assertEqual(active[0].plugins[0].refresh_interval_seconds, 120)
+
+        parser = sync_device_portal._PlaylistParser()
+        parser.feed(_now_playing_html(live_tab="").decode("utf-8"))
+        with self.assertRaises(sync_device_portal.SyncPortalError):
+            parser.finish()
+
+    def test_now_playing_card_without_a_render_offers_no_thumbnail(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            state_dir = Path(temporary) / "state"
+            opener = _Opener(_now_playing_html(source_updated_at=None))
+            push = _PushRecorder()
+
+            with self.assertRaises(sync_device_portal.SyncPortalError) as caught:
+                _sync(state_dir, opener, push)
+
+        self.assertEqual(caught.exception.code, "capture_invalid")
+        self.assertEqual([request["url"] for request in opener.requests], [f"{DEVICE_ORIGIN}/playlist"])
+        self.assertEqual(push.calls, [])
 
     def test_unchanged_fingerprint_is_a_publish_noop(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
