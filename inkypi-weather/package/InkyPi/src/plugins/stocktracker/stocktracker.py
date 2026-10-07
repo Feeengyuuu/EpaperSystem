@@ -166,6 +166,9 @@ CASH_SYMBOLS = ("cash", "usd", "us dollar", "money market")
 EXTENDED_HISTORY_PERIOD = "1d"
 EXTENDED_HISTORY_INTERVAL = "1m"
 PORTFOLIO_HISTORY_DIR_ENV = "INKYPI_STOCKTRACKER_HISTORY_DIR"
+# Saved snapshots are taken after the close, so on a shared day they match the
+# official close-based value closely unless deposits or holdings changed.
+LOCAL_HISTORY_SEAM_TOLERANCE = 0.01
 PORTFOLIO_HISTORY_FILE_ENV = "INKYPI_STOCKTRACKER_HISTORY_FILE"
 PORTFOLIO_HISTORY_MAX_DAYS = 180
 SOURCE_CACHE_SCHEMA_VERSION = "stocktracker-source-v2"
@@ -1218,6 +1221,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		cutoff = self._history_cutoff_date(period, now)
 		earliest_official = min(official_dates) if official_dates else None
 		local_by_date = {}
+		local_on_official = {}
 		for item in history_points or []:
 			point = self._normalize_portfolio_history_entry(item)
 			if point is None:
@@ -1226,12 +1230,30 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			if point_date is None or point_date < cutoff:
 				continue
 			if earliest_official is not None and point_date >= earliest_official:
+				local_on_official[point_date] = float(point["value"])
 				continue
 			local_by_date[point_date] = point
 		supplemental = [local_by_date[date] for date in sorted(local_by_date)]
+		if supplemental and official_series and not self._local_history_meets_official(
+			official_series, local_on_official,
+		):
+			# Saved snapshots record the account as it was, while the official
+			# series back-projects today's holdings and cash. Splice them only
+			# when both agree on their first shared day, never across a jump.
+			supplemental = []
 		values = [float(point["value"]) for point in supplemental]
 		values.extend(value for _date_key, value in official_series)
 		return values, supplemental
+
+	@classmethod
+	def _local_history_meets_official(cls, official_series, local_on_official):
+		for date_key, official_value in official_series:
+			local_value = local_on_official.get(cls._series_date(date_key))
+			if local_value is None:
+				continue
+			scale = max(abs(float(official_value)), 1.0)
+			return abs(float(official_value) - local_value) / scale <= LOCAL_HISTORY_SEAM_TOLERANCE
+		return False
 
 	def _portfolio_curve_values(self, stock_data, history_points=None, **kwargs):
 		values, _supplemental = self._portfolio_curve(stock_data, history_points, **kwargs)

@@ -878,7 +878,7 @@ def test_stock_tracker_curve_uses_official_history_before_older_local_snapshots(
         {"date": "2026-04-01", "timestamp": "2026-04-01T18:00:00", "value": 1.0},
         {"date": "2026-06-01", "timestamp": "2026-06-01T18:00:00", "value": 450.0},
         {"date": "2026-06-02", "timestamp": "2026-06-02T18:00:00", "value": 480.0},
-        {"date": "2026-06-03", "timestamp": "2026-06-03T18:00:00", "value": 999.0},
+        {"date": "2026-06-03", "timestamp": "2026-06-03T18:00:00", "value": 505.0},
     ]
 
     values = plugin._portfolio_curve_values(
@@ -889,6 +889,35 @@ def test_stock_tracker_curve_uses_official_history_before_older_local_snapshots(
     )
 
     assert values == [450.0, 480.0, 500.0, 560.0]
+
+
+def test_stock_tracker_curve_does_not_splice_snapshots_on_a_different_basis():
+    # 2026-10-07 device data: Robinhood back-projects today's holdings and
+    # cash, while saved snapshots recorded the account as it was. Across the
+    # Labor Day weekend the stale snapshots drew a flat start and a $10k jump.
+    plugin = StockTracker({"id": "stocktracker"})
+    stock_data = [
+        {
+            **_stock("PORTFOLIO", [261569.0, 259478.27], 1.0),
+            "history": stocktracker_module._SimpleHistory([
+                ("2026-09-08T00:00:00Z", 261569.0),
+                ("2026-09-09T00:00:00Z", 259478.27),
+            ]),
+        },
+    ]
+    local_history = [
+        {"date": day, "timestamp": f"{day}T13:10:00", "value": 251807.82}
+        for day in ("2026-09-05", "2026-09-06", "2026-09-07")
+    ] + [{"date": "2026-09-08", "timestamp": "2026-09-08T13:22:00", "value": 251280.93}]
+
+    values = plugin._portfolio_curve_values(
+        stock_data,
+        local_history,
+        period="1mo",
+        now=datetime(2026, 10, 7, 13, 19),
+    )
+
+    assert values == [261569.0, 259478.27]
 
 
 def test_stock_tracker_snapshot_reads_imported_history_without_copying_it_into_current_file(tmp_path, monkeypatch):
