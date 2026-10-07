@@ -7,8 +7,11 @@ checked, so ordinary text costs nothing.
 
 from __future__ import annotations
 
-# A code point no font maps, so drawing it yields the font's .notdef glyph.
-_MISSING_PROBE = "\U000E01EF"
+# A noncharacter no font maps, so drawing it yields the font's .notdef glyph.
+# Never use a default-ignorable code point here (e.g. a variation selector):
+# with the raqm layout engine used on the device those render as empty or
+# shaped clusters, not .notdef, and every missing glyph looks "supported".
+_MISSING_PROBE = "￿"
 
 _DOTS = ("·", "・", "‧", "･", "•", "∙", "⋅")
 EQUIVALENTS: dict[str, tuple[str, ...]] = {char: _DOTS for char in _DOTS}

@@ -1,11 +1,14 @@
 import sys
+import unicodedata
 from pathlib import Path
 
-from PIL import ImageFont
+import pytest
+from PIL import ImageFont, features
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC_DIR))
 
+from utils import glyph_text
 from utils.glyph_text import font_has_glyph, glyph_safe_text
 
 
@@ -67,3 +70,22 @@ def test_real_font_without_dot_operator_gets_middle_dot():
     assert font_has_glyph(font, "·")
     assert not font_has_glyph(font, "⋅")
     assert glyph_safe_text("A⋅B", font) == "A·B"
+
+
+def test_missing_probe_is_a_noncharacter_not_an_ignorable_code_point():
+    probe = glyph_text._MISSING_PROBE
+    code = ord(probe)
+
+    # raqm shapes variation selectors instead of drawing .notdef (seen on the device).
+    assert not (0xFE00 <= code <= 0xFE0F or 0xE0100 <= code <= 0xE01EF)
+    assert unicodedata.category(probe) == "Cn"
+    assert code & 0xFFFE == 0xFFFE
+
+
+@pytest.mark.skipif(not features.check("raqm"), reason="raqm layout engine not installed")
+def test_real_font_detection_with_raqm():
+    font = ImageFont.truetype(
+        str(SRC_DIR / "static" / "fonts" / "NotoSansSC-VF.ttf"), 24, layout_engine=ImageFont.Layout.RAQM
+    )
+
+    assert glyph_safe_text("A\u22c5B", font) == "A\u00b7B"
