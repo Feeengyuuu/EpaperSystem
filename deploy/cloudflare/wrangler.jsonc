@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "e",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.css"],
+      "fallthrough": true
+    },
+    {
+      "type": "Text",
+      "globs": ["**/portal.js"],
+      "fallthrough": true
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PORTAL",
+        "class_name": "PortalLedger"
+      }
+    ]
+  },
+  "exports": {
+    "PortalLedger": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "secrets": {
+    "required": ["BROWSER_PASSWORD", "SESSION_SECRET", "PUBLISH_KEY"]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "head_sampling_rate": 1
+    }
+  }
+}
