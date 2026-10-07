@@ -26,6 +26,7 @@ from plugins.box_office_top_movies.china_source import (
 )
 from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.app_utils import bounded_int, get_base_ui_font
+from utils.glyph_text import glyph_safe_text
 from utils.http_client import get_http_session
 from utils.safe_image import safe_open_image_response
 from plugins.box_office_top_movies.poster_store import PosterStore
@@ -1733,13 +1734,15 @@ class BoxOfficeTopMovies(BasePlugin):
         draw.text((x - (bbox[2] - bbox[0]) // 2, y - (bbox[3] - bbox[1]) // 2), text, font=font, fill=fill)
 
     def _fit_text(self, draw, text, font, max_width):
-        value = str(text or "").strip()
+        # Titles such as "小猪佩奇·完美假期" carry punctuation some device fonts lack.
+        original = glyph_safe_text(str(text or "").strip(), font)
+        value = original
         if draw.textlength(value, font=font) <= max_width:
             return value
         suffix = "..."
         while value and draw.textlength(value + suffix, font=font) > max_width:
             value = value[:-1].rstrip()
-        return value + suffix if value else str(text or "")[:1]
+        return value + suffix if value else original[:1]
 
     def _wrap_words(self, draw, words, font, max_width, max_lines=4):
         lines = []

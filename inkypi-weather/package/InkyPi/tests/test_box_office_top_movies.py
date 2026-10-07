@@ -1196,3 +1196,16 @@ def test_china_title_wordmark_is_drawn_into_mainland_header():
     colors = crop.getcolors(maxcolors=box[2] * box[3] + 1) or []
     changed_pixels = sum(count for count, color in colors if color != (18, 21, 24))
     assert changed_pixels > 1000
+
+
+def test_fit_text_swaps_title_punctuation_the_font_cannot_draw():
+    from PIL import ImageDraw
+
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    font_path = Path(box_office_module.__file__).resolve().parents[2] / "static" / "fonts" / "NotoSansSC-VF.ttf"
+    font = ImageFont.truetype(str(font_path), 20)
+    draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+
+    # NotoSansSC has no U+22C5 DOT OPERATOR; the title keeps a visible dot.
+    assert plugin._fit_text(draw, "小猪佩奇\u22c5完美假期", font, 1000) == "小猪佩奇\u00b7完美假期"
+    assert plugin._fit_text(draw, "小猪佩奇\u00b7完美假期", font, 1000) == "小猪佩奇\u00b7完美假期"
