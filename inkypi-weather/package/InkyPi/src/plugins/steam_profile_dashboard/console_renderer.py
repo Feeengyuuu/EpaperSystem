@@ -7,6 +7,7 @@ does not contain game-specific images, names, or network requests.
 
 from PIL import Image, ImageDraw, ImageOps
 
+from plugins.steam_profile_dashboard.avatar_frame import gilded_avatar_frame
 from plugins.steam_profile_dashboard.sidebar_assets import sidebar_asset
 
 
@@ -254,7 +255,8 @@ class _Console:
         avatar = avatar_method(url, 146)
         if avatar is not None:
             self.image.paste(avatar, (16, 16), avatar if avatar.mode == "RGBA" else None)
-        self.draw.rounded_rectangle((13, 13, 164, 164), radius=4, outline=BORDER, width=2)
+        frame = gilded_avatar_frame()
+        self.image.paste(frame, (0, 0), frame)
         self.text((14, 175, 169, 207), profile.get("personaname") or "Steam User",
                   29, bold=True, min_size=18)
         self.text((15, 209, 166, 222), "STEAM PLAYER", 10, MUTED)

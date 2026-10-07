@@ -106,10 +106,17 @@ def test_game_art_and_icons_are_preserved_over_a_solid_page_canvas(plugin, data)
     # The requested flat colour belongs to the page underneath the game cards.
     # The game artwork itself remains present, with the existing navy shading.
     # The generated 54 px level frame reaches x=9; the canvas around it stays black.
-    for box in ((183, 0, 193, 480), (791, 0, 800, 480), (0, 0, 9, 480),
-                (0, 0, 12, 237), (0, 292, 12, 480)):
+    for box in ((183, 0, 193, 480), (791, 0, 800, 480), (0, 178, 9, 480),
+                (0, 178, 12, 237), (0, 292, 12, 480)):
         crop = image.crop(box)
         assert ImageChops.difference(crop, Image.new("RGB", crop.size, CANVAS)).getbbox() is None
+    # Above it, the left margin holds the gilded avatar frame and nothing else.
+    from plugins.steam_profile_dashboard.avatar_frame import gilded_avatar_frame
+
+    frame_margin = gilded_avatar_frame().crop((0, 0, 12, 178))
+    expected_margin = Image.new("RGB", frame_margin.size, CANVAS)
+    expected_margin.paste(frame_margin, (0, 0), frame_margin)
+    assert ImageChops.difference(image.crop((0, 0, 12, 178)), expected_margin).getbbox() is None
     assert image.getpixel((200, 50)) != PANEL
     assert image.getpixel((235, 250)) != PANEL
     assert image.getpixel((259, 450)) != PANEL
@@ -325,3 +332,26 @@ def test_official_asset_budget_covers_main_panels_and_four_friend_games(tmp_path
     plugin._cache_dir = lambda: tmp_path
     # Hero 1 + recent rows 4 + top three 3 + visible online friends 4.
     assert plugin._official_game_assets().max_games >= 12
+
+
+def test_rail_avatar_sits_inside_the_gilded_frame(plugin, data):
+    from plugins.steam_profile_dashboard.avatar_frame import gilded_avatar_frame
+
+    image = render_console(plugin, data, (800, 480))
+    frame = gilded_avatar_frame()
+
+    for xy in ((16, 16), (89, 89), (161, 161)):
+        assert image.getpixel(xy) == (105, 120, 90)
+    for xy in ((10, 60), (168, 120), (10, 168)):
+        assert image.getpixel(xy) == frame.getpixel(xy)[:3]
+    assert image.getpixel((176, 120)) == CANVAS
+
+
+def test_style_version_moves_on_while_previous_cache_stays_compatible():
+    from plugins.steam_profile_dashboard.steam_profile_dashboard import (
+        STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES,
+        STEAM_DASHBOARD_STYLE_VERSION,
+    )
+
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-gilded-avatar-v40"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[0] == "midnight-console-borderless-friends-v39"
