@@ -594,19 +594,18 @@ class NBAMixin:
     @staticmethod
     def _select_nba_events(events, now):
         live = [event for event in events if SportsDashboard._is_nba_live_event(event)]
+        # A game past tip-off that the feed has not confirmed live or final is
+        # still pending, not a result: keep it upcoming for the inferred live
+        # window so RECENT only ever shows scored, finished games.
         upcoming = [
             event for event in events
             if not SportsDashboard._is_nba_live_event(event)
             and not SportsDashboard._is_nba_finished_event(event)
             and not SportsDashboard._is_nba_series_decided_placeholder(event)
-            and event["start"] >= now
+            and event["start"] + NBA_INFERRED_LIVE_WINDOW > now
         ]
         recent = sorted(
-            [
-                event for event in events
-                if not SportsDashboard._is_nba_live_event(event)
-                and (SportsDashboard._is_nba_finished_event(event) or event["start"] < now)
-            ],
+            [event for event in events if SportsDashboard._is_nba_finished_event(event)],
             key=lambda item: item["start"],
             reverse=True,
         )

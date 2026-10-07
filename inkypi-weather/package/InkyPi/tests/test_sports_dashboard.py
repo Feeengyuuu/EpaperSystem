@@ -117,6 +117,7 @@ from plugins.sports_dashboard.sports_dashboard import (
     NCAA_TEAM_ZH_NAMES,
     NFL_TEAM_ZH_FULL_NAMES,
     NFL_TEAM_ZH_NAMES,
+    NBA_INFERRED_LIVE_WINDOW,
     NBA_INLINE_LOGO_SIZE,
     NBA_INLINE_TEAM_FONT_SIZE,
     NBA_INLINE_TEAM_MIN_FONT_SIZE,
@@ -12658,6 +12659,27 @@ def test_select_nba_events_returns_next_upcoming_and_recent_result():
     assert selected["upcoming"][0]["team_a"] == "\u9a6c\u523a"
     assert selected["recent"][0]["team_b"] == "\u5c3c\u514b\u65af"
     assert SportsDashboard._nba_score_label(selected["recent"][0]) == "106-112"
+
+
+def test_select_nba_events_keeps_started_unconfirmed_game_out_of_recent():
+    la = ZoneInfo("America/Los_Angeles")
+    finished, pending = SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), la)
+    assert (finished["state"], pending["state"]) == ("completed", "unstarted")
+
+    tip_off_passed = SportsDashboard._select_nba_events(
+        [finished, pending], pending["start"] + timedelta(minutes=10)
+    )
+
+    assert tip_off_passed["recent"] == [finished]
+    assert SportsDashboard._nba_score_label(tip_off_passed["recent"][0]) == "106-112"
+    assert tip_off_passed["main"] is pending
+
+    window_over = SportsDashboard._select_nba_events(
+        [finished, pending], pending["start"] + NBA_INFERRED_LIVE_WINDOW + timedelta(minutes=1)
+    )
+
+    assert window_over["recent"] == [finished]
+    assert pending not in window_over["upcoming"]
 
 
 def test_select_nba_events_filters_decided_finals_placeholders_and_marks_offseason():
