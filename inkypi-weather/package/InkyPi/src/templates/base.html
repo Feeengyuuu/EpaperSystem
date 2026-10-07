@@ -1,4 +1,4 @@
-{%- from 'components/icons.html' import icon -%}
+{%- from 'components/icons.html' import icon, logo -%}
 {%- set nav_active = nav_active | default('') -%}
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -27,7 +27,7 @@
 <div class="app-shell">
     <nav class="app-nav" aria-label="Main">
         <a class="nav-brand" href="/">
-            <span class="nav-brand-mark" aria-hidden="true"></span>
+            <span class="nav-brand-mark" aria-hidden="true">{{ logo() }}</span>
             <span class="truncate" data-i18n-skip="true">{{ inkypi_device_name | default('InkyPi') }}</span>
         </a>
         <ul class="nav-links">
