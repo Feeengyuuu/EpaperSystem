@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -25,6 +26,29 @@ def inkypi_shell_context():
 @main_bp.route('/')
 def main_page():
     return render_now_playing()
+
+
+@main_bp.route('/manifest.webmanifest')
+def web_manifest():
+    """Install metadata so the UI can live on a phone home screen."""
+    name = inkypi_shell_context()["inkypi_device_name"]
+    payload = {
+        "name": name,
+        "short_name": "InkyPi",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#111316",
+        "theme_color": "#111316",
+        "icons": [
+            {"src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+            {"src": "/static/icons/logo.svg", "sizes": "any", "type": "image/svg+xml"},
+        ],
+    }
+    response = current_app.response_class(json.dumps(payload), mimetype="application/manifest+json")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @main_bp.route('/plugins')

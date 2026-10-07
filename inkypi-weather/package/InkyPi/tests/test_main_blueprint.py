@@ -238,3 +238,27 @@ def test_plugins_page_lists_plugins_in_the_shared_shell(tmp_path, monkeypatch):
     assert 'class="nav-link is-active" href="/plugins" aria-current="page"' in html
     assert 'name="inkypi-csrf-token"' in html
     assert "inkypi-security.js" in html
+
+
+def test_web_manifest_lets_phones_install_the_ui(tmp_path, monkeypatch):
+    response = _rich_app(tmp_path, monkeypatch).test_client().get("/manifest.webmanifest")
+
+    assert response.status_code == 200
+    assert response.mimetype == "application/manifest+json"
+    manifest = response.get_json(force=True)
+    assert manifest["name"] == "Test InkyPi"
+    assert manifest["start_url"] == "/"
+    assert manifest["display"] == "standalone"
+    sizes = {icon["sizes"] for icon in manifest["icons"]}
+    assert {"192x192", "512x512"} <= sizes
+    for icon in manifest["icons"]:
+        assert (SRC_DIR / icon["src"].lstrip("/")).is_file(), icon["src"]
+
+
+def test_shell_pages_link_tab_and_home_screen_icons(tmp_path, monkeypatch):
+    html = _rich_app(tmp_path, monkeypatch).test_client().get("/plugins").get_data(as_text=True)
+
+    assert '<link rel="icon" href="/static/icons/logo.svg" type="image/svg+xml">' in html
+    assert '<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">' in html
+    assert '<link rel="manifest" href="/manifest.webmanifest">' in html
+    assert 'class="brand-logo"' in html

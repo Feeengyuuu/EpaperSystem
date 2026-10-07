@@ -18,6 +18,11 @@ def _css_rule(source, selector):
     ("asset_path", "expected_mimetypes"),
     (
         ("styles/tokens.css", {"text/css"}),
+        ("icons/logo.svg", {"image/svg+xml"}),
+        ("icons/favicon-32.png", {"image/png"}),
+        ("icons/apple-touch-icon.png", {"image/png"}),
+        ("icons/icon-192.png", {"image/png"}),
+        ("icons/icon-512.png", {"image/png"}),
         ("styles/components.css", {"text/css"}),
         ("styles/now_playing.css", {"text/css"}),
         ("styles/plugins.css", {"text/css"}),
@@ -84,3 +89,13 @@ def test_i18n_pauses_mutation_observation_during_translation_writes():
 
     assert "translationObserver?.disconnect()" in script
     assert "observeTranslationMutations()" in script
+
+
+def test_home_screen_icons_are_opaque_squares_of_the_declared_size():
+    from PIL import Image
+
+    for name, size in (("apple-touch-icon.png", 180), ("icon-192.png", 192), ("icon-512.png", 512)):
+        with Image.open(SRC_DIR / "static" / "icons" / name) as image:
+            assert image.size == (size, size), name
+            # iOS fills transparency with black, so the icon must be opaque.
+            assert image.mode == "RGB", name

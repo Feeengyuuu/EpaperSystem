@@ -7,6 +7,7 @@
     <meta name="inkypi-csrf-token" content="{{ inkypi_csrf_token }}">
     <meta name="inkypi-plain-http" content="{{ 'true' if inkypi_plain_http_warning else 'false' }}">
     <meta name="theme-color" content="#111316">
+    {% include 'components/head_icons.html' %}
     <title>{% block title %}InkyPi{% endblock %}</title>
     <script>
         (function () {
