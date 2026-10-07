@@ -70,6 +70,8 @@ describe("Model Y browser reader", () => {
     expect(renewedCookie).toContain("Path=/");
     const body = await reader.text();
     expect(body).toContain("还没有发布内容");
+    expect(body).toContain('<script src="/portal.js" defer></script>');
+    expect(body).toContain('data-poll-ms="30000" data-generation="0"');
     expect(body).not.toContain('name="password"');
   });
 

@@ -476,7 +476,11 @@ def update_plugin_instance(instance_name):
             prepared_files.rollback()
         logger.exception("Plugin instance update failed: %s", error)
         return _server_error(error)
-    return jsonify({"success": True, "message": f"Updated plugin instance {instance_name}."})
+    return jsonify({
+        "success": True,
+        "message": f"Updated plugin instance {instance_name}.",
+        "refresh": dict(mutation.new_snapshot.refresh),
+    })
 
 @plugin_bp.route('/display_plugin_instance', methods=['POST'])
 def display_plugin_instance():

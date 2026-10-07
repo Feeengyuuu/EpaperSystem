@@ -39,6 +39,9 @@
     });
   }
 
+  const playbackStateKey = "epaper-portal-publication-playback";
+  let savePlaybackBeforeReload = () => {};
+  let checkPublication = () => {};
   const pollingRoot = document.querySelector("[data-poll-ms]");
   if (pollingRoot) {
     const pollDelay = Number(pollingRoot.dataset.pollMs);
@@ -46,8 +49,9 @@
     let knownEtag = null;
     let pollInFlight = false;
     let pollAgain = false;
+    let reloadPending = false;
     const poll = async () => {
-      if (document.hidden) return;
+      if (document.hidden || reloadPending) return;
       if (pollInFlight) {
         pollAgain = true;
         return;
@@ -86,6 +90,8 @@
           knownEtag && nextEtag && knownEtag !== nextEtag,
         );
         if (generationChanged || etagChanged) {
+          reloadPending = true;
+          savePlaybackBeforeReload();
           window.location.reload();
           return;
         }
@@ -101,6 +107,7 @@
         }
       }
     };
+    checkPublication = () => { void poll(); };
     void poll();
     if (Number.isFinite(pollDelay) && pollDelay >= 1000) {
       window.setInterval(poll, pollDelay);
@@ -122,10 +129,37 @@
   const currentLabel = autoplay.querySelector("[data-slide-current]");
   const controls = autoplay.querySelector("[data-play-controls]");
   const interval = Number(autoplay.dataset.intervalMs) || 20000;
+  const savedPlayback = (() => {
+    try {
+      const encoded = window.sessionStorage.getItem(playbackStateKey);
+      window.sessionStorage.removeItem(playbackStateKey);
+      const saved = JSON.parse(encoded ?? "null");
+      return saved?.playlistId === autoplay.dataset.playlistId ? saved : null;
+    } catch (_error) {
+      return null;
+    }
+  })();
+  const restoredIndex = savedPlayback
+    ? slides.findIndex((slide) => slide.dataset.instanceId === savedPlayback.instanceId)
+    : -1;
   let current = 0;
-  let paused = false;
+  let paused = savedPlayback?.paused === true;
   let timer = null;
+  let advanceAt = null;
   let idleTimer = null;
+
+  savePlaybackBeforeReload = () => {
+    try {
+      window.sessionStorage.setItem(playbackStateKey, JSON.stringify({
+        playlistId: autoplay.dataset.playlistId,
+        instanceId: slides[current]?.dataset.instanceId,
+        paused,
+        advanceAt,
+      }));
+    } catch (_error) {
+      // A browser that disables storage can still load the new publication.
+    }
+  };
 
   const setChromeHidden = (hidden) => {
     autoplay.classList.toggle("is-chrome-hidden", hidden);
@@ -146,14 +180,22 @@
     if (currentLabel) currentLabel.textContent = String(current + 1);
   };
 
-  const schedule = () => {
+  const schedule = (delay = interval) => {
     window.clearTimeout(timer);
+    advanceAt = null;
     if (!paused && slides.length > 1) {
+      advanceAt = Date.now() + delay;
       timer = window.setTimeout(() => {
         show(current + 1);
         schedule();
-      }, interval);
+      }, delay);
     }
+  };
+
+  const updatePauseButton = () => {
+    if (!pauseButton) return;
+    pauseButton.setAttribute("aria-pressed", paused ? "true" : "false");
+    pauseButton.textContent = paused ? "继续播放" : "暂停播放";
   };
 
   const revealControls = () => {
@@ -173,8 +215,7 @@
   });
   pauseButton?.addEventListener("click", () => {
     paused = !paused;
-    pauseButton.setAttribute("aria-pressed", paused ? "true" : "false");
-    pauseButton.textContent = paused ? "继续播放" : "暂停播放";
+    updatePauseButton();
     schedule();
   });
   chromeToggle?.addEventListener("click", () => {
@@ -208,6 +249,7 @@
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       window.clearTimeout(timer);
+      advanceAt = null;
     } else {
       schedule();
     }
@@ -216,7 +258,18 @@
     document.addEventListener(eventName, revealControls, { passive: true });
   });
 
-  show(0);
+  show(restoredIndex >= 0 ? restoredIndex : 0);
+  updatePauseButton();
   revealControls();
-  schedule();
+  const remaining = restoredIndex >= 0 && Number.isFinite(savedPlayback?.advanceAt)
+    ? Math.max(0, Math.min(interval, savedPlayback.advanceAt - Date.now()))
+    : interval;
+  schedule(remaining);
+
+  // Old content-addressed assets are retired at commit. A lazy image may only
+  // be requested afterwards, so recover without waiting for the next poll.
+  for (const image of autoplay.querySelectorAll("[data-slide] img")) {
+    image.addEventListener("error", checkPublication);
+    if (image.complete && image.naturalWidth === 0) checkPublication();
+  }
 })();

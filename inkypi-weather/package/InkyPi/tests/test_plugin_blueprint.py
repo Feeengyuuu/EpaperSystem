@@ -1147,6 +1147,7 @@ def test_update_uses_resolved_cas_then_cancel_write_and_signal(plugin_env):
     after = plugin_env.inner_manager.snapshot_instance("home-uuid")
     assert after.settings == {"units": "imperial"}
     assert after.refresh == {"interval": 600}
+    assert response.get_json()["refresh"] == {"interval": 600}
     assert after.settings_revision == before.settings_revision + 1
     assert plugin_env.manager.update_calls == [(
         "home-uuid",
@@ -1179,6 +1180,7 @@ def test_game_calendar_setting_and_refresh_only_saves_normalize_cadence(plugin_e
     assert response.status_code == 200
     after = plugin_env.inner_manager.snapshot_instance(before.instance_uuid)
     assert after.refresh == {"interval": 3600}
+    assert response.get_json()["refresh"] == {"interval": 3600}
     assert after.settings[enabled_setting] == "true"
     assert after.settings_revision > before.settings_revision
 

@@ -26,7 +26,7 @@ def _active(command_id="cmd-1", plugin_id="backtothedate"):
     )
 
 
-def _guard(history=(), *, grace=240.0, interval=3600.0, enabled=True, now=None):
+def _guard(history=(), *, grace=240.0, interval=3600.0, enabled=True, now=None, wall_clock=None):
     reads = []
     now = now or datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
 
@@ -37,7 +37,7 @@ def _guard(history=(), *, grace=240.0, interval=3600.0, enabled=True, now=None):
     guard = WorkerOverrunGuard(
         OverrunPolicy(enabled=enabled, grace_seconds=grace, min_interval_seconds=interval),
         history=read_history,
-        wall_clock=lambda: now.timestamp(),
+        wall_clock=wall_clock or (lambda: now.timestamp()),
     )
     return guard, reads
 
@@ -70,17 +70,65 @@ def test_disabled_policy_never_recovers():
     assert guard.evaluate(_active(), 10_000.0) is None
 
 
-def test_recent_overrun_recovery_suppresses_restart_loop_once_per_command():
+def test_recent_overrun_recovery_bounds_ledger_reads_and_logs_once_per_command(caplog):
     now = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
     recent = {"at": (now - timedelta(minutes=20)).isoformat(), "reason": OVERRUN_REASON}
     guard, reads = _guard([recent], now=now)
 
     assert guard.evaluate(_active(), 500.0) is None
-    assert guard.evaluate(_active(), 900.0) is None
+    for _ in range(1000):
+        assert guard.evaluate(_active(), 900.0) is None
     assert reads == [1]
-    # A different stuck command is evaluated again rather than silently ignored.
+    assert len(caplog.records) == 1
+    # The process-wide cooldown also protects a different stuck command.
     assert guard.evaluate(_active("cmd-2"), 500.0) is None
+    assert reads == [1]
+    assert len(caplog.records) == 2
+
+
+def test_same_stuck_command_recovers_when_cooldown_expires(caplog):
+    now = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
+    recovered_at = now - timedelta(minutes=20)
+    clock = [now.timestamp()]
+    guard, reads = _guard(
+        [{"at": recovered_at.isoformat(), "reason": OVERRUN_REASON}],
+        wall_clock=lambda: clock[0],
+    )
+
+    assert guard.evaluate(_active(), 500.0) is None
+    clock[0] = recovered_at.timestamp() + 3600.0 - 0.001
+    assert guard.evaluate(_active(), 2899.999) is None
+    assert reads == [1]
+    assert len(caplog.records) == 1
+
+    clock[0] += 0.001
+    request = guard.evaluate(_active(), 2900.0)
+
+    assert request is not None
+    assert request["reason"] == OVERRUN_REASON
+    assert request["overrun_seconds"] == 2900.0
     assert reads == [1, 1]
+    assert len(caplog.records) == 1
+
+
+def test_expired_cooldown_rechecks_new_recovery_without_repeating_log(caplog):
+    now = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
+    clock = [now.timestamp()]
+    history = [{"at": (now - timedelta(minutes=20)).isoformat(), "reason": OVERRUN_REASON}]
+    guard, reads = _guard(history, wall_clock=lambda: clock[0])
+    assert guard.evaluate(_active(), 500.0) is None
+
+    history.append({"at": (now + timedelta(minutes=30)).isoformat(), "reason": OVERRUN_REASON})
+    clock[0] += 40 * 60
+    assert guard.evaluate(_active(), 2900.0) is None
+    assert guard.evaluate(_active(), 2901.0) is None
+    assert reads == [1, 1]
+    assert len(caplog.records) == 1
+
+    clock[0] = (now + timedelta(minutes=90)).timestamp()
+    assert guard.evaluate(_active(), 5900.0)["reason"] == OVERRUN_REASON
+    assert reads == [1, 1, 1]
+    assert len(caplog.records) == 1
 
 
 def test_old_or_unrelated_recoveries_do_not_suppress():

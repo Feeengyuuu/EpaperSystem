@@ -87,33 +87,42 @@ class WorkerOverrunGuard:
         self._history = history
         self._wall_clock = wall_clock
         self._suppressed_command_id = None
+        self._recovery_not_before: float | None = None
 
     def _recently_recovered(self) -> bool:
         now = self._wall_clock()
+        # The monitor polls four times per second. Reuse a known cooldown,
+        # then re-read the ledger at expiry in case a newer recovery extended it.
+        if self._recovery_not_before is not None and now < self._recovery_not_before:
+            return True
+        self._recovery_not_before = None
         for event in self._history():
             if not isinstance(event, Mapping) or event.get("reason") != OVERRUN_REASON:
                 continue
             at = _event_epoch(event)
             if at is not None and 0 <= now - at < self.policy.min_interval_seconds:
-                return True
-        return False
+                expires_at = at + self.policy.min_interval_seconds
+                if self._recovery_not_before is None or expires_at > self._recovery_not_before:
+                    self._recovery_not_before = expires_at
+        return self._recovery_not_before is not None
 
     def evaluate(self, active: Any, overrun_seconds: float | None) -> dict | None:
         if not self.policy.enabled or active is None or overrun_seconds is None:
             return None
         if overrun_seconds < self.policy.grace_seconds:
             return None
-        if active.command_id == self._suppressed_command_id:
-            return None
         if self._recently_recovered():
-            self._suppressed_command_id = active.command_id
-            logger.error(
-                "Refresh worker overran its deadline, but a recent overrun "
-                "recovery suppresses another restart. | plugin_id: %s | "
-                "overrun_seconds: %.1f",
-                active.plugin_id,
-                overrun_seconds,
-            )
+            # Deduplicate diagnostics without making suppression permanent for
+            # the same command: a stuck worker cannot advance its command id.
+            if active.command_id != self._suppressed_command_id:
+                self._suppressed_command_id = active.command_id
+                logger.error(
+                    "Refresh worker overran its deadline, but a recent overrun "
+                    "recovery suppresses another restart. | plugin_id: %s | "
+                    "overrun_seconds: %.1f",
+                    active.plugin_id,
+                    overrun_seconds,
+                )
             return None
         return {
             "reason": OVERRUN_REASON,

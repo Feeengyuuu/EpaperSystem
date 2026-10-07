@@ -308,7 +308,7 @@ function populatedReaderPage(release: ReaderRelease): Response {
       const title = escapeHtml(item.displayTitle);
       const sourceTime = escapeHtml(item.sourceUpdatedAt);
       const timeLabel = item.pluginId === "weather" ? "当地时间" : "更新时间";
-      return `<article class="play-slide${active ? " is-active" : ""}" data-slide aria-hidden="${active ? "false" : "true"}"${active ? "" : " hidden"}>
+      return `<article class="play-slide${active ? " is-active" : ""}" data-slide data-instance-id="${escapeHtml(item.instanceId)}" aria-hidden="${active ? "false" : "true"}"${active ? "" : " hidden"}>
         <header class="play-publication-heading">
           <div>
             <p class="plugin-name">${escapeHtml(item.pluginId)}</p>
@@ -341,7 +341,7 @@ function populatedReaderPage(release: ReaderRelease): Response {
   <script src="/portal.js" defer></script>
 </head>
 <body class="play-page">
-  <main id="main-content" class="play-shell is-chrome-hidden" data-autoplay data-interval-ms="20000" data-poll-ms="${publicationPollMilliseconds(release)}" data-generation="${release.generation}">
+  <main id="main-content" class="play-shell is-chrome-hidden" data-autoplay data-playlist-id="${escapeHtml(release.playlist.slug)}" data-interval-ms="20000" data-poll-ms="${publicationPollMilliseconds(release)}" data-generation="${release.generation}">
     <header class="play-heading">
       <p class="slide-position" aria-live="polite"><span data-slide-current>1</span> / <span data-slide-total>${release.items.length}</span></p>
     </header>
@@ -370,9 +370,10 @@ function readerPage(release: ReaderRelease | null): Response {
   <title>EpaperSystem 简报</title>
   <link rel="stylesheet" href="/portal.css">
   ${BRAND_HEAD}
+  <script src="/portal.js" defer></script>
 </head>
 <body>
-  <main><h1>还没有发布内容</h1><p>首个完整版本上传后会自动出现在这里。</p></main>
+  <main data-poll-ms="30000" data-generation="0"><h1>还没有发布内容</h1><p>首个完整版本上传后会自动出现在这里。</p></main>
 </body>
 </html>`;
   return new Response(body, { headers: HTML_HEADERS });

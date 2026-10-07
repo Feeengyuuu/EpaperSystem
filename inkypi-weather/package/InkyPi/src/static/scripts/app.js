@@ -354,8 +354,12 @@
 
     /* Poll /refresh_job/<id> until the queued refresh reaches a final state. */
     async function waitForJob(jobId, timeoutMs) {
+        const unknown = {
+            status: "unknown",
+            error: "The refresh result is unavailable. Reload the page to check the device.",
+        };
         if (!jobId) {
-            return null;
+            return unknown;
         }
         const deadline = Date.now() + (timeoutMs || 180000);
         while (Date.now() < deadline) {
@@ -368,7 +372,7 @@
                 }
             } catch (error) {
                 if (error.status === 404) {
-                    return null;
+                    return unknown;
                 }
             }
         }

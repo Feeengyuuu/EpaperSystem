@@ -197,6 +197,7 @@
         "Could not reach the device.": "无法连接到设备。",
         "Something went wrong.": "出了点问题。",
         "The device could not finish this request.": "设备没能完成这个请求。",
+        "The refresh result is unavailable. Reload the page to check the device.": "无法确认刷新结果。请重新加载页面检查设备。",
         "The current item is not in a playlist, so it cannot be refreshed here.": "当前画面不属于任何播放列表，无法在这里刷新。",
         "Refresh settings are not available.": "刷新设置暂不可用。",
         "Plugin order saved.": "插件顺序已保存。",

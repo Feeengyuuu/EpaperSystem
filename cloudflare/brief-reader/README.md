@@ -34,6 +34,13 @@ LiveRadar interval therefore produces a 30-second browser check. Hidden pages
 still pause checks and check immediately when visible again. Legacy v1 releases
 remain readable and use the same 30-second fallback.
 
+When a new edition arrives, the reader resumes the same instance and pause
+state, including the remaining time before its next slide. Reordering a
+playlist therefore does not restart playback, and frequent updates cannot
+starve its later items. A missing lazy-loaded image triggers an immediate
+catalog check so an open page can recover after old assets are retired. The
+empty reader also polls until its first complete edition is published.
+
 Web publication currently excludes the `pixiv_r18_ranking` plugin before any
 thumbnail is fetched. All other active items keep their physical-playlist
 order, and the browser check cadence is derived only from those published
@@ -63,6 +70,10 @@ npm run deploy:dry
 py -3.11 -m unittest discover -s tools -p "test_*.py"
 py -3.14 -m unittest discover -s tools -p "test_*.py"
 ```
+
+`npm test` runs the Worker integration tests and executes the shipped
+`static/portal.js` under a deterministic browser adapter, covering publication
+changes during playback, image failures, session state, and first publication.
 
 `push_portal.py` accepts only an exact `manifest.json + assets/<sha256>.png`
 bundle and reads its signing key from `EPAPER_PUBLISH_KEY`. The key is not a

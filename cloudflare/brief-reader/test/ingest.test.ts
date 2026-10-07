@@ -375,6 +375,8 @@ describe("atomic edition ingestion", () => {
     expect(html).toContain("当地时间");
     expect(html).toContain(`/assets/${assetId}`);
     expect(html).toContain("data-slide");
+    expect(html).toContain('data-instance-id="weather-home"');
+    expect(html).toContain('data-playlist-id="home"');
     expect(html).toContain('data-generation="25"');
     expect(html).toContain('data-poll-ms="30000"');
 

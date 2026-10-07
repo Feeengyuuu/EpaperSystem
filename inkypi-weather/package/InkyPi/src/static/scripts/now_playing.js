@@ -6,7 +6,6 @@
     const ui = window.InkyUI;
     const hero = document.getElementById("hero");
     const heroImage = hero.querySelector(".hero-media img");
-    const UNIT_SECONDS = { minute: 60, hour: 3600, day: 86400 };
 
     let nowPlaying = {};
     try {
@@ -193,7 +192,7 @@
             const body = await ui.api("/display_plugin_instance", { method: "POST", json: cardIdentity(card) });
             ui.toast("Sending to the display…", "info");
             const job = await ui.waitForJob(body.job_id);
-            if (job && job.status !== "completed") {
+            if (!job || job.status !== "completed") {
                 ui.toast(ui.jobFailureMessage(job), "err");
                 return;
             }
@@ -211,7 +210,7 @@
             const body = await ui.api("/refresh_plugin_instance", { method: "POST", json: cardIdentity(card) });
             ui.toast("Refreshing data…", "info");
             const job = await ui.waitForJob(body.job_id);
-            if (job && job.status !== "completed") {
+            if (!job || job.status !== "completed") {
                 ui.toast(ui.jobFailureMessage(job), "err");
                 return false;
             }
@@ -323,15 +322,19 @@
             const data = new FormData();
             data.append("plugin_id", card.dataset.pluginId);
             data.append("refresh_settings", JSON.stringify(formData));
+            let result;
             try {
-                await ui.api(`/update_plugin_instance/${encodeURIComponent(card.dataset.instance)}`, { method: "PUT", body: data });
+                result = await ui.api(`/update_plugin_instance/${encodeURIComponent(card.dataset.instance)}`, { method: "PUT", body: data });
             } catch (error) {
                 ui.reportError(error);
                 return;
             }
-            const refresh = formData.refreshType === "interval"
-                ? { interval: Number(formData.interval) * (UNIT_SECONDS[formData.unit] || 60) }
-                : { scheduled: formData.refreshTime };
+            // Plugin policy may normalize the requested schedule on the server.
+            const refresh = result.refresh;
+            if (!refresh || typeof refresh !== "object" || Array.isArray(refresh)) {
+                window.location.reload();
+                return;
+            }
             card.dataset.refresh = JSON.stringify(refresh);
             card.querySelector("[data-refresh-label]").textContent = describeRefresh(refresh, false);
             ui.closeSheet("refreshSettingsModal");

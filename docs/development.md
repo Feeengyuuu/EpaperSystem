@@ -17,6 +17,10 @@ python -m venv .venv
 
 ## Running Tests
 
+The browser interaction regressions execute the shipped JavaScript with Node.js
+24 and an in-memory DOM. Make `node` available on `PATH` before running the full
+Python suite; these tests do not need npm packages, a browser, or device access.
+
 From the repository root:
 
 ```powershell
