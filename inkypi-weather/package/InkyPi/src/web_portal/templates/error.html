@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} | EpaperSystem 简报{% endblock %}
+{% block content %}
+  <main id="main-content" class="page-shell error-shell">
+    <section class="empty-state" role="alert">
+      <h1>{{ title }}</h1>
+      <p>{{ message }}</p>
+      <a class="button button-primary" href="{{ url_for('catalog') }}">返回信息总览</a>
+    </section>
+  </main>
+{% endblock %}

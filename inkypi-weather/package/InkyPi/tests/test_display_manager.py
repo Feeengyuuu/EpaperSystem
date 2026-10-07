@@ -15,6 +15,8 @@ class FakeDeviceConfig:
     def __init__(self, tmp_path):
         self.display_dir = tmp_path / "display"
         self.current_image_file = self.display_dir / "current_image.png"
+        self.display_revision_file = tmp_path / "run" / "display_revision"
+        self.display_revision_file.parent.mkdir()
         self.data_dir = tmp_path / "data"
         self.display_dir.mkdir()
         self.data_dir.mkdir()
@@ -72,6 +74,7 @@ def test_display_manager_only_publishes_current_image_after_hardware_success(tmp
         logical_target={"id": "one"},
     )
     before = Path(manager.device_config.current_image_file).read_bytes()
+    revision_before = manager.device_config.display_revision_file.read_bytes()
     manager.display.error = RuntimeError("busy")
 
     with pytest.raises(RuntimeError, match="busy"):
@@ -82,7 +85,21 @@ def test_display_manager_only_publishes_current_image_after_hardware_success(tmp
         )
 
     assert Path(manager.device_config.current_image_file).read_bytes() == before
+    assert manager.device_config.display_revision_file.read_bytes() == revision_before
     assert manager.transaction.current().commit_id == first.commit_id
+
+
+def test_display_manager_injects_runtime_revision_marker_path(tmp_path):
+    manager = _manager(tmp_path)
+
+    commit = manager.display_image(
+        Image.new("RGB", (8, 6), "red"),
+        task_context=_context(),
+        logical_target={"id": "one"},
+    )
+
+    assert manager.transaction.revision_marker_path == manager.device_config.display_revision_file
+    assert manager.device_config.display_revision_file.read_text(encoding="ascii") == f"{commit.commit_id}\n"
 
 
 def test_prepare_image_applies_pipeline_without_mutating_source(tmp_path):

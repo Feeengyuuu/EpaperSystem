@@ -86,15 +86,73 @@ class FakeManager:
 def display_transaction(tmp_path):
     display_dir = tmp_path / "display"
     display_dir.mkdir()
+    revision_dir = tmp_path / "run"
+    revision_dir.mkdir()
     runtime_state = RuntimeStateStore(tmp_path / "runtime.json")
     manager = FakeManager()
     transaction = DisplayTransaction(
         manager,
         display_dir=display_dir,
         compatibility_image_path=display_dir / "current_image.png",
+        revision_marker_path=revision_dir / "display_revision",
         runtime_state_store=runtime_state,
     )
     return transaction, manager, runtime_state
+
+
+def test_successful_display_commit_atomically_publishes_small_public_revision_marker(
+    display_transaction,
+):
+    transaction, _manager, _runtime_state = display_transaction
+
+    commit = transaction.commit(
+        transaction.prepare(_image("red"), logical_target={"id": "one"}),
+        task_context=_context(),
+    )
+
+    assert transaction.revision_marker_path.read_text(encoding="ascii") == f"{commit.commit_id}\n"
+    assert transaction.revision_marker_path.stat().st_size == 33
+    if os.name != "nt":
+        assert transaction.revision_marker_path.stat().st_mode & 0o777 == 0o644
+
+
+def test_revision_marker_failure_never_rolls_back_or_fails_epaper_commit(
+    display_transaction,
+    monkeypatch,
+):
+    transaction, manager, _runtime_state = display_transaction
+    original_write = transaction_module.atomic_write_bytes
+
+    def fail_only_revision(path, payload, *, mode=0o600):
+        if Path(path) == transaction.revision_marker_path:
+            raise OSError("revision filesystem unavailable")
+        return original_write(path, payload, mode=mode)
+
+    monkeypatch.setattr(transaction_module, "atomic_write_bytes", fail_only_revision)
+
+    commit = transaction.commit(
+        transaction.prepare(_image("red"), logical_target={"id": "one"}),
+        task_context=_context(),
+    )
+
+    assert len(manager.calls) == 1
+    assert transaction.current().commit_id == commit.commit_id
+    assert transaction.compatibility_image_path.is_file()
+    assert not transaction.revision_marker_path.exists()
+
+
+def test_display_recovery_republishes_missing_revision_marker(display_transaction):
+    transaction, _manager, _runtime_state = display_transaction
+    commit = transaction.commit(
+        transaction.prepare(_image("red"), logical_target={"id": "one"}),
+        task_context=_context(),
+    )
+    transaction.revision_marker_path.unlink()
+
+    recovered = transaction.recover(task_context=_context())
+
+    assert recovered.commit_id == commit.commit_id
+    assert transaction.revision_marker_path.read_text(encoding="ascii") == f"{commit.commit_id}\n"
 
 
 def test_hardware_failure_keeps_previous_manifest(display_transaction):
@@ -131,6 +189,32 @@ def test_same_pixels_new_logical_target_creates_metadata_only_commit(
     assert second.commit_id != first.commit_id
     assert dict(second.logical_target) == {"id": "two"}
     assert second.hardware_written is False
+    assert transaction.revision_marker_path.read_text(encoding="ascii") == f"{second.commit_id}\n"
+
+
+def test_manifest_failure_after_hardware_preserves_previous_revision_marker(
+    display_transaction,
+    monkeypatch,
+):
+    transaction, manager, _runtime_state = display_transaction
+    first = transaction.commit(
+        transaction.prepare(_image("red"), logical_target={"id": "one"}),
+        task_context=_context(),
+    )
+    previous_revision = transaction.revision_marker_path.read_bytes()
+    prepared = transaction.prepare(_image("blue"), logical_target={"id": "two"})
+    monkeypatch.setattr(
+        transaction_module,
+        "atomic_write_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    with pytest.raises(DisplayCommitUnknownError):
+        transaction.commit(prepared, task_context=_context())
+
+    assert len(manager.calls) == 2
+    assert transaction.current().commit_id == first.commit_id
+    assert transaction.revision_marker_path.read_bytes() == previous_revision
 
 
 def test_forced_commit_writes_hardware_even_when_pixels_are_unchanged(

@@ -1,0 +1,11 @@
+**
+!inkypi-weather/
+!inkypi-weather/package/
+!inkypi-weather/package/InkyPi/
+!inkypi-weather/package/InkyPi/src/
+!inkypi-weather/package/InkyPi/src/**
+!inkypi-weather/package/InkyPi/install/
+!inkypi-weather/package/InkyPi/install/requirements-base.txt
+**/__pycache__
+**/*.py[cod]
+**/tests

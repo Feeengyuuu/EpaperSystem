@@ -1,0 +1,8 @@
+.env
+backups/
+config/
+provider-secrets/
+publication/
+security/
+session-key/
+worker-data/

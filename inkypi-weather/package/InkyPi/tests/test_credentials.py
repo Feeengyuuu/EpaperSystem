@@ -91,6 +91,25 @@ def test_password_policy_and_authenticated_rotation(tmp_path):
     assert store.verify_admin_password("second-strong-password")
 
 
+def test_admin_session_revision_is_stable_and_rotates_with_password(tmp_path):
+    store = CredentialStore(tmp_path)
+    token = store.create_bootstrap_token()
+    store.consume_bootstrap_token(token, "first-strong-password")
+
+    first = store.admin_session_revision()
+    repeated = CredentialStore(tmp_path).admin_session_revision()
+    store.rotate_admin_password(
+        "first-strong-password",
+        "second-strong-password",
+    )
+    rotated = store.admin_session_revision()
+
+    assert first == repeated
+    assert isinstance(first, str) and len(first) == 64
+    assert rotated != first
+    assert "scrypt:" not in first
+
+
 def test_recovery_token_rotates_password_once_without_revealing_hash(tmp_path):
     store = CredentialStore(tmp_path)
     bootstrap = store.create_bootstrap_token()

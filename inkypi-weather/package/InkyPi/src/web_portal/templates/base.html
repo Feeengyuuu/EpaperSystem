@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>{% block title %}EpaperSystem 简报{% endblock %}</title>
+  <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ url_for('static', filename='portal.css') }}">
+  <script src="{{ url_for('static', filename='portal.js') }}" defer></script>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+  {% if authenticated %}
+    <header class="site-header">
+      <a class="wordmark" href="{{ url_for('catalog') }}" aria-label="返回信息总览">
+        <span class="wordmark-mark" aria-hidden="true"></span>
+        <span>EpaperSystem 简报</span>
+      </a>
+      <nav class="header-actions" aria-label="全局操作">
+        <a class="button button-secondary" href="{{ url_for('play') }}">自动播放</a>
+        <button class="button button-secondary theme-toggle" type="button" data-theme-toggle aria-pressed="false">切换主题</button>
+        <form action="{{ url_for('logout') }}" method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="button button-quiet" type="submit">退出登录</button>
+        </form>
+      </nav>
+    </header>
+  {% endif %}
+  {% block content %}{% endblock %}
+</body>
+</html>

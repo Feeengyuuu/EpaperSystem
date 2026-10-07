@@ -1,0 +1,185 @@
+name: epapersystem-web
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-python-service: &python-service
+  build:
+    context: ../..
+    dockerfile: deploy/web/Dockerfile
+    args:
+      WEB_PORTAL_GIT_REVISION: ${WEB_PORTAL_GIT_REVISION:-unknown}
+  image: ${WEB_PORTAL_IMAGE:-epapersystem-web:local}
+  user: "10001:10001"
+  init: true
+  restart: unless-stopped
+  read_only: true
+  security_opt:
+    - "no-new-privileges:true"
+  cap_drop:
+    - ALL
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+
+services:
+  caddy:
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      WEB_PORTAL_HOSTNAME: ${WEB_PORTAL_HOSTNAME:?Set WEB_PORTAL_HOSTNAME in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cpus: "0.25"
+    mem_limit: 256m
+    pids_limit: 128
+    logging: *default-logging
+    networks:
+      - edge
+      - portal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      web:
+        condition: service_healthy
+
+  web:
+    <<: *python-service
+    command: ["python", "-m", "web_portal"]
+    expose:
+      - "8080"
+    volumes:
+      - "${WEB_PORTAL_PUBLICATION_DIR:-./publication}:/app/publication:ro"
+      - "${WEB_PORTAL_SECURITY_DIR:-./security}:/app/security:ro"
+      - "${WEB_PORTAL_SESSION_KEY_FILE:-./session-key/web_portal_secret_key}:/run/session-key/web_portal_secret_key:ro"
+      - type: bind
+        source: ${WEB_PORTAL_WORKER_DATA_DIR:-./worker-data}/health
+        target: /app/worker-health
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      PUBLICATION_ROOT: /app/publication
+      WEB_PORTAL_CREDENTIAL_ROOT: /app/security
+      WEB_PORTAL_SECRET_KEY_FILE: /run/session-key/web_portal_secret_key
+      WEB_PORTAL_PUBLICATIONS_FACTORY: ${WEB_PORTAL_PUBLICATIONS_FACTORY:-web_portal.factories:create_reader}
+      WEB_PORTAL_TIMEZONE: ${WEB_PORTAL_TIMEZONE:-America/Los_Angeles}
+      WEB_PORTAL_TRUSTED_HOSTS: "${WEB_PORTAL_HOSTNAME:?Set WEB_PORTAL_HOSTNAME in .env},127.0.0.1,localhost"
+      WEB_PORTAL_TRUST_PROXY_HEADERS: "true"
+      WEB_PORTAL_PUBLICATION_HEALTH_CACHE_SECONDS: ${WEB_PORTAL_PUBLICATION_HEALTH_CACHE_SECONDS:-10}
+      WEB_PORTAL_WORKER_STATE_FILE: /app/worker-health/worker-state.json
+      WEB_PORTAL_WORKER_STATE_MAX_AGE_SECONDS: "300"
+    cpus: "0.75"
+    mem_limit: 768m
+    pids_limit: 256
+    logging: *default-logging
+    networks:
+      - portal
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/livez', timeout=3).read()"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  worker:
+    <<: *python-service
+    command: ["python", "-m", "web_portal.worker"]
+    stop_grace_period: 3m
+    volumes:
+      - "${WEB_PORTAL_CONFIG_DIR:-./config}:/app/config:ro"
+      - "${WEB_PORTAL_PUBLICATION_DIR:-./publication}:/app/publication:rw"
+      - "${WEB_PORTAL_WORKER_DATA_DIR:-./worker-data}:/app/worker-data:rw"
+      - "${WEB_PORTAL_PROVIDER_SECRETS_DIR:-./provider-secrets}:/run/provider-secrets:ro"
+    environment:
+      PUBLICATION_ROOT: /app/publication
+      WEB_CONFIG: /app/config/web_config.json
+      WEB_DATA_ROOT: /app/worker-data
+      WEB_SECRET_DIR: /run/provider-secrets
+      WEB_EDITION_RETENTION_PER_INSTANCE: ${WEB_EDITION_RETENTION_PER_INSTANCE:-32}
+      WEB_CATALOG_RETENTION: ${WEB_CATALOG_RETENTION:-64}
+      WEB_WORKER_DEADLINE_SECONDS: ${WEB_WORKER_DEADLINE_SECONDS:-120}
+      WEB_PORTAL_WORKER_FACTORY: ${WEB_PORTAL_WORKER_FACTORY:-web_portal.factories:create_worker}
+      WEB_PORTAL_WORKER_HEARTBEAT_FILE: /app/worker-data/health/worker-state.json
+      WEB_PORTAL_WORKER_HEARTBEAT_MAX_AGE_SECONDS: "300"
+      XDG_CACHE_HOME: /app/worker-data/cache/xdg
+    cpus: "1.25"
+    mem_limit: 2g
+    pids_limit: 256
+    logging: *default-logging
+    networks:
+      - worker_egress
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os; from web_portal.worker import heartbeat_is_fresh; assert heartbeat_is_fresh(os.environ['WEB_PORTAL_WORKER_HEARTBEAT_FILE'], max_age_seconds=float(os.environ['WEB_PORTAL_WORKER_HEARTBEAT_MAX_AGE_SECONDS']))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+
+  admin:
+    <<: *python-service
+    profiles: ["admin"]
+    restart: "no"
+    network_mode: none
+    stdin_open: true
+    tty: true
+    volumes:
+      - "${WEB_PORTAL_SECURITY_DIR:-./security}:/app/security:rw"
+    environment:
+      WEB_PORTAL_CREDENTIAL_ROOT: /app/security
+    command:
+      - python
+      - -c
+      - |
+          from getpass import getpass
+          from security.credentials import CredentialStore
+          import os
+          store = CredentialStore(os.environ["WEB_PORTAL_CREDENTIAL_ROOT"])
+          if store.has_admin():
+              raise SystemExit("admin is already configured")
+          first = getpass("New admin password: ")
+          second = getpass("Repeat password: ")
+          if first != second or len(first) < 12:
+              raise SystemExit("passwords differ or are shorter than 12 characters")
+          token = store.create_bootstrap_token()
+          store.consume_bootstrap_token(token, first)
+          print("Administrator password configured.")
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  edge:
+  portal:
+    internal: true
+  worker_egress:

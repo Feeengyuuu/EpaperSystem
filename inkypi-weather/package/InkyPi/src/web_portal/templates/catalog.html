@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}信息总览 | EpaperSystem 简报{% endblock %}
+{% block content %}
+  <main id="main-content" class="page-shell" data-poll-ms="30000">
+    <section class="catalog-intro" aria-labelledby="catalog-title">
+      <div>
+        <p class="context-line">当前播放列表{% if selected_playlist and selected_playlist.window %} · {{ selected_playlist.window }}{% endif %}</p>
+        <h1 id="catalog-title">{{ selected_playlist.name if selected_playlist else "信息总览" }}</h1>
+      </div>
+      {% if selected_playlist and selected_playlist.publication_slugs %}
+        <a class="button button-primary" href="{{ url_for('play', playlist=selected_playlist.slug) }}">进入自动播放</a>
+      {% endif %}
+    </section>
+
+    {% if catalog.playlists %}
+      <nav class="playlist-tabs" aria-label="播放列表" role="tablist">
+        {% for playlist in catalog.playlists %}
+          <a role="tab" aria-selected="{{ 'true' if selected_playlist and playlist.slug == selected_playlist.slug else 'false' }}" href="{{ url_for('catalog', playlist=playlist.slug) }}">{{ playlist.name }}{% if playlist.active %}<span class="active-dot">当前</span>{% endif %}</a>
+        {% endfor %}
+      </nav>
+    {% endif %}
+
+    <section class="publication-list" aria-label="已发布内容">
+      {% for publication in selected_publications %}
+        {% include "_publication.html" %}
+      {% else %}
+        <div class="empty-state">
+          <h2>这个播放列表还没有发布内容</h2>
+          <p>内容发布后会自动出现在这里，打开页面不会触发设备刷新。</p>
+        </div>
+      {% endfor %}
+    </section>
+  </main>
+{% endblock %}

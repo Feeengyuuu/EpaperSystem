@@ -1,0 +1,49 @@
+<div class="publication-stage publication-stage-{{ publication.kind }}">
+  {% if publication.freshness == "stale" and publication.message %}
+    <p class="degraded-note" role="status">{{ publication.message }}</p>
+  {% endif %}
+  {% if publication.freshness == "unavailable" %}
+    <div class="unavailable-state" role="status">
+      <strong>暂时无法显示</strong>
+      <p>{{ publication.message }}</p>
+    </div>
+  {% elif publication.kind == "legacy_png" %}
+    <figure class="legacy-png{% if publication.original_plugin_frame %} original-plugin-frame{% endif %}">
+      <img src="{{ url_for('publication_asset', asset_id=publication.asset_id) }}" alt="{{ publication.title }}的{% if publication.original_plugin_frame %}原版插件画面{% else %}兼容图片视图{% endif %}"{% if publication.payload.width and publication.payload.height %} width="{{ publication.payload.width }}" height="{{ publication.payload.height }}"{% endif %} loading="lazy">
+      <figcaption>原版插件画面，内容按原始比例完整显示</figcaption>
+    </figure>
+  {% else %}
+    <div class="native-edition">
+      {% if publication.payload.headline %}
+        <p class="fact-headline">{{ publication.payload.headline }}</p>
+      {% endif %}
+      {% if publication.payload.summary %}
+        <p class="fact-summary">{{ publication.payload.summary }}</p>
+      {% endif %}
+      {% if publication.payload.facts %}
+        <dl class="fact-list">
+          {% for fact in publication.payload.facts %}
+            <div class="fact-item">
+              <dt>{{ fact.label }}</dt>
+              <dd>{{ fact.value }}</dd>
+            </div>
+          {% endfor %}
+        </dl>
+      {% endif %}
+      {% if publication.payload.rows %}
+        <div class="native-rows" role="list" aria-label="{{ publication.title }}详情">
+          {% for row in publication.payload.rows %}
+            <div class="native-row" role="listitem"{% if row.state %} data-state="{{ row.state }}"{% endif %}>
+              <span class="native-row-leading">{{ row.leading }}</span>
+              <span class="native-row-content">
+                <strong>{{ row.title }}</strong>
+                {% if row.meta %}<small>{{ row.meta }}</small>{% endif %}
+              </span>
+              {% if row.value %}<span class="native-row-value">{{ row.value }}</span>{% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>

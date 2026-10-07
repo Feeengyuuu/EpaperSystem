@@ -48,6 +48,9 @@ class UnavailableCredentialStore:
     def verify_admin_password(self, _password) -> bool:
         return False
 
+    def admin_session_revision(self) -> None:
+        return None
+
     def __getattr__(self, _name):
         raise CredentialError("administrator credential storage is unavailable")
 
@@ -64,10 +67,7 @@ def _validate_password(password) -> str:
     if "\x00" in password:
         raise InvalidPassword("password contains an invalid character")
     if not MIN_PASSWORD_LENGTH <= len(password) <= MAX_PASSWORD_LENGTH:
-        raise InvalidPassword(
-            f"password must contain {MIN_PASSWORD_LENGTH} to "
-            f"{MAX_PASSWORD_LENGTH} characters"
-        )
+        raise InvalidPassword(f"password must contain {MIN_PASSWORD_LENGTH} to {MAX_PASSWORD_LENGTH} characters")
     return password
 
 
@@ -169,6 +169,27 @@ class CredentialStore:
             return bool(check_password_hash(password_hash, password))
         except (ValueError, TypeError):
             return False
+
+    def admin_session_revision(self) -> str | None:
+        """Return a non-secret revision that changes with the admin password."""
+
+        with self._lock:
+            admin = self._load_locked().get("admin")
+            if not isinstance(admin, dict) or admin.get("username") != "admin":
+                return None
+            password_hash = admin.get("password_hash")
+            if not isinstance(password_hash, str) or not password_hash.startswith("scrypt:"):
+                return None
+            material = json.dumps(
+                {
+                    "credential_version": CREDENTIAL_VERSION,
+                    "password_hash": password_hash,
+                    "username": "admin",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            return hashlib.sha256(material).hexdigest()
 
     def rotate_admin_password(self, current_password, new_password) -> None:
         new_password = _validate_password(new_password)
@@ -296,9 +317,7 @@ class CredentialStore:
         try:
             os.chmod(path, 0o600)
         except OSError as error:
-            raise CredentialError(
-                f"could not restrict credential file permissions: {path}"
-            ) from error
+            raise CredentialError(f"could not restrict credential file permissions: {path}") from error
 
     @staticmethod
     def _remove_plaintext_token(path, *, missing_ok=False) -> None:

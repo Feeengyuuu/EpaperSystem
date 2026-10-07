@@ -1,0 +1,13 @@
+# Minimal local preview runtime. Keep these pins aligned with
+# inkypi-weather/package/InkyPi/install/requirements-base.txt.
+blinker==1.9.0
+click==8.4.2
+colorama==0.4.6
+flask==3.1.3
+itsdangerous==2.2.0
+jinja2==3.1.6
+markupsafe==3.0.3
+pillow==12.2.0
+tzdata==2026.3
+waitress==3.0.2
+werkzeug==3.1.6

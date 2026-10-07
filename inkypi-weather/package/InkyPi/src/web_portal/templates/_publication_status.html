@@ -1,0 +1,13 @@
+<div class="freshness-block">
+  <div class="status-badges">
+    {% if publication.data_mode_label %}
+      <span class="data-mode data-mode-{{ publication.data_mode }}">{{ publication.data_mode_label }}</span>
+    {% endif %}
+    {% if publication.freshness_label %}
+      <span class="freshness freshness-{{ publication.freshness }}">{{ publication.freshness_label }}</span>
+    {% endif %}
+  </div>
+  <span class="time-prefix">{{ publication.time_label }}</span>
+  <time{% if publication.display_time_value %} datetime="{{ publication.display_time_value }}"{% endif %}>{{ publication.display_time }}</time>
+  <span class="timezone-label">当地时间</span>
+</div>

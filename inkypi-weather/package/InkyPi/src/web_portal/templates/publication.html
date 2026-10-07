@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ publication.title }} | EpaperSystem 简报{% endblock %}
+{% block content %}
+  <main id="main-content" class="page-shell detail-shell" data-poll-ms="30000">
+    <a class="back-link" href="{{ url_for('catalog') }}">返回信息总览</a>
+    <article class="publication-detail" data-freshness="{{ publication.freshness }}">
+      <header class="detail-heading">
+        <div>
+          {% if publication.source_label or publication.plugin %}<p class="plugin-name">{{ publication.source_label or publication.plugin }}</p>{% endif %}
+          <h1>{{ publication.title }}</h1>
+        </div>
+        {% include "_publication_status.html" %}
+      </header>
+      {% include "_publication_stage.html" %}
+    </article>
+  </main>
+{% endblock %}

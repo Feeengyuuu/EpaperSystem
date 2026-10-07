@@ -1,0 +1,45 @@
+{
+	servers {
+		timeouts {
+			read_body 15s
+			read_header 10s
+			write 2m
+			idle 2m
+		}
+		max_header_size 32KB
+		0rtt off
+	}
+}
+
+{$WEB_PORTAL_HOSTNAME} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+	}
+	request_body {
+		max_size 16KB
+	}
+
+	reverse_proxy web:8080
+
+	log {
+		output stdout
+		format filter {
+			request>remote_ip ip_mask 16 32
+			request>client_ip ip_mask 16 32
+			request>headers>Cookie delete
+			request>headers>Authorization delete
+			request>uri query {
+				replace next REDACTED
+				replace playlist REDACTED
+			}
+			wrap json
+		}
+	}
+}

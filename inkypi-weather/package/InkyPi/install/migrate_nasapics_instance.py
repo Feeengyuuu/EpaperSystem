@@ -47,6 +47,7 @@ def _runtime_paths(config_file: Path) -> RuntimePaths:
         env_file=Path("/etc/inkypi/inkypi.env"),
         display_dir=Path("/var/lib/inkypi/display"),
         current_image_file=Path("/var/lib/inkypi/display/current_image.png"),
+        display_revision_file=Path("/run/inkypi/display_revision"),
         plugin_image_dir=Path("/var/lib/inkypi/plugins"),
         flask_secret_file=Path("/var/lib/inkypi/config/flask_secret"),
     )

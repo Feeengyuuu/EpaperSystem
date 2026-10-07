@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}自动播放 | EpaperSystem 简报{% endblock %}
+{% block body_class %}play-page{% endblock %}
+{% block content %}
+  <main id="main-content" class="play-shell" data-autoplay data-interval-ms="20000" data-poll-ms="30000">
+    <header class="play-heading">
+      <div>
+        <p class="context-line">自动播放{% if selected_playlist and selected_playlist.window %} · {{ selected_playlist.window }}{% endif %}</p>
+        <h1>{{ selected_playlist.name if selected_playlist else "播放列表" }}</h1>
+      </div>
+      <p class="slide-position" aria-live="polite"><span data-slide-current>1</span> / <span data-slide-total>{{ slides|length }}</span></p>
+    </header>
+
+    <section class="slide-deck" aria-label="自动播放内容">
+      {% for publication in slides %}
+        <article class="play-slide{% if loop.first %} is-active{% endif %}" data-slide aria-hidden="{{ 'false' if loop.first else 'true' }}"{% if not loop.first %} hidden{% endif %}>
+          <header class="play-publication-heading">
+            <div>
+              {% if publication.source_label or publication.plugin %}<p class="plugin-name">{{ publication.source_label or publication.plugin }}</p>{% endif %}
+              <h2>{{ publication.title }}</h2>
+            </div>
+            {% include "_publication_status.html" %}
+          </header>
+          {% include "_publication_stage.html" %}
+        </article>
+      {% else %}
+        <div class="empty-state play-empty">
+          <h2>没有可以播放的内容</h2>
+          <p>返回总览选择其他播放列表。</p>
+        </div>
+      {% endfor %}
+    </section>
+
+    <button class="button button-secondary play-chrome-toggle" type="button" data-play-chrome-toggle aria-pressed="false">隐藏导航</button>
+
+    <nav class="play-controls" aria-label="播放控制" data-play-controls>
+      <button class="button button-secondary" type="button" data-previous>上一页</button>
+      <button class="button button-primary" type="button" data-pause aria-pressed="false">暂停播放</button>
+      <button class="button button-secondary" type="button" data-next>下一页</button>
+      <button class="button button-secondary" type="button" data-fullscreen>全屏显示</button>
+      <a class="button button-quiet" href="{{ url_for('catalog', playlist=selected_playlist.slug if selected_playlist else None) }}">退出播放</a>
+    </nav>
+  </main>
+{% endblock %}

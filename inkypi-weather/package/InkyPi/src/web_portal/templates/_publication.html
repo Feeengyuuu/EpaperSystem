@@ -1,0 +1,10 @@
+<article class="publication-row" data-freshness="{{ publication.freshness }}">
+  <header class="publication-heading">
+    <div>
+      {% if publication.source_label or publication.plugin %}<p class="plugin-name">{{ publication.source_label or publication.plugin }}</p>{% endif %}
+      <h2><a href="{{ url_for('publication_detail', slug=publication.slug) }}">{{ publication.title }}</a></h2>
+    </div>
+    {% include "_publication_status.html" %}
+  </header>
+  {% include "_publication_stage.html" %}
+</article>

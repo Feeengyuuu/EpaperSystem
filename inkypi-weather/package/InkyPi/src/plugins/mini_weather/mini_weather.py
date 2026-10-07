@@ -18,8 +18,7 @@ from utils.theme_utils import apply_theme_to_plugin_settings, get_theme_context,
 logger = logging.getLogger(__name__)
 
 REVERSE_GEOCODE_URL = (
-    "https://nominatim.openstreetmap.org/reverse"
-    "?lat={lat}&lon={long}&format=jsonv2&addressdetails=1&zoom=10"
+    "https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={long}&format=jsonv2&addressdetails=1&zoom=10"
 )
 
 # Simple in-memory cache for reverse-geocoded titles to avoid hitting Nominatim
@@ -46,10 +45,7 @@ QUICK_LOCATION_LABELS = {
     "35.6762,139.6503": "Tokyo",
 }
 
-QUICK_LOCATION_COORDS = {
-    city: tuple(map(float, coords.split(",")))
-    for coords, city in QUICK_LOCATION_LABELS.items()
-}
+QUICK_LOCATION_COORDS = {city: tuple(map(float, coords.split(","))) for coords, city in QUICK_LOCATION_LABELS.items()}
 
 WEATHER_BACKGROUND_DEFAULT = "cloudy"
 WEATHER_BACKGROUND_DEFAULT_STYLE = "mythic_comic_1982"
@@ -344,12 +340,13 @@ def is_supported_title(value):
 class MiniWeather(Weather):
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
-        template_params['api_key'] = {
+        template_params["api_key"] = {
             "required": True,
             "service": "OpenWeatherMap",
-            "expected_key": "OPEN_WEATHER_MAP_SECRET"
+            "expected_key": "OPEN_WEATHER_MAP_SECRET",
         }
         return template_params
+
     def generate_image(self, settings, device_config):
         lat_value = settings.get("latitude")
         long_value = settings.get("longitude")
@@ -402,7 +399,7 @@ class MiniWeather(Weather):
 
         current_day = forecast[0]
         forecast_days = max(1, min(4, int(settings.get("forecastDays", 4))))
-        forecast_rows = forecast[1:1 + forecast_days] if len(forecast) > 1 else forecast[:forecast_days]
+        forecast_rows = forecast[1 : 1 + forecast_days] if len(forecast) > 1 else forecast[:forecast_days]
         labels = get_language_labels(language)
         weather_icon_style = self._weather_icon_style(settings)
         self._apply_weather_icon_style(template_params, forecast_rows, weather_icon_style)
@@ -432,7 +429,10 @@ class MiniWeather(Weather):
             row["weekday_index"] = target_date.weekday()  # Monday=0 .. Sunday=6
             logger.debug(
                 "  Forecast row %d: %s (%s) weekday_index=%d",
-                i + 1, target_date.strftime("%Y-%m-%d"), target_date.strftime("%A"), row["weekday_index"],
+                i + 1,
+                target_date.strftime("%Y-%m-%d"),
+                target_date.strftime("%A"),
+                row["weekday_index"],
             )
 
         template_params.update(
@@ -458,7 +458,11 @@ class MiniWeather(Weather):
                 "weather_background_color": weather_background["is_color"] if weather_background else False,
             }
         )
-        self._write_weather_context(template_params, now)
+        self._write_weather_context(
+            template_params,
+            now,
+            plugin_id="mini_weather",
+        )
 
         dimensions = self.get_dimensions(device_config)
 
@@ -492,7 +496,9 @@ class MiniWeather(Weather):
         title = str(data.get("title") or "Mini Weather")
         date_text = str(data.get("date") or "")
         self._draw_center_fit(draw, title, margin, 22, width - margin * 2, title_font, ink, 52, "bold")
-        draw.text(((width - self._text_width(draw, date_text, date_font)) // 2, 82), date_text, font=date_font, fill=muted)
+        draw.text(
+            ((width - self._text_width(draw, date_text, date_font)) // 2, 82), date_text, font=date_font, fill=muted
+        )
         draw.line((margin, 124, width - margin, 124), fill=rule, width=2)
 
         top = 148
@@ -697,7 +703,7 @@ class MiniWeather(Weather):
         return get_base_ui_font(int(size), bold=weight == "bold")
 
     def _unit_label(self, data):
-        units = ((data.get("plugin_settings") or {}).get("units") or "metric")
+        units = (data.get("plugin_settings") or {}).get("units") or "metric"
         if units == "metric":
             return f"{chr(176)}C"
         if units == "imperial":

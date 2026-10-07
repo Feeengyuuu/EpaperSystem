@@ -118,6 +118,11 @@ class DisplayManager:
             self,
             display_dir=display_dir,
             compatibility_image_path=self.device_config.current_image_file,
+            revision_marker_path=getattr(
+                self.device_config,
+                "display_revision_file",
+                None,
+            ),
             runtime_state_store=runtime_state_store,
         )
         return self.transaction

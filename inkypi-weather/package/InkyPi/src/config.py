@@ -65,6 +65,7 @@ class Config:
 
     # File path for storing the current image being displayed
     current_image_file = os.path.join(BASE_DIR, "static", "images", "current_image.png")
+    display_revision_file = os.path.join(BASE_DIR, "static", "display", "display_revision")
 
     # Directory path for storing plugin instance images
     plugin_image_dir = os.path.join(BASE_DIR, "static", "images", "plugins")
@@ -74,6 +75,7 @@ class Config:
         if runtime_paths is not None:
             self.config_file = runtime_paths.config_file
             self.current_image_file = runtime_paths.current_image_file
+            self.display_revision_file = runtime_paths.display_revision_file
             self.plugin_image_dir = runtime_paths.plugin_image_dir
             self.data_dir = runtime_paths.data_dir
             self.cache_dir = runtime_paths.cache_dir

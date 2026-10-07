@@ -20,6 +20,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
     read_source_provenance,
 )
+from plugins.context_cache import write_context
 from plugins.sports_dashboard.cache_io import read_json_file, write_json_file
 from utils.app_utils import get_base_ui_font, resolve_path
 from utils.cache_manager import (
@@ -41,14 +42,18 @@ from utils.image_utils import take_screenshot
 try:
     from utils.image_utils import text_width
 except Exception:  # pragma: no cover - compatibility with older image_utils layout
+
     def text_width(draw, text, font):
         left, top, right, bottom = draw.textbbox((0, 0), str(text), font=font)
         return right - left
 
+
 logger = logging.getLogger(__name__)
+
 
 def _safe_exception_text(exc):
     return redact_sensitive_text(exc)
+
 
 DEFAULT_WORLD_CUP_URL = "https://www.sportbusy.com/embed/world-cup"
 DEFAULT_WORLD_CUP_VISIBLE_MATCHES = 4
@@ -349,13 +354,9 @@ MSI_HEADER_LOGO_SIZE = (
     int(round(LOL_HEADER_LOGO_SIZE[1] * MSI_HEADER_LOGO_SCALE)),
 )
 LOLESPORTS_API_KEY = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
-LOLESPORTS_SCHEDULE_URL = (
-    "https://esports-api.lolesports.com/persisted/gw/getSchedule"
-    "?hl=en-US&leagueId={league_id}"
-)
+LOLESPORTS_SCHEDULE_URL = "https://esports-api.lolesports.com/persisted/gw/getSchedule?hl=en-US&leagueId={league_id}"
 LOLESPORTS_TOURNAMENTS_URL = (
-    "https://esports-api.lolesports.com/persisted/gw/getTournamentsForLeague"
-    "?hl=en-US&leagueId={league_id}"
+    "https://esports-api.lolesports.com/persisted/gw/getTournamentsForLeague?hl=en-US&leagueId={league_id}"
 )
 LOLESPORTS_LIVE_URL = "https://esports-api.lolesports.com/persisted/gw/getLive?hl=en-US"
 LOLESPORTS_EVENT_DETAILS_URL = "https://esports-api.lolesports.com/persisted/gw/getEventDetails?hl=en-US&id={event_id}"
@@ -2256,9 +2257,7 @@ class SportsDashboardCommonMixin:
                         timezone_info,
                         now.astimezone(timezone.utc),
                     )
-                    candidates.append(
-                        (0 if fresh else 1, "FOOTBALL CACHE" if fresh else "FOOTBALL STALE", events)
-                    )
+                    candidates.append((0 if fresh else 1, "FOOTBALL CACHE" if fresh else "FOOTBALL STALE", events))
         except Exception as exc:
             logger.debug("World Cup schedule summary skipped football-data cache: %s", _safe_exception_text(exc))
 
@@ -2456,16 +2455,10 @@ class SportsDashboardCommonMixin:
         del device_config
         fetched_at = None
         try:
-            render_data = (
-                route_summary.get("_render_data")
-                if isinstance(route_summary, Mapping)
-                else None
-            )
+            render_data = route_summary.get("_render_data") if isinstance(route_summary, Mapping) else None
             if isinstance(render_data, Mapping):
                 events = list(render_data.get("events") or [])
-                source_state = (
-                    render_data.get("source_state") or "CSL ESPN UNAVAILABLE"
-                )
+                source_state = render_data.get("source_state") or "CSL ESPN UNAVAILABLE"
                 fetched_at = render_data.get("fetched_at")
             else:
                 scoreboard, source_state, fetched_at = self._load_csl_scoreboard(
@@ -2596,14 +2589,116 @@ class SportsDashboardCommonMixin:
             for region in ("football", "lower", "esports")
         ]
         primary_live_override = (
-            self._worldcup_release_one_shot_window_active(now)
-            and panel_provenances[0] is SourceProvenance.LIVE
+            self._worldcup_release_one_shot_window_active(now) and panel_provenances[0] is SourceProvenance.LIVE
         )
+        self._write_sports_dashboard_context(now)
         return self._attest_sports_dashboard_image(
             image,
             *panel_provenances,
             force_refresh=self._force_refresh_requested(settings),
             primary_live_override=primary_live_override,
+        )
+
+    def _sports_native_state_sources(self):
+        """Return known post-render state files without exposing cache internals."""
+
+        accessors = (
+            ("worldcup", "_worldcup_live_state_path"),
+            ("club_football", "_club_football_live_state_path"),
+            ("csl", "_csl_live_state_path"),
+            ("nba", "_nba_live_state_path"),
+            ("offseason", "_offseason_hub_live_state_path"),
+            ("f1", "_f1_live_state_path"),
+            ("ewc", "_ewc_live_state_path"),
+            ("valve_esports", "_valve_esports_live_state_path"),
+            ("lpl", "_lpl_live_state_path"),
+            ("lck", "_lck_live_state_path"),
+            ("msi", "_msi_live_state_path"),
+        )
+        sources = []
+        for section, accessor_name in accessors:
+            accessor = getattr(self, accessor_name, None)
+            if not callable(accessor):
+                continue
+            try:
+                sources.append((section, Path(accessor())))
+            except (OSError, TypeError, ValueError):
+                continue
+        return tuple(sources)
+
+    def _write_sports_dashboard_context(self, generated_at):
+        """Publish a small allowlisted view of the states created by rendering."""
+
+        safe_fields = (
+            "source_state",
+            "has_live",
+            "live_until",
+            "event_id",
+            "league_code",
+            "team_a",
+            "team_b",
+            "home_name",
+            "away_name",
+            "score",
+            "score_a",
+            "score_b",
+            "home_score",
+            "away_score",
+            "state",
+            "status",
+            "status_text",
+            "started_at",
+            "start_utc",
+            "provider",
+            "game_name",
+            "tournament",
+            "updated_at",
+        )
+        events = []
+        for section, path in self._sports_native_state_sources():
+            try:
+                state = self._read_json_file(path)
+            except (OSError, TypeError, ValueError):
+                continue
+            if not isinstance(state, Mapping) or not state:
+                continue
+            nested = next(
+                (state.get(key) for key in ("selected_event", "event", "match") if isinstance(state.get(key), Mapping)),
+                {},
+            )
+            combined = dict(state)
+            combined.update(nested)
+            event = {"section": section}
+            for field in safe_fields:
+                value = combined.get(field)
+                if value is None or value == "":
+                    continue
+                if isinstance(value, datetime):
+                    value = value.isoformat()
+                if isinstance(value, (str, int, float, bool)):
+                    event[field] = value
+            if len(event) > 1:
+                events.append(event)
+
+        if not events:
+            return False
+        live_count = sum(1 for event in events if event.get("has_live") is True)
+        summary = (
+            f"{live_count} live across {len(events)} sports sections"
+            if live_count
+            else f"No live events across {len(events)} sports sections"
+        )
+        return write_context(
+            "sports_dashboard",
+            {
+                "kind": "sports_dashboard",
+                "source": "Sports Dashboard",
+                "summary": summary,
+                "live_count": live_count,
+                "events": events,
+            },
+            generated_at=generated_at,
+            ttl_seconds=15 * 60,
         )
 
     def render_isolated_region(
@@ -2637,9 +2732,7 @@ class SportsDashboardCommonMixin:
             device_config,
             current,
         )
-        theme_token = _ACTIVE_COLORS.set(
-            self._sports_dashboard_colors(theme_context)
-        )
+        theme_token = _ACTIVE_COLORS.set(self._sports_dashboard_colors(theme_context))
         try:
             if base_image is None:
                 image = Image.new("RGB", dimensions, COLORS["paper"])
@@ -2662,9 +2755,7 @@ class SportsDashboardCommonMixin:
                 current,
                 region,
             )
-            image.info["inkypi_theme_mode"] = str(
-                (theme_context or {}).get("mode") or "day"
-            )
+            image.info["inkypi_theme_mode"] = str((theme_context or {}).get("mode") or "day")
             return image, provenance
         finally:
             _ACTIVE_COLORS.reset(theme_token)
@@ -2687,15 +2778,13 @@ class SportsDashboardCommonMixin:
         nba_height = max(1, dimensions[1] - nba_top)
 
         if region == "football":
-            left, left_provenance, left_source, worldcup_content_box = (
-                self._render_selected_football_panel(
-                    settings,
-                    device_config,
-                    (left_width, worldcup_height),
-                    timezone_info,
-                    visible_worldcup_matches,
-                    now,
-                )
+            left, left_provenance, left_source, worldcup_content_box = self._render_selected_football_panel(
+                settings,
+                device_config,
+                (left_width, worldcup_height),
+                timezone_info,
+                visible_worldcup_matches,
+                now,
             )
             image.paste(left, (0, 0))
 
@@ -2859,20 +2948,12 @@ class SportsDashboardCommonMixin:
                 now,
                 ewc_card=ewc_card,
             )
-            choice_kind = str(
-                (esports_choice or {}).get("kind") or ""
-            ).strip().lower()
+            choice_kind = str((esports_choice or {}).get("kind") or "").strip().lower()
             has_timed_lol_or_ewc = choice_kind == "ewc" or (
                 choice_kind == "lol"
-                and self._lol_sidebar_candidate_phase(
-                    (esports_choice or {}).get("choice")
-                )
-                in (0, 1)
+                and self._lol_sidebar_candidate_phase((esports_choice or {}).get("choice")) in (0, 1)
             )
-            if (
-                not has_timed_lol_or_ewc
-                and self._bool_setting(settings, "valveEsportsEnabled", True)
-            ):
+            if not has_timed_lol_or_ewc and self._bool_setting(settings, "valveEsportsEnabled", True):
                 valve_selected = None
                 valve_source_state = ""
                 try:
@@ -2928,10 +3009,7 @@ class SportsDashboardCommonMixin:
         if isinstance(source_state, SourceProvenance):
             return source_state
         state = str(source_state or "").strip().upper()
-        if any(
-            marker in state
-            for marker in ("FALLBACK", "NO DATA", "LIMIT", "BLOCKED", "PREVIEW", "WATCH")
-        ):
+        if any(marker in state for marker in ("FALLBACK", "NO DATA", "LIMIT", "BLOCKED", "PREVIEW", "WATCH")):
             return SourceProvenance.LOCAL_FALLBACK
         if "STALE" in state:
             return SourceProvenance.STALE_CACHE
@@ -2948,19 +3026,11 @@ class SportsDashboardCommonMixin:
         force_refresh=False,
         primary_live_override=False,
     ):
-        provenances = [
-            provenance
-            for provenance in panel_provenances
-            if isinstance(provenance, SourceProvenance)
-        ]
+        provenances = [provenance for provenance in panel_provenances if isinstance(provenance, SourceProvenance)]
         has_untrusted_provenance = len(provenances) != len(panel_provenances)
         if has_untrusted_provenance:
             provenance = SourceProvenance.LOCAL_FALLBACK
-        elif (
-            primary_live_override
-            and provenances
-            and provenances[0] is SourceProvenance.LIVE
-        ):
+        elif primary_live_override and provenances and provenances[0] is SourceProvenance.LIVE:
             provenance = SourceProvenance.LIVE
         elif SourceProvenance.LOCAL_FALLBACK in provenances:
             provenance = SourceProvenance.LOCAL_FALLBACK
@@ -3029,9 +3099,7 @@ class SportsDashboardCommonMixin:
             ).convert("RGB")
             expected_size = (max(1, box[2] - box[0]), max(1, box[3] - box[1]))
             if cached.size != expected_size:
-                raise ValueError(
-                    f"cached region size {cached.size!r} does not match {expected_size!r}"
-                )
+                raise ValueError(f"cached region size {cached.size!r} does not match {expected_size!r}")
             image.paste(cached, (box[0], box[1]))
             logger.info(
                 "Sports Dashboard restored %s region from its last successful render. | source: %s",
@@ -3051,9 +3119,7 @@ class SportsDashboardCommonMixin:
         width = max(1, int(box[2]) - int(box[0]))
         height = max(1, int(box[3]) - int(box[1]))
         palette = {
-            key: list(COLORS[key])
-            for key in ("paper", "panel", "panel2", "text", "border", "line")
-            if key in COLORS
+            key: list(COLORS[key]) for key in ("paper", "panel", "panel2", "text", "border", "line") if key in COLORS
         }
         signature = hashlib.sha256(
             json.dumps(
@@ -3127,7 +3193,9 @@ class SportsDashboardCommonMixin:
                 if isinstance(device_config, Mapping):
                     resolution = device_config.get("resolution")
                 else:
-                    resolution = device_config.get_config("resolution", None) if hasattr(device_config, "get_config") else None
+                    resolution = (
+                        device_config.get_config("resolution", None) if hasattr(device_config, "get_config") else None
+                    )
                 if isinstance(resolution, Mapping):
                     width = resolution.get("width")
                     height = resolution.get("height")
@@ -3268,7 +3336,9 @@ class SportsDashboardCommonMixin:
         )
         self._draw_status_pill(draw, x2 - 84, header_y + 3, status, status == "LIVE")
         if not strip_drawn:
-            draw.rectangle((x2 - 120, header_y + 13, x2 - 112, header_y + 21), fill=accent, outline=COLORS["border"], width=1)
+            draw.rectangle(
+                (x2 - 120, header_y + 13, x2 - 112, header_y + 21), fill=accent, outline=COLORS["border"], width=1
+            )
         draw.line((x1 + 12, y1 + 48, x2 - 12, y1 + 48), fill=COLORS["border"], width=1)
 
     def _draw_standalone_sport_header_cutout(self, image, sport, x1, y1, x2, y2, accent):
@@ -3301,7 +3371,9 @@ class SportsDashboardCommonMixin:
         path = self._sport_logo_path(sport)
         logo = self._load_local_logo(path, (int(width), int(height)), alpha_threshold=8) if path else None
         if logo:
-            image.paste(logo, (int(x) + (int(width) - logo.width) // 2, int(y) + (int(height) - logo.height) // 2), logo)
+            image.paste(
+                logo, (int(x) + (int(width) - logo.width) // 2, int(y) + (int(height) - logo.height) // 2), logo
+            )
             return
         text, font = self._fit_text(draw, str(sport or "SPORT"), int(width), 11, bold=True, min_size=7)
         self._draw_centered_in_box(draw, (x, y, x + width, y + height), text, font, COLORS["muted"])
@@ -3325,8 +3397,12 @@ class SportsDashboardCommonMixin:
         min_left_logo_x = int(x1 + 56)
         max_left_logo_x = int(right_logo_x - logo_size - 8)
         left_logo_x = max(min_left_logo_x, min(left_logo_x, max_left_logo_x))
-        self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y, logo_size, self._small_row_logo_fallback(event, "a"))
-        self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y, logo_size, self._small_row_logo_fallback(event, "b"))
+        self._draw_team_logo(
+            image, draw, event.get("team_a_logo"), left_logo_x, y, logo_size, self._small_row_logo_fallback(event, "a")
+        )
+        self._draw_team_logo(
+            image, draw, event.get("team_b_logo"), right_logo_x, y, logo_size, self._small_row_logo_fallback(event, "b")
+        )
 
     def _draw_sport_info_icon(self, draw, kind, x, y, accent):
         kind = str(kind or "").strip().upper()
@@ -3355,7 +3431,18 @@ class SportsDashboardCommonMixin:
                 draw.line((column_x, y + 1, column_x, y + 8), fill=border, width=1)
             draw.line((x, y + 4, x + 8, y + 4), fill=accent, width=1)
         elif kind == "DOWN":
-            draw.polygon([(x + 4, y + 8), (x + 1, y + 4), (x + 3, y + 4), (x + 3, y), (x + 5, y), (x + 5, y + 4), (x + 7, y + 4)], fill=accent)
+            draw.polygon(
+                [
+                    (x + 4, y + 8),
+                    (x + 1, y + 4),
+                    (x + 3, y + 4),
+                    (x + 3, y),
+                    (x + 5, y),
+                    (x + 5, y + 4),
+                    (x + 7, y + 4),
+                ],
+                fill=accent,
+            )
         elif kind == "FIELD":
             draw.rectangle((x, y + 1, x + 8, y + 8), outline=border, width=1)
             draw.line((x + 4, y + 1, x + 4, y + 8), fill=accent, width=1)
@@ -3402,13 +3489,19 @@ class SportsDashboardCommonMixin:
         right_logo_x = int((right_area[0] + right_area[1] - logo_size) / 2)
         self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y, logo_size, event["team_a"])
         self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y, logo_size, event["team_b"])
-        center_text, center_font = self._fit_text(draw, center_text, 72, 19 if center_text != "VS" else 16, bold=True, min_size=11)
+        center_text, center_font = self._fit_text(
+            draw, center_text, 72, 19 if center_text != "VS" else 16, bold=True, min_size=11
+        )
         self._draw_centered(draw, (center_x, y + logo_size / 2 + 1), center_text, center_font, COLORS["text"])
         team_y = y + logo_size + 14
         team_a_label = self._nba_display_team_from_event(event, "a", full=True)
         team_b_label = self._nba_display_team_from_event(event, "b", full=True)
-        team_a, font_a = self._fit_text(draw, team_a_label, left_area[1] - left_area[0], team_size, bold=True, min_size=9)
-        team_b, font_b = self._fit_text(draw, team_b_label, right_area[1] - right_area[0], team_size, bold=True, min_size=9)
+        team_a, font_a = self._fit_text(
+            draw, team_a_label, left_area[1] - left_area[0], team_size, bold=True, min_size=9
+        )
+        team_b, font_b = self._fit_text(
+            draw, team_b_label, right_area[1] - right_area[0], team_size, bold=True, min_size=9
+        )
         team_a_fill = COLORS[SportsDashboard._nba_team_side_fill_key(event, "a")]
         team_b_fill = COLORS[SportsDashboard._nba_team_side_fill_key(event, "b")]
         self._draw_centered(draw, ((left_area[0] + left_area[1]) / 2, team_y), team_a, font_a, team_a_fill)
@@ -3416,7 +3509,9 @@ class SportsDashboardCommonMixin:
 
     def _draw_compact_match_row(self, image, draw, x1, x2, y, event, center_text, show_time=False, show_date=False):
         row_h = 31
-        draw.rounded_rectangle((x1, y, x2, y + row_h), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+        draw.rounded_rectangle(
+            (x1, y, x2, y + row_h), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=1
+        )
         draw.rectangle((x1 + 1, y + 1, x1 + 5, y + row_h - 1), fill=COLORS["nba_accent"])
         left_label = event["start"].strftime("%m/%d") if (show_date or show_time) else ""
         if left_label:
@@ -3435,19 +3530,31 @@ class SportsDashboardCommonMixin:
         left_logo_x = x1 + 2
         right_logo_x = x2 - logo_size - 2
         self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y, logo_size, event["team_a"])
-        team_a, font_a = self._fit_text(draw, event["team_a"], max(24, center_x - left_logo_x - logo_size - 22), 11, bold=True, min_size=7)
+        team_a, font_a = self._fit_text(
+            draw, event["team_a"], max(24, center_x - left_logo_x - logo_size - 22), 11, bold=True, min_size=7
+        )
         team_a_fill = COLORS[SportsDashboard._nba_team_side_fill_key(event, "a")]
         team_b_fill = COLORS[SportsDashboard._nba_team_side_fill_key(event, "b")]
-        self._draw_text_in_box(draw, (left_logo_x + logo_size + 4, y - 1, center_x - 28, y + 16), team_a, font_a, team_a_fill)
+        self._draw_text_in_box(
+            draw, (left_logo_x + logo_size + 4, y - 1, center_x - 28, y + 16), team_a, font_a, team_a_fill
+        )
         center_text, center_font = self._fit_text(draw, center_text, 54, 11, bold=True, min_size=8)
-        self._draw_centered_in_box(draw, (center_x - 27, y - 1, center_x + 27, y + 16), center_text, center_font, COLORS["text"])
+        self._draw_centered_in_box(
+            draw, (center_x - 27, y - 1, center_x + 27, y + 16), center_text, center_font, COLORS["text"]
+        )
         self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y, logo_size, event["team_b"])
-        team_b, font_b = self._fit_text(draw, event["team_b"], max(24, right_logo_x - center_x - 31), 11, bold=True, min_size=7)
-        self._draw_text_in_box(draw, (center_x + 28, y - 1, right_logo_x - 4, y + 16), team_b, font_b, team_b_fill, align="right")
+        team_b, font_b = self._fit_text(
+            draw, event["team_b"], max(24, right_logo_x - center_x - 31), 11, bold=True, min_size=7
+        )
+        self._draw_text_in_box(
+            draw, (center_x + 28, y - 1, right_logo_x - 4, y + 16), team_b, font_b, team_b_fill, align="right"
+        )
 
     def _draw_status_pill(self, draw, x, y, text, is_live):
         color = COLORS["red"] if is_live else COLORS["green"]
-        draw.rounded_rectangle((x, y, x + 74, y + 24), radius=5, outline=COLORS["border"], fill=COLORS["panel"], width=2)
+        draw.rounded_rectangle(
+            (x, y, x + 74, y + 24), radius=5, outline=COLORS["border"], fill=COLORS["panel"], width=2
+        )
         draw.rectangle((x + 5, y + 5, x + 13, y + 19), fill=color, outline=COLORS["border"], width=1)
         value, value_font = self._fit_text(draw, text, 46, 13, bold=True, min_size=10)
         self._draw_centered_in_box(draw, (x, y + 2, x + 74, y + 22), value, value_font, COLORS["text"])
@@ -3470,15 +3577,24 @@ class SportsDashboardCommonMixin:
         draw_size = self._team_logo_draw_size(fallback_text, size)
         draw_x = int(x - (draw_size - size) / 2)
         draw_y = int(y - (draw_size - size) / 2)
-        logo = self._load_local_team_logo(fallback_text, draw_size) or self._load_team_logo_for_render(logo_url, draw_size)
+        logo = self._load_local_team_logo(fallback_text, draw_size) or self._load_team_logo_for_render(
+            logo_url, draw_size
+        )
         if logo:
             image.paste(logo, (draw_x + (draw_size - logo.width) // 2, draw_y + (draw_size - logo.height) // 2), logo)
             return
-        draw.rounded_rectangle((draw_x, draw_y, draw_x + draw_size, draw_y + draw_size), radius=4, fill=COLORS["panel_gold"], outline=COLORS["border"], width=1)
+        draw.rounded_rectangle(
+            (draw_x, draw_y, draw_x + draw_size, draw_y + draw_size),
+            radius=4,
+            fill=COLORS["panel_gold"],
+            outline=COLORS["border"],
+            width=1,
+        )
         fallback = str(fallback_text or "?")[:1].upper()
         fallback_font = self._font(max(10, int(draw_size * 0.55)), True)
-        self._draw_centered(draw, (draw_x + draw_size / 2, draw_y + draw_size / 2), fallback, fallback_font, COLORS["muted"])
-
+        self._draw_centered(
+            draw, (draw_x + draw_size / 2, draw_y + draw_size / 2), fallback, fallback_font, COLORS["muted"]
+        )
 
     def _load_team_logo_for_render(self, logo_url, size):
         try:
@@ -3515,8 +3631,7 @@ class SportsDashboardCommonMixin:
             LOCAL_LCK_TEAM_LOGO_DIR,
         ):
             candidates.extend(
-                os.path.join(directory, f"{code}{extension}")
-                for extension in (".png", ".webp", ".jpg", ".jpeg")
+                os.path.join(directory, f"{code}{extension}") for extension in (".png", ".webp", ".jpg", ".jpeg")
             )
         return candidates
 
@@ -3864,10 +3979,7 @@ class SportsDashboardCommonMixin:
     @staticmethod
     def _blend(foreground, background, amount):
         amount = max(0.0, min(1.0, float(amount)))
-        return tuple(
-            int(background[index] + (foreground[index] - background[index]) * amount)
-            for index in range(3)
-        )
+        return tuple(int(background[index] + (foreground[index] - background[index]) * amount) for index in range(3))
 
     @classmethod
     def _draw_halftone(cls, draw, bounds, color, paper, spacing, radius):

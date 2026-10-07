@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}登录 | EpaperSystem 简报{% endblock %}
+{% block body_class %}login-page{% endblock %}
+{% block content %}
+  <main id="main-content" class="login-shell">
+    <section class="login-panel" aria-labelledby="login-title">
+      <div class="login-identity">
+        <span class="login-mark" aria-hidden="true"></span>
+        <p>EpaperSystem 私人简报</p>
+      </div>
+      <h1 id="login-title">查看你的播放列表</h1>
+      <p class="login-intro">使用 InkyPi 管理员账号登录。页面只展示已经发布的内容，不会控制实体屏幕。</p>
+      {% if error %}
+        <p class="form-error" role="alert">{{ error }}</p>
+      {% endif %}
+      <form class="login-form" action="{{ url_for('login') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="next" value="{{ next_url }}">
+        <label for="username">用户名</label>
+        <input id="username" name="username" type="text" value="admin" autocomplete="username" autocapitalize="none" required>
+        <label for="password">密码</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+        <button class="button button-primary" type="submit">登录简报</button>
+      </form>
+      <p class="privacy-note">私人站点，请勿在共用设备上保持登录。</p>
+    </section>
+  </main>
+{% endblock %}
