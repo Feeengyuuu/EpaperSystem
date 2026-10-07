@@ -586,7 +586,7 @@ def test_playlist_page_overlays_runtime_success_times(playlist_env, monkeypatch)
     assert response.status_code == 200
     plugins = {
         plugin["name"]: plugin
-        for playlist in captured["playlist_config"]["playlists"]
+        for playlist in captured["playlists"]
         for plugin in playlist["plugins"]
     }
     assert plugins["Home"]["latest_refresh_time"] == "2026-07-14T02:00:00+00:00"
@@ -599,7 +599,30 @@ def test_playlist_page_renders_without_runtime_state(playlist_env, monkeypatch):
     response = playlist_env.client.get("/playlist")
 
     assert response.status_code == 200
-    assert "playlist_config" in captured
+    assert "playlists" in captured
+    assert captured["selected_playlist"] in {
+        playlist["name"] for playlist in captured["playlists"]
+    }
+
+
+@pytest.mark.parametrize(
+    ("refresh", "before_display", "expected"),
+    (
+        ({"interval": 60}, False, "Every minute"),
+        ({"interval": 1800}, False, "Every 30 minutes"),
+        ({"interval": 3600}, False, "Every hour"),
+        ({"interval": 21600}, False, "Every 6 hours"),
+        ({"interval": 172800}, False, "Every 2 days"),
+        ({"interval": 90}, False, "Every 2 minutes"),
+        ({"scheduled": "07:30"}, False, "Daily at 07:30"),
+        ({}, False, "Manual refresh"),
+        (None, False, "Manual refresh"),
+        ({"interval": True}, False, "Manual refresh"),
+        ({"interval": 3600}, True, "Updates before each display"),
+    ),
+)
+def test_describe_refresh_labels(refresh, before_display, expected):
+    assert playlist_blueprint.describe_refresh(refresh, before_display) == expected
 
 
 def test_latest_success_prefers_newest_content_lane_and_ignores_theme():

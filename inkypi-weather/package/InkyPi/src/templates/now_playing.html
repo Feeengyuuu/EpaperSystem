@@ -1,0 +1,162 @@
+{% extends 'base.html' %}
+{%- from 'components/icons.html' import icon -%}
+{%- from 'components/preview_card.html' import preview_card -%}
+{% set nav_active = 'now' %}
+{% block title %}Now Playing · {{ inkypi_device_name }}{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='styles/now_playing.css') }}">
+{% endblock %}
+{% block page_title %}Now Playing{% endblock %}
+
+{% block content %}
+<section class="hero card" id="hero" data-now-playing='{{ now_playing | tojson }}'>
+    <button type="button" class="hero-media" id="heroMedia" aria-label="View full size">
+        <img src="/api/current_image" alt="Current Image">
+        <span class="preview-empty" data-hero-empty hidden>{{ icon('image') }}<span>Nothing on the display yet</span></span>
+    </button>
+    <div class="hero-info">
+        <div class="eyebrow">On the display</div>
+        <h2 class="hero-title" id="heroTitle" data-i18n-skip="true">{{ now_playing.plugin_instance or now_playing.display_name or '—' }}</h2>
+        <div class="hero-meta">
+            <span class="hero-plugin" id="heroPlugin"{% if not now_playing.plugin_instance or now_playing.display_name == now_playing.plugin_instance %} hidden{% endif %}>{{ now_playing.display_name or '' }}</span>
+            <span class="status-pill accent plain" id="heroPlaylist" data-i18n-skip="true"{% if not now_playing.playlist %} hidden{% endif %}>{{ now_playing.playlist or '' }}</span>
+        </div>
+        <div class="hero-updated muted" id="heroUpdated" data-relative-prefix="Updated"{% if now_playing.refresh_time %} data-relative-time="{{ now_playing.refresh_time }}"{% endif %}></div>
+        <div class="hero-actions">
+            <button type="button" class="btn btn-primary" id="heroRefresh"{% if not now_playing.plugin_instance %} disabled{% endif %}>{{ icon('refresh') }}<span>Refresh now</span></button>
+            <button type="button" class="btn btn-secondary" id="heroExpand">{{ icon('expand') }}<span>Full size</span></button>
+        </div>
+        <p class="hero-hint faint">The e-paper panel takes about 30 seconds to redraw.</p>
+    </div>
+</section>
+
+<section class="playlists" aria-labelledby="playlistsTitle">
+    <div class="section-bar">
+        <h2 class="section-title" id="playlistsTitle">Playlists</h2>
+        <div class="row row-wrap">
+            <button type="button" class="btn btn-secondary btn-sm" data-action="edit-playlist"{% if not playlists %} hidden{% endif %}>{{ icon('gear') }}<span>Playlist settings</span></button>
+            <button type="button" class="btn btn-secondary btn-sm" data-action="new-playlist">{{ icon('plus') }}<span>New playlist</span></button>
+            <a class="btn btn-primary btn-sm" href="{{ url_for('main.plugins_page') }}">{{ icon('plus') }}<span>Add plugin</span></a>
+        </div>
+    </div>
+
+    {% if playlists %}
+    <div class="tabs" role="tablist" aria-label="Playlists">
+        {% for playlist in playlists %}
+        <button type="button" class="tab{% if playlist.name == selected_playlist %} is-active{% endif %}" role="tab"
+                aria-selected="{{ 'true' if playlist.name == selected_playlist else 'false' }}"
+                data-playlist-tab="{{ playlist.name }}">
+            {% if playlist.is_active %}<span class="live-dot" title="Active now"></span>{% endif %}
+            <span data-i18n-skip="true">{{ playlist.name }}</span>
+            <span class="tab-count" data-tab-count>{{ playlist.plugins | length }}</span>
+        </button>
+        {% endfor %}
+    </div>
+
+    {% for playlist in playlists %}
+    <div class="playlist-panel" role="tabpanel" data-playlist-panel="{{ playlist.name }}"
+         data-start="{{ playlist.start_time }}" data-end="{{ playlist.end_time }}"
+         {% if playlist.name != selected_playlist %}hidden{% endif %}>
+        <div class="playlist-meta">
+            <span class="row">{{ icon('clock') }}<span>{{ playlist.start_time }} – {{ playlist.end_time }}</span></span>
+            {% if playlist.is_active %}<span class="status-pill ok">Active now</span>{% else %}<span class="status-pill plain">Outside its time window</span>{% endif %}
+        </div>
+        <div class="preview-grid" data-preview-grid{% if not playlist.plugins %} hidden{% endif %}>
+            {% for item in playlist.plugins %}
+            {{ preview_card(playlist, item) }}
+            {% endfor %}
+        </div>
+        <div class="empty-state" data-empty-playlist{% if playlist.plugins %} hidden{% endif %}>
+            <strong>No plugins in this playlist yet</strong>
+            <p>Open a plugin, set it up, then choose Add to Playlist.</p>
+            <a class="btn btn-primary" href="{{ url_for('main.plugins_page') }}">Browse plugins</a>
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="empty-state">
+        <strong>No playlists yet</strong>
+        <p>Create a playlist to choose what the display rotates through.</p>
+        <button type="button" class="btn btn-primary" data-action="new-playlist">New playlist</button>
+    </div>
+    {% endif %}
+</section>
+{% endblock %}
+
+{% block overlays %}
+<div class="sheet" id="instanceSheet" role="dialog" aria-modal="true" aria-labelledby="instanceSheetTitle" aria-hidden="true">
+    <div class="sheet-backdrop" data-sheet-close></div>
+    <div class="sheet-panel">
+        <div class="sheet-head">
+            <div class="grow">
+                <div class="sheet-title" id="instanceSheetTitle" data-i18n-skip="true"></div>
+                <div class="sheet-sub" id="instanceSheetSub"></div>
+            </div>
+            <button type="button" class="sheet-close" data-sheet-close aria-label="Close">×</button>
+        </div>
+        <div class="sheet-menu">
+            <a href="#" id="instanceEditLink">{{ icon('edit') }}<span>Edit settings</span></a>
+            <button type="button" data-menu="refresh-data">{{ icon('refresh') }}<span>Refresh data now</span></button>
+            <button type="button" data-menu="refresh-schedule">{{ icon('clock') }}<span>Refresh schedule</span><span class="menu-hint" id="instanceScheduleHint"></span></button>
+            <button type="button" data-menu="delete" class="is-danger">{{ icon('trash') }}<span>Delete from playlist</span></button>
+        </div>
+    </div>
+</div>
+
+<div class="sheet" id="playlistSheet" role="dialog" aria-modal="true" aria-labelledby="playlistSheetTitle" aria-hidden="true">
+    <div class="sheet-backdrop" data-sheet-close></div>
+    <div class="sheet-panel">
+        <div class="sheet-head">
+            <div class="grow"><div class="sheet-title" id="playlistSheetTitle">New playlist</div></div>
+            <button type="button" class="sheet-close" data-sheet-close aria-label="Close">×</button>
+        </div>
+        <form class="sheet-body" id="playlistForm" autocomplete="off">
+            <label class="field">
+                <span class="field-label">Name</span>
+                <input class="input" type="text" id="playlistName" name="playlist_name" maxlength="64" required>
+            </label>
+            <div class="field">
+                <span class="field-label">Show between</span>
+                <div class="field-row">
+                    <select class="select" id="playlistStart" name="start_time" aria-label="Start time"></select>
+                    <span class="muted">–</span>
+                    <select class="select" id="playlistEnd" name="end_time" aria-label="End time"></select>
+                </div>
+                <span class="field-help">The playlist rotates only inside this daily window.</span>
+            </div>
+        </form>
+        <div class="sheet-actions">
+            <button type="button" class="btn btn-danger" id="playlistDelete" hidden>Delete</button>
+            <span class="grow"></span>
+            <button type="button" class="btn btn-secondary" data-sheet-close>Cancel</button>
+            <button type="button" class="btn btn-primary" id="playlistSave">Save</button>
+        </div>
+    </div>
+</div>
+
+<div class="sheet" id="refreshSettingsModal" role="dialog" aria-modal="true" aria-labelledby="refreshSheetTitle" aria-hidden="true">
+    <div class="sheet-backdrop" data-sheet-close></div>
+    <div class="sheet-panel">
+        <div class="sheet-head">
+            <div class="grow">
+                <div class="sheet-title" id="refreshSheetTitle">Refresh schedule</div>
+                <div class="sheet-sub" id="refreshSheetSub" data-i18n-skip="true"></div>
+            </div>
+            <button type="button" class="sheet-close" data-sheet-close aria-label="Close">×</button>
+        </div>
+        <form class="sheet-body settings-form" id="refreshSettingsForm">
+            {% set prefix = "modal" %}
+            {% include 'refresh_settings_form.html' %}
+        </form>
+        <div class="sheet-actions">
+            <button type="button" class="btn btn-secondary" data-sheet-close>Cancel</button>
+            <button type="button" class="btn btn-primary" id="refreshSave">Save</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{{ url_for('static', filename='scripts/refresh_settings_manager.js') }}"></script>
+<script defer src="{{ url_for('static', filename='scripts/now_playing.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,73 @@
+{%- from 'components/icons.html' import icon -%}
+{%- set nav_active = nav_active | default('') -%}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="inkypi-csrf-token" content="{{ inkypi_csrf_token }}">
+    <meta name="inkypi-plain-http" content="{{ 'true' if inkypi_plain_http_warning else 'false' }}">
+    <meta name="theme-color" content="#111316">
+    <title>{% block title %}{{ inkypi_device_name | default('InkyPi') }}{% endblock %}</title>
+    <script>
+        (function () {
+            var theme = null;
+            try { theme = localStorage.getItem('inkypi-theme'); } catch (error) {}
+            document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
+        })();
+    </script>
+    <script src="{{ url_for('static', filename='inkypi-security.js') }}" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/tokens.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/components.css') }}">
+    {% block head %}{% endblock %}
+    <script defer src="{{ url_for('static', filename='scripts/i18n.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='scripts/app.js') }}"></script>
+</head>
+<body>
+<div class="app-shell">
+    <nav class="app-nav" aria-label="Main">
+        <a class="nav-brand" href="{{ url_for('main.main_page') }}">
+            <span class="nav-brand-mark" aria-hidden="true"></span>
+            <span class="truncate" data-i18n-skip="true">{{ inkypi_device_name | default('InkyPi') }}</span>
+        </a>
+        <ul class="nav-links">
+            <li><a class="nav-link{% if nav_active == 'now' %} is-active{% endif %}" href="{{ url_for('main.main_page') }}"{% if nav_active == 'now' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('now') }}</span><span>Now Playing</span></a></li>
+            <li><a class="nav-link{% if nav_active == 'plugins' %} is-active{% endif %}" href="{{ url_for('main.plugins_page') }}"{% if nav_active == 'plugins' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('plugins') }}</span><span>Plugins</span></a></li>
+            <li><a class="nav-link{% if nav_active == 'keys' %} is-active{% endif %}" href="{{ url_for('apikeys.apikeys_page') }}"{% if nav_active == 'keys' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('keys') }}</span><span>Keys</span></a></li>
+            <li><a class="nav-link{% if nav_active == 'device' %} is-active{% endif %}" href="{{ url_for('settings.settings_page') }}"{% if nav_active == 'device' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('device') }}</span><span>Device</span></a></li>
+        </ul>
+        <div class="nav-foot">InkyPi</div>
+    </nav>
+
+    <main class="app-main" id="main">
+        <header class="page-head">
+            <div class="grow">
+                {% block page_eyebrow %}{% endblock %}
+                <h1 class="page-title">{% block page_title %}{% endblock %}</h1>
+                {% block page_subtitle %}{% endblock %}
+            </div>
+            <div class="page-actions">
+                {% block page_actions %}{% endblock %}
+                <div class="head-tools">
+                    <button type="button" id="languageToggle" class="language-toggle" data-i18n-skip="true" aria-label="Language">中文</button>
+                    <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Toggle theme">
+                        <span class="nav-icon theme-icon-dark">{{ icon('moon') }}</span>
+                        <span class="nav-icon theme-icon-light">{{ icon('sun') }}</span>
+                    </button>
+                    {% if inkypi_admin_authenticated %}
+                    <button type="button" class="auth-chip is-signed-in" data-action="logout" title="Signed in as administrator"><span class="dot"></span><span>Admin</span></button>
+                    {% else %}
+                    <a class="auth-chip" href="{{ url_for('auth.login', next=request.full_path.rstrip('?')) }}"><span class="dot"></span><span>Sign in</span></a>
+                    {% endif %}
+                </div>
+            </div>
+        </header>
+
+        {% block content %}{% endblock %}
+    </main>
+</div>
+<div class="toast-stack" id="toastStack" aria-live="polite"></div>
+{% block overlays %}{% endblock %}
+{% block scripts %}{% endblock %}
+</body>
+</html>

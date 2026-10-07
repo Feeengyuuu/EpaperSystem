@@ -3,12 +3,46 @@ from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, render_template, request, send_file
 
+from blueprints.playlist import now_playing_payload, render_now_playing
+
 main_bp = Blueprint("main", __name__)
+
+
+@main_bp.app_context_processor
+def inkypi_shell_context():
+    """Device name for the navigation shell on every page."""
+    device_config = current_app.config.get("DEVICE_CONFIG")
+    name = None
+    try:
+        name = device_config.get_config("name")
+    except TypeError:
+        name = (device_config.get_config() or {}).get("name")
+    except Exception:
+        name = None
+    return {"inkypi_device_name": name or "InkyPi"}
+
 
 @main_bp.route('/')
 def main_page():
+    return render_now_playing()
+
+
+@main_bp.route('/plugins')
+def plugins_page():
     device_config = current_app.config['DEVICE_CONFIG']
-    return render_template('inky.html', config=device_config.get_config(), plugins=device_config.get_plugins())
+    return render_template('plugins.html', plugins=device_config.get_plugins())
+
+
+@main_bp.route('/api/now-playing')
+def now_playing():
+    """Read-only summary of what the display shows now."""
+    device_config = current_app.config['DEVICE_CONFIG']
+    plugins = {p["id"]: p for p in device_config.get_plugins()}
+    payload = now_playing_payload(device_config.get_refresh_info().to_dict(), plugins)
+    response = jsonify(payload)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
 
 @main_bp.route('/api/current_image')
 def get_current_image():

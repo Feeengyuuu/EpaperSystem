@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{%- from 'components/icons.html' import icon -%}
+{% set nav_active = 'plugins' %}
+{% block title %}Plugins · {{ inkypi_device_name }}{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='styles/plugins.css') }}">
+{% endblock %}
+{% block page_title %}Plugins{% endblock %}
+{% block page_subtitle %}<p class="page-subtitle">Pick a plugin to set it up and add it to a playlist.</p>{% endblock %}
+
+{% block content %}
+<div class="library-toolbar">
+    <label class="search-box">
+        <span class="search-icon">{{ icon('search') }}</span>
+        <input class="input" type="search" id="pluginSearch" placeholder="Search plugins" aria-label="Search plugins" autocomplete="off">
+    </label>
+    <div class="row">
+        <button type="button" class="btn btn-secondary" id="sortToggle" title="Reorder plugins">{{ icon('sort') }}<span data-sort-label>Reorder</span></button>
+        <div class="segmented" role="radiogroup" aria-label="Switch view">
+            <label title="Grid"><input type="radio" name="pluginView" value="grid" checked><span>{{ icon('grid') }}</span></label>
+            <label title="List"><input type="radio" name="pluginView" value="list"><span>{{ icon('list') }}</span></label>
+        </div>
+    </div>
+</div>
+<div class="notice sort-hint" id="sortHint" hidden>Drag plugins to reorder. Choose Done to save.</div>
+
+<div class="plugin-library" id="pluginsContainer">
+    {% for plugin in plugins %}
+    <a class="plugin-tile" href="{{ url_for('plugin.plugin_page', plugin_id=plugin.id) }}"
+       data-plugin-id="{{ plugin.id }}" data-search="{{ (plugin.display_name ~ ' ' ~ plugin.id) | lower }}" draggable="false">
+        <span class="plugin-tile-icon"><img src="{{ url_for('plugin.image', plugin_id=plugin.id, filename='icon.png') }}" alt="" loading="lazy"></span>
+        <span class="plugin-tile-name">{{ plugin.display_name }}</span>
+    </a>
+    {% endfor %}
+</div>
+<div class="empty-state" id="pluginsEmpty" hidden><strong>No plugins match</strong>Try a different name.</div>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{{ url_for('static', filename='scripts/plugins.js') }}"></script>
+{% endblock %}

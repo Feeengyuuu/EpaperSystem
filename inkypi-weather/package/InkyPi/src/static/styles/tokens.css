@@ -1,0 +1,122 @@
+/* Design tokens for the InkyPi web UI. Dark is the default theme. */
+:root,
+html[data-theme="dark"] {
+    color-scheme: dark;
+    --c-bg: #111316;
+    --c-surface: #1b1e23;
+    --c-raised: #23272d;
+    --c-sunken: #15181c;
+    --c-line: #2a2f36;
+    --c-line-strong: #3a4049;
+    --c-text: #e8eaed;
+    --c-muted: #8a9099;
+    --c-faint: #5f6670;
+    --c-accent: #1abc9c;
+    --c-accent-strong: #2fd6b3;
+    --c-accent-soft: rgba(26, 188, 156, 0.16);
+    --c-on-accent: #04110d;
+    --c-ok: #5fd4a0;
+    --c-ok-soft: rgba(95, 212, 160, 0.16);
+    --c-warn: #f2b84b;
+    --c-warn-soft: rgba(242, 184, 75, 0.16);
+    --c-danger: #ff7b72;
+    --c-danger-soft: rgba(255, 123, 114, 0.16);
+    --c-overlay: rgba(4, 6, 8, 0.62);
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --shadow-2: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+html[data-theme="light"] {
+    color-scheme: light;
+    --c-bg: #f4f5f7;
+    --c-surface: #ffffff;
+    --c-raised: #f0f1f4;
+    --c-sunken: #e9ebef;
+    --c-line: #e3e5e9;
+    --c-line-strong: #cfd3da;
+    --c-text: #14161a;
+    --c-muted: #5f6670;
+    --c-faint: #8d939c;
+    --c-accent: #14a385;
+    --c-accent-strong: #0f8a70;
+    --c-accent-soft: rgba(20, 163, 133, 0.12);
+    --c-on-accent: #ffffff;
+    --c-ok: #1f9d63;
+    --c-ok-soft: rgba(31, 157, 99, 0.12);
+    --c-warn: #b7791f;
+    --c-warn-soft: rgba(183, 121, 31, 0.13);
+    --c-danger: #d6453d;
+    --c-danger-soft: rgba(214, 69, 61, 0.12);
+    --c-overlay: rgba(18, 20, 24, 0.45);
+    --shadow-1: 0 1px 2px rgba(16, 24, 40, 0.06);
+    --shadow-2: 0 12px 32px rgba(16, 24, 40, 0.16);
+}
+
+:root {
+    --font: "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", system-ui, -apple-system, sans-serif;
+    --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --fs-xs: 12px;
+    --fs-sm: 14px;
+    --fs-md: 16px;
+    --fs-lg: 20px;
+    --fs-xl: 24px;
+    --r-card: 14px;
+    --r-control: 10px;
+    --r-pill: 999px;
+    --s-1: 4px;
+    --s-2: 8px;
+    --s-3: 12px;
+    --s-4: 16px;
+    --s-5: 20px;
+    --s-6: 24px;
+    --s-8: 32px;
+    --touch: 44px;
+    --nav-width: 232px;
+    --tabbar-height: 64px;
+}
+
+/* Legacy variable names: plugin settings templates still reference these. */
+:root,
+html[data-theme="dark"],
+html[data-theme="light"] {
+    --bg-primary: var(--c-bg);
+    --bg-secondary: var(--c-surface);
+    --text-primary: var(--c-text);
+    --text-secondary: var(--c-muted);
+    --border-color: var(--c-line);
+    --border-light: var(--c-line-strong);
+    --border-subtle: var(--c-line);
+    --shadow-light: rgba(0, 0, 0, 0.12);
+    --shadow-medium: rgba(0, 0, 0, 0.3);
+    --accent-primary: var(--c-accent);
+    --accent-hover: var(--c-accent-strong);
+    --accent-warn: var(--c-danger);
+    --accent-warn-hover: var(--c-danger);
+    --button-bg: var(--c-raised);
+    --button-hover: var(--c-line);
+    --input-bg: var(--c-sunken);
+    --input-focus: var(--c-accent-soft);
+    --label-bg: var(--c-raised);
+    --collapsible-bg: var(--c-raised);
+    --button-group-bg: var(--c-raised);
+    --button-group-border: var(--c-line);
+    --close-btn-color: var(--c-muted);
+    --close-btn-hover: var(--c-text);
+    --modal-bg: var(--c-surface);
+    --modal-overlay: var(--c-overlay);
+    --loading-color: var(--c-accent);
+    --success-color: var(--c-ok);
+    --failure-color: var(--c-danger);
+    --remove-btn-color: var(--c-danger);
+    --remove-btn-hover: var(--c-danger);
+}
+
+/* Plugin icons are dark line art; lift them on dark surfaces. */
+:root,
+html[data-theme="dark"] {
+    --image-filter: invert(0.85) hue-rotate(180deg);
+}
+
+html[data-theme="light"] {
+    --image-filter: none;
+}

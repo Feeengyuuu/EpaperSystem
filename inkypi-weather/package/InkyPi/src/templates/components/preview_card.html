@@ -1,0 +1,35 @@
+{%- from 'components/icons.html' import icon -%}
+{#- One playlist instance rendered as a large preview card. -#}
+{% macro preview_card(playlist, item) -%}
+<article class="preview-card{% if item.is_current %} is-current{% endif %}"
+         data-instance-card
+         data-playlist="{{ playlist.name }}"
+         data-plugin-id="{{ item.plugin_id }}"
+         data-instance="{{ item.name }}"
+         data-display-name="{{ item.display_name }}"
+         data-refresh='{{ item.refresh | tojson }}'
+         data-before-display="{{ 'true' if item.data_before_display else 'false' }}"
+         data-edit-url="{{ url_for('plugin.plugin_page', plugin_id=item.plugin_id, instance=item.name) }}"
+         data-image-url="{{ url_for('plugin.plugin_instance_image', playlist_name=playlist.name, plugin_id=item.plugin_id, instance_name=item.name) }}">
+    <button type="button" class="preview-media" data-action="preview" aria-label="View full size">
+        <img loading="lazy" alt="" data-preview-image
+             src="{{ url_for('plugin.plugin_instance_image', playlist_name=playlist.name, plugin_id=item.plugin_id, instance_name=item.name) }}">
+        <span class="preview-empty" data-preview-empty hidden>{{ icon('image') }}<span>No image yet</span></span>
+        <span class="status-pill" data-status-pill hidden></span>
+        <span class="status-pill now-flag plain" data-now-flag{% if not item.is_current %} hidden{% endif %}>On display</span>
+    </button>
+    <div class="preview-body">
+        <img class="plugin-glyph" src="{{ url_for('plugin.image', plugin_id=item.plugin_id, filename='icon.png') }}" alt="">
+        <div class="grow">
+            <div class="preview-name truncate" data-i18n-skip="true" title="{{ item.name }}">{{ item.name }}</div>
+            <div class="preview-meta truncate">
+                <span data-refresh-label>{{ item.refresh_label }}</span>{% if item.latest_refresh_time %}<span> · </span><span data-relative-time="{{ item.latest_refresh_time }}"></span>{% endif %}
+            </div>
+        </div>
+        <div class="preview-actions">
+            <button type="button" class="icon-btn" data-action="display" title="Display now" aria-label="Display now">{{ icon('play') }}</button>
+            <button type="button" class="icon-btn" data-action="more" title="More actions" aria-label="More actions">{{ icon('more') }}</button>
+        </div>
+    </div>
+</article>
+{%- endmacro %}

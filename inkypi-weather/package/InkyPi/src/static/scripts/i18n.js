@@ -128,10 +128,131 @@
         "Enter value": "输入值",
         "Please enter a value for new API keys": "请为新的 API 密钥输入值",
         "Failed to save API keys": "API 密钥保存失败",
+        "Now Playing": "正在播放",
+        "Keys": "密钥",
+        "Device": "设备",
+        "Main": "主导航",
+        "Admin": "管理员",
+        "Sign in": "登录",
+        "Sign out": "退出登录",
+        "Sign out?": "要退出登录吗？",
+        "You can still view pages, but changes need a sign-in.": "退出后仍可浏览页面，但修改需要重新登录。",
+        "Signed in as administrator": "已以管理员身份登录",
+        "Toggle theme": "切换主题",
+        "Switch to dark mode": "切换到深色模式",
+        "Switch to light mode": "切换到浅色模式",
+        "Language": "语言",
+        "On the display": "屏幕上正在显示",
+        "Nothing on the display yet": "屏幕上还没有内容",
+        "Refresh now": "立即刷新",
+        "Full size": "查看大图",
+        "View full size": "查看大图",
+        "The e-paper panel takes about 30 seconds to redraw.": "墨水屏刷新一次大约需要 30 秒。",
+        "Playlist settings": "播放列表设置",
+        "New playlist": "新建播放列表",
+        "Add plugin": "添加插件",
+        "Active now": "正在生效",
+        "Outside its time window": "不在生效时段",
+        "No plugins in this playlist yet": "这个播放列表还没有内容",
+        "Open a plugin, set it up, then choose Add to Playlist.": "打开一个插件，设置好后选择“添加到播放列表”。",
+        "Browse plugins": "浏览插件",
+        "No playlists yet": "还没有播放列表",
+        "Create a playlist to choose what the display rotates through.": "新建播放列表，决定屏幕轮播哪些内容。",
+        "No image yet": "还没有画面",
+        "On display": "正在显示",
+        "More actions": "更多操作",
+        "Updates before each display": "每次显示前更新",
+        "Manual refresh": "手动刷新",
+        "Every minute": "每分钟",
+        "Every hour": "每小时",
+        "Every day": "每天",
+        "Healthy": "正常",
+        "Waiting to retry": "等待重试",
+        "Failed": "失败",
+        "Failed · showing cache": "失败 · 显示缓存",
+        "Edit settings": "编辑设置",
+        "Refresh data now": "立即刷新数据",
+        "Refresh schedule": "刷新频率",
+        "Delete from playlist": "从播放列表删除",
+        "Close": "关闭",
+        "Name": "名称",
+        "Show between": "显示时段",
+        "Start time": "开始时间",
+        "End time": "结束时间",
+        "The playlist rotates only inside this daily window.": "播放列表只在每天的这个时段内轮播。",
+        "Cancel": "取消",
+        "Confirm": "确认",
+        "Delete this item?": "删除这一项？",
+        "Delete this playlist?": "删除这个播放列表？",
+        "Delete playlist": "删除播放列表",
+        "Sending to the display…": "正在发送到屏幕…",
+        "Now on the display.": "已显示到屏幕。",
+        "Refreshing data…": "正在刷新数据…",
+        "Data refreshed.": "数据已刷新。",
+        "Deleted.": "已删除。",
+        "Refresh schedule saved.": "刷新频率已保存。",
+        "Enter a playlist name.": "请输入播放列表名称。",
+        "Sign in to make changes.": "修改前请先登录。",
+        "Your session changed. Reload the page and try again.": "会话已变化，请刷新页面后重试。",
+        "Could not reach the device.": "无法连接到设备。",
+        "Something went wrong.": "出了点问题。",
+        "The device could not finish this request.": "设备没能完成这个请求。",
+        "The current item is not in a playlist, so it cannot be refreshed here.": "当前画面不属于任何播放列表，无法在这里刷新。",
+        "Refresh settings are not available.": "刷新设置暂不可用。",
+        "Plugin order saved.": "插件顺序已保存。",
+        "Pick a plugin to set it up and add it to a playlist.": "选择一个插件进行设置，并添加到播放列表。",
+        "Search plugins": "搜索插件",
+        "Reorder": "排序",
+        "Done": "完成",
+        "Drag plugins to reorder. Choose Done to save.": "拖动插件调整顺序，完成后点“完成”保存。",
+        "No plugins match": "没有匹配的插件",
+        "Try a different name.": "换个名称试试。",
+        "just now": "刚刚",
+        "in a moment": "马上",
         "API keys are stored in the .env file on the device. For security, existing values are never displayed. To change a key, delete it and add a new one. Some plugins may require a restart after changing keys.": "API 密钥保存在设备上的 .env 文件中。出于安全考虑，现有值不会显示。要修改密钥，请先删除再添加新的密钥。某些插件在修改密钥后可能需要重启。"
     };
 
     const dynamicRules = [
+        {
+            match: /^(\d+) min ago$/u,
+            zh: (match) => `${match[1]} 分钟前`
+        },
+        {
+            match: /^(\d+) h ago$/u,
+            zh: (match) => `${match[1]} 小时前`
+        },
+        {
+            match: /^(\d+) d ago$/u,
+            zh: (match) => `${match[1]} 天前`
+        },
+        {
+            match: /^in (\d+) min$/u,
+            zh: (match) => `${match[1]} 分钟后`
+        },
+        {
+            match: /^in (\d+) h$/u,
+            zh: (match) => `${match[1]} 小时后`
+        },
+        {
+            match: /^Updated (.+)$/u,
+            zh: (match) => `更新于 ${translateValue(match[1], "zh")}`
+        },
+        {
+            match: /^Every (\d+) (minute|hour|day)s$/u,
+            zh: (match) => `每 ${match[1]} ${{ minute: "分钟", hour: "小时", day: "天" }[match[2]]}`
+        },
+        {
+            match: /^Daily at (.+)$/u,
+            zh: (match) => `每天 ${match[1]}`
+        },
+        {
+            match: /^“(.+)” will be removed from (.+)\. Its settings are deleted too\.$/u,
+            zh: (match) => `“${match[1]}”将从 ${match[2]} 中移除，它的设置也会一并删除。`
+        },
+        {
+            match: /^“(.+)” and every item in it will be deleted\.$/u,
+            zh: (match) => `“${match[1]}”及其中的所有内容都会被删除。`
+        },
         {
             match: /^Success!\s*(.*)$/u,
             zh: (match) => `成功！${match[1] || ""}`

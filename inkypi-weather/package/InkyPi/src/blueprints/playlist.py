@@ -156,23 +156,115 @@ def _overlay_runtime_refresh_times(playlist_config, refresh_task):
     return playlist_config
 
 
+_REFRESH_UNITS = ((86400, "day"), (3600, "hour"), (60, "minute"))
+
+
+def describe_refresh(refresh, data_before_display=False):
+    """Short English label for an instance refresh policy; i18n.js translates it."""
+    if data_before_display:
+        return "Updates before each display"
+    refresh = refresh if isinstance(refresh, dict) else {}
+    interval = refresh.get("interval")
+    if isinstance(interval, (int, float)) and not isinstance(interval, bool) and interval > 0:
+        seconds = int(interval)
+        for unit_seconds, unit in _REFRESH_UNITS:
+            if seconds >= unit_seconds and seconds % unit_seconds == 0:
+                count = seconds // unit_seconds
+                return f"Every {unit}" if count == 1 else f"Every {count} {unit}s"
+        return f"Every {max(1, round(seconds / 60))} minutes"
+    scheduled = refresh.get("scheduled")
+    if scheduled:
+        return f"Daily at {scheduled}"
+    return "Manual refresh"
+
+
+def now_playing_payload(refresh_info, plugins):
+    """What the display shows now, without content hashes or settings."""
+    plugin_id = refresh_info.get("plugin_id")
+    plugin = plugins.get(plugin_id) or {}
+    return {
+        "plugin_id": plugin_id,
+        "display_name": plugin.get("display_name") or plugin_id,
+        "playlist": refresh_info.get("playlist"),
+        "plugin_instance": refresh_info.get("plugin_instance"),
+        "refresh_time": refresh_info.get("refresh_time"),
+        "refresh_type": refresh_info.get("refresh_type"),
+    }
+
+
+def now_playing_context(selected_playlist=None):
+    """View model shared by the home page and /playlist.
+
+    Only names, schedules and timestamps leave the server; plugin settings
+    stay out of the page because some hold private locations or tokens.
+    """
+    device_config = current_app.config['DEVICE_CONFIG']
+    refresh_task = current_app.config.get('REFRESH_TASK')
+    playlist_config = _overlay_runtime_refresh_times(
+        device_config.get_playlist_manager().to_dict(),
+        refresh_task,
+    )
+    refresh_info = device_config.get_refresh_info().to_dict()
+    plugins = {p["id"]: p for p in device_config.get_plugins()}
+    active_playlist = playlist_config.get("active_playlist")
+    current = now_playing_payload(refresh_info, plugins)
+
+    playlists = []
+    for playlist in playlist_config.get("playlists", []):
+        items = []
+        for instance in playlist.get("plugins", []):
+            plugin_id = instance.get("plugin_id")
+            plugin = plugins.get(plugin_id) or {}
+            before_display = bool(
+                (plugin.get("capabilities") or {}).get("refresh_data_before_display")
+            )
+            refresh = instance.get("refresh") or {}
+            items.append({
+                "plugin_id": plugin_id,
+                "name": instance.get("name"),
+                "display_name": plugin.get("display_name") or plugin_id,
+                "refresh": refresh,
+                "refresh_label": describe_refresh(refresh, before_display),
+                "data_before_display": before_display,
+                "latest_refresh_time": instance.get("latest_refresh_time"),
+                "is_current": (
+                    playlist.get("name") == current["playlist"]
+                    and instance.get("name") == current["plugin_instance"]
+                ),
+            })
+        playlists.append({
+            "name": playlist.get("name"),
+            "start_time": playlist.get("start_time"),
+            "end_time": playlist.get("end_time"),
+            "is_active": playlist.get("name") == active_playlist,
+            "plugins": items,
+        })
+
+    names = [playlist["name"] for playlist in playlists]
+    if selected_playlist not in names:
+        preferred = (current["playlist"], active_playlist)
+        selected_playlist = next(
+            (name for name in preferred if name in names),
+            names[0] if names else None,
+        )
+    return {
+        "playlists": playlists,
+        "active_playlist": active_playlist,
+        "selected_playlist": selected_playlist,
+        "now_playing": current,
+    }
+
+
+def render_now_playing():
+    return render_template(
+        'now_playing.html',
+        **now_playing_context(request.args.get("playlist")),
+    )
+
+
 @playlist_bp.route('/playlist')
 def playlists():
-    device_config = current_app.config['DEVICE_CONFIG']
-    refresh_task = current_app.config['REFRESH_TASK']
-    playlist_manager = device_config.get_playlist_manager()
-    refresh_info = device_config.get_refresh_info()
-    plugins_list = device_config.get_plugins()
-
-    return render_template(
-        'playlist.html',
-        playlist_config=_overlay_runtime_refresh_times(
-            playlist_manager.to_dict(),
-            refresh_task,
-        ),
-        refresh_info=refresh_info.to_dict(),
-        plugins={p["id"]: p for p in plugins_list}
-    )
+    return render_now_playing()
 
 @playlist_bp.route('/create_playlist', methods=['POST'])
 def create_playlist():
