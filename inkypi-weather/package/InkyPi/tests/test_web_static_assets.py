@@ -17,15 +17,24 @@ def _css_rule(source, selector):
 @pytest.mark.parametrize(
     ("asset_path", "expected_mimetypes"),
     (
-        ("styles/main.css", {"text/css"}),
-        ("scripts/dark_mode.js", {"application/javascript", "text/javascript"}),
+        ("styles/tokens.css", {"text/css"}),
+        ("styles/components.css", {"text/css"}),
+        ("styles/now_playing.css", {"text/css"}),
+        ("styles/plugins.css", {"text/css"}),
+        ("styles/plugin_page.css", {"text/css"}),
+        ("styles/apikeys.css", {"text/css"}),
+        ("styles/device.css", {"text/css"}),
+        ("styles/runtime_status.css", {"text/css"}),
+        ("scripts/app.js", {"application/javascript", "text/javascript"}),
         ("scripts/i18n.js", {"application/javascript", "text/javascript"}),
-        ("scripts/image_modal.js", {"application/javascript", "text/javascript"}),
+        ("scripts/now_playing.js", {"application/javascript", "text/javascript"}),
+        ("scripts/plugins.js", {"application/javascript", "text/javascript"}),
+        ("scripts/apikeys.js", {"application/javascript", "text/javascript"}),
+        ("scripts/device.js", {"application/javascript", "text/javascript"}),
         (
             "scripts/refresh_settings_manager.js",
             {"application/javascript", "text/javascript"},
         ),
-        ("scripts/response_modal.js", {"application/javascript", "text/javascript"}),
     ),
 )
 def test_application_owned_static_asset_is_packaged_and_served(
@@ -45,15 +54,27 @@ def test_application_owned_static_asset_is_packaged_and_served(
     assert response.data
 
 
-def test_administration_frame_centers_independently_of_body_siblings():
-    stylesheet = (SRC_DIR / "static" / "styles" / "main.css").read_text(
+def test_tokens_define_dark_default_and_light_theme():
+    tokens = (SRC_DIR / "static" / "styles" / "tokens.css").read_text(
         encoding="utf-8"
     )
-    body_rule = _css_rule(stylesheet, "body")
-    frame_rule = _css_rule(stylesheet, ".frame")
 
-    assert "display: block" in body_rule
-    assert "margin: 0 auto" in frame_rule
+    assert ":root,\nhtml[data-theme=\"dark\"] {" in tokens
+    assert 'html[data-theme="light"] {' in tokens
+    # Plugin settings partials still reference the legacy variable names.
+    for legacy in ("--text-primary", "--border-color", "--bg-secondary", "--accent-warn"):
+        assert f"{legacy}:" in tokens
+
+
+def test_shell_pages_switch_layout_at_the_tab_bar_breakpoint():
+    components = (SRC_DIR / "static" / "styles" / "components.css").read_text(
+        encoding="utf-8"
+    )
+
+    assert "@media (min-width: 900px)" in components
+    assert "@media (max-width: 899px)" in components
+    assert ".app-main { margin-left: var(--nav-width); }" in components
+    assert "bottom: calc(var(--tabbar-height)" in components
 
 
 def test_i18n_pauses_mutation_observation_during_translation_writes():

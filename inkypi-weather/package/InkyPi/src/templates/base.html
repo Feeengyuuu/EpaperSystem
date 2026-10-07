@@ -55,7 +55,7 @@
                         <span class="nav-icon theme-icon-light">{{ icon('sun') }}</span>
                     </button>
                     {% if inkypi_admin_authenticated %}
-                    <button type="button" class="auth-chip is-signed-in" data-action="logout" title="Signed in as administrator"><span class="dot"></span><span>Admin</span></button>
+                    <button type="button" class="auth-chip is-signed-in" data-action="logout" title="Signed in as administrator"><span class="dot"></span><span class="auth-label">Admin</span></button>
                     {% else %}
                     <a class="auth-chip" href="/auth/login?next={{ request.full_path.rstrip('?') | urlencode }}"><span class="dot"></span><span>Sign in</span></a>
                     {% endif %}

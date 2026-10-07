@@ -171,6 +171,17 @@ html[data-theme="light"] .theme-icon-dark { display: none; }
 .auth-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--c-faint); }
 .auth-chip.is-signed-in .dot { background: var(--c-ok); }
 
+@media (max-width: 639px) {
+    .page-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--s-3); }
+    .page-actions { display: contents; }
+    .page-head > .grow { grid-column: 1; grid-row: 1; }
+    .head-tools { grid-column: 2; grid-row: 1; gap: 6px; }
+    .page-actions > :not(.head-tools) { grid-column: 1 / -1; justify-self: start; }
+    .language-toggle, .theme-toggle, .auth-chip { height: 34px; min-width: 34px; padding: 0 10px; }
+    .auth-chip.is-signed-in .auth-label { display: none; }
+    .page-title { font-size: 22px; }
+}
+
 /* ---------- Buttons ---------- */
 .btn {
     display: inline-flex;
@@ -405,6 +416,7 @@ html[data-theme="light"] .theme-icon-dark { display: none; }
 .field-label { font-weight: 600; font-size: var(--fs-sm); }
 .field-help { font-size: var(--fs-xs); color: var(--c-muted); }
 .field-row { display: flex; gap: var(--s-3); flex-wrap: wrap; align-items: center; }
+.field > .segmented { align-self: flex-start; }
 
 .input,
 .select,
@@ -878,3 +890,15 @@ small { color: var(--c-muted); }
 .notice { display: flex; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-radius: var(--r-control); background: var(--c-raised); color: var(--c-muted); font-size: var(--fs-xs); }
 .notice.warn { background: var(--c-warn-soft); color: var(--c-warn); }
 .notice.err { background: var(--c-danger-soft); color: var(--c-danger); }
+
+/* ---------- Minimal shell (sign-in pages) ---------- */
+.minimal-body { min-height: 100vh; display: grid; place-items: center; padding: var(--s-8) var(--s-4); }
+.minimal-tools { position: fixed; top: var(--s-4); right: var(--s-4); }
+.minimal-card { width: min(100%, 440px); padding: var(--s-8) var(--s-6); }
+.minimal-brand { display: flex; align-items: center; gap: var(--s-2); font-weight: 700; margin-bottom: var(--s-5); }
+.minimal-title { font-size: var(--fs-xl); margin-bottom: var(--s-2); }
+.minimal-card p { margin: 0 0 var(--s-2); }
+.minimal-card .notice { margin: var(--s-3) 0; }
+.minimal-form { margin-top: var(--s-5); }
+.minimal-form .btn { min-height: 46px; margin-top: var(--s-1); }
+.minimal-foot { margin: var(--s-4) 0 0; font-size: var(--fs-xs); text-align: center; }

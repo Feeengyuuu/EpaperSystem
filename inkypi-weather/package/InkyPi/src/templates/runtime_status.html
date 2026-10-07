@@ -1,31 +1,27 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>运行状态 · InkyPi</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles/main.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles/runtime_status.css') }}">
-    <script src="{{ url_for('static', filename='scripts/dark_mode.js') }}"></script>
-    <script defer src="{{ url_for('static', filename='scripts/runtime_status.js') }}"></script>
-</head>
-<body>
-<main class="runtime-status">
-    <header><a href="/playlist">← 播放列表</a><h1>运行状态</h1>
-        <p>显示服务状态、来源数据与自动恢复记录。页面每 30 秒更新一次。</p>
-    </header>
-    <p id="status-message" role="status" aria-live="polite">正在读取状态…</p>
-    <p id="status-login" hidden>请先<a href="/auth/login?next=/status">管理员登录</a>，再返回此页面查看详情。</p>
+{% extends 'base.html' %}
+{% set nav_active = 'device' %}
+{% block title %}Runtime status · {{ inkypi_device_name | default('InkyPi') }}{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='styles/runtime_status.css') }}">
+{% endblock %}
+{% block page_eyebrow %}<nav class="crumbs" aria-label="Breadcrumb"><a href="/settings">Device</a><span aria-hidden="true">/</span></nav>{% endblock %}
+{% block page_title %}Runtime status{% endblock %}
+{% block page_subtitle %}<p class="page-subtitle">显示服务状态、来源数据与自动恢复记录。页面每 30 秒更新一次。</p>{% endblock %}
+
+{% block content %}
+<div class="runtime-status">
+    <p id="status-message" class="notice" role="status" aria-live="polite">正在读取状态…</p>
+    <p id="status-login" class="notice warn" hidden>请先<a href="/auth/login?next=/status">管理员登录</a>，再返回此页面查看详情。</p>
     <section id="status-content" hidden>
         <div class="status-overview">
-            <article><h2>服务</h2><strong id="service-state"></strong><p id="release"></p><p id="uptime"></p></article>
-            <article><h2>当前显示</h2><strong id="display-state"></strong><p id="commit-id"></p><p>提交成功表示驱动完成写屏；不等于来源仍为最新。</p></article>
-            <article><h2>资源与队列</h2><strong id="resource-state"></strong><p id="queue-state"></p><p id="resource-detail"></p></article>
+            <article class="card"><h2>服务</h2><strong id="service-state"></strong><p id="release"></p><p id="uptime"></p></article>
+            <article class="card"><h2>当前显示</h2><strong id="display-state"></strong><p id="commit-id"></p><p>提交成功表示驱动完成写屏；不等于来源仍为最新。</p></article>
+            <article class="card"><h2>资源与队列</h2><strong id="resource-state"></strong><p id="queue-state"></p><p id="resource-detail"></p></article>
         </div>
         <h2>需要关注</h2><ul id="reasons"></ul>
         <h2>内容与新鲜度</h2>
         <p>“数据成功”是健康的取数 / 生成结果；“缓存生成”是可展示内容的保存时间。只有来源提供时间戳时才显示数据年龄。显示前更新的内容不按后台间隔判断逾期。</p>
-        <div class="status-table-wrap"><table>
+        <div class="status-table-wrap card"><table>
             <thead><tr><th scope="col">内容 / 更新方式</th><th scope="col">最近执行</th><th scope="col">来源与素材</th></tr></thead>
             <tbody id="instances"></tbody>
         </table></div>
@@ -34,6 +30,9 @@
         <ul id="recoveries"></ul>
         <details><summary>诊断代码与组件详情</summary><pre id="components"></pre></details>
     </section>
-</main>
-</body>
-</html>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{{ url_for('static', filename='scripts/runtime_status.js') }}"></script>
+{% endblock %}

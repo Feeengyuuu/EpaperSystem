@@ -1079,12 +1079,13 @@ def test_preflight_wraps_directory_fsync_failure_as_preflight_error(
 @pytest.mark.parametrize(
     "missing_asset",
     (
-        "src/static/styles/main.css",
-        "src/static/scripts/dark_mode.js",
+        "src/templates/base.html",
+        "src/static/styles/tokens.css",
+        "src/static/styles/components.css",
+        "src/static/scripts/app.js",
         "src/static/scripts/i18n.js",
-        "src/static/scripts/image_modal.js",
+        "src/static/scripts/now_playing.js",
         "src/static/scripts/refresh_settings_manager.js",
-        "src/static/scripts/response_modal.js",
     ),
 )
 def test_preflight_rejects_release_missing_application_static_asset(

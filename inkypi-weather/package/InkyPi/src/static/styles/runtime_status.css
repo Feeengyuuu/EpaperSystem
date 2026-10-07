@@ -1,21 +1,24 @@
-.runtime-status { max-width: 1100px; margin: 0 auto; padding: 32px 20px 64px; color: var(--text-primary); font-family: "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
-.runtime-status h1 { margin: 18px 0 8px; }
-.runtime-status h2 { font-size: 1.15rem; margin-top: 28px; }
-.runtime-status p { color: var(--text-secondary); line-height: 1.65; }
-.runtime-status a { color: var(--accent-primary); }
-.status-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.status-overview article { border: 1px solid var(--border-color); padding: 18px; border-radius: 10px; background: var(--bg-secondary); overflow-wrap: anywhere; }
-.status-overview h2 { margin: 0 0 14px; }
-.status-overview strong { font-size: 1.2rem; }
-.status-overview p { font-size: .9rem; margin-bottom: 0; }
-.status-table-wrap { overflow-x: auto; border: 1px solid var(--border-color); border-radius: 10px; }
+/* Runtime status page inside the shared shell. */
+.crumbs { display: flex; gap: var(--s-2); font-size: var(--fs-xs); color: var(--c-muted); margin-bottom: var(--s-1); }
+.crumbs a { color: var(--c-muted); }
+.runtime-status { max-width: 1100px; }
+.runtime-status h2 { font-size: var(--fs-md); margin: var(--s-6) 0 var(--s-2); }
+.runtime-status p { color: var(--c-muted); line-height: 1.65; }
+.runtime-status #status-message,
+.runtime-status #status-login { margin-bottom: var(--s-4); }
+.status-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--s-4); }
+.status-overview article { padding: var(--s-5); overflow-wrap: anywhere; }
+.status-overview h2 { margin: 0 0 var(--s-3); color: var(--c-muted); font-size: var(--fs-sm); }
+.status-overview strong { font-size: var(--fs-lg); }
+.status-overview p { font-size: var(--fs-xs); margin-bottom: 0; }
+.status-table-wrap { overflow-x: auto; }
 .runtime-status table { width: 100%; border-collapse: collapse; text-align: left; }
-.runtime-status th, .runtime-status td { padding: 15px; vertical-align: top; border-bottom: 1px solid var(--border-color); min-width: 150px; }
-.runtime-status th { background: var(--bg-secondary); }
-.runtime-status td p { margin: 4px 0 0; font-size: .9rem; }
+.runtime-status th, .runtime-status td { padding: var(--s-3) var(--s-4); vertical-align: top; border-bottom: 1px solid var(--c-line); min-width: 150px; }
+.runtime-status th { background: var(--c-raised); font-size: var(--fs-xs); color: var(--c-muted); }
+.runtime-status td p { margin: 4px 0 0; font-size: var(--fs-xs); }
 .runtime-status tr:last-child td { border-bottom: 0; }
 .runtime-status li { margin: 8px 0; line-height: 1.5; overflow-wrap: anywhere; }
-.runtime-status details { margin-top: 30px; }
-.runtime-status summary { cursor: pointer; }
-.runtime-status pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .8rem; max-height: 480px; overflow-y: auto; }
-@media (max-width: 700px) { .status-overview { grid-template-columns: 1fr; } .runtime-status { padding: 20px 12px 40px; } }
+.runtime-status details { margin-top: var(--s-6); }
+.runtime-status summary { cursor: pointer; color: var(--c-muted); }
+.runtime-status pre { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 12px; max-height: 480px; overflow-y: auto; background: var(--c-sunken); padding: var(--s-4); border-radius: var(--r-control); }
+@media (max-width: 760px) { .status-overview { grid-template-columns: 1fr; } }

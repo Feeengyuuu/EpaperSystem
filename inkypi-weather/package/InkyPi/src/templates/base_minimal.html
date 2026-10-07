@@ -1,0 +1,38 @@
+{%- from 'components/icons.html' import icon -%}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="inkypi-csrf-token" content="{{ inkypi_csrf_token }}">
+    <meta name="inkypi-plain-http" content="{{ 'true' if inkypi_plain_http_warning else 'false' }}">
+    <meta name="theme-color" content="#111316">
+    <title>{% block title %}InkyPi{% endblock %}</title>
+    <script>
+        (function () {
+            var theme = null;
+            try { theme = localStorage.getItem('inkypi-theme'); } catch (error) {}
+            document.documentElement.setAttribute('data-theme', theme === 'light' ? 'light' : 'dark');
+        })();
+    </script>
+    <script src="{{ url_for('static', filename='inkypi-security.js') }}" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/tokens.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/components.css') }}">
+    <script defer src="{{ url_for('static', filename='scripts/i18n.js') }}"></script>
+    <script defer src="{{ url_for('static', filename='scripts/app.js') }}"></script>
+</head>
+<body class="minimal-body">
+<div class="minimal-tools head-tools">
+    <button type="button" id="languageToggle" class="language-toggle" data-i18n-skip="true" aria-label="Language">中文</button>
+    <button type="button" class="theme-toggle" data-theme-toggle aria-label="Toggle theme" title="Toggle theme">
+        <span class="nav-icon theme-icon-dark">{{ icon('moon') }}</span>
+        <span class="nav-icon theme-icon-light">{{ icon('sun') }}</span>
+    </button>
+</div>
+<main class="minimal-card card">
+    <div class="minimal-brand"><span class="nav-brand-mark" aria-hidden="true"></span><span>InkyPi</span></div>
+    {% block content %}{% endblock %}
+</main>
+<div class="toast-stack" id="toastStack" aria-live="polite"></div>
+</body>
+</html>

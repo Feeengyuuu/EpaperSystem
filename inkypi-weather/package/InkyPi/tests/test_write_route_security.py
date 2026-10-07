@@ -123,10 +123,23 @@ def test_high_risk_shutdown_rejects_disallowed_host_even_with_auth_and_csrf(tmp_
 
 
 def test_all_administration_pages_load_the_shared_csrf_fetch_wrapper():
-    for name in ("inky.html", "playlist.html", "plugin.html", "settings.html", "apikeys.html"):
+    for shell in ("base.html", "base_minimal.html"):
+        source = (TEMPLATE_ROOT / shell).read_text(encoding="utf-8")
+        assert 'name="inkypi-csrf-token"' in source, shell
+        assert "inkypi-security.js" in source, shell
+    for name in (
+        "now_playing.html",
+        "plugins.html",
+        "plugin.html",
+        "settings.html",
+        "apikeys.html",
+        "runtime_status.html",
+    ):
         source = (TEMPLATE_ROOT / name).read_text(encoding="utf-8")
-        assert 'name="inkypi-csrf-token"' in source, name
-        assert "inkypi-security.js" in source, name
+        assert source.startswith("{% extends 'base.html' %}"), name
+    for name in ("login.html", "setup_admin.html", "recover_admin.html"):
+        source = (TEMPLATE_ROOT / name).read_text(encoding="utf-8")
+        assert source.startswith("{% extends 'base_minimal.html' %}"), name
 
     script = (
         Path(__file__).resolve().parents[1]

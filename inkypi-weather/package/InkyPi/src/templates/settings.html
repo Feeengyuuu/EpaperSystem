@@ -1,291 +1,141 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="inkypi-csrf-token" content="{{ inkypi_csrf_token }}">
-    <meta name="inkypi-plain-http" content="{{ 'true' if inkypi_plain_http_warning else 'false' }}">
-    <script src="{{ url_for('static', filename='inkypi-security.js') }}" defer></script>
-    <title>Settings</title>
-    <script>
-        (function() {
-            const theme = localStorage.getItem('inkypi-theme') || 
-                         (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-            if (theme === 'dark') {
-                document.documentElement.setAttribute('data-theme', 'dark');
-            }
-        })();
-    </script>
-    <link rel="stylesheet" type="text/css" href="{{ url_for('static',filename='styles/main.css') }}">
-    <script src="{{ url_for('static', filename='scripts/dark_mode.js') }}"></script>
-    <script src="{{ url_for('static', filename='scripts/response_modal.js') }}"></script>
-    <script defer src="{{ url_for('static', filename='scripts/i18n.js') }}"></script>
-    <script>
-        async function handleAction() {
-            const form = document.querySelector('.settings-form');
-            const formData = new FormData(form);
+{% extends 'base.html' %}
+{%- from 'components/icons.html' import icon -%}
+{% set nav_active = 'device' %}
+{%- set image = device_settings.get('image_settings', {}) or {} -%}
+{%- set cycle = device_settings.get('plugin_cycle_interval_seconds') or 3600 -%}
+{%- set cycle_in_hours = cycle >= 3600 and cycle % 3600 == 0 -%}
+{% block title %}Device · {{ inkypi_device_name | default('InkyPi') }}{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='styles/device.css') }}">
+{% endblock %}
+{% block page_title %}Device{% endblock %}
+{% block page_subtitle %}<p class="page-subtitle" data-i18n-skip="true">{{ device_settings.name }}</p>{% endblock %}
 
-            try {
-                const response = await fetch("{{ url_for('settings.save_settings') }}", {
-                    method: 'POST',
-                    body: formData,
-                });
-                
-                const result = await response.json();
-                if (response.ok) {
-                    showResponseModal('success', `Success! ${result.message}`);
-                } else {
-                    showResponseModal('failure', `Error!  ${result.error}`);
-                    form.reset();
-                }
-            } catch (error) {
-                console.error('Error:', error);
-                alert('An error occurred while processing your request.');
-            }
-        }
+{%- macro slider(id, label, value, min, max, step) -%}
+<div class="slider-field">
+    <div class="slider-head">
+        <label for="{{ id }}" class="field-label">{{ label }}</label>
+        <output id="{{ id }}-value" for="{{ id }}">{{ value }}</output>
+    </div>
+    <input type="range" id="{{ id }}" name="{{ id }}" min="{{ min }}" max="{{ max }}" step="{{ step }}" value="{{ value }}" data-slider>
+</div>
+{%- endmacro -%}
 
-        let pluginCycleIntervalSeconds = {{ device_settings.plugin_cycle_interval_seconds | default(3600) | tojson }};
-    
-        // Function to populate the fields
-        function populateIntervalFields() {
-            const intervalInput = document.getElementById('interval');
-            const unitSelect = document.getElementById('unit');
-
-            // Check if pluginCycleIntervalSeconds is valid
-            if (pluginCycleIntervalSeconds !== null && pluginCycleIntervalSeconds !== undefined) {
-                // Convert seconds to minutes and hours
-                let intervalInMinutes = Math.floor(pluginCycleIntervalSeconds / 60);
-                let intervalInHours = Math.floor(pluginCycleIntervalSeconds / 3600);
-
-                // Determine which unit to use (minute or hour) based on the interval
-                if (intervalInHours > 0) {
-                    intervalInput.value = intervalInHours;
-                    unitSelect.value = "hour";
-                } else {
-                    intervalInput.value = intervalInMinutes;
-                    unitSelect.value = "minute";
-                }
-            }
-        }
-
-        function toggleCollapsible(button) {
-            const content = button.nextElementSibling;
-            const icon = button.querySelector(".collapsible-icon");
-            button.classList.toggle("active");
-            content.style.display = content.style.display === "block" ? "none" : "block";
-            icon.textContent = content.style.display === "block" ? "▲" : "▼";
-        }
-
-        async function handleShutdown(reboot) {
-            if (reboot) {
-                showResponseModal('success', 'The system is rebooting. The UI will be unavailable until the reboot is complete.');
-            } else {
-                showResponseModal('success', 'The system is shutting down. The UI will remain unavailable until it is manually restarted.');
-            }
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            // we cannot await a response here
-            await fetch("{{ url_for('settings.shutdown') }}", {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({reboot: reboot})
-            });
-        }
-
-
-        function updateSliderValue(slider) {
-            const valueDisplay = document.getElementById(`${slider.id}-value`);
-            valueDisplay.textContent = parseFloat(slider.value).toFixed(1);
-        }
-        document.addEventListener('DOMContentLoaded', populateIntervalFields);
-    </script>
-</head>
-<body>
-    <div class="frame">
-        <!-- Back Button -->
-        <button onclick="history.back()" class="back-button">← Back</button>
-        <!-- Settings Header -->
-        <div class="app-header">
-            <div class="header-content">
-                <div class="title-container">
-                    <img src="{{ url_for('static', filename='icons/settings.png') }}" alt="settings icon" class="app-icon">
-                    <h1 class="app-title">Settings</h1>
-                </div>
-                <div>
-                    <a class="header-button" style="text-decoration: none; background-color: #2c66b1; color: #fff;" href="{{ url_for('settings.download_logs', hours=24) }}" download>Download Logs</a>
-                    <button class="header-button" style="background-color: #FFD600; color: #333;" onclick="handleShutdown(true)">Reboot</button>
-                    <button class="header-button" style="background-color: #E53935; color: #fff;" onclick="handleShutdown(false)">Shutdown</button>
+{% block content %}
+<form id="settingsForm" class="settings-form device-form" onsubmit="return false;">
+    <div class="device-grid">
+        <section class="card card-pad">
+            <h2 class="card-title">Display</h2>
+            <div class="field">
+                <span class="field-label">Orientation</span>
+                <div class="segmented" role="radiogroup" aria-label="Orientation">
+                    <label><input type="radio" name="orientation" value="horizontal"{% if device_settings.orientation != 'vertical' %} checked{% endif %}><span>Horizontal</span></label>
+                    <label><input type="radio" name="orientation" value="vertical"{% if device_settings.orientation == 'vertical' %} checked{% endif %}><span>Vertical</span></label>
                 </div>
             </div>
-        </div>
-        <div class="separator"></div>
-        <!-- Settings Content -->
-        <form class="settings-form">
-            <div id="settings-container">
-                <!-- Device Name -->
-                <div class="form-group">
-                    <label for="deviceName" class="form-label">Device Name:</label>
-                    <input type="text" 
-                           id="deviceName" 
-                           name="deviceName" 
-                           placeholder="Type something..." 
-                           value="{{ device_settings.name }}" 
-                           required 
-                           class="form-input">
-                </div>
-                <div class="form-group nowrap">
-                    <!-- Orientation Dropdown -->
-                    <div class="form-group">
-                        <label for="orientation" class="form-label">Orientation:</label>
-                        <select id="orientation" name="orientation" class="form-input">
-                            <option value="horizontal" {% if device_settings.orientation == "horizontal" %}selected{% endif %}>Horizontal</option>
-                            <option value="vertical" {% if device_settings.orientation == "vertical" %}selected{% endif %}>Vertical</option>
-                        </select>
-                    </div>
-                    <div class="form-group nowrap">
-                        <!-- Invert Image Checkbox -->
-                        <label class="form-label" for="invertImage">Invert Image</label>
-                        <input type="checkbox" id="invertImage" name="invertImage" {% if device_settings.inverted_image %}checked{% endif %}>
-                        </label>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <!-- Timezone Dropdown -->
-                    <div class="form-group nowrap">
-                        <label for="timezone" class="form-label">Time Zone:</label>
-                        <input
-                            type="text"
-                            id="timezone"
-                            name="timezoneName"
-                            class="form-input"
-                            list="timezoneList"
-                            placeholder="Type to search..."
-                            value="{{ device_settings.timezone }}"
-                        />
-                        <datalist id="timezoneList">
-                            {% for timezone in timezones %}
-                            <option value="{{ timezone }}"></option>
-                            {% endfor %}
-                        </datalist>
-                    </div>
+            <label class="switch setting-switch">
+                <input type="checkbox" id="invertImage" name="invertImage"{% if device_settings.inverted_image %} checked{% endif %}>
+                <span class="switch-track"></span>
+                <span class="grow">Invert Image</span>
+            </label>
+            <div class="separator"></div>
+            <h3 class="subhead">Image Settings</h3>
+            {{ slider('saturation', 'Saturation', image.get('saturation', 1.0), 0, 2, 0.1) }}
+            {{ slider('contrast', 'Contrast', image.get('contrast', 1.0), 0, 2, 0.1) }}
+            {{ slider('sharpness', 'Sharpness', image.get('sharpness', 1.0), 0, 2, 0.1) }}
+            {{ slider('brightness', 'Brightness', image.get('brightness', 1.0), 0, 2, 0.1) }}
+            {% if device_settings.get('display_type', 'inky') == 'inky' %}
+            {{ slider('inky_saturation', 'Inky Driver Saturation', image.get('inky_saturation', 0.5), 0, 1, 0.05) }}
+            {% endif %}
+        </section>
 
-                    <!-- Time Format Dropdown -->
-                    <div class="form-group nowrap">
-                        <label for="timeFormat" class="form-label">Time Format:</label>
-                        <select id="timeFormat" name="timeFormat" class="form-input">
-                            <option value="12h" {% if device_settings.time_format == "12h" %}selected{% endif %}>12 Hour (AM/PM)</option>
-                            <option value="24h" {% if device_settings.time_format == "24h" %}selected{% endif %}>24 Hour</option>
-                        </select>
+        <div class="device-column">
+            <section class="card card-pad">
+                <h2 class="card-title">Rotation</h2>
+                <div class="field">
+                    <span class="field-label">Plugin Cycle Interval</span>
+                    <div class="field-row">
+                        <span class="muted">Every</span>
+                        <input class="input interval-input" type="number" id="interval" name="interval" min="1" required
+                               value="{{ (cycle // 3600) if cycle_in_hours else (cycle // 60) }}">
+                        <div class="segmented" role="radiogroup" aria-label="Unit">
+                            <label><input type="radio" name="unit" value="minute"{% if not cycle_in_hours %} checked{% endif %}><span>Minute</span></label>
+                            <label><input type="radio" name="unit" value="hour"{% if cycle_in_hours %} checked{% endif %}><span>Hour</span></label>
+                        </div>
                     </div>
+                    <span class="field-help">Determines how often the display switches to a new plugin.</span>
                 </div>
-                <div class="form-group">
-                    <div class="form-group">
-                        <label for="interval">Plugin Cycle Interval:</label>
-                        <span title="Determines how often the display switches to a new plugin.">ⓘ</span>
-                        <span>Every</span>
-                        <input type="number" id="interval" name="interval" class="form-input" required min="1">
-                        <select id="unit" name="unit" class="form-input" required>
-                            <option value="minute">Minute</option>
-                            <option value="hour">Hour</option>
-                        </select>
-                    </div>
+            </section>
 
-                    <div class="form-group nowrap">
-                        <label class="form-label" for="logSystemStats">Log System Stats</label>
-                            <input type="checkbox" id="logSystemStats" name="logSystemStats" {% if device_settings.log_system_stats %}checked{% endif %}>
-                        </label>
+            <section class="card card-pad">
+                <h2 class="card-title">Time</h2>
+                <label class="field">
+                    <span class="field-label">Time Zone</span>
+                    <input class="input" type="text" id="timezone" name="timezoneName" list="timezoneList" placeholder="Type to search..." value="{{ device_settings.timezone }}" autocomplete="off">
+                    <datalist id="timezoneList">
+                        {% for timezone in timezones %}<option value="{{ timezone }}"></option>{% endfor %}
+                    </datalist>
+                </label>
+                <div class="field">
+                    <span class="field-label">Time Format</span>
+                    <div class="segmented" role="radiogroup" aria-label="Time Format">
+                        <label><input type="radio" name="timeFormat" value="12h"{% if device_settings.time_format != '24h' %} checked{% endif %}><span>12 Hour (AM/PM)</span></label>
+                        <label><input type="radio" name="timeFormat" value="24h"{% if device_settings.time_format == '24h' %} checked{% endif %}><span>24 Hour</span></label>
                     </div>
                 </div>
+            </section>
 
-                <div class="collapsible">
-                    <button type="button" class="collapsible-header" onclick="toggleCollapsible(this)">
-                        Image Settings <span class="collapsible-icon">▼</span>
-                    </button>
-                    <div class="settings-container collapsible-content">
-                        <div class="form-group">
-                            <label for="saturation" class="form-label" style="min-width: 100px;">Saturation:</label>
-                            <span id="saturation-value">{{ device_settings.get('image_settings', {}).get('saturation', 1.0) }}</span>
-                            <input
-                                type="range"
-                                id="saturation"
-                                name="saturation"
-                                class="form-input"
-                                min="0" max="2" step="0.1"
-                                value="{{ device_settings.get('image_settings', {}).get('saturation', 1.0) }}"
-                                style="max-width: 400px;"
-                                oninput="updateSliderValue(this)"
-                            />
-                        </div>
-                        <div class="form-group">
-                            <label for="contrast" class="form-label" style="min-width: 100px;">Contrast:</label>
-                            <span id="contrast-value">{{ device_settings.get('image_settings', {}).get('contrast', 1.0) }}</span>
-                            <input
-                                type="range"
-                                id="contrast"
-                                name="contrast"
-                                class="form-input"
-                                min="0" max="2" step="0.1"
-                                value="{{ device_settings.get('image_settings', {}).get('contrast', 1.0) }}"
-                                style="max-width: 400px;"
-                                oninput="updateSliderValue(this)"
-                            />
-                         </div>
-                        <div class="form-group">
-                            <label for="sharpness" class="form-label" style="min-width: 100px;">Sharpness:</label>
-                            <span id="sharpness-value">{{ device_settings.get('image_settings', {}).get('sharpness', 1.0) }}</span>
-                            <input
-                                type="range"
-                                id="sharpness"
-                                name="sharpness"
-                                class="form-input"
-                                min="0" max="2" step="0.1"
-                                value="{{ device_settings.get('image_settings', {}).get('sharpness', 1.0) }}"
-                                style="max-width: 400px;"
-                                oninput="updateSliderValue(this)"
-                            />
-                        </div>
-                        <div class="form-group">
-                            <label for="brightness" class="form-label" style="min-width: 100px;">Brightness:</label>
-                            <span id="brightness-value">{{ device_settings.get('image_settings', {}).get('brightness', 1.0) }}</span>
-                            <input
-                                type="range"
-                                id="brightness"
-                                name="brightness"
-                                class="form-input"
-                                min="0" max="2" step="0.1"
-                                value="{{ device_settings.get('image_settings', {}).get('brightness', 1.0) }}"
-                                style="max-width: 400px;"
-                                oninput="updateSliderValue(this)"
-                            />
-                        </div>
-                        {% if device_settings.get('display_type', 'inky') == 'inky' %}
-                        <div class="form-group">
-                            <label for="inky_saturation" class="form-label" style="min-width: 100px;">Inky Driver Saturation:</label>
-                            <span id="inky_saturation-value">{{ device_settings.get('image_settings', {}).get('inky_saturation', 0.5) }}</span>
-                            <input
-                                type="range"
-                                id="inky_saturation"
-                                name="inky_saturation"
-                                class="form-input"
-                                min="0" max="1" step="0.05"
-                                value="{{ device_settings.get('image_settings', {}).get('inky_saturation', 0.5) }}"
-                                style="max-width: 400px;"
-                                oninput="updateSliderValue(this)"
-                            />
-                        </div>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
-        </form>
- 
-        <!-- Buttons -->
-        <div class="buttons-container">
-            <button type="button" onclick="handleAction()" class="action-button">Save</button>
+            <section class="card card-pad">
+                <h2 class="card-title">System</h2>
+                <label class="field">
+                    <span class="field-label">Device Name</span>
+                    <input class="input" type="text" id="deviceName" name="deviceName" value="{{ device_settings.name }}" required maxlength="64">
+                </label>
+                <label class="switch setting-switch">
+                    <input type="checkbox" id="logSystemStats" name="logSystemStats"{% if device_settings.log_system_stats %} checked{% endif %}>
+                    <span class="switch-track"></span>
+                    <span class="grow">Log System Stats</span>
+                </label>
+            </section>
         </div>
     </div>
-    <!-- Success/Error Modal -->
-    {% include 'response_modal.html' %}
-</body>
-</html>
+
+    <div class="save-bar">
+        <span class="muted save-hint" id="saveHint">Changes apply after you save.</span>
+        <button type="button" class="btn btn-primary" id="saveSettings">Save changes</button>
+    </div>
+</form>
+
+<div class="device-grid lower-grid">
+    <section class="card card-pad" id="runtimeCard">
+        <div class="card-row">
+            <h2 class="card-title">Runtime status</h2>
+            <a class="btn btn-ghost btn-sm" href="/status">{{ icon('activity') }}<span>View details</span></a>
+        </div>
+        <div id="runtimeSummary" class="runtime-summary">
+            <span class="status-pill plain" id="runtimeState">Loading…</span>
+            <div class="runtime-lines muted" id="runtimeLines"></div>
+        </div>
+        <p class="muted" id="runtimeLogin" hidden>Sign in to see runtime details.</p>
+    </section>
+
+    <section class="card card-pad">
+        <h2 class="card-title">Maintenance</h2>
+        <p class="muted">Download the service log from the last 24 hours.</p>
+        <a class="btn btn-secondary" href="/download-logs?hours=24" download>{{ icon('download') }}<span>Download Logs</span></a>
+    </section>
+
+    <section class="card card-pad danger-zone">
+        <h2 class="card-title">Power</h2>
+        <p class="muted">The web page is unavailable while the device restarts.</p>
+        <div class="row row-wrap">
+            <button type="button" class="btn btn-secondary" data-power="reboot">{{ icon('reboot') }}<span>Reboot</span></button>
+            <button type="button" class="btn btn-danger" data-power="shutdown">{{ icon('power') }}<span>Shutdown</span></button>
+        </div>
+    </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script defer src="{{ url_for('static', filename='scripts/device.js') }}"></script>
+{% endblock %}
