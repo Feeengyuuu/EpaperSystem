@@ -22,8 +22,9 @@ yellow, red, blue, green with Floyd–Steinberg dithering).
 - A small five-point crown with a ruby crests the top edge.
 - E-paper legibility: strokes are at least 2 px at final size, gold is built from
   yellow-dominant tones with bronze outlines, gems use the native red ink.
-- Bounds: everything stays within x 4–174 and y 0–174, so it never overlaps the
-  persona name (starting at y 175) or leaves the 181 px rail.
+- Bounds: the overlay is 180×178 at the rail origin; opaque pixels stay at
+  x < 180 and y < 178 (corner rosette tips reach y 177), clear of the rail
+  divider at x 180–182 and of the persona name glyphs, which start near y 180.
 - The console is intentionally identical in day and night modes, so the frame is
   designed for the dark canvas only.
 
