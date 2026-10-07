@@ -262,3 +262,28 @@ def test_shell_pages_link_tab_and_home_screen_icons(tmp_path, monkeypatch):
     assert '<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">' in html
     assert '<link rel="manifest" href="/manifest.webmanifest">' in html
     assert 'class="brand-logo"' in html
+
+
+def test_rendered_playlist_page_feeds_the_brief_reader_publisher(tmp_path, monkeypatch):
+    """The cloud brief sidecar parses this page; a markup change must not break it."""
+    import pytest
+
+    tools = Path(__file__).resolve().parents[4] / "cloudflare" / "brief-reader" / "tools"
+    if not (tools / "sync_device_portal.py").is_file():
+        pytest.skip("brief reader publisher is not part of this checkout")
+    monkeypatch.syspath_prepend(str(tools))
+    import sync_device_portal
+
+    html = _rich_app(tmp_path, monkeypatch).test_client().get("/playlist").get_data(as_text=True)
+    parser = sync_device_portal._PlaylistParser()
+    parser.feed(html)
+    active = parser.finish()
+
+    assert [playlist.name for playlist in active] == ["Default"]
+    clock, weather = active[0].plugins
+    assert (clock.name, clock.plugin_id) == ("Kitchen Clock", "clock")
+    assert clock.thumbnail == "/plugin_instance_image/Default/clock/Kitchen%20Clock"
+    assert clock.source_updated_at == "2026-10-06T12:00:00+00:00"
+    assert clock.refresh_interval_seconds is not None
+    # Never rendered: the publisher must not be offered its thumbnail.
+    assert (weather.name, weather.thumbnail) == ("Home Weather", None)
