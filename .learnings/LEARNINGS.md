@@ -3192,3 +3192,291 @@ Treat neighboring graphic marks and wordmarks as separate assets. Replace only t
 - See Also: LRN-20260927-004
 
 ---
+
+## [LRN-20260803-001] best_practice
+
+**Logged**: 2026-08-03T00:07:23-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: backend
+
+### Summary
+Do not use an image endpoint's HEAD request as a lightweight revision probe unless the route is proven metadata-only.
+
+### Details
+`/api/current_image` serves the authoritative PNG and computes its response validator from the image bytes. A one-second HEAD poll would still enter that route, read or decode the frame, and hash it, imposing continuous work on a memory-constrained Pi. A tiny atomic revision marker written after the display transaction commits provides the same wake-up signal without touching the image path.
+
+### Suggested Action
+For sidecar synchronization, publish a bounded metadata marker at the successful transaction boundary and watch it with the kernel. Keep the full image request inside the event-triggered publication job.
+
+### Metadata
+- Source: conversation
+- Related Files: inkypi-weather/package/InkyPi/src/display/display_transaction.py, deploy/cloudflare/tools/watch_device_portal.sh
+- Tags: epaper, polling, head, etag, revision-marker, resource-pressure
+- Pattern-Key: epaper_sync.metadata_marker_not_image_head
+- Recurrence-Count: 1
+- First-Seen: 2026-08-03
+- Last-Seen: 2026-08-03
+
+### Resolution
+- **Resolved**: 2026-08-03T00:07:23-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Replaced the proposed image HEAD loop with an atomic display revision marker and an event-driven publisher.
+
+---
+
+## [LRN-20260803-002] best_practice
+
+**Logged**: 2026-08-03T00:07:23-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: infra
+
+### Summary
+An inotify watcher for a systemd RuntimeDirectory must explicitly detect deletion or movement and reattach to the recreated directory.
+
+### Details
+Watching only `create` and `moved_to` on `/run/inkypi` leaves a hidden failure mode: systemd deletes the RuntimeDirectory when the service stops, the kernel removes the watch, but `inotifywait --monitor` may remain alive. A FIFO reader then waits forever and cron supervision sees the stale watcher process as healthy. Read-only FIFO ownership fixes writer-EOF handling but does not by itself detect the lost watch.
+
+### Suggested Action
+Subscribe to `delete_self` and `move_self`, include event type in the stream, break the reader loop on either event, terminate and reap the old monitor, then wait for the directory and attach a fresh watch. Prove this with a real delete-and-recreate integration test.
+
+### Metadata
+- Source: error
+- Related Files: deploy/cloudflare/tools/watch_device_portal.sh
+- Tags: inotify, systemd, runtimedirectory, fifo, watcher, supervision
+- Pattern-Key: inotify.reattach_after_runtime_directory_replacement
+- Recurrence-Count: 1
+- First-Seen: 2026-08-03
+- Last-Seen: 2026-08-03
+
+### Resolution
+- **Resolved**: 2026-08-03T00:12:00-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Added self-delete and self-move handling, then proved that a real delete-and-recreate cycle attaches a new monitor and consumes the next marker without touching the live service.
+
+---
+
+## [LRN-20260803-003] correction
+
+**Logged**: 2026-08-03T01:13:55-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Derive browser edition detection from the fastest active plugin, but keep source cadence separate from discovery latency.
+
+### Details
+The user rejected a fixed three-second check as unnecessarily short and asked for a cadence based on the active plugins. The current fastest interval is LiveRadar at 120 seconds. Using 120 seconds directly would add up to another full source interval after a cloud edition is published, so the reader uses one quarter of the fastest interval, clamped to 15-60 seconds. The current derived check is therefore 30 seconds. Conditional ETags preserve freshness while avoiding repeated response bodies, and the original 800x480 raster quality remains unchanged.
+
+### Suggested Action
+Publish the bounded fastest active interval as edition metadata, include it in the publication fingerprint, and derive the visible-page check as `ceil(interval / 4)` within 15-60 seconds. Pause while hidden and check immediately when visible again. Do not equate plugin refresh cadence with browser discovery latency.
+
+### Metadata
+- Source: user_feedback
+- Related Files: deploy/cloudflare/tools/sync_device_portal.py, deploy/cloudflare/src/index.ts
+- Tags: model-y, cadence, freshness, etag, active-playlist, discovery-latency
+- Pattern-Key: model_y_portal.derive_detection_from_active_plugin_cadence
+- Recurrence-Count: 1
+- First-Seen: 2026-08-03
+- Last-Seen: 2026-08-03
+
+### Resolution
+- **Resolved**: 2026-08-03T01:13:55-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Deployed schema v2 with a 120-second fastest active interval and verified a 30-second browser check, ETag 304 behavior, live edition reload, and unchanged original rasters.
+
+---
+
+## [LRN-20260802-005] correction
+
+**Logged**: 2026-08-02T15:00:40-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+When the Model Y portal must match the e-paper display, every plugin uses the exact final plugin raster as its primary interface.
+
+### Details
+“Web version” does not imply that Weather alone keeps its renderer output while other plugins are redrawn as native HTML. The standing product contract is pixel-equivalent presentation for every plugin: publish the exact final raster generated for the e-paper frame, then place authentication, navigation, source status, and local-time metadata outside that image. The browser may scale the raster with `object-fit: contain`, but must not crop, recompose, or replace it.
+
+### Suggested Action
+Keep the default publication adapter raster-first for all plugins. Treat structured contexts as metadata or future optional views, never as the default visual replacement for the current e-paper frame.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/publication_producer.py, inkypi-weather/package/InkyPi/src/web_portal/templates/_publication_stage.html, inkypi-weather/package/InkyPi/src/web_portal/static/portal.css
+- Tags: model-y, all-plugins, pixel-equivalent, original-raster, responsive-contain
+- Pattern-Key: model_y_portal.all_plugins_exact_raster
+- Recurrence-Count: 1
+- First-Seen: 2026-08-02
+- Last-Seen: 2026-08-02
+
+### Resolution
+- **Resolved**: 2026-08-02T15:00:40-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: The default producer, preview showcase, detail view, and immersive playback now preserve exact plugin PNG bytes for every supplied plugin; browser tests cover 1920x1200 and 1920x1080 contain-fit layouts.
+
+---
+
+## [LRN-20260802-006] best_practice
+
+**Logged**: 2026-08-02T15:00:40-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Test the rendered image element box after every vehicle viewport resize; CSS Grid can let intrinsic image ratio override a nominal percentage height.
+
+### Details
+At 1920x1080, a grid-contained 800x480 image with `width: 100%`, `height: 100%`, and `object-fit: contain` still computed to a 1920x1152 element box. The overflowing element was clipped by the viewport, defeating the no-crop contract. Anchoring the image itself with `position: absolute; inset: 0` made its element box exactly match the stage, allowing `object-fit: contain` to letterbox inside the box as intended.
+
+### Suggested Action
+For fixed vehicle stages, verify viewport, stage, image element box, intrinsic dimensions, `object-fit`, and document scroll size in a real browser at both matching and mismatched aspect ratios.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/web_portal/static/portal.css, inkypi-weather/package/InkyPi/tests/test_web_portal.py
+- Tags: playwright, css-grid, object-fit, viewport, no-crop, tesla
+- Pattern-Key: browser_raster.absolute_box_before_contain
+- Recurrence-Count: 1
+- First-Seen: 2026-08-02
+- Last-Seen: 2026-08-02
+
+### Resolution
+- **Resolved**: 2026-08-02T15:00:40-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: The image box is now absolutely anchored to the full stage, and the 1920x1080 browser proof shows letterboxing without overflow or cropping.
+
+---
+
+## [LRN-20260802-004] best_practice
+
+**Logged**: 2026-08-02T14:25:00-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tooling
+
+### Summary
+Use a headed Playwright session on the Chrome channel when the user needs a local site opened visibly and already authenticated.
+
+### Details
+Launching `chrome.exe --new-window` can reuse an existing user Chrome process, while synthetic `SendKeys` cannot reliably target the intended page field. A named `playwright-cli` session with `open --browser chrome --headed` creates a separately controllable, visibly rendered Google Chrome window and supports deterministic form login before handing the window to the user.
+
+### Suggested Action
+For interactive local previews, start the loopback server, open a named headed Chrome session, snapshot, log in using element refs, and activate the resulting window. Keep the session and server running until the user asks to close them.
+
+### Metadata
+- Source: error
+- Related Files: .learnings/LEARNINGS.md
+- Tags: chrome, playwright, headed, windows, local-preview, focus
+- Pattern-Key: browser_preview.headed_chrome_handoff
+- Recurrence-Count: 1
+- First-Seen: 2026-08-02
+- Last-Seen: 2026-08-02
+
+### Resolution
+- **Resolved**: 2026-08-02T14:25:00-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: The dedicated headed Chrome window was logged in through stable Playwright refs and foregrounded successfully.
+
+---
+
+## [LRN-20260802-003] correction
+
+**Logged**: 2026-08-02T14:20:00-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Do not make idle autoplay controls untouchable on coarse-pointer or no-hover devices.
+
+### Details
+The autoplay controls faded after four seconds by combining `opacity: 0` with `pointer-events: none`. Mouse movement reveals them on desktop, but a touchscreen has no hover movement, so the first tap landed on the page instead of the intended control. A viewport resize alone did not reproduce the input model; the browser check needed an actual mobile/coarse-pointer context.
+
+### Suggested Action
+Keep idle controls visible and interactive under `(hover: none)` or `(pointer: coarse)`, and validate the computed style plus a real button tap in a touch-emulated browser session.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/web_portal/static/portal.css, inkypi-weather/package/InkyPi/tests/test_web_portal.py
+- Tags: model-y, touchscreen, autoplay, coarse-pointer, playwright
+- Pattern-Key: browser_touch.autoplay_idle_controls
+- Recurrence-Count: 1
+- First-Seen: 2026-08-02
+- Last-Seen: 2026-08-02
+
+### Resolution
+- **Resolved**: 2026-08-02T14:20:00-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: The touch media rule preserves pointer events after idle; a mobile Chromium session reported coarse pointer input and successfully advanced the seven-slide showcase.
+
+---
+
+## [LRN-20260802-001] correction
+
+**Logged**: 2026-08-02T12:54:34-07:00
+**Priority**: high
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Build and prove the independent Model Y portal locally before treating VPS, DNS, or provider secrets as prerequisites.
+
+### Details
+The user clarified that external deployment inputs belong to the final publication stage, not the site-development stage. Weather should preserve the exact plugin-generated raster inside the portal's own authenticated shell. Portal chrome should stay location-neutral (`当地天气`, `当地时间`); the original Weather frame remains the source of truth for the actual place name.
+
+### Suggested Action
+Use local fixture publications and protected same-origin assets for implementation and browser acceptance, then request VPS, domain, and live provider secrets only when the local product is ready to deploy.
+
+### Metadata
+- Source: user_feedback
+- Related Files: inkypi-weather/package/InkyPi/src/publication_producer.py, inkypi-weather/package/InkyPi/src/web_portal/app.py, inkypi-weather/package/InkyPi/src/web_portal/templates/_publication_stage.html
+- Tags: model-y, local-first, weather, original-raster, deployment-boundary
+- Pattern-Key: model_y_portal.local_first_original_weather
+- Recurrence-Count: 1
+- First-Seen: 2026-08-02
+- Last-Seen: 2026-08-02
+
+### Resolution
+- **Resolved**: 2026-08-02T12:54:34-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: Weather now selects the original raster presentation, local browser acceptance uses the supplied 800x480 PNG, and the portal labels are location-neutral.
+
+---
+
+## [LRN-20260802-002] best_practice
+
+**Logged**: 2026-08-02T12:54:34-07:00
+**Priority**: medium
+**Status**: resolved
+**Area**: tests
+
+### Summary
+Local HTTP browser smoke tests must replace both the Secure flag and the `__Host-` session-cookie name.
+
+### Details
+Overriding only `SESSION_COOKIE_SECURE=False` left the production `__Host-epaper_portal` name in place. Chromium correctly rejected that cookie over HTTP, so the next login request lost its CSRF session and returned `400 页面已过期`. A local-only cookie name without the `__Host-` prefix fixed the smoke test while production defaults remained unchanged.
+
+### Suggested Action
+For localhost HTTP fixtures, configure a dedicated non-production cookie name together with `SESSION_COOKIE_SECURE=False`. Never weaken the production cookie configuration.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/web_portal/app.py, inkypi-weather/package/InkyPi/tests/test_web_portal.py
+- Tags: playwright, flask, csrf, session-cookie, localhost
+- Pattern-Key: browser_smoke.local_http_host_cookie
+- Recurrence-Count: 1
+- First-Seen: 2026-08-02
+- Last-Seen: 2026-08-02
+
+### Resolution
+- **Resolved**: 2026-08-02T12:54:34-07:00
+- **Commit/PR**: local-worktree
+- **Notes**: The local fixture used a dedicated cookie name; authenticated browser verification then passed with production defaults untouched.
+
+---
