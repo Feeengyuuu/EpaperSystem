@@ -98,30 +98,112 @@ def write_env_file(filepath, entries):
                 logger.warning("Could not remove temporary .env file: %s", tmp_path)
 
 
-def mask_value(value):
-    """Mask API key value for display. Never reveal actual values for security."""
-    if not value:
-        return "(empty)"
-    return "*" * min(len(value), 20)
+def _has_value(value):
+    return value is not None and str(value) != ""
+
+
+def build_key_services(entries, registry, used_features=()):
+    """Group .env entries by the service that consumes them.
+
+    Returns names and states only; values never leave this function.
+    ``env_key`` is the variable actually in use (canonical name or alias),
+    so replacing a key keeps writing the name the plugins already read.
+    """
+    values = {}
+    order = []
+    for key, value in entries:
+        if key not in values:
+            order.append(key)
+        values[key] = value
+    used = {str(feature).casefold() for feature in used_features}
+
+    known = set()
+    groups = {"needed": [], "configured": [], "available": []}
+    for item in registry:
+        aliases = list(item.get("aliases") or [])
+        names = [item["key"], *aliases]
+        known.update(names)
+        present = [name for name in names if _has_value(values.get(name))]
+        listed = [name for name in names if name in values]
+        features = list(item.get("features") or [])
+        in_use = any(feature.casefold() in used for feature in features)
+        service = {
+            "key": item["key"],
+            "service": item.get("service") or item["key"],
+            "features": features,
+            "aliases": aliases,
+            "signup_url": item.get("signup_url") or "",
+            "notes": item.get("notes") or "",
+            "value_type": item.get("value_type") or "secret",
+            "configured": bool(present),
+            "in_use": in_use,
+            "env_key": (present or listed or [item["key"]])[0],
+        }
+        if present:
+            groups["configured"].append(service)
+        elif in_use:
+            groups["needed"].append(service)
+        else:
+            groups["available"].append(service)
+
+    groups["other"] = [
+        {"key": key, "configured": _has_value(values[key])}
+        for key in order
+        if key not in known
+    ]
+    groups["env_keys"] = order
+    return groups
+
+
+def key_service_status(expected_key, entries, registry):
+    """Configured state of the service that owns ``expected_key``."""
+    services = build_key_services(entries, registry)
+    for service in services["configured"] + services["needed"] + services["available"]:
+        if expected_key == service["key"] or expected_key in service["aliases"]:
+            return service
+    value = dict(entries).get(expected_key)
+    return {
+        "key": expected_key,
+        "service": expected_key,
+        "aliases": [],
+        "configured": _has_value(value),
+        "env_key": expected_key,
+    }
+
+
+def env_entries():
+    """Current (key, value) pairs of the runtime env file."""
+    return parse_env_file(get_env_path())
+
+
+def _used_plugin_features():
+    """Display names of plugins that sit in any playlist."""
+    try:
+        device_config = current_app.config["DEVICE_CONFIG"]
+        names = {plugin["id"]: plugin.get("display_name") for plugin in device_config.get_plugins()}
+        playlists = device_config.get_playlist_manager().to_dict().get("playlists", [])
+    except Exception:
+        return set()
+    return {
+        names.get(instance.get("plugin_id")) or instance.get("plugin_id")
+        for playlist in playlists
+        for instance in playlist.get("plugins", [])
+    }
 
 
 @apikeys_bp.route('/api-keys')
 def apikeys_page():
-    """Render API keys management page."""
+    """Render API keys grouped by service. Values are never sent to the page."""
     env_path = get_env_path()
-    entries = parse_env_file(env_path)
-    
-    # Prepare entries for template: only key and masked value (no real values for security)
-    template_entries = [
-        {"key": key, "masked": mask_value(value)}
-        for key, value in entries
-    ]
-    
+    services = build_key_services(
+        parse_env_file(env_path),
+        get_api_key_registry(),
+        _used_plugin_features(),
+    )
     return render_template(
         'apikeys.html',
-        entries=template_entries,
-        registry=get_api_key_registry(),
-        env_exists=os.path.exists(env_path)
+        services=services,
+        env_exists=os.path.exists(env_path),
     )
 
 

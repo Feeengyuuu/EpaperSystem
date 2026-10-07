@@ -350,6 +350,35 @@
         }
     }
 
+    const JOB_DONE = new Set(["completed", "failed", "canceled", "timed_out", "superseded", "rejected"]);
+
+    /* Poll /refresh_job/<id> until the queued refresh reaches a final state. */
+    async function waitForJob(jobId, timeoutMs) {
+        if (!jobId) {
+            return null;
+        }
+        const deadline = Date.now() + (timeoutMs || 180000);
+        while (Date.now() < deadline) {
+            await new Promise((resolve) => window.setTimeout(resolve, 2000));
+            try {
+                const body = await api(`/refresh_job/${encodeURIComponent(jobId)}`, { quiet: true });
+                const status = body.job && body.job.status;
+                if (JOB_DONE.has(status)) {
+                    return body.job;
+                }
+            } catch (error) {
+                if (error.status === 404) {
+                    return null;
+                }
+            }
+        }
+        return { status: "timed_out" };
+    }
+
+    function jobFailureMessage(job) {
+        return (job && (job.error || job.error_code)) || "The device could not finish this request.";
+    }
+
     /* Call `tick` now and every `intervalMs` while the page is visible. */
     function poll(tick, intervalMs) {
         let timer = null;
@@ -487,9 +516,11 @@
         openSheet,
         poll,
         relativeTime,
+        jobFailureMessage,
         reportError,
         toast,
         updateRelativeTimes,
+        waitForJob,
         withBusy,
     };
 })();

@@ -2,7 +2,7 @@
 {%- from 'components/icons.html' import icon -%}
 {%- from 'components/preview_card.html' import preview_card -%}
 {% set nav_active = 'now' %}
-{% block title %}Now Playing · {{ inkypi_device_name }}{% endblock %}
+{% block title %}Now Playing · {{ inkypi_device_name | default('InkyPi') }}{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='styles/now_playing.css') }}">
 {% endblock %}
@@ -36,7 +36,7 @@
         <div class="row row-wrap">
             <button type="button" class="btn btn-secondary btn-sm" data-action="edit-playlist"{% if not playlists %} hidden{% endif %}>{{ icon('gear') }}<span>Playlist settings</span></button>
             <button type="button" class="btn btn-secondary btn-sm" data-action="new-playlist">{{ icon('plus') }}<span>New playlist</span></button>
-            <a class="btn btn-primary btn-sm" href="{{ url_for('main.plugins_page') }}">{{ icon('plus') }}<span>Add plugin</span></a>
+            <a class="btn btn-primary btn-sm" href="/plugins">{{ icon('plus') }}<span>Add plugin</span></a>
         </div>
     </div>
 
@@ -69,7 +69,7 @@
         <div class="empty-state" data-empty-playlist{% if playlist.plugins %} hidden{% endif %}>
             <strong>No plugins in this playlist yet</strong>
             <p>Open a plugin, set it up, then choose Add to Playlist.</p>
-            <a class="btn btn-primary" href="{{ url_for('main.plugins_page') }}">Browse plugins</a>
+            <a class="btn btn-primary" href="/plugins">Browse plugins</a>
         </div>
     </div>
     {% endfor %}

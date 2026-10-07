@@ -5,6 +5,7 @@ from enum import Enum
 
 from flask import Blueprint, current_app, jsonify, render_template, request, send_from_directory
 
+from blueprints.apikeys import env_entries, get_api_key_registry, key_service_status
 from plugins.plugin_registry import (
     get_plugin_instance,
     plugin_supports_day_night_theme,
@@ -276,6 +277,7 @@ def plugin_page(plugin_id):
                     selection.instance.settings
                 )
                 template_params["plugin_instance"] = plugin_instance_name
+                template_params["plugin_instance_playlist"] = selection.playlist_name
                 template_params["refresh_settings"] = thaw_payload(
                     selection.instance.refresh
                 )
@@ -284,6 +286,13 @@ def plugin_page(plugin_id):
                 template_params.get("plugin_settings")
             )
             template_params["playlists"] = playlist_manager.get_playlist_names()
+            api_key = template_params.get("api_key")
+            if isinstance(api_key, dict) and api_key.get("expected_key"):
+                template_params["api_key_status"] = key_service_status(
+                    api_key["expected_key"],
+                    env_entries(),
+                    get_api_key_registry(),
+                )
         except Exception as e:
             logger.exception("EXCEPTION CAUGHT: " + str(e))
             return jsonify({"error": f"An error occurred: {str(e)}"}), 500

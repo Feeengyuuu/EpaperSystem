@@ -1,0 +1,38 @@
+/* API keys page. */
+
+.key-section { margin-bottom: var(--s-8); max-width: 1000px; }
+.key-section .section-title { margin-bottom: var(--s-2); }
+.section-help { margin: 0 0 var(--s-3); color: var(--c-muted); font-size: var(--fs-xs); }
+.key-section .section-bar { margin-bottom: var(--s-3); }
+
+.key-list { overflow: hidden; }
+.key-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s-4);
+    padding: var(--s-3) var(--s-4);
+    border-bottom: 1px solid var(--c-line);
+}
+.key-row:last-child { border-bottom: 0; }
+.key-row:target { box-shadow: inset 3px 0 0 var(--c-accent); background: var(--c-accent-soft); }
+.key-main { flex: 1; min-width: 0; }
+.key-title { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); }
+.key-meta { margin-top: 2px; font-size: var(--fs-xs); color: var(--c-muted); overflow-wrap: anywhere; }
+.key-notes { margin-top: 2px; font-size: var(--fs-xs); color: var(--c-faint); }
+.key-actions { display: flex; align-items: center; gap: var(--s-2); flex: none; }
+.key-actions .icon-btn { width: 36px; height: 36px; }
+.key-actions .icon-btn svg { width: 18px; height: 18px; }
+.key-delete:hover { color: var(--c-danger); border-color: var(--c-danger); }
+
+.key-search { flex: 0 1 300px; }
+.key-notice { max-width: 1000px; align-items: center; }
+.key-notice svg { width: 18px; height: 18px; flex: none; }
+
+.mono { font-family: var(--font-mono); }
+.show-value { font-size: var(--fs-xs); color: var(--c-muted); }
+
+@media (max-width: 639px) {
+    .key-row { flex-direction: column; align-items: stretch; gap: var(--s-2); }
+    .key-actions { justify-content: flex-end; }
+    .key-search { flex: 1 1 100%; }
+}

@@ -6,7 +6,6 @@
     const ui = window.InkyUI;
     const hero = document.getElementById("hero");
     const heroImage = hero.querySelector(".hero-media img");
-    const JOB_DONE = new Set(["completed", "failed", "canceled", "timed_out", "superseded", "rejected"]);
     const UNIT_SECONDS = { minute: 60, hour: 3600, day: 86400 };
 
     let nowPlaying = {};
@@ -45,32 +44,6 @@
             return `Daily at ${refresh.scheduled}`;
         }
         return "Manual refresh";
-    }
-
-    async function waitForJob(jobId, timeoutMs) {
-        if (!jobId) {
-            return null;
-        }
-        const deadline = Date.now() + (timeoutMs || 180000);
-        while (Date.now() < deadline) {
-            await new Promise((resolve) => window.setTimeout(resolve, 2000));
-            try {
-                const body = await ui.api(`/refresh_job/${encodeURIComponent(jobId)}`, { quiet: true });
-                const status = body.job && body.job.status;
-                if (JOB_DONE.has(status)) {
-                    return body.job;
-                }
-            } catch (error) {
-                if (error.status === 404) {
-                    return null;
-                }
-            }
-        }
-        return { status: "timed_out" };
-    }
-
-    function jobFailureMessage(job) {
-        return (job && (job.error || job.error_code)) || "The device could not finish this request.";
     }
 
     /* ---------- Display card ---------- */
@@ -219,9 +192,9 @@
         try {
             const body = await ui.api("/display_plugin_instance", { method: "POST", json: cardIdentity(card) });
             ui.toast("Sending to the display…", "info");
-            const job = await waitForJob(body.job_id);
+            const job = await ui.waitForJob(body.job_id);
             if (job && job.status !== "completed") {
-                ui.toast(jobFailureMessage(job), "err");
+                ui.toast(ui.jobFailureMessage(job), "err");
                 return;
             }
             await refreshHeroImage();
@@ -237,9 +210,9 @@
         try {
             const body = await ui.api("/refresh_plugin_instance", { method: "POST", json: cardIdentity(card) });
             ui.toast("Refreshing data…", "info");
-            const job = await waitForJob(body.job_id);
+            const job = await ui.waitForJob(body.job_id);
             if (job && job.status !== "completed") {
-                ui.toast(jobFailureMessage(job), "err");
+                ui.toast(ui.jobFailureMessage(job), "err");
                 return false;
             }
             reloadCardImage(card);

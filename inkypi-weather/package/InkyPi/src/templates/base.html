@@ -26,15 +26,15 @@
 <body>
 <div class="app-shell">
     <nav class="app-nav" aria-label="Main">
-        <a class="nav-brand" href="{{ url_for('main.main_page') }}">
+        <a class="nav-brand" href="/">
             <span class="nav-brand-mark" aria-hidden="true"></span>
             <span class="truncate" data-i18n-skip="true">{{ inkypi_device_name | default('InkyPi') }}</span>
         </a>
         <ul class="nav-links">
-            <li><a class="nav-link{% if nav_active == 'now' %} is-active{% endif %}" href="{{ url_for('main.main_page') }}"{% if nav_active == 'now' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('now') }}</span><span>Now Playing</span></a></li>
-            <li><a class="nav-link{% if nav_active == 'plugins' %} is-active{% endif %}" href="{{ url_for('main.plugins_page') }}"{% if nav_active == 'plugins' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('plugins') }}</span><span>Plugins</span></a></li>
-            <li><a class="nav-link{% if nav_active == 'keys' %} is-active{% endif %}" href="{{ url_for('apikeys.apikeys_page') }}"{% if nav_active == 'keys' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('keys') }}</span><span>Keys</span></a></li>
-            <li><a class="nav-link{% if nav_active == 'device' %} is-active{% endif %}" href="{{ url_for('settings.settings_page') }}"{% if nav_active == 'device' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('device') }}</span><span>Device</span></a></li>
+            <li><a class="nav-link{% if nav_active == 'now' %} is-active{% endif %}" href="/"{% if nav_active == 'now' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('now') }}</span><span>Now Playing</span></a></li>
+            <li><a class="nav-link{% if nav_active == 'plugins' %} is-active{% endif %}" href="/plugins"{% if nav_active == 'plugins' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('plugins') }}</span><span>Plugins</span></a></li>
+            <li><a class="nav-link{% if nav_active == 'keys' %} is-active{% endif %}" href="/api-keys"{% if nav_active == 'keys' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('keys') }}</span><span>Keys</span></a></li>
+            <li><a class="nav-link{% if nav_active == 'device' %} is-active{% endif %}" href="/settings"{% if nav_active == 'device' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('device') }}</span><span>Device</span></a></li>
         </ul>
         <div class="nav-foot">InkyPi</div>
     </nav>
@@ -57,7 +57,7 @@
                     {% if inkypi_admin_authenticated %}
                     <button type="button" class="auth-chip is-signed-in" data-action="logout" title="Signed in as administrator"><span class="dot"></span><span>Admin</span></button>
                     {% else %}
-                    <a class="auth-chip" href="{{ url_for('auth.login', next=request.full_path.rstrip('?')) }}"><span class="dot"></span><span>Sign in</span></a>
+                    <a class="auth-chip" href="/auth/login?next={{ request.full_path.rstrip('?') | urlencode }}"><span class="dot"></span><span>Sign in</span></a>
                     {% endif %}
                 </div>
             </div>
