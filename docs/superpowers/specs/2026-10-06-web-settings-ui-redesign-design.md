@@ -1,7 +1,7 @@
 # 网页设置界面重构设计
 
 **日期**：2026-10-06
-**状态**：用户已确认方向，待实现
+**状态**：已实现并部署（2026-10-06，提交 ee335bbc…ed200ff1；设备版本 deploy-20261007T025700Z-glyph-fix-ed200ff1）
 **范围**：InkyPi 设备网页界面（首页、播放列表、插件库、插件设置、API 密钥、设备设置、运行状态、登录类页面）
 
 ## 1. 目标
@@ -156,3 +156,10 @@
 - Python 测试：新路由、`/api/now-playing`、`build_key_services`、各页面渲染 200 和关键标记、旧路由仍然可用。
 - 浏览器验证：本机开发实例（`.tmp/ui-dev`，localhost:8080，测试管理员账号）。覆盖手机 375px 和桌面 1280px、深色和浅色、中文和英文，逐页截图检查；所有操作走一遍。
 - 设备验证：部署后用设备上的真实数据看"正在播放"页，只读浏览。
+
+## 10. 实施后追加（用户要求）
+
+- 品牌标识：左上角改用用户提供的折角边框 logo，重绘为内联 SVG（`components/icons.html` 的 `logo()` 宏），导航和登录类页面共用。
+- 标签页图标：`static/icons/logo.svg` + `favicon-32.png`。
+- 手机主屏幕：`apple-touch-icon.png`（180px，白底不透明，iOS 会把透明区域填成黑色）、`/manifest.webmanifest`（192/512 图标，`display: standalone`），以及 `apple-mobile-web-app-*` 标签。图标由 `tools/generate_brand_icons.py` 从同一组路径生成。
+- 票房插件“小猪佩奇·完美假期”的间隔号显示成方框：设备字体缺 U+00B7。新增 `utils/glyph_text.py`，绘制前把当前字体画不出的标点换成等价字符。缺字检测必须用非字符 `￿` 作探针；设备上的 Pillow 用 raqm 排版，变体选择符会被整形而不是画成缺字方框。
