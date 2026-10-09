@@ -19,8 +19,8 @@ class Element {
       if (force ?? !this.classNames.has(name)) this.classNames.add(name);
       else this.classNames.delete(name);
     },
-    remove: (name) => this.classNames.delete(name),
-    add: (name) => this.classNames.add(name),
+    remove: (...names) => names.forEach((name) => this.classNames.delete(name)),
+    add: (...names) => names.forEach((name) => this.classNames.add(name)),
     contains: (name) => this.classNames.has(name),
   };
 
@@ -30,8 +30,8 @@ class Element {
     this.listeners.set(name, callbacks);
   }
 
-  dispatch(name) {
-    for (const callback of this.listeners.get(name) ?? []) callback();
+  dispatch(name, event = {}) {
+    for (const callback of this.listeners.get(name) ?? []) callback(event);
   }
 
   setAttribute(name, value) { this.attributes.set(name, value); }
@@ -53,6 +53,7 @@ class Browser {
   fetchOverride = null;
   storageDisabled = false;
   initialBrokenImages = [];
+  viewportScale = 1;
 
   constructor(options = {}) {
     Object.assign(this, options);
@@ -80,8 +81,14 @@ class Browser {
       image.naturalWidth = 0;
       return image;
     });
+    this.segments = this.slides.map(() => {
+      const segment = new Element();
+      segment.offsetWidth = 0;
+      segment.style = { properties: new Map(), setProperty(name, value) { this.properties.set(name, value); } };
+      return segment;
+    });
     this.buttons = Object.fromEntries([
-      "previous", "next", "pause", "fullscreen", "play-chrome-toggle", "play-controls",
+      "previous", "next", "pause", "fullscreen", "play-chrome-toggle", "play-controls", "slide-deck",
     ].map((name) => [name, new Element()]));
     const label = {
       set textContent(value) {
@@ -94,7 +101,12 @@ class Browser {
       pollMs: "30000", generation: String(renderedGeneration), intervalMs: "20000",
       playlistId: this.playlist,
     };
-    player.querySelectorAll = (selector) => selector === "[data-slide]" ? this.slides : this.images;
+    player.classList.add("is-chrome-hidden"); // as rendered by the Worker
+    player.querySelectorAll = (selector) => ({
+      "[data-slide]": this.slides,
+      "[data-slide] img": this.images,
+      "[data-progress-segment]": this.segments,
+    })[selector] ?? [];
     player.querySelector = (selector) => selector === "[data-slide-current]"
       ? label : this.buttons[selector.slice(6, -1)] ?? null;
     const document = new Element();
@@ -117,6 +129,7 @@ class Browser {
         removeItem: (key) => { checkStorage(); this.storage.delete(key); },
       },
       AbortController,
+      visualViewport: { scale: this.viewportScale },
       setTimeout: (callback, delay) => this.later(callback, delay),
       clearTimeout: (id) => this.tasks.delete(id),
       setInterval: (callback, delay) => this.later(callback, delay, delay),
@@ -143,6 +156,14 @@ class Browser {
   }
 
   get activeInstance() { return this.slides.find((slide) => !slide.hidden)?.dataset.instanceId; }
+
+  get player() { return this.document.querySelector("[data-autoplay]"); }
+
+  swipe(dx, dy = 0) {
+    const deck = this.buttons["slide-deck"];
+    deck.dispatch("touchstart", { touches: [{ clientX: 200, clientY: 300 }] });
+    deck.dispatch("touchend", { changedTouches: [{ clientX: 200 + dx, clientY: 300 + dy }] });
+  }
 
   async settle() {
     for (let round = 0; round < 16; round += 1) await Promise.resolve();
@@ -184,7 +205,8 @@ test("an edition keeps the selected instance and pause state across reordering",
   assert.equal(browser.reloads, 1);
   assert.equal(browser.activeInstance, "b");
   assert.equal(browser.buttons.pause.getAttribute("aria-pressed"), "true");
-  assert.equal(browser.buttons.pause.textContent, "继续播放");
+  assert.equal(browser.buttons.pause.getAttribute("aria-label"), "继续播放");
+  assert.equal(browser.player.classList.contains("is-paused"), true);
 });
 
 test("image recovery immediately reloads the newer edition and preserves the slide deadline", async () => {
@@ -290,4 +312,98 @@ test("recovery keeps authentication failures on the login path", async () => {
   await browser.settle();
   assert.equal(browser.navigation, "/login");
   assert.equal(browser.reloads, 0);
+});
+
+test("the bottom reveal button and a tap on the picture both toggle the controls", async () => {
+  const browser = new Browser();
+  await browser.settle();
+  const toggle = browser.buttons["play-chrome-toggle"];
+  assert.equal(browser.player.classList.contains("is-chrome-hidden"), true);
+  toggle.dispatch("click");
+  assert.equal(browser.player.classList.contains("is-chrome-hidden"), false);
+  assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  assert.equal(toggle.getAttribute("aria-label"), "隐藏控制");
+  browser.buttons["slide-deck"].dispatch("click");
+  assert.equal(browser.player.classList.contains("is-chrome-hidden"), true);
+  assert.equal(toggle.getAttribute("aria-expanded"), "false");
+  assert.equal(toggle.getAttribute("aria-label"), "显示控制");
+});
+
+test("a horizontal swipe turns the page and restarts the slide timer", async () => {
+  const browser = new Browser();
+  await browser.advance(15000);
+  browser.swipe(-120);
+  assert.equal(browser.activeInstance, "b");
+  assert.equal(browser.player.dataset.direction, "forward");
+  await browser.advance(19999);
+  assert.equal(browser.activeInstance, "b");
+  browser.swipe(140, 30);
+  assert.equal(browser.activeInstance, "a");
+  assert.equal(browser.player.dataset.direction, "backward");
+  browser.swipe(-120);
+  browser.swipe(-120);
+  browser.swipe(-120); // wraps from the last slide to the first
+  assert.equal(browser.activeInstance, "a");
+  assert.equal(browser.player.dataset.direction, "forward");
+});
+
+test("short, vertical and pinch-zoomed gestures do not turn the page", async () => {
+  const browser = new Browser();
+  await browser.settle();
+  browser.swipe(-30);
+  browser.swipe(-80, 120);
+  assert.equal(browser.activeInstance, "a");
+  const zoomed = new Browser({ viewportScale: 2 });
+  await zoomed.settle();
+  zoomed.swipe(-200);
+  assert.equal(zoomed.activeInstance, "a");
+});
+
+test("arrow keys turn the page and space toggles pause outside buttons", async () => {
+  const browser = new Browser();
+  await browser.settle();
+  browser.document.dispatch("keydown", { key: "ArrowRight", target: {} });
+  assert.equal(browser.activeInstance, "b");
+  browser.document.dispatch("keydown", { key: "ArrowLeft", target: {} });
+  assert.equal(browser.activeInstance, "a");
+  let prevented = false;
+  browser.document.dispatch("keydown", { key: " ", target: {}, preventDefault: () => { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(browser.buttons.pause.getAttribute("aria-pressed"), "true");
+  browser.document.dispatch("keydown", { key: " ", target: { tagName: "BUTTON" } });
+  assert.equal(browser.buttons.pause.getAttribute("aria-pressed"), "true");
+});
+
+test("story progress fills the current segment over the remaining time and freezes on pause", async () => {
+  const browser = new Browser();
+  await browser.settle();
+  const [first, second] = browser.segments;
+  assert.equal(first.classList.contains("is-running"), true);
+  assert.equal(first.style.properties.get("--slide-duration"), "20000ms");
+  assert.equal(first.style.properties.get("--slide-offset"), "0ms");
+  await browser.advance(20000);
+  assert.equal(first.classList.contains("is-done"), true);
+  assert.equal(second.classList.contains("is-current"), true);
+  assert.equal(second.classList.contains("is-running"), true);
+  browser.buttons.pause.dispatch("click");
+  assert.equal(second.classList.contains("is-frozen"), true);
+  browser.buttons.pause.dispatch("click");
+  assert.equal(second.classList.contains("is-frozen"), false);
+  assert.equal(second.classList.contains("is-running"), true);
+});
+
+test("a restored edition resumes the progress fill where the slide left off", async () => {
+  const browser = new Browser();
+  await browser.advance(5000);
+  browser.generation = 2;
+  browser.images[0].dispatch("error");
+  await browser.settle();
+  assert.equal(browser.reloads, 1);
+  assert.equal(browser.segments[0].style.properties.get("--slide-offset"), "-5000ms");
+});
+
+test("browsers without system fullscreen omit the fullscreen control", async () => {
+  const browser = new Browser();
+  await browser.settle();
+  assert.equal(browser.buttons.fullscreen.hidden, true);
 });

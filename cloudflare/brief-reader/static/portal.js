@@ -121,6 +121,8 @@
   if (!autoplay) return;
 
   const slides = Array.from(autoplay.querySelectorAll("[data-slide]"));
+  const segments = Array.from(autoplay.querySelectorAll("[data-progress-segment]"));
+  const deck = autoplay.querySelector("[data-slide-deck]");
   const previousButton = autoplay.querySelector("[data-previous]");
   const nextButton = autoplay.querySelector("[data-next]");
   const pauseButton = autoplay.querySelector("[data-pause]");
@@ -161,16 +163,26 @@
     }
   };
 
+  // Icon-only controls carry their state in the accessible name and tooltip.
+  const label = (button, text) => {
+    button.setAttribute("aria-label", text);
+    button.title = text;
+  };
+
   const setChromeHidden = (hidden) => {
     autoplay.classList.toggle("is-chrome-hidden", hidden);
     if (!chromeToggle) return;
-    chromeToggle.setAttribute("aria-pressed", hidden ? "true" : "false");
-    chromeToggle.textContent = hidden ? "显示导航" : "隐藏导航";
+    chromeToggle.setAttribute("aria-expanded", hidden ? "false" : "true");
+    label(chromeToggle, hidden ? "显示控制" : "隐藏控制");
   };
+  const toggleChrome = () => setChromeHidden(!autoplay.classList.contains("is-chrome-hidden"));
 
   const show = (next) => {
     if (!slides.length) return;
+    const previous = current;
     current = (next + slides.length) % slides.length;
+    // Wrapping from the last slide to the first still reads as moving forward.
+    autoplay.dataset.direction = next < previous ? "backward" : "forward";
     slides.forEach((slide, index) => {
       const active = index === current;
       slide.hidden = !active;
@@ -178,6 +190,27 @@
       slide.setAttribute("aria-hidden", active ? "false" : "true");
     });
     if (currentLabel) currentLabel.textContent = String(current + 1);
+  };
+
+  // Story-style progress: earlier segments are full and the current one fills
+  // over the remaining slide time. A stopped timer freezes the current fill.
+  const paintProgress = (delay) => {
+    segments.forEach((segment, index) => {
+      segment.classList.toggle("is-done", index < current);
+      segment.classList.toggle("is-current", index === current);
+      if (index !== current) segment.classList.remove("is-running", "is-frozen");
+    });
+    const segment = segments[current];
+    if (!segment) return;
+    if (delay === null) {
+      segment.classList.add("is-frozen");
+      return;
+    }
+    segment.classList.remove("is-running", "is-frozen");
+    segment.style.setProperty("--slide-duration", `${interval}ms`);
+    segment.style.setProperty("--slide-offset", `${Math.min(0, delay - interval)}ms`);
+    void segment.offsetWidth; // restart the fill animation
+    segment.classList.add("is-running");
   };
 
   const schedule = (delay = interval) => {
@@ -190,12 +223,25 @@
         schedule();
       }, delay);
     }
+    paintProgress(advanceAt === null ? null : delay);
+  };
+
+  const go = (next) => {
+    show(next);
+    schedule();
   };
 
   const updatePauseButton = () => {
+    autoplay.classList.toggle("is-paused", paused);
     if (!pauseButton) return;
     pauseButton.setAttribute("aria-pressed", paused ? "true" : "false");
-    pauseButton.textContent = paused ? "继续播放" : "暂停播放";
+    label(pauseButton, paused ? "继续播放" : "暂停播放");
+  };
+
+  const togglePause = () => {
+    paused = !paused;
+    updatePauseButton();
+    schedule();
   };
 
   const revealControls = () => {
@@ -205,30 +251,50 @@
     idleTimer = window.setTimeout(() => controls.classList.add("is-idle"), 4000);
   };
 
-  previousButton?.addEventListener("click", () => {
-    show(current - 1);
-    schedule();
+  previousButton?.addEventListener("click", () => go(current - 1));
+  nextButton?.addEventListener("click", () => go(current + 1));
+  pauseButton?.addEventListener("click", togglePause);
+  chromeToggle?.addEventListener("click", toggleChrome);
+
+  // Tapping the picture shows or hides the controls; a horizontal swipe turns
+  // the page. Pinch-zoomed pages keep native panning instead of swiping.
+  let touchStart = null;
+  deck?.addEventListener("click", toggleChrome);
+  deck?.addEventListener("touchstart", (event) => {
+    const touch = event.touches.length === 1 ? event.touches[0] : null;
+    touchStart = touch ? { x: touch.clientX, y: touch.clientY } : null;
+  }, { passive: true });
+  deck?.addEventListener("touchmove", (event) => {
+    if (event.touches.length > 1) touchStart = null;
+  }, { passive: true });
+  deck?.addEventListener("touchend", (event) => {
+    const start = touchStart;
+    touchStart = null;
+    const touch = event.changedTouches[0];
+    if (!start || !touch || (window.visualViewport?.scale ?? 1) > 1.01) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    go(dx < 0 ? current + 1 : current - 1);
+  }, { passive: true });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return;
+    if (event.key === "ArrowLeft") go(current - 1);
+    else if (event.key === "ArrowRight") go(current + 1);
+    // Space on a focused button already activates that button.
+    else if (event.key === " " && event.target?.tagName !== "BUTTON") {
+      event.preventDefault();
+      togglePause();
+    }
   });
-  nextButton?.addEventListener("click", () => {
-    show(current + 1);
-    schedule();
-  });
-  pauseButton?.addEventListener("click", () => {
-    paused = !paused;
-    updatePauseButton();
-    schedule();
-  });
-  chromeToggle?.addEventListener("click", () => {
-    setChromeHidden(!autoplay.classList.contains("is-chrome-hidden"));
-  });
+
   const fullscreenAvailable = Boolean(
     document.fullscreenEnabled && document.documentElement.requestFullscreen,
   );
-  if (fullscreenButton && !fullscreenAvailable) {
-    fullscreenButton.disabled = true;
-    fullscreenButton.textContent = "已铺满页面";
-    fullscreenButton.title = "此浏览器未开放系统全屏；当前画面已铺满网页可用区域";
-  }
+  // iPhone Safari and vehicle browsers do not expose system fullscreen; the
+  // picture already fills the page there, so the control is omitted.
+  if (fullscreenButton && !fullscreenAvailable) fullscreenButton.hidden = true;
   fullscreenButton?.addEventListener("click", async () => {
     if (!fullscreenAvailable) return;
     try {
@@ -242,9 +308,10 @@
     }
   });
   document.addEventListener("fullscreenchange", () => {
-    if (fullscreenButton) {
-      fullscreenButton.textContent = document.fullscreenElement ? "退出全屏" : "全屏显示";
-    }
+    if (!fullscreenButton) return;
+    const active = Boolean(document.fullscreenElement);
+    fullscreenButton.setAttribute("aria-pressed", active ? "true" : "false");
+    label(fullscreenButton, active ? "退出全屏" : "全屏显示");
   });
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {

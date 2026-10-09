@@ -8,6 +8,32 @@ export { PortalLedger } from "./ledger";
 const BRAND_HEAD = `<link rel="icon" href="/logo.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">`;
 
+// Inline SVG keeps the strict CSP (no img data: URIs, no icon font). Media
+// glyphs are filled; utility glyphs are stroked.
+const FILLED_ICONS = {
+  play: '<path d="M8 5.6v12.8a1.1 1.1 0 0 0 1.68.93l10.1-6.4a1.1 1.1 0 0 0 0-1.86L9.68 4.67A1.1 1.1 0 0 0 8 5.6Z"/>',
+  pause: '<rect x="6" y="4.5" width="4.2" height="15" rx="1.3"/><rect x="13.8" y="4.5" width="4.2" height="15" rx="1.3"/>',
+  previous: '<path d="M18 6.1v11.8a1 1 0 0 1-1.56.83l-8.5-5.9a1 1 0 0 1 0-1.66l8.5-5.9A1 1 0 0 1 18 6.1Z"/><rect x="5" y="5.5" width="2.4" height="13" rx="1.2"/>',
+  next: '<path d="M6 6.1v11.8a1 1 0 0 0 1.56.83l8.5-5.9a1 1 0 0 0 0-1.66l-8.5-5.9A1 1 0 0 0 6 6.1Z"/><rect x="16.6" y="5.5" width="2.4" height="13" rx="1.2"/>',
+} as const;
+
+const STROKED_ICONS = {
+  expand: '<path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/>',
+  shrink: '<path d="M9 4v3.5A1.5 1.5 0 0 1 7.5 9H4M20 9h-3.5A1.5 1.5 0 0 1 15 7.5V4M15 20v-3.5a1.5 1.5 0 0 1 1.5-1.5H20M4 15h3.5A1.5 1.5 0 0 1 9 16.5V20"/>',
+  reveal: '<path d="m6 14.5 6-6 6 6"/>',
+  conceal: '<path d="m6 9.5 6 6 6-6"/>',
+} as const;
+
+function icon(name: keyof typeof FILLED_ICONS | keyof typeof STROKED_ICONS): string {
+  const attributes = name in FILLED_ICONS
+    ? 'fill="currentColor"'
+    : 'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"';
+  const paths = name in FILLED_ICONS
+    ? FILLED_ICONS[name as keyof typeof FILLED_ICONS]
+    : STROKED_ICONS[name as keyof typeof STROKED_ICONS];
+  return `<svg class="icon icon-${name}" viewBox="0 0 24 24" ${attributes} aria-hidden="true" focusable="false">${paths}</svg>`;
+}
+
 const ICON_HEADERS = {
   "Cache-Control": "public, max-age=86400",
   "X-Content-Type-Options": "nosniff",
@@ -237,16 +263,23 @@ function loginPage(error: string | null = null, status = 200): Response {
 <body class="login-page">
   <main id="main-content" class="login-shell">
     <section class="login-panel" aria-labelledby="login-title">
-      <div class="login-identity"><p>EpaperSystem 私人简报</p></div>
+      <div class="login-identity">
+        <img class="brand-logo" src="/logo.svg" alt="" width="40" height="40">
+        <p>EpaperSystem 私人简报</p>
+      </div>
       <h1 id="login-title">查看你的播放列表</h1>
       <p class="login-intro">页面只展示已经发布的内容，不会控制实体屏幕。</p>
       ${errorMarkup}
       <form class="login-form" action="/login" method="post">
-        <label for="username">用户名</label>
-        <input id="username" name="username" type="text" value="admin" autocomplete="username" autocapitalize="none" required>
-        <label for="password">密码</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
-        <button type="submit">登录简报</button>
+        <label class="field" for="username">
+          <span class="field-label">用户名</span>
+          <input id="username" name="username" type="text" value="admin" autocomplete="username" autocapitalize="none" required>
+        </label>
+        <label class="field" for="password">
+          <span class="field-label">密码</span>
+          <input id="password" name="password" type="password" autocomplete="current-password" required autofocus>
+        </label>
+        <button class="button button-primary" type="submit">登录简报</button>
       </form>
       <p class="privacy-note">私人站点，请勿在共用设备上保持登录。</p>
     </section>
@@ -310,15 +343,15 @@ function populatedReaderPage(release: ReaderRelease): Response {
       const timeLabel = item.pluginId === "weather" ? "当地时间" : "更新时间";
       return `<article class="play-slide${active ? " is-active" : ""}" data-slide data-instance-id="${escapeHtml(item.instanceId)}" aria-hidden="${active ? "false" : "true"}"${active ? "" : " hidden"}>
         <header class="play-publication-heading">
-          <div>
+          <div class="heading-title">
             <p class="plugin-name">${escapeHtml(item.pluginId)}</p>
             <h2>${title}</h2>
           </div>
-          <div class="freshness-block">
+          <p class="freshness-block">
             <span class="time-prefix">${timeLabel}</span>
             <time datetime="${sourceTime}">${escapeHtml(localTime(item.sourceUpdatedAt, release.timezone))}</time>
             <span class="timezone-label">${escapeHtml(release.timezone)}</span>
-          </div>
+          </p>
         </header>
         <div class="publication-stage">
           <figure class="legacy-png original-plugin-frame">
@@ -329,12 +362,17 @@ function populatedReaderPage(release: ReaderRelease): Response {
       </article>`;
     })
     .join("");
+  // One story-style segment per slide; a single slide has nothing to count down.
+  const progress = release.items.length > 1
+    ? `<ol class="play-progress" aria-hidden="true">${'<li class="progress-segment" data-progress-segment></li>'.repeat(release.items.length)}</ol>`
+    : "";
   const body = `<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="#050606">
   <title>${escapeHtml(release.playlist.title)} | EpaperSystem 简报</title>
   <link rel="stylesheet" href="/portal.css">
   ${BRAND_HEAD}
@@ -342,16 +380,19 @@ function populatedReaderPage(release: ReaderRelease): Response {
 </head>
 <body class="play-page">
   <main id="main-content" class="play-shell is-chrome-hidden" data-autoplay data-playlist-id="${escapeHtml(release.playlist.slug)}" data-interval-ms="20000" data-poll-ms="${publicationPollMilliseconds(release)}" data-generation="${release.generation}">
-    <header class="play-heading">
-      <p class="slide-position" aria-live="polite"><span data-slide-current>1</span> / <span data-slide-total>${release.items.length}</span></p>
-    </header>
-    <section class="slide-deck" aria-label="自动播放内容">${slides}</section>
-    <button class="button button-secondary play-chrome-toggle" type="button" data-play-chrome-toggle aria-pressed="true">显示导航</button>
-    <nav class="play-controls" aria-label="播放控制" data-play-controls>
-      <button class="button button-secondary" type="button" data-previous>上一页</button>
-      <button class="button button-primary" type="button" data-pause aria-pressed="false">暂停播放</button>
-      <button class="button button-secondary" type="button" data-next>下一页</button>
-      <button class="button button-secondary" type="button" data-fullscreen>全屏显示</button>
+    <section class="slide-deck" aria-label="自动播放内容" data-slide-deck>${slides}</section>
+    <nav class="play-dock" aria-label="播放控制" data-play-controls>
+      <div class="dock-status">
+        <p class="slide-position" aria-live="polite"><span class="slide-current" data-slide-current>1</span><span class="slide-total">/ <span data-slide-total>${release.items.length}</span></span></p>
+        ${progress}
+      </div>
+      <div class="dock-buttons">
+        <button class="dock-button dock-fullscreen" type="button" data-fullscreen aria-pressed="false" aria-label="全屏显示" title="全屏显示">${icon("expand")}${icon("shrink")}</button>
+        <button class="dock-button" type="button" data-previous aria-label="上一页" title="上一页">${icon("previous")}</button>
+        <button class="dock-button dock-button-primary" type="button" data-pause aria-pressed="false" aria-label="暂停播放" title="暂停播放">${icon("pause")}${icon("play")}</button>
+        <button class="dock-button" type="button" data-next aria-label="下一页" title="下一页">${icon("next")}</button>
+        <button class="dock-button dock-toggle" type="button" data-play-chrome-toggle aria-expanded="false" aria-label="显示控制" title="显示控制">${icon("reveal")}${icon("conceal")}</button>
+      </div>
     </nav>
   </main>
 </body>
@@ -372,8 +413,13 @@ function readerPage(release: ReaderRelease | null): Response {
   ${BRAND_HEAD}
   <script src="/portal.js" defer></script>
 </head>
-<body>
-  <main data-poll-ms="30000" data-generation="0"><h1>还没有发布内容</h1><p>首个完整版本上传后会自动出现在这里。</p></main>
+<body class="empty-page">
+  <main class="empty-reader" data-poll-ms="30000" data-generation="0">
+    <img class="brand-logo" src="/logo.svg" alt="" width="56" height="56">
+    <h1>还没有发布内容</h1>
+    <p>首个完整版本上传后会自动出现在这里。</p>
+    <span class="waiting-indicator" aria-hidden="true"><span></span><span></span><span></span></span>
+  </main>
 </body>
 </html>`;
   return new Response(body, { headers: HTML_HEADERS });

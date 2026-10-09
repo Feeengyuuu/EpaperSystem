@@ -379,6 +379,13 @@ describe("atomic edition ingestion", () => {
     expect(html).toContain('data-playlist-id="home"');
     expect(html).toContain('data-generation="25"');
     expect(html).toContain('data-poll-ms="30000"');
+    // Every control, including the reveal button, sits in the bottom dock.
+    const dock = html.slice(html.indexOf("data-play-controls"));
+    for (const control of ["data-previous", "data-pause", "data-next", "data-fullscreen", "data-play-chrome-toggle"]) {
+      expect(dock).toContain(control);
+    }
+    expect(html).not.toContain("play-progress"); // one slide has nothing to count down
+    expect(html).not.toMatch(/\sstyle=/u); // CSP allows only the external stylesheet
 
     expect((await SELF.fetch(`https://example.com/assets/${assetId}`)).status).toBe(401);
     const frame = await SELF.fetch(`https://example.com/assets/${assetId}`, {
