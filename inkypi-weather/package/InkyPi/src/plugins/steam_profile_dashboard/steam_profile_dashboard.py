@@ -1,6 +1,7 @@
 from utils.resource_cache import cached_resource_image, measured_image_response, prune_resource_images
 from pathlib import Path
 from plugins.steam_profile_dashboard.console_renderer import render_console
+from plugins.steam_profile_dashboard.avatar_frame import next_avatar_frame
 from plugins.steam_profile_dashboard.game_assets import SteamGameAssets
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.render_provenance import (
@@ -36,13 +37,15 @@ STEAM_COMMUNITY_BADGES_URL = "https://steamcommunity.com/profiles/{steam_id}/bad
 STEAM_COMMUNITY_PROFILE_URL = "https://steamcommunity.com/profiles/{steam_id}/"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-gilded-avatar-v40"
+STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-rotating-avatar-frames-v41"
 STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES = (
+    "midnight-console-gilded-avatar-v40",
     "midnight-console-borderless-friends-v39",
     "midnight-console-sidebar-generated-icons-v38",
     "midnight-console-black-base-aligned-v37",
     "midnight-console-official-assets-v36",
 )
+STEAM_AVATAR_FRAME_STATE_FILE = ".steam_avatar_frame_rotation.json"
 STEAM_BACKGROUND_DAY_IMAGE = "background_day.png"
 STEAM_BACKGROUND_NIGHT_IMAGE = "background_night.png"
 STEAM_GAME_BACKDROP_IMAGE = "game_backdrop.png"
@@ -846,6 +849,19 @@ class SteamProfileDashboard(BasePlugin):
         return self._official_game_assets().get_background(
             appid, size, record=self._game_record(data, appid),
         ) if appid else None
+
+    def _avatar_frame_state_path(self):
+        # Production keeps the rotation across restarts in its data directory;
+        # a development tree without INKYPI_DATA_DIR rotates in memory only.
+        if not os.getenv("INKYPI_DATA_DIR", "").strip():
+            return None
+        return self.data_dir(create=False) / STEAM_AVATAR_FRAME_STATE_FILE
+
+    def _next_avatar_frame(self):
+        frame = next_avatar_frame(self._avatar_frame_state_path())
+        if frame is not None:
+            logger.info("Steam avatar frame: %s %s", frame.frame_id, frame.title)
+        return frame
 
     def _profile_avatar_image(self, url, size):
         source = self._cached_profile_media(

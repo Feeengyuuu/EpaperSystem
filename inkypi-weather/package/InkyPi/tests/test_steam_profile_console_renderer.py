@@ -6,6 +6,8 @@ from copy import deepcopy
 from PIL import Image, ImageChops, ImageDraw
 import pytest
 
+from plugins.steam_profile_dashboard import avatar_frame
+from plugins.steam_profile_dashboard.avatar_frame import FRAME_ORIGIN, load_avatar_frame
 from plugins.steam_profile_dashboard.console_renderer import (
     _Console,
     CANVAS,
@@ -63,7 +65,12 @@ def plugin(monkeypatch):
         plugin.asset_calls.append(("avatar", "", size))
         return Image.new("RGB", (size, size), (105, 120, 90))
 
+    def framed():
+        # A fixed frame whose opening clears the left margin keeps layout checks exact.
+        return load_avatar_frame("12")
+
     monkeypatch.setattr(plugin, "_game_background", background, raising=False)
+    monkeypatch.setattr(plugin, "_next_avatar_frame", framed)
     monkeypatch.setattr(plugin, "_game_square_icon", icon)
     monkeypatch.setattr(plugin, "_avatar_image", avatar)
     monkeypatch.setattr(plugin, "_profile_avatar_image", avatar, raising=False)
@@ -110,12 +117,10 @@ def test_game_art_and_icons_are_preserved_over_a_solid_page_canvas(plugin, data)
                 (0, 178, 12, 237), (0, 292, 12, 480)):
         crop = image.crop(box)
         assert ImageChops.difference(crop, Image.new("RGB", crop.size, CANVAS)).getbbox() is None
-    # Above it, the left margin holds the gilded avatar frame and nothing else.
-    from plugins.steam_profile_dashboard.avatar_frame import gilded_avatar_frame
-
-    frame_margin = gilded_avatar_frame().crop((0, 0, 12, 178))
-    expected_margin = Image.new("RGB", frame_margin.size, CANVAS)
-    expected_margin.paste(frame_margin, (0, 0), frame_margin)
+    # Above it, the left margin holds the avatar frame and nothing else.
+    frame = load_avatar_frame("12").image
+    expected_margin = Image.new("RGB", (12, 178), CANVAS)
+    expected_margin.paste(frame, FRAME_ORIGIN, frame)
     assert ImageChops.difference(image.crop((0, 0, 12, 178)), expected_margin).getbbox() is None
     assert image.getpixel((200, 50)) != PANEL
     assert image.getpixel((235, 250)) != PANEL
@@ -334,17 +339,53 @@ def test_official_asset_budget_covers_main_panels_and_four_friend_games(tmp_path
     assert plugin._official_game_assets().max_games >= 12
 
 
-def test_rail_avatar_sits_inside_the_gilded_frame(plugin, data):
-    from plugins.steam_profile_dashboard.avatar_frame import gilded_avatar_frame
+def test_rail_avatar_fills_only_the_frame_opening(plugin, data):
+    image = render_console(plugin, data, (800, 480))
+    frame = load_avatar_frame("12")
+    left, top, right, bottom = frame.opening
+    origin_x, origin_y = FRAME_ORIGIN
+
+    # The photo is requested at the opening's size, not the old fixed 146 px.
+    assert plugin.asset_calls[0] == ("avatar", "", max(right - left, bottom - top))
+    for x in range(0, 178, 3):
+        for y in range(0, 172, 3):  # the persona name starts at y=175
+            opacity = frame.image.getpixel((x, y))[3]
+            shown = image.getpixel((origin_x + x, origin_y + y))
+            if opacity == 255:
+                assert shown == frame.image.getpixel((x, y))[:3]
+            elif opacity == 0 and frame.mask.getpixel((x, y)) == 255:
+                assert shown == (105, 120, 90)
+            elif opacity == 0 and frame.mask.getpixel((x, y)) == 0:
+                assert shown == CANVAS
+    assert image.getpixel((origin_x + 89, origin_y + 89)) == (105, 120, 90)
+
+
+def test_consecutive_renders_change_the_avatar_frame(plugin, data, monkeypatch):
+    monkeypatch.setattr(avatar_frame, "_memory_states", {})
+    dealt = []
+
+    def rotate():
+        frame = SteamProfileDashboard._next_avatar_frame(plugin)
+        dealt.append(frame.frame_id)
+        return frame
+
+    monkeypatch.setattr(plugin, "_next_avatar_frame", rotate)
+    rails = [render_console(plugin, data, (800, 480)).crop((0, 0, 182, 178)) for _ in range(31)]
+
+    assert sorted(dealt[:30]) == [f"{number:02d}" for number in range(1, 31)]
+    assert all(previous != current for previous, current in zip(dealt, dealt[1:]))
+    assert all(ImageChops.difference(a, b).getbbox() is not None for a, b in zip(rails, rails[1:]))
+
+
+def test_rail_keeps_a_plain_avatar_when_no_frame_loads(plugin, data, monkeypatch):
+    monkeypatch.setattr(plugin, "_next_avatar_frame", lambda: None)
 
     image = render_console(plugin, data, (800, 480))
-    frame = gilded_avatar_frame()
 
+    assert plugin.asset_calls[0] == ("avatar", "", 146)
     for xy in ((16, 16), (89, 89), (161, 161)):
         assert image.getpixel(xy) == (105, 120, 90)
-    for xy in ((10, 60), (168, 120), (10, 168)):
-        assert image.getpixel(xy) == frame.getpixel(xy)[:3]
-    assert image.getpixel((176, 120)) == CANVAS
+    assert image.getpixel((10, 60)) == CANVAS
 
 
 def test_style_version_moves_on_while_previous_cache_stays_compatible():
@@ -353,5 +394,8 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-gilded-avatar-v40"
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[0] == "midnight-console-borderless-friends-v39"
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-rotating-avatar-frames-v41"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:2] == (
+        "midnight-console-gilded-avatar-v40",
+        "midnight-console-borderless-friends-v39",
+    )

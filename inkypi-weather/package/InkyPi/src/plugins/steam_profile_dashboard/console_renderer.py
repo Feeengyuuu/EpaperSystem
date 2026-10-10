@@ -7,7 +7,7 @@ does not contain game-specific images, names, or network requests.
 
 from PIL import Image, ImageDraw, ImageOps
 
-from plugins.steam_profile_dashboard.avatar_frame import gilded_avatar_frame
+from plugins.steam_profile_dashboard.avatar_frame import FRAME_ORIGIN
 from plugins.steam_profile_dashboard.sidebar_assets import sidebar_asset
 
 
@@ -246,17 +246,31 @@ class _Console:
             draw.line((x + 6, y + 6, x + 6, y + 12), fill=NAVY, width=2)
             draw.ellipse((x + 13, y + 7, x + 15, y + 9), fill=NAVY)
 
+    def framed_avatar(self, url):
+        avatar_method = getattr(self.plugin, "_profile_avatar_image", self.plugin._avatar_image)
+        next_frame = getattr(self.plugin, "_next_avatar_frame", None)
+        frame = next_frame() if next_frame is not None else None
+        if frame is None:
+            avatar = avatar_method(url, 146)
+            if avatar is not None:
+                self.image.paste(avatar, (16, 16), avatar if avatar.mode == "RGBA" else None)
+            return
+        # The photo fills the frame's own opening and tucks under its inner edge.
+        left, top, right, bottom = frame.opening
+        size = (right - left, bottom - top)
+        avatar = avatar_method(url, max(size))
+        if avatar is not None:
+            photo = ImageOps.fit(avatar.convert("RGB"), size, method=Image.Resampling.LANCZOS)
+            origin_x, origin_y = FRAME_ORIGIN
+            self.image.paste(photo, (origin_x + left, origin_y + top), frame.mask.crop(frame.opening))
+        self.image.paste(frame.image, FRAME_ORIGIN, frame.image)
+
     def rail(self):
         data, profile = self.data, self.data.get("profile") or {}
         self.draw.rectangle((0, 0, 181, 479), fill=CANVAS)
         self.draw.line((181, 0, 181, 480), fill=BORDER, width=2)
         url = profile.get("avatarfull") or profile.get("avatarmedium") or profile.get("avatar")
-        avatar_method = getattr(self.plugin, "_profile_avatar_image", self.plugin._avatar_image)
-        avatar = avatar_method(url, 146)
-        if avatar is not None:
-            self.image.paste(avatar, (16, 16), avatar if avatar.mode == "RGBA" else None)
-        frame = gilded_avatar_frame()
-        self.image.paste(frame, (0, 0), frame)
+        self.framed_avatar(url)
         self.text((14, 175, 169, 207), profile.get("personaname") or "Steam User",
                   29, bold=True, min_size=18)
         self.text((15, 209, 166, 222), "STEAM PLAYER", 10, MUTED)

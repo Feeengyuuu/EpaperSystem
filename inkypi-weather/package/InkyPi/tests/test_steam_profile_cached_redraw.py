@@ -158,6 +158,31 @@ def test_missing_cache_does_not_create_directories_or_contact_providers(tmp_path
     assert not expected.exists()
 
 
+def test_each_display_redraw_deals_a_new_avatar_frame_from_the_data_dir(tmp_path, monkeypatch):
+    from plugins.steam_profile_dashboard import avatar_frame
+
+    monkeypatch.setattr(avatar_frame, "_memory_states", {})
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path / "data"))
+    plugin = subject(tmp_path, monkeypatch)
+    root, _ = seed(plugin)
+    before = tree_snapshot(root)
+    dealt = []
+    original = avatar_frame.load_avatar_frame
+    monkeypatch.setattr(avatar_frame, "load_avatar_frame",
+                        lambda frame_id: dealt.append(frame_id) or original(frame_id))
+
+    rails = [plugin.render_cached_display(SETTINGS, Device(), resolved_theme_context=theme())
+             .crop((0, 0, 182, 178)) for _ in range(3)]
+
+    assert len(set(dealt)) == 3
+    assert rails[0].tobytes() != rails[1].tobytes() != rails[2].tobytes()
+    state_path = tmp_path / "data" / "plugins" / "steam_profile_dashboard" / ".steam_avatar_frame_rotation.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["last"] == dealt[-1] and len(state["queue"]) == 27
+    # The rotation is presentation state; the saved Steam source stays untouched.
+    assert tree_snapshot(root) == before
+
+
 def test_current_style_selects_newer_source_and_missing_icons_remain_readonly(tmp_path, monkeypatch):
     plugin = subject(tmp_path, monkeypatch)
     seed(plugin, age=4000)

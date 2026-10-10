@@ -6,6 +6,7 @@ from PIL import Image, ImageChops, ImageDraw
 import pytest
 
 from plugins.steam_profile_dashboard import console_renderer, sidebar_assets
+from plugins.steam_profile_dashboard.avatar_frame import load_avatar_frame
 from plugins.steam_profile_dashboard.steam_profile_dashboard import SteamProfileDashboard
 
 
@@ -64,6 +65,8 @@ def test_generated_assets_change_only_sidebar_and_level_stays_dynamic(monkeypatc
     monkeypatch.setattr(plugin, "_game_square_icon", lambda *_args: None)
     monkeypatch.setattr(plugin, "_avatar_image", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(plugin, "_profile_avatar_image", lambda *_args: None)
+    # Every render deals a new avatar frame; hold one so only the icons differ.
+    monkeypatch.setattr(plugin, "_next_avatar_frame", lambda: load_avatar_frame("12"))
     data = {"profile": {"personaname": "Player"}, "level": 103,
             "friends": [], "recent_games": [], "owned_games": [], "badges": {}}
     monkeypatch.setattr(console_renderer, "sidebar_asset", lambda *_args: None)
