@@ -22,6 +22,8 @@ CYAN = (129, 213, 246)
 MUTED = (138, 169, 191)
 GREEN = (129, 237, 105)
 FRIEND_GAME_ICON = 14
+# Black ink around the hero title keeps it legible over busy game artwork.
+TITLE_OUTLINE = 2
 
 
 def _appid(value):
@@ -129,22 +131,28 @@ class _Console:
         self.image.paste(block, (x, top), block)
 
     def _text_bitmap(self, text, width, height, size=14, color=WHITE,
-                     bold=False, lines=1, min_size=None, align="left"):
-        """Prepare a bounded, tightly cropped text block for group alignment."""
+                     bold=False, lines=1, min_size=None, align="left", outline=0):
+        """Prepare a bounded, tightly cropped text block for group alignment.
+
+        ``outline`` strokes each glyph in the canvas black, that many pixels wide.
+        """
         text = " ".join(str(text or "").split())
         min_size = size if min_size is None else min_size
+        # The stroke widens every line, so wrap the glyphs inside it.
+        text_width = width - 2 * outline
 
         def glyph(line, font):
-            left, top, right, bottom = self.draw.textbbox((0, 0), line, font=font, anchor="lt")
+            left, top, right, bottom = self.draw.textbbox((0, 0), line, font=font, anchor="lt",
+                                                          stroke_width=outline)
             bitmap = Image.new("RGBA", (max(1, right - left), max(1, bottom - top)))
-            ImageDraw.Draw(bitmap).text((-left, -top), line, font=font,
-                                        fill=color, anchor="lt")
+            ImageDraw.Draw(bitmap).text((-left, -top), line, font=font, fill=color, anchor="lt",
+                                        stroke_width=outline, stroke_fill=CANVAS)
             bounds = bitmap.getbbox()
             return bitmap.crop(bounds) if bounds else bitmap
 
         for font_size in range(size, min_size - 1, -1):
             font = self.font(font_size, bold)
-            wrapped = self._wrap(text, font, width)
+            wrapped = self._wrap(text, font, text_width)
             if len(wrapped) <= lines:
                 glyphs = [glyph(line, font) for line in wrapped]
                 if sum(part.height for part in glyphs) + len(glyphs) - 1 <= height:
@@ -152,7 +160,7 @@ class _Console:
         if len(wrapped) > lines:
             wrapped = wrapped[:lines]
             last = wrapped[-1]
-            while last and self.draw.textlength(last + "…", font=font) > width:
+            while last and self.draw.textlength(last + "…", font=font) > text_width:
                 last = last[:-1]
             wrapped[-1] = last.rstrip() + "…"
         glyphs = [glyph(line, font) for line in wrapped]
@@ -337,7 +345,7 @@ class _Console:
         else:
             status, _ = self.plugin._persona_text(profile)
         detail = f"{status} · AppID {appid}" if appid else status
-        title = self._text_bitmap(name, 290, 72, 25, WHITE, True, 2, 19)
+        title = self._text_bitmap(name, 290, 72, 25, WHITE, True, 2, 19, outline=TITLE_OUTLINE)
         status_line = self._text_bitmap(detail, 290, 24, 15, CYAN, min_size=12)
         group_height = title.height + 13 + status_line.height
         group_y = 43 + (162 - group_height) // 2

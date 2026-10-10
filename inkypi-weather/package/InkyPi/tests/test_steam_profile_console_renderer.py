@@ -329,6 +329,19 @@ def test_game_logos_sit_on_the_page_without_a_border(plugin, data):
             assert image.getpixel(xy) not in (CYAN, GREEN)
 
 
+def test_hero_game_title_is_outlined_over_its_artwork(plugin, data, monkeypatch):
+    # A bright, busy backdrop is where an unoutlined white title gets lost.
+    monkeypatch.setattr(plugin, "_game_background",
+                        lambda _data, appid, size: Image.new("RGB", size, (235, 235, 225)))
+    image = render_console(plugin, data, (800, 480))
+    title = image.crop((281, 50, 571, 150))
+    pixels = {color: count for count, color in title.getcolors(1 << 16)}
+
+    assert pixels[(242, 248, 253)] > 100
+    # The outline is the panel's own black ink, hugging the white glyphs.
+    assert pixels[CANVAS] > 100
+
+
 def test_friend_game_without_icon_keeps_the_status_dot(plugin, data, displayed, monkeypatch):
     original = plugin._game_square_icon
     monkeypatch.setattr(
@@ -419,8 +432,9 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-presence-ordered-friends-v43"
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:4] == (
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-outlined-hero-title-v44"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:5] == (
+        "midnight-console-presence-ordered-friends-v43",
         "midnight-console-breakout-avatar-frames-v42",
         "midnight-console-rotating-avatar-frames-v41",
         "midnight-console-gilded-avatar-v40",

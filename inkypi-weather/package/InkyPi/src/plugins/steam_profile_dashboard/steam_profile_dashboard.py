@@ -37,8 +37,9 @@ STEAM_COMMUNITY_BADGES_URL = "https://steamcommunity.com/profiles/{steam_id}/bad
 STEAM_COMMUNITY_PROFILE_URL = "https://steamcommunity.com/profiles/{steam_id}/"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-presence-ordered-friends-v43"
+STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-outlined-hero-title-v44"
 STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES = (
+    "midnight-console-presence-ordered-friends-v43",
     "midnight-console-breakout-avatar-frames-v42",
     "midnight-console-rotating-avatar-frames-v41",
     "midnight-console-gilded-avatar-v40",
