@@ -16,6 +16,11 @@ MIN_SHORT_PHOTOGRAPH_HEIGHT = 120
 HISTORY_THUMBNAIL_BOX = (92, 74)
 # Row padding above and below each history event, normal and compact.
 HISTORY_ROW_PADDING = ((4, 8), (2, 4))
+# Last resort for text that cannot fit even at the minimum size: cut it at a
+# sentence end, else a clause break, and mark the cut with an ellipsis.
+ELLIPSIS = "…"
+SENTENCE_END = re.compile(r"[。！？!?]|\.(?=\s)")
+CLAUSE_END = re.compile(r"[，；：、,;:]")
 SWISS_FONT_PATH = Path(__file__).resolve().parents[2] / "static" / "fonts" / "NotoSansSC-VF.ttf"
 TITLE_ASSET_PATH = Path(__file__).resolve().parent / "assets" / "daily_image_wordmark.png"
 
@@ -139,11 +144,17 @@ class _Page:
         sample = "国Ag" if re.search(r"[\u3400-\u9fff]", text) else "Ag"
         return max(self.glyph_height(sample, font), getattr(font, "size", 13)) + self.px(2)
 
-    def wrap(self, text, font, width_for_line):
-        """Return contiguous slices; joining them reproduces the entire input."""
+    def wrap(self, text, font, width_for_line, max_lines=None):
+        """Return contiguous slices; joining them reproduces the entire input.
+
+        With ``max_lines`` the wrap stops once it has one line too many, which is
+        enough to tell that ``text`` does not fit.
+        """
         lines = []
         cursor = 0
         while cursor < len(text):
+            if max_lines is not None and len(lines) > max_lines:
+                break
             limit = width_for_line(len(lines))
             end = cursor
             while end < len(text) and self.width_of(text[cursor:end + 1], font) <= limit:
@@ -173,6 +184,33 @@ class _Page:
             lines.append(text[cursor:end])
             cursor = end
         return lines
+
+    def shortened(self, text, font, width_for_line, max_lines):
+        """Return the longest cut of ``text`` that wraps into ``max_lines`` with an ellipsis."""
+        def marked(prefix):
+            prefix = prefix.rstrip(" ，、,；;：:")
+            return prefix + (" " if prefix[-1:] in ".!?" else "") + ELLIPSIS
+
+        def fits(prefix):
+            return len(self.wrap(marked(prefix), font, width_for_line, max_lines)) <= max_lines
+
+        def longest_fitting(cuts):
+            # Fit only shrinks as a cut moves later, so binary search the cuts.
+            low, high, best = 0, len(cuts) - 1, None
+            while low <= high:
+                middle = (low + high) // 2
+                if fits(text[:cuts[middle]]):
+                    best, low = cuts[middle], middle + 1
+                else:
+                    high = middle - 1
+            return best
+
+        for pattern in (SENTENCE_END, CLAUSE_END):
+            cut = longest_fitting([match.end() for match in pattern.finditer(text)
+                                   if match.end() < len(text)])
+            if cut is not None:
+                return marked(text[:cut])
+        return marked(text[:longest_fitting(list(range(1, len(text)))) or 0])
 
     def ink(self, text, x, y, font, color=None):
         box = self.draw.textbbox((0, 0), text, font=font)
@@ -298,12 +336,19 @@ class _Page:
                 break
         else:
             # A long caption keeps every word at the minimum size; the photograph
-            # gives up height down to a smaller floor before the page fails.
-            if photo_bottom - self.top < self.px(MIN_SHORT_PHOTOGRAPH_HEIGHT):
-                raise LayoutOverflowError(
-                    "Complete daily-image caption cannot fit above the minimum photograph height "
-                    f"at {self.minimum_font}px; no caption text was omitted."
-                )
+            # gives up height down to a smaller floor. Only a caption that would
+            # push it below that floor is cut, visibly, at a sentence or clause.
+            floor = self.px(MIN_SHORT_PHOTOGRAPH_HEIGHT)
+            if photo_bottom - self.top < floor:
+                max_lines = (footer_y - self.px(18) - self.top - floor) // step
+                if max_lines < 1:
+                    raise LayoutOverflowError(
+                        "The daily-image caption has no room above the minimum photograph height."
+                    )
+                lines = self.wrap(self.shortened(text, font, lambda _: width, max_lines),
+                                  font, lambda _: width)
+                caption_y = footer_y - self.px(9) - len(lines) * step
+                photo_bottom = caption_y - self.px(9)
         photo_box = (self.photo_left, self.top, self.photo_right, photo_bottom)
         if source is not None:
             self.audit["regions"]["daily_image"] = self.contained_image(source, photo_box)
@@ -318,7 +363,8 @@ class _Page:
                          for index, line in enumerate(lines)]
         self.audit["caption"] = {"source_text": text, "lines": caption_lines, "font_size": size,
                                  "bounds": [self.photo_left, caption_y, self.photo_right, footer_y - self.px(9)],
-                                 "complete": "".join(lines) == text}
+                                 "complete": "".join(lines) == text,
+                                 "shortened": "".join(lines) != text}
         source_records = [self.ink(line, self.photo_left, footer_y + index * source_step,
                                   source_font, self.palette["muted"])
                           for index, line in enumerate(source_lines)]
@@ -384,10 +430,13 @@ class _Page:
             if selected is not None:
                 break
         if selected is None:
+            selected = self.shortened_history_rows(raw_events, source, image_index, available)
+        if selected is None:
             raise LayoutOverflowError(
                 f"Complete history needs {needed}px but has {available}px at {self.minimum_font}px; "
                 f"all {len(raw_events)} events were retained; no image or text was omitted."
             )
+        needed = sum(row["height"] for row in selected)
         extra, remainder = divmod(available - needed, len(selected))
         y = body_top
         for index, row in enumerate(selected):
@@ -405,17 +454,47 @@ class _Page:
                 image_record = self.contained_image(source, (self.right - image_w, top, self.right, top + image_h))
                 image_record["event_year"] = row["year"]
                 image_record["event_index"] = index
+            source_text = row.get("source_text", row["text"])
             self.audit["events"].append({
                 "index": index, "year": row["year"], "year_label": year_text,
-                "source_text": row["text"], "lines": lines,
+                "source_text": source_text, "lines": lines,
                 "bounds": [self.history_left, y, self.right, y + height],
                 "font_size": size, "image": image_record,
-                "complete": "".join(row["lines"]) == row["text"],
+                "complete": "".join(row["lines"]) == source_text,
+                "shortened": row["text"] != source_text,
             })
             y += height
             if index < len(selected) - 1:
                 self.draw.line((self.history_left, y - self.px(1), self.right, y - self.px(1)),
                                fill=self.palette["ink"], width=self.px(1))
+
+    def shortened_history_rows(self, events, source, image_index, available):
+        """Cap the longest events' line count, at the tightest layout, until all fit.
+
+        Every event keeps its row and the opening of its text; a cut entry ends
+        with an ellipsis and the audit keeps the complete source text.
+        """
+        thumbnail_width = self.px(64)
+        originals = [_text(event.get("text")) for event in events]
+        full_rows = self.history_rows(events, source, image_index, self.minimum_font,
+                                      thumbnail_width, compact=True)
+        # No event can use more lines than the whole column holds.
+        column_lines = available // min(row["step"] for row in full_rows)
+        for cap in range(min(max(len(row["lines"]) for row in full_rows) - 1, column_lines), 0, -1):
+            capped = [dict(event, text=original if len(row["lines"]) <= cap
+                           else self.shortened(original, row["font"], row["line_width"], cap))
+                      for event, original, row in zip(events, originals, full_rows)]
+            rows = self.history_rows(capped, source, image_index, self.minimum_font,
+                                     thumbnail_width, compact=True)
+            if sum(row["height"] for row in rows) <= available:
+                for row, original in zip(rows, originals):
+                    row["source_text"] = original
+                self.audit["history_fit"] = {
+                    "font_size": self.minimum_font, "compact": True, "thumbnail_width": thumbnail_width,
+                    "shortened": sum(row["text"] != original for row, original in zip(rows, originals)),
+                }
+                return rows
+        return None
 
     def history_rows(self, events, source, image_index, font_size, thumbnail_width, compact=False):
         rows = []
@@ -448,7 +527,7 @@ class _Page:
                                  image_size[1] if image_size else 0)
             rows.append({"text": text, "year": year, "font": font, "year_font": year_font,
                          "lines": lines, "step": step, "text_x": text_x, "image_size": image_size,
-                         "content_height": content_height, "inset": inset,
+                         "content_height": content_height, "inset": inset, "line_width": line_width,
                          "height": content_height + inset + below})
         return rows
 

@@ -404,16 +404,58 @@ def test_long_daily_image_caption_keeps_every_word_over_a_shorter_photograph(plu
     assert photo[3] <= audit["caption"]["bounds"][1]
 
 
-def test_over_capacity_content_fails_explicitly_instead_of_dropping_events(plugin, payload):
+def assert_visible_cut(block, source):
+    """A cut keeps the opening of the source, ends with an ellipsis and says so."""
+    shown = compact("".join(line["text"] for line in block["lines"]))
+    assert shown.endswith("\u2026")
+    assert compact(source).startswith(shown[:-1])
+    assert block["complete"] is False and block["shortened"] is True
+
+
+def test_over_capacity_history_is_cut_visibly_instead_of_failing_the_page(plugin, payload):
+    """A day that cannot fit at the tightest layout still renders every event."""
     payload["on_this_day"][-1]["text"] = "不可悄悄删除的完整历史正文。" * 300
-    with pytest.raises(LayoutOverflowError):
-        plugin._render_page((800, 480), payload, settings(), NOW)
+    image = plugin._render_page((800, 480), payload, settings(), NOW)
+    audit = image.info["daily_wiki_layout"]
+
+    assert len(audit["events"]) == len(payload["on_this_day"])
+    assert audit["omitted_events"] == []
+    for event, source in zip(audit["events"][:-1], payload["on_this_day"]):
+        assert event["complete"] is True and event["shortened"] is False
+        assert compact(event["source_text"]) == compact(source["text"])
+    assert_visible_cut(audit["events"][-1], payload["on_this_day"][-1]["text"])
+    assert audit["events"][-1]["font_size"] >= swiss_renderer.MIN_BODY_FONT_SIZE
+    assert audit["history_fit"]["shortened"] == 1
+    assert_history_rows_do_not_overlap(audit)
 
 
-def test_over_capacity_caption_fails_explicitly_instead_of_truncating(plugin, payload):
+def test_two_long_history_entries_are_both_capped_to_fit(plugin, payload):
+    """Regression for 10-21: 115- and 71-character entries overflowed even compact rows."""
+    payload["on_this_day"][1]["text"] = "地方士绅恳请英国长老教会牧师向日军将领交涉，" * 6
+    payload["on_this_day"][3]["text"] = "英国皇家海军将领在特拉法加海战前发表讯息，" * 4
+    image = plugin._render_page((800, 480), payload, settings(), NOW)
+    audit = image.info["daily_wiki_layout"]
+
+    assert len(audit["events"]) == 5
+    assert_history_rows_do_not_overlap(audit)
+    for event, source in zip(audit["events"], payload["on_this_day"]):
+        assert event["font_size"] >= swiss_renderer.MIN_BODY_FONT_SIZE
+        if event["shortened"]:
+            assert_visible_cut(event, source["text"])
+        else:
+            assert compact("".join(line["text"] for line in event["lines"])) == compact(source["text"])
+
+
+def test_over_capacity_caption_is_cut_visibly_over_a_usable_photograph(plugin, payload):
     payload["image_caption"] = "Complete photograph description must remain intact. " * 200
-    with pytest.raises(LayoutOverflowError, match="caption"):
-        plugin._render_page((800, 480), payload, settings(), NOW)
+    image = plugin._render_page((800, 480), payload, settings(), NOW)
+    audit = image.info["daily_wiki_layout"]
+
+    assert_visible_cut(audit["caption"], payload["image_caption"])
+    # The cut lands on a sentence end, not mid-word.
+    assert compact("".join(line["text"] for line in audit["caption"]["lines"])).endswith(".\u2026")
+    photo = audit["regions"]["daily_image"]["bounds"]
+    assert photo[3] - photo[1] >= swiss_renderer.MIN_SHORT_PHOTOGRAPH_HEIGHT
 
 
 @pytest.mark.parametrize("missing_role", ["daily_image", "history_image"])
