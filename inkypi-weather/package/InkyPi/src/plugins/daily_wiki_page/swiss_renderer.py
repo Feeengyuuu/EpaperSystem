@@ -11,6 +11,11 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 MIN_BODY_FONT_SIZE = 13
+MIN_SHORT_PHOTOGRAPH_HEIGHT = 120
+# History thumbnails keep this box's proportions as the ladder narrows them.
+HISTORY_THUMBNAIL_BOX = (92, 74)
+# Row padding above and below each history event, normal and compact.
+HISTORY_ROW_PADDING = ((4, 8), (2, 4))
 SWISS_FONT_PATH = Path(__file__).resolve().parents[2] / "static" / "fonts" / "NotoSansSC-VF.ttf"
 TITLE_ASSET_PATH = Path(__file__).resolve().parent / "assets" / "daily_image_wordmark.png"
 
@@ -292,10 +297,13 @@ class _Page:
             if photo_bottom - self.top >= minimum_image_height:
                 break
         else:
-            raise LayoutOverflowError(
-                "Complete daily-image caption cannot fit above the minimum photograph height "
-                f"at {self.minimum_font}px; no caption text was omitted."
-            )
+            # A long caption keeps every word at the minimum size; the photograph
+            # gives up height down to a smaller floor before the page fails.
+            if photo_bottom - self.top < self.px(MIN_SHORT_PHOTOGRAPH_HEIGHT):
+                raise LayoutOverflowError(
+                    "Complete daily-image caption cannot fit above the minimum photograph height "
+                    f"at {self.minimum_font}px; no caption text was omitted."
+                )
         photo_box = (self.photo_left, self.top, self.photo_right, photo_bottom)
         if source is not None:
             self.audit["regions"]["daily_image"] = self.contained_image(source, photo_box)
@@ -358,12 +366,20 @@ class _Page:
         image_index = _history_image_index(raw_events, self.payload) if source is not None else None
         selected = None
         needed = 0
-        for size in range(max(self.minimum_font, self.px(17)), self.minimum_font - 1, -1):
+        # Days that fit with normal spacing render exactly as before; only a day
+        # that would otherwise fail tightens row padding at the minimum size.
+        attempts = [(size, False) for size in range(max(self.minimum_font, self.px(17)),
+                                                    self.minimum_font - 1, -1)]
+        attempts.append((self.minimum_font, True))
+        for size, compact in attempts:
             for thumbnail_width in (92, 76, 64):
-                rows = self.history_rows(raw_events, source, image_index, size, self.px(thumbnail_width))
+                rows = self.history_rows(raw_events, source, image_index, size,
+                                         self.px(thumbnail_width), compact=compact)
                 needed = sum(row["height"] for row in rows)
                 if needed <= available:
                     selected = rows
+                    self.audit["history_fit"] = {"font_size": size, "compact": compact,
+                                                 "thumbnail_width": self.px(thumbnail_width)}
                     break
             if selected is not None:
                 break
@@ -376,7 +392,7 @@ class _Page:
         y = body_top
         for index, row in enumerate(selected):
             height = row["height"] + extra + (1 if index < remainder else 0)
-            top = y + self.px(4)
+            top = y + row["inset"]
             year_text = self.year_ink(row["year"], self.history_left, top, row["year_font"])
             rule_x = row["text_x"] - self.px(9)
             self.draw.line((rule_x, top, rule_x, top + row["content_height"]),
@@ -401,8 +417,11 @@ class _Page:
                 self.draw.line((self.history_left, y - self.px(1), self.right, y - self.px(1)),
                                fill=self.palette["ink"], width=self.px(1))
 
-    def history_rows(self, events, source, image_index, font_size, thumbnail_width):
+    def history_rows(self, events, source, image_index, font_size, thumbnail_width, compact=False):
         rows = []
+        inset, below = (self.px(value) for value in HISTORY_ROW_PADDING[1 if compact else 0])
+        box_width, box_height = HISTORY_THUMBNAIL_BOX
+        thumbnail_box = (thumbnail_width, max(1, round(thumbnail_width * box_height / box_width)))
         text_x = self.history_left + self.px(75)
         full_width = self.right - text_x
         for index, event in enumerate(events):
@@ -411,7 +430,7 @@ class _Page:
             step = self.line_height(text, font)
             image_size = None
             if index == image_index:
-                image_size = ImageOps.contain(source, (thumbnail_width, self.px(74)), method=RESAMPLE).size
+                image_size = ImageOps.contain(source, thumbnail_box, method=RESAMPLE).size
             def line_width(line_index, image_size=image_size, step=step):
                 if image_size and line_index * step < image_size[1]:
                     return full_width - image_size[0] - self.px(8)
@@ -429,7 +448,8 @@ class _Page:
                                  image_size[1] if image_size else 0)
             rows.append({"text": text, "year": year, "font": font, "year_font": year_font,
                          "lines": lines, "step": step, "text_x": text_x, "image_size": image_size,
-                         "content_height": content_height, "height": content_height + self.px(12)})
+                         "content_height": content_height, "inset": inset,
+                         "height": content_height + inset + below})
         return rows
 
 

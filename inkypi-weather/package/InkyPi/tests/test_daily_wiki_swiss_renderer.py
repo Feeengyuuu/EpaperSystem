@@ -295,6 +295,115 @@ def test_explicit_event_index_cannot_override_mismatched_source_year(plugin, pay
         plugin._render_page((800, 480), payload, settings(), NOW)
 
 
+def october_tenth_payload(payload):
+    """The live zh-cn source of 2026-10-10, whose enriched 1911 entry overflowed."""
+    payload.update(
+        date="2026-10-10",
+        image_caption=(
+            "Bust of Germanicus, Getty Villa, California. The young Germanicus is depicted "
+            "before the Roman rite of depositio barbae, the first shaving of the beard. "
+            "Adopted by emperor Tiberius, Germanicus should succed him as Emperor, if he "
+            "hadn't died on this day 2007 years ago."
+        ),
+        history_image_title="卡萊斯·普吉德蒙",
+        history_image_year="2017",
+        history_image_event_index=0,
+        on_this_day=[
+            {"year": "2017", "text": "加泰罗尼亚政府主席卡莱斯·普吉德蒙签署《加泰罗尼亚独立宣言》，然而随即宣布暂缓独立进程。"},
+            {"year": "1964", "text": "第十八届夏季奥林匹克运动会在日本东京开幕，首次使用人造卫星向全世界直播奥运实况。"},
+            {"year": "1911", "text": (
+                "中国湖北省武昌革命组织文学社和共进会发动武昌起义，随后演变为推翻清朝政府的辛亥革命；"
+                "因中国各地革命行动成功，孙中山回中国肇建了中华民国，形成孙中山领导的南京政府及清朝"
+                "袁世凯的北京政府南北对峙，直到袁世凯翌年逼清帝退位，中华民国始取代清朝。"
+            )},
+            {"year": "1780", "text": "历史上最致命的大西洋飓风袭击加勒比海地区，最终共造成至少22,000人死亡。"},
+            {"year": "732", "text": "查理·马特率领的法兰克军队在图尔战役中击败拉赫曼率领的倭马亚军队。"},
+        ],
+    )
+    return payload
+
+
+def portrait_history_download(source_size=(224, 300)):
+    """Serve a portrait history thumbnail, as the 2026-10-10 source did."""
+    def download(url, _target_size, _settings):
+        if url == HISTORY_URL:
+            return corner_marked_image(source_size)
+        return Image.new("RGB", (320, 240), (80, 120, 160))
+    return download
+
+
+def assert_history_rows_do_not_overlap(audit):
+    history = audit["regions"]["history"]["bounds"]
+    previous_bottom = -1
+    for event in audit["events"]:
+        assert_inside(event["bounds"], history)
+        assert event["bounds"][1] >= previous_bottom
+        previous_bottom = event["bounds"][3]
+        for line in event["lines"]:
+            assert_inside(line["bounds"], event["bounds"])
+        if event["image"]:
+            assert_inside(event["image"]["bounds"], event["bounds"])
+
+
+def test_long_enriched_history_day_renders_every_event_at_a_legible_size(plugin, payload, monkeypatch):
+    """Regression for 2026-10-10: 341px of history in a 319px column raised at 13px."""
+    payload = october_tenth_payload(payload)
+    drawn_text = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def record_text(self, xy, text, *args, **kwargs):
+        drawn_text.append(str(text))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+    monkeypatch.setattr(plugin, "_download_image", portrait_history_download())
+    image = plugin._render_page((800, 480), payload, settings(), NOW)
+    audit = image.info["daily_wiki_layout"]
+
+    assert audit["complete"] is True
+    assert audit["omitted_events"] == []
+    assert len(audit["events"]) == 5
+    for event, source in zip(audit["events"], payload["on_this_day"]):
+        assert event["font_size"] >= swiss_renderer.MIN_BODY_FONT_SIZE
+        assert_complete_text(event, source["text"], drawn_text)
+        if event["image"]:
+            for line in event["lines"]:
+                assert_disjoint(line["bounds"], event["image"]["bounds"])
+    assert_history_rows_do_not_overlap(audit)
+    pictured = [event for event in audit["events"] if event["image"]]
+    assert [event["year"] for event in pictured] == ["2017"]
+    assert_complete_image(image, pictured[0]["image"], (224, 300))
+    assert_complete_text(audit["caption"], payload["image_caption"], drawn_text)
+
+
+def test_long_daily_image_caption_keeps_every_word_over_a_shorter_photograph(plugin, payload, monkeypatch):
+    """Regression for 01-25: a 463-character caption left the photo under 200px at 13px."""
+    payload["image_caption"] = (
+        "This stained glass window from Eglise Sainte-Madeleine, a church in Gramond, France, "
+        "depicts Saints Victor of Damascus and Paul the Apostle. Though they were not "
+        "contemporaries, both men have a connection to Damascus. Moreover, legend has it that "
+        "each were martyred by beheading, hence they are displayed holding swords. Today is the "
+        "feast of The Conversion of St. Paul and the conclusion of the Week of Prayer for "
+        "Christian Unity in much of Western Christianity."
+    )
+    drawn_text = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def record_text(self, xy, text, *args, **kwargs):
+        drawn_text.append(str(text))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_text)
+    image = plugin._render_page((800, 480), payload, settings(), NOW)
+    audit = image.info["daily_wiki_layout"]
+
+    assert_complete_text(audit["caption"], payload["image_caption"], drawn_text)
+    assert audit["caption"]["font_size"] >= swiss_renderer.MIN_BODY_FONT_SIZE
+    photo = audit["regions"]["daily_image"]["bounds"]
+    assert photo[3] - photo[1] >= 120
+    assert photo[3] <= audit["caption"]["bounds"][1]
+
+
 def test_over_capacity_content_fails_explicitly_instead_of_dropping_events(plugin, payload):
     payload["on_this_day"][-1]["text"] = "不可悄悄删除的完整历史正文。" * 300
     with pytest.raises(LayoutOverflowError):
