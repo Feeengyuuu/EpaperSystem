@@ -7,8 +7,10 @@ import pytest
 
 from plugins.steam_profile_dashboard import avatar_frame
 from plugins.steam_profile_dashboard.avatar_frame import (
+    AVATAR_BOX,
+    AVATAR_SIZE,
     FRAME_ORIGIN,
-    FRAME_SIZE,
+    OVERLAY_SIZE,
     frame_catalog,
     load_avatar_frame,
     next_avatar_frame,
@@ -37,27 +39,39 @@ def test_catalog_bundles_the_thirty_frames_in_order():
 
 
 @pytest.mark.parametrize("frame_id", FRAME_IDS)
-def test_every_frame_has_an_open_centre_for_the_avatar(frame_id):
+def test_every_frame_opening_fits_the_original_avatar(frame_id):
     frame = load_avatar_frame(frame_id)
 
-    assert frame.image.mode == "RGBA" and frame.image.size == FRAME_SIZE
-    assert frame.mask.mode == "L" and frame.mask.size == FRAME_SIZE
-    left, top, right, bottom = frame.opening
-    assert right - left >= 80 and bottom - top >= 80
-    centre = (FRAME_SIZE[0] // 2, FRAME_SIZE[1] // 2)
-    assert frame.mask.getpixel(centre) == 255
-    assert frame.image.getpixel(centre)[3] == 0
-    # The photo never reaches past the frame's outer extent.
-    frame_left, frame_top, frame_right, frame_bottom = frame.image.getchannel("A").getbbox()
-    assert frame_left <= left and frame_top <= top
-    assert right <= frame_right and bottom <= frame_bottom
+    assert frame.image.mode == "RGBA" and frame.image.size == OVERLAY_SIZE
+    assert frame.mask.mode == "L" and frame.mask.size == (AVATAR_SIZE, AVATAR_SIZE)
+    centre = AVATAR_SIZE // 2
+    assert frame.mask.getpixel((centre, centre)) == 255
+    assert frame.image.getpixel((AVATAR_BOX[0] + centre, AVATAR_BOX[1] + centre))[3] == 0
+    # The frame is scaled to the photo, not the photo to the frame.
+    left, top, right, bottom = frame.mask.getbbox()
+    assert max(right - left, bottom - top) >= AVATAR_SIZE - 4
 
 
-def test_frames_fit_the_rail_above_the_persona_name():
+@pytest.mark.parametrize("frame_id", FRAME_IDS)
+def test_frames_fade_out_before_the_persona_name_and_hero_panel(frame_id):
     origin_x, origin_y = FRAME_ORIGIN
+    # The hero panel starts at x=194 and the persona name at y=175.
+    assert origin_x + OVERLAY_SIZE[0] <= 190 and origin_y + OVERLAY_SIZE[1] <= 174
+    alpha = load_avatar_frame(frame_id).image.getchannel("A")
+    width, height = alpha.size
 
-    assert origin_x >= 0 and origin_x + FRAME_SIZE[0] <= 180
-    assert origin_y >= 0 and origin_y + FRAME_SIZE[1] <= 178
+    assert alpha.crop((0, height - 1, width, height)).getextrema()[1] <= 32
+    assert alpha.crop((width - 1, 0, width, height)).getextrema()[1] <= 32
+
+
+def test_heavy_frames_break_out_of_the_old_box():
+    alpha = load_avatar_frame("13").image.getchannel("A")
+    width, height = alpha.size
+
+    assert alpha.crop((0, 0, 1, height)).getbbox() is not None
+    assert alpha.crop((0, 0, width, 1)).getbbox() is not None
+    # Past the rail divider at x=181.
+    assert alpha.crop((183, 0, width, height)).getbbox() is not None
 
 
 def test_unknown_frame_ids_are_not_loaded():

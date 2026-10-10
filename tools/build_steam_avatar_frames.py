@@ -4,10 +4,16 @@ Usage:
     python -I tools/build_steam_avatar_frames.py <source dir> [<output dir>]
 
 The source directory holds square RGBA PNGs named ``NN_标题.png``. For each one
-this writes ``frame_NN.png`` (the overlay at display size) and ``mask_NN.png``
-(where the avatar photo shows through) plus a ``frames.json`` manifest.
+this writes ``frame_NN.png`` (the overlay for the rail's top-left corner) and
+``mask_NN.png`` (where the 146 px avatar photo shows through) plus a
+``frames.json`` manifest.
 
-The mask is the frame's enclosed opening. Frames drawn as open shapes (a C, a
+Each frame is scaled so its opening matches the avatar at its original size and
+centred on it, so a heavy frame grows past its old box: it may run off the top
+and left screen edges and across the rail divider, and fades out just before
+the persona name and the right-hand panels.
+
+The opening is the frame's enclosed hole. Frames drawn as open shapes (a C, a
 torn edge, three matches) are closed with the smallest morphological closing
 that encloses the centre; failing that, the convex hull bounds the opening.
 The mask reaches a pixel under the frame's inner edge so no gap shows.
@@ -25,8 +31,12 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 
-DISPLAY_SIZE = 178
-WORK_SIZE = DISPLAY_SIZE * 2
+WORK_SIZE = 356
+# The console rail's original avatar; the photo keeps this size and place.
+AVATAR_BOX = (16, 16, 162, 162)
+# A few pixels clear of the hero panel (x 194) and above the persona name (y 175).
+OVERLAY_SIZE = (190, 174)
+EDGE_FADE = 8
 BODY_ALPHA = 64
 CLOSING_RADII = (0, 1, 2, 3, 4, 6, 8, 11, 15, 20, 26, 34, 44)
 MIN_OPENING_SHARE = 0.08
@@ -123,14 +133,28 @@ def opening_mask(alpha):
     return filled, "convex-hull"
 
 
+def _scaled(image, size, offset, canvas_size):
+    canvas = Image.new(image.mode, canvas_size, 0)
+    resized = image.resize((size, size), Image.Resampling.LANCZOS)
+    canvas.paste(resized, offset)
+    return canvas
+
+
+def _fade_edges(alpha):
+    """Fade the overlay out towards the persona name and the hero panel."""
+    width, height = alpha.shape[1], alpha.shape[0]
+    ramp = np.clip(np.arange(EDGE_FADE, 0, -1) / (EDGE_FADE + 1), 0, 1)
+    weight = np.ones_like(alpha, dtype=np.float32)
+    weight[height - EDGE_FADE:, :] *= ramp[:, None]
+    weight[:, width - EDGE_FADE:] *= ramp[None, :]
+    return (alpha * weight).round().astype(np.uint8)
+
+
 def build_one(source_path, frame_id, output_dir):
     with Image.open(source_path) as opened:
         if opened.width != opened.height:
             raise ValueError(f"{source_path.name}: frame artwork must be square")
         source = opened.convert("RGBA")
-    frame = source.resize((DISPLAY_SIZE, DISPLAY_SIZE), Image.Resampling.LANCZOS)
-    # LANCZOS rings faintly past hard edges; drop the imperceptible alpha.
-    frame.putalpha(frame.getchannel("A").point(lambda value: 0 if value < 8 else value))
 
     work_alpha = np.asarray(source.resize((WORK_SIZE, WORK_SIZE), Image.Resampling.LANCZOS).getchannel("A"))
     filled, method = opening_mask(work_alpha)
@@ -138,13 +162,30 @@ def build_one(source_path, frame_id, output_dir):
     # Only the main opening shows the photo, never pockets inside the frame body.
     opening = reachable(~(filled & ~body), (WORK_SIZE // 2, WORK_SIZE // 2))
     tucked = filled & dilate(opening, TUCK_RADIUS)
-    mask = Image.fromarray((tucked * 255).astype(np.uint8)).resize(
-        (DISPLAY_SIZE, DISPLAY_SIZE), Image.Resampling.BOX,
-    )
+
+    # Scale the opening's larger side to the avatar and centre it on the photo.
+    rows, columns = np.nonzero(opening)
+    left, top, right, bottom = columns.min(), rows.min(), columns.max() + 1, rows.max() + 1
+    avatar_left, avatar_top, avatar_right, avatar_bottom = AVATAR_BOX
+    avatar_size = avatar_right - avatar_left
+    scale = avatar_size / max(right - left, bottom - top)
+    size = round(WORK_SIZE * scale)
+    offset = (round((avatar_left + avatar_right) / 2 - (left + right) / 2 * scale),
+              round((avatar_top + avatar_bottom) / 2 - (top + bottom) / 2 * scale))
+
+    frame = _scaled(source, size, offset, OVERLAY_SIZE)
+    alpha = np.asarray(frame.getchannel("A"))
+    # LANCZOS rings faintly past hard edges; drop the imperceptible alpha.
+    alpha = _fade_edges(np.where(alpha < 8, 0, alpha))
+    frame.putalpha(Image.fromarray(alpha))
+
+    tucked_image = Image.fromarray((tucked * 255).astype(np.uint8))
+    mask = _scaled(tucked_image, size, (offset[0] - avatar_left, offset[1] - avatar_top),
+                   (avatar_size, avatar_size))
 
     frame.save(output_dir / f"frame_{frame_id}.png", optimize=True)
     mask.save(output_dir / f"mask_{frame_id}.png", optimize=True)
-    return method, mask.getbbox()
+    return method, round(scale * WORK_SIZE / 178, 2)
 
 
 def main(argv):
@@ -160,13 +201,14 @@ def main(argv):
         if match is None:
             raise ValueError(f"unexpected frame file name: {source_path.name}")
         frame_id, title = match.groups()
-        method, bbox = build_one(source_path, frame_id, output_dir)
+        method, scale = build_one(source_path, frame_id, output_dir)
         digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
         entries.append({"id": frame_id, "title": title, "source_sha256": digest})
-        print(f"{frame_id} {title}: {method}, avatar box {bbox}")
+        print(f"{frame_id} {title}: {method}, {scale}x the old 178 px frame")
     if not entries:
         raise ValueError(f"no frame artwork in {source_dir}")
-    manifest = {"version": 1, "size": DISPLAY_SIZE, "frames": entries}
+    manifest = {"version": 2, "overlay_size": list(OVERLAY_SIZE), "avatar_box": list(AVATAR_BOX),
+                "frames": entries}
     (output_dir / "frames.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n",
     )

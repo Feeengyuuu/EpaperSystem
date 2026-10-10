@@ -1,6 +1,15 @@
 {
-  "version": 1,
-  "size": 178,
+  "version": 2,
+  "overlay_size": [
+    190,
+    174
+  ],
+  "avatar_box": [
+    16,
+    16,
+    162,
+    162
+  ],
   "frames": [
     {
       "id": "01",

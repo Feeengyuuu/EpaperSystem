@@ -3,8 +3,13 @@
 The bundled frames (built by tools/build_steam_avatar_frames.py) are dealt in
 shuffled rounds: every frame appears once per round, and a new round never
 opens with the frame that closed the previous one, so two consecutive renders
-never share a frame. Each frame ships with a mask of its opening, which is
-where the avatar photo shows.
+never share a frame.
+
+The avatar photo keeps its original 146 px box. Each frame is pre-scaled so its
+opening fits that photo, which lets heavy frames break out of the old box: an
+overlay may run off the screen's top and left edges and across the rail
+divider, and fades out before the persona name and the hero panel. A mask
+per frame limits the photo to the frame's opening.
 
 The round survives restarts in a small JSON file. Without a writable state
 file the rotation continues in memory for the life of the process.
@@ -28,15 +33,18 @@ from utils.safe_image import ImageLimits, safe_open_image
 logger = logging.getLogger(__name__)
 
 FRAME_ROOT = Path(__file__).resolve().parent / "assets" / "avatar_frames"
-FRAME_SIZE = (178, 178)
-# Inside the 182 px rail and above the persona name.
-FRAME_ORIGIN = (1, 0)
+MANIFEST_VERSION = 2
+AVATAR_BOX = (16, 16, 162, 162)
+AVATAR_SIZE = AVATAR_BOX[2] - AVATAR_BOX[0]
+# Pasted at the rail's top-left corner, clear of the hero panel and the name.
+FRAME_ORIGIN = (0, 0)
+OVERLAY_SIZE = (190, 174)
 STATE_VERSION = 1
 _ID_PATTERN = re.compile(r"\d{2}\Z")
 _MANIFEST_MAX_BYTES = 64 * 1024
 _STATE_MAX_BYTES = 16 * 1024
-_LIMITS = ImageLimits(max_bytes=512 * 1024, max_width=FRAME_SIZE[0],
-                      max_height=FRAME_SIZE[1], max_pixels=FRAME_SIZE[0] * FRAME_SIZE[1],
+_LIMITS = ImageLimits(max_bytes=512 * 1024, max_width=OVERLAY_SIZE[0],
+                      max_height=OVERLAY_SIZE[1], max_pixels=OVERLAY_SIZE[0] * OVERLAY_SIZE[1],
                       allowed_formats=frozenset({"PNG"}))
 
 _lock = threading.Lock()
@@ -51,11 +59,6 @@ class AvatarFrame:
     image: Image.Image
     mask: Image.Image
 
-    @property
-    def opening(self):
-        """Bounding box of the avatar opening, in frame coordinates."""
-        return self.mask.getbbox()
-
 
 @lru_cache(maxsize=1)
 def frame_catalog():
@@ -64,7 +67,10 @@ def frame_catalog():
         path = FRAME_ROOT / "frames.json"
         if path.stat().st_size > _MANIFEST_MAX_BYTES:
             raise ValueError("avatar frame manifest is too large")
-        entries = json.loads(path.read_text(encoding="utf-8")).get("frames")
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        if manifest.get("version") != MANIFEST_VERSION:
+            raise ValueError("avatar frame manifest has an unexpected version")
+        entries = manifest.get("frames")
     except (OSError, ValueError, AttributeError) as error:
         logger.warning("Steam avatar frame manifest unavailable: %s", error)
         return ()
@@ -80,10 +86,10 @@ def frame_catalog():
     return tuple(catalog)
 
 
-def _open(name, mode):
+def _open(name, mode, size):
     with safe_open_image(FRAME_ROOT / name, limits=_LIMITS) as opened:
-        if opened.size != FRAME_SIZE:
-            raise ValueError(f"{name} is not {FRAME_SIZE}")
+        if opened.size != size:
+            raise ValueError(f"{name} is not {size}")
         return opened.convert(mode)
 
 
@@ -93,8 +99,8 @@ def load_avatar_frame(frame_id):
     if title is None:
         return None
     try:
-        image = _open(f"frame_{frame_id}.png", "RGBA")
-        mask = _open(f"mask_{frame_id}.png", "L")
+        image = _open(f"frame_{frame_id}.png", "RGBA", OVERLAY_SIZE)
+        mask = _open(f"mask_{frame_id}.png", "L", (AVATAR_SIZE, AVATAR_SIZE))
     except (OSError, ValueError) as error:
         logger.warning("Steam avatar frame %s unavailable: %s", frame_id, error)
         return None

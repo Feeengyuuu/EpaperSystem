@@ -7,7 +7,7 @@ does not contain game-specific images, names, or network requests.
 
 from PIL import Image, ImageDraw, ImageOps
 
-from plugins.steam_profile_dashboard.avatar_frame import FRAME_ORIGIN
+from plugins.steam_profile_dashboard.avatar_frame import AVATAR_BOX, AVATAR_SIZE, FRAME_ORIGIN
 from plugins.steam_profile_dashboard.sidebar_assets import sidebar_asset
 
 
@@ -250,19 +250,14 @@ class _Console:
         avatar_method = getattr(self.plugin, "_profile_avatar_image", self.plugin._avatar_image)
         next_frame = getattr(self.plugin, "_next_avatar_frame", None)
         frame = next_frame() if next_frame is not None else None
+        avatar = avatar_method(url, AVATAR_SIZE)
         if frame is None:
-            avatar = avatar_method(url, 146)
             if avatar is not None:
-                self.image.paste(avatar, (16, 16), avatar if avatar.mode == "RGBA" else None)
+                self.image.paste(avatar, AVATAR_BOX[:2], avatar if avatar.mode == "RGBA" else None)
             return
-        # The photo fills the frame's own opening and tucks under its inner edge.
-        left, top, right, bottom = frame.opening
-        size = (right - left, bottom - top)
-        avatar = avatar_method(url, max(size))
+        # The photo keeps its size; the frame's opening decides what shows of it.
         if avatar is not None:
-            photo = ImageOps.fit(avatar.convert("RGB"), size, method=Image.Resampling.LANCZOS)
-            origin_x, origin_y = FRAME_ORIGIN
-            self.image.paste(photo, (origin_x + left, origin_y + top), frame.mask.crop(frame.opening))
+            self.image.paste(avatar.convert("RGB"), AVATAR_BOX[:2], frame.mask)
         self.image.paste(frame.image, FRAME_ORIGIN, frame.image)
 
     def rail(self):

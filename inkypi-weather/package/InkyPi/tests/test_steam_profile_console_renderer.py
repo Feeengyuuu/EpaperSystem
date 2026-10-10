@@ -7,7 +7,13 @@ from PIL import Image, ImageChops, ImageDraw
 import pytest
 
 from plugins.steam_profile_dashboard import avatar_frame
-from plugins.steam_profile_dashboard.avatar_frame import FRAME_ORIGIN, load_avatar_frame
+from plugins.steam_profile_dashboard.avatar_frame import (
+    AVATAR_BOX,
+    AVATAR_SIZE,
+    FRAME_ORIGIN,
+    OVERLAY_SIZE,
+    load_avatar_frame,
+)
 from plugins.steam_profile_dashboard.console_renderer import (
     _Console,
     CANVAS,
@@ -113,15 +119,18 @@ def test_game_art_and_icons_are_preserved_over_a_solid_page_canvas(plugin, data)
     # The requested flat colour belongs to the page underneath the game cards.
     # The game artwork itself remains present, with the existing navy shading.
     # The generated 54 px level frame reaches x=9; the canvas around it stays black.
-    for box in ((183, 0, 193, 480), (791, 0, 800, 480), (0, 178, 9, 480),
+    # The avatar frame may cross the rail divider above the persona name, but
+    # keeps four pixels clear of the hero panel.
+    for box in ((183, 174, 193, 480), (190, 0, 193, 480), (791, 0, 800, 480), (0, 178, 9, 480),
                 (0, 178, 12, 237), (0, 292, 12, 480)):
         crop = image.crop(box)
         assert ImageChops.difference(crop, Image.new("RGB", crop.size, CANVAS)).getbbox() is None
-    # Above it, the left margin holds the avatar frame and nothing else.
+    # Above it, the left margin and the divider gap hold the avatar frame and nothing else.
     frame = load_avatar_frame("12").image
-    expected_margin = Image.new("RGB", (12, 178), CANVAS)
-    expected_margin.paste(frame, FRAME_ORIGIN, frame)
-    assert ImageChops.difference(image.crop((0, 0, 12, 178)), expected_margin).getbbox() is None
+    expected = Image.new("RGB", (800, 480), CANVAS)
+    expected.paste(frame, FRAME_ORIGIN, frame)
+    for box in ((0, 0, 12, 178), (183, 0, 190, 174)):
+        assert ImageChops.difference(image.crop(box), expected.crop(box)).getbbox() is None
     assert image.getpixel((200, 50)) != PANEL
     assert image.getpixel((235, 250)) != PANEL
     assert image.getpixel((259, 450)) != PANEL
@@ -339,25 +348,26 @@ def test_official_asset_budget_covers_main_panels_and_four_friend_games(tmp_path
     assert plugin._official_game_assets().max_games >= 12
 
 
-def test_rail_avatar_fills_only_the_frame_opening(plugin, data):
+def test_rail_avatar_keeps_its_size_inside_the_breakout_frame(plugin, data):
     image = render_console(plugin, data, (800, 480))
     frame = load_avatar_frame("12")
-    left, top, right, bottom = frame.opening
-    origin_x, origin_y = FRAME_ORIGIN
+    avatar_left, avatar_top, avatar_right, avatar_bottom = AVATAR_BOX
 
-    # The photo is requested at the opening's size, not the old fixed 146 px.
-    assert plugin.asset_calls[0] == ("avatar", "", max(right - left, bottom - top))
-    for x in range(0, 178, 3):
-        for y in range(0, 172, 3):  # the persona name starts at y=175
+    assert plugin.asset_calls[0] == ("avatar", "", AVATAR_SIZE)
+    for x in range(0, OVERLAY_SIZE[0], 3):
+        for y in range(0, OVERLAY_SIZE[1], 3):
             opacity = frame.image.getpixel((x, y))[3]
-            shown = image.getpixel((origin_x + x, origin_y + y))
+            shown = image.getpixel((FRAME_ORIGIN[0] + x, FRAME_ORIGIN[1] + y))
+            inside = avatar_left <= x < avatar_right and avatar_top <= y < avatar_bottom
+            mask = frame.mask.getpixel((x - avatar_left, y - avatar_top)) if inside else 0
             if opacity == 255:
                 assert shown == frame.image.getpixel((x, y))[:3]
-            elif opacity == 0 and frame.mask.getpixel((x, y)) == 255:
+            elif opacity == 0 and mask == 255:
                 assert shown == (105, 120, 90)
-            elif opacity == 0 and frame.mask.getpixel((x, y)) == 0:
+            elif opacity == 0 and mask == 0 and not 179 <= x <= 183:
+                # Outside the opening nothing shows, apart from the rail divider.
                 assert shown == CANVAS
-    assert image.getpixel((origin_x + 89, origin_y + 89)) == (105, 120, 90)
+    assert image.getpixel((89, 89)) == (105, 120, 90)
 
 
 def test_consecutive_renders_change_the_avatar_frame(plugin, data, monkeypatch):
@@ -394,8 +404,9 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-rotating-avatar-frames-v41"
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:2] == (
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-breakout-avatar-frames-v42"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:3] == (
+        "midnight-console-rotating-avatar-frames-v41",
         "midnight-console-gilded-avatar-v40",
         "midnight-console-borderless-friends-v39",
     )
