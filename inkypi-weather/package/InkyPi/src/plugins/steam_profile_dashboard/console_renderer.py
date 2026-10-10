@@ -216,16 +216,16 @@ class _Console:
 
     def icon(self, appid, x, y, size):
         icon = self.plugin._game_square_icon(self.data, appid, size) if appid else None
-        self.draw.rounded_rectangle((x - 1, y - 1, x + size, y + size), radius=3,
-                                    fill=PANEL, outline=CYAN)
         if icon is not None:
+            # Game logos sit straight on their artwork, without a frame.
             self.image.paste(icon, (x, y), icon if icon.mode == "RGBA" else None)
-        else:
-            # An explicit neutral placeholder never borrows a different game's icon.
-            self.draw.rectangle((x + size // 4, y + size // 3,
-                                 x + size * 3 // 4, y + size * 2 // 3), outline=MUTED)
-            self.draw.line((x + size // 3, y + size // 2,
-                            x + size * 2 // 3, y + size // 2), fill=MUTED)
+            return
+        # An explicit neutral placeholder never borrows a different game's icon.
+        self.draw.rounded_rectangle((x - 1, y - 1, x + size, y + size), radius=3, fill=PANEL)
+        self.draw.rectangle((x + size // 4, y + size // 3,
+                             x + size * 3 // 4, y + size * 2 // 3), outline=MUTED)
+        self.draw.line((x + size // 3, y + size // 2,
+                        x + size * 2 // 3, y + size // 2), fill=MUTED)
 
     def small_symbol(self, kind, x, y, color=CYAN):
         draw = self.draw
@@ -354,8 +354,11 @@ class _Console:
         self.text((630, 10, 710, 42), "在线好友", 18, CYAN, bold=True)
         counter = f"{_value(data.get('online_friend_count'))}/{_value(data.get('friend_count'))}"
         self.text((711, 10, 783, 42), counter, 15, CYAN, min_size=11, align="right")
-        friends = [friend for friend in data.get("friends", []) or []
-                   if _number(friend.get("personastate")) > 0]
+        # Order at display time so saved data and remarks follow the presence rule.
+        friends = sorted((friend for friend in data.get("friends", []) or []
+                          if _number(friend.get("personastate")) > 0),
+                         key=lambda friend: (self.plugin._friend_presence_rank(friend),
+                                             self.plugin._friend_display_id(friend).casefold()))
         if not friends:
             message = "好友列表暂不可用" if data.get("friend_count") is None else "目前没有在线好友"
             self.text((607, 110, 780, 148), message, 15, MUTED, lines=2)

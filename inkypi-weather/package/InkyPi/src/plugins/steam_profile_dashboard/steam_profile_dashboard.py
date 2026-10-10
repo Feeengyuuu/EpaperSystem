@@ -37,8 +37,9 @@ STEAM_COMMUNITY_BADGES_URL = "https://steamcommunity.com/profiles/{steam_id}/bad
 STEAM_COMMUNITY_PROFILE_URL = "https://steamcommunity.com/profiles/{steam_id}/"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-breakout-avatar-frames-v42"
+STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-presence-ordered-friends-v43"
 STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES = (
+    "midnight-console-breakout-avatar-frames-v42",
     "midnight-console-rotating-avatar-frames-v41",
     "midnight-console-gilded-avatar-v40",
     "midnight-console-borderless-friends-v39",
@@ -83,6 +84,10 @@ PERSONA_STATES = {
     5: "想交易",
     6: "想玩游戏",
 }
+# Friends are listed by presence: anyone in a game first, then these signed-in
+# states in order (online, looking to play, looking to trade, busy, away,
+# snooze), then offline.
+FRIEND_PRESENCE_ORDER = (1, 6, 5, 2, 3, 4)
 
 
 class SteamProfileDashboard(BasePlugin):
@@ -1719,12 +1724,23 @@ class SteamProfileDashboard(BasePlugin):
             return max(owned_games, key=lambda game: game.get("playtime_forever", 0))
         return {}
 
+    def _friend_presence_rank(self, friend):
+        if friend.get("gameid") or friend.get("gameextrainfo"):
+            return 0
+        try:
+            state = int(friend.get("personastate", 0) or 0)
+        except (TypeError, ValueError):
+            state = 0
+        if state in FRIEND_PRESENCE_ORDER:
+            return 1 + FRIEND_PRESENCE_ORDER.index(state)
+        # An unrecognised signed-in state still ranks above offline.
+        return 1 + len(FRIEND_PRESENCE_ORDER) + (0 if state else 1)
+
     def _sort_friends(self, players):
         return sorted(
             players,
             key=lambda friend: (
-                0 if friend.get("gameid") or friend.get("gameextrainfo") else 1,
-                0 if int(friend.get("personastate", 0)) else 1,
+                self._friend_presence_rank(friend),
                 str(friend.get("personaname", "")).lower(),
             ),
         )

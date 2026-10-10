@@ -17,6 +17,7 @@ from plugins.steam_profile_dashboard.avatar_frame import (
 from plugins.steam_profile_dashboard.console_renderer import (
     _Console,
     CANVAS,
+    CYAN,
     GREEN,
     PANEL,
     render_console,
@@ -314,6 +315,20 @@ def test_friend_game_activity_shows_the_game_icon_before_its_name(plugin, data, 
     assert any(text == "Company of Heroes 3" and box[0] == 665 for box, text in displayed)
 
 
+def test_game_logos_sit_on_the_page_without_a_border(plugin, data):
+    image = render_console(plugin, data, (800, 480))
+    # Hero, four recent rows and the top three, as (x, y, size). A friend's
+    # game keeps its green in-game frame (see the friend activity test).
+    logos = ([(209, 96, 56)] + [(206, 246 + row * 29, 24) for row in range(4)]
+             + [(222 + rank * 197, 412, 33) for rank in range(3)])
+
+    for x, y, size in logos:
+        middle_x, middle_y = x + size // 2, y + size // 2
+        assert image.getpixel((middle_x, middle_y)) == (200, 80, 40)
+        for xy in ((x - 1, middle_y), (x + size, middle_y), (middle_x, y - 1), (middle_x, y + size)):
+            assert image.getpixel(xy) not in (CYAN, GREEN)
+
+
 def test_friend_game_without_icon_keeps_the_status_dot(plugin, data, displayed, monkeypatch):
     original = plugin._game_square_icon
     monkeypatch.setattr(
@@ -404,8 +419,9 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-breakout-avatar-frames-v42"
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:3] == (
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-presence-ordered-friends-v43"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:4] == (
+        "midnight-console-breakout-avatar-frames-v42",
         "midnight-console-rotating-avatar-frames-v41",
         "midnight-console-gilded-avatar-v40",
         "midnight-console-borderless-friends-v39",
