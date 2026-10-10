@@ -447,6 +447,7 @@ def test_history_image_scans_beyond_six_events_for_selected_item(tmp_path):
 def test_simplified_chinese_keeps_daily_image_with_its_caption(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
     feed = sample_feed()
+    feed["image"]["description"] = {"text": "一张关联示意图", "lang": "zh"}
 
     def fake_get_json(url, params=None):
         if params["action"] == "query":
@@ -470,9 +471,212 @@ def test_simplified_chinese_keeps_daily_image_with_its_caption(tmp_path, monkeyp
     payload = plugin._payload_from_feed(feed, "zh-cn", {})
 
     assert payload["image_url"] == "https://example.com/image.jpg"
-    assert payload["image_caption"] == "A connected diagram"
+    assert payload["image_caption"] == "一张关联示意图"
     assert payload["daily_image_title"] == "Daily image"
     assert payload["image_source"] == "daily_image"
+
+
+GERMANICUS_FILE = "File:Bust of Germanicus, front - Getty Museum (2021.66).jpg"
+GERMANICUS_ZH_PAGE = (
+    "{{Featurepic/format\n"
+    "| type = packed-hover\n"
+    "| Image = Bust of Germanicus, front - Getty Museum (2021.66).jpg\n"
+    "| Content = [[蓋蒂別墅]]收藏的[[日耳曼尼庫斯|凱撒]][[胸像|半身大理石像]]\n"
+    "}}"
+)
+
+
+def germanicus_feed():
+    feed = sample_feed()
+    feed["image"] = {
+        "title": GERMANICUS_FILE,
+        "thumbnail": {"source": "https://thumb.example.test/germanicus.jpg"},
+        "description": {
+            "text": "Bust of Germanicus, Getty Villa, California.",
+            "lang": "en",
+        },
+        "artist": {"text": "J. Paul Getty Museum"},
+        "structured": {"captions": {"en": "Ancient Roman marble bust", "zh-hant": "蓋蒂別墅收藏的半身像"}},
+    }
+    return feed
+
+
+def zh_api(revision_content=None, parsed_html=None, image_info=None, calls=None):
+    """Fake zh.wikipedia API for the daily-picture page, caption parse and image info."""
+    calls = calls if calls is not None else []
+
+    def get_json(url, params=None):
+        calls.append(("GET", params))
+        if params.get("prop") == "revisions":
+            if revision_content is None:
+                return {"query": {"pages": [{"title": params["titles"], "missing": True}]}}
+            return {"query": {"pages": [{"title": params["titles"], "revisions": [
+                {"slots": {"main": {"content": revision_content}}}]}]}}
+        if params.get("prop") == "imageinfo":
+            if image_info is None:
+                raise RuntimeError("imageinfo unavailable")
+            return {"query": {"pages": [{"title": params["titles"], "imageinfo": [image_info]}]}}
+        raise RuntimeError(f"unexpected zh API call: {params}")
+
+    def post_json(url, data=None):
+        calls.append(("POST", data))
+        if parsed_html is None:
+            raise RuntimeError("parse unavailable")
+        return {"parse": {"text": parsed_html}}
+
+    return get_json, post_json, calls
+
+
+def chinese_daily_image(plugin, feed, now=datetime(2026, 10, 10, 9, 0)):
+    featured = feed["image"]
+    current = {
+        "image_url": plugin._image_url(featured),
+        "image_caption": plugin._image_caption(featured),
+        "daily_image_title": plugin._page_title(featured),
+        "image_credit": plugin._image_credit(featured),
+        "image_source": "daily_image",
+    }
+    current.update(plugin._chinese_daily_image(featured, current, now))
+    return current
+
+
+def test_zh_daily_picture_caption_replaces_english_commons_description(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    get_json, post_json, calls = zh_api(
+        revision_content=GERMANICUS_ZH_PAGE,
+        parsed_html=(
+            '<div class="mw-content-ltr mw-parser-output" lang="zh-CN"><p>'
+            '<a href="/wiki/x">盖蒂别墅</a>收藏的<a href="/wiki/y">凯撒</a>'
+            '<a href="/wiki/z">半身大理石像</a>\n</p></div>'
+        ),
+    )
+    monkeypatch.setattr(plugin, "_get_json", get_json)
+    monkeypatch.setattr(plugin, "_post_json", post_json)
+
+    image = chinese_daily_image(plugin, germanicus_feed())
+
+    assert image["image_caption"] == "盖蒂别墅收藏的凯撒半身大理石像"
+    assert image["image_url"] == "https://thumb.example.test/germanicus.jpg"
+    assert image["image_credit"] == "J. Paul Getty Museum"
+    assert calls[0][1]["titles"] == "Wikipedia:每日图片/2026年10月10日"
+    assert calls[1][1]["variant"] == "zh-cn"
+    assert "<ref" not in calls[1][1]["text"]
+
+
+def test_zh_daily_picture_caption_parses_locally_when_parser_fails(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    page = GERMANICUS_ZH_PAGE.replace(
+        "[[胸像|半身大理石像]]",
+        "[[胸像|半身大理石像]]（{{lang|en|Germanicus}}，''Getty''）<ref>注</ref>"
+        "，[[喜马偕尔邦|-{zh-cn:喜马偕尔邦;zh-tw:喜馬恰爾邦}-]]{{Convert|4166|m|ft|0}}",
+    )
+    get_json, post_json, _calls = zh_api(revision_content=page, parsed_html=None)
+    monkeypatch.setattr(plugin, "_get_json", get_json)
+    monkeypatch.setattr(plugin, "_post_json", post_json)
+
+    image = chinese_daily_image(plugin, germanicus_feed())
+
+    # No wiki markup survives; the offline character table simplifies common characters only.
+    assert image["image_caption"] == "蓋蒂别墅收藏的凱撒半身大理石像（Germanicus，Getty），喜马偕尔邦4166米"
+
+
+def test_zh_daily_picture_with_a_different_file_shows_that_picture(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    page = (
+        "{{Featurepic/format\n| Image = 双龙桥 - 2025-05-04 14.jpg\n"
+        "| Content = 云南[[建水县]]的[[双龙桥]]。\n}}"
+    )
+    get_json, post_json, _calls = zh_api(
+        revision_content=page,
+        parsed_html="<p>云南建水县的双龙桥。</p>",
+        image_info={
+            "thumburl": "https://upload.example.test/960px-shuanglong.jpg",
+            "extmetadata": {"Artist": {"value": '<a href="//x">Zhang San</a>'}},
+        },
+    )
+    monkeypatch.setattr(plugin, "_get_json", get_json)
+    monkeypatch.setattr(plugin, "_post_json", post_json)
+
+    image = chinese_daily_image(plugin, germanicus_feed())
+
+    assert image["image_url"] == "https://upload.example.test/960px-shuanglong.jpg"
+    assert image["image_caption"] == "云南建水县的双龙桥。"
+    assert image["image_credit"] == "Zhang San"
+    assert image["daily_image_title"] == "File:双龙桥 - 2025-05-04 14.jpg"
+    assert image["image_source"] == "daily_image"
+
+
+def test_zh_daily_picture_missing_uses_structured_chinese_caption(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    get_json, post_json, _calls = zh_api(revision_content=None)
+    monkeypatch.setattr(plugin, "_get_json", get_json)
+    monkeypatch.setattr(plugin, "_post_json", post_json)
+
+    image = chinese_daily_image(plugin, germanicus_feed())
+
+    assert image["image_caption"] == "蓋蒂別墅收藏的半身像"
+    assert image["image_url"] == "https://thumb.example.test/germanicus.jpg"
+
+
+def test_zh_daily_picture_other_file_without_image_info_keeps_feed_picture(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    page = "{{Featurepic/format\n| Image = Other.jpg\n| Content = 另一张图片。\n}}"
+    get_json, post_json, _calls = zh_api(revision_content=page, parsed_html="<p>另一张图片。</p>")
+    monkeypatch.setattr(plugin, "_get_json", get_json)
+    monkeypatch.setattr(plugin, "_post_json", post_json)
+
+    image = chinese_daily_image(plugin, germanicus_feed())
+
+    assert image["image_url"] == "https://thumb.example.test/germanicus.jpg"
+    assert image["image_caption"] == "蓋蒂別墅收藏的半身像"
+
+
+def test_zh_page_never_captions_the_daily_image_in_english(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    feed = germanicus_feed()
+    del feed["image"]["structured"]
+
+    def offline(*_args, **_kwargs):
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr(plugin, "_get_json", offline)
+    monkeypatch.setattr(plugin, "_post_json", offline)
+
+    image = chinese_daily_image(plugin, feed)
+
+    assert image["image_caption"] == "维基共享资源每日图片"
+
+
+def test_zh_payload_end_to_end_uses_zh_daily_picture(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    get_json, post_json, _calls = zh_api(
+        revision_content=GERMANICUS_ZH_PAGE,
+        parsed_html="<p>盖蒂别墅收藏的凯撒半身大理石像</p>",
+    )
+
+    def fake_get_json(url, params=None):
+        if params.get("prop") in {"revisions", "imageinfo"}:
+            return get_json(url, params)
+        raise RuntimeError("article enrichment offline")
+
+    monkeypatch.setattr(plugin, "_get_json", fake_get_json)
+    monkeypatch.setattr(plugin, "_post_json", post_json)
+    monkeypatch.setattr(plugin, "_fetch_zh_date_page_events", lambda _now: [])
+    monkeypatch.setattr(plugin, "_convert_zh_cn_texts", lambda values: [plugin._to_simplified_cn(v) for v in values])
+
+    payload = plugin._payload_from_feed(germanicus_feed(), "zh-cn", {}, now=datetime(2026, 10, 10, 9, 0))
+
+    assert payload["image_caption"] == "盖蒂别墅收藏的凯撒半身大理石像"
+    assert payload["image_url"] == "https://thumb.example.test/germanicus.jpg"
+
+
+def test_english_payload_keeps_commons_description(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    monkeypatch.setattr(plugin, "_get_json", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("no zh call")))
+
+    payload = plugin._payload_from_feed(germanicus_feed(), "en", {}, now=datetime(2026, 10, 10, 9, 0))
+
+    assert payload["image_caption"] == "Bust of Germanicus, Getty Villa, California."
 
 
 def test_image_caption_collapses_duplicate_chinese_sentence_punctuation(tmp_path):
@@ -553,7 +757,7 @@ def test_daily_payload_ignores_v6_cache_and_fetches_current_source(tmp_path, mon
     assert payload["language"] == "zh-cn"
     assert payload["title"] == "Fresh Chinese source"
     assert payload["source_state"] == "live"
-    assert plugin._read_cache()["schema"] == "daily-wiki-page-v7"
+    assert plugin._read_cache()["schema"] == "daily-wiki-page-v8"
 
 
 def test_daily_payload_rejects_v6_cache_when_live_fetch_fails(tmp_path, monkeypatch):

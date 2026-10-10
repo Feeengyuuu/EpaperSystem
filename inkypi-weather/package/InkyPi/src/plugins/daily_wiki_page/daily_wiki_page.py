@@ -24,6 +24,8 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
+from plugins.daily_wiki_page import zh_daily_picture
+from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
 from utils.cache_manager import CacheBudget, CachePathError
 from utils.http_client import get_http_session
@@ -46,15 +48,17 @@ class _HTMLTextExtractor(HTMLParser):
         return "".join(self._parts)
 
 PLUGIN_ID = "daily_wiki_page"
-CACHE_SCHEMA_VERSION = "daily-wiki-page-v7"
+CACHE_SCHEMA_VERSION = "daily-wiki-page-v8"
 DEFAULT_FONT = DEFAULT_FONT_FAMILY
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 FEED_URL = "https://{language}.wikipedia.org/api/rest_v1/feed/featured/{year}/{month}/{day}"
 ZH_ACTION_API_URL = "https://zh.wikipedia.org/w/api.php"
 ZH_SIMPLIFIED_VARIANT = "zh-cn"
 ZH_DATE_PAGE_API_URL = "https://zh.wikipedia.org/w/api.php"
-REQUEST_HEADERS = {"User-Agent": "InkyPi DailyWikiPage/1.0", "Accept": "application/json,*/*;q=0.8"}
-IMAGE_HEADERS = {"User-Agent": "InkyPi DailyWikiPage/1.0", "Accept": "image/jpeg,image/png,image/webp,image/*;q=0.8"}
+# Wikimedia throttles anonymous clients whose User-Agent carries no contact URL.
+USER_AGENT = "InkyPi DailyWikiPage/1.0 (https://github.com/Feeengyuuu/EpaperSystem)"
+REQUEST_HEADERS = {"User-Agent": USER_AGENT, "Accept": "application/json,*/*;q=0.8"}
+IMAGE_HEADERS = {"User-Agent": USER_AGENT, "Accept": "image/jpeg,image/png,image/webp,image/*;q=0.8"}
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 DEFAULT_IMAGE_CACHE_HOURS = 24
 MAX_IMAGE_CACHE_HOURS = 30 * 24
@@ -346,17 +350,23 @@ class DailyWikiPage(BasePlugin):
         featured_image_url = self._image_url(featured_image)
         article_image_url = self._image_url(article)
         if featured_image_url:
-            image_url = featured_image_url
-            image_caption = self._image_caption(featured_image) or self._page_title(featured_image) or description
-            daily_image_title = self._page_title(featured_image)
-            image_credit = self._image_credit(featured_image)
-            image_source = "daily_image"
+            image = {
+                "image_url": featured_image_url,
+                "image_caption": self._image_caption(featured_image) or self._page_title(featured_image) or description,
+                "daily_image_title": self._page_title(featured_image),
+                "image_credit": self._image_credit(featured_image),
+                "image_source": "daily_image",
+            }
         else:
-            image_url = article_image_url
-            image_caption = description
-            daily_image_title = ""
-            image_credit = ""
-            image_source = "article_image" if article_image_url else ""
+            image = {
+                "image_url": article_image_url,
+                "image_caption": description,
+                "daily_image_title": "",
+                "image_credit": "",
+                "image_source": "article_image" if article_image_url else "",
+            }
+        if self._wants_simplified_chinese(language):
+            image.update(self._chinese_daily_image(featured_image, image, now))
         payload = {
             "schema": CACHE_SCHEMA_VERSION,
             "language": language,
@@ -366,11 +376,7 @@ class DailyWikiPage(BasePlugin):
             "description": description,
             "extract": extract,
             "page_url": self._page_url(article),
-            "image_url": image_url,
-            "image_caption": image_caption,
-            "daily_image_title": daily_image_title,
-            "image_credit": image_credit,
-            "image_source": image_source,
+            **image,
             "history_image_url": history_image.get("url") or "",
             "history_image_title": history_image.get("title") or "",
             "history_image_year": history_image.get("year") or "",
@@ -381,6 +387,126 @@ class DailyWikiPage(BasePlugin):
         if self._wants_simplified_chinese(language):
             payload = self._apply_simplified_chinese_variant(payload, article)
         return payload
+
+    def _chinese_daily_image(self, feed_image, image, now):
+        """Image fields that keep the photograph caption Chinese on a Chinese page.
+
+        Order: Chinese Wikipedia's own daily picture page (Chinese caption, normally
+        the same Commons picture) -> a Chinese caption already in the feed -> a
+        generic Chinese label. The English Commons description is never used.
+        """
+        if now is not None:
+            try:
+                picture = self._fetch_zh_daily_picture(now, feed_image)
+                if picture:
+                    return picture
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("DailyWikiPage zh daily picture unavailable: %s", exc)
+        if image.get("image_source") == "daily_image":
+            caption = zh_daily_picture.feed_image_chinese_caption(feed_image)
+            return {"image_caption": caption or zh_daily_picture.GENERIC_ZH_IMAGE_CAPTION}
+        if not zh_daily_picture.contains_cjk(image.get("image_caption")):
+            # The renderer then captions the article image with the Chinese article title.
+            return {"image_caption": ""}
+        return {}
+
+    def _fetch_zh_daily_picture(self, now, feed_image):
+        data = self._get_json(
+            ZH_ACTION_API_URL,
+            params={
+                "action": "query",
+                "format": "json",
+                "formatversion": "2",
+                "prop": "revisions",
+                "rvprop": "content",
+                "rvslots": "main",
+                "titles": zh_daily_picture.daily_picture_page_title(now),
+            },
+        )
+        page = self._first_query_page(data)
+        revisions = page.get("revisions") if isinstance(page.get("revisions"), list) else []
+        revision = revisions[0] if revisions and isinstance(revisions[0], dict) else {}
+        main_slot = (revision.get("slots") or {}).get("main") or {}
+        file_name, content = zh_daily_picture.daily_picture_fields(main_slot.get("content"))
+        if not file_name:
+            return {}
+        caption = self._zh_caption_text(content)
+        if not zh_daily_picture.contains_cjk(caption):
+            return {}
+        feed_url = self._image_url(feed_image)
+        if feed_url and zh_daily_picture.file_key(file_name) == zh_daily_picture.file_key(self._page_title(feed_image)):
+            return {"image_caption": caption}
+        # Chinese Wikipedia occasionally features a different picture; show that
+        # picture so the caption describes what is on screen.
+        info = self._fetch_zh_image_info(file_name)
+        if not info:
+            return {}
+        return {**info, "image_caption": caption, "image_source": "daily_image"}
+
+    def _zh_caption_text(self, wikitext):
+        """Simplified-Chinese plain text for daily-picture caption wikitext."""
+        wikitext = zh_daily_picture.without_references(wikitext)
+        try:
+            data = self._post_json(
+                ZH_ACTION_API_URL,
+                data={
+                    "action": "parse",
+                    "format": "json",
+                    "formatversion": "2",
+                    "contentmodel": "wikitext",
+                    "prop": "text",
+                    "text": wikitext,
+                    "variant": ZH_SIMPLIFIED_VARIANT,
+                    "disablelimitreport": "1",
+                    "disableeditsection": "1",
+                    "disabletoc": "1",
+                },
+            )
+            html_text = data.get("parse", {}).get("text") if isinstance(data, dict) else ""
+            html_text = re.sub(r"<(style|script)\b.*?</\1\s*>", "", str(html_text or ""),
+                               flags=re.IGNORECASE | re.DOTALL)
+            text = self._html_text(html_text)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("DailyWikiPage zh daily picture caption parse failed: %s", exc)
+            text = ""
+        return text or self._to_simplified_cn(zh_daily_picture.strip_caption_markup(wikitext))
+
+    def _fetch_zh_image_info(self, file_name):
+        data = self._get_json(
+            ZH_ACTION_API_URL,
+            params={
+                "action": "query",
+                "format": "json",
+                "formatversion": "2",
+                "titles": f"File:{file_name}",
+                "prop": "imageinfo",
+                "iiprop": "url|extmetadata",
+                "iiurlwidth": "960",
+                "iiextmetadatafilter": "Artist",
+                "redirects": "1",
+            },
+        )
+        page = self._first_query_page(data)
+        infos = page.get("imageinfo") if isinstance(page.get("imageinfo"), list) else []
+        info = infos[0] if infos and isinstance(infos[0], dict) else {}
+        url = info.get("thumburl") or info.get("url")
+        if not url:
+            return {}
+        artist = ((info.get("extmetadata") or {}).get("Artist") or {}).get("value")
+        return {
+            "image_url": str(url),
+            "daily_image_title": self._clean_text(page.get("title")) or f"File:{file_name}",
+            "image_credit": self._clean_text(artist),
+        }
+
+    def _first_query_page(self, data):
+        pages = data.get("query", {}).get("pages") if isinstance(data, dict) else None
+        return pages[0] if isinstance(pages, list) and pages and isinstance(pages[0], dict) else {}
+
     def _render_page(self, dimensions, payload, settings, now):
         from plugins.daily_wiki_page.swiss_renderer import render_page
 
