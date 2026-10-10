@@ -28,8 +28,11 @@ from utils.http_client import get_http_client, get_http_session
 logger = logging.getLogger(__name__)
 
 DISCOVERY_EVENTS_URL = "https://app.ticketmaster.com/discovery/v2/events.json"
-STATE_VERSION = "ticketmaster-events-v1"
+# v2 drops Ticketmaster's generic category art, so v1 caches are refetched.
+STATE_VERSION = "ticketmaster-events-v2"
 MAX_ITEMS = 5
+# Repeat showtimes collapse into one listing, so ask for enough rows to fill.
+DISCOVERY_ROW_FLOOR = 20
 DEFAULT_CACHE_HOURS = 3
 DISCOVERY_JSON_MAX_BYTES = 2 * 1024 * 1024
 STATE_CACHE_BUDGET = CacheBudget(
@@ -60,6 +63,18 @@ REQUEST_HEADERS = {
 
 class MissingTicketmasterCredentials(RuntimeError):
     pass
+
+
+def _classification_name(node):
+    """Ticketmaster's literal "Undefined" category carries no information."""
+    name = _clean_text(((node or {}).get("name") or ""))
+    return "" if name.casefold() == "undefined" else name
+
+
+def _is_category_art(item, url):
+    """Generic segment art (swirls, bokeh) is flagged and served from /dam/c/."""
+    flag = item.get("fallback")
+    return flag is True or str(flag).strip().lower() == "true" or "/dam/c/" in url
 
 
 @dataclass
@@ -293,7 +308,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         days_ahead = self._bounded_int(settings.get("daysAhead"), 7, 1, 180)
         params = {
             "apikey": api_key,
-            "size": str(max(items_count * 2, 10)),
+            "size": str(max(items_count * 4, DISCOVERY_ROW_FLOOR)),
             "sort": "date,asc",
             "unit": "miles",
             "radius": str(self._bounded_int(settings.get("radiusMiles"), 50, 1, 250)),
@@ -333,9 +348,11 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         rows = (((data or {}).get("_embedded") or {}).get("events") or [])
         events = []
         seen = set()
+        listings = {}
         for row in rows:
             title = _clean_text(row.get("name") or "")
-            if not title:
+            # Venues list their private bookings as "Private Event"; nobody can attend them.
+            if not title or title.casefold().startswith("private event"):
                 continue
             event_id = _clean_text(row.get("id") or "")
             dates = row.get("dates") or {}
@@ -345,28 +362,37 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                 continue
 
             venue = (((row.get("_embedded") or {}).get("venues") or [{}])[0]) or {}
-            city = _clean_text(((venue.get("city") or {}).get("name") or ""))
-            state_code = _clean_text(((venue.get("state") or {}).get("stateCode") or ""))
-            classification = ((row.get("classifications") or [{}])[0]) or {}
-            segment = _clean_text(((classification.get("segment") or {}).get("name") or ""))
-            genre = _clean_text(((classification.get("genre") or {}).get("name") or ""))
-            image_url = self._best_image_url(row.get("images") or [])
-            key = event_id or f"{title}|{start.get('localDate') or ''}|{venue.get('name') or ''}"
+            local_date = _clean_text(start.get("localDate") or "")
+            key = event_id or f"{title}|{local_date}|{venue.get('name') or ''}"
             if key in seen:
                 continue
             seen.add(key)
+            # Rows arrive in date order, so a repeat of a listed show is a later showtime.
+            listing = (title.casefold(), _clean_text(venue.get("name") or "").casefold(), local_date)
+            if listing in listings:
+                listed = listings[listing]
+                listed.extra["more_showtimes"] = listed.extra.get("more_showtimes", 0) + 1
+                continue
+            if len(events) >= items_count:
+                continue
 
+            classification = ((row.get("classifications") or [{}])[0]) or {}
+            image_url = self._event_artwork_url(row, venue)
+            local_time = _clean_text(start.get("localTime") or "")
+            if start.get("noSpecificTime") or start.get("timeTBA"):
+                # Ticketmaster fills these with 00:00, which is not a real start time.
+                local_time = ""
             event = TicketmasterEvent(
                 rank=len(events) + 1,
                 title=title,
                 event_id=event_id,
-                local_date=_clean_text(start.get("localDate") or ""),
-                local_time=_clean_text(start.get("localTime") or ""),
+                local_date=local_date,
+                local_time=local_time,
                 venue_name=_clean_text(venue.get("name") or ""),
-                city=city,
-                state_code=state_code,
-                segment=segment,
-                genre=genre,
+                city=_clean_text(((venue.get("city") or {}).get("name") or "")),
+                state_code=_clean_text(((venue.get("state") or {}).get("stateCode") or "")),
+                segment=_classification_name(classification.get("segment")),
+                genre=_classification_name(classification.get("genre")),
                 status=status,
                 price=self._price_text(row.get("priceRanges") or []),
                 distance=self._distance_text(row.get("distance")),
@@ -375,26 +401,33 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                 poster_url=image_url,
                 extra={"timezone": start.get("timezone") or "", "source": "ticketmaster"},
             )
+            listings[listing] = event
             events.append(event)
-            if len(events) >= items_count:
-                break
         return events
+
+    def _event_artwork_url(self, row, venue):
+        """Prefer the event's own art, then its attraction's, then the venue's."""
+        attractions = ((row.get("_embedded") or {}).get("attractions") or [])
+        for images in [row.get("images") or []] + [
+            (attraction or {}).get("images") or [] for attraction in attractions
+        ] + [venue.get("images") or []]:
+            url = self._best_image_url(images)
+            if url:
+                return url
+        return ""
 
     def _best_image_url(self, images):
         best = None
         best_score = -1
         for item in images:
             url = _clean_text(item.get("url") or "")
-            if not url:
+            if not url or _is_category_art(item, url):
                 continue
             width = self._safe_int(item.get("width"), 0)
             height = self._safe_int(item.get("height"), 0)
-            ratio = _clean_text(item.get("ratio") or "")
             score = width * height
-            if ratio == "16_9":
+            if _clean_text(item.get("ratio") or "") == "16_9":
                 score += 2_000_000
-            if "RETINA" in _clean_text(item.get("fallback") or "").upper():
-                score += 200_000
             if score > best_score:
                 best = url
                 best_score = score
@@ -736,6 +769,9 @@ class TicketmasterEvents(BoxOfficeTopMovies):
             pieces.append(event.segment)
         if event.genre and event.genre.lower() != event.segment.lower():
             pieces.append(event.genre)
+        more = (event.extra or {}).get("more_showtimes")
+        if more:
+            pieces.append(f"+{more} more time{'s' if more > 1 else ''}")
         if event.distance:
             pieces.append(event.distance)
         return " / ".join(pieces)
