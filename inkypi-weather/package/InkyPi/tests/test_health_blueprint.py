@@ -1,3 +1,4 @@
+import logging
 import time
 
 from flask import Flask
@@ -218,6 +219,28 @@ def test_readyz_does_not_infer_stalls_from_age_or_unconfirmed_progress(progress)
     assert response.status_code == 200
     assert response.get_json()["status"] == "ready"
     assert response.get_json()["error_codes"] == []
+
+
+def test_readyz_requests_never_write_readiness_transition_logs(caplog):
+    # Transitions are journaled by the periodic health collector; probes that
+    # poll /readyz must not add a log line per request.
+    caplog.set_level(logging.DEBUG)
+    app, publisher = _app_with_health()
+    client = app.test_client()
+    client.get("/readyz")
+    publisher.publish_component(
+        "display",
+        {"state": "display_unknown", "commit_id": "pending"},
+    )
+
+    responses = [client.get("/readyz") for _ in range(3)]
+
+    assert [response.status_code for response in responses] == [503, 503, 503]
+    assert not [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Readiness status changed")
+    ]
 
 
 def test_readyz_keeps_fatal_display_failure_above_progress_degradation():

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 import logging
 import math
+import re
 import threading
 import time
 from types import MappingProxyType
@@ -319,6 +320,84 @@ class ReadinessEvaluator:
         return number if math.isfinite(number) else None
 
 
+# Higher is worse; anything outside the evaluator's vocabulary ranks worst.
+_READINESS_STATUS_RANK = {"ready": 0, "degraded": 1, "starting": 2, "not_ready": 3}
+_READINESS_LOG_TOKEN = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
+def _readiness_log_token(value, *, fallback):
+    if isinstance(value, str) and _READINESS_LOG_TOKEN.fullmatch(value):
+        return value
+    return fallback
+
+
+def _readiness_log_list(codes):
+    return ",".join(codes) if codes else "none"
+
+
+class ReadinessTransitionLog:
+    """Journal each readiness verdict change once, with stable codes only.
+
+    Anonymous /readyz callers see only the status, so a sustained
+    ``degraded`` used to leave no trace for operators or audits. Logging the
+    status and its reason codes on change, and never on repeats, keeps the
+    journal quiet while making every new degradation visible. Only tokens
+    from the evaluator's fixed vocabulary are logged; component values,
+    paths, settings and administrator-only detail never reach the journal.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._last = None
+
+    def observe(self, result) -> bool:
+        """Log ``result`` if it differs from the last verdict; return whether it did."""
+
+        status = _readiness_log_token(result.status, fallback="unknown")
+        codes = tuple(
+            dict.fromkeys(
+                _readiness_log_token(code, fallback="unrecognized_code")
+                for code in result.error_codes
+            )
+        )
+        with self._lock:
+            previous = self._last
+            if previous is None and status == "starting":
+                # The startup grace is expected on every boot. Wait for the
+                # first settled verdict; it becomes not_ready if grace expires.
+                return False
+            if (
+                previous is not None
+                and previous.status == status
+                and set(previous.error_codes) == set(codes)
+            ):
+                return False
+            self._last = ReadinessResult(status=status, error_codes=codes)
+            previous_status = "startup" if previous is None else previous.status
+            previous_codes = () if previous is None else previous.error_codes
+            added = tuple(code for code in codes if code not in previous_codes)
+            removed = tuple(code for code in previous_codes if code not in codes)
+            worst_rank = len(_READINESS_STATUS_RANK)
+            worsened = status != "ready" and (
+                previous is None
+                or bool(added)
+                or _READINESS_STATUS_RANK.get(status, worst_rank)
+                > _READINESS_STATUS_RANK.get(previous_status, worst_rank)
+            )
+            # Log under the lock so journal order always matches state order.
+            logger.log(
+                logging.WARNING if worsened else logging.INFO,
+                "Readiness status changed. | status: %s | previous_status: %s | "
+                "error_codes: %s | added: %s | removed: %s",
+                status,
+                previous_status,
+                _readiness_log_list(codes),
+                _readiness_log_list(added),
+                _readiness_log_list(removed),
+            )
+            return True
+
+
 class HealthCollector:
     """Sample mutable runtime components away from HTTP request threads."""
 
@@ -334,6 +413,7 @@ class HealthCollector:
         cache_manager=None,
         clock=time.monotonic,
         interval_seconds=1.0,
+        readiness_evaluator=None,
     ):
         self.publisher = publisher
         self.refresh_task = refresh_task
@@ -344,6 +424,13 @@ class HealthCollector:
         self.cache_manager = cache_manager
         self._clock = clock
         self.interval_seconds = max(0.1, float(interval_seconds))
+        self.readiness_evaluator = (
+            ReadinessEvaluator()
+            if readiness_evaluator is None
+            else readiness_evaluator
+        )
+        self.readiness_log = ReadinessTransitionLog()
+        self._readiness_check_failed = False
         self._queue_full_since = None
         self._stop_event = threading.Event()
         self._thread = None
@@ -364,7 +451,35 @@ class HealthCollector:
             "cache_lifecycle": cache_lifecycle,
             "disk": self._disk_component(cache_lifecycle),
         }
-        return self.publisher.publish_components(components)
+        snapshot = self.publisher.publish_components(components)
+        self._observe_readiness(snapshot)
+        return snapshot
+
+    def _observe_readiness(self, snapshot):
+        """Journal readiness changes from the periodic path, not per request.
+
+        The collector runs whether or not anyone polls /readyz, so evaluating
+        here records a degradation even when no probe is watching.
+        """
+
+        try:
+            result = self.readiness_evaluator.evaluate(
+                snapshot,
+                now_monotonic=self.publisher.now_monotonic(),
+            )
+            self.readiness_log.observe(result)
+        except Exception as error:
+            # Publishing already succeeded; report a broken check once per
+            # failure streak instead of on every collection tick, and only by
+            # type so exception text cannot carry component values.
+            if not self._readiness_check_failed:
+                logger.warning(
+                    "Readiness transition check failed. | error_code: %s",
+                    type(error).__name__,
+                )
+            self._readiness_check_failed = True
+            return
+        self._readiness_check_failed = False
 
     def start(self):
         with self._thread_lock:
