@@ -3809,7 +3809,13 @@ def test_persistent_hard_disk_blocks_renderer_before_any_state_mutation(
     assert device_config.refresh_info.to_dict() == before_anchor
     assert device_config.config == before_theme
     assert task.retry_registry.snapshot() == before_retry
-    assert task.scheduler_state.snapshot() == before_scheduler
+    after_scheduler = task.scheduler_state.snapshot()
+    # Only the liveness beat moves: the worker withdrew the command deadline.
+    assert after_scheduler.heartbeat_monotonic == clock.monotonic()
+    assert replace(
+        after_scheduler,
+        heartbeat_monotonic=before_scheduler.heartbeat_monotonic,
+    ) == before_scheduler
 
 
 def test_display_cache_is_allowed_while_disk_remains_hard(monkeypatch):
