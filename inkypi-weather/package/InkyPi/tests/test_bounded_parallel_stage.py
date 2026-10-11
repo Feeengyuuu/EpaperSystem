@@ -777,3 +777,21 @@ def test_oversized_worker_artifact_is_rejected_before_parent_reads_it(
     monkeypatch.setattr(Path, "read_bytes", refuse_unbounded_read)
     with pytest.raises(InvalidImageWorkset, match="result byte boundary"):
         stage_module._validate_artifact(artifact, payload, tmp_path)
+
+
+def test_parallel_child_loads_service_logging_before_any_work(monkeypatch):
+    # A spawned stage child does not inherit the parent's handlers; without the
+    # service config its warnings fall through logging.lastResort.
+    calls = []
+
+    class Configured(Exception):
+        pass
+
+    def configure():
+        calls.append("configured")
+        raise Configured
+
+    monkeypatch.setattr(stage_module, "_configure_child_logging", configure)
+    with pytest.raises(Configured):
+        stage_module._parallel_child_main({}, 1, "run", None, None, None)
+    assert calls == ["configured"]

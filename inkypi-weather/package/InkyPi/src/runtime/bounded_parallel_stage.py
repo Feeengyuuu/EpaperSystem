@@ -23,7 +23,7 @@ from uuid import uuid4
 
 from PIL import Image, ImageOps
 
-from .long_task_executor import InstanceIdentity
+from .long_task_executor import InstanceIdentity, _configure_child_logging
 from .refresh_contracts import TaskCancelled, TaskContext
 from .resource_deferral import ResourcePressureDeferred
 from .resource_governor import ResourceLease, RuntimeResourceGovernor
@@ -848,6 +848,7 @@ def _parallel_child_main(
     dispatch_event,
     sender,
 ) -> None:
+    _configure_child_logging()
     artifacts: list[Mapping[str, Any]] = []
     worker_thread_ids: set[int] = set()
     thread_ids_lock = threading.Lock()

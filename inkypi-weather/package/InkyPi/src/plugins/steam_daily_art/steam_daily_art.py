@@ -61,6 +61,14 @@ STEAM_MEDIA_HOST_SUFFIXES = (
 )
 
 
+class _OptionalMediaUnavailable(RuntimeError):
+    """Optional media is missing upstream or still inside its retry window."""
+
+    def __init__(self, message, *, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class SteamDailyArt(BasePlugin):
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
@@ -894,6 +902,10 @@ class SteamDailyArt(BasePlugin):
                 if self._is_not_found_error(e):
                     self._remember_optional_media_negative(url)
                     logger.info("Optional Steam logo candidate is unavailable: %s", url)
+                elif isinstance(e, _OptionalMediaUnavailable):
+                    # The durable retry marker bounds the next attempt, and the
+                    # failure that wrote it was reported when it happened.
+                    logger.info("Optional Steam logo candidate is in retry backoff: %s", url)
                 else:
                     logger.warning(f"Steam logo candidate failed: {url} | {e}")
 
@@ -947,13 +959,21 @@ class SteamDailyArt(BasePlugin):
 
     def _download_logo(self, url):
         path = Path(self._cache_dir()) / ("logo_" + hashlib.sha256(url.encode("utf-8")).hexdigest() + ".png")
+        # cached_resource_image keeps only a retry marker for a failed fetch;
+        # remember the cause so a missing logo is not reported like a fault.
+        attempt = {"started": False, "error": None}
 
         def fetch():
-            payload = self._download_media_bytes(url, max_bytes=MAX_MEDIA_BYTES, timeout=30)
-            image = safe_open_image(BytesIO(payload), limits=ImageLimits(
-                max_bytes=MAX_MEDIA_BYTES, max_width=8192, max_height=8192,
-                max_pixels=32_000_000,
-            )).convert("RGBA")
+            attempt["started"] = True
+            try:
+                payload = self._download_media_bytes(url, max_bytes=MAX_MEDIA_BYTES, timeout=30)
+                image = safe_open_image(BytesIO(payload), limits=ImageLimits(
+                    max_bytes=MAX_MEDIA_BYTES, max_width=8192, max_height=8192,
+                    max_pixels=32_000_000,
+                )).convert("RGBA")
+            except Exception as error:
+                attempt["error"] = error
+                raise
             image.thumbnail((1600, 900), Image.Resampling.LANCZOS)
             image.info["resource_downloaded_bytes"] = len(payload)
             return image
@@ -962,9 +982,20 @@ class SteamDailyArt(BasePlugin):
         prune_resource_images(path.parent, prefixes=("logo_",), max_files=128,
                               max_bytes=24 * 1024 * 1024, max_age=60 * 24 * 3600,
                               label="steam_logos", protected=(path,))
-        if image is None:
-            raise RuntimeError("Optional Steam logo is unavailable or in retry backoff")
-        return image
+        if image is not None:
+            return image
+        # Drop the stored exception so its traceback (and the payload held by
+        # the fetch frame) is not kept alive by this closure state.
+        error = attempt.pop("error", None)
+        if not attempt["started"]:
+            raise _OptionalMediaUnavailable("Optional Steam logo is in retry backoff")
+        if error is not None and self._is_not_found_error(error):
+            raise _OptionalMediaUnavailable(
+                "Optional Steam logo is missing upstream",
+                status_code=404,
+            ) from error
+        detail = f"{type(error).__name__}: {error}" if error is not None else "invalid media"
+        raise RuntimeError(f"Optional Steam logo download failed: {detail}") from error
 
     def _download_media_bytes(self, url, *, max_bytes, timeout):
         policy = get_ssrf_policy()

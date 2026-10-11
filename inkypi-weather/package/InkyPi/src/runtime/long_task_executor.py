@@ -8,11 +8,13 @@ from dataclasses import dataclass, field
 import importlib
 import errno
 import logging
+import logging.config
 import math
 import multiprocessing
 import os
 import queue
 import signal
+import sys
 import threading
 import time
 from typing import Any, Callable, Mapping
@@ -41,6 +43,14 @@ MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 MAX_RESULT_BYTES = 32 * 1024 * 1024
 MAX_PRIMITIVE_ITEMS = 20_000
 MAX_PRIMITIVE_DEPTH = 32
+# The service process configures logging from this file in inkypi.py.
+_SERVICE_LOGGING_CONF = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "config",
+    "logging.conf",
+)
+_SERVICE_LOG_FORMAT = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+_SERVICE_LOG_DATEFMT = "%H:%M:%S"
 
 _CURRENT_TASK_CONTEXT: ContextVar[TaskContext | None] = ContextVar(
     "inkypi_long_task_context",
@@ -284,6 +294,34 @@ def _resolve_task(value: Any) -> Callable[[Any, Any], Any]:
     raise TypeError("isolated tasks must be callables or 'module:callable' strings")
 
 
+def _configure_child_logging() -> None:
+    """Give a spawned child the service log format instead of lastResort.
+
+    A spawned interpreter does not inherit the parent's logging setup, so its
+    warnings lost their level, logger and time, and INFO records vanished.
+    In-process callers and forked children keep the handlers they already have.
+    """
+
+    root = logging.getLogger()
+    if multiprocessing.parent_process() is None or root.handlers:
+        return
+    try:
+        logging.config.fileConfig(
+            _SERVICE_LOGGING_CONF,
+            disable_existing_loggers=False,
+        )
+    except Exception:
+        # Logging setup must never fail the isolated task itself.
+        if root.handlers:
+            return
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(
+            logging.Formatter(_SERVICE_LOG_FORMAT, _SERVICE_LOG_DATEFMT)
+        )
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+
+
 def _child_main(
     task,
     payload,
@@ -293,6 +331,7 @@ def _child_main(
     sender,
 ) -> None:
     try:
+        _configure_child_logging()
         _enter_long_task_child_process_group()
         if long_task_child_process_group_active():
             process_group_ready_event.set()

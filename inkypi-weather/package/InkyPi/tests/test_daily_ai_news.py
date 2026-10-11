@@ -2068,3 +2068,133 @@ def test_daily_ai_news_cold_theme_render_does_not_create_cache_tree(
         / "cache"
         / "data-writer.json"
     ).is_file()
+
+
+def _freeze_daily_ai_news_clock(monkeypatch):
+    moment = {"value": (2026, 10, 8, 7, 30)}
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(*moment["value"])
+            return tz.localize(value) if tz is not None else value
+
+    monkeypatch.setattr(daily_ai_news_module, "datetime", FrozenDateTime)
+    return moment
+
+
+def _night_theme():
+    return _canonical_theme(
+        "night",
+        background=(7, 9, 12),
+        panel=(22, 26, 32),
+        ink=(245, 246, 248),
+        muted=(178, 182, 190),
+        rule=(58, 64, 72),
+        accent=(76, 190, 238),
+    )
+
+
+def _seed_scheduled_daily_brief(monkeypatch, plugin, moment, settings):
+    """Run the 07:30 DATA refresh once against fixed RSS items."""
+
+    items = [
+        {
+            "source": "中国新闻网要闻" if index < 4 else "BBC世界",
+            "source_section": "mainland" if index < 4 else "world",
+            "title": f"午夜追赶测试新闻 {index}",
+            "summary": f"午夜追赶测试摘要 {index}",
+            "published": "",
+            "link": "",
+        }
+        for index in range(8)
+    ]
+    monkeypatch.setattr(plugin, "_fetch_items", lambda *_args: items)
+    monkeypatch.setattr(plugin, "_fetch_market_snapshot", lambda *_args: {})
+    monkeypatch.setattr(
+        daily_ai_news_module,
+        "write_context",
+        lambda *_args, **_kwargs: True,
+    )
+    moment["value"] = (2026, 10, 8, 7, 30)
+    plugin.generate_image(settings, _ThemeDeviceConfig())
+
+
+def _forbid_daily_ai_news_side_effects(monkeypatch, plugin):
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("theme-only redraw must not fetch or write")
+
+    for name in (
+        "_fetch_items",
+        "_fetch_market_snapshot",
+        "_summarize_with_ai",
+        "_write_news_context",
+        "_record_recent_news_titles",
+        "_record_api_call",
+    ):
+        monkeypatch.setattr(plugin, name, forbidden)
+    monkeypatch.setattr(daily_ai_news_module, "_safe_json_write", forbidden)
+
+
+def test_theme_catchup_after_local_midnight_redraws_the_scheduled_brief(
+    monkeypatch,
+    tmp_path,
+):
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
+    moment = _freeze_daily_ai_news_clock(monkeypatch)
+    settings = {"feed_urls": daily_ai_news_module.DEFAULT_FEEDS, "max_items": "8"}
+    _seed_scheduled_daily_brief(monkeypatch, plugin, moment, settings)
+    cache_file = tmp_path / "brief.json"
+    before = cache_file.read_bytes()
+    _forbid_daily_ai_news_side_effects(monkeypatch, plugin)
+    night_settings = {
+        **settings,
+        "_theme_render_only": True,
+        "_inkypi_theme": _night_theme(),
+    }
+
+    moment["value"] = (2026, 10, 8, 23, 0)
+    before_midnight = plugin.generate_image(night_settings, _ThemeDeviceConfig())
+    # The next DATA refresh is not due until 07:30, so the catch-up must keep
+    # drawing the brief that is on screen instead of failing until morning.
+    moment["value"] = (2026, 10, 9, 1, 43)
+    after_midnight = plugin.generate_image(night_settings, _ThemeDeviceConfig())
+
+    assert after_midnight.size == before_midnight.size == (800, 480)
+    assert after_midnight.tobytes() == before_midnight.tobytes()
+    assert read_source_provenance(before_midnight).value == "fresh_cache"
+    assert read_source_provenance(after_midnight).value == "stale_cache"
+    assert cache_file.read_bytes() == before
+
+
+@pytest.mark.parametrize("change", ["settings", "summary_schema"])
+def test_theme_only_still_rejects_a_brief_built_for_other_settings(
+    monkeypatch,
+    tmp_path,
+    change,
+):
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
+    moment = _freeze_daily_ai_news_clock(monkeypatch)
+    settings = {"feed_urls": daily_ai_news_module.DEFAULT_FEEDS, "max_items": "8"}
+    _seed_scheduled_daily_brief(monkeypatch, plugin, moment, settings)
+    _forbid_daily_ai_news_side_effects(monkeypatch, plugin)
+    night_settings = {
+        **settings,
+        "_theme_render_only": True,
+        "_inkypi_theme": _night_theme(),
+    }
+    if change == "settings":
+        night_settings["max_items"] = "6"
+    else:
+        monkeypatch.setattr(
+            daily_ai_news_module,
+            "SUMMARY_SCHEMA_VERSION",
+            daily_ai_news_module.SUMMARY_SCHEMA_VERSION + "-next",
+        )
+
+    for value in ((2026, 10, 8, 23, 0), (2026, 10, 9, 1, 43)):
+        moment["value"] = value
+        with pytest.raises(RuntimeError, match="matching Daily AI News cache"):
+            plugin.generate_image(night_settings, _ThemeDeviceConfig())

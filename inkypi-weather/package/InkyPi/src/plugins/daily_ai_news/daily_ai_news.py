@@ -922,7 +922,21 @@ class DailyAINews(BasePlugin):
         cache_dir = self._cache_dir(create=False) if theme_render_only else self._cache_dir()
         cached = _safe_json_load(cache_dir / "brief.json", {})
         cache_matches = cached.get("cache_key") == cache_key
-        if theme_render_only and cached.get("brief") and not cache_matches:
+        # A theme redraw only recolors the brief on screen. After local midnight
+        # that is still the previous day's brief until the scheduled DATA
+        # refresh, but never one built for other settings or another schema.
+        if (
+            theme_render_only
+            and cached.get("brief")
+            and not cache_matches
+            and not self._brief_built_for_settings(
+                cached,
+                model,
+                feeds_text,
+                max_items,
+                settings.get("region_focus"),
+            )
+        ):
             raise RuntimeError(
                 "Theme-only redraw requires a matching Daily AI News cache."
             )
@@ -959,7 +973,16 @@ class DailyAINews(BasePlugin):
         cache_matches_current_settings = cached.get("cache_key") == cache_key
         if cached.get("brief") and (cache_only_render or (cache_matches_current_settings and not force_refresh)):
             cached["from_cache"] = True
-            if cache_only_render and not cache_matches_current_settings:
+            if cache_only_render and not (
+                cache_matches_current_settings
+                or self._brief_built_for_settings(
+                    cached,
+                    model,
+                    feeds_text,
+                    max_items,
+                    settings.get("region_focus"),
+                )
+            ):
                 cached["warning"] = "仅重渲染显示，复用现有新闻缓存。"
             return cached
         if theme_render_only:
@@ -1055,6 +1078,26 @@ class DailyAINews(BasePlugin):
     def _cache_key(self, date_key: str, model: str, feeds_text: str, max_items: int, region_focus: Any) -> str:
         raw = "\n".join([SUMMARY_SCHEMA_VERSION, date_key, model, feeds_text, str(max_items), str(region_focus or "")])
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _brief_built_for_settings(
+        self,
+        cached: dict[str, Any],
+        model: str,
+        feeds_text: str,
+        max_items: int,
+        region_focus: Any,
+    ) -> bool:
+        """Return whether a cached brief matches these settings on its own date."""
+        date_key = cached.get("date")
+        if not isinstance(date_key, str) or not date_key:
+            return False
+        return cached.get("cache_key") == self._cache_key(
+            date_key,
+            model,
+            feeds_text,
+            max_items,
+            region_focus,
+        )
 
     def _effective_feeds_text(self, feeds_text: Any) -> str:
         raw = str(feeds_text or "").strip()

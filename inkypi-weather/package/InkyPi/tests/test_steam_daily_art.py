@@ -1,5 +1,6 @@
 from datetime import datetime
 import json
+import logging
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -64,6 +65,130 @@ def test_missing_optional_logo_is_negatively_cached(tmp_path, monkeypatch):
     assert plugin._download_first_available_logo({"id": 7}) == (None, None)
 
     assert calls == ["https://cdn.example.test/missing-logo.png"]
+
+
+STEAM_LOGO_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/3883570/logo.png"
+
+
+def _plugin_with_logo_media(tmp_path, monkeypatch, media):
+    """Exercise the real logo cache path with only the HTTP fetch replaced."""
+
+    plugin = make_plugin(tmp_path, monkeypatch)
+    calls = []
+    plugin._logo_candidate_urls = lambda _item: [STEAM_LOGO_URL]
+
+    def download(url, *, max_bytes, timeout):
+        calls.append(url)
+        return media()
+
+    monkeypatch.setattr(plugin, "_download_media_bytes", download)
+    return plugin, calls
+
+
+def _steam_records(caplog):
+    return [
+        record
+        for record in caplog.records
+        if record.name == steam_daily_art_module.logger.name
+    ]
+
+
+def _raise_steam_status(status):
+    def media():
+        raise RuntimeError(f"Steam media request failed with status {status}")
+
+    return media
+
+
+def test_upstream_missing_logo_is_info_and_negatively_cached_through_resource_cache(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    plugin, calls = _plugin_with_logo_media(
+        tmp_path,
+        monkeypatch,
+        _raise_steam_status(404),
+    )
+    caplog.set_level(logging.INFO, logger=steam_daily_art_module.logger.name)
+
+    assert plugin._download_first_available_logo({"id": 3883570}) == (None, None)
+    assert plugin._download_first_available_logo({"id": 3883570}) == (None, None)
+
+    records = _steam_records(caplog)
+    assert calls == [STEAM_LOGO_URL]
+    assert plugin._optional_media_negative_hit(STEAM_LOGO_URL)
+    assert [record for record in records if record.levelno >= logging.WARNING] == []
+    assert [
+        record.getMessage()
+        for record in records
+        if record.levelno == logging.INFO and STEAM_LOGO_URL in record.getMessage()
+    ] == [f"Optional Steam logo candidate is unavailable: {STEAM_LOGO_URL}"]
+
+
+def test_logo_retry_backoff_after_restart_is_info_without_refetch(
+    tmp_path,
+    monkeypatch,
+    caplog,
+):
+    first, first_calls = _plugin_with_logo_media(
+        tmp_path,
+        monkeypatch,
+        _raise_steam_status(404),
+    )
+    assert first._download_first_available_logo({"id": 3883570}) == (None, None)
+    # A new process keeps the durable retry marker but not the memory cache.
+    restarted, restarted_calls = _plugin_with_logo_media(
+        tmp_path,
+        monkeypatch,
+        _raise_steam_status(404),
+    )
+    caplog.clear()
+    caplog.set_level(logging.INFO, logger=steam_daily_art_module.logger.name)
+
+    assert restarted._download_first_available_logo({"id": 3883570}) == (None, None)
+
+    records = _steam_records(caplog)
+    assert first_calls == [STEAM_LOGO_URL]
+    assert restarted_calls == []
+    assert [record for record in records if record.levelno >= logging.WARNING] == []
+    assert [
+        record.getMessage()
+        for record in records
+        if record.levelno == logging.INFO and STEAM_LOGO_URL in record.getMessage()
+    ] == [f"Optional Steam logo candidate is in retry backoff: {STEAM_LOGO_URL}"]
+
+
+@pytest.mark.parametrize(
+    ("media", "expected_detail"),
+    [
+        (_raise_steam_status(503), "status 503"),
+        (lambda: b"not an image", "UnidentifiedImageError"),
+    ],
+)
+def test_real_logo_download_failure_stays_warning_and_is_not_negatively_cached(
+    tmp_path,
+    monkeypatch,
+    caplog,
+    media,
+    expected_detail,
+):
+    plugin, calls = _plugin_with_logo_media(tmp_path, monkeypatch, media)
+    caplog.set_level(logging.INFO, logger=steam_daily_art_module.logger.name)
+
+    assert plugin._download_first_available_logo({"id": 3883570}) == (None, None)
+
+    warnings = [
+        record
+        for record in _steam_records(caplog)
+        if record.levelno >= logging.WARNING
+    ]
+    assert calls == [STEAM_LOGO_URL]
+    assert not plugin._optional_media_negative_hit(STEAM_LOGO_URL)
+    assert len(warnings) == 1
+    assert warnings[0].levelno == logging.WARNING
+    assert STEAM_LOGO_URL in warnings[0].getMessage()
+    assert expected_detail in warnings[0].getMessage()
 
 
 def test_missing_primary_art_candidate_is_negatively_cached_without_blocking_fallback(
