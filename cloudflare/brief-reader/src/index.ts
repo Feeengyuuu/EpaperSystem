@@ -8,6 +8,22 @@ export { PortalLedger } from "./ledger";
 const BRAND_HEAD = `<link rel="icon" href="/logo.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">`;
 
+// 32-bit FNV-1a of the shipped stylesheet and script. Pages reference both
+// with it, so a deployment reaches readers that never reload on their own
+// (the player swaps new editions in place and reloads when this changes).
+function contentVersion(content: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < content.length; index += 1) {
+    hash ^= content.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+const ASSET_VERSION = contentVersion(`${portalCss}\n${portalScript}`);
+const STYLESHEET = `<link rel="stylesheet" href="/portal.css?v=${ASSET_VERSION}">`;
+const SCRIPT = `<script src="/portal.js?v=${ASSET_VERSION}" defer></script>`;
+
 // Inline SVG keeps the strict CSP (no img data: URIs, no icon font). Media
 // glyphs are filled; utility glyphs are stroked.
 const FILLED_ICONS = {
@@ -22,6 +38,10 @@ const STROKED_ICONS = {
   shrink: '<path d="M9 4v3.5A1.5 1.5 0 0 1 7.5 9H4M20 9h-3.5A1.5 1.5 0 0 1 15 7.5V4M15 20v-3.5a1.5 1.5 0 0 1 1.5-1.5H20M4 15h3.5A1.5 1.5 0 0 1 9 16.5V20"/>',
   reveal: '<path d="m6 14.5 6-6 6 6"/>',
   conceal: '<path d="m6 9.5 6 6 6-6"/>',
+  // A landscape screen under a clockwise turn arrow.
+  rotate: '<rect x="3" y="10" width="14" height="10" rx="2"/><path d="M11.5 4.5a7.5 7.5 0 0 1 8 7"/><path d="m17.3 9.6 2.2 2.4 2.3-2.3"/>',
+  // A sun: the screen stays lit.
+  awake: '<circle cx="12" cy="12" r="3.6"/><path d="M12 3v1.8M12 19.2V21M3 12h1.8M19.2 12H21M5.6 5.6l1.3 1.3M17.1 17.1l1.3 1.3M5.6 18.4l1.3-1.3M17.1 6.9l1.3-1.3"/>',
 } as const;
 
 function icon(name: keyof typeof FILLED_ICONS | keyof typeof STROKED_ICONS): string {
@@ -52,7 +72,9 @@ const HTML_HEADERS = {
     "style-src 'self'",
   ].join("; "),
   "Content-Type": "text/html; charset=utf-8",
-  "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
+  // The player may enter fullscreen and keep the screen lit for long-running
+  // displays; every other device feature stays blocked.
+  "Permissions-Policy": "camera=(), fullscreen=(self), geolocation=(), microphone=(), screen-wake-lock=(self)",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
@@ -257,7 +279,7 @@ function loginPage(error: string | null = null, status = 200): Response {
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>登录 | EpaperSystem 简报</title>
-  <link rel="stylesheet" href="/portal.css">
+  ${STYLESHEET}
   ${BRAND_HEAD}
 </head>
 <body class="login-page">
@@ -374,20 +396,24 @@ function populatedReaderPage(release: ReaderRelease): Response {
   <meta name="robots" content="noindex,nofollow,noarchive">
   <meta name="theme-color" content="#050606">
   <title>${escapeHtml(release.playlist.title)} | EpaperSystem 简报</title>
-  <link rel="stylesheet" href="/portal.css">
+  ${STYLESHEET}
   ${BRAND_HEAD}
-  <script src="/portal.js" defer></script>
+  ${SCRIPT}
 </head>
 <body class="play-page">
-  <main id="main-content" class="play-shell is-chrome-hidden" data-autoplay data-playlist-id="${escapeHtml(release.playlist.slug)}" data-interval-ms="20000" data-poll-ms="${publicationPollMilliseconds(release)}" data-generation="${release.generation}">
+  <main id="main-content" class="play-shell is-chrome-hidden" data-autoplay data-playlist-id="${escapeHtml(release.playlist.slug)}" data-interval-ms="20000" data-poll-ms="${publicationPollMilliseconds(release)}" data-generation="${release.generation}" data-asset-version="${ASSET_VERSION}">
     <section class="slide-deck" aria-label="自动播放内容" data-slide-deck>${slides}</section>
     <nav class="play-dock" aria-label="播放控制" data-play-controls>
-      <div class="dock-status">
+      <div class="dock-status" data-dock-status>
         <p class="slide-position" aria-live="polite"><span class="slide-current" data-slide-current>1</span><span class="slide-total">/ <span data-slide-total>${release.items.length}</span></span></p>
         ${progress}
       </div>
       <div class="dock-buttons">
-        <button class="dock-button dock-fullscreen" type="button" data-fullscreen aria-pressed="false" aria-label="全屏显示" title="全屏显示">${icon("expand")}${icon("shrink")}</button>
+        <div class="dock-tools" role="group" aria-label="显示选项">
+          <button class="dock-button dock-tool dock-fullscreen" type="button" data-fullscreen aria-pressed="false" aria-label="全屏显示" title="全屏显示">${icon("expand")}${icon("shrink")}</button>
+          <button class="dock-button dock-tool dock-rotate" type="button" data-rotate-fullscreen aria-pressed="false" aria-label="旋转全屏" title="旋转全屏">${icon("rotate")}</button>
+          <button class="dock-button dock-tool dock-awake" type="button" data-keep-awake aria-pressed="false" aria-label="开启不息屏" title="开启不息屏">${icon("awake")}</button>
+        </div>
         <button class="dock-button" type="button" data-previous aria-label="上一页" title="上一页">${icon("previous")}</button>
         <button class="dock-button dock-button-primary" type="button" data-pause aria-pressed="false" aria-label="暂停播放" title="暂停播放">${icon("pause")}${icon("play")}</button>
         <button class="dock-button" type="button" data-next aria-label="下一页" title="下一页">${icon("next")}</button>
@@ -409,9 +435,9 @@ function readerPage(release: ReaderRelease | null): Response {
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
   <title>EpaperSystem 简报</title>
-  <link rel="stylesheet" href="/portal.css">
+  ${STYLESHEET}
   ${BRAND_HEAD}
-  <script src="/portal.js" defer></script>
+  ${SCRIPT}
 </head>
 <body class="empty-page">
   <main class="empty-reader" data-poll-ms="30000" data-generation="0">

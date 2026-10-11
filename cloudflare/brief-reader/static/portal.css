@@ -333,6 +333,14 @@ p {
   --accent: #7edcdf;
   --glass: rgb(18 23 24 / 66%);
   --glass-edge: rgb(255 255 255 / 11%);
+  /* Safe areas in the picture's own frame; the rotated frame remaps them. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  /* Layout below follows the player's own size, which is the rotated size
+   * when the picture is turned, not the device viewport. */
+  container: player / size;
   position: fixed;
   inset: 0;
   width: 100vw;
@@ -343,6 +351,28 @@ p {
   touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* Rotate to fullscreen without an orientation lock (iPhone Safari): the whole
+ * player turns 90° clockwise and fills the portrait screen along its long
+ * side. A device that is really turned to landscape is never rotated twice. */
+@media (orientation: portrait) {
+  .play-shell.is-rotated {
+    --safe-top: env(safe-area-inset-right, 0px);
+    --safe-right: env(safe-area-inset-bottom, 0px);
+    --safe-bottom: env(safe-area-inset-left, 0px);
+    --safe-left: env(safe-area-inset-top, 0px);
+    top: 0;
+    right: auto;
+    bottom: auto;
+    left: 100%;
+    width: 100vh;
+    width: 100dvh;
+    height: 100vw;
+    height: 100dvw;
+    transform: rotate(90deg);
+    transform-origin: top left;
+  }
 }
 
 .slide-deck {
@@ -370,6 +400,11 @@ p {
 
 .play-shell[data-direction="backward"] .publication-stage {
   animation-name: slide-backward;
+}
+
+/* A new edition swapped in place keeps the picture still. */
+.play-shell[data-direction="steady"] .publication-stage {
+  animation: none;
 }
 
 .legacy-png {
@@ -413,7 +448,7 @@ p {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px 28px;
-  padding: max(18px, env(safe-area-inset-top)) max(22px, env(safe-area-inset-right)) 56px max(22px, env(safe-area-inset-left));
+  padding: max(18px, var(--safe-top)) max(22px, var(--safe-right)) 56px max(22px, var(--safe-left));
   background: linear-gradient(to bottom, rgb(5 6 6 / 88%) 0%, rgb(5 6 6 / 58%) 52%, rgb(5 6 6 / 0%) 100%);
   transition:
     opacity var(--chrome-speed) var(--ease-out),
@@ -494,7 +529,7 @@ p {
 .play-dock {
   position: absolute;
   right: 0;
-  bottom: max(16px, calc(env(safe-area-inset-bottom) + 6px));
+  bottom: max(16px, calc(var(--safe-bottom) + 6px));
   left: 0;
   z-index: 12;
   display: grid;
@@ -593,11 +628,26 @@ p {
   animation-play-state: paused;
 }
 
+/* Narrow portrait screens: playback in the middle row, display options and
+ * the collapse button on the bottom row (the collapse button keeps the
+ * bottom-right corner it occupies when the dock is hidden). Wider players put
+ * everything on one row (see the container queries below). */
 .dock-buttons {
   display: grid;
   align-items: center;
   grid-template-columns: 1fr auto auto auto 1fr;
-  gap: 8px;
+  grid-template-areas:
+    ". previous play next ."
+    "tools tools tools tools toggle";
+  gap: 6px 8px;
+}
+
+.dock-tools {
+  display: flex;
+  grid-area: tools;
+  align-items: center;
+  justify-self: start;
+  gap: 4px;
 }
 
 .dock-button {
@@ -641,17 +691,80 @@ p {
   height: 26px;
 }
 
-.dock-fullscreen {
-  grid-column: 1;
-  justify-self: start;
+/* Display options and the collapse button: slightly smaller, still well
+ * above the 40px touch minimum. */
+.dock-tool,
+.dock-toggle {
+  width: 46px;
+  height: 46px;
+}
+
+.dock-tool .icon,
+.dock-toggle .icon {
+  width: 23px;
+  height: 23px;
+}
+
+.dock-tool {
+  color: rgb(242 246 246 / 84%);
+}
+
+.dock-tool[aria-pressed="true"] {
+  background: rgb(126 220 223 / 16%);
+  box-shadow: inset 0 0 0 1px rgb(126 220 223 / 28%);
+  color: var(--accent);
+}
+
+.dock-tool[aria-pressed="true"]:hover {
+  background: rgb(126 220 223 / 24%);
+}
+
+/* Keep-awake status dot: filled while the screen is held on, a ring while
+ * the browser waits for the next tap to grant it. */
+.dock-awake::after {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  content: "";
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity 160ms ease-out, transform 220ms var(--ease-out);
+}
+
+[data-keep-awake][data-wake-state="active"]::after {
+  background: var(--accent);
+  box-shadow: 0 0 0 2px rgb(18 23 24 / 90%), 0 0 8px rgb(126 220 223 / 75%);
+  opacity: 1;
+  transform: none;
+}
+
+[data-keep-awake][data-wake-state="pending"]::after {
+  border: 1.5px solid var(--accent);
+  background: rgb(18 23 24 / 90%);
+  opacity: 1;
+  transform: none;
+}
+
+.dock-tool[aria-disabled="true"] {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.dock-tool[aria-disabled="true"]:hover,
+.dock-tool[aria-disabled="true"]:active {
+  background: transparent;
+  transform: none;
 }
 
 .dock-buttons [data-previous] {
-  grid-column: 2;
+  grid-area: previous;
 }
 
 .dock-button-primary {
-  grid-column: 3;
+  grid-area: play;
   width: 66px;
   height: 66px;
   margin: 0 6px;
@@ -674,11 +787,11 @@ p {
 }
 
 .dock-buttons [data-next] {
-  grid-column: 4;
+  grid-area: next;
 }
 
 .dock-toggle {
-  grid-column: 5;
+  grid-area: toggle;
   justify-self: end;
 }
 
@@ -706,7 +819,7 @@ p {
  * corner, inside the letterbox on both phones and the wide vehicle screen. */
 
 .play-shell.is-chrome-hidden .play-dock {
-  right: max(16px, env(safe-area-inset-right));
+  right: max(16px, var(--safe-right));
   left: auto;
   width: auto;
   margin: 0;
@@ -804,9 +917,11 @@ p {
   40% { opacity: 1; transform: scale(1); }
 }
 
-/* ---------- Responsive ---------- */
+/* ---------- Responsive ----------
+ * Container queries measure the player itself, so a picture turned with CSS
+ * on a portrait phone gets the landscape layout of its rotated frame. */
 
-@media (max-width: 600px) {
+@container player (max-width: 600px) {
   .play-publication-heading {
     flex-direction: column;
     gap: 10px;
@@ -826,9 +941,9 @@ p {
   }
 }
 
-@media (max-width: 370px) {
+@container player (max-width: 370px) {
   .dock-buttons {
-    gap: 2px;
+    gap: 4px 2px;
   }
 
   .dock-button {
@@ -841,12 +956,35 @@ p {
     height: 58px;
     margin: 0 2px;
   }
+
+  .dock-tool,
+  .dock-toggle {
+    width: 42px;
+    height: 42px;
+  }
+
+  .dock-tools {
+    gap: 2px;
+  }
 }
 
-/* Phone in landscape: keep the dock compact so it covers less picture. */
-@media (max-height: 520px) {
+/* Wide enough for one row: display options left, playback centred, the
+ * collapse button right. */
+@container player (min-width: 600px) {
+  .play-dock {
+    width: min(620px, calc(100% - 24px));
+  }
+
+  .dock-buttons {
+    grid-template-areas: "tools previous play next toggle";
+  }
+}
+
+/* Phone in landscape (or a rotated picture): one compact row covers less of
+ * the picture. */
+@container player (max-height: 520px) {
   .play-publication-heading {
-    padding-top: max(12px, env(safe-area-inset-top));
+    padding-top: max(12px, var(--safe-top));
     padding-bottom: 36px;
   }
 
@@ -855,10 +993,14 @@ p {
   }
 
   .play-dock {
-    width: min(440px, calc(100% - 24px));
+    width: min(520px, calc(100% - 24px));
     gap: 6px;
     padding: 8px 10px 10px;
     border-radius: 24px;
+  }
+
+  .dock-buttons {
+    gap: 4px 6px;
   }
 
   .dock-button {
@@ -869,6 +1011,23 @@ p {
   .dock-button-primary {
     width: 54px;
     height: 54px;
+    margin: 0 4px;
+  }
+
+  .dock-tool,
+  .dock-toggle {
+    width: 42px;
+    height: 42px;
+  }
+
+  .dock-tool .icon,
+  .dock-toggle .icon {
+    width: 21px;
+    height: 21px;
+  }
+
+  .dock-tools {
+    gap: 2px;
   }
 
   .play-shell.is-chrome-hidden .dock-toggle {
@@ -877,10 +1036,16 @@ p {
   }
 }
 
+@container player (max-height: 520px) and (min-width: 500px) {
+  .dock-buttons {
+    grid-template-areas: "tools previous play next toggle";
+  }
+}
+
 /* Large touch screens (vehicle display): bigger targets at arm's length. */
-@media (min-width: 1100px) and (min-height: 700px) {
+@container player (min-width: 1100px) and (min-height: 700px) {
   .play-dock {
-    width: 580px;
+    width: 680px;
     padding: 14px 18px 16px;
   }
 
@@ -902,6 +1067,22 @@ p {
   .dock-button-primary .icon {
     width: 34px;
     height: 34px;
+  }
+
+  .dock-tool,
+  .dock-toggle {
+    width: 52px;
+    height: 52px;
+  }
+
+  .dock-tool .icon,
+  .dock-toggle .icon {
+    width: 25px;
+    height: 25px;
+  }
+
+  .dock-tools {
+    gap: 6px;
   }
 
   .play-shell.is-chrome-hidden .dock-toggle {

@@ -60,6 +60,46 @@ describe("vehicle reader assets", () => {
     expect(script).toContain("knownEtag !== nextEtag");
     expect(script).toContain("AbortController");
     expect(script).toContain("pollAgain");
+    expect(script).toContain('lock("landscape")');
+    expect(script).toContain("navigator?.wakeLock");
+    expect(script).toContain('request("screen")');
+    expect(script).toContain("DOMParser");
     expect(script).not.toContain("eval(");
+  });
+
+  it("serves the versioned stylesheet and script URLs with the same content and caching", async () => {
+    for (const path of ["/portal.css", "/portal.js"]) {
+      const plain = await SELF.fetch(`https://example.com${path}`);
+      const versioned = await SELF.fetch(`https://example.com${path}?v=0123abcd`);
+      expect(versioned.status).toBe(200);
+      expect(versioned.headers.get("cache-control")).toBe(plain.headers.get("cache-control"));
+      expect(versioned.headers.get("content-type")).toBe(plain.headers.get("content-type"));
+      expect(await versioned.text()).toBe(await plain.text());
+    }
+  });
+
+  it("derives the asset version from the shipped stylesheet and script", async () => {
+    const css = await (await SELF.fetch("https://example.com/portal.css")).text();
+    const script = await (await SELF.fetch("https://example.com/portal.js")).text();
+    // 32-bit FNV-1a over both files: any deployment that changes them changes the URL.
+    let hash = 0x811c9dc5;
+    const content = `${css}\n${script}`;
+    for (let index = 0; index < content.length; index += 1) {
+      hash ^= content.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+    const expected = (hash >>> 0).toString(16).padStart(8, "0");
+    const page = await (await SELF.fetch("https://example.com/")).text();
+    expect(page).toContain(`href="/portal.css?v=${expected}"`);
+  });
+
+  it("rotates the player with CSS only while the viewport is portrait", async () => {
+    const css = await (await SELF.fetch("https://example.com/portal.css")).text();
+    const portrait = /@media \(orientation: portrait\)\s*\{([\s\S]*?)\n\}/u.exec(css)?.[1] ?? "";
+    expect(portrait).toMatch(/\.play-shell\.is-rotated\s*\{[^}]*rotate\(90deg\)/u);
+    expect(portrait).toContain("100dvw");
+    expect(portrait).toContain("100dvh");
+    expect(css).toMatch(/\.play-shell\[data-direction="steady"\] \.publication-stage\s*\{[^}]*animation: none/u);
+    expect(css).toContain('[data-keep-awake][data-wake-state="active"]');
   });
 });

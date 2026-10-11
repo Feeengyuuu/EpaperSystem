@@ -41,6 +41,33 @@ starve its later items. A missing lazy-loaded image triggers an immediate
 catalog check so an open page can recover after old assets are retired. The
 empty reader also polls until its first complete edition is published.
 
+New editions are swapped into the open page instead of reloading it: the
+player fetches `/` again, parses it and replaces only the slides (and the
+progress segments when the item count changes). Fullscreen, the rotation and
+the screen wake lock therefore survive the roughly five-minute publication
+cadence. The page still reloads when the playlist changes, the catalog becomes
+empty, the response is not a 2xx page, the markup no longer matches, or a new
+Worker deployment changed `portal.css`/`portal.js` (pages reference both as
+`?v=<FNV-1a of their content>` and carry the same `data-asset-version`). A
+401 or the login form goes to `/login`; a network failure keeps the current
+picture and retries on the next check.
+
+For long-running displays the dock has two toggles next to fullscreen:
+
+- **旋转全屏** enters system fullscreen and locks landscape where the browser
+  allows it (Android Chrome). Without a lock (iPhone Safari has neither API)
+  the whole player turns 90° clockwise on a portrait screen; the stylesheet
+  applies that only while the viewport is portrait, so a device really turned
+  to landscape is never rotated twice. Swipes are mapped into the picture's
+  own direction. The choice is remembered (`epaper-portal-rotation`) and the
+  CSS rotation returns after a reload; system fullscreen needs a new tap.
+- **不息屏** holds a Screen Wake Lock (`epaper-portal-keep-awake`). It is asked
+  for again when the page becomes visible or on the next tap or key after a
+  refusal, never in a loop. Browsers without the API show it disabled.
+
+`Permissions-Policy` allows only `fullscreen=(self)` and
+`screen-wake-lock=(self)`; camera, geolocation and microphone stay blocked.
+
 Web publication currently excludes the `pixiv_r18_ranking` plugin before any
 thumbnail is fetched. All other active items keep their physical-playlist
 order, and the browser check cadence is derived only from those published
