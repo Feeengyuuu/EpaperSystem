@@ -1566,7 +1566,9 @@ def test_missing_token_renders_local_setup_without_network(tmp_path, monkeypatch
 
 
 def test_worker_stale_snapshot_stays_stale_and_non_cacheable(tmp_path, monkeypatch):
-    client = FakeHttpClient(_summary(freshness="stale_cache", connectivity="asleep"))
+    # An asleep/offline vehicle is healthy (see test_vehicle_status_resting.py);
+    # only the bridge's provider fallback reports the source as stale.
+    client = FakeHttpClient(_summary(freshness="stale_cache", connectivity="unavailable"))
     monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
     plugin = _plugin(tmp_path)
 
@@ -1718,7 +1720,7 @@ def test_new_usable_stale_snapshot_replaces_expired_local_cache(tmp_path, monkey
     expired["snapshot"]["captured_at"] = "2026-08-04T18:59:55Z"
     expired["vehicle"]["display_name"] = "Expired vehicle"
     plugin._write_cache({"fetched_at": now - 90_000, "summary": expired})
-    replacement = _summary(freshness="stale_cache", connectivity="asleep")
+    replacement = _summary(freshness="stale_cache", connectivity="unavailable")
     replacement["vehicle"]["display_name"] = "Current vehicle"
     monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
     monkeypatch.setattr(

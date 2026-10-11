@@ -49,7 +49,9 @@ def _forbidden(*_args, **_kwargs):
     pytest.fail("cached display must not use a provider, credentials, or source writes")
 
 
-def _vehicle_display(tmp_path, monkeypatch, *, source_age=72_000, redraw=True, theme="day", automatic=False):
+def _vehicle_display(
+    tmp_path, monkeypatch, *, source_age=72_000, redraw=True, theme="day", automatic=False, connectivity="offline",
+):
     data = _runtime_plugin_data("vehicle_status", "Vehicle", latest_refresh_time=None)
     data["plugin_settings"].update({"language": "en", "cacheSeconds": 900, "themeMode": "auto" if automatic else theme})
     playlist = _runtime_playlist(data)
@@ -79,7 +81,7 @@ def _vehicle_display(tmp_path, monkeypatch, *, source_age=72_000, redraw=True, t
     )
     plugin = _plugin(tmp_path / "source")
     plugin.config = plugin_config
-    payload = _summary(freshness="stale_cache", connectivity="offline")
+    payload = _summary(freshness="stale_cache", connectivity=connectivity)
     payload["snapshot"]["captured_at"] = (NOW - timedelta(seconds=source_age)).isoformat()
     payload["snapshot"]["age_seconds"] = source_age - 300
     plugin._write_cache({"fetched_at": NOW.timestamp() - 300, "summary": payload})
@@ -131,8 +133,20 @@ def _assert_data_and_caches_unchanged(case):
         assert case.formal_path.read_bytes() == case.formal_bytes
 
 
-def test_vehicle_display_uses_current_source_cache_and_advances_offline_age(tmp_path, monkeypatch):
-    case = _vehicle_display(tmp_path, monkeypatch)
+@pytest.mark.parametrize(
+    "connectivity,within_poll_window",
+    [
+        # The bridge confirmed this resting vehicle within cacheSeconds.
+        ("offline", SourceProvenance.FRESH_CACHE),
+        ("asleep", SourceProvenance.FRESH_CACHE),
+        # A provider fallback stays stale even inside the poll window.
+        ("unavailable", SourceProvenance.STALE_CACHE),
+    ],
+)
+def test_vehicle_display_uses_current_source_cache_and_advances_offline_age(
+    tmp_path, monkeypatch, connectivity, within_poll_window,
+):
+    case = _vehicle_display(tmp_path, monkeypatch, connectivity=connectivity)
     seen = []
     render = case.plugin._render_summary
 
@@ -141,16 +155,16 @@ def test_vehicle_display_uses_current_source_cache_and_advances_offline_age(tmp_
         return render(summary, *args, **kwargs)
 
     monkeypatch.setattr(case.plugin, "_render_summary", capture)
-    for elapsed in (0, 3600):
+    for elapsed, expected in ((0, within_poll_window), (3600, SourceProvenance.STALE_CACHE)):
         case.clock.advance(elapsed)
         result = _queue_and_process(case.task, _display_command(case))
         assert result.job.status is JobStatus.SUCCEEDED
-        assert seen[-1]["snapshot"]["vehicle_connectivity"] == "offline"
+        assert seen[-1]["snapshot"]["vehicle_connectivity"] == connectivity
         assert seen[-1]["snapshot"]["age_seconds"] == 72_000 + elapsed
-        assert seen[-1]["snapshot"]["freshness"] == "stale_cache"
+        assert seen[-1]["snapshot"]["freshness"] == expected.value
         image = case.display.calls[-1]["image"]
         assert image.getpixel((0, 0)) != OLD_PIXEL
-        assert case.display.calls[-1]["source_provenance"] is SourceProvenance.STALE_CACHE
+        assert case.display.calls[-1]["source_provenance"] is expected
         _assert_data_and_caches_unchanged(case)
     assert len(case.display.calls) == 2
 
@@ -245,8 +259,9 @@ def test_vehicle_rotation_without_formal_png_uses_local_view_or_warning(
     assert result.job.status is JobStatus.SUCCEEDED
     assert len(case.display.calls) == 1
     assert case.display.calls[0]["image"].getpixel((0, 0)) != OLD_PIXEL
+    # The offline source cache was confirmed by the bridge within cacheSeconds.
     assert case.display.calls[0]["source_provenance"] is (
-        SourceProvenance.LOCAL_FALLBACK if missing_source else SourceProvenance.STALE_CACHE
+        SourceProvenance.LOCAL_FALLBACK if missing_source else SourceProvenance.FRESH_CACHE
     )
     _assert_data_and_caches_unchanged(case)
 

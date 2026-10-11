@@ -245,6 +245,8 @@ _PREFERENCE_KEYS = {
 _MEASUREMENT_KEYS = {"value", "unit"}
 _FRESHNESS = {"live", "fresh_cache", "stale_cache"}
 _CONNECTIVITY = {"online", "asleep", "offline", "unknown", "unavailable", "in_service"}
+# The bridge never wakes a resting vehicle; "unavailable" marks a provider fallback.
+_RESTING_CONNECTIVITY = frozenset({"asleep", "offline"})
 _OPEN_CLOSURES = {
     "driver_front_door",
     "driver_rear_door",
@@ -2719,6 +2721,8 @@ def _same_cached_snapshot(cached, summary):
 
 
 def _bridge_provenance(summary):
+    if _is_resting_vehicle_snapshot(summary):
+        return SourceProvenance.FRESH_CACHE
     return {
         "live": SourceProvenance.LIVE,
         "fresh_cache": SourceProvenance.FRESH_CACHE,
@@ -2727,9 +2731,16 @@ def _bridge_provenance(summary):
 
 
 def _local_cache_provenance(summary):
-    if summary["snapshot"]["freshness"] == "stale_cache":
+    if summary["snapshot"]["freshness"] == "stale_cache" and not _is_resting_vehicle_snapshot(summary):
         return SourceProvenance.STALE_CACHE
     return SourceProvenance.FRESH_CACHE
+
+
+def _is_resting_vehicle_snapshot(summary):
+    # An asleep/offline vehicle is not woken, so the bridge marks its last snapshot
+    # stale even though nothing newer exists; only a provider fallback is unhealthy.
+    snapshot = summary["snapshot"]
+    return snapshot["freshness"] == "stale_cache" and snapshot["vehicle_connectivity"] in _RESTING_CONNECTIVITY
 
 
 def _log_bridge_failure(exc, *, has_cache):
