@@ -129,6 +129,7 @@ def test_degraded_ticketmaster_keeps_original_freshness_while_backing_off(tmp_pa
         task._record_degraded_data_result(command, SourceProvenance.STALE_CACHE, now)
     state = task.runtime_state.snapshot().instances[instance.instance_uuid].data
     assert state.last_success_at == succeeded
-    assert datetime.fromisoformat(state.next_retry_at) == now + timedelta(minutes=15)
-    assert task._snapshot_retry_delayed(instance, now + timedelta(minutes=14)) is True
-    assert task._snapshot_retry_delayed(instance, now + timedelta(minutes=15)) is False
+    # Display-safe degraded data waits min(30 minutes, saved interval), not the failure ladder.
+    assert datetime.fromisoformat(state.next_retry_at) == now + timedelta(minutes=30)
+    assert task._snapshot_retry_delayed(instance, now + timedelta(minutes=29)) is True
+    assert task._snapshot_retry_delayed(instance, now + timedelta(minutes=30)) is False

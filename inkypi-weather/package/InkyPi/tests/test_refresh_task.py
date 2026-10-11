@@ -20636,7 +20636,7 @@ def test_vehicle_invalid_degraded_retry_config_uses_safe_default(configured):
     assert task._degraded_data_retry_minimum_seconds(command) == 1_800
 
 
-def test_non_vehicle_degraded_data_result_keeps_generic_retry_backoff():
+def test_non_vehicle_degraded_data_result_uses_the_shared_retry_floor():
     tmp_path = make_test_dir("task6-non-vehicle-degraded-retry")
     current = datetime(2026, 7, 12, 8, 0, tzinfo=timezone.utc)
     playlist = _runtime_playlist(
@@ -20669,7 +20669,8 @@ def test_non_vehicle_degraded_data_result_keeps_generic_retry_backoff():
     )
 
     state = task.runtime_state.snapshot().instances[instance.instance_uuid]
-    assert state.data.next_retry_at == (current + timedelta(seconds=30)).isoformat()
+    # Every plugin waits min(30 minutes, its hourly saved interval).
+    assert state.data.next_retry_at == (current + timedelta(minutes=30)).isoformat()
 
 
 @pytest.mark.parametrize(

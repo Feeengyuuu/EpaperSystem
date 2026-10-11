@@ -117,6 +117,10 @@ from runtime.refresh_progress import RefreshProgressTracker
 from runtime.runtime_status import RuntimeStatusObserver
 from runtime.parallel_health import parallel_runtime_health_snapshot
 from runtime.retry_policy import source_retry_policy
+from runtime.expected_failures import ThemeCatchupNotCacheable, log_refresh_command_failure
+from runtime.degraded_data import (
+    DegradedDataEpisodes, degraded_data_retry_floor_seconds, saved_refresh_interval_seconds,
+)
 from runtime.long_task_executor import InstanceIdentity
 from runtime.plugin_execution import PluginExecutionContext
 from runtime.refresh_planning import (
@@ -191,11 +195,6 @@ DEFAULT_SPORTS_ISOLATED_LIVENESS_STARVATION_SECONDS = 30 * 60
 DEFAULT_SPORTS_ISOLATED_LIVENESS_WINDOW_SECONDS = 90
 DEFAULT_SPORTS_ISOLATED_LIVENESS_COOLDOWN_SECONDS = 5 * 60
 DEFAULT_SPORTS_BACKGROUND_LIVE_MIN_INTERVAL_SECONDS = 15 * 60
-# A stale Vehicle Bridge response is commonly the intentional no-wake path.
-# Probe it faster than the normal three-hour cadence without occupying the
-# background lane every five minutes for an indefinitely sleeping vehicle.
-DEFAULT_VEHICLE_STATUS_DEGRADED_RETRY_SECONDS = 30 * 60
-MAX_DEGRADED_DATA_RETRY_SECONDS = 24 * 60 * 60
 MAX_RESOURCE_PRESSURE_DEFERRAL_SECONDS = 5 * 60
 DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS = 5 * 60
 DEFAULT_ROTATION_PRESENTATION_WAIT_SECONDS = 60
@@ -614,6 +613,7 @@ class RefreshTask:
         self._due_counts = {lane.value: 0 for lane in RefreshLane}
         self._oldest_data_overdue_seconds = None
         self._refresh_progress = RefreshProgressTracker(clock=clock)
+        self._degraded_data_episodes = DegradedDataEpisodes(logger)
         self._lightweight_followup_remaining = 0
         self._background_scheduler_recheck_pending = False
         self._scheduler_due_wake_monotonic = None
@@ -4689,12 +4689,7 @@ class RefreshTask:
                 error=str(error),
             )
         except Exception as error:
-            logger.exception(
-                "Refresh command failed. | source: %s | intent: %s | plugin_id: %s",
-                command.source,
-                command.intent,
-                command.plugin_id,
-            )
+            log_refresh_command_failure(logger, command, error)
             abort = self._classify_command_abort(command, context)
             if abort is None:
                 try:
@@ -4809,14 +4804,27 @@ class RefreshTask:
             )
 
     def _record_resource_pressure_deferral(self, command, *, minimum_seconds=0):
+        fresh_display = command.payload.get("fresh_display") is True
+        if fresh_display and command.payload.get("automatic_rotation"):
+            # Hold a rejected fresh-display turn out for at least one rotation
+            # turn and past the starvation concession: when it is the round's
+            # only eligible member, a shorter gate re-reserves it before the
+            # concession can hand the panel to another member.
+            minimum_seconds = max(minimum_seconds, self._yielded_rotation_turn_seconds())
         retry_at = self._record_lane_resource_pressure_deferral(
             command.instance_uuid,
             command.intent,
             minimum_seconds=minimum_seconds,
         )
-        if command.payload.get("fresh_display") is True:
-            self._release_failed_rotation_reservation(command)
+        if fresh_display:
+            self._release_failed_rotation_reservation(command, defer=True)
         return retry_at
+
+    def _yielded_rotation_turn_seconds(self):
+        return max(
+            self._config_float("plugin_cycle_interval_seconds", DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS),
+            self._rotation_starvation_concession_seconds() + DEFAULT_IDLE_SCHEDULER_POLL_SECONDS,
+        )
 
     def _record_plugin_refresh_deferral(self, command, *, minimum_seconds):
         lane = self._lane_for_intent(command.intent)
@@ -5538,6 +5546,12 @@ class RefreshTask:
             settings_revision=instance.settings_revision,
             promoted_at=promoted_at,
         )
+        if lane is RefreshLane.DATA:
+            previous = self.runtime_state.snapshot().instances.get(
+                command.instance_uuid,
+                InstanceRuntimeState(),
+            )
+            self._degraded_data_episodes.record_success(command, previous.data)
         self.runtime_state.record_success(
             command.instance_uuid,
             promoted_at,
@@ -5595,49 +5609,21 @@ class RefreshTask:
             minimum_delay_seconds=retry_floor,
             maximum_delay_seconds=retry_ceiling,
         )
-        if retry_delay is not None and retry_floor > 0:
-            logger.info(
-                "Degraded DATA retry floor applied. | plugin_id: %s | "
-                "minimum_seconds: %.1f | retry_seconds: %.1f",
-                command.plugin_id,
-                retry_floor,
-                retry_delay,
-            )
+        self._degraded_data_episodes.record_degraded(
+            command, provenance_value, retry_floor, retry_delay,
+        )
         self.scheduler_state.set_next_attempt(
             self._clock() + self._scheduler_poll_seconds()
         )
 
     def _degraded_data_retry_minimum_seconds(self, command):
-        if command.plugin_id != "vehicle_status":
-            return 0.0
-        delay = self._config_float(
-            "vehicle_status_degraded_retry_seconds",
-            DEFAULT_VEHICLE_STATUS_DEGRADED_RETRY_SECONDS,
+        return degraded_data_retry_floor_seconds(
+            command.plugin_id, command.payload, self.device_config.get_config,
         )
-        if not math.isfinite(delay) or delay < 0:
-            delay = float(DEFAULT_VEHICLE_STATUS_DEGRADED_RETRY_SECONDS)
-        delay = min(delay, float(MAX_DEGRADED_DATA_RETRY_SECONDS))
-
-        interval = self._degraded_data_retry_maximum_seconds(command)
-        if interval is not None:
-            delay = min(delay, interval)
-        return delay
 
     @staticmethod
     def _degraded_data_retry_maximum_seconds(command):
-        if command.plugin_id != "vehicle_status":
-            return None
-        refresh = command.payload.get("refresh")
-        raw_interval = refresh.get("interval") if isinstance(refresh, Mapping) else None
-        if isinstance(raw_interval, bool):
-            return None
-        try:
-            interval = float(raw_interval)
-        except (TypeError, ValueError, OverflowError):
-            return None
-        if not math.isfinite(interval) or interval <= 0:
-            return None
-        return interval
+        return saved_refresh_interval_seconds(command.payload)
 
     def _record_runtime_success(self, instance_uuid, succeeded_at):
         try:
@@ -6188,17 +6174,26 @@ class RefreshTask:
             self._defer_scheduler_after_bookkeeping_error()
             return False
 
-    def _release_failed_rotation_reservation(self, command):
+    def _release_failed_rotation_reservation(self, command, *, defer=False):
         if not command.payload.get("automatic_rotation"):
             return False
         playlist_name = command.payload.get("playlist_name")
         if command.instance_uuid is None or not playlist_name:
             return False
-        released = (
-            self.device_config.get_playlist_manager().release_rotation_reservation(
+        manager = self.device_config.get_playlist_manager()
+        if defer and manager.defer_rotation_reservation(
+            command.instance_uuid,
+            expected_playlist_name=playlist_name,
+        ):
+            logger.warning(
+                "Deferred automatic rotation command moved behind the rest of its round. | plugin_id: %s | instance_uuid: %s",
+                command.plugin_id,
                 command.instance_uuid,
-                expected_playlist_name=playlist_name,
             )
+            return True
+        released = manager.release_rotation_reservation(
+            command.instance_uuid,
+            expected_playlist_name=playlist_name,
         )
         if released:
             logger.warning(
@@ -7102,7 +7097,7 @@ class RefreshTask:
                 command.intent is RefreshIntent.THEME_CATCHUP
                 and not promoted_for_intent
             ):
-                raise RuntimeError(
+                raise ThemeCatchupNotCacheable(
                     "theme catch-up did not produce an exact cacheable image"
                 )
 
