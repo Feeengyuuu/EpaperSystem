@@ -25,6 +25,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
+from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
@@ -184,6 +185,7 @@ CARD_META_Y_NUDGE = 2
 LIVE_CARD_SNAPSHOT_TITLE_MAX_SIZE = 10 + CARD_DETAIL_FONT_SIZE_NUDGE
 LIVE_CARD_TITLE_MAX_SIZE = 14 + CARD_DETAIL_FONT_SIZE_NUDGE
 COMPACT_CARD_DETAIL_MAX_SIZE = 8 + CARD_DETAIL_FONT_SIZE_NUDGE
+LIVE_QUEUE_MIN_NAME_WIDTH = 36
 STATUS_RANK = {
     "live": 0,
     "replay": 1,
@@ -1273,6 +1275,8 @@ class LiveRadar(BasePlugin):
                 theme,
                 max_items=live_queue_max,
                 avatar_cache_seconds=avatar_cache_seconds,
+                show_snapshot=show_snapshots,
+                snapshot_cache_seconds=snapshot_cache_seconds,
             )
         else:
             self._draw_snapshot_mini_section(
@@ -1644,7 +1648,19 @@ class LiveRadar(BasePlugin):
             more = f"+{len(cards) - len(visible)}"
             self._draw_text_right(draw, more, x + w, y, sub_font, theme["muted"])
 
-    def _draw_live_queue_section(self, image, draw, box, title, cards, theme, max_items, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
+    def _draw_live_queue_section(
+        self,
+        image,
+        draw,
+        box,
+        title,
+        cards,
+        theme,
+        max_items,
+        avatar_cache_seconds=AVATAR_CACHE_SECONDS,
+        show_snapshot=True,
+        snapshot_cache_seconds=90,
+    ):
         x, y, w, h = box
         sub_font = self._font(13, "bold")
         self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font)
@@ -1680,7 +1696,16 @@ class LiveRadar(BasePlugin):
             row = index % rows_used
             row_x = x + column * (col_w + col_gap)
             row_y = content_y + row * (row_h + gap)
-            self._draw_live_mini_row(image, draw, (row_x, row_y, col_w, row_h), card, theme, avatar_cache_seconds)
+            self._draw_live_mini_row(
+                image,
+                draw,
+                (row_x, row_y, col_w, row_h),
+                card,
+                theme,
+                avatar_cache_seconds,
+                show_snapshot=show_snapshot,
+                snapshot_cache_seconds=snapshot_cache_seconds,
+            )
 
         grid_capacity = rows_used * columns
         if columns > 1 and visible_count < grid_capacity and visible_count < max_items:
@@ -1990,7 +2015,17 @@ class LiveRadar(BasePlugin):
             "col_gap": col_gap,
         }
 
-    def _draw_live_mini_row(self, image, draw, box, card, theme, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
+    def _draw_live_mini_row(
+        self,
+        image,
+        draw,
+        box,
+        card,
+        theme,
+        avatar_cache_seconds=AVATAR_CACHE_SECONDS,
+        show_snapshot=True,
+        snapshot_cache_seconds=90,
+    ):
         x, y, w, h = box
         fill = theme["panel"]
         ink = theme["ink"]
@@ -2035,11 +2070,44 @@ class LiveRadar(BasePlugin):
             right -= icon_size + 4
 
         text_x = avatar_x + avatar_size + 8
+        if show_snapshot:
+            # Dense queue rows keep a 16:9 live snapshot next to the badges; drop it
+            # only when it would squeeze the streamer name below a readable width.
+            thumb_h = max(12, h - 6)
+            thumb_w = int(round(thumb_h * 16 / 9))
+            if right - thumb_w - 6 - text_x >= LIVE_QUEUE_MIN_NAME_WIDTH:
+                thumb_y = y + int((h - thumb_h) / 2)
+                self._draw_live_mini_snapshot(
+                    image,
+                    draw,
+                    (right - thumb_w, thumb_y, right, thumb_y + thumb_h),
+                    card,
+                    theme,
+                    snapshot_cache_seconds,
+                )
+                right -= thumb_w + 6
+
         text_w = max(24, right - text_x)
         owner_text = self._card_display_name(card)
         name_font = self._fit_font(draw, owner_text, text_w, 11, 8, "bold")
         name_y = y + max(2, int((h - self._line_height(name_font)) / 2) - 1)
         draw.text((text_x, name_y), self._fit_text(draw, owner_text, name_font, text_w), fill=ink, font=name_font)
+
+    def _draw_live_mini_snapshot(self, image, draw, thumb_box, card, theme, snapshot_cache_seconds):
+        snapshot = self._load_cover_source(card.get("cover"), snapshot_cache_seconds)
+        if snapshot:
+            try:
+                size = (max(1, thumb_box[2] - thumb_box[0]), max(1, thumb_box[3] - thumb_box[1]))
+                fitted = self._prepare_snapshot_image(snapshot, size, card["status"])
+                image.paste(fitted, (thumb_box[0], thumb_box[1]))
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("LiveRadar queue cover render failed for %s/%s: %s", card.get("platform"), card.get("id"), exc)
+                self._draw_snapshot_placeholder(draw, thumb_box, card, theme, False)
+        else:
+            self._draw_snapshot_placeholder(draw, thumb_box, card, theme, False)
+        draw.rectangle(thumb_box, outline=theme["ink"], width=1)
 
     def _draw_compact_card(self, image, draw, box, card, theme, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
         x, y, w, h = box

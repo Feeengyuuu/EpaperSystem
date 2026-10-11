@@ -2842,6 +2842,129 @@ def test_live_queue_section_draws_placeholder_for_empty_second_column_slot():
     assert seen["box"] == (202, 106, 184, 32)
 
 
+def _queue_row_card(**overrides):
+    card = {
+        "platform": "twitch",
+        "id": "hasanabi",
+        "owner": "HasanAbi",
+        "label": "",
+        "title": "Live",
+        "status": "live",
+        "is_fav": False,
+        "heat": 0,
+        "start_time": None,
+        "cover": "https://covers.test/queue.jpg",
+        "avatar": "",
+    }
+    card.update(overrides)
+    return card
+
+
+def test_live_mini_row_draws_landscape_snapshot_between_name_and_platform_badge():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (220, 60), theme["bg"])
+    real_draw = ImageDraw.Draw(image)
+    seen = {"texts": [], "badges": [], "cache_seconds": []}
+
+    class DrawSpy:
+        def __getattr__(self, name):
+            return getattr(real_draw, name)
+
+        def text(self, xy, text, fill=None, font=None, *args, **kwargs):
+            seen["texts"].append((xy, text, font))
+            return real_draw.text(xy, text, fill=fill, font=font, *args, **kwargs)
+
+    cover_color = (24, 180, 240)
+
+    def load_cover(url, cache_seconds):
+        seen["cache_seconds"].append(cache_seconds)
+        return Image.new("RGB", (160, 90), cover_color) if url == "https://covers.test/queue.jpg" else None
+
+    plugin._load_cover_source = load_cover
+    plugin._load_avatar_source = lambda url, cache_seconds: None
+    plugin._draw_platform_badge = lambda _image, _draw, box, *_args, **_kwargs: seen["badges"].append(box)
+    draw = DrawSpy()
+
+    plugin._draw_live_mini_row(
+        image, draw, (10, 10, 184, 30), _queue_row_card(), theme,
+        show_snapshot=True, snapshot_cache_seconds=75,
+    )
+
+    assert seen["cache_seconds"] == [75]
+    cover_columns = [
+        x for x in range(10, 194)
+        if image.getpixel((x, 25)) == cover_color
+    ]
+    assert cover_columns, "queue row should show the live snapshot"
+    thumb_left, thumb_right = min(cover_columns), max(cover_columns)
+    cover_rows = [y for y in range(10, 40) if image.getpixel((thumb_left + 2, y)) == cover_color]
+    thumb_w = thumb_right - thumb_left + 1
+    thumb_h = max(cover_rows) - min(cover_rows) + 1
+    assert thumb_h >= 20
+    assert 1.6 <= thumb_w / thumb_h <= 1.9
+    badge_left = seen["badges"][0][0]
+    assert thumb_right < badge_left
+    (name_x, _name_y), name, font = next(item for item in seen["texts"] if "Hasan" in item[1])
+    assert name == "HasanAbi"
+    assert name_x + real_draw.textlength(name, font=font) < thumb_left
+
+
+def test_live_mini_row_skips_snapshot_when_snapshots_are_disabled():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (220, 60), theme["bg"])
+    draw = ImageDraw.Draw(image)
+
+    def fail_cover(*_args, **_kwargs):
+        raise AssertionError("snapshots disabled: queue rows must not load covers")
+
+    plugin._load_cover_source = fail_cover
+    plugin._load_avatar_source = lambda url, cache_seconds: None
+
+    plugin._draw_live_mini_row(image, draw, (10, 10, 184, 30), _queue_row_card(), theme, show_snapshot=False)
+
+
+def test_live_mini_row_without_cover_draws_snapshot_placeholder():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (220, 60), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    seen = {}
+    plugin._load_cover_source = lambda url, cache_seconds: None
+    plugin._load_avatar_source = lambda url, cache_seconds: None
+    plugin._draw_snapshot_placeholder = lambda _draw, box, card, _theme, large: seen.update(box=box, large=large)
+
+    plugin._draw_live_mini_row(
+        image, draw, (10, 10, 184, 30), _queue_row_card(cover=""), theme, show_snapshot=True,
+    )
+
+    left, top, right, bottom = seen["box"]
+    assert seen["large"] is False
+    assert bottom - top >= 20
+    assert right <= 10 + 184 - 10 - 15
+
+
+def test_live_queue_section_passes_snapshot_settings_to_each_row():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (420, 170), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    seen = []
+    plugin._draw_live_mini_row = lambda _image, _draw, _box, card, _theme, _avatar_seconds, **kwargs: seen.append(
+        (card["id"], kwargs)
+    )
+    cards = [_queue_row_card(id=f"live-{index}") for index in range(6)]
+
+    plugin._draw_live_queue_section(
+        image, draw, (10, 10, 376, 129), "LIVE TOO", cards, theme, max_items=8,
+        show_snapshot=True, snapshot_cache_seconds=75,
+    )
+
+    assert [card_id for card_id, _kwargs in seen] == [f"live-{index}" for index in range(6)]
+    assert all(kwargs == {"show_snapshot": True, "snapshot_cache_seconds": 75} for _card_id, kwargs in seen)
+
+
 def test_snapshot_mini_section_keeps_four_thumbnails_landscape():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
@@ -3038,9 +3161,11 @@ def test_dashboard_keeps_dense_live_queue_for_more_than_seven_live_cards():
     def fail_snapshot_mini(*_args, **_kwargs):
         raise AssertionError("snapshot mini should only replace live queue at 7 or fewer live cards")
 
-    def draw_live_queue(_image, _draw, _box, title, cards, _theme, max_items, avatar_cache_seconds=0):
+    def draw_live_queue(_image, _draw, _box, title, cards, _theme, max_items, avatar_cache_seconds=0, show_snapshot=False, snapshot_cache_seconds=0):
         seen["title"] = title
         seen["count"] = len(cards)
+        seen["show_snapshot"] = show_snapshot
+        seen["snapshot_cache_seconds"] = snapshot_cache_seconds
         return len(cards)
 
     plugin._draw_snapshot_mini_section = fail_snapshot_mini
@@ -3062,9 +3187,12 @@ def test_dashboard_keeps_dense_live_queue_for_more_than_seven_live_cards():
         for i in range(8)
     ]
 
-    plugin._render_dashboard(cards, (800, 480), theme, datetime.now(timezone.utc), False, None)
+    plugin._render_dashboard(
+        cards, (800, 480), theme, datetime.now(timezone.utc), False, None,
+        {"show_snapshots": True, "snapshot_cache_seconds": 75},
+    )
 
-    assert seen == {"title": "LIVE TOO", "count": 5}
+    assert seen == {"title": "LIVE TOO", "count": 5, "show_snapshot": True, "snapshot_cache_seconds": 75}
 
 
 def test_top_overflow_excludes_live_queue_rows():
