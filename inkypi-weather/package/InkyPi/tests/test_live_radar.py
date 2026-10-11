@@ -2860,7 +2860,15 @@ def _queue_row_card(**overrides):
     return card
 
 
-def test_live_mini_row_draws_landscape_snapshot_between_name_and_platform_badge():
+def _cover_box(image, color, mid_y):
+    columns = [x for x in range(image.width) if image.getpixel((x, mid_y)) == color]
+    left, right = min(columns), max(columns)
+    mid_x = (left + right) // 2
+    rows = [y for y in range(image.height) if image.getpixel((mid_x, y)) == color]
+    return left, min(rows), right, max(rows)
+
+
+def test_live_mini_row_wraps_snapshot_and_platform_logo_in_brand_capsule():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
     image = Image.new("RGB", (220, 60), theme["bg"])
@@ -2892,22 +2900,66 @@ def test_live_mini_row_draws_landscape_snapshot_between_name_and_platform_badge(
     )
 
     assert seen["cache_seconds"] == [75]
-    cover_columns = [
-        x for x in range(10, 194)
-        if image.getpixel((x, 25)) == cover_color
-    ]
-    assert cover_columns, "queue row should show the live snapshot"
-    thumb_left, thumb_right = min(cover_columns), max(cover_columns)
-    cover_rows = [y for y in range(10, 40) if image.getpixel((thumb_left + 2, y)) == cover_color]
+    thumb_left, thumb_top, thumb_right, thumb_bottom = _cover_box(image, cover_color, 25)
     thumb_w = thumb_right - thumb_left + 1
-    thumb_h = max(cover_rows) - min(cover_rows) + 1
+    thumb_h = thumb_bottom - thumb_top + 1
     assert thumb_h >= 20
     assert 1.6 <= thumb_w / thumb_h <= 1.9
-    badge_left = seen["badges"][0][0]
-    assert thumb_right < badge_left
+
+    # One brand-coloured capsule wraps the snapshot and the logo tab.
+    purple = live_radar_module.PLATFORM_BRAND_COLORS["twitch"]
+    mid_x = (thumb_left + thumb_right) // 2
+    assert image.getpixel((thumb_left - 1, 25)) == image.getpixel((thumb_left - 2, 25)) == purple
+    assert image.getpixel((mid_x, thumb_top - 1)) == image.getpixel((mid_x, thumb_bottom + 1)) == purple
+    assert image.getpixel((thumb_right + 1, 25)) == purple  # divider between snapshot and logo
+    frame_right = max(x for x in range(image.width) if image.getpixel((x, 25)) == purple)
+    badge_left, badge_top, badge_right, badge_bottom = seen["badges"][0]
+    assert thumb_right + 2 < badge_left and badge_right < frame_right
+    assert thumb_top <= badge_top and badge_bottom <= thumb_bottom + 1
+    tab_centre = ((badge_left + badge_right) // 2, (badge_top + badge_bottom) // 2)
+    assert image.getpixel(tab_centre) not in (purple, theme["panel"])  # tinted logo tab
+
     (name_x, _name_y), name, font = next(item for item in seen["texts"] if "Hasan" in item[1])
     assert name == "HasanAbi"
-    assert name_x + real_draw.textlength(name, font=font) < thumb_left
+    assert name_x + real_draw.textlength(name, font=font) < thumb_left - 2
+
+
+@pytest.mark.parametrize("platform", ["bilibili", "douyu", "twitch", "kick", "picarto"])
+def test_live_mini_capsule_uses_each_platform_brand_colour(platform):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (220, 60), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    cover_color = (24, 180, 240)
+    plugin._load_cover_source = lambda url, cache_seconds: Image.new("RGB", (160, 90), cover_color)
+    plugin._load_avatar_source = lambda url, cache_seconds: None
+    plugin._draw_platform_badge = lambda *_args, **_kwargs: None
+
+    plugin._draw_live_mini_row(image, draw, (10, 10, 184, 30), _queue_row_card(platform=platform), theme)
+
+    thumb_left, _top, _right, _bottom = _cover_box(image, cover_color, 25)
+    expected = live_radar_module.PLATFORM_BRAND_COLORS.get(platform, theme["ink"])
+    assert image.getpixel((thumb_left - 1, 25)) == expected
+
+
+def test_live_mini_row_keeps_favourite_star_outside_the_capsule():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (220, 60), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    stars = []
+    cover_color = (24, 180, 240)
+    plugin._load_cover_source = lambda url, cache_seconds: Image.new("RGB", (160, 90), cover_color)
+    plugin._load_avatar_source = lambda url, cache_seconds: None
+    plugin._draw_icon_badge = lambda _image, _draw, box, kind, **_kwargs: stars.append(box) if kind == "fav" else None
+
+    plugin._draw_live_mini_row(image, draw, (10, 10, 184, 30), _queue_row_card(is_fav=True), theme)
+
+    # The avatar carries its own small star; the row-level star is the rightmost one.
+    row_star = max(stars, key=lambda box: box[0])
+    thumb_left, _top, _right, _bottom = _cover_box(image, cover_color, 25)
+    assert row_star[0] > 10 + 15 + 22 + 8
+    assert row_star[2] < thumb_left - 2
 
 
 def test_live_mini_row_skips_snapshot_when_snapshots_are_disabled():
@@ -2942,7 +2994,7 @@ def test_live_mini_row_without_cover_draws_snapshot_placeholder():
     left, top, right, bottom = seen["box"]
     assert seen["large"] is False
     assert bottom - top >= 20
-    assert right <= 10 + 184 - 10 - 15
+    assert right <= 10 + 184 - 6 - 20
 
 
 def test_live_queue_section_passes_snapshot_settings_to_each_row():

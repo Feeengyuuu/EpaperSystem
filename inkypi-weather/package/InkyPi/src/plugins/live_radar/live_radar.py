@@ -140,6 +140,13 @@ PLATFORMS = {
     "picarto": {"label": "PICARTO", "short": "PA"},
     "soop": {"label": "SOOP", "short": "SO"},
 }
+# Main brand colours for the LIVE TOO snapshot capsule; other platforms use theme ink.
+PLATFORM_BRAND_COLORS = {
+    "bilibili": (0, 174, 236),
+    "twitch": (145, 70, 255),
+    "douyu": (255, 119, 0),
+    "kick": (83, 252, 24),
+}
 LIVE_STATUS_DOT = (0, 170, 80)
 STATUS_TOTAL_FILLS = {
     "live": LIVE_STATUS_DOT,
@@ -2042,50 +2049,51 @@ class LiveRadar(BasePlugin):
         avatar_y = y + max(3, int((h - avatar_size) / 2))
         self._draw_avatar(image, draw, (avatar_x, avatar_y, avatar_size), card, platform, fill, ink, line, avatar_cache_seconds)
 
-        platform_w = min(17, max(15, int(h * 0.64)))
-        platform_h = min(16, max(13, h - 7))
-        platform_y = y + max(3, int((h - platform_h) / 2))
-        right = x + w - pad
-        self._draw_platform_badge(
-            image,
-            draw,
-            (right - platform_w, platform_y, right, platform_y + platform_h),
-            card["platform"],
-            fill=fill,
-            ink=ink,
-            outline=muted,
-        )
-        right -= platform_w + 4
+        text_x = avatar_x + avatar_size + 8
+        fav_size = min(15, max(12, h - 7))
+        fav_reserve = fav_size + 4 if card.get("is_fav") else 0
+        capsule_left = None
+        if show_snapshot:
+            capsule_left = self._draw_live_mini_capsule(
+                image,
+                draw,
+                x + w - 6,
+                y,
+                h,
+                text_x + LIVE_QUEUE_MIN_NAME_WIDTH + 4 + fav_reserve,
+                card,
+                theme,
+                snapshot_cache_seconds,
+            )
+        if capsule_left is not None:
+            right = capsule_left - 4
+            icon_y = y + max(3, int((h - fav_size) / 2))
+        else:
+            platform_w = min(17, max(15, int(h * 0.64)))
+            platform_h = min(16, max(13, h - 7))
+            icon_y = y + max(3, int((h - platform_h) / 2))
+            right = x + w - pad
+            self._draw_platform_badge(
+                image,
+                draw,
+                (right - platform_w, icon_y, right, icon_y + platform_h),
+                card["platform"],
+                fill=fill,
+                ink=ink,
+                outline=muted,
+            )
+            right -= platform_w + 4
         if card.get("is_fav"):
-            icon_size = min(15, max(12, h - 7))
             self._draw_icon_badge(
                 image,
                 draw,
-                (right - icon_size, platform_y, right, platform_y + icon_size),
+                (right - fav_size, icon_y, right, icon_y + fav_size),
                 "fav",
                 fill=fill,
                 ink=ink,
                 outline=muted,
             )
-            right -= icon_size + 4
-
-        text_x = avatar_x + avatar_size + 8
-        if show_snapshot:
-            # Dense queue rows keep a 16:9 live snapshot next to the badges; drop it
-            # only when it would squeeze the streamer name below a readable width.
-            thumb_h = max(12, h - 6)
-            thumb_w = int(round(thumb_h * 16 / 9))
-            if right - thumb_w - 6 - text_x >= LIVE_QUEUE_MIN_NAME_WIDTH:
-                thumb_y = y + int((h - thumb_h) / 2)
-                self._draw_live_mini_snapshot(
-                    image,
-                    draw,
-                    (right - thumb_w, thumb_y, right, thumb_y + thumb_h),
-                    card,
-                    theme,
-                    snapshot_cache_seconds,
-                )
-                right -= thumb_w + 6
+            right -= fav_size + 4
 
         text_w = max(24, right - text_x)
         owner_text = self._card_display_name(card)
@@ -2093,12 +2101,30 @@ class LiveRadar(BasePlugin):
         name_y = y + max(2, int((h - self._line_height(name_font)) / 2) - 1)
         draw.text((text_x, name_y), self._fit_text(draw, owner_text, name_font, text_w), fill=ink, font=name_font)
 
-    def _draw_live_mini_snapshot(self, image, draw, thumb_box, card, theme, snapshot_cache_seconds):
+    def _draw_live_mini_capsule(self, image, draw, right, y, h, min_left, card, theme, snapshot_cache_seconds):
+        """Frame a 16:9 snapshot and the platform logo as one brand-coloured capsule.
+
+        Returns the capsule's left edge, or None (nothing drawn) when it would push
+        the capsule left of ``min_left``.
+        """
+        thumb_h = max(12, h - 8)
+        thumb_w = int(round(thumb_h * 16 / 9))
+        tab_w = 22
+        left = right - (2 + thumb_w + 2 + tab_w)
+        if left < min_left:
+            return None
+        top = y + (h - (thumb_h + 4)) // 2
+        bottom = top + thumb_h + 3
+        brand = PLATFORM_BRAND_COLORS.get(card.get("platform"), theme["ink"])
+        strength = 0.35 if theme.get("mode") == "dark" else 0.18
+        tab_fill = tuple(round(c * strength + p * (1 - strength)) for c, p in zip(brand, theme["panel"]))
+        self._rounded_rectangle(draw, (left, top, right, bottom), radius=6, fill=tab_fill, outline=None, width=0)
+
+        thumb_box = (left + 2, top + 2, left + 2 + thumb_w, top + 2 + thumb_h)
         snapshot = self._load_cover_source(card.get("cover"), snapshot_cache_seconds)
         if snapshot:
             try:
-                size = (max(1, thumb_box[2] - thumb_box[0]), max(1, thumb_box[3] - thumb_box[1]))
-                fitted = self._prepare_snapshot_image(snapshot, size, card["status"])
+                fitted = self._prepare_snapshot_image(snapshot, (thumb_w, thumb_h), card["status"])
                 image.paste(fitted, (thumb_box[0], thumb_box[1]))
             except TaskCancelled:
                 raise
@@ -2107,7 +2133,24 @@ class LiveRadar(BasePlugin):
                 self._draw_snapshot_placeholder(draw, thumb_box, card, theme, False)
         else:
             self._draw_snapshot_placeholder(draw, thumb_box, card, theme, False)
-        draw.rectangle(thumb_box, outline=theme["ink"], width=1)
+
+        divider = thumb_box[2]
+        draw.rectangle((divider, top, divider + 1, bottom), fill=brand)
+        logo = min(16, thumb_h)
+        logo_x = divider + 2 + (right - 2 - (divider + 2) - logo) // 2
+        logo_y = top + (bottom - top + 1 - logo) // 2
+        self._draw_platform_badge(
+            image,
+            draw,
+            (logo_x, logo_y, logo_x + logo, logo_y + logo),
+            card["platform"],
+            fill=tab_fill,
+            ink=theme["ink"],
+            outline=brand,
+        )
+        # The border goes on last so it also rounds off the snapshot's corners.
+        self._rounded_rectangle(draw, (left, top, right, bottom), radius=6, fill=None, outline=brand, width=2)
+        return left
 
     def _draw_compact_card(self, image, draw, box, card, theme, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
         x, y, w, h = box
