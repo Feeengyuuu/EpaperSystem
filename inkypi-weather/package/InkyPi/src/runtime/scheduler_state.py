@@ -369,6 +369,7 @@ class SchedulerSnapshot:
     last_failure_wall: float | None
     last_error: str | None
     next_attempt_monotonic: float | None
+    heartbeat_monotonic: float | None
     retry_entries: tuple[RetryEntrySnapshot, ...]
 
 
@@ -392,6 +393,7 @@ class SchedulerState:
         self._last_failure_wall: float | None = None
         self._last_error: str | None = None
         self._next_attempt_monotonic: float | None = None
+        self._heartbeat_monotonic: float | None = None
 
     def record_attempt(self) -> None:
         monotonic = self._clock()
@@ -399,6 +401,13 @@ class SchedulerState:
         with self._lock:
             self._last_attempt_monotonic = monotonic
             self._last_attempt_wall = wall
+            self._heartbeat_monotonic = monotonic
+
+    def record_heartbeat(self) -> None:
+        """Mark the worker alive after work that is not a scheduling attempt."""
+        monotonic = self._clock()
+        with self._lock:
+            self._heartbeat_monotonic = monotonic
 
     def record_success(self) -> None:
         wall = self._wall_clock()
@@ -426,6 +435,7 @@ class SchedulerState:
                 self._last_failure_wall,
                 self._last_error,
                 self._next_attempt_monotonic,
+                self._heartbeat_monotonic,
             )
         retry_entries = self._retry_registry.snapshot()
         return SchedulerSnapshot(*fields, retry_entries=retry_entries)

@@ -1176,6 +1176,25 @@ def test_scheduler_state_records_diagnostics_and_retains_failure_after_success()
     assert succeeded.next_attempt_monotonic is None
 
 
+def test_scheduler_heartbeat_follows_attempts_and_worker_beats_without_faking_attempts():
+    fake_clock = FakeClock(monotonic=10.0, wall=100.0)
+    scheduler = SchedulerState(
+        RetryRegistry(jitter=lambda delay: delay),
+        clock=fake_clock.monotonic,
+        wall_clock=fake_clock.wall_time,
+    )
+    assert scheduler.snapshot().heartbeat_monotonic is None
+
+    scheduler.record_attempt()
+    assert scheduler.snapshot().heartbeat_monotonic == 10.0
+    fake_clock.set(monotonic=25.0, wall=115.0)
+    scheduler.record_heartbeat()
+    beat = scheduler.snapshot()
+
+    assert beat.heartbeat_monotonic == 25.0
+    assert (beat.last_attempt_monotonic, beat.last_attempt_wall) == (10.0, 100.0)
+
+
 def test_scheduler_snapshot_is_frozen_and_detached():
     scheduler = SchedulerState(RetryRegistry(jitter=lambda delay: delay))
     snapshot = scheduler.snapshot()

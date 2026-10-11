@@ -478,7 +478,7 @@ def _independent_refresh_health_collector(tmp_path, *, progress=None):
                 accepting=True,
             )
         ),
-        scheduler_snapshot=lambda: SimpleNamespace(last_attempt_monotonic=150.0),
+        scheduler_snapshot=lambda: SimpleNamespace(heartbeat_monotonic=150.0),
         active_operation_snapshot=lambda: active,
         refresh_health_snapshot=lambda: {
             "resource_tier": "healthy",
@@ -534,7 +534,7 @@ def _independent_refresh_health_collector(tmp_path, *, progress=None):
                 "error": "provider exploded with secret text",
             },
         },
-        _scheduler_poll_seconds=lambda: 30.0,
+        _scheduler_idle_poll_seconds=lambda: 30.0,
     )
     config_status = SimpleNamespace(
         valid=True,
@@ -586,6 +586,31 @@ def test_health_exposes_only_aggregate_tier_due_counts_and_active_intent(tmp_pat
         "retained_limit": 16,
     }
     assert "active_command_id" not in scheduler
+
+
+def test_health_never_pairs_a_withdrawn_command_deadline_with_an_older_heartbeat(tmp_path):
+    collector, _publisher = _independent_refresh_health_collector(tmp_path)
+    worker = {"heartbeat": 100.0, "active": SimpleNamespace(intent=None, deadline_monotonic=500.0)}
+
+    def finish_command_after(read):
+        def reader():
+            value = read()
+            # The worker beats, then withdraws its deadline, between the two reads.
+            worker.update(heartbeat=400.0, active=None)
+            return value
+
+        return reader
+
+    collector.refresh_task.scheduler_snapshot = finish_command_after(
+        lambda: SimpleNamespace(heartbeat_monotonic=worker["heartbeat"])
+    )
+    collector.refresh_task.active_operation_snapshot = finish_command_after(
+        lambda: worker["active"]
+    )
+
+    result = ReadinessEvaluator().evaluate(collector.collect_once(), now_monotonic=400.0)
+
+    assert "scheduler_stalled" not in result.error_codes
 
 
 def test_health_never_exposes_instance_uuid_name_settings_or_error_text(tmp_path):

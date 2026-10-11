@@ -1483,14 +1483,20 @@ class RefreshTask:
             deadline if previous is None else min(previous, deadline)
         )
 
-    def _scheduler_poll_seconds(self):
+    def _scheduler_idle_poll_seconds(self):
+        """Longest poll a probe commits to; health budgets liveness from it."""
         interval = self._config_float(
             "plugin_cycle_interval_seconds",
             DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS,
         )
         if interval <= 0:
             interval = DEFAULT_PLUGIN_CYCLE_INTERVAL_SECONDS
-        poll_cap = DEFAULT_IDLE_SCHEDULER_POLL_SECONDS
+        return max(1.0, min(DEFAULT_IDLE_SCHEDULER_POLL_SECONDS, interval))
+
+    def _scheduler_poll_seconds(self):
+        # Rotation narrows only the wake-up time, never the liveness budget:
+        # a due rotation probe still reserves and prepares before dispatch.
+        poll = self._scheduler_idle_poll_seconds()
         try:
             active = self.device_config.get_playlist_manager().snapshot_active_playlist(
                 self._get_current_datetime()
@@ -1498,13 +1504,13 @@ class RefreshTask:
             if active is not None and active.plugins:
                 remaining = self._get_rotation_wait_seconds()
                 if math.isfinite(remaining):
-                    poll_cap = max(
-                        DEFAULT_ROTATION_SCHEDULER_POLL_SECONDS,
-                        min(DEFAULT_IDLE_SCHEDULER_POLL_SECONDS, remaining),
+                    poll = min(
+                        poll,
+                        max(DEFAULT_ROTATION_SCHEDULER_POLL_SECONDS, remaining),
                     )
         except Exception:
             logger.exception("Could not inspect active playlist for scheduler polling.")
-        return max(1.0, min(poll_cap, interval))
+        return poll
 
     def _scheduler_lightweight_burst_limit(self):
         return self._config_int(
@@ -4189,6 +4195,9 @@ class RefreshTask:
             self._execution_local.context = None
             self._execution_local.degraded_data_result = False
             self._execution_local.effective_theme_context = None
+            # Beat before withdrawing the deadline so the gap until the next
+            # probe (memory maintenance included) is budgeted from now.
+            self.scheduler_state.record_heartbeat()
             self._active_operation = None
             try:
                 self._run_memory_maintenance(

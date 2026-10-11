@@ -611,15 +611,19 @@ class HealthCollector:
 
     def _scheduler_component(self):
         try:
-            snapshot = self.refresh_task.scheduler_snapshot()
+            # The worker beats before it withdraws a command deadline, so
+            # reading the deadline first never pairs it with an older beat.
             active = self.refresh_task.active_operation_snapshot()
+            snapshot = self.refresh_task.scheduler_snapshot()
             aggregate = self.refresh_task.refresh_health_snapshot()
             due_counts = aggregate.get("due_counts", {})
             active_intent = None if active is None else active.intent
             active_intent = getattr(active_intent, "value", active_intent)
             return {
-                "heartbeat_monotonic": snapshot.last_attempt_monotonic,
-                "tick_seconds": self.refresh_task._scheduler_poll_seconds(),
+                "heartbeat_monotonic": snapshot.heartbeat_monotonic,
+                # Not the rotation-narrowed poll: that collapses to 1 s while
+                # a due rotation probe is still preparing its display.
+                "tick_seconds": self.refresh_task._scheduler_idle_poll_seconds(),
                 "active_deadline_monotonic": (
                     None if active is None else active.deadline_monotonic
                 ),
