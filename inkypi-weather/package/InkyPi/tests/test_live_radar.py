@@ -2942,6 +2942,38 @@ def test_live_mini_capsule_uses_each_platform_brand_colour(platform):
     assert image.getpixel((thumb_left - 1, 25)) == expected
 
 
+@pytest.mark.parametrize("platform", ["bilibili", "douyu", "twitch", "picarto"])
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_card_borders_use_the_platform_brand_colour(platform, mode):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": mode}, FakeDeviceConfig())
+    plugin._load_cover_source = lambda url, cache_seconds: Image.new("RGB", (160, 90), (24, 180, 240))
+    plugin._load_avatar_source = lambda url, cache_seconds: None
+    live = _queue_row_card(platform=platform)
+    offline = _queue_row_card(platform=platform, status="offline", cover="")
+    expected = live_radar_module.PLATFORM_BRAND_COLORS.get(platform)
+
+    def border(draw_card, card, box, palette_status, width):
+        image = Image.new("RGB", (box[0] * 2 + box[2], box[1] * 2 + box[3]), theme["bg"])
+        draw_card(image, ImageDraw.Draw(image), box, card)
+        x, y, w, h = box
+        fill, _ink, _muted, line = plugin._card_palette(palette_status, theme)
+        colour = expected or line
+        # Only the colour changes: the border keeps its original thickness.
+        for offset in range(width):
+            assert image.getpixel((x + offset, y + h // 2)) == colour
+            assert image.getpixel((x + w // 2, y + offset)) == colour
+        # (The left edge is followed by the card's ink accent stripe, so check the top.)
+        assert image.getpixel((x + w // 2, y + width)) != colour
+
+    border(lambda image, draw, box, card: plugin._draw_card(image, draw, box, card, theme, large=True),
+           live, (10, 10, 248, 196), "live", 2)
+    border(lambda image, draw, box, card: plugin._draw_compact_card(image, draw, box, card, theme),
+           offline, (10, 10, 377, 48), "offline", 1)
+    border(lambda image, draw, box, card: plugin._draw_snapshot_mini_card(image, draw, box, card, theme),
+           live, (10, 10, 184, 49), "live", 1)
+
+
 def test_live_mini_row_keeps_favourite_star_outside_the_capsule():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())

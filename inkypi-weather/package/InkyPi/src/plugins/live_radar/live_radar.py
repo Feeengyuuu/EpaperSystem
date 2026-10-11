@@ -140,7 +140,8 @@ PLATFORMS = {
     "picarto": {"label": "PICARTO", "short": "PA"},
     "soop": {"label": "SOOP", "short": "SO"},
 }
-# Main brand colours for the LIVE TOO snapshot capsule; other platforms use theme ink.
+# Main brand colours for card borders and the LIVE TOO snapshot capsule; other
+# platforms keep the theme colours.
 PLATFORM_BRAND_COLORS = {
     "bilibili": (0, 174, 236),
     "twitch": (145, 70, 255),
@@ -1372,7 +1373,7 @@ class LiveRadar(BasePlugin):
         x, y, w, h = box
         status = card["status"]
         fill, ink, muted, line = self._card_palette(status, theme)
-        self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=8, fill=fill, outline=line, width=2)
+        self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=8, fill=fill, outline=self._brand_line(card, line), width=2)
 
         accent_w = 2 if large else 1
         accent_x = x + max(1, accent_w)
@@ -1898,7 +1899,7 @@ class LiveRadar(BasePlugin):
     def _draw_snapshot_mini_card(self, image, draw, box, card, theme, snapshot_cache_seconds=90, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
         x, y, w, h = [int(value) for value in box]
         fill, ink, muted, line = self._card_palette(card["status"], theme)
-        self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=5, fill=fill, outline=line, width=1)
+        self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=5, fill=fill, outline=self._brand_line(card, line), width=1)
 
         pad = 5
         thumb_h_max = max(18, h - 2 * pad)
@@ -2115,7 +2116,7 @@ class LiveRadar(BasePlugin):
             return None
         top = y + (h - (thumb_h + 4)) // 2
         bottom = top + thumb_h + 3
-        brand = PLATFORM_BRAND_COLORS.get(card.get("platform"), theme["ink"])
+        brand = self._brand_line(card, theme["ink"])
         strength = 0.35 if theme.get("mode") == "dark" else 0.18
         tab_fill = tuple(round(c * strength + p * (1 - strength)) for c, p in zip(brand, theme["panel"]))
         self._rounded_rectangle(draw, (left, top, right, bottom), radius=6, fill=tab_fill, outline=None, width=0)
@@ -2156,7 +2157,7 @@ class LiveRadar(BasePlugin):
         x, y, w, h = box
         status = card["status"]
         fill, ink, muted, line = self._card_palette(status, theme)
-        self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=6, fill=fill, outline=line, width=1)
+        self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=6, fill=fill, outline=self._brand_line(card, line), width=1)
         draw.line((x + 5, y + 7, x + 5, y + h - 7), fill=ink, width=1)
 
         platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
@@ -2721,6 +2722,11 @@ class LiveRadar(BasePlugin):
             angle = -math.pi / 2 + index * math.pi / 5
             points.append((cx + math.cos(angle) * radius, cy + math.sin(angle) * radius))
         return points
+
+    @staticmethod
+    def _brand_line(card, default):
+        """Card border colour: the platform's main brand colour, else the theme line."""
+        return PLATFORM_BRAND_COLORS.get(card.get("platform"), default)
 
     def _card_palette(self, status, theme):
         if status == "live":
