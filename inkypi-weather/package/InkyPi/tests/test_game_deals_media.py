@@ -42,6 +42,20 @@ def test_media_downsizes_persists_and_cached_display_never_fetches_or_writes(tmp
     assert http.calls[0][1]["max_bytes"] == 512 * 1024
 
 
+def test_every_one_of_ten_offers_gets_its_cover(tmp_path):
+    http = ImagesHTTP()
+    rows = []
+    for number in range(10):
+        value = row()
+        value.update(gameID=str(number), title=f"Game {number}",
+                     thumb=f"https://shared.fastly.steamstatic.com/{number}.jpg")
+        rows.append(value)
+    covers = load_covers(normalize_deals(rows), tmp_path / "covers", http=http)
+    assert sorted(covers, key=int) == [str(number) for number in range(10)]
+    for image in covers.values():
+        image.close()
+
+
 def test_cache_only_missing_cover_does_not_create_directory(tmp_path):
     http = ImagesHTTP()
     target = tmp_path / "missing"

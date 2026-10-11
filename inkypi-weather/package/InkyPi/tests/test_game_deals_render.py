@@ -18,24 +18,41 @@ NOW = datetime(2026, 9, 30, 1, tzinfo=timezone.utc)
 def offers():
     titles = ["The Witcher 2: Assassins of Kings Enhanced Edition", "Ori and the Will of the Wisps",
               "ENDLESS Legend 2", "A" * 200, "A Very Long Game Title With Many Actual Words " * 4,
-              "Short"]
+              "Short", "Deaths Door", "The Next Penelope", "TowerFall Ascension", "Fly'N"]
     return tuple({"title": title, "game_id": str(index), "sale_price": "199.99" if index == 3 else "2.99",
                   "normal_price": "299.99", "discount_percent": 100 if index == 3 else 90}
                  for index, title in enumerate(titles))
 
 
-def test_six_realistic_and_extreme_titles_fit_day_and_night():
+def test_ten_realistic_and_extreme_titles_fit_day_and_night():
     snapshot = DealSnapshot(offers(), NOW, "live", "steam")
     day = render_page(snapshot, {}, theme={"mode": "day"}, now=NOW)
     night = render_page(snapshot, {}, theme={"mode": "night"}, now=NOW)
     assert day.size == night.size == (800, 480)
     assert ImageChops.difference(day, night).getbbox() is not None
-    assert len(day.info["game_deals_layout"]) == 6
-    for card in day.info["game_deals_layout"]:
-        assert len(card["lines"]) <= 3
+    layout = day.info["game_deals_layout"]
+    assert len(layout) == 10
+    for card in layout:
+        assert len(card["lines"]) == 1
         assert max(card["title_widths"]) <= card["text_width"]
-    assert day.info["game_deals_layout"][0]["lines"][-1].endswith("Edition")
-    assert day.info["game_deals_layout"][3]["lines"][-1].endswith("…")
+        # Sale and struck original prices share one line and never run into the badge.
+        assert card["prices_right"] <= card["badge_left"] - 4
+    assert layout[1]["lines"] == ["Ori and the Will of the Wisps"]
+    assert layout[3]["lines"][0].endswith("…")
+    assert layout[4]["lines"][0].endswith("…")
+
+
+def test_five_rows_per_column_fill_the_page_in_reading_order():
+    snapshot = DealSnapshot(offers(), NOW, "live", "steam")
+    layout = render_page(snapshot, {}, theme={"mode": "day"}, now=NOW).info["game_deals_layout"]
+    boxes = [card["box"] for card in layout]
+    left, right = boxes[0::2], boxes[1::2]
+    assert {box[0] for box in left} == {14} and {box[0] for box in right} == {413}
+    assert [box[1] for box in left] == [box[1] for box in right]
+    tops = [box[1] for box in left]
+    assert tops[0] > 67 and boxes[-1][3] < 445
+    assert all(later - earlier == tops[1] - tops[0] for earlier, later in zip(tops, tops[1:]))
+    assert all(box[3] - box[1] >= 60 for box in boxes)
 
 
 def test_empty_and_unavailable_have_different_messages_and_no_invented_cards():
@@ -55,11 +72,11 @@ def test_wide_cover_is_complete_proportional_and_surrounded_by_page_background(m
     source.rectangle((560, 0, 599, 99), fill=(255, 255, 0))
     snapshot = DealSnapshot(offers()[:1], NOW, "live", "steam")
     result = render_page(snapshot, {"0": cover}, theme={"mode": mode}, now=NOW)
-    frame = result.crop((14, 83, 164, 184))
-    assert frame.size == (150, 101)
+    frame = result.crop((14, 76, 164, 138))
+    assert frame.size == (150, 62)
     background = result.getpixel((0, 0))
     visible = ImageChops.difference(frame, Image.new("RGB", frame.size, background)).getbbox()
-    assert visible == (0, 38, 150, 63)
+    assert visible == (0, 18, 150, 43)
     artwork = frame.crop(visible)
     assert artwork.getpixel((0, 12)) == (0, 255, 0)
     assert artwork.getpixel((149, 12)) == (255, 255, 0)
@@ -77,11 +94,23 @@ def test_small_cover_is_not_enlarged_and_keeps_every_source_pixel(mode):
     ImageDraw.Draw(cover).rectangle((0, 0, 5, 19), fill=(200, 25, 40))
     snapshot = DealSnapshot(offers()[:1], NOW, "live", "steam")
     result = render_page(snapshot, {"0": cover}, theme={"mode": mode}, now=NOW)
-    frame = result.crop((14, 83, 164, 184))
+    frame = result.crop((14, 76, 164, 138))
     background = Image.new("RGB", frame.size, result.getpixel((0, 0)))
     visible = ImageChops.difference(frame, background).getbbox()
-    assert visible == (45, 40, 105, 60)
+    assert visible == (45, 21, 105, 41)
     assert ImageChops.difference(frame.crop(visible), cover).getbbox() is None
+
+
+def test_steam_capsule_keeps_its_ratio_at_full_column_width():
+    # CheapShark serves 231x87 Steam capsules; they must shrink, not crop or stretch.
+    cover = Image.new("RGB", (231, 87), (27, 144, 233))
+    snapshot = DealSnapshot(offers()[:1], NOW, "live", "steam")
+    result = render_page(snapshot, {"0": cover}, theme={"mode": "day"}, now=NOW)
+    frame = result.crop((14, 76, 164, 138))
+    background = Image.new("RGB", frame.size, result.getpixel((0, 0)))
+    left, top, right, bottom = ImageChops.difference(frame, background).getbbox()
+    assert right - left == 150
+    assert abs((right - left) / (bottom - top) - 231 / 87) < 0.06
 
 
 class Device:

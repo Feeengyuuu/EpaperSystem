@@ -19,7 +19,7 @@ USER_AGENT = "EpaperSystem-GameDeals/1.0 (personal e-paper dashboard; https://gi
 REFRESH_SECONDS = 7200
 MAX_STALE_SECONDS = 24 * 3600
 MAX_JSON_BYTES = 128 * 1024
-MAX_ITEMS = 6
+MAX_ITEMS = 10
 SCHEMA_VERSION = 1
 _ABORT = (TaskCancelled, TaskDeadlineExceeded)
 

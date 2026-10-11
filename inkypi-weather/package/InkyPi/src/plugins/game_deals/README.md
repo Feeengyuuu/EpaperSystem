@@ -1,7 +1,7 @@
 # Game Deals
 
-Displays up to six currently discounted US Steam offers, with USD prices provided
-by CheapShark. This is a dynamic deal-rating feed, not a personalised wishlist.
+Displays up to ten currently discounted US Steam offers, five per column, with USD
+prices provided by CheapShark. This is a dynamic deal-rating feed, not a personalised wishlist.
 Prices and availability can change before the next scheduled fetch.
 
 - Source: `https://www.cheapshark.com/api/1.0/deals` with `storeID=1`, `onSale=1`,
@@ -21,8 +21,8 @@ Register the playlist instance with `refresh.interval=7200`,
 the repository also enforces a 7200-second successful-data TTL.
 
 Runtime state is under `INKYPI_CACHE_DIR/plugins/game_deals/data/`:
-`deals-steam.json` stores the original successful `fetched_at`, currency and six
-normalised offers. Failure adds `error` and `retry_at` without renewing source
+`deals-steam.json` stores the original successful `fetched_at`, currency and up
+to ten normalised offers (older six-offer caches remain valid until the next fetch). Failure adds `error` and `retry_at` without renewing source
 time. Genuine empty responses clear old offers. Data older than two hours is
 visibly stale; offers older than 24 hours are hidden.
 
@@ -35,7 +35,9 @@ claim a successful provider refresh.
 Covers use approved HTTPS Steam/CheapShark hosts, no redirects, a 512 KiB byte
 limit and at most 1024 by 1024 decoded pixels. Saved thumbnails are at most
 320 by 180. The display preserves each complete cover at its original aspect
-ratio, only shrinking it when needed to fit the artwork column. Smaller sources
+ratio, only shrinking it when needed to fit the 150 by 62 artwork column (a 231 by 87
+Steam capsule becomes 150 by 56). Each row keeps the title on one line (shrunk, then
+ellipsised) with the sale price, struck original price and discount badge beneath it. Smaller sources
 are never enlarged; uncovered space uses the page background with no added frame
 or black padding. Versioned cover keys replace earlier smaller
 thumbnails on the next data refresh. The media namespace retains at most

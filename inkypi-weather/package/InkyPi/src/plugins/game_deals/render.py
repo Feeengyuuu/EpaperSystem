@@ -1,4 +1,4 @@
-"""Pillow recreation of the approved six-offer, two-column design."""
+"""Pillow recreation of the ten-offer design: two columns of five rows."""
 
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,40 +12,29 @@ from utils.local_wordmark import paste_local_wordmark
 
 SIZE = (800, 480)
 LOCAL_ZONE = ZoneInfo("America/Los_Angeles")
-CARD_RECTS = tuple((14 + col * 399, 80 + row * 122, 386 + col * 399, 193 + row * 122)
-                   for row in range(3) for col in range(2))
+ROWS = 5
+ROW_PITCH = 74
+CARD_HEIGHT = 68
+CARD_RECTS = tuple((14 + col * 399, 73 + row * ROW_PITCH, 386 + col * 399, 73 + row * ROW_PITCH + CARD_HEIGHT)
+                   for row in range(ROWS) for col in range(2))
+ART_SIZE = (150, 62)
+BADGE_SIZE = (58, 28)
 
 
 def _font(size, bold=False):
     return get_base_ui_font(size, bold=bold)
 
 
-def _title_lines(text, width, *, max_lines=3):
-    font = _font(18, True)
-    lines, line = [], ""
-    # Break at words when possible; exceptionally long tokens are split safely.
-    for word in text.split():
-        trial = f"{line} {word}".strip()
-        if font.getlength(trial) <= width:
-            line = trial
-            continue
-        if line:
-            lines.append(line)
-        line = ""
-        for char in word:
-            if line and font.getlength(line + char) > width:
-                lines.append(line)
-                line = ""
-            line += char
-    if line:
-        lines.append(line)
-    if len(lines) > max_lines:
-        lines = lines[:max_lines]
-        last = lines[-1]
-        while last and font.getlength(last + "…") > width:
-            last = last[:-1]
-        lines[-1] = last.rstrip() + "…"
-    return lines, font
+def _title_line(text, width):
+    # One line per offer: shrink first, then cut at the end with an ellipsis.
+    for size in range(18, 14, -1):
+        font = _font(size, True)
+        if font.getlength(text) <= width:
+            return text, font
+    line = text
+    while line and font.getlength(line.rstrip() + "…") > width:
+        line = line[:-1]
+    return line.rstrip() + "…", font
 
 
 def _fitted_font(text, width, preferred, minimum=14, bold=False):
@@ -79,63 +68,70 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
     draw.line((14, 67, 785, 67), fill=ink, width=2)
 
     layout = []
-    for index, deal in enumerate(snapshot.deals[:6]):
+    art_w, art_h = ART_SIZE
+    badge_w, badge_h = BADGE_SIZE
+    for index, deal in enumerate(snapshot.deals[:len(CARD_RECTS)]):
         x0, y0, x1, y1 = CARD_RECTS[index]
-        art_box = (x0, y0 + 3, x0 + 150, y0 + 104)
+        art_y = y0 + (CARD_HEIGHT - art_h) // 2
         cover = covers.get(deal["game_id"])
         if cover is not None:
             # Preserve the complete capsule and never enlarge a small source.
             # Unused space is the page itself: no frame or added black padding.
             fitted = cover.copy()
-            fitted.thumbnail((150, 101), Image.Resampling.LANCZOS)
-            image.paste(fitted, (x0 + (150 - fitted.width) // 2,
-                                 y0 + 3 + (101 - fitted.height) // 2))
+            fitted.thumbnail(ART_SIZE, Image.Resampling.LANCZOS)
+            image.paste(fitted, (x0 + (art_w - fitted.width) // 2,
+                                 art_y + (art_h - fitted.height) // 2))
             fitted.close()
         else:
-            draw.rectangle(art_box, fill=(22, 41, 52))
-            draw.text((x0 + 29, y0 + 43), "STEAM", font=_font(22, True), fill="white", anchor="lt")
-        text_x = x0 + 161
+            # Same footprint as a 231x87 Steam capsule shrunk into the column.
+            placeholder = (x0, art_y + 3, x0 + art_w, art_y + art_h - 3)
+            draw.rectangle(placeholder, fill=(22, 41, 52))
+            draw.text(((placeholder[0] + placeholder[2]) / 2, (placeholder[1] + placeholder[3]) / 2),
+                      "STEAM", font=_font(20, True), fill="white", anchor="mm")
+        text_x = x0 + 160
         available = x1 - text_x
-        lines, title_font = _title_lines(deal["title"], available)
-        sale = "$" + deal["sale_price"]
-        price_font = _fitted_font(sale, available - 67, 29, 17, True)
-        original = "$" + deal["normal_price"]
-        original_font = _fitted_font(original, available - 67, 16)
+        line, title_font = _title_line(deal["title"], available)
 
-        # Center the title and prices as one compact group beside the cover.
-        title_height = max((number * 20 + title_font.getbbox(line, anchor="lt")[3]
-                            for number, line in enumerate(lines)), default=0)
-        sale_height = price_font.getbbox(sale, anchor="lt")[3]
-        original_height = original_font.getbbox(original, anchor="lt")[3]
-        prices_height = sale_height + 2 + original_height
-        group_height = title_height + 4 + prices_height
-        title_y = y0 + 3 + (101 - group_height) // 2
-        price_y = title_y + title_height + 4
-        original_y = price_y + sale_height + 2
-        for number, line in enumerate(lines):
-            draw.text((text_x, title_y + number * 20), line, font=title_font, fill=ink, anchor="lt")
-        draw.text((text_x, price_y), sale, font=price_font, fill=ink, anchor="lt")
-        draw.text((text_x, original_y), original, font=original_font, fill=muted, anchor="lt")
-        strike_y = original_y + original_height // 2
-        draw.line((text_x, strike_y, text_x + int(original_font.getlength(original)), strike_y),
+        # The sale price and struck original share one line beside the discount badge.
+        badge_left = x1 - badge_w
+        prices_limit = badge_left - 4 - text_x
+        sale = "$" + deal["sale_price"]
+        original = "$" + deal["normal_price"]
+        original_font = _font(15)
+        price_font = _fitted_font(sale, prices_limit - 8 - original_font.getlength(original), 26, 17, True)
+        if price_font.getlength(sale) + 8 + original_font.getlength(original) > prices_limit:
+            original_font = _fitted_font(original, prices_limit - 8 - price_font.getlength(sale), 15, 11)
+        sale_w = price_font.getlength(sale)
+        original_x = text_x + sale_w + 8
+
+        title_height = max(title_font.getbbox("Ag", anchor="lt")[3], title_font.getbbox(line, anchor="lt")[3])
+        group_top = y0 + (CARD_HEIGHT - (title_height + 5 + badge_h)) // 2
+        price_row = group_top + title_height + 5
+        draw.text((text_x, group_top), line, font=title_font, fill=ink, anchor="lt")
+        _, sale_top, _, sale_bottom = price_font.getbbox(sale, anchor="ls")
+        baseline = price_row + badge_h / 2 - (sale_top + sale_bottom) / 2
+        draw.text((text_x, baseline), sale, font=price_font, fill=ink, anchor="ls")
+        draw.text((original_x, baseline), original, font=original_font, fill=muted, anchor="ls")
+        strike_y = round(baseline + original_font.getbbox("0", anchor="ls")[1] / 2)
+        draw.line((original_x, strike_y, original_x + int(original_font.getlength(original)), strike_y),
                   fill=muted, width=1)
-        badge_y = price_y + (prices_height - 33) // 2
-        badge = (x1 - 62, badge_y, x1, badge_y + 33)
-        draw.rectangle(badge, fill=green)
+        draw.rectangle((badge_left, price_row, x1, price_row + badge_h), fill=green)
         discount = f"-{deal['discount_percent']}%"
-        badge_font = _fitted_font(discount, 56, 22, 16, True)
-        badge_text_y = badge_y + (33 - badge_font.getbbox(discount, anchor="lt")[3]) // 2
-        draw.text((badge[0] + (62 - badge_font.getlength(discount)) / 2, badge_text_y),
-                  discount, font=badge_font, fill="white", anchor="lt")
-        layout.append({"title": deal["title"], "lines": lines, "text_width": available,
-                       "title_widths": [title_font.getlength(line) for line in lines]})
-    draw.line((399, 80, 399, 435), fill=ink, width=1)
-    for y in (197, 319):
+        badge_font = _fitted_font(discount, badge_w - 6, 20, 14, True)
+        draw.text((badge_left + badge_w / 2, price_row + badge_h / 2), discount,
+                  font=badge_font, fill="white", anchor="mm")
+        layout.append({"title": deal["title"], "lines": [line], "text_width": available,
+                       "title_widths": [title_font.getlength(line)], "box": (x0, y0, x1, y1),
+                       "prices_right": original_x + original_font.getlength(original),
+                       "badge_left": badge_left})
+    draw.line((399, 72, 399, 440), fill=ink, width=1)
+    for row in range(1, ROWS):
+        y = CARD_RECTS[row * 2][1] - (ROW_PITCH - CARD_HEIGHT) // 2
         draw.line((14, y, 785, y), fill=ink, width=1)
     if not snapshot.deals:
         title = "暂时没有符合条件的优惠" if snapshot.state != "unavailable" else "优惠数据暂时不可用"
         detail = "下次更新后自动显示" if snapshot.state != "unavailable" else "等待重新连接 CheapShark"
-        draw.rectangle((14, 78, 785, 438), fill=background)
+        draw.rectangle((14, 70, 785, 442), fill=background)
         draw.text((80, 192), title, font=_font(33, True), fill=ink, anchor="lt")
         draw.text((80, 245), detail, font=_font(23), fill=muted, anchor="lt")
 

@@ -132,6 +132,15 @@ def test_store_scope_cannot_escape_user_approved_us_steam_filter(tmp_path):
     assert http.calls[-1][1]["params"]["storeID"] == "1"
 
 
-def test_source_keeps_six_distinct_offers_but_not_the_entire_response():
+def test_source_keeps_ten_distinct_offers_but_not_the_entire_response():
     deals = normalize_deals([row(gameID=str(number), title=f"Game {number}") for number in range(20)])
-    assert len(deals) == 6
+    assert len(deals) == 10
+
+
+def test_previous_six_offer_cache_stays_readable(tmp_path):
+    http = FakeHTTP([row(gameID=str(number), title=f"Game {number}") for number in range(6)])
+    repo = DealRepository(tmp_path, http=http)
+    repo.load({}, now=NOW)
+    snapshot = repo.load({}, now=NOW + timedelta(minutes=5), cached_only=True)
+    assert snapshot.state == "fresh_cache"
+    assert len(snapshot.deals) == 6
