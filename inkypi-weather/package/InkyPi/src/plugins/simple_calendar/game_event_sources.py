@@ -1,7 +1,7 @@
 """Bounded, deterministic adapters for announced gaming broadcasts."""
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timezone
 from email.utils import parsedate_to_datetime
 from html import escape
@@ -67,7 +67,8 @@ SOURCE_URLS = {
     "playstation": ("https://blog.playstation.com/tag/state-of-play/feed/",),
     "nintendo": ("https://www.nintendo.com/us/nintendo-direct/", "https://www.nintendo.com/us/nintendo-direct/archive/"),
     "sgf": ("https://www.addevent.com/feed/eeidoioaw.ics", "https://www.summergamefest.com/"),
-    "tga": ("https://thegameawards.com/news", "https://thegameawards.com/faq"),
+    # The FAQ page was retired in the 2026 redesign; news cards also appear on the homepage.
+    "tga": ("https://thegameawards.com/news", "https://thegameawards.com/"),
     "xbox": ("https://news.xbox.com/en-us/feed/",),
     "gamescom": ("https://www.gamescom.global/en/program",),
     "eurogamer": ("https://www.eurogamer.net/feed/news",),
@@ -400,19 +401,61 @@ def _parse_ics(text, url):
     return list(events.values()), []
 
 
+def _tga_notice_link(headline, slug, now):
+    """Follow a TGA story only when it names the show and is not a recap or a past edition."""
+    searchable = headline + " " + slug.replace("-", " ")
+    if not re.search(FAMILY_PATTERNS["the_game_awards"], searchable, re.I) or RECAP_RE.search(searchable):
+        return None
+    years = [int(year) for year in re.findall(r"\b(20\d{2})\b", searchable)]
+    if years and max(years) < now.year:
+        return None
+    return urljoin("https://thegameawards.com/news/", slug)
+
+
+def _tga_cards(html, url):
+    """Yield (headline, slug) for the 2026 redesign's <a href="/news/<slug>"> story cards."""
+    page_path = urlsplit(url).path.rstrip("/")
+    for anchor in BeautifulSoup(html, "html.parser").select("a[href]"):
+        target = urlsplit(urljoin(url, anchor["href"]))
+        slug = re.fullmatch(r"/news/([a-z0-9][a-z0-9-]{0,200})/?", target.path, re.I)
+        # Accessibility skip links ("#main-content") resolve to the story itself.
+        if target.hostname not in OFFICIAL_HOSTS["the_game_awards"] or not slug or target.path.rstrip("/") == page_path:
+            continue
+        heading = anchor.select_one(".tga-card__heading") or anchor
+        yield heading.get_text(" ", strip=True), slug[1]
+
+
+def _tga_card_links(html, url, now):
+    """Follow cards with the same notice rules as the legacy posts list."""
+    links = []
+    for headline, slug in _tga_cards(html, url):
+        link = _tga_notice_link(headline, slug, now)
+        if link and link not in links:
+            links.append(link)
+    return links
+
+
+def _tga_lists_stories(html, url):
+    """A TGA index keeps its structure while it lists any story, even one not worth following."""
+    if any(isinstance(item.get("posts"), list) and any(isinstance(post, dict) and post.get("slug") for post in item["posts"])
+           for item in _embedded_objects(html)):
+        return True
+    return next(_tga_cards(html, url), None) is not None
+
+
 def _parse_tga(html, url, now):
     links, faq = [], {}
     for item in _embedded_objects(html):
         if isinstance(item.get("posts"), list):
             for post in item["posts"]:
-                if not isinstance(post, dict):
+                if not isinstance(post, dict) or not post.get("slug"):
                     continue
-                headline = str(post.get("title", ""))
-                searchable = headline + " " + str(post.get("slug", "")).replace("-", " ")
-                if post.get("slug") and re.search(FAMILY_PATTERNS["the_game_awards"], headline, re.I) and not RECAP_RE.search(searchable):
-                    links.append(urljoin("https://thegameawards.com/news/", post["slug"]))
+                link = _tga_notice_link(str(post.get("title", "")), str(post["slug"]), now)
+                if link and link not in links:
+                    links.append(link)
         if item.get("category") == "The Event" and item.get("title") in {"When is The Game Awards?", "How can I watch the show?"}:
             faq[item["title"]] = str(item.get("content", ""))
+    links.extend(link for link in _tga_card_links(html, url, now) if link not in links)
     if faq:
         when = BeautifulSoup(faq.get("When is The Game Awards?", ""), "html.parser").get_text(" ", strip=True)
         how = BeautifulSoup(faq.get("How can I watch the show?", ""), "html.parser").get_text(" ", strip=True)
@@ -449,14 +492,38 @@ def valid_source_url(url):
 
 @dataclass
 class SourceBatch:
+    """Announcements plus compact `host: Exception` errors persisted in source state.
+
+    `details` mirrors `errors` with a short exception message for logs only, so
+    a varying message (for example a remaining timeout) never changes state.
+    """
+
     announcements: list[Announcement]
     errors: list[str]
+    details: list[str] = field(default_factory=list)
+
+
+def _error_detail(url, exc):
+    """Describe a failed request for logs without query strings or long payloads."""
+    message = re.sub(r"\?[^\s'\"()<>]*", "", " ".join(str(exc).split()))[:120]
+    summary = f"{urlsplit(url).hostname}: {type(exc).__name__}"
+    return f"{summary}: {message}" if message else summary
+
+
+def _index_structure_missing(source_id, text, url, parsed, links):
+    """Only an index page proves the schedule structure is gone; a followed
+    story or retained notice may legitimately be an ordinary article."""
+    if parsed or links or source_id not in {"nintendo", "gamescom", "tga"} or url not in SOURCE_URLS[source_id]:
+        return False
+    # TGA lists stories that need not name the show: ticket news can fill the
+    # homepage rail, and in January the newest notices describe last year's show.
+    return source_id != "tga" or not _tga_lists_stories(text, url)
 
 
 def fetch_source(source_id, fetch_text, known_urls, now):
     """Discover announcements and recheck retained detail URLs, with bounded IO."""
     pending = list(SOURCE_URLS[source_id]) + sorted(set(known_urls))
-    seen, events, errors = set(), {}, []
+    seen, events, errors, details = set(), {}, [], []
 
     def remember(item):
         key = (item.source_url, item.external_id, item.family)
@@ -493,7 +560,7 @@ def fetch_source(source_id, fetch_text, known_urls, now):
                         pending.append(link)
                 continue
             parsed, links = parse_source_page(source_id, text, url, now)
-            if not parsed and not links and source_id in {"nintendo", "gamescom", "tga"}:
+            if _index_structure_missing(source_id, text, url, parsed, links):
                 raise ValueError("source schedule structure unavailable")
             for item in parsed:
                 remember(item)
@@ -502,6 +569,8 @@ def fetch_source(source_id, fetch_text, known_urls, now):
                 raise ValueError("unrecognized page")
         except Exception as exc:
             errors.append(f"{urlsplit(url).hostname}: {type(exc).__name__}")
+            details.append(_error_detail(url, exc))
     if any(url not in seen and valid_source_url(url) for url in pending):
         errors.append("source request limit reached")
-    return SourceBatch(list(events.values()), errors)
+        details.append("source request limit reached")
+    return SourceBatch(list(events.values()), errors, details)

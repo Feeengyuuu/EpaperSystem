@@ -1,9 +1,10 @@
 """Source documents are the public parsing boundary; fixtures contain no live IO."""
 from datetime import date, datetime, timezone
 import json
+from pathlib import Path
 import pytest
 
-from plugins.simple_calendar.game_event_sources import parse_announcement, parse_source_page
+from plugins.simple_calendar.game_event_sources import fetch_source, parse_announcement, parse_source_page
 
 NOW = datetime(2026, 9, 2, tzinfo=timezone.utc)
 
@@ -217,3 +218,156 @@ def test_html_challenge_is_failure_not_successful_empty_calendar():
         batch = fetch_source(source, lambda _: '<html><title>Please wait</title><body>Checking your browser</body></html>', [], NOW)
         assert batch.announcements == []
         assert batch.errors
+
+
+# Trimmed copies of the October 2026 Next.js redesign: news and homepage cards
+# replaced the embedded posts list, and /faq now redirects to the homepage.
+TGA_FIXTURES = Path(__file__).parent / "fixtures" / "tga_2026"
+TGA_NOW = datetime(2026, 10, 11, 0, 15, tzinfo=timezone.utc)
+TGA_NOTICE = "https://thegameawards.com/news/tga-returns-december-10-2026"
+TGA_PAGES = {
+    "https://thegameawards.com/news": "news.html",
+    "https://thegameawards.com/": "home.html",
+    "https://thegameawards.com/faq": "home.html",
+    TGA_NOTICE: "tga-returns-december-10-2026.html",
+    "https://thegameawards.com/news/public-tickets-on-october-29": "public-tickets-on-october-29.html",
+}
+
+
+def tga_site(calls=None):
+    """Serve the redesigned site offline; any other request is a test failure."""
+    def fetch(url):
+        if calls is not None:
+            calls.append(url)
+        if url not in TGA_PAGES:
+            raise OSError("unexpected request")
+        return (TGA_FIXTURES / TGA_PAGES[url]).read_text(encoding="utf-8")
+    return fetch
+
+
+@pytest.mark.parametrize("url", ["https://thegameawards.com/news", "https://thegameawards.com/"])
+def test_tga_redesigned_cards_link_only_the_current_show_notice(url):
+    _, links = parse_source_page("tga", tga_site()(url), url, TGA_NOW)
+    # Ticket news lacks the series name and the 2025 viewership story is a past show.
+    assert links == [TGA_NOTICE]
+
+
+def test_tga_notice_page_parses_show_date_without_linking_to_itself():
+    items, links = parse_source_page("tga", tga_site()(TGA_NOTICE), TGA_NOTICE, TGA_NOW)
+    assert [(item.event_date, item.starts_at, item.authority) for item in items] == [(date(2026, 12, 10), None, 3)]
+    # "#main-content" resolves to the notice; related cards are tickets and a past show.
+    assert links == []
+
+
+def test_tga_redesign_and_retired_faq_refresh_without_source_errors():
+    calls = []
+    batch = fetch_source("tga", tga_site(calls), ["https://thegameawards.com/faq", TGA_NOTICE], TGA_NOW)
+    assert batch.errors == []
+    assert [(item.family, item.event_date, item.authority, item.source_url) for item in batch.announcements] == [
+        ("the_game_awards", date(2026, 12, 10), 3, TGA_NOTICE),
+    ]
+    assert calls[:2] == ["https://thegameawards.com/news", "https://thegameawards.com/"]
+    assert sorted(calls[2:]) == ["https://thegameawards.com/faq", TGA_NOTICE]
+
+
+def test_tga_cards_without_any_structure_on_index_pages_still_fail():
+    def fetch(url):
+        if url in ("https://thegameawards.com/news", "https://thegameawards.com/"):
+            # Navigation, skip links and other hosts' story paths are not story cards.
+            return ('<html><a href="#main-content">Skip</a><nav><a href="/">Home</a><a href="/news">News</a></nav>'
+                    '<main id="main-content"><h1>News</h1><p>Stories are loading.</p>'
+                    '<a href="https://example.com/news/the-game-awards-2026">Elsewhere</a></main></html>')
+        return tga_site()(url)
+    batch = fetch_source("tga", fetch, [TGA_NOTICE], TGA_NOW)
+    assert batch.errors == ["thegameawards.com: ValueError", "thegameawards.com: ValueError"]
+    assert [item.source_url for item in batch.announcements] == [TGA_NOTICE]
+
+
+def tga_cards_page(*cards):
+    """Render index cards in the redesign's markup from (slug, heading) pairs."""
+    items = "".join(f'<div class="home-news-rail__item"><a class="tga-card tga-card--rail" href="/news/{slug}">'
+                    f'<div class="tga-card__body"><span class="tga-card__heading">{heading}</span></div></a></div>'
+                    for slug, heading in cards)
+    return (f'<!DOCTYPE html><html><body><a href="#main-content">Skip</a><nav><a href="/">Home</a><a href="/news">News</a></nav>'
+            f'<main id="main-content"><section class="home-news"><div class="home-news-rail__track">{items}</div></section></main></body></html>')
+
+
+def test_tga_index_cards_that_skip_the_show_are_structure_not_failure():
+    # The homepage rail shows only the latest three stories, which need not name the show.
+    off_topic = tga_cards_page(("public-tickets-on-october-29", "Public Tickets on October 29"),
+                               ("future-class-2026", "Future Class 2026"),
+                               ("2026-nominees-revealed", "2026 Nominees Revealed"))
+    calls = []
+    def fetch(url):
+        calls.append(url)
+        return off_topic if url in ("https://thegameawards.com/news", "https://thegameawards.com/") else tga_site()(url)
+    assert parse_source_page("tga", off_topic, "https://thegameawards.com/", TGA_NOW) == ([], [])
+    batch = fetch_source("tga", fetch, [TGA_NOTICE], TGA_NOW)
+    assert batch.errors == []
+    assert calls == ["https://thegameawards.com/news", "https://thegameawards.com/", TGA_NOTICE]
+    assert [(item.event_date, item.source_url) for item in batch.announcements] == [(date(2026, 12, 10), TGA_NOTICE)]
+
+
+def test_tga_index_listing_only_last_years_show_is_not_a_failure_in_january():
+    # Until the next edition is announced, the newest show stories name a past year.
+    january = datetime(2027, 1, 5, 18, tzinfo=timezone.utc)
+    for url in ("https://thegameawards.com/news", "https://thegameawards.com/"):
+        assert parse_source_page("tga", tga_site()(url), url, january)[1] == []
+    calls = []
+    batch = fetch_source("tga", tga_site(calls), [], january)
+    assert batch.errors == []
+    assert calls == ["https://thegameawards.com/news", "https://thegameawards.com/"]
+
+
+def test_tga_legacy_posts_list_without_a_show_notice_is_not_a_failure():
+    payload = {"posts": [{"slug": "public-tickets-on-october-29", "title": "Public Tickets on October 29"}]}
+    html = '<html><script>self.__next_f.push(' + json.dumps([1, 'a:' + json.dumps(payload) + '\n']) + ')</script></html>'
+    batch = fetch_source("tga", lambda _: html, [], TGA_NOW)
+    assert batch.errors == [] and batch.announcements == []
+
+
+def test_followed_or_rechecked_tga_article_without_schedule_is_not_a_failure():
+    voting = "https://thegameawards.com/news/the-game-awards-voting-is-open"
+    tickets = "https://thegameawards.com/news/public-tickets-on-october-29"
+    calls = []
+    def fetch(url):
+        calls.append(url)
+        if url in ("https://thegameawards.com/news", "https://thegameawards.com/"):
+            return ('<html><main><a class="tga-card" href="/news/the-game-awards-voting-is-open">'
+                    '<span class="tga-card__heading">The Game Awards Voting Is Open</span></a></main></html>')
+        if url == tickets:
+            return tga_site()(url)
+        return '<html><h1>The Game Awards voting is open</h1><article>Cast your votes for every category now.</article></html>'
+    batch = fetch_source("tga", fetch, [tickets], TGA_NOW)
+    assert voting in calls and tickets in calls
+    assert batch.errors == [] and batch.announcements == []
+
+
+@pytest.mark.parametrize("source,index,detail", [
+    ("nintendo",
+     '<script id="__NEXT_DATA__">' + json.dumps({"event": {"__typename": "NintendoDirect", "id": "direct", "slug": "9-10-2026", "name": "Nintendo Direct", "startDate": "2026-09-10T07:00:00Z", "description": {"text": "Watch the Nintendo Direct on September 10, 2026 at 7am PT."}}}) + '</script>',
+     "https://www.nintendo.com/us/nintendo-direct/9-10-2026/"),
+    ("gamescom",
+     '<script>self.__next_f.push(' + json.dumps([1, 'a:' + json.dumps({"event": {"id": "onl-2026", "slug": "gamescom-opening-night-live-2026", "title": "gamescom Opening Night Live 2026", "startsAt": "2026-09-25T18:00:00Z"}}) + '\n']) + ')</script>',
+     "https://www.gamescom.global/en/event/gamescom-opening-night-live-2026"),
+], ids=["nintendo", "gamescom"])
+def test_structured_index_with_plain_detail_page_is_healthy(source, index, detail):
+    calls = []
+    def fetch(url):
+        calls.append(url)
+        return '<html><h1>Event</h1><main>Details are coming soon.</main></html>' if url == detail else index
+    batch = fetch_source(source, fetch, [], NOW)
+    assert detail in calls
+    assert batch.errors == []
+    assert [item.source_url for item in batch.announcements] == [detail]
+
+
+def test_source_error_detail_keeps_short_message_without_query_strings():
+    def fetch(url):
+        raise OSError("404 Client Error: Not Found for url: https://www.ign.com/rss/articles/feed?tags=games&session=secret " + "x" * 300)
+    batch = fetch_source("ign", fetch, [], NOW)
+    assert batch.errors == ["www.ign.com: OSError"]
+    detail, = batch.details
+    assert detail.startswith("www.ign.com: OSError: 404 Client Error: Not Found for url: https://www.ign.com/rss/articles/feed")
+    assert "?" not in detail and "session" not in detail
+    assert len(detail) <= len("www.ign.com: OSError: ") + 120

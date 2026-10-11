@@ -5,12 +5,13 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import re
 import threading
 import time
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
 from plugins.base_plugin.render_provenance import SourceProvenance
@@ -25,6 +26,7 @@ CHECK_INTERVAL_SECONDS = 3 * 60 * 60
 MAX_STATE_BYTES = 2 * 1024 * 1024
 MAX_SOURCE_ITEMS = 256
 _REFRESH_LOCK = threading.RLock()
+logger = logging.getLogger(__name__)
 
 
 def enabled(value):
@@ -198,6 +200,7 @@ class GameEventProvider:
                 due = _instant(source.get("next_check_at"))
                 if due and now < due <= now + timedelta(seconds=CHECK_INTERVAL_SECONDS):
                     continue
+                previous_error, previous_attempt = source.get("error") or "", _instant(source.get("last_attempt_at"))
                 source.update(last_attempt_at=now.isoformat(), next_check_at=(now + timedelta(seconds=CHECK_INTERVAL_SECONDS)).isoformat(), error="check interrupted")
                 self._save(state)
                 known = [item["source_url"] for item in source.get("items", []) if str(item.get("event_date", "")) >= now.date().isoformat()]
@@ -207,7 +210,33 @@ class GameEventProvider:
                 if not batch.errors:
                     source["last_success_at"] = now.isoformat()
                 self._save(state)
+                self._log_source_transition(source_id, previous_error, source["error"], batch.details or batch.errors)
+                if not batch.errors:
+                    self._log_unconfirmed_evidence(source_id, source["items"], previous_attempt, now)
             return self._result(state, settings, now)
+
+    def _log_source_transition(self, source_id, previous_error, error, details):
+        """Source state is otherwise silent; log only when its error starts, changes or clears."""
+        if error and error != previous_error:
+            logger.warning("Simple Calendar %s source %s check failed: %s",
+                           self.state_subdir, source_id, "; ".join(details)[:500])
+        elif previous_error and not error:
+            logger.info("Simple Calendar %s source %s recovered", self.state_subdir, source_id)
+
+    def _log_unconfirmed_evidence(self, source_id, items, previous_attempt, now):
+        """Warn once when a healthy check misses upcoming evidence the previous check confirmed.
+
+        Such events turn pending without any source error (for example a story
+        that left a feed), so the transition is the only signal worth logging.
+        """
+        if previous_attempt is None or previous_attempt >= now:
+            return
+        today = now.date().isoformat()
+        lost = sorted({urlsplit(item["source_url"]).netloc + urlsplit(item["source_url"]).path for item in items
+                       if item["event_date"] >= today and _instant(item.get("checked_at")) == previous_attempt})
+        if lost:
+            logger.warning("Simple Calendar %s source %s no longer confirms retained evidence: %s",
+                           self.state_subdir, source_id, ", ".join(lost)[:500])
 
     def read(self, settings, *, now=None):
         """No network, directory creation or writes; safe for presentation and UI."""
@@ -291,12 +320,12 @@ class GameEventProvider:
                 continue
             checked = _instant(winner.get("checked_at"))
             pending = not checked or (now - checked).total_seconds() >= CHECK_INTERVAL_SECONDS
-            pending = pending or bool(state["sources"].get(winner["source_id"], {}).get("error"))
+            pending = pending or self._doubted_by_source_error(state, winner)
             conflict = any(not self._agree(winner, item) for item in candidates)
             if winner.get("authority", 0) < 2 and not winner.get("official_url"):
                 fresh_publishers = {item["source_id"] for item in agreeing
                                     if _instant(item.get("checked_at")) and (now - _instant(item["checked_at"])).total_seconds() < CHECK_INTERVAL_SECONDS
-                                    and not state["sources"].get(item["source_id"], {}).get("error")}
+                                    and not self._doubted_by_source_error(state, item)}
                 pending = pending or len(fresh_publishers) < 2
             event = dict(winner, pending_verification=pending or conflict, conflict=conflict)
             if not event.get("starts_at"):
@@ -306,7 +335,7 @@ class GameEventProvider:
                     event["starts_at"] = time_evidence["starts_at"]
                     event["time_source_url"] = time_evidence["source_url"]
                     verified = _instant(time_evidence.get("checked_at"))
-                    event["pending_verification"] |= not verified or (now - verified).total_seconds() >= CHECK_INTERVAL_SECONDS or bool(state["sources"][time_evidence["source_id"]].get("error"))
+                    event["pending_verification"] |= not verified or (now - verified).total_seconds() >= CHECK_INTERVAL_SECONDS or self._doubted_by_source_error(state, time_evidence)
             instant = _instant(event.get("starts_at"))
             still_upcoming = instant >= now if instant else event["event_date"] >= now.date().isoformat()
             if not still_upcoming:
@@ -320,6 +349,19 @@ class GameEventProvider:
         if cold_failure and not events:
             provenance = SourceProvenance.LOCAL_FALLBACK
         return GameEventResult(events, diagnostics, provenance)
+
+    @staticmethod
+    def _doubted_by_source_error(state, item):
+        """A source error only doubts evidence its latest check did not observe again.
+
+        One failed URL must not discredit a notice the same check just re-read;
+        evidence missing from a failed check stays pending until re-verified.
+        """
+        source = state["sources"].get(item["source_id"], {})
+        if not source.get("error"):
+            return False
+        checked, attempted = _instant(item.get("checked_at")), _instant(source.get("last_attempt_at"))
+        return not (checked and attempted and checked >= attempted)
 
     @classmethod
     def _agree(cls, left, right):
