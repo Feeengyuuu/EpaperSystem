@@ -81,6 +81,7 @@ def _collector(clock, **kwargs):
         ),
         scheduler_snapshot=lambda: SimpleNamespace(
             last_attempt_monotonic=clock.value,
+            heartbeat_monotonic=clock.value,
         ),
         active_operation_snapshot=lambda: None,
         refresh_health_snapshot=lambda: {
@@ -96,6 +97,7 @@ def _collector(clock, **kwargs):
         },
         cache_lifecycle=SimpleNamespace(snapshot=_healthy_cache_lifecycle),
         _scheduler_poll_seconds=lambda: 30.0,
+        _scheduler_idle_poll_seconds=lambda: 30.0,
     )
     config_status = SimpleNamespace(
         valid=True,
