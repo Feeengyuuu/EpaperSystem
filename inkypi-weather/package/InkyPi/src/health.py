@@ -320,6 +320,10 @@ class ReadinessEvaluator:
         return number if math.isfinite(number) else None
 
 
+# The scheduler heartbeat briefly exceeds 2 ticks while a display command is
+# dispatched, flipping readiness for 1-4 s on every rotation. Journal a worse
+# verdict only once it has held this long; recoveries are logged at once.
+READINESS_LOG_SETTLE_SECONDS = 30.0
 # Higher is worse; anything outside the evaluator's vocabulary ranks worst.
 _READINESS_STATUS_RANK = {"ready": 0, "degraded": 1, "starting": 2, "not_ready": 3}
 _READINESS_LOG_TOKEN = re.compile(r"[a-z][a-z0-9_]{0,63}")
@@ -346,12 +350,19 @@ class ReadinessTransitionLog:
     paths, settings and administrator-only detail never reach the journal.
     """
 
-    def __init__(self):
+    def __init__(self, settle_seconds=0.0):
         self._lock = threading.Lock()
         self._last = None
+        self._settle_seconds = max(0.0, float(settle_seconds))
+        self._pending = None
 
-    def observe(self, result) -> bool:
-        """Log ``result`` if it differs from the last verdict; return whether it did."""
+    def observe(self, result, now=None) -> bool:
+        """Log ``result`` if it differs from the last verdict; return whether it did.
+
+        A worse verdict is logged only after it has held for ``settle_seconds``
+        (measured with ``now``, a monotonic time); one that clears sooner is
+        dropped, so transient blips never reach the journal.
+        """
 
         status = _readiness_log_token(result.status, fallback="unknown")
         codes = tuple(
@@ -371,8 +382,8 @@ class ReadinessTransitionLog:
                 and previous.status == status
                 and set(previous.error_codes) == set(codes)
             ):
+                self._pending = None
                 return False
-            self._last = ReadinessResult(status=status, error_codes=codes)
             previous_status = "startup" if previous is None else previous.status
             previous_codes = () if previous is None else previous.error_codes
             added = tuple(code for code in codes if code not in previous_codes)
@@ -384,6 +395,18 @@ class ReadinessTransitionLog:
                 or _READINESS_STATUS_RANK.get(status, worst_rank)
                 > _READINESS_STATUS_RANK.get(previous_status, worst_rank)
             )
+            if worsened and self._settle_seconds > 0:
+                # Settle on the status when it changed, else on the new codes,
+                # so code churn inside one worse status cannot defer forever.
+                key = status if status != previous_status else frozenset(codes)
+                moment = time.monotonic() if now is None else float(now)
+                if self._pending is None or self._pending[0] != key:
+                    self._pending = (key, moment)
+                    return False
+                if moment - self._pending[1] < self._settle_seconds:
+                    return False
+            self._pending = None
+            self._last = ReadinessResult(status=status, error_codes=codes)
             # Log under the lock so journal order always matches state order.
             logger.log(
                 logging.WARNING if worsened else logging.INFO,
@@ -414,6 +437,7 @@ class HealthCollector:
         clock=time.monotonic,
         interval_seconds=1.0,
         readiness_evaluator=None,
+        readiness_settle_seconds=READINESS_LOG_SETTLE_SECONDS,
     ):
         self.publisher = publisher
         self.refresh_task = refresh_task
@@ -429,7 +453,9 @@ class HealthCollector:
             if readiness_evaluator is None
             else readiness_evaluator
         )
-        self.readiness_log = ReadinessTransitionLog()
+        self.readiness_log = ReadinessTransitionLog(
+            settle_seconds=readiness_settle_seconds,
+        )
         self._readiness_check_failed = False
         self._queue_full_since = None
         self._stop_event = threading.Event()
@@ -467,7 +493,9 @@ class HealthCollector:
                 snapshot,
                 now_monotonic=self.publisher.now_monotonic(),
             )
-            self.readiness_log.observe(result)
+            self.readiness_log.observe(
+                result, now=self.publisher.now_monotonic(),
+            )
         except Exception as error:
             # Publishing already succeeded; report a broken check once per
             # failure streak instead of on every collection tick, and only by

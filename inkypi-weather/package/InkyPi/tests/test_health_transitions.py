@@ -126,7 +126,7 @@ def _collector(clock, **kwargs):
             "reasons": {},
         },
         clock=clock.monotonic,
-        **kwargs,
+        **{"readiness_settle_seconds": 0.0, **kwargs},
     )
     return collector, state
 
@@ -460,3 +460,67 @@ def test_readiness_check_failure_does_not_break_snapshot_collection(caplog_healt
     assert failures[0].getMessage().endswith("| error_code: RuntimeError")
     assert "evaluator exploded" not in caplog_health.text
     assert _transitions(caplog_health) == []
+
+
+def test_collector_settles_worse_verdicts_by_default():
+    assert HealthCollector.__init__.__kwdefaults__["readiness_settle_seconds"] >= 30
+
+
+def test_transient_worse_verdict_that_clears_within_settle_is_not_logged(caplog_health):
+    # The scheduler heartbeat blips to not_ready for 1-4 s around each display
+    # command; those must not journal a WARNING/INFO pair every rotation.
+    clock = FakeClock(300)
+    collector, state = _collector(clock, readiness_settle_seconds=30.0)
+    collector.collect_once()
+    caplog_health.clear()
+    state["data_stalled_count"] = 1
+    for step in range(1, 5):
+        clock.value = 300 + step
+        collector.collect_once()
+    state["data_stalled_count"] = 0
+    clock.value = 306
+    collector.collect_once()
+    assert _transitions(caplog_health) == []
+
+
+def test_sustained_worse_verdict_is_logged_once_after_settle(caplog_health):
+    clock = FakeClock(300)
+    collector, state = _collector(clock, readiness_settle_seconds=30.0)
+    collector.collect_once()
+    caplog_health.clear()
+    state["data_stalled_count"] = 1
+    for step in range(1, 40):
+        clock.value = 300 + step
+        collector.collect_once()
+    [record] = _transitions(caplog_health)
+    assert record.levelno == logging.WARNING
+    assert record.created and _fields(record)["status"] == "degraded"
+    state["data_stalled_count"] = 0
+    clock.value = 341
+    collector.collect_once()
+    records = _transitions(caplog_health)
+    assert len(records) == 2 and records[1].levelno == logging.INFO
+    assert _fields(records[1])["status"] == "ready"
+
+
+def test_settle_timer_restarts_when_a_blip_clears():
+    log = ReadinessTransitionLog(settle_seconds=30.0)
+    ready = ReadinessResult(status="ready", error_codes=())
+    degraded = ReadinessResult(status="degraded", error_codes=("data_progress_stalled",))
+    assert log.observe(ready, now=0) is True
+    assert log.observe(degraded, now=10) is False
+    assert log.observe(ready, now=20) is False
+    assert log.observe(degraded, now=35) is False
+    assert log.observe(degraded, now=60) is False
+    assert log.observe(degraded, now=65) is True
+
+
+def test_reason_code_churn_inside_a_worse_status_still_settles():
+    log = ReadinessTransitionLog(settle_seconds=30.0)
+    assert log.observe(ReadinessResult(status="ready", error_codes=()), now=0) is True
+    first = ReadinessResult(status="degraded", error_codes=("data_progress_stalled",))
+    second = ReadinessResult(status="degraded", error_codes=("data_progress_stalled", "queue_full"))
+    assert log.observe(first, now=1) is False
+    assert log.observe(second, now=15) is False
+    assert log.observe(first, now=29) is False
+    assert log.observe(second, now=32) is True
