@@ -320,9 +320,9 @@ class ReadinessEvaluator:
         return number if math.isfinite(number) else None
 
 
-# The scheduler heartbeat briefly exceeds 2 ticks while a display command is
-# dispatched, flipping readiness for 1-4 s on every rotation. Journal a worse
-# verdict only once it has held this long; recoveries are logged at once.
+# Journal a worse verdict only once it has held this long, so a transient flip
+# (before f84fb37d the scheduler liveness check blipped for 1-4 s around every
+# rotation) never reaches the journal; recoveries are logged at once.
 READINESS_LOG_SETTLE_SECONDS = 30.0
 # Higher is worse; anything outside the evaluator's vocabulary ranks worst.
 _READINESS_STATUS_RANK = {"ready": 0, "degraded": 1, "starting": 2, "not_ready": 3}
