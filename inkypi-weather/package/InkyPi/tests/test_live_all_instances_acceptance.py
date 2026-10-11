@@ -3873,7 +3873,6 @@ def test_stocktracker_history_diagnostics_reports_dates_without_values(acceptanc
         data_root=tmp_path / "data",
         plugin_root=tmp_path / "plugins",
         install_root=tmp_path / "missing-install",
-        legacy_root=tmp_path / "missing-legacy",
     )
 
     printed = json.dumps(result, sort_keys=True)
@@ -3891,7 +3890,7 @@ def test_stocktracker_history_diagnostics_reports_dates_without_values(acceptanc
 
 def test_stocktracker_history_migration_merges_latest_daily_records_without_changing_sources(acceptance, tmp_path):
     durable = tmp_path / "data" / "plugins" / "stocktracker" / "history"
-    legacy = tmp_path / "legacy" / "src" / "plugins" / "stocktracker" / ".stocktracker_history"
+    legacy = tmp_path / "plugins" / "stocktracker" / ".stocktracker_history"
     durable.mkdir(parents=True)
     legacy.mkdir(parents=True)
     durable_source = durable / "current-holdings.json"
@@ -3915,9 +3914,8 @@ def test_stocktracker_history_migration_merges_latest_daily_records_without_chan
 
     result = acceptance.migrate_stocktracker_history(
         data_root=tmp_path / "data",
-        plugin_root=tmp_path / "missing-plugins",
+        plugin_root=tmp_path / "plugins",
         install_root=tmp_path / "missing-install",
-        legacy_root=tmp_path / "legacy",
         chown_fn=lambda path: chowned.append(Path(path)),
     )
 

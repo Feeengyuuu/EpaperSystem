@@ -527,7 +527,6 @@ def test_normal_update_recovers_old_journal_then_refuses_active_canary(
         recovery_unit_target=tmp_path / "etc" / "inkypi-update-recover.service",
         launcher_target=tmp_path / "bin" / "inkypi",
         updater_target=tmp_path / "sbin" / "inkypi-update",
-        legacy_root=tmp_path / "legacy",
     )
     layout = ReleaseLayout(args.install_root, args.state_root)
     layout.ensure()

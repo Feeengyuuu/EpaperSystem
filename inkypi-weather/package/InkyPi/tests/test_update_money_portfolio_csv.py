@@ -37,7 +37,7 @@ def test_update_money_portfolio_csv_sets_csv_path_and_period():
 
     updated = update_money_portfolio_csv(
         config,
-        "/usr/local/inkypi/data/money_robinhood_holdings.csv",
+        "/var/lib/inkypi/data/money_robinhood_holdings.csv",
         period="1mo",
         extra_settings={
             "cash_balance": "123.45",
@@ -48,7 +48,7 @@ def test_update_money_portfolio_csv_sets_csv_path_and_period():
     )
 
     settings = config["playlist_config"]["playlists"][0]["plugins"][0]["plugin_settings"]
-    assert settings["portfolio_csv_path"] == "/usr/local/inkypi/data/money_robinhood_holdings.csv"
+    assert settings["portfolio_csv_path"] == "/var/lib/inkypi/data/money_robinhood_holdings.csv"
     assert settings["period"] == "1mo"
     assert settings["cash_balance"] == "123.45"
     assert settings["buying_power"] == "123.45"

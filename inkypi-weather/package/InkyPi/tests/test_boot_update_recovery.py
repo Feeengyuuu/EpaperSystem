@@ -364,7 +364,6 @@ def test_second_stage_bootstraps_recovery_unit_before_host_capture(tmp_path, mon
         recovery_unit_target=tmp_path / "etc" / RECOVERY_UNIT_NAME,
         launcher_target=tmp_path / "bin" / "inkypi",
         updater_target=tmp_path / "sbin" / "inkypi-update",
-        legacy_root=tmp_path / "legacy",
     )
     layout = ReleaseLayout(args.install_root, args.state_root)
     layout.ensure()
@@ -492,7 +491,6 @@ def test_concurrent_updater_cannot_enter_locked_capability_bootstrap(
         recovery_unit_target=tmp_path / "etc" / RECOVERY_UNIT_NAME,
         launcher_target=tmp_path / "bin" / "inkypi",
         updater_target=tmp_path / "sbin" / "inkypi-update",
-        legacy_root=tmp_path / "legacy",
     )
     gate = threading.Lock()
     bootstrap_entered = threading.Event()
@@ -583,7 +581,6 @@ def test_recover_only_waits_for_locked_bootstrap_then_acquires_same_lock(
         recovery_unit_target=tmp_path / "etc" / RECOVERY_UNIT_NAME,
         launcher_target=tmp_path / "bin" / "inkypi",
         updater_target=tmp_path / "sbin" / "inkypi-update",
-        legacy_root=tmp_path / "legacy",
     )
     layout = ReleaseLayout(args.install_root, args.state_root)
     layout.ensure()
@@ -737,7 +734,6 @@ def test_bootstrap_failure_prevents_journal_and_host_capture(tmp_path, monkeypat
         recovery_unit_target=tmp_path / "etc" / RECOVERY_UNIT_NAME,
         launcher_target=tmp_path / "bin" / "inkypi",
         updater_target=tmp_path / "sbin" / "inkypi-update",
-        legacy_root=tmp_path / "legacy",
     )
     layout = ReleaseLayout(args.install_root, args.state_root)
     layout.ensure()
@@ -1208,7 +1204,6 @@ def test_bootstrap_recovers_existing_journal_before_requiring_capability_files(
         recovery_unit_target=tmp_path / "etc" / RECOVERY_UNIT_NAME,
         launcher_target=tmp_path / "bin" / "inkypi",
         updater_target=tmp_path / "sbin" / "inkypi-update",
-        legacy_root=tmp_path / "legacy",
     )
     layout = ReleaseLayout(args.install_root, args.state_root)
     layout.ensure()
@@ -1303,7 +1298,6 @@ def test_current_release_drift_after_bootstrap_wait_aborts_before_journal(
         recovery_unit_target=tmp_path / "etc" / RECOVERY_UNIT_NAME,
         launcher_target=tmp_path / "bin" / "inkypi",
         updater_target=tmp_path / "sbin" / "inkypi-update",
-        legacy_root=tmp_path / "legacy",
     )
     expected = {"release_id": "capability", "updater_sha256": "a" * 64}
 

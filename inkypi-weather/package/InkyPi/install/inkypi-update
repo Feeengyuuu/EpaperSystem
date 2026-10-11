@@ -433,7 +433,6 @@ def run_recovery(*, layout=None, coordinator=None) -> int:
             recovery_layout,
             service,
             managed_files=_default_managed_files(),
-            fallback_release=Path("/usr/local/inkypi"),
         )
     try:
         with _recovery_update_lock(recovery_layout.lock_path):
@@ -467,7 +466,6 @@ def run_finalize_recovery(*, layout=None, coordinator=None) -> int:
             recovery_layout,
             service,
             managed_files=_default_managed_files(),
-            fallback_release=Path("/usr/local/inkypi"),
         )
     try:
         with _recovery_update_lock(recovery_layout.lock_path):
@@ -596,7 +594,6 @@ def run_update(args) -> int:
         # fixed recovery capability files before this invocation decides what
         # the candidate itself is allowed to manage.
         managed_files=_managed_files(args, include_boot_recovery=True),
-        fallback_release=args.legacy_root,
     )
     preparer = ArtifactPreparer(
         layout,
@@ -732,11 +729,6 @@ def build_parser():
     )
     parser.add_argument("--launcher-target", default="/usr/local/bin/inkypi")
     parser.add_argument("--updater-target", default="/usr/local/sbin/inkypi-update")
-    parser.add_argument(
-        "--legacy-root",
-        type=Path,
-        default=Path(os.getenv("INKYPI_LEGACY_ROOT", "/usr/local/inkypi")),
-    )
     return parser
 
 

@@ -140,9 +140,10 @@ class UpdateCoordinator:
         self.links = links or FilesystemLinks()
         self.managed_files = tuple(managed_files)
         self.copy_file = copy_file or atomic_copy_file
-        self.fallback_release = (
-            Path(fallback_release) if fallback_release is not None else None
-        )
+        # fallback_release is accepted and ignored.  Installed N-1 updaters
+        # still pass the retired /usr/local/inkypi root, and boot recovery can
+        # pair such a script with this library while managed files are half
+        # installed or half restored.
         self.host_migrator = host_migrator or TrustedHostMigrator()
 
     def activate(self, journal, release_path) -> None:
@@ -165,13 +166,6 @@ class UpdateCoordinator:
         )
 
         previous = self.links.read(self.layout.current_link)
-        if (
-            previous is None
-            and self.fallback_release is not None
-            and self.fallback_release.is_dir()
-            and not self.fallback_release.is_symlink()
-        ):
-            previous = self.fallback_release.resolve()
         legacy_source = None
         if getattr(self.links, "is_legacy_directory", lambda _path: False)(
             self.layout.current_link

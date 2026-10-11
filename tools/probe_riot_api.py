@@ -8,9 +8,6 @@ import requests
 
 
 ENV_CANDIDATES = [
-    Path("/home/feeengyuuu/inkypi-weather-pi-package-zero2w-20260531/InkyPi/.env"),
-    Path("/usr/local/inkypi/.env"),
-    Path("/usr/local/inkypi/src/.env"),
     Path("inkypi-weather/package/InkyPi/.env"),
     Path(".env"),
 ]

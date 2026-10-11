@@ -261,7 +261,6 @@ def _updater_args(tmp_path):
         unit_target=tmp_path / "etc" / "inkypi.service",
         launcher_target=tmp_path / "bin" / "inkypi",
         updater_target=tmp_path / "sbin" / "inkypi-update",
-        legacy_root=tmp_path / "legacy",
     )
 
 
@@ -636,6 +635,47 @@ def test_successful_activation_commits_target_release_and_managed_files(tmp_path
         "start",
         ("ready", "new"),
     ]
+
+
+def test_activation_ignores_retired_fallback_release_from_n1_updater(tmp_path):
+    layout = ReleaseLayout(tmp_path / "opt", tmp_path / "state")
+    layout.ensure()
+    new = _release(layout, "new", "new-unit")
+    retired_root = tmp_path / "usr-local-inkypi"
+    (retired_root / "src").mkdir(parents=True)
+    unit_target = tmp_path / "etc" / "inkypi.service"
+    links = FakeLinks(new)
+    links.remove(layout.current_link)
+    journal = _prepared_journal(layout, "new")
+    # An installed N-1 updater still passes the retired legacy root.
+    coordinator = UpdateCoordinator(
+        layout,
+        FakeService(),
+        links=links,
+        managed_files=(ManagedFile("install/inkypi.service", unit_target, 0o644),),
+        fallback_release=retired_root,
+    )
+
+    coordinator.activate(journal, new)
+
+    assert links.read(layout.current_link) == new
+    assert links.read(layout.previous_link) is None
+    assert journal.metadata["previous_target"] is None
+    assert journal.phase is UpdatePhase.COMMITTED
+    assert (retired_root / "src").is_dir()
+
+
+def test_updater_cli_no_longer_offers_a_legacy_root(monkeypatch):
+    monkeypatch.setenv("INKYPI_LEGACY_ROOT", "/usr/local/inkypi")
+    module = _load_updater_module()
+    parser = module.build_parser()
+
+    args = parser.parse_args(
+        ["--artifact", "release.zip", "--sha256", "0" * 64, "--release-id", "new"]
+    )
+
+    assert not hasattr(args, "legacy_root")
+    assert "--legacy-root" not in parser.format_help()
 
 
 @pytest.mark.parametrize(

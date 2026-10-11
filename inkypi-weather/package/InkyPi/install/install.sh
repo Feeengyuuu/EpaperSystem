@@ -128,25 +128,10 @@ ensure_service_user() {
     install -o inkypi -g inkypi -m 0600 /dev/null "$RUNTIME_ENV_FILE"
   fi
 
-  local -a legacy_env_candidates=("/usr/local/inkypi/.env")
-  local -a merge_args=()
-  local legacy_src=""
-  local env_candidate
-  if [[ -e "/usr/local/inkypi/src" ]]; then
-    legacy_src="$(readlink -f -- "/usr/local/inkypi/src")"
-    if [[ -d "$legacy_src" && "$(basename "$legacy_src")" == "src" ]]; then
-      legacy_env_candidates+=("$(dirname "$legacy_src")/.env")
-    fi
-  fi
-  legacy_env_candidates+=("$PROJECT_DIR/.env")
-  for env_candidate in "${legacy_env_candidates[@]}"; do
-    if [[ -f "$env_candidate" && ! -L "$env_candidate" ]]; then
-      merge_args+=(--merge-from "$env_candidate")
-    fi
-  done
-  if ((${#merge_args[@]})); then
+  local project_env="$PROJECT_DIR/.env"
+  if [[ -f "$project_env" && ! -L "$project_env" ]]; then
     python3 "$SCRIPT_DIR/configure_api_keys.py" --env-file "$RUNTIME_ENV_FILE" \
-      "${merge_args[@]}"
+      --merge-from "$project_env"
   fi
   chown inkypi:inkypi "$RUNTIME_ENV_FILE"
   chmod 0600 "$RUNTIME_ENV_FILE"
@@ -200,13 +185,10 @@ install_config() {
     return
   fi
   local source="$SCRIPT_DIR/config_base/device.json"
-  local candidate
-  for candidate in "/usr/local/inkypi/src/config/device.json" "$SRC_PATH/config/device.json"; do
-    if [[ -f "$candidate" ]] && python3 -c 'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")); raise SystemExit(0 if isinstance(value, dict) else 1)' "$candidate"; then
-      source="$candidate"
-      break
-    fi
-  done
+  local candidate="$SRC_PATH/config/device.json"
+  if [[ -f "$candidate" ]] && python3 -c 'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")); raise SystemExit(0 if isinstance(value, dict) else 1)' "$candidate"; then
+    source="$candidate"
+  fi
   install -o inkypi -g inkypi -m 0600 "$source" "$target"
   if [[ "$source" == "$SCRIPT_DIR/config_base/device.json" ]]; then
     python3 - "$target" "${WS_TYPE:-inky}" <<'PY'

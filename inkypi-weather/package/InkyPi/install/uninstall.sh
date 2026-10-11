@@ -3,7 +3,6 @@ set -Eeuo pipefail
 
 APPNAME="inkypi"
 INSTALL_ROOT="/opt/$APPNAME"
-LEGACY_INSTALL_ROOT="/usr/local/inkypi"
 ETC_ROOT="/etc/inkypi"
 STATE_ROOT="/var/lib/inkypi"
 CACHE_ROOT="/var/cache/inkypi"
@@ -100,7 +99,7 @@ rm -f \
   "$PRIVILEGED_BROKER" \
   "$LAUNCHER" \
   "$UPDATE_BIN"
-rm -rf "$INSTALL_ROOT" "$LEGACY_INSTALL_ROOT" "$UPDATE_LIB_ROOT"
+rm -rf "$INSTALL_ROOT" "$UPDATE_LIB_ROOT"
 systemctl daemon-reload
 
 if [[ "$PURGE" == "true" ]]; then

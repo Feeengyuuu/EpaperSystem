@@ -23,6 +23,7 @@ def test_uninstall_removes_release_binaries_but_not_arbitrary_paths():
     assert 'UPDATE_BIN="/usr/local/sbin/inkypi-update"' in source
     assert 'rm -rf "$INSTALL_ROOT"' in source
     assert "rm -rf /" not in source
+    assert "/usr/local/inkypi" not in source
 
 
 def test_default_uninstall_preserves_durable_fonts_directory():

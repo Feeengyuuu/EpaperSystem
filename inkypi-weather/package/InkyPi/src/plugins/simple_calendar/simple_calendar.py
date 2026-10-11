@@ -44,9 +44,7 @@ PARALLEL_IMAGE_STAGE_RATIONALE = (
     "weather background and hero cutout are single assets under independent roots"
 )
 
-LEGACY_CALENDAR_DIR = Path("/usr/local/inkypi/src/static/calendar")
 DEFAULT_DATA_DIR = Path("/var/lib/inkypi/data")
-DURABLE_CALENDAR_SUBDIR = Path("plugins/simple_calendar/calendars")
 EVENT_SNAPSHOT_SUBDIR = Path("plugins/simple_calendar/event_snapshots")
 EVENT_SNAPSHOT_VERSION = 1
 EVENT_SNAPSHOT_MAX_BYTES = 256 * 1024
@@ -2209,9 +2207,9 @@ class SimpleCalendar(BasePlugin):
                 path_text = f"//{parsed.netloc}{path_text}"
             if os.name == "nt" and path_text.startswith("/") and len(path_text) > 2 and path_text[2] == ":":
                 path_text = path_text[1:]
-            return self._read_local_calendar_path(Path(path_text))
+            return Path(path_text).read_bytes()
         if url.startswith("\\\\") or (not parsed.scheme and Path(url).is_absolute()):
-            return self._read_local_calendar_path(Path(url))
+            return Path(url).read_bytes()
         session = get_http_session()
         current_url = self._validated_remote_calendar_url(url, redirect=False)
         for redirect_count in range(CALENDAR_SOURCE_MAX_REDIRECTS + 1):
@@ -2279,24 +2277,6 @@ class SimpleCalendar(BasePlugin):
         if address is not None and not address.is_global:
             raise RuntimeError(f"Calendar source {label} cannot target a private host")
         return parsed.geturl()
-
-    def _read_local_calendar_path(self, path):
-        try:
-            relative = path.relative_to(LEGACY_CALENDAR_DIR)
-        except ValueError:
-            return path.read_bytes()
-
-        if len(relative.parts) != 1 or relative.name in {"", ".", ".."}:
-            return path.read_bytes()
-
-        data_dir = Path(os.environ.get("INKYPI_DATA_DIR") or DEFAULT_DATA_DIR)
-        durable_root = data_dir / DURABLE_CALENDAR_SUBDIR
-        durable_path = durable_root / relative
-        if not durable_path.is_relative_to(durable_root):
-            return path.read_bytes()
-        if durable_path.is_file():
-            return durable_path.read_bytes()
-        return path.read_bytes()
 
     def _extract_holiday_events(self, cal, source, selected_date, tz):
         month_start = date(selected_date.year, selected_date.month, 1)

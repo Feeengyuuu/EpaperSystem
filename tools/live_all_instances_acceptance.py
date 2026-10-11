@@ -3775,12 +3775,10 @@ def _stocktracker_history_roots(
     data_root,
     plugin_root,
     install_root="/opt/inkypi",
-    legacy_root="/usr/local/inkypi",
 ):
     roots = {
         "durable": Path(data_root) / "plugins" / "stocktracker" / "history",
         "current_legacy": Path(plugin_root) / "stocktracker" / ".stocktracker_history",
-        "legacy_install": Path(legacy_root) / "src" / "plugins" / "stocktracker" / ".stocktracker_history",
     }
     releases = Path(install_root) / "releases"
     try:
@@ -3850,13 +3848,11 @@ def stocktracker_history_diagnostics(
     data_root,
     plugin_root,
     install_root="/opt/inkypi",
-    legacy_root="/usr/local/inkypi",
 ):
     files, roots_with_history = _stocktracker_history_files(
         data_root=data_root,
         plugin_root=plugin_root,
         install_root=install_root,
-        legacy_root=legacy_root,
     )
 
     dates = []
@@ -3889,18 +3885,16 @@ def migrate_stocktracker_history(
     data_root,
     plugin_root,
     install_root="/opt/inkypi",
-    legacy_root="/usr/local/inkypi",
     chown_fn=None,
 ):
     files, _roots_with_history = _stocktracker_history_files(
         data_root=data_root,
         plugin_root=plugin_root,
         install_root=install_root,
-        legacy_root=legacy_root,
     )
     by_date = {}
     source_records = 0
-    priorities = {"durable": 3, "current_legacy": 2, "legacy_install": 1}
+    priorities = {"durable": 3, "current_legacy": 2}
     for label, path in files:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
