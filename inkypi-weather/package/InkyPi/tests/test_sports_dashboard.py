@@ -12581,6 +12581,119 @@ def test_nba_team_aliases_normalize_short_names_to_chinese_codes():
     assert "Los Angeles Lakers" in event["team_a_source_aliases"]
 
 
+def _nba_london_lions_preseason_payload():
+    # Shape of ESPN's 2026-10-12 scoreboard: the guest club has no logo fields.
+    return {
+        "events": [
+            {
+                "id": "401914130",
+                "date": "2026-10-12T20:00Z",
+                "season": {"type": 1},
+                "competitions": [
+                    {
+                        "id": "401914130",
+                        "date": "2026-10-12T20:00Z",
+                        "status": {
+                            "period": 0,
+                            "displayClock": "0.0",
+                            "type": {"state": "pre", "completed": False, "description": "Scheduled"},
+                        },
+                        "competitors": [
+                            {
+                                "homeAway": "home",
+                                "team": {
+                                    "id": "22",
+                                    "abbreviation": "POR",
+                                    "shortDisplayName": "Trail Blazers",
+                                    "displayName": "Portland Trail Blazers",
+                                    "logo": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/por.png",
+                                },
+                            },
+                            {
+                                "homeAway": "away",
+                                "team": {
+                                    "id": "134478",
+                                    "abbreviation": "LON",
+                                    "location": "London Lions",
+                                    "name": "Lions",
+                                    "shortDisplayName": "Lions",
+                                    "displayName": "London Lions",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def test_nba_parser_gives_logo_less_guest_club_its_packaged_crest():
+    event = SportsDashboard._parse_nba_espn_events(
+        _nba_london_lions_preseason_payload(), ZoneInfo("America/Los_Angeles")
+    )[0]
+
+    assert event["team_a_code"] == "LON"
+    assert event["team_a_logo"] == sports_dashboard_common_module.LOCAL_NBA_GUEST_TEAM_LOGO_SCHEME + "london-lions"
+    assert event["team_b_logo"] == "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/por.png"
+
+
+def test_nba_guest_crest_draws_from_package_without_network(monkeypatch):
+    plugin = _plugin()
+    TEAM_LOGO_CACHE.clear()
+    monkeypatch.setattr(
+        SportsDashboard,
+        "_fetch_remote_image_bytes",
+        staticmethod(lambda *_args, **_kwargs: pytest.fail("packaged crest must not hit the network")),
+    )
+    event = SportsDashboard._parse_nba_espn_events(
+        _nba_london_lions_preseason_payload(), ZoneInfo("America/Los_Angeles")
+    )[0]
+    image = Image.new("RGB", (60, 60), DAY_COLORS["panel"])
+    token = _ACTIVE_COLORS.set(DAY_COLORS)
+    try:
+        plugin._draw_team_logo(image, ImageDraw.Draw(image), event["team_a_logo"], 13, 13, 34, event["team_a"])
+    finally:
+        _ACTIVE_COLORS.reset(token)
+
+    pixels = [image.getpixel((x, y)) for y in range(60) for x in range(60)]
+    red = sum(r >= 140 and r >= g * 1.6 and r >= b * 1.6 for r, g, b in pixels)
+    dark = sum(max(r, g, b) <= 60 for r, g, b in pixels)
+    placeholder = sum((r, g, b) == tuple(DAY_COLORS["panel_gold"][:3]) for r, g, b in pixels)
+    assert red >= 15
+    assert dark >= 60
+    assert placeholder == 0
+
+
+@pytest.mark.parametrize("key", ["unknown-club", "../../../etc/passwd", ""])
+def test_nba_guest_crest_scheme_never_falls_back_to_network(monkeypatch, key):
+    plugin = _plugin()
+    TEAM_LOGO_CACHE.clear()
+    monkeypatch.setattr(
+        SportsDashboard,
+        "_fetch_remote_image_bytes",
+        staticmethod(lambda *_args, **_kwargs: pytest.fail("local crest scheme must not hit the network")),
+    )
+
+    logo_url = sports_dashboard_common_module.LOCAL_NBA_GUEST_TEAM_LOGO_SCHEME + key
+
+    assert plugin._load_team_logo_for_render(logo_url, 34) is None
+
+
+def test_nba_guest_crest_manifest_matches_packaged_file():
+    directory = Path(sports_dashboard_common_module.LOCAL_NBA_GUEST_TEAM_LOGO_DIR)
+    manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+
+    for team_id, guest in sports_dashboard_common_module.NBA_GUEST_TEAM_LOGO_KEYS.items():
+        entry = manifest["teams"][team_id]
+        packaged = directory / entry["filename"]
+        assert entry["local_logo_key"] == guest
+        assert hashlib.sha256(packaged.read_bytes()).hexdigest() == entry["output_sha256"]
+        with Image.open(packaged) as crest:
+            assert crest.mode == "RGBA"
+            assert max(crest.size) <= 1024
+
+
 def test_nba_full_team_names_for_main_cards():
     assert SportsDashboard._nba_display_team_name("LAL", "Lakers", full=True) == "\u6d1b\u6749\u77f6\u6e56\u4eba"
     assert (

@@ -373,6 +373,12 @@ LOCAL_F1_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "f1_title_wordmark.
 LOCAL_CS2_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "cs2_title_wordmark.png")
 LOCAL_CLUB_LEAGUE_ICON_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "club_leagues")
 LOCAL_CLUB_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "club_teams")
+# Non-NBA clubs that ESPN lists without a logo (preseason guests), keyed by ESPN team id.
+LOCAL_NBA_GUEST_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "nba_guests")
+LOCAL_NBA_GUEST_TEAM_LOGO_SCHEME = "local-nba-guest://"
+NBA_GUEST_TEAM_LOGO_KEYS = {
+    "134478": "london-lions",
+}
 LOCAL_CLUB_LEAGUE_ICON_PATHS = {
     "PL": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "pl.png"),
     "PD": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "pd.png"),
@@ -3827,6 +3833,14 @@ class SportsDashboardCommonMixin:
 
 
     def _load_team_logo_for_render(self, logo_url, size):
+        if str(logo_url or "").startswith(LOCAL_NBA_GUEST_TEAM_LOGO_SCHEME):
+            return self._load_local_team_logo_candidates(
+                self._local_team_logo_candidates_in(
+                    str(logo_url)[len(LOCAL_NBA_GUEST_TEAM_LOGO_SCHEME):],
+                    (LOCAL_NBA_GUEST_TEAM_LOGO_DIR,),
+                ),
+                size,
+            )
         try:
             return self._load_team_logo(logo_url, size, cache_dir=self._team_logo_disk_cache_dir())
         except TypeError:

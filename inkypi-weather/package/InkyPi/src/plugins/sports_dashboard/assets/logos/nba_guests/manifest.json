@@ -1,0 +1,17 @@
+{
+  "version": "2026-10-12-nba-guests-v1",
+  "teams": {
+    "134478": {
+      "filename": "london-lions.png",
+      "local_logo_key": "london-lions",
+      "team": "London Lions",
+      "espn_team_id": "134478",
+      "source_url": "https://cdn.prod.website-files.com/61372d61901e59b6cdd88b75/686624cdd11059b6b9d489b3_EXPORTSArtboard%20113.png",
+      "source_page": "https://www.thelondonlions.com/",
+      "source_sha256": "ced57f317e686761df9d16dc39fed981000fc8f46b51ae07272feb5703effa96",
+      "output_sha256": "c4879352d44d7905c36ae7c05c78f13506010b41b8a36f1df1c8bb73e99e0e9c",
+      "processing": "white/grey artwork recoloured to black for the light panel; cropped; 512 px high"
+    }
+  },
+  "license_note": "Club crest sourced from the official London Lions website; trademarks remain property of their owners."
+}
