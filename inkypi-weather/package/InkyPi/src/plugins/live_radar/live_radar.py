@@ -123,6 +123,7 @@ BILIBILI_UID_STATUS_URL = "https://api.live.bilibili.com/room/v1/Room/get_status
 BILIBILI_DIRECT_BATCH_LIMIT = 50
 BILIBILI_ROOM_MAP_TTL_SECONDS = 7 * 24 * 3600
 BILIBILI_ROOM_MAP_NEGATIVE_TTL_SECONDS = 6 * 3600
+BILIBILI_PROFILE_KEYS = ("uname", "face")
 TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 TWITCH_STREAMS_URL = "https://api.twitch.tv/helix/streams"
 TWITCH_USERS_URL = "https://api.twitch.tv/helix/users"
@@ -921,14 +922,15 @@ class LiveRadar(BasePlugin):
                     continue
                 cached_info = self._bilibili_room_info_for_cache(data)
                 room_info_by_id[room_id] = cached_info
+                uid = str(cached_info.get("uid") or "")
                 mapping_rooms[room_id] = {
                     "missing": False,
                     "updated_at": mapping_now,
-                    "uid": str(cached_info.get("uid") or ""),
+                    "uid": uid,
                     "room_info": cached_info,
+                    **self._bilibili_cached_profile(cached_entry, uid),
                 }
                 mapping_changed = True
-                uid = str(cached_info.get("uid") or "")
                 if uid:
                     uids.append(uid)
             except Exception as exc:
@@ -937,9 +939,6 @@ class LiveRadar(BasePlugin):
                     room_id,
                     exc.__class__.__name__,
                 )
-
-        if mapping_changed:
-            self._write_bilibili_room_map(mapping)
 
         status_by_uid = {}
         unique_uids = list(dict.fromkeys(uids))
@@ -977,7 +976,17 @@ class LiveRadar(BasePlugin):
                 )
                 continue
             uid = str(room_info.get("uid") or "")
-            status = self._bilibili_status_from_payload(room, room_info, status_by_uid.get(uid), fetch_avatars)
+            uid_status = status_by_uid.get(uid)
+            entry = mapping_rooms.get(room_id)
+            if self._remember_bilibili_profile(entry, uid_status):
+                mapping_changed = True
+            status = self._bilibili_status_from_payload(
+                room,
+                room_info,
+                uid_status,
+                fetch_avatars,
+                self._bilibili_cached_profile(entry, uid),
+            )
             results.append(
                 {
                     "ok": True,
@@ -988,6 +997,9 @@ class LiveRadar(BasePlugin):
                     "error": None,
                 }
             )
+
+        if mapping_changed:
+            self._write_bilibili_room_map(mapping)
         return results
 
     def _bilibili_room_map_now(self):
@@ -1050,6 +1062,30 @@ class LiveRadar(BasePlugin):
         )
         return {key: data.get(key) for key in safe_keys if data.get(key) not in (None, "")}
 
+    # The last successful UID status name and avatar outlive a failed batch
+    # call, so an intermittent outage does not redraw streamers as room IDs.
+    @staticmethod
+    def _bilibili_cached_profile(entry, uid):
+        if not isinstance(entry, dict) or not uid or str(entry.get("uid") or "") != uid:
+            return {}
+        return {
+            key: entry[key]
+            for key in BILIBILI_PROFILE_KEYS
+            if isinstance(entry.get(key), str) and entry[key]
+        }
+
+    @staticmethod
+    def _remember_bilibili_profile(entry, uid_status):
+        if not isinstance(entry, dict) or not isinstance(uid_status, dict):
+            return False
+        changed = False
+        for key in BILIBILI_PROFILE_KEYS:
+            value = str(uid_status.get(key) or "").strip()
+            if value and entry.get(key) != value:
+                entry[key] = value
+                changed = True
+        return changed
+
     def _bilibili_get_json(self, session, url, timeout, params=None):
         response = session.get(
             url,
@@ -1079,8 +1115,9 @@ class LiveRadar(BasePlugin):
             raise TimeoutError("LiveRadar status refresh budget exhausted.")
         return min(requested, remaining)
 
-    def _bilibili_status_from_payload(self, room, room_info, uid_status, fetch_avatars):
+    def _bilibili_status_from_payload(self, room, room_info, uid_status, fetch_avatars, cached_profile=None):
         uid_status = uid_status if isinstance(uid_status, dict) else {}
+        cached_profile = cached_profile if isinstance(cached_profile, dict) else {}
         live_status = self._safe_int(uid_status.get("live_status", room_info.get("live_status")), 0)
         cover = (
             uid_status.get("keyframe")
@@ -1093,9 +1130,15 @@ class LiveRadar(BasePlugin):
             "isLive": live_status == 1,
             "isReplay": live_status == 2,
             "title": uid_status.get("title") or room_info.get("title") or "",
-            "owner": uid_status.get("uname") or room.get("label") or room.get("id") or "",
+            "owner": (
+                uid_status.get("uname")
+                or cached_profile.get("uname")
+                or room.get("label")
+                or room.get("id")
+                or ""
+            ),
             "cover": cover,
-            "avatar": uid_status.get("face") if fetch_avatars else "",
+            "avatar": (uid_status.get("face") or cached_profile.get("face") or "") if fetch_avatars else "",
             "heatValue": self._safe_int(uid_status.get("online", room_info.get("online")), 0),
             "isError": False,
             "startTime": self._bilibili_start_time(uid_status.get("live_time") or room_info.get("live_time")),

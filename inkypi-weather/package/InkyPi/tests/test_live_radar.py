@@ -1022,6 +1022,128 @@ def test_bilibili_room_uid_mapping_is_reused_for_warm_bulk_refresh(tmp_path):
     assert set(mapping["rooms"]) == {"101", "202"}
 
 
+def _bilibili_profile_session(calls, fail_uid_status):
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class FakeSession:
+        def get(self, url, params, timeout, headers):
+            calls.append(url)
+            if "get_info" in url:
+                room_id = params["room_id"]
+                return FakeResponse(
+                    {
+                        "code": 0,
+                        "data": {
+                            "uid": int(room_id) + 1000,
+                            "room_id": int(room_id),
+                            "live_status": 1,
+                            "title": f"Room {room_id}",
+                        },
+                    }
+                )
+            if fail_uid_status[0]:
+                raise ConnectionError("HTTPSConnectionPool(host='api.live.bilibili.com'): Max retries exceeded")
+            uids = [uid for key, uid in params if key == "uids[]"]
+            return FakeResponse(
+                {
+                    "code": 0,
+                    "data": {
+                        uid: {
+                            "uid": int(uid),
+                            "live_status": 1,
+                            "uname": f"Streamer {uid}",
+                            "face": f"https://i0.hdslb.com/face/{uid}.jpg",
+                            "title": "Bulk status",
+                        }
+                        for uid in uids
+                    },
+                }
+            )
+
+    return FakeSession()
+
+
+def test_bilibili_failed_uid_status_keeps_last_known_name_and_avatar(tmp_path):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    calls = []
+    fail_uid_status = [False]
+    session = _bilibili_profile_session(calls, fail_uid_status)
+    rooms = [
+        {"platform": "bilibili", "id": "101", "label": "One", "isFav": False},
+        {"platform": "bilibili", "id": "202", "isFav": False},
+    ]
+
+    healthy = plugin._fetch_bilibili_statuses_direct(session, rooms, 9, True)
+    fail_uid_status[0] = True
+    degraded = plugin._fetch_bilibili_statuses_direct(session, rooms, 9, True)
+
+    assert [result["status"]["owner"] for result in healthy] == ["Streamer 1101", "Streamer 1202"]
+    assert [result["ok"] for result in degraded] == [True, True]
+    assert [result["status"]["owner"] for result in degraded] == ["Streamer 1101", "Streamer 1202"]
+    assert [result["status"]["avatar"] for result in degraded] == [
+        "https://i0.hdslb.com/face/1101.jpg",
+        "https://i0.hdslb.com/face/1202.jpg",
+    ]
+    assert [result["status"]["isLive"] for result in degraded] == [True, True]
+    assert [result["status"]["title"] for result in degraded] == ["Room 101", "Room 202"]
+    assert len([url for url in calls if "get_info" in url]) == 2
+
+    without_avatars = plugin._fetch_bilibili_statuses_direct(session, rooms, 9, False)
+    assert [result["status"]["owner"] for result in without_avatars] == ["Streamer 1101", "Streamer 1202"]
+    assert [result["status"]["avatar"] for result in without_avatars] == ["", ""]
+
+
+def test_bilibili_first_failed_uid_status_falls_back_to_label_then_room_id(tmp_path):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    calls = []
+    session = _bilibili_profile_session(calls, [True])
+    rooms = [
+        {"platform": "bilibili", "id": "101", "label": "One", "isFav": False},
+        {"platform": "bilibili", "id": "202", "isFav": False},
+    ]
+
+    results = plugin._fetch_bilibili_statuses_direct(session, rooms, 9, True)
+
+    assert [result["ok"] for result in results] == [True, True]
+    assert [result["status"]["owner"] for result in results] == ["One", "202"]
+    assert [result["status"]["avatar"] for result in results] == ["", ""]
+    assert [result["status"]["isLive"] for result in results] == [True, True]
+    mapping = json.loads((tmp_path / "bilibili_room_map.json").read_text(encoding="utf-8"))
+    assert all("uname" not in entry and "face" not in entry for entry in mapping["rooms"].values())
+
+
+def test_bilibili_room_info_refresh_keeps_last_known_profile(tmp_path):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    now = [1000.0]
+    plugin._bilibili_room_map_clock = lambda: now[0]
+    calls = []
+    fail_uid_status = [False]
+    session = _bilibili_profile_session(calls, fail_uid_status)
+    room = {"platform": "bilibili", "id": "101", "label": "One", "isFav": False}
+
+    plugin._fetch_bilibili_statuses_direct(session, [room], 9, True)
+    now[0] += live_radar_module.BILIBILI_ROOM_MAP_TTL_SECONDS
+    fail_uid_status[0] = True
+    refreshed = plugin._fetch_bilibili_statuses_direct(session, [room], 9, True)
+
+    assert len([url for url in calls if "get_info" in url]) == 2
+    assert refreshed[0]["status"]["owner"] == "Streamer 1101"
+    assert refreshed[0]["status"]["avatar"] == "https://i0.hdslb.com/face/1101.jpg"
+    mapping = json.loads((tmp_path / "bilibili_room_map.json").read_text(encoding="utf-8"))
+    assert mapping["rooms"]["101"]["updated_at"] == now[0]
+
+
 def test_bilibili_missing_room_is_negative_cached_for_six_hours(tmp_path):
     plugin = _plugin()
     plugin._cache_dir = lambda: tmp_path
