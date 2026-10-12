@@ -376,8 +376,8 @@ LOCAL_CLUB_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "club_teams")
 # Non-NBA clubs that ESPN lists without a logo (preseason guests), keyed by ESPN team id.
 LOCAL_NBA_GUEST_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "nba_guests")
 LOCAL_NBA_GUEST_TEAM_LOGO_SCHEME = "local-nba-guest://"
-NBA_GUEST_TEAM_LOGO_KEYS = {
-    "134478": "london-lions",
+NBA_GUEST_TEAMS = {
+    "134478": {"logo_key": "london-lions", "zh_name": "伦敦雄狮"},
 }
 LOCAL_CLUB_LEAGUE_ICON_PATHS = {
     "PL": os.path.join(LOCAL_CLUB_LEAGUE_ICON_DIR, "pl.png"),

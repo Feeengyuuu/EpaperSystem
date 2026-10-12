@@ -12638,6 +12638,18 @@ def test_nba_parser_gives_logo_less_guest_club_its_packaged_crest():
     assert event["team_b_logo"] == "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/por.png"
 
 
+def test_nba_guest_club_uses_simplified_chinese_name_in_every_layout():
+    event = SportsDashboard._parse_nba_espn_events(
+        _nba_london_lions_preseason_payload(), ZoneInfo("America/Los_Angeles")
+    )[0]
+
+    assert event["team_a"] == "伦敦雄狮"
+    assert SportsDashboard._nba_display_team_from_event(event, "a") == "伦敦雄狮"
+    assert SportsDashboard._nba_display_team_from_event(event, "a", full=True) == "伦敦雄狮"
+    assert SportsDashboard._nba_display_team_from_event(event, "b", full=True) == "波特兰开拓者"
+    assert "London Lions" in event["team_a_source_aliases"]
+
+
 def test_nba_guest_crest_draws_from_package_without_network(monkeypatch):
     plugin = _plugin()
     TEAM_LOGO_CACHE.clear()
@@ -12684,10 +12696,10 @@ def test_nba_guest_crest_manifest_matches_packaged_file():
     directory = Path(sports_dashboard_common_module.LOCAL_NBA_GUEST_TEAM_LOGO_DIR)
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
 
-    for team_id, guest in sports_dashboard_common_module.NBA_GUEST_TEAM_LOGO_KEYS.items():
+    for team_id, guest in sports_dashboard_common_module.NBA_GUEST_TEAMS.items():
         entry = manifest["teams"][team_id]
         packaged = directory / entry["filename"]
-        assert entry["local_logo_key"] == guest
+        assert entry["local_logo_key"] == guest["logo_key"]
         assert hashlib.sha256(packaged.read_bytes()).hexdigest() == entry["output_sha256"]
         with Image.open(packaged) as crest:
             assert crest.mode == "RGBA"

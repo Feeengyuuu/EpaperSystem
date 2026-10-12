@@ -238,8 +238,9 @@ class NBAMixin:
             team.get("location"),
         ]
         code = SportsDashboard._nba_normalized_team_code(raw_code, aliases)
-        display_name = SportsDashboard._nba_display_team_name(code, name, aliases)
-        logo = SportsDashboard._espn_team_logo(team) or SportsDashboard._nba_guest_team_logo_url(team)
+        guest = NBA_GUEST_TEAMS.get(str(team.get("id") or "").strip()) or {}
+        display_name = guest.get("zh_name") or SportsDashboard._nba_display_team_name(code, name, aliases)
+        logo = SportsDashboard._espn_team_logo(team) or SportsDashboard._nba_guest_team_logo_url(guest)
         score = SportsDashboard._lpl_int_value((competitor or {}).get("score")) if show_score else None
         periods = SportsDashboard._nba_period_scores(competitor) if show_score else []
         record = SportsDashboard._nba_record_label((competitor or {}).get("records") or [])
@@ -247,8 +248,8 @@ class NBAMixin:
         return display_name, name, code, logo, score, periods, record, winner
 
     @staticmethod
-    def _nba_guest_team_logo_url(team):
-        key = NBA_GUEST_TEAM_LOGO_KEYS.get(str((team or {}).get("id") or "").strip())
+    def _nba_guest_team_logo_url(guest):
+        key = (guest or {}).get("logo_key")
         return f"{LOCAL_NBA_GUEST_TEAM_LOGO_SCHEME}{key}" if key else ""
 
     @staticmethod
