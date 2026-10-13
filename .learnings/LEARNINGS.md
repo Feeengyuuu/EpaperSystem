@@ -3480,3 +3480,27 @@ For localhost HTTP fixtures, configure a dedicated non-production cookie name to
 - **Notes**: The local fixture used a dedicated cookie name; authenticated browser verification then passed with production defaults untouched.
 
 ---
+
+## [LRN-20261013-001] best_practice
+
+**Logged**: 2026-10-13T12:28:00Z
+**Priority**: medium
+**Status**: resolved
+**Area**: frontend
+
+### Summary
+Reproduce e-paper missing glyphs with the exact durable font file and weight, not a current Windows font with the same family name.
+
+### Details
+The MLS upcoming metadata displayed a box between Apple TV and ScottsMiracle-Gro Field. The generated separator was U+00B7. The project's older private YaHei bold files (SHA256 bdb9acc8ca1c5aebcd0ecc5d48dd8e03d503dd5747230efbc043148147b5ddcf) draw U+00B7 exactly like the undefined-character glyph; regular YaHei, bundled Noto, and the newer Windows YaHei bold support it. An initial check with the newer system font therefore missed the failure. All four generated middle-dot separators in the sports plugin were replaced by its existing ASCII pipe style, including CSL round labels; provider names and global fonts were preserved.
+
+### Suggested Action
+When diagnosing tofu, capture the exact displayed string and compare the selected font's character mask with an undefined codepoint at the actual weight and size. Compare font hashes when identical family names disagree. Verify day/night rendering plus an actual deployed hardware write; a successful font load alone is insufficient.
+
+### Metadata
+- Source: error
+- Related Files: inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/club_football.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/club_football_render.py, inkypi-weather/package/InkyPi/src/plugins/sports_dashboard/csl.py, inkypi-weather/package/InkyPi/tests/test_sports_club_glyphs.py
+- Tags: epaper, fonts, yahei, missing-glyph, regression
+- Pattern-Key: fonts.exact_file_weight_coverage
+
+---

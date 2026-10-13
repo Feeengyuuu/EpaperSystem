@@ -911,11 +911,11 @@ class CSLMixin:
                     ):
                         number = CSLMixin._csl_round_number(value.get(nested_key))
                         if number is not None:
-                            return f"中超 · 第{number}轮"
+                            return f"中超 | 第{number}轮"
                 else:
                     number = CSLMixin._csl_round_number(value)
                     if number is not None:
-                        return f"中超 · 第{number}轮"
+                        return f"中超 | 第{number}轮"
         return "中超联赛"
 
     @staticmethod

@@ -2185,7 +2185,8 @@ class ClubFootballMixin:
             )
             if value
         )
-        block = " · ".join(context_parts) or league_name
+        # The device's bold YaHei font lacks the middle-dot separator.
+        block = " | ".join(context_parts) or league_name
 
         status = str(event.get("status") or "").upper()
         provider_status_delayed = bool(event.get("provider_status_delayed"))

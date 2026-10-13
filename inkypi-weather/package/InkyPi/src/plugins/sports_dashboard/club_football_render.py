@@ -376,7 +376,7 @@ class ClubFootballRenderMixin:
         )
         venue = str((event or {}).get("venue") or "").strip()
         broadcast = str((event or {}).get("broadcast") or "").strip()
-        context = " · ".join(value for value in (broadcast, venue) if value)
+        context = " | ".join(value for value in (broadcast, venue) if value)
         return date_time, context
 
     @staticmethod

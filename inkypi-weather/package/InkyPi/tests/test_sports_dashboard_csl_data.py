@@ -214,7 +214,7 @@ def test_csl_espn_adapter_emits_worldcup_contract_with_chinese_names_and_badge_f
         ),
         "wins_a": 2,
         "wins_b": 1,
-        "block": "中超 · 第21轮",
+        "block": "中超 | 第21轮",
         "odds": {
             "team_a": "2.25",
             "draw": "3.20",
