@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 import time
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.render_provenance import (
@@ -100,6 +100,8 @@ LPL_LIVE_STATE_VERSION = "sports-dashboard-lpl-live-v1"
 LCK_LIVE_STATE_VERSION = "sports-dashboard-lck-live-v1"
 MSI_TOURNAMENT_STATE_VERSION = "sports-dashboard-msi-tournament-v1"
 MSI_LIVE_STATE_VERSION = "sports-dashboard-msi-live-v1"
+WORLDS_TOURNAMENT_STATE_VERSION = "sports-dashboard-worlds-tournament-v1"
+WORLDS_LIVE_STATE_VERSION = "sports-dashboard-worlds-live-v1"
 VALVE_ESPORTS_STATE_VERSION = "sports-dashboard-valve-esports-v1"
 VALVE_ESPORTS_LIVE_STATE_VERSION = "sports-dashboard-valve-esports-live-v4"
 VALVE_TI_OFFICIAL_CACHE_VERSION = "sports-dashboard-valve-ti-official-v1"
@@ -161,6 +163,12 @@ OFFSEASON_HUB_URGENT_NEXT_WINDOW = timedelta(minutes=90)
 OFFSEASON_HUB_DEFAULT_LIVE_WINDOW = timedelta(hours=5)
 OFFSEASON_HUB_PGA_POST_EVENT_WINDOW = timedelta(hours=18)
 TEAM_LOGO_FETCH_TIMEOUT_SECONDS = 2
+# Logos made for dark backgrounds (mostly near-white strokes) get a dark
+# backdrop on the light theme so they do not vanish into the card.
+TEAM_LOGO_LIGHT_PIXEL_LUMINANCE = 225
+TEAM_LOGO_LIGHT_PIXEL_FRACTION = 0.6
+TEAM_LOGO_LIGHT_PROBE_SIZE = 128
+TEAM_LOGO_LIGHT_INFO_KEY = "inkypi_light_on_transparent"
 TEAM_LOGO_DISK_CACHE_MAX_BYTES = 2 * 1024 * 1024
 TEAM_LOGO_DISK_CACHE_MAX_SIDE = 2048
 TEAM_LOGO_DISK_CACHE_MAX_PIXELS = 4 * 1024 * 1024
@@ -313,6 +321,8 @@ DEFAULT_LPL_LEAGUE_ID = "98767991314006698"
 DEFAULT_LCK_LEAGUE_ID = "98767991310872058"
 DEFAULT_MSI_LEAGUE_ID = "98767991325878492"
 DEFAULT_MSI_TOURNAMENT_CACHE_HOURS = 12
+DEFAULT_WORLDS_LEAGUE_ID = "98767975604431411"
+DEFAULT_WORLDS_TOURNAMENT_CACHE_HOURS = 12
 DEFAULT_TIMEZONE = "America/Los_Angeles"
 ODDS_API_IO_LEAGUE_ALIASES = {
     "international-world-cup": DEFAULT_WORLD_CUP_ODDS_API_IO_LEAGUE,
@@ -336,6 +346,7 @@ LOCAL_EWC_GAME_PLACEHOLDER_DIR = os.path.join(
     "ewc_game_placeholders",
 )
 LOCAL_MSI_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "msi.png")
+LOCAL_WORLDS_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "worlds.png")
 LOCAL_TBD_TEAM_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "tbd.png")
 LOCAL_WORLDCUP_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "worldcup.png")
 LOCAL_NBA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nba.png")
@@ -1812,6 +1823,10 @@ DAY_COLORS = {
     "msi_live": (222, 45, 38),
     "msi_tag": (221, 238, 255),
     "msi_shadow": (0, 136, 156),
+    "worlds_accent": (8, 8, 8),
+    "worlds_live": (222, 45, 38),
+    "worlds_tag": (255, 239, 176),
+    "worlds_shadow": (255, 196, 30),
 }
 
 DEEP_NIGHT_COLORS = {
@@ -1887,6 +1902,10 @@ DEEP_NIGHT_COLORS = {
     "msi_live": (255, 82, 74),
     "msi_tag": (20, 52, 86),
     "msi_shadow": (25, 104, 128),
+    "worlds_accent": (255, 205, 54),
+    "worlds_live": (255, 82, 74),
+    "worlds_tag": (68, 54, 12),
+    "worlds_shadow": (130, 104, 26),
 }
 
 _ACTIVE_COLORS = ContextVar("sports_dashboard_active_colors", default=DAY_COLORS)
@@ -3038,6 +3057,12 @@ class SportsDashboardCommonMixin:
         """Finish discovery and tracking before allocating fonts and images."""
         lol_cards = self._load_lol_esports_sidebar_cards(settings, device_config, timezone_info, now)
         lol_sidebar_override = self._lol_esports_sidebar_override(settings)
+        pinned_lol_card = None
+        if not lol_sidebar_override:
+            pinned_lol_card = next(
+                (card for card in lol_cards if (card or {}).get("sidebar_pinned")),
+                None,
+            )
         tracked_valve_selected = None
         tracked_valve_source_state = ""
         should_write_valve_state = False
@@ -3050,6 +3075,10 @@ class SportsDashboardCommonMixin:
                     league_override=lol_sidebar_override,
                 ),
             }
+        elif pinned_lol_card:
+            # A running Worlds owns the sidebar, so CS2/TI discovery (and its
+            # request budget) is skipped until the tournament window closes.
+            esports_choice = {"kind": "lol", "choice": pinned_lol_card}
         else:
             pandascore_card = None
             pandascore_source_state = ""
@@ -3236,6 +3265,7 @@ class SportsDashboardCommonMixin:
         esports_choice = self._prepare_right_esports_panel(settings, device_config, timezone_info, now)
 
         if esports_choice.get("kind") == "valve":
+            self._release_worlds_sidebar_pin()
             valve_selected = esports_choice["selected"]
             valve_source_state = esports_choice["source_state"]
             self._draw_valve_esports_sidebar(image, left_width, valve_selected, valve_source_state, now)
@@ -3245,8 +3275,17 @@ class SportsDashboardCommonMixin:
         lol_selected = lol_choice["selected"]
         lol_source_state = lol_choice["source_state"]
         lol_league_key = lol_choice["league_key"]
+        live_state_options = {"league_key": lol_league_key}
+        if str(lol_league_key or "").upper() == "WORLDS":
+            live_state_options["sidebar_pinned_until"] = (
+                lol_choice.get("pinned_until")
+                if lol_choice.get("sidebar_pinned")
+                else None
+            )
+        else:
+            self._release_worlds_sidebar_pin()
         self._attach_lpl_realtime_info(lol_selected, settings, league_key=lol_league_key)
-        self._write_lol_live_state(lol_selected, now, lol_source_state, league_key=lol_league_key)
+        self._write_lol_live_state(lol_selected, now, lol_source_state, **live_state_options)
         self._draw_lpl_sidebar(
             image,
             left_width,
@@ -3824,13 +3863,61 @@ class SportsDashboardCommonMixin:
         draw_y = int(y - (draw_size - size) / 2)
         logo = self._load_local_team_logo(fallback_text, draw_size) or self._load_team_logo_for_render(logo_url, draw_size)
         if logo:
-            image.paste(logo, (draw_x + (draw_size - logo.width) // 2, draw_y + (draw_size - logo.height) // 2), logo)
+            paste_x = draw_x + (draw_size - logo.width) // 2
+            paste_y = draw_y + (draw_size - logo.height) // 2
+            if self._team_logo_needs_dark_backdrop(logo):
+                pad = max(2, draw_size // 12)
+                draw.rounded_rectangle(
+                    (paste_x - pad, paste_y - pad, paste_x + logo.width + pad - 1, paste_y + logo.height + pad - 1),
+                    radius=max(3, draw_size // 6),
+                    fill=COLORS["text"],
+                )
+            image.paste(logo, (paste_x, paste_y), logo)
             return
         draw.rounded_rectangle((draw_x, draw_y, draw_x + draw_size, draw_y + draw_size), radius=4, fill=COLORS["panel_gold"], outline=COLORS["border"], width=1)
         fallback = str(fallback_text or "?")[:1].upper()
         fallback_font = self._font(max(10, int(draw_size * 0.55)), True)
         self._draw_centered(draw, (draw_x + draw_size / 2, draw_y + draw_size / 2), fallback, fallback_font, COLORS["muted"])
 
+
+    @staticmethod
+    def _team_logo_needs_dark_backdrop(logo):
+        panel = COLORS["panel"]
+        if 0.299 * panel[0] + 0.587 * panel[1] + 0.114 * panel[2] < 128:
+            return False
+        if getattr(logo, "mode", "") != "RGBA":
+            return False
+        flag = logo.info.get(TEAM_LOGO_LIGHT_INFO_KEY)
+        if flag is None:
+            flag = SportsDashboard._team_logo_is_light_on_transparent(logo)
+        return bool(flag)
+
+    @staticmethod
+    def _team_logo_is_light_on_transparent(logo):
+        """Whether a logo is mostly near-white strokes meant for dark backgrounds."""
+        if getattr(logo, "mode", "") != "RGBA":
+            return False
+        probe = logo
+        if max(logo.size) > TEAM_LOGO_LIGHT_PROBE_SIZE:
+            # Resize straight to the probe size; a full-size copy of a 2000px
+            # provider logo would cost ~16 MB on the device.
+            probe = ImageOps.contain(
+                logo,
+                (TEAM_LOGO_LIGHT_PROBE_SIZE, TEAM_LOGO_LIGHT_PROBE_SIZE),
+                Image.BILINEAR,
+            )
+        alpha = probe.getchannel("A")
+        if alpha.getextrema()[0] == 255:
+            return False
+        opaque_mask = alpha.point(lambda value: 255 if value >= 128 else 0)
+        opaque = opaque_mask.histogram()[255]
+        if not opaque:
+            return False
+        light_mask = probe.convert("RGB").convert("L").point(
+            lambda value: 255 if value >= TEAM_LOGO_LIGHT_PIXEL_LUMINANCE else 0
+        )
+        light = ImageChops.multiply(light_mask, opaque_mask).histogram()[255]
+        return light / opaque >= TEAM_LOGO_LIGHT_PIXEL_FRACTION
 
     def _load_team_logo_for_render(self, logo_url, size):
         if str(logo_url or "").startswith(LOCAL_NBA_GUEST_TEAM_LOGO_SCHEME):
@@ -3938,7 +4025,9 @@ class SportsDashboardCommonMixin:
                     bbox = logo.getbbox()
                     if bbox:
                         logo = logo.crop(bbox)
+                    light = SportsDashboard._team_logo_is_light_on_transparent(logo)
                     logo = ImageOps.contain(logo, (size, size), Image.LANCZOS)
+                    logo.info[TEAM_LOGO_LIGHT_INFO_KEY] = light
                 TEAM_LOGO_CACHE[cache_key] = logo
                 return logo
             except Exception as exc:
@@ -4064,10 +4153,15 @@ class SportsDashboardCommonMixin:
                 cropped = logo.crop(bbox)
                 logo.close()
                 try:
-                    return ImageOps.contain(cropped, (size, size), Image.LANCZOS)
+                    light = SportsDashboard._team_logo_is_light_on_transparent(cropped)
+                    result = ImageOps.contain(cropped, (size, size), Image.LANCZOS)
                 finally:
                     cropped.close()
-            return ImageOps.contain(logo, (size, size), Image.LANCZOS)
+            else:
+                light = SportsDashboard._team_logo_is_light_on_transparent(logo)
+                result = ImageOps.contain(logo, (size, size), Image.LANCZOS)
+            result.info[TEAM_LOGO_LIGHT_INFO_KEY] = light
+            return result
         finally:
             logo.close()
 
@@ -4238,6 +4332,7 @@ class SportsDashboardCommonMixin:
             "PANDASCORE STALE AUTH": "PANDASCORE STALE",
             "PANDASCORE STALE LIMIT": "PANDASCORE STALE",
             "PANDASCORE ARCHIVE": "PANDASCORE ARCHIVE",
+            "WORLDS LIVE DATA": "WORLDS DATA",
         }.get(str(source_state or "").upper(), str(source_state or "DATA"))
 
     @staticmethod

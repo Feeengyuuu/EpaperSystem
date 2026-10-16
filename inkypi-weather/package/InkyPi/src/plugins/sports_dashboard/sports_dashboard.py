@@ -12,6 +12,7 @@ from . import club_football_render as _club_football_render_module
 from . import nba as _nba_module
 from . import esports as _esports_module
 from . import esports_render as _esports_render_module
+from . import lol_worlds as _lol_worlds_module
 from . import f1 as _f1_module
 from . import offseason_hub as _offseason_hub_module
 from . import offseason_render as _offseason_render_module
@@ -27,6 +28,7 @@ from .club_football_render import ClubFootballRenderMixin
 from .nba import NBAMixin
 from .esports import EsportsMixin
 from .esports_render import EsportsRenderMixin
+from .lol_worlds import LolWorldsMixin
 from .f1 import F1Mixin
 from .offseason_hub import OffseasonHubMixin
 from .offseason_render import OffseasonRenderMixin
@@ -52,6 +54,7 @@ class SportsDashboard(
     NBAMixin,
     EsportsMixin,
     EsportsRenderMixin,
+    LolWorldsMixin,
     F1Mixin,
     OffseasonHubMixin,
     OffseasonRenderMixin,
@@ -138,6 +141,8 @@ class SportsDashboard(
             sources.append("lpl")
         if self._live_state_active(self._msi_live_state_path(), MSI_LIVE_STATE_VERSION, current_dt):
             sources.append("msi")
+        if self._live_state_active(self._worlds_live_state_path(), WORLDS_LIVE_STATE_VERSION, current_dt):
+            sources.append("worlds")
         if self._live_state_active(self._lck_live_state_path(), LCK_LIVE_STATE_VERSION, current_dt):
             sources.append("lck")
         if self._live_state_active(
@@ -185,12 +190,15 @@ class SportsDashboard(
             return self._bool_setting(settings, "clubFootballLiveRefreshEnabled", True)
         if source == "offseason_hub":
             return self._bool_setting(settings, "offseasonHubLiveRefreshEnabled", True)
-        if source in {"lpl", "lck", "msi"}:
+        if source in {"lpl", "lck", "msi", "worlds"}:
             return self._bool_setting(settings, "lplLiveRefreshEnabled", True)
         if source == "valve_esports":
             if not self._bool_setting(settings, "valveEsportsEnabled", True):
                 return False
             if self._lol_esports_sidebar_override(settings):
+                return False
+            # A pinned Worlds card owns the sidebar; CS2/TI matches stay hidden.
+            if self._worlds_sidebar_pin_marker_active(current_dt):
                 return False
             state = self._read_json_file(self._valve_esports_live_state_path())
             state_source = " ".join(
@@ -261,7 +269,7 @@ class SportsDashboard(
             )
         if source == "offseason_hub":
             return self._int_setting(settings, "offseasonHubLiveRefreshIntervalSeconds", 60, 60, 900)
-        if source in {"lpl", "lck", "msi"}:
+        if source in {"lpl", "lck", "msi", "worlds"}:
             return self._int_setting(settings, "lplLiveRefreshIntervalSeconds", 60, 60, 900)
         if source == "valve_esports":
             return self._int_setting(
@@ -382,7 +390,7 @@ class SportsDashboard(
         for item in candidates or []:
             phase = item.get("phase")
             kind = str(item.get("kind") or "").strip().lower()
-            if kind == "lol" and phase in (0, 1):
+            if kind == "lol" and (phase in (0, 1) or item.get("pinned")):
                 return True
             if kind == "ewc" and phase in (0, 1):
                 return True
@@ -1905,6 +1913,7 @@ _SPLIT_MODULES = (
     _nba_module,
     _esports_module,
     _esports_render_module,
+    _lol_worlds_module,
     _f1_module,
     _offseason_hub_module,
     _offseason_render_module,

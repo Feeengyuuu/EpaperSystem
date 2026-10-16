@@ -455,6 +455,9 @@ class EsportsMixin:
 
     def _fetch_msi_tournament(self, settings, timezone_info, now):
         league_id = str(settings.get("msiLeagueId") or DEFAULT_MSI_LEAGUE_ID).strip()
+        return self._fetch_lol_league_tournament(league_id, timezone_info, now, "MSI")
+
+    def _fetch_lol_league_tournament(self, league_id, timezone_info, now, league_label):
         url = LOLESPORTS_TOURNAMENTS_URL.format(league_id=league_id)
         session = get_http_session()
         response = session.get(
@@ -476,7 +479,7 @@ class EsportsMixin:
             tournaments = []
         tournament = self._select_msi_tournament(tournaments, timezone_info, now)
         if not tournament:
-            raise ValueError("LoLEsports returned no MSI tournament metadata")
+            raise ValueError(f"LoLEsports returned no {league_label} tournament metadata")
         return tournament
 
     @staticmethod
@@ -523,9 +526,18 @@ class EsportsMixin:
 
     @staticmethod
     def _cached_msi_tournament(cache, league_id, timezone_info):
+        return SportsDashboard._cached_lol_league_tournament(
+            cache,
+            league_id,
+            timezone_info,
+            MSI_TOURNAMENT_STATE_VERSION,
+        )
+
+    @staticmethod
+    def _cached_lol_league_tournament(cache, league_id, timezone_info, version):
         if not isinstance(cache, Mapping):
             return None
-        if cache.get("version") != MSI_TOURNAMENT_STATE_VERSION:
+        if cache.get("version") != version:
             return None
         if str(cache.get("league_id") or "").strip() != str(league_id or "").strip():
             return None
@@ -542,10 +554,19 @@ class EsportsMixin:
         }
 
     def _write_msi_tournament_state(self, tournament, league_id, now_utc):
+        self._write_lol_league_tournament_state(
+            self._msi_tournament_state_path(),
+            MSI_TOURNAMENT_STATE_VERSION,
+            tournament,
+            league_id,
+            now_utc,
+        )
+
+    def _write_lol_league_tournament_state(self, path, version, tournament, league_id, now_utc):
         if not tournament:
             return
         payload = {
-            "version": MSI_TOURNAMENT_STATE_VERSION,
+            "version": version,
             "league_id": str(league_id or "").strip(),
             "fetched_at": now_utc.astimezone(timezone.utc).isoformat(),
             "tournament": {
@@ -555,7 +576,7 @@ class EsportsMixin:
                 "end_date": tournament["end"].date().isoformat() if isinstance(tournament.get("end"), datetime) else "",
             },
         }
-        self._write_json_file(self._msi_tournament_state_path(), payload)
+        self._write_json_file(path, payload)
 
     @staticmethod
     def _msi_tournament_live_window_active(tournament, now):
@@ -2433,6 +2454,18 @@ class EsportsMixin:
                     "priority": 2,
                 }
             )
+        if self._bool_setting(settings, "worldsEnabled", True):
+            worlds_forced = self._lol_esports_sidebar_override(settings) == "WORLDS"
+            worlds_card = self._load_worlds_sidebar_card(
+                settings,
+                timezone_info,
+                now,
+                force=worlds_forced,
+            )
+            # Worlds joins the sidebar only while its tournament runs (where it
+            # is pinned) or when the sidebar override forces it for a preview.
+            if worlds_card.get("sidebar_pinned") or worlds_forced:
+                cards.append(worlds_card)
         return cards
 
     def _load_lol_esports_sidebar(self, settings, device_config, timezone_info, now):
@@ -2448,7 +2481,7 @@ class EsportsMixin:
             or settings.get("lolSidebarLeagueOverride")
             or ""
         ).strip().upper()
-        if configured in {"LPL", "LCK", "MSI"}:
+        if configured in {"LPL", "LCK", "MSI", "WORLDS"}:
             return configured
         if SportsDashboard._bool_setting(settings, "lckPreviewEnabled", False):
             return "LCK"
@@ -2472,6 +2505,10 @@ class EsportsMixin:
         if not displayable:
             return SportsDashboard._right_sidebar_default_lpl_choice(cards, now)
 
+        pinned_cards = [card for card in displayable if card.get("sidebar_pinned")]
+        if pinned_cards:
+            return pinned_cards[0]
+
         live_cards = [card for card in displayable if SportsDashboard._lol_sidebar_candidate_phase(card) == 0]
         if live_cards:
             return sorted(live_cards, key=SportsDashboard._right_sidebar_lol_sort_key)[0]
@@ -2486,21 +2523,24 @@ class EsportsMixin:
     def _select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now, ewc_card=None):
         lol_cards = [dict(card) for card in (lol_cards or []) if card and card.get("selected") is not None]
         candidates = []
-        # Resolve the preferred LoL league first (LPL/LCK/MSI), then compare
-        # that single timed choice with EWC. This preserves the configured LoL
-        # league order without letting it hide an earlier cross-module match.
+        # Resolve the preferred LoL league first (LPL/LCK/MSI/Worlds), then
+        # compare that single timed choice with EWC. This preserves the
+        # configured LoL league order without letting it hide an earlier
+        # cross-module match. A running Worlds is pinned above everything.
         lol_choice = SportsDashboard._select_lol_esports_sidebar(lol_cards, now)
         phase = SportsDashboard._lol_sidebar_candidate_phase(lol_choice)
         if phase is not None:
-            candidates.append(
-                {
-                    "kind": "lol",
-                    "choice": lol_choice,
-                    "phase": phase,
-                    "priority": SportsDashboard._right_sidebar_lol_priority(lol_choice),
-                    "tie": SportsDashboard._right_sidebar_lol_tie_value(lol_choice),
-                }
-            )
+            lol_candidate = {
+                "kind": "lol",
+                "choice": lol_choice,
+                "phase": phase,
+                "priority": SportsDashboard._right_sidebar_lol_priority(lol_choice),
+                "tie": SportsDashboard._right_sidebar_lol_tie_value(lol_choice),
+                "pinned": bool((lol_choice or {}).get("sidebar_pinned")),
+            }
+            if lol_candidate["pinned"]:
+                return lol_candidate
+            candidates.append(lol_candidate)
 
         ewc_phase = SportsDashboard._ewc_sidebar_candidate_phase(ewc_card)
         if ewc_phase is not None:
@@ -2645,6 +2685,8 @@ class EsportsMixin:
         if selected.get("upcoming"):
             return 1
         if str((card or {}).get("league_key") or "").strip().upper() == "LPL":
+            return 2
+        if (card or {}).get("sidebar_pinned") and selected.get("recent"):
             return 2
         return None
 
@@ -4863,6 +4905,7 @@ class EsportsMixin:
             "LPL": "lplLiveEndpointEnabled",
             "LCK": "lckLiveEndpointEnabled",
             "MSI": "msiLiveEndpointEnabled",
+            "WORLDS": "worldsLiveEndpointEnabled",
         }.get(str(league_key).upper(), "lolLiveEndpointEnabled")
         should_poll_live = force_live_endpoint or self._should_poll_lpl_live_endpoint(events, now)
         if self._bool_setting(settings, live_endpoint_key, True) and should_poll_live:
@@ -5022,6 +5065,10 @@ class EsportsMixin:
             return SportsDashboard._format_lpl_stage_label(normalized)
         if lower.startswith("round"):
             return SportsDashboard._format_lpl_stage_label(normalized)
+        if compact in {"playin", "playins", "playinstage"}:
+            return "Play-In"
+        if compact in {"swiss", "swissstage"}:
+            return "Swiss Stage"
         return ""
 
     @staticmethod
@@ -5058,6 +5105,8 @@ class EsportsMixin:
                 continue
             if text == DEFAULT_MSI_LEAGUE_ID:
                 return "MSI"
+            if text == DEFAULT_WORLDS_LEAGUE_ID:
+                return "Worlds"
             if text == DEFAULT_LCK_LEAGUE_ID:
                 return "LCK"
             if text == DEFAULT_LPL_LEAGUE_ID:
@@ -5065,6 +5114,8 @@ class EsportsMixin:
             compact = "".join(ch for ch in text.lower() if ch.isalnum())
             if compact in {"msi", "midseasoninvitational"}:
                 return "MSI"
+            if compact in {"worlds", "worldchampionship"}:
+                return "Worlds"
             if compact in {"lck", "leagueoflegendschampionskorea"}:
                 return "LCK"
             if compact in {"lpl", "leagueoflegendsproleague"}:
@@ -5454,18 +5505,28 @@ class EsportsMixin:
     def _write_lck_live_state(self, selected, now, source_state):
         self._write_lol_live_state(selected, now, source_state, league_key="LCK")
 
-    def _write_lol_live_state(self, selected, now, source_state, league_key="LPL"):
+    def _write_lol_live_state(self, selected, now, source_state, league_key="LPL", sidebar_pinned_until=None):
         key = str(league_key or "LPL").strip().upper()
         live_events = (selected or {}).get("live") or []
         event = live_events[0] if live_events else None
         payload = {
-            "version": {"LCK": LCK_LIVE_STATE_VERSION, "MSI": MSI_LIVE_STATE_VERSION}.get(key, LPL_LIVE_STATE_VERSION),
+            "version": {
+                "LCK": LCK_LIVE_STATE_VERSION,
+                "MSI": MSI_LIVE_STATE_VERSION,
+                "WORLDS": WORLDS_LIVE_STATE_VERSION,
+            }.get(key, LPL_LIVE_STATE_VERSION),
             "league_key": key,
             "updated_at": now.astimezone(timezone.utc).isoformat(),
             "source_state": source_state,
             "has_live": bool(event),
             "live_until": None,
         }
+        if key == "WORLDS":
+            payload["sidebar_pinned_until"] = (
+                sidebar_pinned_until.astimezone(timezone.utc).isoformat()
+                if isinstance(sidebar_pinned_until, datetime)
+                else None
+            )
         if event:
             start = event.get("start")
             live_until = start + LPL_INFERRED_LIVE_WINDOW if isinstance(start, datetime) else None
@@ -5483,7 +5544,11 @@ class EsportsMixin:
                 }
             )
         try:
-            path = {"LCK": self._lck_live_state_path, "MSI": self._msi_live_state_path}.get(key, self._lpl_live_state_path)()
+            path = {
+                "LCK": self._lck_live_state_path,
+                "MSI": self._msi_live_state_path,
+                "WORLDS": self._worlds_live_state_path,
+            }.get(key, self._lpl_live_state_path)()
             self._write_json_file(path, payload)
         except OSError as exc:
             logger.warning("Failed to write %s live refresh state: %s", key, exc)

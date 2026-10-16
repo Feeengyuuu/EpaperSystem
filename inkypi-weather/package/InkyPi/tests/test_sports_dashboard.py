@@ -1968,6 +1968,7 @@ def test_lol_sidebar_override_forces_lck(monkeypatch):
     plugin._load_lpl_events = lambda _settings, _timezone_info: ([lpl_event], "LIVE DATA")
     plugin._load_lck_events = lambda _settings, _timezone_info: ([lck_event], "LCK LIVE DATA")
     plugin._load_msi_events = lambda _settings, _timezone_info, _now: ([], "MSI NO DATA", None)
+    plugin._load_worlds_events = lambda *_args, **_kwargs: ([], "WORLDS NO DATA", None)
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
 
     choice = plugin._load_lol_esports_sidebar(
@@ -4305,6 +4306,7 @@ def test_right_region_renders_official_ti_live_over_waiting_lpl(monkeypatch, tmp
                 "lplOddsEnabled": False,
                 "lckEnabled": False,
                 "msiEnabled": False,
+                "worldsEnabled": False,
                 "ewcSidebarEnabled": False,
                 "valveEsportsEnabled": True,
                 "valveEsportsHltvEnabled": False,
@@ -5448,6 +5450,7 @@ def test_lol_sidebar_override_forces_msi(monkeypatch):
     plugin._load_lpl_events = lambda _settings, _timezone_info: ([], "CACHE DATA")
     plugin._load_lck_events = lambda _settings, _timezone_info: ([], "LCK NO DATA")
     plugin._load_msi_events = lambda _settings, _timezone_info, _now: ([msi_event], "MSI LIVE DATA", None)
+    plugin._load_worlds_events = lambda *_args, **_kwargs: ([], "WORLDS NO DATA", None)
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
 
     choice = plugin._load_lol_esports_sidebar(
@@ -17303,6 +17306,7 @@ def test_theme_only_injected_palettes_use_cached_stubs_without_provider_and_rese
         "ewcSidebarEnabled": "false",
         "lckEnabled": "false",
         "msiEnabled": "false",
+        "worldsEnabled": "false",
         "_theme_render_only": True,
     }
     day = _canonical_theme(
@@ -20808,6 +20812,7 @@ def test_generate_image_uses_lpl_before_active_valve_when_lpl_live():
     plugin._load_lpl_events = lambda settings, timezone_info: ([lpl_event], "LIVE DATA")
     plugin._load_lck_events = lambda settings, timezone_info: ([], "LCK NO DATA")
     plugin._load_msi_events = lambda settings, timezone_info, now_arg: ([], "MSI NO DATA", None)
+    plugin._load_worlds_events = lambda *_args, **_kwargs: ([], "WORLDS NO DATA", None)
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
     plugin._attach_lpl_realtime_info = lambda *args, **kwargs: None
     plugin._load_valve_esports = lambda *_args, **_kwargs: pytest.fail(
@@ -20864,6 +20869,7 @@ def test_generate_image_uses_active_valve_when_lol_has_no_active_or_upcoming():
     plugin._load_lpl_events = lambda settings, timezone_info: ([], "CACHE DATA")
     plugin._load_lck_events = lambda settings, timezone_info: ([], "LCK NO DATA")
     plugin._load_msi_events = lambda settings, timezone_info, now_arg: ([], "MSI NO DATA", None)
+    plugin._load_worlds_events = lambda *_args, **_kwargs: ([], "WORLDS NO DATA", None)
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
     plugin._attach_lpl_realtime_info = lambda *args, **kwargs: None
     def load_valve(_settings, _timezone_info, _now):

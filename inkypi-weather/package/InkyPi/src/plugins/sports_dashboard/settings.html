@@ -500,6 +500,14 @@
 </div>
 
 <div class="form-group">
+    <input type="hidden" name="worldsEnabled" value="false">
+    <label class="form-label">
+        <input type="checkbox" id="worldsEnabled" name="worldsEnabled" value="true">
+        Pin LoL Worlds to the esports sidebar while the tournament runs (above CS2 / TI)
+    </label>
+</div>
+
+<div class="form-group">
     <input type="hidden" name="lplLiveRefreshEnabled" value="false">
     <label class="form-label">
         <input type="checkbox" id="lplLiveRefreshEnabled" name="lplLiveRefreshEnabled" value="true">
@@ -673,6 +681,7 @@
             document.getElementById('lplLeagueId').value = pluginSettings.lplLeagueId || '';
             document.getElementById('lckEnabled').checked = pluginSettings.lckEnabled !== 'false';
             document.getElementById('lckLeagueId').value = pluginSettings.lckLeagueId || '';
+            document.getElementById('worldsEnabled').checked = pluginSettings.worldsEnabled !== 'false';
             document.getElementById('lplLiveRefreshEnabled').checked = pluginSettings.lplLiveRefreshEnabled !== 'false';
             document.getElementById('lplLiveRefreshIntervalSeconds').value = pluginSettings.lplLiveRefreshIntervalSeconds || '';
             document.getElementById('lplOddsEnabled').checked = pluginSettings.lplOddsEnabled !== 'false';

@@ -1,0 +1,15 @@
+{
+  "source_page": "https://esports-api.lolesports.com/persisted/gw/getLeagues (league 98767975604431411)",
+  "transform": "White emblem recolored to near-black (8, 8, 8) with the source alpha, cropped to its visible box.",
+  "assets": {
+    "worlds.png": {
+      "source_url": "https://static.lolesports.com/leagues/1592594612171_WorldsDarkBG.png",
+      "source_sha256": "84a2df992f961410231f3f248ca38c21eb279dcace0d82b12b17cdb8aca360b4",
+      "runtime_sha256": "e7c6f78cd623bfd02be411f4907b71e14671b9e6e0da32a33a1f4e62f3fc6336",
+      "runtime_dimensions": [
+        444,
+        454
+      ]
+    }
+  }
+}

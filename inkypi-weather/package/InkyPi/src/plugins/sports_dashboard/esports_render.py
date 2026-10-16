@@ -1615,6 +1615,18 @@ class EsportsRenderMixin:
                 "empty_schedule": "No MSI schedule",
                 "empty_upcoming": "No more MSI schedule",
             }
+        if key == "WORLDS":
+            return {
+                "key": "WORLDS",
+                "name": "Worlds",
+                "logo_path": LOCAL_WORLDS_LOGO_PATH,
+                "accent": "worlds_accent",
+                "live": "worlds_live",
+                "tag": "worlds_tag",
+                "shadow": "worlds_shadow",
+                "empty_schedule": "No Worlds schedule",
+                "empty_upcoming": "No more Worlds schedule",
+            }
         return {
             "key": "LPL",
             "name": "LPL",
@@ -1660,7 +1672,7 @@ class EsportsRenderMixin:
         logo_x = right_x + 13
         logo_y = header_y + 5
         logo_w, logo_h = LOL_HEADER_LOGO_SIZE
-        if logo_path == LOCAL_MSI_LOGO_PATH:
+        if logo_path in {LOCAL_MSI_LOGO_PATH, LOCAL_WORLDS_LOGO_PATH}:
             logo_w, logo_h = MSI_HEADER_LOGO_SIZE
             logo_x += (LOL_HEADER_LOGO_SIZE[0] - logo_w) // 2
             logo_y += (LOL_HEADER_LOGO_SIZE[1] - logo_h) // 2
@@ -1713,6 +1725,12 @@ class EsportsRenderMixin:
         logo_path = logo_path or LOCAL_LPL_LOGO_PATH
         logo = self._load_local_logo(logo_path, (width, height), alpha_threshold=8)
         if logo:
+            if logo_path == LOCAL_WORLDS_LOGO_PATH:
+                # The Worlds emblem is a one-color mask: draw it in the theme ink
+                # so it stays visible on the deep-night panel.
+                tinted = Image.new("RGBA", logo.size, tuple(COLORS["text"][:3]) + (255,))
+                tinted.putalpha(logo.getchannel("A"))
+                logo = tinted
             image.paste(logo, (x + (width - logo.width) // 2, y + (height - logo.height) // 2), logo)
             return
         fallback_text = fallback_text or ("MSI" if logo_path == LOCAL_MSI_LOGO_PATH else "LPL")
@@ -1941,7 +1959,7 @@ class EsportsRenderMixin:
         team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
 
         stage = self._lpl_stage_label(event, league_key=league_key)
-        stage_is_lower_badge = config["key"] == "MSI"
+        stage_is_lower_badge = config["key"] in {"MSI", "WORLDS"}
         if not is_live and not stage_is_lower_badge:
             stage_text, stage_font = self._fit_text(draw, stage, 88, 12, bold=True, min_size=7)
             self._draw_centered_in_box(
