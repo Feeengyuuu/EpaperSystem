@@ -402,3 +402,25 @@ def test_web_and_network_modules_have_no_privileged_shell_fallback():
     assert "sudo " not in settings_source
     assert '"power_save", "off"' not in network_source
     assert '"device", "connect"' not in network_source
+
+
+def test_install_ships_persistent_bounded_journal_retention():
+    script = (INSTALL_ROOT / "install.sh").read_text(encoding="utf-8")
+    drop_in = INSTALL_ROOT / "journald" / "90-inkypi-persistent.conf"
+
+    parser = configparser.ConfigParser()
+    parser.optionxform = str
+    parser.read_string(drop_in.read_text(encoding="utf-8"))
+    journal = dict(parser["Journal"])
+    assert journal["Storage"] == "persistent"
+    assert journal["SystemMaxUse"] == "320M"
+    assert journal["SystemMaxFiles"] == "64"
+    assert journal["MaxRetentionSec"] == "7day"
+
+    assert "/etc/systemd/journald.conf.d/90-inkypi-persistent.conf" in script
+    assert 'cmp -s "$source" "$target"' in script
+    assert "systemctl restart systemd-journald" in script
+    main_body = script.split("\nmain() {", 1)[1]
+    assert main_body.index("install_journald_retention") < main_body.index(
+        "build_release_artifact"
+    )

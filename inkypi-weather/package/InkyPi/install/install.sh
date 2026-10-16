@@ -244,6 +244,21 @@ install_privileged_broker() {
   systemctl enable --now inkypi-privileged.socket
 }
 
+install_journald_retention() {
+  # Persistent, bounded journal so incidents survive a reboot (live device values).
+  local source="$SCRIPT_DIR/journald/90-inkypi-persistent.conf"
+  local target="/etc/systemd/journald.conf.d/90-inkypi-persistent.conf"
+  if cmp -s "$source" "$target"; then
+    return 0
+  fi
+  install -d -o root -g root -m 0755 /etc/systemd/journald.conf.d
+  install -o root -g root -m 0644 "$source" "$target"
+  systemctl restart systemd-journald
+  if ! journalctl --flush; then
+    echo "Warning: journald flush failed; logs persist from the next reboot."
+  fi
+}
+
 build_release_artifact() {
   # Keep transient release archives inside the application installation root.
   install -d -o root -g root -m 0700 "$INSTALL_ROOT/.tmp"
@@ -286,6 +301,7 @@ main() {
   install_system_dependencies
   install_config
   install_privileged_broker
+  install_journald_retention
   build_release_artifact
   ask_for_reboot
 }
