@@ -2416,3 +2416,24 @@ def test_one_broken_dashboard_icon_falls_back_without_losing_live_page(
             ).getbbox()
             is not None
         )
+
+
+def test_security_card_lists_open_items_on_one_line_above_the_port_status():
+    # Two detail rows used to reach y=234 and run into the charge-port line at y=232.
+    draw = ImageDraw.Draw(Image.new("RGB", (400, 100), "white"))
+    font = vehicle_module._font(11, True)
+    closures = {"all_closed": False, "open": ["driver_rear_window"], "charge_port_open": True}
+    items = vehicle_module._closure_detail_lines(closures, "zh-CN")
+
+    assert len(items) == 2
+    assert vehicle_module._closure_detail_line(draw, items, font, 166, "zh-CN") == " / ".join(items)
+
+    crowded = vehicle_module._closure_detail_lines(
+        {"all_closed": False, "open": sorted(vehicle_module._OPEN_CLOSURES), "charge_port_open": True},
+        "en",
+    )
+    line = vehicle_module._closure_detail_line(draw, crowded, font, 166, "en")
+    assert draw.textbbox((0, 0), line, font=font)[2] <= 166
+    head, _, count = line.partition(" / ")
+    assert crowded[0].startswith(head.removesuffix("...").rstrip())
+    assert count == f"+{len(crowded) - 1} MORE"

@@ -1619,14 +1619,13 @@ class VehicleStatus(BasePlugin):
             font=_font(14, True),
             fill=closure_color,
         )
-        detail_lines = _closure_detail_lines(closures, language)
-        for index, line in enumerate(detail_lines[:2]):
-            draw.text(
-                (350, 202 + (index * 18)),
-                _ellipsize_text(draw, line, _font(11, True), 166),
-                font=_font(11, True),
-                fill=colors["muted"],
-            )
+        # One line: a second detail row would collide with the charge-port line at y=232.
+        draw.text(
+            (350, 202),
+            _closure_detail_line(draw, _closure_detail_lines(closures, language), _font(11, True), 166, language),
+            font=_font(11, True),
+            fill=colors["muted"],
+        )
         port_text = _bool_status(
             closures["charge_port_open"],
             _t(language, "port_open"),
@@ -3462,12 +3461,22 @@ def _closure_detail_lines(closures, language="en"):
         return [
             _t(language, "all_access_secure") if closures["all_closed"] is True else _t(language, "opening_incomplete")
         ]
-    if len(items) <= 2:
-        return items
-    return [
-        items[0],
-        f"{items[1]} / {_t(language, 'more_open', count=len(items) - 2)}",
-    ]
+    return items
+
+
+def _closure_detail_line(draw, items, font, max_width, language="en"):
+    """As many open items as fit on one line, then a "+N more" count."""
+
+    for shown in range(len(items), 0, -1):
+        text = " / ".join(items[:shown])
+        if shown < len(items):
+            text = f"{text} / {_t(language, 'more_open', count=len(items) - shown)}"
+        if draw.textbbox((0, 0), text, font=font)[2] <= max_width:
+            return text
+    # Not even one full item fits beside the count: shorten the item, keep the count.
+    more = f" / {_t(language, 'more_open', count=len(items) - 1)}" if len(items) > 1 else ""
+    head = _ellipsize_text(draw, items[0], font, max_width - draw.textbbox((0, 0), more, font=font)[2])
+    return head + more if head else _ellipsize_text(draw, items[0], font, max_width)
 
 
 def _draw_vehicle_silhouette(draw, origin, colors, scale=1.0):
