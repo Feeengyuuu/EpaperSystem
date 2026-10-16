@@ -1,7 +1,7 @@
 # InkyPi 插件刷新契约
 
 审计日期：2026-07-15  
-实机：`ColoredEpaperFrame`（`192.168.1.196`）  
+实机：`ColoredEpaperFrame`（`ColoredEpaperFrame.local`）\
 持久化播放列表：`DailyDoseOfDay`
 
 ## 三类刷新不能混为一谈

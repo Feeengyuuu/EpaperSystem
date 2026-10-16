@@ -6,8 +6,10 @@ This project uses various fonts and icons, each with specific licensing terms. B
 |---------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------|
 [Jost by Owen Earl](https://fonts.google.com/specimen/Jost) | [SIL OFL v1.1](https://fonts.google.com/specimen/Jost/license) |
 [Dogica Pixel by Roberto Mocci ](https://www.dafont.com/dogica.font) | [SIL OFL v1.1](http://scripts.sil.org/OFL)|
-[DS-Digital by Dusit Supasawat ](https://www.dafont.com/ds-digital.font) | [Shareware](../src/static/fonts/DS-DIGI/DIGITAL.txt)|
+[DS-Digital by Dusit Supasawat ](https://www.dafont.com/ds-digital.font) | [Shareware](../src/static/fonts/DS-DIGI/DIGITAL.TXT)|
 [Napoli by Vladimir Nikolic ](https://www.dafont.com/napoli.font) | Free for personal use |
+[LXGW WenKai by LXGW (based on Klee by Fontworks Inc.)](https://github.com/lxgw/LxgwWenKai) | [SIL OFL v1.1](../src/static/fonts/LXGWWenKai-OFL.txt) |
+[Noto Sans SC (Noto CJK) by Adobe](https://github.com/notofonts/noto-cjk) | [SIL OFL v1.1](../src/static/fonts/NotoSansSC-OFL.txt) |
 
 
 ## Icons

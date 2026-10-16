@@ -50,13 +50,11 @@ $INKYPI_DATA_DIR/plugins/simple_calendar/game_events/state.json
 
 测试覆盖六类来源、Next.js 数据帧、RSS 正文复查、日期待定、补时刻、跨日/跨月/夏令时、任天堂机器日期不一致、媒体门槛、去重、改期、取消、ICS 修订顺序、断网恢复、持久化三小时间隔、展示零网络及实际 DATA 图片保存。
 
-Windows 当前测试环境使用项目现有 Python 3.12 环境和 `.pc-packages`：
+Windows 本地测试使用项目运行器 `tools/run_inkypi_tests.ps1`（Python 3.11；可用环境变量 `INKYPI_PYTHON311` 指定解释器，见 [development.md](development.md)）。运行器会进入 `inkypi-weather/package/InkyPi` 并设置 `PYTHONPATH`，测试路径相对该目录：
 
 ```powershell
-# 工作目录：inkypi-weather/package/InkyPi
-$env:PYTHONPATH="$PWD;$PWD\src;$PWD\.pc-packages"
-$env:PYTHONDONTWRITEBYTECODE='1'
-& '.venv-test\Scripts\python.exe' -m pytest -p no:cacheprovider `
+# 工作目录：仓库根目录
+.\tools\run_inkypi_tests.ps1 `
     tests/test_game_event_sources.py tests/test_game_events.py `
     tests/test_simple_calendar_game_events.py tests/test_simple_calendar_holidays.py `
     tests/test_weather_calendar_contract.py tests/test_calendar.py `
