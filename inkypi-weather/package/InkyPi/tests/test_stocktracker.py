@@ -571,7 +571,7 @@ def test_stock_tracker_loads_direct_holdings_csv():
     })
 
     assert period == "1mo"
-    assert holdings == [("AAPL", 246.30), ("NVDA", 245.29)]
+    assert holdings == [("AAPL", 12.50), ("NVDA", 30.25)]
 
 
 def test_stock_tracker_prefers_current_csv_path_over_stale_legacy_file_setting(tmp_path):
@@ -585,7 +585,7 @@ def test_stock_tracker_prefers_current_csv_path_over_stale_legacy_file_setting(t
     })
 
     assert period == "1mo"
-    assert holdings == [("AAPL", 246.30), ("NVDA", 245.29)]
+    assert holdings == [("AAPL", 12.50), ("NVDA", 30.25)]
 
 
 def test_stock_tracker_uses_existing_legacy_csv_when_current_path_is_stale(tmp_path):
@@ -599,7 +599,7 @@ def test_stock_tracker_uses_existing_legacy_csv_when_current_path_is_stale(tmp_p
     })
 
     assert period == "1mo"
-    assert holdings == [("AAPL", 246.30), ("NVDA", 245.29)]
+    assert holdings == [("AAPL", 12.50), ("NVDA", 30.25)]
 
 
 def test_stock_tracker_falls_back_to_inline_holdings_when_saved_csv_paths_are_stale(tmp_path):
