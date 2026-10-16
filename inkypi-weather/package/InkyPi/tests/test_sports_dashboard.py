@@ -25550,6 +25550,11 @@ def test_club_team_name_localization_supports_all_current_mls_teams(
         ("PD", "Rayo Vallecano de Madrid", "巴列卡诺"),
         ("PD", "Real Betis Balompié", "皇家贝蒂斯"),
         ("PD", "Real Sociedad de Fútbol", "皇家社会"),
+        ("PD", "RC Deportivo La Coruña", "拉科鲁尼亚"),
+        ("PD", "Real Racing Club de Santander", "桑坦德竞技"),
+        ("PD", "Málaga CF", "马拉加"),
+        ("BL1", "SV 07 Elversberg", "埃尔弗斯贝格"),
+        ("SA", "AC Monza", "蒙扎"),
         ("BL1", "1. FC Köln", "科隆"),
         ("BL1", "SV Werder Bremen", "云达不莱梅"),
         ("BL1", "1. FC Heidenheim 1846", "海登海姆"),
@@ -25600,6 +25605,115 @@ def test_club_team_name_localization_preserves_named_unmapped_team():
         SportsDashboard._club_team_zh_name("SA", "Example United 1907")
         == "Example United 1907"
     )
+
+
+def test_club_team_name_localization_falls_back_to_provider_short_name():
+    assert (
+        SportsDashboard._club_team_zh_name(
+            "PD",
+            "Real Club Deportivo de La Coruña SAD",
+            aliases=("Deportivo",),
+        )
+        == "拉科鲁尼亚"
+    )
+    assert (
+        SportsDashboard._club_team_zh_name(
+            "PD",
+            "Real Club Deportivo de La Coruña SAD",
+            aliases=("La Coruña SAD", None, ""),
+        )
+        == "Real Club Deportivo de La Coruña SAD"
+    )
+
+
+def test_parse_club_football_data_event_localizes_promoted_deportivo():
+    matches = [
+        {
+            "id": 544990,
+            "utcDate": "2026-10-16T19:00:00Z",
+            "status": "IN_PLAY",
+            "homeTeam": {
+                "id": 560,
+                "name": "RC Deportivo La Coruña",
+                "shortName": "La Coruña",
+                "tla": "RCD",
+            },
+            "awayTeam": {
+                "id": 88,
+                "name": "Levante UD",
+                "shortName": "Levante",
+                "tla": "LEV",
+            },
+            "score": {"fullTime": {"home": 0, "away": 0}},
+        }
+    ]
+
+    event = SportsDashboard._parse_club_football_data_events(
+        "PD", matches, timezone.utc
+    )[0]
+
+    assert event["home_name"] == "RC Deportivo La Coruña"
+    assert event["home_name_zh"] == "拉科鲁尼亚"
+    assert event["away_name_zh"] == "莱万特"
+
+
+def test_merge_club_events_uses_espn_chinese_name_for_unknown_schedule_spelling():
+    schedule = SportsDashboard._parse_club_football_data_events(
+        "PD",
+        [
+            {
+                "id": 544991,
+                "utcDate": "2026-10-16T19:00:00Z",
+                "status": "IN_PLAY",
+                "homeTeam": {
+                    "id": 560,
+                    "name": "Real Club Deportivo de La Coruña SAD",
+                    "shortName": "La Coruña SAD",
+                    "tla": "DEP",
+                },
+                "awayTeam": {
+                    "id": 88,
+                    "name": "Levante UD",
+                    "shortName": "Levante",
+                    "tla": "LEV",
+                },
+                "score": {"fullTime": {"home": 0, "away": 0}},
+            }
+        ],
+        timezone.utc,
+    )[0]
+    assert schedule["home_name_zh"] == "Real Club Deportivo de La Coruña SAD"
+
+    payload = _sample_club_espn_payload()
+    payload["events"][0]["date"] = "2026-10-16T19:00:00Z"
+    competition = payload["events"][0]["competitions"][0]
+    home, away = competition["competitors"]
+    home["team"].update(
+        {
+            "id": "90",
+            "displayName": "Deportivo",
+            "shortDisplayName": "Deportivo",
+            "abbreviation": "DEP",
+        }
+    )
+    away["team"].update(
+        {
+            "id": "1538",
+            "displayName": "Levante",
+            "shortDisplayName": "Levante",
+            "abbreviation": "LEV",
+        }
+    )
+    score = SportsDashboard._parse_club_espn_events("PD", payload, timezone.utc)[0]
+    assert score["home_name_zh"] == "拉科鲁尼亚"
+
+    merged = SportsDashboard._merge_club_football_events([schedule], [score])
+
+    assert len(merged) == 1
+    assert merged[0]["provider"] == "football-data.org+ESPN"
+    assert merged[0]["home_name"] == "Real Club Deportivo de La Coruña SAD"
+    assert merged[0]["home_name_zh"] == "拉科鲁尼亚"
+    assert merged[0]["away_name_zh"] == "莱万特"
 
 
 def test_club_team_localization_aliases_are_unambiguous_within_each_league():

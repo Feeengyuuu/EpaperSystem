@@ -270,7 +270,7 @@ class ClubFootballMixin:
         return keys
 
     @staticmethod
-    def _club_team_zh_name(league_code, name, team_id=""):
+    def _club_team_zh_name(league_code, name, team_id="", aliases=()):
         display_name = str(name or "").strip()
         if contains_chinese(display_name):
             return display_name
@@ -285,12 +285,23 @@ class ClubFootballMixin:
                     return chinese_name
 
         requested_key = SportsDashboard._club_team_match_key(display_name)
-        for _entry_id, english_name, chinese_name in entries:
-            if SportsDashboard._club_team_match_key(english_name) == requested_key:
-                return chinese_name
+        # Provider short names (football-data.org "shortName") are tried as
+        # exact aliases only after the full name misses.
+        for candidate in (display_name, *(aliases or ())):
+            candidate_key = SportsDashboard._club_team_match_key(candidate)
+            if not candidate_key:
+                continue
+            for _entry_id, english_name, chinese_name in entries:
+                if SportsDashboard._club_team_match_key(english_name) == candidate_key:
+                    return chinese_name
         if requested_key in CLUB_FOOTBALL_PENDING_TEAM_KEYS:
             return "待定球队"
         return display_name
+
+    @staticmethod
+    def _club_zh_team_name_resolved(value):
+        text = str(value or "").strip()
+        return contains_chinese(text) and text != "待定球队"
 
     @staticmethod
     def _club_event_key(league_code, start_utc, home_name, away_name):
@@ -746,10 +757,14 @@ class ClubFootballMixin:
                     "home_team_id": str(home_team.get("id") or ""),
                     "away_team_id": str(away_team.get("id") or ""),
                     "home_name_zh": SportsDashboard._club_team_zh_name(
-                        league_code, home_name
+                        league_code,
+                        home_name,
+                        aliases=(home_team.get("shortName"),),
                     ),
                     "away_name_zh": SportsDashboard._club_team_zh_name(
-                        league_code, away_name
+                        league_code,
+                        away_name,
+                        aliases=(away_team.get("shortName"),),
                     ),
                     "home_aliases": [
                         value
@@ -912,9 +927,29 @@ class ClubFootballMixin:
                 if prefer_schedule_evidence
                 else score.get("provider_status_delayed")
             )
+            # The schedule provider can spell a club in a way the registry does
+            # not know yet; the matched ESPN side then supplies the Chinese name.
+            home_name_zh = schedule.get("home_name_zh")
+            away_name_zh = schedule.get("away_name_zh")
+            score_home_name_zh = (
+                score.get("away_name_zh") if reverse_order else score.get("home_name_zh")
+            )
+            score_away_name_zh = (
+                score.get("home_name_zh") if reverse_order else score.get("away_name_zh")
+            )
+            if not SportsDashboard._club_zh_team_name_resolved(
+                home_name_zh
+            ) and SportsDashboard._club_zh_team_name_resolved(score_home_name_zh):
+                home_name_zh = score_home_name_zh
+            if not SportsDashboard._club_zh_team_name_resolved(
+                away_name_zh
+            ) and SportsDashboard._club_zh_team_name_resolved(score_away_name_zh):
+                away_name_zh = score_away_name_zh
 
             merged.update(
                 {
+                    "home_name_zh": home_name_zh,
+                    "away_name_zh": away_name_zh,
                     "status": status,
                     "home_score": home_score,
                     "away_score": away_score,
