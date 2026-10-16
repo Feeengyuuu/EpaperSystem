@@ -597,3 +597,17 @@ def test_missing_swiss_font_uses_shared_fallback_without_losing_content(plugin, 
     assert len(audit["events"]) == len(payload["on_this_day"]) == 5
     for event, source in zip(audit["events"], payload["on_this_day"]):
         assert compact("".join(line["text"] for line in event["lines"])) == compact(source["text"])
+
+
+def test_straight_closing_quote_never_starts_a_line():
+    # "...唐睿宗为"皇嗣"。" used to leave '"。' alone at the start of the last line.
+    page = object.__new__(swiss_renderer._Page)
+    page.width_of = lambda text, _font: len(text)
+    text = '武则天在神都洛阳登极成为皇帝，以遭废黜的唐睿宗为"皇嗣"。'
+    width = text.index('"。') - text.index("以")  # break exactly before the closing quote
+
+    lines = page.wrap(text[text.index("以"):], None, lambda _line: width)
+
+    assert "".join(lines) == text[text.index("以"):]
+    assert all(not line.startswith(('"', "。")) for line in lines[1:])
+    assert all(not line.endswith('"') or line.count('"') % 2 == 0 for line in lines[:-1])

@@ -178,9 +178,14 @@ class _Page:
                 # mark with what follows. These are break changes, never deletions.
                 closing = "，。！？；：、）】》」』”’…,.!?;:%)]}"
                 opening = "（【《「『“‘([{"
-                while end - cursor > 1 and text[end] in closing:
+                # A straight '"' closes a quote when an odd number precede it.
+                while end - cursor > 1 and (
+                    text[end] in closing or (text[end] == '"' and text.count('"', 0, end) % 2 == 1)
+                ):
                     end -= 1
-                while end - cursor > 1 and text[end - 1] in opening:
+                while end - cursor > 1 and (
+                    text[end - 1] in opening or (text[end - 1] == '"' and text.count('"', 0, end - 1) % 2 == 0)
+                ):
                     end -= 1
             lines.append(text[cursor:end])
             cursor = end
