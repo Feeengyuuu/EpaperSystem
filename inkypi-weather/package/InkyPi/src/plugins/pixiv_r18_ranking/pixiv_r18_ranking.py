@@ -18,6 +18,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urljoin, urlparse, urlsplit
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from utils.fonts import load_font
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import (
@@ -1776,7 +1777,7 @@ class PixivR18Ranking(BasePlugin):
         paths.extend(JAPANESE_FONT_PATHS)
         for path in paths:
             try:
-                candidate = ImageFont.truetype(path, size=int(size))
+                candidate = load_font(path, size=int(size))
                 if self._font_supports_text(candidate, JAPANESE_FONT_SAMPLE):
                     return candidate
             except Exception:

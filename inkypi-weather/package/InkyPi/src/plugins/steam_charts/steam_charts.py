@@ -20,6 +20,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlsplit
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+from utils.fonts import load_font
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import logging
@@ -1327,7 +1328,7 @@ class SteamCharts(BasePlugin):
 
     @staticmethod
     def _load_sans_font(font_path, size, weight="normal"):
-        font = ImageFont.truetype(font_path, size)
+        font = load_font(font_path, size)
         if hasattr(font, "get_variation_axes") and hasattr(font, "set_variation_by_axes"):
             try:
                 target_weight = 700 if weight == "bold" else 400

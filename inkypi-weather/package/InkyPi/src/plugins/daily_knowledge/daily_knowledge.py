@@ -13,6 +13,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont
+from utils.fonts import load_font
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
@@ -798,7 +799,7 @@ class DailyKnowledge(BasePlugin):
         cjk = self._cjk_font_path()
         if cjk:
             try:
-                return ImageFont.truetype(str(cjk), size)
+                return load_font(str(cjk), size)
             except OSError:
                 pass
         return ImageFont.load_default()

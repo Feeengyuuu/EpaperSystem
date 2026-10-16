@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urljoin
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from utils.fonts import load_font
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.parallel_image_stage import prepare_local_bank_images
@@ -1729,7 +1730,7 @@ def _font(family, size, weight="normal"):
     if font:
         return font
     try:
-        return ImageFont.truetype("DejaVuSans.ttf", int(size))
+        return load_font("DejaVuSans.ttf", int(size))
     except Exception:
         return ImageFont.load_default()
 

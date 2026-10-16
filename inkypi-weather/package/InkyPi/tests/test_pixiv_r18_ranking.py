@@ -659,8 +659,8 @@ def test_pixiv_font_falls_back_to_noto_when_shared_font_lacks_japanese(
         raising=False,
     )
     monkeypatch.setattr(
-        pixiv_mod.ImageFont,
-        "truetype",
+        pixiv_mod,
+        "load_font",
         lambda path, size: japanese_font,
     )
 

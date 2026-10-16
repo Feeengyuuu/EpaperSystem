@@ -377,8 +377,8 @@ def test_lol_hangul_font_falls_back_when_shared_font_lacks_glyphs(
         lambda path: "NotoSansCJK" in str(path),
     )
     monkeypatch.setattr(
-        lol_info_module.ImageFont,
-        "truetype",
+        lol_info_module,
+        "load_font",
         lambda path, size: hangul_font,
     )
 

@@ -75,6 +75,7 @@ os.environ.setdefault("MPLCONFIGDIR", MPLCONFIGDIR)
 os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+from utils.fonts import load_font
 from utils.app_utils import get_font
 from utils.image_utils import text_width
 from utils.massive_market_data import (
@@ -987,7 +988,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		try:
 			for font_path in font_paths:
 				if os.path.isfile(font_path):
-					return ImageFont.truetype(font_path, font_size)
+					return load_font(font_path, font_size)
 			font = get_font("Jost", font_size, "bold" if bold else "normal")
 			if font:
 				return font

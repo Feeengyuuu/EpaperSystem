@@ -24,6 +24,7 @@ except Exception:  # pragma: no cover - older Python fallback
     ZoneInfo = None
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+from utils.fonts import load_font
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import (
@@ -3163,7 +3164,7 @@ LIMIT 8
 
         for path in self._preferred_font_paths(bold=bold):
             try:
-                candidate = ImageFont.truetype(path, size)
+                candidate = load_font(path, size)
                 if self._font_supports_text(candidate, "汉"):
                     return candidate
             except Exception:
@@ -3171,7 +3172,7 @@ LIMIT 8
 
         for path in self._emergency_font_paths(bold=bold):
             try:
-                candidate = ImageFont.truetype(path, size)
+                candidate = load_font(path, size)
                 if self._font_supports_text(candidate, "汉"):
                     return candidate
             except Exception:

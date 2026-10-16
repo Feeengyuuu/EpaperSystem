@@ -9,6 +9,8 @@ from pathlib import Path
 from flask import current_app, has_app_context
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+from utils.fonts import load_font
+
 from security.request_limits import (
     UploadPolicy,
     UploadTooLarge,
@@ -174,7 +176,7 @@ def get_base_ui_font(
         if not Path(candidate).is_file():
             continue
         try:
-            font = ImageFont.truetype(candidate, int(font_size))
+            font = load_font(candidate, int(font_size))
         except OSError:
             continue
         if Path(font.path).resolve() == Path(candidate).resolve():
@@ -186,7 +188,7 @@ def resolve_base_ui_font_path(bold: bool = False) -> str:
         if not Path(candidate).is_file():
             continue
         try:
-            font = ImageFont.truetype(candidate, 10)
+            font = load_font(candidate, 10)
         except OSError:
             continue
         if Path(font.path).resolve() == Path(candidate).resolve():
@@ -238,7 +240,7 @@ def get_font(font_name, font_size=50, font_weight="normal"):
                     local_path = resolve_font_path(font_file)
                     if Path(local_path).is_file():
                         try:
-                            return ImageFont.truetype(local_path, font_size)
+                            return load_font(local_path, font_size)
                         except OSError:
                             pass
                 return get_base_ui_font(
@@ -247,7 +249,7 @@ def get_font(font_name, font_size=50, font_weight="normal"):
                     in {name.casefold() for name in YAHEI_BOLD_FILES},
                 )
             font_path = resolve_font_path(font_file)
-            return ImageFont.truetype(font_path, font_size)
+            return load_font(font_path, font_size)
         else:
             logger.warning(f"Requested font weight not found: font_name={font_name}, font_weight={font_weight}")
     else:

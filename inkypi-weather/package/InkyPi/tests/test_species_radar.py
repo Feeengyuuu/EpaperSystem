@@ -1110,8 +1110,8 @@ def test_cjk_font_falls_back_when_shared_font_lacks_required_glyphs(
         lambda bold=False: ("cjk-capable.ttf",),
     )
     monkeypatch.setattr(
-        species_mod.ImageFont,
-        "truetype",
+        species_mod,
+        "load_font",
         lambda _path, _size: cjk_font,
     )
 

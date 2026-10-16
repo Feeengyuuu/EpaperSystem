@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+from utils.fonts import load_font
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
@@ -1821,7 +1822,7 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
         for path in candidates:
             if path.exists():
                 try:
-                    candidate = ImageFont.truetype(str(path), size=int(size))
+                    candidate = load_font(str(path), size=int(size))
                     if self._font_supports_text(candidate, "\ud55c"):
                         return candidate
                 except Exception:

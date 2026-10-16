@@ -14,6 +14,7 @@ from pathlib import Path
 from urllib.parse import urljoin
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from utils.fonts import load_font
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.render_provenance import (
@@ -1797,7 +1798,7 @@ class BoxOfficeTopMovies(BasePlugin):
         return None
 
     def _load_font(self, path, size, bold=False):
-        font = ImageFont.truetype(path, size)
+        font = load_font(path, size)
         if bold and hasattr(font, "get_variation_axes") and hasattr(font, "set_variation_by_axes"):
             try:
                 values = []

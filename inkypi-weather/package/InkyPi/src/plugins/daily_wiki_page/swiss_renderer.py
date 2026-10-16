@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+from utils.fonts import load_font
 
 
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
@@ -120,7 +121,7 @@ class _Page:
         key = (size, weight)
         if key not in self.fonts:
             try:
-                font = ImageFont.truetype(str(SWISS_FONT_PATH), size)
+                font = load_font(str(SWISS_FONT_PATH), size)
                 axes = font.get_variation_axes()
                 values = [weight if axis["name"] == b"Weight" else axis["default"] for axis in axes]
                 font.set_variation_by_axes(values)

@@ -4,6 +4,7 @@ from datetime import datetime
 import pytz
 
 from PIL import Image, ImageDraw, ImageFont
+from utils.fonts import load_font
 from utils.app_utils import get_font, bounded_int, get_available_font_names
 from plugins.base_plugin.base_plugin import BasePlugin
 
@@ -353,7 +354,7 @@ class ChineseLiteratureClock(BasePlugin):
         local_font = os.path.join(self.get_plugin_dir("fonts"), DEFAULT_LOCAL_FONT)
         if os.path.isfile(local_font):
             try:
-                return ImageFont.truetype(local_font, size)
+                return load_font(local_font, size)
             except OSError as exc:
                 logger.warning("Could not load bundled Chinese Kai font: %s", exc)
 
@@ -372,7 +373,7 @@ class ChineseLiteratureClock(BasePlugin):
                 local_font = os.path.join(font_dir, filename)
                 if os.path.isfile(local_font):
                     try:
-                        self._append_font(fonts, ImageFont.truetype(local_font, size))
+                        self._append_font(fonts, load_font(local_font, size))
                     except OSError as exc:
                         logger.warning("Could not load bundled fallback font %s: %s", filename, exc)
                     break

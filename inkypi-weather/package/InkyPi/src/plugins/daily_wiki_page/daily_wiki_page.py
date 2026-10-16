@@ -16,6 +16,7 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageFont
+from utils.fonts import load_font
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import PresentationMode
@@ -1254,7 +1255,7 @@ class DailyWikiPage(BasePlugin):
         cjk = self._cjk_font_path()
         if cjk:
             try:
-                return ImageFont.truetype(str(cjk), size)
+                return load_font(str(cjk), size)
             except OSError:
                 pass
         return ImageFont.load_default()

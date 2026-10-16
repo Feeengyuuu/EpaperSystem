@@ -26,6 +26,7 @@ from utils.browser_renderer import get_browser_renderer
 from utils.image_utils import resize_image, text_width
 from runtime.refresh_contracts import TaskCancelled, TaskContext
 from PIL import Image, ImageDraw, ImageFont
+from utils.fonts import load_font
 import hashlib
 import json
 import logging
@@ -1539,7 +1540,7 @@ class Newspaper(BasePlugin):
             try:
                 font_path = src_dir / relative_path
                 if font_path.is_file():
-                    return ImageFont.truetype(str(font_path), size)
+                    return load_font(str(font_path), size)
             except Exception as exc:
                 logger.warning("Could not load font file %s: %s", relative_path, exc)
 

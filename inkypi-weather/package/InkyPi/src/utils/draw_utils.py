@@ -2,6 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from PIL import ImageFont
+from utils.fonts import load_font
 
 
 def text_width(draw, text, font):
@@ -34,7 +35,7 @@ def load_font_from_paths(size, paths=(), fallback=True):
         try:
             target = Path(path)
             if target.is_file():
-                return ImageFont.truetype(str(target), int(size))
+                return load_font(str(target), int(size))
         except Exception:
             continue
     if fallback:
