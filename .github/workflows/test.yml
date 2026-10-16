@@ -111,6 +111,7 @@ jobs:
           inkypi-weather/package/InkyPi/tests
           tools/run_simulated_soak.py
           tools/verify_clean_archive.py
+          tools/release
       - name: Whitespace gate
         shell: bash
         env:

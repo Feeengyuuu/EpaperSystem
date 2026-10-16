@@ -1868,13 +1868,20 @@ def test_operations_scripts_are_strict_and_forbid_mutable_deployment_paths():
     assert "cdn.jsdelivr.net/npm/chart.js|" not in combined
     assert "unzip -o" not in combined
 
-    deploy = (REPO_ROOT / "tools" / "epaperpod-deploy-zip.ps1").read_text(
-        encoding="utf-8"
+    # Deployments go through the tracked release toolkit; the single-shot scp
+    # script it replaced once froze the device's Wi-Fi and must not return.
+    assert not (REPO_ROOT / "tools" / "epaperpod-deploy-zip.ps1").exists()
+    toolkit = REPO_ROOT / "tools" / "release"
+    deploy = "\n".join(
+        (toolkit / name).read_text(encoding="utf-8")
+        for name in ("release_deploy.py", "release_device.py")
     )
-    assert "Get-FileHash" in deploy
-    assert "scp.exe" in deploy
+    assert "file_sha256(artifact) == manifest[\"artifact_sha256\"]" in deploy
+    assert "CHUNK_BYTES = 16 * 1024 * 1024" in deploy
+    assert '"scp"' in deploy and ".exe" in deploy
     assert "StrictHostKeyChecking=yes" in deploy
-    assert "inkypi-update" in deploy
+    assert "HostKeyAlias=" in deploy
+    assert "sudo -n /usr/local/sbin/inkypi-update --artifact" in deploy
     assert "wget" not in deploy
     assert "accept-new" not in deploy
 
