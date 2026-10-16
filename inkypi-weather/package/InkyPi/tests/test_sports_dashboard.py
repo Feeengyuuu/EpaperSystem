@@ -25932,3 +25932,32 @@ def test_club_football_data_localization_does_not_reuse_espn_team_ids():
 
     assert event["home_name_zh"] == "阿森纳"
     assert event["away_name_zh"] == "切尔西"
+
+
+def test_default_enabled_live_refresh_checkboxes_submit_explicit_false():
+    import re
+
+    settings_path = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "plugins"
+        / "sports_dashboard"
+        / "settings.html"
+    )
+    html = settings_path.read_text(encoding="utf-8")
+    # The loader treats a missing value as enabled, so an unchecked box must
+    # still post "false"; otherwise the source can never be switched off.
+    default_enabled = re.findall(
+        r"pluginSettings\.(\w+LiveRefreshEnabled) !== 'false'", html
+    )
+
+    assert set(default_enabled) >= {
+        "clubFootballLiveRefreshEnabled",
+        "worldCupLiveRefreshEnabled",
+        "nbaLiveRefreshEnabled",
+        "offseasonHubLiveRefreshEnabled",
+        "valveEsportsLiveRefreshEnabled",
+        "lplLiveRefreshEnabled",
+    }
+    for key in default_enabled:
+        assert f'<input type="hidden" name="{key}" value="false">' in html, key
