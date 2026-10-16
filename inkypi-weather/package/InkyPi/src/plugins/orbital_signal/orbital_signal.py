@@ -759,8 +759,11 @@ class OrbitalSignal(BasePlugin):
     def _draw_markets(self, draw, box, markets, palette, family):
         left, top, right, bottom = box
         draw.rectangle(box, fill=palette["paper"])
-        draw.text((left + 15, top + 11), "MARKET HEAT", font=self._font(23, True, family), fill=palette["ink"])
-        self._draw_thermometer(draw, (left + 197, top + 8), palette)
+        title_font = self._font(23, True, family)
+        draw.text((left + 15, top + 11), "MARKET HEAT", font=title_font, fill=palette["ink"])
+        title_right = draw.textbbox((left + 15, top + 11), "MARKET HEAT", font=title_font)[2]
+        # The bulb starts 3 px left of its origin; keep an 8 px optical gap after the title.
+        self._draw_thermometer(draw, (max(left + 197, title_right + 11), top + 8), palette)
         draw.text((left + 226, top + 22), "VOLUME + 24H MOVE", font=self._font(10, True, family), fill=palette["ink"])
 
         if not markets:
