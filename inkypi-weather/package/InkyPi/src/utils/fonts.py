@@ -5,6 +5,7 @@ layout. The device has libraqm and development machines usually do not, so a
 default engine renders the same text differently on each; with BASIC a local
 render is pixel-identical to the device's.
 
+Every font is a :class:`GlyphSafeFont`, so no font ever draws its .notdef box.
 Microsoft YaHei (the base UI font) gets :class:`SystemFont`, which keeps the
 font but fixes two rendering faults:
 
@@ -156,17 +157,19 @@ def is_system_font_file(path) -> bool:
 
 
 def load_font(path, size, index: int = 0, encoding: str = ""):
-    """The only way to open a font file: BASIC layout, YaHei as SystemFont.
+    """The only way to open a font file: BASIC layout and glyph-safe text.
 
-    Bare file names keep ``ImageFont.truetype``'s system font directory search.
+    YaHei becomes a SystemFont (also evenly spaced); every other font a
+    GlyphSafeFont with its own spacing. Bare file names keep
+    ``ImageFont.truetype``'s system font directory search.
     """
 
-    if is_system_font_file(path) and Path(str(path)).is_file():
-        return SystemFont(str(path), size, index, encoding)
-    font = ImageFont.truetype(path, size, index, encoding, layout_engine=BASIC)
-    if isinstance(font.path, (str, Path)) and is_system_font_file(font.path):
-        return SystemFont(str(font.path), size, index, encoding)
-    return font
+    if not isinstance(path, (str, Path)):
+        return ImageFont.truetype(path, size, index, encoding, layout_engine=BASIC)
+    if not Path(str(path)).is_file():
+        path = ImageFont.truetype(path, size, index, encoding, layout_engine=BASIC).path
+    cls = SystemFont if is_system_font_file(path) else GlyphSafeFont
+    return cls(str(path), size, index, encoding)
 
 
 def _image(core) -> Image.Image:
@@ -184,8 +187,13 @@ def _paste_max(canvas: Image.Image, glyph: Image.Image, x: int, y: int) -> None:
     canvas.paste(ImageChops.lighter(canvas.crop(box), piece), box)
 
 
-class SystemFont(ImageFont.FreeTypeFont):
-    """FreeTypeFont with glyph-safe text and evenly spaced narrow runs."""
+class GlyphSafeFont(ImageFont.FreeTypeFont):
+    """FreeTypeFont that never draws its .notdef box.
+
+    A character the font lacks becomes an equivalent the same font has, or is
+    dropped when it is invisible or pictographic; letters of scripts the font
+    lacks are left alone (no font fallback). Spacing is untouched.
+    """
 
     def __init__(self, font, size=10, index=0, encoding="", layout_engine=None):
         super().__init__(font, size, index, encoding, BASIC)
@@ -197,7 +205,7 @@ class SystemFont(ImageFont.FreeTypeFont):
 
     def __setstate__(self, state):
         path, size, index, encoding, layout_engine, *rest = state
-        SystemFont.__init__(self, path, size, index, encoding, layout_engine)
+        type(self).__init__(self, path, size, index, encoding, layout_engine)
         variation = rest[0] if rest else None
         _apply_variation(self, variation)
         self._variation = variation
@@ -223,9 +231,6 @@ class SystemFont(ImageFont.FreeTypeFont):
             _apply_variation(variant, self._variation)
             variant._variation = self._variation
         return variant
-
-    def _hires_font(self) -> ImageFont.FreeTypeFont:
-        return _hires_font(self.path, self.index, self.encoding, self.size, self._variation)
 
     # -- text normalisation ------------------------------------------------------------
 
@@ -268,6 +273,40 @@ class SystemFont(ImageFont.FreeTypeFont):
         if category in _SYMBOL_CATEGORIES or ord(char) >= 0x1F000:
             return ""
         return char  # a letter from a script the font lacks; no font fallback by design
+
+    # -- Pillow font interface -----------------------------------------------------------
+
+    def getlength(self, text, mode="", direction=None, features=None, language=None):
+        return super().getlength(self.safe_text(text), mode, direction, features, language)
+
+    def getbbox(self, text, mode="", direction=None, features=None, language=None, stroke_width=0, anchor=None):
+        return super().getbbox(self.safe_text(text), mode, direction, features, language, stroke_width, anchor)
+
+    def getmask2(
+        self,
+        text,
+        mode="",
+        direction=None,
+        features=None,
+        language=None,
+        stroke_width=0,
+        anchor=None,
+        ink=0,
+        start=None,
+        *args,
+        **kwargs,
+    ):
+        return super().getmask2(
+            self.safe_text(text), mode, direction, features, language, stroke_width, anchor, ink, start,
+            *args, **kwargs,
+        )
+
+
+class SystemFont(GlyphSafeFont):
+    """Microsoft YaHei: glyph-safe text plus evenly spaced narrow runs."""
+
+    def _hires_font(self) -> ImageFont.FreeTypeFont:
+        return _hires_font(self.path, self.index, self.encoding, self.size, self._variation)
 
     # -- layout --------------------------------------------------------------------------
 
@@ -338,7 +377,7 @@ class SystemFont(ImageFont.FreeTypeFont):
     def getlength(self, text, mode="", direction=None, features=None, language=None):
         text = self.safe_text(text)
         if not isinstance(text, str) or not self._even(mode, direction, features, language):
-            return super().getlength(text, mode, direction, features, language)
+            return ImageFont.FreeTypeFont.getlength(self, text, mode, direction, features, language)
         return self._layout(text)[1]
 
     def getbbox(self, text, mode="", direction=None, features=None, language=None, stroke_width=0, anchor=None):
@@ -349,11 +388,11 @@ class SystemFont(ImageFont.FreeTypeFont):
             or "\n" in text
             or not self._even(mode, direction, features, language)
         ):
-            return super().getbbox(text, mode, direction, features, language, stroke_width, anchor)
+            return ImageFont.FreeTypeFont.getbbox(self, text, mode, direction, features, language, stroke_width, anchor)
         _, (left, _, right, _), _, _ = self._extent(text, mode, stroke_width, anchor)
         # Only horizontal placement changes; keeping the hinted vertical extent
         # leaves every line height and vertical layout exactly as before.
-        hinted = super().getbbox(text, mode, None, None, None, stroke_width, anchor)
+        hinted = ImageFont.FreeTypeFont.getbbox(self, text, mode, None, None, None, stroke_width, anchor)
         return math.floor(left), hinted[1], math.ceil(right), hinted[3]
 
     def getmask2(
@@ -377,8 +416,8 @@ class SystemFont(ImageFont.FreeTypeFont):
             or "\n" in text
             or not self._even(mode, direction, features, language)
         ):
-            return super().getmask2(
-                text, mode, direction, features, language, stroke_width, anchor, ink, start, *args, **kwargs
+            return ImageFont.FreeTypeFont.getmask2(
+                self, text, mode, direction, features, language, stroke_width, anchor, ink, start, *args, **kwargs
             )
         start = start or (0.0, 0.0)
         pieces, (left, top, right, bottom), dx, dy = self._extent(text, mode, stroke_width, anchor, start)

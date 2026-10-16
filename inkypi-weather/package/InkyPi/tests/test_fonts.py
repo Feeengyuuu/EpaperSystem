@@ -12,7 +12,7 @@ sys.path.insert(0, str(SRC_DIR))
 
 from utils import fonts  # noqa: E402
 from utils.app_utils import get_base_ui_font  # noqa: E402
-from utils.fonts import SystemFont, load_font  # noqa: E402
+from utils.fonts import GlyphSafeFont, SystemFont, load_font  # noqa: E402
 
 FONT_DIR = SRC_DIR / "static" / "fonts"
 CJK_FONT = FONT_DIR / "NotoSansSC-VF.ttf"
@@ -41,7 +41,7 @@ def test_every_font_is_opened_through_load_font():
 
 def test_load_font_uses_basic_layout_and_wraps_yahei(tmp_path):
     plain = load_font(LATIN_FONT, 14)
-    assert type(plain) is ImageFont.FreeTypeFont
+    assert type(plain) is GlyphSafeFont
     assert plain.layout_engine == ImageFont.Layout.BASIC
 
     yahei_named = tmp_path / "msyhbd.ttf"
@@ -53,7 +53,7 @@ def test_load_font_uses_basic_layout_and_wraps_yahei(tmp_path):
 
 def test_base_ui_font_is_a_system_font_only_for_yahei(monkeypatch, tmp_path):
     fallback = get_base_ui_font(12, bold=True)
-    assert type(fallback) is ImageFont.FreeTypeFont
+    assert type(fallback) is GlyphSafeFont
     assert fallback.layout_engine == ImageFont.Layout.BASIC
 
     (tmp_path / "fonts").mkdir()
@@ -177,3 +177,16 @@ def test_variants_and_pickling_keep_system_font_and_weight():
     assert isinstance(restored, SystemFont)
     assert restored._variation == font._variation
     assert restored.getlength("Jason Kurth") == pytest.approx(font.getlength("Jason Kurth"))
+
+
+def test_other_fonts_only_lose_missing_glyphs_and_keep_their_spacing():
+    plain = ImageFont.FreeTypeFont(str(LATIN_FONT), 15, layout_engine=ImageFont.Layout.BASIC)
+    safe = load_font(LATIN_FONT, 15)
+    text = "All executive power - from the reign of ancient kings"
+    assert safe.getlength(text) == plain.getlength(text)
+    assert safe.getbbox(text) == plain.getbbox(text)
+    assert ImageChops.difference(_mask(safe, text), _mask(plain, text)).getbbox() is None
+
+    safe._facts = _Facts({"\u200b", "\U0001f525"})
+    assert safe.safe_text("hot\u200b take \U0001f525") == "hot take "
+    assert safe.getlength("hot\u200b take \U0001f525") == plain.getlength("hot take ")
