@@ -46,12 +46,20 @@ inkypi-weather/dist/
 # Local isolated development worktrees
 .worktrees/
 
-$known
+# Local agent tooling, task evidence and backups (see AGENTS.md)
+/.claude/
+/.superpowers/
+/.playwright-cli/
+/outputs/
+/.backups/
+/.retained-work/
+**/.wrangler/
+**/.mypy_cache/
+**/.ruff_cache/
+
 # Runtime/generated outputs
 .tmp_*.json
-dashboard-7in5/app/dashboard.log
-dashboard-7in5/app/output*/
 inkypi-weather/package/InkyPi/src/static/images/current_image.png
 .codex_tmp/
 # Proprietary fonts must not be committed (Microsoft EULA); install locally instead
-inkypi-weather/package/InkyPi/src/static/fonts/msyh*
+**/msyh*.tt[cf]
