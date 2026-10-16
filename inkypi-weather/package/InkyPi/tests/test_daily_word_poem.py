@@ -846,3 +846,36 @@ def test_theme_only_daily_cache_miss_fails_without_provider_calls(tmp_path, monk
         plugin._daily_payload({"_theme_render_only": True}, datetime(2026, 7, 11, 9, 0))
 
     assert calls == {"dictionary": 0, "wikiquote": 0}
+
+
+def test_clean_quote_text_ends_long_quotes_on_a_word_boundary():
+    quote = ("The purpose was, not to avoid friction, but by means of the inevitable friction "
+             "incident to the distribution of the governmental powers among three departments, "
+             "to save the people from autocracy. ") * 5
+
+    cleaned = word_module._clean_quote_text(quote)
+
+    assert len(cleaned) <= word_module.QUOTE_TEXT_MAX_LEN
+    assert cleaned.endswith("...")
+    assert quote.startswith(cleaned[:-3])
+    assert quote[len(cleaned) - 3] in " ,;:-"
+
+
+def test_render_quote_panel_marks_a_cut_quote_with_an_ellipsis(tmp_path):
+    plugin = _plugin(tmp_path)
+    draw = RecordingDraw(ImageDraw.Draw(Image.new("RGB", (800, 480), "white")))
+    quote_text = " ".join(["Legislative action may indeed often be cumbersome and slow."] * 12)
+
+    plugin._render_quote_panel(
+        draw,
+        {"text": quote_text, "author": "William O. Douglas", "topic": "Wikiquote QOTD"},
+        (445, 79, 326, 300),
+        "Jost",
+        (0, 0, 0),
+        (35, 110, 70),
+        (120, 120, 120),
+    )
+
+    quote_lines = [call for call in draw.text_calls if "Legislative" in call or "cumbersome" in call or "slow" in call]
+    assert quote_lines
+    assert quote_lines[-1].endswith('..."')

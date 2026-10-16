@@ -452,7 +452,15 @@ def _strip_wrapping_quotes(text: str) -> str:
 
 
 def _clean_quote_text(value: Any, max_len: int = QUOTE_TEXT_MAX_LEN) -> str:
-    return _strip_wrapping_quotes(_normalized_text(value))[:max_len]
+    text = _strip_wrapping_quotes(_normalized_text(value))
+    if len(text) <= max_len:
+        return text
+    # Never stop mid-word ("friction, b"): end on a word boundary and mark the cut.
+    cut = text[: max_len - 3]
+    boundary = cut.rfind(" ")
+    if boundary > max_len // 2:
+        cut = cut[:boundary]
+    return cut.rstrip(" ,;:-") + "..."
 
 
 def _safe_json_load(path: Path, default: Any) -> Any:
@@ -1373,9 +1381,17 @@ class DailyWordPoem(BasePlugin):
         quote_font = self._fit_quote_font(draw, quoted, font_family, max_width, available_height)
         line_height = self._quote_line_height(draw, quote_font)
 
-        for line in self._wrap_text(draw, quoted, quote_font, max_width):
-            if y + line_height > bottom - reserved_height:
-                break
+        lines = self._wrap_text(draw, quoted, quote_font, max_width)
+        fitting = max(0, (bottom - reserved_height - y) // line_height)
+        if fitting == 0:
+            lines = []
+        elif len(lines) > fitting:
+            lines = lines[:fitting]
+            words = lines[-1].split()
+            while len(words) > 1 and self._text_width(draw, " ".join(words) + '..."', quote_font) > max_width:
+                words.pop()
+            lines[-1] = " ".join(words).rstrip(" ,;:-") + '..."'
+        for line in lines:
             draw.text((x, y), line, font=quote_font, fill=text)
             y += line_height
         y += max(8, line_height // 5)
