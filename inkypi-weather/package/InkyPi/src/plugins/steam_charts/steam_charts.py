@@ -1798,11 +1798,25 @@ class SteamCharts(BasePlugin):
             params={"appids": appid, "l": language}, timeout=STEAM_STORE_TIMEOUT,
         ).data
         entry = payload.get(appid) if isinstance(payload, dict) else None
+        # Language does not select the store country. Some valid chart entries
+        # (e.g. 2315040) are unavailable in the default store but visible in CN.
+        # Retry only an explicit business rejection, not malformed responses,
+        # transport failures or a different app's data.
+        regional_fallback = isinstance(entry, dict) and entry.get("success") is False
+        if regional_fallback:
+            payload = get_http_client().request_json(
+                "GET", STEAM_STORE_APPDETAILS,
+                params={"appids": appid, "l": language, "cc": "cn"}, timeout=STEAM_STORE_TIMEOUT,
+            ).data
+            entry = payload.get(appid) if isinstance(payload, dict) else None
         data = entry.get("data") if isinstance(entry, dict) and entry.get("success") else None
         if not isinstance(data, dict) or not data:
             raise ValueError(f"Steam response has no successful data for app {appid}")
         if str(data.get("steam_appid", appid)) != appid:
             raise ValueError(f"Steam response app ID does not match {appid}")
+        if regional_fallback:
+            logger.info("Steam store metadata resolved using country fallback. | app_id: %s | language: %s | country: cn",
+                        appid, language)
         return data
 
     def _fetch_homepage(self, failure_message):

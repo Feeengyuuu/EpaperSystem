@@ -85,7 +85,7 @@ def test_store_metadata_failure_is_retried_on_next_refresh(monkeypatch, first):
     class Client:
         def request_json(self, *args, **kwargs):
             calls.append(1)
-            if len(calls) == 1:
+            if len(calls) == 1 or (first == "unsuccessful" and len(calls) == 2):
                 if first == "transport":
                     raise RuntimeError("connection reset")
                 if first == "wrong_id":
@@ -99,7 +99,131 @@ def test_store_metadata_failure_is_retried_on_next_refresh(monkeypatch, first):
     assert SteamCharts._fetch_store_appdetails(1867240, "english") == {}
     assert SteamCharts._fetch_store_appdetails(1867240, "english")["name"] == "WARDOGS"
     assert SteamCharts._fetch_store_appdetails(1867240, "english")["name"] == "WARDOGS"
-    assert len(calls) == 2
+    assert len(calls) == (3 if first == "unsuccessful" else 2)
+
+
+def test_default_region_metadata_success_needs_no_fallback(monkeypatch):
+    calls = []
+
+    class Client:
+        def request_json(self, *args, **kwargs):
+            calls.append(dict(kwargs["params"]))
+            return SimpleNamespace(data={"2315040": {"success": True, "data": {
+                "steam_appid": 2315040, "name": "火炬之光：无限",
+            }}})
+
+    monkeypatch.setattr(module, "get_http_client", Client)
+    for _ in range(2):
+        assert SteamCharts._fetch_store_appdetails(2315040, "schinese")["steam_appid"] == 2315040
+    assert calls == [{"appids": "2315040", "l": "schinese"}]
+
+
+def test_region_fallback_supplies_localized_name_cover_and_caches_without_warnings(monkeypatch, tmp_path, caplog):
+    cover_url = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2315040/hash/header.jpg"
+    output = BytesIO()
+    Image.new("RGB", (64, 32), "red").save(output, format="PNG")
+    metadata_calls = []
+    image_calls = []
+
+    class Client:
+        def request_json(self, *args, **kwargs):
+            params = dict(kwargs["params"])
+            metadata_calls.append(params)
+            assert params["appids"] == "2315040"
+            if "cc" not in params:
+                return SimpleNamespace(data={"2315040": {"success": False}})
+            assert params["cc"] == "cn"
+            name = "火炬之光：无限" if params["l"] == "schinese" else "Torchlight: Infinite"
+            return SimpleNamespace(data={"2315040": {"success": True, "data": {
+                "steam_appid": 2315040, "name": name, "header_image": cover_url,
+            }}})
+
+        def request_bytes(self, method, url, **kwargs):
+            image_calls.append(url)
+            assert url == cover_url
+            return SimpleNamespace(data=output.getvalue())
+
+    monkeypatch.setattr(module, "get_http_client", Client)
+    plugin = SteamCharts({"id": "steam_charts"})
+    monkeypatch.setattr(plugin, "cache_dir", lambda **kwargs: tmp_path)
+    for _ in range(2):
+        games = [{"app_id": 2315040, "name": "Torchlight: Infinite"}]
+        plugin._apply_store_metadata(games)
+        assert games[0]["name"] == "火炬之光：无限"
+        assert games[0]["secondary_name"] == "Torchlight: Infinite"
+        assert games[0]["_metadata_missing"] == 0
+        assert games[0]["image"].startswith("data:image/png;base64,")
+    assert metadata_calls == [
+        {"appids": "2315040", "l": "schinese"},
+        {"appids": "2315040", "l": "schinese", "cc": "cn"},
+        {"appids": "2315040", "l": "english"},
+        {"appids": "2315040", "l": "english", "cc": "cn"},
+    ]
+    assert image_calls == [cover_url]
+    assert not [record for record in caplog.records if record.levelno >= 30]
+
+
+@pytest.mark.parametrize("failure", ["transport", "missing_entry", "empty_data", "wrong_appid", "missing_success", "zero_success"])
+def test_default_region_other_failures_do_not_trigger_region_fallback(monkeypatch, failure):
+    calls = []
+
+    class Client:
+        def request_json(self, *args, **kwargs):
+            calls.append(dict(kwargs["params"]))
+            if failure == "transport":
+                raise RuntimeError("connection reset")
+            if failure == "missing_entry":
+                return SimpleNamespace(data={"1974050": {"success": False}})
+            if failure == "missing_success":
+                return SimpleNamespace(data={"2315040": {}})
+            if failure == "zero_success":
+                return SimpleNamespace(data={"2315040": {"success": 0}})
+            data = {} if failure == "empty_data" else {"steam_appid": 1974050, "name": "Wrong game"}
+            return SimpleNamespace(data={"2315040": {"success": True, "data": data}})
+
+    monkeypatch.setattr(module, "get_http_client", Client)
+    assert SteamCharts._fetch_store_appdetails(2315040, "english") == {}
+    assert calls == [{"appids": "2315040", "l": "english"}]
+
+
+@pytest.mark.parametrize("failure", ["wrong_entry", "wrong_data_id", "empty_data"])
+def test_region_fallback_rejects_invalid_metadata_without_caching(monkeypatch, failure):
+    calls = []
+
+    class Client:
+        def request_json(self, *args, **kwargs):
+            params = dict(kwargs["params"])
+            calls.append(params)
+            if "cc" not in params:
+                return SimpleNamespace(data={"2315040": {"success": False}})
+            assert params["cc"] == "cn"
+            if failure == "wrong_entry":
+                return SimpleNamespace(data={"1974050": {"success": True, "data": {"name": "Wrong game"}}})
+            data = {} if failure == "empty_data" else {"steam_appid": 1974050, "name": "Wrong game"}
+            return SimpleNamespace(data={"2315040": {"success": True, "data": data}})
+
+    monkeypatch.setattr(module, "get_http_client", Client)
+    for _ in range(2):
+        assert SteamCharts._fetch_store_appdetails(2315040, "schinese") == {}
+    assert [params.get("cc") for params in calls] == [None, "cn", None, "cn"]
+
+
+def test_region_fallback_cancellation_propagates_without_warning(monkeypatch, caplog):
+    calls = []
+
+    class Client:
+        def request_json(self, *args, **kwargs):
+            params = dict(kwargs["params"])
+            calls.append(params)
+            if "cc" not in params:
+                return SimpleNamespace(data={"2315040": {"success": False}})
+            raise TaskCancelled("cancelled during region fallback")
+
+    monkeypatch.setattr(module, "get_http_client", Client)
+    with pytest.raises(TaskCancelled, match="region fallback"):
+        SteamCharts._fetch_store_appdetails(2315040, "english")
+    assert [params.get("cc") for params in calls] == [None, "cn"]
+    assert not [record for record in caplog.records if record.levelno >= 30]
 
 
 def test_successful_metadata_expires_and_refreshes_asset_urls(monkeypatch):
