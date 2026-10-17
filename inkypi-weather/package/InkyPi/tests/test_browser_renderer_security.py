@@ -186,26 +186,6 @@ def test_all_take_screenshot_callers_supply_ssrf_validator():
         _assert_calls_supply_ssrf_validator(path, calls)
 
 
-def test_tech_pulse_direct_render_url_call_supplies_ssrf_validator():
-    path = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "plugins"
-        / "tech_pulse"
-        / "tech_pulse.py"
-    )
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "render_url"
-    ]
-
-    _assert_calls_supply_ssrf_validator(path, calls)
-
-
 def test_newspaper_browser_capture_keeps_network_closed_security_chain():
     source_path = (
         Path(__file__).resolve().parents[1]

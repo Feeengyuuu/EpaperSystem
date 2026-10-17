@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import hashlib
-from io import BytesIO
 import json
 import logging
 import math
 import os
 import re
-import time
 from datetime import datetime, timezone
 from html import unescape
 from pathlib import Path
@@ -24,13 +21,9 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
-from security.ssrf import validate_browser_target
 from utils.app_utils import DEFAULT_FONT_FAMILY, bounded_int, coerce_bool, get_available_font_names, get_font
-from utils.browser_renderer import get_browser_renderer
-from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
-from utils.safe_image import safe_open_image
 
 logger = logging.getLogger(__name__)
 
@@ -44,17 +37,8 @@ HN_HOME_URL = "https://news.ycombinator.com/"
 HN_ITEM_URL = "https://news.ycombinator.com/item?id={id}"
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
 TITLE_WORDMARK_DISPLAY_SIZE = (246, 46)
-STORY_PREVIEW_CACHE_VERSION = "v1"
-STORY_PREVIEW_CAPTURE_SIZE = (1100, 720)
-STORY_PREVIEW_TIMEOUT_MS = 15000
-STORY_PREVIEW_FAILURE_TTL_SECONDS = 6 * 60 * 60
-STORY_PREVIEW_CROP_TOP = 0
-STORY_PREVIEW_CROP_HEIGHT = 520
-STORY_PREVIEW_CACHE_BUDGET = CacheBudget(
-    30 * 24 * 60 * 60,
-    256,
-    50 * 1024 * 1024,
-)
+TOP_COMMENT_CANDIDATES = 3
+TOP_COMMENT_MAX_CHARS = 600
 REQUEST_TIMEOUT = (4, 12)
 FEED_ENDPOINTS = {
     "topstories": f"{HN_BASE_URL}/topstories.json",
@@ -233,6 +217,7 @@ class TechPulse(BasePlugin):
             raise RuntimeError(f"Unexpected Hacker News feed response for {feed}")
 
         stories = []
+        lead_kids = None
         inspect_count = min(len(story_ids), max(20, max_stories * 6))
         for raw_id in story_ids[:inspect_count]:
             try:
@@ -242,7 +227,8 @@ class TechPulse(BasePlugin):
                     headers=headers,
                 )
                 item_response.raise_for_status()
-                story = self._parse_story_item(item_response.json(), now=now)
+                item = item_response.json()
+                story = self._parse_story_item(item, now=now)
             except Exception as exc:
                 logger.debug("Skipping HN item %s: %s", raw_id, exc)
                 continue
@@ -250,6 +236,8 @@ class TechPulse(BasePlugin):
                 continue
             if min_score is not None and story["score"] < min_score:
                 continue
+            if not stories:
+                lead_kids = item.get("kids")
             story["rank"] = len(stories) + 1
             stories.append(story)
             if len(stories) >= max_stories:
@@ -258,7 +246,56 @@ class TechPulse(BasePlugin):
         if not stories:
             raise RuntimeError("No displayable Hacker News stories were returned")
 
+        top_comment = self._fetch_top_comment(session, headers, lead_kids, now)
+        if top_comment:
+            stories[0]["top_comment"] = top_comment
+
         return self._build_payload(feed, stories, "live", now, [feed_url, HN_DOCS_URL])
+
+    def _fetch_top_comment(self, session, headers, kids, now):
+        # HN lists kids in ranked display order, so the first live comment is
+        # the one the discussion page shows on top.
+        if not isinstance(kids, list):
+            return None
+        for raw_id in kids[:TOP_COMMENT_CANDIDATES]:
+            try:
+                response = session.get(
+                    f"{HN_BASE_URL}/item/{int(raw_id)}.json",
+                    timeout=REQUEST_TIMEOUT,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                comment = self._parse_comment_item(response.json(), now=now)
+            except Exception as exc:
+                logger.debug("Skipping HN comment %s: %s", raw_id, exc)
+                continue
+            if comment:
+                return comment
+        return None
+
+    def _parse_comment_item(self, item, now=None):
+        if not isinstance(item, dict):
+            return None
+        if item.get("deleted") or item.get("dead") or item.get("type") != "comment":
+            return None
+        text = self._comment_text(item.get("text"))
+        if not text:
+            return None
+        return {
+            "id": self._optional_int(item.get("id")) or 0,
+            "by": self._clean_text(item.get("by")) or "unknown",
+            "text": text,
+            "age_hours": self._age_hours(self._published_at(self._optional_int(item.get("time"))), now),
+        }
+
+    def _comment_text(self, value):
+        # Tags are stripped before entities are decoded so escaped markup in
+        # the comment survives as literal text.
+        text = re.sub(r"<p>", " ", str(value or ""), flags=re.IGNORECASE)
+        text = self._clean_text(re.sub(r"<[^>]*>", "", text))
+        if len(text) > TOP_COMMENT_MAX_CHARS:
+            text = text[:TOP_COMMENT_MAX_CHARS - 3].rsplit(" ", 1)[0].rstrip() + "..."
+        return text
 
     def _parse_story_item(self, item, now=None):
         if not isinstance(item, dict):
@@ -274,10 +311,7 @@ class TechPulse(BasePlugin):
         story_id = self._optional_int(item.get("id")) or 0
         raw_time = self._optional_int(item.get("time"))
         published = self._published_at(raw_time)
-        now_utc = self._to_utc(now)
-        age_hours = 0
-        if published:
-            age_hours = max(0, int((now_utc - published).total_seconds() // 3600))
+        age_hours = self._age_hours(published, now)
 
         url = str(item.get("url") or "").strip()
         hn_url = HN_ITEM_URL.format(id=story_id) if story_id else ""
@@ -431,7 +465,8 @@ class TechPulse(BasePlugin):
                 preview_story or story,
                 palette,
                 scale,
-                not bool(settings.get("_theme_render_only")),
+                label_font,
+                small_font,
             )
 
         meta_line = []
@@ -524,161 +559,52 @@ class TechPulse(BasePlugin):
         self._draw_text(draw, (label_x, y0 + int(3 * scale)), label_text, label_font, palette["muted"])
         self._draw_text(draw, (value_x, y0 + int(17 * scale)), value_text, metric_font, palette["ink"])
 
-    def _draw_hn_story_preview(
-        self,
-        image,
-        draw,
-        box,
-        story,
-        palette,
-        scale,
-        allow_fetch=True,
-    ):
+    def _draw_hn_story_preview(self, image, draw, box, story, palette, scale, label_font, body_font):
         x0, y0, x1, y1 = [int(value) for value in box]
         width = max(1, x1 - x0)
         height = max(1, y1 - y0)
-        preview = (
-            self._story_preview_image(story)
-            if allow_fetch
-            else self._story_preview_image(story, allow_fetch=False)
-        )
-        if preview is None:
-            preview = self._fallback_story_preview((width, height), palette, scale, story)
-        try:
-            fitted = ImageOps.fit(preview.convert("RGB"), (width, height), method=Image.LANCZOS, centering=(0.5, 0.38))
-            radius = max(6, int(8 * scale))
-            mask = Image.new("L", (width, height), 0)
-            mask_draw = ImageDraw.Draw(mask)
-            mask_draw.rounded_rectangle((0, 0, width - 1, height - 1), radius=radius, fill=255)
-            image.paste(fitted, (x0, y0), mask)
-            draw.rounded_rectangle((x0, y0, x1 - 1, y1 - 1), radius=radius, outline=palette["rule"], width=max(1, int(scale)))
-        except Exception as exc:
-            logger.debug("Could not draw story preview: %s", exc)
+        card = self._story_preview_card((width, height), story, palette, scale, label_font, body_font)
+        radius = max(6, int(8 * scale))
+        mask = Image.new("L", (width, height), 0)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, width - 1, height - 1), radius=radius, fill=255)
+        image.paste(card, (x0, y0), mask)
+        draw.rounded_rectangle((x0, y0, x1 - 1, y1 - 1), radius=radius, outline=palette["rule"], width=max(1, int(scale)))
 
-    def _story_preview_image(self, story=None, allow_fetch=True):
-        for preview_url in self._story_preview_candidate_urls(story):
-            cache_path = self._story_preview_cache_path(preview_url)
-            cached = self._load_story_preview_cache(cache_path)
-            if cached is not None:
-                return cached
-            if not allow_fetch:
-                continue
-            if self._story_preview_failure_is_active(preview_url):
-                continue
-            captured = self._capture_story_preview_page(preview_url)
-            if captured is None:
-                self._remember_story_preview_failure(preview_url)
-                continue
-            self._forget_story_preview_failure(preview_url)
-            prepared = self._prepare_story_screenshot(captured)
-            try:
-                output = BytesIO()
-                prepared.save(output, format="PNG", optimize=True)
-                self._story_preview_namespace().put_bytes(
-                    cache_path.stem,
-                    output.getvalue(),
-                    suffix=cache_path.suffix,
-                )
-            except Exception as exc:
-                logger.debug("Could not cache story preview %s: %s", cache_path, exc)
-            return prepared
-        return None
+    def _story_preview_card(self, size, story, palette, scale, label_font, body_font):
+        width, height = size
+        card = Image.new("RGB", (width, height), palette["row"])
+        draw = ImageDraw.Draw(card)
+        story = story if isinstance(story, dict) else {}
+        comment = story.get("top_comment")
+        if isinstance(comment, dict) and self._clean_text(comment.get("text")):
+            heading = "TOP COMMENT"
+            detail = f"{comment.get('by') or 'unknown'} | {self._age_text(comment.get('age_hours'))}"
+            body = self._clean_text(comment.get("text"))
+            body_fill = palette["ink"]
+        else:
+            heading = "HN DISCUSSION"
+            detail = f"{self._compact_number(story.get('comments') or 0)} comments"
+            body = self._story_preview_url(story) or "news.ycombinator.com"
+            body_fill = palette["muted"]
 
-    def _capture_story_preview_page(self, url):
-        return self._capture_story_preview_page_direct(url)
+        pad = int(9 * scale)
+        bar_h = int(22 * scale)
+        bar_text_y = int(4 * scale)
+        draw.rectangle((0, 0, width, bar_h), fill=palette["orange"])
+        self._draw_text(draw, (pad, bar_text_y), heading, label_font, palette["background"])
+        detail_w = width - pad * 3 - self._text_width(draw, heading, label_font)
+        if detail_w > 0:
+            detail = self._fit_text(draw, detail, body_font, detail_w)
+            detail_x = width - pad - self._text_width(draw, detail, body_font)
+            self._draw_text(draw, (detail_x, bar_text_y), detail, body_font, palette["background"])
 
-    def _capture_story_preview_page_direct(self, url):
-        return get_browser_renderer().render_url(
-            url,
-            viewport=STORY_PREVIEW_CAPTURE_SIZE,
-            timeout_seconds=STORY_PREVIEW_TIMEOUT_MS / 1000.0,
-            validator=validate_browser_target,
-        )
-
-    def _prepare_story_screenshot(self, image):
-        page = image.convert("RGB")
-        width, height = page.size
-        crop_height = min(height, STORY_PREVIEW_CROP_HEIGHT)
-        top = min(max(0, STORY_PREVIEW_CROP_TOP), max(0, height - crop_height))
-        return page.crop((0, top, width, top + crop_height))
-
-    def _load_story_preview_cache(self, path):
-        try:
-            data = self._story_preview_namespace().get_bytes(
-                path.stem,
-                suffix=path.suffix,
-            )
-            if data is not None:
-                return safe_open_image(data).convert("RGB")
-        except Exception as exc:
-            logger.debug("Could not load story preview cache %s: %s", path, exc)
-        return None
-
-    def _story_preview_cache_path(self, url=None):
-        target_url = url or "story-preview"
-        parsed = urlparse(target_url)
-        key = f"{parsed.netloc}{parsed.path}"
-        if parsed.query:
-            key = f"{key}-{parsed.query}"
-        slug = re.sub(r"[^A-Za-z0-9._-]+", "-", key.strip("/")).strip("-").lower() or "story-preview"
-        digest = hashlib.sha256(target_url.encode("utf-8")).hexdigest()[:16]
-        cache_key = f"{slug[:120]}-{digest}-{STORY_PREVIEW_CACHE_VERSION}"
-        return self._story_preview_namespace().path(cache_key, ".png")
-
-    def _story_preview_namespace(self):
-        return self.managed_cache_namespace(
-            self._cache_dir() / "story_preview",
-            STORY_PREVIEW_CACHE_BUDGET,
-        )
-
-    def _story_preview_failed_targets(self):
-        failed_targets = getattr(self, "_story_preview_failed_target_times", None)
-        if failed_targets is None:
-            failed_targets = {}
-            self._story_preview_failed_target_times = failed_targets
-        return failed_targets
-
-    def _story_preview_failure_now(self):
-        return time.monotonic()
-
-    def _story_preview_failure_is_active(self, url):
-        failed_targets = self._story_preview_failed_targets()
-        now = self._story_preview_failure_now()
-        for target_url, failed_at in list(failed_targets.items()):
-            if now - failed_at >= STORY_PREVIEW_FAILURE_TTL_SECONDS:
-                failed_targets.pop(target_url, None)
-        return url in failed_targets
-
-    def _remember_story_preview_failure(self, url):
-        self._story_preview_failed_targets()[url] = self._story_preview_failure_now()
-
-    def _forget_story_preview_failure(self, url):
-        self._story_preview_failed_targets().pop(url, None)
-
-    def _fallback_story_preview(self, size, palette, scale, story=None):
-        width, height = [max(1, int(value)) for value in size]
-        preview = Image.new("RGB", (width, height), palette["background"])
-        draw = ImageDraw.Draw(preview)
-        top_h = max(18, min(height // 3, int(24 * scale)))
-        draw.rectangle((0, 0, width, top_h), fill=palette["ink"])
-        title_font = self._load_font(DEFAULT_FONT, max(9, int(11 * scale)), "bold")
-        small_font = self._load_font(DEFAULT_FONT, max(8, int(9 * scale)))
-        tiny_font = self._load_font(DEFAULT_FONT, max(7, int(8 * scale)))
-        domain = self._domain(self._story_preview_url(story)) or "target page"
-        self._draw_text(draw, (int(8 * scale), int(5 * scale)), self._fit_text(draw, domain, title_font, width - int(16 * scale)), title_font, palette["background"])
-        body_y = top_h + int(8 * scale)
-        card = (int(7 * scale), body_y, width - int(7 * scale), height - int(7 * scale))
-        draw.rounded_rectangle(card, radius=max(4, int(6 * scale)), fill=palette["panel"], outline=palette["rule"], width=1)
-        title = self._clean_text((story or {}).get("title")) if isinstance(story, dict) else ""
-        self._draw_text(draw, (card[0] + int(9 * scale), body_y + int(8 * scale)), self._fit_text(draw, title or "Story target page", title_font, width - int(32 * scale)), title_font, palette["ink"])
-        self._draw_text(draw, (card[0] + int(9 * scale), body_y + int(27 * scale)), "Preview unavailable", small_font, palette["muted"])
-        y = body_y + int(46 * scale)
-        for line in (self._story_preview_url(story), "HN title target page"):
-            if y + int(10 * scale) > height - int(8 * scale):
-                break
-            self._draw_text(draw, (card[0] + int(9 * scale), y), self._fit_text(draw, line, tiny_font, width - int(32 * scale)), tiny_font, palette["ink"])
-            y += int(14 * scale)
-        return preview
+        line_h = int(16 * scale)
+        body_top = bar_h + int(5 * scale)
+        max_lines = max(1, (height - body_top - int(3 * scale)) // line_h)
+        lines = self._wrap_text(draw, body, body_font, width - pad * 2, max_lines=max_lines, ellipsis=True)
+        for index, line in enumerate(lines):
+            self._draw_text(draw, (pad, body_top + index * line_h), line, body_font, body_fill)
+        return card
 
     def _story_preview_url(self, story):
         if isinstance(story, str):
@@ -691,28 +617,6 @@ class TechPulse(BasePlugin):
             return ""
         parsed = urlparse(raw_url)
         if parsed.scheme not in ("http", "https") or not parsed.netloc:
-            return ""
-        return raw_url
-
-    def _story_preview_candidate_urls(self, story):
-        preview_url = self._story_preview_browser_url(story)
-        return [preview_url] if preview_url else []
-
-    def _story_preview_browser_url(self, story):
-        if isinstance(story, str):
-            raw_url = story.strip()
-        elif isinstance(story, dict):
-            raw_url = str(story.get("hn_url") or "").strip()
-        else:
-            raw_url = ""
-        if not raw_url:
-            return ""
-        parsed = urlparse(raw_url)
-        if (
-            parsed.scheme not in ("http", "https")
-            or parsed.hostname != "news.ycombinator.com"
-            or parsed.path.rstrip("/") != "/item"
-        ):
             return ""
         return raw_url
 
@@ -919,6 +823,11 @@ class TechPulse(BasePlugin):
         except Exception:
             return None
 
+    def _age_hours(self, published, now):
+        if not published:
+            return 0
+        return max(0, int((self._to_utc(now) - published).total_seconds() // 3600))
+
     def _parse_datetime(self, value):
         if isinstance(value, datetime):
             return self._to_utc(value)
@@ -966,9 +875,11 @@ class TechPulse(BasePlugin):
 
     def _byline(self, story):
         by = story.get("by") or "unknown"
-        age = int(story.get("age_hours") or 0)
-        age_text = f"{age}h ago" if age < 48 else f"{age // 24}d ago"
-        return f"by {by} | {age_text}"
+        return f"by {by} | {self._age_text(story.get('age_hours'))}"
+
+    def _age_text(self, age_hours):
+        age = self._optional_int(age_hours) or 0
+        return f"{age}h ago" if age < 48 else f"{age // 24}d ago"
 
     def _compact_number(self, value):
         try:
@@ -995,16 +906,18 @@ class TechPulse(BasePlugin):
             pass
         return ImageFont.load_default()
 
-    def _wrap_text(self, draw, text, font, max_width, max_lines=2):
+    def _wrap_text(self, draw, text, font, max_width, max_lines=2, ellipsis=False):
         words = str(text or "").split()
         lines = []
         current = ""
+        truncated = False
         for word in words:
             candidate = f"{current} {word}".strip()
             if current and self._text_width(draw, candidate, font) > max_width:
                 lines.append(current)
                 current = word
                 if len(lines) >= max_lines:
+                    truncated = True
                     break
             else:
                 current = candidate
@@ -1014,7 +927,13 @@ class TechPulse(BasePlugin):
             lines = [""]
         if len(lines) > max_lines:
             lines = lines[:max_lines]
-        return [self._fit_text(draw, line, font, max_width) for line in lines]
+        lines = [self._fit_text(draw, line, font, max_width) for line in lines]
+        if ellipsis and truncated and not lines[-1].endswith("..."):
+            last = lines[-1]
+            while last and self._text_width(draw, last.rstrip() + "...", font) > max_width:
+                last = last[:-1]
+            lines[-1] = last.rstrip() + "..."
+        return lines
 
     def _fit_text(self, draw, text, font, max_width):
         text = str(text or "")

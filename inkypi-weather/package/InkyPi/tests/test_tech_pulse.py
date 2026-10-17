@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import json
 import sys
@@ -24,15 +25,12 @@ from plugins.tech_pulse import tech_pulse as tech_pulse_module  # noqa: E402
 from plugins.tech_pulse.tech_pulse import (  # noqa: E402
     CACHE_SCHEMA_VERSION,
     HN_DOCS_URL,
-    HN_HOME_URL,
-    STORY_PREVIEW_CAPTURE_SIZE,
-    STORY_PREVIEW_TIMEOUT_MS,
     TITLE_WORDMARK_IMAGE,
+    TOP_COMMENT_MAX_CHARS,
     TechPulse,
 )
 from plugins.base_plugin.presentation import PresentationMode  # noqa: E402
 from plugins.base_plugin.render_provenance import read_source_provenance  # noqa: E402
-from security.ssrf import validate_browser_target  # noqa: E402
 
 
 def test_background_layer_stays_flat_for_color_epaper():
@@ -312,19 +310,19 @@ def test_tech_pulse_theme_only_uses_stale_source_cache_without_network(
     )
     cache["cache_key"] = plugin._cache_key("topstories", 5, None)
     (tmp_path / "state.json").write_text(json.dumps(cache), encoding="utf-8")
-    calls = {"fetch": 0, "preview": 0}
+    calls = {"fetch": 0, "session": 0}
 
     def forbidden_fetch(*_args, **_kwargs):
         calls["fetch"] += 1
         raise AssertionError("theme-only render must not fetch Hacker News")
 
-    def forbidden_preview(_url):
-        calls["preview"] += 1
-        return None
+    def forbidden_session():
+        calls["session"] += 1
+        raise AssertionError("theme-only render must not open a network session")
 
     monkeypatch.setattr(plugin, "_now_for_device", lambda _device: now)
     monkeypatch.setattr(plugin, "_fetch_live_payload", forbidden_fetch)
-    monkeypatch.setattr(plugin, "_capture_story_preview_page", forbidden_preview)
+    monkeypatch.setattr("plugins.tech_pulse.tech_pulse.get_http_session", forbidden_session)
     monkeypatch.setattr(plugin, "_write_context", lambda *_args: None)
 
     day_settings = {
@@ -346,7 +344,7 @@ def test_tech_pulse_theme_only_uses_stale_source_cache_without_network(
     assert expected_day["panel"] == (255, 251, 241)
     assert expected_day["orange"] == (255, 102, 0)
     assert plugin._palette({**day_settings, "themeMode": "dark"}) == expected_day
-    assert calls == {"fetch": 0, "preview": 0}
+    assert calls == {"fetch": 0, "session": 0}
     assert image_digest(day) != image_digest(night)
 
 
@@ -418,7 +416,6 @@ def test_render_page_returns_nonblank_800x480_and_draws_labels(tmp_path, monkeyp
     monkeypatch.setattr(plugin, "_draw_text", capture)
     monkeypatch.setattr(plugin, "_draw_story_list", capture_story_list)
     monkeypatch.setattr(plugin, "_draw_hn_story_preview", capture_preview)
-    monkeypatch.setattr(plugin, "_story_preview_image", lambda story=None: None)
 
     image = plugin._render_page((800, 480), payload, {}, now)
 
@@ -581,168 +578,138 @@ def test_title_wordmark_asset_exists_and_draws(tmp_path):
     assert len(crop.getcolors(maxcolors=1_000_000)) > 8
 
 
-def test_hn_story_preview_captures_hn_item_and_caches(tmp_path, monkeypatch):
+def _comment(comment_id, text, by="bob", when=1782520200, **extra):
+    return {"id": comment_id, "type": "comment", "by": by, "time": when, "text": text, **extra}
+
+
+def test_fetch_live_payload_attaches_first_live_comment_to_lead_story(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
-    captured = []
-    story_url = "https://github.com/HackerNews/API/issues/1"
-    hn_url = "https://news.ycombinator.com/item?id=42"
-    story = {"url": story_url, "hn_url": hn_url}
-
-    def fake_capture(url):
-        captured.append(url)
-        img = Image.new("RGB", (1100, 720), (246, 248, 250))
-        draw = ImageDraw.Draw(img)
-        draw.rectangle((0, 0, 1100, 72), fill=(36, 41, 47))
-        draw.rectangle((120, 150, 980, 260), fill=(255, 255, 255), outline=(208, 215, 222))
-        draw.text((145, 184), "Target story page", fill=(31, 35, 40))
-        return img
-
-    monkeypatch.setattr(plugin, "_capture_story_preview_page", fake_capture)
-
-    first = plugin._story_preview_image(story)
-    second = plugin._story_preview_image(story)
-
-    assert captured == [hn_url]
-    assert first.size == second.size
-    assert first.size[0] == 1100
-    assert first.getpixel((0, 0)) == (36, 41, 47)
-    assert plugin._story_preview_cache_path(hn_url).is_file()
-
-
-def test_story_preview_cache_uses_managed_namespace(tmp_path):
-    from utils.cache_manager import CacheNamespace
-
-    plugin = _plugin(tmp_path)
-
-    namespace = plugin._story_preview_namespace()
-
-    assert isinstance(namespace, CacheNamespace)
-    assert namespace.root == tmp_path / "story_preview"
-    assert namespace.budget.max_files == 256
-    assert namespace.budget.max_bytes == 50 * 1024 * 1024
-
-
-def test_failed_hn_story_preview_is_not_retried_for_same_item(
-    tmp_path,
-    monkeypatch,
-):
-    plugin = _plugin(tmp_path)
-    hn_url = "https://news.ycombinator.com/item?id=42"
-    captured = []
-
-    def fake_capture(url):
-        captured.append(url)
-        return None
-
-    monkeypatch.setattr(plugin, "_capture_story_preview_page", fake_capture)
-    story = {"url": "https://example.com/dynamic-story", "hn_url": hn_url}
-
-    assert plugin._story_preview_image(story) is None
-    assert plugin._story_preview_image(story) is None
-    assert captured == [hn_url]
-
-
-def test_failed_hn_story_preview_retries_after_backoff(
-    tmp_path,
-    monkeypatch,
-):
-    plugin = _plugin(tmp_path)
-    hn_url = "https://news.ycombinator.com/item?id=42"
-    captured = []
-    now = [1000.0]
-
-    def fake_capture(url):
-        captured.append(url)
-        return None
-
-    monkeypatch.setattr(plugin, "_capture_story_preview_page", fake_capture)
-    monkeypatch.setattr(
-        plugin,
-        "_story_preview_failure_now",
-        lambda: now[0],
-        raising=False,
+    now = datetime.fromtimestamp(1782523800, timezone.utc)
+    session = FakeSession(
+        {
+            "topstories.json": [1, 2],
+            "/item/1.json": {**_story(1, "Lead story"), "kids": [101, 102, 103, 104]},
+            "/item/2.json": {**_story(2, "Second story"), "kids": [201]},
+            "/item/101.json": _comment(101, "", deleted=True),
+            "/item/102.json": _comment(102, "flagged", dead=True),
+            "/item/103.json": _comment(
+                103,
+                'It&#x27;s fast.<p>See <a href="https:&#x2F;&#x2F;example.com" rel="nofollow">the docs</a> &gt; README.',
+                by="carol",
+            ),
+            "/item/104.json": _comment(104, "Never fetched"),
+        }
     )
-    monkeypatch.setattr(
-        tech_pulse_module,
-        "STORY_PREVIEW_FAILURE_TTL_SECONDS",
-        60,
-        raising=False,
-    )
-    story = {"url": "https://example.com/dynamic-story", "hn_url": hn_url}
+    monkeypatch.setattr("plugins.tech_pulse.tech_pulse.get_http_session", lambda: session)
 
-    assert plugin._story_preview_image(story) is None
-    now[0] += 61
-    assert plugin._story_preview_image(story) is None
-    assert captured == [hn_url, hn_url]
+    payload = plugin._fetch_live_payload("topstories", max_stories=2, min_score=None, now=now)
+
+    lead, second = payload["stories"]
+    assert lead["top_comment"] == {
+        "id": 103,
+        "by": "carol",
+        "text": "It's fast. See the docs > README.",
+        "age_hours": 1,
+    }
+    assert "top_comment" not in second
+    fetched = [url for url, _kwargs in session.urls]
+    assert not any(url.endswith(("/item/104.json", "/item/201.json")) for url in fetched)
 
 
-def test_story_preview_remote_capture_uses_exact_browser_timeout(
-    tmp_path,
-    monkeypatch,
-):
+def test_fetch_live_payload_keeps_stories_when_top_comment_fails(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
-    calls = []
-
-    class FakeRenderer:
-        def render_url(self, url, **kwargs):
-            calls.append((url, kwargs))
-            return None
-
-    monkeypatch.setattr(
-        tech_pulse_module,
-        "get_browser_renderer",
-        lambda: FakeRenderer(),
-        raising=False,
+    now = datetime.fromtimestamp(1782523800, timezone.utc)
+    session = FakeSession(
+        {
+            "topstories.json": [1],
+            "/item/1.json": {**_story(1, "Lead story"), "kids": [101]},
+        }
     )
-    monkeypatch.setattr(
-        tech_pulse_module,
-        "take_screenshot",
-        lambda *args, **kwargs: pytest.fail("compatibility wrapper must not be used"),
-        raising=False,
-    )
+    monkeypatch.setattr("plugins.tech_pulse.tech_pulse.get_http_session", lambda: session)
 
-    assert plugin._capture_story_preview_page_direct(HN_HOME_URL) is None
-    assert calls == [
-        (
-            HN_HOME_URL,
-            {
-                "viewport": STORY_PREVIEW_CAPTURE_SIZE,
-                "timeout_seconds": STORY_PREVIEW_TIMEOUT_MS / 1000.0,
-                "validator": validate_browser_target,
-            },
-        )
+    payload = plugin._fetch_live_payload("topstories", max_stories=1, min_score=None, now=now)
+
+    assert [story["title"] for story in payload["stories"]] == ["Lead story"]
+    assert "top_comment" not in payload["stories"][0]
+
+
+def test_parse_comment_item_skips_unusable_comments_and_bounds_text(tmp_path):
+    plugin = _plugin(tmp_path)
+
+    assert plugin._parse_comment_item(_comment(1, "gone", deleted=True)) is None
+    assert plugin._parse_comment_item(_comment(1, "dead", dead=True)) is None
+    assert plugin._parse_comment_item(_story(1, "A story")) is None
+    assert plugin._parse_comment_item(_comment(1, "<p> <i></i>")) is None
+    assert len(plugin._parse_comment_item(_comment(1, "word " * 400))["text"]) <= TOP_COMMENT_MAX_CHARS
+
+
+def _draw_preview(plugin, monkeypatch, story, box):
+    image = Image.new("RGB", (800, 480), (10, 12, 15))
+    palette = plugin._palette({"_inkypi_theme": canonical_theme("night")})
+    drawn = []
+    original = plugin._draw_text
+
+    def capture(draw_arg, xy, text, font, fill):
+        drawn.append((xy, str(text), font))
+        return original(draw_arg, xy, text, font, fill)
+
+    monkeypatch.setattr(plugin, "_draw_text", capture)
+    label_font = plugin._load_font(None, 12, "bold")
+    body_font = plugin._load_font(None, 12)
+    plugin._draw_hn_story_preview(image, ImageDraw.Draw(image), box, story, palette, 1.0, label_font, body_font)
+    return image, drawn
+
+
+def test_hn_story_preview_draws_top_comment_inside_card(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    box = (42, 212, 350, 318)
+    story = {
+        "title": "Tesla Roadster",
+        "url": "https://www.tesla.com/roadster",
+        "comments": 2100,
+        "top_comment": {
+            "id": 7,
+            "by": "jsnell",
+            "text": " ".join(["Deposits from 2017 are still waiting for a delivery date."] * 6),
+            "age_hours": 20,
+        },
+    }
+
+    image, drawn = _draw_preview(plugin, monkeypatch, story, box)
+
+    texts = [text for _xy, text, _font in drawn]
+    assert texts[:2] == ["TOP COMMENT", "jsnell | 20h ago"]
+    assert len(texts[2:]) >= 3
+    assert texts[2].startswith("Deposits from 2017")
+    assert texts[-1].endswith("...")
+    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    for (x, y), text, font in drawn:
+        assert x >= 0
+        assert x + plugin._text_width(measure, text, font) <= box[2] - box[0]
+        assert y + font.getbbox(text)[3] <= box[3] - box[1]
+    assert len(image.crop(box).getcolors(maxcolors=1_000_000)) > 8
+
+
+def test_hn_story_preview_without_comment_shows_discussion_link(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    story = {"title": "Fallback story", "url": "https://example.com/story", "comments": 2100}
+
+    _image, drawn = _draw_preview(plugin, monkeypatch, story, (42, 212, 350, 318))
+
+    assert [text for _xy, text, _font in drawn] == [
+        "HN DISCUSSION",
+        "2.1k comments",
+        "https://example.com/story",
     ]
 
 
+def test_tech_pulse_does_not_start_chromium():
+    tree = ast.parse(Path(tech_pulse_module.__file__).read_text(encoding="utf-8"))
 
-def test_hn_story_preview_draws_story_target_screenshot(tmp_path, monkeypatch):
-    plugin = _plugin(tmp_path)
-    image = Image.new("RGB", (800, 480), (10, 12, 15))
-    draw = ImageDraw.Draw(image)
-    box = (70, 230, 350, 310)
-    preview = Image.new("RGB", (1100, 520), (246, 248, 250))
-    preview_draw = ImageDraw.Draw(preview)
-    preview_draw.rectangle((0, 0, 1100, 42), fill=(36, 41, 47))
-    preview_draw.rectangle((80, 95, 1020, 250), fill=(255, 255, 255), outline=(208, 215, 222))
-    monkeypatch.setattr(plugin, "_story_preview_image", lambda story=None: preview)
-
-    plugin._draw_hn_story_preview(image, draw, box, {"title": "Fallback story", "url": "https://example.com/story"}, plugin._palette({}), 1.0)
-
-    crop = image.crop(box)
-    assert len(crop.getcolors(maxcolors=1_000_000)) > 8
-
-
-def test_hn_story_preview_fallback_draws_story_placeholder(tmp_path, monkeypatch):
-    plugin = _plugin(tmp_path)
-    image = Image.new("RGB", (800, 480), (10, 12, 15))
-    draw = ImageDraw.Draw(image)
-    box = (70, 230, 350, 305)
-    monkeypatch.setattr(plugin, "_story_preview_image", lambda story=None: None)
-
-    plugin._draw_hn_story_preview(image, draw, box, {"title": "Fallback story", "url": "https://example.com/story"}, plugin._palette({}), 1.0)
-
-    crop = image.crop(box)
-    assert len(crop.getcolors(maxcolors=1_000_000)) > 8
+    modules = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
+    attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+    assert "utils.browser_renderer" not in modules
+    assert not attributes & {"render_url", "render_html"}
 
 
 def test_story_row_text_stays_inside_row_without_overlap(tmp_path, monkeypatch):
