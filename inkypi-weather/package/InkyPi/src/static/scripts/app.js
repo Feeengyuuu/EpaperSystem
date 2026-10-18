@@ -237,6 +237,7 @@
 
     /* ---------- Lightbox ---------- */
     let lightboxNode = null;
+    const LIGHTBOX_MAX_SCALE = 1.65;
 
     function openLightbox(src, caption) {
         if (!lightboxNode) {
@@ -244,6 +245,13 @@
             lightboxNode.className = "lightbox";
             lightboxNode.innerHTML = '<img alt=""><div class="lightbox-caption"></div>';
             lightboxNode.addEventListener("click", closeLightbox);
+            const image = lightboxNode.querySelector("img");
+            image.addEventListener("load", () => {
+                if (image.naturalWidth && image.naturalHeight) {
+                    image.style.setProperty("--lightbox-ratio", String(image.naturalWidth / image.naturalHeight));
+                    image.style.setProperty("--lightbox-max-width", `${Math.round(image.naturalWidth * LIGHTBOX_MAX_SCALE)}px`);
+                }
+            });
             document.body.appendChild(lightboxNode);
         }
         lightboxNode.querySelector("img").src = src;
