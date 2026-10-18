@@ -189,6 +189,7 @@ class NBAMixin:
                     "broadcast": SportsDashboard._football_broadcast_label(broadcasts),
                     "spread": odds.get("spread", ""),
                     "over_under": odds.get("over_under", ""),
+                    **SportsDashboard._basketball_scorebug_fields(event, competition, away, home, state),
                 }
             )
         parsed = sorted(parsed, key=lambda item: item["start"])
@@ -201,6 +202,64 @@ class NBAMixin:
             seen.add(key)
             unique.append(event)
         return SportsDashboard._normalize_nba_series_wins(unique)
+
+    @staticmethod
+    def _basketball_scorebug_fields(event, competition, away, home, state):
+        """Scorebug details from the ESPN scoreboard: clock, team colours,
+        game leaders, the event headline and the playoff series line."""
+        status = (competition or {}).get("status") or (event or {}).get("status") or {}
+        status_type = status.get("type") or {}
+        series = (competition or {}).get("series") if isinstance((competition or {}).get("series"), Mapping) else {}
+        return {
+            "clock": str(status.get("displayClock") or "").strip() if state == "inprogress" else "",
+            "status_detail": str(status_type.get("shortDetail") or status_type.get("detail") or "").strip(),
+            "team_a_color": SportsDashboard._football_team_color(away),
+            "team_b_color": SportsDashboard._football_team_color(home),
+            "leaders": SportsDashboard._basketball_game_leaders(away, home) if state != "unstarted" else [],
+            "team_leaders_a": SportsDashboard._basketball_team_leaders(away) if state != "unstarted" else [],
+            "team_leaders_b": SportsDashboard._basketball_team_leaders(home) if state != "unstarted" else [],
+            "headline": SportsDashboard._football_event_headline(event, competition),
+            "series_summary": str((series or {}).get("summary") or "").strip(),
+            "series_length": SportsDashboard._lpl_int_value((series or {}).get("totalCompetitions")),
+        }
+
+    @staticmethod
+    def _basketball_team_leaders(competitor):
+        """This team's points / rebounds / assists leaders."""
+        leaders = []
+        groups = {
+            group.get("name"): group
+            for group in (competitor or {}).get("leaders") or []
+            if isinstance(group, Mapping)
+        }
+        for category, label in (("points", "PTS"), ("rebounds", "REB"), ("assists", "AST")):
+            top = (((groups.get(category) or {}).get("leaders") or [None])[0]) or {}
+            name = str((top.get("athlete") or {}).get("shortName") or "").strip()
+            if name:
+                leaders.append({"label": label, "name": name, "value": str(top.get("displayValue") or "").strip()})
+        return leaders
+
+    @staticmethod
+    def _basketball_game_leaders(away, home):
+        """The game's best scorer, rebounder and passer across both teams."""
+        leaders = []
+        for category, label in (("points", "PTS"), ("rebounds", "REB"), ("assists", "AST")):
+            best = None
+            for side, competitor in (("a", away), ("b", home)):
+                for group in (competitor or {}).get("leaders") or []:
+                    if not isinstance(group, Mapping) or group.get("name") != category:
+                        continue
+                    top = ((group.get("leaders") or [None])[0]) or {}
+                    try:
+                        value = float(top.get("value"))
+                    except (TypeError, ValueError):
+                        continue
+                    name = str((top.get("athlete") or {}).get("shortName") or "").strip()
+                    if name and (best is None or value > best[0]):
+                        best = (value, {"label": label, "name": name, "value": str(top.get("displayValue") or int(value)), "side": side})
+            if best:
+                leaders.append(best[1])
+        return leaders
 
     @staticmethod
     def _nba_competitors_by_side(competitors):
@@ -1262,35 +1321,6 @@ class NBAMixin:
             return None
 
     @staticmethod
-    def _load_nba_empty_slot_filler(size):
-        width, height = int(size[0]), int(size[1])
-        if width <= 0 or height <= 0:
-            return None
-        path = LOCAL_NBA_EMPTY_SLOT_FILLER_PATH
-        cache_key = (path, (width, height), "nba-empty-slot-filler-v1")
-        if cache_key in TEAM_LOGO_CACHE:
-            return TEAM_LOGO_CACHE[cache_key]
-        if not os.path.exists(path):
-            TEAM_LOGO_CACHE[cache_key] = None
-            return None
-        try:
-            with Image.open(path) as source:
-                filler = source.convert("RGBA")
-            if filler.size != (width, height):
-                filler = ImageOps.fit(
-                    filler,
-                    (width, height),
-                    method=Image.LANCZOS,
-                    centering=(0.5, 0.5),
-                )
-            TEAM_LOGO_CACHE[cache_key] = filler
-            return filler
-        except Exception as exc:
-            logger.warning("Failed to load NBA empty slot filler %s: %s", path, exc)
-            TEAM_LOGO_CACHE[cache_key] = None
-            return None
-
-    @staticmethod
     def _load_nba_offseason_filler(size):
         width, height = int(size[0]), int(size[1])
         if width <= 0 or height <= 0:
@@ -1356,657 +1386,6 @@ class NBAMixin:
         image.paste(wordmark, (paste_x, paste_y), wordmark)
         return True
 
-    def _draw_wnba_standalone_panel(self, image, draw, bounds, card, source_state, now):
-        x1, y1, x2, y2 = [int(value) for value in bounds]
-        draw.rectangle((x1, y1, x2, y2), fill=COLORS["panel"])
-        self._draw_halftone(draw, (x1, y1, x2, y2), COLORS["wnba_accent"], COLORS["panel"], 22, 1)
-        self._draw_standalone_sport_header(image, draw, x1, y1, x2, "WNBA", card, source_state)
-        content_y = y1 + 58
-        bottom = y2 - 8
-        split_x = x1 + max(300, min(330, int((x2 - x1 + 1) * 0.59)))
-        left = (x1 + 12, content_y, split_x - 10, bottom)
-        right = (split_x + 6, content_y, x2 - 12, bottom)
-        self._draw_vertical_split(draw, split_x, content_y - 6, bottom)
-        self._draw_wnba_main_card(image, draw, left, card, now)
-        self._draw_wnba_side_column(image, draw, right, card, now)
-
-    def _draw_wnba_main_card(self, image, draw, bounds, card, now):
-        x1, y1, x2, y2 = [int(value) for value in bounds]
-        event = (card or {}).get("main") or {}
-        accent = COLORS["wnba_live"] if card.get("status") == "LIVE" else COLORS["wnba_accent"]
-        self._draw_hub_card_shell(draw, x1, y1, x2, y2, accent)
-        tag, tag_font = self._fit_text(draw, f"WNBA {card.get('status') or 'NEXT'}", 100, 12, bold=True, min_size=8)
-        draw.rectangle((x1 + 18, y1 + 11, x1 + 120, y1 + 29), fill=COLORS["wnba_tag"], outline=COLORS["border"], width=1)
-        draw.text((x1 + 23, y1 + 12), tag, font=tag_font, fill=COLORS["text"])
-        right_label = self._hub_event_time_label(event, now)
-        right_label, right_font = self._fit_text(draw, right_label, 86, 11, bold=True, min_size=8)
-        self._draw_right_aligned(draw, (x2 - 12, y1 + 13), right_label, right_font, COLORS["muted"])
-        court_y1 = y1 + 43
-        court_y2 = y2 - 42
-        draw.rounded_rectangle((x1 + 16, court_y1, x2 - 16, court_y2), radius=5, fill=COLORS["wnba_court"], outline=COLORS["border"], width=1)
-        center_x = (x1 + x2) / 2
-        draw.line((center_x, court_y1 + 3, center_x, court_y2 - 3), fill=COLORS["line"], width=1)
-        draw.ellipse((center_x - 24, court_y1 + 20, center_x + 24, court_y1 + 68), outline=COLORS["line"], width=2)
-        away_label = self._wnba_display_team_from_event(event, "a", full=True)
-        home_label = self._wnba_display_team_from_event(event, "b", full=True)
-        away_fill = COLORS[SportsDashboard._wnba_score_side_fill_key(event, "a")]
-        home_fill = COLORS[SportsDashboard._wnba_score_side_fill_key(event, "b")]
-        self._draw_hub_team_score(draw, x1 + 27, court_y1 + 11, center_x - 24, away_label, event.get("wins_a"), event.get("record_a"), image=image, logo_url=event.get("team_a_logo"), logo_size=20, logo_fallback=SportsDashboard._wnba_logo_fallback(event, "a"), team_fill=away_fill, score_fill=away_fill)
-        self._draw_hub_team_score(draw, center_x + 24, court_y1 + 11, x2 - 27, home_label, event.get("wins_b"), event.get("record_b"), align="right", image=image, logo_url=event.get("team_b_logo"), logo_size=20, logo_fallback=SportsDashboard._wnba_logo_fallback(event, "b"), team_fill=home_fill, score_fill=home_fill)
-        score = self._hub_score_label(event)
-        score, score_font = self._fit_text(draw, score, 86, 28 if score != "VS" else 23, bold=True, min_size=16)
-        self._draw_centered(draw, (center_x, court_y1 + 43), score, score_font, COLORS["text"])
-        self._draw_wnba_court_quarter_strip(draw, x1 + 36, court_y2 - 39, x2 - 36, event)
-        if self._hub_event_state(event) == "scheduled":
-            self._draw_wnba_pregame_context(draw, x1, x2, court_y2, y2, event, now)
-            return
-        if self._hub_event_state(event) == "final":
-            self._draw_wnba_final_context(draw, x1, x2, court_y2, y2, event, now)
-            return
-        self._draw_wnba_live_context(draw, x1, x2, court_y2, y2, event, now)
-
-    def _draw_wnba_court_quarter_strip(self, draw, x1, y, x2, event):
-        rows = SportsDashboard._wnba_quarter_rows(event)
-        if not rows:
-            return
-        period = SportsDashboard._lpl_int_value((event or {}).get("period"))
-        y = int(y)
-        gap = 3
-        count = min(4, len(rows))
-        cell_w = max(34, int((x2 - x1 - gap * (count - 1)) / count))
-        for index, (quarter, score) in enumerate(rows[:count]):
-            left = int(x1 + index * (cell_w + gap))
-            right = int(x2 if index == count - 1 else left + cell_w)
-            active = period == index + 1
-            self._draw_wnba_quarter_score_cell(draw, (left, y, right, y + 13), quarter, score, active)
-
-    def _draw_wnba_quarter_score_cell(self, draw, box, quarter, score, active=False):
-        x1, y1, x2, y2 = [int(value) for value in box]
-        accent = COLORS["wnba_accent"] if active else COLORS["line"]
-        fill = self._blend(COLORS["wnba_accent"], COLORS["panel"], 0.22) if active else COLORS["panel"]
-        draw.rounded_rectangle((x1, y1, x2, y2), radius=3, fill=fill, outline=accent, width=1)
-        quarter_text, quarter_font = self._fit_text(draw, str(quarter or "Q"), 17, 6, bold=True, min_size=5)
-        draw.text((x1 + 4, y1 + 3), quarter_text, font=quarter_font, fill=COLORS["wnba_accent"] if active else COLORS["muted"])
-        score_text, score_font = self._fit_text(draw, str(score or "-"), max(14, x2 - x1 - 25), 7, bold=True, min_size=5)
-        self._draw_right_aligned(draw, (x2 - 4, y1 + 3), score_text, score_font, COLORS["text"])
-
-    def _draw_wnba_pregame_context(self, draw, x1, x2, court_y2, y2, event, now):
-        tip_y = court_y2 - 25
-        draw.rounded_rectangle((x1 + 26, tip_y, x2 - 26, tip_y + 20), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
-        self._draw_sport_info_icon(draw, "TIP", x1 + 34, tip_y + 6, COLORS["wnba_accent"])
-        label, label_font = self._fit_text(draw, "TIP OFF", 72, 9, bold=True, min_size=7)
-        draw.text((x1 + 49, tip_y + 5), label, font=label_font, fill=COLORS["wnba_accent"])
-        tip = self._wnba_tip_label(event, now)
-        tip, tip_font = self._fit_text(draw, tip, 92, 10, bold=True, min_size=7)
-        self._draw_right_aligned(draw, (x2 - 35, tip_y + 5), tip, tip_font, COLORS["text"])
-        meta = SportsDashboard._wnba_pregame_meta_label(event)
-        meta, meta_font = self._fit_text(draw, meta, x2 - x1 - 44, 10, bold=True, min_size=7)
-        self._draw_centered_in_box(draw, (x1 + 18, y2 - 30, x2 - 18, y2 - 10), meta, meta_font, COLORS["muted"])
-
-    def _draw_wnba_live_context(self, draw, x1, x2, court_y2, y2, event, now):
-        pulse_y = court_y2 - 25
-        draw.rounded_rectangle((x1 + 26, pulse_y, x2 - 26, pulse_y + 20), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
-        self._draw_sport_info_icon(draw, "CLOCK", x1 + 34, pulse_y + 6, COLORS["wnba_accent"])
-        label, label_font = self._fit_text(draw, "LIVE PULSE", 78, 9, bold=True, min_size=7)
-        draw.text((x1 + 49, pulse_y + 5), label, font=label_font, fill=COLORS["wnba_accent"])
-        status = str((event or {}).get("status_text") or "").strip() or self._hub_event_time_label(event, now)
-        status, status_font = self._fit_text(draw, status, 92, 10, bold=True, min_size=7)
-        self._draw_right_aligned(draw, (x2 - 35, pulse_y + 5), status, status_font, COLORS["text"])
-        self._draw_wnba_live_summary_strip(draw, x1 + 18, y2 - 30, x2 - 18, event)
-
-    def _draw_wnba_live_summary_strip(self, draw, x1, y, x2, event):
-        lead = SportsDashboard._wnba_lead_label(event)
-        if lead == "TBD":
-            lead = ""
-        quarter = SportsDashboard._wnba_current_quarter_label(event)
-        items = []
-        if lead:
-            items.append(("LEAD", lead, COLORS["wnba_accent"]))
-        if quarter:
-            items.append(("QTR", quarter, COLORS["amber"]))
-        broadcast = str((event or {}).get("broadcast") or "").strip()
-        spread = str((event or {}).get("spread") or "").strip()
-        total = str((event or {}).get("over_under") or "").strip()
-        if broadcast:
-            items.append(("TV", " / ".join(part for part in (broadcast, spread, total) if part), COLORS["wnba_accent"]))
-        elif spread:
-            items.append(("SPREAD", " / ".join(part for part in (spread, total) if part), COLORS["wnba_accent"]))
-        elif total:
-            items.append(("TOTAL", total, COLORS["wnba_accent"]))
-        if not items:
-            meta = SportsDashboard._wnba_live_main_meta_label(event)
-            meta, meta_font = self._fit_text(draw, meta, x2 - x1, 10, bold=True, min_size=7)
-            self._draw_centered_in_box(draw, (x1, y, x2, y + 20), meta, meta_font, COLORS["muted"])
-            return
-        if len(items) == 1:
-            self._draw_wnba_live_summary_cell(draw, (x1, y, x2, y + 20), items[0][0], items[0][1], items[0][2])
-            return
-        items = items[:3]
-        gap = 4 if len(items) > 2 else 6
-        cell_w = max(58, int((x2 - x1 - gap * (len(items) - 1)) / len(items)))
-        for index, (label, value, accent) in enumerate(items):
-            left = int(x1 + index * (cell_w + gap))
-            right = int(x2 if index == len(items) - 1 else left + cell_w)
-            self._draw_wnba_live_summary_cell(draw, (left, y, right, y + 20), label, value, accent)
-
-    def _draw_wnba_live_summary_cell(self, draw, box, label, value, accent):
-        x1, y1, x2, y2 = [int(value) for value in box]
-        draw.rounded_rectangle((x1, y1, x2, y2), radius=3, fill=COLORS["panel"], outline=COLORS["border"], width=1)
-        self._draw_sport_info_icon(draw, label, x1 + 5, y1 + 6, accent)
-        compact = (x2 - x1) < 94
-        label_budget = 23 if compact else 32
-        value_budget = max(24, x2 - x1 - (45 if compact else 55))
-        label_text, label_font = self._fit_text(draw, label, label_budget, 7, bold=True, min_size=5)
-        draw.text((x1 + 18, y1 + 5), label_text, font=label_font, fill=accent)
-        value_text, value_font = self._fit_text(draw, str(value or "TBD"), value_budget, 9, bold=True, min_size=6)
-        self._draw_right_aligned(draw, (x2 - 5, y1 + 5), value_text, value_font, COLORS["text"])
-
-    def _draw_wnba_final_context(self, draw, x1, x2, court_y2, y2, event, now):
-        snap_y = court_y2 - 25
-        draw.rounded_rectangle((x1 + 26, snap_y, x2 - 26, snap_y + 20), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
-        self._draw_sport_info_icon(draw, "SCORE", x1 + 34, snap_y + 6, COLORS["wnba_accent"])
-        label, label_font = self._fit_text(draw, "RESULT SNAP", 88, 9, bold=True, min_size=7)
-        draw.text((x1 + 49, snap_y + 5), label, font=label_font, fill=COLORS["wnba_accent"])
-        status = str((event or {}).get("status_text") or "").strip() or self._hub_event_time_label(event, now)
-        status, status_font = self._fit_text(draw, status, 74, 10, bold=True, min_size=7)
-        self._draw_right_aligned(draw, (x2 - 35, snap_y + 5), status, status_font, COLORS["text"])
-        meta = SportsDashboard._wnba_final_main_meta_label(event)
-        meta, meta_font = self._fit_text(draw, meta, x2 - x1 - 44, 10, bold=True, min_size=7)
-        self._draw_centered_in_box(draw, (x1 + 18, y2 - 30, x2 - 18, y2 - 10), meta, meta_font, COLORS["muted"])
-
-    @staticmethod
-    def _wnba_live_main_meta_label(event):
-        parts = []
-        lead = SportsDashboard._wnba_lead_label(event)
-        if lead and lead != "TBD":
-            parts.append(lead)
-        quarter = SportsDashboard._wnba_current_quarter_label(event)
-        if quarter:
-            parts.append(quarter)
-        line = SportsDashboard._wnba_live_line_label(event)
-        if line:
-            parts.append(line)
-        return " / ".join(parts[:3]) or SportsDashboard._nba_period_label(event, max_parts=2) or "LIVE GAME"
-
-    @staticmethod
-    def _wnba_live_line_label(event):
-        event = event or {}
-        parts = []
-        broadcast = str(event.get("broadcast") or "").strip()
-        if broadcast:
-            parts.append(f"TV {broadcast}")
-        spread = str(event.get("spread") or "").strip()
-        if spread:
-            parts.append(f"SPREAD {spread}")
-        total = str(event.get("over_under") or "").strip()
-        if total:
-            parts.append(total)
-        return "  |  ".join(parts)
-
-    @staticmethod
-    def _wnba_final_main_meta_label(event):
-        result = SportsDashboard._wnba_result_meta_label(event)
-        period = SportsDashboard._nba_period_label(event, max_parts=2)
-        if result and period and " / " not in result:
-            return f"{result} / {period}"
-        return result or period or "FINAL RESULT"
-
-    @staticmethod
-    def _wnba_pregame_meta_label(event):
-        parts = []
-        broadcast = str((event or {}).get("broadcast") or "").strip()
-        spread = str((event or {}).get("spread") or "").strip()
-        total = str((event or {}).get("over_under") or "").strip()
-        line_parts = [part for part in (spread, total) if part]
-        if broadcast:
-            tv_parts = [f"TV {broadcast}"] + line_parts
-            parts.append(" | ".join(tv_parts))
-        elif line_parts:
-            parts.append(" / ".join(line_parts))
-        venue = str((event or {}).get("venue") or (event or {}).get("city") or "").strip()
-        if venue:
-            parts.append(venue)
-        status = str((event or {}).get("status_text") or "").strip()
-        block = str((event or {}).get("block") or "").strip()
-        if parts:
-            if status and len(parts) < 3:
-                parts.append(status)
-            if block and len(parts) < 3:
-                parts.append(block)
-            return " / ".join(parts[:3]) or "WNBA GAME INFO"
-        record = SportsDashboard._wnba_record_matchup_label(event)
-        if record:
-            parts.append(record)
-        if status and len(parts) < 2:
-            parts.append(status)
-        if block and len(parts) < 2:
-            parts.append(block)
-        return " / ".join(parts[:2]) or "WNBA GAME INFO"
-
-    @staticmethod
-    def _wnba_result_meta_label(event):
-        event = event or {}
-        parts = []
-        lead = SportsDashboard._wnba_lead_label(event)
-        if lead and lead != "TBD":
-            parts.append(lead)
-        status = str(event.get("status_text") or "").strip()
-        if status:
-            parts.append(status)
-        record = SportsDashboard._wnba_record_matchup_label(event)
-        if record and len(parts) < 2:
-            parts.append(record)
-        block = str(event.get("block") or "").strip()
-        if block and len(parts) < 2:
-            parts.append(block)
-        return " / ".join(parts[:2]) or "WNBA RESULT"
-
-    def _draw_wnba_side_column(self, image, draw, bounds, card, now):
-        x1, y1, x2, y2 = [int(value) for value in bounds]
-        main = (card or {}).get("main") or {}
-        upcoming = list((card or {}).get("upcoming") or [])
-        recent = list((card or {}).get("recent") or [])
-        main_state = self._hub_event_state(main)
-        recent_only_main = len(recent) == 1 and (
-            recent[0] is main
-            or (
-                str(recent[0].get("event_id") or "")
-                and str(recent[0].get("event_id") or "") == str(main.get("event_id") or "")
-            )
-        )
-        if main_state == "live":
-            if not upcoming and not recent:
-                self._draw_wnba_live_side_fallback(image, draw, x1, y1, x2, y2, main)
-                return
-            secondary_y = min(y2 - 54, y1 + 136)
-            self._draw_wnba_live_pulse_section(image, draw, x1, x2, y1, max(y1 + 88, secondary_y - 2), main)
-            if upcoming:
-                self._draw_hub_section_header(draw, x1, x2, secondary_y, "UPCOMING", COLORS["wnba_accent"])
-                row_y = secondary_y + 24
-                for index, event in enumerate(upcoming[:1]):
-                    self._draw_wnba_small_row(image, draw, x1, x2, row_y + index * 31, event, True)
-            else:
-                self._draw_hub_section_header(draw, x1, x2, secondary_y, "RECENT", COLORS["wnba_accent"])
-                row_y = secondary_y + 24
-                for index, event in enumerate(recent[:1]):
-                    self._draw_wnba_small_row(image, draw, x1, x2, row_y + index * 28, event, False)
-            return
-        if not upcoming and main_state == "final" and (not recent or recent_only_main):
-            self._draw_wnba_result_side_fallback(draw, x1, y1, x2, y2, main)
-            return
-        self._draw_hub_section_header(draw, x1, x2, y1, "UPCOMING", COLORS["wnba_accent"])
-        row_y = y1 + 24
-        if upcoming:
-            for index, event in enumerate(upcoming[:3]):
-                self._draw_wnba_small_row(image, draw, x1, x2, row_y + index * 31, event, True)
-        else:
-            draw.text((x1 + 10, row_y + 6), "No WNBA schedule", font=self._font(10, True), fill=COLORS["muted"])
-        recent_y = min(y2 - 76, row_y + max(1, min(3, len(upcoming))) * 31 + 10)
-        if recent:
-            self._draw_hub_section_header(draw, x1, x2, recent_y, "RECENT", COLORS["wnba_accent"])
-            recent_row_y = recent_y + 24
-            for index, event in enumerate(recent[:2]):
-                self._draw_wnba_small_row(image, draw, x1, x2, recent_row_y + index * 28, event, False)
-        elif main_state == "live":
-            self._draw_wnba_live_pulse_section(image, draw, x1, x2, recent_y, y2, main)
-        elif main_state == "scheduled":
-            self._draw_wnba_game_info_section(draw, x1, x2, recent_y, y2, main, now)
-        else:
-            self._draw_wnba_result_snap_section(draw, x1, x2, recent_y, y2, main)
-
-    def _draw_wnba_live_side_fallback(self, image, draw, x1, y1, x2, y2, event):
-        self._draw_hub_section_header(draw, x1, x2, y1, "LIVE GAME", COLORS["wnba_accent"])
-        row_y = y1 + 24
-        status = str(event.get("status_text") or "").strip() or self._hub_event_time_label(event, None)
-        self._draw_wnba_live_info_row(draw, x1, x2, row_y, "CLOCK", status)
-        self._draw_wnba_live_team_row(image, draw, x1, x2, row_y + 18, event, "a")
-        self._draw_wnba_live_team_row(image, draw, x1, x2, row_y + 36, event, "b")
-        info_y = row_y + 54
-        lead = self._wnba_lead_label(event)
-        if lead and lead != "TBD":
-            self._draw_wnba_live_info_row(draw, x1, x2, info_y, "LEAD", lead, accent=True)
-            info_y += 18
-        broadcast = str(event.get("broadcast") or "").strip()
-        line = " / ".join(
-            part
-            for part in (
-                str(event.get("spread") or "").strip(),
-                str(event.get("over_under") or "").strip(),
-            )
-            if part
-        )
-        if broadcast:
-            self._draw_wnba_live_info_row(draw, x1, x2, info_y, "TV", " / ".join(part for part in (broadcast, line) if part))
-            info_y += 18
-            line = ""
-        if line:
-            self._draw_wnba_live_info_row(draw, x1, x2, info_y, "SPREAD", line)
-            info_y += 18
-        venue = str(event.get("venue") or event.get("city") or "").strip()
-        if venue:
-            self._draw_wnba_live_info_row(draw, x1, x2, info_y, "VENUE", venue)
-            info_y += 18
-
-        quarter_y = min(y2 - 76, max(y1 + 104, info_y + 6))
-        self._draw_hub_section_header(draw, x1, x2, quarter_y, "QUARTER LOG", COLORS["wnba_accent"])
-        period = SportsDashboard._lpl_int_value(event.get("period"))
-        for index, label in enumerate(self._wnba_quarter_rows(event)[:4]):
-            top = quarter_y + 22 + index * 14
-            if top + 10 > y2 - 2:
-                break
-            score_color = COLORS["wnba_accent"] if period == index + 1 else COLORS["text"]
-            draw.line((x1, top - 2, x2, top - 2), fill=COLORS["line"], width=1)
-            quarter, score = label
-            self._draw_sport_info_icon(draw, "PERIOD", x1 + 3, top + 1, COLORS["wnba_accent"])
-            quarter, quarter_font = self._fit_text(draw, quarter, 32, 8, bold=True, min_size=6)
-            draw.text((x1 + 17, top), quarter, font=quarter_font, fill=score_color)
-            score, score_font = self._fit_text(draw, score, 58, 9, bold=True, min_size=6)
-            self._draw_right_aligned(draw, (x2 - 3, top), score, score_font, score_color)
-
-    def _draw_wnba_live_pulse_section(self, image, draw, x1, x2, y, y2, event):
-        self._draw_hub_section_header(draw, x1, x2, y, "LIVE PULSE", COLORS["wnba_accent"])
-        row_y = y + 24
-        for index, row in enumerate(self._wnba_live_pulse_rows(event)):
-            top = row_y + index * 18
-            if top + 14 > y2 - 4:
-                break
-            label, value, accent = row
-            if label == "SCORE":
-                self._draw_wnba_live_score_row(image, draw, x1, x2, top, event)
-            else:
-                self._draw_wnba_live_info_row(draw, x1, x2, top, label, value, accent=accent)
-
-    def _draw_wnba_result_side_fallback(self, draw, x1, y1, x2, y2, event):
-        quarter_rows = self._wnba_quarter_rows(event)
-        self._draw_wnba_result_snap_section(
-            draw,
-            x1,
-            x2,
-            y1,
-            min(y2, y1 + 104),
-            event,
-            max_rows=4,
-            include_quarter=not quarter_rows,
-        )
-        if not quarter_rows:
-            return
-        quarter_y = min(y2 - 96, y1 + 104)
-        self._draw_hub_section_header(draw, x1, x2, quarter_y, "QUARTER LOG", COLORS["wnba_accent"])
-        for index, row in enumerate(quarter_rows[:4]):
-            top = quarter_y + 24 + index * 18
-            if top + 14 > y2 - 4:
-                break
-            quarter, score = row
-            draw.line((x1, top - 2, x2, top - 2), fill=COLORS["line"], width=1)
-            self._draw_sport_info_icon(draw, "PERIOD", x1 + 3, top + 1, COLORS["wnba_accent"])
-            quarter, quarter_font = self._fit_text(draw, quarter, 32, 9, bold=True, min_size=7)
-            draw.text((x1 + 17, top), quarter, font=quarter_font, fill=COLORS["muted"])
-            score, score_font = self._fit_text(draw, score, 58, 10, bold=True, min_size=7)
-            self._draw_right_aligned(draw, (x2 - 3, top), score, score_font, COLORS["text"])
-
-    def _draw_wnba_result_snap_section(self, draw, x1, x2, y, y2, event, max_rows=5, include_quarter=True):
-        self._draw_hub_section_header(draw, x1, x2, y, "RESULT SNAP", COLORS["wnba_accent"])
-        row_y = y + 24
-        rows = self._wnba_result_snap_rows(event, include_quarter=include_quarter)
-        if not rows:
-            draw.text((x1 + 10, row_y + 6), "No recent results", font=self._font(10, True), fill=COLORS["muted"])
-            return
-        for index, row in enumerate(rows[:max_rows]):
-            top = row_y + index * 18
-            if top + 14 > y2 - 4:
-                break
-            label, value, accent = row
-            self._draw_wnba_live_info_row(draw, x1, x2, top, label, value, accent=accent)
-
-    def _draw_wnba_game_info_section(self, draw, x1, x2, y, y2, event, now):
-        self._draw_hub_section_header(draw, x1, x2, y, "GAME INFO", COLORS["wnba_accent"])
-        row_y = y + 24
-        for index, row in enumerate(self._wnba_game_info_rows(event, now)):
-            top = row_y + index * 18
-            if top + 14 > y2 - 4:
-                break
-            label, value, accent = row
-            self._draw_wnba_live_info_row(draw, x1, x2, top, label, value, accent=accent)
-
-    @staticmethod
-    def _wnba_game_info_rows(event, now):
-        event = event or {}
-        rows = []
-        tip = SportsDashboard._wnba_tip_label(event, now)
-        status = str(event.get("status_text") or "").strip()
-        if tip:
-            tip_parts = [tip]
-            if status and status != tip:
-                tip_parts.append(status)
-            rows.append(("TIP", " / ".join(tip_parts[:2]), False))
-        team_a = SportsDashboard._wnba_display_team_from_event(event, "a")
-        team_b = SportsDashboard._wnba_display_team_from_event(event, "b")
-        rows.append(("MATCH", f"{team_a} @ {team_b}", True))
-        rows.extend(SportsDashboard._wnba_media_context_rows(event))
-        record = SportsDashboard._wnba_record_matchup_label(event)
-        if record:
-            rows.append(("RECORD", record, False))
-        return rows
-
-    @staticmethod
-    def _wnba_media_context_rows(event):
-        event = event or {}
-        rows = []
-        broadcast = str(event.get("broadcast") or "").strip()
-        spread = str(event.get("spread") or "").strip()
-        total = str(event.get("over_under") or "").strip()
-        if broadcast:
-            tv_parts = [broadcast]
-            if spread:
-                tv_parts.append(spread)
-            if total:
-                tv_parts.append(total)
-            rows.append(("TV", " / ".join(tv_parts), False))
-        elif spread:
-            line_parts = [spread]
-            if total:
-                line_parts.append(total)
-            rows.append(("SPREAD", " / ".join(line_parts), False))
-        elif total:
-            rows.append(("TOTAL", total, False))
-        venue = str(event.get("venue") or event.get("city") or "").strip()
-        if venue:
-            rows.append(("VENUE", venue, False))
-        return rows
-
-    @staticmethod
-    def _wnba_result_snap_rows(event, include_quarter=True):
-        event = event or {}
-        rows = []
-        lead = SportsDashboard._wnba_lead_label(event)
-        if lead and lead != "TBD":
-            label = "WIN" if SportsDashboard._hub_event_state(event) == "final" else "LEAD"
-            rows.append((label, lead, True))
-        score = SportsDashboard._wnba_score_line_label(event)
-        if score:
-            rows.append(("SCORE", score, False))
-        quarter = SportsDashboard._nba_period_label(event, max_parts=2)
-        if include_quarter and quarter:
-            rows.append(("QTR", quarter, False))
-        rows.extend(SportsDashboard._wnba_media_context_rows(event))
-        record = SportsDashboard._wnba_record_matchup_label(event)
-        if record:
-            rows.append(("RECORD", record, False))
-        status = str(event.get("status_text") or "").strip()
-        if status:
-            rows.append(("STATUS", status, False))
-        block = str(event.get("block") or "").strip()
-        if block and not status:
-            rows.append(("STATUS", block, False))
-        return rows
-
-    @staticmethod
-    def _wnba_score_line_label(event):
-        event = event or {}
-        score_a = event.get("wins_a")
-        score_b = event.get("wins_b")
-        if score_a is None or score_b is None:
-            return ""
-        team_a = SportsDashboard._wnba_display_team_from_event(event, "a")
-        team_b = SportsDashboard._wnba_display_team_from_event(event, "b")
-        return f"{team_a} {score_a} / {team_b} {score_b}"
-
-    @staticmethod
-    def _wnba_tip_label(event, now):
-        start = (event or {}).get("start")
-        if start:
-            return f"{start.strftime('%m/%d')} {SportsDashboard._format_time(start)}"
-        return SportsDashboard._hub_event_time_label(event, now)
-
-    @staticmethod
-    def _wnba_record_matchup_label(event):
-        team_a = SportsDashboard._wnba_display_team_from_event(event, "a")
-        team_b = SportsDashboard._wnba_display_team_from_event(event, "b")
-        record_a = str((event or {}).get("record_a") or "").strip()
-        record_b = str((event or {}).get("record_b") or "").strip()
-        if record_a and record_b:
-            return f"{team_a} {record_a} / {team_b} {record_b}"
-        if record_a:
-            return f"{team_a} {record_a}"
-        if record_b:
-            return f"{team_b} {record_b}"
-        return ""
-
-    @staticmethod
-    def _wnba_live_pulse_rows(event):
-        event = event or {}
-        rows = []
-        status = str(event.get("status_text") or "").strip()
-        if status:
-            rows.append(("CLOCK", status, False))
-        lead = SportsDashboard._wnba_lead_label(event)
-        if lead and lead != "TBD":
-            rows.append(("LEAD", lead, True))
-        score_a = event.get("wins_a")
-        score_b = event.get("wins_b")
-        if score_a is not None and score_b is not None:
-            team_a = SportsDashboard._wnba_display_team_from_event(event, "a")
-            team_b = SportsDashboard._wnba_display_team_from_event(event, "b")
-            rows.append(("SCORE", f"{team_a} {score_a} / {team_b} {score_b}", False))
-        quarter = SportsDashboard._wnba_current_quarter_label(event)
-        if quarter:
-            rows.append(("QTR", quarter, False))
-        broadcast = str(event.get("broadcast") or "").strip()
-        spread = str(event.get("spread") or "").strip()
-        total = str(event.get("over_under") or "").strip()
-        if broadcast:
-            rows.append(("TV", " / ".join(part for part in (broadcast, spread, total) if part), False))
-        elif spread:
-            rows.append(("SPREAD", " / ".join(part for part in (spread, total) if part), False))
-        elif total:
-            rows.append(("TOTAL", total, False))
-        venue = str(event.get("venue") or event.get("city") or "").strip()
-        if venue:
-            rows.append(("VENUE", venue, False))
-        return rows
-
-    def _draw_wnba_live_info_row(self, draw, x1, x2, y, label, value, accent=False):
-        draw.line((x1, y - 2, x2, y - 2), fill=COLORS["line"], width=1)
-        self._draw_sport_info_icon(draw, label, x1 + 3, y + 1, COLORS["wnba_accent"])
-        label, label_font = self._fit_text(draw, label, 40, 8, bold=True, min_size=6)
-        draw.text((x1 + 17, y), label, font=label_font, fill=COLORS["muted"])
-        value, value_font = self._fit_text(draw, value or "TBD", x2 - x1 - 70, 10, bold=True, min_size=7)
-        self._draw_right_aligned(draw, (x2 - 3, y), value, value_font, COLORS["wnba_accent"] if accent else COLORS["text"])
-
-    def _draw_wnba_live_score_row(self, image, draw, x1, x2, y, event):
-        draw.line((x1, y - 2, x2, y - 2), fill=COLORS["line"], width=1)
-        self._draw_sport_info_icon(draw, "SCORE", x1 + 3, y + 1, COLORS["wnba_accent"])
-        label, label_font = self._fit_text(draw, "SCORE", 38, 8, bold=True, min_size=6)
-        draw.text((x1 + 17, y), label, font=label_font, fill=COLORS["muted"])
-        content_x1 = x1 + 58
-        content_w = max(92, x2 - content_x1 - 2)
-        mid_x = content_x1 + content_w // 2
-        score_a = "-" if (event or {}).get("wins_a") is None else str((event or {}).get("wins_a"))
-        score_b = "-" if (event or {}).get("wins_b") is None else str((event or {}).get("wins_b"))
-        self._draw_wnba_live_score_team(image, draw, content_x1, mid_x - 3, y, event, "a", score_a)
-        self._draw_wnba_live_score_team(image, draw, mid_x + 4, x2 - 2, y, event, "b", score_b)
-        draw.line((mid_x, y + 1, mid_x, y + 12), fill=COLORS["line"], width=1)
-
-    def _draw_wnba_live_score_team(self, image, draw, x1, x2, y, event, side, score):
-        prefix = "team_a" if side == "a" else "team_b"
-        logo_size = 11
-        logo_url = (event or {}).get(f"{prefix}_logo")
-        fallback = SportsDashboard._wnba_logo_fallback(event, side)
-        team = SportsDashboard._wnba_display_team_from_event(event, side)
-        fill = COLORS[SportsDashboard._wnba_score_side_fill_key(event, side)]
-        self._draw_team_logo(image, draw, logo_url, x1, y, logo_size, fallback)
-        team_width = max(16, x2 - x1 - 28)
-        team, team_font = self._fit_text(draw, team, team_width, 9, bold=True, min_size=6)
-        draw.text((x1 + logo_size + 3, y), team, font=team_font, fill=fill)
-        score, score_font = self._fit_text(draw, score, 20, 10, bold=True, min_size=7)
-        self._draw_right_aligned(draw, (x2, y), score, score_font, fill)
-
-    def _draw_wnba_live_team_row(self, image, draw, x1, x2, y, event, side):
-        draw.line((x1, y - 2, x2, y - 2), fill=COLORS["line"], width=1)
-        event = event or {}
-        prefix = "team_a" if side == "a" else "team_b"
-        team = SportsDashboard._wnba_display_team_from_event(event, side)
-        score = event.get(f"wins_{side}")
-        logo_url = event.get(f"{prefix}_logo")
-        logo_size = 11
-        self._draw_team_logo(image, draw, logo_url, x1 + 3, y, logo_size, SportsDashboard._wnba_logo_fallback(event, side))
-        fill = COLORS[SportsDashboard._wnba_score_side_fill_key(event, side)]
-        team, team_font = self._fit_text(draw, team, x2 - x1 - 82, 10, bold=True, min_size=7)
-        draw.text((x1 + 18, y), team, font=team_font, fill=fill)
-        score = "-" if score is None else str(score)
-        score, score_font = self._fit_text(draw, score, 34, 10, bold=True, min_size=7)
-        self._draw_right_aligned(draw, (x2 - 3, y), score, score_font, fill)
-
-    @staticmethod
-    def _wnba_score_side_fill_key(event, side):
-        winner_side = SportsDashboard._wnba_winner_side(event)
-        if winner_side:
-            return "wnba_accent" if winner_side == side else "text"
-        score_a = SportsDashboard._lpl_int_value((event or {}).get("wins_a"))
-        score_b = SportsDashboard._lpl_int_value((event or {}).get("wins_b"))
-        if score_a is None or score_b is None or score_a == score_b:
-            return "text"
-        if side == "a" and score_a > score_b:
-            return "wnba_accent"
-        if side == "b" and score_b > score_a:
-            return "wnba_accent"
-        return "text"
-
-    @staticmethod
-    def _wnba_lead_label(event):
-        score_a = SportsDashboard._lpl_int_value((event or {}).get("wins_a"))
-        score_b = SportsDashboard._lpl_int_value((event or {}).get("wins_b"))
-        team_a = SportsDashboard._wnba_display_team_from_event(event, "a")
-        team_b = SportsDashboard._wnba_display_team_from_event(event, "b")
-        winner_side = SportsDashboard._wnba_winner_side(event)
-        if winner_side:
-            winner_team = SportsDashboard._wnba_display_team_from_event(event, winner_side, full=True)
-            if score_a is not None and score_b is not None and score_a != score_b:
-                return f"{winner_team} \u80dc{abs(score_a - score_b)}\u5206"
-            return f"{winner_team} \u80dc"
-        if score_a is None or score_b is None:
-            return "TBD"
-        if score_a == score_b:
-            return "TIE"
-        if score_a > score_b:
-            return f"{team_a} +{score_a - score_b}"
-        return f"{team_b} +{score_b - score_a}"
-
-    @staticmethod
-    def _wnba_winner_side(event):
-        if SportsDashboard._hub_event_state(event) != "final":
-            return ""
-        event = event or {}
-        if event.get("winner_a") is True and event.get("winner_b") is not True:
-            return "a"
-        if event.get("winner_b") is True and event.get("winner_a") is not True:
-            return "b"
-        score_a = SportsDashboard._lpl_int_value(event.get("wins_a"))
-        score_b = SportsDashboard._lpl_int_value(event.get("wins_b"))
-        if score_a is None or score_b is None or score_a == score_b:
-            return ""
-        return "a" if score_a > score_b else "b"
-
     @staticmethod
     def _wnba_display_team_from_event(event, side, full=False):
         prefix = "team_a" if side == "a" else "team_b"
@@ -2038,174 +1417,6 @@ class NBAMixin:
         if code and code != "TBD":
             return code
         return raw_code or raw_team or raw_name or "TBD"
-
-    @staticmethod
-    def _wnba_quarter_rows(event):
-        scores_a = list((event or {}).get("period_scores_a") or [])
-        scores_b = list((event or {}).get("period_scores_b") or [])
-        rows = []
-        for index in range(min(len(scores_a), len(scores_b), 4)):
-            rows.append((f"Q{index + 1}", f"{scores_a[index]}-{scores_b[index]}"))
-        return rows
-
-    @staticmethod
-    def _wnba_current_quarter_label(event):
-        period = SportsDashboard._lpl_int_value((event or {}).get("period"))
-        if period is None or period <= 0:
-            return ""
-        rows = SportsDashboard._wnba_quarter_rows(event)
-        if period <= len(rows):
-            quarter, score = rows[period - 1]
-            return f"{quarter} {score}"
-        return f"Q{period}"
-
-    @staticmethod
-    def _wnba_small_note_label(event, show_time=True):
-        state = SportsDashboard._hub_event_state(event)
-        if state == "live":
-            status = str((event or {}).get("status_text") or "").strip() or SportsDashboard._nba_period_label(event, max_parts=2)
-            lead = SportsDashboard._wnba_lead_label(event)
-            parts = []
-            if status:
-                parts.append(status)
-            if lead and lead != "TBD":
-                parts.append(lead)
-            return " / ".join(parts[:2])
-        if state == "final":
-            status = str((event or {}).get("status_text") or "Final").strip() or "Final"
-            venue = str((event or {}).get("venue") or (event or {}).get("city") or "").strip()
-            return " / ".join(part for part in (status, venue) if part)
-        if not show_time:
-            return SportsDashboard._nba_period_label(event, max_parts=2) or str((event or {}).get("status_text") or "").strip()
-        parts = []
-        broadcast = str((event or {}).get("broadcast") or "").strip()
-        if broadcast:
-            parts.append(broadcast)
-        spread = str((event or {}).get("spread") or "").strip()
-        total = str((event or {}).get("over_under") or "").strip()
-        if spread:
-            parts.append(spread)
-        elif total:
-            parts.append(total)
-        venue = str((event or {}).get("venue") or (event or {}).get("city") or "").strip()
-        if venue and len(parts) < 2:
-            parts.append(venue)
-        if parts:
-            return " / ".join(parts[:2])
-        return str((event or {}).get("status_text") or "").strip()
-
-    def _draw_wnba_small_row(self, image, draw, x1, x2, y, event, show_time):
-        draw.rounded_rectangle((x1, y, x2, y + 25), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
-        draw.rectangle((x1 + 1, y + 1, x1 + 5, y + 24), fill=COLORS["wnba_accent"])
-        left = self._format_time(event["start"]) if show_time and event.get("start") else (event["start"].strftime("%m/%d") if event.get("start") else "TBD")
-        left, left_font = self._fit_text(draw, left, 42, 9, bold=True, min_size=7)
-        draw.text((x1 + 10, y + 3), left, font=left_font, fill=COLORS["muted"])
-        logo_size = 11
-        label = f"{self._wnba_display_team_from_event(event, 'a')} {self._hub_score_label(event)} {self._wnba_display_team_from_event(event, 'b')}"
-        label, label_font = self._fit_text(draw, label, x2 - x1 - 96, 10, bold=True, min_size=7)
-        self._draw_small_row_team_logos(image, draw, x1, x2, y + 3, event, label, label_font, x2 - 25, logo_size)
-        self._draw_right_aligned(draw, (x2 - 25, y + 3), label, label_font, COLORS["text"])
-        note = self._wnba_small_note_label(event, show_time=show_time)
-        if note:
-            period = SportsDashboard._lpl_int_value((event or {}).get("period"))
-            has_period_chips = SportsDashboard._hub_event_state(event) == "live" and bool(period and period > 0)
-            lead_chip = SportsDashboard._wnba_lead_chip_label(event) if SportsDashboard._hub_event_state(event) == "live" else ""
-            note_width = x2 - x1 - (140 if lead_chip else (112 if has_period_chips else 84))
-            if has_period_chips:
-                self._draw_wnba_period_chips(draw, x1 + 58, y + 16, period)
-            if lead_chip:
-                self._draw_wnba_lead_chip(draw, x1 + 86, y + 16, lead_chip)
-            note, note_font = self._fit_text(draw, note, note_width, 8, bold=True, min_size=6)
-            self._draw_right_aligned(draw, (x2 - 25, y + 15), note, note_font, COLORS["muted"])
-
-    def _draw_wnba_period_chips(self, draw, x, y, period):
-        current = max(1, min(4, SportsDashboard._lpl_int_value(period) or 1))
-        for index in range(4):
-            left = int(x) + index * 6
-            top = int(y)
-            fill = COLORS["wnba_accent"] if index + 1 <= current else COLORS["panel"]
-            outline = COLORS["amber"] if index + 1 == current else COLORS["border"]
-            draw.rectangle((left, top, left + 4, top + 5), fill=fill, outline=outline, width=1)
-
-    def _draw_wnba_lead_chip(self, draw, x, y, label):
-        label = str(label or "").strip()
-        if not label:
-            return
-        x = int(x)
-        y = int(y)
-        box = (x, y, x + 25, y + 9)
-        fill = self._blend(COLORS["wnba_accent"], COLORS["panel"], 0.28)
-        draw.rounded_rectangle(box, radius=2, fill=fill, outline=COLORS["wnba_accent"], width=1)
-        draw.ellipse((x + 2, y + 2, x + 7, y + 7), outline=COLORS["amber"], width=1)
-        draw.line((x + 4, y + 2, x + 4, y + 7), fill=COLORS["amber"], width=1)
-        draw.arc((x + 1, y + 1, x + 6, y + 8), 300, 60, fill=COLORS["amber"], width=1)
-        label, label_font = self._fit_text(draw, label, 13, 6, bold=True, min_size=5)
-        self._draw_centered_in_box(draw, (x + 10, y + 1, x + 24, y + 8), label, label_font, COLORS["text"])
-
-    @staticmethod
-    def _wnba_lead_chip_label(event):
-        score_a = SportsDashboard._lpl_int_value((event or {}).get("wins_a"))
-        score_b = SportsDashboard._lpl_int_value((event or {}).get("wins_b"))
-        if score_a is None or score_b is None or score_a == score_b:
-            return ""
-        return f"+{abs(score_a - score_b)}"
-
-    def _draw_nba_compact_panel(self, image, draw, bounds, selected, source_state, now):
-        x1, y1, x2, y2 = [int(value) for value in bounds]
-        panel_w = x2 - x1 + 1
-        draw.rectangle((x1, y1, x2, y2), fill=COLORS["panel"])
-        self._draw_halftone(draw, (x1, y1, x2, y2), COLORS["nba_accent"], COLORS["panel"], 22, 1)
-        header_y = y1 + 8
-        self._draw_nba_logo(image, draw, x1 + 14, header_y - 2, 30, 34)
-        if not self._draw_local_wordmark(image, LOCAL_NBA_TITLE_WORDMARK_PATH, x1 + 52, header_y - 1, 86, 22):
-            title, title_font = self._fit_text(draw, "NBA", 86, 22, bold=True, min_size=17)
-            draw.text((x1 + 52, header_y), title, font=title_font, fill=COLORS["text"])
-        source_label = self._source_label(source_state)
-        source_label, source_font = self._fit_text(draw, source_label, 96, 10, bold=True, min_size=7)
-        draw.text((x1 + 52, header_y + 22), source_label, font=source_font, fill=COLORS["muted"])
-        self._draw_nba_header_court_strip(image, x1 + 150, header_y + 2, x2 - 92, y1 + 47)
-
-        live = selected.get("live") or []
-        upcoming = selected.get("upcoming") or []
-        recent = selected.get("recent") or []
-        main_event = live[0] if live else (upcoming[0] if upcoming else selected.get("main"))
-        remaining_upcoming = [event for event in upcoming if event is not main_event][:4]
-        pill_text = "LIVE" if live else ("OFF" if selected.get("offseason") else "NEXT")
-        self._draw_status_pill(draw, x2 - 84, header_y + 4, pill_text, bool(live))
-        draw.line((x1 + 12, y1 + 48, x2 - 12, y1 + 48), fill=COLORS["border"], width=1)
-
-        content_y = y1 + 58
-        content_bottom = y2 - 8
-        if selected.get("offseason"):
-            self._draw_nba_compact_offseason_panel(
-                image,
-                draw,
-                x1 + 12,
-                content_y,
-                x2 - 12,
-                content_bottom,
-                selected,
-                now,
-            )
-            return
-
-        split_x = x1 + max(254, min(292, int(panel_w * 0.51)))
-        left_x1 = x1 + 12
-        left_x2 = split_x - 10
-        right_x1 = split_x + 4
-        right_x2 = x2 - 12
-        draw.line((split_x - 3, content_y - 5, split_x - 3, content_bottom), fill=COLORS["border"], width=1)
-        draw.line((split_x - 1, content_y - 5, split_x - 1, content_bottom), fill=COLORS["line"], width=1)
-
-        self._draw_nba_compact_main_card(image, draw, left_x1, content_y, left_x2, content_bottom, main_event, now, bool(live))
-        upcoming_rows = remaining_upcoming[:4]
-        recent_rows = recent[:1] if len(upcoming_rows) >= 4 else recent[:2]
-        upcoming_y = content_y
-        recent_y = upcoming_y + 21 + max(1, len(upcoming_rows)) * 31 + 8
-        if recent_rows and recent_y + 48 > content_bottom:
-            recent_y = max(upcoming_y + 54, content_bottom - 48)
-        self._draw_nba_compact_upcoming_rows(image, draw, right_x1, right_x2, upcoming_y, upcoming_rows)
-        self._draw_nba_compact_recent_rows(image, draw, right_x1, right_x2, recent_y, content_bottom, recent_rows)
 
     def _draw_nba_compact_offseason_panel(self, image, draw, x1, y1, x2, y2, selected, now):
         width = x2 - x1 + 1
@@ -2396,100 +1607,6 @@ class NBAMixin:
             strip = self._tint_alpha_art(strip, COLORS["text"])
             image.paste(strip, (x1, y1), strip)
 
-    def _draw_nba_compact_main_card(self, image, draw, x1, y1, x2, y2, event, now, is_live):
-        accent = COLORS["nba_live"] if is_live else COLORS["nba_accent"]
-        draw.rounded_rectangle((x1 + 3, y1 + 3, x2 + 3, y2 + 3), radius=5, fill=COLORS["nba_shadow"])
-        draw.rounded_rectangle((x1, y1, x2, y2), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=2)
-        draw.rectangle((x1 + 1, y1 + 1, x1 + 8, y2 - 1), fill=accent)
-        if not event:
-            draw.text((x1 + 18, y1 + 62), "No NBA schedule", font=self._font(16, True), fill=COLORS["text"])
-            return
-
-        tag = "NOW PLAYING" if is_live else "NEXT MATCH"
-        tag_w = 104 if is_live else 88
-        tag_text, tag_font = self._fit_text(draw, tag, tag_w - 8, 11, bold=True, min_size=7)
-        tag_fill = COLORS["nba_live"] if is_live else COLORS["nba_tag"]
-        draw.rectangle((x1 + 14, y1 + 10, x1 + 14 + tag_w, y1 + 28), fill=tag_fill, outline=COLORS["border"], width=1)
-        draw.text((x1 + 18, y1 + 11), tag_text, font=tag_font, fill=COLORS["text"])
-        date_text = event["start"].strftime("%m/%d")
-        date_text, date_font = self._fit_text(draw, date_text, 52, 11, bold=True, min_size=8)
-        self._draw_right_aligned(draw, (x2 - 12, y1 + 11), date_text, date_font, COLORS["muted"])
-
-        time_text = str(event.get("status_text") or ("LIVE" if is_live else self._format_time(event["start"])))
-        time_text = "IN PROGRESS" if is_live and not time_text else time_text
-        time_text, time_font = self._fit_text(draw, time_text, x2 - x1 - 42, 17, bold=True, min_size=10)
-        self._draw_centered(draw, ((x1 + x2) / 2, y1 + 45), time_text, time_font, COLORS["text"])
-
-        center_x = (x1 + x2) / 2
-        logo_size = 34
-        left_area = (x1 + 20, center_x - 17)
-        right_area = (center_x + 17, x2 - 20)
-        logo_y = y1 + 66
-        left_logo_x = int((left_area[0] + left_area[1] - logo_size) / 2)
-        right_logo_x = int((right_area[0] + right_area[1] - logo_size) / 2)
-        self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, logo_y, logo_size, event["team_a"])
-        self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, logo_y, logo_size, event["team_b"])
-        has_series_score = event.get("series_wins_a") is not None and event.get("series_wins_b") is not None
-        score_text = self._nba_score_label(event)
-        score_text, score_font = self._fit_text(draw, score_text, 50, 13, bold=True, min_size=9)
-        self._draw_centered(draw, (center_x, logo_y + 19), score_text, score_font, COLORS["text"])
-
-        team_y = logo_y + 47
-        team_a_label = self._nba_display_team_from_event(event, "a", full=True)
-        team_b_label = self._nba_display_team_from_event(event, "b", full=True)
-        team_a, font_a = self._fit_text(draw, team_a_label, left_area[1] - left_area[0], 18, bold=True, min_size=10)
-        team_b, font_b = self._fit_text(draw, team_b_label, right_area[1] - right_area[0], 18, bold=True, min_size=10)
-        team_a_fill = COLORS[SportsDashboard._nba_team_side_fill_key(event, "a")]
-        team_b_fill = COLORS[SportsDashboard._nba_team_side_fill_key(event, "b")]
-        self._draw_centered(draw, ((left_area[0] + left_area[1]) / 2, team_y), team_a, font_a, team_a_fill)
-        self._draw_centered(draw, ((right_area[0] + right_area[1]) / 2, team_y), team_b, font_b, team_b_fill)
-        has_odds = self._nba_event_has_moneyline_odds(event)
-        if has_odds:
-            self._draw_nba_odds_pair(draw, left_area, right_area, team_y + 14, event, max_size=10)
-        if has_series_score:
-            self._draw_nba_main_series_score(draw, left_area, right_area, center_x, team_y + (32 if has_odds else 21), event)
-
-        artwork_top = team_y + (30 if has_odds else 18)
-        if has_series_score:
-            artwork_top = team_y + (32 if has_odds else 21) + 28
-        self._draw_nba_card_placeholder(image, x1 + 15, artwork_top, x2 - 12, y2 - 24)
-
-        bottom_label = SportsDashboard._nba_main_footer_label(event, max_period_parts=2)
-        block = str(event.get("block") or "NBA").upper()
-        block_width = x2 - x1 - (152 if bottom_label else 88)
-        block_text, block_font = self._fit_text(draw, block, max(64, block_width), 9, bold=True, min_size=7)
-        draw.text((x1 + 15, y2 - 17), block_text, font=block_font, fill=COLORS["nba_accent"])
-        if bottom_label:
-            bottom_label, bottom_font = self._fit_text(draw, bottom_label, 128, 8, bold=True, min_size=6)
-            self._draw_right_aligned(draw, (x2 - 14, y2 - 17), bottom_label, bottom_font, COLORS["muted"])
-
-    def _draw_nba_card_placeholder(self, image, x1, y1, x2, y2):
-        width, height = int(x2 - x1 + 1), int(y2 - y1 + 1)
-        # Dense cards keep their match information; decoration only uses slack.
-        if width < 80 or height < 24:
-            return
-        artwork = self._load_local_logo(
-            LOCAL_NBA_CARD_PLACEHOLDER_PATH, (width, height), alpha_threshold=8
-        )
-        if artwork is not None:
-            position = (
-                int(x1 + (width - artwork.width) / 2),
-                int(y1 + (height - artwork.height) / 2),
-            )
-            image.paste(artwork, position, artwork)
-
-    def _draw_nba_main_series_score(self, draw, left_area, right_area, center_x, y, event):
-        left_score = str(event.get("series_wins_a"))
-        right_score = str(event.get("series_wins_b"))
-        score_font = self._font(18, True)
-        score_y1 = y - 3
-        score_y2 = y + 22
-        left_score, left_font = self._fit_text(draw, left_score, left_area[1] - left_area[0], 19, bold=True, min_size=12)
-        right_score, right_font = self._fit_text(draw, right_score, right_area[1] - right_area[0], 19, bold=True, min_size=12)
-        self._draw_centered_in_box(draw, (left_area[0], score_y1, left_area[1], score_y2), left_score, left_font, COLORS["red"])
-        self._draw_centered_in_box(draw, (center_x - 16, score_y1, center_x + 16, score_y2), "-", score_font, COLORS["muted"])
-        self._draw_centered_in_box(draw, (right_area[0], score_y1, right_area[1], score_y2), right_score, right_font, COLORS["red"])
-
     def _draw_nba_compact_detail_card(self, image, draw, x1, y1, x2, y2, main_event, detail_event):
         draw.rounded_rectangle((x1, y1, x2, y2), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=1)
         draw.rectangle((x1 + 1, y1 + 1, x1 + 6, y2 - 1), fill=COLORS["nba_accent"])
@@ -2531,76 +1648,10 @@ class NBAMixin:
         self._draw_text_in_box(draw, (x1, y - 1, center_x - 4, y + 14), left_text, left_font, color)
         self._draw_text_in_box(draw, (center_x + 4, y - 1, x2, y + 14), right_text, right_font, color, align="right")
 
-    def _draw_nba_compact_upcoming_rows(self, image, draw, x1, x2, y, events):
-        self._draw_nba_mini_section_header(draw, x1, x2, y, "UPCOMING")
-        if not events:
-            draw.text((x1 + 10, y + 23), "No more NBA schedule", font=self._font(10, True), fill=COLORS["muted"])
-            return
-        row_y = y + 21
-        for index, event in enumerate(events[:4]):
-            self._draw_nba_mini_match_row(image, draw, x1, x2, row_y + index * 31, event, "VS", show_time=True)
-
-    def _draw_nba_compact_recent_rows(self, image, draw, x1, x2, y, bottom, events):
-        self._draw_nba_mini_section_header(draw, x1, x2, y, "RECENT")
-        row_y = y + 21
-        row_gap = 27
-        if not events:
-            self._draw_nba_empty_recent_filler(image, x1, x2, y + 42, bottom)
-            draw.text((x1 + 10, y + 23), "No recent NBA results", font=self._font(10, True), fill=COLORS["muted"])
-            return
-        visible_events = events[:2]
-        self._draw_nba_empty_recent_filler(image, x1, x2, row_y + len(visible_events) * row_gap, bottom)
-        for index, event in enumerate(visible_events):
-            self._draw_nba_mini_match_row(image, draw, x1, x2, row_y + index * row_gap, event, self._nba_score_label(event), show_date=True)
-
-    def _draw_nba_empty_recent_filler(self, image, x1, x2, y1, y2):
-        x1 = int(x1)
-        x2 = int(x2)
-        y1 = int(y1)
-        y2 = int(y2)
-        width = x2 - x1 + 1
-        height = y2 - y1 + 1
-        if width < 80 or height < 24:
-            return
-        filler = self._load_nba_empty_slot_filler((width, height))
-        if filler:
-            image.paste(filler, (x1, y1), filler)
-
     def _draw_nba_mini_section_header(self, draw, x1, x2, y, title):
         draw.rectangle((x1, y + 2, x1 + 8, y + 17), fill=COLORS["nba_accent"], outline=COLORS["border"], width=1)
         draw.text((x1 + 13, y - 2), title, font=self._font(13, True), fill=COLORS["text"])
         draw.line((x1, y + 19, x2, y + 19), fill=COLORS["border"], width=1)
-
-    def _draw_nba_mini_match_row(self, image, draw, x1, x2, y, event, center_text, show_time=False, show_date=False):
-        has_odds = center_text == "VS" and self._nba_event_has_moneyline_odds(event)
-        row_h = 31 if has_odds else 27
-        draw.rounded_rectangle((x1, y, x2, y + row_h), radius=4, fill=COLORS["panel"], outline=COLORS["border"], width=1)
-        draw.rectangle((x1 + 1, y + 1, x1 + 5, y + row_h - 1), fill=COLORS["nba_accent"])
-        left_label = event["start"].strftime("%m/%d") if show_date or show_time else ""
-        matchup_x1 = x1 + 8
-        if left_label:
-            left_label, label_font = self._fit_text(draw, left_label, 36, 9, bold=True, min_size=7)
-            draw.text((x1 + 9, y + 1), left_label, font=label_font, fill=COLORS["muted"])
-            if not show_time:
-                matchup_x1 = x1 + 45
-        matchup_x2 = x2 - 7
-        if show_time:
-            time_text, time_font = self._fit_text(draw, self._format_time(event["start"]), 58, 9, bold=True, min_size=7)
-            self._draw_centered(draw, ((matchup_x1 + matchup_x2) / 2, y + 6), time_text, time_font, COLORS["text"])
-        row_y = y + 11 if show_time else y + 8
-        self._draw_nba_lineup_inline(
-            image,
-            draw,
-            matchup_x1,
-            matchup_x2,
-            row_y,
-            event,
-            center_text,
-            logo_size=NBA_MINI_LINEUP_LOGO_SIZE,
-            team_size=NBA_MINI_LINEUP_TEAM_FONT_SIZE,
-            score_w=26 if show_time else 46,
-            odds_team_size=NBA_MINI_LINEUP_ODDS_TEAM_FONT_SIZE,
-        )
 
     def _draw_nba_lineup_inline(self, image, draw, x1, x2, y, event, center_text, logo_size=14, team_size=11, score_w=42, odds_team_size=9):
         center_x = (x1 + x2) / 2
@@ -2632,13 +1683,6 @@ class NBAMixin:
     def _nba_event_has_moneyline_odds(event):
         odds = (event or {}).get("odds") or {}
         return bool(odds.get("team_a") and odds.get("team_b"))
-
-    def _draw_nba_odds_pair(self, draw, left_area, right_area, y, event, max_size=9):
-        odds = event.get("odds") or {}
-        if not (odds.get("team_a") and odds.get("team_b")):
-            return
-        self._draw_nba_odds_text(draw, (left_area[0], y, left_area[1], y + 12), odds.get("team_a"), max_size=max_size)
-        self._draw_nba_odds_text(draw, (right_area[0], y, right_area[1], y + 12), odds.get("team_b"), max_size=max_size)
 
     def _draw_nba_odds_text(self, draw, box, text, max_size=9, align="center"):
         text = str(text or "").strip()

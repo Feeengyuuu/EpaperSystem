@@ -1,0 +1,608 @@
+{
+  "note": "Competition marks and F1 circuit outlines, trimmed and downsized; drawn from local files only.",
+  "assets": {
+    "mlb/2026_alcs.png": {
+      "source_url": "https://content.sportslogos.net/logos/53/482/full/-alcs-logo-primary-2026-48294262026.png",
+      "source_sha256": "668b02b8cc2d0d81a77a194636ba156941ec5cee1cedc958f6cd730aefd0f094",
+      "runtime_sha256": "2165ca7cbc11540568912f1fc881fc557a109794dbd58b2215b407412731df28",
+      "runtime_dimensions": [
+        240,
+        135
+      ]
+    },
+    "mlb/2026_nlcs.png": {
+      "source_url": "https://content.sportslogos.net/logos/54/483/full/-nlcs-logo-primary-2026-48385122026.png",
+      "source_sha256": "5c9c45f779ee09ec7ade90e29968a9ebe61ee79633116be0842fd70a6bcb8f24",
+      "runtime_sha256": "b1bab829df88a5ad90e1fc57cea902dcf44681576c849e8cb23c12f13ee3e702",
+      "runtime_dimensions": [
+        240,
+        138
+      ]
+    },
+    "mlb/2026_world_series.png": {
+      "source_url": "https://content.sportslogos.net/logos/4/484/full/-world-series-alternate-logo-2026-48463602026.png",
+      "source_sha256": "bcd289410307a487ffdccc32e41b902fd0130a7921e5da62c692b442d7b26ae9",
+      "runtime_sha256": "644af1885bd198f5b32ac8f1e6081a425b3b5a310b3c2ca0bcf45d72774638ea",
+      "runtime_dimensions": [
+        200,
+        157
+      ]
+    },
+    "wnba/2026_finals.png": {
+      "source_url": "https://logos-world.net/wp-content/uploads/2026/09/WNBA-Finals-Logo-New.png",
+      "source_sha256": "0cd2839a0a76aada368490f7b94f5f60ac5bdad158c58677a030f711a39785f9",
+      "runtime_sha256": "76969587e3d09a93f26ab87f1969d2d91b52b98c0ccd01c66bbeeda70e96a2cc",
+      "runtime_dimensions": [
+        199,
+        192
+      ]
+    },
+    "nba/nba_cup.png": {
+      "source_url": "https://content.sportslogos.net/logos/6/6875/full/_emirates_nba_cup_logo_primary_2025_sportslogosnet-2894.png",
+      "source_sha256": "7d5dfb83c20ca283bb8c5f12082eb09c5519b52d5e409644df964aa0bcef1c2f",
+      "runtime_sha256": "01da2a7f7c1a2338a6e9fe0fa5357f1938a1f098c99a3ad69791f707311042e7",
+      "runtime_dimensions": [
+        300,
+        123
+      ]
+    },
+    "pga/2026_baycurrent.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r527.png",
+      "source_sha256": "bb20831bebfb9b5a7787bc661d80b97d89ab865df52cd00f82ee543d47735cd6",
+      "runtime_sha256": "7c4b4976496fc8f1b06d24c1e85ae8bf6cec7a998612d25fb47425eb1963bcd3",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_bermuda.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r528.png",
+      "source_sha256": "2bc3f36c08f49ffc5c49c758dac5c9eb92af76a262aa1c7940841f801410347d",
+      "runtime_sha256": "e10864a078634679334724fb75a9c1e4313504ecd7ee37839e14affe7b394387",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_mexico_open.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r540.png",
+      "source_sha256": "242c79d243ae61cb83001766a08d3c0f9a40af383b345f04feaface287ee6b56",
+      "runtime_sha256": "64508992e1ecdf9b4a4e3e6f3e3ad0db58cb2472ca39737d57fc4c03908b1f99",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_world_wide_technology.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r457.png",
+      "source_sha256": "847eb32f6fb3f266567770e0de7b155c1ee02ad9760f4a627f1e7189a4b037ea",
+      "runtime_sha256": "98a51195ce96ae87eba8e540cff752c1ad4dabafcf76ba60478b08b32e148923",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_austin.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r558.png",
+      "source_sha256": "8224d271572168796a2cf9b109ddeac9ac3743dfdb822ed4d0b4a48a16dbca01",
+      "runtime_sha256": "b5968345a028208df02a234b88956a6e179e7cfce54fe3b01dc15f4d1b887187",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_rsm.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r493.png",
+      "source_sha256": "1ba0bf36737860e8db11adb7887a80319d273fae760807ed772d8de8810b84b0",
+      "runtime_sha256": "da398759d815271f82d06f92830a8ba452e495e1022f50f38632a45784b63142",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_procore.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r464.png",
+      "source_sha256": "86aa05e54841e8a1d3548e2d67fdf96eebe701863a820cda46799384f87d5b1b",
+      "runtime_sha256": "45357c06ce42836c349907329817f85dcdcba4856e93526e2a0275d90f29c103",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_sanderson_farms.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r054.png",
+      "source_sha256": "f9dbc6643fd927f29eb98836f0ca642aba8c0279dae1f61e4a31bd70d4b5c0f6",
+      "runtime_sha256": "91f073b66b85bc3d8cd56ee8a83d291121f90e977585773509b94e36454cb621",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_shriners.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r047.png",
+      "source_sha256": "a8eb32bfdb581fad69e7527ad8f2c05ef5ee2b31fa901da38ec947d7d11cef99",
+      "runtime_sha256": "2d60c3d234b6ec771750f285d72cfdbd16cf72f13cf07fea1071a0ac093b4564",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_isco.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r518.png",
+      "source_sha256": "ab998a2a0b7be31baba23d3ef3f959e3c6b5cb43945ccc3ca7a482ae01653159",
+      "runtime_sha256": "dc3e725deba76e2a77f11b52c99da25929829b4c16f7d27a44e638d747f5b3ca",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_masters.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r014.png",
+      "source_sha256": "cbddd36b85966fe34bf334c89105588c8ffa6250cbb50b511cdefa3b47043abd",
+      "runtime_sha256": "30ca2a89f221f3dd90fb8e9bac058d567e382324d2a2e37efd6a76968c7f1793",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_pga_championship.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r033.png",
+      "source_sha256": "d2d6be6d6ae06465f2a9ebb879d99ca2a3f60341058b09417796802283145093",
+      "runtime_sha256": "d3b3f9d1e6dc72a4d34e36fa6c35c7da9f898a405dcbc80d0e063978b0d5f696",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_us_open.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r026.png",
+      "source_sha256": "e3abd924576c21249c3e8cd136a85a0954be5bd75d30515899ad3b4103ad884c",
+      "runtime_sha256": "ff860ac7395783f189f05ba4e47d927e07d885b628183ea9d5d9bf0d4151affa",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_the_open.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r100.png",
+      "source_sha256": "61663dea50e869e2cd74d182baeaddd2a0a0c6f12a4a0a8789d7191b9d31e621",
+      "runtime_sha256": "62776151f47f74f93efbdd42327a0a4ec73df62443386c7ba44b35fd2d437563",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "pga/2026_players.png": {
+      "source_url": "https://res.cloudinary.com/pgatour-prod/tournaments/logos/2026/r011.png",
+      "source_sha256": "c191ca8bae54aff3b66e4f374a30211c9c200a02bb49b4a2c5006db6e2dfe7ff",
+      "runtime_sha256": "32955171dcf386cec5530506af93aa4a7c80002492f1303d2a32c5177951e7c0",
+      "runtime_dimensions": [
+        160,
+        160
+      ]
+    },
+    "f1/flags/au.png": {
+      "source_url": "https://flagcdn.com/w320/au.png",
+      "source_sha256": "1fc19c0e59a7158894e1836da6e6ee545ea4f35f2cf748bee771f1bc3a0e00ce",
+      "runtime_sha256": "b237d19e525327eb41e9ce014c189b3bf6af15933eab34bd2406f80d1023f2bd",
+      "runtime_dimensions": [
+        96,
+        48
+      ]
+    },
+    "f1/flags/cn.png": {
+      "source_url": "https://flagcdn.com/w320/cn.png",
+      "source_sha256": "19d4b9084307aed2400bdc6c6ab33929c78b5f7cd3b4075758ed9efd0208402c",
+      "runtime_sha256": "de26263fbf621702bf7c9e467941c2eb859ce56288be687afd208fceefd0e36b",
+      "runtime_dimensions": [
+        96,
+        64
+      ]
+    },
+    "f1/flags/jp.png": {
+      "source_url": "https://flagcdn.com/w320/jp.png",
+      "source_sha256": "d70de87c9b178bf7a4ce09478eb8375df20bafa16d50e34b837f471f2daff8e6",
+      "runtime_sha256": "7e3a10d6c81341c755f50f44c59b9f279ad7dbe9826f3411755fa254117c6be9",
+      "runtime_dimensions": [
+        96,
+        64
+      ]
+    },
+    "f1/flags/us.png": {
+      "source_url": "https://flagcdn.com/w320/us.png",
+      "source_sha256": "dcd9384ffc761b248e03e7f148e7aea8f662570b6f6db02e27a643c02adf72da",
+      "runtime_sha256": "68959ccf3a15e1dbd5a216c49c4e786d15a2ed211946e4353c2313be8f5ed9d3",
+      "runtime_dimensions": [
+        96,
+        50
+      ]
+    },
+    "f1/flags/ca.png": {
+      "source_url": "https://flagcdn.com/w320/ca.png",
+      "source_sha256": "85490776a6998e472e5928719f44ab6e352f5ead15508b6995c931b17053b95a",
+      "runtime_sha256": "4ded1e78c9a6a519310b8cffedf864253e9dec5391a7b5abadf24242377a385a",
+      "runtime_dimensions": [
+        96,
+        48
+      ]
+    },
+    "f1/flags/mc.png": {
+      "source_url": "https://flagcdn.com/w320/mc.png",
+      "source_sha256": "6ba9d9b3d362b300d03239099f1b07db73a0dd55888766f0acb116b01ffd135f",
+      "runtime_sha256": "c9a4b4f5f22681291b5c804889425ce625cce5f1f3264797006aeb19a7ad94c9",
+      "runtime_dimensions": [
+        80,
+        64
+      ]
+    },
+    "f1/flags/es.png": {
+      "source_url": "https://flagcdn.com/w320/es.png",
+      "source_sha256": "e0433d505c347dd38f7f538a88fd7729b3e81925a3fe5869de961e2cc45fd178",
+      "runtime_sha256": "042bea3605e77897f892f57119cde046abaa7d75806b4ffdf5ffa473f99d523a",
+      "runtime_dimensions": [
+        96,
+        64
+      ]
+    },
+    "f1/flags/at.png": {
+      "source_url": "https://flagcdn.com/w320/at.png",
+      "source_sha256": "857597f405c4666612b0c65f03489000942e4aaa33aeb3188d80348a8618d3d8",
+      "runtime_sha256": "acf451dafc651505559056c732af1e644044321184f9e6d7ebe28343e705be8f",
+      "runtime_dimensions": [
+        96,
+        64
+      ]
+    },
+    "f1/flags/gb.png": {
+      "source_url": "https://flagcdn.com/w320/gb.png",
+      "source_sha256": "04cfcfb1f7bd3de068b5ba5ed7686fa68919a9f070ae5b5664124a51a3f3cd85",
+      "runtime_sha256": "20146e7ad9d3926967d079dd313d2f358cf3367ccbb16cad6e8b1819d5eb7f8c",
+      "runtime_dimensions": [
+        96,
+        48
+      ]
+    },
+    "f1/flags/be.png": {
+      "source_url": "https://flagcdn.com/w320/be.png",
+      "source_sha256": "08f0b3d860476a151ce275cfad1b2066327af09d2b9d186b3a1c7316a2cc59fb",
+      "runtime_sha256": "cc038ff20d7fb13bc8b789e36d00692458d3054e501cac147931cac9b02c8f83",
+      "runtime_dimensions": [
+        74,
+        64
+      ]
+    },
+    "f1/flags/hu.png": {
+      "source_url": "https://flagcdn.com/w320/hu.png",
+      "source_sha256": "64f56ea9db403a24f7dd98ea02c4532230339db42a0bbb79a74074af28101bc0",
+      "runtime_sha256": "867b09840aaa18587820450498367b8f732503459e844b679bc18fa1f2946222",
+      "runtime_dimensions": [
+        96,
+        48
+      ]
+    },
+    "f1/flags/nl.png": {
+      "source_url": "https://flagcdn.com/w320/nl.png",
+      "source_sha256": "e55319d1fb32c47f7183cd94b8b9399dffda1b4e4dc25b000d88c59937aa076e",
+      "runtime_sha256": "f2d4670e7489801af73460ecf8c4e6a4eb454082de4b02827213d42848e5bcd3",
+      "runtime_dimensions": [
+        96,
+        64
+      ]
+    },
+    "f1/flags/it.png": {
+      "source_url": "https://flagcdn.com/w320/it.png",
+      "source_sha256": "d50c6434f7f34424dd524d3535cea21725ed72ea66c706d964f0643e91c17227",
+      "runtime_sha256": "f635d24aac84205c4cc16ec464819d5d5928a32022fa0b740c090146016043b9",
+      "runtime_dimensions": [
+        96,
+        64
+      ]
+    },
+    "f1/flags/az.png": {
+      "source_url": "https://flagcdn.com/w320/az.png",
+      "source_sha256": "60f67759cbfb7865eee977e1fccbd9f80bf70fbd50bcaf5715bdef0b426136d1",
+      "runtime_sha256": "a231ef0ba805d7578820a9d4996e8b261e989f598518815f50b8a870446b8373",
+      "runtime_dimensions": [
+        96,
+        48
+      ]
+    },
+    "f1/flags/my.png": {
+      "source_url": "https://flagcdn.com/w320/my.png",
+      "source_sha256": "42fb1c832e2282bb6173b2bb0acac66218e15c271f7729cafc9b5dba7c7a937d",
+      "runtime_sha256": "27014193dac18a69eb526c3d565c80fdbaabbbaaa4e7b27bb1ca53cc740854f5",
+      "runtime_dimensions": [
+        96,
+        48
+      ]
+    },
+    "f1/flags/sg.png": {
+      "source_url": "https://flagcdn.com/w320/sg.png",
+      "source_sha256": "da851f78cfbb456cb8167ea09ae37640a0fb2b46afb7d2c32583d5e8e7ab4e89",
+      "runtime_sha256": "ed75e0ea9685de44ac8028bb0cbe3dd71ff52557e08c30e904aa07838997c4cd",
+      "runtime_dimensions": [
+        96,
+        64
+      ]
+    },
+    "f1/flags/mx.png": {
+      "source_url": "https://flagcdn.com/w320/mx.png",
+      "source_sha256": "7861fd85478121bc9fbffd71e7493ac48b598dfdcdd27cbe5cf05d6e69d6c6f4",
+      "runtime_sha256": "ffd9f875ecb66642d0e2c3c3c75fe2ee4c80d4cfe732bd8aabc7cdaeaa59ac2e",
+      "runtime_dimensions": [
+        96,
+        55
+      ]
+    },
+    "f1/flags/br.png": {
+      "source_url": "https://flagcdn.com/w320/br.png",
+      "source_sha256": "76f921bcec127a82ac23e7d46eabbe4780c32cbd5447574f984b7e2115ef9750",
+      "runtime_sha256": "57a8f443b6f53249591a7725c3937a98ad25ec498b8398cecd605ea8d7eb148a",
+      "runtime_dimensions": [
+        91,
+        64
+      ]
+    },
+    "f1/flags/qa.png": {
+      "source_url": "https://flagcdn.com/w320/qa.png",
+      "source_sha256": "df8a86cabdec4947f34dbe913aa2a82e3832220b2a07e6a136d7a69fadb648c3",
+      "runtime_sha256": "0bf6d1afa78b386abb132f96694d315ea5ba7cbf34746bfd5ce2f3a1b604e454",
+      "runtime_dimensions": [
+        96,
+        38
+      ]
+    },
+    "f1/flags/ae.png": {
+      "source_url": "https://flagcdn.com/w320/ae.png",
+      "source_sha256": "e994b473d43d9ff3a0f57ff5aee33e1f6f14a8cff9744afb1d01a41f4ac482fb",
+      "runtime_sha256": "fc6d12a8338a050457aa1e7622381a7ed41699f4535f3766303ffb58c9150e5f",
+      "runtime_dimensions": [
+        96,
+        48
+      ]
+    },
+    "f1/flags/bh.png": {
+      "source_url": "https://flagcdn.com/w320/bh.png",
+      "source_sha256": "9a46617816567a55ba4af1a4a63f4404f6638617f3b3ee1e86785cbad819510c",
+      "runtime_sha256": "16a9dde75200481405911ccd70aa972f93be1c418b47da46999e719ebc1509b8",
+      "runtime_dimensions": [
+        96,
+        58
+      ]
+    },
+    "f1/flags/sa.png": {
+      "source_url": "https://flagcdn.com/w320/sa.png",
+      "source_sha256": "471e93e6e2be4e1d77cd1dc0103b5edab2e3bbbd09c5ec2a44fbd8f890d7d628",
+      "runtime_sha256": "b369a3a4f3212c3e9150d32b1111253f48645a937e4fd6cec7baa82035316d5a",
+      "runtime_dimensions": [
+        96,
+        64
+      ]
+    },
+    "f1/albert_park.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackmelbourneblackoutline.svg",
+      "source_sha256": "d03d644ede9f318c8d43b5a6b095a60295936f2d1746c788424a79ad830d4265",
+      "runtime_sha256": "371eba2d54527d5516a55098729fcc76806b499f981e4c5ec2ff83f96a970a1b",
+      "runtime_dimensions": [
+        220,
+        137
+      ]
+    },
+    "f1/shanghai.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackshanghaiblackoutline.svg",
+      "source_sha256": "4b69289ea2d91d2b79ea30072f50d380194355c550efc51b76bcf87f622f88a4",
+      "runtime_sha256": "c0e4623c58aa4499d63353afa55f453ee338e43cdc87b12a94bb4e6db21e7492",
+      "runtime_dimensions": [
+        209,
+        140
+      ]
+    },
+    "f1/suzuka.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026tracksuzukablackoutline.svg",
+      "source_sha256": "977c392da694915bc4cee96b29eb86f16b9267597fe43a0e4a63acbf47680dc8",
+      "runtime_sha256": "d219f5b3feaaf9ef54ddc8319ae07c9151a9c762321da57c2264009abe17acc4",
+      "runtime_dimensions": [
+        220,
+        128
+      ]
+    },
+    "f1/miami.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackmiamiblackoutline.svg",
+      "source_sha256": "3316dfd1c05b9179eb56e24c4d63831b9b52f5c812591cb85d8780f83660156f",
+      "runtime_sha256": "02173b93e7e3ca9599eb2cd9b291fa1432009dd87935a36417390fe1fcbc5b80",
+      "runtime_dimensions": [
+        220,
+        93
+      ]
+    },
+    "f1/villeneuve.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackmontrealblackoutline.svg",
+      "source_sha256": "0c24532a48a30c821420f1034f7fa5e61a189aa00a07a509aff4da588ac34258",
+      "runtime_sha256": "a40af2a2b06e8e5e75f15c8815cce942225d43365ab52dc0184416d388ea6bf0",
+      "runtime_dimensions": [
+        220,
+        88
+      ]
+    },
+    "f1/monaco.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackmontecarloblackoutline.svg",
+      "source_sha256": "e340dface7876ce7e96cccb9f43dd631b0c9be0f74e596d66c884a78840bf3a7",
+      "runtime_sha256": "dd5b1669796dc3b0586a1d79edf48b00d6d1f2a0e64ed03b42ba7a7e7734ddc8",
+      "runtime_dimensions": [
+        220,
+        99
+      ]
+    },
+    "f1/catalunya.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackcatalunyablackoutline.svg",
+      "source_sha256": "f50f8bdcb1b34d5cb1ab9b66293c920c561293e136000747c63ff8699d27d702",
+      "runtime_sha256": "86a611da902e1c3faf95d32f173417f4f4bcfaa2ad5e42eee9edf5cccca88f46",
+      "runtime_dimensions": [
+        220,
+        77
+      ]
+    },
+    "f1/red_bull_ring.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackspielbergblackoutline.svg",
+      "source_sha256": "bbd59697633bdd6faff29f30f15555b00f0d8a4f207cc247bc3bbe661cc18cde",
+      "runtime_sha256": "a8d41f5041a7c5dd04bec0d2d259cd421cb9fde3323bacb0353e220523d5f952",
+      "runtime_dimensions": [
+        220,
+        132
+      ]
+    },
+    "f1/silverstone.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026tracksilverstoneblackoutline.svg",
+      "source_sha256": "e27eb584c0d3b84b178eeef82a57a1ceadde6a15537ae089bd23e8ef36198069",
+      "runtime_sha256": "7a27ee31bf8ba32b5369fe4e09a7d44ed60ded65420c847e63e46502efab57ed",
+      "runtime_dimensions": [
+        220,
+        137
+      ]
+    },
+    "f1/spa.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackspafrancorchampsblackoutline.svg",
+      "source_sha256": "3342767d438ee23e63a72bfdea07c58c32f09aad7ac290347a85dc749ccbccad",
+      "runtime_sha256": "72e13bbcecf4a9a51bcbcbf2a0e8129a4fc09517b7b2c610349b27f15f704553",
+      "runtime_dimensions": [
+        209,
+        140
+      ]
+    },
+    "f1/hungaroring.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackhungaroringblackoutline.svg",
+      "source_sha256": "c164b6fe34764876d489483d7a1a48c7bcb6378933ce52d69f58a88f3cd8afb0",
+      "runtime_sha256": "01f29d67723cc5b09762df5c7c594b7f3f91c2fa92534c0eb89aa3639abe86f8",
+      "runtime_dimensions": [
+        147,
+        140
+      ]
+    },
+    "f1/zandvoort.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackzandvoortblackoutline.svg",
+      "source_sha256": "ed09dec5103b607a9741e20b441dc5655f860c423160ac87b911e258c813b7d7",
+      "runtime_sha256": "c1b6e8ee94ee0d501d12fe9d4fb693a5dbcdf30cc71870f310339f48387efd2a",
+      "runtime_dimensions": [
+        162,
+        140
+      ]
+    },
+    "f1/monza.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackmonzablackoutline.svg",
+      "source_sha256": "aacd0e79440f2db9fae753cb2e49a596e16b6f20043cbd2b713dcbba2d89e4c6",
+      "runtime_sha256": "776963f9d2e9785827d083260528e800e3e242f16b7c6ee61ef0293b49254b10",
+      "runtime_dimensions": [
+        220,
+        121
+      ]
+    },
+    "f1/madring.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackmadringblackoutline.svg",
+      "source_sha256": "e20904a3cae7f1a1613e3b47a471acd117599384a26a25b9b156b4de1d10c514",
+      "runtime_sha256": "d270b61991278820d9fafd3579a0408cfe5c3a1a6bacf22376fb3125112de5ee",
+      "runtime_dimensions": [
+        217,
+        140
+      ]
+    },
+    "f1/baku.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackbakublackoutline.svg",
+      "source_sha256": "2b5bb2fc73cc7b4ca8f76887cd3db70be2fd8717765baebd303810f90061f38f",
+      "runtime_sha256": "272b3a94f122f4bea5c9169112055cc3bd3fc61d8091f8f04f1b004b0f296e9b",
+      "runtime_dimensions": [
+        220,
+        130
+      ]
+    },
+    "f1/sepang.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackkualalumpurblackoutline.svg",
+      "source_sha256": "d50f77c49692b496c3bfab561b4a25835999d7e601ef8950174864f657f72f71",
+      "runtime_sha256": "8378ac2fa77b46579ae765275e251f316b63b3fad62837a6afd50c866df0113f",
+      "runtime_dimensions": [
+        168,
+        140
+      ]
+    },
+    "f1/marina_bay.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026tracksingaporeblackoutline.svg",
+      "source_sha256": "ac233445329e068a29a4507c3f82f13ebc694a0e40edf540df1287c9f81a3d4c",
+      "runtime_sha256": "6950c66cf55a25abb0c03fa4737598f2ce952b33d67ae1d7566a3cd2e00b84e2",
+      "runtime_dimensions": [
+        213,
+        140
+      ]
+    },
+    "f1/americas.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackaustinblackoutline.svg",
+      "source_sha256": "b21b647e97435a6c53e9185f045ef270fc4f19f05a2d91c3dd2697e8c82862dd",
+      "runtime_sha256": "9e72f3b3790cdbabe8e2ee076c4955f95e9480f47ffa97be71265d0105ab387b",
+      "runtime_dimensions": [
+        220,
+        119
+      ]
+    },
+    "f1/rodriguez.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackmexicocityblackoutline.svg",
+      "source_sha256": "16c84bc1c7fab3487ae30c971713f3bf158ed3f44358f14e8aa2076f03397e90",
+      "runtime_sha256": "b7ebd1e970af912b07d53acf6a3b98feb8a6b466d2ffb3546da82a1f6eb26637",
+      "runtime_dimensions": [
+        217,
+        140
+      ]
+    },
+    "f1/interlagos.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackinterlagosblackoutline.svg",
+      "source_sha256": "35532c2056c3528c3ceee5ba9c30dad2ad8bb742712e1aef2594f4c28ee400b8",
+      "runtime_sha256": "1472fe25896acaf2c01d63b58de42f075f3d30f658ca0967df291dc759bff0f2",
+      "runtime_dimensions": [
+        212,
+        140
+      ]
+    },
+    "f1/vegas.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026tracklasvegasblackoutline.svg",
+      "source_sha256": "065efc266343051e359dec8fc71890d0437ccf332d531354306c4a8b25bc143a",
+      "runtime_sha256": "779e2427a6b511a477c98a0797d498168f074f10be4fcbb418e62c874d306a10",
+      "runtime_dimensions": [
+        220,
+        139
+      ]
+    },
+    "f1/losail.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026tracklusailblackoutline.svg",
+      "source_sha256": "944970914c8c236ab4ef78ed0dcd3717a8b970b40badba7cfab005a902659f10",
+      "runtime_sha256": "7eacb8295dc042f6f26022dd31e7f62ba5cb3c518ace924dbc863c0b8602869b",
+      "runtime_dimensions": [
+        190,
+        140
+      ]
+    },
+    "f1/yas_marina.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackyasmarinacircuitblackoutline.svg",
+      "source_sha256": "8d83321234f1a5d64da24162bbd8d2a09fdd148d0e489af29b5c0d2ae3f6fdda",
+      "runtime_sha256": "69f27a830a599e9fec48b39701139920a8657b0dfaba8b1151c6024ec8cfd6e3",
+      "runtime_dimensions": [
+        220,
+        100
+      ]
+    },
+    "f1/bahrain.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026tracksakhirblackoutline.svg",
+      "source_sha256": "10bdd3160406af2f52bc64c2c5531b4cde4b43a784d280eb00a8b7c698a96987",
+      "runtime_sha256": "be114f0768ae41b982be6106aa7cb92364399f2f9d01c9e92646d43de580c05d",
+      "runtime_dimensions": [
+        207,
+        140
+      ]
+    },
+    "f1/jeddah.png": {
+      "source_url": "https://media.formula1.com/image/upload/f_png,w_480/common/f1/2026/track/2026trackjeddahblackoutline.svg",
+      "source_sha256": "0ec0a59b8edd9a1bedd9e408819c5e56b2bf94364ea59708f640ccac57d53991",
+      "runtime_sha256": "4e56ecdea3a10a012ec44749061ac47dcebbc26c149c21bdf0f286676fe82636",
+      "runtime_dimensions": [
+        220,
+        135
+      ]
+    }
+  }
+}

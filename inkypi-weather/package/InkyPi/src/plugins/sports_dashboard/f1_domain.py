@@ -83,6 +83,7 @@ def _parse_f1_jolpica_race(race, timezone_info):
         "season": str(race.get("season") or ""),
         "round": str(race.get("round") or ""),
         "race_name": str(race.get("raceName") or "Formula 1").strip() or "Formula 1",
+        "circuit_id": str(circuit.get("circuitId") or "").strip(),
         "circuit_name": str(circuit.get("circuitName") or "").strip(),
         "locality": str(location.get("locality") or "").strip(),
         "country": str(location.get("country") or "").strip(),
@@ -152,10 +153,13 @@ def _parse_f1_driver_standings(payload):
     result = []
     for item in standings[:5]:
         driver = item.get("Driver") or {}
+        constructors = item.get("Constructors") or []
+        constructor = constructors[-1] if isinstance(constructors, list) and constructors else {}
         result.append(
             {
                 "position": _int_value(item.get("position")) or len(result) + 1,
                 "driver_code": _f1_driver_code(driver),
+                "constructor": str((constructor or {}).get("name") or "").strip(),
                 "points": str(item.get("points") or "0"),
                 "wins": str(item.get("wins") or "0"),
             }
@@ -255,6 +259,8 @@ def select_events(data, now):
         "next_race": next_race,
         "recent_race": recent_race,
         "weekend_sessions": weekend_sessions,
+        # First practice (minus a morning) through the race's result window.
+        "weekend": weekend_race is not None,
         "last_result": (data or {}).get("last_result"),
         "driver_standings": (data or {}).get("driver_standings") or [],
         "constructor_standings": (data or {}).get("constructor_standings") or [],

@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw
 import pytest
 
 from plugins.sports_dashboard.common import _ACTIVE_COLORS, COLORS, DAY_COLORS, DEEP_NIGHT_COLORS
-from plugins.sports_dashboard.nfl_render import NFL_SCOREBOARD_ROW_HEIGHT
+from plugins.sports_dashboard.scorebug_kit import KIT_SCOREBOARD_ROW_HEIGHT
 from plugins.sports_dashboard.sports_dashboard import SportsDashboard
 from tests.test_sports_dashboard import _plugin
 
@@ -228,7 +228,7 @@ def test_nfl_logos_come_from_the_espn_thumbnail_combiner(parsed):
 
 def test_scoreboard_lists_live_then_upcoming_then_finals_without_the_featured_game(parsed):
     card = _card(parsed)
-    games = SportsDashboard._nfl_scoreboard_events(card)
+    games = SportsDashboard._football_scoreboard_events(card, "NFL")
 
     assert card["main"]["event_id"] not in [game["event_id"] for game in games]
     states = [SportsDashboard._hub_event_state(game) for game in games]
@@ -280,10 +280,10 @@ def test_short_down_label_falls_back_to_the_long_text():
 def test_spread_is_shown_from_each_teams_side(parsed):
     event = _by_id(parsed, "next")
 
-    assert SportsDashboard._nfl_spread_for_side(event, "a") == "+12.5"
-    assert SportsDashboard._nfl_spread_for_side(event, "b") == "-12.5"
-    assert SportsDashboard._nfl_spread_for_side({"spread": "LAR -3", "team_a_code": "ARI", "team_b_code": "LAR"}, "a") == "+3"
-    assert SportsDashboard._nfl_spread_for_side({"spread": "EVEN"}, "a") == ""
+    assert SportsDashboard._kit_spread_for_side(event, "a") == "+12.5"
+    assert SportsDashboard._kit_spread_for_side(event, "b") == "-12.5"
+    assert SportsDashboard._kit_spread_for_side({"spread": "LAR -3", "team_a_code": "ARI", "team_b_code": "LAR"}, "a") == "+3"
+    assert SportsDashboard._kit_spread_for_side({"spread": "EVEN"}, "a") == ""
 
 
 def test_drive_summary_label():
@@ -293,19 +293,20 @@ def test_drive_summary_label():
 
 
 def test_team_colours_map_to_pure_panel_inks():
-    assert SportsDashboard._nfl_team_ink_key({"team_a_color": "a71930"}, "a") == "red"
-    assert SportsDashboard._nfl_team_ink_key({"team_a_color": "0b1c3a"}, "a") == "text"
-    assert SportsDashboard._nfl_team_ink_key({"team_a_color": "0085ca"}, "a") == "blue"
-    assert SportsDashboard._nfl_team_ink_key({"team_a_color": "ffb612"}, "a") == "amber"
-    assert SportsDashboard._nfl_team_ink_key({}, "a") == "nfl_accent"
+    assert SportsDashboard._kit_team_ink_key("a71930", "nfl_accent") == "red"
+    assert SportsDashboard._kit_team_ink_key("0b1c3a", "nfl_accent") == "text"
+    assert SportsDashboard._kit_team_ink_key("0085ca", "nfl_accent") == "blue"
+    assert SportsDashboard._kit_team_ink_key("ffb612", "nfl_accent") == "amber"
+    assert SportsDashboard._kit_team_ink_key("", "nfl_accent") == "nfl_accent"
 
 
 def test_kickoff_countdown_label():
-    start = {"start": NOW + timedelta(hours=1, minutes=40)}
-    assert SportsDashboard._nfl_kickoff_countdown_label(start, NOW) == "IN 1H 40M"
-    assert SportsDashboard._nfl_kickoff_countdown_label({"start": NOW + timedelta(minutes=9)}, NOW) == "IN 9M"
-    assert SportsDashboard._nfl_kickoff_countdown_label({"start": NOW + timedelta(days=2, hours=3)}, NOW) == "IN 2D 3H"
-    assert SportsDashboard._nfl_kickoff_countdown_label({"start": NOW - timedelta(minutes=1)}, NOW) == "SOON"
+    countdown = SportsDashboard._kit_countdown_label
+    assert countdown(NOW + timedelta(hours=1, minutes=40), NOW) == "IN 1H 40M"
+    assert countdown(NOW + timedelta(minutes=9), NOW) == "IN 9M"
+    assert countdown(NOW + timedelta(days=2, hours=3), NOW) == "IN 2D 3H"
+    assert countdown(NOW - timedelta(minutes=1), NOW) == "SOON"
+    assert countdown(None, NOW) == "TBD"
 
 
 # Rendering ---------------------------------------------------------------------
@@ -421,20 +422,20 @@ def test_pregame_panel_shows_kickoff_tiles_spread_and_season_leaders(parsed, ren
 
 def test_scoreboard_never_draws_rows_past_its_bottom(parsed, render, monkeypatch):
     rows = []
-    original = SportsDashboard._draw_nfl_scoreboard_row
+    original = SportsDashboard._draw_kit_scoreboard_row
 
-    def capture_row(self, image, draw, box, event, now, last=False):
+    def capture_row(self, image, draw, box, event, now, spec, last=False):
         rows.append(box)
-        return original(self, image, draw, box, event, now, last=last)
+        return original(self, image, draw, box, event, now, spec, last=last)
 
-    monkeypatch.setattr(SportsDashboard, "_draw_nfl_scoreboard_row", capture_row)
+    monkeypatch.setattr(SportsDashboard, "_draw_kit_scoreboard_row", capture_row)
     many = [dict(_by_id(parsed, "monday"), event_id=f"game-{index}") for index in range(20)]
     card = _card(parsed, "live-away-ball", events=[_by_id(parsed, "live-away-ball"), *many])
     render(card)
 
     bottom = 268 - 1 - 7
     assert rows and all(box[3] <= bottom for box in rows)
-    assert len(rows) == (bottom - (57 - 2 + 23) + 1) // NFL_SCOREBOARD_ROW_HEIGHT
+    assert len(rows) == (bottom - (57 - 2 + 23) + 1) // KIT_SCOREBOARD_ROW_HEIGHT
 
 
 def test_empty_card_and_empty_scoreboard_render_placeholders(render):

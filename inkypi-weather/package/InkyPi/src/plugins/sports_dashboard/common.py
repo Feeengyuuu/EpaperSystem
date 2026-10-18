@@ -161,6 +161,9 @@ DEFAULT_OFFSEASON_HUB_LOOKAHEAD_DAYS = 5
 OFFSEASON_HUB_ROTATION_MINUTES = 30
 OFFSEASON_HUB_URGENT_NEXT_WINDOW = timedelta(minutes=90)
 OFFSEASON_HUB_DEFAULT_LIVE_WINDOW = timedelta(hours=5)
+# How long after a scheduled start the hub keeps polling at the live cadence
+# waiting for the feed to report the game live.
+OFFSEASON_HUB_START_DETECTION_WINDOW = timedelta(minutes=30)
 OFFSEASON_HUB_PGA_POST_EVENT_WINDOW = timedelta(hours=18)
 TEAM_LOGO_FETCH_TIMEOUT_SECONDS = 2
 # Logos made for dark backgrounds (mostly near-white strokes) get a dark
@@ -172,6 +175,7 @@ TEAM_LOGO_LIGHT_INFO_KEY = "inkypi_light_on_transparent"
 TEAM_LOGO_DISK_CACHE_MAX_BYTES = 2 * 1024 * 1024
 TEAM_LOGO_DISK_CACHE_MAX_SIDE = 2048
 ESPN_LOGO_THUMBNAIL_SIDE = 200
+NCAA_POLL_SIZE = 25
 TEAM_LOGO_DISK_CACHE_MAX_PIXELS = 4 * 1024 * 1024
 TEAM_LOGO_IMAGE_LIMITS = ImageLimits(
     max_bytes=TEAM_LOGO_DISK_CACHE_MAX_BYTES,
@@ -1001,6 +1005,16 @@ MLB_TEAM_CODES = {
     "Washington Nationals": "WSH",
 }
 
+# Primary club colours (statsapi has none); the scorebug maps them to panel inks.
+MLB_TEAM_COLORS = {
+    "ARI": "a71930", "ATL": "ce1141", "BAL": "df4601", "BOS": "bd3039", "CHC": "0e3386",
+    "CWS": "27251f", "CIN": "c6011f", "CLE": "00385d", "COL": "333366", "DET": "0c2340",
+    "HOU": "002d62", "KC": "004687", "LAA": "ba0021", "LAD": "005a9c", "MIA": "00a3e0",
+    "MIL": "12284b", "MIN": "002b5c", "NYM": "002d72", "NYY": "0c2340", "OAK": "003831",
+    "ATH": "003831", "PHI": "e81828", "PIT": "27251f", "SD": "2f241d", "SF": "fd5a1e",
+    "SEA": "0c2c56", "STL": "c41e3a", "TB": "092c5c", "TEX": "003278", "TOR": "134a8e",
+    "WSH": "ab0003",
+}
 MLB_TEAM_NAME_ALIASES = {
     "ARI": ("AZ", "Arizona Diamondbacks", "Diamondbacks", "D-backs", "Dbacks", "Arizona"),
     "ATL": ("Atlanta Braves", "Braves"),
@@ -3009,50 +3023,6 @@ class SportsDashboardCommonMixin:
 
         raise ValueError("unknown Sports Dashboard region")
 
-    def _draw_lower_sports_region(
-        self,
-        image,
-        draw,
-        settings,
-        device_config,
-        timezone_info,
-        now,
-        box,
-    ):
-        nba_events, nba_source_state = self._load_nba_events(settings, timezone_info)
-        nba_selected = self._select_nba_events(nba_events, now)
-        if self._should_show_offseason_hub_panel(settings, nba_selected):
-            try:
-                hub_selected, hub_source_state = self._load_offseason_hub(settings, timezone_info, now)
-                self._write_offseason_hub_state(hub_selected, now, hub_source_state)
-                self._draw_offseason_hub_compact_panel(
-                    image,
-                    draw,
-                    box,
-                    hub_selected,
-                    hub_source_state,
-                    now,
-                )
-                self._write_nba_live_state(nba_selected, now, nba_source_state)
-                return self._sports_source_state_provenance(hub_source_state)
-            except Exception as exc:
-                logger.warning(
-                    "Offseason hub panel failed, falling back to NBA panel: %s",
-                    _safe_exception_text(exc),
-                )
-        nba_events = self._attach_nba_odds(nba_events, settings, device_config, timezone_info)
-        nba_selected = self._select_nba_events(nba_events, now)
-        self._write_nba_live_state(nba_selected, now, nba_source_state)
-        self._draw_nba_compact_panel(
-            image,
-            draw,
-            box,
-            nba_selected,
-            nba_source_state,
-            now,
-        )
-        return self._sports_source_state_provenance(nba_source_state)
-
     def _prepare_right_esports_panel(
         self,
         settings,
@@ -3713,17 +3683,6 @@ class SportsDashboardCommonMixin:
             return int(value)
         except (TypeError, ValueError):
             return None
-
-    def _draw_small_row_team_logos(self, image, draw, x1, x2, y, event, label, label_font, label_right, logo_size):
-        right_logo_x = int(x2 - 21)
-        text_width = self._text_width(draw, label, label_font)
-        label_left = int(label_right - text_width)
-        left_logo_x = label_left - logo_size - 4
-        min_left_logo_x = int(x1 + 56)
-        max_left_logo_x = int(right_logo_x - logo_size - 8)
-        left_logo_x = max(min_left_logo_x, min(left_logo_x, max_left_logo_x))
-        self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y, logo_size, self._small_row_logo_fallback(event, "a"))
-        self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y, logo_size, self._small_row_logo_fallback(event, "b"))
 
     def _draw_sport_info_icon(self, draw, kind, x, y, accent):
         kind = str(kind or "").strip().upper()

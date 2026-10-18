@@ -6,15 +6,6 @@ SportsDashboard = None
 
 
 class OffseasonHubMixin:
-    @staticmethod
-    def _should_show_offseason_hub_panel(settings, nba_selected):
-        mode = str((settings or {}).get("nbaOffseasonPanelMode") or "auto").strip().lower()
-        if mode in {"off", "false", "disabled", "disable", "none", "nba"}:
-            return False
-        if mode in {"always", "on", "true", "hub", "live-hub", "offseason"}:
-            return True
-        return bool((nba_selected or {}).get("offseason"))
-
     def _load_offseason_hub(self, settings, timezone_info, now):
         try:
             payload, source_state, _fetched_at = self._load_offseason_hub_payload(settings, timezone_info, now)
@@ -93,7 +84,7 @@ class OffseasonHubMixin:
                     "sportId": "1",
                     "startDate": start_date.isoformat(),
                     "endDate": end_date.isoformat(),
-                    "hydrate": "team,linescore,probablePitcher",
+                    "hydrate": "team,linescore,probablePitcher,decisions,seriesStatus,broadcasts(all)",
                 },
             ),
             (
@@ -153,7 +144,26 @@ class OffseasonHubMixin:
             return True
         if str(((selected.get("primary") or {}).get("status") or "")).upper() == "LIVE":
             return self._cache_is_fresh_seconds(cache, self._offseason_hub_live_refresh_seconds(settings), now_utc)
+        # A game past its start that the cache still lists as scheduled has
+        # probably gone live: refresh at the live cadence to catch it.
+        if SportsDashboard._offseason_hub_has_started_game(selected, now):
+            return self._cache_is_fresh_seconds(cache, self._offseason_hub_live_refresh_seconds(settings), now_utc)
         return True
+
+    @staticmethod
+    def _offseason_hub_has_started_game(selected, now):
+        for card in (selected or {}).get("cards") or []:
+            if str(card.get("sport") or "").upper() == "PGA":
+                continue
+            for event in card.get("events") or []:
+                start = event.get("start")
+                if (
+                    SportsDashboard._hub_event_state(event) == "scheduled"
+                    and isinstance(start, datetime)
+                    and start <= now <= start + OFFSEASON_HUB_START_DETECTION_WINDOW
+                ):
+                    return True
+        return False
 
     def _offseason_hub_cache_key(self, settings, timezone_info, now_utc):
         local_date = now_utc.astimezone(timezone_info).date()
@@ -286,6 +296,9 @@ class OffseasonHubMixin:
         away_code = SportsDashboard._mlb_team_code(away_name)
         home_code = SportsDashboard._mlb_team_code(home_name)
         status = game.get("status") or {}
+        # A postponed or cancelled game returns as its own makeup game.
+        if str(status.get("detailedState") or "").strip().lower() in {"postponed", "cancelled", "canceled"}:
+            return None
         state = SportsDashboard._mlb_state(status)
         show_score = state in {"live", "final"}
         linescore = game.get("linescore") or {}
@@ -321,6 +334,7 @@ class OffseasonHubMixin:
             "current_pitcher": SportsDashboard._mlb_pitcher_name((linescore.get("defense") or {}).get("pitcher")),
             "away_line": SportsDashboard._mlb_line_score((linescore.get("teams") or {}).get("away") or {}),
             "home_line": SportsDashboard._mlb_line_score((linescore.get("teams") or {}).get("home") or {}),
+            **SportsDashboard._mlb_scorebug_fields(game, linescore, away_code, home_code, state),
         }
 
     @staticmethod
@@ -340,7 +354,13 @@ class OffseasonHubMixin:
         if not events and not skipped_team_event:
             events.extend(SportsDashboard._parse_pga_calendar((payload or {}).get("leagues") or [], timezone_info, now))
         events.sort(key=lambda item: item.get("start") or datetime.max.replace(tzinfo=timezone.utc))
-        return {"events": events}
+        # The season calendar rides along for the "on tour" schedule.
+        shown = {str(event.get("event_id") or "") for event in events}
+        calendar = [
+            event for event in SportsDashboard._parse_pga_calendar((payload or {}).get("leagues") or [], timezone_info, now)
+            if event.get("state") == "scheduled" and str(event.get("event_id") or "") not in shown
+        ]
+        return {"events": events, "calendar": calendar[:4]}
 
     @staticmethod
     def _parse_football_scoreboard(payload, timezone_info, sport):
@@ -576,12 +596,13 @@ class OffseasonHubMixin:
 
     @staticmethod
     def _football_rank(competitor):
+        # Polls rank 25 teams; ESPN sends 99 for an unranked team.
         rank = SportsDashboard._lpl_int_value((competitor or {}).get("curatedRank", {}).get("current") if isinstance((competitor or {}).get("curatedRank"), Mapping) else None)
-        if rank and rank < 100:
+        if rank and rank <= NCAA_POLL_SIZE:
             return rank
         team = (competitor or {}).get("team") or {}
         rank = SportsDashboard._lpl_int_value(team.get("rank"))
-        return rank if rank and rank < 100 else None
+        return rank if rank and rank <= NCAA_POLL_SIZE else None
 
     @staticmethod
     def _football_record_label(records):
@@ -1010,6 +1031,12 @@ class OffseasonHubMixin:
                     "round": latest_round.get("round"),
                     "today": latest_round.get("today") or "",
                     "strokes": latest_round.get("strokes") or "",
+                    "rounds": [
+                        str(item.get("displayValue") or "").strip()
+                        for item in sorted(linescores, key=lambda item: SportsDashboard._lpl_int_value(item.get("period")) or 0)
+                        if isinstance(item, Mapping) and item.get("displayValue") is not None
+                    ][:4],
+                    "thru": SportsDashboard._pga_thru_label(competitor),
                 }
             )
         rows.sort(key=lambda item: item["position"])
@@ -1027,6 +1054,18 @@ class OffseasonHubMixin:
             row.pop("_score_provided", None)
             row.pop("_rank_provided", None)
         return rows[:8]
+
+    @staticmethod
+    def _pga_thru_label(competitor):
+        """Holes played in the current round ('14', 'F'), when ESPN sends it."""
+        status = (competitor or {}).get("status") if isinstance((competitor or {}).get("status"), Mapping) else {}
+        thru = status.get("thru") if status else None
+        if thru in (None, ""):
+            return ""
+        thru = SportsDashboard._lpl_int_value(thru)
+        if thru is None:
+            return ""
+        return "F" if thru >= 18 else str(thru)
 
     @staticmethod
     def _pga_has_provider_rank(competitor):
@@ -1302,6 +1341,7 @@ class OffseasonHubMixin:
             "season_label": str(((parsed or {}).get("season_label") or "")).strip(),
             "week_label": str(((parsed or {}).get("week_label") or "")).strip(),
             "order": {"MLB": 0, "WNBA": 1, "PGA": 2, "NFL": 3, "NCAA": 4}.get(sport, 99),
+            "calendar": list((parsed or {}).get("calendar") or []),
         }
 
     @staticmethod
@@ -1461,6 +1501,46 @@ class OffseasonHubMixin:
         if isinstance(offense.get("third"), Mapping):
             bases.append("3")
         return "".join(bases)
+
+    @staticmethod
+    def _mlb_scorebug_fields(game, linescore, away_code, home_code, state):
+        """Inning line, series status, pitching decisions, national TV and
+        club colours for the scorebug."""
+        innings = []
+        for inning in (linescore or {}).get("innings") or []:
+            if not isinstance(inning, Mapping):
+                continue
+            innings.append(
+                (
+                    SportsDashboard._lpl_int_value((inning.get("away") or {}).get("runs")),
+                    SportsDashboard._lpl_int_value((inning.get("home") or {}).get("runs")),
+                )
+            )
+        series = game.get("seriesStatus") if isinstance(game.get("seriesStatus"), Mapping) else {}
+        decisions = game.get("decisions") if isinstance(game.get("decisions"), Mapping) else {}
+        tv = []
+        for broadcast in game.get("broadcasts") or []:
+            if not isinstance(broadcast, Mapping) or broadcast.get("type") != "TV" or not broadcast.get("isNational"):
+                continue
+            name = str(broadcast.get("name") or "").split("/")[0].strip()
+            if name and name not in tv and not any(word in name for word in ("Univision", "Deportes", "TUDN")):
+                tv.append(name)
+        return {
+            "status_detail": str(((game.get("status") or {}).get("detailedState")) or "").strip(),
+            "team_a_color": MLB_TEAM_COLORS.get(away_code, ""),
+            "team_b_color": MLB_TEAM_COLORS.get(home_code, ""),
+            "innings": innings if state != "scheduled" else [],
+            "scheduled_innings": SportsDashboard._lpl_int_value((linescore or {}).get("scheduledInnings")) or 9,
+            "is_top_inning": (linescore or {}).get("isTopInning") is True,
+            "series_summary": str(series.get("result") or "").strip(),
+            "series_game": str(game.get("description") or series.get("shortDescription") or "").split(",")[0].strip(),
+            "decisions": [
+                {"label": label, "name": SportsDashboard._mlb_pitcher_name(decisions.get(key))}
+                for key, label in (("winner", "W"), ("loser", "L"), ("save", "S"))
+                if SportsDashboard._mlb_pitcher_name(decisions.get(key))
+            ],
+            "broadcast": " / ".join(tv[:2]),
+        }
 
     @staticmethod
     def _mlb_line_score(line):
@@ -1701,174 +1781,3 @@ class OffseasonHubMixin:
             self._record_worldcup_api_call(settings, now_utc)
         response.raise_for_status()
         return response.json()
-
-    @staticmethod
-    def _load_pga_fairway_strip(size):
-        width, height = int(size[0]), int(size[1])
-        if width <= 0 or height <= 0:
-            return None
-        path = LOCAL_PGA_FAIRWAY_STRIP_PATH
-        cache_key = (path, (width, height), "pga-fairway-strip-v3")
-        if cache_key in TEAM_LOGO_CACHE:
-            return TEAM_LOGO_CACHE[cache_key]
-        if not os.path.exists(path):
-            TEAM_LOGO_CACHE[cache_key] = None
-            return None
-        try:
-            with Image.open(path) as source:
-                strip = source.convert("RGBA")
-            if strip.size != (width, height):
-                strip = strip.resize((width, height), Image.LANCZOS)
-            TEAM_LOGO_CACHE[cache_key] = strip
-            return strip
-        except Exception as exc:
-            logger.warning("Failed to load PGA fairway strip %s: %s", path, exc)
-            TEAM_LOGO_CACHE[cache_key] = None
-            return None
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

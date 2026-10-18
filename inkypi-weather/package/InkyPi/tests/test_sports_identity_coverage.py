@@ -90,7 +90,6 @@ def test_ncaa_relocalizes_english_cached_zh_fields_in_every_name_entrypoint(code
     assert SportsDashboard._ncaa_school_label(event, "a", full=True) == full
     assert SportsDashboard._football_display_team(event, "a", "NCAA") == f"#8 {short}"
     assert SportsDashboard._football_display_team(event, "a", "NCAA", full=True) == f"#8 {full}"
-    assert SportsDashboard._football_possession_display_label(event, "NCAA") == short
 
 
 def test_ncaa_ids_disambiguate_shared_abbreviations_and_unknown_names_remain_honest():

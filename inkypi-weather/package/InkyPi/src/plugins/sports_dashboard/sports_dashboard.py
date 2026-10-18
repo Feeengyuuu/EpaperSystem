@@ -16,7 +16,14 @@ from . import lol_worlds as _lol_worlds_module
 from . import f1 as _f1_module
 from . import offseason_hub as _offseason_hub_module
 from . import offseason_render as _offseason_render_module
-from . import nfl_render as _nfl_render_module
+from . import scorebug_kit as _scorebug_kit_module
+from . import event_marks as _event_marks_module
+from . import football_render as _football_render_module
+from . import basketball_render as _basketball_render_module
+from . import baseball_render as _baseball_render_module
+from . import golf_render as _golf_render_module
+from . import f1_render as _f1_render_module
+from . import lower_panel as _lower_panel_module
 from .worldcup import WorldCupMixin
 from .worldcup_render import WorldCupRenderMixin
 from .csl import CSL_LIVE_STATE_VERSION, CSLMixin
@@ -33,7 +40,14 @@ from .lol_worlds import LolWorldsMixin
 from .f1 import F1Mixin
 from .offseason_hub import OffseasonHubMixin
 from .offseason_render import OffseasonRenderMixin
-from .nfl_render import NflRenderMixin
+from .scorebug_kit import ScorebugKitMixin
+from .event_marks import EventMarksMixin
+from .football_render import FootballRenderMixin
+from .basketball_render import BasketballRenderMixin
+from .baseball_render import BaseballRenderMixin
+from .golf_render import GolfRenderMixin
+from .f1_render import F1RenderMixin
+from .lower_panel import LowerPanelMixin
 from plugins.base_plugin.presentation import PresentationMode, PresentationPreparation
 from plugins.base_plugin.render_provenance import SourceProvenance, read_source_provenance
 from utils.safe_image import safe_open_image
@@ -60,7 +74,14 @@ class SportsDashboard(
     F1Mixin,
     OffseasonHubMixin,
     OffseasonRenderMixin,
-    NflRenderMixin,
+    ScorebugKitMixin,
+    EventMarksMixin,
+    FootballRenderMixin,
+    BasketballRenderMixin,
+    BaseballRenderMixin,
+    GolfRenderMixin,
+    F1RenderMixin,
+    LowerPanelMixin,
     BasePlugin,
 ):
     def presentation_mode(self, settings):
@@ -1920,7 +1941,14 @@ _SPLIT_MODULES = (
     _f1_module,
     _offseason_hub_module,
     _offseason_render_module,
-    _nfl_render_module,
+    _scorebug_kit_module,
+    _event_marks_module,
+    _football_render_module,
+    _basketball_render_module,
+    _baseball_render_module,
+    _golf_render_module,
+    _f1_render_module,
+    _lower_panel_module,
 )
 for _module in _SPLIT_MODULES:
     _module.SportsDashboard = SportsDashboard
