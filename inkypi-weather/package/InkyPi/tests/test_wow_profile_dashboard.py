@@ -1,5 +1,4 @@
 import sys
-import types
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
@@ -7,40 +6,6 @@ from PIL import Image, ImageChops, ImageDraw
 SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
 TEST_CACHE_ROOT = SRC.parents[3] / ".tmp" / "wow_profile_dashboard_tests"
-
-
-def install_import_stubs():
-    base_pkg = types.ModuleType("plugins.base_plugin")
-    sys.modules.setdefault("plugins.base_plugin", base_pkg)
-    base = types.ModuleType("plugins.base_plugin.base_plugin")
-
-    class BasePlugin:
-        def __init__(self, config, **_dependencies):
-            self.config = config
-
-        def get_plugin_id(self):
-            return self.config.get("id")
-
-        def get_plugin_dir(self, path=None):
-            plugin_dir = SRC / "plugins" / self.get_plugin_id()
-            return str(plugin_dir / path) if path else str(plugin_dir)
-
-        def generate_settings_template(self):
-            return {"settings_template": "base_plugin/settings.html"}
-
-    base.BasePlugin = BasePlugin
-    sys.modules.setdefault("plugins.base_plugin.base_plugin", base)
-
-    context = types.ModuleType("plugins.context_cache")
-    context.write_context = lambda *args, **kwargs: None
-    sys.modules.setdefault("plugins.context_cache", context)
-
-    http = types.ModuleType("utils.http_client")
-    http.get_http_session = lambda: None
-    sys.modules.setdefault("utils.http_client", http)
-
-
-install_import_stubs()
 
 from config import Config  # noqa: E402
 from plugins.wow_profile_dashboard.wow_profile_dashboard import WowProfileDashboard  # noqa: E402

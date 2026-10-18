@@ -1,13 +1,19 @@
 import json
 import sys
 import time
-import types
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
+
+import plugins.lol_info.lol_info as lol_info_module  # noqa: E402
+from plugins.lol_info.lol_info import (  # noqa: E402
+    LOCAL_ASSET_IMAGE_LIMITS,
+    LoLInfo,
+    STYLE_VERSION,
+)
 
 
 def test_dashboard_background_layer_stays_flat_for_color_epaper():
@@ -25,83 +31,6 @@ def test_dashboard_background_layer_stays_flat_for_color_epaper():
     assert image.getcolors(maxcolors=image.width * image.height) == [
         (image.width * image.height, background)
     ]
-
-
-def install_import_stubs():
-    base_pkg = types.ModuleType("plugins.base_plugin")
-    base_pkg.__path__ = []
-    sys.modules.setdefault("plugins.base_plugin", base_pkg)
-    base = types.ModuleType("plugins.base_plugin.base_plugin")
-
-    class BasePlugin:
-        def __init__(self, config, **_dependencies):
-            self.config = config
-
-        def get_plugin_id(self):
-            return self.config.get("id")
-
-        def get_plugin_dir(self, path=None):
-            plugin_dir = SRC / "plugins" / self.get_plugin_id()
-            return str(plugin_dir / path) if path else str(plugin_dir)
-
-        def get_dimensions(self, device_config):
-            return device_config.get_resolution()
-
-        def generate_settings_template(self):
-            return {"settings_template": "base_plugin/settings.html"}
-
-    base.BasePlugin = BasePlugin
-    sys.modules.setdefault("plugins.base_plugin.base_plugin", base)
-
-    presentation = types.ModuleType(
-        "plugins.base_plugin.refresh_on_display_presentation"
-    )
-
-    class RefreshOnDisplayPresentationMixin:
-        pass
-
-    presentation.RefreshOnDisplayPresentationMixin = RefreshOnDisplayPresentationMixin
-    sys.modules.setdefault(
-        "plugins.base_plugin.refresh_on_display_presentation",
-        presentation,
-    )
-
-    provenance = types.ModuleType("plugins.base_plugin.render_provenance")
-
-    class SourceProvenance:
-        FRESH_CACHE = "fresh_cache"
-        LIVE = "live"
-        LOCAL_FALLBACK = "local_fallback"
-        STALE_CACHE = "stale_cache"
-
-    provenance.SourceProvenance = SourceProvenance
-    provenance.attach_source_provenance = (
-        lambda image, source: image.info.update({"source_provenance": source}) or image
-    )
-    sys.modules.setdefault("plugins.base_plugin.render_provenance", provenance)
-
-    context = types.ModuleType("plugins.context_cache")
-    context.write_context = lambda *args, **kwargs: None
-    sys.modules.setdefault("plugins.context_cache", context)
-
-    http = types.ModuleType("utils.http_client")
-    http.get_http_client = lambda: None
-    http.get_http_session = lambda: None
-    sys.modules.setdefault("utils.http_client", http)
-
-    theme = types.ModuleType("utils.theme_utils")
-    theme.get_theme_context = lambda *args, **kwargs: {}
-    sys.modules.setdefault("utils.theme_utils", theme)
-
-
-install_import_stubs()
-
-import plugins.lol_info.lol_info as lol_info_module  # noqa: E402
-from plugins.lol_info.lol_info import (  # noqa: E402
-    LOCAL_ASSET_IMAGE_LIMITS,
-    LoLInfo,
-    STYLE_VERSION,
-)
 
 
 class FakeDeviceConfig:

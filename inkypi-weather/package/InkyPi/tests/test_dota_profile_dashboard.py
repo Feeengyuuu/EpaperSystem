@@ -1,51 +1,10 @@
-import os
 import sys
-import types
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
-
-
-def install_import_stubs():
-    base_pkg = types.ModuleType("plugins.base_plugin")
-    sys.modules.setdefault("plugins.base_plugin", base_pkg)
-    base = types.ModuleType("plugins.base_plugin.base_plugin")
-
-    class BasePlugin:
-        def __init__(self, config, **_dependencies):
-            self.config = config
-
-        def get_plugin_id(self):
-            return self.config.get("id")
-
-        def get_plugin_dir(self, path=None):
-            plugin_dir = SRC / "plugins" / self.get_plugin_id()
-            return str(plugin_dir / path) if path else str(plugin_dir)
-
-        def generate_settings_template(self):
-            return {"settings_template": "base_plugin/settings.html"}
-
-    base.BasePlugin = BasePlugin
-    sys.modules.setdefault("plugins.base_plugin.base_plugin", base)
-
-    context = types.ModuleType("plugins.context_cache")
-    context.write_context = lambda *args, **kwargs: None
-    sys.modules.setdefault("plugins.context_cache", context)
-
-    http = types.ModuleType("utils.http_client")
-    http.get_http_session = lambda: None
-    http.get_http_client = lambda: None
-    sys.modules.setdefault("utils.http_client", http)
-
-    theme = types.ModuleType("utils.theme_utils")
-    theme.get_theme_context = lambda *args, **kwargs: {}
-    sys.modules.setdefault("utils.theme_utils", theme)
-
-
-install_import_stubs()
 
 import plugins.dota_profile_dashboard.dota_profile_dashboard as dota_module  # noqa: E402
 from plugins.dota_profile_dashboard.dota_profile_dashboard import (  # noqa: E402
