@@ -422,6 +422,14 @@ class OffseasonHubMixin:
             "week": week,
             "week_label": week_label,
             "season_label": str(((event.get("season") or {}).get("slug") if isinstance(event.get("season"), Mapping) else "") or "").strip(),
+            **SportsDashboard._football_scorebug_fields(
+                event,
+                competition,
+                status,
+                situation,
+                (away, home),
+                (away_info["id"], home_info["id"]),
+            ),
         }
 
     @staticmethod
@@ -465,12 +473,26 @@ class OffseasonHubMixin:
     def _football_team_logo_url(team, code, sport):
         logo = SportsDashboard._espn_team_logo(team)
         if logo:
+            if str(sport or "").upper() == "NFL":
+                return SportsDashboard._espn_logo_thumbnail_url(logo)
             return logo
         league = "ncaa" if str(sport or "").upper() == "NCAA" else "nfl"
         team_id = ""
         if isinstance(team, Mapping):
             team_id = str(team.get("id") or "").strip()
         return SportsDashboard._espn_cdn_team_logo_url(league, code, team_id)
+
+    @staticmethod
+    def _espn_logo_thumbnail_url(url, side=ESPN_LOGO_THUMBNAIL_SIDE):
+        """Ask ESPN's image combiner for a small PNG of a team logo.
+
+        Some NFL scoreboard originals are 4096 px (LV, GB), past the decode
+        limit, so those teams lost their logos; the combiner serves ~200 px.
+        """
+        parsed = urlparse(str(url or ""))
+        if parsed.scheme != "https" or parsed.netloc != "a.espncdn.com" or not parsed.path.startswith("/i/teamlogos/"):
+            return url
+        return f"https://a.espncdn.com/combiner/i?{urlencode({'img': parsed.path, 'w': side, 'h': side})}"
 
     @staticmethod
     def _football_normalized_team_code(raw_code, aliases, sport):
@@ -629,6 +651,115 @@ class OffseasonHubMixin:
         return text[:86]
 
     @staticmethod
+    def _football_scorebug_fields(event, competition, status, situation, competitors, team_ids):
+        """Scorebug details from the ESPN scoreboard: quarter scores, team colours,
+        timeouts, ball spot, current drive, win odds and game leaders.
+
+        Yard values keep ESPN's frame: yards from the home team's goal line.
+        """
+        state = SportsDashboard._football_state(status)
+        status_type = (status or {}).get("type") or {}
+        away, home = competitors
+        fields = {
+            "status_detail": str(status_type.get("shortDetail") or status_type.get("detail") or "").strip(),
+            # Only a real headline (London game, playoff round); "note" falls
+            # back to the plain "X at Y" event name.
+            "headline": SportsDashboard._football_event_headline(event, competition),
+            "team_a_color": SportsDashboard._football_team_color(away),
+            "team_b_color": SportsDashboard._football_team_color(home),
+            "linescore_a": SportsDashboard._football_linescores(away) if state != "scheduled" else [],
+            "linescore_b": SportsDashboard._football_linescores(home) if state != "scheduled" else [],
+            # Game leaders once play starts; ESPN sends season leaders before kickoff.
+            "leaders": SportsDashboard._football_game_leaders(competition, team_ids),
+            "timeouts_a": None,
+            "timeouts_b": None,
+            "red_zone": False,
+            "down_distance_short": "",
+            "distance": None,
+            "ball_yard": None,
+            "drive_summary": "",
+            "drive_start_yard": None,
+            "win_pct_a": None,
+            "win_pct_b": None,
+        }
+        if state != "live":
+            return fields
+        situation = situation or {}
+        possession = str(situation.get("possession") or "").strip()
+        last_play = situation.get("lastPlay") or {}
+        probability = last_play.get("probability") or {}
+        drive = last_play.get("drive") or {}
+        fields.update(
+            {
+                "timeouts_a": SportsDashboard._lpl_int_value(situation.get("awayTimeouts")),
+                "timeouts_b": SportsDashboard._lpl_int_value(situation.get("homeTimeouts")),
+                "red_zone": situation.get("isRedZone") is True,
+                "down_distance_short": str(situation.get("shortDownDistanceText") or "").strip().upper(),
+                "distance": SportsDashboard._lpl_int_value(situation.get("distance")),
+                "ball_yard": SportsDashboard._football_yard_value(situation.get("yardLine")) if possession else None,
+                "win_pct_a": SportsDashboard._football_probability(probability.get("awayWinPercentage")),
+                "win_pct_b": SportsDashboard._football_probability(probability.get("homeWinPercentage")),
+            }
+        )
+        # lastPlay carries the drive of whoever ran it; after a change of
+        # possession that is the previous drive, so only keep the offense's own.
+        if possession and str((last_play.get("team") or {}).get("id") or "").strip() == possession:
+            fields["drive_summary"] = str(drive.get("description") or "").strip()
+            fields["drive_start_yard"] = SportsDashboard._football_yard_value((drive.get("start") or {}).get("yardLine"))
+        return fields
+
+    @staticmethod
+    def _football_team_color(competitor):
+        color = str((((competitor or {}).get("team") or {}).get("color") or "")).strip().lstrip("#")
+        return color.lower() if re.fullmatch(r"[0-9a-fA-F]{6}", color) else ""
+
+    @staticmethod
+    def _football_linescores(competitor):
+        scores = []
+        for item in (competitor or {}).get("linescores") or []:
+            value = (item or {}).get("value") if isinstance(item, Mapping) else None
+            try:
+                scores.append(int(float(value)))
+            except (TypeError, ValueError):
+                scores.append(None)
+        return scores[:8]
+
+    @staticmethod
+    def _football_yard_value(value):
+        try:
+            yard = int(round(float(value)))
+        except (TypeError, ValueError):
+            return None
+        return yard if 0 <= yard <= 100 else None
+
+    @staticmethod
+    def _football_probability(value):
+        try:
+            probability = float(value)
+        except (TypeError, ValueError):
+            return None
+        return probability if 0.0 <= probability <= 1.0 else None
+
+    @staticmethod
+    def _football_game_leaders(competition, team_ids):
+        away_id, home_id = (str(value or "") for value in team_ids)
+        leaders = []
+        for category in (competition or {}).get("leaders") or []:
+            if not isinstance(category, Mapping):
+                continue
+            label = str(category.get("shortDisplayName") or category.get("abbreviation") or "").strip().upper()
+            top = ((category.get("leaders") or [None])[0]) or {}
+            athlete = top.get("athlete") or {}
+            name = str(athlete.get("shortName") or athlete.get("displayName") or "").strip()
+            value = str(top.get("displayValue") or "").strip()
+            if not (label and name and value):
+                continue
+            team_id = str((top.get("team") or athlete.get("team") or {}).get("id") or "").strip()
+            side = "a" if team_id and team_id == away_id else ("b" if team_id and team_id == home_id else "")
+            leaders.append({"label": label, "name": name, "value": value, "side": side})
+        return leaders[:3]
+
+    @staticmethod
     def _football_venue_city(venue):
         address = (venue or {}).get("address") or {}
         city = str(address.get("city") or "").strip()
@@ -665,6 +796,15 @@ class OffseasonHubMixin:
             "spread": spread,
             "over_under": f"O/U {over_under}" if over_under not in {None, ""} else "",
         }
+
+    @staticmethod
+    def _football_event_headline(event, competition):
+        notes = (event or {}).get("notes") or (competition or {}).get("notes") or []
+        for note in notes:
+            headline = str((note or {}).get("headline") or "").strip()
+            if headline:
+                return headline[:40]
+        return ""
 
     @staticmethod
     def _football_event_note(event, competition):

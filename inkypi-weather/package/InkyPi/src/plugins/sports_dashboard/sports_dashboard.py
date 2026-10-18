@@ -16,6 +16,7 @@ from . import lol_worlds as _lol_worlds_module
 from . import f1 as _f1_module
 from . import offseason_hub as _offseason_hub_module
 from . import offseason_render as _offseason_render_module
+from . import nfl_render as _nfl_render_module
 from .worldcup import WorldCupMixin
 from .worldcup_render import WorldCupRenderMixin
 from .csl import CSL_LIVE_STATE_VERSION, CSLMixin
@@ -32,6 +33,7 @@ from .lol_worlds import LolWorldsMixin
 from .f1 import F1Mixin
 from .offseason_hub import OffseasonHubMixin
 from .offseason_render import OffseasonRenderMixin
+from .nfl_render import NflRenderMixin
 from plugins.base_plugin.presentation import PresentationMode, PresentationPreparation
 from plugins.base_plugin.render_provenance import SourceProvenance, read_source_provenance
 from utils.safe_image import safe_open_image
@@ -58,6 +60,7 @@ class SportsDashboard(
     F1Mixin,
     OffseasonHubMixin,
     OffseasonRenderMixin,
+    NflRenderMixin,
     BasePlugin,
 ):
     def presentation_mode(self, settings):
@@ -1917,6 +1920,7 @@ _SPLIT_MODULES = (
     _f1_module,
     _offseason_hub_module,
     _offseason_render_module,
+    _nfl_render_module,
 )
 for _module in _SPLIT_MODULES:
     _module.SportsDashboard = SportsDashboard

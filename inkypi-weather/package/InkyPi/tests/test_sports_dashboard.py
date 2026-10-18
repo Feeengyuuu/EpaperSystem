@@ -332,8 +332,6 @@ def test_offseason_hub_sport_accents_are_distinct_comic_palette_colors():
             assert palette["pga_leader"] != palette["pga_accent"]
             assert palette["nfl_field_tint"] != palette["panel_blue"]
             assert palette["ncaa_field_tint"] != palette["panel_blue"]
-            assert SportsDashboard._football_context_fill_key("NFL") == "nfl_field_tint"
-            assert SportsDashboard._football_context_fill_key("NCAA") == "ncaa_field_tint"
         finally:
             _ACTIVE_COLORS.reset(token)
 
@@ -6867,36 +6865,17 @@ def test_main_card_logo_fallbacks_normalize_team_name_aliases():
         "wins_a": None,
         "wins_b": None,
     }
-    plugin._draw_football_main_card(
+    nfl_fallbacks = []
+    plugin._draw_team_logo = lambda _image, _draw, _url, _x, _y, _size, fallback: nfl_fallbacks.append(str(fallback or ""))
+    plugin._draw_nfl_featured_card(
         image,
         draw,
-        (0, 0, 320, 190),
+        (0, 0, 320, 200),
         {"sport": "NFL", "status": "NEXT", "main": nfl_event},
         now,
-        "NFL",
     )
-    assert logo_fallbacks[-2:] == ["NE", "SEA"]
+    assert nfl_fallbacks[:2] == ["NE", "SEA"]
 
-    ncaa_event = {
-        "sport": "NCAA",
-        "state": "scheduled",
-        "start": now + timedelta(days=4),
-        "team_a": "Notre Dame Fighting Irish",
-        "team_a_name": "Notre Dame",
-        "team_b": "Texas Longhorns",
-        "team_b_name": "Texas",
-        "wins_a": None,
-        "wins_b": None,
-    }
-    plugin._draw_football_main_card(
-        image,
-        draw,
-        (0, 0, 320, 190),
-        {"sport": "NCAA", "status": "NEXT", "main": ncaa_event},
-        now,
-        "NCAA",
-    )
-    assert logo_fallbacks[-2:] == ["ND", "TEX"]
 
 
 def test_ncaa_chinese_name_maps_cover_all_known_espn_codes():
@@ -7510,23 +7489,21 @@ def test_standalone_sport_panels_draw_their_own_information():
     assert "CARD" not in seen_texts
     assert "R3 68 / -2" in seen_texts
     assert "LEADERBOARD" in seen_texts
-    assert "NFL LIVE" in seen_texts
+    assert "Q2 8:42" in seen_texts
     assert "\u897f\u96c5\u56fe\u6d77\u9e70" in seen_texts
     assert "\u65b0\u82f1\u683c\u5170\u7231\u56fd\u8005" in seen_texts
     assert "3RD & 4" in seen_texts
-    assert any("Kenneth Walker run for 6 yards" in text for text in seen_texts)
-    assert "TV NBC  |  SPREAD NE -2.5  |  O/U 44.5" in seen_texts
+    assert "SCOREBOARD" in seen_texts
     assert "NCAA LIVE" in seen_texts
     assert "CFB" in seen_texts
     assert "\u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b" in seen_texts
     assert "\u5bc6\u6b47\u6839\u72fc\u737e" in seen_texts
     assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
     assert "NEUTRAL SITE  |  AT&T Stadium  |  TV ESPN / SPREAD TEX -6.5 / O/U 52.5" not in seen_texts
-    assert "LIVE DRIVE" in seen_texts
     assert "COLLEGE DRIVE" in seen_texts
     assert ("https://a.espncdn.com/i/teamlogos/mlb/500/sf.png", 20, "SF") in logo_calls
     assert any(call[0] == "https://example.com/wnba-sea.png" and call[1] == 20 for call in logo_calls)
-    assert ("https://example.com/nfl-sea.png", 20, "SEA") in logo_calls
+    assert ("https://example.com/nfl-sea.png", 24, "SEA") in logo_calls
     assert ("https://example.com/ncaa-tex.png", 20, "TEX") in logo_calls
     assert any(call == ("https://a.espncdn.com/i/teamlogos/mlb/500/tex.png", 11, "TEX") for call in logo_calls)
 
@@ -9810,321 +9787,6 @@ def test_wnba_side_column_uses_result_snap_when_only_recent_is_main_final():
     assert icon_calls[-4:] == ["PERIOD", "PERIOD", "PERIOD", "PERIOD"]
 
 
-def test_football_live_side_column_uses_drive_and_game_info_when_schedule_empty():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 8, 29, 17, 0, tzinfo=la)
-    card = SportsDashboard._offseason_hub_card(
-        "NCAA",
-        SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA"),
-        now,
-    )
-    image = Image.new("RGB", (240, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_football_side_column(image, draw, (0, 0, 220, 200), card, now, "NCAA")
-
-    assert "COLLEGE DRIVE" in seen_texts
-    assert "LIVE DRIVE" not in seen_texts
-    assert "GAME INFO" in seen_texts
-    assert "Q4 1:18" in seen_texts
-    assert "2ND & 8" in seen_texts
-    assert "MICH 36 / POS \u5fb7\u5dde" in seen_texts
-    assert "ESPN / TEX -6.5 / O/U 52.5" in seen_texts
-    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
-    assert "#12 \u5fb7\u5dde 0-0 / #7 \u5bc6\u6b47\u6839 0-0" in seen_texts
-    assert icon_calls[:3] == ["QTR", "DOWN", "FIELD"]
-    assert icon_calls[3:] == ["TV", "SITE", "RECORD"]
-
-
-def test_football_side_column_replaces_empty_recent_with_live_drive_after_upcoming():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
-    card = SportsDashboard._offseason_hub_card(
-        "NFL",
-        SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL"),
-        now,
-    )
-    image = Image.new("RGB", (240, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_side_column(image, draw, (0, 0, 220, 200), card, now, "NFL")
-
-    assert "UPCOMING" in seen_texts
-    assert "LIVE DRIVE" in seen_texts
-    assert seen_texts.index("LIVE DRIVE") < seen_texts.index("UPCOMING")
-    assert "Q2 8:42" in seen_texts
-    assert "3RD & 4" in seen_texts
-    assert "SEA 42 / POS \u6d77\u9e70" in seen_texts
-    assert "Kenneth Walker run for 6 yards" in seen_texts
-    assert "NBC / NE -2.5 / O/U 44.5" in seen_texts
-    assert "RECENT" not in seen_texts
-    assert icon_calls[-5:] == ["QTR", "DOWN", "FIELD", "PLAY", "TV"]
-
-
-def test_football_side_column_replaces_empty_recent_with_game_info_for_next_game():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
-    next_event = next(event for event in parsed["events"] if event["event_id"] == "nfl-next")
-    card = SportsDashboard._offseason_hub_card("NFL", {"events": [next_event]}, now)
-    image = Image.new("RGB", (240, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_side_column(image, draw, (0, 0, 220, 200), card, now, "NFL")
-
-    assert "UPCOMING" in seen_texts
-    assert "GAME INFO" in seen_texts
-    assert "09/14 1:25 PM" in seen_texts
-    assert "\u5305\u88c5\u5de5 @ \u718a" in seen_texts
-    assert "\u5305\u88c5\u5de5 0-0 / \u718a 0-0" in seen_texts
-    assert "FOX / CHI -1.5 / O/U 42.5" in seen_texts
-    assert "Soldier Field" in seen_texts
-    assert "RECENT" not in seen_texts
-    assert icon_calls[-5:] == ["KICK", "MATCH", "TV", "VENUE", "RECORD"]
-
-
-def test_football_side_column_uses_final_snap_when_no_recent_or_upcoming():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 15, 17, 30, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
-    final_event = dict(next(event for event in parsed["events"] if event["event_id"] == "nfl-next"))
-    final_event.update(
-        {
-            "state": "post",
-            "status_text": "Final",
-            "start": datetime(2026, 9, 14, 13, 25, tzinfo=la),
-            "wins_a": 24,
-            "wins_b": 21,
-            "winner_a": True,
-            "winner_b": False,
-            "down_distance": "",
-            "yard_line": "",
-            "possession": "",
-        }
-    )
-    card = {"sport": "NFL", "status": "RECENT", "main": final_event, "upcoming": [], "recent": []}
-    image = Image.new("RGB", (240, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    right_aligned = []
-    original_fit_text = plugin._fit_text
-    original_right_aligned = plugin._draw_right_aligned
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    def capture_right_aligned(draw_obj, pos, text, font, fill):
-        right_aligned.append((str(text), fill))
-        return original_right_aligned(draw_obj, pos, text, font, fill)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_right_aligned = capture_right_aligned
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_side_column(image, draw, (0, 0, 220, 200), card, now, "NFL")
-
-    assert "FINAL SNAP" in seen_texts
-    assert "\u7eff\u6e7e\u5305\u88c5\u5de5 \u80dc3\u5206" in seen_texts
-    assert "\u5305\u88c5\u5de5 24 / \u718a 21" in seen_texts
-    assert "\u5305\u88c5\u5de5 0-0 / \u718a 0-0" in seen_texts
-    assert "FOX / CHI -1.5 / O/U 42.5" in seen_texts
-    assert "Soldier Field" in seen_texts
-    assert "UPCOMING" not in seen_texts
-    assert "RECENT" not in seen_texts
-    assert "No recent results" not in seen_texts
-    assert icon_calls[:5] == ["WIN", "SCORE", "RECORD", "TV", "VENUE"]
-    assert ("\u7eff\u6e7e\u5305\u88c5\u5de5 \u80dc3\u5206", COLORS["nfl_accent"]) in right_aligned
-
-
-def test_ncaa_side_column_uses_final_snap_for_neutral_site_result_without_lists():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 8, 30, 12, 0, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
-    final_event = dict(parsed["events"][0])
-    final_event.update(
-        {
-            "state": "post",
-            "status_text": "Final",
-            "start": datetime(2026, 8, 29, 16, 30, tzinfo=la),
-            "wins_a": 31,
-            "wins_b": 28,
-            "winner_a": True,
-            "winner_b": False,
-            "period": None,
-            "clock": "",
-            "down_distance": "",
-            "yard_line": "",
-            "possession": "",
-        }
-    )
-    card = {"sport": "NCAA", "status": "RECENT", "main": final_event, "upcoming": [], "recent": []}
-    image = Image.new("RGB", (240, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_side_column(image, draw, (0, 0, 220, 200), card, now, "NCAA")
-
-    assert "FINAL SNAP" in seen_texts
-    assert "#12 \u5fb7\u514b\u8428\u65af\u957f\u89d2\u725b \u80dc3\u5206" in seen_texts
-    assert "#12 \u5fb7\u5dde 31 / #7 \u5bc6\u6b47\u6839 28" in seen_texts
-    assert "#12 \u5fb7\u5dde 0-0 / #7 \u5bc6\u6b47\u6839 0-0" in seen_texts
-    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
-    assert "ESPN / TEX -6.5 / O/U 52.5" in seen_texts
-    assert "RANKED WATCH" not in seen_texts
-    assert "RECENT" not in seen_texts
-    assert "No recent results" not in seen_texts
-    assert icon_calls[:5] == ["WIN", "SCORE", "RECORD", "SITE", "TV"]
-
-
-def test_football_main_card_uses_pregame_context_for_scheduled_nfl_game():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
-    next_event = next(event for event in parsed["events"] if event["event_id"] == "nfl-next")
-    card = SportsDashboard._offseason_hub_card("NFL", {"events": [next_event]}, now)
-    image = Image.new("RGB", (340, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NFL")
-
-    assert "KICKOFF" in seen_texts
-    assert "09/14 1:25 PM" in seen_texts
-    assert "TV FOX / CHI -1.5" in seen_texts
-    assert "Soldier Field  |  O/U 42.5" in seen_texts
-    assert "SCHEDULED" not in seen_texts
-    assert icon_calls[-1] == "KICK"
-
-
-def test_football_main_card_uses_final_context_for_completed_nfl_game():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 15, 17, 30, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
-    final_event = dict(next(event for event in parsed["events"] if event["event_id"] == "nfl-next"))
-    final_event.update(
-        {
-            "state": "post",
-            "status_text": "Final",
-            "start": datetime(2026, 9, 14, 13, 25, tzinfo=la),
-            "wins_a": 24,
-            "wins_b": 21,
-            "down_distance": "",
-            "yard_line": "",
-            "possession": "",
-        }
-    )
-    card = SportsDashboard._offseason_hub_card("NFL", {"events": [final_event]}, now)
-    image = Image.new("RGB", (340, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NFL")
-
-    assert "NFL RECENT" in seen_texts
-    assert "FINAL" in seen_texts
-    assert "09/14" in seen_texts
-    assert "Soldier Field" in seen_texts
-    assert "TV FOX  |  SPREAD CHI -1.5  |  O/U 42.5" in seen_texts
-    assert "SCHEDULED" not in seen_texts
-    assert icon_calls[-1] == "SCORE"
-
-
-def test_nfl_main_card_uses_nfl_specific_pregame_context():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
-    next_event = next(event for event in parsed["events"] if event["event_id"] == "nfl-next")
-    card = SportsDashboard._offseason_hub_card("NFL", {"events": [next_event]}, now)
-    image = Image.new("RGB", (340, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
-
-    assert "NFL NEXT" in seen_texts
-    assert "NFL KICK" in seen_texts
-    assert "09/14 1:25 PM" in seen_texts
-    assert "TV FOX / CHI -1.5 / O/U 42.5" in seen_texts
-    assert "Soldier Field" in seen_texts
-    assert "KICKOFF" not in seen_texts
-    assert icon_calls[-1] == "KICK"
-
-
 def test_scheduled_football_main_cards_do_not_repeat_preview_center_label():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
@@ -10144,74 +9806,14 @@ def test_scheduled_football_main_cards_do_not_repeat_preview_center_label():
     plugin._fit_text = capture_fit_text
     plugin._draw_team_logo = lambda *_args, **_kwargs: None
 
-    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), nfl_card, now)
+    plugin._draw_nfl_featured_card(image, draw, (0, 0, 320, 200), nfl_card, now)
     plugin._draw_ncaa_main_card(image, draw, (0, 210, 320, 400), ncaa_card, now)
 
     assert "Preview" not in seen_texts
     assert "PREVIEW" not in seen_texts
-    assert "NFL KICK" in seen_texts
+    assert any(text.endswith("PM") for text in seen_texts)
     assert "KICKOFF" in seen_texts
     assert "NEUTRAL / Kickoff Watch" in seen_texts
-
-
-def test_nfl_main_card_uses_nfl_specific_final_context():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 15, 17, 30, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
-    final_event = dict(next(event for event in parsed["events"] if event["event_id"] == "nfl-next"))
-    final_event.update(
-        {
-            "state": "post",
-            "status_text": "Final",
-            "start": datetime(2026, 9, 14, 13, 25, tzinfo=la),
-            "wins_a": 24,
-            "wins_b": 21,
-            "down_distance": "",
-            "yard_line": "",
-            "possession": "",
-        }
-    )
-    card = SportsDashboard._offseason_hub_card("NFL", {"events": [final_event]}, now)
-    image = Image.new("RGB", (340, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
-
-    assert "NFL RECENT" in seen_texts
-    assert "FINAL SCORE" in seen_texts
-    assert "09/14" in seen_texts
-    assert "TV FOX / CHI -1.5 / O/U 42.5" in seen_texts
-    assert "Soldier Field" in seen_texts
-    assert "KICKOFF" not in seen_texts
-    assert icon_calls[-1] == "SCORE"
-
-
-def test_football_field_marker_fraction_maps_yard_line_to_screen_position():
-    event = {
-        "team_a_code": "SEA",
-        "team_b_code": "NE",
-        "possession": "SEA",
-        "yard_line": "SEA 42",
-    }
-
-    assert SportsDashboard._football_field_marker_fraction(event) == 0.42
-
-    event["yard_line"] = "NE 36"
-    assert SportsDashboard._football_field_marker_fraction(event) == 0.64
-
-    event.update({"possession": "NE", "yard_line": "NE 25"})
-    assert SportsDashboard._football_field_marker_fraction(event) == 0.75
 
 
 def test_football_possession_side_fill_key_marks_only_live_possession():
@@ -10427,192 +10029,6 @@ def test_football_small_note_label_prioritizes_final_status():
     )
 
 
-def test_nfl_main_card_keeps_live_team_scores_high_contrast():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
-    card = SportsDashboard._offseason_hub_card(
-        "NFL",
-        SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL"),
-        now,
-    )
-    image = Image.new("RGB", (340, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    team_score_calls = []
-
-    def capture_team_score(*args, **kwargs):
-        team_score_calls.append(
-            {
-                "team": args[4],
-                "score": args[5],
-                "team_fill": kwargs.get("team_fill"),
-                "score_fill": kwargs.get("score_fill"),
-            }
-        )
-
-    plugin._draw_hub_team_score = capture_team_score
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NFL")
-
-    assert team_score_calls[0]["team"] == "\u897f\u96c5\u56fe\u6d77\u9e70"
-    assert team_score_calls[0]["score"] == 17
-    assert team_score_calls[0]["team_fill"] == COLORS["text"]
-    assert team_score_calls[0]["score_fill"] == COLORS["text"]
-    assert team_score_calls[1]["team"] == "\u65b0\u82f1\u683c\u5170\u7231\u56fd\u8005"
-    assert team_score_calls[1]["team_fill"] == COLORS["text"]
-    assert team_score_calls[1]["score_fill"] == COLORS["text"]
-
-
-def test_nfl_main_card_highlights_final_winner():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 15, 17, 30, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
-    final_event = dict(next(event for event in parsed["events"] if event["event_id"] == "nfl-next"))
-    final_event.update(
-        {
-            "state": "post",
-            "status_text": "Final",
-            "start": datetime(2026, 9, 14, 13, 25, tzinfo=la),
-            "wins_a": 21,
-            "wins_b": 24,
-            "down_distance": "",
-            "yard_line": "",
-            "possession": "",
-        }
-    )
-    card = SportsDashboard._offseason_hub_card("NFL", {"events": [final_event]}, now)
-    image = Image.new("RGB", (340, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    team_score_calls = []
-
-    def capture_team_score(*args, **kwargs):
-        team_score_calls.append(
-            {
-                "team": args[4],
-                "score": args[5],
-                "team_fill": kwargs.get("team_fill"),
-                "score_fill": kwargs.get("score_fill"),
-            }
-        )
-
-    plugin._draw_hub_team_score = capture_team_score
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
-
-    assert team_score_calls[0]["team_fill"] == COLORS["text"]
-    assert team_score_calls[0]["score_fill"] == COLORS["text"]
-    assert team_score_calls[1]["team"] == "芝加哥熊"
-    assert team_score_calls[1]["score"] == 24
-    assert team_score_calls[1]["team_fill"] == COLORS["amber"]
-    assert team_score_calls[1]["score_fill"] == COLORS["amber"]
-
-
-def test_nfl_main_card_uses_own_field_tint_for_live_context_box():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
-    card = SportsDashboard._offseason_hub_card(
-        "NFL",
-        SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL"),
-        now,
-    )
-    image = Image.new("RGB", (340, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
-
-    assert COLORS["nfl_field_tint"] != COLORS["panel_blue"]
-    assert image.getpixel((20, 140)) == COLORS["nfl_field_tint"]
-
-
-def test_nfl_main_card_live_meta_prioritizes_tv_and_line_before_last_play():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
-    card = SportsDashboard._offseason_hub_card(
-        "NFL",
-        SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL"),
-        now,
-    )
-    image = Image.new("RGB", (340, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
-
-    assert "NFL DRIVE" in seen_texts
-    assert "DOWN" in seen_texts
-    assert "3RD & 4" in seen_texts
-    assert "FIELD" in seen_texts
-    assert "SEA 42" in seen_texts
-    assert "POS \u6d77\u9e70" in seen_texts
-    assert "PLAY" in seen_texts
-    assert "Kenneth Walker run for 6 yards" in seen_texts
-    assert "TV NBC  |  SPREAD NE -2.5  |  O/U 44.5" in seen_texts
-    assert "LAST Kenneth Walker run for 6 yards" not in seen_texts
-    assert icon_calls[-3:] == ["DOWN", "FIELD", "PLAY"]
-
-
-def test_nfl_main_card_live_drive_chips_fall_back_without_drive_position():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 10, 17, 30, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
-    event = dict(next(event for event in parsed["events"] if event["event_id"] == "nfl-live"))
-    event.update({"down_distance": "", "yard_line": "", "note": "", "last_play": ""})
-    card = SportsDashboard._offseason_hub_card("NFL", {"events": [event]}, now)
-    image = Image.new("RGB", (340, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
-
-    assert "LIVE DRIVE" in seen_texts
-    assert "FIELD" not in icon_calls
-    assert icon_calls.count("DOWN") == 2
-
-
-def test_nfl_live_drive_chips_use_last_play_when_position_missing():
-    plugin = _plugin()
-    image = Image.new("RGB", (180, 40), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    chips = []
-
-    def capture_chip(_draw, _box, label, value, accent):
-        chips.append((label, value, accent))
-
-    plugin._draw_nfl_live_drive_chip = capture_chip
-    plugin._draw_nfl_live_drive_chips(
-        draw,
-        0,
-        0,
-        160,
-        {"down_distance": "", "yard_line": "", "note": "", "last_play": "Timeout New England"},
-    )
-
-    assert chips == [("PLAY", "LAST PLAY", COLORS["amber"])]
-
-
 def test_ncaa_main_card_highlights_final_winner_team_block():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
@@ -10649,52 +10065,6 @@ def test_ncaa_main_card_highlights_final_winner_team_block():
         {"side": "a", "align": "left", "team_fill": COLORS["amber"]},
         {"side": "b", "align": "right", "team_fill": COLORS["text"]},
     ]
-
-
-def test_ncaa_side_column_game_info_prioritizes_ranked_neutral_site_context():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 8, 29, 12, 0, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
-    next_event = dict(parsed["events"][0])
-    next_event.update(
-        {
-            "state": "pre",
-            "status_text": "Preview",
-            "score_a": "",
-            "score_b": "",
-            "period": None,
-            "clock": "",
-            "down_distance": "",
-            "yard_line": "",
-            "possession": "",
-        }
-    )
-    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [next_event]}, now)
-    image = Image.new("RGB", (240, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_side_column(image, draw, (0, 0, 220, 200), card, now, "NCAA")
-
-    assert "RANKED WATCH" in seen_texts
-    assert "GAME INFO" in seen_texts
-    assert "08/29 4:30 PM" in seen_texts
-    assert "#12 \u5fb7\u5dde VS #7 \u5bc6\u6b47\u6839" in seen_texts
-    assert "#12 \u5fb7\u5dde 0-0 / #7 \u5bc6\u6b47\u6839 0-0" in seen_texts
-    assert "NEUTRAL / Kickoff Classic / AT&T Stadium" in seen_texts
-    assert "ESPN / TEX -6.5 / O/U 52.5" in seen_texts
-    assert "RECENT" not in seen_texts
-    assert icon_calls[-5:] == ["KICK", "MATCH", "TV", "SITE", "RECORD"]
 
 
 def test_ncaa_matchup_label_maps_english_aliases_to_chinese_school_names():
@@ -10917,10 +10287,9 @@ def test_nfl_standalone_panel_uses_own_comic_accent_not_mlb_blue():
 
     plugin._draw_halftone = capture_halftone
     plugin._draw_hub_card_shell = capture_shell
-    plugin._draw_nfl_field = lambda *_args, **_kwargs: None
-    plugin._draw_hub_team_score = lambda *_args, **_kwargs: None
-    plugin._draw_nfl_pregame_context = lambda *_args, **_kwargs: None
-    plugin._draw_football_side_column = lambda *_args, **_kwargs: None
+    plugin._draw_nfl_scorebug = lambda *_args, **_kwargs: 120
+    plugin._draw_nfl_pregame_details = lambda *_args, **_kwargs: None
+    plugin._draw_nfl_scoreboard_column = lambda *_args, **_kwargs: None
 
     plugin._draw_nfl_standalone_panel(image, draw, (0, 0, 551, 267), card, "HUB LIVE", now)
 
@@ -10958,42 +10327,6 @@ def test_ncaa_standalone_panel_uses_own_comic_accent_token():
     assert COLORS["ncaa_accent"] != COLORS["nfl_accent"]
 
 
-def test_nfl_standalone_panel_uses_drive_first_layout():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 9, 10, 17, 50, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
-    card = SportsDashboard._offseason_hub_card("NFL", parsed, now)
-    image = Image.new("RGB", (552, 268), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    logo_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    def capture_team_logo(_image, _draw, logo_url, _x, _y, size, fallback_text):
-        logo_calls.append((str(logo_url or ""), int(size), str(fallback_text or "")))
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_team_logo = capture_team_logo
-    plugin._draw_nfl_standalone_panel(image, draw, (0, 0, 551, 267), card, "HUB LIVE", now)
-
-    assert "NFL LIVE" in seen_texts
-    assert "\u897f\u96c5\u56fe\u6d77\u9e70" in seen_texts
-    assert "\u65b0\u82f1\u683c\u5170\u7231\u56fd\u8005" in seen_texts
-    assert "NFL DRIVE" in seen_texts
-    assert "3RD & 4" in seen_texts
-    assert "SEA 42" in seen_texts
-    assert "POS \u6d77\u9e70" in seen_texts
-    assert any("Kenneth Walker run for 6 yards" in text for text in seen_texts)
-    assert "TV NBC  |  SPREAD NE -2.5  |  O/U 44.5" in seen_texts
-    assert ("https://example.com/nfl-sea.png", 20, "SEA") in logo_calls
-    assert ("https://example.com/nfl-ne.png", 20, "NE") in logo_calls
-
-
 def test_nfl_main_card_uses_named_stage_header_without_week_prefix():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
@@ -11013,7 +10346,7 @@ def test_nfl_main_card_uses_named_stage_header_without_week_prefix():
 
     plugin._fit_text = capture_fit_text
     plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_nfl_main_card(image, draw, (0, 0, 320, 190), card, now)
+    plugin._draw_nfl_featured_card(image, draw, (0, 0, 320, 200), card, now)
 
     assert card["week_label"] == "SUPER BOWL"
     assert "SUPER BOWL" in seen_texts
@@ -11373,52 +10706,6 @@ def test_ncaa_side_column_keeps_final_snap_below_ranked_watch_when_upcoming_exis
     assert final_y > ranked_y
 
 
-def test_ncaa_main_card_uses_neutral_site_pregame_context():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 8, 29, 12, 0, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
-    next_event = dict(parsed["events"][0])
-    next_event.update(
-        {
-            "state": "pre",
-            "status_text": "Preview",
-            "score_a": "",
-            "score_b": "",
-            "period": None,
-            "clock": "",
-            "down_distance": "",
-            "yard_line": "",
-            "possession": "",
-            "wins_a": None,
-            "wins_b": None,
-        }
-    )
-    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [next_event]}, now)
-    image = Image.new("RGB", (340, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NCAA")
-
-    assert "TOP 25" in seen_texts
-    assert "KICKOFF" in seen_texts
-    assert "08/29 4:30 PM" in seen_texts
-    assert "NEUTRAL / Kickoff Classic" in seen_texts
-    assert "AT&T Stadium  |  O/U 52.5" in seen_texts
-    assert "NEUTRAL SITE" not in seen_texts
-    assert icon_calls[-1] == "KICK"
-
-
 def test_ncaa_main_card_live_drive_uses_down_and_field_chips():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
@@ -11549,23 +10836,6 @@ def test_ncaa_live_drive_chips_use_last_play_when_position_missing():
     assert chips == [("PLAY", "LAST PLAY", COLORS["amber"])]
 
 
-def test_football_main_card_uses_ncaa_tag_token_for_ncaa_fallback():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 8, 29, 12, 0, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
-    next_event = dict(parsed["events"][0])
-    next_event.update({"state": "pre", "score_a": "", "score_b": ""})
-    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [next_event]}, now)
-    image = Image.new("RGB", (340, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NCAA")
-
-    assert image.getpixel((20, 20)) == COLORS["ncaa_tag"]
-
-
 def test_ncaa_main_card_uses_own_field_tint_for_pregame_context_box():
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
@@ -11596,50 +10866,6 @@ def test_ncaa_main_card_uses_own_field_tint_for_pregame_context_box():
 
     assert COLORS["ncaa_field_tint"] != COLORS["panel_blue"]
     assert image.getpixel((20, 145)) == COLORS["ncaa_field_tint"]
-
-
-def test_ncaa_main_card_uses_neutral_site_final_context():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    now = datetime(2026, 8, 30, 12, 0, tzinfo=la)
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), la, "NCAA")
-    final_event = dict(parsed["events"][0])
-    final_event.update(
-        {
-            "state": "post",
-            "status_text": "Final",
-            "start": datetime(2026, 8, 29, 16, 30, tzinfo=la),
-            "wins_a": 31,
-            "wins_b": 28,
-            "period": None,
-            "clock": "",
-            "down_distance": "",
-            "yard_line": "",
-            "possession": "",
-        }
-    )
-    card = SportsDashboard._offseason_hub_card("NCAA", {"events": [final_event]}, now)
-    image = Image.new("RGB", (340, 210), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    icon_calls = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_sport_info_icon = lambda _draw, kind, _x, _y, _accent: icon_calls.append(str(kind))
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_main_card(image, draw, (0, 0, 320, 190), card, now, "NCAA")
-
-    assert "NCAA RECENT" in seen_texts
-    assert "FINAL" in seen_texts
-    assert "NEUTRAL / Kickoff Classic" in seen_texts
-    assert "NEUTRAL SITE  |  AT&T Stadium  |  TV ESPN / SPREAD TEX -6.5 / O/U 52.5" in seen_texts
-    assert "SCHEDULED" not in seen_texts
-    assert icon_calls[-1] == "SCORE"
 
 
 def test_wnba_side_row_draws_live_status_context():
@@ -12182,142 +11408,6 @@ def test_hub_team_score_right_logo_stays_before_team_name():
 
     assert logo["fallback"] == "NY"
     assert logo["x"] < team_left
-    assert 0 <= logo_gap <= 5
-
-
-def test_football_side_row_draws_live_drive_context_with_time():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    event = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")["events"][0]
-    image = Image.new("RGB", (250, 40), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-
-    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
-
-    assert "Q2 8:42 / 3RD & 4 / SEA 42 / POS \u6d77\u9e70" in seen_texts
-
-
-def test_football_side_row_draws_mini_field_marker_for_live_drive():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    event = dict(SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")["events"][0])
-    image = Image.new("RGB", (250, 40), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    field_markers = []
-
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_mini_field_marker = lambda _draw, x, y, width, sport, row_event: field_markers.append(
-        (x, y, width, sport, row_event.get("yard_line"))
-    )
-
-    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
-
-    assert field_markers == [(68, 24, 24, "NFL", "SEA 42")]
-
-    field_markers.clear()
-    event.update({"state": "pre", "yard_line": "", "possession": "", "down_distance": ""})
-    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
-
-    assert field_markers == []
-
-
-def test_football_side_row_draws_down_chip_for_live_drive():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    event = dict(SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")["events"][0])
-    image = Image.new("RGB", (250, 40), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    down_chips = []
-
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-    plugin._draw_football_mini_field_marker = lambda *_args, **_kwargs: None
-    plugin._draw_football_down_chip = lambda _draw, x, y, label, row_event, sport: down_chips.append(
-        (x, y, label, row_event.get("down_distance"), sport)
-    )
-
-    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
-
-    assert SportsDashboard._football_down_number(event) == 3
-    assert SportsDashboard._football_down_chip_label(event) == "3&4"
-    assert down_chips == [(96, 24, "3&4", "3RD & 4", "NFL")]
-
-    down_chips.clear()
-    event.update({"state": "pre", "yard_line": "SEA 42", "possession": "SEA", "down_distance": "3RD & 4"})
-    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
-
-    assert SportsDashboard._football_down_chip_label(event) == ""
-    assert down_chips == []
-
-
-def test_football_side_row_keeps_broadcast_context_for_scheduled_game():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    parsed = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")
-    event = next(item for item in parsed["events"] if item["event_id"] == "nfl-next")
-    image = Image.new("RGB", (250, 40), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    seen_texts = []
-    original_fit_text = plugin._fit_text
-
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
-
-    plugin._fit_text = capture_fit_text
-    plugin._draw_team_logo = lambda *_args, **_kwargs: None
-
-    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
-
-    assert "FOX / CHI -1.5 / O/U 42.5" in seen_texts
-
-
-def test_football_side_row_left_logo_stays_next_to_left_team_name():
-    plugin = _plugin()
-    la = ZoneInfo("America/Los_Angeles")
-    event = SportsDashboard._parse_football_scoreboard(_sample_nfl_scoreboard_payload(), la, "NFL")["events"][0]
-    image = Image.new("RGB", (250, 40), COLORS["panel"])
-    draw = ImageDraw.Draw(image)
-    logo_calls = []
-    right_aligned_calls = []
-    original_right_aligned = plugin._draw_right_aligned
-
-    def capture_team_logo(_image, _draw, logo_url, x, y, size, fallback_text):
-        logo_calls.append(
-            {
-                "url": str(logo_url or ""),
-                "x": int(x),
-                "y": int(y),
-                "size": int(size),
-                "fallback": str(fallback_text or ""),
-            }
-        )
-
-    def capture_right_aligned(draw_obj, xy, text, font, color):
-        right_aligned_calls.append((xy, str(text), font))
-        return original_right_aligned(draw_obj, xy, text, font, color)
-
-    plugin._draw_team_logo = capture_team_logo
-    plugin._draw_right_aligned = capture_right_aligned
-
-    plugin._draw_football_small_row(image, draw, 10, 230, 8, event, True, "NFL")
-
-    matchup_xy, matchup_text, matchup_font = next(
-        call for call in right_aligned_calls if call[1] == "\u6d77\u9e70 17-14 \u7231\u56fd\u8005"
-    )
-    matchup_left = int(matchup_xy[0] - SportsDashboard._text_width(draw, matchup_text, matchup_font))
-    left_logo = next(call for call in logo_calls if call["fallback"] == "SEA")
-    logo_gap = matchup_left - (left_logo["x"] + left_logo["size"])
-
-    assert left_logo["x"] >= 66
     assert 0 <= logo_gap <= 5
 
 
