@@ -347,6 +347,11 @@ LOCAL_EWC_GAME_PLACEHOLDER_DIR = os.path.join(
 )
 LOCAL_MSI_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "msi.png")
 LOCAL_WORLDS_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "worlds.png")
+# Edition-specific official wordmarks ("WORLDS 26"); editions without one keep
+# the emblem and source label.
+LOCAL_WORLDS_WORDMARK_PATHS = {
+    2026: os.path.join(LOCAL_TEAM_LOGO_DIR, "worlds_wordmark_2026.png"),
+}
 LOCAL_TBD_TEAM_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "tbd.png")
 LOCAL_WORLDCUP_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "worldcup.png")
 LOCAL_NBA_LOGO_PATH = os.path.join(LOCAL_TEAM_LOGO_DIR, "nba.png")

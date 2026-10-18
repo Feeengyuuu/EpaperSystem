@@ -10,6 +10,20 @@
         444,
         454
       ]
+    },
+    "worlds_wordmark_2026.png": {
+      "source": "Official Worlds 2026 wordmark (WORLDS 26 with the Worlds emblem), supplied by the owner on 2026-10-18",
+      "source_sha256": "e26ca7c395fc25b1b30410527a96d5ed402e3d675d7ce324bde6ce375b582c3b",
+      "source_dimensions": [
+        792,
+        213
+      ],
+      "transform": "Alpha mask cropped to its visible box, ink recoloured to near-black (8, 8, 8).",
+      "runtime_sha256": "fc8f93338a5e07379608004569dd432413f34fda761eb871d45b366dca3135eb",
+      "runtime_dimensions": [
+        662,
+        155
+      ]
     }
   }
 }

@@ -1669,24 +1669,31 @@ class EsportsRenderMixin:
 
         header_y = 12
 
-        logo_x = right_x + 13
-        logo_y = header_y + 5
-        logo_w, logo_h = LOL_HEADER_LOGO_SIZE
-        if logo_path in {LOCAL_MSI_LOGO_PATH, LOCAL_WORLDS_LOGO_PATH}:
-            logo_w, logo_h = MSI_HEADER_LOGO_SIZE
-            logo_x += (LOL_HEADER_LOGO_SIZE[0] - logo_w) // 2
-            logo_y += (LOL_HEADER_LOGO_SIZE[1] - logo_h) // 2
-        self._draw_lpl_logo(image, draw, logo_x, logo_y, logo_w, logo_h, logo_path=logo_path, fallback_text=config["key"])
-        source_label = "MSI WATCH" if featured_event_page and config["key"] == "LPL" else self._source_label(source_state)
-        source_label, source_font = self._fit_text(draw, source_label, 62, 10, bold=True, min_size=8)
-        self._draw_text_in_box(
-            draw,
-            (right_x + 90, header_y + 9, right_x + right_w - 92, header_y + 32),
-            source_label,
-            source_font,
-            COLORS["muted"],
-            align="center",
+        wordmark_path = self._worlds_header_wordmark_path(config, logo_path, now)
+        wordmark_drawn = bool(wordmark_path) and self._draw_worlds_header_wordmark(
+            image,
+            wordmark_path,
+            (right_x + 13, header_y + 1, right_x + right_w - 96, header_y + 41),
         )
+        if not wordmark_drawn:
+            logo_x = right_x + 13
+            logo_y = header_y + 5
+            logo_w, logo_h = LOL_HEADER_LOGO_SIZE
+            if logo_path in {LOCAL_MSI_LOGO_PATH, LOCAL_WORLDS_LOGO_PATH}:
+                logo_w, logo_h = MSI_HEADER_LOGO_SIZE
+                logo_x += (LOL_HEADER_LOGO_SIZE[0] - logo_w) // 2
+                logo_y += (LOL_HEADER_LOGO_SIZE[1] - logo_h) // 2
+            self._draw_lpl_logo(image, draw, logo_x, logo_y, logo_w, logo_h, logo_path=logo_path, fallback_text=config["key"])
+            source_label = "MSI WATCH" if featured_event_page and config["key"] == "LPL" else self._source_label(source_state)
+            source_label, source_font = self._fit_text(draw, source_label, 62, 10, bold=True, min_size=8)
+            self._draw_text_in_box(
+                draw,
+                (right_x + 90, header_y + 9, right_x + right_w - 92, header_y + 32),
+                source_label,
+                source_font,
+                COLORS["muted"],
+                align="center",
+            )
         if live:
             pill_text = "LIVE"
         elif featured_event_page:
@@ -1716,6 +1723,25 @@ class EsportsRenderMixin:
             league_key=league_key,
         )
         self._draw_lpl_recent_rows(image, draw, right_x, right_w, 374, recent[:2], league_key=league_key)
+
+    @staticmethod
+    def _worlds_header_wordmark_path(config, logo_path, now):
+        if (config or {}).get("key") != "WORLDS" or logo_path != LOCAL_WORLDS_LOGO_PATH:
+            return None
+        return LOCAL_WORLDS_WORDMARK_PATHS.get(getattr(now, "year", None))
+
+    def _draw_worlds_header_wordmark(self, image, path, box):
+        """Draw the edition wordmark across the header slot, keeping its proportions."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        wordmark = self._load_local_logo(path, (x2 - x1, y2 - y1), alpha_threshold=8)
+        if not wordmark:
+            return False
+        # One-colour mask like the emblem: draw it in the theme ink. A hard
+        # edge keeps the panel's dithering from fringing the letters in colour.
+        tinted = Image.new("RGBA", wordmark.size, tuple(COLORS["text"][:3]) + (255,))
+        tinted.putalpha(wordmark.getchannel("A").point(lambda value: 255 if value >= 128 else 0))
+        image.paste(tinted, (x1, y1 + (y2 - y1 - tinted.height) // 2), tinted)
+        return True
 
     def _draw_lpl_logo(self, image, draw, x, y, width, height, logo_path=None, fallback_text=None):
         x = int(x)

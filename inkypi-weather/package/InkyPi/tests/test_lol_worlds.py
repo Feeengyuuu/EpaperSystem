@@ -14,6 +14,7 @@ from plugins.sports_dashboard.common import (
     _ACTIVE_COLORS,
     DAY_COLORS,
     DEEP_NIGHT_COLORS,
+    LOCAL_WORLDS_WORDMARK_PATHS,
     TEAM_LOGO_LIGHT_INFO_KEY,
 )
 from plugins.sports_dashboard.sports_dashboard import (
@@ -412,19 +413,111 @@ def test_lol_sidebar_override_can_force_worlds():
     assert SportsDashboard._lol_esports_sidebar_override({"lolEsportsSidebarOverride": "worlds"}) == "WORLDS"
 
 
-def test_worlds_sidebar_uses_worlds_branding(monkeypatch):
-    plugin = _plugin()
+def _capture_worlds_header(plugin):
     logos = []
+    wordmarks = []
+    texts = []
+    original_wordmark = plugin._draw_worlds_header_wordmark
+    original_text = plugin._draw_text_in_box
 
     def capture_logo(image, draw, x, y, width, height, logo_path=None, fallback_text=None):
         logos.append((logo_path, (width, height), fallback_text))
 
+    def capture_wordmark(image, path, box):
+        wordmarks.append((path, box))
+        return original_wordmark(image, path, box)
+
+    def capture_text(draw, box, text, font, color, align="left"):
+        texts.append(str(text))
+        return original_text(draw, box, text, font, color, align=align)
+
     plugin._draw_lpl_logo = capture_logo
+    plugin._draw_worlds_header_wordmark = capture_wordmark
+    plugin._draw_text_in_box = capture_text
+    return logos, wordmarks, texts
+
+
+def test_worlds_sidebar_header_uses_the_official_edition_wordmark():
+    plugin = _plugin()
+    logos, wordmarks, texts = _capture_worlds_header(plugin)
     image = Image.new("RGB", (800, 480), (255, 255, 255))
     selected = SportsDashboard._select_worlds_events(_worlds_events(), NOW)
 
     plugin._draw_lpl_sidebar(image, 552, selected, "WORLDS LIVE DATA", NOW, league_key="WORLDS")
 
+    right_x = 552 + 4
+    assert wordmarks == [(LOCAL_WORLDS_WORDMARK_PATHS[2026], (right_x + 13, 13, 800 - 96, 53))]
+    assert logos == []
+    assert "WORLDS DATA" not in texts
+    # The mark fills the old emblem + label slot, left of the LIVE pill.
+    header = image.crop((right_x + 13, 13, 800 - 96, 53))
+    ink_columns = [x for x in range(header.width) if any(header.getpixel((x, y)) == DAY_COLORS["text"] for y in range(header.height))]
+    assert ink_columns[0] <= 1 and ink_columns[-1] >= header.width - 3
+
+
+def test_worlds_sidebar_keeps_the_emblem_for_editions_without_a_wordmark():
+    plugin = _plugin()
+    logos, wordmarks, texts = _capture_worlds_header(plugin)
+    image = Image.new("RGB", (800, 480), (255, 255, 255))
+    later = NOW.replace(year=2027)
+    selected = SportsDashboard._select_worlds_events(_worlds_events(), later)
+
+    plugin._draw_lpl_sidebar(image, 552, selected, "WORLDS LIVE DATA", later, league_key="WORLDS")
+
+    assert 2027 not in LOCAL_WORLDS_WORDMARK_PATHS
+    assert wordmarks == []
+    assert logos[0] == (LOCAL_WORLDS_LOGO_PATH, MSI_HEADER_LOGO_SIZE, "WORLDS")
+    assert "WORLDS DATA" in texts
+
+
+def test_lpl_and_msi_headers_never_use_the_worlds_wordmark():
+    for league in ("LPL", "LCK", "MSI"):
+        config = SportsDashboard._lol_sidebar_config(league)
+        assert SportsDashboard._worlds_header_wordmark_path(config, config["logo_path"], NOW) is None
+
+
+def test_worlds_wordmark_keeps_its_proportions_and_uses_the_theme_ink():
+    plugin = _plugin()
+    for colors in (DAY_COLORS, DEEP_NIGHT_COLORS):
+        token = _ACTIVE_COLORS.set(colors)
+        try:
+            image = Image.new("RGB", (160, 60), colors["panel"])
+            assert plugin._draw_worlds_header_wordmark(image, LOCAL_WORLDS_WORDMARK_PATHS[2026], (0, 0, 131, 40))
+        finally:
+            _ACTIVE_COLORS.reset(token)
+        bbox = ImageChops.difference(image, Image.new("RGB", image.size, colors["panel"])).getbbox()
+        width, height = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        with Image.open(LOCAL_WORLDS_WORDMARK_PATHS[2026]) as source:
+            assert abs(width / height - source.width / source.height) < 0.15
+        # Hard-edged one-colour mark: only the panel and the theme ink.
+        assert set(image.get_flattened_data()) <= {tuple(colors["panel"]), tuple(colors["text"])}
+
+
+def test_worlds_wordmark_asset_matches_its_manifest():
+    path = Path(LOCAL_WORLDS_WORDMARK_PATHS[2026])
+    manifest = json.loads((path.parent / "worlds_manifest.json").read_text(encoding="utf-8"))
+    entry = manifest["assets"][path.name]
+
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == entry["runtime_sha256"]
+    with Image.open(path) as mark:
+        assert mark.mode == "RGBA"
+        assert list(mark.size) == entry["runtime_dimensions"]
+        assert mark.getchannel("A").getbbox() == (0, 0, mark.width, mark.height)
+        opaque = mark.getchannel("A").point(lambda alpha: 255 if alpha >= 128 else 0)
+        brightness = mark.convert("RGB").convert("L")
+    assert ImageChops.multiply(brightness, opaque).getextrema()[1] <= 16
+
+
+def test_worlds_sidebar_uses_worlds_branding(monkeypatch):
+    plugin = _plugin()
+    logos, _wordmarks, _texts = _capture_worlds_header(plugin)
+    plugin._draw_worlds_header_wordmark = lambda *_args, **_kwargs: False
+    image = Image.new("RGB", (800, 480), (255, 255, 255))
+    selected = SportsDashboard._select_worlds_events(_worlds_events(), NOW)
+
+    plugin._draw_lpl_sidebar(image, 552, selected, "WORLDS LIVE DATA", NOW, league_key="WORLDS")
+
+    # Without the wordmark (missing asset) the emblem comes back.
     assert logos[0] == (LOCAL_WORLDS_LOGO_PATH, MSI_HEADER_LOGO_SIZE, "WORLDS")
     config = SportsDashboard._lol_sidebar_config("WORLDS")
     assert config["name"] == "Worlds"
