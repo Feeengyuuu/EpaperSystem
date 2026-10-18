@@ -32,8 +32,8 @@ from utils.http_client import (
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping
-from urllib.parse import parse_qsl, urlsplit
+from typing import Any, Literal, Mapping
+from urllib.parse import parse_qsl, quote, urlsplit
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import hashlib
@@ -811,12 +811,18 @@ def _public_http_url(value: Any) -> str | None:
     text = _optional_text(value, maximum=4096)
     if text is None:
         return None
-    if (
-        not text.isascii()
-        or "\\" in text
-        or any(character.isspace() or ord(character) < 32 for character in text)
+    if "\\" in text or any(
+        character.isspace() or ord(character) < 32 or 127 <= ord(character) < 160
+        for character in text
     ):
         raise ValueError("APOD media URL contains invalid characters")
+    # NASA serves IRIs (e.g. a photographer's "č" in the asset path); send the
+    # UTF-8 percent-encoded URI a browser would. A non-ASCII host is encoded too
+    # and then fails the NASA host allowlist below.
+    text = "".join(
+        character if character.isascii() else quote(character, safe="")
+        for character in text
+    )
     parsed = urlsplit(text)
     scheme = parsed.scheme.lower()
     if (
@@ -832,7 +838,7 @@ def _public_http_url(value: Any) -> str | None:
         port = parsed.port
     except ValueError:
         raise ValueError("APOD media URL host or port is invalid") from None
-    if not host or not _trusted_apod_media_host(host):
+    if not host or "%" in host or not _trusted_apod_media_host(host):
         raise ValueError("APOD media URL requires a trusted NASA host")
     expected_port = 443 if scheme == "https" else 80
     if port is not None and port != expected_port:
@@ -1055,8 +1061,14 @@ def _fetch_apod_record(
     api_key: str,
     requested_date: str,
     context,
+    allow_missing_media: bool = False,
 ) -> ApodRecord:
-    """Fetch one bounded, validated APOD response without exposing credentials."""
+    """Fetch one bounded, validated APOD response without exposing credentials.
+
+    An image record without a trusted media URL is refused, except for the
+    current day with allow_missing_media: that record is returned without
+    media so rendering falls back to the newest prior image and retries later.
+    """
 
     reason = "request"
     try:
@@ -1094,7 +1106,12 @@ def _fetch_apod_record(
         hdurl = _safe_media_candidate(raw.get("hdurl"))
         if media_type == "image" and url is None and hdurl is None:
             reason = "missing_safe_media"
-            raise ValueError("APOD image response has no safe media URL")
+            if not allow_missing_media:
+                raise ValueError("APOD image response has no safe media URL")
+            logger.warning(
+                "APOD %s has no trusted image URL; showing the latest prior image",
+                requested,
+            )
         copyright_text = _optional_text(raw.get("copyright"), maximum=500)
     except _ABORT_EXCEPTIONS:
         raise
@@ -1129,43 +1146,6 @@ def _fetch_apod_record(
         fetched_at_utc=_utc_now(),
         source_state="live",
         warning=None,
-    )
-
-
-def _resolve_image_record(
-    *,
-    requested: ApodRecord,
-    fetch_for_date: Callable[[str], ApodRecord],
-    max_prior_days: int = 7,
-) -> tuple[ApodRecord, bool]:
-    """Return the requested image or the newest prior image within the limit."""
-
-    if requested.media_type == "image":
-        return requested, False
-    if not isinstance(max_prior_days, int) or max_prior_days <= 0:
-        raise ValueError("APOD fallback day limit must be positive")
-    requested_day = date.fromisoformat(requested.date)
-    for offset in range(1, max_prior_days + 1):
-        candidate_date = (requested_day - timedelta(days=offset)).isoformat()
-        try:
-            candidate = fetch_for_date(candidate_date)
-        except _ABORT_EXCEPTIONS:
-            raise
-        except Exception:
-            continue
-        if candidate.media_type != "image":
-            continue
-        return (
-            replace(
-                candidate,
-                selection_key=requested.selection_key,
-                requested_device_date=requested.requested_device_date,
-                warning=_fallback_warning(candidate.date),
-            ),
-            True,
-        )
-    raise RuntimeError(
-        f"No image APOD was available within {max_prior_days} prior days"
     )
 
 
@@ -1835,6 +1815,7 @@ def _load_or_fetch_apod_state(
             api_key=api_key,
             requested_date=str(selection.resolved_record_date),
             context=context,
+            allow_missing_media=True,
         )
 
     _task_checkpoint(context)

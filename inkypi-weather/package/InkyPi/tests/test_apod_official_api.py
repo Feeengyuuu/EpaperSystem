@@ -112,23 +112,44 @@ def test_wrong_date_or_missing_trusted_image_is_not_an_admissible_record(changes
         _fetch(_payload(**changes))
 
 
+def test_non_ascii_media_path_is_admitted_as_its_percent_encoded_uri():
+    # 2026-10-14's real hdurl carries the photographer's "č" in the asset path.
+    folder = "https://assets.science.nasa.gov/dynamicimage/assets/science/cds/apod/apod/2026/october/"
+    query = "?w=1500&h=1000&fit=clip&crop=faces%2Cfocalpoint"
+    iri = f"{folder}2026_10_10_PZ_Jesli{chr(0x10D)}ky_01_1500px.png{query}"
+    record, _ = _fetch(_payload(hdurl=iri))
+    assert record.hdurl == f"{folder}2026_10_10_PZ_Jesli%C4%8Dky_01_1500px.png{query}"
+    assert apod._public_http_url(record.hdurl) == record.hdurl
+
+
+@pytest.mark.parametrize("hdurl", [
+    f"https://assets.science.nasa.gov/a{chr(0xA0)}b.jpg",  # non-ASCII whitespace
+    f"https://assets.science.nasa.gov/a{chr(0x85)}b.jpg",  # C1 control
+    f"https://assets.science.nasa.gov/a{chr(0x7F)}b.jpg",  # DEL
+    f"https://a{chr(0x10D)}.nasa.gov/image.jpg",  # non-ASCII host
+])
+def test_non_ascii_whitespace_controls_and_hosts_stay_refused(hdurl):
+    with pytest.raises(RuntimeError, match=r"\[missing_safe_media\]"):
+        _fetch(_payload(hdurl=hdurl))
+
+
+def test_current_day_without_trusted_media_is_returned_without_media_for_fallback():
+    http = _Http(_payload(hdurl="https://127.0.0.1/private.jpg"))
+    record = apod._fetch_apod_record(
+        http=http, api_key="private-nasa-key", requested_date="2026-09-30",
+        context=None, allow_missing_media=True,
+    )
+    assert record.media_type == "image"
+    assert record.url is None and record.hdurl is None
+    assert record.title_en == "Arp 78: Peculiar Galaxy in Aries"
+
+
 @pytest.mark.parametrize("kind", ["video", "iframe"])
 def test_non_image_records_keep_existing_video_fallback_contract(kind):
+    # Rendering falls back to the newest prior image (test_network_failure_regression).
     record, _ = _fetch(_payload(media_type=kind, hdurl="https://www.youtube.com/embed/video"))
     assert record.media_type == "video"
     assert record.url is None and record.hdurl is None
-    dates = []
-
-    def prior(day):
-        dates.append(day)
-        return _fetch(_payload(date=day), requested_date=day)[0]
-
-    selected, fallback = apod._resolve_image_record(requested=record, fetch_for_date=prior)
-    assert fallback is True
-    assert dates == ["2026-09-29"]
-    assert selected.date == "2026-09-29"
-    assert selected.requested_device_date == "2026-09-30"
-    assert selected.warning
 
 
 @pytest.mark.parametrize("error, reason", [

@@ -826,6 +826,82 @@ def test_apod_provisional_media_retries_current_each_cadence_reuses_fallback_and
     ]
 
 
+def test_apod_current_day_without_trusted_media_shows_prior_image_and_retries(
+    monkeypatch,
+):
+    current_url = "https://media.example.test/current-fixed.jpg"
+    fallback_url = "https://media.example.test/prior-day.jpg"
+    payloads = {
+        "2026-07-22": {
+            "date": "2026-07-22",
+            "media_type": "image",
+            "title": "Current APOD",
+            "url": "https://127.0.0.1/private.jpg",
+        },
+        "2026-07-21": {
+            "date": "2026-07-21",
+            "media_type": "image",
+            "title": "Prior APOD",
+            "url": fallback_url,
+        },
+    }
+
+    class Http:
+        def __init__(self):
+            self.apod_dates = []
+            self.download_urls = []
+
+        def request_json(self, method, url, **kwargs):
+            requested = _requested_apod_date(url, kwargs)
+            self.apod_dates.append(requested)
+            return SimpleNamespace(status=200, data=dict(payloads[requested]), headers={}, url=url)
+
+        def stream_to_file(self, method, url, path, **_kwargs):
+            self.download_urls.append(url)
+            Path(path).write_bytes(_network_image_bytes())
+            return SimpleNamespace(status=200, data=Path(path), headers={}, url=url)
+
+    http = Http()
+    rendered = []
+    monkeypatch.setattr(apod_module, "get_http_client", lambda: http, raising=False)
+    monkeypatch.setattr(
+        apod_module,
+        "_device_day",
+        lambda _config: datetime(2026, 7, 22, tzinfo=timezone.utc).date(),
+    )
+    monkeypatch.setattr(apod_module, "current_task_context", lambda: None, raising=False)
+    monkeypatch.setattr(
+        apod_module, "refresh_space_weather", lambda *_args, **_kwargs: _network_weather(), raising=False
+    )
+
+    def render(**kwargs):
+        rendered.append((kwargs["apod"].date, kwargs["apod"].warning))
+        return Image.new("RGB", (800, 480), (250, 250, 246))
+
+    monkeypatch.setattr(apod_module, "render_apod_page", render, raising=False)
+    monkeypatch.setattr(apod_module, "write_context", lambda *_args, **_kwargs: None)
+    plugin = Apod({"id": "apod"})
+    config = FakeDeviceConfig({"NASA_SECRET": "nasa-key"})
+
+    plugin.generate_image({}, config)
+    state = json.loads(
+        (apod_module._instance_paths(plugin).cache / "apod-state.json").read_text(encoding="utf-8")
+    )
+    assert state["fallback_reason"] == "current_media_unavailable"
+    assert state["provisional_media"] is True
+
+    # NASA fixes the current record: the next cadence fetches it again and switches.
+    payloads["2026-07-22"]["url"] = current_url
+    plugin.generate_image({"forceRefresh": "true"}, config)
+
+    assert http.apod_dates == ["2026-07-22", "2026-07-21", "2026-07-22"]
+    assert http.download_urls == [fallback_url, current_url]
+    assert rendered == [
+        ("2026-07-21", "LATEST AVAILABLE \u00b7 APOD 2026-07-21"),
+        ("2026-07-22", None),
+    ]
+
+
 def test_apod_video_fallback_never_crosses_requested_day_minus_seven(
     monkeypatch,
 ):
