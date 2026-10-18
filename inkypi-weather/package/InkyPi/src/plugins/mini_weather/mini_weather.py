@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytz
 import datetime
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 from plugins.weather.weather import UNITS, Weather
 from utils.app_utils import get_base_ui_font

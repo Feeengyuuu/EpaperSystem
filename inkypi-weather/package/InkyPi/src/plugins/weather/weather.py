@@ -3,7 +3,6 @@ from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     attach_source_provenance,
 )
-from PIL import Image
 import os
 import hashlib
 import requests
@@ -11,7 +10,6 @@ import logging
 from datetime import datetime, timedelta, timezone, date
 from astral import moon
 import pytz
-from io import BytesIO
 import math
 from plugins.context_cache import write_context
 from utils.theme_utils import (
@@ -722,7 +720,6 @@ class Weather(BasePlugin):
             weather_icon = self.map_weather_code_to_icon(code, is_day=1)
             weather_icon_path = self.get_plugin_dir(f"icons/{weather_icon}.png")
 
-            timestamp = int(dt.replace(hour=12, minute=0, second=0).timestamp())
             target_date: date = dt.date() + timedelta(days=1)
 
             try:

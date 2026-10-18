@@ -524,9 +524,6 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         title_font = self._font(max(26, height // 15), bold=True)
         subtitle_font = self._font(max(12, height // 38), bold=True)
         small_font = self._font(max(11, height // 44))
-        hero_title_font = self._font(max(22, height // 21), bold=True)
-        body_font = self._font(max(14, height // 32), bold=True)
-        meta_font = self._font(max(12, height // 40), bold=True)
         chip_font = self._font(max(12, height // 42), bold=True)
         day_font = self._font(max(21, height // 20), bold=True)
         right_scale = 1.2
@@ -566,7 +563,6 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         self._draw_left_event_text(draw, hero, hero_x, hero_text_y, hero_img_w, hero_text_bottom, colors)
 
         list_x = margin + left_w + 14
-        list_w = width - list_x - margin
         list_title = f"NEXT {len(events)}"
         list_top = top - int(round(28 * right_scale))
         draw.text((list_x, list_top), list_title, fill=colors.get("title", colors["ink"]), font=list_body_font)
@@ -1111,12 +1107,6 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         return hashlib.sha256(
             (event.image_url or event.event_id or event.title).encode("utf-8")
         ).hexdigest()[:18]
-
-    def _event_image_cache_path(self, event):
-        return self._poster_cache_namespace().path(
-            self._event_image_cache_key(event),
-            suffix=".jpg",
-        )
 
     def _write_ticketmaster_context(self, events, generated_at, stale, settings):
         cache_hours = self._bounded_int(

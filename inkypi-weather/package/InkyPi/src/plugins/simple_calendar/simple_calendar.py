@@ -14,7 +14,7 @@ from urllib.parse import unquote, urljoin, urlparse
 
 import icalendar
 import pytz
-from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageColor, ImageDraw, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import (
@@ -32,6 +32,7 @@ from plugins.simple_calendar.game_event_sources import SERIES as GAME_EVENT_SERI
 from utils.app_utils import get_base_ui_font, get_font
 from utils.atomic_file import atomic_write_json
 from utils.http_client import get_http_session
+from utils.theme_utils import contrast_ratio, relative_luminance
 
 logger = logging.getLogger(__name__)
 
@@ -216,371 +217,10 @@ LOCALE_DATA = {
 
 _DIGIT_W, _DIGIT_H = 5, 7
 
-_DIGIT_PATTERNS = {
-    "0": [
-        "01110",
-        "10001",
-        "10011",
-        "10101",
-        "11001",
-        "10001",
-        "01110",
-    ],
-    "1": [
-        "00100",
-        "01100",
-        "00100",
-        "00100",
-        "00100",
-        "00100",
-        "01110",
-    ],
-    "2": [
-        "01110",
-        "10001",
-        "00001",
-        "00110",
-        "01000",
-        "10000",
-        "11111",
-    ],
-    "3": [
-        "01110",
-        "10001",
-        "00001",
-        "00110",
-        "00001",
-        "10001",
-        "01110",
-    ],
-    "4": [
-        "00010",
-        "00110",
-        "01010",
-        "10010",
-        "11111",
-        "00010",
-        "00010",
-    ],
-    "5": [
-        "11111",
-        "10000",
-        "11110",
-        "00001",
-        "00001",
-        "10001",
-        "01110",
-    ],
-    "6": [
-        "01110",
-        "10001",
-        "10000",
-        "11110",
-        "10001",
-        "10001",
-        "01110",
-    ],
-    "7": [
-        "11111",
-        "00001",
-        "00010",
-        "00100",
-        "01000",
-        "01000",
-        "01000",
-    ],
-    "8": [
-        "01110",
-        "10001",
-        "10001",
-        "01110",
-        "10001",
-        "10001",
-        "01110",
-    ],
-    "9": [
-        "01110",
-        "10001",
-        "10001",
-        "01111",
-        "00001",
-        "10001",
-        "01110",
-    ],
-}
 
 # 5×7 dot-matrix letter patterns for weekday abbreviations
 _LETTER_W, _LETTER_H = 5, 7
 
-_LETTER_PATTERNS = {
-    "S": [
-        "01110",
-        "10001",
-        "10000",
-        "01110",
-        "00001",
-        "10001",
-        "01110",
-    ],
-    "A": [
-        "01110",
-        "10001",
-        "10001",
-        "11111",
-        "10001",
-        "10001",
-        "10001",
-    ],
-    "T": [
-        "11111",
-        "00100",
-        "00100",
-        "00100",
-        "00100",
-        "00100",
-        "00100",
-    ],
-    "M": [
-        "10001",
-        "11011",
-        "10101",
-        "10101",
-        "10001",
-        "10001",
-        "10001",
-    ],
-    "O": [
-        "01110",
-        "10001",
-        "10001",
-        "10001",
-        "10001",
-        "10001",
-        "01110",
-    ],
-    "N": [
-        "10001",
-        "11001",
-        "10101",
-        "10011",
-        "10001",
-        "10001",
-        "10001",
-    ],
-    "U": [
-        "10001",
-        "10001",
-        "10001",
-        "10001",
-        "10001",
-        "10001",
-        "01110",
-    ],
-    "E": [
-        "11111",
-        "10000",
-        "10000",
-        "11110",
-        "10000",
-        "10000",
-        "11111",
-    ],
-    "W": [
-        "10001",
-        "10001",
-        "10001",
-        "10101",
-        "10101",
-        "11011",
-        "10001",
-    ],
-    "D": [
-        "11100",
-        "10010",
-        "10001",
-        "10001",
-        "10001",
-        "10010",
-        "11100",
-    ],
-    "H": [
-        "10001",
-        "10001",
-        "10001",
-        "11111",
-        "10001",
-        "10001",
-        "10001",
-    ],
-    "F": [
-        "11111",
-        "10000",
-        "10000",
-        "11110",
-        "10000",
-        "10000",
-        "10000",
-    ],
-    "R": [
-        "11110",
-        "10001",
-        "10001",
-        "11110",
-        "10010",
-        "10001",
-        "10001",
-    ],
-    "I": [
-        "01110",
-        "00100",
-        "00100",
-        "00100",
-        "00100",
-        "00100",
-        "01110",
-    ],
-    "P": [
-        "11110",
-        "10001",
-        "10001",
-        "11110",
-        "10000",
-        "10000",
-        "10000",
-    ],
-    "Q": [
-        "01110",
-        "10001",
-        "10001",
-        "10001",
-        "10001",
-        "10011",
-        "01111",
-    ],
-    "B": [
-        "11110",
-        "10001",
-        "10001",
-        "11110",
-        "10001",
-        "10001",
-        "11110",
-    ],
-    "G": [
-        "01110",
-        "10001",
-        "10000",
-        "10111",
-        "10001",
-        "10001",
-        "01110",
-    ],
-    "J": [
-        "00111",
-        "00010",
-        "00010",
-        "00010",
-        "00010",
-        "10010",
-        "01100",
-    ],
-    "K": [
-        "10001",
-        "10010",
-        "10100",
-        "11000",
-        "10100",
-        "10010",
-        "10001",
-    ],
-    "L": [
-        "10000",
-        "10000",
-        "10000",
-        "10000",
-        "10000",
-        "10000",
-        "11111",
-    ],
-    "V": [
-        "10001",
-        "10001",
-        "10001",
-        "10001",
-        "10001",
-        "01010",
-        "00100",
-    ],
-    "X": [
-        "10001",
-        "10001",
-        "01010",
-        "00100",
-        "01010",
-        "10001",
-        "10001",
-    ],
-    "Z": [
-        "11111",
-        "00001",
-        "00010",
-        "00100",
-        "01000",
-        "10000",
-        "11111",
-    ],
-}
-
-def _get_dot_positions(char, reserve_accent_row=False):
-    """Return list of (row, col) positions for a character glyph."""
-    accent_positions = []
-    base_char = char.upper()
-
-    if base_char == "Á":
-        base_char = "A"
-        accent_positions = [(0, 3)]
-    elif base_char == "É":
-        base_char = "E"
-        accent_positions = [(0, 3)]
-
-    patterns = _DIGIT_PATTERNS if base_char.isdigit() else _LETTER_PATTERNS
-    rows = patterns.get(base_char.upper(), [])
-    positions = []
-    for r, row_str in enumerate(rows):
-        for c, ch in enumerate(row_str):
-            if ch == "1":
-                positions.append((r + (1 if reserve_accent_row else 0), c))
-
-    positions.extend(accent_positions)
-
-    return positions
-
-
-def _draw_dotmatrix_text(draw, text, center_x, center_y, dot_radius, dot_spacing,
-                         fill, glyph_w=5, glyph_h=7, char_gap_dots=1.5):
-    """Draw a string of dot-matrix characters centred at (center_x, center_y)."""
-
-    cell = dot_radius * 2 + dot_spacing
-    char_width_px = glyph_w * cell
-    gap_px = char_gap_dots * cell
-    total_width = len(text) * char_width_px + (len(text) - 1) * gap_px
-    accent_row = any(ch.upper() in {"Á", "É"} for ch in text)
-    total_height = (glyph_h + (1 if accent_row else 0)) * cell
-
-    start_x = center_x - total_width / 2
-    start_y = center_y - total_height / 2
-
-    for i, ch in enumerate(text):
-        ox = start_x + i * (char_width_px + gap_px)
-        oy = start_y
-        for r, c in _get_dot_positions(ch, reserve_accent_row=accent_row):
-            cx = ox + c * cell + dot_radius
-            cy = oy + r * cell + dot_radius
-            draw.ellipse(
-                [cx - dot_radius, cy - dot_radius,
-                 cx + dot_radius, cy + dot_radius],
-                fill=fill,
-            )
 
 
 class SimpleCalendar(BasePlugin):
@@ -2132,27 +1772,6 @@ class SimpleCalendar(BasePlugin):
             })
         return sources
 
-    def _get_personal_calendar_events(
-        self,
-        settings,
-        selected_date,
-        tz,
-        *,
-        allow_remote=True,
-    ):
-        if not self._personal_calendars_enabled(settings):
-            return []
-
-        events = []
-        for source in self._get_personal_calendar_sources(settings):
-            if not allow_remote and self._calendar_source_requires_network(source):
-                continue
-            try:
-                events.extend(self._fetch_holiday_events(source, selected_date, tz))
-            except Exception as exc:
-                self._log_calendar_source_failure(source, exc)
-        return events
-
     def _personal_calendars_enabled(self, settings):
         urls = self._as_list(settings.get("personalCalendarURLs[]"))
         if not any(str(url or "").strip() for url in urls):
@@ -2652,46 +2271,6 @@ class SimpleCalendar(BasePlugin):
             return month_start, date(selected_date.year + 1, 1, 1)
         return month_start, date(selected_date.year, selected_date.month + 1, 1)
 
-    def _component_datetime(self, component, key, tz):
-        try:
-            value = component.decoded(key)
-        except Exception:
-            return None
-        if not isinstance(value, datetime):
-            return None
-        if value.tzinfo:
-            return value.astimezone(tz)
-        return tz.localize(value)
-
-    def _component_date(self, component, key, tz):
-        try:
-            value = component.decoded(key)
-        except Exception:
-            return None
-        if isinstance(value, datetime):
-            if value.tzinfo:
-                value = value.astimezone(tz)
-            return value.date()
-        if isinstance(value, date):
-            return value
-        return None
-
-    def _component_time_label(self, component, key, tz):
-        try:
-            value = component.decoded(key)
-        except Exception:
-            return ""
-        if not isinstance(value, datetime):
-            return ""
-        if value.tzinfo:
-            value = value.astimezone(tz)
-        hour = value.hour % 12 or 12
-        minute = value.minute
-        suffix = "a" if value.hour < 12 else "p"
-        if minute:
-            return f"{hour}:{minute:02d}{suffix}"
-        return f"{hour}{suffix}"
-
     def _dedupe_holiday_events(self, events):
         deduped = []
         seen = set()
@@ -3182,25 +2761,9 @@ class SimpleCalendar(BasePlugin):
             key=lambda candidate: cls._contrast_ratio(background, candidate),
         )
 
-    @classmethod
-    def _contrast_ratio(cls, first, second):
-        lighter, darker = sorted(
-            (cls._relative_luminance(first), cls._relative_luminance(second)),
-            reverse=True,
-        )
-        return (lighter + 0.05) / (darker + 0.05)
+    _contrast_ratio = staticmethod(contrast_ratio)
 
-    @staticmethod
-    def _relative_luminance(color):
-        channels = []
-        for channel in color:
-            value = channel / 255
-            channels.append(
-                value / 12.92
-                if value <= 0.04045
-                else ((value + 0.055) / 1.055) ** 2.4
-            )
-        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+    _relative_luminance = staticmethod(relative_luminance)
 
     @staticmethod
     def _parse_color(value, fallback):

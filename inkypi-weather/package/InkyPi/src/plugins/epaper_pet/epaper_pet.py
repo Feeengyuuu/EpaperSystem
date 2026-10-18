@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from flask import Blueprint, current_app, jsonify, request
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from refresh_task import PlaylistRefresh
@@ -2999,7 +2999,6 @@ class EpaperPet(BasePlugin):
     def _draw_header(self, draw, box: tuple[int, int, int, int], settings, state: dict[str, Any], mood_label: str, title_font, meta_font, label_font, now: datetime, palette) -> None:
         x1, y1, x2, y2 = box
         ink = palette["ink"]
-        border = palette["border"]
         stats = state["stats"]
         name = str(state.get("name", DEFAULT_PET_NAME)).strip() or DEFAULT_PET_NAME
         if len(name) > 15:

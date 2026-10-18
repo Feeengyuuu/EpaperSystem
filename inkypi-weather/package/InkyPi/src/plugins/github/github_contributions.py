@@ -6,7 +6,6 @@ from utils.http_client import get_http_session
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_COLORS = ['#ebedf0', '#9be9a8', '#40c463', '#30a14e', '#216e39']
 COMIC_TOKENS = {
     # Calibrated preview values derived from docs/color-ui-guidelines.md chart IDs.
     # Keep source labels traceable; final production values should be panel-calibrated.
@@ -427,9 +426,6 @@ def get_setting_color(settings, key, default):
         return ImageColor.getrgb(settings.get(key) or default)
     except Exception:
         return ImageColor.getrgb(default)
-
-def blend_color(fg, bg, amount):
-    return tuple(int(bg[idx] + (fg[idx] - bg[idx]) * amount) for idx in range(3))
 
 def int_or_default(value, default):
     try:

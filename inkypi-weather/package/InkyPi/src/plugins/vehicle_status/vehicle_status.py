@@ -3673,13 +3673,6 @@ def _preferred_unit(
     return normalized if normalized in allowed else None
 
 
-def _closure_text(closures):
-    count = len(closures["open"]) + (1 if closures["charge_port_open"] is True else 0)
-    if count:
-        return f"{count} OPEN"
-    return "UNKNOWN"
-
-
 def _age_text(seconds, language="en"):
     if seconds is None:
         return _t(language, "unknown")

@@ -6,7 +6,6 @@ import html
 import json
 import logging
 import re
-import time
 from copy import deepcopy
 from datetime import datetime
 from html.parser import HTMLParser
@@ -31,7 +30,7 @@ from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font
 from utils.cache_manager import CacheBudget, CachePathError
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
-from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
+from utils.safe_image import ImageLimits
 
 logger = logging.getLogger(__name__)
 
@@ -559,33 +558,6 @@ class DailyWikiPage(BasePlugin):
             MEDIA_CACHE_BUDGET,
         )
 
-    def _cached_media_is_fresh(self, path, settings):
-        cache_hours = self._int(
-            settings.get("imageCacheHours"),
-            DEFAULT_IMAGE_CACHE_HOURS,
-            1,
-            MAX_IMAGE_CACHE_HOURS,
-        )
-        try:
-            if path.is_symlink() or not path.is_file():
-                return False
-            return time.time() - path.stat(follow_symlinks=False).st_mtime < cache_hours * 60 * 60
-        except OSError:
-            return False
-
-    def _open_cached_media(self, path):
-        if path.is_symlink() or not path.is_file():
-            return None
-        try:
-            cached = safe_open_image(path)
-            try:
-                return cached.convert("RGB")
-            finally:
-                cached.close()
-        except Exception as exc:
-            logger.warning("Could not read DailyWikiPage media cache %s: %s", path, exc)
-            return None
-
     def _write_cached_media(self, path, image):
         try:
             output = BytesIO()
@@ -796,24 +768,6 @@ class DailyWikiPage(BasePlugin):
                 best_score = score
                 best_index = index
         return best_index if best_score >= 10 else None
-
-    def _most_read_items(self, feed, title, settings):
-        if not self._enabled(settings.get("showMostRead"), default=True):
-            return []
-        mostread = feed.get("mostread") if isinstance(feed.get("mostread"), dict) else {}
-        articles = mostread.get("articles") if isinstance(mostread.get("articles"), list) else []
-        items = []
-        title_key = self._clean_text(title).lower()
-        for article in articles:
-            if not isinstance(article, dict):
-                continue
-            item_title = self._page_title(article)
-            if item_title and item_title.lower() != title_key:
-                views = article.get("views")
-                items.append({"title": item_title, "views": views if isinstance(views, int) else None})
-            if len(items) >= 4:
-                break
-        return items
 
     def _local_fallback_payload(self, language, date_key):
         candidates = [item for item in LOCAL_FALLBACK_PAGES if item["language"] == language] or list(LOCAL_FALLBACK_PAGES)
@@ -1067,11 +1021,6 @@ class DailyWikiPage(BasePlugin):
             return ""
         return str(value)
 
-    def _event_line(self, item):
-        year = self._clean_text(item.get("year") if isinstance(item, dict) else "")
-        text = self._clean_text(item.get("text") if isinstance(item, dict) else str(item))
-        return f"{year} - {text}" if year else text
-
     def _source_label(self, payload):
         parts = [payload.get("source") or "Wikimedia", payload.get("language"), payload.get("source_state")]
         return " / ".join(str(part).upper() for part in parts if part)
@@ -1171,30 +1120,10 @@ class DailyWikiPage(BasePlugin):
         value = re.sub(r"([\u3002\uff01\uff1f])\1+", r"\1", value)
         return re.sub(r"\s+", " ", value).strip()
 
-    def _fit_lines(self, draw, text, font, max_width, max_height, max_lines=6):
-        text = self._clean_text(text)
-        size = getattr(font, "size", 20) or 20
-        family = "__cjk__" if self._contains_cjk(text) else getattr(font, "family", None) or DEFAULT_FONT
-        for candidate_size in range(size, 11, -2):
-            candidate = self._font(family, candidate_size)
-            lines = self._wrap(draw, text, candidate, max_width, max_lines=max_lines)
-            line_h = int(self._text_height(draw, "Ag", candidate) * 1.24)
-            if lines and len(lines) * line_h <= max_height:
-                return lines, candidate
-        candidate = self._font(family, 12)
-        return self._wrap(draw, text, candidate, max_width, max_lines=max_lines), candidate
-
     def _wrap(self, draw, text, font, max_width, max_lines=6):
         text = self._clean_text(text)
         if not text:
             return []
-        return self._wrap_chars(draw, text, font, max_width, max_lines) if self._contains_cjk(text) else self._wrap_words(draw, text, font, max_width, max_lines)
-
-    def _wrap_all(self, draw, text, font, max_width):
-        text = self._clean_text(text)
-        if not text:
-            return []
-        max_lines = max(1, len(text))
         return self._wrap_chars(draw, text, font, max_width, max_lines) if self._contains_cjk(text) else self._wrap_words(draw, text, font, max_width, max_lines)
 
     def _wrap_words(self, draw, text, font, max_width, max_lines):

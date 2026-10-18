@@ -4,8 +4,6 @@ from utils.resource_cache import cached_resource_image, measured_image_response,
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import lru_cache
-from pathlib import Path
-from typing import Any
 from urllib.parse import urlsplit
 import hashlib
 import json
@@ -28,7 +26,7 @@ from plugins.context_cache import write_context
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
-from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
+from utils.safe_image import ImageLimits
 
 logger = logging.getLogger(__name__)
 
@@ -159,12 +157,10 @@ STATUS_TOTAL_FILLS = {
 STATUS_TOTAL_DARK_OFFLINE_FILL = (88, 88, 88)
 
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-PLATFORM_ICON_SIZE = (64, 64)
 PLATFORM_ICON_FILES = {
     platform: os.path.join(PLUGIN_DIR, "platform_icons", f"{platform}.png")
     for platform in ("douyu", "bilibili", "twitch")
 }
-STATUS_ICON_SIZE = (64, 64)
 STATUS_ICON_FILES = {
     kind: os.path.join(PLUGIN_DIR, "status_icons", f"{kind}.png")
     for kind in ("live", "fav")
@@ -3022,22 +3018,6 @@ class LiveRadar(BasePlugin):
         prune_resource_images(self._cache_dir(), prefixes=("avatar_",),
                               max_files=256, max_bytes=24 * 1024 * 1024,
                               max_age=90 * 24 * 3600, label="live_avatars", protected=avatar_paths)
-
-    @staticmethod
-    def _open_cached_cover(path):
-        try:
-            return safe_open_image(path, limits=ImageLimits(max_bytes=COVER_MAX_BYTES)).convert("RGB")
-        except Exception as exc:
-            logger.warning("Could not read LiveRadar cover cache %s: %s", path, exc)
-            return None
-
-    @staticmethod
-    def _open_cached_avatar(path):
-        try:
-            return safe_open_image(path, limits=ImageLimits(max_bytes=AVATAR_MAX_BYTES)).convert("RGB")
-        except Exception as exc:
-            logger.warning("Could not read LiveRadar avatar cache %s: %s", path, exc)
-            return None
 
     @staticmethod
     def _cover_headers(url):

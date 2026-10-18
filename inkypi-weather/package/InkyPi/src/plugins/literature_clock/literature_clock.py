@@ -1,12 +1,11 @@
 import logging
-import os
 from pathlib import Path
 import shutil
 from datetime import datetime
 import pytz
 
 from PIL import Image, ImageDraw, ImageFont
-from utils.app_utils import get_font, get_fonts, get_available_font_names
+from utils.app_utils import get_font, get_available_font_names
 from utils.image_utils import text_width
 from plugins.base_plugin.base_plugin import BasePlugin
 

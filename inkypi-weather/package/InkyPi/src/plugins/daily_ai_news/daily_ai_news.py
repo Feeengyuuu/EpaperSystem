@@ -45,7 +45,6 @@ DEFAULT_MODEL = "gpt-5-nano"
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 DEFAULT_TITLE = "整点新闻"
 DEFAULT_FONT = "Microsoft YaHei"
-BACKGROUND_IMAGE = "background_world_news.png"
 PLUGIN_DIR = Path(__file__).resolve().parent
 TITLE_BACKGROUND_IMAGE = "title_bg_global_radar.png"
 TITLE_BACKGROUND_SIZE = (325, 65)
@@ -2776,11 +2775,6 @@ class DailyAINews(BasePlugin):
                 cursor_x += self._tw(draw, text, body_font)
         return y + line_h + 3
 
-    def _draw_module(self, draw, label, items, x, y, width, section_font, body_font, accent, ink, rule, max_y=None) -> int:
-        self._section_header(draw, label, x, y, width, section_font, accent, rule)
-        y += 31
-        return self._draw_module_lines(draw, items, x, y, width, body_font, ink, max_y=max_y)
-
     def _draw_module_lines(self, draw, items, x, y, width, body_font, ink, max_y=None) -> int:
         for item in list(items)[:2]:
             text = self._module_text(item)
@@ -3073,20 +3067,6 @@ class DailyAINews(BasePlugin):
                 return f"{primary}，{why}"
             return str(primary or why)
         return str(item)
-
-    def _rss_sidebar_items(self, payload: dict[str, Any], start_index: int, limit: int) -> list[dict[str, str]]:
-        result = []
-        for item in list(payload.get("items") or [])[start_index:]:
-            if not isinstance(item, dict):
-                continue
-            title = str(item.get("title") or "").strip()
-            if not title or not self._has_cjk(title):
-                continue
-            source = str(item.get("source") or "").strip()
-            result.append({"title": title, "why": source})
-            if len(result) >= limit:
-                break
-        return result
 
     def _has_cjk(self, text: str) -> bool:
         return bool(re.search(r"[\u3400-\u9fff]", text))

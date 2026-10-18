@@ -19,7 +19,6 @@ if VENDOR_DIR.is_dir():
     sys.path.insert(0, str(VENDOR_DIR))
 
 # ---- third-party ----
-from dotenv import load_dotenv
 from flask import abort, jsonify, request
 from google import genai
 from google.genai import types

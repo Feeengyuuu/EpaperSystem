@@ -1,8 +1,6 @@
-import os
-from utils.app_utils import resolve_path, get_font
+from utils.app_utils import get_font
 from plugins.base_plugin.base_plugin import BasePlugin
-from PIL import Image, ImageColor, ImageDraw, ImageFont
-from io import BytesIO
+from PIL import Image, ImageColor, ImageDraw
 import logging
 import numpy as np
 import math

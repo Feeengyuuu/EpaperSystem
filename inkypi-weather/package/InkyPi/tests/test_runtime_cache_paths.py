@@ -239,15 +239,6 @@ def test_backtothedate_bank_uses_data_while_legacy_cache_stays_in_cache(
     assert legacy_output_dir == cache_root / "plugins" / "backtothedate" / "output"
 
 
-def test_newspaper_rotation_state_uses_global_runtime_cache_root(monkeypatch, tmp_path):
-    root = tmp_path / "runtime-cache"
-    monkeypatch.setenv("INKYPI_CACHE_DIR", str(root))
-
-    state_path = _plugin(Newspaper, "newspaper")._rotation_state_path()
-
-    assert state_path == root / "plugins" / "newspaper" / ".newspaper_rotation_state.json"
-
-
 @pytest.mark.parametrize(
     ("plugin_class", "plugin_id", "override_name", "leaf"),
     [
@@ -449,15 +440,6 @@ def test_backtothedate_state_keeps_development_source_fallback(monkeypatch):
     state_path = plugin._state_path()
 
     assert state_path == Path(plugin.get_plugin_dir(".backtothedate_state.json"))
-
-
-def test_newspaper_rotation_state_keeps_development_source_fallback(monkeypatch):
-    monkeypatch.delenv("INKYPI_CACHE_DIR", raising=False)
-    plugin = _plugin(Newspaper, "newspaper")
-
-    state_path = plugin._rotation_state_path()
-
-    assert state_path == Path(plugin.get_plugin_dir(".newspaper_rotation_state.json"))
 
 
 def test_sports_dashboard_cache_keeps_development_source_fallback(monkeypatch):

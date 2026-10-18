@@ -1,6 +1,5 @@
 from plugins.base_plugin.base_plugin import BasePlugin
-from PIL import Image
-from datetime import datetime, timezone
+from datetime import datetime
 import logging
 import pytz
 

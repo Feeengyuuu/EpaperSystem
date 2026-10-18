@@ -1676,7 +1676,7 @@ def test_render_page_does_not_draw_radar_after_right_panel_simplification(tmp_pa
     }
 
     monkeypatch.setattr(plugin, "_download_image", lambda *_args, **_kwargs: Image.new("RGB", (600, 400), (70, 130, 90)))
-    monkeypatch.setattr(plugin, "_draw_radar", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("radar should not render")))
+    assert not hasattr(plugin, "_draw_radar")
 
     image = plugin._render_page((800, 480), payload, {}, now)
 

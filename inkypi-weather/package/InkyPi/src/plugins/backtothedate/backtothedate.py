@@ -2,7 +2,6 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from html import unescape
 from html.parser import HTMLParser
-from pathlib import Path
 from urllib.parse import urljoin, urlparse, urlunparse
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin

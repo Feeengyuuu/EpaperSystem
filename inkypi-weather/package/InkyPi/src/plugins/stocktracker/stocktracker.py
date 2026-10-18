@@ -89,7 +89,6 @@ from utils.theme_utils import get_theme_palette
 from plugins.stocktracker import trend_chart
 import csv
 import hashlib
-import io
 import json
 import logging
 import math
@@ -261,8 +260,6 @@ def _active_stock_colors():
 	return _ACTIVE_STOCK_COLORS.get() or _LEGACY_STOCK_COLORS
 
 _yf = None
-_plt = None
-_np = None
 
 
 def _load_yfinance():
@@ -271,19 +268,6 @@ def _load_yfinance():
 		import yfinance as yf
 		_yf = yf
 	return _yf
-
-
-def _load_plot_libs():
-	global _plt, _np
-	if _plt is None:
-		import matplotlib
-		matplotlib.use("Agg", force=True)
-		import matplotlib.pyplot as plt
-		_plt = plt
-	if _np is None:
-		import numpy as np
-		_np = np
-	return _plt, _np
 
 
 class _SimpleIloc:
@@ -1137,10 +1121,6 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 
 		today = datetime.now().strftime("%Y-%m-%d")
 		return _SimpleHistory([(f"{today}-start", 1.0), (today, 1.0)])
-
-	@staticmethod
-	def _threshold_image(img):
-		return img.convert("L").point(lambda p: 255 if p >= 128 else 0, mode="1").convert("RGB")
 
 	def _portfolio_series(self, stock_data, account_value_override=None):
 		histories = [

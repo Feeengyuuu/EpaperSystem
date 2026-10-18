@@ -1,5 +1,5 @@
 from plugins.base_plugin.base_plugin import BasePlugin
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 import logging
 import random
 from datetime import datetime

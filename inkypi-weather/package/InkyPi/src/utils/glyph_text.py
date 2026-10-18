@@ -74,3 +74,25 @@ def glyph_safe_text(text: str, font) -> str:
             " ",
         ))
     return "".join(result)
+
+
+def font_supports_text(font, text) -> bool:
+    """True when every non-space character of ``text`` draws a non-empty glyph
+    that differs from the font's replacement glyph (used to pick CJK, kana and
+    Hangul fallback fonts)."""
+    if font is None or not hasattr(font, "getmask"):
+        return False
+    try:
+        replacement = font.getmask("\ufffd")
+        replacement_signature = (replacement.size, bytes(replacement))
+        for char in str(text or ""):
+            if char.isspace():
+                continue
+            glyph = font.getmask(char)
+            if glyph.getbbox() is None:
+                return False
+            if (glyph.size, bytes(glyph)) == replacement_signature:
+                return False
+    except Exception:
+        return False
+    return True

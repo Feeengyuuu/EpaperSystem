@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import http.client
 import ipaddress
 import json
@@ -17,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urljoin, urlparse, urlsplit
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 from utils.fonts import load_font
 
 from plugins.base_plugin.base_plugin import BasePlugin
@@ -45,6 +44,7 @@ from plugins.pixiv_r18_ranking.presentation_bank import (
 from security.ssrf import get_ssrf_policy
 from utils.app_utils import get_base_ui_font
 from utils.safe_image import ImageLimits, safe_open_image
+from utils.glyph_text import font_supports_text
 
 logger = logging.getLogger(__name__)
 
@@ -1415,21 +1415,6 @@ class PixivR18Ranking(BasePlugin):
                         break
         return queue
 
-    def _select_daily_item(self, pool):
-        pool_by_id = {str(item.get("illust_id")): item for item in pool if item.get("illust_id")}
-        if not pool_by_id:
-            return None
-
-        state = self._read_state()
-        queue = self._init_queue(pool_by_id, state)
-
-        selected_id = queue.pop(0)
-        state["queue"] = queue
-        state["last_illust_id"] = selected_id
-        state["last_displayed_at"] = self._now_utc().isoformat()
-        self._write_state(state)
-        return pool_by_id.get(selected_id)
-
     def _select_display_group(self, pool, settings):
         """Pick the next 1-3 items to show, advancing the rotation queue.
 
@@ -1784,24 +1769,7 @@ class PixivR18Ranking(BasePlugin):
                 continue
         return font
 
-    @staticmethod
-    def _font_supports_text(font, text):
-        if font is None or not hasattr(font, "getmask"):
-            return False
-        try:
-            replacement = font.getmask("\ufffd")
-            replacement_signature = (replacement.size, bytes(replacement))
-            for char in str(text or ""):
-                if char.isspace():
-                    continue
-                glyph = font.getmask(char)
-                if glyph.getbbox() is None:
-                    return False
-                if (glyph.size, bytes(glyph)) == replacement_signature:
-                    return False
-        except Exception:
-            return False
-        return True
+    _font_supports_text = staticmethod(font_supports_text)
 
     def _draw_centered(self, draw, text, x, y, font, fill):
         bbox = draw.textbbox((0, 0), text, font=font)

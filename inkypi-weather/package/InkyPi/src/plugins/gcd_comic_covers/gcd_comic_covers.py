@@ -14,7 +14,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, urlunparse
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import (
@@ -953,7 +953,6 @@ class GcdComicCovers(BasePlugin):
 
     def _gcd_candidate_pool(self, settings, today, *, force_refresh=False):
         years = self._target_years(settings, today)
-        month = today.month
         candidates = []
         missing_years = []
 

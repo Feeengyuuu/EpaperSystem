@@ -13,7 +13,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 from utils.fonts import load_font
 
 from plugins.base_plugin.base_plugin import BasePlugin

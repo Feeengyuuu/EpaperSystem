@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps

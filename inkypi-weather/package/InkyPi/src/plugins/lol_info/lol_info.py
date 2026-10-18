@@ -12,9 +12,8 @@ import urllib.parse
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 from utils.fonts import load_font
 
 from plugins.base_plugin.base_plugin import BasePlugin
@@ -26,6 +25,7 @@ from utils.http_client import get_http_session
 from utils.image_utils import text_width
 from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
 from utils.theme_utils import get_theme_context
+from utils.glyph_text import font_supports_text
 
 logger = logging.getLogger(__name__)
 
@@ -1163,7 +1163,6 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
         top_h = 242
         left_w = 208
         center_w = 344
-        right_w = width - margin * 2 - left_w - center_w - gap * 2
         left_box = (margin, top_y, margin + left_w, top_y + top_h)
         center_box = (left_box[2] + gap, top_y, left_box[2] + gap + center_w, top_y + top_h)
         right_box = (center_box[2] + gap, top_y, width - margin, top_y + top_h)
@@ -1829,24 +1828,7 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
                     continue
         return font
 
-    @staticmethod
-    def _font_supports_text(font, text):
-        if font is None or not hasattr(font, "getmask"):
-            return False
-        try:
-            replacement = font.getmask("\ufffd")
-            replacement_signature = (replacement.size, bytes(replacement))
-            for char in str(text or ""):
-                if char.isspace():
-                    continue
-                glyph = font.getmask(char)
-                if glyph.getbbox() is None:
-                    return False
-                if (glyph.size, bytes(glyph)) == replacement_signature:
-                    return False
-        except Exception:
-            return False
-        return True
+    _font_supports_text = staticmethod(font_supports_text)
 
     def _settings_for_selected_pro_account(self, settings):
         effective = dict(settings or {})

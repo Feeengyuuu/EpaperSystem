@@ -4,10 +4,11 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 from utils.app_utils import get_base_ui_font
 from utils.image_utils import text_width
 from utils.safe_image import ImageLimits, safe_open_image
+from utils.theme_utils import contrast_ratio, relative_luminance
 from datetime import datetime
 from contextvars import ContextVar
 import colorsys
@@ -1467,25 +1468,9 @@ class BambuMonitor(BasePlugin):
             key=lambda candidate: cls._contrast_ratio(fill, candidate),
         )
 
-    @classmethod
-    def _contrast_ratio(cls, first, second):
-        lighter, darker = sorted(
-            (cls._relative_luminance(first), cls._relative_luminance(second)),
-            reverse=True,
-        )
-        return (lighter + 0.05) / (darker + 0.05)
+    _contrast_ratio = staticmethod(contrast_ratio)
 
-    @staticmethod
-    def _relative_luminance(color):
-        channels = []
-        for channel in color:
-            value = channel / 255
-            channels.append(
-                value / 12.92
-                if value <= 0.04045
-                else ((value + 0.055) / 1.055) ** 2.4
-            )
-        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+    _relative_luminance = staticmethod(relative_luminance)
 
     @staticmethod
     def _parse_filament_color(color):

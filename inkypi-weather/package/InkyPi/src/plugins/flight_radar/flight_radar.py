@@ -1428,29 +1428,6 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
         digest = hashlib.sha1(str(url).encode("utf-8")).hexdigest()[:18]
         return _runtime_cache_dir() / f"map_{digest}.png"
 
-    def _draw_radar_grid(self, draw, cx, cy, radius_px, radius_nm, theme):
-        for fraction in (0.25, 0.5, 0.75, 1.0):
-            r = radius_px * fraction
-            color = theme["ring"] if fraction < 1.0 else theme["line"]
-            draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=color, width=1)
-            label = f"{int(radius_nm * fraction)}"
-            font = self._font(8, "normal")
-            draw.text((cx + r - 18, cy + 3), label, fill=theme["muted"], font=font)
-        draw.line((cx - radius_px, cy, cx + radius_px, cy), fill=theme["ring"], width=1)
-        draw.line((cx, cy - radius_px, cx, cy + radius_px), fill=theme["ring"], width=1)
-        for angle in range(30, 360, 30):
-            rad = math.radians(angle)
-            x = cx + math.sin(rad) * radius_px
-            y = cy - math.cos(rad) * radius_px
-            draw.line((cx, cy, x, y), fill=theme["grid_faint"], width=1)
-
-    def _draw_center_cross(self, draw, cx, cy, theme):
-        draw.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), outline=theme["amber"], width=2)
-        draw.line((cx - 12, cy, cx - 7, cy), fill=theme["amber"], width=1)
-        draw.line((cx + 7, cy, cx + 12, cy), fill=theme["amber"], width=1)
-        draw.line((cx, cy - 12, cx, cy - 7), fill=theme["amber"], width=1)
-        draw.line((cx, cy + 7, cx, cy + 12), fill=theme["amber"], width=1)
-
     def _draw_plane_marker(self, draw, x, y, plane, theme):
         color = self._altitude_color(plane.get("altitude_ft"), plane.get("on_ground"), theme)
         track = self._number(plane.get("track"))
@@ -2283,13 +2260,6 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
         if value is None:
             return "-- kt"
         return f"{int(value)} kt"
-
-    @staticmethod
-    def _format_heading(track):
-        value = FlightRadar._number(track)
-        if value is None:
-            return "---"
-        return f"{int(value) % 360:03d} deg"
 
     @staticmethod
     def _format_distance(distance_nm):

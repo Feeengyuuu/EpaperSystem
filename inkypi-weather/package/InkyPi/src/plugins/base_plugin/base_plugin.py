@@ -24,8 +24,6 @@ from utils.theme_utils import (
 )
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
-import asyncio
-import base64
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,6 @@ import re
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 from zoneinfo import ZoneInfo
 
 from PIL import Image, ImageDraw, ImageFont

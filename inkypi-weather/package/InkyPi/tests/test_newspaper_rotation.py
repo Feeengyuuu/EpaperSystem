@@ -290,44 +290,6 @@ def test_newspaper_fingerprint_defaults_and_source_universe():
     assert omitted != newspaper_bank.settings_fingerprint({}, sources[:-1], (800, 480))
 
 
-def test_select_next_source_persists_sequential_rotation():
-    plugin = make_plugin("sequential")
-    sources = plugin._parse_media_sources(
-        """
-        BBC News|url|https://www.bbc.com/news
-        CNN|url|https://www.cnn.com
-        Xinhua|url|https://www.xinhuanet.com/
-        """
-    )
-
-    selected = [plugin._select_next_source(sources)["name"] for _ in range(4)]
-
-    assert selected == ["BBC News", "CNN", "Xinhua", "BBC News"]
-
-
-def test_rotating_image_skips_failed_source(monkeypatch):
-    plugin = make_plugin("skip_failed")
-    sources = plugin._parse_media_sources(
-        """
-        Broken|url|https://example.invalid
-        Working|newspaper|chi_cd
-        """
-    )
-    expected = Image.new("RGB", (10, 10), "white")
-
-    def fake_fetch_source_image(source, device_config):
-        if source["name"] == "Broken":
-            return None
-        return expected
-
-    monkeypatch.setattr(plugin, "_fetch_source_image", fake_fetch_source_image)
-
-    image = plugin._generate_rotating_image(sources, DeviceConfig())
-
-    assert image is expected
-    assert plugin._select_next_source(sources)["name"] == "Broken"
-
-
 def test_url_source_returns_none_when_screenshot_fails(monkeypatch):
     plugin = make_plugin("url-no-fallback")
     source = plugin._parse_media_sources("BBC News|url|https://www.bbc.com/news")[0]
@@ -553,38 +515,6 @@ def test_newspaper_data_respects_total_time_budget(monkeypatch):
 
     assert clock["value"] <= 93.0
     assert len(calls) == 3
-
-
-def test_newspaper_data_does_not_consume_source_rotation(monkeypatch):
-    plugin = make_plugin("data-no-consume")
-    settings = bound_settings(
-        mediaSources="""
-        Paper A|newspaper|chi_cd
-        Paper B|newspaper|chi_pd
-        Paper C|newspaper|ny_nyt
-        """
-    )
-    sources = plugin._parse_media_sources(settings["mediaSources"])
-    pool_key = plugin._source_pool_key(sources)
-    initial = {
-        pool_key: {
-            "next_index": 1,
-            "last_selected": sources[0]["id"],
-            "pool_size": 3,
-            "source_ids": [source["id"] for source in sources],
-        }
-    }
-    plugin._write_rotation_state(initial)
-    before = plugin._rotation_state_path().read_bytes()
-    monkeypatch.setattr(
-        plugin,
-        "_fetch_source_image",
-        lambda *_args, **_kwargs: Image.new("RGB", (800, 480), "white"),
-    )
-
-    plugin.generate_image(settings, DeviceConfig())
-
-    assert plugin._rotation_state_path().read_bytes() == before
 
 
 def test_newspaper_prepare_is_provider_free_and_receipt_advances_once(monkeypatch):

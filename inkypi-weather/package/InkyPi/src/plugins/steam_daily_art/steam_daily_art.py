@@ -526,9 +526,6 @@ class SteamDailyArt(BasePlugin):
             return 7 * 60 * 60
         return 26 * 60 * 60
 
-    def _today_key(self, device_config):
-        return self._now_for_device(device_config).strftime("%Y-%m-%d")
-
     def _now_for_device(self, device_config):
         timezone_name = device_config.get_config("timezone", default="")
         try:

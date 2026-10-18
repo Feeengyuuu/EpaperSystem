@@ -30,7 +30,6 @@ from utils.fonts import load_font
 import hashlib
 import json
 import logging
-import os
 import pytz
 import re
 from plugins.newspaper.constants import NEWSPAPERS
@@ -113,7 +112,6 @@ EPAPER_SCAN_RE = re.compile(
     re.I,
 )
 MAX_EPAPER_LAYOUT_BYTES = 512 * 1024
-NEWS_FRONTPAGE_ROTATION_VERSION = "news-frontpage-rotation-v1"
 MAX_DATA_SECONDS = 90.0
 MAX_BROWSER_SECONDS = 40.0
 MAX_HTTP_SECONDS = 20.0
@@ -1138,26 +1136,6 @@ class Newspaper(BasePlugin):
 
         return sources
 
-    def _generate_rotating_image(self, sources, device_config):
-        errors = []
-        for _ in range(len(sources)):
-            source = self._select_next_source(sources)
-            try:
-                image = self._fetch_source_image(source, device_config)
-            except Exception as exc:
-                logger.warning("News front page failed for %s: %s", source["name"], exc)
-                errors.append(f"{source['name']}: {exc}")
-                continue
-
-            if image:
-                logger.info("Selected news front page: %s", source["name"])
-                return image
-
-            errors.append(f"{source['name']}: no image")
-
-        detail = "; ".join(errors[-4:])
-        raise RuntimeError(f"No news front page could be fetched. {detail}")
-
     def _fetch_source_image(
         self,
         source,
@@ -2020,29 +1998,6 @@ class Newspaper(BasePlugin):
                 response.close()
         raise RuntimeError("Newspaper redirect limit was exceeded")
 
-    def _select_next_source(self, sources):
-        pool_key = self._source_pool_key(sources)
-        state = self._read_rotation_state()
-        pool_state = state.get(pool_key, {})
-        next_index = int(pool_state.get("next_index") or 0) % len(sources)
-        selected = sources[next_index]
-
-        state[pool_key] = {
-            "next_index": (next_index + 1) % len(sources),
-            "last_selected": selected["id"],
-            "pool_size": len(sources),
-            "source_ids": [source["id"] for source in sources],
-        }
-        self._write_rotation_state(state)
-        return selected
-
-    def _source_pool_key(self, sources):
-        raw = "|".join([NEWS_FRONTPAGE_ROTATION_VERSION] + [source["id"] for source in sources])
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-    def _rotation_state_path(self):
-        return self.cache_dir() / ".newspaper_rotation_state.json"
-
     def _provider_failure_state_path(self):
         return self.cache_dir() / PROVIDER_FAILURE_STATE_FILE
 
@@ -2170,30 +2125,6 @@ class Newspaper(BasePlugin):
                 return
             state.pop(normalized_key, None)
             self._write_provider_failure_state(state)
-
-    def _read_rotation_state(self):
-        path = self._rotation_state_path()
-        try:
-            if path.is_file():
-                return json.loads(path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.warning("Could not read newspaper rotation state %s: %s", path, exc)
-        return {}
-
-    def _write_rotation_state(self, state):
-        path = self._rotation_state_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        text = json.dumps(state, indent=2)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        try:
-            tmp.write_text(text, encoding="utf-8")
-            os.replace(tmp, path)
-        except Exception:
-            path.write_text(text, encoding="utf-8")
-            try:
-                tmp.unlink(missing_ok=True)
-            except Exception:
-                pass
 
     def generate_settings_template(self):
         template_params = super().generate_settings_template()

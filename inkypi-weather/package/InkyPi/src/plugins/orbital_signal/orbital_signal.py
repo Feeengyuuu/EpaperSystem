@@ -26,7 +26,7 @@ from utils.app_utils import (
 )
 
 from . import launch_photo
-from .sources import fetch_launches, fetch_market_events
+from .sources import _parse_time, _utc, fetch_launches, fetch_market_events
 
 
 logger = logging.getLogger(__name__)
@@ -69,20 +69,6 @@ NIGHT_PALETTE = {
     "green": (85, 188, 120),
     "white": (26, 42, 64),
 }
-
-
-def _utc(value):
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-def _parse_time(value):
-    try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    return _utc(parsed)
 
 
 class OrbitalSignal(BasePlugin):

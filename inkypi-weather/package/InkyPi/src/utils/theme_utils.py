@@ -181,10 +181,10 @@ def resolve_palette_roles(
         role: _coerce_rgb(supplied.get(role), fallback[role])
         for role in PALETTE_ROLES
     }
-    if _contrast_ratio(resolved["background"], resolved["ink"]) < 4.5:
+    if contrast_ratio(resolved["background"], resolved["ink"]) < 4.5:
         resolved["ink"] = max(
             ((0, 0, 0), (255, 255, 255)),
-            key=lambda candidate: _contrast_ratio(resolved["background"], candidate),
+            key=lambda candidate: contrast_ratio(resolved["background"], candidate),
         )
     return resolved
 
@@ -303,12 +303,12 @@ def _coerce_rgb(value: Any, default: tuple[int, int, int]) -> tuple[int, int, in
     return default
 
 
-def _contrast_ratio(first: tuple[int, int, int], second: tuple[int, int, int]) -> float:
-    lighter, darker = sorted((_relative_luminance(first), _relative_luminance(second)), reverse=True)
+def contrast_ratio(first: tuple[int, int, int], second: tuple[int, int, int]) -> float:
+    lighter, darker = sorted((relative_luminance(first), relative_luminance(second)), reverse=True)
     return (lighter + 0.05) / (darker + 0.05)
 
 
-def _relative_luminance(rgb: tuple[int, int, int]) -> float:
+def relative_luminance(rgb: tuple[int, int, int]) -> float:
     channels = []
     for channel in rgb:
         value = channel / 255

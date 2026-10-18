@@ -628,33 +628,6 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
         except Exception as exc:
             logger.warning("Mainland cinema placeholder asset unavailable: %s", exc)
 
-    def _north_america_title_wordmark_box(self, width, height, margin):
-        target_w, target_h = NORTH_AMERICA_TITLE_WORDMARK_DISPLAY_SIZE
-        draw_w = min(target_w, max(236, round(width * 0.404)))
-        draw_h = min(target_h, max(52, round(height * 0.151)))
-        x = margin
-        y = max(0, margin - max(8, height // 70))
-        return (int(x), int(y), int(draw_w), int(draw_h))
-
-    def _draw_north_america_title_wordmark(self, image, box):
-        asset = self._load_north_america_title_wordmark_asset()
-        if asset is None:
-            return False
-        x, y, w, h = [int(value) for value in box]
-        if w <= 0 or h <= 0:
-            return False
-        try:
-            fitted = ImageOps.contain(asset, (w, h), method=Image.Resampling.LANCZOS)
-            visible_bbox = fitted.getchannel("A").getbbox()
-            visible_left = visible_bbox[0] if visible_bbox else 0
-            paste_x = x - visible_left - 2
-            paste_y = y + (h - fitted.height) // 2
-            image.paste(fitted.convert("RGB"), (paste_x, paste_y), fitted.getchannel("A"))
-            return True
-        except Exception as exc:
-            logger.warning("North America title wordmark asset unavailable: %s", exc)
-            return False
-
     @staticmethod
     @lru_cache(maxsize=1)
     def _load_north_america_title_wordmark_asset():

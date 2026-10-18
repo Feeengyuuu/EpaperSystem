@@ -12,7 +12,7 @@ from PIL import Image, ImageOps
 
 from security.ssrf import get_ssrf_policy
 from utils.http_client import get_http_session
-from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
+from utils.safe_image import ImageLimits, safe_open_image
 
 
 logger = logging.getLogger(__name__)

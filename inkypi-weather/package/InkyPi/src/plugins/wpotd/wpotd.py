@@ -28,7 +28,6 @@ from utils.safe_image import safe_open_image_response
 import logging
 from random import randint
 from datetime import datetime, timedelta, date
-from functools import lru_cache
 from typing import Dict, Any
 from urllib.parse import urlparse
 

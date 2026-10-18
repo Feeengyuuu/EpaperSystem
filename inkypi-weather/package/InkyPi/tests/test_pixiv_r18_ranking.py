@@ -536,38 +536,6 @@ def test_generate_image_renders_triptych_for_portrait_pool(monkeypatch):
     assert len(plugin.image_loader.paths) == 3
 
 
-def test_random_queue_avoids_repeats_until_pool_is_consumed(monkeypatch):
-    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
-    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(make_test_tmp_dir("queue")))
-    monkeypatch.setattr(plugin, "_now_utc", lambda: datetime(2026, 6, 16, 16, 0, tzinfo=timezone.utc))
-    monkeypatch.setattr(random, "shuffle", lambda values: None)
-    pool = [
-        {"illust_id": "a", "rank": 1},
-        {"illust_id": "b", "rank": 2},
-        {"illust_id": "c", "rank": 3},
-    ]
-
-    selected = [plugin._select_daily_item(pool)["illust_id"] for _ in range(3)]
-    next_round_first = plugin._select_daily_item(pool)["illust_id"]
-
-    assert selected == ["a", "b", "c"]
-    assert next_round_first == "a"
-
-
-def test_random_queue_does_not_start_new_round_with_last_item(monkeypatch):
-    plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
-    monkeypatch.setenv("INKYPI_PIXIV_R18_CACHE", str(make_test_tmp_dir("queue-last")))
-    monkeypatch.setattr(plugin, "_now_utc", lambda: datetime(2026, 6, 16, 16, 0, tzinfo=timezone.utc))
-    monkeypatch.setattr(random, "shuffle", lambda values: None)
-    plugin._write_state({"last_illust_id": "a"})
-    pool = [
-        {"illust_id": "a", "rank": 1},
-        {"illust_id": "b", "rank": 2},
-    ]
-
-    assert plugin._select_daily_item(pool)["illust_id"] == "b"
-
-
 def test_fit_image_handles_landscape_and_portrait_sources():
     plugin = PixivR18Ranking({"id": "pixiv_r18_ranking"})
     landscape = Image.new("RGB", (500, 250), "red")

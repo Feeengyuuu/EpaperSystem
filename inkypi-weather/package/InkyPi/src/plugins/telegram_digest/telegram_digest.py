@@ -23,7 +23,7 @@ from runtime.long_task_executor import current_task_context
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import bounded_int, coerce_bool, get_base_ui_font
 from utils.http_client import get_http_session, provider_io_lease
-from utils.safe_image import ImageLimits, safe_open_image, safe_open_image_response
+from utils.safe_image import ImageLimits, safe_open_image
 
 logger = logging.getLogger(__name__)
 
@@ -628,9 +628,6 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
             ),
             "session_candidates": [str(candidate) for candidate in session_candidates],
         }
-
-    def _resolve_session_path(self, configured_path):
-        return self._session_path_candidates(configured_path)[0]
 
     def _session_path_candidates(self, configured_path):
         if configured_path:
@@ -1757,20 +1754,6 @@ class TelegramDigest(RefreshOnDisplayPresentationMixin, BasePlugin):
         if kind in {"photo", "video"}:
             return ""
         return self._clean_text((item or {}).get("title") or "")
-
-    def _draw_post_row(self, image, draw, item, box, fonts, p, scale):
-        x0, y0, x1, y1 = box
-        draw.rounded_rectangle(box, radius=7, fill=p["panel"], outline=p["rule"], width=1)
-        pad = int(9 * scale)
-        thumb_box = (x0 + pad, y0 + pad, x0 + int(86 * scale), y1 - pad)
-        self._draw_media(image, draw, item, thumb_box, p, featured=False)
-        text_x = thumb_box[2] + int(9 * scale)
-        title = item.get("title") or "等待频道更新"
-        self._draw_text(draw, (text_x, y0 + int(9 * scale)), self._fit_text(draw, title, fonts["row_title"], x1 - text_x - pad), fonts["row_title"], p["ink"])
-        for line_index, line in enumerate(self._wrap_text(draw, item.get("summary") or "刷新后显示最新内容", fonts["small"], x1 - text_x - pad, 2)):
-            self._draw_text(draw, (text_x, y0 + int(32 * scale) + line_index * int(16 * scale)), line, fonts["small"], p["muted"])
-        meta = f"{self._media_badge(item)}  {self._relative_time(item.get('date'))}"
-        self._draw_text(draw, (text_x, y1 - int(19 * scale)), self._fit_text(draw, meta, fonts["label"], x1 - text_x - pad), fonts["label"], p["dim"])
 
     def _draw_media(self, image, draw, item, box, p, featured=False):
         x0, y0, x1, y1 = [int(v) for v in box]

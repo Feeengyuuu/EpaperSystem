@@ -23,7 +23,7 @@ try:
 except Exception:  # pragma: no cover - older Python fallback
     ZoneInfo = None
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 from utils.fonts import load_font
 
 from plugins.base_plugin.base_plugin import BasePlugin
@@ -55,6 +55,7 @@ from utils.cache_manager import CacheBudget
 from utils.safe_image import ImageLimits, safe_open_image
 from utils.image_utils import text_width
 from utils.theme_utils import normalize_palette_colors
+from utils.glyph_text import font_supports_text
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +107,6 @@ DEFAULT_MAP_CACHE_HOURS = 24
 DEFAULT_PHOTO_CACHE_HOURS = 24
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 100
-DEFAULT_NIGHT_START_HOUR = 18
-DEFAULT_NIGHT_END_HOUR = 6
 # Dual-location refreshes include GBIF queries, common-name enrichment, photo
 # media, and map preparation.  Keep the plugin below the 180-second manual job
 # ceiling while allowing the complete live pipeline to finish on the Pi.
@@ -162,8 +161,6 @@ _DATA_DEADLINE = ContextVar("species_radar_data_deadline", default=None)
 MICROSOFT_YAHEI_FONT = "Microsoft YaHei"
 DEFAULT_FONT = MICROSOFT_YAHEI_FONT
 DEFAULT_CJK_FONT = MICROSOFT_YAHEI_FONT
-FALLBACK_FONT = MICROSOFT_YAHEI_FONT
-FALLBACK_CJK_FONT = MICROSOFT_YAHEI_FONT
 
 # Color tokens follow docs/color-ui-guidelines.md: warm paper, process black
 # linework, and limited vintage comic process-color accents.
@@ -180,18 +177,13 @@ COMIC_MUTED = (126, 112, 82)  # 50Y-25R-25B PANTONE 465 family
 COMIC_RULE = (190, 177, 134)
 COMIC_BLUE = (0, 92, 185)  # 100B-25R PANTONE 285 family
 COMIC_CYAN = (0, 163, 173)  # 50Y-100B PANTONE 327 family
-COMIC_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
 COMIC_ORANGE = (245, 122, 38)  # 100Y-50R PANTONE ORANGE 021 family
 COMIC_RED = (222, 45, 38)  # 100Y-100R PANTONE RED 032 family
 COMIC_GREEN = (0, 152, 82)  # 100Y-100B PANTONE 354 family
 COMIC_PURPLE = (98, 58, 160)  # 100R-100B PANTONE 266 family
 COMIC_BROWN = (137, 88, 56)  # 100Y-50R-50B PANTONE 470 family
 COMIC_NIGHT_PAPER = (18, 21, 34)
-COMIC_NIGHT_PANEL = (29, 34, 51)
 COMIC_NIGHT_INK = (255, 248, 220)
-COMIC_NIGHT_DIM = (218, 204, 158)
-COMIC_NIGHT_MUTED = (167, 154, 117)
-COMIC_NIGHT_RULE = (94, 103, 132)
 
 CATEGORY_STYLES = {
     "植物": {"slug": "plants", "color": COMIC_GREEN, "light": COMIC_PANEL_GREEN},
@@ -1616,10 +1608,6 @@ class SpeciesRadar(BasePlugin):
             return
         self._enrich_common_names([observation])
 
-    def _fetch_vernacular_name(self, taxon_key):
-        names = self._fetch_vernacular_name_candidates(taxon_key)
-        return names.get("zh") or names.get("en") or names.get("any") or ""
-
     def _fetch_vernacular_name_candidates(self, taxon_key):
         taxon_key = str(taxon_key or "").strip()
         empty = {"zh": "", "en": "", "any": ""}
@@ -1861,8 +1849,6 @@ LIMIT 8
         subtitle_font = self._font(12, cjk=True)
         small_font = self._font(11, cjk=True)
         label_font = self._font(14, bold=True, cjk=True)
-        name_font = self._font(26, bold=True, cjk=True)
-        sci_font = self._font(14, cjk=True)
         english_common_font = self._font(17)
         latin_font = self._font(15)
         body_font = self._font(15, cjk=True)
@@ -2289,23 +2275,6 @@ LIMIT 8
         x0, y0, x1, y1 = box
         draw.line((x0 + 5, y1 - 8, x0 + 18, y0 + 12, x1 - 6, y1 - 10), fill=palette["rule"], width=1)
         draw.ellipse((x0 + 8, y0 + 7, x0 + 18, y0 + 17), outline=palette["rule"], width=1)
-    def _draw_radar(self, draw, x, y, size, observations, palette):
-        cx = x + size / 2
-        cy = y + size / 2
-        radius = size / 2 - 4
-        draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), outline=palette["rule"], width=2)
-        draw.ellipse((cx - radius * 0.55, cy - radius * 0.55, cx + radius * 0.55, cy + radius * 0.55), outline=palette["rule"], width=1)
-        draw.line((cx - radius, cy, cx + radius, cy), fill=palette["rule"], width=1)
-        draw.line((cx, cy - radius, cx, cy + radius), fill=palette["rule"], width=1)
-        for index, obs in enumerate(observations[:10]):
-            distance = max(0.0, min(float(obs.get("distance_km") or 0), 25.0))
-            angle = (index * 137.5) % 360
-            point_radius = 4 + (distance / 25.0) * (radius - 8)
-            px = cx + math.cos(math.radians(angle)) * point_radius
-            py = cy + math.sin(math.radians(angle)) * point_radius
-            style = CATEGORY_STYLES.get(obs.get("category_label"), CATEGORY_STYLES["其他生物"])
-            draw.ellipse((px - 3, py - 3, px + 3, py + 3), fill=style["color"])
-        draw.ellipse((cx - 3, cy - 3, cx + 3, cy + 3), fill=palette["accent"])
 
     def _draw_photo_placeholder(self, draw, box, palette):
         draw.rectangle(box, fill=palette["panel"], outline=palette["ink"], width=2)
@@ -3122,30 +3091,6 @@ LIMIT 8
         context = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config or settings, now=now)
         return "night" if context.get("mode") == "night" else "day"
 
-    def _is_night(self, now, settings=None, device_config=None):
-        local_now = self._local_datetime(now, settings or {}, device_config)
-        start = self._int((settings or {}).get("nightStartHour"), DEFAULT_NIGHT_START_HOUR, 0, 23)
-        end = self._int((settings or {}).get("nightEndHour"), DEFAULT_NIGHT_END_HOUR, 0, 23)
-        hour = int(local_now.hour)
-        if start == end:
-            return False
-        if start > end:
-            return hour >= start or hour < end
-        return start <= hour < end
-
-    def _local_datetime(self, now, settings=None, device_config=None):
-        current = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
-        timezone_name = self._device_timezone(settings or {}, device_config)
-        if ZoneInfo and timezone_name:
-            try:
-                return current.astimezone(ZoneInfo(timezone_name))
-            except Exception:
-                logger.debug("SpeciesRadar could not resolve timezone %s", timezone_name)
-        try:
-            return current.astimezone()
-        except Exception:
-            return current.astimezone(timezone.utc)
-
     def _device_timezone(self, settings=None, device_config=None):
         explicit = self._clean_text((settings or {}).get("timezone"))
         if explicit:
@@ -3179,24 +3124,7 @@ LIMIT 8
                 continue
         return font
 
-    @staticmethod
-    def _font_supports_text(font, text):
-        if font is None or not hasattr(font, "getmask"):
-            return False
-        try:
-            replacement = font.getmask("�")
-            replacement_signature = (replacement.size, bytes(replacement))
-            for char in str(text or ""):
-                if char.isspace():
-                    continue
-                glyph = font.getmask(char)
-                if glyph.getbbox() is None:
-                    return False
-                if (glyph.size, bytes(glyph)) == replacement_signature:
-                    return False
-        except Exception:
-            return False
-        return True
+    _font_supports_text = staticmethod(font_supports_text)
 
     def _preferred_font_paths(self, bold=False):
         if bold:

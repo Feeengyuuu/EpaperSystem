@@ -8,7 +8,6 @@ import re
 from datetime import datetime, timezone
 from html import unescape
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -33,7 +32,6 @@ DEFAULT_TIMEZONE = "America/Los_Angeles"
 DEFAULT_FONT = DEFAULT_FONT_FAMILY
 HN_BASE_URL = "https://hacker-news.firebaseio.com/v0"
 HN_DOCS_URL = "https://github.com/HackerNews/API"
-HN_HOME_URL = "https://news.ycombinator.com/"
 HN_ITEM_URL = "https://news.ycombinator.com/item?id={id}"
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
 TITLE_WORDMARK_DISPLAY_SIZE = (246, 46)
@@ -716,39 +714,6 @@ class TechPulse(BasePlugin):
             strip=True,
         )
 
-
-    def _trim_flat_background(self, image):
-        if image.width < 2 or image.height < 2:
-            return image
-        if image.mode == "RGBA":
-            alpha_bbox = image.getchannel("A").getbbox()
-            if alpha_bbox:
-                pad = 2
-                return image.crop((
-                    max(0, alpha_bbox[0] - pad),
-                    max(0, alpha_bbox[1] - pad),
-                    min(image.width, alpha_bbox[2] + pad),
-                    min(image.height, alpha_bbox[3] + pad),
-                ))
-        background = image.getpixel((0, 0))[:3]
-        pixels = image.load()
-        xs = []
-        ys = []
-        for y in range(image.height):
-            for x in range(image.width):
-                pixel = pixels[x, y]
-                r, g, b = pixel[:3]
-                if abs(r - background[0]) + abs(g - background[1]) + abs(b - background[2]) > 18:
-                    xs.append(x)
-                    ys.append(y)
-        if not xs or not ys:
-            return image
-        pad = 2
-        left = max(0, min(xs) - pad)
-        top = max(0, min(ys) - pad)
-        right = min(image.width, max(xs) + 1 + pad)
-        bottom = min(image.height, max(ys) + 1 + pad)
-        return image.crop((left, top, right, bottom))
 
     def _cache_key(self, feed, max_stories, min_score):
         return f"{feed}|{max_stories}|{min_score if min_score is not None else ''}"

@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 import re
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 from utils.fonts import load_font
 
 

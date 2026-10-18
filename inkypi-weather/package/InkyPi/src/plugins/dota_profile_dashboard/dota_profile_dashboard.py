@@ -4,13 +4,11 @@ import hashlib
 import json
 import logging
 import math
-import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
@@ -283,7 +281,6 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
         left_w = 208
         center_w = 344
         gap = 14
-        right_w = width - margin * 2 - left_w - center_w - gap * 2
         top_h = 242
         bottom_y = top_y + top_h + 16
         bottom_h = height - bottom_y - 24
@@ -516,7 +513,7 @@ class DotaProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
             return []
         blocked = {"gg", "wp", "ez", "the", "and", "you"}
         terms = []
-        for word, count in sorted(counts.items(), key=lambda pair: int(pair[1] or 0), reverse=True):
+        for word, _count in sorted(counts.items(), key=lambda pair: int(pair[1] or 0), reverse=True):
             word = str(word).strip()
             if len(word) < 2 or word.lower() in blocked:
                 continue

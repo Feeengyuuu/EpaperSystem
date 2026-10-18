@@ -19,8 +19,7 @@ from functools import lru_cache
 from bs4 import BeautifulSoup
 from urllib.parse import urlsplit
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont, ImageOps
-from utils.fonts import load_font
+from PIL import Image, ImageDraw, ImageOps
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import logging
@@ -65,7 +64,6 @@ STEAM_LOGO_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_logo.png")
 STEAM_TITLE_WORDMARK_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_charts_title_wordmark.png")
 STEAM_PIXEL_KAIJU_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_charts_pixel_kaiju.png")
 STEAM_HEADER_BAR_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_header_pixel_bar.png")
-STEAM_HEADER_SCENE_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_header_pixel_level.png")
 STEAMCHARTS_HOME_URL = "https://steamcharts.com"
 STEAMCHARTS_CHART_URL = "https://steamcharts.com/app/{appid}/chart-data.json"
 STEAM_STORE_APPDETAILS = "https://store.steampowered.com/api/appdetails"
@@ -975,84 +973,6 @@ class SteamCharts(BasePlugin):
         return image
 
     @staticmethod
-    def _draw_header_pixel_gradient(target, margin, bottom_y, theme_colors, area_width=None):
-        if SteamCharts._paste_header_bar(target, margin, bottom_y, theme_colors, area_width):
-            return
-
-        width, height = target.size
-        draw = ImageDraw.Draw(target)
-        ink = theme_colors["ink"]
-        pixel = max(4, int(height * 0.011))
-        gap = max(3, int(pixel * 0.85))
-        if area_width is None:
-            area_width = max(126, int(width * 0.2))
-        else:
-            area_width = max(1, int(area_width))
-        area_height = max(40, int(height * 0.13))
-        left = width - margin - area_width
-        top = max(margin - pixel, 0)
-        right = width - margin
-        bottom = min(top + area_height, max(top + pixel, int(bottom_y - pixel * 2)))
-        if bottom <= top:
-            return
-
-        cols = max(1, (right - left) // (pixel + gap))
-        rows = max(1, (bottom - top) // (pixel + gap))
-        for row in range(rows):
-            for col in range(cols):
-                x_ratio = (col + 1) / cols
-                y_ratio = 1 - (row / rows)
-                density = (x_ratio ** 1.7) * (y_ratio ** 0.9)
-                threshold = int(1000 * density)
-                value = SteamCharts._stable_pixel_value(row, col)
-                if value > threshold:
-                    continue
-                x = right - (cols - col) * (pixel + gap)
-                y = top + row * (pixel + gap)
-                if x < left or y < top:
-                    continue
-                elongate = pixel if SteamCharts._stable_pixel_value(col, row, salt=17) < 360 else 0
-                height_boost = pixel if SteamCharts._stable_pixel_value(row, col, salt=29) < 160 else 0
-                draw.rectangle(
-                    (x, y, min(x + pixel + elongate, right), min(y + pixel + height_boost, bottom)),
-                    fill=ink,
-                )
-
-    @staticmethod
-    def _paste_header_bar(target, margin, bottom_y, theme_colors, area_width=None):
-        source = SteamCharts._load_header_bar_source()
-        if source is None:
-            return False
-
-        width, height = target.size
-        if area_width is None:
-            area_width = max(126, int(width * 0.2))
-        else:
-            area_width = max(1, int(area_width))
-        area_height = max(40, min(int(height * 0.13), max(1, int(bottom_y - margin))))
-
-        bar = ImageOps.contain(
-            source.convert("RGBA"),
-            (area_width, area_height),
-            method=Image.Resampling.LANCZOS,
-        )
-        alpha = bar.getchannel("A")
-        ink = theme_colors["ink"]
-        themed = Image.new("RGBA", bar.size, (ink[0], ink[1], ink[2], 0))
-        themed.putalpha(alpha)
-
-        x = width - margin - area_width + (area_width - bar.width) // 2
-        y = max(0, margin - max(2, int(height * 0.006))) + (area_height - bar.height) // 2
-        target.paste(themed, (x, y), themed)
-        return True
-
-    @staticmethod
-    def _stable_pixel_value(row, col, salt=0):
-        value = (row * 1103515245 + col * 12345 + salt * 2654435761) & 0xFFFFFFFF
-        value ^= value >> 16
-        return value % 1000
-
-    @staticmethod
     def _format_updated_at(device_config, now=None):
         current = SteamCharts._device_local_datetime(device_config, now)
         return f"\u5237\u65b0\u65f6\u95f4 {current.strftime('%m/%d %H:%M')}"
@@ -1143,24 +1063,6 @@ class SteamCharts(BasePlugin):
             return ""
 
     @staticmethod
-    def _header_bar_data_uri():
-        try:
-            with open(STEAM_HEADER_BAR_PATH, "rb") as fh:
-                encoded = base64.b64encode(fh.read()).decode("ascii")
-            return f"data:image/png;base64,{encoded}"
-        except OSError:
-            return ""
-
-    @staticmethod
-    def _header_scene_data_uri():
-        try:
-            with open(STEAM_HEADER_SCENE_PATH, "rb") as fh:
-                encoded = base64.b64encode(fh.read()).decode("ascii")
-            return f"data:image/png;base64,{encoded}"
-        except OSError:
-            return ""
-
-    @staticmethod
     def _theme_steam_logo(size, theme_colors):
         source = SteamCharts._load_steam_logo_source()
         if source is None:
@@ -1193,19 +1095,6 @@ class SteamCharts(BasePlugin):
             method=Image.Resampling.LANCZOS,
         )
         target.paste(wordmark, (int(x), int(y)), wordmark)
-        return True
-
-    @staticmethod
-    def _paste_pixel_kaiju(target, x, y, max_size):
-        source = SteamCharts._load_pixel_kaiju_source()
-        if source is None:
-            return False
-        kaiju = ImageOps.contain(
-            source,
-            (max(1, int(max_size[0])), max(1, int(max_size[1]))),
-            method=Image.Resampling.NEAREST,
-        )
-        target.paste(kaiju, (int(x), int(y)), kaiju)
         return True
 
 
@@ -1325,32 +1214,6 @@ class SteamCharts(BasePlugin):
     @staticmethod
     def _font(size, weight="normal"):
         return get_base_ui_font(int(size), bold=weight == "bold")
-
-    @staticmethod
-    def _load_sans_font(font_path, size, weight="normal"):
-        font = load_font(font_path, size)
-        if hasattr(font, "get_variation_axes") and hasattr(font, "set_variation_by_axes"):
-            try:
-                target_weight = 700 if weight == "bold" else 400
-                values = []
-                changed = False
-                for axis in font.get_variation_axes():
-                    axis_name = axis.get("name", b"")
-                    if isinstance(axis_name, bytes):
-                        axis_name = axis_name.decode("utf-8", errors="ignore")
-                    default = axis.get("default")
-                    if "weight" in str(axis_name).lower():
-                        minimum = axis.get("minimum", target_weight)
-                        maximum = axis.get("maximum", target_weight)
-                        values.append(max(minimum, min(maximum, target_weight)))
-                        changed = True
-                    else:
-                        values.append(default)
-                if changed:
-                    font.set_variation_by_axes(values)
-            except Exception:
-                pass
-        return font
 
     @staticmethod
     @lru_cache(maxsize=4)
@@ -1758,21 +1621,6 @@ class SteamCharts(BasePlugin):
             raise ValueError(f"Steam page has no verified cover for app {appid}")
         return tuple(urls)
 
-    def _apply_cached_images(self, games):
-        for game in games:
-            app_id = game.get("app_id")
-            if app_id is None:
-                continue
-            try:
-                game["image"] = self._get_cached_capsule_image(app_id)
-            except Exception as e:
-                logger.warning(f"Failed to cache capsule image for app {app_id}: {e}")
-                # Clear the image field so templates do not leave a remote CDN URL.
-                # This prevents Chromium (used by `take_screenshot`) from
-                # performing uncontrolled network fetches outside our timeouts
-                # and rate limits which can hang or slow rendering.
-                game["image"] = ""
-
     @staticmethod
     def _fetch_store_appdetails(app_id, language):
         appid = str(app_id or "").strip()
@@ -2018,9 +1866,6 @@ class SteamCharts(BasePlugin):
                     results[aid] = {}
 
         return results
-
-    def _get_cached_capsule_image(self, app_id):
-        return self._image_url_to_data_uri(STEAM_CAPSULE_URL.format(appid=app_id))
 
     def _image_url_to_data_uri(self, image_url):
         if not image_url:

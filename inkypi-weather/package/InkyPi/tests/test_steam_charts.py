@@ -851,11 +851,7 @@ def test_steam_charts_title_wordmark_tints_for_night_theme():
 def test_steam_charts_combined_fallback_places_logo_in_title_gap(monkeypatch):
     logo_calls = []
     wordmark_calls = []
-
-    def fail_paste_kaiju(*_args):
-        raise AssertionError("Steam Charts fallback should hide the header kaiju")
-
-    monkeypatch.setattr(SteamCharts, "_paste_pixel_kaiju", staticmethod(fail_paste_kaiju))
+    assert not hasattr(SteamCharts, "_paste_pixel_kaiju")  # the fallback header has no kaiju
 
     def fake_paste_wordmark(_target, x, y, max_size, _theme_colors):
         wordmark_calls.append((x, y, max_size))
@@ -1267,23 +1263,6 @@ def test_header_bar_asset_is_exact_transparent_slot():
     assert image.getpixel((0, 0))[3] == 0
     assert image.getpixel((66, 47))[3] == 0
     assert image.getchannel("A").getbbox() is not None
-
-def test_header_scene_asset_is_exact_transparent_pixel_level_strip():
-    path = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "plugins"
-        / "steam_charts"
-        / "assets"
-        / "steam_header_pixel_level.png"
-    )
-
-    image = Image.open(path).convert("RGBA")
-    alpha = image.getchannel("A")
-
-    assert image.size == (320, 44)
-    assert alpha.getbbox() is not None
-    assert alpha.getextrema() == (0, 255)
 
 
 def test_steam_charts_base_font_uses_shared_resolver(monkeypatch):

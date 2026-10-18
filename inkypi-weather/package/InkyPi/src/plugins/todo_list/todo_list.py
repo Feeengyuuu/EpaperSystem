@@ -1,7 +1,4 @@
 from plugins.base_plugin.base_plugin import BasePlugin
-from PIL import Image
-from io import BytesIO
-import requests
 import logging
 
 logger = logging.getLogger(__name__)

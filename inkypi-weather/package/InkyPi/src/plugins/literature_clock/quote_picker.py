@@ -1,6 +1,5 @@
 import csv
 import random
-import re
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -74,12 +73,3 @@ def pick_quote(rows: list[dict], strategy: str, seed_key: str) -> dict:
         return rng.choice(rows)
     # shortest (default)
     return min(rows, key=lambda r: len(r["full_quote"]))
-
-
-HIGHLIGHT_OPEN = '<span class="litclock-highlight">'
-HIGHLIGHT_CLOSE = "</span>"
-
-
-def wrap_highlight(quote: str, time_human: str) -> str:
-    pattern = re.compile(re.escape(time_human), re.IGNORECASE)
-    return pattern.sub(lambda m: f"{HIGHLIGHT_OPEN}{m.group()}{HIGHLIGHT_CLOSE}", quote, count=1)

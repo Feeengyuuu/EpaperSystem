@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
@@ -512,33 +512,6 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
             self._center_single(draw, (cx + 6, y + 9, cx + cell_w - 6, y + 37), str(value or "-"), fonts["title"], color, 10)
             self._center_single(draw, (cx + 6, y + 48, cx + cell_w - 6, y + 67), label, fonts["tiny"], palette["muted"], 8)
 
-    def _draw_equipment(self, draw, data, box, fonts, palette):
-        x0, y0, x1, y1 = box
-        self._text(draw, (x0 + 16, y0 + 10), "Top Gear", fonts["section"], palette["ink"])
-        rows = data.get("equipment") or []
-        if not rows:
-            self._wrapped(draw, (x0 + 18, y0 + 46), "Equipment endpoint did not return public items.", fonts["body"], palette["muted"], x1 - x0 - 36)
-            return
-        card_gap = 8
-        card_w = (x1 - x0 - 32 - card_gap * 2) // 3
-        card_h = 51
-        start_x = x0 + 16
-        start_y = y0 + 43
-        for index, item in enumerate(rows[:6]):
-            col = index % 3
-            row = index // 3
-            cx = start_x + col * (card_w + card_gap)
-            cy = start_y + row * (card_h + 8)
-            if cy + card_h > y1 - 8:
-                break
-            quality = self._quality_color(item.get("quality"), palette)
-            draw.rounded_rectangle((cx, cy, cx + card_w, cy + card_h), radius=4, fill=(245, 236, 207), outline=(130, 111, 82), width=1)
-            draw.rounded_rectangle((cx + 7, cy + 8, cx + 31, cy + 32), radius=3, fill=quality, outline=(86, 71, 52), width=1)
-            self._center_single(draw, (cx + 8, cy + 8, cx + 30, cy + 31), self._slot_initial(item.get("slot")), fonts["micro"], (250, 247, 235), 7)
-            self._single(draw, (cx + 38, cy + 7), item.get("slot") or "-", fonts["tiny"], palette["muted"], card_w - 45, 8)
-            self._single(draw, (cx + 38, cy + 23), item.get("name") or "-", fonts["tiny"], palette["ink"], card_w - 50, 7)
-            self._single(draw, (cx + card_w - 34, cy + 7), str(item.get("level") or "-"), fonts["tiny"], palette["red"], 28, 7)
-
     def _draw_activity(self, draw, data, box, fonts, palette):
         x0, y0, x1, y1 = box
         self._text(draw, (x0 + 16, y0 + 10), "Activity", fonts["section"], palette["light"])
@@ -776,10 +749,6 @@ class WowProfileDashboard(RefreshOnDisplayPresentationMixin, BasePlugin):
     def _pill(self, draw, x, y, width, height, text, font, fill, ink):
         draw.rounded_rectangle((x, y, x + width, y + height), radius=height // 2, fill=fill, outline=(238, 208, 129), width=1)
         self._center_single(draw, (x + 8, y + 6, x + width - 8, y + height - 4), text, font, ink, 8)
-
-    def _label_value(self, draw, x, y, label, value, fonts, label_color, value_color, max_width):
-        self._text(draw, (x, y), label.upper(), fonts["tiny"], label_color)
-        self._single(draw, (x + 56, y - 3), value, fonts["body"], value_color, max_width - 56, 8)
 
     def _remote_image(self, url, size):
         url = str(url or "").strip()
