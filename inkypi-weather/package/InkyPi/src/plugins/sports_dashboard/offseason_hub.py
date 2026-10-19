@@ -29,7 +29,8 @@ class OffseasonHubMixin:
         now_utc = datetime.now(timezone.utc)
         cache_path = self._offseason_hub_cache_path()
         cache_key = self._offseason_hub_cache_key(settings, timezone_info, now_utc)
-        force_refresh = self._force_refresh_requested(settings)
+        cache_only = self._provider_cache_only(settings)
+        force_refresh = self._force_refresh_requested(settings) and not cache_only
         low_memory_force_refresh = force_refresh and self._bool_setting(
             settings, "_inkypi_sports_low_memory", False
         )
@@ -41,6 +42,10 @@ class OffseasonHubMixin:
             and self._offseason_hub_cache_is_fresh(cache, settings, timezone_info, now, now_utc)
         ):
             return cache, "HUB CACHE", cache.get("fetched_at")
+        if cache_only:
+            if has_compatible_cache:
+                return cache, "HUB STALE", cache.get("fetched_at")
+            return {}, "HUB NO DATA", None
 
         if not force_refresh and self._offseason_hub_calls_left(settings, now_utc) <= 0:
             if has_compatible_cache:

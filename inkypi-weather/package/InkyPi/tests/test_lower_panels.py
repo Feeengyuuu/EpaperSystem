@@ -405,3 +405,39 @@ def test_layouts_draw_their_competition_marks(monkeypatch):
     assert "2026_bermuda.png" in drawn
     assert "americas.png" in drawn
     assert "us.png" in drawn  # the host flag replaces the round badge
+
+
+# Theme-only redraws ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("flag", ["_theme_render_only", "_inkypi_ewc_cache_only"])
+def test_cache_only_lower_panel_sources_never_open_a_provider_session(monkeypatch, tmp_path, flag):
+    import plugins.sports_dashboard.sports_dashboard as sports_dashboard_module
+
+    def no_provider():
+        raise AssertionError("a theme-only redraw must not open a provider session")
+
+    monkeypatch.setattr(sports_dashboard_module, "get_http_session", no_provider)
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_offseason_hub_cache_path", lambda: tmp_path / "hub.json")
+    monkeypatch.setattr(plugin, "_f1_jolpica_cache_path", lambda: tmp_path / "jolpica.json")
+    monkeypatch.setattr(plugin, "_f1_openf1_cache_path", lambda: tmp_path / "openf1.json")
+    settings = {flag: True, "forceRefresh": True}
+    now_utc = datetime.now(timezone.utc)
+
+    assert plugin._load_offseason_hub_payload(settings, LA, NOW)[1] == "HUB NO DATA"
+    assert plugin._load_f1_jolpica_bundle(settings, LA)[1] == "JOLPICA NO DATA"
+    assert plugin._load_f1_openf1_snapshot(settings)[1] == "OPENF1 NO DATA"
+
+    # An expired cache is shown as stale instead of being refreshed.
+    expired = (now_utc - timedelta(days=3)).isoformat()
+    hub = {"cache_key": plugin._offseason_hub_cache_key(settings, LA, now_utc), "payloads": {}, "fetched_at": expired}
+    jolpica = {**_sample_f1_jolpica_bundle(), "cache_key": plugin._f1_jolpica_cache_key(settings, LA), "fetched_at": expired}
+    openf1 = {"cache_key": plugin._f1_openf1_cache_key(settings), "snapshot": _sample_openf1_snapshot(), "fetched_at": expired}
+    (tmp_path / "hub.json").write_text(json.dumps(hub), encoding="utf-8")
+    (tmp_path / "jolpica.json").write_text(json.dumps(jolpica), encoding="utf-8")
+    (tmp_path / "openf1.json").write_text(json.dumps(openf1), encoding="utf-8")
+
+    assert plugin._load_offseason_hub_payload(settings, LA, NOW)[1] == "HUB STALE"
+    assert plugin._load_f1_jolpica_bundle(settings, LA)[1] == "JOLPICA STALE"
+    assert plugin._load_f1_openf1_snapshot(settings)[1] == "OPENF1 STALE"

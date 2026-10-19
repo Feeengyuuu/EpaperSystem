@@ -38,7 +38,8 @@ class F1Mixin:
         cache_path = self._f1_jolpica_cache_path()
         cache = self._read_json_file(cache_path)
         cache_key = self._f1_jolpica_cache_key(settings, timezone_info)
-        force_refresh = self._force_refresh_requested(settings)
+        cache_only = self._provider_cache_only(settings)
+        force_refresh = self._force_refresh_requested(settings) and not cache_only
         has_compatible_cache = (
             cache.get("cache_key") == cache_key
             and isinstance(cache.get("schedule"), dict)
@@ -49,6 +50,10 @@ class F1Mixin:
             and self._f1_jolpica_cache_is_fresh(cache, settings, timezone_info, now_utc)
         ):
             return cache, "JOLPICA CACHE", cache.get("fetched_at")
+        if cache_only:
+            if has_compatible_cache:
+                return cache, "JOLPICA STALE", cache.get("fetched_at")
+            return {}, "JOLPICA NO DATA", None
 
         if self._f1_jolpica_calls_left(settings, now_utc) <= 0:
             if has_compatible_cache:
@@ -225,7 +230,8 @@ class F1Mixin:
         cache_path = self._f1_openf1_cache_path()
         cache = self._read_json_file(cache_path)
         cache_key = self._f1_openf1_cache_key(settings)
-        force_refresh = self._force_refresh_requested(settings)
+        cache_only = self._provider_cache_only(settings)
+        force_refresh = self._force_refresh_requested(settings) and not cache_only
         has_compatible_cache = cache.get("cache_key") == cache_key and isinstance(cache.get("snapshot"), dict)
         if (
             has_compatible_cache
@@ -233,6 +239,10 @@ class F1Mixin:
             and self._cache_is_fresh_seconds(cache, self._f1_live_refresh_seconds(settings), now_utc)
         ):
             return cache["snapshot"], "OPENF1 CACHE", cache.get("fetched_at")
+        if cache_only:
+            if has_compatible_cache:
+                return cache["snapshot"], "OPENF1 STALE", cache.get("fetched_at")
+            return {}, "OPENF1 NO DATA", None
 
         if self._f1_openf1_calls_left(settings, now_utc) <= 0:
             if has_compatible_cache:

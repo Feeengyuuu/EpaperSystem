@@ -3548,6 +3548,14 @@ class SportsDashboardCommonMixin:
                 return True
         return False
 
+    @staticmethod
+    def _provider_cache_only(settings):
+        """Theme-only redraws and cache-only workers must not reach a provider."""
+        settings = settings or {}
+        return SportsDashboard._bool_setting(settings, "_theme_render_only", False) or (
+            SportsDashboard._bool_setting(settings, "_inkypi_ewc_cache_only", False)
+        )
+
     def _sports_dashboard_cache_dir(self):
         if os.getenv("INKYPI_CACHE_DIR", "").strip():
             return self.cache_dir(leaf="cache")
