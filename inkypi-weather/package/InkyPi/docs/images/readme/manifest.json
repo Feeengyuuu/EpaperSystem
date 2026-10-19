@@ -7,7 +7,8 @@
       "slug": "sports-dashboard",
       "label": "SportsDashboard",
       "path": "docs\\images\\readme\\screens\\actual-sports-dashboard-800x480.png",
-      "source": "offline public sample render"
+      "source": "device render after Display Now (release deploy-20261019T024152Z-esports-ed2dc775)",
+      "captured_at": "2026-10-19T02:58:12+00:00"
     },
     {
       "slug": "lol-info",
