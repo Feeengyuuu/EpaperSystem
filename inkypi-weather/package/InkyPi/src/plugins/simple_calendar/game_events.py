@@ -265,10 +265,13 @@ class GameEventProvider:
                                     and old["event_date"] == item["previous_date"]}
                 if len(previous_matches) == 1:
                     matching = next(iter(previous_matches.values()))
-            seed = announcement.family + "|" + (announcement.external_id or announcement.source_url) + "|" + announcement.edition
-            item["id"] = matching["id"] if matching else hashlib.sha256(seed.encode()).hexdigest()[:24]
             key = (announcement.source_url, announcement.external_id, announcement.family)
             old = items.get(key)
+            # A record re-read under a newer edition rule (e.g. "ID@Xbox Showcase")
+            # keeps its identity, so agreement with other publishers survives.
+            matching = matching or old
+            seed = announcement.family + "|" + (announcement.external_id or announcement.source_url) + "|" + announcement.edition
+            item["id"] = matching["id"] if matching else hashlib.sha256(seed.encode()).hexdigest()[:24]
             if old and announcement.external_id and old.get("revision", 0) > announcement.revision:
                 continue
             items[key] = item

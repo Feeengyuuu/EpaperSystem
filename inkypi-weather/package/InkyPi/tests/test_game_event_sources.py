@@ -212,6 +212,29 @@ def test_xbox_follow_on_direct_is_still_xbox_and_short_meridiem_is_supported():
     assert item.starts_at == datetime(2026, 6, 7, 17, tzinfo=timezone.utc)
 
 
+def test_xbox_wire_kick_off_with_dotted_meridiem_keeps_its_time():
+    item, = parse_announcement('<h1>ID@Xbox Showcase returns October 20</h1><article><p>The ID@Xbox Showcase will kick off on Tuesday, October 20 at 10 a.m. PT / 1 p.m. ET.</p></article>', url="https://news.xbox.com/en-us/2026/10/13/id-xbox-showcase-october-2026/", source_id="xbox", now=NOW)
+    assert (item.family, item.edition, item.title) == ("xbox_showcase", "id_xbox", "ID@Xbox Showcase")
+    assert item.starts_at == datetime(2026, 10, 20, 17, tzinfo=timezone.utc)
+
+
+def test_media_time_sentence_naming_the_show_date_supplies_the_start():
+    html = ('<meta property="article:published_time" content="2026-10-13T17:00:00.000Z">'
+            '<h1>ID@Xbox Showcase Returns in October With 18 Games</h1><main>'
+            '<p>IGN and Xbox announced a brand-new edition of the ID@Xbox showcase. On October 20, we will be presenting exclusive reveals.</p>'
+            '<p>The October edition of the ID@Xbox Showcase Presented by IGN is on Tuesday, October 20 at 10am PT / 1pm ET / 6pm BST.</p>'
+            '<p>Be sure to tune in October 20 to see what this month’s show has to offer.</p></main>')
+    item, = parse_announcement(html, url="https://www.ign.com/articles/id-xbox-showcase-october-2026-how-to-watch", source_id="ign", now=NOW)
+    assert item.title == "ID@Xbox Showcase" and item.event_date == date(2026, 10, 20)
+    assert item.starts_at == datetime(2026, 10, 20, 17, tzinfo=timezone.utc)
+
+
+def test_other_schedules_on_the_show_date_do_not_become_its_start():
+    item, = parse_announcement('<h1>Xbox Partner Preview returns November 12</h1><article><p>Tune in November 12 for the Xbox Partner Preview.</p><p>Pre-orders open November 12 at 9am PT.</p></article>', url="https://news.xbox.com/en-us/2026/11/05/xbox-partner-preview/", source_id="xbox", now=NOW)
+    assert (item.family, item.title, item.event_date) == ("xbox_showcase", "Xbox Partner Preview", date(2026, 11, 12))
+    assert item.starts_at is None
+
+
 def test_html_challenge_is_failure_not_successful_empty_calendar():
     from plugins.simple_calendar.game_event_sources import fetch_source
     for source in ("nintendo", "gamescom", "tga"):

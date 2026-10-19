@@ -27,17 +27,20 @@ class AppleEventProvider(GameEventProvider):
         return ["apple"]
 
     def _merge_source(self, state, source_id, announcements, now):
-        previous = {item["external_id"]: item for item in state["sources"][source_id].get("items", [])}
+        # Calendar entries are identified by UID; Newsroom stories have none and
+        # are identified by their own URL.
+        previous = {item["external_id"] or item["source_url"]: item for item in state["sources"][source_id].get("items", [])}
         unique = {}
         for item in sorted(announcements, key=lambda row: (
             row.revision, row.published_at or datetime.min.replace(tzinfo=timezone.utc), row.status == "cancelled"
         )):
-            old = previous.get(item.external_id, {})
+            key = item.external_id or item.source_url
+            old = previous.get(key, {})
             old_stamp = _instant(old.get("published_at"))
             if old.get("revision", 0) > item.revision or (
                 old.get("revision", 0) == item.revision and old_stamp and item.published_at
                 and old_stamp > item.published_at
             ):
                 continue
-            unique[item.external_id] = item
+            unique[key] = item
         super()._merge_source(state, source_id, list(unique.values()), now)

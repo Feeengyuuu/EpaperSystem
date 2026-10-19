@@ -29,7 +29,7 @@ FAMILY_PATTERNS = {
     "nintendo_direct": r"nintendo direct",
     "summer_game_fest": r"summer game fest",
     "the_game_awards": r"the game awards|\btga\b",
-    "xbox_showcase": r"xbox.*showcase|developer.?direct",
+    "xbox_showcase": r"xbox.*showcase|developer.?direct|xbox partner preview",
     "gamescom_onl": r"opening night live|gamescom.*\bonl\b",
 }
 MONTHS = "January February March April May June July August September October November December".split()
@@ -81,10 +81,14 @@ RUMOR_RE = re.compile(r"\b(rumou?rs?|leaks?|reportedly|expected|might|could|insi
 RECAP_RE = re.compile(r"recap|highlights|everything (?:announced|revealed)|all (?:the )?announcements|watch (?:the )?replay|round.?up|announced at|revealed at|viewership record", re.I)
 BROADCAST_CUE = re.compile(
     r"\btune in\b|\bwatch\b.{0,70}(?:broadcast|state of play|direct|showcase|show|live)|"
-    r"(?:state of play(?: japan)?|nintendo direct|summer game fest|game awards|\btga\b|opening night live|showcase|developer.?direct|broadcast)"
-    r"[^.!?]{0,90}\b(?:returns?|airs?|airing|streams? live|starts?|starting|begins?|take place|be held|scheduled|rescheduled|moved|confirmed|cancelled|canceled|postponed)\b|"
-    r"(?:confirms?|confirmed|announced)[^.!?]{0,65}(?:state of play|nintendo direct|showcase|game awards|opening night live)", re.I
+    r"(?:state of play(?: japan)?|nintendo direct|summer game fest|game awards|\btga\b|opening night live|showcase|partner preview|developer.?direct|broadcast)"
+    r"[^.!?]{0,90}\b(?:returns?|airs?|airing|streams? live|starts?|starting|begins?|kick(?:s|ing)? off|go(?:es|ing)? live|take place|be held|scheduled|rescheduled|moved|confirmed|cancelled|canceled|postponed)\b|"
+    r"(?:confirms?|confirmed|announced)[^.!?]{0,65}(?:state of play|nintendo direct|showcase|partner preview|game awards|opening night live)", re.I
 )
+# A sentence naming the show's own date and clock time; other schedules in the
+# same article (pre-shows, pre-orders, releases) never supply its start time.
+SHOW_WORD_RE = re.compile(r"\b(?:show(?:case)?|broadcast|stream|livestream|presentation|direct|ceremony|preview|kick(?:s|ing)? off|tune in|watch)\b", re.I)
+OTHER_SCHEDULE_RE = re.compile(r"pre.?show|post.?show|countdown|pre.?orders?|releases?\b|launch(?:es|ed)?\b|early access|\bon sale\b", re.I)
 
 
 @dataclass(frozen=True)
@@ -110,6 +114,10 @@ class Announcement:
 
 def _edition(title):
     title = title.lower()
+    if "id@xbox" in title:
+        return "id_xbox"
+    if "xbox partner preview" in title:
+        return "partner_preview"
     if "partner showcase" in title:
         return "partner"
     if re.search(r"developer.?direct", title):
@@ -120,8 +128,10 @@ def _edition(title):
 
 
 def _display_title(family, edition):
+    # The indie and partner shows are separate Xbox broadcasts, not the June showcase.
+    named = {"id_xbox": "ID@Xbox Showcase", "partner_preview": "Xbox Partner Preview"}
     suffix = {"main": "", "partner": " Partner Showcase", "developer_direct": " / Developer Direct", "japan": " Japan"}
-    return SERIES[family] + suffix[edition]
+    return named.get(edition) or SERIES[family] + suffix[edition]
 
 
 def _broadcast_status(text, family):
@@ -168,6 +178,21 @@ def _time_from_text(text, event_date):
         return None
 
 
+def _split_sentences(text):
+    """Split prose into sentences without breaking "10 a.m. PT" apart."""
+    return re.split(r"(?<=[.!?])(?<![apAP]\.[mM]\.)\s+(?=[A-Z])", text)
+
+
+def _dated_time_sentence(sentences, event_date, year):
+    """Return a sentence that gives the show's own date together with a clock time."""
+    for sentence in sentences:
+        if RUMOR_RE.search(sentence) or OTHER_SCHEDULE_RE.search(sentence) or not SHOW_WORD_RE.search(sentence):
+            continue
+        if TIME_RE.search(sentence) and _date_from_text(sentence, year) == event_date:
+            return sentence
+    return ""
+
+
 def parse_announcement(html: str, *, url: str, source_id: str, now: datetime) -> list[Announcement]:
     """Extract the announced broadcast date, never an article's publication time."""
     soup = BeautifulSoup(html, "html.parser")
@@ -191,7 +216,7 @@ def parse_announcement(html: str, *, url: str, source_id: str, now: datetime) ->
     blocks = [node.get_text(" ", strip=True) for node in body.select("p, li")]
     if not blocks:
         blocks = [text]
-    blocks = [sentence for block in blocks for sentence in re.split(r"(?<=[.!?])\s+(?=[A-Z])", block)]
+    blocks = [sentence for block in blocks for sentence in _split_sentences(block)]
     evidence = [block for block in blocks if BROADCAST_CUE.search(block) and not RUMOR_RE.search(block)]
     if not evidence and not BROADCAST_CUE.search(title):
         return []
@@ -222,8 +247,14 @@ def parse_announcement(html: str, *, url: str, source_id: str, now: datetime) ->
         status = "confirmed"
     edition = _edition(title)
     display_title = _display_title(family, edition)
-    starts_at = _time_from_text(new_schedule or evidence_text, event_date)
-    time_match = TIME_RE.search(new_schedule or evidence_text)
+    time_text = new_schedule or evidence_text
+    starts_at = _time_from_text(time_text, event_date)
+    if starts_at is None:
+        # "The showcase will kick off on Tuesday, October 20 at 10am PT" may sit
+        # outside the cue sentences that supplied the date.
+        time_text = _dated_time_sentence(blocks, event_date, year) or time_text
+        starts_at = _time_from_text(time_text, event_date)
+    time_match = TIME_RE.search(time_text)
     event_timezone = TIMEZONES[time_match[4].upper()] if time_match else DEFAULT_TIMEZONES[family]
     if edition == "japan" and re.search(r"immediately following|after (?:the )?(?:first|main)", text, re.I):
         starts_at = None

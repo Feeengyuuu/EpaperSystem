@@ -21,13 +21,15 @@
 - State of Play：[PlayStation RSS](https://blog.playstation.com/tag/state-of-play/feed/) 发现公告，继续读取未来活动的正文。
 - Nintendo Direct：[最新页面](https://www.nintendo.com/us/nintendo-direct/)和归档中的官方数据。正文的日期、时刻和时区优先；机器字段中的 `Z` 不直接作为可信直播时间。
 - SGF / TGA：[Summer Game Fest](https://www.summergamefest.com/)关联的 AddEvent 日历，以及 [TGA 公告](https://thegameawards.com/news)和官方 FAQ。主办方直接公告优先于聚合日历。
-- Xbox：[Xbox Wire RSS](https://news.xbox.com/en-us/feed/)及正文，覆盖 Showcase 和 Developer Direct。
+- Xbox：[Xbox Wire RSS](https://news.xbox.com/en-us/feed/)及正文，覆盖 Showcase、Developer Direct、ID@Xbox Showcase 和 Xbox Partner Preview。后两者是独立的节目，以自己的名称显示，不再显示成 “Xbox Showcase”。
 - gamescom ONL：[官方节目页](https://www.gamescom.global/en/program)中的活动详情，排除预热节目、回顾和手语转播。
 - 媒体：[Eurogamer](https://www.eurogamer.net/feed/news)、[IGN](https://www.ign.com/rss/articles/feed?tags=games)。报道必须明确说明已确认；单家必须给出对应的官方公告链接，否则需要两家独立报道一致。
 
 不使用文章发布时间作为活动时间，不收录传闻、预测、游戏发售日期和播后回顾。只有日期时显示“时间待定”；相对描述不用于推算直播时刻。明确时间统一存成 UTC，同时保留来源日期及其时区。
 
-活动以稳定身份归并。相同 URL / 官方活动 ID 的更新、对应官方链接，以及可确认的同场报道不会重复展示。独立改期公告明确给出原日期时，会在原日期只有一个匹配活动的情况下复用身份。取消和未给出新日期的延期记录仍保留在缓存中，但不出现在正常日程中。冲突保留较高优先级的信息，并标记待核验。
+时刻先从公告句（tune in、airs、starts、kicks off、goes live 等）读取；公告句没有时刻时，再取同时写明节目当天日期和带时区时刻、且提到节目本身的句子（例如 IGN 的 “will kick off on Tuesday, October 20 at 10am PT”）。预热节目、预购、发售等同日的其他时刻不会当作开播时间。“10 a.m. PT” 这类带点的上下午写法不会在分句时被拆开。
+
+活动以稳定身份归并。相同 URL / 官方活动 ID 的更新、对应官方链接，以及可确认的同场报道不会重复展示。同一条公告在解析规则更新后被归入新的节目版本时沿用原身份，因此与其他媒体的互证不会中断。独立改期公告明确给出原日期时，会在原日期只有一个匹配活动的情况下复用身份。取消和未给出新日期的延期记录仍保留在缓存中，但不出现在正常日程中。冲突保留较高优先级的信息，并标记待核验。
 
 ## 缓存与刷新
 

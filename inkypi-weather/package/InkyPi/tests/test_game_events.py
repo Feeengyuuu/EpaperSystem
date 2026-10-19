@@ -111,6 +111,28 @@ def test_media_without_official_link_requires_two_independent_agreeing_publisher
     assert len(result.events) == 1
 
 
+def test_reclassified_media_record_keeps_identity_and_publisher_agreement(tmp_path):
+    settings = {"showGameEvents": "true", "gameEventSeries[]": ["xbox_showcase"], "allowGameEventMedia": "true"}
+    titles = {"eurogamer": "Xbox indie showcase confirmed for October 20", "ign": "Xbox indie showcase confirmed for October 20"}
+
+    def fetch(url):
+        for host, title in titles.items():
+            if host in url:
+                return (f'<rss version="2.0"><channel><title>News</title><item><title>{title}</title>'
+                        f'<link>https://www.{host}.{"net" if host == "eurogamer" else "com"}/articles/xbox-indie-showcase</link>'
+                        '<description><![CDATA[<p>Xbox confirmed the showcase will air October 20, 2026 at 10am PT.</p>]]></description>'
+                        '</item></channel></rss>')
+        raise OSError("official unavailable")
+
+    provider = GameEventProvider(tmp_path, fetch_text=fetch)
+    first, = provider.refresh(settings, now=NOW).events
+    assert first["title"] == "Xbox Showcase"
+    titles["ign"] = "ID@Xbox Showcase confirmed for October 20"
+    event, = provider.refresh(settings, now=NOW + timedelta(hours=3)).events
+    assert event["id"] == first["id"] and not event["pending_verification"]
+    assert event["starts_at"] == "2026-10-20T17:00:00+00:00"
+
+
 def test_cancelled_event_disappears_and_missing_feed_does_not_cancel(tmp_path):
     web = Web()
     provider = GameEventProvider(tmp_path, fetch_text=web)
