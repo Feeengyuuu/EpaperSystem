@@ -90,7 +90,8 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
                       "STEAM", font=_font(20, True), fill="white", anchor="mm")
         text_x = x0 + 160
         available = x1 - text_x
-        line, title_font = _title_line(deal["title"], available)
+        # Only the name changes: Steam's Simplified Chinese name when it has one.
+        line, title_font = _title_line(deal.get("title_zh") or deal["title"], available)
 
         # The sale price and struck original share one line beside the discount badge.
         badge_left = x1 - badge_w
@@ -123,7 +124,7 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         layout.append({"title": deal["title"], "lines": [line], "text_width": available,
                        "title_widths": [title_font.getlength(line)], "box": (x0, y0, x1, y1),
                        "prices_right": original_x + original_font.getlength(original),
-                       "badge_left": badge_left})
+                       "badge_left": badge_left, "price_row": price_row})
     draw.line((399, 72, 399, 440), fill=ink, width=1)
     for row in range(1, ROWS):
         y = CARD_RECTS[row * 2][1] - (ROW_PITCH - CARD_HEIGHT) // 2

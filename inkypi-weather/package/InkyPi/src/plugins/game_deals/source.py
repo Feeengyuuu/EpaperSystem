@@ -13,6 +13,8 @@ from runtime.refresh_contracts import TaskCancelled, TaskDeadlineExceeded
 from utils.atomic_file import atomic_write_json
 from utils.plugin_cache import parse_datetime
 
+from .names import ChineseNameCache, chinese_title
+
 
 API_URL = "https://www.cheapshark.com/api/1.0/deals"
 USER_AGENT = "EpaperSystem-GameDeals/1.0 (personal e-paper dashboard; https://github.com/Feeengyuuu/EpaperSystem)"
@@ -21,6 +23,7 @@ MAX_STALE_SECONDS = 24 * 3600
 MAX_JSON_BYTES = 128 * 1024
 MAX_ITEMS = 10
 SCHEMA_VERSION = 1
+NAME_LANGUAGE = "schinese"
 _ABORT = (TaskCancelled, TaskDeadlineExceeded)
 
 
@@ -83,9 +86,13 @@ def normalize_deals(payload, *, scope="steam"):
             continue
         seen.add(game_id)
         discount = int(((normal - sale) * 100 / normal).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        steam_app_id = str(row.get("steamAppID") or "")
         deals.append({
-            "title": " ".join(title.split()), "deal_id": deal_id,
-            "game_id": game_id, "store_id": store_id,
+            "title": " ".join(title.split()),
+            # Steam's Simplified Chinese store name, when it has one; "" keeps the English title.
+            "title_zh": chinese_title(row.get("title_zh")),
+            "steam_app_id": steam_app_id if steam_app_id.isdecimal() and len(steam_app_id) <= 12 else "",
+            "deal_id": deal_id, "game_id": game_id, "store_id": store_id,
             "store_name": "Steam" if store_id == "1" else f"商店 {store_id}",
             "sale_price": str(sale), "normal_price": str(normal),
             "discount_percent": min(discount, 100),
@@ -130,7 +137,8 @@ class DealRepository:
             rows = [{"title": item["title"], "dealID": item["deal_id"],
                      "gameID": item["game_id"], "storeID": item["store_id"],
                      "salePrice": item["sale_price"], "normalPrice": item["normal_price"],
-                     "thumb": item.get("thumbnail_url", "")} for item in deals]
+                     "thumb": item.get("thumbnail_url", ""), "title_zh": item.get("title_zh", ""),
+                     "steamAppID": item.get("steam_app_id", "")} for item in deals]
             envelope["deals"] = normalize_deals(rows, scope=scope)
             return envelope
         except (OSError, ValueError, TypeError, KeyError):
@@ -160,7 +168,8 @@ class DealRepository:
         retry_at = parse_datetime(envelope.get("retry_at"))
         if retry_at and retry_at > now:
             return snapshot
-        if not force and snapshot.state == "fresh_cache":
+        # A cache written before Chinese names existed is refreshed once, not kept for two hours.
+        if not force and snapshot.state == "fresh_cache" and envelope.get("names") == NAME_LANGUAGE:
             return snapshot
         if context:
             context.raise_if_cancelled()
@@ -177,8 +186,15 @@ class DealRepository:
             deals = normalize_deals(result.data, scope=scope)
             if context:
                 context.raise_if_cancelled()
+            names = ChineseNameCache(self.cache_dir / "names-schinese.json", http=self.http,
+                                     user_agent=USER_AGENT).names_for(
+                [deal["steam_app_id"] for deal in deals], now=now, context=context)
+            for deal in deals:
+                deal["title_zh"] = names.get(deal["steam_app_id"], "")
+            if context:
+                context.raise_if_cancelled()
             envelope = {"schema": SCHEMA_VERSION, "scope": scope, "currency": "USD",
-                        "fetched_at": now.isoformat(), "deals": deals}
+                        "names": NAME_LANGUAGE, "fetched_at": now.isoformat(), "deals": deals}
             atomic_write_json(self._path(scope), envelope)
             return self._snapshot(envelope, now=now, scope=scope, live=True)
         except _ABORT:

@@ -42,6 +42,24 @@ def test_ten_realistic_and_extreme_titles_fit_day_and_night():
     assert layout[4]["lines"][0].endswith("…")
 
 
+def test_chinese_store_name_replaces_only_the_title_line():
+    english = offers()
+    chinese = tuple(dict(deal, title_zh=name) for deal, name in zip(english, ["巫师2：国王刺客 加强版", "", "无尽传奇2"]))
+    plain = render_page(DealSnapshot(english[:3], NOW, "live", "steam"), {}, theme={"mode": "day"}, now=NOW)
+    named = render_page(DealSnapshot(chinese, NOW, "live", "steam"), {}, theme={"mode": "day"}, now=NOW)
+    layout = named.info["game_deals_layout"]
+    assert [card["lines"] for card in layout] == [["巫师2：国王刺客 加强版"], ["Ori and the Will of the Wisps"], ["无尽传奇2"]]
+    assert all(max(card["title_widths"]) <= card["text_width"] for card in layout)
+    # Covers are untouched and prices/badges keep their columns; only the existing
+    # title-plus-price centring may move the price row by a couple of pixels.
+    for card, before in zip(layout, plain.info["game_deals_layout"]):
+        assert card["prices_right"] == before["prices_right"] and card["badge_left"] == before["badge_left"]
+        assert abs(card["price_row"] - before["price_row"]) <= 2
+        x0, y0, _, y1 = card["box"]
+        cover = (x0, y0, x0 + 150, y1)
+        assert ImageChops.difference(named.crop(cover), plain.crop(cover)).getbbox() is None
+
+
 def test_five_rows_per_column_fill_the_page_in_reading_order():
     snapshot = DealSnapshot(offers(), NOW, "live", "steam")
     layout = render_page(snapshot, {}, theme={"mode": "day"}, now=NOW).info["game_deals_layout"]

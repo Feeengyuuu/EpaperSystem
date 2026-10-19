@@ -14,6 +14,16 @@ Prices and availability can change before the next scheduled fetch.
   form, retained in the data cache. There is no QR dependency on the display.
 - No historical-low claim is made: the list response does not prove a Steam
   historical low, and the cross-store history endpoint is not requested.
+- Titles use Steam's Simplified Chinese store name when one exists. After each
+  successful offer fetch, one keyless `IStoreBrowseService/GetItems` request
+  (`language=schinese`, `country_code=US`) looks up the offers' `steamAppID`s.
+  A name counts only if it contains Chinese characters; untranslated names,
+  unlisted apps and offers without an app ID keep the English CheapShark title.
+  Trademark signs are dropped. Found and absent names are cached for 30 days in
+  `names-schinese.json` (at most 200 apps); a failed lookup only skips the
+  overlay and never fails the offer refresh. Covers, prices and badges are
+  unchanged; the existing title-plus-price centring can move the price row by
+  a pixel or two when the title font size changes.
 
 Register the playlist instance with `refresh.interval=7200`,
 `settings.storeScope="steam"`, `settings.themeMode="auto"`, and
@@ -22,7 +32,8 @@ the repository also enforces a 7200-second successful-data TTL.
 
 Runtime state is under `INKYPI_CACHE_DIR/plugins/game_deals/data/`:
 `deals-steam.json` stores the original successful `fetched_at`, currency and up
-to ten normalised offers (older six-offer caches remain valid until the next fetch). Failure adds `error` and `retry_at` without renewing source
+to ten normalised offers with `steam_app_id` and `title_zh` (older six-offer caches remain valid until the next fetch;
+a cache without the `names` marker is refetched on the next DATA refresh instead of waiting two hours). Failure adds `error` and `retry_at` without renewing source
 time. Genuine empty responses clear old offers. Data older than two hours is
 visibly stale; offers older than 24 hours are hidden.
 
