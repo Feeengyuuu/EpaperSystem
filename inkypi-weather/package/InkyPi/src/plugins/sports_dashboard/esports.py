@@ -2462,9 +2462,9 @@ class EsportsMixin:
                 now,
                 force=worlds_forced,
             )
-            # Worlds joins the sidebar only while its tournament runs (where it
-            # is pinned) or when the sidebar override forces it for a preview.
-            if worlds_card.get("sidebar_pinned") or worlds_forced:
+            # Worlds joins the sidebar only while its tournament runs (pinned
+            # on match days) or when the sidebar override forces it.
+            if worlds_card.get("in_window") or worlds_card.get("sidebar_pinned") or worlds_forced:
                 cards.append(worlds_card)
         return cards
 
@@ -2513,20 +2513,34 @@ class EsportsMixin:
         if live_cards:
             return sorted(live_cards, key=SportsDashboard._right_sidebar_lol_sort_key)[0]
 
+        # With nothing live, the league whose next match starts first wins.
         upcoming_cards = [card for card in displayable if SportsDashboard._lol_sidebar_candidate_phase(card) == 1]
         if upcoming_cards:
-            return sorted(upcoming_cards, key=SportsDashboard._right_sidebar_lol_sort_key)[0]
+            return sorted(upcoming_cards, key=SportsDashboard._right_sidebar_lol_upcoming_sort_key)[0]
 
         return SportsDashboard._right_sidebar_default_lpl_choice(displayable, now)
 
     @staticmethod
     def _select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now, ewc_card=None):
+        """Pick the right esports sidebar. In order:
+
+        1. Worlds on a match day (a match live, or the next within
+           WORLDS_PIN_LEAD) is pinned above everything.
+        2. A live match; when several are live, LoL (LPL > LCK > MSI >
+           Worlds) > EWC > CS2 > TI > other Valve events.
+        3. Otherwise the earliest next match across every league and event
+           (Worlds rest days included); equal starts keep the order above.
+        4. With nothing scheduled, a recent tournament result (Valve, then
+           EWC), else the LPL page.
+
+        LoL leagues are first reduced to one card by the same rules. EWC only
+        competes when a card is passed. The lolEsportsSidebarOverride preview
+        is handled by the caller.
+        """
         lol_cards = [dict(card) for card in (lol_cards or []) if card and card.get("selected") is not None]
         candidates = []
-        # Resolve the preferred LoL league first (LPL/LCK/MSI/Worlds), then
-        # compare that single timed choice with EWC. This preserves the
-        # configured LoL league order without letting it hide an earlier
-        # cross-module match. A running Worlds is pinned above everything.
+        # Resolve one LoL card first (live by league order, else the earliest
+        # next match), then compare it with EWC and Valve on the same terms.
         lol_choice = SportsDashboard._select_lol_esports_sidebar(lol_cards, now)
         phase = SportsDashboard._lol_sidebar_candidate_phase(lol_choice)
         if phase is not None:
@@ -2725,6 +2739,10 @@ class EsportsMixin:
     @staticmethod
     def _right_sidebar_lol_sort_key(card):
         return (SportsDashboard._right_sidebar_lol_priority(card), SportsDashboard._right_sidebar_lol_tie_value(card))
+
+    @staticmethod
+    def _right_sidebar_lol_upcoming_sort_key(card):
+        return (SportsDashboard._right_sidebar_lol_tie_value(card), SportsDashboard._right_sidebar_lol_priority(card))
 
     @staticmethod
     def _right_sidebar_lol_priority(card):

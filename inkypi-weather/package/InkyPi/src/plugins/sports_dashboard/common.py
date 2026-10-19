@@ -3154,21 +3154,23 @@ class SportsDashboardCommonMixin:
             choice_kind = str(
                 (esports_choice or {}).get("kind") or ""
             ).strip().lower()
-            has_timed_esports_choice = (
+            # Unless something is already live, the HLTV/OpenDota events join
+            # the comparison so an earlier match there is not hidden.
+            has_live_esports_choice = (
                 choice_kind == "lol"
                 and self._lol_sidebar_candidate_phase(
                     (esports_choice or {}).get("choice")
                 )
-                in (0, 1)
+                == 0
             ) or (
                 choice_kind == "valve"
                 and self._valve_sidebar_candidate_phase(
                     ((esports_choice or {}).get("selected") or {}).get("primary")
                 )
-                in (0, 1)
+                == 0
             )
             if (
-                not has_timed_esports_choice
+                not has_live_esports_choice
                 and self._bool_setting(settings, "valveEsportsEnabled", True)
             ):
                 valve_selected = None

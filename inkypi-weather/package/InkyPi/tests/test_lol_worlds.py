@@ -158,7 +158,7 @@ def test_fetch_worlds_events_uses_worlds_league_and_drops_previous_edition(monke
     assert [event["stage_label"] for event in events] == ["Play-In", "Play-In", "Swiss Stage"]
 
 
-def test_worlds_card_is_pinned_while_the_tournament_runs():
+def test_worlds_card_is_pinned_on_a_match_day():
     plugin = _plugin()
     plugin._load_worlds_events = lambda *_args, **_kwargs: (
         _worlds_events(),
@@ -169,9 +169,28 @@ def test_worlds_card_is_pinned_while_the_tournament_runs():
     card = plugin._load_worlds_sidebar_card({}, timezone.utc, NOW)
 
     assert card["league_key"] == "WORLDS"
+    assert card["in_window"] is True
     assert card["sidebar_pinned"] is True
-    assert card["pinned_until"] == TOURNAMENT["end"]
+    # Live w-2 and w-3 within 24 hours: the pin covers w-3's live window.
+    assert card["pinned_until"] == datetime(2026, 10, 18, 0, 0, tzinfo=timezone.utc)
     assert [event["event_id"] for event in card["selected"]["live"]] == ["w-2"]
+
+
+@pytest.mark.parametrize("hours_ahead, pinned", [(23, True), (30, False)])
+def test_worlds_pins_only_when_the_next_match_is_within_a_day(hours_ahead, pinned):
+    plugin = _plugin()
+    rest_day = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+    events = [
+        _match("done", rest_day - timedelta(days=2), "completed", "KC", "MVK", (3, 0)),
+        _match("next", rest_day + timedelta(hours=hours_ahead), "unstarted", "GEN", "IG", block="Swiss"),
+    ]
+    plugin._load_worlds_events = lambda *_args, **_kwargs: (events, "WORLDS LIVE DATA", TOURNAMENT)
+
+    card = plugin._load_worlds_sidebar_card({}, timezone.utc, rest_day)
+
+    assert card["in_window"] is True
+    assert card["sidebar_pinned"] is pinned
+    assert (card["pinned_until"] is None) is (not pinned)
 
 
 @pytest.mark.parametrize(
@@ -264,22 +283,27 @@ def test_worlds_tournament_metadata_is_cached_in_its_own_state_file(monkeypatch,
     assert not (tmp_path / "cache" / "msi_tournament_state.json").exists()
 
 
-def test_lol_sidebar_cards_include_worlds_only_while_pinned():
+def test_lol_sidebar_cards_include_worlds_only_during_the_tournament():
     plugin = _plugin()
     plugin._load_lpl_events = lambda *_args: ([], "CACHE DATA")
     plugin._attach_lpl_odds = lambda events, *_args, **_kwargs: events
     plugin._load_lck_events = lambda *_args: ([], "LCK NO DATA")
     plugin._load_msi_events = lambda *_args: ([], "MSI NO DATA", None)
-    pinned = {"value": False}
+    state = {"in_window": False, "pinned": False}
     plugin._load_worlds_sidebar_card = lambda *_args, **_kwargs: {
         **_pinned_worlds_card(SportsDashboard._select_worlds_events(_worlds_events(), NOW)),
-        "sidebar_pinned": pinned["value"],
+        "in_window": state["in_window"],
+        "sidebar_pinned": state["pinned"],
     }
 
     keys = [card["league_key"] for card in plugin._load_lol_esports_sidebar_cards({}, FakeDeviceConfig(), timezone.utc, NOW)]
     assert "WORLDS" not in keys
 
-    pinned["value"] = True
+    state["in_window"] = True  # a rest day: a candidate, not pinned
+    keys = [card["league_key"] for card in plugin._load_lol_esports_sidebar_cards({}, FakeDeviceConfig(), timezone.utc, NOW)]
+    assert keys[-1] == "WORLDS"
+
+    state["pinned"] = True
     keys = [card["league_key"] for card in plugin._load_lol_esports_sidebar_cards({}, FakeDeviceConfig(), timezone.utc, NOW)]
     assert keys[-1] == "WORLDS"
 
@@ -320,21 +344,59 @@ def test_running_worlds_outranks_a_live_cs2_match_even_between_worlds_games():
     assert choice["choice"]["league_key"] == "WORLDS"
 
 
-def test_pinned_worlds_keeps_its_last_result_until_the_window_closes():
+def test_worlds_stops_pinning_after_the_final_and_a_live_cs2_match_takes_over():
+    plugin = _plugin()
     final_day = datetime(2026, 11, 15, 20, 0, tzinfo=timezone.utc)
-    finished = SportsDashboard._select_worlds_events(
-        [_match("final", final_day - timedelta(hours=8), "completed", "GEN", "BLG", (3, 1), block="Finals")],
-        final_day,
-    )
-    card = _pinned_worlds_card(finished)
+    final = _match("final", final_day - timedelta(hours=8), "completed", "GEN", "BLG", (3, 1), block="Finals")
+    plugin._load_worlds_events = lambda *_args, **_kwargs: ([final], "WORLDS LIVE DATA", TOURNAMENT)
 
-    assert SportsDashboard._lol_sidebar_candidate_phase(card) == 2
+    card = plugin._load_worlds_sidebar_card({}, timezone.utc, final_day)
+
+    assert card["in_window"] is True
+    assert card["sidebar_pinned"] is False
+    assert SportsDashboard._lol_sidebar_candidate_phase(card) is None
+    assert SportsDashboard._lol_sidebar_candidate_phase({**card, "sidebar_pinned": True}) == 2
     choice = SportsDashboard._select_right_esports_sidebar([card], _live_cs2_card(final_day), "PANDASCORE LIVE", final_day)
-    assert choice["kind"] == "lol"
-    assert choice["choice"]["league_key"] == "WORLDS"
+    assert choice["kind"] == "valve"
 
-    unpinned = {**card, "sidebar_pinned": False}
-    assert SportsDashboard._lol_sidebar_candidate_phase(unpinned) is None
+
+def _upcoming_cs2_card(start):
+    match = {"start": start, "state": "unstarted", "team_a": "LGC", "team_b": "BB"}
+    card = {
+        "series": "CS",
+        "event_name": "Thunderpick World Championship 2026",
+        "status": "NEXT",
+        "window_active": True,
+        "main": match,
+        "live": [],
+        "upcoming": [match],
+        "recent": [],
+        "source_state": "PANDASCORE LIVE",
+    }
+    return {"primary": card, "cards": [card]}
+
+
+@pytest.mark.parametrize("cs2_hours, winner", [(2, "valve"), (40, "lol")])
+def test_on_a_worlds_rest_day_the_earlier_match_wins(cs2_hours, winner):
+    rest_day = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+    worlds_next = _match("next", rest_day + timedelta(hours=30), "unstarted", "GEN", "IG", block="Swiss")
+    worlds = {
+        **_pinned_worlds_card(SportsDashboard._select_worlds_events([worlds_next], rest_day)),
+        "in_window": True,
+        "sidebar_pinned": False,
+        "pinned_until": None,
+    }
+
+    choice = SportsDashboard._select_right_esports_sidebar(
+        [worlds],
+        _upcoming_cs2_card(rest_day + timedelta(hours=cs2_hours)),
+        "PANDASCORE LIVE",
+        rest_day,
+    )
+
+    assert choice["kind"] == winner
+    if winner == "lol":
+        assert choice["choice"]["league_key"] == "WORLDS"
 
 
 def test_prepare_right_panel_skips_cs2_discovery_while_worlds_is_pinned():

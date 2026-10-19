@@ -1,10 +1,13 @@
 """League of Legends World Championship (Worlds) card for the esports sidebar.
 
 Worlds reuses the lolesports schedule and live pipeline shared with LPL, LCK
-and MSI. While the official tournament window is open the card is pinned: it
-takes the right esports sidebar ahead of CS2, TI, EWC and the regional LoL
-leagues. Outside that window the card stays off the sidebar and its schedule
-is not requested; the sidebar override can still force it for a preview.
+and MSI. Inside the official tournament window the card is a sidebar
+candidate, and on match days it is pinned: while a Worlds match is live or the
+next one starts within WORLDS_PIN_LEAD it takes the right esports sidebar
+ahead of CS2, TI, EWC and the regional LoL leagues. On rest days it competes
+like any other league (live first, then the earliest next match). Outside the
+window the card stays off the sidebar and its schedule is not requested; the
+sidebar override can still force it for a preview.
 """
 
 from runtime.refresh_contracts import TaskCancelled
@@ -18,6 +21,7 @@ SportsDashboard = None
 WORLDS_LEAGUE_KEY = "WORLDS"
 WORLDS_SIDEBAR_PRIORITY = 3
 WORLDS_SCHEDULE_MARGIN = timedelta(days=1)
+WORLDS_PIN_LEAD = timedelta(hours=24)
 
 
 class LolWorldsMixin:
@@ -30,18 +34,51 @@ class LolWorldsMixin:
         )
         selected = self._select_worlds_events(events, now)
         window_start, window_end = self._worlds_tournament_window(tournament, events)
-        pinned = bool(
+        in_window = bool(
             self._worlds_window_contains(window_start, window_end, now)
             and self._lol_selected_has_displayable_event(selected)
+        )
+        pinned_until = (
+            SportsDashboard._worlds_match_day_pin_until(selected, now, window_end)
+            if in_window
+            else None
         )
         return {
             "league_key": WORLDS_LEAGUE_KEY,
             "selected": selected,
             "source_state": source_state,
             "priority": WORLDS_SIDEBAR_PRIORITY,
-            "sidebar_pinned": pinned,
-            "pinned_until": window_end if pinned else None,
+            "in_window": in_window,
+            "sidebar_pinned": pinned_until is not None,
+            "pinned_until": pinned_until,
         }
+
+    @staticmethod
+    def _worlds_match_day_pin_until(selected, now, window_end):
+        """When the match-day pin ends, or None on a rest day.
+
+        Worlds is pinned while a match is live or the next one starts within
+        WORLDS_PIN_LEAD; the pin lasts through the inferred live window of the
+        latest such match, never past the tournament window.
+        """
+        selected = selected or {}
+        anchors = [
+            event["start"]
+            for event in selected.get("live") or []
+            if isinstance(event.get("start"), datetime)
+        ]
+        anchors += [
+            event["start"]
+            for event in selected.get("upcoming") or []
+            if isinstance(event.get("start"), datetime)
+            and event["start"] - now <= WORLDS_PIN_LEAD
+        ]
+        if not anchors:
+            return None
+        until = max(max(anchors) + LPL_INFERRED_LIVE_WINDOW, now)
+        if isinstance(window_end, datetime):
+            until = min(until, window_end)
+        return until
 
     def _load_worlds_events(self, settings, timezone_info, now, force=False):
         tournament = None

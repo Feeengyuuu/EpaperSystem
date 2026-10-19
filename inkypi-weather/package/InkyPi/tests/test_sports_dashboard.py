@@ -3775,7 +3775,7 @@ def test_right_sidebar_prefers_earlier_upcoming_ewc_over_waiting_lpl():
     assert choice["selected"]["main_match"]["event_id"] == "ewc-lol"
 
 
-def test_right_sidebar_keeps_upcoming_lpl_ahead_of_earlier_lck():
+def test_right_sidebar_prefers_the_earlier_lck_match_over_a_later_lpl_one():
     now = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
     lpl_match = {
         "start": now + timedelta(hours=2),
@@ -3821,7 +3821,7 @@ def test_right_sidebar_keeps_upcoming_lpl_ahead_of_earlier_lck():
     )
 
     assert choice["kind"] == "lol"
-    assert choice["choice"]["league_key"] == "LPL"
+    assert choice["choice"]["league_key"] == "LCK"
 
 
 def test_active_ewc_competition_with_future_detail_does_not_preempt_earlier_upcoming_lpl():
@@ -14699,13 +14699,14 @@ def test_right_esports_prefetches_pandascore_and_uses_earlier_match(monkeypatch)
         "_load_pandascore_cs2_card",
         lambda *_args: (calls.append("pandascore") or panda_card, "PANDASCORE LIVE"),
     )
-    monkeypatch.setattr(
-        plugin,
-        "_load_valve_esports",
-        lambda *_args, **_kwargs: pytest.fail(
-            "timed PandaScore card should avoid loading fallback providers"
-        ),
-    )
+    def full_valve_load(_settings, _timezone_info, load_now, **preloaded):
+        # Nothing is live yet, so the other Valve providers join the
+        # comparison; the prefetched PandaScore card is reused, not refetched.
+        calls.append("full-valve")
+        card, source_state = preloaded["pandascore_result"]
+        return SportsDashboard._select_valve_esports([card], load_now), source_state
+
+    monkeypatch.setattr(plugin, "_load_valve_esports", full_valve_load)
     monkeypatch.setattr(
         plugin,
         "_write_valve_esports_live_state",
@@ -14739,6 +14740,7 @@ def test_right_esports_prefetches_pandascore_and_uses_earlier_match(monkeypatch)
 
     assert calls == [
         "pandascore",
+        "full-valve",
         "state:BLAST Premier Open Porto 2026:PANDASCORE LIVE",
         "valve",
     ]
