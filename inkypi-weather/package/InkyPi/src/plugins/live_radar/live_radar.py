@@ -194,17 +194,23 @@ CARD_META_Y_NUDGE = 2
 LIVE_CARD_SNAPSHOT_TITLE_MAX_SIZE = 10 + CARD_DETAIL_FONT_SIZE_NUDGE
 LIVE_CARD_TITLE_MAX_SIZE = 14 + CARD_DETAIL_FONT_SIZE_NUDGE
 COMPACT_CARD_DETAIL_MAX_SIZE = 8 + CARD_DETAIL_FONT_SIZE_NUDGE
-# LIVE TOO with many streams is one framed cover wall of tiles at least 90 px
-# wide (2-6 columns), each a full-bleed snapshot over a name strip whose top edge
-# is a 3 px platform-colour line. In landscape the wall takes three quarters of
-# the bottom row and OFFLINE becomes a slim list beside it.
+# LIVE TOO is one framed cover wall sized to the extra live streams. In landscape
+# up to three share one row of large tiles, more take as many rows as fit (at most
+# two) of 2-6 columns, and OFFLINE takes the rest of the row: full cards when wide
+# enough, else a slim list. Portrait keeps two halves and adds rows. Each tile is a
+# full-bleed snapshot, never taller than a 16:9 cover, over a name strip whose top
+# edge is a 3 px platform-colour line; free cells of the last row merge into one
+# live-count tile.
 LIVE_QUEUE_TILE_MIN_W = 90
 LIVE_QUEUE_MIN_COLUMNS = 2
 LIVE_QUEUE_MAX_COLUMNS = 6
 LIVE_QUEUE_MAX_ITEMS = 12
-LIVE_WALL_OFFLINE_SHARE = 0.25
+LIVE_QUEUE_TILE_W = 94
+LIVE_QUEUE_LARGE_TILE_W = 158
+LIVE_QUEUE_LARGE_ROW_MAX = 3
 LIVE_WALL_OFFLINE_MIN_W = 176
 OFFLINE_LIST_MIN_ROW_H = 24
+OFFLINE_CARDS_MIN_W = 300
 LIVE_QUEUE_MIN_TILE_H = 40
 LIVE_QUEUE_NAME_STRIP_H = 15
 LIVE_QUEUE_BRAND_LINE_H = 3
@@ -1322,19 +1328,21 @@ class LiveRadar(BasePlugin):
         bottom_y = top_y + (208 if show_snapshots else 184)
         footer_y = height - 27
         col_gap = max(12, int(width * 0.018))
-        snapshot_mini_live_threshold = max(3, int(layout.get("snapshot_mini_live_threshold") or 7))
         queued_live_cards = live_cards[live_limit:]
-        live_wall = bool(queued_live_cards) and not (
-            show_snapshots and len(live_cards) <= snapshot_mini_live_threshold
-        )
-        # A landscape cover wall gets three quarters of the row; OFFLINE goes slim.
-        wide_wall = live_wall and width > height
         bottom_h = footer_y - bottom_y - 8
-        if wide_wall:
-            offline_w = max(LIVE_WALL_OFFLINE_MIN_W, int((width - 2 * margin) * LIVE_WALL_OFFLINE_SHARE))
-            live_w = width - 2 * margin - col_gap - offline_w
+        row_w = width - 2 * margin - col_gap
+        landscape_wall = bool(queued_live_cards) and width > height
+        if landscape_wall:
+            wall_count = min(len(queued_live_cards), LIVE_QUEUE_MAX_ITEMS)
+            wall_rows = min(2, max(1, int((bottom_h - 24) // LIVE_QUEUE_MIN_TILE_H)))
+            if wall_count <= LIVE_QUEUE_LARGE_ROW_MAX:
+                wall_w = wall_count * LIVE_QUEUE_LARGE_TILE_W
+            else:
+                wall_w = int(math.ceil(wall_count / wall_rows)) * LIVE_QUEUE_TILE_W
+            live_w = min(wall_w, row_w - LIVE_WALL_OFFLINE_MIN_W)
+            offline_w = row_w - live_w
         else:
-            live_w = offline_w = int((width - 2 * margin - col_gap) / 2)
+            live_w = offline_w = int(row_w / 2)
         live_queue_box = (margin, bottom_y, live_w, bottom_h)
         offline_box = (margin + live_w + col_gap, bottom_y, offline_w, bottom_h)
         live_queue_max = LIVE_QUEUE_MAX_ITEMS
@@ -1372,19 +1380,7 @@ class LiveRadar(BasePlugin):
         else:
             self._draw_quiet_panel(draw, (margin, top_y, width - 2 * margin, top_h), len(cards), theme)
 
-        if queued_live_cards and not live_wall:
-            self._draw_snapshot_mini_section(
-                image,
-                draw,
-                live_queue_box,
-                "LIVE TOO",
-                queued_live_cards,
-                theme,
-                max_items=4,
-                snapshot_cache_seconds=snapshot_cache_seconds,
-                avatar_cache_seconds=avatar_cache_seconds,
-            )
-        elif queued_live_cards:
+        if queued_live_cards:
             self._draw_live_queue_section(
                 image,
                 draw,
@@ -1396,6 +1392,7 @@ class LiveRadar(BasePlugin):
                 avatar_cache_seconds=avatar_cache_seconds,
                 show_snapshot=show_snapshots,
                 snapshot_cache_seconds=snapshot_cache_seconds,
+                live_total=len(live_cards),
             )
         else:
             self._draw_snapshot_mini_section(
@@ -1413,8 +1410,9 @@ class LiveRadar(BasePlugin):
                 snapshot_cache_seconds=snapshot_cache_seconds,
                 avatar_cache_seconds=avatar_cache_seconds,
                 caption="quiet slots",
+                live_count=len(live_cards),
             )
-        if wide_wall:
+        if landscape_wall and offline_w < OFFLINE_CARDS_MIN_W:
             self._draw_offline_list_section(
                 image,
                 draw,
@@ -1881,6 +1879,7 @@ class LiveRadar(BasePlugin):
         avatar_cache_seconds=AVATAR_CACHE_SECONDS,
         show_snapshot=True,
         snapshot_cache_seconds=90,
+        live_total=None,
     ):
         x, y, w, h = box
         sub_font = self._font(13, "bold")
@@ -1906,12 +1905,12 @@ class LiveRadar(BasePlugin):
         columns = layout["columns"]
         rows = layout["rows"]
         visible = cards[: layout["visible_count"]]
-        wall = (int(x), int(content_y), int(x + w), int(y + h))
+        wall = (int(x), int(content_y), int(x + w), int(round(content_y + rows * layout["tile_h"])))
         left, top, right, bottom = wall
         self._rounded_rectangle(draw, wall, radius=LIVE_QUEUE_RADIUS, fill=theme["panel"])
         col_edges = [round(left + (right - left) * column / columns) for column in range(columns + 1)]
         row_edges = [round(top + (bottom - top) * row / rows) for row in range(rows + 1)]
-        for slot in range(columns * rows):
+        for slot, card in enumerate(visible):
             column, row = slot % columns, slot // columns
             cell = (
                 col_edges[column],
@@ -1919,21 +1918,32 @@ class LiveRadar(BasePlugin):
                 col_edges[column + 1] - col_edges[column],
                 row_edges[row + 1] - row_edges[row],
             )
-            if slot < len(visible):
-                self._draw_live_queue_tile(
-                    image,
-                    draw,
-                    cell,
-                    visible[slot],
-                    theme,
-                    show_snapshot=show_snapshot,
-                    snapshot_cache_seconds=snapshot_cache_seconds,
-                    avatar_cache_seconds=avatar_cache_seconds,
-                )
-            else:
-                self._draw_snapshot_mini_placeholder(image, draw, cell, theme, framed=False)
+            self._draw_live_queue_tile(
+                image,
+                draw,
+                cell,
+                card,
+                theme,
+                show_snapshot=show_snapshot,
+                snapshot_cache_seconds=snapshot_cache_seconds,
+                avatar_cache_seconds=avatar_cache_seconds,
+            )
+        last = len(visible) % columns
+        if last:
+            # Free cells only ever sit at the end of the last row: one tile says who is live.
+            status = (
+                col_edges[last],
+                row_edges[-2],
+                right - col_edges[last],
+                row_edges[-1] - row_edges[-2],
+            )
+            self._draw_live_status_tile(
+                image, draw, status, theme, len(cards) if live_total is None else live_total,
+            )
         for edge in col_edges[1:-1]:
-            draw.line((edge, top, edge, bottom), fill=theme["line"], width=1)
+            # The status tile spans its cells, so no divider runs through it.
+            lower = row_edges[-2] if last and edge > col_edges[last] else bottom
+            draw.line((edge, top, edge, lower), fill=theme["line"], width=1)
         for edge in row_edges[1:-1]:
             draw.line((left, edge, right, edge), fill=theme["line"], width=1)
         self._clip_outside_round(image, wall, LIVE_QUEUE_RADIUS, theme["bg"])
@@ -1979,6 +1989,7 @@ class LiveRadar(BasePlugin):
         snapshot_cache_seconds=90,
         avatar_cache_seconds=AVATAR_CACHE_SECONDS,
         caption=None,
+        live_count=None,
     ):
         x, y, w, h = box
         sub_font = self._font(13, "bold")
@@ -2038,18 +2049,44 @@ class LiveRadar(BasePlugin):
             row = placeholder_index // columns
             card_x = x + column * (card_w + col_gap)
             card_y = content_y + row * (row_h + gap)
-            self._draw_snapshot_mini_placeholder(image, draw, (card_x, card_y, card_w, row_h), theme)
+            self._draw_snapshot_mini_placeholder(
+                image, draw, (card_x, card_y, card_w, row_h), theme, live_count=live_count,
+            )
         return len(visible)
 
-    def _draw_snapshot_mini_placeholder(self, image, draw, box, theme, framed=True):
-        """An empty slot: a blue-screen TV waiting for the next stream."""
+    def _draw_snapshot_mini_placeholder(self, image, draw, box, theme, framed=True, live_count=None):
+        """An empty slot says how many streams are live instead of staying blank."""
+        self._draw_live_status_tile(image, draw, box, theme, live_count, framed=framed)
+
+    def _draw_live_status_tile(self, image, draw, box, theme, live_count, framed=False):
+        """A quiet tile for free slots: a live dot, the live count and that all are shown."""
         x, y, w, h = [int(value) for value in box]
-        font = self._font(10 if h < 52 or w < 120 else 11, "bold")
         if framed:
             self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=5, fill=theme["panel"], outline=theme["line"], width=1)
-            placeholder_art.draw_waiting_tv(draw, (x + 1, y + 1, x + w - 1, y + h - 1), theme, font, fill=False)
         else:
-            placeholder_art.draw_waiting_tv(draw, (x, y, x + w - 1, y + h - 1), theme, font)
+            draw.rectangle((x, y, x + w - 1, y + h - 1), fill=theme["panel"])
+        if not live_count:
+            lines = [("暂无直播", self._font(10, "bold"), theme["ink"])]
+        else:
+            lines = [
+                (f"{int(live_count)} 位在线", self._font(11, "bold"), theme["ink"]),
+                ("全部已显示", self._font(9, "bold"), theme["muted"]),
+            ]
+        dot = 7
+        gap = 3
+        extents = [self._glyph_extent(font) for _text, font, _fill in lines]
+        block_h = sum(bottom - top for top, bottom in extents) + gap * (len(lines) - 1)
+        line_top = y + (h - block_h) // 2
+        for index, ((text, font, fill), (glyph_top, glyph_bottom)) in enumerate(zip(lines, extents)):
+            text_w = draw.textlength(text, font=font)
+            lead = dot + 4 if index == 0 and live_count else 0
+            left = x + (w - text_w - lead) / 2
+            if lead:
+                dot_top = line_top + (glyph_bottom - glyph_top - dot) // 2
+                draw.ellipse((int(left), dot_top, int(left) + dot - 1, dot_top + dot - 1),
+                             fill=placeholder_art.GREEN, outline=theme["ink"])
+            draw.text((left + lead, line_top - glyph_top), text, fill=fill, font=font)
+            line_top += glyph_bottom - glyph_top + gap
 
     def _draw_snapshot_mini_card(self, image, draw, box, card, theme, snapshot_cache_seconds=90, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
         x, y, w, h = [int(value) for value in box]
@@ -2157,15 +2194,17 @@ class LiveRadar(BasePlugin):
     def _live_queue_layout(box, card_count, max_items):
         _x, _y, w, h = box
         content_h = max(1, h - 24)
-        columns = max(LIVE_QUEUE_MIN_COLUMNS, min(LIVE_QUEUE_MAX_COLUMNS, int(w // LIVE_QUEUE_TILE_MIN_W)))
-        rows = max(
-            1,
-            min(int(math.ceil(max(1, int(max_items)) / columns)), int(content_h // LIVE_QUEUE_MIN_TILE_H)),
-        )
+        max_columns = max(LIVE_QUEUE_MIN_COLUMNS, min(LIVE_QUEUE_MAX_COLUMNS, int(w // LIVE_QUEUE_TILE_MIN_W)))
+        max_rows = max(1, int(content_h // LIVE_QUEUE_MIN_TILE_H))
+        count = max(0, min(card_count, max_items, max_columns * max_rows))
+        rows = max(1, min(max_rows, int(math.ceil(max(1, count) / max_columns))))
+        columns = max(1, int(math.ceil(max(1, count) / rows)))
+        widest_cover_h = round(w / columns * 9 / 16) + LIVE_QUEUE_NAME_STRIP_H
         return {
-            "visible_count": min(card_count, max_items, rows * columns),
+            "visible_count": count,
             "columns": columns,
             "rows": rows,
+            "tile_h": min(content_h / rows, widest_cover_h),
         }
 
     def _draw_live_queue_tile(

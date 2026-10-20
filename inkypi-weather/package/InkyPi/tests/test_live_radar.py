@@ -2693,18 +2693,30 @@ def test_large_no_signal_placeholder_says_no_signal():
 
 
 @pytest.mark.parametrize("mode", ["light", "dark"])
-def test_waiting_slot_placeholder_fills_its_box_with_a_blue_screen_tv(mode):
+def test_status_tile_says_how_many_are_live_and_stays_in_its_box(mode):
     plugin = _plugin()
     theme = plugin._theme({"themeMode": mode}, FakeDeviceConfig())
     sentinel = (12, 34, 56)
-    image = Image.new("RGB", (120, 80), sentinel)
+    image = Image.new("RGB", (220, 80), sentinel)
+    texts = []
 
-    plugin._draw_snapshot_mini_placeholder(image, ImageDraw.Draw(image), (10, 10, 94, 53), theme, framed=False)
+    class DrawSpy:
+        def __init__(self, draw):
+            self._draw = draw
 
-    inside = set(image.crop((10, 10, 104, 63)).getdata())
-    assert (0, 0, 255) in inside and theme["ink"] in inside and sentinel not in inside
-    assert image.getpixel((9, 30)) == image.getpixel((104, 30)) == image.getpixel((50, 63)) == sentinel
+        def __getattr__(self, name):
+            return getattr(self._draw, name)
 
+        def text(self, xy, text, *args, **kwargs):
+            texts.append(text)
+            return self._draw.text(xy, text, *args, **kwargs)
+
+    plugin._draw_live_status_tile(image, DrawSpy(ImageDraw.Draw(image)), (10, 10, 188, 53), theme, 10)
+
+    assert texts == ["10 位在线", "全部已显示"]
+    inside = set(image.crop((10, 10, 198, 63)).getdata())
+    assert (0, 255, 0) in inside and sentinel not in inside
+    assert image.getpixel((9, 30)) == image.getpixel((198, 30)) == image.getpixel((50, 63)) == sentinel
 
 def test_live_queue_section_fits_two_columns_of_remaining_live_rows():
     plugin = _plugin()
@@ -2998,7 +3010,7 @@ def test_snapshot_mini_section_draws_exact_size_placeholder_for_empty_fourth_slo
     seen = {}
     plugin._load_cover_source = lambda url, cache_seconds: Image.new("RGB", (160, 90), (24, 180, 240))
     plugin._load_avatar_source = lambda url, cache_seconds: None
-    plugin._draw_snapshot_mini_placeholder = lambda _image, _draw, box, _theme: seen.__setitem__("box", box)
+    plugin._draw_snapshot_mini_placeholder = lambda _image, _draw, box, _theme, **_kwargs: seen.__setitem__("box", box)
     cards = [
         {
             "platform": "twitch",
@@ -3022,21 +3034,41 @@ def test_snapshot_mini_section_draws_exact_size_placeholder_for_empty_fourth_slo
     assert seen["box"] == (202, 89, 184, 49)
 
 
-def test_live_queue_section_fills_empty_wall_slots_with_placeholders():
+def test_live_queue_section_merges_the_last_rows_empty_cells_into_one_status_tile():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
     image = Image.new("RGB", (420, 170), theme["bg"])
     draw = ImageDraw.Draw(image)
-    seen = []
-    plugin._draw_live_queue_tile = lambda *_args, **_kwargs: None
-    plugin._draw_snapshot_mini_placeholder = lambda _image, _draw, box, _theme, **_kwargs: seen.append(box)
+    tiles, status = [], []
+    plugin._draw_live_queue_tile = lambda _image, _draw, box, card, *_args, **_kwargs: tiles.append(box)
+    plugin._draw_live_status_tile = lambda _image, _draw, box, _theme, live_count, **_kwargs: status.append((box, live_count))
     cards = [{"platform": "twitch", "id": f"live-{index}", "status": "live"} for index in range(5)]
 
-    visible = plugin._draw_live_queue_section(image, draw, (10, 10, 376, 129), "LIVE TOO", cards, theme, max_items=8)
+    visible = plugin._draw_live_queue_section(
+        image, draw, (10, 10, 376, 129), "LIVE TOO", cards, theme, max_items=12, live_total=8,
+    )
 
-    # Four columns by two rows, filled left to right: slots 5-7 are the last three of row two.
+    # Five streams fill three columns by two rows; the one free cell says who is live.
     assert visible == 5
-    assert seen == [(104, 86, 94, 53), (198, 86, 94, 53), (292, 86, 94, 53)]
+    assert [box[2] for box in tiles] == [125, 126, 125, 125, 126]
+    assert status == [((261, 86, 125, 53), 8)]
+
+
+def test_live_queue_status_tile_spans_every_free_cell_of_the_last_row():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (620, 170), theme["bg"])
+    status = []
+    plugin._draw_live_queue_tile = lambda *_args, **_kwargs: None
+    plugin._draw_live_status_tile = lambda _image, _draw, box, _theme, live_count, **_kwargs: status.append(box)
+    cards = [{"platform": "twitch", "id": f"live-{index}", "status": "live"} for index in range(7)]
+
+    plugin._draw_live_queue_section(
+        image, ImageDraw.Draw(image), (10, 10, 564, 129), "LIVE TOO", cards, theme, max_items=12, live_total=10,
+    )
+
+    # Seven streams take four columns; the last row's single free cell is the status tile.
+    assert status == [(433, 86, 141, 53)]
 
 
 def test_live_queue_section_draws_one_merged_cover_wall_in_reading_order():
@@ -3416,7 +3448,8 @@ def test_dashboard_uses_snapshot_mini_when_no_extra_live():
     theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
     seen = {}
 
-    def draw_snapshot_mini(_image, _draw, _box, _title, cards, _theme, max_items=4, snapshot_cache_seconds=90, avatar_cache_seconds=0, caption=None):
+    def draw_snapshot_mini(_image, _draw, _box, _title, cards, _theme, max_items=4, snapshot_cache_seconds=90, avatar_cache_seconds=0, caption=None, live_count=None):
+        seen["live_count"] = live_count
         seen["ids"] = [card["id"] for card in cards]
         seen["caption"] = caption
         return len(cards)
@@ -3459,57 +3492,39 @@ def test_dashboard_uses_snapshot_mini_when_no_extra_live():
 
     assert seen["ids"] == ["recent-cover"]
     assert seen["caption"] == "quiet slots"
+    assert seen["live_count"] == sum(card["status"] == "live" for card in cards)
 
 
-def test_dashboard_uses_snapshot_mini_for_seven_or_fewer_live_cards():
-    plugin = _plugin()
-    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
-    seen = {}
-
-    def draw_snapshot_mini(_image, _draw, _box, title, cards, _theme, max_items=4, snapshot_cache_seconds=90, avatar_cache_seconds=0, caption=None):
-        seen["title"] = title
-        seen["ids"] = [card["id"] for card in cards]
-        seen["caption"] = caption
-        return len(cards)
-
-    def fail_live_queue(*_args, **_kwargs):
-        raise AssertionError("dense live queue should not draw for 7 or fewer live cards")
-
-    plugin._draw_snapshot_mini_section = draw_snapshot_mini
-    plugin._draw_live_queue_section = fail_live_queue
-    cards = [
-        {
-            "platform": "twitch",
-            "id": f"streamer{i}",
-            "owner": f"Streamer {i}",
-            "label": "",
-            "title": "Live",
-            "status": "live",
-            "is_fav": False,
-            "heat": 100 - i,
-            "start_time": None,
-            "cover": f"https://covers.test/{i}.jpg",
-            "avatar": "",
-        }
-        for i in range(7)
-    ]
-
-    plugin._render_dashboard(cards, (800, 480), theme, datetime.now(timezone.utc), False, None)
-
-    assert seen["title"] == "LIVE TOO"
-    assert seen["ids"] == ["streamer3", "streamer4", "streamer5", "streamer6"]
-    assert seen["caption"] is None
-
-
-def test_dashboard_keeps_dense_live_queue_for_more_than_seven_live_cards():
+def test_dashboard_uses_the_cover_wall_for_any_extra_live_cards():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
     seen = {}
 
     def fail_snapshot_mini(*_args, **_kwargs):
-        raise AssertionError("snapshot mini should only replace live queue at 7 or fewer live cards")
+        raise AssertionError("snapshot mini only fills the quiet slots when nobody else is live")
 
-    def draw_live_queue(_image, _draw, _box, title, cards, _theme, max_items, avatar_cache_seconds=0, show_snapshot=False, snapshot_cache_seconds=0):
+    def draw_live_queue(_image, _draw, _box, title, cards, _theme, max_items, **_kwargs):
+        seen["title"] = title
+        seen["ids"] = [card["id"] for card in cards]
+        return len(cards)
+
+    plugin._draw_snapshot_mini_section = fail_snapshot_mini
+    plugin._draw_live_queue_section = draw_live_queue
+
+    plugin._render_dashboard(_live_cards(7), (800, 480), theme, datetime.now(timezone.utc), False, None)
+
+    assert seen == {"title": "LIVE TOO", "ids": ["streamer3", "streamer4", "streamer5", "streamer6"]}
+
+
+def test_dashboard_draws_the_cover_wall_for_many_live_cards():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    seen = {}
+
+    def fail_snapshot_mini(*_args, **_kwargs):
+        raise AssertionError("snapshot mini only fills the quiet slots when nobody else is live")
+
+    def draw_live_queue(_image, _draw, _box, title, cards, _theme, max_items, avatar_cache_seconds=0, show_snapshot=False, snapshot_cache_seconds=0, live_total=None):
         seen["title"] = title
         seen["count"] = len(cards)
         seen["show_snapshot"] = show_snapshot
@@ -3616,14 +3631,35 @@ def test_dense_live_dashboard_widens_live_too_and_slims_offline():
     assert live_x + live_w < off_x and off_x + off_w <= 800 - 14
 
 
-def test_few_live_dashboard_keeps_two_equal_halves():
+def test_three_extra_live_get_one_row_of_large_tiles():
     plugin = _plugin()
 
     seen = _bottom_boxes(plugin, _live_cards(6) + _offline_cards(5), (800, 480))
 
-    assert seen["live"][1] is None
-    assert seen["offline"][0] == "cards"
-    assert seen["live"][0][2] == seen["offline"][1][2]
+    (live_x, _y, live_w, _h), _max_items = seen["live"]
+    kind, (off_x, _off_y, off_w, _off_h) = seen["offline"]
+    layout = LiveRadar._live_queue_layout(seen["live"][0], 3, 12)
+    assert (layout["columns"], layout["rows"]) == (3, 1)
+    assert live_w == 3 * live_radar_module.LIVE_QUEUE_LARGE_TILE_W
+    assert kind == "list" and off_x == live_x + live_w + 14 and off_x + off_w == 800 - 16
+
+
+def test_two_extra_live_leave_room_for_full_offline_cards():
+    plugin = _plugin()
+
+    seen = _bottom_boxes(plugin, _live_cards(5) + _offline_cards(5), (800, 480))
+
+    (_x, _y, live_w, _h), _max_items = seen["live"]
+    kind, (_off_x, _off_y, off_w, _off_h) = seen["offline"]
+    assert live_w == 2 * live_radar_module.LIVE_QUEUE_LARGE_TILE_W
+    assert kind == "cards" and off_w >= live_radar_module.OFFLINE_CARDS_MIN_W
+
+
+def test_live_queue_layout_uses_one_row_of_large_tiles_for_up_to_three():
+    for count in (1, 2, 3):
+        width = count * live_radar_module.LIVE_QUEUE_LARGE_TILE_W
+        layout = LiveRadar._live_queue_layout((16, 317, width, 128), count, 12)
+        assert (layout["columns"], layout["rows"], layout["visible_count"]) == (count, 1, count)
 
 
 def test_vertical_dense_dashboard_keeps_two_equal_halves():
@@ -3851,3 +3887,92 @@ def test_kick_rooms_use_the_livestream_thumbnail_during_a_full_fetch(monkeypatch
 
     assert results[0]["status"]["cover"] == "https://images.kick.com/x/720.webp"
     assert LiveRadar._cover_headers("https://images.kick.com/x/720.webp")["Referer"] == "https://kick.com/"
+
+
+def test_status_tile_without_anyone_live_has_no_live_dot():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (220, 80), theme["bg"])
+    texts = []
+
+    class DrawSpy:
+        def __init__(self, draw):
+            self._draw = draw
+
+        def __getattr__(self, name):
+            return getattr(self._draw, name)
+
+        def text(self, xy, text, *args, **kwargs):
+            texts.append(text)
+            return self._draw.text(xy, text, *args, **kwargs)
+
+    plugin._draw_live_status_tile(image, DrawSpy(ImageDraw.Draw(image)), (10, 10, 188, 53), theme, 0)
+
+    assert texts == ["\u6682\u65e0\u76f4\u64ad"]
+    assert (0, 255, 0) not in set(image.getdata())
+
+
+def _cover_aspects(plugin, live_count, dimensions, orientation="horizontal"):
+    seen = []
+    plugin._load_cover_source = lambda url, seconds: Image.new("RGB", (160, 90), (24, 180, 240))
+    plugin._load_avatar_source = lambda url, seconds=0: None
+    plugin._draw_live_queue_tile = lambda _image, _draw, box, card, *_args, **_kwargs: seen.append(box)
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(resolution=dimensions, orientation=orientation))
+    cards = [dict(card, cover=f"https://covers.test/{card['id']}.jpg") for card in _live_cards(live_count)]
+    plugin._render_dashboard(cards, dimensions, theme, datetime.now(timezone.utc), False, None, {"show_snapshots": True})
+    strip = live_radar_module.LIVE_QUEUE_NAME_STRIP_H
+    return [w / (h - strip) for _x, _y, w, h in seen]
+
+
+@pytest.mark.parametrize("live_count", [4, 5, 6, 7, 9, 15])
+@pytest.mark.parametrize("dimensions", [(480, 800), (1600, 1200), (800, 480)])
+def test_wall_tiles_never_stretch_taller_than_a_wide_cover(live_count, dimensions):
+    aspects = _cover_aspects(_plugin(), live_count, dimensions)
+
+    assert aspects and min(aspects) >= 1.6
+
+
+def test_one_row_landscape_wall_shows_as_many_streams_as_fit():
+    seen = {}
+    plugin = _plugin()
+
+    def live_queue(_image, _draw, box, _title, cards, _theme, max_items, **_kwargs):
+        seen["layout"] = LiveRadar._live_queue_layout(box, len(cards), max_items)
+        return seen["layout"]["visible_count"]
+
+    plugin._draw_live_queue_section = live_queue
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+
+    for extra in (3, 4, 5):
+        plugin._render_dashboard(_live_cards(3 + extra), (600, 448), theme, datetime.now(timezone.utc), False, None,
+                                 {"show_snapshots": True})
+        assert seen["layout"]["rows"] == 1
+        assert seen["layout"]["visible_count"] >= min(extra, 3)
+
+
+def test_status_tile_spanning_two_cells_has_no_divider_through_it():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (330, 220), theme["bg"])
+    status = []
+    plugin._draw_live_queue_tile = lambda *_args, **_kwargs: None
+    original = plugin._draw_live_status_tile
+
+    def record(_image, _draw, box, _theme, live_count, **kwargs):
+        status.append(box)
+        return original(_image, _draw, box, _theme, live_count, **kwargs)
+
+    plugin._draw_live_status_tile = record
+    cards = [{"platform": "twitch", "id": f"live-{index}", "status": "live"} for index in range(7)]
+
+    plugin._draw_live_queue_section(
+        image, ImageDraw.Draw(image), (10, 10, 300, 190), "LIVE TOO", cards, theme, max_items=12, live_total=10,
+    )
+
+    # Seven streams in three columns leave two free cells on the last row: one tile, no divider inside it.
+    (left, top, width, height), = status
+    assert left == 110 and left + width == 310
+    middle_divider = 210
+    # The centred caption may cross the old divider column, so sample the tile's free top and bottom edges.
+    edges = [*range(top + 1, top + 4), *range(top + height - 4, top + height - 1)]
+    assert all(image.getpixel((middle_divider, y)) == theme["panel"] for y in edges)

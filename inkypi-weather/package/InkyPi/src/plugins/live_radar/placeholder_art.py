@@ -2,9 +2,8 @@
 
 Everything here is drawn without anti-aliasing in the theme's panel/ink colours
 plus the six colours the Spectra 6 panel shows solidly, so the art stays crisp
-after the display's dithering: TV colour bars for a missing snapshot, a
-blue-screen TV waiting in an empty slot, and small offline doodles that stay
-fixed per streamer.
+after the display's dithering: TV colour bars for a missing snapshot and small
+offline doodles that stay fixed per streamer.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ RED = (255, 0, 0)
 BLUE = (0, 0, 255)
 GREEN = (0, 255, 0)
 COLOUR_BARS = (WHITE, YELLOW, GREEN, RED, BLUE, BLACK)
-WAITING_CAPTION = "虚位以待"
 OFFLINE_DOODLE_COUNT = 5
 
 
@@ -59,33 +57,6 @@ def draw_colour_bars(draw, box, *, large):
         width=2 if plate >= 20 else 1,
     )
     return {"plate": plate_box, "band": (left, bars_bottom + 1, right, bottom)}
-
-
-def draw_waiting_tv(draw, box, theme, font, *, fill=True):
-    """An empty slot: a blue-screen TV with sparkles waiting for the next stream."""
-    left, top, right, bottom = [int(value) for value in box]
-    width, height = right - left + 1, bottom - top + 1
-    if fill:
-        draw.rectangle((left, top, right, bottom), fill=theme["panel"])
-    caption_w = draw.textlength(WAITING_CAPTION, font=font)
-    caption_h = font.size
-    beside = width >= height * 2.6
-    tv_h = min(round(height * (0.72 if beside else 0.62)), 40)
-    tv_w = round(tv_h * 1.25)
-    if beside:
-        tv_x = left + round((width - tv_w - 8 - caption_w) / 2)
-        tv_y = top + (height - tv_h) // 2
-        caption_xy = (tv_x + tv_w + 8, top + (height - caption_h) / 2 - 2)
-    else:
-        tv_x = left + (width - tv_w) // 2
-        tv_y = top + max(2, (height - tv_h - caption_h - 3) // 2)
-        caption_xy = (left + (width - caption_w) / 2, tv_y + tv_h + 1)
-    _draw_tv(draw, tv_x, tv_y, tv_w, tv_h, theme, screen=BLUE)
-    spark = max(3, tv_h // 7)
-    _draw_sparkle(draw, tv_x - spark - 3, tv_y + tv_h // 3, spark, YELLOW, theme["ink"])
-    _draw_sparkle(draw, tv_x + tv_w + spark + (-1 if beside else 2), tv_y + spark + 1, max(2, spark - 1), RED, None)
-    draw.ellipse((tv_x - 2, tv_y + tv_h - 4, tv_x + 1, tv_y + tv_h - 1), fill=GREEN)
-    draw.text(caption_xy, WAITING_CAPTION, fill=theme["ink"], font=font)
 
 
 def doodle_kind(card):
