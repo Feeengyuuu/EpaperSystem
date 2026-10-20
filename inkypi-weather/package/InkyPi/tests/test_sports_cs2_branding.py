@@ -268,8 +268,11 @@ def test_hltv_failure_retains_match_and_provider_branding_without_changing_fresh
     card = branding_card(now)
     card["source_state"] = "PANDASCORE LIVE"
     original = dict(card)
-    assert cs2_branding.enrich_event_branding(plugin, card, {}, now, SimpleNamespace()) == original
-    assert cs2_branding.enrich_event_branding(plugin, card, {}, now, SimpleNamespace()) == original
+    for _ in range(2):
+        result = cs2_branding.enrich_event_branding(plugin, card, {}, now, SimpleNamespace())
+        # Only the branding source is recorded; the provider logo and freshness stay as they were.
+        assert {key: value for key, value in result.items() if key != "event_logo_source"} == original
+        assert result["event_logo_source"] == "PANDASCORE"
     assert len(calls) == 1
 
 
@@ -318,3 +321,184 @@ def test_low_contrast_gold_logo_has_no_solid_backing_in_daylight(monkeypatch):
                 assert logo.tobytes() == original
         finally:
             common._ACTIVE_COLORS.reset(token)
+
+
+def _entry(event_id, name, start, end, logo):
+    return {"id": event_id, "name": name, "start": start, "end": end, "event_logo_path": logo}
+
+
+FUZZY_ENTRIES = [
+    _entry("9426", "WINLINE MPKBK CIS LAN Season 9", "2026-10-20T00:00:00+00:00", "2026-10-23T00:00:00+00:00", "cis9.png"),
+    _entry("9361", "WINLINE MPKBK CIS LAN Season 8", "2026-09-29T00:00:00+00:00", "2026-10-02T00:00:00+00:00", "cis.png"),
+    _entry("9312", "Digital Crusade DraculaN Season 7", "2026-10-19T00:00:00+00:00", "2026-10-23T00:00:00+00:00", "dracula.png"),
+    _entry("9457", "CCT 2026 Europe Series 12", "2026-10-19T00:00:00+00:00", "2026-10-30T00:00:00+00:00", "cct.png"),
+    _entry("9456", "CCT 2026 Europe Series 11", "2026-10-12T00:00:00+00:00", "2026-10-22T00:00:00+00:00", "cct.png"),
+    _entry("9458", "CCT 2026 Challengers Europe Series 8", "2026-10-19T00:00:00+00:00", "2026-10-26T00:00:00+00:00", "cctc.png"),
+    _entry("9460", "Stake Ranked Episode 6 Closed Qualifier", "2026-10-18T00:00:00+00:00", "2026-10-21T00:00:00+00:00", "stake.png"),
+]
+
+
+@pytest.mark.parametrize("name, expected", [
+    ("CIS LAN Championship Season 9 2026", "9426"),
+    ("CIS LAN Championship #9 2026", "9426"),
+    ("DraculaN Season 7 2026", "9312"),
+    ("CCT Europe Series #12 2026", "9457"),
+    ("CIS LAN Championship Season 9 Closed Qualifier 2026", None),
+    ("CIS LAN Championship Season 10 2026", None),
+    ("CIS Esports League Season 2 2026", None),
+    ("Stake Ranked Episode 6 2026", None),
+    ("DraculaN 2026", None),
+])
+def test_fuzzy_edition_match_tolerates_provider_naming_but_never_crosses_editions(name, expected):
+    from plugins.sports_dashboard.cs2_branding import fuzzy_match_event
+
+    main = {"event_name": name, "start": datetime(2026, 10, 21, 12, tzinfo=timezone.utc)}
+
+    match = fuzzy_match_event(FUZZY_ENTRIES, main)
+
+    assert (match or {}).get("id") == expected
+
+
+def test_fuzzy_edition_match_needs_the_event_dates():
+    from plugins.sports_dashboard.cs2_branding import fuzzy_match_event
+
+    main = {"event_name": "DraculaN Season 7 2026", "start": datetime(2026, 11, 20, tzinfo=timezone.utc)}
+
+    assert fuzzy_match_event(FUZZY_ENTRIES, main) is None
+
+
+def test_family_match_reuses_the_latest_past_edition_of_the_same_series():
+    from plugins.sports_dashboard.cs2_branding import family_match_event
+
+    past = [entry for entry in FUZZY_ENTRIES if entry["id"] != "9426"]
+    main = {"event_name": "CIS LAN Championship Season 9 2026", "start": datetime(2026, 10, 21, tzinfo=timezone.utc)}
+
+    assert family_match_event(past, main)["id"] == "9361"
+    assert family_match_event(past, {**main, "event_name": "CIS Esports League Season 2 2026"}) is None
+    assert family_match_event(past, {**main, "start": datetime(2027, 9, 1, tzinfo=timezone.utc)}) is None
+
+
+def test_bundled_dracula_logo_matches_the_provider_name_offline_and_reports_its_source():
+    from pathlib import Path
+    from plugins.sports_dashboard.cs2_branding import local_event_branding
+
+    card = {
+        "event_name": "DraculaN Season 7 2026",
+        "main": {"start": datetime(2026, 10, 20, 11, tzinfo=timezone.utc)},
+    }
+
+    branding = local_event_branding(card)
+
+    assert Path(branding["event_logo_path"]).name == "65b6bb43d275c8fb3c73.png"
+    assert branding["event_logo_source"] == "LOCAL"
+
+
+def test_enrich_falls_back_to_the_series_logo_only_without_any_provider_logo(monkeypatch, tmp_path):
+    from pathlib import Path
+    from plugins.sports_dashboard import cs2_branding
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    now = datetime(2026, 10, 20, 20, tzinfo=timezone.utc)
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    monkeypatch.setattr(cs2_branding, "_text", lambda *args: (_ for _ in ()).throw(requests.Timeout("offline")))
+    card = {
+        "event_id": "series:9001",
+        "event_name": "CIS LAN Championship Season 9 2026",
+        "event_logo_url": "",
+        "main": {"start": now, "event_name": "CIS LAN Championship Season 9 2026", "league_name": "CIS LAN"},
+    }
+
+    family = cs2_branding.enrich_event_branding(plugin, dict(card), {}, now, SimpleNamespace())
+    provider = cs2_branding.enrich_event_branding(
+        plugin, {**card, "event_logo_url": "https://cdn.pandascore.co/images/league/cis.png"}, {}, now, SimpleNamespace(),
+    )
+
+    assert Path(family["event_logo_path"]).name == "b42d8dd7fbbcb894a498.png"
+    assert family["event_logo_source"] == "LOCAL FAMILY"
+    assert "event_logo_path" not in provider and provider["event_logo_source"] == "PANDASCORE"
+
+
+def test_hltv_catalog_matches_sponsor_prefixed_editions(monkeypatch, tmp_path):
+    from plugins.sports_dashboard import cs2_branding
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    monkeypatch.setattr(cs2_branding, "_local_events", lambda: [])
+    now = datetime(2026, 10, 20, 20, tzinfo=timezone.utc)
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    plugin._sports_dashboard_cache_dir = lambda: tmp_path
+    catalog = """<a href="/events/9426/winline-mpkbk-cis-lan-season-9" class="big-event">
+    <div class="big-event-name">WINLINE MPKBK CIS LAN Season 9</div>
+    <span data-unix="1792454400000"></span><span data-unix="1792713600000"></span></a>"""
+    detail = """<img class="event-logo" title="WINLINE MPKBK CIS LAN Season 9" src="https://img-cdn.hltv.org/eventlogo/cis9.png">"""
+    monkeypatch.setattr(cs2_branding, "_text", lambda client, path, context: catalog if path == "/events" else detail)
+    card = {
+        "event_id": "series:9001",
+        "event_name": "CIS LAN Championship Season 9 2026",
+        "event_logo_url": "",
+        "main": {"start": now, "event_name": "CIS LAN Championship Season 9 2026", "league_name": "CIS LAN"},
+    }
+
+    enriched = cs2_branding.enrich_event_branding(plugin, card, {}, now, SimpleNamespace())
+
+    assert enriched["event_logo_url"] == "https://img-cdn.hltv.org/eventlogo/cis9.png"
+    assert enriched["event_logo_source"] == "HLTV"
+
+
+@pytest.mark.parametrize("name, lines", [
+    ("CIS LAN Championship Season 9 2026", ("CIS LAN", "SEASON 9")),
+    ("1win Private Club #2 2026", ("1WIN PRIVATE", "#2")),
+    ("CCT Europe Series #12 2026", ("CCT", "#12")),
+    ("DraculaN Season 7 2026", ("DRACULAN", "SEASON 7")),
+    ("PGL Masters Bucharest 2026", ("PGL MASTERS", "2026")),
+])
+def test_event_badge_lines_name_the_organiser_and_edition(name, lines):
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    assert SportsDashboard._cs2_event_badge_lines(name) == lines
+
+
+@pytest.mark.parametrize("theme", ["day", "night"])
+def test_cs2_card_without_any_event_logo_draws_a_badge_instead_of_the_tag_bar(monkeypatch, theme):
+    from plugins.sports_dashboard import common
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    monkeypatch.setattr(plugin, "_load_team_logo_for_render", lambda *args: None)
+    primary = {
+        "series": "CS",
+        "auto_follow": True,
+        "event_name": "Nova Showdown Season 1 2026",
+        "main": {"start": datetime(2027, 3, 1, tzinfo=timezone.utc)},
+    }
+    palette = common.DAY_COLORS if theme == "day" else common.DEEP_NIGHT_COLORS
+    token = common._ACTIVE_COLORS.set(palette)
+    try:
+        with Image.new("RGB", (120, 80), palette["panel"]) as canvas:
+            assert plugin._draw_valve_focus_event_logo(canvas, (8, 8, 87, 65), primary)
+            inside = set(canvas.crop((8, 8, 88, 66)).getdata())
+            assert len(inside) > 2
+            assert canvas.getpixel((100, 70)) == palette["panel"]
+    finally:
+        common._ACTIVE_COLORS.reset(token)
+
+
+def test_fuzzy_match_does_not_hand_a_main_series_the_contenders_logo():
+    from plugins.sports_dashboard.cs2_branding import family_match_event, fuzzy_match_event
+
+    entries = [
+        _entry("9372", "CCT 2026 Contenders Europe Series 9", "2026-09-10T00:00:00+00:00", "2026-09-13T00:00:00+00:00", "contenders.png"),
+        _entry("9404", "CCT 2026 Europe Series 9", "2026-09-15T00:00:00+00:00", "2026-09-27T00:00:00+00:00", "cct.png"),
+    ]
+    main = {"event_name": "CCT Europe Series #9 2026", "start": datetime(2026, 9, 12, 14, tzinfo=timezone.utc)}
+
+    assert fuzzy_match_event(entries, main) is None
+    assert family_match_event(entries, {**main, "start": datetime(2026, 9, 14, tzinfo=timezone.utc)}) is None
+
+
+def test_event_badge_never_reads_a_year_as_the_edition():
+    from plugins.sports_dashboard.sports_dashboard import SportsDashboard
+
+    brand, edition = SportsDashboard._cs2_event_badge_lines("Esports World Cup 2026")
+
+    assert brand not in ("", "CS2") and edition == "2026"

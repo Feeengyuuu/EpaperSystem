@@ -15989,7 +15989,8 @@ def test_valve_generated_team_icon_is_stable_and_distinct(monkeypatch):
 
     assert image.getpixel((11, 10)) != COLORS["paper"]
     assert image.getpixel((51, 10)) != COLORS["paper"]
-    assert SportsDashboard._valve_team_icon_colors("Spirit", 7020) != SportsDashboard._valve_team_icon_colors("Falcons", 11283)
+    assert SportsDashboard._solid_badge_colors("7020:Spirit") == SportsDashboard._solid_badge_colors("7020:Spirit")
+    assert SportsDashboard._solid_badge_colors("7020:Spirit") != SportsDashboard._solid_badge_colors("11283:Falcons")
 
 
 def test_valve_team_icon_prefers_local_cs2_logo(tmp_path, monkeypatch):
@@ -16001,12 +16002,14 @@ def test_valve_team_icon_prefers_local_cs2_logo(tmp_path, monkeypatch):
     monkeypatch.setattr(plugin, "_load_team_logo", lambda *_args, **_kwargs: None)
     image = Image.new("RGB", (52, 52), COLORS["paper"])
     draw = ImageDraw.Draw(image)
-    event = {"series": "CS", "team_a": "Spirit", "team_a_id": 7020}
+    # HLTV-sourced events carry HLTV team ids, which name the bundled files.
+    event = {"series": "CS", "source": "HLTV", "team_a": "Spirit", "team_a_id": 7020}
 
     plugin._draw_valve_team_icon(image, draw, event, "a", 8, 7, 34)
 
     assert image.getpixel((25, 24)) != COLORS["paper"]
-    assert Path(SportsDashboard._valve_local_team_logo_candidates("Spirit", 7020, "CS")[0]).parent.name == "cs2"
+    candidates = SportsDashboard._valve_local_team_logo_candidates("Spirit", 7020, "CS", hltv_ids=True)
+    assert Path(candidates[0]).parent.name == "cs2"
 
 
 def test_valve_team_icon_prefers_local_dota2_logo(tmp_path, monkeypatch):

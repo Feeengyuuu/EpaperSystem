@@ -11,6 +11,7 @@ from runtime.refresh_contracts import TaskContext
 from utils.http_client import HttpClient, create_single_attempt_http_client
 from .cs2_cards import apply_event_schedule, followed_names, has_followed_team, parse_cs2_card, utc_datetime
 from .cs2_branding import enrich_event_branding
+from .cs2_team_logos import enrich_team_logos
 
 
 logger = logging.getLogger(__name__)
@@ -218,12 +219,14 @@ def load_cs2_follow_card(plugin, settings, device_config, tz, now, *, session, g
     )
     if near_match:
         ttls["running"] = live_ttl
-    if plugin._bool_setting(settings, "_inkypi_ewc_cache_only", False):
+    # Theme-only redraws and cache-only workers never reach PandaScore or HLTV.
+    if plugin._provider_cache_only(settings):
         card = parse_cs2_card(_merge_snapshots(snapshots, ttls, now), tz, now, settings, game_logo_path=game_logo_path)
         card = apply_event_schedule(card, schedule, tz, now, schedule_ttl)
         current_schedule = schedule if card and schedule.get("event_id") == card["event_id"] else {}
         source = _state(card, {**snapshots, "event_schedule": current_schedule}, set())
-        return enrich_event_branding(plugin, card, settings, now, session, allow_network=False), source
+        card = enrich_event_branding(plugin, card, settings, now, session, allow_network=False)
+        return enrich_team_logos(plugin, card, settings, now, session, allow_network=False), source
     api_key = plugin._pandascore_api_key(device_config)
     if not api_key:
         card = parse_cs2_card(
@@ -296,6 +299,7 @@ def load_cs2_follow_card(plugin, settings, device_config, tz, now, *, session, g
     card = apply_event_schedule(card, schedule, tz, now, schedule_ttl)
     source = _state(card, {**snapshots, "event_schedule": schedule}, updated)
     card = enrich_event_branding(plugin, card, settings, now, session)
+    card = enrich_team_logos(plugin, card, settings, now, session)
     signature = [card["event_id"], card["main"]["match_id"], card["status"], card["main"]["feed_fresh"]] if card else []
     if signature != cache.get("selected_signature", []):
         changed = True

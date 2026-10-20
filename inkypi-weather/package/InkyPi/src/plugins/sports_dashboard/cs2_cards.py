@@ -220,6 +220,7 @@ def _event(item, tz, now, settings):
                 f"team_{side}_id": team_id,
                 f"team_{side}_tag": str(team.get("acronym") or "")[:16],
                 f"team_{side}_logo": safe_logo_url(team.get("image_url")),
+                f"team_{side}_logo_dark": safe_logo_url(team.get("dark_mode_image_url")),
                 f"wins_{side}": scores.get(team_id) if state != "unstarted" else None,
             }
         )

@@ -1,7 +1,14 @@
+from functools import lru_cache
+
 from PIL import ImageFilter
 
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
+
+# Provider names add words the bundled CS2 catalog leaves out ("Team Spirit",
+# "G2 Esports", "Aurora Gaming"); NAVI is the acronym of Natus Vincere.
+CS2_TEAM_NAME_NOISE = frozenset({"team", "esports", "esport", "gaming", "club", "gg"})
+CS2_TEAM_ALIASES = {"navi": "natusvincere"}
 
 SportsDashboard = None
 
@@ -1302,6 +1309,9 @@ class EsportsRenderMixin:
                 resized = ImageOps.contain(logo, (width, height), Image.LANCZOS)
                 logo = resized
         if not logo:
+            if str(primary.get("series") or "").upper() == "CS" and primary.get("auto_follow"):
+                self._draw_cs2_event_badge(image, (x1, y1, x2, y2), primary.get("event_name"))
+                return True
             return False
         try:
             position = (x1 + (width - logo.width) // 2, y1 + (height - logo.height) // 2)
@@ -1323,6 +1333,50 @@ class EsportsRenderMixin:
             if resized is not None:
                 resized.close()
         return True
+
+    @staticmethod
+    def _cs2_event_badge_lines(name):
+        """Organiser and edition of a CS2 event, for a badge when no logo exists."""
+        from .cs2_branding import GENERIC_WORDS, REGION_WORDS, STAGE_WORDS
+
+        text = str(name or "")
+        brand = []
+        for word in re.findall(r"#?\w+", text):
+            folded = word.casefold()
+            if word.startswith("#") or folded.isdigit() or folded in GENERIC_WORDS or folded in STAGE_WORDS:
+                break
+            brand.append(word)
+        if not brand:
+            brand = [word for word in re.findall(r"\w+", text) if not word.isdigit()][:2]
+        brand = brand[:2]
+        while len(brand) > 1 and brand[-1].casefold() in REGION_WORDS:
+            brand.pop()
+        numbered = re.search(r"#\s*(\d+)", text)
+        edition = re.search(r"\b(season|series|episode|stage|cup)\s+(?!20\d\d\b)(\d{1,3})\b", text, re.IGNORECASE)
+        year = re.search(r"\b(20\d{2})\b", text)
+        if numbered:
+            line = "#" + numbered[1]
+        elif edition:
+            line = f"{edition[1].upper()} {edition[2]}"
+        else:
+            line = year[1] if year else ""
+        return (" ".join(brand).upper() or "CS2", line)
+
+    def _draw_cs2_event_badge(self, image, box, name):
+        draw = ImageDraw.Draw(image)
+        x1, y1, x2, y2 = box
+        brand, edition = self._cs2_event_badge_lines(name)
+        fill, ink = self._solid_badge_colors(name)
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=6, fill=fill, outline=COLORS["border"], width=1)
+        width = max(1, x2 - x1 - 8)
+        brand_text, brand_font = self._fit_text_ellipsis(draw, brand, width, 15, bold=True, min_size=8)
+        if edition:
+            middle = (y1 + y2) / 2
+            self._draw_centered(draw, ((x1 + x2) / 2, middle - 8), brand_text, brand_font, ink)
+            edition_text, edition_font = self._fit_text_ellipsis(draw, edition, width, 11, bold=True, min_size=7)
+            self._draw_centered(draw, ((x1 + x2) / 2, middle + 10), edition_text, edition_font, ink)
+        else:
+            self._draw_centered(draw, ((x1 + x2) / 2, (y1 + y2) / 2), brand_text, brand_font, ink)
 
     def _draw_cs2_event_caption(self, draw, box, caption):
         width = max(1, box[2] - box[0])
@@ -1357,26 +1411,73 @@ class EsportsRenderMixin:
         return str(event.get("team_b_tag") or event.get("team_b") or "TBD").strip() or "TBD"
 
     def _draw_valve_team_icon(self, image, draw, event, side, x, y, size):
-        logo_url = str((event or {}).get("team_a_logo" if side == "a" else "team_b_logo") or "").strip()
-        name = str((event or {}).get("team_a" if side == "a" else "team_b") or "TBD").strip() or "TBD"
-        team_id = (event or {}).get("team_a_id" if side == "a" else "team_b_id")
-        series = str((event or {}).get("series") or "").strip().upper()
-        logo = self._load_team_logo_for_render(logo_url, int(size)) if logo_url else None
+        event = event or {}
+        day_url = str(event.get(f"team_{side}_logo") or "").strip()
+        night_url = str(event.get(f"team_{side}_logo_dark") or "").strip()
+        name = str(event.get(f"team_{side}") or "TBD").strip() or "TBD"
+        team_id = event.get(f"team_{side}_id")
+        series = str(event.get("series") or "").strip().upper()
+        urls = [night_url, day_url] if sum(COLORS["panel"]) < sum(COLORS["text"]) else [day_url]
+        logo = None
+        for url in dict.fromkeys(url for url in urls if url):
+            logo = self._load_team_logo_for_render(url, int(size))
+            if logo:
+                break
         if not logo:
-            logo = self._load_valve_local_team_logo(name, team_id, int(size), series)
+            hltv_ids = str(event.get("source") or "").strip().upper().startswith("HLTV")
+            logo = self._load_valve_local_team_logo(name, team_id, int(size), series, hltv_ids=hltv_ids)
         if logo:
-            image.paste(logo, (int(x) + (int(size) - logo.width) // 2, int(y) + (int(size) - logo.height) // 2), logo)
+            paste_x = int(x) + (int(size) - logo.width) // 2
+            paste_y = int(y) + (int(size) - logo.height) // 2
+            if self._team_logo_needs_dark_backdrop(logo):
+                pad = max(2, int(size) // 12)
+                draw.rounded_rectangle(
+                    (paste_x - pad, paste_y - pad, paste_x + logo.width + pad - 1, paste_y + logo.height + pad - 1),
+                    radius=max(3, int(size) // 6),
+                    fill=COLORS["text"],
+                )
+            image.paste(logo, (paste_x, paste_y), logo)
             return
-        fill, stripe = self._valve_team_icon_colors(name, team_id)
+        self._draw_valve_team_badge(draw, event, side, x, y, size)
+
+    def _draw_valve_team_badge(self, draw, event, side, x, y, size):
+        """A team with no published logo: its acronym on a solid panel ink."""
+        name = str(event.get(f"team_{side}") or "TBD").strip() or "TBD"
+        tag = str(event.get(f"team_{side}_tag") or "").strip()
+        fill, ink = self._solid_badge_colors(f"{event.get(f'team_{side}_id') or ''}:{name}")
         draw.rounded_rectangle((x, y, x + size, y + size), radius=5, fill=fill, outline=COLORS["border"], width=1)
-        draw.rectangle((x + 3, y + 3, x + 7, y + size - 3), fill=stripe)
+        label, font = self._valve_badge_label(draw, tag, name, size)
+        self._draw_centered(draw, (x + size / 2, y + size / 2), label, font, ink)
+
+    def _valve_badge_label(self, draw, tag, name, size):
+        """The longest of acronym, initials or a prefix that fits inside the badge."""
+        width = max(4, int(size) - 4)
         initials = self._valve_team_initials(name)
-        initials, font = self._fit_text(draw, initials, max(12, size - 13), max(12, int(size * 0.42)), bold=True, min_size=8)
-        self._draw_centered(draw, (x + size / 2 + 3, y + size / 2), initials, font, COLORS["text"])
+        for candidate in dict.fromkeys(
+            text for text in (tag, initials, tag[:3], tag[:2], initials[:2], initials[:1]) if text
+        ):
+            label, font = self._fit_text(draw, candidate, width, max(8, int(size * 0.42)), bold=True, min_size=6)
+            box = draw.textbbox((0, 0), label, font=font)
+            if box[2] - box[0] <= width and box[3] - box[1] <= int(size) - 4:
+                return label, font
+        return initials[:1] or "?", self._font(6, True)
 
     @staticmethod
-    def _load_valve_local_team_logo(name, team_id, size, series=None):
-        for path in SportsDashboard._valve_local_team_logo_candidates(name, team_id, series):
+    def _solid_badge_colors(seed_text):
+        # Colours the Spectra 6 panel shows without dithering, with a readable ink.
+        inks = (
+            ((0, 0, 0), (255, 255, 255)),
+            ((0, 0, 255), (255, 255, 255)),
+            ((255, 0, 0), (255, 255, 255)),
+            ((255, 255, 0), (0, 0, 0)),
+            ((0, 255, 0), (0, 0, 0)),
+        )
+        seed = sum((index + 1) * ord(ch) for index, ch in enumerate(str(seed_text)))
+        return inks[seed % len(inks)]
+
+    @staticmethod
+    def _load_valve_local_team_logo(name, team_id, size, series=None, hltv_ids=False):
+        for path in SportsDashboard._valve_local_team_logo_candidates(name, team_id, series, hltv_ids=hltv_ids):
             logo = SportsDashboard._load_local_logo(path, (size, size))
             if logo:
                 return logo
@@ -1392,7 +1493,18 @@ class EsportsRenderMixin:
         return [LOCAL_CS2_TEAM_LOGO_DIR, LOCAL_DOTA2_TEAM_LOGO_DIR]
 
     @staticmethod
-    def _valve_local_team_logo_candidates(name, team_id, series=None):
+    def _valve_local_team_logo_candidates(name, team_id, series=None, hltv_ids=False):
+        if str(series or "").strip().upper() == "CS":
+            # Bundled CS2 files are named by HLTV team id: only HLTV-sourced events may
+            # use those numbers; PandaScore ids are another namespace.
+            paths = SportsDashboard._cs2_bundled_team_logo_paths(name)
+            if not hltv_ids:
+                return paths
+            team_id_value = SportsDashboard._lpl_int_value(team_id)
+            return paths + ([
+                os.path.join(LOCAL_CS2_TEAM_LOGO_DIR, f"{team_id_value}{extension}")
+                for extension in (".png", ".webp", ".jpg", ".jpeg")
+            ] if team_id_value else [])
         candidates = []
         logo_dirs = SportsDashboard._valve_local_team_logo_dirs(series)
         team_id_value = SportsDashboard._lpl_int_value(team_id)
@@ -1412,6 +1524,40 @@ class EsportsRenderMixin:
         return candidates
 
     @staticmethod
+    def _cs2_team_key(name):
+        normalized = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode("ascii")
+        words = [word for word in re.findall(r"[a-z0-9]+", normalized.lower()) if word not in CS2_TEAM_NAME_NOISE]
+        key = "".join(words)
+        return CS2_TEAM_ALIASES.get(key, key)
+
+    @staticmethod
+    @lru_cache(maxsize=4)
+    def _cs2_bundled_team_logo_index(directory):
+        try:
+            with open(os.path.join(directory, "manifest.json"), encoding="utf-8") as handle:
+                teams = json.load(handle).get("teams", {})
+        except (OSError, ValueError, AttributeError):
+            return {}
+        index = {}
+        for team in teams.values() if isinstance(teams, dict) else []:
+            filename = str((team or {}).get("slug_file") or "")
+            if not re.fullmatch(r"[a-z0-9_-]+\.png", filename):
+                continue
+            for value in (team.get("name"), filename[:-4]):
+                key = SportsDashboard._cs2_team_key(value)
+                if key:
+                    index.setdefault(key, filename)
+        return index
+
+    @staticmethod
+    def _cs2_bundled_team_logo_paths(name):
+        filename = SportsDashboard._cs2_bundled_team_logo_index(LOCAL_CS2_TEAM_LOGO_DIR).get(
+            SportsDashboard._cs2_team_key(name)
+        )
+        path = os.path.join(LOCAL_CS2_TEAM_LOGO_DIR, filename) if filename else ""
+        return [path] if path and os.path.isfile(path) else []
+
+    @staticmethod
     def _valve_team_logo_slug(name):
         normalized = unicodedata.normalize("NFKD", str(name or "")).encode("ascii", "ignore").decode("ascii")
         return "".join(ch for ch in normalized.lower() if ch.isalnum())
@@ -1425,20 +1571,6 @@ class EsportsRenderMixin:
             return "".join(part[0] for part in words[:3]).upper()
         letters = "".join(ch for ch in words[0].upper() if ch.isalnum())
         return (letters[:3] or "?")
-
-    @staticmethod
-    def _valve_team_icon_colors(name, team_id=None):
-        palette = [
-            ((34, 73, 128), COLORS["amber"]),
-            ((92, 38, 116), COLORS["cyan"]),
-            ((34, 104, 89), COLORS["orange"]),
-            ((126, 48, 54), COLORS["amber"]),
-            ((72, 79, 96), COLORS["green"]),
-            ((44, 92, 147), COLORS["red"]),
-        ]
-        seed_text = f"{name or ''}:{team_id or ''}"
-        seed = sum((index + 1) * ord(ch) for index, ch in enumerate(seed_text))
-        return palette[seed % len(palette)]
 
     def _draw_valve_esports_recent_rows(self, image, draw, right_x, right_w, y, events, primary, accent, title="RECENT"):
         cs2_upcoming = bool(primary.get("auto_follow") and title == "UPCOMING")
