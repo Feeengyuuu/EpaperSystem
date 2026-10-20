@@ -88,6 +88,7 @@ from runtime.presentation_cache import (
     PresentationCache,
     prepared_presentation_path,
 )
+from runtime.presentation_yield import YieldedPresentationReservations
 from runtime.refresh_queue import QueueEntry, RefreshQueue
 from runtime.plugin_deferral import PluginRefreshDeferred
 from runtime.resource_deferral import ResourcePressureDeferred
@@ -621,6 +622,7 @@ class RefreshTask:
         self._rotation_deadline_guard_active = False
         self._rotation_has_ready_candidates = False
         self._rotation_cache_starved_since = None
+        self._yielded_presentations = YieldedPresentationReservations()
         self._display_transactions_enabled = False
         bind_runtime_state = getattr(display_manager, "bind_runtime_state", None)
         if callable(bind_runtime_state):
@@ -6212,6 +6214,31 @@ class RefreshTask:
             )
         return released
 
+    def _yield_undisplayable_presentation_reservation(self, command, instance):
+        """Stop re-reserving a member a no-change preparation left undisplayable."""
+        plugin_config, _context, theme_mode = self._latest_presentation_theme(instance)
+        if (plugin_supports_cached_display_redraw(plugin_config)
+                or plugin_refreshes_data_before_display(plugin_config)
+                or self._exact_cache_is_valid(instance, theme_mode)):
+            self._yielded_presentations.forget(instance.instance_uuid)
+            return
+        self._yielded_presentations.yield_reservation(
+            instance, self._data_last_success_at(instance), self.device_config.get_playlist_manager(),
+            command.payload.get("playlist_name") if command.payload.get("automatic_rotation") else None,
+        )
+
+    def _presentation_reservation_yielded(self, instance):
+        if not self._yielded_presentations.marked(instance.instance_uuid):
+            return False
+        _config, _context, theme_mode = self._latest_presentation_theme(instance)
+        return self._yielded_presentations.excludes(
+            instance, self._data_last_success_at(instance), self._exact_cache_is_valid(instance, theme_mode),
+        )
+
+    def _data_last_success_at(self, instance):
+        state = self.runtime_state.snapshot().instances.get(instance.instance_uuid, InstanceRuntimeState())
+        return state.data.last_success_at
+
     def _render_presentation_command(self, command, resolved, context):
         started = self._clock()
         before = self._read_process_memory_stats()
@@ -6291,6 +6318,7 @@ class RefreshTask:
                         RefreshLane.PRESENTATION,
                     )
                 )
+                self._yield_undisplayable_presentation_reservation(command, instance)
                 return None
             origin_receipt = PresentationCommitReceipt(
                 request_id=request.request_id,
@@ -6343,6 +6371,7 @@ class RefreshTask:
                     RefreshLane.PRESENTATION,
                 )
             )
+            self._yield_undisplayable_presentation_reservation(command, instance)
             return None
 
         candidate = self._presentation_candidate(
@@ -7596,11 +7625,16 @@ class RefreshTask:
         active = manager.snapshot_active_playlist(current_dt)
         if active is None:
             return False
+        # Without any displayable cache a presentation never becomes due, so a
+        # reservation would only hold the pre-display background guard.
+        cached = self._active_cache_candidates(active, None)
         eligible_instance_uuids = {
             instance.instance_uuid
             for instance in active.plugins
             if instance.instance_uuid != displayed_instance_uuid
+            and instance.instance_uuid in cached
             and self._presentation_request_target(instance) is not None
+            and not self._presentation_reservation_yielded(instance)
         }
         if not eligible_instance_uuids:
             return False

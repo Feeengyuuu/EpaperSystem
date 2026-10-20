@@ -15860,6 +15860,7 @@ def test_successful_rotation_immediately_requests_the_next_presentation():
         plugin_count=2,
     )
     first, second = [plugin.snapshot() for plugin in playlist.plugins]
+    _write_runtime_cache(task, second, Image.new("RGB", (32, 16), "black"))
     playlist.plugin_rotation_pool = [first.instance_uuid, second.instance_uuid]
     playlist.plugin_rotation_queue = [first.instance_uuid, second.instance_uuid]
     playlist.plugin_rotation_recent_history = []
@@ -16155,6 +16156,7 @@ def test_provider_free_automatic_display_requests_next_when_global_provider_poli
     playlist.plugin_rotation_recent_history = []
     playlist._plugin_rotation_reserved_key = first.instance_uuid
     _write_runtime_cache(task, first, Image.new("RGB", (32, 16), "black"))
+    _write_runtime_cache(task, second, Image.new("RGB", (32, 16), "black"))
     monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
     command = task._playlist_command(
         playlist.name,
@@ -16191,6 +16193,7 @@ def test_automatic_display_does_not_request_next_presentation_when_policy_is_off
     playlist.plugin_rotation_recent_history = []
     playlist._plugin_rotation_reserved_key = first.instance_uuid
     _write_runtime_cache(task, first, Image.new("RGB", (32, 16), "black"))
+    _write_runtime_cache(task, second, Image.new("RGB", (32, 16), "black"))
     monkeypatch.setattr(task, "_get_current_datetime", lambda: PRESENTATION_NOW)
     command = task._playlist_command(
         playlist.name,
@@ -16223,6 +16226,8 @@ def test_next_presentation_reservation_skips_ineligible_members():
     ]
     playlist.plugins[1].settings["refreshOnDisplay"] = "sometimes"
     ineligible = playlist.plugins[1].snapshot()
+    for instance in (ineligible, eligible):
+        _write_runtime_cache(task, instance, Image.new("RGB", (32, 16), "black"))
     device_config.config["display_triggered_refresh_enabled"] = False
     manifests = {
         first.plugin_id: _presentation_manifest(first.plugin_id),
