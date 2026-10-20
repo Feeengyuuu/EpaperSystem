@@ -2583,24 +2583,13 @@ def test_compact_card_draws_avatar_image():
     assert any(r != g or g != b for r, g, b in avatar_area.getdata())
 
 
-def test_compact_internal_placeholder_asset_is_exact_size_and_transparent():
-    path = Path(live_radar_module.PLUGIN_DIR) / live_radar_module.COMPACT_PLACEHOLDER_FILE
-    image = Image.open(path).convert("RGBA")
-    alpha = image.getchannel("A")
-
-    assert image.size == live_radar_module.COMPACT_PLACEHOLDER_SIZE
-    assert alpha.getextrema()[0] == 0
-    assert alpha.getextrema()[1] > 0
-    assert len(set(image.getdata())) > 8
-
-
-def test_compact_card_draws_internal_placeholder_at_native_size():
+def test_compact_card_draws_offline_doodle_at_native_size():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
     image = Image.new("RGB", (430, 80), theme["bg"])
     draw = ImageDraw.Draw(image)
     seen = {}
-    plugin._draw_compact_placeholder_asset = lambda _image, _draw, box, _theme: seen.__setitem__("box", box)
+    plugin._draw_offline_doodle = lambda _image, _draw, box, _theme, card: seen.update(box=box, card=card["id"])
     card = {
         "platform": "twitch",
         "id": "zard1991",
@@ -2622,6 +2611,99 @@ def test_compact_card_draws_internal_placeholder_at_native_size():
     assert seen["box"][2:] == live_radar_module.COMPACT_PLACEHOLDER_SIZE
     assert seen["box"][0] > 10 + 10 + 32 + 10
     assert seen["box"][0] + seen["box"][2] < 10 + 377 - 30
+    assert seen["card"] == "zard1991"
+
+
+SPECTRA_SOLID = {(0, 0, 0), (255, 255, 255), (255, 255, 0), (255, 0, 0), (0, 0, 255), (0, 255, 0)}
+
+
+def _doodle_card(index):
+    return {"platform": "douyu" if index % 2 else "bilibili", "id": f"room-{index}"}
+
+
+def test_offline_doodles_are_stable_per_streamer_and_vary_between_streamers():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+
+    def render(card):
+        image = Image.new("RGB", (170, 40), theme["bg"])
+        plugin._draw_offline_doodle(image, ImageDraw.Draw(image), (10, 8, 150, 24), theme, card)
+        return image.tobytes()
+
+    assert render(_doodle_card(3)) == render(_doodle_card(3))
+    assert len({render(_doodle_card(index)) for index in range(12)}) >= 4
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_offline_doodles_use_only_solid_panel_colours_and_stay_in_their_box(mode):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": mode}, FakeDeviceConfig())
+    sentinel = (12, 34, 56)
+    allowed = SPECTRA_SOLID | {theme["panel"], theme["ink"], sentinel}
+    for index in range(12):
+        image = Image.new("RGB", (170, 40), sentinel)
+        image.paste(theme["panel"], (10, 8, 160, 32))
+        plugin._draw_offline_doodle(image, ImageDraw.Draw(image), (10, 8, 150, 24), theme, _doodle_card(index))
+
+        assert set(image.getdata()) <= allowed
+        assert image.crop((0, 0, 170, 8)).getcolors() == [(170 * 8, sentinel)]
+        assert image.crop((160, 0, 170, 40)).getcolors() == [(10 * 40, sentinel)]
+
+
+def test_no_signal_placeholder_draws_solid_colour_bars_around_the_platform_logo():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (120, 70), (12, 34, 56))
+    badges = []
+    plugin._draw_platform_badge = lambda _image, _draw, box, platform_key, **_kwargs: badges.append((box, platform_key))
+
+    plugin._draw_snapshot_placeholder(image, ImageDraw.Draw(image), (10, 10, 105, 47), {"platform": "douyu"}, theme, False)
+
+    bar_row = [image.getpixel((x, 12)) for x in range(10, 106)]
+    assert set(bar_row) <= SPECTRA_SOLID
+    assert {(255, 255, 0), (0, 255, 0), (255, 0, 0), (0, 0, 255)} <= set(bar_row)
+    (left, top, right, bottom), platform = badges[0]
+    assert platform == "douyu"
+    assert abs((left + right) / 2 - 57.5) <= 2 and 10 < top < bottom < 47
+    assert image.getpixel((9, 30)) == image.getpixel((106, 30)) == (12, 34, 56)
+
+
+def test_large_no_signal_placeholder_says_no_signal():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (270, 150), theme["bg"])
+    texts = []
+
+    class DrawSpy:
+        def __init__(self, draw):
+            self._draw = draw
+
+        def __getattr__(self, name):
+            return getattr(self._draw, name)
+
+        def text(self, xy, text, *args, **kwargs):
+            texts.append(text)
+            return self._draw.text(xy, text, *args, **kwargs)
+
+    plugin._draw_snapshot_placeholder(
+        image, DrawSpy(ImageDraw.Draw(image)), (10, 10, 257, 139), {"platform": "bilibili"}, theme, True,
+    )
+
+    assert "NO SIGNAL" in texts
+
+
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_waiting_slot_placeholder_fills_its_box_with_a_blue_screen_tv(mode):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": mode}, FakeDeviceConfig())
+    sentinel = (12, 34, 56)
+    image = Image.new("RGB", (120, 80), sentinel)
+
+    plugin._draw_snapshot_mini_placeholder(image, ImageDraw.Draw(image), (10, 10, 94, 53), theme, framed=False)
+
+    inside = set(image.crop((10, 10, 104, 63)).getdata())
+    assert (0, 0, 255) in inside and theme["ink"] in inside and sentinel not in inside
+    assert image.getpixel((9, 30)) == image.getpixel((104, 30)) == image.getpixel((50, 63)) == sentinel
 
 
 def test_live_queue_section_fits_two_columns_of_remaining_live_rows():
@@ -2871,14 +2953,6 @@ def test_snapshot_mini_section_keeps_two_thumbnails_landscape():
     assert image.getpixel((18, 126)) == theme["bg"]
 
 
-def test_generated_slot_placeholder_asset_is_exact_size_and_nonblank():
-    path = Path(live_radar_module.PLUGIN_DIR) / live_radar_module.SLOT_PLACEHOLDER_FILE
-    image = Image.open(path).convert("RGB")
-
-    assert image.size == (184, 49)
-    assert len(set(image.getdata())) > 16
-
-
 def test_snapshot_mini_section_keeps_three_thumbnails_landscape():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
@@ -2948,20 +3022,59 @@ def test_snapshot_mini_section_draws_exact_size_placeholder_for_empty_fourth_slo
     assert seen["box"] == (202, 89, 184, 49)
 
 
-def test_live_queue_section_draws_placeholder_for_empty_second_column_slot():
+def test_live_queue_section_fills_empty_wall_slots_with_placeholders():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
     image = Image.new("RGB", (420, 170), theme["bg"])
     draw = ImageDraw.Draw(image)
-    seen = {}
-    plugin._draw_live_mini_row = lambda *_args, **_kwargs: None
-    plugin._draw_snapshot_mini_placeholder = lambda _image, _draw, box, _theme: seen.__setitem__("box", box)
+    seen = []
+    plugin._draw_live_queue_tile = lambda *_args, **_kwargs: None
+    plugin._draw_snapshot_mini_placeholder = lambda _image, _draw, box, _theme, **_kwargs: seen.append(box)
     cards = [{"platform": "twitch", "id": f"live-{index}", "status": "live"} for index in range(5)]
 
     visible = plugin._draw_live_queue_section(image, draw, (10, 10, 376, 129), "LIVE TOO", cards, theme, max_items=8)
 
+    # Four columns by two rows, filled left to right: slots 5-7 are the last three of row two.
     assert visible == 5
-    assert seen["box"] == (202, 106, 184, 32)
+    assert seen == [(104, 86, 94, 53), (198, 86, 94, 53), (292, 86, 94, 53)]
+
+
+def test_live_queue_section_draws_one_merged_cover_wall_in_reading_order():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (420, 170), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    colours = [(200, 30 + 25 * index, 40) for index in range(8)]
+    covers = {
+        f"https://covers.test/{index}.jpg": Image.new("RGB", (160, 90), colour)
+        for index, colour in enumerate(colours)
+    }
+    plugin._load_cover_source = lambda url, cache_seconds: covers.get(url)
+    cards = [
+        _queue_row_card(id=f"live-{index}", platform="bilibili", cover=f"https://covers.test/{index}.jpg")
+        for index in range(9)
+    ]
+
+    visible = plugin._draw_live_queue_section(image, draw, (10, 10, 376, 129), "LIVE TOO", cards, theme, max_items=8)
+
+    assert visible == 8
+    for index, colour in enumerate(colours):
+        column, row = index % 4, index // 4
+        assert image.getpixel((10 + 94 * column + 56, 34 + 52 * row + 22)) == colour
+    # One rounded frame around the whole wall and single 1 px dividers, no per-tile frames.
+    assert image.getpixel((10, 34)) == theme["bg"]
+    assert image.getpixel((10, 60)) == image.getpixel((140, 34)) == theme["line"]
+    assert image.getpixel((104, 56)) == theme["line"]
+    assert image.getpixel((103, 56)) == colours[0]
+    assert image.getpixel((105, 56)) == colours[1]
+
+
+def test_live_queue_layout_uses_two_columns_in_narrow_boxes():
+    wide = LiveRadar._live_queue_layout((16, 317, 377, 128), 11, 8)
+    narrow = LiveRadar._live_queue_layout((14, 520, 220, 250), 11, 8)
+
+    assert (wide["columns"], wide["rows"], wide["visible_count"]) == (4, 2, 8)
+    assert (narrow["columns"], narrow["rows"], narrow["visible_count"]) == (2, 4, 8)
 
 
 def _queue_row_card(**overrides):
@@ -2982,86 +3095,145 @@ def _queue_row_card(**overrides):
     return card
 
 
-def _cover_box(image, color, mid_y):
-    columns = [x for x in range(image.width) if image.getpixel((x, mid_y)) == color]
-    left, right = min(columns), max(columns)
-    mid_x = (left + right) // 2
-    rows = [y for y in range(image.height) if image.getpixel((mid_x, y)) == color]
-    return left, min(rows), right, max(rows)
+class _TextSpy:
+    def __init__(self, draw, seen):
+        self._draw = draw
+        self._seen = seen
+
+    def __getattr__(self, name):
+        return getattr(self._draw, name)
+
+    def text(self, xy, text, fill=None, font=None, *args, **kwargs):
+        self._seen.append((xy, text, fill, font))
+        return self._draw.text(xy, text, fill=fill, font=font, *args, **kwargs)
 
 
-def test_live_mini_row_wraps_snapshot_and_platform_logo_in_brand_capsule():
+def _tile_image(theme):
+    return Image.new("RGB", (140, 90), theme["bg"])
+
+
+TILE_BOX = (10, 10, 94, 52)
+
+
+def _strip_top():
+    return TILE_BOX[1] + TILE_BOX[3] - live_radar_module.LIVE_QUEUE_NAME_STRIP_H
+
+
+def test_live_queue_tile_lays_platform_logo_on_cover_above_brand_lined_name():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
-    image = Image.new("RGB", (220, 60), theme["bg"])
-    real_draw = ImageDraw.Draw(image)
-    seen = {"texts": [], "badges": [], "cache_seconds": []}
+    image = _tile_image(theme)
+    texts, badges, cache_seconds = [], [], []
+    cover_colour = (24, 180, 240)
 
-    class DrawSpy:
-        def __getattr__(self, name):
-            return getattr(real_draw, name)
-
-        def text(self, xy, text, fill=None, font=None, *args, **kwargs):
-            seen["texts"].append((xy, text, font))
-            return real_draw.text(xy, text, fill=fill, font=font, *args, **kwargs)
-
-    cover_color = (24, 180, 240)
-
-    def load_cover(url, cache_seconds):
-        seen["cache_seconds"].append(cache_seconds)
-        return Image.new("RGB", (160, 90), cover_color) if url == "https://covers.test/queue.jpg" else None
+    def load_cover(url, seconds):
+        cache_seconds.append(seconds)
+        return Image.new("RGB", (160, 90), cover_colour)
 
     plugin._load_cover_source = load_cover
-    plugin._load_avatar_source = lambda url, cache_seconds: None
-    plugin._draw_platform_badge = lambda _image, _draw, box, *_args, **_kwargs: seen["badges"].append(box)
-    draw = DrawSpy()
+    plugin._draw_platform_badge = lambda _image, _draw, box, platform_key, **_kwargs: badges.append((box, platform_key))
+    card = _queue_row_card(platform="douyu", owner="异灵术老师")
 
-    plugin._draw_live_mini_row(
-        image, draw, (10, 10, 184, 30), _queue_row_card(), theme,
+    plugin._draw_live_queue_tile(
+        image, _TextSpy(ImageDraw.Draw(image), texts), TILE_BOX, card, theme,
         show_snapshot=True, snapshot_cache_seconds=75,
     )
 
-    assert seen["cache_seconds"] == [75]
-    thumb_left, thumb_top, thumb_right, thumb_bottom = _cover_box(image, cover_color, 25)
-    thumb_w = thumb_right - thumb_left + 1
-    thumb_h = thumb_bottom - thumb_top + 1
-    assert thumb_h >= 20
-    assert 1.6 <= thumb_w / thumb_h <= 1.9
-
-    # One brand-coloured capsule wraps the snapshot and the logo tab.
-    purple = live_radar_module.PLATFORM_BRAND_COLORS["twitch"]
-    mid_x = (thumb_left + thumb_right) // 2
-    assert image.getpixel((thumb_left - 1, 25)) == image.getpixel((thumb_left - 2, 25)) == purple
-    assert image.getpixel((mid_x, thumb_top - 1)) == image.getpixel((mid_x, thumb_bottom + 1)) == purple
-    assert image.getpixel((thumb_right + 1, 25)) == purple  # divider between snapshot and logo
-    frame_right = max(x for x in range(image.width) if image.getpixel((x, 25)) == purple)
-    badge_left, badge_top, badge_right, badge_bottom = seen["badges"][0]
-    assert thumb_right + 2 < badge_left and badge_right < frame_right
-    assert thumb_top <= badge_top and badge_bottom <= thumb_bottom + 1
-    tab_centre = ((badge_left + badge_right) // 2, (badge_top + badge_bottom) // 2)
-    assert image.getpixel(tab_centre) not in (purple, theme["panel"])  # tinted logo tab
-
-    (name_x, _name_y), name, font = next(item for item in seen["texts"] if "Hasan" in item[1])
-    assert name == "HasanAbi"
-    assert name_x + real_draw.textlength(name, font=font) < thumb_left - 2
+    assert cache_seconds == [75]
+    strip_top = _strip_top()
+    # The cover is full-bleed across the tile above the name strip.
+    assert image.getpixel((10, strip_top - 2)) == image.getpixel((103, strip_top - 2)) == cover_colour
+    assert image.getpixel((70, 12)) == cover_colour
+    # The platform logo sits on the cover's top-left corner.
+    (left, top, right, bottom), platform = badges[0]
+    assert platform == "douyu"
+    assert 10 < left < right < 10 + 22 and 10 < top < bottom < 10 + 22
+    # A 3 px platform-colour line separates cover and name; the name is plain ink.
+    brand = live_radar_module.PLATFORM_BRAND_COLORS["douyu"]
+    assert [image.getpixel((50, strip_top + offset)) for offset in range(3)] == [brand] * 3
+    assert image.getpixel((100, strip_top + 3)) == theme["panel"]
+    (name_x, name_y), _name, fill, font = next(item for item in texts if item[1] == "异灵术老师")
+    assert fill == theme["ink"]
+    assert name_x >= 10 and strip_top + 3 <= name_y + 2
+    assert name_y + plugin._line_height(font) <= 10 + 52 + 1
 
 
 @pytest.mark.parametrize("platform", ["bilibili", "douyu", "twitch", "kick", "picarto"])
-def test_live_mini_capsule_uses_each_platform_brand_colour(platform):
+@pytest.mark.parametrize("mode", ["light", "dark"])
+def test_live_queue_name_line_uses_each_platform_brand_colour(platform, mode):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": mode}, FakeDeviceConfig())
+    image = _tile_image(theme)
+    plugin._load_cover_source = lambda url, seconds: Image.new("RGB", (160, 90), (24, 180, 240))
+
+    plugin._draw_live_queue_tile(image, ImageDraw.Draw(image), TILE_BOX, _queue_row_card(platform=platform), theme)
+
+    expected = live_radar_module.PLATFORM_BRAND_COLORS.get(platform, theme["line"])
+    assert image.getpixel((50, _strip_top() + 1)) == expected
+
+
+def test_live_queue_tile_shows_uptime_on_the_cover():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
-    image = Image.new("RGB", (220, 60), theme["bg"])
-    draw = ImageDraw.Draw(image)
-    cover_color = (24, 180, 240)
-    plugin._load_cover_source = lambda url, cache_seconds: Image.new("RGB", (160, 90), cover_color)
-    plugin._load_avatar_source = lambda url, cache_seconds: None
-    plugin._draw_platform_badge = lambda *_args, **_kwargs: None
+    image = _tile_image(theme)
+    texts = []
+    plugin._load_cover_source = lambda url, seconds: Image.new("RGB", (160, 90), (24, 180, 240))
+    card = _queue_row_card(start_time=(time.time() - 2 * 3600 - 5 * 60 - 20) * 1000)
 
-    plugin._draw_live_mini_row(image, draw, (10, 10, 184, 30), _queue_row_card(platform=platform), theme)
+    plugin._draw_live_queue_tile(image, _TextSpy(ImageDraw.Draw(image), texts), TILE_BOX, card, theme)
 
-    thumb_left, _top, _right, _bottom = _cover_box(image, cover_color, 25)
-    expected = live_radar_module.PLATFORM_BRAND_COLORS.get(platform, theme["ink"])
-    assert image.getpixel((thumb_left - 1, 25)) == expected
+    (chip_x, chip_y), _text, fill, _font = next(item for item in texts if item[1] == "2h05m")
+    assert fill == (255, 255, 255)
+    assert chip_x > 10 + 94 // 2 and chip_y < _strip_top()
+
+
+def test_live_queue_tile_keeps_favourite_star_in_the_name_strip():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = _tile_image(theme)
+    texts, stars = [], []
+    plugin._load_cover_source = lambda url, seconds: Image.new("RGB", (160, 90), (24, 180, 240))
+    plugin._draw_icon_badge = lambda _image, _draw, box, kind, **_kwargs: stars.append(box) if kind == "fav" else None
+
+    plugin._draw_live_queue_tile(
+        image, _TextSpy(ImageDraw.Draw(image), texts), TILE_BOX, _queue_row_card(is_fav=True), theme,
+    )
+
+    (name_x, _name_y), name, _fill, font = next(item for item in texts if item[1] == "HasanAbi")
+    left, top, right, bottom = stars[0]
+    assert top >= _strip_top() + 3 and bottom <= 10 + 52
+    assert left >= name_x + ImageDraw.Draw(image).textlength(name, font=font)
+    assert right <= 10 + 94
+
+
+def test_live_queue_tile_skips_covers_when_snapshots_are_disabled():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = _tile_image(theme)
+    seen = {}
+
+    def fail_cover(*_args, **_kwargs):
+        raise AssertionError("snapshots disabled: queue tiles must not load covers")
+
+    plugin._load_cover_source = fail_cover
+    plugin._draw_snapshot_placeholder = lambda _image, _draw, box, card, _theme, large: seen.update(box=box, large=large)
+
+    plugin._draw_live_queue_tile(image, ImageDraw.Draw(image), TILE_BOX, _queue_row_card(), theme, show_snapshot=False)
+
+    assert seen == {"box": (10, 10, 103, _strip_top() - 1), "large": False}
+
+
+def test_live_queue_tile_without_cover_draws_snapshot_placeholder():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = _tile_image(theme)
+    seen = {}
+    plugin._load_cover_source = lambda url, seconds: None
+    plugin._draw_snapshot_placeholder = lambda _image, _draw, box, card, _theme, large: seen.update(box=box, large=large)
+
+    plugin._draw_live_queue_tile(image, ImageDraw.Draw(image), TILE_BOX, _queue_row_card(cover=""), theme)
+
+    assert seen == {"box": (10, 10, 103, _strip_top() - 1), "large": False}
 
 
 @pytest.mark.parametrize("platform", ["bilibili", "douyu", "twitch", "picarto"])
@@ -3096,70 +3268,13 @@ def test_card_borders_use_the_platform_brand_colour(platform, mode):
            live, (10, 10, 184, 49), "live", 1)
 
 
-def test_live_mini_row_keeps_favourite_star_outside_the_capsule():
-    plugin = _plugin()
-    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
-    image = Image.new("RGB", (220, 60), theme["bg"])
-    draw = ImageDraw.Draw(image)
-    stars = []
-    cover_color = (24, 180, 240)
-    plugin._load_cover_source = lambda url, cache_seconds: Image.new("RGB", (160, 90), cover_color)
-    plugin._load_avatar_source = lambda url, cache_seconds: None
-    plugin._draw_icon_badge = lambda _image, _draw, box, kind, **_kwargs: stars.append(box) if kind == "fav" else None
-
-    plugin._draw_live_mini_row(image, draw, (10, 10, 184, 30), _queue_row_card(is_fav=True), theme)
-
-    # The avatar carries its own small star; the row-level star is the rightmost one.
-    row_star = max(stars, key=lambda box: box[0])
-    thumb_left, _top, _right, _bottom = _cover_box(image, cover_color, 25)
-    assert row_star[0] > 10 + 15 + 22 + 8
-    assert row_star[2] < thumb_left - 2
-
-
-def test_live_mini_row_skips_snapshot_when_snapshots_are_disabled():
-    plugin = _plugin()
-    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
-    image = Image.new("RGB", (220, 60), theme["bg"])
-    draw = ImageDraw.Draw(image)
-
-    def fail_cover(*_args, **_kwargs):
-        raise AssertionError("snapshots disabled: queue rows must not load covers")
-
-    plugin._load_cover_source = fail_cover
-    plugin._load_avatar_source = lambda url, cache_seconds: None
-
-    plugin._draw_live_mini_row(image, draw, (10, 10, 184, 30), _queue_row_card(), theme, show_snapshot=False)
-
-
-def test_live_mini_row_without_cover_draws_snapshot_placeholder():
-    plugin = _plugin()
-    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
-    image = Image.new("RGB", (220, 60), theme["bg"])
-    draw = ImageDraw.Draw(image)
-    seen = {}
-    plugin._load_cover_source = lambda url, cache_seconds: None
-    plugin._load_avatar_source = lambda url, cache_seconds: None
-    plugin._draw_snapshot_placeholder = lambda _draw, box, card, _theme, large: seen.update(box=box, large=large)
-
-    plugin._draw_live_mini_row(
-        image, draw, (10, 10, 184, 30), _queue_row_card(cover=""), theme, show_snapshot=True,
-    )
-
-    left, top, right, bottom = seen["box"]
-    assert seen["large"] is False
-    assert bottom - top >= 20
-    assert right <= 10 + 184 - 6 - 20
-
-
-def test_live_queue_section_passes_snapshot_settings_to_each_row():
+def test_live_queue_section_passes_snapshot_settings_to_each_tile():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
     image = Image.new("RGB", (420, 170), theme["bg"])
     draw = ImageDraw.Draw(image)
     seen = []
-    plugin._draw_live_mini_row = lambda _image, _draw, _box, card, _theme, _avatar_seconds, **kwargs: seen.append(
-        (card["id"], kwargs)
-    )
+    plugin._draw_live_queue_tile = lambda _image, _draw, _box, card, _theme, **kwargs: seen.append((card["id"], kwargs))
     cards = [_queue_row_card(id=f"live-{index}") for index in range(6)]
 
     plugin._draw_live_queue_section(
@@ -3401,6 +3516,143 @@ def test_dashboard_keeps_dense_live_queue_for_more_than_seven_live_cards():
     assert seen == {"title": "LIVE TOO", "count": 5, "show_snapshot": True, "snapshot_cache_seconds": 75}
 
 
+def _live_cards(count, *, platform="twitch"):
+    return [
+        {
+            "platform": platform,
+            "id": f"streamer{index}",
+            "owner": f"Streamer {index}",
+            "label": "",
+            "title": "Live",
+            "status": "live",
+            "is_fav": False,
+            "heat": 100 - index,
+            "start_time": None,
+            "cover": "",
+            "avatar": "",
+        }
+        for index in range(count)
+    ]
+
+
+def _offline_cards(count):
+    platforms = ("bilibili", "douyu", "picarto", "twitch", "kick")
+    return [
+        {
+            "platform": platforms[index % len(platforms)],
+            "id": f"offline{index}",
+            "owner": f"Offline {index}",
+            "label": "",
+            "title": f"Sign {index}",
+            "status": "offline",
+            "is_fav": index == 0,
+            "heat": 0,
+            "start_time": None,
+            "cover": "",
+            "avatar": "",
+        }
+        for index in range(count)
+    ]
+
+
+def _bottom_boxes(plugin, cards, dimensions):
+    seen = {}
+
+    def live_queue(_image, _draw, box, _title, _cards, _theme, max_items, **_kwargs):
+        seen["live"] = (box, max_items)
+        return 0
+
+    def snapshot_mini(_image, _draw, box, *_args, **_kwargs):
+        seen["live"] = (box, None)
+        return 0
+
+    plugin._draw_live_queue_section = live_queue
+    plugin._draw_snapshot_mini_section = snapshot_mini
+    plugin._draw_compact_section = lambda _image, _draw, box, *_args, **_kwargs: seen.__setitem__("offline", ("cards", box))
+    plugin._draw_offline_list_section = lambda _image, _draw, box, *_args, **_kwargs: seen.__setitem__("offline", ("list", box))
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    plugin._render_dashboard(cards, dimensions, theme, datetime.now(timezone.utc), False, None, {"show_snapshots": True})
+    return seen
+
+
+def test_dense_live_dashboard_widens_live_too_and_slims_offline():
+    plugin = _plugin()
+
+    seen = _bottom_boxes(plugin, _live_cards(15) + _offline_cards(5), (800, 480))
+
+    (live_x, _live_y, live_w, _live_h), max_items = seen["live"]
+    kind, (off_x, _off_y, off_w, _off_h) = seen["offline"]
+    assert kind == "list"
+    assert max_items == 12
+    assert LiveRadar._live_queue_layout(seen["live"][0], 12, max_items)["columns"] == 6
+    assert off_w <= 200 and live_w >= 3 * off_w - 40
+    assert live_x + live_w < off_x and off_x + off_w <= 800 - 14
+
+
+def test_few_live_dashboard_keeps_two_equal_halves():
+    plugin = _plugin()
+
+    seen = _bottom_boxes(plugin, _live_cards(6) + _offline_cards(5), (800, 480))
+
+    assert seen["live"][1] is None
+    assert seen["offline"][0] == "cards"
+    assert seen["live"][0][2] == seen["offline"][1][2]
+
+
+def test_vertical_dense_dashboard_keeps_two_equal_halves():
+    plugin = _plugin()
+
+    seen = _bottom_boxes(plugin, _live_cards(15) + _offline_cards(5), (480, 800))
+
+    assert seen["offline"][0] == "cards"
+    assert seen["live"][0][2] == seen["offline"][1][2]
+
+
+def test_live_queue_layout_fits_six_columns_in_the_wide_wall():
+    layout = LiveRadar._live_queue_layout((16, 317, 562, 128), 14, 12)
+
+    assert (layout["columns"], layout["rows"], layout["visible_count"]) == (6, 2, 12)
+
+
+def test_offline_list_section_is_one_frame_with_platform_edged_rows():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (220, 150), theme["bg"])
+    texts, badges, avatars = [], [], []
+
+    class DrawSpy:
+        def __init__(self, draw):
+            self._draw = draw
+
+        def __getattr__(self, name):
+            return getattr(self._draw, name)
+
+        def text(self, xy, text, *args, **kwargs):
+            texts.append(text)
+            return self._draw.text(xy, text, *args, **kwargs)
+
+    plugin._draw_platform_badge = lambda _image, _draw, box, platform_key, **_kwargs: badges.append(platform_key)
+    plugin._draw_avatar = lambda _image, _draw, avatar_box, card, *_args, **_kwargs: avatars.append(card["id"])
+    cards = _offline_cards(5)
+
+    visible = plugin._draw_offline_list_section(
+        image, DrawSpy(ImageDraw.Draw(image)), (10, 10, 192, 128), "OFFLINE", cards, theme, max_items=3,
+    )
+
+    assert visible == 3
+    assert avatars == ["offline0", "offline1", "offline2"]
+    assert badges == ["bilibili", "douyu", "picarto"]
+    assert {"Offline 0", "Offline 1", "Offline 2", "+2"} <= set(texts)
+    top, slot = 34, 104 / 3
+    for index, platform in enumerate(("bilibili", "douyu", "picarto")):
+        middle = round(top + slot * index + slot / 2)
+        expected = live_radar_module.PLATFORM_BRAND_COLORS.get(platform, theme["line"])
+        assert image.getpixel((12, middle)) == expected
+    assert image.getpixel((10, 34)) == theme["bg"]
+    assert image.getpixel((10, 52)) == image.getpixel((100, 34)) == theme["line"]
+    assert image.getpixel((100, round(top + slot))) == theme["line"]
+
+
 def test_top_overflow_excludes_live_queue_rows():
     cards = [{"id": str(index)} for index in range(12)]
 
@@ -3473,3 +3725,102 @@ def test_live_radar_preserves_shared_bold_fallback_raster(monkeypatch):
 
     assert font is shared
     assert bytes(font.getmask("Readable UI")) == expected
+
+
+def test_kick_uses_its_official_favicon_asset():
+    icon = LiveRadar._load_platform_icon_asset("kick")
+
+    assert icon is not None and icon.size == (64, 64)
+    colours = {colour for _count, colour in icon.convert("RGB").getcolors(4096)}
+    assert live_radar_module.PLATFORM_BRAND_COLORS["kick"] in colours
+
+
+def test_kick_quin_sorts_right_behind_mr_quin_among_favourites():
+    cards = [
+        {"platform": platform, "id": room_id, "status": "live", "is_fav": True, "heat": heat, "owner": room_id,
+         "label": "", "favorite_rank": LiveRadar._favorite_priority(platform, room_id)}
+        for platform, room_id, heat in (
+            ("douyu", "60937", 900),
+            ("kick", "quin3614", 10),
+            ("bilibili", "545318", 5),
+        )
+    ]
+
+    ordered = LiveRadar._sort_cards(cards)
+
+    assert [(card["platform"], card["id"]) for card in ordered] == [
+        ("bilibili", "545318"),
+        ("kick", "quin3614"),
+        ("douyu", "60937"),
+    ]
+
+
+KICK_SRCSET = (
+    "https://images.kick.com/video_thumbnails/a/b/1080.webp?v=1 1920w, "
+    "https://images.kick.com/video_thumbnails/a/b/720.webp?v=2 1280w, "
+    "https://images.kick.com/video_thumbnails/a/b/360.webp?v=3 480w, "
+    "https://images.kick.com/video_thumbnails/a/b/480.webp?v=4 640w"
+)
+STALE_KICK_COVER = "https://stream.kick.com/thumbnails/livestream/1/thumb0/video_thumbnail/thumb0.jpg"
+
+
+class _KickApiSession:
+    def __init__(self, payload=None, error=None):
+        self.payload = payload
+        self.error = error
+        self.calls = []
+
+    def get(self, url, timeout, headers):
+        self.calls.append(url)
+        if self.error is not None:
+            raise self.error
+        payload = self.payload
+
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return payload
+
+        return Response()
+
+
+def _kick_results():
+    return [
+        {"ok": True, "platform": "kick", "id": "quin3614", "status": {"isLive": True, "cover": STALE_KICK_COVER}},
+        {"ok": True, "platform": "kick", "id": "xqc", "status": {"isLive": False, "cover": "https://files.kick.com/u.webp"}},
+    ]
+
+
+def test_live_kick_rooms_take_their_snapshot_from_kicks_livestream_api():
+    plugin = _plugin()
+    session = _KickApiSession({"data": {"thumbnail": {"src": "https://images.kick.com/x/720.webp", "srcset": KICK_SRCSET}}})
+    results = _kick_results()
+
+    updated = plugin._attach_kick_thumbnails(session, results, timeout=9)
+
+    assert session.calls == ["https://kick.com/api/v2/channels/quin3614/livestream"]
+    assert updated[0]["status"]["cover"] == "https://images.kick.com/video_thumbnails/a/b/480.webp?v=4"
+    assert updated[1] == results[1]
+    assert results[0]["status"]["cover"] == STALE_KICK_COVER
+
+
+def test_kick_thumbnail_lookup_failure_keeps_the_aggregator_cover():
+    plugin = _plugin()
+    results = _kick_results()
+
+    for session in (_KickApiSession(error=RuntimeError("blocked")), _KickApiSession({"data": None})):
+        assert plugin._attach_kick_thumbnails(session, results, timeout=9) == results
+
+
+def test_kick_rooms_use_the_livestream_thumbnail_during_a_full_fetch(monkeypatch):
+    plugin = _plugin()
+    session = _KickApiSession({"data": {"thumbnail": {"src": "https://images.kick.com/x/720.webp", "srcset": ""}}})
+    monkeypatch.setattr(live_radar_module, "get_http_session", lambda: session)
+    plugin._fetch_aggregator_platform = lambda _session, rooms, *_args: [dict(result) for result in _kick_results()[:1]]
+
+    results = plugin._fetch_statuses([{"platform": "kick", "id": "quin3614", "isFav": True}], "https://aggregator.test", 9, True)
+
+    assert results[0]["status"]["cover"] == "https://images.kick.com/x/720.webp"
+    assert LiveRadar._cover_headers("https://images.kick.com/x/720.webp")["Referer"] == "https://kick.com/"

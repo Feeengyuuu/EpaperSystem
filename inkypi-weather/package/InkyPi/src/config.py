@@ -41,6 +41,18 @@ _LIVERADAR_DOUYU_CAKE_ROOM = {
     "id": "4067868",
     "isFav": False,
 }
+# Mr.Quin's Kick channel joins the same saved instance as a favourite; the
+# Douyu migration above leaves that instance at settings revision 3.
+_LIVERADAR_KICK_QUIN_MIGRATION = "liveradar_kick_quin3614_v1"
+_LIVERADAR_KICK_QUIN_UUID_SHA256_PREFIX = "14c36f0ef259f0b5"
+_LIVERADAR_KICK_QUIN_STRUCTURAL_GENERATION = 1
+_LIVERADAR_KICK_QUIN_SETTINGS_REVISION = 3
+_LIVERADAR_KICK_QUIN_REFRESH_INTERVAL_SECONDS = 5 * 60
+_LIVERADAR_KICK_QUIN_ROOM = {
+    "platform": "kick",
+    "id": "quin3614",
+    "isFav": True,
+}
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_LEGACY_REFRESH_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_REFRESH_INTERVAL_SECONDS = 3 * 60 * 60
@@ -185,6 +197,7 @@ class Config:
         self.refresh_info = self.load_refresh_info()
         self._apply_release_bound_nasapics_migration()
         self._migrate_liveradar_douyu_cake_room()
+        self._migrate_liveradar_kick_quin_room()
         self._migrate_runtime_balance_cadences()
         self._migrate_runtime_balance_soft_threshold(
             cadence_marker_preexisting=cadence_marker_preexisting,
@@ -229,10 +242,43 @@ class Config:
     def _migrate_liveradar_douyu_cake_room(self):
         """Append the requested Douyu room to the exact saved LiveRadar instance."""
 
+        self._append_liveradar_room(
+            migration=_LIVERADAR_DOUYU_CAKE_MIGRATION,
+            uuid_prefix=_LIVERADAR_DOUYU_CAKE_UUID_SHA256_PREFIX,
+            structural_generation=_LIVERADAR_DOUYU_CAKE_STRUCTURAL_GENERATION,
+            settings_revision=_LIVERADAR_DOUYU_CAKE_SETTINGS_REVISION,
+            refresh_interval=_LIVERADAR_DOUYU_CAKE_REFRESH_INTERVAL_SECONDS,
+            room=_LIVERADAR_DOUYU_CAKE_ROOM,
+        )
+
+    def _migrate_liveradar_kick_quin_room(self):
+        """Append Mr.Quin's Kick channel, as a favourite, to the same instance."""
+
+        self._append_liveradar_room(
+            migration=_LIVERADAR_KICK_QUIN_MIGRATION,
+            uuid_prefix=_LIVERADAR_KICK_QUIN_UUID_SHA256_PREFIX,
+            structural_generation=_LIVERADAR_KICK_QUIN_STRUCTURAL_GENERATION,
+            settings_revision=_LIVERADAR_KICK_QUIN_SETTINGS_REVISION,
+            refresh_interval=_LIVERADAR_KICK_QUIN_REFRESH_INTERVAL_SECONDS,
+            room=_LIVERADAR_KICK_QUIN_ROOM,
+        )
+
+    def _append_liveradar_room(
+        self,
+        *,
+        migration,
+        uuid_prefix,
+        structural_generation,
+        settings_revision,
+        refresh_interval,
+        room,
+    ):
+        """Append one room to the exact saved LiveRadar instance, once."""
+
         migrations = self.get_config(_RUNTIME_MIGRATIONS_KEY, default={})
         if (
             isinstance(migrations, Mapping)
-            and migrations.get(_LIVERADAR_DOUYU_CAKE_MIGRATION) is True
+            and migrations.get(migration) is True
         ):
             return
 
@@ -244,7 +290,7 @@ class Config:
         ) = self.capture_detached_playlist_transaction()
         migrations = authoritative_config.get(_RUNTIME_MIGRATIONS_KEY, {})
         if isinstance(migrations, Mapping) and (
-            migrations.get(_LIVERADAR_DOUYU_CAKE_MIGRATION) is True
+            migrations.get(migration) is True
         ):
             return
 
@@ -260,13 +306,13 @@ class Config:
             before.instance_uuid.encode("utf-8")
         ).hexdigest()[:16]
         if (
-            instance_fingerprint != _LIVERADAR_DOUYU_CAKE_UUID_SHA256_PREFIX
+            instance_fingerprint != uuid_prefix
             or before.structural_generation
-            != _LIVERADAR_DOUYU_CAKE_STRUCTURAL_GENERATION
+            != structural_generation
             or before.settings_revision
-            != _LIVERADAR_DOUYU_CAKE_SETTINGS_REVISION
+            != settings_revision
             or before.refresh.get("interval")
-            != _LIVERADAR_DOUYU_CAKE_REFRESH_INTERVAL_SECONDS
+            != refresh_interval
         ):
             logger.info(
                 "Skipped the release-specific LiveRadar room migration because "
@@ -294,8 +340,8 @@ class Config:
 
         def is_target(platform, room_id):
             return (
-                str(platform or "").strip().casefold() == "douyu"
-                and str(room_id or "").strip() == "4067868"
+                str(platform or "").strip().casefold() == room["platform"]
+                and str(room_id or "").strip() == room["id"]
             )
 
         json_target_count = sum(
@@ -314,11 +360,13 @@ class Config:
         settings_changed = json_target_count == 0
         if settings_changed:
             updated_document = _detach_json(room_document)
-            updated_document["rooms"].append(dict(_LIVERADAR_DOUYU_CAKE_ROOM))
+            updated_document["rooms"].append(dict(room))
             updated_settings = dict(settings)
             separator = "" if not rooms_text or rooms_text.endswith(("\n", "\r")) else "\n"
             updated_settings["roomsText"] = (
-                rooms_text + separator + "douyu|4067868"
+                rooms_text + separator + "|".join(
+                    [room["platform"], room["id"]] + (["fav"] if room["isFav"] else [])
+                )
             )
             updated_settings["roomsJson"] = json.dumps(
                 updated_document,
@@ -345,7 +393,7 @@ class Config:
                 raise ConfigLoadError("LiveRadar room migration changed identity")
 
         migration_state = _detach_json(migrations)
-        migration_state[_LIVERADAR_DOUYU_CAKE_MIGRATION] = True
+        migration_state[migration] = True
         self.commit_detached_playlist_transaction(
             expected_config_version=expected_config_version,
             expected_config_data=authoritative_config,
@@ -354,9 +402,12 @@ class Config:
             config_updates={_RUNTIME_MIGRATIONS_KEY: migration_state},
         )
         logger.warning(
-            "Migrated the saved LiveRadar instance to include Douyu room 4067868. "
-            "| settings_changed: %s | room_count: %s | previous_settings_revision: %s "
-            "| current_settings_revision: %s",
+            "Migrated the saved LiveRadar instance to include a room. "
+            "| room: %s|%s | favourite: %s | settings_changed: %s | room_count: %s "
+            "| previous_settings_revision: %s | current_settings_revision: %s",
+            room["platform"],
+            room["id"],
+            room["isFav"],
             settings_changed,
             len(room_document["rooms"]) + int(settings_changed),
             before.settings_revision,

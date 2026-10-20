@@ -1521,3 +1521,119 @@ def test_live_radar_room_migration_skips_other_valid_instance_formats(
         "live_radar",
         "LiveRadar",
     ).settings == instance["plugin_settings"]
+
+
+def _kick_ready_live_radar_config(**overrides):
+    rooms_document = {
+        "version": "3.1.1",
+        "timestamp": 1_786_000_000,
+        "rooms": [
+            {"platform": "bilibili", "id": "545318", "isFav": True},
+            {"platform": "douyu", "id": "4067868", "isFav": False},
+        ],
+    }
+    payload = _live_radar_room_config(
+        rooms_text=overrides.pop("rooms_text", "bilibili|545318|fav\ndouyu|4067868"),
+        rooms_json=json.dumps(overrides.pop("rooms_document", rooms_document), ensure_ascii=False),
+        migrations={"liveradar_douyu_4067868_v1": True},
+    )
+    payload["playlist_config"]["playlists"][0]["plugins"][0]["settings_revision"] = 3
+    return payload, rooms_document
+
+
+def _patch_live_radar_identity(monkeypatch, *names):
+    fingerprint = hashlib.sha256(b"6ce0a56e6ddd4feaa1006be9394daf10").hexdigest()[:16]
+    for name in names:
+        monkeypatch.setattr(config_module, name, fingerprint)
+
+
+def test_startup_appends_kick_quin_as_a_favourite_once(monkeypatch, tmp_path):
+    original, rooms_document = _kick_ready_live_radar_config()
+    _patch_live_radar_identity(monkeypatch, "_LIVERADAR_KICK_QUIN_UUID_SHA256_PREFIX")
+
+    config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    instance = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    settings = instance["plugin_settings"]
+    assert settings["roomsText"].splitlines() == [
+        "bilibili|545318|fav",
+        "douyu|4067868",
+        "kick|quin3614|fav",
+    ]
+    assert json.loads(settings["roomsJson"])["rooms"] == [
+        *rooms_document["rooms"],
+        {"platform": "kick", "id": "quin3614", "isFav": True},
+    ]
+    assert instance["settings_revision"] == 4
+    assert instance["structural_generation"] == 1
+    assert saved["runtime_migrations"]["liveradar_kick_quin3614_v1"] is True
+    assert saved["runtime_migrations"]["liveradar_douyu_4067868_v1"] is True
+
+    first_revision = saved["config_revision"]
+    Config()
+    assert json.loads(config_path.read_text(encoding="utf-8"))["config_revision"] == first_revision
+
+
+def test_live_radar_room_migrations_chain_douyu_then_kick(monkeypatch, tmp_path):
+    original = _live_radar_room_config(
+        rooms_text="bilibili|545318|fav",
+        rooms_json=json.dumps({"version": "3.1.1", "rooms": [{"platform": "bilibili", "id": "545318", "isFav": True}]}),
+    )
+    _patch_live_radar_identity(
+        monkeypatch,
+        "_LIVERADAR_DOUYU_CAKE_UUID_SHA256_PREFIX",
+        "_LIVERADAR_KICK_QUIN_UUID_SHA256_PREFIX",
+    )
+
+    _config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    instance = json.loads(config_path.read_text(encoding="utf-8"))["playlist_config"]["playlists"][0]["plugins"][0]
+    assert instance["plugin_settings"]["roomsText"].splitlines() == [
+        "bilibili|545318|fav",
+        "douyu|4067868",
+        "kick|quin3614|fav",
+    ]
+    assert instance["settings_revision"] == 4
+
+
+def test_kick_room_migration_marks_an_existing_room_without_editing(monkeypatch, tmp_path):
+    present = {
+        "version": "3.1.1",
+        "rooms": [{"platform": "kick", "id": "quin3614", "isFav": True}],
+    }
+    original, _rooms = _kick_ready_live_radar_config(rooms_text="kick|quin3614|fav", rooms_document=present)
+    _patch_live_radar_identity(monkeypatch, "_LIVERADAR_KICK_QUIN_UUID_SHA256_PREFIX")
+
+    _config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    instance = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    assert instance["plugin_settings"]["roomsText"] == "kick|quin3614|fav"
+    assert instance["settings_revision"] == 3
+    assert saved["runtime_migrations"]["liveradar_kick_quin3614_v1"] is True
+
+
+def test_kick_room_migration_rejects_one_sided_target(monkeypatch, tmp_path):
+    original, _rooms = _kick_ready_live_radar_config(rooms_text="bilibili|545318|fav\nkick|quin3614|fav")
+    _patch_live_radar_identity(monkeypatch, "_LIVERADAR_KICK_QUIN_UUID_SHA256_PREFIX")
+    config_path = tmp_path / "device.json"
+    config_path.write_text(json.dumps(original), encoding="utf-8")
+    monkeypatch.setattr(Config, "config_file", str(config_path))
+
+    with pytest.raises(ConfigLoadError, match="LiveRadar room lists disagree"):
+        Config()
+
+    assert json.loads(config_path.read_text(encoding="utf-8")) == original
+
+
+def test_kick_room_migration_skips_a_different_settings_revision(monkeypatch, tmp_path):
+    original, _rooms = _kick_ready_live_radar_config()
+    original["playlist_config"]["playlists"][0]["plugins"][0]["settings_revision"] = 5
+    _patch_live_radar_identity(monkeypatch, "_LIVERADAR_KICK_QUIN_UUID_SHA256_PREFIX")
+
+    _config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert "kick" not in saved["playlist_config"]["playlists"][0]["plugins"][0]["plugin_settings"]["roomsText"]
+    assert "liveradar_kick_quin3614_v1" not in saved["runtime_migrations"]

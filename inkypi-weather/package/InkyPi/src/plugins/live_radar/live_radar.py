@@ -4,7 +4,7 @@ from utils.resource_cache import cached_resource_image, measured_image_response,
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from functools import lru_cache
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 import hashlib
 import json
 import logging
@@ -23,6 +23,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
+from plugins.live_radar import placeholder_art
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
@@ -125,6 +126,10 @@ BILIBILI_PROFILE_KEYS = ("uname", "face")
 TWITCH_TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 TWITCH_STREAMS_URL = "https://api.twitch.tv/helix/streams"
 TWITCH_USERS_URL = "https://api.twitch.tv/helix/users"
+# The aggregator's Kick snapshot path is denied by Kick's CDN; Kick's own public
+# livestream endpoint names the current thumbnail in several widths.
+KICK_LIVESTREAM_URL = "https://kick.com/api/v2/channels/{slug}/livestream"
+KICK_THUMBNAIL_MIN_WIDTH = 640
 BILIBILI_API_HEADERS = {
     "User-Agent": COVER_HEADERS["User-Agent"],
     "Accept": "application/json",
@@ -139,7 +144,7 @@ PLATFORMS = {
     "picarto": {"label": "PICARTO", "short": "PA"},
     "soop": {"label": "SOOP", "short": "SO"},
 }
-# Main brand colours for card borders and the LIVE TOO snapshot capsule; other
+# Main brand colours for card borders and the LIVE TOO name lines; other
 # platforms keep the theme colours.
 PLATFORM_BRAND_COLORS = {
     "bilibili": (0, 174, 236),
@@ -159,7 +164,7 @@ STATUS_TOTAL_DARK_OFFLINE_FILL = (88, 88, 88)
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 PLATFORM_ICON_FILES = {
     platform: os.path.join(PLUGIN_DIR, "platform_icons", f"{platform}.png")
-    for platform in ("douyu", "bilibili", "twitch")
+    for platform in ("douyu", "bilibili", "twitch", "kick")
 }
 STATUS_ICON_FILES = {
     kind: os.path.join(PLUGIN_DIR, "status_icons", f"{kind}.png")
@@ -168,13 +173,12 @@ STATUS_ICON_FILES = {
 TITLE_LOGO_FILE = "liveradar_logo.png"
 TITLE_WORDMARK_FILE = "liveradar_wordmark.png"
 HEADER_ART_FILE = "liveradar_header_art.png"
-SLOT_PLACEHOLDER_FILE = "liveradar_slot_placeholder.png"
-COMPACT_PLACEHOLDER_FILE = "liveradar_compact_placeholder.png"
 SECTION_TITLE_WORDMARK_FILES = {
     "LIVE NOW": "liveradar_section_live_now.png",
     "LIVE TOO": "liveradar_section_live_too.png",
     "OFFLINE": "liveradar_section_offline.png",
 }
+# Largest offline doodle drawn in a compact card's free space.
 COMPACT_PLACEHOLDER_SIZE = (150, 24)
 HEADER_ART_SIZE = (270, 64)
 TITLE_WORDMARK_SIZE = (226, 58)
@@ -190,7 +194,21 @@ CARD_META_Y_NUDGE = 2
 LIVE_CARD_SNAPSHOT_TITLE_MAX_SIZE = 10 + CARD_DETAIL_FONT_SIZE_NUDGE
 LIVE_CARD_TITLE_MAX_SIZE = 14 + CARD_DETAIL_FONT_SIZE_NUDGE
 COMPACT_CARD_DETAIL_MAX_SIZE = 8 + CARD_DETAIL_FONT_SIZE_NUDGE
-LIVE_QUEUE_MIN_NAME_WIDTH = 36
+# LIVE TOO with many streams is one framed cover wall of tiles at least 90 px
+# wide (2-6 columns), each a full-bleed snapshot over a name strip whose top edge
+# is a 3 px platform-colour line. In landscape the wall takes three quarters of
+# the bottom row and OFFLINE becomes a slim list beside it.
+LIVE_QUEUE_TILE_MIN_W = 90
+LIVE_QUEUE_MIN_COLUMNS = 2
+LIVE_QUEUE_MAX_COLUMNS = 6
+LIVE_QUEUE_MAX_ITEMS = 12
+LIVE_WALL_OFFLINE_SHARE = 0.25
+LIVE_WALL_OFFLINE_MIN_W = 176
+OFFLINE_LIST_MIN_ROW_H = 24
+LIVE_QUEUE_MIN_TILE_H = 40
+LIVE_QUEUE_NAME_STRIP_H = 15
+LIVE_QUEUE_BRAND_LINE_H = 3
+LIVE_QUEUE_RADIUS = 8
 STATUS_RANK = {
     "live": 0,
     "replay": 1,
@@ -200,15 +218,16 @@ STATUS_RANK = {
 
 FAVORITE_PRIORITY = {
     ("bilibili", "545318"): 0,  # Mr.Quin stays first inside the favorites group.
-    ("douyu", "60937"): 1,
-    ("douyu", "6979222"): 2,
-    ("douyu", "12306"): 3,
-    ("douyu", "57321"): 4,
-    ("bilibili", "5229"): 5,
-    ("twitch", "jinnytty"): 6,
-    ("douyu", "10639765"): 7,
-    ("douyu", "3507497"): 8,
-    ("bilibili", "733"): 9,
+    ("kick", "quin3614"): 1,  # ... with his Kick channel right behind.
+    ("douyu", "60937"): 2,
+    ("douyu", "6979222"): 3,
+    ("douyu", "12306"): 4,
+    ("douyu", "57321"): 5,
+    ("bilibili", "5229"): 6,
+    ("twitch", "jinnytty"): 7,
+    ("douyu", "10639765"): 8,
+    ("douyu", "3507497"): 9,
+    ("bilibili", "733"): 10,
 }
 
 
@@ -522,6 +541,8 @@ class LiveRadar(BasePlugin):
                 fetch_avatars,
                 platform,
             )
+            if platform == "kick":
+                platform_results = self._attach_kick_thumbnails(session, platform_results, timeout)
             fetched_results.extend(platform_results)
             source_health[platform] = self._source_health_entry(
                 "aggregator",
@@ -636,6 +657,45 @@ class LiveRadar(BasePlugin):
             results_by_key.get(self._room_key(room), self._missing_source_result(room))
             for room in rooms
         ]
+
+    def _attach_kick_thumbnails(self, session, results, timeout):
+        """Replace live Kick snapshots with the thumbnail Kick itself publishes."""
+        updated = []
+        for result in results:
+            status = result.get("status") if isinstance(result, dict) else None
+            if not (isinstance(status, dict) and result.get("ok") and status.get("isLive")):
+                updated.append(result)
+                continue
+            try:
+                thumbnail = self._kick_live_thumbnail(session, result.get("id"), timeout)
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("LiveRadar Kick thumbnail lookup failed for %s: %s", result.get("id"), exc.__class__.__name__)
+                thumbnail = ""
+            updated.append({**result, "status": {**status, "cover": thumbnail}} if thumbnail else result)
+        return updated
+
+    def _kick_live_thumbnail(self, session, slug, timeout):
+        response = session.get(
+            KICK_LIVESTREAM_URL.format(slug=quote(str(slug or "").strip().lower(), safe="")),
+            timeout=self._bounded_status_timeout(timeout),
+            headers={"User-Agent": COVER_HEADERS["User-Agent"], "Accept": "application/json"},
+        )
+        response.raise_for_status()
+        payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else None
+        thumbnail = data.get("thumbnail") if isinstance(data, dict) else None
+        if not isinstance(thumbnail, dict):
+            return ""
+        widths = []
+        for entry in str(thumbnail.get("srcset") or "").split(","):
+            parts = entry.split()
+            if len(parts) == 2 and parts[1].endswith("w") and parts[1][:-1].isdigit():
+                widths.append((int(parts[1][:-1]), parts[0]))
+        # The smallest rendition that still covers a large card keeps downloads light.
+        wide_enough = sorted(item for item in widths if item[0] >= KICK_THUMBNAIL_MIN_WIDTH)
+        return self._http_media_url(wide_enough[0][1] if wide_enough else thumbnail.get("src"))
 
     def _batch_clock_now(self):
         clock = getattr(self, "_batch_clock", time.monotonic)
@@ -1260,12 +1320,23 @@ class LiveRadar(BasePlugin):
         bottom_y = top_y + (208 if show_snapshots else 184)
         footer_y = height - 27
         col_gap = max(12, int(width * 0.018))
-        col_w = int((width - 2 * margin - col_gap) / 2)
-        live_queue_box = (margin, bottom_y, col_w, footer_y - bottom_y - 8)
-        offline_box = (margin + col_w + col_gap, bottom_y, col_w, footer_y - bottom_y - 8)
-        live_queue_max = 8
         snapshot_mini_live_threshold = max(3, int(layout.get("snapshot_mini_live_threshold") or 7))
-        live_queue_count = self._live_queue_visible_count(live_queue_box, len(live_cards[live_limit:]), live_queue_max)
+        queued_live_cards = live_cards[live_limit:]
+        live_wall = bool(queued_live_cards) and not (
+            show_snapshots and len(live_cards) <= snapshot_mini_live_threshold
+        )
+        # A landscape cover wall gets three quarters of the row; OFFLINE goes slim.
+        wide_wall = live_wall and width > height
+        bottom_h = footer_y - bottom_y - 8
+        if wide_wall:
+            offline_w = max(LIVE_WALL_OFFLINE_MIN_W, int((width - 2 * margin) * LIVE_WALL_OFFLINE_SHARE))
+            live_w = width - 2 * margin - col_gap - offline_w
+        else:
+            live_w = offline_w = int((width - 2 * margin - col_gap) / 2)
+        live_queue_box = (margin, bottom_y, live_w, bottom_h)
+        offline_box = (margin + live_w + col_gap, bottom_y, offline_w, bottom_h)
+        live_queue_max = LIVE_QUEUE_MAX_ITEMS
+        live_queue_count = self._live_queue_visible_count(live_queue_box, len(queued_live_cards), live_queue_max)
 
         if live_cards:
             self._draw_section_title(image, draw, margin, top_label_y, "LIVE NOW", len(live_cards), theme, sub_font)
@@ -1299,8 +1370,7 @@ class LiveRadar(BasePlugin):
         else:
             self._draw_quiet_panel(draw, (margin, top_y, width - 2 * margin, top_h), len(cards), theme)
 
-        queued_live_cards = live_cards[live_limit:]
-        if queued_live_cards and show_snapshots and len(live_cards) <= snapshot_mini_live_threshold:
+        if queued_live_cards and not live_wall:
             self._draw_snapshot_mini_section(
                 image,
                 draw,
@@ -1342,18 +1412,30 @@ class LiveRadar(BasePlugin):
                 avatar_cache_seconds=avatar_cache_seconds,
                 caption="quiet slots",
             )
-        self._draw_compact_section(
-            image,
-            draw,
-            offline_box,
-            "OFFLINE",
-            offline_cards + error_cards,
-            theme,
-            max_items=max_offline,
-            show_snapshot=False,
-            snapshot_cache_seconds=snapshot_cache_seconds,
-            avatar_cache_seconds=avatar_cache_seconds,
-        )
+        if wide_wall:
+            self._draw_offline_list_section(
+                image,
+                draw,
+                offline_box,
+                "OFFLINE",
+                offline_cards + error_cards,
+                theme,
+                max_items=max_offline,
+                avatar_cache_seconds=avatar_cache_seconds,
+            )
+        else:
+            self._draw_compact_section(
+                image,
+                draw,
+                offline_box,
+                "OFFLINE",
+                offline_cards + error_cards,
+                theme,
+                max_items=max_offline,
+                show_snapshot=False,
+                snapshot_cache_seconds=snapshot_cache_seconds,
+                avatar_cache_seconds=avatar_cache_seconds,
+            )
 
         footer_parts = [generated_at.astimezone().strftime("%H:%M")]
         if from_cache:
@@ -1605,38 +1687,41 @@ class LiveRadar(BasePlugin):
                 image.paste(snapshot, (left, top))
             except Exception as exc:
                 logger.warning("LiveRadar cover render failed for %s/%s: %s", card.get("platform"), card.get("id"), exc)
-                self._draw_snapshot_placeholder(draw, (left, top, right, bottom), card, theme, large)
+                self._draw_snapshot_placeholder(image, draw, (left, top, right, bottom), card, theme, large)
         else:
-            self._draw_snapshot_placeholder(draw, (left, top, right, bottom), card, theme, large)
+            self._draw_snapshot_placeholder(image, draw, (left, top, right, bottom), card, theme, large)
 
         draw.line((left, bottom, right, bottom), fill=theme["line"], width=1)
         return snapshot_h
 
-    def _draw_snapshot_placeholder(self, draw, box, card, theme, large):
-        left, top, right, bottom = box
-        if theme.get("mode") == "light":
-            fill = (255, 255, 255)
-            stroke = (0, 0, 0)
-            text_fill = (0, 0, 0)
-        else:
-            fill = (0, 0, 0)
-            stroke = (255, 255, 255)
-            text_fill = (255, 255, 255)
-        draw.rectangle((left, top, right, bottom), fill=fill)
-        step = 20 if large else 14
-        for offset in range(-int(bottom - top), int(right - left), step):
-            draw.line((left + offset, bottom, left + offset + (bottom - top), top), fill=stroke, width=1)
-        platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
-        label = platform["short"]
-        font = self._font(14 if large else 9, "bold")
-        label_w = draw.textlength(label, font=font)
-        label_h = self._line_height(font)
-        draw.text(
-            (left + (right - left - label_w) / 2, top + (bottom - top - label_h) / 2 - 1),
-            label,
-            fill=text_fill,
-            font=font,
+    def _draw_snapshot_placeholder(self, image, draw, box, card, theme, large):
+        """A missing snapshot: TV colour bars with the platform logo on a plate."""
+        geometry = placeholder_art.draw_colour_bars(draw, box, large=large)
+        left, top, right, bottom = geometry["plate"]
+        inset = 3 if right - left >= 20 else 2
+        self._draw_platform_badge(
+            image,
+            draw,
+            (left + inset, top + inset, right - inset + 1, bottom - inset + 1),
+            card["platform"],
+            fill=placeholder_art.WHITE,
+            ink=placeholder_art.BLACK,
+            outline=placeholder_art.WHITE,
         )
+        if large:
+            band_left, band_top, band_right, band_bottom = geometry["band"]
+            font = self._font(14, "bold")
+            label = "NO SIGNAL"
+            label_w = draw.textlength(label, font=font)
+            draw.text(
+                (
+                    band_left + (band_right - band_left + 1 - label_w) / 2,
+                    band_top + (band_bottom - band_top + 1 - self._line_height(font)) / 2 - 1,
+                ),
+                label,
+                fill=placeholder_art.WHITE,
+                font=font,
+            )
 
     def _draw_compact_section(
         self,
@@ -1695,6 +1780,93 @@ class LiveRadar(BasePlugin):
             more = f"+{len(cards) - len(visible)}"
             self._draw_text_right(draw, more, x + w, y, sub_font, theme["muted"])
 
+    def _draw_offline_list_section(
+        self,
+        image,
+        draw,
+        box,
+        title,
+        cards,
+        theme,
+        max_items,
+        avatar_cache_seconds=AVATAR_CACHE_SECONDS,
+    ):
+        """Slim OFFLINE beside a wide cover wall: one frame, a row per streamer."""
+        x, y, w, h = box
+        sub_font = self._font(13, "bold")
+        self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font)
+        left, top, right, bottom = int(x), int(y + 24), int(x + w), int(y + h)
+        if not cards:
+            self._rounded_rectangle(draw, (left, top, right, bottom), radius=LIVE_QUEUE_RADIUS,
+                                    fill=theme["panel"], outline=theme["line"], width=1)
+            font = self._font(12, "bold")
+            message = "No cards"
+            draw.text((left + (right - left - draw.textlength(message, font=font)) / 2, top + 30),
+                      message, fill=theme["muted"], font=font)
+            return 0
+        slots = max(1, min(int(max_items), int((bottom - top) // OFFLINE_LIST_MIN_ROW_H)))
+        visible = cards[:slots]
+        row_edges = [round(top + (bottom - top) * index / slots) for index in range(len(visible) + 1)]
+        frame = (left, top, right, row_edges[-1])
+        self._rounded_rectangle(draw, frame, radius=LIVE_QUEUE_RADIUS, fill=theme["panel"])
+        for index, card in enumerate(visible):
+            self._draw_offline_list_row(
+                image,
+                draw,
+                (left, row_edges[index], right - left, row_edges[index + 1] - row_edges[index]),
+                card,
+                theme,
+                avatar_cache_seconds,
+            )
+        for edge in row_edges[1:-1]:
+            draw.line((left + 8, edge, right - 8, edge), fill=theme["line"], width=1)
+        self._clip_outside_round(image, frame, LIVE_QUEUE_RADIUS, theme["bg"])
+        self._rounded_rectangle(draw, frame, radius=LIVE_QUEUE_RADIUS, outline=theme["line"], width=1)
+        if len(cards) > len(visible):
+            self._draw_text_right(draw, f"+{len(cards) - len(visible)}", x + w, y, sub_font, theme["muted"])
+        return len(visible)
+
+    def _draw_offline_list_row(self, image, draw, box, card, theme, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
+        x, y, w, h = [int(value) for value in box]
+        ink, panel = theme["ink"], theme["panel"]
+        draw.rectangle((x + 1, y, x + 3, y + h - 1), fill=self._brand_line(card, theme["line"]))
+        platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
+        avatar = max(14, min(24, h - 8))
+        avatar_x, avatar_y = x + 9, y + (h - avatar) // 2
+        self._draw_avatar(image, draw, (avatar_x, avatar_y, avatar), card, platform, panel, ink, theme["line"],
+                          avatar_cache_seconds, show_fav_badge=False)
+        right = x + w - 6
+        logo = 12
+        logo_top = y + (h - logo) // 2
+        self._draw_platform_badge(image, draw, (right - logo, logo_top, right, logo_top + logo), card["platform"],
+                                  fill=panel, ink=ink, outline=ink)
+        right -= logo + 3
+        if card.get("is_fav"):
+            star = 11
+            star_top = y + (h - star) // 2
+            self._draw_icon_badge(image, draw, (right - star, star_top, right, star_top + star), "fav",
+                                  fill=panel, ink=ink, outline=ink)
+            right -= star + 3
+        text_x = avatar_x + avatar + 6
+        text_w = max(12, right - 2 - text_x)
+        name = self._card_display_name(card)
+        name_font = self._fit_font(draw, name, text_w, 11, 8, "bold")
+        detail = str(card.get("title") or "").strip() or self._meta_text(card)
+        detail_font = self._fit_font(draw, detail, text_w, 9, 7, "bold") if detail else None
+        name_top, name_bottom = self._glyph_extent(name_font)
+        detail_top, detail_bottom = self._glyph_extent(detail_font) if detail_font else (0, 0)
+        gap = 2
+        block = name_bottom - name_top
+        show_detail = detail_font is not None and block + gap + detail_bottom - detail_top <= h - 4
+        if show_detail:
+            block += gap + detail_bottom - detail_top
+        block_top = y + (h - block) // 2
+        draw.text((text_x, block_top - name_top), self._fit_text(draw, name, name_font, text_w), fill=ink, font=name_font)
+        if show_detail:
+            detail_y = block_top + name_bottom - name_top + gap - detail_top
+            draw.text((text_x, detail_y), self._fit_text(draw, detail, detail_font, text_w),
+                      fill=theme["muted"], font=detail_font)
+
     def _draw_live_queue_section(
         self,
         image,
@@ -1728,40 +1900,41 @@ class LiveRadar(BasePlugin):
             draw.text((x + (w - msg_w) / 2, content_y + max(14, int((content_h - self._line_height(muted_font)) / 2))), msg, fill=theme["muted"], font=muted_font)
             return 0
 
-        layout = self._live_queue_layout((x, y, w, h), len(cards), max_items)
-        visible_count = layout["visible_count"]
-        rows_used = layout["rows_used"]
-        row_h = layout["row_h"]
-        col_w = layout["col_w"]
+        layout = self._live_queue_layout(box, len(cards), max_items)
         columns = layout["columns"]
-        gap = layout["gap"]
-        col_gap = layout["col_gap"]
-
-        visible = cards[:visible_count]
-        for index, card in enumerate(visible):
-            column = index // rows_used
-            row = index % rows_used
-            row_x = x + column * (col_w + col_gap)
-            row_y = content_y + row * (row_h + gap)
-            self._draw_live_mini_row(
-                image,
-                draw,
-                (row_x, row_y, col_w, row_h),
-                card,
-                theme,
-                avatar_cache_seconds,
-                show_snapshot=show_snapshot,
-                snapshot_cache_seconds=snapshot_cache_seconds,
+        rows = layout["rows"]
+        visible = cards[: layout["visible_count"]]
+        wall = (int(x), int(content_y), int(x + w), int(y + h))
+        left, top, right, bottom = wall
+        self._rounded_rectangle(draw, wall, radius=LIVE_QUEUE_RADIUS, fill=theme["panel"])
+        col_edges = [round(left + (right - left) * column / columns) for column in range(columns + 1)]
+        row_edges = [round(top + (bottom - top) * row / rows) for row in range(rows + 1)]
+        for slot in range(columns * rows):
+            column, row = slot % columns, slot // columns
+            cell = (
+                col_edges[column],
+                row_edges[row],
+                col_edges[column + 1] - col_edges[column],
+                row_edges[row + 1] - row_edges[row],
             )
-
-        grid_capacity = rows_used * columns
-        if columns > 1 and visible_count < grid_capacity and visible_count < max_items:
-            for index in range(visible_count, min(grid_capacity, max_items)):
-                column = index // rows_used
-                row = index % rows_used
-                row_x = x + column * (col_w + col_gap)
-                row_y = content_y + row * (row_h + gap)
-                self._draw_snapshot_mini_placeholder(image, draw, (row_x, row_y, col_w, row_h), theme)
+            if slot < len(visible):
+                self._draw_live_queue_tile(
+                    image,
+                    draw,
+                    cell,
+                    visible[slot],
+                    theme,
+                    show_snapshot=show_snapshot,
+                    snapshot_cache_seconds=snapshot_cache_seconds,
+                )
+            else:
+                self._draw_snapshot_mini_placeholder(image, draw, cell, theme, framed=False)
+        for edge in col_edges[1:-1]:
+            draw.line((edge, top, edge, bottom), fill=theme["line"], width=1)
+        for edge in row_edges[1:-1]:
+            draw.line((left, edge, right, edge), fill=theme["line"], width=1)
+        self._clip_outside_round(image, wall, LIVE_QUEUE_RADIUS, theme["bg"])
+        self._rounded_rectangle(draw, wall, radius=LIVE_QUEUE_RADIUS, outline=theme["line"], width=1)
 
         if len(cards) > len(visible):
             self._draw_text_right(draw, f"+{len(cards) - len(visible)}", x + w, y, sub_font, theme["muted"])
@@ -1865,75 +2038,15 @@ class LiveRadar(BasePlugin):
             self._draw_snapshot_mini_placeholder(image, draw, (card_x, card_y, card_w, row_h), theme)
         return len(visible)
 
-    def _draw_snapshot_mini_placeholder(self, image, draw, box, theme):
+    def _draw_snapshot_mini_placeholder(self, image, draw, box, theme, framed=True):
+        """An empty slot: a blue-screen TV waiting for the next stream."""
         x, y, w, h = [int(value) for value in box]
-        asset = self._load_slot_placeholder_asset()
-        if asset:
-            try:
-                fitted = ImageOps.fit(asset.convert("RGB"), (max(1, w), max(1, h)), method=self._resampling_filter(), centering=(0.5, 0.52))
-                image.paste(fitted, (x, y))
-                draw.rectangle((x, y, x + w, y + h), outline=theme["ink"], width=1)
-                return
-            except Exception as exc:
-                logger.warning("LiveRadar generated placeholder render failed: %s", exc)
-        fill = theme["panel"]
-        ink = theme["ink"]
-        muted = theme["muted"]
-        accent = STATUS_TOTAL_FILLS["live"]
-        replay = STATUS_TOTAL_FILLS["replay"]
-        self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=5, fill=fill, outline=muted, width=1)
-
-        pad = max(5, min(9, h // 6))
-        left = x + pad
-        top = y + pad
-        right = x + w - pad
-        cx = left + max(20, int((right - left) * 0.34))
-        cy = y + h // 2
-        radius = max(9, min(h // 3, (right - left) // 5))
-        for index, scale in enumerate((1.0, 1.55, 2.05)):
-            r = int(radius * scale)
-            outline = ink if index == 0 else muted
-            draw.arc((cx - r, cy - r, cx + r, cy + r), 205, 335, fill=outline, width=1)
-        draw.ellipse((cx - 3, cy - 3, cx + 3, cy + 3), fill=accent)
-        draw.line((cx, cy, min(right - 25, cx + radius + 13), max(top + 4, cy - radius)), fill=accent, width=1)
-
-        card_w = max(25, min(44, int(w * 0.25)))
-        card_h = max(16, min(25, h - 2 * pad))
-        stack_x = right - card_w - 1
-        stack_y = y + max(pad, int((h - card_h) / 2))
-        self._rounded_rectangle(draw, (stack_x - 8, stack_y + 5, stack_x - 8 + card_w, stack_y + 5 + card_h), radius=4, fill=fill, outline=muted, width=1)
-        self._rounded_rectangle(draw, (stack_x, stack_y, stack_x + card_w, stack_y + card_h), radius=4, fill=fill, outline=ink, width=1)
-        draw.line((stack_x + 5, stack_y + 6, stack_x + card_w - 5, stack_y + 6), fill=replay, width=2)
-        draw.line((stack_x + 5, stack_y + 12, stack_x + card_w - 7, stack_y + 12), fill=muted, width=1)
-        draw.line((stack_x + 5, stack_y + 17, stack_x + card_w - 13, stack_y + 17), fill=muted, width=1)
-
-    @staticmethod
-    @lru_cache(maxsize=1)
-    def _load_slot_placeholder_asset():
-        path = os.path.join(PLUGIN_DIR, SLOT_PLACEHOLDER_FILE)
-        try:
-            if not os.path.exists(path):
-                return None
-            image = Image.open(path)
-            image.load()
-            return ImageOps.exif_transpose(image).convert("RGB")
-        except Exception as exc:
-            logger.warning("LiveRadar slot placeholder asset unavailable: %s", exc)
-            return None
-
-    @staticmethod
-    @lru_cache(maxsize=1)
-    def _load_compact_placeholder_asset():
-        path = os.path.join(PLUGIN_DIR, COMPACT_PLACEHOLDER_FILE)
-        try:
-            if not os.path.exists(path):
-                return None
-            image = Image.open(path)
-            image.load()
-            return ImageOps.exif_transpose(image).convert("RGBA")
-        except Exception as exc:
-            logger.warning("LiveRadar compact placeholder asset unavailable: %s", exc)
-            return None
+        font = self._font(10 if h < 52 or w < 120 else 11, "bold")
+        if framed:
+            self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=5, fill=theme["panel"], outline=theme["line"], width=1)
+            placeholder_art.draw_waiting_tv(draw, (x + 1, y + 1, x + w - 1, y + h - 1), theme, font, fill=False)
+        else:
+            placeholder_art.draw_waiting_tv(draw, (x, y, x + w - 1, y + h - 1), theme, font)
 
     def _draw_snapshot_mini_card(self, image, draw, box, card, theme, snapshot_cache_seconds=90, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
         x, y, w, h = [int(value) for value in box]
@@ -1956,9 +2069,9 @@ class LiveRadar(BasePlugin):
                 image.paste(fitted, (thumb_box[0], thumb_box[1]))
             except Exception as exc:
                 logger.warning("LiveRadar mini cover render failed for %s/%s: %s", card.get("platform"), card.get("id"), exc)
-                self._draw_snapshot_placeholder(draw, thumb_box, card, theme, False)
+                self._draw_snapshot_placeholder(image, draw, thumb_box, card, theme, False)
         else:
-            self._draw_snapshot_placeholder(draw, thumb_box, card, theme, False)
+            self._draw_snapshot_placeholder(image, draw, thumb_box, card, theme, False)
         draw.rectangle(thumb_box, outline=ink, width=1)
         platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
 
@@ -2041,156 +2154,97 @@ class LiveRadar(BasePlugin):
     def _live_queue_layout(box, card_count, max_items):
         _x, _y, w, h = box
         content_h = max(1, h - 24)
-        gap = 4
-        col_gap = 8
-        columns = 2 if w >= 320 and card_count > 4 and max_items > 4 else 1
-        min_row_h = 22
-        rows_capacity = max(1, int((content_h + gap) / (min_row_h + gap)))
-        if columns == 2:
-            rows_capacity = min(rows_capacity, max(1, int(math.ceil(max_items / 2))))
-        visible_count = min(card_count, max_items, rows_capacity * columns)
-        rows_used = max(1, int(math.ceil(max(1, visible_count) / columns)))
-        row_h = max(min_row_h, int((content_h - gap * (rows_used - 1)) / rows_used))
-        col_w = int((w - col_gap * (columns - 1)) / columns)
+        columns = max(LIVE_QUEUE_MIN_COLUMNS, min(LIVE_QUEUE_MAX_COLUMNS, int(w // LIVE_QUEUE_TILE_MIN_W)))
+        rows = max(
+            1,
+            min(int(math.ceil(max(1, int(max_items)) / columns)), int(content_h // LIVE_QUEUE_MIN_TILE_H)),
+        )
         return {
-            "visible_count": visible_count,
-            "rows_used": rows_used,
-            "row_h": row_h,
-            "col_w": col_w,
+            "visible_count": min(card_count, max_items, rows * columns),
             "columns": columns,
-            "gap": gap,
-            "col_gap": col_gap,
+            "rows": rows,
         }
 
-    def _draw_live_mini_row(
-        self,
-        image,
-        draw,
-        box,
-        card,
-        theme,
-        avatar_cache_seconds=AVATAR_CACHE_SECONDS,
-        show_snapshot=True,
-        snapshot_cache_seconds=90,
-    ):
-        x, y, w, h = box
-        fill = theme["panel"]
-        ink = theme["ink"]
-        muted = theme["muted"]
-        line = theme["line"]
-        accent = theme["live_fill"] if theme.get("mode") == "dark" else theme["live_ink"]
-        self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=5, fill=fill, outline=line, width=1)
-        draw.line((x + 5, y + 5, x + 5, y + h - 5), fill=accent, width=1)
-
-        platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
-        pad = 10
-        avatar_size = min(22, max(16, h - 6))
-        avatar_x = x + pad + 5
-        avatar_y = y + max(3, int((h - avatar_size) / 2))
-        self._draw_avatar(image, draw, (avatar_x, avatar_y, avatar_size), card, platform, fill, ink, line, avatar_cache_seconds)
-
-        text_x = avatar_x + avatar_size + 8
-        fav_size = min(15, max(12, h - 7))
-        fav_reserve = fav_size + 4 if card.get("is_fav") else 0
-        capsule_left = None
-        if show_snapshot:
-            capsule_left = self._draw_live_mini_capsule(
-                image,
-                draw,
-                x + w - 6,
-                y,
-                h,
-                text_x + LIVE_QUEUE_MIN_NAME_WIDTH + 4 + fav_reserve,
-                card,
-                theme,
-                snapshot_cache_seconds,
-            )
-        if capsule_left is not None:
-            right = capsule_left - 4
-            icon_y = y + max(3, int((h - fav_size) / 2))
-        else:
-            platform_w = min(17, max(15, int(h * 0.64)))
-            platform_h = min(16, max(13, h - 7))
-            icon_y = y + max(3, int((h - platform_h) / 2))
-            right = x + w - pad
-            self._draw_platform_badge(
-                image,
-                draw,
-                (right - platform_w, icon_y, right, icon_y + platform_h),
-                card["platform"],
-                fill=fill,
-                ink=ink,
-                outline=muted,
-            )
-            right -= platform_w + 4
-        if card.get("is_fav"):
-            self._draw_icon_badge(
-                image,
-                draw,
-                (right - fav_size, icon_y, right, icon_y + fav_size),
-                "fav",
-                fill=fill,
-                ink=ink,
-                outline=muted,
-            )
-            right -= fav_size + 4
-
-        text_w = max(24, right - text_x)
-        owner_text = self._card_display_name(card)
-        name_font = self._fit_font(draw, owner_text, text_w, 11, 8, "bold")
-        name_y = y + max(2, int((h - self._line_height(name_font)) / 2) - 1)
-        draw.text((text_x, name_y), self._fit_text(draw, owner_text, name_font, text_w), fill=ink, font=name_font)
-
-    def _draw_live_mini_capsule(self, image, draw, right, y, h, min_left, card, theme, snapshot_cache_seconds):
-        """Frame a 16:9 snapshot and the platform logo as one brand-coloured capsule.
-
-        Returns the capsule's left edge, or None (nothing drawn) when it would push
-        the capsule left of ``min_left``.
-        """
-        thumb_h = max(12, h - 8)
-        thumb_w = int(round(thumb_h * 16 / 9))
-        tab_w = 22
-        left = right - (2 + thumb_w + 2 + tab_w)
-        if left < min_left:
-            return None
-        top = y + (h - (thumb_h + 4)) // 2
-        bottom = top + thumb_h + 3
-        brand = self._brand_line(card, theme["ink"])
-        strength = 0.35 if theme.get("mode") == "dark" else 0.18
-        tab_fill = tuple(round(c * strength + p * (1 - strength)) for c, p in zip(brand, theme["panel"]))
-        self._rounded_rectangle(draw, (left, top, right, bottom), radius=6, fill=tab_fill, outline=None, width=0)
-
-        thumb_box = (left + 2, top + 2, left + 2 + thumb_w, top + 2 + thumb_h)
-        snapshot = self._load_cover_source(card.get("cover"), snapshot_cache_seconds)
+    def _draw_live_queue_tile(self, image, draw, box, card, theme, show_snapshot=True, snapshot_cache_seconds=90):
+        """One wall tile: full-bleed snapshot with the platform logo, then the name strip."""
+        x, y, w, h = [int(value) for value in box]
+        strip_top = y + h - LIVE_QUEUE_NAME_STRIP_H
+        cover_size = (max(1, w), max(1, strip_top - y))
+        snapshot = self._load_cover_source(card.get("cover"), snapshot_cache_seconds) if show_snapshot else None
         if snapshot:
             try:
-                fitted = self._prepare_snapshot_image(snapshot, (thumb_w, thumb_h), card["status"])
-                image.paste(fitted, (thumb_box[0], thumb_box[1]))
+                image.paste(self._prepare_snapshot_image(snapshot, cover_size, card["status"]), (x, y))
             except TaskCancelled:
                 raise
             except Exception as exc:
                 logger.warning("LiveRadar queue cover render failed for %s/%s: %s", card.get("platform"), card.get("id"), exc)
-                self._draw_snapshot_placeholder(draw, thumb_box, card, theme, False)
+                snapshot = None
+        if not snapshot:
+            self._draw_snapshot_placeholder(image, draw, (x, y, x + w - 1, strip_top - 1), card, theme, False)
         else:
-            self._draw_snapshot_placeholder(draw, thumb_box, card, theme, False)
+            plate = (x + 3, y + 3, x + 16, y + 16)
+            self._rounded_rectangle(draw, plate, radius=4, fill=theme["panel"], outline=theme["ink"], width=1)
+            self._draw_platform_badge(
+                image,
+                draw,
+                (plate[0] + 2, plate[1] + 2, plate[2] - 1, plate[3] - 1),
+                card["platform"],
+                fill=theme["panel"],
+                ink=theme["ink"],
+                outline=theme["panel"],
+            )
+        if card["status"] == "live":
+            self._draw_uptime_chip(draw, x + w - 4, strip_top - 4, card)
 
-        divider = thumb_box[2]
-        draw.rectangle((divider, top, divider + 1, bottom), fill=brand)
-        logo = min(16, thumb_h)
-        logo_x = divider + 2 + (right - 2 - (divider + 2) - logo) // 2
-        logo_y = top + (bottom - top + 1 - logo) // 2
-        self._draw_platform_badge(
-            image,
-            draw,
-            (logo_x, logo_y, logo_x + logo, logo_y + logo),
-            card["platform"],
-            fill=tab_fill,
-            ink=theme["ink"],
-            outline=brand,
+        draw.rectangle((x, strip_top, x + w - 1, y + h - 1), fill=theme["panel"])
+        body_top = strip_top + LIVE_QUEUE_BRAND_LINE_H
+        body_h = y + h - body_top
+        right = x + w - 4
+        if card.get("is_fav"):
+            star = 10
+            star_top = body_top + max(0, (body_h - star) // 2)
+            self._draw_icon_badge(
+                image,
+                draw,
+                (right - star, star_top, right, star_top + star),
+                "fav",
+                fill=theme["panel"],
+                ink=theme["ink"],
+                outline=theme["ink"],
+            )
+            right -= star + 2
+        name_left = x + 4
+        name_w = max(8, right - name_left)
+        name = self._card_display_name(card)
+        font = self._fit_font(draw, name, name_w, 10, 8, "bold")
+        glyph_top, glyph_bottom = self._glyph_extent(font)
+        name_y = body_top + max(0, (body_h - (glyph_bottom - glyph_top)) // 2) - glyph_top
+        draw.text((name_left, name_y), self._fit_text(draw, name, font, name_w), fill=theme["ink"], font=font)
+        # The platform line goes on last so it stays a clean 3 px edge above the name.
+        draw.rectangle(
+            (x, strip_top, x + w - 1, body_top - 1),
+            fill=self._brand_line(card, theme["line"]),
         )
-        # The border goes on last so it also rounds off the snapshot's corners.
-        self._rounded_rectangle(draw, (left, top, right, bottom), radius=6, fill=None, outline=brand, width=2)
-        return left
+
+    def _draw_uptime_chip(self, draw, right, bottom, card):
+        text = self._format_uptime(card.get("start_time")).replace(" ", "")
+        if not text:
+            return
+        font = self._font(8, "bold")
+        text_w = int(draw.textlength(text, font=font))
+        chip = (right - text_w - 6, bottom - 11, right, bottom)
+        self._rounded_rectangle(draw, chip, radius=3, fill=placeholder_art.BLACK)
+        draw.text((chip[0] + 3, chip[1] - 1), text, fill=placeholder_art.WHITE, font=font)
+
+    @staticmethod
+    def _clip_outside_round(image, box, radius, colour):
+        """Repaint what lies inside ``box`` but outside its rounded corners."""
+        left, top, right, bottom = box
+        region = image.crop((left, top, right + 1, bottom + 1))
+        mask = Image.new("L", region.size, 255)
+        ImageDraw.Draw(mask).rounded_rectangle((0, 0, region.width - 1, region.height - 1), radius=radius, fill=0)
+        region.paste(Image.new("RGB", region.size, colour), (0, 0), mask)
+        image.paste(region, (left, top))
 
     def _draw_compact_card(self, image, draw, box, card, theme, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
         x, y, w, h = box
@@ -2258,12 +2312,10 @@ class LiveRadar(BasePlugin):
             y,
             h,
             theme,
+            card,
         )
 
-    def _draw_compact_internal_placeholder(self, image, draw, text_end_x, right_x, y, h, theme):
-        asset = self._load_compact_placeholder_asset()
-        if not asset:
-            return None
+    def _draw_compact_internal_placeholder(self, image, draw, text_end_x, right_x, y, h, theme, card):
         target_w, target_h = COMPACT_PLACEHOLDER_SIZE
         available_left = int(text_end_x + 12)
         available_right = int(right_x - 8)
@@ -2274,21 +2326,16 @@ class LiveRadar(BasePlugin):
         draw_h = min(target_h, max(10, int(h - 14)))
         x = available_left + max(0, int((available_w - draw_w) / 2))
         y0 = int(y + (h - draw_h) / 2)
-        self._draw_compact_placeholder_asset(image, draw, (x, y0, draw_w, draw_h), theme)
+        self._draw_offline_doodle(image, draw, (x, y0, draw_w, draw_h), theme, card)
         return (x, y0, draw_w, draw_h)
 
-    def _draw_compact_placeholder_asset(self, image, draw, box, theme):
+    def _draw_offline_doodle(self, image, draw, box, theme, card):
+        """A small doodle fixed per streamer: sleeping TV, moon, flatline, coffee or radar."""
         x, y, w, h = [int(value) for value in box]
         if w <= 0 or h <= 0:
             return
-        asset = self._load_compact_placeholder_asset()
-        if not asset:
-            return
-        try:
-            fitted = ImageOps.fit(asset, (w, h), method=self._resampling_filter(), centering=(0.5, 0.5)).convert("RGBA")
-            image.paste(fitted.convert("RGB"), (x, y), fitted.getchannel("A"))
-        except Exception as exc:
-            logger.warning("LiveRadar compact placeholder render failed: %s", exc)
+        layer = placeholder_art.render_offline_doodle((w, h), theme, placeholder_art.doodle_kind(card))
+        image.paste(layer.convert("RGB"), (x, y), layer.getchannel("A"))
 
     def _draw_avatar(self, image, draw, avatar_box, card, platform, fill, ink, line, cache_seconds, show_fav_badge=True):
         avatar_x, avatar_y, avatar_size = avatar_box
@@ -3029,6 +3076,8 @@ class LiveRadar(BasePlugin):
             headers["Referer"] = "https://www.douyu.com/"
         elif "ttvnw.net" in lower or "jtvnw.net" in lower or "twitch" in lower:
             headers["Referer"] = "https://www.twitch.tv/"
+        elif "kick.com" in lower:
+            headers["Referer"] = "https://kick.com/"
         return headers
 
     def _read_cache(self, cache_key):
@@ -3207,6 +3256,12 @@ class LiveRadar(BasePlugin):
     def _line_height(font):
         bbox = font.getbbox("Ag") if hasattr(font, "getbbox") else (0, 0, 8, 12)
         return max(1, bbox[3] - bbox[1])
+
+    @staticmethod
+    def _glyph_extent(font):
+        """Top and bottom of a mixed Latin/CJK line's ink, relative to its draw origin."""
+        bbox = font.getbbox("Ag中") if hasattr(font, "getbbox") else (0, 0, 8, 12)
+        return bbox[1], bbox[3]
 
     def _fit_font(self, draw, text, max_width, start_size, min_size, weight="normal"):
         size = int(start_size)
