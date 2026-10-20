@@ -118,7 +118,9 @@ from runtime.refresh_progress import RefreshProgressTracker
 from runtime.runtime_status import RuntimeStatusObserver
 from runtime.parallel_health import parallel_runtime_health_snapshot
 from runtime.retry_policy import source_retry_policy
-from runtime.expected_failures import ThemeCatchupNotCacheable, log_refresh_command_failure
+from runtime.expected_failures import (
+    ThemeCatchupNotCacheable, ThemeRedrawNotCacheable, log_refresh_command_failure,
+)
 from runtime.degraded_data import (
     DegradedDataEpisodes, degraded_data_retry_floor_seconds, saved_refresh_interval_seconds,
 )
@@ -7138,6 +7140,16 @@ class RefreshTask:
                 raise ThemeCatchupNotCacheable(
                     "theme catch-up did not produce an exact cacheable image"
                 )
+            if (
+                command.intent is RefreshIntent.THEME_REDRAW
+                and command.kind is CommandKind.CACHE_REFRESH
+                and not promoted_for_intent
+            ):
+                # Reporting success here left the THEME lane without a retry
+                # time, so every completion re-selected the same redraw.
+                raise ThemeRedrawNotCacheable(
+                    "theme redraw did not produce an exact cacheable image"
+                )
 
             if degraded_data_result:
                 self._execution_local.degraded_data_result = True
@@ -7824,6 +7836,16 @@ class RefreshTask:
                         )
                     ).isoformat(),
                 )
+            return
+        if isinstance(error, ThemeRedrawNotCacheable):
+            # Back off only this instance's THEME lane. The global theme
+            # failure cooldown would freeze the transition: rotation would stop
+            # persisting the new theme and every catch-up would stay blocked.
+            self._record_intent_failure(
+                command,
+                error,
+                self._get_current_datetime(),
+            )
             return
         theme_context = command.payload.get("theme_context")
         if theme_context:

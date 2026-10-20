@@ -157,6 +157,12 @@ JPEG_START = b"\xff\xd8\xff"
 JPEG_END = b"\xff\xd9"
 CAMERA_WAITING_FAILURES = 3
 CAMERA_FRAME_CENTERING = (0.5, 0.0)
+# A theme-only redraw repaints the status snapshot of the last successful fetch,
+# the same data the current image shows. cacheSeconds only spaces MQTT requests
+# and is shorter than the DATA interval, so theme changes accept snapshots up to
+# 900 s (the scheduler's stalled-DATA age for a 300 s interval) before going
+# stale. A cacheSeconds above that is already covered by the fresh branch.
+THEME_ONLY_STATUS_MAX_AGE_SECONDS = 900
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
 TITLE_WORDMARK_SIZE = (292, 52)
@@ -533,9 +539,16 @@ class BambuMonitor(BasePlugin):
                         self._render_status(status, dimensions),
                         SourceProvenance.FRESH_CACHE,
                     )
+                theme_max_age = max(cache_seconds, THEME_ONLY_STATUS_MAX_AGE_SECONDS)
+                if self._cache_entry_is_fresh(cached, theme_max_age, now):
+                    status["source"] = "cache"
+                    return attach_source_provenance(
+                        self._render_status(status, dimensions),
+                        SourceProvenance.STALE_CACHE,
+                    )
                 status["source"] = "stale"
                 status["warning"] = (
-                    "Cached printer status is older than cacheSeconds; "
+                    "Cached printer status is older than the theme redraw limit; "
                     "theme-only redraw kept it stale"
                 )
                 return attach_source_provenance(

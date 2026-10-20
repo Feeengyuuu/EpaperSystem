@@ -2,6 +2,8 @@
 
 They keep the ordinary failure path (job status, lane bookkeeping, cooldowns);
 only the log severity differs, so error-only health scans stay meaningful.
+ThemeRedrawNotCacheable is narrower on purpose: it backs off only the THEME
+lane, because the global theme cooldown would freeze the whole transition.
 """
 
 from __future__ import annotations
@@ -13,6 +15,10 @@ class ExpectedRefreshFailure(RuntimeError):
 
 class ThemeCatchupNotCacheable(ExpectedRefreshFailure):
     """A degraded source produced no exact-theme cache; catch-up retries later."""
+
+
+class ThemeRedrawNotCacheable(ExpectedRefreshFailure):
+    """The displayed instance produced no exact-theme cache; its THEME lane backs off."""
 
 
 def log_refresh_command_failure(logger, command, error):

@@ -2,6 +2,7 @@ import sys
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -552,12 +553,12 @@ def test_theme_only_warm_cache_is_provider_free_and_byte_stable(tmp_path, monkey
     assert image.info.get("inkypi_skip_cache") is not True
 
 
-def test_theme_only_expired_cache_stays_stale_and_non_cacheable(tmp_path, monkeypatch):
+def _theme_only_render_at_age(tmp_path, monkeypatch, age_seconds, *, cache_seconds=60):
     plugin = _plugin(tmp_path)
     settings = _connected_settings()
     settings.update(
         {
-            "cacheSeconds": 60,
+            "cacheSeconds": cache_seconds,
             "cameraEnabled": True,
             "_theme_render_only": True,
             "_inkypi_theme": _theme_context("night"),
@@ -567,7 +568,7 @@ def test_theme_only_expired_cache_stays_stale_and_non_cacheable(tmp_path, monkey
     plugin._write_cache(
         cache_file,
         {
-            "fetched_at": bambu_module.time.time() - 61,
+            "fetched_at": bambu_module.time.time() - age_seconds,
             "status": _cached_status(),
         },
     )
@@ -596,10 +597,46 @@ def test_theme_only_expired_cache_stays_stale_and_non_cacheable(tmp_path, monkey
 
     image = plugin.generate_image(settings, _BambuDeviceConfig())
 
+    assert Path(cache_file).read_bytes() == original_cache
+    return image, rendered
+
+
+def test_theme_only_snapshot_from_the_last_data_cycle_is_cacheable(tmp_path, monkeypatch):
+    # 2026-10-19 18:26 sunset catch-up ran 122 s after the 300 s DATA fetch.
+    image, rendered = _theme_only_render_at_age(tmp_path, monkeypatch, 122)
+
+    assert rendered["source"] == "cache"
+    assert "warning" not in rendered
+    assert image.info.get("inkypi_skip_cache") is not True
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
+
+
+@pytest.mark.parametrize(
+    ("cache_seconds", "age_seconds", "cacheable"),
+    [("0", 122, True), ("1800", 1200, True), ("1800", 1801, False)],
+)
+def test_theme_only_limit_is_the_larger_of_cache_seconds_and_the_theme_window(
+    tmp_path, monkeypatch, cache_seconds, age_seconds, cacheable,
+):
+    image, rendered = _theme_only_render_at_age(
+        tmp_path, monkeypatch, age_seconds, cache_seconds=cache_seconds,
+    )
+
+    assert (image.info.get("inkypi_skip_cache") is not True) is cacheable
+    assert rendered["source"] == ("cache" if cacheable else "stale")
+
+
+def test_theme_only_expired_cache_stays_stale_and_non_cacheable(tmp_path, monkeypatch):
+    image, rendered = _theme_only_render_at_age(
+        tmp_path,
+        monkeypatch,
+        bambu_module.THEME_ONLY_STATUS_MAX_AGE_SECONDS + 1,
+    )
+
     assert rendered["source"] == "stale"
     assert "warning" in rendered
     assert image.info["inkypi_skip_cache"] is True
-    assert Path(cache_file).read_bytes() == original_cache
+    assert read_source_provenance(image) is SourceProvenance.STALE_CACHE
 
 
 def test_theme_only_cold_cache_stays_local_and_preserves_offline_semantics(tmp_path, monkeypatch):
