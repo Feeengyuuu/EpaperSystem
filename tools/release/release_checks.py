@@ -84,6 +84,38 @@ def configuration_note(before: dict, after: dict) -> str | None:
     return None
 
 
+REBASELINE_CHANGES = ("stable_top_level_settings_sha256", "instance_settings_sha256")
+
+
+def rebaseline_configuration(ctx: TaskContext, device: Device, reason: str, migration: str) -> dict:
+    """Accept the deployed release's own startup migration as the acceptance configuration.
+
+    Only settings may change (instance count, cycle and display control may not),
+    and the migration's runtime marker must be on the device. The original
+    identity stays in configuration-rebaseline.json and preflight.json.
+    """
+    reason = str(reason or "").strip()
+    require(reason, "A configuration rebaseline needs a reason")
+    ctx.require_deployed()
+    preflight = ctx.load("preflight.json")
+    config = device.document(CONFIG)
+    before, after = preflight["configuration"], config_identity(config)
+    changed = [key for key in STABLE_CONFIGURATION if before.get(key) != after.get(key)]
+    require(changed, "The live configuration did not change; nothing to rebaseline")
+    refused = [key for key in changed if key not in REBASELINE_CHANGES]
+    require(not refused, f"A rebaseline cannot accept changes to {refused}")
+    migrations = config.get("runtime_migrations")
+    require(isinstance(migrations, dict) and migrations.get(migration) is True,
+            f"Migration {migration} is not recorded on the device")
+    record = {"rebaselined_at": datetime.now(timezone.utc).isoformat(), "reason": reason, "migration": migration,
+              "changed": changed, "before": before, "after": after}
+    preflight["configuration"] = after
+    preflight.setdefault("configuration_rebaselines", []).append(record)
+    ctx.save("configuration-rebaseline.json", record)
+    ctx.save("preflight.json", preflight)
+    return record
+
+
 def source_proof(device: Device, manifest: dict) -> dict:
     """Hash the deployed changed files on the device; removed files must be gone."""
     names = [name for name in manifest["changed_files"] if name in manifest["hashes"]]

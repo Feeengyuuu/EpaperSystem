@@ -763,6 +763,93 @@ def test_configuration_identity_separates_runtime_theme_from_user_settings():
         release_checks.configuration_note(before, release_checks.config_identity(edited))
 
 
+class ConfigDevice:
+    def __init__(self, document):
+        self.config = document
+
+    def document(self, path):
+        assert path == release_device.CONFIG
+        return self.config
+
+
+def deployed_with_preflight(ctx, before):
+    ctx.save("deployment.json", {"status": "passed", "release_id": NEW_RELEASE, "commit": HEAD})
+    ctx.save("preflight.json", {"commit": BASE, "configuration": release_checks.config_identity(before)})
+
+
+def migrated(document, migration="room_v1"):
+    changed = json.loads(json.dumps(document))
+    changed["runtime_migrations"] = {migration: True}
+    changed["playlist_config"]["playlists"][0]["plugins"][0]["plugin_settings"] = {"city": "x", "rooms": "kick|q"}
+    return changed
+
+
+def test_rebaseline_accepts_the_releases_own_migration_and_keeps_the_original_identity(ctx):
+    before = config(weather=600)
+    deployed_with_preflight(ctx, before)
+    after = migrated(before)
+
+    record = release_checks.rebaseline_configuration(ctx, ConfigDevice(after), "Kick room migration", "room_v1")
+
+    identity = release_checks.config_identity(after)
+    assert record["changed"] == ["stable_top_level_settings_sha256", "instance_settings_sha256"]
+    assert record["before"] == release_checks.config_identity(before) and record["after"] == identity
+    assert record["reason"] == "Kick room migration" and record["migration"] == "room_v1"
+    assert ctx.load("preflight.json")["configuration"] == identity
+    assert ctx.load("preflight.json")["configuration_rebaselines"] == [record]
+    assert ctx.load("configuration-rebaseline.json") == record
+    assert release_checks.configuration_note(ctx.load("preflight.json")["configuration"], identity) is None
+
+
+def _copy(document):
+    return json.loads(json.dumps(document))
+
+
+def _second_instance(document):
+    plugins = document["playlist_config"]["playlists"][0]["plugins"]
+    plugins.append(dict(plugins[0], instance_uuid="uuid-second"))
+
+
+@pytest.mark.parametrize("make, message", [
+    (lambda before: _copy(before), "did not change"),
+    (lambda before: migrated(before, "other_v1"), "room_v1 is not recorded"),
+    (lambda before: {**migrated(before), "plugin_cycle_interval_seconds": 600}, "cycle_seconds"),
+    (lambda before: (lambda after: (_second_instance(after), after)[1])(migrated(before)), "instance_count"),
+])
+def test_rebaseline_refuses_anything_but_a_recorded_settings_migration(ctx, make, message):
+    before = config(weather=600)
+    deployed_with_preflight(ctx, before)
+    original = ctx.load("preflight.json")
+
+    with pytest.raises(ReleaseError, match=message):
+        release_checks.rebaseline_configuration(ctx, ConfigDevice(make(before)), "reason", "room_v1")
+
+    assert ctx.load("preflight.json") == original
+    assert not ctx.has("configuration-rebaseline.json")
+
+
+def test_rebaseline_needs_a_reason_and_a_finished_deployment(ctx):
+    before = config(weather=600)
+    ctx.save("preflight.json", {"commit": BASE, "configuration": release_checks.config_identity(before)})
+
+    with pytest.raises(ReleaseError, match="Missing task evidence: deployment.json"):
+        release_checks.rebaseline_configuration(ctx, ConfigDevice(migrated(before)), "reason", "room_v1")
+    deployed_with_preflight(ctx, before)
+    with pytest.raises(ReleaseError, match="reason"):
+        release_checks.rebaseline_configuration(ctx, ConfigDevice(migrated(before)), "  ", "room_v1")
+
+
+def test_rebaseline_command_requires_reason_and_migration(capsys):
+    parsed = parse("rebaseline-config", "--task-dir", "outputs/r", "--reason", "Kick room", "--migration", "m_v1")
+
+    assert (parsed.reason, parsed.migration) == ("Kick room", "m_v1")
+    with pytest.raises(SystemExit):
+        parse("rebaseline-config", "--task-dir", "outputs/r", "--migration", "m_v1")
+    with pytest.raises(SystemExit):
+        parse("rebaseline-config", "--task-dir", "outputs/r", "--reason", "Kick room")
+    capsys.readouterr()
+
+
 def test_display_origin_finds_the_command_that_drew_the_commit():
     entries = [
         {"timestamp": "2026-10-16T20:00:00+00:00", "message": "Refresh command started. source: scheduler, "

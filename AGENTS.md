@@ -25,6 +25,7 @@ pwsh -NoProfile -File tools\release\run_test_shards.ps1 -TaskDir $Task -Python $
 & $Py tools\release\epaper_release.py backup --task-dir $Task
 & $Py tools\release\epaper_release.py deploy --task-dir $Task --release-label <name> [--execute]
 & $Py tools\release\epaper_release.py health-gate --task-dir $Task
+& $Py tools\release\epaper_release.py rebaseline-config --task-dir $Task --reason "<why>" --migration <runtime_migrations key>  # only if the release migrates saved settings
 & $Py tools\release\epaper_release.py snapshot --task-dir $Task
 & $Py tools\release\epaper_release.py show-plugins --task-dir $Task <plugin_id> [...]
 & $Py tools\release\epaper_release.py journal --task-dir $Task
@@ -33,6 +34,7 @@ pwsh -NoProfile -File tools\release\run_test_shards.ps1 -TaskDir $Task -Python $
 
 - `baseline` reads the live release over SSH and takes its expected source from the `current-manifest.json` of the round whose `deployment.json` deployed it (`--base-manifest` overrides). It records `preflight.json` and `health-predeploy.json`.
 - `deploy` and `rotate-backup` are dry runs without `--execute`. `deploy` uploads 16 MiB parts with per-part sha256 and pauses, because a single large scp once froze the device's Wi-Fi, then runs `inkypi-update`; the release id is `deploy-<UTC>-<label>-<commit8>`. The device IPv4 is resolved from `ColoredEpaperFrame.local` per run and never stored; host keys stay pinned through `.tmp/epaperpod_known_hosts`.
+- Acceptance refuses any change to the saved configuration. When the release itself migrates saved settings at startup, verify the live diff first, then run `rebaseline-config`: it accepts only settings hashes (not instance count, cycle or display control), needs the migration's `runtime_migrations` marker on the device and keeps the original identity in `configuration-rebaseline.json`.
 - `show-plugins` saves `acceptance-<plugin>-shown.json` per hardware write; `rotate-backup` uses that proof to replace the single archive and manifest in `.backups/previous`. `snapshot` (label `postdeploy` by default) also checks the deployed files and the preserved configuration; `watch`, `probe` and `health-record` are available for extra checks.
 - `deploy --execute` and `show-plugins` change the device: run them only in a round the owner authorized, never from cloud tasks. After the round, remove `.tmp/release/<task>` and keep only compact evidence in the task folder.
 

@@ -11,6 +11,8 @@ holds deployment.json:
   backup         re-package the live release as the next .backups/previous candidate
   deploy         16 MiB verified chunks + transactional inkypi-update (dry run unless --execute)
   health-gate    record postdeploy health and compare it with predeploy
+  rebaseline-config  only when the release itself migrates saved settings: accept that
+                 recorded migration as the acceptance configuration (reason required)
   show-plugins   refresh and display named plugins once (LAN display control)
   snapshot       acceptance snapshot with configuration and source checks
   journal        summarize the service journal since the deployment
@@ -63,6 +65,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_argument("--allow-not-ready", action="store_true", help="pass even if /readyz is not ready")
     sub = command("health-record", "Record health-<label>.json (read-only).")
     sub.add_argument("--label", required=True)
+    sub = command("rebaseline-config",
+                  "Accept the deployed release's own recorded settings migration as the acceptance configuration.")
+    sub.add_argument("--reason", required=True, help="why this release changes the saved configuration")
+    sub.add_argument("--migration", required=True, help="runtime_migrations key the release records")
     sub = command("show-plugins", "Refresh and display each named plugin once and snapshot the hardware write.")
     sub.add_argument("plugins", nargs="+", metavar="plugin_id")
     sub = command("snapshot", "Save an acceptance snapshot with configuration and source checks.")
@@ -117,6 +123,8 @@ def run(args: argparse.Namespace, ctx: TaskContext) -> tuple[object, int]:
         return verdict, 0 if verdict["passed"] else 1
     if args.command == "health-record":
         return release_checks.record_health(ctx, device(), args.label), 0
+    if args.command == "rebaseline-config":
+        return release_checks.rebaseline_configuration(ctx, device(), args.reason, args.migration), 0
     if args.command == "show-plugins":
         return release_checks.show_plugins(ctx, device(), args.plugins), 0
     if args.command == "snapshot":
