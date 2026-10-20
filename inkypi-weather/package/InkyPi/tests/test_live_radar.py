@@ -3279,11 +3279,38 @@ def test_live_queue_section_passes_snapshot_settings_to_each_tile():
 
     plugin._draw_live_queue_section(
         image, draw, (10, 10, 376, 129), "LIVE TOO", cards, theme, max_items=8,
-        show_snapshot=True, snapshot_cache_seconds=75,
+        avatar_cache_seconds=900, show_snapshot=True, snapshot_cache_seconds=75,
     )
 
     assert [card_id for card_id, _kwargs in seen] == [f"live-{index}" for index in range(6)]
-    assert all(kwargs == {"show_snapshot": True, "snapshot_cache_seconds": 75} for _card_id, kwargs in seen)
+    assert all(
+        kwargs == {"show_snapshot": True, "snapshot_cache_seconds": 75, "avatar_cache_seconds": 900}
+        for _card_id, kwargs in seen
+    )
+
+
+def test_live_queue_tile_puts_the_streamer_avatar_before_the_name():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = _tile_image(theme)
+    texts, avatars = [], []
+    plugin._load_cover_source = lambda url, seconds: Image.new("RGB", (160, 90), (24, 180, 240))
+
+    def draw_avatar(_image, _draw, avatar_box, card, _platform, _fill, _ink, _line, cache_seconds, show_fav_badge=True):
+        avatars.append((avatar_box, card["id"], cache_seconds, show_fav_badge))
+
+    plugin._draw_avatar = draw_avatar
+
+    plugin._draw_live_queue_tile(
+        image, _TextSpy(ImageDraw.Draw(image), texts), TILE_BOX, _queue_row_card(), theme, avatar_cache_seconds=600,
+    )
+
+    ((avatar_x, avatar_y, size), card_id, cache_seconds, badge), = avatars
+    assert (card_id, cache_seconds, badge) == ("hasanabi", 600, False)
+    assert size >= 16 and 10 < avatar_x <= 14
+    assert avatar_y + size <= 10 + 52 and avatar_y + size > _strip_top() + 3
+    (name_x, _name_y), _name, _fill, _font = next(item for item in texts if item[1] == "HasanAbi")
+    assert name_x >= avatar_x + size + 2
 
 
 def test_snapshot_mini_section_keeps_four_thumbnails_landscape():

@@ -208,6 +208,8 @@ OFFLINE_LIST_MIN_ROW_H = 24
 LIVE_QUEUE_MIN_TILE_H = 40
 LIVE_QUEUE_NAME_STRIP_H = 15
 LIVE_QUEUE_BRAND_LINE_H = 3
+# The streamer's avatar sits at the start of the name strip and peeks into the snapshot.
+LIVE_QUEUE_AVATAR_SIZE = 18
 LIVE_QUEUE_RADIUS = 8
 STATUS_RANK = {
     "live": 0,
@@ -1926,6 +1928,7 @@ class LiveRadar(BasePlugin):
                     theme,
                     show_snapshot=show_snapshot,
                     snapshot_cache_seconds=snapshot_cache_seconds,
+                    avatar_cache_seconds=avatar_cache_seconds,
                 )
             else:
                 self._draw_snapshot_mini_placeholder(image, draw, cell, theme, framed=False)
@@ -2165,8 +2168,18 @@ class LiveRadar(BasePlugin):
             "rows": rows,
         }
 
-    def _draw_live_queue_tile(self, image, draw, box, card, theme, show_snapshot=True, snapshot_cache_seconds=90):
-        """One wall tile: full-bleed snapshot with the platform logo, then the name strip."""
+    def _draw_live_queue_tile(
+        self,
+        image,
+        draw,
+        box,
+        card,
+        theme,
+        show_snapshot=True,
+        snapshot_cache_seconds=90,
+        avatar_cache_seconds=AVATAR_CACHE_SECONDS,
+    ):
+        """One wall tile: full-bleed snapshot with the platform logo, then avatar and name."""
         x, y, w, h = [int(value) for value in box]
         strip_top = y + h - LIVE_QUEUE_NAME_STRIP_H
         cover_size = (max(1, w), max(1, strip_top - y))
@@ -2213,7 +2226,9 @@ class LiveRadar(BasePlugin):
                 outline=theme["ink"],
             )
             right -= star + 2
-        name_left = x + 4
+        avatar = LIVE_QUEUE_AVATAR_SIZE
+        avatar_x, avatar_y = x + 3, y + h - 2 - avatar
+        name_left = avatar_x + avatar + 4
         name_w = max(8, right - name_left)
         name = self._card_display_name(card)
         font = self._fit_font(draw, name, name_w, 10, 8, "bold")
@@ -2225,6 +2240,10 @@ class LiveRadar(BasePlugin):
             (x, strip_top, x + w - 1, body_top - 1),
             fill=self._brand_line(card, theme["line"]),
         )
+        draw.ellipse((avatar_x - 1, avatar_y - 1, avatar_x + avatar, avatar_y + avatar), fill=theme["panel"])
+        platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
+        self._draw_avatar(image, draw, (avatar_x, avatar_y, avatar), card, platform, theme["panel"], theme["ink"],
+                          theme["line"], avatar_cache_seconds, show_fav_badge=False)
 
     def _draw_uptime_chip(self, draw, right, bottom, card):
         text = self._format_uptime(card.get("start_time")).replace(" ", "")
