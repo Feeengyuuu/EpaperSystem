@@ -217,6 +217,10 @@ LIVE_QUEUE_NAME_STRIP_H = 15
 LIVE_QUEUE_BRAND_LINE_H = 3
 # The streamer's avatar sits at the start of the name strip and peeks into the snapshot.
 LIVE_QUEUE_AVATAR_SIZE = 18
+# The room title follows the name in the strip when at least this much width is left.
+LIVE_QUEUE_TITLE_SIZE = 8
+LIVE_QUEUE_TITLE_GAP = 4
+LIVE_QUEUE_TITLE_MIN_W = 24
 LIVE_QUEUE_RADIUS = 8
 STATUS_RANK = {
     "live": 0,
@@ -2236,12 +2240,11 @@ class LiveRadar(BasePlugin):
         if not snapshot:
             self._draw_snapshot_placeholder(image, draw, (x, y, x + w - 1, strip_top - 1), card, theme, False)
         else:
-            plate = (x + 3, y + 3, x + 16, y + 16)
-            self._rounded_rectangle(draw, plate, radius=4, fill=theme["panel"], outline=theme["ink"], width=1)
+            # The official logo goes straight onto the cover, no plate behind it.
             self._draw_platform_badge(
                 image,
                 draw,
-                (plate[0] + 2, plate[1] + 2, plate[2] - 1, plate[3] - 1),
+                (x + 3, y + 3, x + 17, y + 17),
                 card["platform"],
                 fill=theme["panel"],
                 ink=theme["ink"],
@@ -2275,7 +2278,18 @@ class LiveRadar(BasePlugin):
         font = self._fit_font(draw, name, name_w, 10, 8, "bold")
         glyph_top, glyph_bottom = self._glyph_extent(font)
         name_y = body_top + max(0, (body_h - (glyph_bottom - glyph_top)) // 2) - glyph_top
-        draw.text((name_left, name_y), self._fit_text(draw, name, font, name_w), fill=theme["ink"], font=font)
+        shown_name = self._fit_text(draw, name, font, name_w)
+        draw.text((name_left, name_y), shown_name, fill=theme["ink"], font=font)
+        # Whatever width the name leaves goes to the room title, bottom-aligned in a smaller size.
+        title = self._clean_text(card.get("title") or "")
+        title_left = name_left + int(math.ceil(draw.textlength(shown_name, font=font))) + LIVE_QUEUE_TITLE_GAP
+        title_w = right - title_left
+        if title and title_w >= LIVE_QUEUE_TITLE_MIN_W:
+            title_font = self._font(LIVE_QUEUE_TITLE_SIZE, "bold")
+            title_y = name_y + glyph_bottom - self._glyph_extent(title_font)[1]
+            shown_title = self._fit_text(draw, title, title_font, title_w)
+            if shown_title:
+                draw.text((title_left, title_y), shown_title, fill=theme["ink"], font=title_font)
         # The platform line goes on last so it stays a clean 3 px edge above the name.
         draw.rectangle(
             (x, strip_top, x + w - 1, body_top - 1),

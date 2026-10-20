@@ -3176,10 +3176,12 @@ def test_live_queue_tile_lays_platform_logo_on_cover_above_brand_lined_name():
     # The cover is full-bleed across the tile above the name strip.
     assert image.getpixel((10, strip_top - 2)) == image.getpixel((103, strip_top - 2)) == cover_colour
     assert image.getpixel((70, 12)) == cover_colour
-    # The platform logo sits on the cover's top-left corner.
+    # The platform logo sits straight on the cover's top-left corner, with no plate behind it.
     (left, top, right, bottom), platform = badges[0]
     assert platform == "douyu"
     assert 10 < left < right < 10 + 22 and 10 < top < bottom < 10 + 22
+    assert right - left >= 13 and bottom - top >= 13
+    assert {image.getpixel((px, py)) for px in range(10, 32) for py in range(10, 32)} == {cover_colour}
     # A 3 px platform-colour line separates cover and name; the name is plain ink.
     brand = live_radar_module.PLATFORM_BRAND_COLORS["douyu"]
     assert [image.getpixel((50, strip_top + offset)) for offset in range(3)] == [brand] * 3
@@ -3188,6 +3190,54 @@ def test_live_queue_tile_lays_platform_logo_on_cover_above_brand_lined_name():
     assert fill == theme["ink"]
     assert name_x >= 10 and strip_top + 3 <= name_y + 2
     assert name_y + plugin._line_height(font) <= 10 + 52 + 1
+
+
+def _wide_tile_texts(card, box=(10, 10, 144, 96)):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig())
+    image = Image.new("RGB", (box[0] + box[2] + 10, box[1] + box[3] + 10), theme["bg"])
+    texts = []
+    plugin._load_cover_source = lambda url, seconds: Image.new("RGB", (160, 90), (24, 180, 240))
+    plugin._draw_avatar = lambda *_args, **_kwargs: None
+    draw = _TextSpy(ImageDraw.Draw(image), texts)
+    plugin._draw_live_queue_tile(image, draw, box, card, theme, show_snapshot=True)
+    return plugin, theme, draw, texts
+
+
+def test_wide_live_queue_tile_follows_the_name_with_the_room_title():
+    box = (10, 10, 144, 96)
+    title = "Just chatting about the new patch notes"
+    plugin, theme, draw, texts = _wide_tile_texts(_queue_row_card(owner="Emiru", title=title), box)
+
+    (name_x, name_y), _name, _fill, name_font = next(item for item in texts if item[1] == "Emiru")
+    (title_x, title_y), shown, fill, title_font = next(item for item in texts if item[1] not in ("Emiru",))
+    assert shown and title.startswith(shown) and len(shown) >= 8
+    assert fill == theme["ink"]
+    assert title_x >= name_x + draw.textlength("Emiru", font=name_font) + 3
+    assert title_x + draw.textlength(shown, font=title_font) <= box[0] + box[2] - 4
+    assert title_font.size < name_font.size
+    name_bottom = name_y + plugin._glyph_extent(name_font)[1]
+    assert abs(title_y + plugin._glyph_extent(title_font)[1] - name_bottom) <= 1
+    assert title_y + plugin._glyph_extent(title_font)[0] >= box[1] + box[3] - live_radar_module.LIVE_QUEUE_NAME_STRIP_H
+
+
+def test_live_queue_tile_title_stops_before_the_favourite_star():
+    box = (10, 10, 144, 96)
+    _plugin_, _theme_, draw, texts = _wide_tile_texts(
+        _queue_row_card(owner="Emiru", title="【预告】24号1点全球总决赛瑞士轮第三轮", is_fav=True), box,
+    )
+
+    (title_x, _y), shown, _fill, title_font = next(item for item in texts if item[1] != "Emiru")
+    assert shown.startswith("【预告】")
+    assert title_x + draw.textlength(shown, font=title_font) <= box[0] + box[2] - 4 - 10 - 2
+
+
+def test_live_queue_tile_skips_the_title_when_the_name_leaves_no_room():
+    _plugin_, _theme_, _draw, texts = _wide_tile_texts(
+        _queue_row_card(owner="AVeryLongStreamerName", title="Some title"), TILE_BOX,
+    )
+
+    assert [item[1] for item in texts] == ["AVeryLongStreamerName"[: len(texts[0][1])]]
 
 
 @pytest.mark.parametrize("platform", ["bilibili", "douyu", "twitch", "kick", "picarto"])
