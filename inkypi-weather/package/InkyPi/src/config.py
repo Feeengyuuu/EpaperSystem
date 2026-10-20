@@ -53,6 +53,18 @@ _LIVERADAR_KICK_QUIN_ROOM = {
     "id": "quin3614",
     "isFav": True,
 }
+# The requested Twitch channel zackrawrr follows on that instance, which the
+# Kick migration leaves at settings revision 4.
+_LIVERADAR_TWITCH_ZACK_MIGRATION = "liveradar_twitch_zackrawrr_v1"
+_LIVERADAR_TWITCH_ZACK_UUID_SHA256_PREFIX = "14c36f0ef259f0b5"
+_LIVERADAR_TWITCH_ZACK_STRUCTURAL_GENERATION = 1
+_LIVERADAR_TWITCH_ZACK_SETTINGS_REVISION = 4
+_LIVERADAR_TWITCH_ZACK_REFRESH_INTERVAL_SECONDS = 5 * 60
+_LIVERADAR_TWITCH_ZACK_ROOM = {
+    "platform": "twitch",
+    "id": "zackrawrr",
+    "isFav": False,
+}
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_LEGACY_REFRESH_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_REFRESH_INTERVAL_SECONDS = 3 * 60 * 60
@@ -198,6 +210,7 @@ class Config:
         self._apply_release_bound_nasapics_migration()
         self._migrate_liveradar_douyu_cake_room()
         self._migrate_liveradar_kick_quin_room()
+        self._migrate_liveradar_twitch_zack_room()
         self._migrate_runtime_balance_cadences()
         self._migrate_runtime_balance_soft_threshold(
             cadence_marker_preexisting=cadence_marker_preexisting,
@@ -261,6 +274,18 @@ class Config:
             settings_revision=_LIVERADAR_KICK_QUIN_SETTINGS_REVISION,
             refresh_interval=_LIVERADAR_KICK_QUIN_REFRESH_INTERVAL_SECONDS,
             room=_LIVERADAR_KICK_QUIN_ROOM,
+        )
+
+    def _migrate_liveradar_twitch_zack_room(self):
+        """Append the Twitch channel zackrawrr to the same instance."""
+
+        self._append_liveradar_room(
+            migration=_LIVERADAR_TWITCH_ZACK_MIGRATION,
+            uuid_prefix=_LIVERADAR_TWITCH_ZACK_UUID_SHA256_PREFIX,
+            structural_generation=_LIVERADAR_TWITCH_ZACK_STRUCTURAL_GENERATION,
+            settings_revision=_LIVERADAR_TWITCH_ZACK_SETTINGS_REVISION,
+            refresh_interval=_LIVERADAR_TWITCH_ZACK_REFRESH_INTERVAL_SECONDS,
+            room=_LIVERADAR_TWITCH_ZACK_ROOM,
         )
 
     def _append_liveradar_room(
