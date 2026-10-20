@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import os
 import sys
 import time
@@ -3201,19 +3202,28 @@ def _wide_tile_texts(card, box=(10, 10, 144, 96)):
     plugin._draw_avatar = lambda *_args, **_kwargs: None
     draw = _TextSpy(ImageDraw.Draw(image), texts)
     plugin._draw_live_queue_tile(image, draw, box, card, theme, show_snapshot=True)
-    return plugin, theme, draw, texts
+    return plugin, theme, draw, texts, image
 
 
 def test_wide_live_queue_tile_follows_the_name_with_the_room_title():
     box = (10, 10, 144, 96)
     title = "Just chatting about the new patch notes"
-    plugin, theme, draw, texts = _wide_tile_texts(_queue_row_card(owner="Emiru", title=title), box)
+    plugin, theme, draw, texts, image = _wide_tile_texts(_queue_row_card(owner="Emiru", title=title), box)
 
     (name_x, name_y), _name, _fill, name_font = next(item for item in texts if item[1] == "Emiru")
     (title_x, title_y), shown, fill, title_font = next(item for item in texts if item[1] not in ("Emiru",))
     assert shown and title.startswith(shown) and len(shown) >= 8
     assert fill == theme["ink"]
-    assert title_x >= name_x + draw.textlength("Emiru", font=name_font) + 3
+    name_end = int(math.ceil(name_x + draw.textlength("Emiru", font=name_font)))
+    assert title_x >= name_end + 6
+    # A one-pixel ink rule separates the name from the title.
+    title_top, title_bottom = plugin._glyph_extent(title_font)
+    rule = [
+        px for px in range(name_end + 1, int(title_x) - 1)
+        if all(image.getpixel((px, title_y + py)) == theme["ink"] for py in range(title_top + 1, title_bottom - 1))
+    ]
+    assert len(rule) == 1
+    assert image.getpixel((rule[0], title_y + title_top - 2)) == theme["panel"]
     assert title_x + draw.textlength(shown, font=title_font) <= box[0] + box[2] - 4
     assert title_font.size < name_font.size
     name_bottom = name_y + plugin._glyph_extent(name_font)[1]
@@ -3223,7 +3233,7 @@ def test_wide_live_queue_tile_follows_the_name_with_the_room_title():
 
 def test_live_queue_tile_title_stops_before_the_favourite_star():
     box = (10, 10, 144, 96)
-    _plugin_, _theme_, draw, texts = _wide_tile_texts(
+    _plugin_, _theme_, draw, texts, _image = _wide_tile_texts(
         _queue_row_card(owner="Emiru", title="【预告】24号1点全球总决赛瑞士轮第三轮", is_fav=True), box,
     )
 
@@ -3233,7 +3243,7 @@ def test_live_queue_tile_title_stops_before_the_favourite_star():
 
 
 def test_live_queue_tile_skips_the_title_when_the_name_leaves_no_room():
-    _plugin_, _theme_, _draw, texts = _wide_tile_texts(
+    _plugin_, _theme_, _draw, texts, _image = _wide_tile_texts(
         _queue_row_card(owner="AVeryLongStreamerName", title="Some title"), TILE_BOX,
     )
 

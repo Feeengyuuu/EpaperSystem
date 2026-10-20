@@ -217,9 +217,9 @@ LIVE_QUEUE_NAME_STRIP_H = 15
 LIVE_QUEUE_BRAND_LINE_H = 3
 # The streamer's avatar sits at the start of the name strip and peeks into the snapshot.
 LIVE_QUEUE_AVATAR_SIZE = 18
-# The room title follows the name in the strip when at least this much width is left.
+# The room title follows the name after a rule (gap on each side) when this much width is left.
 LIVE_QUEUE_TITLE_SIZE = 8
-LIVE_QUEUE_TITLE_GAP = 4
+LIVE_QUEUE_TITLE_GAP = 3
 LIVE_QUEUE_TITLE_MIN_W = 24
 LIVE_QUEUE_RADIUS = 8
 STATUS_RANK = {
@@ -2280,15 +2280,19 @@ class LiveRadar(BasePlugin):
         name_y = body_top + max(0, (body_h - (glyph_bottom - glyph_top)) // 2) - glyph_top
         shown_name = self._fit_text(draw, name, font, name_w)
         draw.text((name_left, name_y), shown_name, fill=theme["ink"], font=font)
-        # Whatever width the name leaves goes to the room title, bottom-aligned in a smaller size.
+        # Whatever width the name leaves goes to the room title, bottom-aligned in a smaller
+        # size after a one-pixel ink rule.
         title = self._clean_text(card.get("title") or "")
-        title_left = name_left + int(math.ceil(draw.textlength(shown_name, font=font))) + LIVE_QUEUE_TITLE_GAP
+        rule_x = name_left + int(math.ceil(draw.textlength(shown_name, font=font))) + LIVE_QUEUE_TITLE_GAP
+        title_left = rule_x + 1 + LIVE_QUEUE_TITLE_GAP
         title_w = right - title_left
         if title and title_w >= LIVE_QUEUE_TITLE_MIN_W:
             title_font = self._font(LIVE_QUEUE_TITLE_SIZE, "bold")
-            title_y = name_y + glyph_bottom - self._glyph_extent(title_font)[1]
+            title_top, title_bottom = self._glyph_extent(title_font)
+            title_y = name_y + glyph_bottom - title_bottom
             shown_title = self._fit_text(draw, title, title_font, title_w)
             if shown_title:
+                draw.line((rule_x, title_y + title_top, rule_x, title_y + title_bottom - 1), fill=theme["ink"])
                 draw.text((title_left, title_y), shown_title, fill=theme["ink"], font=title_font)
         # The platform line goes on last so it stays a clean 3 px edge above the name.
         draw.rectangle(
