@@ -773,13 +773,16 @@ def test_gcd_metadata_only_hydration_never_becomes_a_ready_display(
     assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
     request = _request("e" * 32)
 
-    with pytest.raises(RuntimeError, match="no ready cover records"):
-        plugin.prepare_presentation(
-            settings,
-            DeviceConfig(),
-            request=request,
-            resolved_theme_context=None,
-        )
+    preparation = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=request,
+        resolved_theme_context=None,
+    )
+
+    assert preparation.changed is False
+    assert preparation.image is None
+    assert _profile_for(_state_json(plugin))["pending_selection"] is None
 
 
 def test_gcd_bank_cleanup_is_bounded_and_does_not_follow_symlinks(tmp_path, monkeypatch):
@@ -1430,6 +1433,71 @@ def test_gcd_new_day_rotates_away_from_previous_triptych_when_alternatives_exist
     )
     assert second_profile["current_selection"]["date_key"] == "07-13"
     assert set(second_selection).isdisjoint(first_selection)
+
+
+def test_gcd_day_rollover_leaves_display_unchanged_until_data_refills_bank(
+    tmp_path,
+    monkeypatch,
+):
+    # The bank is keyed by local day. On 2026-10-20 a rotation reserved this
+    # member at 00:00 and every preparation raised until the hourly DATA
+    # refresh refilled the new day at 00:57.
+    plugin = make_plugin(tmp_path, monkeypatch)
+    settings = _bound_settings()
+    _fill_presentation_bank(plugin, monkeypatch, settings)
+    monkeypatch.setattr(plugin, "_current_date", lambda _device: date(2026, 7, 13))
+    for name in ("_candidate_pool", "_fetch_json", "_comic_vine_get", "_download_cover_image"):
+        monkeypatch.setattr(
+            plugin,
+            name,
+            lambda *_args, _name=name, **_kwargs: pytest.fail(
+                f"cold presentation called provider method {_name}"
+            ),
+        )
+    request = _request("f" * 32)
+
+    preparation = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=request,
+        resolved_theme_context=None,
+    )
+
+    assert preparation.request_id == request.request_id
+    assert preparation.changed is False
+    assert preparation.image is None
+    cold_profile = _profile_for(_state_json(plugin))
+    assert cold_profile["pending_selection"] is None
+    assert len(cold_profile["records"]) == READY_TARGET
+
+    new_day = [
+        {**_bank_candidate(index), "on_sale_date": "2026-07-13", "target_date": "2026-07-13"}
+        for index in range(30, 54)
+    ]
+    monkeypatch.setattr(plugin, "_candidate_pool", lambda _settings, _today: list(new_day))
+    monkeypatch.setattr(
+        plugin,
+        "_load_cover",
+        lambda candidate, _dimensions, _settings: {
+            **candidate,
+            "image": Image.new("RGB", (220, 360), (90, 60, 30)),
+        },
+    )
+    plugin.generate_image(settings, DeviceConfig())
+    refilled = _request("0" * 32)
+
+    warm = plugin.prepare_presentation(
+        settings,
+        DeviceConfig(),
+        request=refilled,
+        resolved_theme_context=None,
+    )
+
+    assert warm.changed is True
+    assert warm.image.size == DeviceConfig().get_resolution()
+    assert set(_pending_issue_ids(_state_json(plugin), refilled.request_id)) <= {
+        candidate["issue_id"] for candidate in new_day
+    }
 
 
 def _priority_candidate(index, quality):

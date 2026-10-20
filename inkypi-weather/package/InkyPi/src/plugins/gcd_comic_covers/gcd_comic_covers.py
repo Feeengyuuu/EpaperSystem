@@ -424,6 +424,19 @@ class GcdComicCovers(BasePlugin):
         pending = bank.pending_for_request(profile, request.request_id)
         if pending is None:
             ready = bank.ready_records(profile, prune=False)
+            if not ready:
+                # The bank is keyed by local day, so it is empty from midnight
+                # until the next DATA refresh fills the new day.
+                logger.info(
+                    "GCD presentation bank has no ready covers for %s; leaving "
+                    "the display unchanged while background data refresh fills it",
+                    bank.display_date_key,
+                )
+                return PresentationPreparation(
+                    request_id=request.request_id,
+                    image=None,
+                    changed=False,
+                )
             selection = bank.choose_selection(
                 document,
                 profile,
