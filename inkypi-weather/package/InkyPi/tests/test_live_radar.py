@@ -3644,6 +3644,49 @@ def test_three_extra_live_get_one_row_of_large_tiles():
     assert kind == "list" and off_x == live_x + live_w + 14 and off_x + off_w == 800 - 16
 
 
+def test_few_extra_live_spread_in_one_row_and_squeeze_offline():
+    row_w = 800 - 2 * 16 - 14
+    for extra in (4, 5, 6):
+        plugin = _plugin()
+
+        seen = _bottom_boxes(plugin, _live_cards(3 + extra) + _offline_cards(5), (800, 480))
+
+        (live_x, _y, live_w, _h), max_items = seen["live"]
+        kind, (off_x, _off_y, off_w, _off_h) = seen["offline"]
+        layout = LiveRadar._live_queue_layout(seen["live"][0], extra, max_items)
+        assert (layout["columns"], layout["rows"], layout["visible_count"]) == (extra, 1, extra)
+        assert live_w == row_w - live_radar_module.LIVE_WALL_OFFLINE_MIN_W
+        assert live_w / extra >= live_radar_module.LIVE_QUEUE_ROW_TILE_MIN_W
+        assert kind == "list" and off_w == live_radar_module.LIVE_WALL_OFFLINE_MIN_W
+        assert off_x == live_x + live_w + 14
+
+
+def test_four_extra_live_show_larger_snapshots_than_a_two_by_two_wall():
+    plugin = _plugin()
+
+    seen = _bottom_boxes(plugin, _live_cards(7) + _offline_cards(5), (800, 480))
+
+    box = seen["live"][0]
+    layout = LiveRadar._live_queue_layout(box, 4, 12)
+    cover_w = box[2] / layout["columns"]
+    cover_h = layout["tile_h"] - live_radar_module.LIVE_QUEUE_NAME_STRIP_H
+    two_by_two = LiveRadar._live_queue_layout((16, box[1], 2 * live_radar_module.LIVE_QUEUE_TILE_W, box[3]), 4, 12)
+    small_h = two_by_two["tile_h"] - live_radar_module.LIVE_QUEUE_NAME_STRIP_H
+    assert cover_w >= 140 and cover_h >= 78
+    assert cover_w * cover_h > 3 * live_radar_module.LIVE_QUEUE_TILE_W * small_h
+
+
+def test_seven_extra_live_fall_back_to_two_rows():
+    plugin = _plugin()
+
+    seen = _bottom_boxes(plugin, _live_cards(10) + _offline_cards(5), (800, 480))
+
+    (_x, _y, live_w, _h), max_items = seen["live"]
+    layout = LiveRadar._live_queue_layout(seen["live"][0], 7, max_items)
+    assert (layout["columns"], layout["rows"], layout["visible_count"]) == (4, 2, 7)
+    assert live_w == 4 * live_radar_module.LIVE_QUEUE_TILE_W
+
+
 def test_two_extra_live_leave_room_for_full_offline_cards():
     plugin = _plugin()
 
