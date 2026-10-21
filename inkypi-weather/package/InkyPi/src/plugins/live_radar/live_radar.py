@@ -195,13 +195,14 @@ LIVE_CARD_SNAPSHOT_TITLE_MAX_SIZE = 10 + CARD_DETAIL_FONT_SIZE_NUDGE
 LIVE_CARD_TITLE_MAX_SIZE = 14 + CARD_DETAIL_FONT_SIZE_NUDGE
 COMPACT_CARD_DETAIL_MAX_SIZE = 8 + CARD_DETAIL_FONT_SIZE_NUDGE
 # LIVE TOO is one framed cover wall sized to the extra live streams. In landscape
-# they share one row while every tile stays at least LIVE_QUEUE_ROW_TILE_MIN_W wide
-# (OFFLINE shrinks to its slim minimum for that), tiles growing up to the large
-# width; more take two rows of 2-6 columns. OFFLINE takes the rest of the row: full
-# cards when wide enough, else a slim list. Portrait keeps two halves and adds rows. Each tile is a
-# full-bleed snapshot, never taller than a 16:9 cover, over a name strip whose top
-# edge is a 3 px platform-colour line; free cells of the last row merge into one
-# live-count tile.
+# up to LIVE_QUEUE_ONE_ROW_MAX share one row while every tile stays at least
+# LIVE_QUEUE_ROW_TILE_MIN_W wide (OFFLINE shrinks to its slim minimum for that),
+# tiles growing up to the large width; more fill the height as two rows of 3-6
+# columns. OFFLINE takes the rest of the row: full cards when wide enough, else a
+# slim list. Portrait keeps two halves and adds rows. Each tile is a full-bleed
+# snapshot, never taller than a 16:9 cover, over a name strip whose top edge is a
+# 3 px platform-colour line; free cells of the last row merge into one live-count
+# tile.
 LIVE_QUEUE_TILE_MIN_W = 90
 LIVE_QUEUE_MIN_COLUMNS = 2
 LIVE_QUEUE_MAX_COLUMNS = 6
@@ -209,6 +210,7 @@ LIVE_QUEUE_MAX_ITEMS = 12
 LIVE_QUEUE_TILE_W = 94
 LIVE_QUEUE_LARGE_TILE_W = 158
 LIVE_QUEUE_ROW_TILE_MIN_W = 96
+LIVE_QUEUE_ONE_ROW_MAX = 5
 LIVE_WALL_OFFLINE_MIN_W = 176
 OFFLINE_LIST_MIN_ROW_H = 24
 OFFLINE_CARDS_MIN_W = 300
@@ -1341,7 +1343,10 @@ class LiveRadar(BasePlugin):
             wall_count = min(len(queued_live_cards), LIVE_QUEUE_MAX_ITEMS)
             wall_rows = min(2, max(1, int((bottom_h - 24) // LIVE_QUEUE_MIN_TILE_H)))
             widest_wall = row_w - LIVE_WALL_OFFLINE_MIN_W
-            if wall_count * LIVE_QUEUE_ROW_TILE_MIN_W <= widest_wall:
+            if (
+                wall_count <= LIVE_QUEUE_ONE_ROW_MAX
+                and wall_count * LIVE_QUEUE_ROW_TILE_MIN_W <= widest_wall
+            ):
                 wall_w = wall_count * LIVE_QUEUE_LARGE_TILE_W
             else:
                 wall_w = int(math.ceil(wall_count / wall_rows)) * LIVE_QUEUE_TILE_W
