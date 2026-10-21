@@ -20,6 +20,11 @@ COLUMN_GAP = 24
 COLUMN_BOTTOM = 388
 MARKET_TOP = 396
 ITEM_GAP = 9
+# The tighter gap a full column may use to give a clipped title its second line.
+COMPACT_ITEM_GAP = 5
+# A story is its title lines plus a footer row with the tag chip and the one-line fact.
+TITLE_LINE = 19
+ITEM_FOOTER = 20
 GLOBE_MIN_HEIGHT = 46
 WEEKDAYS = "一二三四五六日"
 
@@ -93,10 +98,8 @@ class NewsPage:
         self.lead(lead, width, art_left)
         column_width = (width - 2 * MARGIN - COLUMN_GAP) // 2
         left_x, right_x = MARGIN, MARGIN + column_width + COLUMN_GAP
-        self.column(left_x, column_width, "国内", self.c["domestic"], mainland, title_lines=1,
-                    sources=meta.get("mainland_sources") or [])
-        self.column(right_x, column_width, "国际", self.c["world"], world, title_lines=2,
-                    sources=meta.get("world_sources") or [])
+        self.column(left_x, column_width, "国内", self.c["domestic"], mainland, sources=meta.get("mainland_sources") or [])
+        self.column(right_x, column_width, "国际", self.c["world"], world, sources=meta.get("world_sources") or [])
         self.market(left_x, column_width, "A股", quotes.get("a_share") or [], height)
         self.market(right_x, column_width, "美股", quotes.get("us_stock") or [], height)
 
@@ -140,27 +143,45 @@ class NewsPage:
         news_art.draw_topic_art(self.d, (art_left, top + 4, width - MARGIN - 6, bottom - 4), kind,
                                 c["ink"], c["panel"], c["rule"])
 
-    def column(self, x, width, label, colour, items, *, title_lines, sources):
+    def column(self, x, width, label, colour, items, *, sources):
         c = self.c
         self.d.rounded_rectangle((x, COLUMN_TOP + 3, x + 4, COLUMN_TOP + 15), radius=2, fill=colour)
         self.text((x + 10, COLUMN_TOP), label, 14, True)
         count_x = x + 14 + self.width(label, 14)
         self.d.line((x, COLUMN_TOP + 22, x + width, COLUMN_TOP + 22), fill=c["rule"], width=1)
         y = COLUMN_TOP + 32
-        shown = 0
-        for item in items:
-            needed = self.item_height(item, width, title_lines)
-            if y + needed > COLUMN_BOTTOM:
-                break
-            shown += 1
-            y += self.item(x, y, width, shown, item, colour, title_lines) + ITEM_GAP
-        self.text((count_x, COLUMN_TOP + 2), str(shown), 11, True)
+        plan, gap = self.plan_column(items, width - 26, COLUMN_BOTTOM - y)
+        for number, (item, title_lines) in enumerate(zip(items, plan), 1):
+            y += self.item(x, y, width, number, item, colour, title_lines) + gap
+        self.text((count_x, COLUMN_TOP + 2), str(len(plan)), 11, True)
         if COLUMN_BOTTOM - y >= GLOBE_MIN_HEIGHT:
             self.globe_filler(x, y, width, COLUMN_BOTTOM, label, sources)
 
-    def item_height(self, item, width, title_lines):
-        lines = self.wrap(item["title"], 15, width - 26, title_lines)
-        return len(lines) * 19 + 20
+    def plan_column(self, items, text_width, available):
+        """Title lines per shown story and the gap between stories.
+
+        As many stories as fit on one line each, then a second line for each clipped
+        title in order while the column has room. When the normal gap leaves a clipped
+        title on one line, the compact gap is used if it lets more titles show whole.
+        """
+        clipped = [len(self.wrap(item["title"], 15, text_width, 2)) == 2 for item in items]
+        best = None
+        for gap in (ITEM_GAP, COMPACT_ITEM_GAP):
+            lines, used = [], 0
+            for _item in items:
+                height = TITLE_LINE + ITEM_FOOTER + (gap if lines else 0)
+                if used + height > available:
+                    break
+                lines.append(1)
+                used += height
+            for index in range(len(lines)):
+                if clipped[index] and used + TITLE_LINE <= available:
+                    lines[index] = 2
+                    used += TITLE_LINE
+            whole = sum(1 for index, count in enumerate(lines) if count == 2 or not clipped[index])
+            if best is None or (len(lines), whole) > (len(best[0]), best[2]):
+                best = (lines, gap, whole)
+        return best[0], best[1]
 
     def item(self, x, y, width, number, item, colour, title_lines):
         c = self.c
@@ -168,14 +189,15 @@ class NewsPage:
         text_x, text_w = x + 26, width - 26
         lines = self.wrap(item["title"], 15, text_w, title_lines)
         for index, line in enumerate(lines):
-            self.text((text_x, y + index * 19), line, 15, True)
-        row_y = y + len(lines) * 19 + 1
+            self.text((text_x, y + index * TITLE_LINE), line, 15, True)
+        row_y = y + len(lines) * TITLE_LINE + 1
         tag = item.get("tag") or ""
-        tag_w = self.chip(text_x, row_y, tag, colour, size=10, solid=False) + 6 if tag else 0
-        why = self.clip(item.get("why"), 12, text_w - tag_w, False)
+        # The tag sits under the number, so the fact gets the full row after it.
+        fact_x = x + self.chip(x, row_y, tag, colour, size=10, solid=False) + 6 if tag else text_x
+        why = self.clip(item.get("why"), 12, x + width - fact_x, False)
         if why:
-            self.text((text_x + tag_w, row_y + 9), why, 12, False, c["ink"], "lm")
-        return len(lines) * 19 + 20
+            self.text((fact_x, row_y + 9), why, 12, False, c["ink"], "lm")
+        return len(lines) * TITLE_LINE + ITEM_FOOTER
 
     def globe_filler(self, x, top, width, bottom, label, sources):
         c = self.c

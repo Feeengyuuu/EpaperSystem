@@ -16,7 +16,7 @@ RED = (255, 0, 0)
 BLUE = (0, 0, 255)
 GREEN = (0, 255, 0)
 
-# Keyword groups, checked in order against the lead's tag and title.
+# Keyword groups, checked in order against the lead's tag and then its title.
 TOPIC_KEYWORDS = (
     ("health", ("公共卫生", "卫生", "疫情", "病毒", "埃博拉", "医疗", "医院", "健康", "疾病", "疫苗", "流感")),
     ("conflict", ("冲突", "军事", "战争", "袭击", "空袭", "导弹", "武装", "战机", "军队", "停火", "以军", "胡塞")),
@@ -25,7 +25,7 @@ TOPIC_KEYWORDS = (
     ("climate", ("气候", "环境", "灾害", "地震", "台风", "洪水", "暴雨", "天气", "火灾", "干旱", "高温")),
     ("justice", ("司法", "法院", "法律", "判决", "审判", "执行", "警方", "逮捕", "检方", "起诉")),
     ("sports", ("体育", "比赛", "奥运", "足球", "篮球", "冠军", "联赛")),
-    ("economy", ("经济", "金融", "财经", "市场", "股市", "贸易", "产业", "投资", "基建", "铁路", "人民币",
+    ("economy", ("经济", "金融", "财经", "市场", "股市", "贸易", "经贸", "产业", "投资", "基建", "铁路", "人民币",
                  "央行", "关税", "就业", "消费", "制造")),
     ("politics", ("外交", "选举", "公投", "政治", "两岸", "会谈", "峰会", "政府", "议会", "国台办", "总统", "首相")),
 )
@@ -43,14 +43,26 @@ TOPIC_COLOURS = {
 }
 
 
-def topic_kind(*texts):
-    """The illustration topic for a story, from its tag first and then its title."""
-    for text in texts:
-        value = str(text or "")
-        for kind, words in TOPIC_KEYWORDS:
-            if any(word in value for word in words):
-                return kind
+# Topics too broad to picture a story on their own; a title with a specific topic wins.
+GENERIC_TOPICS = ("politics", "news")
+
+
+def _keyword_kind(text):
+    value = str(text or "")
+    for kind, words in TOPIC_KEYWORDS:
+        if any(word in value for word in words):
+            return kind
     return "news"
+
+
+def topic_kind(tag, title=""):
+    """The illustration topic for a story: its tag, unless the tag is generic and the title is specific."""
+    kind = _keyword_kind(tag)
+    if kind in GENERIC_TOPICS:
+        title_kind = _keyword_kind(title)
+        if title_kind not in GENERIC_TOPICS or kind == "news":
+            kind = title_kind
+    return kind
 
 
 def draw_topic_art(draw, box, kind, ink, panel, rule):

@@ -784,7 +784,8 @@ def test_market_snapshot_rejects_massive_etf_proxy_for_index(monkeypatch):
 
     def fake_yahoo(symbol, name):
         prices = {"^GSPC": 6200.0, "^DJI": 43000.0}
-        return {"symbol": symbol, "name": name, "price": prices.get(symbol, 100.0), "change_pct": 1.0, "as_of": "2026-06-19", "source": "yahoo"}
+        # Same session as Massive, so an accepted Massive index quote is kept.
+        return {"symbol": symbol, "name": name, "price": prices.get(symbol, 100.0), "change_pct": 1.0, "as_of": "2026-06-18", "source": "yahoo"}
 
     monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.load_massive_api_key", lambda device_config: "massive-key")
     monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.MassiveMarketData", FakeMassiveClient)
@@ -1991,3 +1992,318 @@ def test_rss_cards_skip_english_titles_with_a_translated_word():
     cards = plugin._rss_news_cards(items, 5)
 
     assert [card["title"] for card in cards] == ["数字人民币基础设施服务体系全面升级", "波音737 MAX 10获美国联邦航空局批准"]
+
+
+def test_topic_kind_prefers_a_specific_title_topic_over_a_generic_tag():
+    assert news_art.topic_kind("外交", "巴以冲突再起，西岸农作区遭袭致多名平民受伤") == "conflict"
+    assert news_art.topic_kind("外交", "中美举行新一轮经贸磋商") == "economy"
+
+
+def test_page_news_drops_a_column_story_that_shares_the_leads_event():
+    plugin = _plugin()
+    brief = {
+        "lead": {"tag": "外交", "title": "巴以冲突再起，西岸农作区遭袭致多名平民受伤", "why": "事实", "section": "world"},
+        "mainland": [{"title": "碳交易市场成交量破10亿吨", "why": "事实", "tag": "公共安全"}],
+        "world": [{"title": "以巴冲突再起引发国际关注", "why": "评论", "tag": "外交"}, {"title": "波音获美国监管批准", "why": "事实"}],
+    }
+
+    _lead, _mainland, world = plugin._page_news(brief, {"items": []})
+
+    assert [item["title"] for item in world] == ["波音获美国监管批准"]
+
+
+def test_sanitizer_keeps_english_model_names_next_to_numbers():
+    plugin = _plugin()
+
+    assert plugin._strip_untranslated_english_terms("波音737 MAX 10获美国监管批准") == "波音737 MAX 10获美国监管批准"
+    assert plugin._strip_untranslated_english_terms("美国拟对伊朗 unknownword 提案") == "美国拟对伊朗提案"
+
+
+def test_rss_cards_turn_summaries_into_facts_without_datelines():
+    plugin = _plugin()
+    items = [
+        {"source": "中国新闻网要闻", "section": "mainland", "title": "工信部建设一批专精特新赋能中心",
+         "summary": "中新网10月21日电 据工业和信息化部网站消息，工业和信息化部21日发布通知。通知明确了任务。"},
+        {"source": "中国新闻网财经", "section": "mainland", "title": "数字人民币基础设施服务体系全面升级",
+         "summary": "新华社北京10月21日电(记者吴雨)10月21日，数字人民币运营管理中心对外公布服务体系。"},
+    ]
+
+    cards = plugin._rss_news_cards(items, 4)
+
+    assert cards[0]["why"] == "工业和信息化部21日发布通知"
+    assert cards[1]["why"] == "数字人民币运营管理中心对外公布服务体系"
+
+
+def test_prompt_bans_vague_commentary_in_facts(monkeypatch):
+    plugin = _plugin()
+    captured = {}
+
+    class _Responses:
+        @staticmethod
+        def create(**kwargs):
+            captured.update(kwargs)
+
+            class _Response:
+                output_text = '{"mainland":[],"world":[]}'
+
+            return _Response()
+
+    class _Client:
+        responses = _Responses()
+
+    monkeypatch.setattr(daily_ai_news_module, "OpenAI", lambda **_kwargs: _Client())
+
+    plugin._summarize_with_openai("key", "gpt-5-nano", {}, [], {}, datetime(2026, 10, 21, 7, 0))
+
+    assert "成为关注焦点" in captured["input"] and "引发关注" in captured["input"]
+
+
+def test_market_uses_yahoo_when_massive_lags_a_session(monkeypatch):
+    plugin = _plugin()
+
+    class FakeMassiveClient:
+        def __init__(self, api_key):
+            pass
+
+        def fetch_treasury_yields(self, limit=1):
+            return []
+
+        def fetch_quote(self, symbol, name):
+            if symbol == "^IXIC":
+                return {"symbol": symbol, "name": name, "price": 26430.87, "change_pct": 1.11, "as_of": "2026-10-19",
+                        "source": "massive", "massive_symbol": "I:COMP"}
+            return None
+
+    def fake_yahoo(symbol, name):
+        return {"symbol": symbol, "name": name, "price": 26424.82, "change_pct": -0.02, "as_of": "2026-10-20T13:30:00+00:00",
+                "source": "yahoo", "closes": [26430.89, 26424.82]}
+
+    monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.load_massive_api_key", lambda device_config: "massive-key")
+    monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.MassiveMarketData", FakeMassiveClient)
+    monkeypatch.setattr(plugin, "_fetch_yahoo_quote", fake_yahoo)
+
+    row = plugin._fetch_market_snapshot(datetime(2026, 10, 21), object())["groups"]["us_stock"][1]
+
+    assert row["source"] == "yahoo" and row["change_pct"] == -0.02
+
+
+def test_yahoo_quote_without_daily_history_uses_hourly_bars(monkeypatch):
+    plugin = _plugin()
+    day = 86400
+    today_open = 1792546200  # 2026-10-21 01:30 UTC (09:30 Shanghai)
+    hourly_stamps = [today_open - 2 * day + hour * 3600 for hour in range(3)] + \
+        [today_open - day + hour * 3600 for hour in range(3)] + [today_open + hour * 3600 for hour in range(2)]
+    hourly_closes = [2700.0, 2705.0, 2710.0, 2730.0, 2735.0, 2739.2, 2720.0, 2711.33]
+    responses = {
+        "1d": _yahoo_chart([2711.33], [today_open + 3600], today_open + 3600, 2711.33, gmtoffset=28800),
+        "60m": _yahoo_chart(hourly_closes, hourly_stamps, today_open + 3600, 2711.33, gmtoffset=28800),
+    }
+    responses["60m"]["chart"]["result"][0]["meta"]["previousClose"] = 2739.2031
+    seen = []
+
+    class _Client:
+        def request_json(self, method, url, params=None, **_kwargs):
+            seen.append(params)
+            return _ChartResponse(responses[params["interval"]])
+
+    monkeypatch.setattr(daily_ai_news_module, "get_http_client", lambda: _Client())
+
+    row = plugin._fetch_yahoo_quote("399006.SZ", "创业板指")
+
+    assert [params["interval"] for params in seen] == ["1d", "60m"]
+    assert row["change_pct"] == pytest.approx((2711.33 / 2739.2031 - 1) * 100, abs=0.005)
+    assert row["closes"] == [2710.0, 2739.2, 2711.33]
+
+
+def test_long_column_titles_take_a_second_line_when_the_column_has_room(monkeypatch):
+    plugin = _plugin()
+    long_title = "工信部：“十五五”期间我国将建设一批专精特新赋能中心并推广"
+    payload = _page_payload()
+    payload["brief"]["mainland"] = [
+        {"tag": "要闻", "title": long_title, "why": "按先试点后推广模式推进"},
+        {"tag": "金融", "title": "数字人民币体系升级", "why": "推出央行端系统"},
+    ]
+
+    _image, seen = _rendered_text(monkeypatch, plugin, payload)
+
+    first, second = next((line, seen[index + 1]) for index, line in enumerate(seen) if long_title.startswith(line) and line != long_title)
+    assert first + second == long_title
+    assert not any(line.endswith("…") and long_title.startswith(line[:-1]) for line in seen)
+
+
+def test_a_full_column_keeps_every_story_on_one_line_before_adding_second_lines():
+    plugin = _plugin()
+    page = news_layout.NewsPage(plugin, Image.new("RGB", (800, 480), "white"), plugin._page_palette({"mode": "day"}), "Microsoft YaHei")
+    items = [{"title": f"足够长的标题需要两行才能完整显示在栏目里的第{index}条新闻内容", "why": "", "tag": ""} for index in range(4)]
+
+    lines, gap = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
+
+    # All four stories stay; the tighter gap frees room for the first clipped title's second line.
+    assert lines == [2, 1, 1, 1]
+    assert gap == news_layout.COMPACT_ITEM_GAP
+
+
+def test_a_column_keeps_the_normal_gap_when_no_title_is_clipped():
+    plugin = _plugin()
+    page = news_layout.NewsPage(plugin, Image.new("RGB", (800, 480), "white"), plugin._page_palette({"mode": "day"}), "Microsoft YaHei")
+    items = [{"title": f"短标题{index}", "why": "", "tag": ""} for index in range(4)]
+
+    lines, gap = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
+
+    assert (lines, gap) == ([1, 1, 1, 1], news_layout.ITEM_GAP)
+
+
+def test_story_tag_sits_under_the_number_and_the_fact_follows_it(monkeypatch):
+    plugin = _plugin()
+    chips, texts = {}, {}
+    original_chip = news_layout.NewsPage.chip
+    original_text = ImageDraw.ImageDraw.text
+
+    def record_chip(self, x, y, text, colour, *args, **kwargs):
+        width = original_chip(self, x, y, text, colour, *args, **kwargs)
+        chips.setdefault(text, (x, width))
+        return width
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        texts.setdefault(str(text), xy)
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(news_layout.NewsPage, "chip", record_chip)
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    payload = _page_payload()
+    payload["brief"]["mainland"] = [{"tag": "金融", "title": "数字人民币体系升级", "why": "推出央行端系统"}]
+
+    plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 10, 21), {"mode": "day"})
+
+    number_x = texts["01"][0]
+    chip_x, chip_w = chips["金融"]
+    assert chip_x == number_x == news_layout.MARGIN
+    assert texts["推出央行端系统"][0] == chip_x + chip_w + 6
+
+
+def test_yahoo_as_of_follows_the_price_session_when_it_is_newer_than_the_last_bar(monkeypatch):
+    plugin = _plugin()
+    _patch_chart(
+        monkeypatch,
+        _yahoo_chart([7690.73, 7712.57], [MONDAY_OPEN, TUESDAY_OPEN], TUESDAY_OPEN + DAY + 3600, 7750.0),
+    )
+
+    row = plugin._fetch_yahoo_quote("^GSPC", "标普500")
+
+    assert row["as_of"].startswith("2026-10-21")
+
+
+@pytest.mark.parametrize(
+    ("lead", "story"),
+    [
+        ("中国人民银行下调存款准备金率", "中国人民解放军东部战区开展联合演训"),
+        ("外交部发言人就日本防卫政策答问", "外交部发言人宣布王毅将访问欧洲"),
+        ("美国总统特朗普抵达北京国事访问", "美国总统签署对欧盟关税行政令"),
+        ("联合国秘书长呼吁苏丹停火", "联合国秘书长谴责加沙空袭"),
+    ],
+)
+def test_page_news_keeps_stories_that_only_share_a_subject_with_the_lead(lead, story):
+    plugin = _plugin()
+    brief = {"lead": {"title": lead, "why": "", "section": "mainland"}, "mainland": [{"title": story, "why": ""}], "world": []}
+
+    _lead, mainland, _world = plugin._page_news(brief, {"items": []})
+
+    assert [item["title"] for item in mainland] == [story]
+
+
+def test_sanitizer_drops_an_english_name_before_a_date():
+    plugin = _plugin()
+
+    assert plugin._strip_untranslated_english_terms("Trump 20日宣布对欧盟加征关税") == "20日宣布对欧盟加征关税"
+
+
+def test_a_rejected_lead_does_not_stay_as_the_lede():
+    plugin = _plugin()
+    brief = {
+        "lede": "国务院宣布全面取消房贷利率下限",
+        "lead": {"tag": "政策", "title": "国务院宣布全面取消房贷利率下限", "why": "编造", "section": "mainland"},
+        "mainland": [{"tag": "金融", "title": "数字人民币基础设施服务体系全面升级", "why": "推出央行端系统"}],
+        "world": [],
+    }
+    items = [{"source": "中国新闻网财经", "section": "mainland", "title": "数字人民币基础设施服务体系全面升级", "summary": ""}]
+
+    result = plugin._postprocess_brief_news(brief, items)
+
+    assert result["lead"] is None
+    assert result["lede"] == "数字人民币基础设施服务体系全面升级"
+
+
+def test_list_or_number_tags_never_render_as_python_reprs():
+    plugin = _plugin()
+    brief = {
+        "lead": {"tag": ["经济", "贸易"], "title": "美欧达成新贸易协议", "why": "事实", "section": "world"},
+        "mainland": [{"tag": 2026, "title": "数字人民币体系升级", "why": "事实"}],
+        "world": [],
+    }
+
+    lead, mainland, _world = plugin._page_news(brief, {"items": []})
+
+    assert lead["tag"] == "经济"
+    assert mainland[0]["tag"] == "2026"
+
+
+@pytest.mark.parametrize("dimensions", [(640, 400), (400, 300), (480, 800), (250, 122)])
+def test_render_fits_other_display_sizes_without_crashing(dimensions):
+    plugin = _plugin()
+
+    image = plugin._render(dimensions, {"brief_title": "整点新闻"}, _page_payload(), datetime(2026, 10, 21), {"mode": "day"})
+
+    assert image.size == dimensions
+
+
+def test_world_stories_are_capped_at_what_the_column_shows():
+    plugin = _plugin()
+    page = news_layout.NewsPage(plugin, Image.new("RGB", (800, 480), "white"), plugin._page_palette({"mode": "day"}), "Microsoft YaHei")
+    items = [{"title": f"世界短新闻{index}", "why": "", "tag": ""} for index in range(daily_ai_news_module.WORLD_NEWS_MAX)]
+
+    lines, _gap = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
+
+    assert len(lines) == daily_ai_news_module.WORLD_NEWS_MAX
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        ("法国正式承认巴勒斯坦国", "王毅会见巴勒斯坦外长"),
+        ("约旦河西岸定居者焚烧清真寺", "以军在约旦河西岸逮捕百名嫌犯"),
+        ("巴勒斯坦总统访华", "法国承认巴勒斯坦国"),
+    ],
+)
+def test_a_shared_place_name_alone_does_not_make_two_stories_one(left, right):
+    assert not _plugin()._similar_news_title(left, right)
+
+
+def test_lede_follows_the_deduplicated_first_story_when_the_ai_gives_no_lead():
+    plugin = _plugin()
+    brief = plugin._parse_brief_json(
+        '{"mainland": [{"title": "国务院宣布全面取消房贷利率下限", "why": "编造"},'
+        ' {"title": "数字人民币基础设施服务体系全面升级", "why": "事实"}], "world": []}'
+    )
+    items = [{"source": "中国新闻网财经", "section": "mainland", "title": "数字人民币基础设施服务体系全面升级", "summary": ""}]
+
+    result = plugin._postprocess_brief_news(brief, items)
+
+    assert result["lede"] == "数字人民币基础设施服务体系全面升级"
+
+
+def test_news_context_keeps_every_shown_story_after_the_lead(monkeypatch):
+    plugin = _plugin()
+    written = {}
+    monkeypatch.setattr(daily_ai_news_module, "write_context", lambda key, payload, **_kwargs: written.update(payload))
+    mainland = [{"title": f"国内新闻第{index}条", "why": ""} for index in range(4)]
+    world = [{"title": f"国际新闻第{index}条", "why": ""} for index in range(4)]
+    brief = {"lede": "头条", "lead": {"title": "头条新闻", "why": ""}, "mainland": mainland, "world": world, "top": mainland + world}
+
+    plugin._write_news_context({"brief": brief}, datetime(2026, 10, 21))
+
+    assert len(written["items"]) == 9 and written["items"][-1]["title"] == "国际新闻第3条"
+
+
+def test_a_tag_list_skips_blank_and_boolean_entries():
+    assert DailyAINews._field_text([True, "经济"]) == "经济"
+    assert DailyAINews._field_text(["", " ", "经济"]) == "经济"

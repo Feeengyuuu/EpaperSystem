@@ -131,11 +131,19 @@ MARKET_CLOSES_KEPT = 22
 NEWS_TITLE_MAX_CHARS = 30
 NEWS_FACT_MAX_CHARS = 44
 NEWS_TAG_MAX_CHARS = 4
+# Events whose headlines vary a lot: titles naming one group are the same story at a
+# lower character overlap. A group lists the ways one event is written.
+HOT_NEWS_TERM_GROUPS = (
+    ("伊朗",), ("空袭",), ("煤矿",), ("太空人",), ("黎巴嫩",), ("基辅",), ("教宗",),
+    ("巴以", "以巴", "加沙", "巴勒斯坦", "约旦河西岸"),
+)
 # Tag for an RSS-only card, from its chinanews.com.cn desk.
 SOURCE_DESK_TAGS = {"要闻": "要闻", "国内": "时政", "财经": "财经", "社会": "社会", "即时": "快讯"}
 # Accents are the panel's own primaries, which it shows solidly instead of dithering;
 # gains are red and losses green, as Chinese market quotes show them.
 PAGE_ACCENTS = {"lead": (255, 0, 0), "domestic": (0, 255, 0), "world": (0, 0, 255), "up": (255, 0, 0), "down": (0, 255, 0)}
+# The page is laid out for the 800x480 panel; other displays get it scaled to fit.
+PAGE_SIZE = (800, 480)
 PAGE_DAY_COLOURS = {**PAGE_ACCENTS, "card": (255, 255, 255)}
 PAGE_NIGHT_COLOURS = {**PAGE_ACCENTS, "card": (0, 0, 0), "panel": (0, 0, 0)}
 FEED_SECTION_PREFIXES = {
@@ -157,7 +165,7 @@ MAINLAND_FEED_HOST_HINTS = (
     "cctv.com",
 )
 MAINLAND_NEWS_MAX = 4
-WORLD_NEWS_MAX = 5
+WORLD_NEWS_MAX = 4
 
 TRADITIONAL_PHRASE_REPLACEMENTS = (
     ("繁體中文", "简体中文"),
@@ -878,7 +886,7 @@ class DailyAINews(BasePlugin):
             context_news = [payload["lead"], *context_news]
 
         items = []
-        for item in context_news[:MAINLAND_NEWS_MAX + WORLD_NEWS_MAX]:
+        for item in context_news[:MAINLAND_NEWS_MAX + WORLD_NEWS_MAX + 1]:
             if isinstance(item, dict):
                 title = str(item.get("title") or "").strip()
                 why = str(item.get("why") or "").strip()
@@ -1546,9 +1554,12 @@ class DailyAINews(BasePlugin):
         if not row:
             return self._fetch_yahoo_quote(symbol, name)
         if not row.get("closes"):
-            # Massive gives the quote; Yahoo's daily closes only feed the sparkline.
             history = self._fetch_yahoo_quote(symbol, name)
+            if history and str(history.get("as_of") or "")[:10] > str(row.get("as_of") or "")[:10]:
+                # Massive can lag a session behind; mixing dates in one strip misleads.
+                return history
             if history and history.get("closes"):
+                # Otherwise Massive gives the quote and Yahoo's daily closes feed the sparkline.
                 row = {**row, "closes": history["closes"]}
         return row
 
@@ -1580,44 +1591,79 @@ class DailyAINews(BasePlugin):
             "treasury_yields": treasury_yields[:1],
         }
 
-    def _fetch_yahoo_quote(self, symbol: str, name: str) -> dict[str, Any] | None:
+    def _yahoo_chart(self, symbol: str, chart_range: str, interval: str) -> dict[str, Any] | None:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(symbol, safe='')}"
         try:
             resp = get_http_client().request_json(
                 "GET",
                 url,
-                params={"range": "1mo", "interval": "1d"},
+                params={"range": chart_range, "interval": interval},
                 timeout=10,
                 headers={"User-Agent": "InkyPi Daily AI News/1.0"},
             )
-            result = resp.data["chart"]["result"][0]
+            return resp.data["chart"]["result"][0]
         except Exception as exc:
-            logger.warning("Market quote fetch failed for %s: %s", symbol, exc)
+            logger.warning("Market quote fetch failed for %s (%s): %s", symbol, interval, exc)
             return None
 
-        meta = result.get("meta") or {}
+    @staticmethod
+    def _yahoo_series(result: dict[str, Any]) -> list[tuple[float, float]]:
         quote_data = ((result.get("indicators") or {}).get("quote") or [{}])[0]
-        series = [
+        return [
             (stamp, float(close))
             for stamp, close in zip(result.get("timestamp") or [], quote_data.get("close") or [])
             if isinstance(stamp, (int, float)) and isinstance(close, (int, float))
         ]
+
+    @staticmethod
+    def _daily_closes(series, gmtoffset: Any) -> list[tuple[float, float]]:
+        """The last bar of each exchange-local day, from intraday bars."""
+        offset = gmtoffset if isinstance(gmtoffset, (int, float)) else 0
+        days: dict[Any, tuple[float, float]] = {}
+        for stamp, close in series:
+            days[datetime.fromtimestamp(stamp + offset, tz=pytz.UTC).date()] = (stamp, close)
+        return [days[day] for day in sorted(days)]
+
+    def _fetch_yahoo_quote(self, symbol: str, name: str) -> dict[str, Any] | None:
+        result = self._yahoo_chart(symbol, "1mo", "1d")
+        if result is None:
+            return None
+
+        meta = result.get("meta") or {}
+        series = self._yahoo_series(result)
         price = meta.get("regularMarketPrice")
         if not isinstance(price, (int, float)) and series:
             price = series[-1][1]
         if not isinstance(price, (int, float)):
             return None
 
-        previous = self._previous_session_close(series, meta.get("regularMarketTime"), meta.get("gmtoffset"))
+        previous = None
+        if len(series) < 2:
+            # Some indexes (创业板指 399006.SZ) have no daily history on Yahoo; hourly bars
+            # give their recent days and the chart reports the previous session's close.
+            hourly = self._yahoo_chart(symbol, "5d", "60m")
+            if hourly is not None:
+                hourly_meta = hourly.get("meta") or {}
+                series = self._daily_closes(self._yahoo_series(hourly), hourly_meta.get("gmtoffset")) or series
+                previous_close = hourly_meta.get("previousClose")
+                if isinstance(previous_close, (int, float)) and previous_close:
+                    previous = float(previous_close)
+        if previous is None:
+            previous = self._previous_session_close(series, meta.get("regularMarketTime"), meta.get("gmtoffset"))
         change = change_pct = None
         if previous:
             change = price - previous
             change_pct = change / previous * 100
 
         as_of = ""
-        if series:
+        stamps = [series[-1][0]] if series else []
+        market_time = meta.get("regularMarketTime")
+        if isinstance(market_time, (int, float)):
+            # The price can come from a session the daily bars do not show yet.
+            stamps.append(market_time)
+        if stamps:
             try:
-                as_of = datetime.fromtimestamp(series[-1][0], tz=pytz.UTC).isoformat()
+                as_of = datetime.fromtimestamp(max(stamps), tz=pytz.UTC).isoformat()
             except Exception:
                 as_of = ""
 
@@ -1751,10 +1797,10 @@ class DailyAINews(BasePlugin):
                 "中文词内部不要加空格，例如写“美伊谈判”，不要写“美 伊谈判”",
                 "lead 是两个分区中今天最重要的一条新变化，必须来自 RSS 条目，section 写它来自 mainland 还是 world；lead 不得再出现在 mainland 或 world 中",
                 "mainland 给 2 到 4 条，只能选择 section=mainland 的 RSS 条目，优先大陆时政、经济、社会、公共安全和重大政策更新",
-                "world 给 3 到 5 条，只能选择 section=world 的 RSS 条目，优先国际冲突、外交、政策、事故、市场、法律和重大科技治理",
+                "world 给 3 到 4 条，只能选择 section=world 的 RSS 条目，优先国际冲突、外交、政策、事故、市场、法律和重大科技治理",
                 "tag 用 2 到 4 个字的新闻分类，例如 两岸、外交、冲突、中东、经济、金融、产业、基建、科技、航空、公共卫生、灾害、司法、选举、社会",
                 "title 中大陆新闻和 lead 不超过18字，世界新闻不超过24字，写清主体和动作，不要标点堆砌",
-                "why 写一句话事实：谁、做了什么、关键数字或结果，不超过30字；不要写意义、影响、体现、凸显、彰显之类的评价",
+                "why 写一句话事实：谁、做了什么、关键数字或结果，不超过30字；不要写意义、影响、体现、凸显、彰显之类的评价，也不要写“成为关注焦点”“引发关注”“引发讨论”“持续发酵”“局势紧张”这类空话",
                 "如果某个分区素材不足，宁可少写，不得跨区挪用，也不得编造新闻",
                 "mainland 和 world 不允许使用 market_snapshot、股票指数或你自己的背景知识生成新闻",
                 "不得写 RSS items 中不存在的人名、机构、政策或市场事件",
@@ -1939,6 +1985,9 @@ class DailyAINews(BasePlugin):
             mainland, world = self._split_legacy_top_sections(top)
 
         lead = self._checked_lead(payload.get("lead"), mainland_sources)
+        if not lead:
+            # Without a checked lead the page promotes the first de-duplicated story.
+            payload["lede"] = ""
         if lead:
             mainland = [item for item in mainland if not self._similar_news_title(self._news_text(item)[0], lead["title"])]
             world = [item for item in world if not self._similar_news_title(self._news_text(item)[0], lead["title"])]
@@ -1982,8 +2031,33 @@ class DailyAINews(BasePlugin):
         limits = {"title": NEWS_TITLE_MAX_CHARS, "why": NEWS_FACT_MAX_CHARS, "tag": NEWS_TAG_MAX_CHARS}
         for key, limit in limits.items():
             if key in trimmed:
-                trimmed[key] = str(trimmed.get(key) or "").strip()[:limit]
+                trimmed[key] = DailyAINews._field_text(trimmed.get(key))[:limit]
         return trimmed
+
+    @staticmethod
+    def _field_text(value: Any) -> str:
+        """A visible text field from AI output: a string, a number, or the first string of a list."""
+        if isinstance(value, (list, tuple)):
+            value = next(
+                (
+                    entry
+                    for entry in value
+                    if isinstance(entry, (str, int, float)) and not isinstance(entry, bool) and str(entry).strip()
+                ),
+                "",
+            )
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            return ""
+        return str(value).strip()
+
+    @staticmethod
+    def _summary_fact(summary: Any) -> str:
+        """The first sentence of an RSS summary, without its dateline or 据…消息 attribution."""
+        text = re.sub(r"\s+", " ", str(summary or "")).strip()
+        text = re.sub(r"^\S{0,24}?\d{1,2}月\d{1,2}日电\s*(?:[（(][^）)]{0,24}[）)])?\s*", "", text)
+        text = re.sub(r"^\d{1,2}月\d{1,2}日[，,]\s*", "", text)
+        text = re.sub(r"^据[^，,。]{0,24}消息[，,]\s*", "", text)
+        return re.split(r"[。！？]", text, maxsplit=1)[0].strip()[:36]
 
     def _source_tag(self, source: Any) -> str:
         """An RSS-only card's tag: its chinanews desk, else a generic 要闻."""
@@ -2058,6 +2132,11 @@ class DailyAINews(BasePlugin):
             canonical = term.replace(".", "").replace("-", "").upper()
             if canonical in VISIBLE_ENGLISH_ALLOWLIST:
                 return term
+            # A word between numbers is a model designation, e.g. 737 MAX 10.
+            before = match.string[: match.start()].rstrip()[-1:]
+            after = match.string[match.end():].lstrip()[:1]
+            if before.isdigit() and after.isdigit():
+                return term
             return ""
 
         cleaned = VISIBLE_ENGLISH_WORD_RE.sub(replace_match, cleaned)
@@ -2086,7 +2165,7 @@ class DailyAINews(BasePlugin):
                 continue
             source = str(item.get("source") or "").strip()
             summary = str(item.get("summary") or "").strip()
-            why = summary[:36] if summary else (source[:36] or "来自 RSS 源。")
+            why = self._summary_fact(summary) or source[:36] or "来自 RSS 源。"
             card = {"title": title[:32], "why": why, "tag": self._source_tag(source)}
             if self._matches_recent_news_title(title, recent_titles):
                 delayed_recent.append(card)
@@ -2182,8 +2261,8 @@ class DailyAINews(BasePlugin):
             title = str(source.get("title") or "").strip()
             if not title or not self._is_chinese_title(title):
                 continue
-            summary = str(source.get("summary") or source.get("source") or "").strip()
-            card = {"title": title[:32], "why": summary[:36], "tag": self._source_tag(source.get("source"))}
+            summary = self._summary_fact(source.get("summary")) or str(source.get("source") or "").strip()[:36]
+            card = {"title": title[:32], "why": summary, "tag": self._source_tag(source.get("source"))}
             append_candidate(card, title)
             if len(result) >= limit:
                 break
@@ -2218,8 +2297,21 @@ class DailyAINews(BasePlugin):
         if not left_chars or not right_chars:
             return False
         overlap = len(left_chars & right_chars) / max(1, min(len(left_chars), len(right_chars)))
-        shared_hot_terms = any(term in left and term in right for term in ("伊朗", "空袭", "煤矿", "太空人", "黎巴嫩", "基辅", "教宗"))
-        return overlap >= 0.56 or (shared_hot_terms and overlap >= 0.38)
+        if overlap >= 0.56:
+            return True
+        for group in HOT_NEWS_TERM_GROUPS:
+            left_named = [term for term in group if term in left]
+            right_named = [term for term in group if term in right]
+            if not left_named or not right_named:
+                continue
+            # Both name the same hot event; the words beyond its name must still overlap,
+            # so two different stories about one place are not merged.
+            named = set("".join(left_named + right_named))
+            rest_left = left_chars - named
+            rest_right = right_chars - named
+            if rest_left and rest_right and len(rest_left & rest_right) / min(len(rest_left), len(rest_right)) >= 0.38:
+                return True
+        return False
 
     def _fallback_brief(self, settings, now: datetime, error: str) -> dict[str, Any]:
         return {
@@ -2266,7 +2358,7 @@ class DailyAINews(BasePlugin):
         payload = self._simplify_chinese_payload(payload)
         brief = payload.get("brief") or {}
         palette = self._page_palette(theme_context)
-        img = self._base_background(dimensions, palette["background"], (theme_context or {}).get("mode", "day"))
+        img = self._base_background(PAGE_SIZE, palette["background"], (theme_context or {}).get("mode", "day"))
         lead, mainland, world = self._page_news(brief, payload)
         NewsPage(self, img, palette, DEFAULT_FONT).render(
             title=title,
@@ -2276,7 +2368,18 @@ class DailyAINews(BasePlugin):
             quotes=self._page_quotes(payload),
             meta=self._page_meta(payload, now),
         )
+        if tuple(dimensions) != PAGE_SIZE:
+            img = self._fit_page(img, dimensions, palette["background"])
         return img
+
+    @staticmethod
+    def _fit_page(page: Image.Image, dimensions, background) -> Image.Image:
+        """The 800x480 page scaled to fit another display, centred on the page colour."""
+        resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+        fitted = ImageOps.contain(page, tuple(int(value) for value in dimensions), method=resample)
+        canvas = Image.new("RGB", tuple(int(value) for value in dimensions), background)
+        canvas.paste(fitted, ((canvas.width - fitted.width) // 2, (canvas.height - fitted.height) // 2))
+        return canvas
 
     def _page_palette(self, theme_context) -> dict[str, Any]:
         palette = dict(self._render_palette(theme_context))
@@ -2314,7 +2417,7 @@ class DailyAINews(BasePlugin):
         title = title.strip()
         if not title:
             return None
-        tag = str(item.get("tag") or "").strip() if isinstance(item, dict) else ""
+        tag = self._field_text(item.get("tag")) if isinstance(item, dict) else ""
         return {"title": title, "why": why.strip(), "tag": tag[:NEWS_TAG_MAX_CHARS]}
 
     def _page_quotes(self, payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
