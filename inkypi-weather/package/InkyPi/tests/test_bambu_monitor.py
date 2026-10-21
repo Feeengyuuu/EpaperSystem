@@ -9,16 +9,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.bambu_monitor import bambu_monitor as bambu_module
 from plugins.bambu_monitor.bambu_monitor import (
-    ACCENT_BLUE,
+    ACCENT_ORANGE,
     BAMBU_LAB_LOGO_GAP,
     BAMBU_LAB_LOGO_IMAGE,
     BAMBU_LAB_LOGO_SIZE,
     ACCENT_GOLD,
     CINNABAR,
+    HEADER_RULE_Y,
     INK,
     MALACHITE,
     PAPER,
-    SECTION_WORDMARK_IMAGES,
     TITLE_WORDMARK_IMAGE,
     TITLE_WORDMARK_SIZE,
     BambuMonitor,
@@ -95,10 +95,34 @@ def test_render_status_uses_comic_process_palette(tmp_path):
     assert image.size == (800, 480)
     assert image.mode == "RGB"
     assert _near_color_count(image, PAPER, tolerance=4) > 20_000
-    assert _near_color_count(image, ACCENT_GOLD, tolerance=8) > 1_000
-    assert _near_color_count(image, ACCENT_BLUE, tolerance=8) > 1_000
-    assert _near_color_count(image, MALACHITE, tolerance=8) > 500
+    assert _near_color_count(image, MALACHITE, tolerance=8) > 1_500
     assert _near_color_count(image, CINNABAR, tolerance=8) > 200
+    assert _near_color_count(image, ACCENT_ORANGE, tolerance=8) > 200
+
+
+def test_job_column_progress_bar_fills_to_the_print_progress(tmp_path):
+    plugin = _plugin(tmp_path)
+    status = plugin._demo_status()
+    status["progress"] = 50
+
+    image = plugin._render_status(status, (800, 480))
+
+    bar_y = HEADER_RULE_Y + 2 + 85
+    assert image.getpixel((600, bar_y)) == MALACHITE
+    assert image.getpixel((700, bar_y)) != MALACHITE
+
+
+def test_camera_hero_is_a_wide_frame_beside_the_job_column(tmp_path):
+    plugin = _plugin(tmp_path)
+    status = plugin._demo_status()
+    status["camera_image"] = Image.new("RGB", (1280, 720), (18, 52, 86))
+
+    image = plugin._render_status(status, (800, 480))
+
+    for point in ((40, 120), (500, 330), (270, 200)):
+        assert image.getpixel(point) == (18, 52, 86)
+    assert image.getpixel((540, 200)) == PAPER
+    assert image.getpixel((270, 360)) != (18, 52, 86)
 
 
 def test_title_wordmark_asset_is_transparent_measured_strip():
@@ -125,19 +149,6 @@ def test_bambulab_logo_asset_is_transparent():
     assert image.height <= 100
 
 
-def test_section_wordmark_assets_are_transparent():
-    for title, (filename, size) in SECTION_WORDMARK_IMAGES.items():
-        path = Path(bambu_module.__file__).with_name(filename)
-
-        image = Image.open(path).convert("RGBA")
-
-        assert image.size == size, title
-        assert image.getchannel("A").getextrema() == (0, 255)
-        assert image.getchannel("A").getbbox() is not None
-        assert image.getpixel((0, 0))[3] == 0
-        assert image.getpixel((image.width - 1, image.height - 1))[3] == 0
-
-
 def test_settings_expose_machine_name_and_model_overrides():
     settings_html = Path(bambu_module.__file__).with_name("settings.html").read_text(encoding="utf-8")
     name_input = settings_html.split('id="printerName"', 1)[1].split(">", 1)[0]
@@ -149,28 +160,6 @@ def test_settings_expose_machine_name_and_model_overrides():
     assert 'maxlength="16"' in model_input
     assert "pluginSettings.printerName" in settings_html
     assert "pluginSettings.printerModel" in settings_html
-
-
-def test_render_status_uses_section_wordmarks(tmp_path, monkeypatch):
-    plugin = _plugin(tmp_path)
-    colors = {
-        "PRINT": (11, 22, 33, 255),
-        "LIVE VIEW": (44, 55, 66, 255),
-        "THERMALS": (77, 88, 99, 255),
-        "AMS": (111, 122, 133, 255),
-    }
-
-    def fake_section_wordmark(title):
-        return Image.new("RGBA", SECTION_WORDMARK_IMAGES[title][1], colors[title])
-
-    monkeypatch.setattr(plugin, "_load_section_wordmark", fake_section_wordmark)
-
-    image = plugin._render_status(plugin._demo_status(), (800, 480))
-
-    assert image.getpixel((32, 72)) == colors["PRINT"][:3]
-    assert image.getpixel((320, 72)) == colors["LIVE VIEW"][:3]
-    assert image.getpixel((32, 352)) == colors["THERMALS"][:3]
-    assert image.getpixel((398, 352)) == colors["AMS"][:3]
 
 
 def test_render_status_draws_bambulab_logo_and_shifts_title(tmp_path, monkeypatch):
@@ -297,7 +286,19 @@ def test_machine_identity_is_trimmed_and_bounded_server_side(tmp_path):
     assert status["serial"] == "SERIAL1234567890"
 
 
-def test_print_card_draws_masked_machine_info(tmp_path, monkeypatch):
+def _all_drawn_text(monkeypatch):
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+
+    def record(self, xy, text, *args, **kwargs):
+        drawn.append(str(text))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)
+    return drawn
+
+
+def test_header_draws_masked_machine_info_right_aligned_before_the_clock(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     status = plugin._demo_status()
     status.update({
@@ -307,21 +308,22 @@ def test_print_card_draws_masked_machine_info(tmp_path, monkeypatch):
         "host": "192.0.2.55",
     })
     expected = plugin._machine_info_lines(status)
-    drawn_text = []
+    calls = []
     draw_fit_text = plugin._draw_fit_text_ellipsis
 
-    def record_text(draw, text, *args, **kwargs):
-        drawn_text.append(text)
-        return draw_fit_text(draw, text, *args, **kwargs)
+    def record_text(draw, text, x, y, *args, **kwargs):
+        calls.append((text, x, y, kwargs.get("anchor")))
+        return draw_fit_text(draw, text, x, y, *args, **kwargs)
 
     monkeypatch.setattr(plugin, "_draw_fit_text_ellipsis", record_text)
+    drawn = _all_drawn_text(monkeypatch)
 
     plugin._render_status(status, (800, 480))
 
-    assert expected[0] in drawn_text
-    assert expected[1] in drawn_text
-    assert status["serial"] not in drawn_text
-    assert status["host"] not in drawn_text
+    identity = [call for call in calls if call[0] in expected]
+    assert [call[0] for call in identity] == list(expected)
+    assert all(anchor == "ra" and y < HEADER_RULE_Y for _text, _x, y, anchor in identity)
+    assert not any(status["serial"] in text or status["host"] in text for text in drawn)
 
 
 def test_max_machine_identity_lines_fit_with_pixel_aware_ellipsis(tmp_path):
@@ -362,7 +364,7 @@ def test_max_machine_identity_lines_fit_with_pixel_aware_ellipsis(tmp_path):
     assert fitted[0][1].size == 9
 
 
-def test_max_machine_identity_pixels_stay_inside_print_card(tmp_path, monkeypatch):
+def test_max_machine_identity_pixels_stay_between_title_and_clock(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     status = plugin._demo_status()
     plugin._apply_machine_identity(
@@ -374,24 +376,22 @@ def test_max_machine_identity_pixels_stay_inside_print_card(tmp_path, monkeypatc
         host="printer-with-a-very-long-hostname.local",
         serial="SERIAL1234567890",
     )
+    identity_lines = plugin._machine_info_lines(status)
     draw_identity = plugin._draw_fit_text_ellipsis
     drawn_identity = []
 
-    def record_identity(draw, text, x, y, max_width, start_size, bold=False, fill=INK):
-        rendered_text, font = draw_identity(
-            draw,
-            text,
-            x,
-            y,
-            max_width,
-            start_size,
-            bold,
-            fill,
-        )
-        drawn_identity.append((draw, rendered_text, font, max_width))
+    def skip_identity(draw, text, *args, **kwargs):
+        if text in identity_lines:
+            return text, None
+        return draw_identity(draw, text, *args, **kwargs)
+
+    def record_identity(draw, text, x, y, max_width, *args, **kwargs):
+        rendered_text, font = draw_identity(draw, text, x, y, max_width, *args, **kwargs)
+        if text in identity_lines:
+            drawn_identity.append((draw, rendered_text, font, max_width))
         return rendered_text, font
 
-    monkeypatch.setattr(plugin, "_draw_fit_text_ellipsis", lambda *args, **kwargs: None)
+    monkeypatch.setattr(plugin, "_draw_fit_text_ellipsis", skip_identity)
     background = plugin._render_status(status, (800, 480))
     monkeypatch.setattr(plugin, "_draw_fit_text_ellipsis", record_identity)
     rendered = plugin._render_status(status, (800, 480))
@@ -399,36 +399,195 @@ def test_max_machine_identity_pixels_stay_inside_print_card(tmp_path, monkeypatc
     assert len(drawn_identity) == 2
     for draw, rendered_text, font, max_width in drawn_identity:
         bounds = draw.textbbox((0, 0), rendered_text, font=font)
-        assert max_width == 238
         assert bounds[2] - bounds[0] <= max_width
+    assert drawn_identity[0][1].endswith("…")
 
+    title_right = 22 + BAMBU_LAB_LOGO_SIZE[0] + BAMBU_LAB_LOGO_GAP + TITLE_WORDMARK_SIZE[0]
     identity_pixels = [
         (x, y)
-        for y in range(98, 125)
+        for y in range(rendered.height)
         for x in range(rendered.width)
         if rendered.getpixel((x, y)) != background.getpixel((x, y))
     ]
     assert identity_pixels
-    assert max(x for x, _ in identity_pixels) <= 292
+    assert min(x for x, _ in identity_pixels) > title_right
+    assert max(x for x, _ in identity_pixels) < 800 - 22 - 50
+    assert max(y for _, y in identity_pixels) < HEADER_RULE_Y
 
 
-def test_print_card_does_not_use_full_host_as_stage_fallback(tmp_path, monkeypatch):
+def test_stage_line_falls_back_to_the_state_never_the_host(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     status = plugin._demo_status()
     status.update({"stage": "", "host": "192.0.2.55"})
-    drawn_text = []
-    draw_fit_text = plugin._draw_fit_text
-
-    def record_text(draw, text, *args, **kwargs):
-        drawn_text.append(text)
-        return draw_fit_text(draw, text, *args, **kwargs)
-
-    monkeypatch.setattr(plugin, "_draw_fit_text", record_text)
+    drawn = _all_drawn_text(monkeypatch)
 
     plugin._render_status(status, (800, 480))
 
-    assert status["host"] not in drawn_text
-    assert "RUNNING" in drawn_text
+    assert not any("192.0.2.55" in text for text in drawn)
+    assert "PRINTING" in drawn
+    assert "Printing" in drawn
+
+
+def test_legacy_numeric_stage_is_not_shown(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    status = plugin._demo_status()
+    status["stage"] = "2"
+    drawn = _all_drawn_text(monkeypatch)
+
+    plugin._render_status(status, (800, 480))
+
+    assert not any("Stage 2" in text for text in drawn)
+    assert BambuMonitor._display_stage("2") == ""
+    assert BambuMonitor._display_stage("Heating hotend") == "Heating hotend"
+
+
+def test_setup_and_error_renders_still_show_their_message(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    drawn = _all_drawn_text(monkeypatch)
+
+    plugin._render_setup_required((800, 480), "", "SERIAL", False)
+    plugin._render_error((800, 480), "No route to host", host="192.0.2.55", serial="SERIAL")
+
+    joined = " ".join(drawn)
+    assert "Enter printer IP, serial, and access code" in drawn
+    assert "Missing:" in joined
+    assert "Unable to read printer" in drawn
+    assert "No route to host" in joined
+    assert "192.0.2.55" not in joined
+
+
+def test_stale_warning_is_drawn_over_the_camera(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    status = plugin._demo_status()
+    status.update({"source": "stale", "warning": "No route to host"})
+    drawn = _all_drawn_text(monkeypatch)
+
+    plugin._render_status(status, (800, 480))
+
+    assert "No route to host" in drawn
+    assert "STALE" in drawn
+
+
+def _report(**fields):
+    return {"print": {"gcode_state": "RUNNING", **fields}}
+
+
+def test_normalize_report_reads_stage_layers_fan_and_finish_time(tmp_path):
+    plugin = _plugin(tmp_path)
+    before = bambu_module.datetime.now()
+
+    status = plugin._normalize_report(
+        _report(stg_cur=2, mc_print_stage="2", layer_num=12, total_layer_num=48,
+                cooling_fan_speed="15", mc_remaining_time=18),
+        "192.0.2.55",
+        "SERIAL",
+    )
+
+    after = bambu_module.datetime.now()
+    assert status["stage"] == "Heatbed preheating"
+    assert (status["layer"], status["total_layers"]) == (12, 48)
+    assert status["fan"] == 100
+    expected = {
+        (moment + bambu_module.timedelta(minutes=18)).strftime("%H:%M") for moment in (before, after)
+    }
+    assert status["finish_at"] in expected
+
+
+@pytest.mark.parametrize(
+    ("fields", "stage"),
+    [
+        ({"stg_cur": 0}, "Printing"),
+        ({"stg_cur": 0, "gcode_state": "IDLE"}, ""),
+        ({"stg_cur": 255}, ""),
+        ({"stg_cur": -1}, ""),
+        ({"stg_cur": 99}, ""),
+        ({"mc_print_stage": "2"}, ""),
+        ({"mc_print_stage": "Calibrating"}, "Calibrating"),
+    ],
+)
+def test_normalize_report_stage_text(tmp_path, fields, stage):
+    status = _plugin(tmp_path)._normalize_report(_report(**fields), "192.0.2.55", "SERIAL")
+
+    assert status["stage"] == stage
+
+
+def test_normalize_report_fan_falls_back_and_finish_needs_remaining_time(tmp_path):
+    plugin = _plugin(tmp_path)
+
+    status = plugin._normalize_report(_report(fan_gear=70, mc_remaining_time=0), "192.0.2.55", "SERIAL")
+
+    assert status["fan"] == 70
+    assert status["finish_at"] is None
+    assert status["layer"] is None and status["total_layers"] is None
+
+
+def test_job_value_formatters():
+    assert BambuMonitor._remaining_text(18) == "18m"
+    assert BambuMonitor._remaining_text(65) == "1h 05m"
+    assert BambuMonitor._remaining_text(None) == "--"
+    assert BambuMonitor._speed_text("2") == "STANDARD"
+    assert BambuMonitor._speed_text("4") == "LUDICROUS"
+    assert BambuMonitor._speed_text("7") == "LV 7"
+    assert BambuMonitor._speed_text("") == "--"
+    assert BambuMonitor._fan_text(None) == "--"
+    assert BambuMonitor._fan_text(100) == "100%"
+    assert BambuMonitor._layer_text({"layer": 12, "total_layers": 48}) == "LAYER 12/48"
+    assert BambuMonitor._layer_text({"layer": 0, "total_layers": 0}) == ""
+
+
+def test_tray_slot_labels_follow_bambu_studio():
+    assert BambuMonitor._tray_slot_label("0-1") == "A2"
+    assert BambuMonitor._tray_slot_label("1-3") == "B4"
+    assert BambuMonitor._tray_slot_label("254") == "254"
+
+
+def test_visible_trays_show_the_unit_holding_the_active_tray():
+    trays = [{"id": f"{index // 4}-{index % 4}", "active": index == 5} for index in range(8)]
+
+    assert [tray["id"] for tray in BambuMonitor._visible_trays(trays)] == ["1-0", "1-1", "1-2", "1-3"]
+    for tray in trays:
+        tray["active"] = False
+    assert [tray["id"] for tray in BambuMonitor._visible_trays(trays)] == ["0-0", "0-1", "0-2", "0-3"]
+
+
+def test_in_use_pill_sits_roomily_under_the_spool(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    box = (22, 376, 141, 466)
+    layout = plugin._ams_tile_layout(box)
+    pills = []
+    draw_pill = plugin._draw_pill
+
+    def record_pill(draw, x, y, text, *args, **kwargs):
+        drawn_box = draw_pill(draw, x, y, text, *args, **kwargs)
+        pills.append((text, drawn_box))
+        return drawn_box
+
+    monkeypatch.setattr(plugin, "_draw_pill", record_pill)
+    image = Image.new("RGB", (200, 500), PAPER)
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_ams_tile(draw, box, {"id": "0-1", "active": True, "type": "PETG", "color": "FFFFFFFF"})
+
+    (text, (left, top, right, bottom)), = pills
+    cx, _cy, _radius = layout["spool"]
+    assert text == "USE"
+    assert top >= layout["ring_bottom"] + 6
+    assert bottom <= box[3] - 6 and box[0] < left and right < layout["text_x"]
+    assert bottom - top == 18
+    assert right - left >= plugin._text_width(draw, "USE", plugin._font(10, True)) + 22
+    assert abs((left + right) / 2 - cx) <= 1
+    assert image.getpixel((cx, (top + bottom) // 2 - 6)) == MALACHITE
+
+
+def test_inactive_tray_has_no_in_use_pill(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    pills = []
+    monkeypatch.setattr(plugin, "_draw_pill", lambda *args, **kwargs: pills.append(args))
+    draw = ImageDraw.Draw(Image.new("RGB", (200, 500), PAPER))
+
+    plugin._draw_ams_tile(draw, (22, 376, 141, 466), {"id": "0-0", "active": False, "type": "PLA", "color": "F2862EFF"})
+
+    assert pills == []
 
 
 class _BambuDeviceConfig:
@@ -708,11 +867,6 @@ def test_canonical_night_palette_recolors_neutral_wordmark_ink(tmp_path, monkeyp
         "_load_title_wordmark",
         lambda: Image.new("RGBA", TITLE_WORDMARK_SIZE, (0, 0, 0, 255)),
     )
-    monkeypatch.setattr(
-        plugin,
-        "_load_section_wordmark",
-        lambda title: Image.new("RGBA", SECTION_WORDMARK_IMAGES[title][1], (0, 0, 0, 255)),
-    )
     settings = {
         "demoMode": True,
         "_inkypi_theme": _theme_context("night"),
@@ -721,7 +875,6 @@ def test_canonical_night_palette_recolors_neutral_wordmark_ink(tmp_path, monkeyp
     image = plugin.generate_image(settings, _BambuDeviceConfig())
 
     assert image.getpixel((23, 14)) == night_ink
-    assert image.getpixel((32, 72)) == night_ink
 
 
 def test_night_theme_black_and_white_filaments_keep_data_colors_and_contrast_borders(
@@ -731,14 +884,14 @@ def test_night_theme_black_and_white_filaments_keep_data_colors_and_contrast_bor
     colors = bambu_module._render_colors(_theme_context("night"))
     token = bambu_module._ACTIVE_COLORS.set(colors)
     try:
-        image = Image.new("RGB", (34, 18), colors["panel"])
+        image = Image.new("RGB", (70, 34), colors["panel"])
         draw = ImageDraw.Draw(image)
-        plugin._draw_filament_color_chip(draw, (2, 2, 14, 14), "111111FF")
-        plugin._draw_filament_color_chip(draw, (19, 2, 31, 14), "FFFFFFFF")
-        black_fill = image.getpixel((8, 8))
-        black_border = image.getpixel((2, 2))
-        white_fill = image.getpixel((25, 8))
-        white_border = image.getpixel((19, 2))
+        plugin._draw_spool(draw, 16, 16, 14, "111111FF")
+        plugin._draw_spool(draw, 50, 16, 14, "FFFFFFFF")
+        black_fill = image.getpixel((16 + 10, 16))
+        black_border = image.getpixel((16 + 14, 16))
+        white_fill = image.getpixel((50 + 10, 16))
+        white_border = image.getpixel((50 + 14, 16))
     finally:
         bambu_module._ACTIVE_COLORS.reset(token)
 

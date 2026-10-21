@@ -9,7 +9,7 @@ from utils.app_utils import get_base_ui_font
 from utils.image_utils import text_width
 from utils.safe_image import ImageLimits, safe_open_image
 from utils.theme_utils import contrast_ratio, relative_luminance
-from datetime import datetime
+from datetime import datetime, timedelta
 from contextvars import ContextVar
 import colorsys
 import json
@@ -172,11 +172,46 @@ BAMBU_LAB_LOGO_GAP = 8
 MACHINE_NAME_MAX_LENGTH = 28
 MACHINE_MODEL_MAX_LENGTH = 16
 _MACHINE_IDENTITY_UNSET = object()
-SECTION_WORDMARK_IMAGES = {
-    "PRINT": ("subtitle_print.png", (106, 24)),
-    "LIVE VIEW": ("subtitle_live_view.png", (150, 24)),
-    "THERMALS": ("subtitle_thermals.png", (146, 24)),
-    "AMS": ("subtitle_ams.png", (72, 24)),
+# Camera-hero layout: a 16:9 camera frame with the AMS spools under it on the
+# left, the job column (progress, times, file, temperatures, speed) on the right.
+LAYOUT_MARGIN = 22
+LAYOUT_GAP = 16
+JOB_COLUMN_WIDTH = 232
+HEADER_RULE_Y = 54
+CONTENT_TOP = 64
+CARD_RADIUS = 10
+NOZZLE_SCALE_C = 300
+BED_SCALE_C = 120
+AMS_SLOTS = 4
+AMS_SLOT_GAP = 10
+AMS_SPOOL_RADIUS = 22
+AMS_USE_PILL_HEIGHT = 18
+AMS_USE_PILL_PAD = 11
+SPEED_LEVEL_NAMES = {"1": "SILENT", "2": "STANDARD", "3": "SPORT", "4": "LUDICROUS"}
+# The printer's stg_cur sub-stage codes; others (and -1/255 idle) are not shown.
+PRINT_STAGE_NAMES = {
+    0: "Printing",
+    1: "Auto bed leveling",
+    2: "Heatbed preheating",
+    3: "Sweeping XY mech mode",
+    4: "Changing filament",
+    5: "M400 pause",
+    6: "Paused: filament runout",
+    7: "Heating hotend",
+    8: "Calibrating extrusion",
+    9: "Scanning bed surface",
+    10: "Inspecting first layer",
+    11: "Identifying build plate type",
+    12: "Calibrating micro lidar",
+    13: "Homing toolhead",
+    14: "Cleaning nozzle tip",
+    15: "Checking extruder temperature",
+    16: "Paused by user",
+    17: "Paused: front cover falling",
+    18: "Calibrating micro lidar",
+    19: "Calibrating extrusion flow",
+    20: "Paused: nozzle temperature",
+    21: "Paused: heatbed temperature",
 }
 
 class MqttProtocolError(RuntimeError):
@@ -621,16 +656,19 @@ class BambuMonitor(BasePlugin):
             "updated_at": now,
             "source": "live",
             "state": str(data.get("gcode_state") or data.get("print_status") or data.get("stg_cur") or "UNKNOWN"),
-            "stage": str(data.get("mc_print_stage") or data.get("stg_cur") or ""),
+            "stage": self._stage_text(data),
             "progress": self._num(data.get("mc_percent"), 0),
             "remaining_minutes": data.get("mc_remaining_time"),
+            "finish_at": self._finish_at(data.get("mc_remaining_time")),
+            "layer": self._positive_int(data.get("layer_num")),
+            "total_layers": self._positive_int(data.get("total_layer_num")),
             "file": str(data.get("subtask_name") or data.get("gcode_file") or data.get("project_name") or ""),
             "nozzle": self._num(data.get("nozzle_temper")),
             "nozzle_target": self._num(data.get("nozzle_target_temper")),
             "bed": self._num(data.get("bed_temper")),
             "bed_target": self._num(data.get("bed_target_temper")),
             "chamber": self._num(data.get("chamber_temper")),
-            "fan": self._num(data.get("fan_gear")),
+            "fan": self._fan_percent(data),
             "speed": str(data.get("spd_lvl") or data.get("speed_lvl") or ""),
             "error": data.get("print_error") or data.get("fail_reason") or 0,
             "ams": self._extract_ams(data),
@@ -645,6 +683,43 @@ class BambuMonitor(BasePlugin):
             host=host,
             serial=serial,
         )
+
+    @staticmethod
+    def _stage_text(data):
+        """A readable sub-stage from stg_cur, else a non-numeric mc_print_stage."""
+        try:
+            code = int(data.get("stg_cur"))
+        except (TypeError, ValueError):
+            code = None
+        if code in PRINT_STAGE_NAMES:
+            running = str(data.get("gcode_state") or "").upper() == "RUNNING"
+            return PRINT_STAGE_NAMES[code] if code or running else ""
+        text = str(data.get("mc_print_stage") or "").strip()
+        return "" if not text or text.lstrip("-").isdigit() else text
+
+    @staticmethod
+    def _finish_at(remaining_minutes):
+        try:
+            minutes = int(float(remaining_minutes))
+        except (TypeError, ValueError):
+            return None
+        return (datetime.now() + timedelta(minutes=minutes)).strftime("%H:%M") if minutes > 0 else None
+
+    @staticmethod
+    def _positive_int(value):
+        try:
+            number = int(float(value))
+        except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
+
+    @classmethod
+    def _fan_percent(cls, data):
+        """Part cooling fan as a percentage (cooling_fan_speed is 0-15)."""
+        speed = cls._num(data.get("cooling_fan_speed"))
+        if speed is not None and 0 <= speed <= 15:
+            return round(speed / 15 * 100)
+        return cls._num(data.get("fan_gear"))
 
     @staticmethod
     def _apply_machine_identity(
@@ -703,6 +778,9 @@ class BambuMonitor(BasePlugin):
             "stage": "Printing",
             "progress": 63,
             "remaining_minutes": 147,
+            "finish_at": self._finish_at(147),
+            "layer": 87,
+            "total_layers": 240,
             "file": "desk_organizer_v4_plate_1.3mf",
             "nozzle": 219,
             "nozzle_target": 220,
@@ -723,124 +801,54 @@ class BambuMonitor(BasePlugin):
         }
 
     def _render_status(self, status, dimensions):
+        """Camera-hero layout: frame and AMS spools on the left, the job column on the right."""
         width, height = dimensions
-        paper = _active_color("paper", PAPER)
-        panel = _active_color("panel", PANEL)
-        ink = _active_color("ink", INK)
-        muted = _active_color("muted", MUTED)
-        accent_blue = _active_color("accent_blue", ACCENT_BLUE)
-        accent_gold = _active_color("accent_gold", ACCENT_GOLD)
-        accent_orange = _active_color("accent_orange", ACCENT_ORANGE)
-        cinnabar = _active_color("cinnabar", CINNABAR)
-        malachite = _active_color("malachite", MALACHITE)
-        img = Image.new("RGB", (width, height), paper)
+        img = Image.new("RGB", (width, height), _active_color("paper", PAPER))
         draw = ImageDraw.Draw(img)
+        self._draw_header(img, draw, status, width)
 
-        margin = 22
-        self._draw_halftone(draw, (width - 190, 8, width - 28, 50), accent_blue, paper, 9, 1)
-        self._draw_halftone(draw, (22, height - 46, 178, height - 12), cinnabar, paper, 10, 1)
-        title_x = margin
-        if self._draw_bambulab_logo(img, margin, 14, BAMBU_LAB_LOGO_SIZE):
-            title_x = margin + BAMBU_LAB_LOGO_SIZE[0] + BAMBU_LAB_LOGO_GAP
-        if not self._draw_title_wordmark(img, title_x, 13, TITLE_WORDMARK_SIZE):
-            title_box = (title_x, 12, title_x + 234, 44)
-            draw.rectangle((title_box[0] + 3, title_box[1] + 3, title_box[2] + 3, title_box[3] + 3), fill=accent_orange)
-            draw.rectangle(title_box, fill=accent_gold)
-            draw.rectangle(title_box, outline=ink, width=2)
-            draw.text((title_x + 10, 16), "BAMBU MONITOR", fill=ink, font=self._font(23, True))
-        draw.text((width - margin, 18), status.get("updated_at", ""), fill=muted, font=self._font(13, True), anchor="ra")
-        draw.line((margin, 52, width - margin, 52), fill=ink, width=2)
-        draw.line((margin, 56, width - margin, 56), fill=accent_blue, width=2)
-
-        left = (margin, 64, 292, 326)
-        camera = (310, 64, width - margin, 326)
-        thermals = (margin, 344, 370, height - margin)
-        ams = (388, 344, width - margin, height - margin)
-        self._draw_box(img, draw, left, "PRINT", accent_gold, _active_color("panel_gold", panel))
-        self._draw_box(img, draw, camera, "LIVE VIEW", accent_blue, _active_color("panel_blue", panel))
-        self._draw_box(img, draw, thermals, "THERMALS", cinnabar, _active_color("panel_orange", panel))
-        self._draw_box(img, draw, ams, "AMS", malachite, _active_color("panel_green", panel))
-
-        self._draw_print_panel(draw, left, status)
-        self._draw_camera_panel(img, draw, camera, status)
-        self._draw_thermal_panel(draw, thermals, status)
-        self._draw_ams_panel(draw, ams, status)
-
-        source = str(status.get("source") or "").upper()
-        if source:
-            source_font = self._font(11, True)
-            source_w = self._text_width(draw, source, source_font)
-            source_box = (width - margin - source_w - 18, height - 29, width - margin, height - 12)
-            source_color = self._source_color(source)
-            draw.rectangle(source_box, fill=source_color, outline=ink, width=1)
-            draw.text(
-                (source_box[0] + 9, height - 28),
-                source,
-                fill=self._contrast_text(source_color),
-                font=source_font,
-            )
-        warning = status.get("warning")
-        if warning:
-            self._draw_fit_text(draw, str(warning), margin + 8, height - 39, width - margin - 90, 12, False, cinnabar)
-
+        margin = LAYOUT_MARGIN
+        camera_right = width - margin - JOB_COLUMN_WIDTH - LAYOUT_GAP
+        camera_bottom = CONTENT_TOP + round((camera_right - margin) * 9 / 16)
+        self._draw_camera_hero(img, draw, (margin, CONTENT_TOP, camera_right, camera_bottom), status)
+        self._draw_ams_strip(draw, (margin, camera_bottom + 8, camera_right, height - 14), status)
+        self._draw_job_column(
+            draw,
+            (camera_right + LAYOUT_GAP, HEADER_RULE_Y + 2, width - margin, height - 14),
+            status,
+        )
         return img
 
-    def _draw_print_panel(self, draw, box, status):
-        left, top, right, bottom = box
-        panel = _active_color("panel", PANEL)
+    def _draw_header(self, canvas, draw, status, width):
+        margin = LAYOUT_MARGIN
         ink = _active_color("ink", INK)
-        accent_blue = _active_color("accent_blue", ACCENT_BLUE)
-        machine_name, machine_endpoint = self._machine_info_lines(status)
-        self._draw_fit_text_ellipsis(
-            draw,
-            machine_name,
-            left + 16,
-            top + 34,
-            right - left - 32,
-            11,
-            True,
-            ink,
-        )
-        self._draw_fit_text_ellipsis(
-            draw,
-            machine_endpoint,
-            left + 16,
-            top + 47,
-            right - left - 32,
-            10,
-            True,
-            ink,
-        )
+        title_x = margin
+        if self._draw_bambulab_logo(canvas, margin, 14, BAMBU_LAB_LOGO_SIZE):
+            title_x = margin + BAMBU_LAB_LOGO_SIZE[0] + BAMBU_LAB_LOGO_GAP
+        title_right = title_x + TITLE_WORDMARK_SIZE[0]
+        if not self._draw_title_wordmark(canvas, title_x, 13, TITLE_WORDMARK_SIZE):
+            title_right = title_x + 234
+            title_box = (title_x, 12, title_right, 44)
+            draw.rectangle((title_box[0] + 3, title_box[1] + 3, title_box[2] + 3, title_box[3] + 3),
+                           fill=_active_color("accent_orange", ACCENT_ORANGE))
+            draw.rectangle(title_box, fill=_active_color("accent_gold", ACCENT_GOLD))
+            draw.rectangle(title_box, outline=ink, width=2)
+            draw.text((title_x + 10, 16), "BAMBU MONITOR", fill=ink, font=self._font(23, True))
 
-        state = self._state_label(status.get("state"))
-        state_color = self._status_color(status.get("state"), status.get("error"))
-        state_font = self._fit_font(draw, state, right - left - 28, 36, True, 20)
-        state_box = (left + 14, top + 62, right - 14, top + 100)
-        draw.rectangle(state_box, fill=state_color, outline=ink, width=2)
-        state_text_box = draw.textbbox((0, 0), state, font=state_font)
-        state_y = state_box[1] + 5 - state_text_box[1]
-        draw.text((left + 24, state_y), state, fill=self._contrast_text(state_color), font=state_font)
-        stage = self._display_stage(status.get("stage"), status.get("state"))
-        self._draw_fit_text(draw, stage, left + 16, top + 106, right - left - 32, 13, True, ink)
-
-        progress = int(max(0, min(100, self._num(status.get("progress"), 0))))
-        bar = (left + 16, top + 128, right - 16, top + 156)
-        draw.rectangle(bar, fill=panel, outline=ink, width=2)
-        fill_w = int((bar[2] - bar[0] - 4) * progress / 100)
-        if fill_w > 0:
-            fill_box = (bar[0] + 2, bar[1] + 2, bar[0] + 2 + fill_w, bar[3] - 2)
-            draw.rectangle(fill_box, fill=state_color)
-            for x in range(fill_box[0] + 8, fill_box[2], 12):
-                draw.line((x, fill_box[1], x - 8, fill_box[3]), fill=ink, width=1)
-        draw.text((right - 18, top + 158), f"{progress}%", fill=ink, font=self._font(22, True), anchor="ra")
-
-        remaining = self._remaining_text(status.get("remaining_minutes"))
-        remaining_box = (left + 16, top + 187, right - 16, top + 211)
-        draw.rectangle(remaining_box, fill=panel, outline=ink, width=1)
-        draw.rectangle((remaining_box[0], remaining_box[1], remaining_box[0] + 7, remaining_box[3]), fill=accent_blue)
-        draw.text((left + 29, top + 190), remaining, fill=ink, font=self._font(16, True))
-        file_name = str(status.get("file") or "No active job")
-        self._draw_wrapped_fit_text(draw, file_name, left + 16, top + 224, right - left - 32, 2, 14, True, ink)
+        date_text, time_text = self._split_updated_at(status.get("updated_at"))
+        time_font = self._font(22, True)
+        date_font = self._font(10, True)
+        right = width - margin
+        draw.text((right, 12), time_text, fill=ink, font=time_font, anchor="ra")
+        draw.text((right, 38), date_text, fill=ink, font=date_font, anchor="ra")
+        clock_w = max(self._text_width(draw, time_text, time_font), self._text_width(draw, date_text, date_font))
+        identity_right = right - clock_w - 16
+        identity_w = identity_right - (title_right + 12)
+        if identity_w >= 60:
+            name_line, endpoint_line = self._machine_info_lines(status)
+            self._draw_fit_text_ellipsis(draw, name_line, identity_right, 17, identity_w, 11, True, ink, anchor="ra")
+            self._draw_fit_text_ellipsis(draw, endpoint_line, identity_right, 33, identity_w, 10, True, ink, anchor="ra")
+        draw.line((margin, HEADER_RULE_Y, right, HEADER_RULE_Y), fill=_active_color("rule", RULE), width=1)
 
     @classmethod
     def _machine_info_lines(cls, status):
@@ -882,134 +890,269 @@ class BambuMonitor(BasePlugin):
             return f"{host[0]}...{host[-1]}"
         return f"{host[:2]}...{host[-2:]}"
 
-    def _draw_camera_panel(self, canvas, draw, box, status):
+    @staticmethod
+    def _split_updated_at(value):
+        text = str(value or "").strip()
+        date_text, _, time_text = text.rpartition(" ")
+        return date_text, time_text or "--:--"
+
+    def _draw_camera_hero(self, canvas, draw, box, status):
         left, top, right, bottom = box
-        panel_blue = _active_color("panel_blue", PANEL_BLUE)
+        size = (right - left, bottom - top)
         ink = _active_color("ink", INK)
-        accent_blue = _active_color("accent_blue", ACCENT_BLUE)
-        accent_orange = _active_color("accent_orange", ACCENT_ORANGE)
-        cinnabar = _active_color("cinnabar", CINNABAR)
-        image_box = (left + 14, top + 40, right - 14, bottom - 16)
-        camera_img = self._load_camera_image(status)
-        if camera_img:
-            prepared = self._fit_camera_image(
-                camera_img,
-                (image_box[2] - image_box[0], image_box[3] - image_box[1]),
-                CAMERA_FRAME_CENTERING,
-            )
-            draw.rectangle(image_box, fill=ink)
-            canvas.paste(prepared, (image_box[0], image_box[1]))
-            draw.rectangle(image_box, outline=ink, width=2)
-            label = status.get("camera_updated_at")
-            if label:
-                draw.text((right - 18, top + 13), f"FRAME {label}", fill=accent_blue, font=self._font(10, True), anchor="ra")
-            return
-
-        waiting_img = self._load_waiting_image()
-        if waiting_img:
-            prepared = self._fit_camera_image(waiting_img, (image_box[2] - image_box[0], image_box[3] - image_box[1]))
-            draw.rectangle(image_box, fill=ink)
-            canvas.paste(prepared, (image_box[0], image_box[1]))
-            draw.rectangle(image_box, outline=ink, width=2)
-            draw.text((right - 18, top + 13), "WAITING", fill=accent_orange, font=self._font(10, True), anchor="ra")
-            return
-
-        draw.rectangle(image_box, fill=_blend(accent_blue, panel_blue, 0.08), outline=ink, width=2)
-        self._draw_halftone(draw, image_box, accent_blue, panel_blue, 18, 1)
-        draw.text(
-            ((image_box[0] + image_box[2]) // 2, (image_box[1] + image_box[3]) // 2 - 10),
-            "NO CAMERA FRAME",
-            fill=accent_blue,
-            font=self._font(18, True),
-            anchor="mm",
-        )
-        error = status.get("camera_error")
-        if error:
-            self._draw_fit_text(
-                draw,
-                error[:60],
-                image_box[0] + 12,
-                image_box[3] - 26,
-                image_box[2] - image_box[0] - 24,
-                11,
-                False,
-                cinnabar,
-            )
-
-    def _draw_thermal_panel(self, draw, box, status):
-        left, top, right, bottom = box
-        ink = _active_color("ink", INK)
-        muted = _active_color("muted", MUTED)
-        rule = _active_color("rule", RULE)
-        rows = [
-            ("NOZZLE", self._temp_text(status.get("nozzle"), status.get("nozzle_target")), _active_color("cinnabar", CINNABAR)),
-            ("BED", self._temp_text(status.get("bed"), status.get("bed_target")), _active_color("accent_orange", ACCENT_ORANGE)),
-            ("CHAMBER", self._temp_text(status.get("chamber"), None), _active_color("accent_gold", ACCENT_GOLD)),
-            ("FAN", self._percent_text(status.get("fan")), _active_color("accent_blue", ACCENT_BLUE)),
-            ("SPEED", self._speed_text(status.get("speed")), _active_color("malachite", MALACHITE)),
-        ]
-        y = top + 36
-        for label, value, accent in rows:
-            draw.rectangle((left + 16, y + 1, left + 25, y + 10), fill=accent, outline=ink, width=1)
-            draw.text((left + 32, y - 1), label, fill=muted, font=self._font(11, True))
-            draw.text((right - 16, y - 2), value, fill=ink, font=self._font(13, True), anchor="ra")
-            y += 16
-            if y < bottom - 12:
-                draw.line((left + 14, y - 3, right - 14, y - 3), fill=rule, width=1)
-
-    def _draw_ams_panel(self, draw, box, status):
-        left, top, right, bottom = box
         paper = _active_color("paper", PAPER)
-        panel = _active_color("panel", PANEL)
-        ink = _active_color("ink", INK)
-        muted = _active_color("muted", MUTED)
-        malachite = _active_color("malachite", MALACHITE)
         cinnabar = _active_color("cinnabar", CINNABAR)
+        frame = self._load_camera_image(status)
+        chip, chip_fill = None, _blend(ink, paper, 0.15)
+        prepared = None
+        if frame:
+            prepared = self._fit_camera_image(frame, size, CAMERA_FRAME_CENTERING)
+            if status.get("camera_updated_at"):
+                chip = f"CAM {status['camera_updated_at']}"
+        else:
+            waiting = self._load_waiting_image()
+            if waiting:
+                prepared = self._fit_camera_image(waiting, size)
+                chip, chip_fill = "WAITING", _active_color("accent_orange", ACCENT_ORANGE)
+        if prepared is not None:
+            mask = Image.new("L", size, 0)
+            ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=CARD_RADIUS, fill=255)
+            canvas.paste(prepared, (left, top), mask)
+        else:
+            panel_blue = _active_color("panel_blue", PANEL_BLUE)
+            accent_blue = _active_color("accent_blue", ACCENT_BLUE)
+            draw.rounded_rectangle(box, radius=CARD_RADIUS, fill=_blend(accent_blue, panel_blue, 0.08))
+            self._draw_halftone(draw, (left + 8, top + 8, right - 8, bottom - 8), accent_blue, panel_blue, 18, 1)
+            draw.text(((left + right) // 2, (top + bottom) // 2 - 10), "NO CAMERA FRAME",
+                      fill=accent_blue, font=self._font(18, True), anchor="mm")
+            error = status.get("camera_error")
+            if error:
+                self._draw_fit_text_ellipsis(draw, str(error), left + 16, bottom - 30, right - left - 32, 11, False, cinnabar)
+        draw.rounded_rectangle((left, top, right - 1, bottom - 1), radius=CARD_RADIUS, outline=ink, width=2)
+
+        state = self._state_label(status.get("state"))
+        self._draw_pill(draw, left + 10, top + 10, state, self._status_color(status.get("state"), status.get("error")))
+        if chip:
+            self._draw_pill(draw, right - 10, top + 10, chip, chip_fill, size=10, dot=False, align="right")
+        warning = status.get("warning")
+        if warning:
+            band = (left + 10, bottom - 36, right - 10, bottom - 10)
+            draw.rounded_rectangle(band, radius=8, fill=_active_color("panel", PANEL), outline=cinnabar, width=1)
+            self._draw_fit_text_ellipsis(draw, str(warning), band[0] + 10, band[1] + 6, band[2] - band[0] - 20, 12, True, cinnabar)
+
+    def _draw_job_column(self, draw, box, status):
+        x0, top, x1, bottom = box
+        ink = _active_color("ink", INK)
+        rule = _active_color("rule", RULE)
+        state_color = self._status_color(status.get("state"), status.get("error"))
+        progress = int(max(0, min(100, self._num(status.get("progress"), 0) or 0)))
+        draw.text((x0 - 3, top - 2), f"{progress}%", fill=ink, font=self._font(64, True))
+        layers = self._layer_text(status)
+        if layers:
+            draw.text((x1, top + 36), layers, fill=ink, font=self._font(11, True), anchor="ra")
+        self._draw_progress_bar(draw, (x0, top + 78, x1, top + 92), progress / 100, state_color, ticks=10)
+
+        chip_w = (x1 - x0 - 12) // 2
+        self._draw_stat_chip(draw, (x0, top + 104, x0 + chip_w, top + 144), "REMAINING",
+                             self._remaining_text(status.get("remaining_minutes")))
+        self._draw_stat_chip(draw, (x1 - chip_w, top + 104, x1, top + 144), "FINISH", status.get("finish_at") or "--")
+
+        self._draw_section_label(draw, x0, top + 156, "JOB", _active_color("accent_gold", ACCENT_GOLD))
+        self._draw_wrapped_text(draw, str(status.get("file") or "No active job"), x0, top + 174, x1 - x0, 3, 15)
+        draw.line((x0, top + 238, x1, top + 238), fill=rule, width=1)
+
+        half = (x1 - x0 - 20) // 2
+        self._draw_thermo(draw, x0, top + 248, half, "NOZZLE", status.get("nozzle"), status.get("nozzle_target"),
+                          NOZZLE_SCALE_C, _active_color("cinnabar", CINNABAR))
+        self._draw_thermo(draw, x1 - half, top + 248, half, "BED", status.get("bed"), status.get("bed_target"),
+                          BED_SCALE_C, _active_color("accent_orange", ACCENT_ORANGE))
+        self._draw_stat_chip(draw, (x0, top + 312, x0 + chip_w, top + 352), "SPEED", self._speed_text(status.get("speed")))
+        self._draw_stat_chip(draw, (x1 - chip_w, top + 312, x1, top + 352), "PART FAN", self._fan_text(status.get("fan")))
+
+        self._draw_section_label(draw, x0, top + 366, "STAGE", _active_color("accent_blue", ACCENT_BLUE))
+        source = str(status.get("source") or "").upper()
+        if source:
+            self._draw_pill(draw, x1, top + 362, source, self._source_color(source), size=10, dot=False, align="right")
+        stage = self._display_stage(status.get("stage")) or self._state_label(status.get("state")).title()
+        self._draw_fit_text_ellipsis(draw, stage, x0, top + 384, x1 - x0, 13, True, ink)
+
+    def _draw_ams_strip(self, draw, box, status):
+        left, top, right, bottom = box
+        ink = _active_color("ink", INK)
+        malachite = _active_color("malachite", MALACHITE)
         error = status.get("error")
         error_text = "OK" if not error or str(error) == "0" else f"ERR {error}"
-        error_color = malachite if error_text == "OK" else cinnabar
-        draw.text((right - 16, top + 11), error_text, fill=error_color, font=self._font(13, True), anchor="ra")
+        self._draw_section_label(draw, left, top, "AMS", malachite)
+        draw.text((right, top), error_text, font=self._font(11, True), anchor="ra",
+                  fill=malachite if error_text == "OK" else _active_color("cinnabar", CINNABAR))
 
-        trays = status.get("ams") or []
+        tiles_top = top + 18
+        trays = self._visible_trays(status.get("ams") or [])
         if not trays:
-            draw.text((left + 16, top + 44), "AMS: not reported", fill=ink, font=self._font(16))
+            draw.rounded_rectangle((left, tiles_top, right, bottom), radius=CARD_RADIUS,
+                                   fill=_active_color("panel", PANEL), outline=_active_color("rule", RULE))
+            draw.text(((left + right) // 2, (tiles_top + bottom) // 2), "AMS not reported", fill=ink,
+                      font=self._font(14, True), anchor="mm")
             return
+        slot_w = (right - left - (AMS_SLOTS - 1) * AMS_SLOT_GAP) // AMS_SLOTS
+        for index, tray in enumerate(trays):
+            x = left + index * (slot_w + AMS_SLOT_GAP)
+            self._draw_ams_tile(draw, (x, tiles_top, x + slot_w, bottom), tray)
 
-        x = left + 16
-        y = top + 42
-        visible_trays = trays[:4]
-        tray_w = max(64, min(110, int((right - left - 32 - 8 * (len(visible_trays) - 1)) / max(len(visible_trays), 1))))
-        for tray in visible_trays:
-            if x + tray_w > right - 10:
-                break
-            tray_box = (x, y, x + tray_w, bottom - 18)
-            swatch = self._filament_swatch_color(tray.get("color")) or _active_color("filament_gray", FILAMENT_GRAY)
-            tray_fill = _blend(swatch, panel, 0.10)
-            outline = malachite if tray.get("active") else ink
-            draw.rectangle(tray_box, fill=tray_fill, outline=outline, width=3 if tray.get("active") else 1)
-            draw.rectangle(
-                (tray_box[0], tray_box[1], tray_box[2], tray_box[1] + 5),
-                fill=swatch,
-                outline=self._filament_swatch_outline(tray.get("color"), swatch),
-                width=1,
-            )
-            draw.text((x + 7, y + 9), str(tray.get("id") or "?"), fill=ink, font=self._font(13, True))
-            if tray.get("active"):
-                tag = (x + tray_w - 30, y + 7, x + tray_w - 7, y + 20)
-                draw.rectangle(tag, fill=malachite, outline=ink, width=1)
-                draw.text(((tag[0] + tag[2]) // 2, tag[1] + 1), "USE", fill=paper, font=self._font(9, True), anchor="ma")
+    @staticmethod
+    def _visible_trays(trays):
+        """At most one AMS unit's worth of trays, the one holding the tray in use."""
+        trays = [tray for tray in trays if isinstance(tray, dict)]
+        active = next((index for index, tray in enumerate(trays) if tray.get("active")), 0)
+        start = (active // AMS_SLOTS) * AMS_SLOTS
+        return trays[start:start + AMS_SLOTS]
 
-            remain = tray.get("remain")
-            detail = str(tray.get("type") or "FIL").upper()
-            if self._is_nonnegative(remain):
-                detail = f"{detail} {remain}%"
-            self._draw_fit_text(draw, detail, x + 7, y + 27, tray_w - 14, 11, True, ink)
+    @staticmethod
+    def _ams_tile_layout(box):
+        """Spool, text column and in-use pill positions inside one AMS tile."""
+        left, top, right, bottom = box
+        radius = AMS_SPOOL_RADIUS
+        centre = (left + 32, top + 32)
+        pill_top = bottom - 8 - AMS_USE_PILL_HEIGHT
+        return {
+            "spool": (centre[0], centre[1], radius),
+            "ring_bottom": centre[1] + radius + 4,
+            "pill_top": pill_top,
+            "text_x": left + 64,
+            "text_w": right - 8 - (left + 64),
+        }
 
-            color = tray.get("color")
-            chip = (x + 7, y + 41, x + 18, y + 52)
-            self._draw_filament_color_chip(draw, chip, color)
-            self._draw_fit_text(draw, self._filament_color_label(color), x + 23, y + 39, tray_w - 30, 10, False, muted)
-            x += tray_w + 8
+    def _draw_ams_tile(self, draw, box, tray):
+        left, top, right, bottom = box
+        ink = _active_color("ink", INK)
+        malachite = _active_color("malachite", MALACHITE)
+        active = bool(tray.get("active"))
+        draw.rounded_rectangle(box, radius=CARD_RADIUS, fill=_active_color("panel", PANEL),
+                               outline=malachite if active else _active_color("rule", RULE), width=2 if active else 1)
+        layout = self._ams_tile_layout(box)
+        cx, cy, radius = layout["spool"]
+        self._draw_spool(draw, cx, cy, radius, tray.get("color"), active)
+        text_x, text_w = layout["text_x"], layout["text_w"]
+        self._draw_fit_text_ellipsis(draw, self._tray_slot_label(tray.get("id")), text_x, top + 10, text_w, 15, True, ink)
+        detail = str(tray.get("type") or "FIL").upper()
+        if self._is_nonnegative(tray.get("remain")):
+            detail = f"{detail} {float(tray['remain']):.0f}%"
+        self._draw_fit_text_ellipsis(draw, detail, text_x, top + 31, text_w, 13, True, ink)
+        self._draw_fit_text_ellipsis(draw, self._filament_color_label(tray.get("color")), text_x, top + 50, text_w, 10, True, ink)
+        if active:
+            self._draw_pill(draw, cx, layout["pill_top"], "USE", malachite, size=10, dot=False, align="center",
+                            pad=AMS_USE_PILL_PAD, height=AMS_USE_PILL_HEIGHT)
+
+    def _draw_spool(self, draw, cx, cy, radius, color, active=False):
+        swatch = self._filament_swatch_color(color)
+        ink = _active_color("ink", INK)
+        panel = _active_color("panel", PANEL)
+        if not swatch:
+            draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=panel, outline=ink, width=1)
+            draw.line((cx - radius * 0.7, cy + radius * 0.7, cx + radius * 0.7, cy - radius * 0.7),
+                      fill=_active_color("cinnabar", CINNABAR), width=2)
+        else:
+            edge = self._filament_swatch_outline(color, swatch)
+            draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=swatch, outline=edge, width=1)
+            for ratio in (0.78, 0.62):
+                ring = round(radius * ratio)
+                draw.ellipse((cx - ring, cy - ring, cx + ring, cy + ring), outline=_blend(edge, swatch, 0.45), width=1)
+        hub = round(radius * 0.42)
+        draw.ellipse((cx - hub, cy - hub, cx + hub, cy + hub), fill=panel, outline=ink, width=2)
+        hole = max(2, round(radius * 0.12))
+        draw.ellipse((cx - hole, cy - hole, cx + hole, cy + hole), fill=ink)
+        if active:
+            ring = radius + 4
+            draw.ellipse((cx - ring, cy - ring, cx + ring, cy + ring), outline=_active_color("malachite", MALACHITE), width=3)
+
+    @staticmethod
+    def _tray_slot_label(tray_id):
+        """Bambu Studio's slot name: AMS unit letter and 1-based tray, e.g. 0-1 -> A2."""
+        unit, _, tray = str(tray_id or "").partition("-")
+        if unit.isdigit() and tray.isdigit() and int(unit) < 26:
+            return f"{chr(65 + int(unit))}{int(tray) + 1}"
+        return str(tray_id or "?")
+
+    def _draw_pill(self, draw, x, y, text, fill, size=13, dot=True, align="left", pad=9, height=None):
+        """A rounded label; ``x`` is its left edge, right edge or centre per ``align``."""
+        font = self._font(size, True)
+        height = height or size + 11
+        width = self._text_width(draw, text, font) + 2 * pad + (12 if dot else 0)
+        left = {"right": x - width, "center": x - width / 2}.get(align, x)
+        box = (round(left), y, round(left + width), y + height)
+        draw.rounded_rectangle(box, radius=height // 2, fill=fill)
+        ink = self._contrast_text(fill)
+        text_x = box[0] + pad
+        if dot:
+            middle = y + height // 2
+            draw.ellipse((text_x, middle - 3, text_x + 6, middle + 3), fill=ink)
+            text_x += 12
+        draw.text((text_x, y + height / 2), text, fill=ink, font=font, anchor="lm")
+        return box
+
+    def _draw_progress_bar(self, draw, box, fraction, color, ticks=0):
+        left, top, right, bottom = box
+        radius = (bottom - top) // 2
+        panel = _active_color("panel", PANEL)
+        draw.rounded_rectangle(box, radius=radius, fill=_blend(_active_color("rule", RULE), panel, 0.55))
+        fill_right = left + round((right - left) * max(0.0, min(1.0, fraction)))
+        if fill_right - left >= 2 * radius:
+            draw.rounded_rectangle((left, top, fill_right, bottom), radius=radius, fill=color)
+        for index in range(1, ticks):
+            x = left + round((right - left) * index / ticks)
+            draw.line((x, top + 2, x, bottom - 2), fill=_active_color("paper", PAPER), width=1)
+
+    def _draw_stat_chip(self, draw, box, label, value):
+        left, top, right, bottom = box
+        ink = _active_color("ink", INK)
+        draw.rounded_rectangle(box, radius=8, fill=_blend(_active_color("rule", RULE), _active_color("panel", PANEL), 0.18),
+                               outline=_active_color("rule", RULE), width=1)
+        draw.text((left + 10, top + 6), label, fill=ink, font=self._font(10, True))
+        self._draw_fit_text_ellipsis(draw, str(value), left + 10, top + 19, right - left - 20, 15, True, ink)
+
+    def _draw_section_label(self, draw, x, y, text, color):
+        draw.rounded_rectangle((x, y + 2, x + 4, y + 12), radius=2, fill=color)
+        draw.text((x + 9, y), text, fill=_active_color("ink", INK), font=self._font(11, True))
+
+    def _draw_thermo(self, draw, x, y, width, label, current, target, scale, color):
+        ink = _active_color("ink", INK)
+        draw.text((x, y), label, fill=ink, font=self._font(10, True))
+        current = self._num(current)
+        target = self._num(target)
+        value = "--" if current is None else f"{current:.0f}°"
+        value_font = self._font(22, True)
+        draw.text((x, y + 14), value, fill=ink, font=value_font)
+        if target is not None and current is not None:
+            draw.text((x + self._text_width(draw, value, value_font) + 4, y + 22), f"/ {target:.0f}°",
+                      fill=ink, font=self._font(12, True))
+        bar_top = y + 44
+        self._draw_progress_bar(draw, (x, bar_top, x + width, bar_top + 6), (current or 0) / scale, color)
+        if target:
+            tick = x + round(width * min(1.0, target / scale))
+            draw.line((tick, bar_top - 3, tick, bar_top + 9), fill=ink, width=2)
+
+    def _draw_wrapped_text(self, draw, text, x, y, max_width, max_lines, size, bold=True):
+        """Greedy word wrap at one size; the last line ends in an ellipsis if text remains."""
+        font = self._font(size, bold)
+        words = str(text).replace("_", " ").split()
+        lines = []
+        while words and len(lines) < max_lines:
+            line = words.pop(0)
+            while words and self._text_width(draw, f"{line} {words[0]}", font) <= max_width:
+                line = f"{line} {words.pop(0)}"
+            lines.append(line)
+        if words:
+            lines[-1] = f"{lines[-1]} {' '.join(words)}"
+        ink = _active_color("ink", INK)
+        for index, line in enumerate(lines):
+            draw.text((x, y + index * (size + 4)), self._ellipsize(draw, line, font, max_width), fill=ink, font=font)
+
+    def _ellipsize(self, draw, text, font, max_width):
+        if self._text_width(draw, text, font) <= max_width:
+            return text
+        while text and self._text_width(draw, text.rstrip() + "…", font) > max_width:
+            text = text[:-1]
+        return text.rstrip() + "…"
 
     def _render_setup_required(self, dimensions, host, serial, has_code, settings=None):
         status = {
@@ -1119,55 +1262,6 @@ class BambuMonitor(BasePlugin):
         except Exception as exc:
             logger.warning(f"Failed to write Bambu cache: {exc}")
 
-    def _draw_box(self, canvas, draw, box, title=None, accent=ACCENT_BLUE, fill=PANEL):
-        left, top, right, bottom = [int(value) for value in box]
-        ink = _active_color("ink", INK)
-        draw.rectangle((left + 3, top + 4, right + 3, bottom + 4), fill=_active_color("accent_orange", ACCENT_ORANGE))
-        draw.rectangle((left, top, right, bottom), fill=fill)
-        draw.rectangle((left, top, right, bottom), outline=ink, width=2)
-        draw.rectangle((left, top, right, top + 7), fill=accent)
-        if title and not self._draw_section_wordmark(canvas, title, left + 10, top + 8):
-            draw.text((left + 12, top + 12), title, fill=ink, font=self._font(15, True))
-
-    def _draw_section_wordmark(self, canvas, title, x, y):
-        config = SECTION_WORDMARK_IMAGES.get(title)
-        if not config:
-            return False
-        source = self._load_section_wordmark(title)
-        if source is None:
-            return False
-
-        try:
-            _, size = config
-            target_w, target_h = [int(value) for value in size]
-            source = self._tint_neutral_asset_ink(self._trim_transparent(source))
-            resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
-            art = ImageOps.contain(source.copy(), (target_w, target_h), method=resample)
-            layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
-            layer.alpha_composite(art, ((target_w - art.width) // 2, (target_h - art.height) // 2))
-            canvas.paste(layer.convert("RGB"), (int(x), int(y)), layer.getchannel("A"))
-            return True
-        except Exception as exc:
-            logger.warning(f"Bambu section wordmark unavailable: {title}: {exc}")
-            return False
-
-    def _section_wordmark_file(self, title):
-        config = SECTION_WORDMARK_IMAGES.get(title)
-        if not config:
-            return None
-        filename, _ = config
-        return os.path.join(os.path.dirname(__file__), filename)
-
-    def _load_section_wordmark(self, title):
-        path = self._section_wordmark_file(title)
-        if not path or not os.path.exists(path):
-            return None
-        try:
-            return Image.open(path).convert("RGBA")
-        except Exception as exc:
-            logger.warning(f"Failed to load Bambu section wordmark {title}: {exc}")
-            return None
-
     @staticmethod
     def _trim_transparent(image):
         if image.mode != "RGBA":
@@ -1259,10 +1353,6 @@ class BambuMonitor(BasePlugin):
             for x in range(left + offset, right, max(4, int(spacing))):
                 draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=dot)
 
-    def _draw_fit_text(self, draw, text, x, y, max_width, start_size, bold=False, fill=INK):
-        font = self._fit_font(draw, text, max_width, start_size, bold, 9)
-        draw.text((x, y), str(text), fill=fill, font=font)
-
     def _draw_fit_text_ellipsis(
         self,
         draw,
@@ -1273,6 +1363,7 @@ class BambuMonitor(BasePlugin):
         start_size,
         bold=False,
         fill=INK,
+        anchor="la",
     ):
         rendered = str(text)
         font = self._fit_font(draw, rendered, max_width, start_size, bold, 9)
@@ -1299,50 +1390,8 @@ class BambuMonitor(BasePlugin):
                 while rendered and rendered_width(rendered) > max_width:
                     rendered = rendered[:-2].rstrip() + ellipsis
 
-        draw.text((x, y), rendered, fill=fill, font=font)
+        draw.text((x, y), rendered, fill=fill, font=font, anchor=anchor)
         return rendered, font
-
-    def _draw_filament_color_chip(self, draw, box, color):
-        swatch = self._filament_swatch_color(color)
-        panel = _active_color("panel", PANEL)
-        ink = _active_color("ink", INK)
-        paper = _active_color("paper", PAPER)
-        if not swatch:
-            draw.rectangle(box, fill=panel, outline=ink)
-            draw.line((box[0], box[1], box[2], box[3]), fill=_active_color("cinnabar", CINNABAR), width=1)
-            return
-
-        draw.rectangle(
-            box,
-            outline=self._filament_swatch_outline(color, swatch),
-            fill=swatch,
-        )
-        luminance = self._luma(swatch)
-        if 55 <= luminance < 210:
-            pattern = ink if luminance > 150 else paper
-            left, top, right, bottom = box[0] + 2, box[1] + 2, box[2] - 2, box[3] - 2
-            for y in range(top, bottom + 1, 4):
-                draw.line((left, y, right, y), fill=pattern, width=1)
-
-    def _draw_wrapped_fit_text(self, draw, text, x, y, max_width, max_lines, start_size, bold=False, fill=INK):
-        words = str(text).replace("_", " ").split()
-        lines = []
-        current = ""
-        font = self._font(start_size, bold)
-        for word in words:
-            candidate = f"{current} {word}".strip()
-            if self._text_width(draw, candidate, font) <= max_width:
-                current = candidate
-            else:
-                if current:
-                    lines.append(current)
-                current = word
-            if len(lines) >= max_lines:
-                break
-        if current and len(lines) < max_lines:
-            lines.append(current)
-        for idx, line in enumerate(lines[:max_lines]):
-            self._draw_fit_text(draw, line, x, y + idx * (start_size + 4), max_width, start_size, bold, fill)
 
     def _load_camera_image(self, status):
         image = status.get("camera_image")
@@ -1611,43 +1660,37 @@ class BambuMonitor(BasePlugin):
         return aliases.get(state, state)
 
     @staticmethod
-    def _display_stage(stage, fallback):
+    def _display_stage(stage):
+        """Readable stage text; a bare number (old mc_print_stage caches) is hidden."""
         text = str(stage or "").strip()
-        if not text:
-            return str(fallback or "")
-        if text.isdigit():
-            return f"Stage {text}"
-        return text
+        return "" if text.lstrip("-").isdigit() else text
 
     @staticmethod
     def _remaining_text(value):
         try:
             minutes = int(float(value))
         except (TypeError, ValueError):
-            return "Remaining: --"
-        hours = minutes // 60
-        mins = minutes % 60
-        if hours:
-            return f"Remaining: {hours}h {mins}m"
-        return f"Remaining: {mins}m"
+            return "--"
+        if minutes < 0:
+            return "--"
+        hours, mins = divmod(minutes, 60)
+        return f"{hours}h {mins:02d}m" if hours else f"{mins}m"
 
     @staticmethod
-    def _temp_text(current, target):
-        if current is None:
-            return "--"
-        current_text = f"{float(current):.0f}C"
-        if target not in (None, ""):
-            return f"{current_text}/{float(target):.0f}C"
-        return current_text
+    def _layer_text(status):
+        layer = BambuMonitor._positive_int(status.get("layer"))
+        total = BambuMonitor._positive_int(status.get("total_layers"))
+        return f"LAYER {layer}/{total}" if layer and total else ""
 
     @staticmethod
-    def _percent_text(value):
-        if value is None:
+    def _fan_text(value):
+        try:
+            return f"{float(value):.0f}%"
+        except (TypeError, ValueError):
             return "--"
-        return f"{float(value):.0f}%"
 
     @staticmethod
     def _speed_text(value):
         if value in (None, ""):
             return "--"
-        return f"LV {value}"
+        return SPEED_LEVEL_NAMES.get(str(value), f"LV {value}")
