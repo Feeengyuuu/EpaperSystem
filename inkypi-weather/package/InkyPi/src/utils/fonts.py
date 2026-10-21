@@ -17,6 +17,10 @@ font but fixes two rendering faults:
 * Missing glyphs. Characters the font only draws as its .notdef box (YaHei
   Bold's middle dot, zero-width marks, emoji) are replaced by an equivalent the
   same font has, or dropped when they are invisible or pictographic.
+
+Every font also draws curly quotes and the ellipsis it would set full width (as
+CJK fonts do) as their ASCII forms when they sit in Latin text, so "Meier’s"
+does not read "Meier’ s"; beside Chinese they keep their full-width form.
 """
 
 from __future__ import annotations
@@ -79,6 +83,16 @@ _EQUIVALENTS.update(
         "\u2716": ("\u00d7", "x"),
     }
 )
+# Punctuation CJK fonts set full width, and its form for Latin text.
+_LATIN_PUNCTUATION = {
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201b": "'",
+    "\u201c": '"',
+    "\u201d": '"',
+    "\u201f": '"',
+    "\u2026": "...",
+}
 _DROPPED_CATEGORIES = frozenset({"Cc", "Cf", "Cn", "Co", "Cs", "Mn", "Me"})
 _SYMBOL_CATEGORIES = frozenset({"So", "Sk"})
 _COVERAGE_LUT = [
@@ -187,6 +201,28 @@ def _paste_max(canvas: Image.Image, glyph: Image.Image, x: int, y: int) -> None:
     canvas.paste(ImageChops.lighter(canvas.crop(box), piece), box)
 
 
+def _neighbour(text: str, index: int, step: int) -> str:
+    """The nearest non-space character before (step -1) or after (+1) ``index``."""
+    index += step
+    while 0 <= index < len(text):
+        if not text[index].isspace():
+            return text[index]
+        index += step
+    return ""
+
+
+def _is_latin(char: str) -> bool:
+    if not char or char in _LATIN_PUNCTUATION:
+        return False
+    if char.isascii():
+        return char.isprintable() and not char.isspace()
+    return char.isalpha() and unicodedata.name(char, "").startswith("LATIN")
+
+
+def _is_wide_script(char: str) -> bool:
+    return bool(char) and unicodedata.east_asian_width(char) in ("W", "F")
+
+
 class GlyphSafeFont(ImageFont.FreeTypeFont):
     """FreeTypeFont that never draws its .notdef box.
 
@@ -235,7 +271,8 @@ class GlyphSafeFont(ImageFont.FreeTypeFont):
     # -- text normalisation ------------------------------------------------------------
 
     def safe_text(self, text):
-        """Replace characters this font would draw as .notdef."""
+        """Replace characters this font would draw as .notdef, and narrow
+        full-width curly quotes and ellipses inside Latin text."""
 
         if not isinstance(text, str) or (text.isascii() and text.isprintable()):
             return text
@@ -246,6 +283,19 @@ class GlyphSafeFont(ImageFont.FreeTypeFont):
                 out.append(char)
             else:
                 out.append(self._substitute(char))
+        return self._narrow_latin_punctuation("".join(out))
+
+    def _narrow_latin_punctuation(self, text: str) -> str:
+        if not any(char in _LATIN_PUNCTUATION for char in text):
+            return text
+        out = []
+        for index, char in enumerate(text):
+            ascii_form = _LATIN_PUNCTUATION.get(char)
+            if ascii_form is not None and self._facts.wide(char):
+                sides = (_neighbour(text, index, -1), _neighbour(text, index, 1))
+                if any(_is_latin(side) for side in sides) and not any(_is_wide_script(side) for side in sides):
+                    char = ascii_form
+            out.append(char)
         return "".join(out)
 
     def _all_present(self, text: str) -> bool:

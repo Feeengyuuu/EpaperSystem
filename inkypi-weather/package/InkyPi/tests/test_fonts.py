@@ -190,3 +190,25 @@ def test_other_fonts_only_lose_missing_glyphs_and_keep_their_spacing():
     safe._facts = _Facts({"\u200b", "\U0001f525"})
     assert safe.safe_text("hot\u200b take \U0001f525") == "hot take "
     assert safe.getlength("hot\u200b take \U0001f525") == plain.getlength("hot take ")
+
+
+def test_cjk_fonts_draw_curly_quotes_and_ellipses_narrow_inside_latin_text():
+    font = load_font(CJK_FONT, 16)
+
+    assert font.safe_text("Sid Meier\u2019s Civiliza\u2026") == "Sid Meier's Civiliza..."
+    assert font.safe_text("\u201cHello\u201d and \u2018\u201990s") == '"Hello" and \'\'90s'
+    assert font.getlength("Sid Meier\u2019s") == font.getlength("Sid Meier's")
+
+
+def test_cjk_quotes_stay_full_width_around_and_beside_chinese():
+    font = load_font(CJK_FONT, 16)
+
+    for text in ("\u201c\u5341\u4e94\u4e94\u201d\u89c4\u5212", "\u4ed6\u8bf4\u201cOK\u201d\u3002",
+                 "\u8fd8\u6709\u2026\u2026", "\u6c34\u2019s"):
+        assert font.safe_text(text) == text
+
+
+def test_fonts_with_narrow_curly_quotes_keep_them():
+    font = load_font(LATIN_FONT, 16)
+
+    assert font.safe_text("Sid Meier\u2019s Civiliza\u2026") == "Sid Meier\u2019s Civiliza\u2026"
