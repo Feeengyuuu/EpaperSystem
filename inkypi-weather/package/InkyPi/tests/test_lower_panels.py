@@ -297,6 +297,100 @@ def test_each_panel_renders_with_every_text_inside_its_box(panel, colors, boxes)
     assert tuple(colors["text"]) in content
 
 
+def _ticker_game(code_a, code_b, hours, **overrides):
+    return {
+        "event_id": f"{code_a}-{code_b}", "state": "pre", "start": NOW + timedelta(hours=hours),
+        "team_a": code_a, "team_b": code_b, "team_a_code": code_a, "team_b_code": code_b,
+        "team_a_logo": f"https://logos.test/{code_a}.png", "team_b_logo": f"https://logos.test/{code_b}.png",
+        **overrides,
+    }
+
+
+def test_ticker_rows_put_each_team_logo_beside_its_name(boxes):
+    games = [_ticker_game("ATL", "ORL", 4), _ticker_game("DEN", "UTA", 4), _ticker_game("MIN", "MIA", 5)]
+    logos = []
+    spec = _plugin()._basketball_spec("NBA")
+    shown = {
+        game[f"team_{side}_code"]: (side, spec.hook("team_name", game, side, False))
+        for game in games for side in ("a", "b")
+    }
+
+    def draw(plugin, image, draw):
+        plugin._draw_team_logo = lambda _image, _draw, url, x, y, size, fallback: logos.append((url, x, y, size, fallback))
+        plugin._draw_kit_ticker(image, draw, (300, 120, 520, 220), games, NOW, plugin._basketball_spec("NBA"))
+
+    _image, image_draw = _render(draw)
+
+    _assert_fits(image_draw, boxes)
+    assert [url for url, *_rest in logos] == [
+        f"https://logos.test/{code}.png" for game in games for code in (game["team_a_code"], game["team_b_code"])
+    ]
+    names = {text: (box, font) for box, text, font in boxes}
+    for url, x, y, size, _fallback in logos:
+        side, name = shown[url.rsplit("/", 1)[1][:3]]
+        (left, top, right, bottom), font = names[name]
+        name_w = SportsDashboard._text_width(image_draw, name, font)
+        assert size >= 11 and top <= y and y + size <= bottom + 2
+        if side == "a":
+            assert x + size <= right - name_w - 1
+        else:
+            assert x >= left + name_w + 1
+        assert 300 <= x and x + size <= 520
+
+
+def _leaderless_live_game(**overrides):
+    return {
+        "event_id": "OKC-SA", "state": "in", "period": 1, "clock": "7:20", "wins_a": 9, "wins_b": 8,
+        "team_a": "OKC", "team_b": "SA", "team_a_code": "OKC", "team_b_code": "SA",
+        "team_a_color": "007AC1", "team_b_color": "C4CED4", "start": NOW,
+        **overrides,
+    }
+
+
+def test_leaderless_game_fills_the_leader_area_with_team_jerseys(boxes):
+    def draw(plugin, image, draw):
+        plugin._draw_basketball_leader_duel(draw, (12, 140, 328, 228), _leaderless_live_game(), plugin._basketball_spec("NBA"))
+
+    image, _draw = _render(draw)
+
+    texts = [text for _box, text, _font in boxes]
+    assert "球员数据稍后更新" in texts
+    art = set(image.crop((14, 160, 326, 226)).get_flattened_data())
+    blue = tuple(DAY_COLORS["blue"])
+    assert blue in art and tuple(DAY_COLORS["amber"]) in art
+
+
+def test_pending_art_stays_below_the_leader_header_and_inks_silver_teams_black():
+    seen = {}
+
+    def draw(plugin, image, draw):
+        plugin._draw_basketball_leader_duel(draw, (12, 140, 328, 228), _leaderless_live_game(), plugin._basketball_spec("NBA"))
+        seen["before"] = image.copy()
+
+    image, _draw = _render(draw)
+
+    header_band = set(image.crop((60, 141, 280, 156)).get_flattened_data())
+    assert tuple(DAY_COLORS["amber"]) not in header_band
+    right_half = set(image.crop((200, 160, 326, 226)).get_flattened_data())
+    assert tuple(DAY_COLORS["text"]) in right_half and tuple(DAY_COLORS["amber"]) not in set(image.crop((290, 160, 326, 226)).get_flattened_data())
+    assert SportsDashboard._kit_jersey_ink_key("C4CED4", "nba_accent") == "text"
+    assert SportsDashboard._kit_jersey_ink_key("007AC1", "nba_accent") == "blue"
+
+
+def test_leader_rows_leave_no_room_for_the_pending_art(boxes):
+    leaders = {
+        "team_leaders_a": [{"label": "PTS", "name": "S. Gilgeous-Alexander", "value": "6"}],
+        "team_leaders_b": [{"label": "PTS", "name": "V. Wembanyama", "value": "4"}],
+    }
+
+    def draw(plugin, image, draw):
+        plugin._draw_basketball_leader_duel(draw, (12, 140, 328, 228), _leaderless_live_game(**leaders), plugin._basketball_spec("NBA"))
+
+    _render(draw)
+
+    assert "球员数据稍后更新" not in [text for _box, text, _font in boxes]
+
+
 def test_mlb_live_panel_lights_the_situation(boxes):
     _image, _draw = _render(_panels()["mlb"])
     texts = [text for _box, text, _font in boxes]

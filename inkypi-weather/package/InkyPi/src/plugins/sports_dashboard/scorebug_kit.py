@@ -24,6 +24,8 @@ KIT_SCOREBOARD_ROW_HEIGHT = 26
 KIT_SCOREBOARD_STATE_WIDTH = 44
 KIT_TILE_HEIGHT = 36
 KIT_TICKER_ROW_HEIGHT = 17
+KIT_TICKER_LOGO_SIZE = 12
+KIT_TICKER_LOGO_GAP = 3
 # Pure panel inks a team colour may map to; white is left out so every team
 # stripe stays visible on paper.
 KIT_TEAM_INK_KEYS = ("red", "blue", "green", "amber", "text")
@@ -361,12 +363,21 @@ class ScorebugKitMixin:
             team_x1 = x1 + 60
             center = (team_x1 + x2) // 2
             self._draw_text_in_box(draw, (center - middle_w // 2 - 1, top, center + middle_w // 2 + 2, top + 15), middle_text, middle_font, COLORS["text"], align="center")
+            # Each team's logo sits on the outer side of its name.
+            logo_room = KIT_TICKER_LOGO_SIZE + KIT_TICKER_LOGO_GAP
             for side, name, box_side, align in (
-                ("a", name_a, (team_x1, top, center - middle_w // 2 - 5, top + 15), "right"),
-                ("b", name_b, (center + middle_w // 2 + 5, top, x2, top + 15), "left"),
+                ("a", name_a, (team_x1 + logo_room, top, center - middle_w // 2 - 5, top + 15), "right"),
+                ("b", name_b, (center + middle_w // 2 + 5, top, x2 - logo_room, top + 15), "left"),
             ):
                 text, font = self._fit_text_ellipsis(draw, name, box_side[2] - box_side[0], 10, bold=winner in ("", side), min_size=8)
                 self._draw_text_in_box(draw, box_side, text, font, COLORS["text"], align=align)
+                text_w = self._text_width(draw, text, font)
+                if side == "a":
+                    logo_x = box_side[2] - text_w - KIT_TICKER_LOGO_GAP - KIT_TICKER_LOGO_SIZE
+                else:
+                    logo_x = box_side[0] + text_w + KIT_TICKER_LOGO_GAP
+                fallback = spec.hook("logo_fallback", event, side, default=event.get(f"team_{side}_code"))
+                self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), logo_x, top + 2, KIT_TICKER_LOGO_SIZE, fallback)
             if index < min(capacity, len(games)) - 1:
                 draw.line((x1, top + KIT_TICKER_ROW_HEIGHT - 1, x2, top + KIT_TICKER_ROW_HEIGHT - 1), fill=COLORS["line"], width=1)
 

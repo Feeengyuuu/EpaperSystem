@@ -26,6 +26,8 @@ BASKETBALL_SPEC_KEYS = {
 BASKETBALL_CLUTCH_MARGIN = 5
 FACEOFF_HERO_HEIGHT = 88
 FACEOFF_CENTER_HALF_WIDTH = 72
+# Below this height the leader area stays plain when no player stats exist yet.
+LEADERS_PENDING_MIN_HEIGHT = 40
 
 
 class BasketballRenderMixin:
@@ -289,6 +291,78 @@ class BasketballRenderMixin:
             margin = SportsDashboard._basketball_margin_label(event)
             if margin:
                 self._draw_kit_labeled_line(draw, (x1, y, x2, y + 14), "", margin)
+                y += 18
+            if y2 - y >= LEADERS_PENDING_MIN_HEIGHT:
+                self._draw_basketball_leaders_pending(draw, (x1, y, x2, y2), event, spec)
+
+    def _draw_basketball_leaders_pending(self, draw, box, event, spec):
+        """Before any player stats: the two teams' jerseys passing a ball across."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        caption_y = y2 - 12
+        jersey_h = min(40, caption_y - y1 - 2)
+        jersey_w = round(jersey_h * 0.9)
+        jersey_top = caption_y - 2 - jersey_h
+        centers = (round(x1 + (x2 - x1) * 0.22), round(x1 + (x2 - x1) * 0.78))
+        for side, cx in zip(("a", "b"), centers):
+            ink = self._kit_jersey_ink_key(event.get(f"team_{side}_color"), spec.accent)
+            code = str(event.get(f"team_{side}_code") or "").upper()[:3]
+            self._draw_basketball_jersey(draw, cx, jersey_top, jersey_w, jersey_h, ink, code)
+        start = (centers[0] + jersey_w // 2 + 8, jersey_top + jersey_h * 0.45)
+        end = (centers[1] - jersey_w // 2 - 8, start[1])
+        lift = max(6, min(jersey_h * 0.5, start[1] - y1 - 10))
+        steps = max(8, int(end[0] - start[0]) // 7)
+        for step in range(0, steps + 1, 2):
+            t = step / steps
+            x = start[0] + (end[0] - start[0]) * t
+            y = start[1] - lift * 4 * t * (1 - t)
+            draw.ellipse((x - 1, y - 1, x + 1, y + 1), fill=COLORS["text"])
+        t = 0.6
+        ball_x = start[0] + (end[0] - start[0]) * t
+        ball_y = start[1] - lift * 4 * t * (1 - t)
+        self._draw_basketball_ball(draw, ball_x, ball_y, 7)
+        for offset in (0, 5):
+            draw.line((ball_x - 12 - offset * 2, ball_y + 1 + offset, ball_x - 20 - offset * 2, ball_y + 3 + offset),
+                      fill=COLORS["text"], width=1)
+        caption_box = (centers[0] + jersey_w // 2 + 4, caption_y, centers[1] - jersey_w // 2 - 4, y2)
+        caption, font = self._fit_text(draw, "球员数据稍后更新", caption_box[2] - caption_box[0], 9, bold=True, min_size=8)
+        self._draw_centered_in_box(draw, caption_box, caption, font, COLORS["text"])
+
+    @staticmethod
+    def _kit_jersey_ink_key(color, fallback):
+        """A jersey ink: grey, silver and white team colours print as a black jersey."""
+        value = str(color or "").strip().lstrip("#")
+        if re.fullmatch(r"[0-9a-fA-F]{6}", value):
+            rgb = [int(value[index:index + 2], 16) for index in (0, 2, 4)]
+            if max(rgb) - min(rgb) <= 40:
+                return "text"
+        return SportsDashboard._kit_team_ink_key(color, fallback)
+
+    def _draw_basketball_jersey(self, draw, cx, top, width, height, ink_key, code):
+        """A tank-top jersey: narrow straps, deep armholes, V neck and the team code."""
+        def at(dx, dy):
+            return (cx + width * dx, top + height * dy)
+
+        armhole = ((0.30, 0.0), (0.33, 0.14), (0.40, 0.28), (0.5, 0.38))
+        right = [at(dx, dy) for dx, dy in armhole]
+        left = [at(-dx, dy) for dx, dy in reversed(armhole)]
+        points = [at(-0.30, 0.0), at(-0.15, 0.0), at(0.0, 0.24), at(0.15, 0.0), *right, at(0.5, 1.0), at(-0.5, 1.0), *left[:-1]]
+        draw.polygon(points, fill=COLORS[ink_key], outline=COLORS["border"])
+        trim = COLORS[self._kit_ink_text_key(ink_key)]
+        draw.line([at(-0.15, 0.04), at(0.0, 0.27), at(0.15, 0.04)], fill=trim, width=1)
+        for sign in (-1, 1):
+            draw.line([at(sign * (dx - 0.06), dy + 0.04) for dx, dy in armhole[1:]], fill=trim, width=1)
+        draw.line([at(-0.46, 0.88), at(0.46, 0.88)], fill=trim, width=1)
+        if code:
+            font = self._font(max(8, round(height * 0.24)), True)
+            self._draw_centered_in_box(draw, (cx - width / 2, top + height * 0.36, cx + width / 2, top + height * 0.86), code, font, trim)
+
+    @staticmethod
+    def _draw_basketball_ball(draw, cx, cy, radius):
+        draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=COLORS["amber"], outline=COLORS["border"], width=1)
+        draw.line((cx - radius, cy, cx + radius, cy), fill=COLORS["border"], width=1)
+        draw.line((cx, cy - radius, cx, cy + radius), fill=COLORS["border"], width=1)
+        draw.arc((cx - radius * 1.6, cy - radius, cx - radius * 0.2, cy + radius), 300, 60, fill=COLORS["border"])
+        draw.arc((cx + radius * 0.2, cy - radius, cx + radius * 1.6, cy + radius), 120, 240, fill=COLORS["border"])
 
     # Series tracker layout (WNBA playoffs) -----------------------------------
 
