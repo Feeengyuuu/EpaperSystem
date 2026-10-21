@@ -155,11 +155,11 @@ FALLBACK_NEWS_TAG = "要闻"
 # Title keywords that place an out-of-vocabulary tag, most specific first.
 TAG_TITLE_KEYWORDS = (
     ("两岸", ("两岸", "台湾", "台当局", "国台办", "台胞", "陆生", "民进党")),
-    ("公卫", ("疫情", "病毒", "埃博拉", "公共卫生", "疫苗", "医疗", "流感")),
+    ("公卫", ("疫情", "病毒", "埃博拉", "病例", "公共卫生", "疫苗", "医疗", "流感")),
     ("冲突", ("冲突", "袭击", "空袭", "战争", "导弹", "武装", "停火", "交火", "战机", "以军", "胡塞", "军事")),
     ("灾害", ("地震", "台风", "洪水", "暴雨", "火灾", "山火", "干旱", "灾害", "泥石流", "事故")),
     ("航空", ("航空", "机场", "客机", "航班", "波音", "空客", "飞机", "FAA")),
-    ("能源", ("能源", "石油", "原油", "天然气", "电力", "煤炭", "核电", "光伏", "油价")),
+    ("能源", ("能源", "石油", "原油", "天然气", "电力", "煤电", "煤炭", "核电", "光伏", "电池", "储能", "油价")),
     ("司法", ("法院", "法官", "司法", "判决", "审判", "起诉", "检察", "逮捕", "查处", "查获", "违纪", "审查调查", "警方")),
     ("外交", ("外交", "会谈", "会晤", "对话", "访问", "特使", "大使", "峰会", "外长")),
     ("金融", ("金融", "银行", "央行", "人民币", "利率", "股市", "证券", "汇率", "债券")),
@@ -171,6 +171,9 @@ TAG_TITLE_KEYWORDS = (
     ("社会", ("社会", "乡村", "教育", "民生", "养老", "医保", "学校")),
     ("时政", ("国务院", "中央", "政府", "政策", "人大", "政协", "选举", "总统", "首相", "议会")),
 )
+# Title keywords for these tags are specific enough to correct even a vocabulary tag the AI
+# picked (埃博拉 is 公卫 whatever the AI says); broad ones (时政 经济 产业 社会 环境) are not.
+DECISIVE_TITLE_TAGS = frozenset({"两岸", "公卫", "冲突", "灾害", "航空", "能源", "司法", "外交", "金融", "科技", "体育"})
 # Out-of-vocabulary tags the AI writes for a vocabulary tag, used when the title says nothing.
 TAG_SYNONYMS = {"公共卫生": "公卫", "卫生": "公卫", "医疗": "公卫", "政治": "时政", "财经": "经济", "军事": "冲突",
                 "战争": "冲突", "灾难": "灾害", "法治": "司法", "反腐": "司法", "民生": "社会"}
@@ -2105,16 +2108,19 @@ class DailyAINews(BasePlugin):
     def _normalized_tag(tag: Any, title: Any) -> str:
         """A tag from the fixed vocabulary.
 
-        A vocabulary tag stays. Anything else is placed by the title's keywords, then by
-        a vocabulary tag or known synonym inside the AI's tag, and finally falls back to 要闻.
+        A vocabulary tag stays unless the title has a decisive keyword for another tag.
+        Anything else is placed by the title's keywords, then by a vocabulary tag or known
+        synonym inside the AI's tag, and finally falls back to 要闻.
         """
         tag = DailyAINews._field_text(tag)
-        if tag in NEWS_TAGS or tag == FALLBACK_NEWS_TAG:
-            return tag
         title = str(title or "")
-        for vocabulary_tag, words in TAG_TITLE_KEYWORDS:
-            if any(word in title for word in words):
-                return vocabulary_tag
+        guess = next((vocabulary_tag for vocabulary_tag, words in TAG_TITLE_KEYWORDS
+                      if any(word in title for word in words)), "")
+        if tag in NEWS_TAGS:
+            return guess if guess in DECISIVE_TITLE_TAGS and guess != tag else tag
+        if guess:
+            # 要闻 means the AI was unsure, so any title keyword places the story.
+            return guess
         for vocabulary_tag in NEWS_TAGS:
             if vocabulary_tag in tag:
                 return vocabulary_tag

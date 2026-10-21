@@ -2519,3 +2519,24 @@ def test_prompt_lists_the_fixed_tag_vocabulary(monkeypatch):
 
     assert "只能从" in captured["input"]
     assert all(tag in captured["input"] for tag in daily_ai_news_module.NEWS_TAGS)
+
+
+@pytest.mark.parametrize(
+    ("tag", "title", "expected"),
+    [
+        ("环境", "尼日利亚发现埃博拉病例", "公卫"),
+        ("科技", "FAA批准波音737-10进入服务", "航空"),
+        ("时政", "山东煤电新能源融合加速", "能源"),
+        ("社会", "云南新能源电池产值增速42.0%", "能源"),
+        ("社会", "锂电储能项目落地", "能源"),
+        ("要闻", "某地新增输入病例", "公卫"),
+        ("要闻", "国务院部署秋冬农业生产", "时政"),
+        ("要闻", "某地举办秋季民俗文化节", "要闻"),
+        ("时政", "外交部敦促美方停止对古巴封锁", "外交"),
+        ("社会", "三明举办火场生存挑战赛", "社会"),
+        ("冲突", "普京泽连斯基相关动态再受关注", "冲突"),
+        ("外交", "美国总统宣布对欧盟加征关税", "外交"),
+    ],
+)
+def test_a_decisive_title_keyword_overrides_a_wrong_vocabulary_tag(tag, title, expected):
+    assert DailyAINews._normalized_tag(tag, title) == expected
