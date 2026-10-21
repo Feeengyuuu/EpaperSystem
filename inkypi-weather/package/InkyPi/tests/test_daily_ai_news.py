@@ -571,6 +571,9 @@ def test_forced_refresh_treats_today_policy_limited_cache_as_fresh(monkeypatch, 
     assert brief["from_cache"] is True
     assert brief["_source_provenance"] == "fresh_cache"
     assert brief["brief"]["top"][0]["title"] == "今日新闻"
+    # Reusing today's brief under the API limit is normal, so it is a notice, not a warning.
+    assert "warning" not in brief
+    assert "限额" in brief["notice"]
 
 
 def test_base_background_uses_plain_theme_color_in_night_mode():
@@ -2412,3 +2415,35 @@ def test_hourly_fallback_measures_from_the_previous_days_last_bar_not_a_stale_me
 )
 def test_sanitizer_keeps_brand_names_and_cleans_dangling_separators(text, expected):
     assert _plugin()._strip_untranslated_english_terms(text) == expected
+
+
+def test_a_notice_shows_as_the_normal_cached_detail_not_a_red_warning(monkeypatch):
+    plugin = _plugin()
+    fills = {}
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        fills[str(text)] = kwargs.get("fill")
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    payload = _page_payload(from_cache=True, notice="已按今日 API 限额复用计划内最新缓存。")
+
+    plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 10, 21), {"mode": "day"})
+
+    assert "07:34 更新 · 3 个信源 · 缓存" in fills
+    assert fills["07:34 更新 · 3 个信源 · 缓存"] == daily_ai_news_module.get_theme_palette("day")["ink"]
+    assert not any("限额" in text for text in fills)
+
+
+def test_cached_titles_and_facts_are_tidied_when_drawn():
+    plugin = _plugin()
+    brief = {
+        "mainland": [{"title": "前三季度全国铁路投资6012亿元", "why": ""}],
+        "world": [{"tag": "金融", "title": "/特斯拉传合并传闻受关注", "why": "OpenAI 发布新模型、"}],
+    }
+
+    _lead, _mainland, world = plugin._page_news(brief, {"items": []})
+
+    assert world[0]["title"] == "特斯拉传合并传闻受关注"
+    assert world[0]["why"] == "OpenAI发布新模型"

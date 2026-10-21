@@ -992,7 +992,8 @@ class DailyAINews(BasePlugin):
                     settings.get("region_focus"),
                 )
             ):
-                cached["warning"] = "仅重渲染显示，复用现有新闻缓存。"
+                # Normal operation, not a failure: the header shows it as plain "· 缓存".
+                cached["notice"] = "仅重渲染显示，复用现有新闻缓存。"
             return cached
         if theme_render_only:
             raise RuntimeError("Theme-only redraw requires a warm Daily AI News cache.")
@@ -1005,7 +1006,7 @@ class DailyAINews(BasePlugin):
         ):
             cached["from_cache"] = True
             cached["_policy_fresh_cache"] = True
-            cached["warning"] = "已按今日 API 限额复用计划内最新缓存。"
+            cached["notice"] = "已按今日 API 限额复用计划内最新缓存。"
             return cached
 
         recent_titles = self._load_recent_news_titles(now)
@@ -2168,14 +2169,18 @@ class DailyAINews(BasePlugin):
 
         cleaned = VISIBLE_ENGLISH_WORD_RE.sub(replace_match, cleaned)
         cleaned = re.sub(r"\s{2,}", " ", cleaned)
-        cleaned = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[A-Za-z0-9])|(?<=[A-Za-z0-9])\s+(?=[\u4e00-\u9fff])", "", cleaned)
         cleaned = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", cleaned)
         cleaned = re.sub(r"\s+([，。；：、])", r"\1", cleaned)
         cleaned = re.sub(r"([（(])\s+", r"\1", cleaned)
         cleaned = re.sub(r"\s+([）)])", r"\1", cleaned)
-        # A removed word can leave its separator behind, e.g. "/特斯拉".
-        cleaned = re.sub(r"^[\s/／、，,·]+|[\s/／、，,·]+$", "", cleaned)
-        return cleaned.strip()
+        return self._tidy_visible_text(cleaned)
+
+    @staticmethod
+    def _tidy_visible_text(text: str) -> str:
+        """Drop the space between Latin text and Chinese characters, and any separator a
+        removed word left at either end, e.g. "/特斯拉". Safe on already-clean text."""
+        text = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[A-Za-z0-9])|(?<=[A-Za-z0-9])\s+(?=[\u4e00-\u9fff])", "", str(text or ""))
+        return re.sub(r"^[\s/／、，,·]+|[\s/／、，,·]+$", "", text).strip()
 
     def _rss_news_cards(
         self,
@@ -2443,11 +2448,12 @@ class DailyAINews(BasePlugin):
 
     def _page_item(self, item) -> dict[str, str] | None:
         title, why = self._news_text(item)
-        title = title.strip()
+        # Briefs cached before a sanitizer fix are tidied here as well.
+        title = self._tidy_visible_text(title)
         if not title:
             return None
         tag = self._field_text(item.get("tag")) if isinstance(item, dict) else ""
-        return {"title": title, "why": why.strip(), "tag": tag[:NEWS_TAG_MAX_CHARS]}
+        return {"title": title, "why": self._tidy_visible_text(why), "tag": tag[:NEWS_TAG_MAX_CHARS]}
 
     def _page_quotes(self, payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         groups = (payload.get("market_snapshot") or {}).get("groups") or {}
