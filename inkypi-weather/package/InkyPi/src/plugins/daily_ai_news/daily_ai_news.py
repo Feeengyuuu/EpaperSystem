@@ -1796,11 +1796,14 @@ class DailyAINews(BasePlugin):
                 "如果无法确定某个英文术语的标准中文译名，必须改写句子，不要把英文原词放进 title、why 或 lede",
                 "中文词内部不要加空格，例如写“美伊谈判”，不要写“美 伊谈判”",
                 "lead 是两个分区中今天最重要的一条新变化，必须来自 RSS 条目，section 写它来自 mainland 还是 world；lead 不得再出现在 mainland 或 world 中",
+                "lead 选重大硬新闻（重大政策、冲突、灾害、关键经济数据、外交），不要选人物表彰、企业宣传、活动启幕、纪念活动这类软新闻",
+                "section=mainland 的素材里如果是外国新闻（例如乌克兰、美国、中东的事件），不要放进 mainland；mainland 只写中国大陆的事件",
+                "表彰、荣誉、先进个人评选和企业宣传不进 mainland，除非没有其他素材",
                 "mainland 给 2 到 4 条，只能选择 section=mainland 的 RSS 条目，优先大陆时政、经济、社会、公共安全和重大政策更新",
                 "world 给 3 到 4 条，只能选择 section=world 的 RSS 条目，优先国际冲突、外交、政策、事故、市场、法律和重大科技治理",
                 "tag 用 2 到 4 个字的新闻分类，例如 两岸、外交、冲突、中东、经济、金融、产业、基建、科技、航空、公共卫生、灾害、司法、选举、社会",
                 "title 中大陆新闻和 lead 不超过18字，世界新闻不超过24字，写清主体和动作，不要标点堆砌",
-                "why 写一句话事实：谁、做了什么、关键数字或结果，不超过30字；不要写意义、影响、体现、凸显、彰显之类的评价，也不要写“成为关注焦点”“引发关注”“引发讨论”“持续发酵”“局势紧张”这类空话",
+                "why 写一句话事实：谁、做了什么、关键数字或结果，不超过30字；不要写意义、影响、体现、凸显、彰显之类的评价，也不要写“成为关注焦点”“引发关注”“引发讨论”“持续发酵”“局势紧张”这类空话；why 要补充标题以外的信息，不能复述标题",
                 "如果某个分区素材不足，宁可少写，不得跨区挪用，也不得编造新闻",
                 "mainland 和 world 不允许使用 market_snapshot、股票指数或你自己的背景知识生成新闻",
                 "不得写 RSS items 中不存在的人名、机构、政策或市场事件",
@@ -1984,6 +1987,8 @@ class DailyAINews(BasePlugin):
             )
             mainland, world = self._split_legacy_top_sections(top)
 
+        mainland = self._without_world_copies(mainland, world)
+        top = self._merge_section_news(mainland, world) or top
         lead = self._checked_lead(payload.get("lead"), mainland_sources)
         if not lead:
             # Without a checked lead the page promotes the first de-duplicated story.
@@ -2001,6 +2006,19 @@ class DailyAINews(BasePlugin):
         if not str(payload.get("lede") or "").strip():
             payload["lede"] = self._fallback_lede(top)
         return payload
+
+    def _without_world_copies(self, mainland: list[Any], world: list[Any]) -> list[Any]:
+        """Mainland stories minus those a world story already covers.
+
+        The mixed 即时 desk carries foreign news too; a copy of a dedicated world-feed
+        story is international news, so it stays in 国际 and leaves 国内.
+        """
+        world_titles = [self._news_text(item)[0] for item in world if item]
+        return [
+            item
+            for item in mainland
+            if item and not any(self._similar_news_title(self._news_text(item)[0], title) for title in world_titles)
+        ]
 
     def _checked_lead(self, lead: Any, mainland_sources: list[dict[str, str]]) -> dict[str, str] | None:
         """The AI's lead story, kept only when it is one of the RSS items.
@@ -2396,7 +2414,7 @@ class DailyAINews(BasePlugin):
         """The lead story and the two columns, the lead never repeated in a column."""
         mainland = [self._page_item(item) for item in self._render_news_section_items(brief, payload, "mainland")]
         world = [self._page_item(item) for item in self._render_news_section_items(brief, payload, "world")]
-        mainland = [item for item in mainland if item]
+        mainland = self._without_world_copies([item for item in mainland if item], world)
         world = [item for item in world if item]
         raw_lead = brief.get("lead") if isinstance(brief.get("lead"), dict) else None
         lead = self._page_item(raw_lead) if raw_lead else None

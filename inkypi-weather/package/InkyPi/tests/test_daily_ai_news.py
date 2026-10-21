@@ -1729,15 +1729,16 @@ def test_prompt_asks_for_a_lead_tags_and_one_sentence_facts(monkeypatch):
 def test_page_news_uses_the_first_mainland_story_as_lead_for_legacy_briefs():
     plugin = _plugin()
     brief = {
-        "mainland": [{"title": "大陆新闻一", "why": "国内更新"}, {"title": "大陆新闻二", "why": "政策进展"}],
-        "world": [{"title": "世界新闻一", "why": "国际进展"}],
+        "mainland": [{"title": "数字人民币基础设施服务体系全面升级", "why": "国内更新"},
+                     {"title": "前三季度全国铁路投资6012亿元", "why": "政策进展"}],
+        "world": [{"title": "尼日利亚确诊埃博拉病例", "why": "国际进展"}],
     }
 
     lead, mainland, world = plugin._page_news(brief, {"items": []})
 
-    assert lead["title"] == "大陆新闻一" and lead["section_label"] == "国内"
-    assert [item["title"] for item in mainland] == ["大陆新闻二"]
-    assert [item["title"] for item in world] == ["世界新闻一"]
+    assert lead["title"] == "数字人民币基础设施服务体系全面升级" and lead["section_label"] == "国内"
+    assert [item["title"] for item in mainland] == ["前三季度全国铁路投资6012亿元"]
+    assert [item["title"] for item in world] == ["尼日利亚确诊埃博拉病例"]
 
 
 def test_page_news_keeps_an_explicit_world_lead():
@@ -2307,3 +2308,64 @@ def test_news_context_keeps_every_shown_story_after_the_lead(monkeypatch):
 def test_a_tag_list_skips_blank_and_boolean_entries():
     assert DailyAINews._field_text([True, "经济"]) == "经济"
     assert DailyAINews._field_text(["", " ", "经济"]) == "经济"
+
+
+def test_postprocess_drops_a_mainland_copy_of_a_world_story():
+    plugin = _plugin()
+    brief = {
+        "mainland": [
+            {"tag": "社会", "title": "乌克兰愿与美俄三方会晤", "why": "泽连斯基表示愿同美俄举行三方会晤"},
+            {"tag": "司法", "title": "法院发布司法责任追究条例", "why": "明确司法追究范围"},
+        ],
+        "world": [{"tag": "外交", "title": "乌克兰期待美俄三方会谈", "why": "泽连斯基表达愿与美俄会谈的立场"}],
+    }
+    items = [
+        {"source": "中国新闻网即时", "section": "mainland", "title": "泽连斯基：乌克兰愿与美俄举行三方会晤", "summary": ""},
+        {"source": "中国新闻网要闻", "section": "mainland", "title": "最高法发布司法责任追究条例", "summary": ""},
+    ]
+
+    result = plugin._postprocess_brief_news(brief, items)
+
+    assert [item["title"] for item in result["mainland"]] == ["法院发布司法责任追究条例"]
+    assert [item["title"] for item in result["world"]] == ["乌克兰期待美俄三方会谈"]
+
+
+def test_page_news_drops_a_mainland_copy_of_a_world_story_from_cached_briefs():
+    plugin = _plugin()
+    brief = {
+        "lead": {"title": "爱尔眼科陈杰获全国退役军人服务先进个人", "why": "", "section": "mainland"},
+        "mainland": [{"title": "乌克兰愿与美俄三方会晤", "why": ""}, {"title": "法院发布司法责任追究条例", "why": ""}],
+        "world": [{"title": "乌克兰期待美俄三方会谈", "why": ""}],
+    }
+
+    _lead, mainland, world = plugin._page_news(brief, {"items": []})
+
+    assert [item["title"] for item in mainland] == ["法院发布司法责任追究条例"]
+    assert [item["title"] for item in world] == ["乌克兰期待美俄三方会谈"]
+
+
+def test_prompt_steers_the_lead_to_hard_news_and_mainland_to_china(monkeypatch):
+    plugin = _plugin()
+    captured = {}
+
+    class _Responses:
+        @staticmethod
+        def create(**kwargs):
+            captured.update(kwargs)
+
+            class _Response:
+                output_text = '{"mainland":[],"world":[]}'
+
+            return _Response()
+
+    class _Client:
+        responses = _Responses()
+
+    monkeypatch.setattr(daily_ai_news_module, "OpenAI", lambda **_kwargs: _Client())
+
+    plugin._summarize_with_openai("key", "gpt-5-nano", {}, [], {}, datetime(2026, 10, 21, 7, 0))
+
+    request = captured["input"]
+    assert "不要选人物表彰" in request
+    assert "外国新闻" in request and "不要放进 mainland" in request
+    assert "表彰、荣誉" in request and "不能复述标题" in request
