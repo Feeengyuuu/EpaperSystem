@@ -53,11 +53,17 @@ def require_label(label: str) -> str:
     return label
 
 
-def config_identity(config: dict) -> dict:
-    """Hash what the owner configured, separating it from fields the runtime rewrites."""
+def config_identity(config: dict, without_plugins=()) -> dict:
+    """Hash what the owner configured, separating it from fields the runtime rewrites.
+
+    ``without_plugins`` leaves those plugins' instances out, so a migration that
+    only adds instances can be proven to leave every other instance untouched.
+    """
     instances = []
     for playlist in config.get("playlist_config", {}).get("playlists", []):
         for instance in playlist.get("plugins", []):
+            if instance.get("plugin_id") in without_plugins:
+                continue
             instances.append({"playlist_hash": digest(playlist.get("name")), "plugin_id": instance.get("plugin_id"),
                               "instance_uuid": instance.get("instance_uuid"),
                               "settings_sha256": digest(instance.get("plugin_settings", {})),
@@ -87,28 +93,44 @@ def configuration_note(before: dict, after: dict) -> str | None:
 REBASELINE_CHANGES = ("stable_top_level_settings_sha256", "instance_settings_sha256")
 
 
-def rebaseline_configuration(ctx: TaskContext, device: Device, reason: str, migration: str) -> dict:
+def rebaseline_configuration(ctx: TaskContext, device: Device, reason: str, migration: str,
+                             added_plugins=()) -> dict:
     """Accept the deployed release's own startup migration as the acceptance configuration.
 
-    Only settings may change (instance count, cycle and display control may not),
-    and the migration's runtime marker must be on the device. The original
-    identity stays in configuration-rebaseline.json and preflight.json.
+    Only settings may change (cycle and display control may not), and the
+    migration's runtime marker must be on the device. The instance count may
+    grow only by one new instance for each of ``added_plugins``, and every other
+    instance must then be exactly as before. The original identity stays in
+    configuration-rebaseline.json and preflight.json.
     """
     reason = str(reason or "").strip()
     require(reason, "A configuration rebaseline needs a reason")
+    added = sorted(set(added_plugins or ()))
+    require(all(PLUGIN_ID.fullmatch(plugin) for plugin in added), f"Unsafe plugin id in {added}")
     ctx.require_deployed()
     preflight = ctx.load("preflight.json")
     config = device.document(CONFIG)
     before, after = preflight["configuration"], config_identity(config)
     changed = [key for key in STABLE_CONFIGURATION if before.get(key) != after.get(key)]
     require(changed, "The live configuration did not change; nothing to rebaseline")
-    refused = [key for key in changed if key not in REBASELINE_CHANGES]
+    accepted = REBASELINE_CHANGES + (("instance_count",) if added else ())
+    refused = [key for key in changed if key not in accepted]
     require(not refused, f"A rebaseline cannot accept changes to {refused}")
+    if added:
+        counts = Counter(instance.get("plugin_id")
+                         for playlist in config.get("playlist_config", {}).get("playlists", [])
+                         for instance in playlist.get("plugins", []))
+        require(all(counts[plugin] == 1 for plugin in added)
+                and after["instance_count"] == before["instance_count"] + len(added),
+                f"Each of {added} must add exactly one new instance")
+        kept = config_identity(config, without_plugins=added)
+        require(kept["instance_settings_sha256"] == before["instance_settings_sha256"],
+                "Instances other than the added plugins changed")
     migrations = config.get("runtime_migrations")
     require(isinstance(migrations, dict) and migrations.get(migration) is True,
             f"Migration {migration} is not recorded on the device")
     record = {"rebaselined_at": datetime.now(timezone.utc).isoformat(), "reason": reason, "migration": migration,
-              "changed": changed, "before": before, "after": after}
+              "changed": changed, "added_plugins": added, "before": before, "after": after}
     preflight["configuration"] = after
     preflight.setdefault("configuration_rebaselines", []).append(record)
     ctx.save("configuration-rebaseline.json", record)

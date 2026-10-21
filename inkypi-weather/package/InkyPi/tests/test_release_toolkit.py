@@ -839,10 +839,56 @@ def test_rebaseline_needs_a_reason_and_a_finished_deployment(ctx):
         release_checks.rebaseline_configuration(ctx, ConfigDevice(migrated(before)), "  ", "room_v1")
 
 
+def with_pages(document, *plugins, migration="pages_v1"):
+    changed = _copy(document)
+    changed["runtime_migrations"] = {migration: True}
+    changed["playlist_config"]["playlists"][0]["plugins"] += [
+        {"plugin_id": plugin, "instance_uuid": "uuid-" + plugin, "name": plugin.title(),
+         "refresh": {"interval": 1800}, "plugin_settings": {}} for plugin in plugins]
+    return changed
+
+
+def test_rebaseline_accepts_one_new_instance_per_added_plugin(ctx):
+    before = config(weather=600, apod=3600)
+    deployed_with_preflight(ctx, before)
+
+    record = release_checks.rebaseline_configuration(
+        ctx, ConfigDevice(with_pages(before, "tech_play", "bay_alerts")), "Pages join the rotation", "pages_v1",
+        ["tech_play", "bay_alerts"])
+
+    assert record["changed"] == ["stable_top_level_settings_sha256", "instance_settings_sha256", "instance_count"]
+    assert record["added_plugins"] == ["bay_alerts", "tech_play"]
+    assert ctx.load("preflight.json")["configuration"]["instance_count"] == 4
+
+
+@pytest.mark.parametrize("make, message", [
+    (lambda before: with_pages(before, "tech_play"), "bay_alerts.*exactly one"),
+    (lambda before: with_pages(before, "tech_play", "bay_alerts", "tech_play"), "exactly one"),
+    (lambda before: (lambda after: (after["playlist_config"]["playlists"][0]["plugins"][0].update(
+        plugin_settings={"city": "y"}), after)[1])(with_pages(before, "tech_play", "bay_alerts")),
+     "other than the added plugins"),
+    (lambda before: with_pages(before, "tech_play", "bay_alerts", migration="other_v1"), "pages_v1 is not recorded"),
+])
+def test_rebaseline_refuses_added_instances_beyond_the_named_plugins(ctx, make, message):
+    before = config(weather=600, apod=3600)
+    deployed_with_preflight(ctx, before)
+    original = ctx.load("preflight.json")
+
+    with pytest.raises(ReleaseError, match=message):
+        release_checks.rebaseline_configuration(ctx, ConfigDevice(make(before)), "reason", "pages_v1",
+                                                ["tech_play", "bay_alerts"])
+
+    assert ctx.load("preflight.json") == original
+    assert not ctx.has("configuration-rebaseline.json")
+
+
 def test_rebaseline_command_requires_reason_and_migration(capsys):
     parsed = parse("rebaseline-config", "--task-dir", "outputs/r", "--reason", "Kick room", "--migration", "m_v1")
 
-    assert (parsed.reason, parsed.migration) == ("Kick room", "m_v1")
+    assert (parsed.reason, parsed.migration, parsed.added_plugins) == ("Kick room", "m_v1", [])
+    added = parse("rebaseline-config", "--task-dir", "outputs/r", "--reason", "Pages", "--migration", "m_v1",
+                  "--added-plugins", "tech_play", "bay_alerts")
+    assert added.added_plugins == ["tech_play", "bay_alerts"]
     with pytest.raises(SystemExit):
         parse("rebaseline-config", "--task-dir", "outputs/r", "--migration", "m_v1")
     with pytest.raises(SystemExit):

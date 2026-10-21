@@ -12,7 +12,8 @@ holds deployment.json:
   deploy         16 MiB verified chunks + transactional inkypi-update (dry run unless --execute)
   health-gate    record postdeploy health and compare it with predeploy
   rebaseline-config  only when the release itself migrates saved settings: accept that
-                 recorded migration as the acceptance configuration (reason required)
+                 recorded migration as the acceptance configuration (reason required;
+                 --added-plugins when it only adds one instance per named plugin)
   show-plugins   refresh and display named plugins once (LAN display control)
   snapshot       acceptance snapshot with configuration and source checks
   journal        summarize the service journal since the deployment
@@ -69,6 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
                   "Accept the deployed release's own recorded settings migration as the acceptance configuration.")
     sub.add_argument("--reason", required=True, help="why this release changes the saved configuration")
     sub.add_argument("--migration", required=True, help="runtime_migrations key the release records")
+    sub.add_argument("--added-plugins", nargs="+", default=[], metavar="plugin_id",
+                     help="plugins the migration adds one new instance of; every other instance must be unchanged")
     sub = command("show-plugins", "Refresh and display each named plugin once and snapshot the hardware write.")
     sub.add_argument("plugins", nargs="+", metavar="plugin_id")
     sub = command("snapshot", "Save an acceptance snapshot with configuration and source checks.")
@@ -124,7 +127,8 @@ def run(args: argparse.Namespace, ctx: TaskContext) -> tuple[object, int]:
     if args.command == "health-record":
         return release_checks.record_health(ctx, device(), args.label), 0
     if args.command == "rebaseline-config":
-        return release_checks.rebaseline_configuration(ctx, device(), args.reason, args.migration), 0
+        return release_checks.rebaseline_configuration(ctx, device(), args.reason, args.migration,
+                                                       args.added_plugins), 0
     if args.command == "show-plugins":
         return release_checks.show_plugins(ctx, device(), args.plugins), 0
     if args.command == "snapshot":
