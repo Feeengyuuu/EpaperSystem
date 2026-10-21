@@ -141,6 +141,59 @@ def test_full_percentage_never_runs_into_the_layer_count(tmp_path, monkeypatch):
     assert layer[2] <= 800 - 22
 
 
+@pytest.mark.parametrize(
+    ("error", "text"),
+    [(83902475, "0500-400B"), ("83902475", "0500-400B"), (0, ""), ("0", ""), (1, ""), (None, ""),
+     ("Filament runout", "Filament runout")],
+)
+def test_print_error_reads_like_bambu_studio(error, text):
+    assert BambuMonitor._print_error_text(error) == text
+
+
+def test_idle_printer_shows_the_last_job_and_names_its_error(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    status = plugin._demo_status()
+    status.update({"state": "IDLE", "stage": "", "progress": 100, "remaining_minutes": 0, "error": 83902475})
+    boxes = _drawn_text_boxes(monkeypatch)
+
+    plugin._render_status(status, (800, 480))
+
+    texts = [text for text, _box in boxes]
+    assert "LAST JOB" in texts and "JOB" not in texts
+    error = next(box for text, box in boxes if text == "ERR 0500-400B")
+    idle = next(box for text, box in boxes if text == "IDLE")
+    assert idle[2] < error[0] and error[3] < 120
+    assert not any("83902475" in text for text in texts)
+
+
+def test_printing_job_keeps_the_job_label(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    boxes = _drawn_text_boxes(monkeypatch)
+
+    plugin._render_status(plugin._demo_status(), (800, 480))
+
+    texts = [text for text, _box in boxes]
+    assert "JOB" in texts and "LAST JOB" not in texts
+    assert not any(text.startswith("ERR") for text in texts)
+
+
+def test_empty_tray_reads_empty_with_a_hollow_spool(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    boxes = _drawn_text_boxes(monkeypatch)
+    image = Image.new("RGB", (200, 500), PAPER)
+    draw = ImageDraw.Draw(image)
+    box = (22, 376, 141, 466)
+
+    plugin._draw_ams_tile(draw, box, {"id": "0-1", "active": False, "type": "FIL", "color": ""})
+
+    texts = [text for text, _box in boxes]
+    assert "EMPTY" in texts
+    assert "FIL" not in texts and "COLOR --" not in texts
+    cx, cy, radius = plugin._ams_tile_layout(box)["spool"]
+    assert image.getpixel((cx + radius - 6, cy)) == bambu_module.PANEL
+    assert CINNABAR not in {image.getpixel((x, y)) for x in range(cx - radius, cx + radius) for y in range(cy - radius, cy + radius)}
+
+
 def test_switched_off_heaters_show_no_zero_target(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     status = plugin._demo_status()

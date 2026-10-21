@@ -931,7 +931,14 @@ class BambuMonitor(BasePlugin):
         draw.rounded_rectangle((left, top, right - 1, bottom - 1), radius=CARD_RADIUS, outline=ink, width=2)
 
         state = self._state_label(status.get("state"))
-        self._draw_pill(draw, left + 10, top + 10, state, self._status_color(status.get("state"), status.get("error")))
+        state_box = self._draw_pill(draw, left + 10, top + 10, state,
+                                    self._status_color(status.get("state"), status.get("error")))
+        error_text = self._print_error_text(status.get("error"))
+        if error_text:
+            font = self._font(11, True)
+            room = right - 130 - (state_box[2] + 6) - 18
+            self._draw_pill(draw, state_box[2] + 6, top + 10, self._ellipsize(draw, f"ERR {error_text}", font, room),
+                            cinnabar, size=11, dot=False, height=state_box[3] - state_box[1])
         if chip:
             self._draw_pill(draw, right - 10, top + 10, chip, chip_fill, size=10, dot=False, align="right")
         warning = status.get("warning")
@@ -961,7 +968,9 @@ class BambuMonitor(BasePlugin):
                              self._remaining_text(status.get("remaining_minutes")))
         self._draw_stat_chip(draw, (x1 - chip_w, top + 104, x1, top + 144), "FINISH", status.get("finish_at") or "--")
 
-        self._draw_section_label(draw, x0, top + 156, "JOB", _active_color("accent_gold", ACCENT_GOLD))
+        # An idle or finished printer still reports the job it last ran.
+        job_label = "LAST JOB" if self._state_label(status.get("state")) in ("IDLE", "DONE") else "JOB"
+        self._draw_section_label(draw, x0, top + 156, job_label, _active_color("accent_gold", ACCENT_GOLD))
         self._draw_wrapped_text(draw, str(status.get("file") or "No active job"), x0, top + 174, x1 - x0, 3, 15)
         draw.line((x0, top + 238, x1, top + 238), fill=rule, width=1)
 
@@ -983,12 +992,7 @@ class BambuMonitor(BasePlugin):
     def _draw_ams_strip(self, draw, box, status):
         left, top, right, bottom = box
         ink = _active_color("ink", INK)
-        malachite = _active_color("malachite", MALACHITE)
-        error = status.get("error")
-        error_text = "OK" if not error or str(error) == "0" else f"ERR {error}"
-        self._draw_section_label(draw, left, top, "AMS", malachite)
-        draw.text((right, top), error_text, font=self._font(11, True), anchor="ra",
-                  fill=malachite if error_text == "OK" else _active_color("cinnabar", CINNABAR))
+        self._draw_section_label(draw, left, top, "AMS", _active_color("malachite", MALACHITE))
 
         tiles_top = top + 18
         trays = self._visible_trays(status.get("ams") or [])
@@ -1035,23 +1039,30 @@ class BambuMonitor(BasePlugin):
                                outline=malachite if active else _active_color("rule", RULE), width=2 if active else 1)
         layout = self._ams_tile_layout(box)
         cx, cy, radius = layout["spool"]
-        self._draw_spool(draw, cx, cy, radius, tray.get("color"), active)
+        # A slot without filament reports neither a material nor a colour.
+        empty = not str(tray.get("color") or "").strip() and str(tray.get("type") or "FIL").upper() in ("", "FIL")
+        self._draw_spool(draw, cx, cy, radius, tray.get("color"), active, empty=empty)
         text_x, text_w = layout["text_x"], layout["text_w"]
         self._draw_fit_text_ellipsis(draw, self._tray_slot_label(tray.get("id")), text_x, top + 10, text_w, 15, True, ink)
-        detail = str(tray.get("type") or "FIL").upper()
+        detail = "EMPTY" if empty else str(tray.get("type") or "FIL").upper()
         if self._is_nonnegative(tray.get("remain")):
             detail = f"{detail} {float(tray['remain']):.0f}%"
         self._draw_fit_text_ellipsis(draw, detail, text_x, top + 31, text_w, 13, True, ink)
-        self._draw_fit_text_ellipsis(draw, self._filament_color_label(tray.get("color")), text_x, top + 50, text_w, 10, True, ink)
+        if not empty:
+            self._draw_fit_text_ellipsis(draw, self._filament_color_label(tray.get("color")), text_x, top + 50,
+                                         text_w, 10, True, ink)
         if active:
             self._draw_pill(draw, cx, layout["pill_top"], "USE", malachite, size=10, dot=False, align="center",
                             pad=AMS_USE_PILL_PAD, height=AMS_USE_PILL_HEIGHT)
 
-    def _draw_spool(self, draw, cx, cy, radius, color, active=False):
+    def _draw_spool(self, draw, cx, cy, radius, color, active=False, empty=False):
         swatch = self._filament_swatch_color(color)
         ink = _active_color("ink", INK)
         panel = _active_color("panel", PANEL)
-        if not swatch:
+        if empty:
+            draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=panel,
+                         outline=_active_color("rule", RULE), width=2)
+        elif not swatch:
             draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=panel, outline=ink, width=1)
             draw.line((cx - radius * 0.7, cy + radius * 0.7, cx + radius * 0.7, cy - radius * 0.7),
                       fill=_active_color("cinnabar", CINNABAR), width=2)
@@ -1068,6 +1079,15 @@ class BambuMonitor(BasePlugin):
         if active:
             ring = radius + 4
             draw.ellipse((cx - ring, cy - ring, cx + ring, cy + ring), outline=_active_color("malachite", MALACHITE), width=3)
+
+    @staticmethod
+    def _print_error_text(error):
+        """A printer error code as Bambu Studio writes it (0500-400B); small internal codes stay unnamed."""
+        text = str(error if error is not None else "").strip()
+        if text.isdigit():
+            code = int(text)
+            return f"{code >> 16:04X}-{code & 0xFFFF:04X}" if code > 0xFFFF else ""
+        return text
 
     @staticmethod
     def _tray_slot_label(tray_id):
