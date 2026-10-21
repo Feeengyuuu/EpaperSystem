@@ -52,6 +52,36 @@ def test_calendar_compaction_preserves_display_fields_without_analytics():
     assert len(json.dumps(compact)) < 10000
 
 
+def test_calendar_compaction_keeps_team_colours_and_basketball_leaders():
+    import json
+    event = deepcopy(_sample_nba_scoreboard_payload()["events"][0])
+    event["status"] = {"type": {"state": "in", "shortDetail": "Q3 7:45"}, "period": 3, "displayClock": "7:45"}
+    event["competitions"][0]["status"] = deepcopy(event["status"])
+    for index, competitor in enumerate(event["competitions"][0]["competitors"]):
+        competitor["team"].update({"color": ("000000", "007ac1")[index], "alternateColor": "c4ced4"})
+        competitor["leaders"] = [
+            {
+                "name": category,
+                "displayName": category.title(),
+                "leaders": [{
+                    "value": 20 - rank,
+                    "displayValue": str(20 - rank),
+                    "athlete": {"shortName": f"Player {category} {rank}", "headshot": "x" * 5000, "links": ["y" * 5000]},
+                    "team": {"id": "1"},
+                } for rank in range(3)],
+            }
+            for category in ("points", "rebounds", "assists", "rating")
+        ]
+    expected = SportsDashboard._parse_nba_espn_events({"events": [event]}, timezone.utc)
+    compact = calendar_module._compact(event)
+    parsed = SportsDashboard._parse_nba_espn_events({"events": [compact]}, timezone.utc)
+
+    assert parsed == expected
+    assert (parsed[0]["team_a_color"], parsed[0]["team_b_color"]) != ("", "")
+    assert parsed[0]["team_leaders_a"] and parsed[0]["team_leaders_b"] and parsed[0]["leaders"]
+    assert len(json.dumps(compact)) < 10000
+
+
 def test_month_queries_preserve_more_than_one_hundred_matches(monkeypatch, tmp_path):
     plugin = SportsDashboard({"id": "sports_dashboard"})
     plugin._sports_dashboard_cache_dir = lambda: tmp_path

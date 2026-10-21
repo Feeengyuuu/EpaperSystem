@@ -12,6 +12,8 @@ VERSION = "nba-calendar-v1"
 EVENT_LIMIT = 1000
 MONTH_TTL_SECONDS = 12 * 3600
 ESPN_TIMEZONE = ZoneInfo("America/New_York")
+# The panel shows these leader groups; the rest of ESPN's leader data is dropped.
+LEADER_CATEGORIES = ("points", "rebounds", "assists")
 
 
 def _stamp(value):
@@ -48,16 +50,40 @@ def _compact(event):
     competitor_keys = ("id", "uid", "type", "order", "homeAway", "score", "winner",
                        "linescores", "lineScores", "records", "record", "team")
     team_keys = ("id", "uid", "abbreviation", "shortDisplayName", "displayName",
-                 "name", "location", "logo", "logos")
+                 "name", "location", "logo", "logos", "color", "alternateColor")
     for competition in result["competitions"]:
         competitors = []
         for item in competition.get("competitors", []):
             competitor = {key: item[key] for key in competitor_keys if key in item}
             team = item.get("team") or {}
             competitor["team"] = {key: team[key] for key in team_keys if key in team}
+            leaders = _compact_leaders(item.get("leaders"))
+            if leaders:
+                competitor["leaders"] = leaders
             competitors.append(competitor)
         competition["competitors"] = competitors
     return result
+
+
+def _compact_leaders(groups):
+    """Each points / rebounds / assists group's top player: value and short name only."""
+    compact = []
+    for group in groups if isinstance(groups, list) else []:
+        if not isinstance(group, dict) or group.get("name") not in LEADER_CATEGORIES:
+            continue
+        top = next((item for item in group.get("leaders") or [] if isinstance(item, dict)), None)
+        if top is None:
+            continue
+        athlete = top.get("athlete") if isinstance(top.get("athlete"), dict) else {}
+        compact.append({
+            "name": group["name"],
+            "leaders": [{
+                "value": top.get("value"),
+                "displayValue": top.get("displayValue"),
+                "athlete": {"shortName": athlete.get("shortName")},
+            }],
+        })
+    return compact
 
 
 def load_calendar(plugin, settings, tz, now, session):
