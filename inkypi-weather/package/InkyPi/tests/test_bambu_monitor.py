@@ -112,6 +112,48 @@ def test_job_column_progress_bar_fills_to_the_print_progress(tmp_path):
     assert image.getpixel((700, bar_y)) != MALACHITE
 
 
+def _drawn_text_boxes(monkeypatch):
+    boxes = []
+    original = ImageDraw.ImageDraw.text
+
+    def record(self, xy, text, *args, **kwargs):
+        font = kwargs.get("font")
+        anchor = kwargs.get("anchor")
+        boxes.append((str(text), self.textbbox(xy, str(text), font=font, anchor=anchor)))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)
+    return boxes
+
+
+def test_full_percentage_never_runs_into_the_layer_count(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    status = plugin._demo_status()
+    status.update({"state": "FINISH", "progress": 100, "layer": 75, "total_layers": 75})
+    boxes = _drawn_text_boxes(monkeypatch)
+
+    plugin._render_status(status, (800, 480))
+
+    percent = next(box for text, box in boxes if text == "100%")
+    layer = next(box for text, box in boxes if text == "LAYER 75/75")
+    assert percent[2] + 6 <= layer[0]
+    assert percent[3] - percent[1] >= 40
+    assert layer[2] <= 800 - 22
+
+
+def test_switched_off_heaters_show_no_zero_target(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    status = plugin._demo_status()
+    status.update({"nozzle": 25, "nozzle_target": 0, "bed": 26, "bed_target": 0})
+    boxes = _drawn_text_boxes(monkeypatch)
+
+    plugin._render_status(status, (800, 480))
+
+    texts = [text for text, _box in boxes]
+    assert "25°" in texts and "26°" in texts
+    assert "/ 0°" not in texts
+
+
 def test_camera_hero_is_a_wide_frame_beside_the_job_column(tmp_path):
     plugin = _plugin(tmp_path)
     status = plugin._demo_status()

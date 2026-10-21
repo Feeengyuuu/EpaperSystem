@@ -946,10 +946,14 @@ class BambuMonitor(BasePlugin):
         rule = _active_color("rule", RULE)
         state_color = self._status_color(status.get("state"), status.get("error"))
         progress = int(max(0, min(100, self._num(status.get("progress"), 0) or 0)))
-        draw.text((x0 - 3, top - 2), f"{progress}%", fill=ink, font=self._font(64, True))
         layers = self._layer_text(status)
+        layer_font = self._font(11, True)
+        # "100%" shrinks so it never runs into the layer count beside it.
+        percent_w = x1 - x0 + 3 - (self._text_width(draw, layers, layer_font) + 8 if layers else 0)
+        percent_font = self._fit_font(draw, f"{progress}%", percent_w, 64, True, 44)
+        draw.text((x0 - 3, top + 62), f"{progress}%", fill=ink, font=percent_font, anchor="ls")
         if layers:
-            draw.text((x1, top + 36), layers, fill=ink, font=self._font(11, True), anchor="ra")
+            draw.text((x1, top + 36), layers, fill=ink, font=layer_font, anchor="ra")
         self._draw_progress_bar(draw, (x0, top + 78, x1, top + 92), progress / 100, state_color, ticks=10)
 
         chip_w = (x1 - x0 - 12) // 2
@@ -1122,7 +1126,7 @@ class BambuMonitor(BasePlugin):
         value = "--" if current is None else f"{current:.0f}°"
         value_font = self._font(22, True)
         draw.text((x, y + 14), value, fill=ink, font=value_font)
-        if target is not None and current is not None:
+        if target and current is not None:
             draw.text((x + self._text_width(draw, value, value_font) + 4, y + 22), f"/ {target:.0f}°",
                       fill=ink, font=self._font(12, True))
         bar_top = y + 44
