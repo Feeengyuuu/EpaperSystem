@@ -1616,3 +1616,16 @@ def test_holiday_list_source_labels_color_cn_and_us_independently():
     label_pixels = [image.getpixel((px, py)) for py in range(12, 45) for px in range(50, 130)]
     assert any(r > 180 and g < 120 and b < 100 for r, g, b in label_pixels)
     assert any(b > 120 and r < 120 and g < 160 for r, g, b in label_pixels)
+
+
+def test_focus_text_outline_only_draws_halo_when_requested():
+    canvas = Image.new("RGB", (220, 120), (0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    font = SimpleCalendar({"id": "simple_calendar"})._get_calendar_ui_font(60, bold=True)
+
+    SimpleCalendar._draw_focus_text(draw, (110, 60), "21", font, (10, 10, 10))
+    assert canvas.getcolors(maxcolors=4096) is not None
+    assert all(max(color) < 20 for _count, color in canvas.getcolors(maxcolors=4096))
+
+    SimpleCalendar._draw_focus_text(draw, (110, 60), "21", font, (10, 10, 10), (255, 255, 255), (10, 10, 10))
+    assert any(color == (255, 255, 255) for _count, color in canvas.getcolors(maxcolors=4096))

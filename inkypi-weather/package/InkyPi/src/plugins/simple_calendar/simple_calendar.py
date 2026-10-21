@@ -517,8 +517,18 @@ class SimpleCalendar(BasePlugin):
             muted_text,
             theme_palette,
         )
-        draw.text((panel_cx, weekday_y), weekday_str, fill=muted_text, font=clean_weekday_font, anchor="mm")
-        draw.text((panel_cx, day_y), day_str, fill=text_color, font=clean_day_font, anchor="mm")
+        # Over a picture the date is lettered in ink with a surface halo and a thin
+        # ink edge, so it reads on bright and dark parts of the art alike.
+        outlined = bool(weather_panel_background_path)
+        focus_muted = text_color if outlined else muted_text
+        self._draw_focus_text(
+            draw, (panel_cx, weekday_y), weekday_str, clean_weekday_font, focus_muted,
+            surface if outlined else None, text_color,
+        )
+        self._draw_focus_text(
+            draw, (panel_cx, day_y), day_str, clean_day_font, text_color,
+            surface if outlined else None, text_color,
+        )
         if date_hero_overlay_enabled:
             self._draw_focus_date_hero(
                 img,
@@ -532,12 +542,22 @@ class SimpleCalendar(BasePlugin):
                 panel_w,
                 panel_h,
             )
-        draw.line(
-            [(panel_cx - rule_w // 2, rule_y), (panel_cx + rule_w // 2, rule_y)],
-            fill=accent,
-            width=max(int(W * 0.004), 2),
+        rule_width = max(int(W * 0.004), 2)
+        rule_points = [(panel_cx - rule_w // 2, rule_y), (panel_cx + rule_w // 2, rule_y)]
+        if outlined:
+            halo = max(rule_width // 2, 2)
+            draw.rectangle(
+                [rule_points[0][0] - halo - 1, rule_y - rule_width // 2 - halo - 1,
+                 rule_points[1][0] + halo + 1, rule_y + rule_width // 2 + halo + 1],
+                fill=surface,
+                outline=text_color,
+                width=1,
+            )
+        draw.line(rule_points, fill=accent, width=rule_width)
+        self._draw_focus_text(
+            draw, (panel_cx, date_y), f"{month_name} {selected_date.year}", clean_date_font, focus_muted,
+            surface if outlined else None, text_color,
         )
-        draw.text((panel_cx, date_y), f"{month_name} {selected_date.year}", fill=muted_text, font=clean_date_font, anchor="mm")
 
         # === CALENDAR CONTENT (inside light area) ===
         grid_side_pad = int(cal_w * 0.04)
@@ -2578,6 +2598,16 @@ class SimpleCalendar(BasePlugin):
     def _text_width(self, draw, text, font):
         bbox = draw.textbbox((0, 0), str(text), font=font)
         return bbox[2] - bbox[0]
+
+    @staticmethod
+    def _draw_focus_text(draw, xy, text, font, fill, halo=None, edge=None):
+        """Centered focus-panel text; with a halo it gets a surface ring and a thin edge around it."""
+        if halo is not None:
+            ring = max(int(round(getattr(font, "size", 20) * 0.045)), 2)
+            draw.text(xy, text, fill=edge, font=font, anchor="mm", stroke_width=ring + max(ring // 4, 1), stroke_fill=edge)
+            draw.text(xy, text, fill=fill, font=font, anchor="mm", stroke_width=ring, stroke_fill=halo)
+            return
+        draw.text(xy, text, fill=fill, font=font, anchor="mm")
 
     def _get_calendar_ui_font(self, font_size, bold=False):
         weight = "bold" if bold else "normal"
