@@ -131,6 +131,49 @@ MARKET_CLOSES_KEPT = 22
 NEWS_TITLE_MAX_CHARS = 30
 NEWS_FACT_MAX_CHARS = 44
 NEWS_TAG_MAX_CHARS = 4
+# The fixed tag vocabulary the AI picks from, with the meaning the prompt gives it.
+NEWS_TAG_DEFINITIONS = (
+    ("时政", "国内政策、政府与人事、重要会议"),
+    ("经济", "宏观数据、消费、贸易、物价、口岸"),
+    ("产业", "工业、制造、企业经营、产量"),
+    ("金融", "银行、央行、货币、股市、债市"),
+    ("科技", "科研、人工智能、芯片、航天、互联网"),
+    ("社会", "民生、教育、乡村、社会事件"),
+    ("两岸", "台湾与两岸关系"),
+    ("外交", "国家间往来、会谈、特使、峰会"),
+    ("冲突", "战争、袭击、军事行动、停火"),
+    ("公卫", "疫情、疾病、医疗卫生"),
+    ("灾害", "地震、台风、洪水、火灾等灾害事故"),
+    ("司法", "法院、执法、反腐审查、案件"),
+    ("航空", "民航、机场、飞机与航班"),
+    ("能源", "石油、天然气、电力、煤炭、新能源"),
+    ("体育", "赛事与运动员"),
+    ("环境", "气候、生态、污染、碳排放"),
+)
+NEWS_TAGS = tuple(tag for tag, _meaning in NEWS_TAG_DEFINITIONS)
+FALLBACK_NEWS_TAG = "要闻"
+# Title keywords that place an out-of-vocabulary tag, most specific first.
+TAG_TITLE_KEYWORDS = (
+    ("两岸", ("两岸", "台湾", "台当局", "国台办", "台胞", "陆生", "民进党")),
+    ("公卫", ("疫情", "病毒", "埃博拉", "公共卫生", "疫苗", "医疗", "流感")),
+    ("冲突", ("冲突", "袭击", "空袭", "战争", "导弹", "武装", "停火", "交火", "战机", "以军", "胡塞", "军事")),
+    ("灾害", ("地震", "台风", "洪水", "暴雨", "火灾", "山火", "干旱", "灾害", "泥石流", "事故")),
+    ("航空", ("航空", "机场", "客机", "航班", "波音", "空客", "飞机", "FAA")),
+    ("能源", ("能源", "石油", "原油", "天然气", "电力", "煤炭", "核电", "光伏", "油价")),
+    ("司法", ("法院", "法官", "司法", "判决", "审判", "起诉", "检察", "逮捕", "查处", "查获", "违纪", "审查调查", "警方")),
+    ("外交", ("外交", "会谈", "会晤", "对话", "访问", "特使", "大使", "峰会", "外长")),
+    ("金融", ("金融", "银行", "央行", "人民币", "利率", "股市", "证券", "汇率", "债券")),
+    ("科技", ("科技", "人工智能", "芯片", "航天", "卫星", "火箭", "发射", "半导体", "互联网")),
+    ("产业", ("产业", "制造", "钢", "汽车", "工业", "企业", "产量", "工信部")),
+    ("环境", ("气候", "环境", "生态", "污染", "排放", "碳")),
+    ("经济", ("经济", "消费", "投资", "贸易", "外贸", "出口", "进口", "物价", "价格", "批发价", "就业", "口岸", "GDP")),
+    ("体育", ("体育", "比赛", "奥运", "足球", "篮球", "冠军", "联赛")),
+    ("社会", ("社会", "乡村", "教育", "民生", "养老", "医保", "学校")),
+    ("时政", ("国务院", "中央", "政府", "政策", "人大", "政协", "选举", "总统", "首相", "议会")),
+)
+# Out-of-vocabulary tags the AI writes for a vocabulary tag, used when the title says nothing.
+TAG_SYNONYMS = {"公共卫生": "公卫", "卫生": "公卫", "医疗": "公卫", "政治": "时政", "财经": "经济", "军事": "冲突",
+                "战争": "冲突", "灾难": "灾害", "法治": "司法", "反腐": "司法", "民生": "社会"}
 # Events whose headlines vary a lot: titles naming one group are the same story at a
 # lower character overlap. A group lists the ways one event is written.
 HOT_NEWS_TERM_GROUPS = (
@@ -138,7 +181,7 @@ HOT_NEWS_TERM_GROUPS = (
     ("巴以", "以巴", "加沙", "巴勒斯坦", "约旦河西岸"),
 )
 # Tag for an RSS-only card, from its chinanews.com.cn desk.
-SOURCE_DESK_TAGS = {"要闻": "要闻", "国内": "时政", "财经": "财经", "社会": "社会", "即时": "快讯"}
+SOURCE_DESK_TAGS = {"要闻": "要闻", "国内": "时政", "财经": "经济", "社会": "社会", "即时": "要闻"}
 # Accents are the panel's own primaries, which it shows solidly instead of dithering;
 # gains are red and losses green, as Chinese market quotes show them.
 PAGE_ACCENTS = {"lead": (255, 0, 0), "domestic": (0, 255, 0), "world": (0, 0, 255), "up": (255, 0, 0), "down": (0, 255, 0)}
@@ -1788,9 +1831,9 @@ class DailyAINews(BasePlugin):
             "style": settings.get("region_focus") or "china_global",
             "recent_titles": list(recent_titles or [])[:24],
             "output_schema": {
-                "lead": {"section": "mainland 或 world", "tag": "2到4字分类", "title": "头条标题，不超过18字", "why": "一句话事实，不超过30字"},
-                "mainland": [{"tag": "2到4字分类", "title": "大陆新闻标题，不超过18字", "why": "一句话事实，不超过30字"}],
-                "world": [{"tag": "2到4字分类", "title": "世界新闻标题，不超过24字", "why": "一句话事实，不超过30字"}],
+                "lead": {"section": "mainland 或 world", "tag": "固定分类之一", "title": "头条标题，不超过18字", "why": "一句话事实，不超过30字"},
+                "mainland": [{"tag": "固定分类之一", "title": "大陆新闻标题，不超过18字", "why": "一句话事实，不超过30字"}],
+                "world": [{"tag": "固定分类之一", "title": "世界新闻标题，不超过24字", "why": "一句话事实，不超过30字"}],
                 "sources": ["来源名"],
             },
             "rules": [
@@ -1804,7 +1847,7 @@ class DailyAINews(BasePlugin):
                 "表彰、荣誉、先进个人评选和企业宣传不进 mainland，除非没有其他素材",
                 "mainland 给 2 到 4 条，只能选择 section=mainland 的 RSS 条目，优先大陆时政、经济、社会、公共安全和重大政策更新",
                 "world 给 3 到 4 条，只能选择 section=world 的 RSS 条目，优先国际冲突、外交、政策、事故、市场、法律和重大科技治理",
-                "tag 用 2 到 4 个字的新闻分类，例如 两岸、外交、冲突、中东、经济、金融、产业、基建、科技、航空、公共卫生、灾害、司法、选举、社会",
+                "tag 只能从以下分类中选一个：" + "；".join(f"{tag}（{meaning}）" for tag, meaning in NEWS_TAG_DEFINITIONS) + "；都不合适时写 要闻",
                 "title 中大陆新闻和 lead 不超过18字，世界新闻不超过24字，写清主体和动作，不要标点堆砌",
                 "why 写一句话事实：谁、做了什么、关键数字或结果，不超过30字；不要写意义、影响、体现、凸显、彰显之类的评价，也不要写“成为关注焦点”“引发关注”“引发讨论”“持续发酵”“局势紧张”这类空话；why 要补充标题以外的信息，不能复述标题",
                 "如果某个分区素材不足，宁可少写，不得跨区挪用，也不得编造新闻",
@@ -2049,11 +2092,36 @@ class DailyAINews(BasePlugin):
         if not isinstance(item, dict):
             return item
         trimmed = dict(item)
+        if "tag" in trimmed:
+            # Mapped from the AI's full tag, before any truncation.
+            trimmed["tag"] = DailyAINews._normalized_tag(trimmed["tag"], trimmed.get("title"))
         limits = {"title": NEWS_TITLE_MAX_CHARS, "why": NEWS_FACT_MAX_CHARS, "tag": NEWS_TAG_MAX_CHARS}
         for key, limit in limits.items():
             if key in trimmed:
                 trimmed[key] = DailyAINews._field_text(trimmed.get(key))[:limit]
         return trimmed
+
+    @staticmethod
+    def _normalized_tag(tag: Any, title: Any) -> str:
+        """A tag from the fixed vocabulary.
+
+        A vocabulary tag stays. Anything else is placed by the title's keywords, then by
+        a vocabulary tag or known synonym inside the AI's tag, and finally falls back to 要闻.
+        """
+        tag = DailyAINews._field_text(tag)
+        if tag in NEWS_TAGS or tag == FALLBACK_NEWS_TAG:
+            return tag
+        title = str(title or "")
+        for vocabulary_tag, words in TAG_TITLE_KEYWORDS:
+            if any(word in title for word in words):
+                return vocabulary_tag
+        for vocabulary_tag in NEWS_TAGS:
+            if vocabulary_tag in tag:
+                return vocabulary_tag
+        for synonym, vocabulary_tag in TAG_SYNONYMS.items():
+            if synonym in tag:
+                return vocabulary_tag
+        return FALLBACK_NEWS_TAG
 
     @staticmethod
     def _field_text(value: Any) -> str:
@@ -2452,7 +2520,8 @@ class DailyAINews(BasePlugin):
         title = self._tidy_visible_text(title)
         if not title:
             return None
-        tag = self._field_text(item.get("tag")) if isinstance(item, dict) else ""
+        # Cached tags from before the fixed vocabulary are mapped onto it too.
+        tag = self._normalized_tag(item.get("tag"), title) if isinstance(item, dict) and "tag" in item else ""
         return {"title": title, "why": self._tidy_visible_text(why), "tag": tag[:NEWS_TAG_MAX_CHARS]}
 
     def _page_quotes(self, payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:

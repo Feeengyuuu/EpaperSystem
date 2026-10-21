@@ -1685,7 +1685,7 @@ def test_postprocess_trims_titles_facts_and_tags():
     result = plugin._postprocess_brief_news(brief, [{"source": "BBC世界", "section": "world", "title": "Ebola", "summary": ""}])
 
     item = result["world"][0]
-    assert len(item["tag"]) == daily_ai_news_module.NEWS_TAG_MAX_CHARS
+    assert item["tag"] == "公卫"
     assert len(item["title"]) == daily_ai_news_module.NEWS_TITLE_MAX_CHARS
     assert len(item["why"]) == daily_ai_news_module.NEWS_FACT_MAX_CHARS
 
@@ -1699,7 +1699,7 @@ def test_rss_cards_take_their_tag_from_the_chinanews_desk():
 
     cards = plugin._rss_news_cards(items, 4)
 
-    assert [card["tag"] for card in cards] == ["财经", "要闻"]
+    assert [card["tag"] for card in cards] == ["经济", "要闻"]
 
 
 def test_prompt_asks_for_a_lead_tags_and_one_sentence_facts(monkeypatch):
@@ -1754,7 +1754,7 @@ def test_page_news_keeps_an_explicit_world_lead():
 
     lead, mainland, world = plugin._page_news(brief, {"items": []})
 
-    assert lead["section_label"] == "国际" and lead["tag"] == "公共卫生"
+    assert lead["section_label"] == "国际" and lead["tag"] == "公卫"
     assert [item["title"] for item in mainland] == ["大陆新闻一"]
     assert [item["title"] for item in world] == ["英国派战机协防沙特"]
 
@@ -1810,7 +1810,7 @@ def test_render_draws_lead_columns_meta_and_market_tiles(monkeypatch):
     assert image.size == (800, 480)
     assert "10月21日 周三" in seen
     assert "07:34 更新 · 3 个信源" in seen
-    assert "头条 · 国际 · 公共卫生" in seen
+    assert "头条 · 国际 · 公卫" in seen
     assert "尼日利亚确诊埃博拉病例" in seen
     assert {"大陆新闻1", "大陆新闻4", "英国派战机协防沙特"} <= set(seen)
     assert {"上证", "-0.05%", "3,733.52", "标普", "+0.28%", "截至 10/21", "截至 10/20"} <= set(seen)
@@ -1905,7 +1905,7 @@ def test_small_text_is_pure_ink_and_accents_are_panel_primaries(monkeypatch):
     ink = daily_ai_news_module.get_theme_palette("day")["ink"]
     assert fills["01"] == ink
     assert fills["金融"] == ink
-    assert fills["头条 · 国际 · 公共卫生"] == (255, 255, 255)
+    assert fills["头条 · 国际 · 公卫"] == (255, 255, 255)
     primaries = {(0, 0, 0), (255, 255, 255), (255, 255, 0), (255, 0, 0), (0, 0, 255), (0, 255, 0)}
     palette = plugin._page_palette({"mode": "day"})
     assert {palette[key] for key in ("lead", "domestic", "world", "up", "down", "card")} <= primaries
@@ -2249,7 +2249,8 @@ def test_list_or_number_tags_never_render_as_python_reprs():
     lead, mainland, _world = plugin._page_news(brief, {"items": []})
 
     assert lead["tag"] == "经济"
-    assert mainland[0]["tag"] == "2026"
+    # A number is not a category; the title (数字人民币) places it.
+    assert mainland[0]["tag"] == "金融"
 
 
 @pytest.mark.parametrize("dimensions", [(640, 400), (400, 300), (480, 800), (250, 122)])
@@ -2447,3 +2448,74 @@ def test_cached_titles_and_facts_are_tidied_when_drawn():
 
     assert world[0]["title"] == "特斯拉传合并传闻受关注"
     assert world[0]["why"] == "OpenAI发布新模型"
+
+
+@pytest.mark.parametrize(
+    ("tag", "title", "expected"),
+    [
+        ("公共安全", "上海浦东机场口岸出入境破3000万", "航空"),
+        ("公共安全", "中钢协：9月粗钢产量增0.1%", "产业"),
+        ("公共安全", "农产品批发价指数微增0.22点", "经济"),
+        ("科技治理", "埃博拉疫情在非洲再起关注", "公卫"),
+        ("国际冲突", "美俄对话前景再受关注", "外交"),
+        ("国际冲突", "局势再受关注", "冲突"),
+        ("公共卫生", "某地开展专项行动", "公卫"),
+        ("两岸", "国台办回应", "两岸"),
+        ("", "某地举办秋季民俗文化节", "要闻"),
+    ],
+)
+def test_tags_outside_the_vocabulary_are_mapped_from_the_title(tag, title, expected):
+    assert DailyAINews._normalized_tag(tag, title) == expected
+
+
+def test_postprocess_puts_every_tag_in_the_vocabulary():
+    plugin = _plugin()
+    brief = {
+        "lead": {"tag": "公共安全", "title": "上海浦东机场口岸出入境破3000万", "why": "事实", "section": "world"},
+        "mainland": [],
+        "world": [{"tag": "科技治理", "title": "埃博拉疫情在非洲再起关注", "why": "事实"}],
+    }
+
+    result = plugin._postprocess_brief_news(brief, [{"source": "BBC世界", "section": "world", "title": "Ebola", "summary": ""}])
+
+    assert result["lead"]["tag"] == "航空"
+    assert result["world"][0]["tag"] == "公卫"
+
+
+def test_cached_tags_are_mapped_when_drawn():
+    plugin = _plugin()
+    brief = {
+        "mainland": [{"tag": "公共安全", "title": "中钢协：9月粗钢产量增0.1%", "why": ""},
+                     {"tag": "社会", "title": "江淮分水岭创意创业", "why": ""}],
+        "world": [],
+    }
+
+    lead, mainland, _world = plugin._page_news(brief, {"items": []})
+
+    assert lead["tag"] == "产业"
+    assert mainland[0]["tag"] == "社会"
+
+
+def test_prompt_lists_the_fixed_tag_vocabulary(monkeypatch):
+    plugin = _plugin()
+    captured = {}
+
+    class _Responses:
+        @staticmethod
+        def create(**kwargs):
+            captured.update(kwargs)
+
+            class _Response:
+                output_text = '{"mainland":[],"world":[]}'
+
+            return _Response()
+
+    class _Client:
+        responses = _Responses()
+
+    monkeypatch.setattr(daily_ai_news_module, "OpenAI", lambda **_kwargs: _Client())
+
+    plugin._summarize_with_openai("key", "gpt-5-nano", {}, [], {}, datetime(2026, 10, 21, 7, 0))
+
+    assert "只能从" in captured["input"]
+    assert all(tag in captured["input"] for tag in daily_ai_news_module.NEWS_TAGS)
