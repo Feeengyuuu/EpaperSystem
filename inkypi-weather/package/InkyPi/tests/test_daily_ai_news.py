@@ -2112,7 +2112,8 @@ def test_yahoo_quote_without_daily_history_uses_hourly_bars(monkeypatch):
     row = plugin._fetch_yahoo_quote("399006.SZ", "创业板指")
 
     assert [params["interval"] for params in seen] == ["1d", "60m"]
-    assert row["change_pct"] == pytest.approx((2711.33 / 2739.2031 - 1) * 100, abs=0.005)
+    # Measured from the previous day's last hourly bar (2739.2), not the chart's previousClose.
+    assert row["change_pct"] == pytest.approx((2711.33 / 2739.2 - 1) * 100, abs=0.005)
     assert row["closes"] == [2710.0, 2739.2, 2711.33]
 
 
@@ -2369,3 +2370,31 @@ def test_prompt_steers_the_lead_to_hard_news_and_mainland_to_china(monkeypatch):
     assert "不要选人物表彰" in request
     assert "外国新闻" in request and "不要放进 mainland" in request
     assert "表彰、荣誉" in request and "不能复述标题" in request
+
+
+def test_summary_facts_drop_a_day_only_leading_date():
+    assert DailyAINews._summary_fact("21日，国新办就中国积极应对气候变化举行发布会。更多内容") == "国新办就中国积极应对气候变化举行发布会"
+    assert DailyAINews._summary_fact("中新网10月21日电 21日，国务院台办举行例行新闻发布会。") == "国务院台办举行例行新闻发布会"
+
+
+def test_hourly_fallback_measures_from_the_previous_days_last_bar_not_a_stale_meta_close(monkeypatch):
+    plugin = _plugin()
+    day = 86400
+    today_open = 1792546200  # 2026-10-21 01:30 UTC (09:30 Shanghai)
+    stamps = [today_open - day + hour * 3600 for hour in range(3)] + [today_open + hour * 3600 for hour in range(2)]
+    responses = {
+        "1d": _yahoo_chart([2711.33], [today_open + 3600], today_open + 3600, 2711.33, gmtoffset=28800),
+        "60m": _yahoo_chart([2730.0, 2735.0, 2739.69, 2720.0, 2711.33], stamps, today_open + 3600, 2711.33, gmtoffset=28800),
+    }
+    # Yahoo's hourly previousClose can be a session behind (seen live: 3730.92 for 上证 vs a 3735.37 close).
+    responses["60m"]["chart"]["result"][0]["meta"]["previousClose"] = 2700.0
+
+    class _Client:
+        def request_json(self, method, url, params=None, **_kwargs):
+            return _ChartResponse(responses[params["interval"]])
+
+    monkeypatch.setattr(daily_ai_news_module, "get_http_client", lambda: _Client())
+
+    row = plugin._fetch_yahoo_quote("399006.SZ", "创业板指")
+
+    assert row["change_pct"] == pytest.approx((2711.33 / 2739.69 - 1) * 100, abs=0.005)

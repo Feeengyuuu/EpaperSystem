@@ -1639,14 +1639,16 @@ class DailyAINews(BasePlugin):
 
         previous = None
         if len(series) < 2:
-            # Some indexes (创业板指 399006.SZ) have no daily history on Yahoo; hourly bars
-            # give their recent days and the chart reports the previous session's close.
+            # Some indexes (创业板指 399006.SZ) have no daily history on Yahoo; hourly bars,
+            # grouped by exchange day, give their recent closes. The hourly chart's own
+            # previousClose can be a session behind, so it is only a last resort.
             hourly = self._yahoo_chart(symbol, "5d", "60m")
             if hourly is not None:
                 hourly_meta = hourly.get("meta") or {}
-                series = self._daily_closes(self._yahoo_series(hourly), hourly_meta.get("gmtoffset")) or series
+                daily = self._daily_closes(self._yahoo_series(hourly), hourly_meta.get("gmtoffset"))
+                series = daily or series
                 previous_close = hourly_meta.get("previousClose")
-                if isinstance(previous_close, (int, float)) and previous_close:
+                if len(daily) < 2 and isinstance(previous_close, (int, float)) and previous_close:
                     previous = float(previous_close)
         if previous is None:
             previous = self._previous_session_close(series, meta.get("regularMarketTime"), meta.get("gmtoffset"))
@@ -2073,7 +2075,7 @@ class DailyAINews(BasePlugin):
         """The first sentence of an RSS summary, without its dateline or 据…消息 attribution."""
         text = re.sub(r"\s+", " ", str(summary or "")).strip()
         text = re.sub(r"^\S{0,24}?\d{1,2}月\d{1,2}日电\s*(?:[（(][^）)]{0,24}[）)])?\s*", "", text)
-        text = re.sub(r"^\d{1,2}月\d{1,2}日[，,]\s*", "", text)
+        text = re.sub(r"^(?:\d{1,2}月)?\d{1,2}日[，,]\s*", "", text)
         text = re.sub(r"^据[^，,。]{0,24}消息[，,]\s*", "", text)
         return re.split(r"[。！？]", text, maxsplit=1)[0].strip()[:36]
 
