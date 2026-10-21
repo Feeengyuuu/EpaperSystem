@@ -111,10 +111,6 @@ ACCENT_ORANGE = (245, 122, 38)  # 100Y-50R PANTONE ORANGE 021 family
 CINNABAR = (222, 45, 38)  # 100Y-100R PANTONE RED 032 family
 MALACHITE = (0, 152, 82)  # 100Y-100B PANTONE 354 family
 CHART_MARKER_GREEN = (0, 92, 50)  # 100Y-100B-50R PANTONE 350 family
-ROW_COLORS = [
-	PANEL,
-	(240, 247, 255),
-]
 TICKER_PALETTES = {
 	"day": {
 		"fill": PANEL_GOLD,
@@ -173,6 +169,36 @@ PORTFOLIO_HISTORY_FILE_ENV = "INKYPI_STOCKTRACKER_HISTORY_FILE"
 PORTFOLIO_HISTORY_MAX_DAYS = 180
 SOURCE_CACHE_SCHEMA_VERSION = "stocktracker-source-v2"
 SOURCE_CACHE_LEAF = "source"
+WINDOW_SHORT_LABELS = {
+	"1d": "1D",
+	"5d": "1W",
+	"1mo": "1M",
+	"3mo": "3M",
+	"6mo": "6M",
+	"1y": "1Y",
+	"ytd": "YTD",
+	"max": "MAX",
+}
+# Dashboard geometry for the 800x480 panel; cards keep a 16px gutter.
+DASHBOARD_MARGIN = 16
+HEADER_RULE_Y = 38
+TOP_CARDS = (48, 186)
+SUMMARY_CARD_WIDTH = 300
+HOLDINGS_TOP = 198
+HOLDING_ROW_MIN_HEIGHT = 15
+HOLDING_ROW_MAX_HEIGHT = 24
+# Holdings table columns as fractions of the inner table width.
+HOLDING_COLUMNS = {
+	"price": 0.205,
+	"shares": 0.29,
+	"value": 0.43,
+	"weight_bar": (0.448, 0.528),
+	"weight": 0.597,
+	"day": 0.70,
+	"day_pl": 0.81,
+	"trend": (0.835, 0.915),
+	"window": 1.0,
+}
 
 _LEGACY_STOCK_COLORS = {
 	"mode": "day",
@@ -191,7 +217,6 @@ _LEGACY_STOCK_COLORS = {
 	"cinnabar": CINNABAR,
 	"malachite": MALACHITE,
 	"chart_marker_green": CHART_MARKER_GREEN,
-	"row_colors": ROW_COLORS,
 }
 _ACTIVE_STOCK_COLORS = ContextVar("stocktracker_render_colors", default=None)
 
@@ -252,7 +277,6 @@ def _stock_render_colors(theme_context):
 		"cinnabar": red,
 		"malachite": green,
 		"chart_marker_green": green,
-		"row_colors": [panel, _blend_rgb(accent, panel, 0.055 if mode == "day" else 0.10)],
 	}
 
 
@@ -422,6 +446,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			ticker_theme=settings.get("ticker_theme", "auto"),
 			theme_context=theme_context,
 			updated_at=updated_at,
+			portfolio_meta=portfolio_meta,
 		)
 		if hasattr(image, "info"):
 			provenance = SourceProvenance.FRESH_CACHE if theme_render_only else SourceProvenance.LIVE
@@ -1406,7 +1431,122 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				return
 			draw.text((left + 12, top + 12), title, fill=colors["ink"], font=self._font(16, True))
 
-	def _draw_summary(self, img, draw, box, stock_data, account_value_override=None, updated_at=None):
+	@staticmethod
+	def _window_short_label(period):
+		key = str(period or "").strip().lower()
+		return WINDOW_SHORT_LABELS.get(key, key.upper() or "1M")
+
+	@staticmethod
+	def _signed_money(value, decimals=2):
+		sign = "-" if value < 0 else "+"
+		return f"{sign}${abs(value):,.{decimals}f}"
+
+	@staticmethod
+	def _compact_money(value):
+		abs_value = abs(value)
+		if abs_value >= 1000000:
+			return f"${value / 1000000:.2f}M"
+		if abs_value >= 1000:
+			return f"${value / 1000:.1f}K"
+		return f"${value:.0f}"
+
+	def _history_closes(self, data):
+		history = data.get("history")
+		if history is None or getattr(history, "empty", True):
+			return []
+		closes = []
+		for date_key in list(getattr(history, "index", [])):
+			try:
+				close = float(history.loc[date_key, "Close"])
+			except (KeyError, TypeError, ValueError, IndexError):
+				continue
+			if math.isfinite(close):
+				closes.append(close)
+		return closes
+
+	def _holding_metrics(self, data, portfolio_total):
+		"""Day and window movement for one table row, derived from the fetched quote and history."""
+		is_cash = self._is_cash_holding(data)
+		value = self._finite_float(data.get("total_value"))
+		shares = self._finite_float(data.get("shares"))
+		price = self._finite_float(data.get("price"))
+		closes = [] if is_cash else self._history_closes(data)
+		day_change = None
+		day_percent = None
+		if not is_cash:
+			if data.get("data_provider") != "robinhood_mcp" and len(closes) >= 2 and closes[-2]:
+				# Yahoo and Massive report change over the whole window; the bar before the
+				# live point is the previous session's close.
+				day_change = price - closes[-2]
+				day_percent = day_change / closes[-2] * 100
+			else:
+				day_change = self._finite_float(data.get("change"))
+				day_percent = self._finite_float(data.get("change_percent"))
+		window_percent = None
+		if len(closes) >= 2 and closes[0]:
+			window_percent = (closes[-1] - closes[0]) / closes[0] * 100
+		return {
+			"data": data,
+			"is_cash": is_cash,
+			"value": value,
+			"weight": value / portfolio_total * 100 if portfolio_total else 0.0,
+			"day_percent": day_percent,
+			"day_pl": day_change * shares if day_change is not None else None,
+			"window_percent": window_percent,
+			"closes": closes,
+		}
+
+	def _summary_stats(self, metrics, portfolio_meta):
+		portfolio_meta = portfolio_meta or {}
+		stats = []
+		equities = [item for item in metrics if not item["is_cash"]]
+		stats.append(("INVESTED", self._money(sum(item["value"] for item in equities))))
+		cash = portfolio_meta.get("cash_balance")
+		if cash is None:
+			cash_rows = [item["value"] for item in metrics if item["is_cash"]]
+			cash = sum(cash_rows) if cash_rows else None
+		if cash is not None:
+			stats.append(("CASH", self._money(cash)))
+		if portfolio_meta.get("buying_power") is not None:
+			stats.append(("BUYING POWER", self._money(portfolio_meta["buying_power"])))
+		pending = portfolio_meta.get("pending_deposits")
+		if pending is not None and abs(pending) >= 0.005:
+			stats.append(("PENDING", self._money(pending)))
+		movers = [item for item in equities if item["day_percent"] is not None]
+		if movers:
+			best = max(movers, key=lambda item: item["day_percent"])
+			worst = min(movers, key=lambda item: item["day_percent"])
+			stats.append(("BEST TODAY", f"{best['data']['symbol']} {best['day_percent']:+.2f}%"))
+			if worst is not best:
+				stats.append(("WORST TODAY", f"{worst['data']['symbol']} {worst['day_percent']:+.2f}%"))
+		stats.append(("POSITIONS", str(len(equities))))
+		return stats[:4]
+
+	def _draw_change_arrow(self, draw, x, center_y, percent, size=8):
+		"""Solid up/down triangle: color lives in a filled shape, which survives e-paper dithering."""
+		colors = _active_stock_colors()
+		half = size / 2
+		if percent is None or abs(percent) <= 0.005:
+			draw.rectangle((x + 1, round(center_y) - 1, x + size - 1, round(center_y) + 1), fill=colors["ink"])
+			return
+		color = self._change_color(percent)
+		if percent > 0:
+			points = [(x, center_y + half * 0.85), (x + size, center_y + half * 0.85), (x + half, center_y - half * 0.95)]
+		else:
+			points = [(x, center_y - half * 0.85), (x + size, center_y - half * 0.85), (x + half, center_y + half * 0.95)]
+		draw.polygon(points, fill=color)
+
+	def _draw_summary(
+		self,
+		img,
+		draw,
+		box,
+		total_value,
+		day_change,
+		day_percent,
+		day_label="TODAY",
+		stats=(),
+	):
 		colors = _active_stock_colors()
 		left, top, right, bottom = box
 		self._draw_box(
@@ -1417,33 +1557,75 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			fill=colors["panel_gold"],
 			canvas=img,
 		)
-		total_value, total_change, total_change_percent = self._portfolio_totals(
-			stock_data,
-			account_value_override=account_value_override,
-		)
-		change_color = self._change_color(total_change_percent)
+		change_color = self._change_color(day_percent)
 
 		value_text = self._money(total_value)
-		value_font = self._fit_font(draw, value_text, right - left - 28, 36, True, 20)
-		draw.text((left + 14, top + 44), value_text, fill=colors["ink"], font=value_font)
-
-		change_text = self._change_text(total_change, total_change_percent)
-		change_font = self._fit_font(draw, change_text, right - left - 32, 18, True, 12)
-		pill = (left + 12, top + 96, right - 12, top + 124)
-		draw.rounded_rectangle(
-			pill,
-			radius=8,
-			fill=self._blend(change_color, colors["panel_gold"], 0.12),
-			outline=change_color,
-			width=2,
-		)
-		draw.text((left + 24, top + 100), change_text, fill=change_color, font=change_font)
-		updated_at = updated_at or datetime.now()
+		value_font = self._fit_font(draw, value_text, right - left - 28, 34, True, 20)
 		draw.text(
-			(left + 14, bottom - 18),
-			updated_at.strftime("Updated %H:%M"),
-			fill=colors["muted"],
-			font=self._font(10),
+			(left + 14, self._centered_text_y(draw, value_text, value_font, top + 52)),
+			value_text,
+			fill=colors["ink"],
+			font=value_font,
+		)
+
+		pill = (left + 12, top + 72, right - 12, top + 96)
+		pill_center = (pill[1] + pill[3]) / 2
+		draw.rounded_rectangle(pill, radius=7, fill=colors["panel"], outline=change_color, width=2)
+		self._draw_change_arrow(draw, pill[0] + 9, pill_center, day_percent, size=10)
+		label_font = self._font(10, True)
+		label_width = self._text_width(draw, day_label, label_font)
+		draw.text(
+			(pill[2] - 9 - label_width, self._centered_text_y(draw, day_label, label_font, pill_center)),
+			day_label,
+			fill=colors["ink"],
+			font=label_font,
+		)
+		change_text = self._change_text(day_change, day_percent)
+		change_font = self._fit_font(draw, change_text, pill[2] - pill[0] - 38 - label_width, 17, True, 11)
+		# Ink numbers with a solid colored arrow: colored type dithers into noise on the panel.
+		draw.text(
+			(pill[0] + 25, self._centered_text_y(draw, change_text, change_font, pill_center)),
+			change_text,
+			fill=colors["ink"],
+			font=change_font,
+		)
+
+		stats = list(stats)[:4]
+		if not stats:
+			return
+		grid_left, grid_right = left + 12, right - 12
+		grid_top, grid_bottom = top + 102, bottom - 6
+		cell_w = (grid_right - grid_left) / 2
+		cell_h = (grid_bottom - grid_top) / 2
+		stat_label_font = self._font(9, True)
+		draw.line((grid_left, grid_top, grid_right, grid_top), fill=colors["grid"], width=1)
+		for index, (label, value) in enumerate(stats):
+			column, row = index % 2, index // 2
+			cell_left = grid_left + column * cell_w
+			cell_right = cell_left + cell_w
+			center_y = grid_top + row * cell_h + cell_h / 2
+			label_x = cell_left + (8 if column else 2)
+			draw.text(
+				(label_x, self._centered_text_y(draw, label, stat_label_font, center_y)),
+				label,
+				fill=colors["ink"],
+				font=stat_label_font,
+			)
+			label_width = self._text_width(draw, label, stat_label_font)
+			value_font = self._fit_font(draw, value, cell_right - label_x - label_width - 8, 12, True, 8)
+			value_x = cell_right - 2 - self._text_width(draw, value, value_font)
+			draw.text(
+				(value_x, self._centered_text_y(draw, value, value_font, center_y)),
+				value,
+				fill=colors["ink"],
+				font=value_font,
+			)
+			if row == 0 and len(stats) > 2:
+				draw.line((cell_left + 2, grid_top + cell_h, cell_right - 2, grid_top + cell_h), fill=colors["grid"], width=1)
+		draw.line(
+			(grid_left + cell_w, grid_top + 3, grid_left + cell_w, grid_bottom - 2),
+			fill=colors["grid"],
+			width=1,
 		)
 
 	def _draw_sparkline(
@@ -1454,6 +1636,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		values,
 		history_points=None,
 		history_markers_on_prefix=False,
+		*,
+		window_label=None,
+		date_range=None,
+		extremes=False,
 	):
 		# Local snapshots are already merged into values; they are no longer marked separately.
 		colors = _active_stock_colors()
@@ -1467,6 +1653,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			canvas=img,
 		)
 		plot = (left + 16, top + 40, right - 16, bottom - 12)
+		if window_label and len(values) >= 2:
+			self._draw_trend_return(draw, (right - 14, top + 22), values, window_label)
+		if date_range:
+			self._draw_trend_dates(draw, plot, bottom, date_range)
 		chart_bg = self._blend(colors["panel"], colors["paper"], 0.78)
 		draw.rounded_rectangle(
 			plot,
@@ -1504,12 +1694,87 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			width=2,
 		)
 		ended_up = values[-1] >= start
+		baseline_rect = self._draw_baseline_label(draw, plot, base_y, self._money(start, 0), chart_bg, below=ended_up)
+		if extremes:
+			self._draw_extreme_tags(draw, plot, values, points, chart_bg, avoid=[baseline_rect])
 		self._draw_latest_value_marker(
 			draw,
 			(round(points[-1][0]), round(points[-1][1])),
 			gain if ended_up else loss,
 		)
-		self._draw_baseline_label(draw, plot, base_y, self._money(start, 0), chart_bg, below=ended_up)
+
+	def _draw_trend_return(self, draw, anchor, values, window_label):
+		"""Window return right-aligned in the trend card's title row."""
+		colors = _active_stock_colors()
+		change = values[-1] - values[0]
+		percent = change / values[0] * 100 if values[0] else 0.0
+		right, center_y = anchor
+		label_font = self._font(11, True)
+		label = f"{window_label} RETURN"
+		value_text = f"{self._signed_money(change)} ({percent:+.2f}%)"
+		value_font = self._font(15, True)
+		label_width = self._text_width(draw, label, label_font)
+		value_width = self._text_width(draw, value_text, value_font)
+		value_x = right - label_width - 8 - value_width
+		draw.text(
+			(right - label_width, self._centered_text_y(draw, label, label_font, center_y)),
+			label,
+			fill=colors["ink"],
+			font=label_font,
+		)
+		draw.text(
+			(value_x, self._centered_text_y(draw, value_text, value_font, center_y)),
+			value_text,
+			fill=colors["ink"],
+			font=value_font,
+		)
+		self._draw_change_arrow(draw, value_x - 13, center_y, percent, size=9)
+
+	def _draw_trend_dates(self, draw, plot, bottom, date_range):
+		colors = _active_stock_colors()
+		font = self._font(9, True)
+		center_y = (plot[3] + bottom) / 2 + 0.5
+		start_text, end_text = (value.strftime("%b %d").upper() for value in date_range)
+		draw.text((plot[0] + 2, self._centered_text_y(draw, start_text, font, center_y)), start_text, fill=colors["ink"], font=font)
+		end_width = self._text_width(draw, end_text, font)
+		draw.text((plot[2] - 2 - end_width, self._centered_text_y(draw, end_text, font, center_y)), end_text, fill=colors["ink"], font=font)
+
+	def _draw_extreme_tags(self, draw, plot, values, points, chart_bg, avoid=()):
+		"""Label the window high above its point and the low below it, skipping any that collide."""
+		colors = _active_stock_colors()
+		if max(values) - min(values) < 0.005:
+			return
+		font = self._font(10, True)
+		placed = [rect for rect in avoid if rect]
+		latest = points[-1]
+		placed.append((latest[0] - 7, latest[1] - 7, latest[0] + 7, latest[1] + 7))
+		for prefix, index, above in (
+			("HIGH", max(range(len(values)), key=lambda i: values[i]), True),
+			("LOW", min(range(len(values)), key=lambda i: values[i]), False),
+		):
+			if index in (0, len(values) - 1):
+				continue
+			text = f"{prefix} {self._compact_money(values[index])}"
+			width = self._text_width(draw, text, font)
+			x_point, y_point = points[index]
+			x = min(max(x_point - width / 2, plot[0] + 4), plot[2] - width - 4)
+			y = y_point - 17 if above else y_point + 5
+			y = min(max(y, plot[1] + 2), plot[3] - 15)
+			rect = (x - 3, y - 1, x + width + 3, y + 13)
+			if any(self._rects_overlap(rect, other) for other in placed):
+				continue
+			draw.rounded_rectangle(rect, radius=3, fill=chart_bg)
+			draw.text((x, y), text, fill=colors["ink"], font=font)
+			placed.append(rect)
+
+	@staticmethod
+	def _rects_overlap(first, second):
+		return not (
+			first[2] <= second[0]
+			or second[2] <= first[0]
+			or first[3] <= second[1]
+			or second[3] <= first[1]
+		)
 
 	def _fill_against_baseline(self, img, plot, curve, base_y, chart_bg):
 		"""Tint the area between the curve and the start baseline: gain above, loss below."""
@@ -1550,8 +1815,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		x = plot[2] - width - 14
 		y = round(base_y) + 4 if below else round(base_y) - 18
 		y = min(max(y, plot[1] + 2), plot[3] - 16)
-		draw.rounded_rectangle((x - 3, y - 1, x + width + 3, y + 14), radius=3, fill=chart_bg)
-		draw.text((x, y), text, fill=colors["muted"], font=font)
+		rect = (x - 3, y - 1, x + width + 3, y + 14)
+		draw.rounded_rectangle(rect, radius=3, fill=chart_bg)
+		draw.text((x, y), text, fill=colors["ink"], font=font)
+		return rect
 
 	def _draw_latest_value_marker(self, draw, point, color=None):
 		colors = _active_stock_colors()
@@ -1702,24 +1969,47 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		self._header_logo_cache[cache_key] = logo
 		return logo
 
-	def _draw_header(self, img, draw, width, stock_data, header_brand=None):
+	def _draw_header(self, img, draw, width, stock_data, header_brand=None, updated_at=None):
 		colors = _active_stock_colors()
-		draw.rectangle((0, 0, width, 54), fill=colors["paper"])
-		header_logo = self._header_logo_image(header_brand, 214, 34)
+		margin = DASHBOARD_MARGIN
+		draw.rectangle((0, 0, width, HEADER_RULE_Y), fill=colors["paper"])
+		header_logo = self._header_logo_image(header_brand, 190, 28)
+		if header_logo and colors["mode"] == "night":
+			# The wordmark is black artwork; on a dark ground draw its silhouette in ink.
+			tinted = Image.new("RGBA", header_logo.size, (*colors["ink"], 255))
+			tinted.putalpha(header_logo.getchannel("A"))
+			header_logo = tinted
 		if header_logo:
-			img.paste(header_logo, (24, 9), header_logo)
+			img.paste(header_logo, (margin + 4, (HEADER_RULE_Y - header_logo.height) // 2), header_logo)
 		else:
-			draw.text((24, 12), "STOCK TRACKER", fill=colors["ink"], font=self._font(24, True))
+			draw.text((margin + 4, 7), "STOCK TRACKER", fill=colors["ink"], font=self._font(22, True))
 
-		source_label = self._source_label(stock_data)
+		center_y = HEADER_RULE_Y / 2
+		chip_font = self._font(11, True)
+		right = width - margin
+		chips = [(f"AS OF {(updated_at or datetime.now()).strftime('%H:%M')}", colors["ink"])]
+		if any(data.get("extended_hours") for data in stock_data):
+			chips.append(("EXTENDED HOURS", colors["accent_blue"]))
+		for text, outline in chips:
+			text_width = self._text_width(draw, text, chip_font)
+			chip = (right - text_width - 16, center_y - 10, right, center_y + 10)
+			draw.rounded_rectangle(chip, radius=10, fill=colors["panel"], outline=outline, width=2)
+			draw.text(
+				(chip[0] + 8, self._centered_text_y(draw, text, chip_font, center_y)),
+				text,
+				fill=colors["ink"],
+				font=chip_font,
+			)
+			right = chip[0] - 8
+		source_label = self._source_label(stock_data).upper()
+		source_font = self._font(12, True)
 		draw.text(
-			(width - 24, 18),
-			f"{source_label}  |  COLOR E-PAPER MODE",
-			fill=colors["muted"],
-			font=self._font(13, True),
-			anchor="ra",
+			(right - 4 - self._text_width(draw, source_label, source_font), self._centered_text_y(draw, source_label, source_font, center_y)),
+			source_label,
+			fill=colors["ink"],
+			font=source_font,
 		)
-		draw.line((24, 46, width - 24, 46), fill=colors["accent_gold"], width=3)
+		draw.line((margin, HEADER_RULE_Y, width - margin, HEADER_RULE_Y), fill=colors["accent_gold"], width=3)
 
 	@staticmethod
 	def _ticker_theme_key(theme=None, theme_context=None):
@@ -1800,14 +2090,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			price = data.get("price_text", self._money(float(data.get("price") or 0)))
 			change = data.get("change_text", f"{float(data.get('change_percent') or 0):+.2f}%")
 			change_color = data.get("change_text_color", self._change_color(float(data.get("change_percent") or 0)))
-			value = float(data.get("total_value") or 0)
-			abs_value = abs(value)
-			if abs_value >= 1000000:
-				value_text = f"${value / 1000000:.1f}M"
-			elif abs_value >= 1000:
-				value_text = f"${value / 1000:.1f}K"
-			else:
-				value_text = f"${value:.0f}"
+			value_text = self._compact_money(float(data.get("total_value") or 0))
 			price_width = self._text_width(draw, price, price_font)
 			max_symbol_width = max(22, text_right - text_left - price_width - 3)
 			symbol_font = self._fit_font(draw, symbol, max_symbol_width, 10, True, min_size=8)
@@ -1822,12 +2105,11 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		img,
 		draw,
 		box,
-		stock_data,
+		metrics,
 		tracking_window_label=None,
-		holdings_pin_symbols=None,
-		holdings_sink_symbols=None,
 		ticker_theme=None,
 		theme_context=None,
+		window_short="1M",
 	):
 		colors = _active_stock_colors()
 		left, top, right, bottom = box
@@ -1839,76 +2121,178 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			fill=colors["panel"],
 			canvas=img,
 		)
-		if tracking_window_label:
-			draw.text(
-				(right - 14, top + 14),
-				tracking_window_label,
-				fill=colors["muted"],
-				font=self._font(12, True),
-				anchor="ra",
-			)
-		header_font = self._font(12, True)
-		row_font = self._font(13)
-		symbol_font = self._font(15, True)
-		y = top + 40
-		row_slot_height = 20
-		logo_size = 18
-		logo_x = left + 20
-		cols = {
-			"symbol": left + 56,
-			"price": left + 166,
-			"shares": left + 292,
-			"value": left + 412,
-			"change": left + 604,
-		}
-		for label, x in [("SYMBOL", cols["symbol"]), ("PRICE", cols["price"]), ("SHARES", cols["shares"]), ("VALUE", cols["value"]), ("CHANGE", cols["change"])]:
-			draw.text((x, y), label, fill=colors["muted"], font=header_font)
-		y += 22
-		draw.line((left + 12, y, right - 12, y), fill=colors["grid"], width=1)
-		y += 6
+		self._draw_holdings_status(draw, (right - 14, top + 22), metrics, tracking_window_label)
 
-		max_rows = min(len(stock_data), 6)
-		displayed_rows = 0
-		display_rows = self._ordered_holdings(stock_data, holdings_pin_symbols, holdings_sink_symbols)
-		for idx, data in enumerate(display_rows[:max_rows]):
-			if y + row_slot_height > bottom - 38:
-				break
-			row_bg = colors["row_colors"][idx % len(colors["row_colors"])]
-			row_top = y - 2
-			row_bottom = row_top + row_slot_height
-			row_center_y = row_top + row_slot_height / 2
-			draw.rounded_rectangle((left + 10, row_top - 1, right - 10, row_bottom), radius=5, fill=row_bg)
-			change_color = data.get("change_text_color", self._change_color(data["change_percent"]))
-			indicator_color = data.get("indicator_color", change_color)
-			draw.rounded_rectangle((left + 5, row_top, left + 10, row_bottom - 1), radius=3, fill=indicator_color)
-			logo = self._holding_logo_image(data.get("symbol"), logo_size)
-			if logo:
-				logo_y = int(round(row_center_y - logo.height / 2))
-				img.paste(logo, (logo_x, logo_y), logo)
-			row_items = [
-				(cols["symbol"], data["symbol"], symbol_font, colors["ink"]),
-				(cols["price"], data.get("price_text", self._money(data["price"])), row_font, colors["ink"]),
-				(cols["shares"], data.get("shares_text", self._shares(data["shares"])), row_font, colors["ink"]),
-				(cols["value"], data.get("value_text", self._money(data["total_value"])), row_font, colors["ink"]),
-				(cols["change"], data.get("change_text", f"{data['change_percent']:+.2f}%"), row_font, change_color),
-			]
-			for x, text, font, fill in row_items:
-				text_y = self._centered_text_y(draw, text, font, row_center_y)
-				draw.text((x, text_y), text, fill=fill, font=font)
-			y += row_slot_height
-			draw.line((left + 12, y, right - 12, y), fill=colors["grid"], width=1)
-			displayed_rows += 1
+		table_left, table_right = left + 12, right - 12
+		columns = self._holding_column_positions(table_left + 16, table_right)
+		header_font = self._font(10, True)
+		header_center = top + 41
+		for label, key, align in (
+			("SYMBOL", "symbol", "left"),
+			("PRICE", "price", "right"),
+			("SHARES", "shares", "right"),
+			("VALUE", "value", "right"),
+			("WEIGHT", "weight_bar", "left"),
+			("DAY", "day", "right"),
+			("DAY P/L", "day_pl", "right"),
+			(f"{window_short} TREND", "trend", "left"),
+		):
+			x = columns[key][0] if isinstance(columns[key], tuple) else columns[key]
+			if align == "right":
+				x -= self._text_width(draw, label, header_font)
+			draw.text((x, self._centered_text_y(draw, label, header_font, header_center)), label, fill=colors["ink"], font=header_font)
+		rows_top = top + 50
+		draw.line((table_left, rows_top - 1, table_right, rows_top - 1), fill=colors["ink"], width=1)
 
-		hidden_rows = display_rows[displayed_rows:]
-		if hidden_rows:
+		rows_bottom = bottom - 6
+		max_rows = int((rows_bottom - rows_top) // HOLDING_ROW_MIN_HEIGHT)
+		visible = list(metrics)
+		hidden = []
+		if len(visible) > max_rows:
+			rows_bottom = bottom - 40
+			max_rows = max(int((rows_bottom - rows_top) // HOLDING_ROW_MIN_HEIGHT), 1)
+			visible, hidden = visible[:max_rows], visible[max_rows:]
+		if visible:
+			row_height = min((rows_bottom - rows_top) / len(visible), HOLDING_ROW_MAX_HEIGHT)
+			max_weight = max((item["weight"] for item in visible), default=0.0)
+			for index, item in enumerate(visible):
+				row_top = rows_top + index * row_height
+				self._draw_holding_row(
+					img,
+					draw,
+					(table_left, round(row_top), table_right, round(row_top + row_height)),
+					item,
+					columns,
+					max_weight,
+				)
+
+		if hidden:
 			self._draw_hidden_holdings_ticker(
 				img,
 				draw,
 				box,
-				hidden_rows,
+				[item["data"] for item in hidden],
 				ticker_theme=ticker_theme,
 				theme_context=theme_context,
 			)
+
+	@staticmethod
+	def _holding_column_positions(left, right):
+		width = right - left
+		positions = {"symbol": left + 18}
+		for key, fraction in HOLDING_COLUMNS.items():
+			if isinstance(fraction, tuple):
+				positions[key] = (round(left + width * fraction[0]), round(left + width * fraction[1]))
+			else:
+				positions[key] = round(left + width * fraction)
+		return positions
+
+	def _draw_holdings_status(self, draw, anchor, metrics, tracking_window_label):
+		"""Right side of the HOLDINGS title row: position count, today's breadth, window."""
+		colors = _active_stock_colors()
+		right, center_y = anchor
+		font = self._font(11, True)
+		equities = [item for item in metrics if not item["is_cash"]]
+		up = sum(1 for item in equities if (item["day_percent"] or 0) > 0.005)
+		down = sum(1 for item in equities if (item["day_percent"] or 0) < -0.005)
+		parts = [(f"{len(equities)} POSITIONS", None), (f"{up} UP", 1.0), (f"{down} DOWN", -1.0)]
+		if tracking_window_label:
+			parts.append((tracking_window_label, None))
+		x = right
+		for index, (text, arrow) in enumerate(reversed(parts)):
+			width = self._text_width(draw, text, font)
+			x -= width
+			draw.text((x, self._centered_text_y(draw, text, font, center_y)), text, fill=colors["ink"], font=font)
+			if arrow is not None:
+				x -= 12
+				self._draw_change_arrow(draw, x, center_y, arrow, size=9)
+			if index < len(parts) - 1:
+				x -= 16
+				draw.ellipse((x + 6, center_y - 1.5, x + 9, center_y + 1.5), fill=colors["ink"])
+
+	def _draw_holding_row(self, img, draw, row_box, item, columns, max_weight):
+		colors = _active_stock_colors()
+		left, top, right, bottom = row_box
+		data = item["data"]
+		center_y = (top + bottom) / 2
+		draw.line((left + 6, bottom - 1, right, bottom - 1), fill=colors["grid"], width=1)
+		day_percent = item["day_percent"]
+		indicator = colors["accent_blue"] if item["is_cash"] else self._change_color(day_percent or 0)
+		draw.rectangle((left, top + 1, left + 3, bottom - 2), fill=indicator)
+
+		logo_size = max(min(bottom - top - 2, 16), 10)
+		logo = self._holding_logo_image(data.get("symbol"), logo_size)
+		if logo:
+			img.paste(logo, (left + 8, round(center_y - logo.height / 2)), logo)
+
+		row_font = self._font(12)
+		bold_font = self._font(12, True)
+		symbol = str(data.get("symbol") or "")
+		symbol_font = self._fit_font(draw, symbol, columns["price"] - columns["symbol"] - 62, 13, True, 9)
+
+		def text_at(x, text, font, align="right"):
+			if align == "right":
+				x -= self._text_width(draw, text, font)
+			draw.text((x, self._centered_text_y(draw, text, font, center_y)), text, fill=colors["ink"], font=font)
+
+		text_at(columns["symbol"], symbol, symbol_font, align="left")
+		if item["is_cash"]:
+			text_at(columns["price"], data.get("price_text") or "USD", row_font)
+			text_at(columns["shares"], "-", row_font)
+		else:
+			text_at(columns["price"], self._money(self._finite_float(data.get("price"))), row_font)
+			text_at(columns["shares"], self._shares(self._finite_float(data.get("shares"))), row_font)
+		text_at(columns["value"], self._money(item["value"]), bold_font)
+
+		bar_left, bar_right = columns["weight_bar"]
+		bar_top, bar_bottom = round(center_y - 3), round(center_y + 3)
+		draw.rectangle((bar_left, bar_top, bar_right, bar_bottom), outline=colors["grid"], width=1)
+		if max_weight > 0 and item["weight"] > 0:
+			fill_right = bar_left + max(2, round((bar_right - bar_left) * item["weight"] / max_weight))
+			draw.rectangle((bar_left, bar_top, fill_right, bar_bottom), fill=colors["ink"])
+		text_at(columns["weight"], f"{item['weight']:.1f}%", row_font)
+
+		if day_percent is None:
+			text_at(columns["day"], "-", row_font)
+			text_at(columns["day_pl"], "-", row_font)
+		else:
+			day_text = f"{day_percent:+.2f}%"
+			day_width = self._text_width(draw, day_text, row_font)
+			self._draw_change_arrow(draw, columns["day"] - day_width - 11, center_y, day_percent)
+			text_at(columns["day"], day_text, row_font)
+			text_at(columns["day_pl"], self._signed_money(item["day_pl"] or 0.0), row_font)
+
+		trend_left, trend_right = columns["trend"]
+		window_percent = item["window_percent"]
+		if item["is_cash"] or window_percent is None:
+			text_at(columns["window"], "-", row_font)
+			return
+		self._draw_row_sparkline(
+			draw,
+			(trend_left, top + 3, trend_right, bottom - 4),
+			item["closes"],
+			self._change_color(window_percent),
+		)
+		text_at(columns["window"], f"{window_percent:+.1f}%", bold_font)
+
+	@staticmethod
+	def _draw_row_sparkline(draw, box, closes, color):
+		left, top, right, bottom = box
+		if len(closes) < 2 or right <= left or bottom <= top:
+			return
+		low, high = min(closes), max(closes)
+		span = high - low
+		last = len(closes) - 1
+		points = [
+			(
+				left + (right - left) * index / last,
+				(top + bottom) / 2 if span < 1e-9 else bottom - (bottom - top) * (close - low) / span,
+			)
+			for index, close in enumerate(closes)
+		]
+		draw.line(points, fill=color, width=2, joint="curve")
+		end_x, end_y = points[-1]
+		draw.ellipse((end_x - 2, end_y - 2, end_x + 2, end_y + 2), fill=color)
 
 	def _create_dashboard(
 		self,
@@ -1924,24 +2308,46 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		ticker_theme=None,
 		theme_context=None,
 		updated_at=None,
+		portfolio_meta=None,
 	):
-		"""Create a color dashboard that preserves the original stock layout."""
+		"""Account summary and trend on top, every holding with its day and window movement below."""
 		colors = _stock_render_colors(theme_context)
 		token = _ACTIVE_STOCK_COLORS.set(colors)
 		try:
 			width, height = dimensions
+			margin = DASHBOARD_MARGIN
 			img = Image.new("RGB", (width, height), colors["paper"])
 			draw = ImageDraw.Draw(img)
+			window_short = self._window_short_label(tracking_period)
 
-			self._draw_header(img, draw, width, stock_data, header_brand=header_brand)
+			self._draw_header(img, draw, width, stock_data, header_brand=header_brand, updated_at=updated_at)
 
+			total_value, _window_change, _window_percent = self._portfolio_totals(
+				stock_data,
+				account_value_override=account_value_override,
+			)
+			ordered = self._ordered_holdings(stock_data, holdings_pin_symbols, holdings_sink_symbols)
+			metrics = [self._holding_metrics(data, total_value) for data in ordered]
+			day_change = sum(item["day_pl"] or 0.0 for item in metrics)
+			day_base = total_value - day_change
+			day_percent = self._finite_float(day_change / day_base * 100 if day_base else 0.0)
+			all_live = all(
+				item["data"].get("data_provider") == "robinhood_mcp"
+				for item in metrics
+				if not item["is_cash"]
+			)
+
+			card_top, card_bottom = TOP_CARDS
+			summary_right = margin + SUMMARY_CARD_WIDTH
 			self._draw_summary(
 				img,
 				draw,
-				(24, 60, 284, 204),
-				stock_data,
-				account_value_override=account_value_override,
-				updated_at=updated_at,
+				(margin, card_top, summary_right, card_bottom),
+				total_value,
+				day_change,
+				day_percent,
+				day_label="TODAY" if all_live else "LAST SESSION",
+				stats=self._summary_stats(metrics, portfolio_meta),
 			)
 			curve_values, supplemental_history = self._portfolio_curve(
 				stock_data,
@@ -1953,26 +2359,41 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			self._draw_sparkline(
 				img,
 				draw,
-				(304, 60, width - 24, 204),
+				(summary_right + 12, card_top, width - margin, card_bottom),
 				curve_values,
 				supplemental_history,
 				history_markers_on_prefix=True,
+				window_label=window_short,
+				date_range=self._curve_date_range(
+					stock_data,
+					supplemental_history,
+					account_value_override=account_value_override,
+				),
+				extremes=True,
 			)
 			self._draw_holdings(
 				img,
 				draw,
-				(24, 224, width - 24, height - 24),
-				stock_data,
+				(margin, HOLDINGS_TOP, width - margin, height - 10),
+				metrics,
 				tracking_window_label,
-				holdings_pin_symbols,
-				holdings_sink_symbols,
 				ticker_theme,
 				theme_context,
+				window_short=window_short,
 			)
 
 			return img
 		finally:
 			_ACTIVE_STOCK_COLORS.reset(token)
+
+	def _curve_date_range(self, stock_data, supplemental_history, account_value_override=None):
+		series = self._portfolio_series(stock_data, account_value_override=account_value_override)
+		dates = [self._series_date(point["date"]) for point in supplemental_history or []]
+		dates.extend(self._series_date(date_key) for date_key, _value in series)
+		dates = [value for value in dates if value is not None]
+		if len(dates) < 2 or dates[0] == dates[-1]:
+			return None
+		return dates[0], dates[-1]
 
 	@staticmethod
 	def _source_label(stock_data):

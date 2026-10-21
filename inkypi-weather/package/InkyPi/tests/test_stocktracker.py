@@ -294,9 +294,9 @@ def test_stock_dashboard_uses_img2_section_wordmarks(monkeypatch):
     )
 
     assert calls == [
-        ("PORTFOLIO", 34, 68),
-        ("PORTFOLIO TREND", 314, 68),
-        ("HOLDINGS", 34, 232),
+        ("PORTFOLIO", 26, 56),
+        ("PORTFOLIO TREND", 338, 56),
+        ("HOLDINGS", 26, 206),
     ]
 
 
@@ -342,8 +342,15 @@ def _region_near_color_count(image, target, region, tolerance=8):
         if max(abs(pixel[index] - target[index]) for index in range(3)) <= tolerance
     )
 
+# The table shows every holding that fits; only the overflow rolls into the bottom ticker.
+TICKER_REGION = (36, 434, 764, 463)
+
+
 def _hidden_ticker_stock_data():
-    symbols = ["SPCX", "AAPL", "NVDA", "TSLA", "VTI", "NTDOY", "VXUS", "VGIT", "TTWO", "GOOGL", "SPY", "CASH"]
+    symbols = [
+        "SPCX", "AAPL", "NVDA", "TSLA", "VTI", "NTDOY", "VXUS", "VGIT", "TTWO",
+        "GOOGL", "SPY", "MSFT", "AMZN", "GOOG", "FIG", "QQQ", "VOO", "CASH",
+    ]
     stock_data = []
     for index, symbol in enumerate(symbols):
         start = 100 + index
@@ -382,11 +389,11 @@ def test_stock_dashboard_draws_hidden_holdings_as_horizontal_night_ticker():
         tracking_window_label="WINDOW: LAST MONTH",
         ticker_theme="night",
     )
-    ticker_region = (36, 420, 764, 449)
+    ticker_region = TICKER_REGION
 
     assert _region_near_color_count(image, INK, ticker_region, tolerance=5) > 10000
     assert _region_near_color_count(image, ACCENT_GOLD, ticker_region, tolerance=12) > 600
-    assert _region_near_color_count(image, WHITE, ticker_region, tolerance=18) > 250
+    assert _region_near_color_count(image, WHITE, ticker_region, tolerance=18) > 200
     assert _region_near_color_count(image, MALACHITE, ticker_region, tolerance=35) > 40
     assert _region_near_color_count(image, CINNABAR, ticker_region, tolerance=35) > 30
     assert _region_near_color_count(image, PANEL, ticker_region, tolerance=2) < 500
@@ -400,13 +407,90 @@ def test_stock_dashboard_draws_hidden_holdings_as_horizontal_day_ticker():
         tracking_window_label="WINDOW: LAST MONTH",
         ticker_theme="day",
     )
-    ticker_region = (36, 420, 764, 449)
+    ticker_region = TICKER_REGION
 
     assert _region_near_color_count(image, PANEL_GOLD, ticker_region, tolerance=8) > 10000
     assert _region_near_color_count(image, ACCENT_GOLD, ticker_region, tolerance=12) > 600
     assert _region_near_color_count(image, ACCENT_BLUE, ticker_region, tolerance=35) > 80
     assert _region_near_color_count(image, INK, ticker_region, tolerance=10) > 200
     assert _region_near_color_count(image, WHITE, ticker_region, tolerance=18) < 150
+
+
+def test_stock_dashboard_lists_every_holding_that_fits_without_a_ticker():
+    plugin = StockTracker({"id": "stocktracker"})
+    stock_data = _hidden_ticker_stock_data()[:11] + [_hidden_ticker_stock_data()[-1]]
+    rows_drawn = []
+    original = plugin._draw_holding_row
+
+    def record_row(img, draw, row_box, item, columns, max_weight):
+        rows_drawn.append(item["data"]["symbol"])
+        return original(img, draw, row_box, item, columns, max_weight)
+
+    plugin._draw_holding_row = record_row
+    image = plugin._create_dashboard(stock_data, (800, 480), ticker_theme="day")
+
+    assert len(rows_drawn) == 12
+    assert rows_drawn[0] == "SPCX"
+    assert rows_drawn[-1] == "CASH"
+    assert _region_near_color_count(image, PANEL_GOLD, TICKER_REGION, tolerance=8) < 500
+
+
+def test_holding_metrics_use_official_day_change_and_history_window():
+    plugin = StockTracker({"id": "stocktracker"})
+    live = _stock("SPCX", [100.0, 104.0, 110.0], 2)
+    live.update({"data_provider": "robinhood_mcp", "change": 2.0, "change_percent": 1.85})
+
+    metrics = plugin._holding_metrics(live, 1100.0)
+
+    assert metrics["day_percent"] == pytest.approx(1.85)
+    assert metrics["day_pl"] == pytest.approx(4.0)
+    assert metrics["window_percent"] == pytest.approx(10.0)
+    assert metrics["weight"] == pytest.approx(20.0)
+    assert metrics["closes"] == [100.0, 104.0, 110.0]
+
+
+def test_holding_metrics_derive_day_change_for_window_based_providers():
+    plugin = StockTracker({"id": "stocktracker"})
+    yahoo = _stock("AAPL", [100.0, 104.0, 110.0], 2)
+    yahoo["data_provider"] = "yfinance"
+    cash = _stock("CASH", [1.0], 50.0)
+    cash["is_cash"] = True
+
+    metrics = plugin._holding_metrics(yahoo, 270.0)
+    cash_metrics = plugin._holding_metrics(cash, 270.0)
+
+    # Yahoo's change spans the window; the day move is against the previous close.
+    assert metrics["day_percent"] == pytest.approx(6 / 104 * 100)
+    assert metrics["day_pl"] == pytest.approx(12.0)
+    assert metrics["window_percent"] == pytest.approx(10.0)
+    assert cash_metrics["day_percent"] is None
+    assert cash_metrics["window_percent"] is None
+    assert cash_metrics["weight"] == pytest.approx(50 / 270 * 100)
+
+
+def test_summary_stats_show_account_balances_then_best_mover():
+    plugin = StockTracker({"id": "stocktracker"})
+    rows = [_stock("SPCX", [100.0, 110.0], 2), _stock("AAPL", [100.0, 95.0], 1)]
+    for row, percent in zip(rows, (2.5, -1.25)):
+        row.update({"data_provider": "robinhood_mcp", "change_percent": percent})
+    metrics = [plugin._holding_metrics(row, 400.0) for row in rows]
+
+    stats = plugin._summary_stats(
+        metrics,
+        {"cash_balance": 85.0, "buying_power": 80.5, "pending_deposits": 0.0},
+    )
+
+    assert stats == [
+        ("INVESTED", "$315.00"),
+        ("CASH", "$85.00"),
+        ("BUYING POWER", "$80.50"),
+        ("BEST TODAY", "SPCX +2.50%"),
+    ]
+    assert plugin._summary_stats(metrics, {})[1:] == [
+        ("BEST TODAY", "SPCX +2.50%"),
+        ("WORST TODAY", "AAPL -1.25%"),
+        ("POSITIONS", "2"),
+    ]
 
 
 TREND_BOX = (304, 60, 776, 204)
@@ -1022,9 +1106,9 @@ def test_stock_auto_ticker_uses_pinned_mode_with_original_day_colors(monkeypatch
     assert plugin._ticker_theme_key("auto", night_theme) == "night"
     assert day.getpixel((0, 100)) == stocktracker_module.PAPER
     assert night.getpixel((0, 100)) == night_theme["palette"]["background"]
-    assert day.getpixel((40, 250)) == stocktracker_module.PANEL
-    assert night.getpixel((40, 250)) == night_theme["palette"]["panel"]
-    ticker_region = (36, 420, 764, 449)
+    assert day.getpixel((40, 238)) == stocktracker_module.PANEL
+    assert night.getpixel((40, 238)) == night_theme["palette"]["panel"]
+    ticker_region = TICKER_REGION
     assert _region_near_color_count(
         night,
         night_theme["palette"]["background"],
