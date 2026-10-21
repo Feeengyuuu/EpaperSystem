@@ -76,6 +76,76 @@ def test_camera_frame_is_cached_as_original_jpeg_bytes(tmp_path, monkeypatch):
     assert status["camera_waiting"] is False
 
 
+def _failing_camera(monkeypatch):
+    class FailingCameraClient:
+        def __init__(self, *args):
+            pass
+
+        def capture_frame(self):
+            raise OSError(113, "No route to host")
+
+    monkeypatch.setattr(bambu_module, "BambuCameraClient", FailingCameraClient)
+
+
+def test_failed_capture_labels_the_cached_frame_with_its_own_time(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    stale = Path(plugin._camera_file("192.0.2.10", "SERIAL"))
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_bytes(_jpeg_bytes())
+    captured_at = bambu_module.datetime(2026, 10, 20, 21, 21).timestamp()
+    bambu_module.os.utime(stale, (captured_at, captured_at))
+    _failing_camera(monkeypatch)
+    status = {"serial": "SERIAL", "camera_updated_at": "19:09"}
+
+    plugin._attach_camera_frame(status, "192.0.2.10", 6000, "secret", 3)
+
+    assert status["camera_path"] == str(stale)
+    assert status["camera_updated_at"] == "21:21"
+    assert status["camera_stale"] is True
+
+
+def test_successful_capture_clears_the_stale_mark(tmp_path, monkeypatch):
+    frame = _jpeg_bytes()
+
+    class FakeCameraClient:
+        def __init__(self, *args):
+            pass
+
+        def capture_frame(self):
+            return frame
+
+    monkeypatch.setattr(bambu_module, "BambuCameraClient", FakeCameraClient)
+    plugin = _plugin(tmp_path)
+    status = {"serial": "SERIAL", "camera_stale": True}
+
+    plugin._attach_camera_frame(status, "192.0.2.10", 6000, "secret", 3)
+
+    assert status["camera_stale"] is False
+
+
+@pytest.mark.parametrize(("stale", "chip", "fill"), [(True, "CAM 21:21 STALE", ACCENT_ORANGE), (False, "CAM 21:21", None)])
+def test_camera_chip_marks_a_stale_frame(tmp_path, monkeypatch, stale, chip, fill):
+    plugin = _plugin(tmp_path)
+    status = plugin._demo_status()
+    status.update({"camera_updated_at": "21:21", "camera_stale": stale})
+    pills = []
+    draw_pill = plugin._draw_pill
+
+    def record_pill(draw, x, y, text, color, *args, **kwargs):
+        pills.append((text, color))
+        return draw_pill(draw, x, y, text, color, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_pill", record_pill)
+
+    plugin._render_status(status, (800, 480))
+
+    texts = dict(pills)
+    assert chip in texts
+    assert ("CAM 21:21 STALE" in texts) is stale
+    if fill:
+        assert texts[chip] == fill
+
+
 def test_rendered_camera_panel_keeps_source_rgb_values(tmp_path):
     plugin = _plugin(tmp_path)
     status = plugin._demo_status()

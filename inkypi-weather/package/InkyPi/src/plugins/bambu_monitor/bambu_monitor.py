@@ -633,6 +633,7 @@ class BambuMonitor(BasePlugin):
                 f.write(frame)
             status["camera_path"] = path
             status["camera_updated_at"] = datetime.now().strftime("%H:%M")
+            status["camera_stale"] = False
             status["camera_failure_count"] = 0
             status["camera_waiting"] = False
         except Exception as exc:
@@ -642,7 +643,10 @@ class BambuMonitor(BasePlugin):
             status["camera_failure_count"] = failures
             stale_path = self._camera_file(host, status.get("serial") or "printer")
             if os.path.exists(stale_path) and failures < CAMERA_WAITING_FAILURES:
+                # The cached frame keeps the time it was captured, so it never passes for a live one.
                 status["camera_path"] = stale_path
+                status["camera_updated_at"] = datetime.fromtimestamp(os.path.getmtime(stale_path)).strftime("%H:%M")
+                status["camera_stale"] = True
                 status["camera_waiting"] = False
             else:
                 status["camera_path"] = None
@@ -909,6 +913,8 @@ class BambuMonitor(BasePlugin):
             prepared = self._fit_camera_image(frame, size, CAMERA_FRAME_CENTERING)
             if status.get("camera_updated_at"):
                 chip = f"CAM {status['camera_updated_at']}"
+                if status.get("camera_stale"):
+                    chip, chip_fill = f"{chip} STALE", _active_color("accent_orange", ACCENT_ORANGE)
         else:
             waiting = self._load_waiting_image()
             if waiting:
