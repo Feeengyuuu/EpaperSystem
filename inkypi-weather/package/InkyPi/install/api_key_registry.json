@@ -511,6 +511,30 @@
       "value_type": "secret"
     },
     {
+      "key": "FINNHUB_API_KEY",
+      "service": "Finnhub",
+      "features": [
+        "Money Radar"
+      ],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://finnhub.io/dashboard",
+      "notes": "Optional: shows upcoming earnings for your holdings.",
+      "value_type": "secret"
+    },
+    {
+      "key": "FRED_API_KEY",
+      "service": "FRED (St. Louis Fed)",
+      "features": [
+        "Money Radar"
+      ],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://fredaccount.stlouisfed.org/apikeys",
+      "notes": "Optional: CPI, unemployment, Fed funds and 30-year mortgage rate from FRED.",
+      "value_type": "secret"
+    },
+    {
       "key": "TICKETMASTER_API_KEY",
       "service": "Ticketmaster Discovery API",
       "features": [
@@ -658,7 +682,8 @@
       "key": "TWITCH_CLIENT_ID",
       "service": "Twitch application client ID",
       "features": [
-        "LiveRadar"
+        "LiveRadar",
+        "Tech & Play"
       ],
       "required": false,
       "aliases": [],
@@ -670,7 +695,8 @@
       "key": "TWITCH_CLIENT_SECRET",
       "service": "Twitch application client secret",
       "features": [
-        "LiveRadar"
+        "LiveRadar",
+        "Tech & Play"
       ],
       "required": false,
       "aliases": [],

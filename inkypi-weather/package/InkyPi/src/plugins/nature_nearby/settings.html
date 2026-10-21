@@ -1,0 +1,37 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <label class="form-label" for="latitude">中心位置（纬度, 经度）</label>
+  <div style="display:flex; gap:8px;">
+    <input class="form-control" type="number" step="0.0001" min="-90" max="90" name="latitude" id="latitude" placeholder="37.5485">
+    <input class="form-control" type="number" step="0.0001" min="-180" max="180" name="longitude" id="longitude" placeholder="-121.9886">
+  </div>
+  <small>留空为弗里蒙特。显示这个范围内 iNaturalist 上的研究级观察（物种已被社区确认）。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="radiusKm">半径（公里）</label>
+  <input class="form-control" type="number" name="radiusKm" id="radiusKm" value="40" min="5" max="150">
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取全部数据</label>
+  <small>最新观察 30 分钟、热门物种与观察者 3 小时、类群 6 小时更新；照片版权归各观察者（见页面署名）。轮播只读本地缓存。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const saved = typeof pluginSettings !== 'undefined' ? pluginSettings : {};
+  for (const key of ['latitude', 'longitude', 'radiusKm', 'fontFamily', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    if (saved[key] === undefined) {
+      if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+      continue;
+    }
+    if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(saved[key]);
+    else el.value = saved[key];
+  }
+});
+</script>

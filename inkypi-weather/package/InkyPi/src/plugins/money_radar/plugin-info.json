@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "id": "money_radar",
+  "class": "MoneyRadar",
+  "display_name": "资金雷达",
+  "refresh_on_display": false,
+  "recommended_refresh": {"interval": 1800},
+  "capabilities": {
+    "supports_live_refresh": false,
+    "supports_presentation_refresh": false,
+    "supports_day_night_theme": true,
+    "supports_cached_display_redraw": true
+  },
+  "theme": {
+    "presentation": "ui",
+    "day": {"background": "#fbfaf5", "accent": "#1f5fbf"},
+    "night": {"background": "#0e171f", "accent": "#7fb8ff"}
+  }
+}

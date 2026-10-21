@@ -83,15 +83,19 @@ SERIAL_HEAVY_PLUGINS = frozenset(
 
 INLINE_PLUGINS = frozenset(
     {
+        "bay_alerts",
         "bay_commute",
         "chinese_literature_clock",
         "clock",
         "flow_progress",
         "game_deals",
         "literature_clock",
+        "money_radar",
         "moon_phase",
+        "nature_nearby",
         "simple_calendar",
         "species_radar",
+        "tech_play",
     }
 )
 

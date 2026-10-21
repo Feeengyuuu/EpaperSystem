@@ -78,6 +78,8 @@ installer and web UI source of truth.
 | `API_SPORTS_KEY` | API-SPORTS / API-Football | Sports Dashboard | <https://dashboard.api-football.com/register> |
 | `THE_ODDS_API_KEY` | The Odds API | Sports Dashboard odds | <https://the-odds-api.com/#get-access> |
 | `ODDS_API_IO_KEY` | Odds-API.io | Sports Dashboard odds | <https://odds-api.io/> |
+| `FINNHUB_API_KEY` | Finnhub | Money Radar | <https://finnhub.io/dashboard> |
+| `FRED_API_KEY` | FRED (St. Louis Fed) | Money Radar | <https://fredaccount.stlouisfed.org/apikeys> |
 | `BLIZZARD_CLIENT_ID` | Battle.net Developer Portal | WoW Profile Dashboard | <https://develop.battle.net/access/clients> |
 | `BLIZZARD_CLIENT_SECRET` | Battle.net Developer Portal | WoW Profile Dashboard | <https://develop.battle.net/access/clients> |
 | `BLIZZARD_USER_ACCESS_TOKEN` | Battle.net OAuth | WoW Profile Dashboard account mode | <https://develop.battle.net/documentation/guides/using-oauth> |

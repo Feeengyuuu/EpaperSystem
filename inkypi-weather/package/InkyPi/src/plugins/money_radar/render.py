@@ -1,0 +1,407 @@
+"""800 x 480 Money Radar page: market tiles, yield curve and macro, then holdings activity."""
+
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+
+from PIL import Image, ImageOps
+
+from utils.flat_icons import draw_icon
+from utils.local_wordmark import paste_local_wordmark
+from utils.page_canvas import PageCanvas
+from utils.safe_image import ImageLimits, safe_open_image
+
+from .sources import CURVE_POINTS, EARNINGS_HOURS, FORM_NAMES, ITEM_NAMES, days_until, local_now, parse_time
+
+
+ASSETS = Path(__file__).resolve().parent / "assets"
+_LIMITS = ImageLimits(max_bytes=256 * 1024, max_width=512, max_height=512, max_pixels=512 * 512)
+DAY = {
+    "paper": "#fbfaf5", "panel": "#f0eee6", "ink": "#121a20", "muted": "#222c34", "rule": "#a3aab0",
+    "up": "#00a83a", "down": "#d42020", "accent": "#1f5fbf", "past": "#8a949b", "gold": "#ffde00",
+    "badge_ink": "#ffffff",
+}
+NIGHT = {
+    "paper": "#0e171f", "panel": "#16232d", "ink": "#edf1ea", "muted": "#c6d0d5", "rule": "#4f606b",
+    "up": "#6fd38f", "down": "#ff6b6b", "accent": "#7fb8ff", "past": "#7d8b94", "gold": "#ffd84a",
+    "badge_ink": "#0e171f",
+}
+COIN_NAMES = {"bitcoin": "比特币", "ethereum": "以太坊", "solana": "Solana"}
+WEEKDAYS = "一二三四五六日"
+TILES = ((12, 200), (206, 394), (400, 588), (594, 788))
+
+
+def _rgb(value):
+    if isinstance(value, str) and value.startswith("#") and len(value) == 7:
+        return tuple(int(value[index:index + 2], 16) for index in (1, 3, 5))
+    return value
+
+
+def _palette(settings):
+    theme = settings.get("_inkypi_theme") or {}
+    palette = NIGHT if theme.get("mode", settings.get("themeMode")) == "night" else DAY
+    return {key: _rgb(value) for key, value in palette.items()}
+
+
+def _asset(name, height):
+    path = ASSETS / f"{name}.png"
+    if not path.is_file():
+        return None
+    with safe_open_image(path, limits=_LIMITS) as source:
+        image = source.convert("RGBA")
+    return ImageOps.contain(image, (height * 3, height), Image.Resampling.LANCZOS)
+
+
+def _paste(canvas, image, xy):
+    if image is not None:
+        canvas.image.paste(image, (round(xy[0]), round(xy[1])), image)
+        return image.width
+    return 0
+
+
+def ago(stamp, now):
+    seconds = max(0, (now - stamp).total_seconds())
+    if seconds < 3600:
+        return f"{max(1, int(seconds // 60))} 分钟前"
+    if seconds < 86400:
+        return f"{int(seconds // 3600)} 小时前"
+    return f"{int(seconds // 86400)} 天前"
+
+
+def price_text(value):
+    if value >= 1000:
+        return f"${value:,.0f}"
+    if value >= 1:
+        return f"${value:,.2f}"
+    return f"${value:.4f}"
+
+
+def sparkline(canvas, box, values, color):
+    values = [value for value in values or [] if value is not None]
+    left, top, right, bottom = box
+    if len(values) < 2:
+        canvas.text(((left + right) / 2, (top + bottom) / 2), "暂无走势", 12, "muted", anchor="mm", bold=False)
+        return
+    low, high = min(values), max(values)
+    span = (high - low) or 1
+    points = [(left + (right - left) * index / (len(values) - 1),
+               bottom - (bottom - top) * (value - low) / span) for index, value in enumerate(values)]
+    base_y = points[0][1]
+    for x in range(int(left), int(right), 6):
+        canvas.draw.line((x, base_y, x + 2, base_y), fill=canvas.color("rule"), width=1)
+    canvas.draw.line(points, fill=color, width=2, joint="curve")
+    end_x, end_y = points[-1]
+    canvas.draw.ellipse((end_x - 3, end_y - 3, end_x + 3, end_y + 3), fill=color)
+
+
+def _direction(change):
+    if change is None or abs(change) < 1e-9:
+        return "flat", "muted"
+    return ("up", "up") if change > 0 else ("down", "down")
+
+
+def _change_line(canvas, xy, change, text, *, colored=True):
+    icon, tone = _direction(change)
+    color = canvas.color(tone if colored else "ink")
+    draw_icon(canvas.draw, icon, (xy[0], xy[1] - 6), 11, color, canvas.color("paper"))
+    canvas.text((xy[0] + 15, xy[1]), text, 13, anchor="lm")
+
+
+def _tile_frame(canvas, left, right, title, mark=None, mark_text=None):
+    canvas.draw.rounded_rectangle((left, 60, right, 196), radius=6, outline=canvas.color("rule"), width=1)
+    x = left + 10
+    if mark is not None:
+        x += _paste(canvas, mark, (x, 68)) + 6
+    elif mark_text:
+        canvas.draw.rounded_rectangle((x, 68, x + 22, 90), radius=5, fill=canvas.color("ink"))
+        canvas.text((x + 11, 79), mark_text, 13, "paper", anchor="mm")
+        x += 28
+    canvas.text((x, 79), title, 14, anchor="lm", width=right - x - 8)
+
+
+def _fx_tile(canvas, payload, box):
+    left, right = box
+    data = payload["fx"]["data"]
+    series = (data.get("series") or {}).get("CNY") or []
+    us, cn = _asset("flag-us", 14), _asset("flag-cn", 14)
+    _tile_frame(canvas, left, right, "美元/人民币")
+    flag_x = right - 10 - (us.width if us else 0) - (cn.width if cn else 0) - 4
+    _paste(canvas, us, (flag_x, 72))
+    _paste(canvas, cn, (flag_x + (us.width if us else 0) + 4, 72))
+    if len(series) < 2:
+        canvas.text((left + 10, 120), "汇率暂不可用", 15, "muted", anchor="lm")
+        return
+    latest, first = series[-1][1], series[0][1]
+    canvas.text((left + 10, 112), f"{latest:.4f}", 28, anchor="lm")
+    change = (latest / first - 1) * 100
+    # An exchange rate has no good or bad direction, so it stays neutral ink and blue.
+    _change_line(canvas, (left + 10, 138), change, f"{change:+.2f}% · {len(series)} 个交易日", colored=False)
+    sparkline(canvas, (left + 12, 150, right - 12, 176), [value for _day, value in series], canvas.color("accent"))
+    others = []
+    for code, label in (("EUR", "欧元"), ("JPY", "日元"), ("HKD", "港币")):
+        rows = (data.get("series") or {}).get(code) or []
+        if rows:
+            others.append(f"{label} {rows[-1][1]:.2f}" if code != "JPY" else f"{label} {rows[-1][1]:.1f}")
+    canvas.text((left + 10, 187), " · ".join(others), 11, "muted", anchor="lm", bold=False, width=right - left - 20)
+
+
+def _coin_tile(canvas, coin, box):
+    left, right = box
+    name = COIN_NAMES.get(coin["id"], coin.get("name") or coin["symbol"])
+    _tile_frame(canvas, left, right, name, _asset(f"coin-{coin['id']}", 22), coin["symbol"][:2])
+    canvas.text((right - 10, 79), coin["symbol"], 12, "muted", anchor="rm", bold=False)
+    canvas.text((left + 10, 112), price_text(coin["price"]), 28, anchor="lm", width=right - left - 20)
+    day, week = coin.get("change_24h"), coin.get("change_7d")
+    text = f"{day:+.2f}% 24 小时" if day is not None else "24 小时 —"
+    _change_line(canvas, (left + 10, 138), day, text)
+    color = canvas.color("up" if (week or 0) >= 0 else "down")
+    sparkline(canvas, (left + 12, 150, right - 12, 176), coin.get("sparkline"), color)
+    canvas.text((left + 10, 187), f"7 天 {week:+.1f}%" if week is not None else "7 天走势", 11, "muted",
+                anchor="lm", bold=False)
+
+
+def _yield_tile(canvas, payload, box):
+    left, right = box
+    quotes = payload["markets"]["data"].get("quotes") or {}
+    ten = quotes.get("^TNX")
+    _tile_frame(canvas, left, right, "10 年期美债", mark_text="%")
+    if not ten:
+        canvas.text((left + 10, 120), "利率暂不可用", 15, "muted", anchor="lm")
+        return
+    canvas.text((left + 10, 112), f"{ten['last']:.2f}%", 28, anchor="lm")
+    change_bp = (ten["last"] - ten["month_ago"]) * 100
+    _change_line(canvas, (left + 10, 138), change_bp, f"{change_bp:+.0f} 基点 · 30 天", colored=False)
+    sparkline(canvas, (left + 12, 150, right - 12, 176), ten.get("series"), canvas.color("accent"))
+    rest = [f"{label} {quotes[symbol]['last']:.2f}" for symbol, label in CURVE_POINTS
+            if symbol != "^TNX" and symbol in quotes]
+    canvas.text((left + 10, 187), " · ".join(rest), 11, "muted", anchor="lm", bold=False, width=right - left - 20)
+
+
+def _curve(canvas, payload):
+    left, top, right, bottom = 12, 204, 392, 330
+    canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
+    canvas.text((left + 10, top + 14), "美债收益率曲线", 15, anchor="lm")
+    quotes = payload["markets"]["data"].get("quotes") or {}
+    points = [(label, quotes[symbol]) for symbol, label in CURVE_POINTS if symbol in quotes]
+    legend_x = right - 10
+    for label, color, dashed in (("一个月前", "past", True), ("今天", "accent", False)):
+        width = canvas.text((legend_x, top + 14), label, 11, "muted", anchor="rm", bold=False)
+        line_left = legend_x - width - 22
+        if dashed:
+            for x in range(int(line_left), int(line_left) + 16, 5):
+                canvas.draw.line((x, top + 14, x + 2, top + 14), fill=canvas.color(color), width=2)
+        else:
+            canvas.draw.line((line_left, top + 14, line_left + 16, top + 14), fill=canvas.color(color), width=2)
+        legend_x = line_left - 10
+    if len(points) < 2:
+        canvas.text(((left + right) / 2, (top + bottom) / 2 + 8), "收益率暂不可用", 14, "muted", anchor="mm")
+        return
+    values = [quote["last"] for _label, quote in points] + [quote["month_ago"] for _label, quote in points]
+    low, high = min(values) - 0.1, max(values) + 0.1
+    plot = (left + 44, top + 40, right - 16, bottom - 22)
+
+    def y_of(value):
+        return plot[3] - (plot[3] - plot[1]) * (value - low) / (high - low)
+
+    for step in range(3):
+        value = low + (high - low) * step / 2
+        y = y_of(value)
+        canvas.rule((plot[0], y, plot[2], y))
+        canvas.text((plot[0] - 6, y), f"{value:.1f}%", 11, "muted", anchor="rm", bold=False)
+    xs = [plot[0] + (plot[2] - plot[0]) * index / (len(points) - 1) for index in range(len(points))]
+    past = [(x, y_of(quote["month_ago"])) for x, (_label, quote) in zip(xs, points)]
+    for (x1, y1), (x2, y2) in zip(past, past[1:]):
+        steps = max(1, int(abs(x2 - x1) // 6))
+        for index in range(0, steps, 2):
+            a, b = index / steps, min(1, (index + 1) / steps)
+            canvas.draw.line((x1 + (x2 - x1) * a, y1 + (y2 - y1) * a, x1 + (x2 - x1) * b, y1 + (y2 - y1) * b),
+                             fill=canvas.color("past"), width=2)
+    now_points = [(x, y_of(quote["last"])) for x, (_label, quote) in zip(xs, points)]
+    canvas.draw.line(now_points, fill=canvas.color("accent"), width=3, joint="curve")
+    for (x, y), (label, quote) in zip(now_points, points):
+        canvas.draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=canvas.color("accent"))
+        canvas.text((x, y - 8), f"{quote['last']:.2f}", 11, anchor="mb", stroke="paper")
+        canvas.text((x, bottom - 10), label, 12, anchor="mm", bold=False)
+
+
+def _macro_tiles(canvas, payload):
+    macro = payload["macro"]["data"]
+    quotes = payload["markets"]["data"].get("quotes") or {}
+    tiles = []
+    for key, label, unit in (("cpi", "CPI 同比", "%"), ("unemployment", "失业率", "%")):
+        item = macro.get(key)
+        if item and item.get("value") is not None:
+            tiles.append((label, f"{item['value']:.1f}{unit}", item.get("previous"), item["value"],
+                          f"{str(item.get('period'))[-2:].lstrip('0')} 月 · {macro.get('source', '')}"))
+    if macro.get("fed_funds") or macro.get("mortgage30"):
+        for key, label in (("fed_funds", "联邦基金利率"), ("mortgage30", "30 年房贷利率")):
+            item = macro.get(key)
+            if item:
+                tiles.append((label, f"{item['value']:.2f}%", item.get("previous"), item["value"], "FRED"))
+    else:
+        for symbol, label, fmt in (("DX-Y.NYB", "美元指数", "{:.1f}"), ("GC=F", "黄金", "${:,.0f}")):
+            quote = quotes.get(symbol)
+            if quote:
+                tiles.append((label, fmt.format(quote["last"]), quote["month_ago"], quote["last"], "30 天"))
+    for index, (label, value, previous, current, note) in enumerate(tiles[:4]):
+        column, row = index % 2, index // 2
+        left = 400 + column * 197
+        top = 204 + row * 64
+        canvas.draw.rounded_rectangle((left, top, left + 191, top + 58), radius=6, outline=canvas.color("rule"))
+        canvas.text((left + 10, top + 13), label, 13, anchor="lm", width=110)
+        canvas.text((left + 181, top + 13), note, 11, "muted", anchor="rm", bold=False, width=80)
+        canvas.text((left + 10, top + 39), value, 22, anchor="lm")
+        if previous is not None:
+            change = current - previous
+            icon, _tone = _direction(change)
+            draw_icon(canvas.draw, icon, (left + 120, top + 33), 11, canvas.color("ink"), canvas.color("paper"))
+            canvas.text((left + 135, top + 39), f"{change:+.2f}" if abs(change) < 10 else f"{change:+,.0f}",
+                        12, anchor="lm", bold=False)
+    if not tiles:
+        canvas.text((594, 268), "宏观数据暂不可用", 14, "muted", anchor="mm")
+
+
+def _ticker_chip(canvas, x, y, symbol, width=42):
+    canvas.draw.rounded_rectangle((x, y - 8, x + width, y + 8), radius=3, fill=canvas.color("ink"))
+    canvas.text((x + width / 2, y), symbol or "—", 10, "paper", anchor="mm", width=width - 4)
+    return width
+
+
+def _news(canvas, items, now, left, right, top, rows):
+    if not items:
+        canvas.text((left, top + 4), "暂无持仓相关新闻", 13, "muted", anchor="lm")
+        return
+    for index, item in enumerate(items[:rows]):
+        y = top + index * 19
+        stamp = parse_time(item.get("time"))
+        meta = ago(stamp, now).replace(" ", "") if stamp else ""
+        meta_width = canvas.text((right, y), meta, 11, "muted", anchor="rm", bold=False)
+        chip = _ticker_chip(canvas, left, y, item.get("symbol"))
+        canvas.text((left + chip + 6, y), item["title"], 12, anchor="lm", bold=False,
+                    width=right - left - chip - 14 - meta_width)
+        if index < min(rows, len(items)) - 1:
+            for x in range(int(left), int(right), 5):
+                canvas.draw.point((x, y + 9), fill=canvas.color("rule"))
+
+
+def _weekday_date(day):
+    value = date.fromisoformat(day)
+    return f"{value:%m/%d} 周{WEEKDAYS[value.weekday()]}"
+
+
+def _earnings(canvas, payload, now, left, right, top, rows):
+    items = payload["earnings"]["data"].get("items", [])[:rows]
+    if not items:
+        canvas.text((left, top), "45 天内持仓无财报", 13, "muted", anchor="lm")
+        return 1
+    for index, item in enumerate(items):
+        y = top + index * 19
+        draw_icon(canvas.draw, "calendar", (left, y - 7), 13, canvas.color("ink"), canvas.color("paper"))
+        canvas.text((left + 19, y), _weekday_date(item["date"]), 12, anchor="lm")
+        hour = EARNINGS_HOURS.get(item.get("hour"), "")
+        canvas.text((left + 104, y), f"{item['symbol']} {hour}", 13, anchor="lm")
+        remaining = days_until(item["date"], now)
+        canvas.text((right, y), "今天" if remaining == 0 else f"{remaining} 天后", 12, "muted",
+                    anchor="rm", bold=False)
+    return len(items)
+
+
+def _filings(canvas, payload, left, right, top, rows):
+    items = payload["filings"]["data"].get("items", [])[:rows]
+    insider = payload["filings"]["data"].get("insider") or {}
+    if not items:
+        canvas.text((left, top), "60 天内持仓无新公告", 13, "muted", anchor="lm")
+        return
+    for index, item in enumerate(items):
+        y = top + index * 19
+        canvas.text((left, y), item["date"][5:].replace("-", "/"), 12, "muted", anchor="lm", bold=False)
+        canvas.text((left + 42, y), item["symbol"], 13, anchor="lm")
+        badge = item["form"]
+        badge_left = left + 92
+        width = canvas.width(badge, 11) + 10
+        canvas.draw.rounded_rectangle((badge_left, y - 8, badge_left + width, y + 8), radius=3,
+                                      fill=canvas.color("ink"))
+        canvas.text((badge_left + width / 2, y), badge, 11, "paper", anchor="mm")
+        meaning = "、".join(ITEM_NAMES[code] for code in item.get("items", []) if code in ITEM_NAMES) \
+            or FORM_NAMES.get(item["form"], item.get("description", ""))
+        canvas.text((badge_left + width + 6, y), meaning, 12, anchor="lm", bold=False,
+                    width=right - badge_left - width - 6)
+    if insider:
+        text = "近 30 天内部人交易：" + "、".join(f"{symbol} {count}" for symbol, count in insider.items())
+        canvas.text((left, top + len(items) * 19), text, 11, "muted", anchor="lm", bold=False, width=right - left)
+
+
+def _holdings(canvas, payload, now):
+    left, top, right, bottom = 12, 336, 788, 468
+    canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
+    canvas.draw.rectangle((left + 8, top + 8, left + 12, top + 22), fill=canvas.color("accent"))
+    draw_icon(canvas.draw, "paper", (left + 18, top + 7), 16, canvas.color("ink"), canvas.color("paper"))
+    x = left + 40 + canvas.text((left + 40, top + 15), "持仓动态", 15, anchor="lm") + 10
+    earnings_on = payload["earnings"]["state"] != "disabled"
+    filings_on = payload["filings"]["state"] != "disabled"
+    hint = []
+    if not earnings_on:
+        hint.append("财报需 FINNHUB_API_KEY")
+    if not filings_on:
+        hint.append("公告需 SEC 联系邮箱")
+    origin = "跟随股票页" if payload["symbols_from_portfolio"] else "自选"
+    detail = " · ".join([origin, *hint]) if hint else f"{origin} · Yahoo · Finnhub · SEC"
+    detail_width = canvas.text((right - 8, top + 15), detail, 11, "muted", anchor="rm", bold=False)
+    for symbol in payload["symbols"]:
+        width = canvas.width(symbol, 10) + 10
+        if x + width > right - 16 - detail_width:
+            break
+        canvas.draw.rounded_rectangle((x, top + 8, x + width, top + 22), radius=7, outline=canvas.color("ink"))
+        canvas.text((x + width / 2, top + 15), symbol, 10, anchor="mm")
+        x += width + 4
+    canvas.rule((left + 8, top + 28, right - 8, top + 28))
+    body, rows = top + 42, 5
+    news = payload["news"]["data"].get("items", [])
+    middle = (left + right) // 2
+    if not earnings_on and not filings_on:
+        _news(canvas, news, now, left + 10, middle - 10, body, rows)
+        _news(canvas, news[rows:], now, middle + 10, right - 10, body, rows)
+        canvas.rule((middle, body - 8, middle, bottom - 8))
+        return
+    left_rows = rows
+    y = body
+    if earnings_on:
+        used = _earnings(canvas, payload, now, left + 10, middle - 10, y, 2 if filings_on else rows)
+        y += max(used, 1) * 19 + 2
+        left_rows -= max(used, 1)
+    if filings_on:
+        _filings(canvas, payload, left + 10, middle - 10, y, max(left_rows - 1, 2))
+    canvas.rule((middle, body - 8, middle, bottom - 8))
+    _news(canvas, news, now, middle + 10, right - 10, body, rows)
+
+
+def render_page(dimensions, payload, settings, now):
+    now = local_now(now)
+    canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei")
+    # The night artwork lightens the navy outline and radar ring so they survive a dark ground.
+    night = canvas.color("paper") == _rgb(NIGHT["paper"])
+    wordmark = ASSETS / ("title_wordmark_night.png" if night else "title_wordmark.png")
+    pasted = paste_local_wordmark(canvas.image, wordmark, (12, 2, 206, 51), align="left")
+    if pasted:
+        title_right = pasted[2]
+    else:
+        title_right = 16 + canvas.text((16, 27), "资金雷达", 30, anchor="lm")
+    canvas.text((title_right + 14, 30), "汇率 · 加密 · 利率 · 宏观 · 持仓", 14, "muted", anchor="lm", bold=False)
+    canvas.text((788, 27), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
+    canvas.rule((12, 52, 788, 52), "ink", 2)
+    _fx_tile(canvas, payload, TILES[0])
+    coins = payload["crypto"]["data"].get("coins", [])
+    for coin, box in zip(coins[:2], TILES[1:3]):
+        _coin_tile(canvas, coin, box)
+    for box in TILES[1 + len(coins[:2]):3]:
+        _tile_frame(canvas, box[0], box[1], "加密货币", mark_text="C")
+        canvas.text(((box[0] + box[1]) / 2, 130), "暂不可用", 15, "muted", anchor="mm")
+    _yield_tile(canvas, payload, TILES[3])
+    _curve(canvas, payload)
+    _macro_tiles(canvas, payload)
+    _holdings(canvas, payload, now)
+    result = canvas.image
+    if tuple(dimensions) != (800, 480):
+        result = result.resize(tuple(dimensions), Image.Resampling.LANCZOS)
+    return result

@@ -1310,3 +1310,21 @@ def test_stock_theme_only_reuses_matching_currency_snapshot(monkeypatch, tmp_pat
     assert next(row for row in cached["stock_data"] if row["symbol"] == "CASH")["price_text"] == "EUR"
     assert next(row for row in rendered_rows if row["symbol"] == "CASH")["price_text"] == "EUR"
     assert provider_calls == []
+
+
+def test_stock_tracker_publishes_only_holding_symbols_for_money_radar(monkeypatch):
+    plugin = StockTracker({"id": "stocktracker"})
+    published = {}
+    monkeypatch.setattr(
+        stocktracker_module,
+        "write_context",
+        lambda plugin_id, payload, **kwargs: published.update(plugin_id=plugin_id, payload=payload, **kwargs),
+    )
+    cash = _stock("CASH", [1.0], 500)
+    cash["is_cash"] = True
+
+    plugin._publish_holdings_context([_stock("AAPL", [100.0], 2), _stock("NVDA", [300.0], 2), cash])
+
+    assert published["plugin_id"] == "stocktracker"
+    assert published["payload"]["symbols"] == ["NVDA", "AAPL"]
+    assert "shares" not in str(published["payload"]) and "value" not in published["payload"]

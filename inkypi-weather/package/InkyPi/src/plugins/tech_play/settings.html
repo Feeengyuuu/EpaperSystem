@@ -1,0 +1,33 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <label class="form-label" for="arxivCategory">arXiv 分类</label>
+  <input class="form-control" name="arxivCategory" id="arxivCategory" value="cs.AI" maxlength="20">
+  <small>例如 cs.AI、cs.CL（自然语言）、cs.LG（机器学习）、cs.CV（视觉）。显示最新提交的论文。</small>
+</div>
+<div class="form-group">
+  <small>速通周榜自动生成：每次刷新统计 speedrun.com 新验证的成绩，按 7 天滚动排出最活跃的 3 款游戏，并显示它们最新的成绩。刚安装时先显示“近 N 小时”，满一周后变为“本周”。服务状态固定显示 Claude、GitHub、OpenAI、Cloudflare、Discord。设备已有 TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET 时，“即将发售”用 IGDB 的期待度排行；否则用 Steam 热门即将推出。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取全部数据</label>
+  <small>服务状态 10 分钟、Epic 3 小时、论文 6 小时、新作 12 小时更新；轮播只读本地缓存。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const saved = typeof pluginSettings !== 'undefined' ? pluginSettings : {};
+  for (const key of ['arxivCategory', 'fontFamily', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    if (saved[key] === undefined) {
+      if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+      continue;
+    }
+    if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(saved[key]);
+    else el.value = saved[key];
+  }
+});
+</script>

@@ -1,0 +1,43 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <label class="form-label" for="symbols">关注的股票</label>
+  <input class="form-control" name="symbols" id="symbols" placeholder="auto" maxlength="120">
+  <small>留空或填 auto：跟随股票页（Stock Tracker）的持仓；也可手填，逗号分隔，最多 12 个。用于新闻、财报和公告。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="coins">加密货币（CoinGecko ID）</label>
+  <input class="form-control" name="coins" id="coins" value="bitcoin, ethereum" maxlength="80">
+  <small>显示前两个，例如 bitcoin, ethereum, solana。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="secContact">SEC 联系邮箱（可选）</label>
+  <input class="form-control" type="email" name="secContact" id="secContact" maxlength="120" placeholder="you@example.com">
+  <small>SEC EDGAR 要求请求里带联系邮箱，填写后显示持仓公司的 8-K、10-Q 等公告和内部人交易次数；不填则不请求 SEC。</small>
+</div>
+<div class="form-group">
+  <small>可选密钥（在“密钥”设置里添加）：FINNHUB_API_KEY 显示 45 天内财报日程；FRED_API_KEY 把宏观数据换成 FRED，并加上联邦基金利率和 30 年房贷利率。没有密钥时用 BLS 和 Yahoo 的公开数据。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取全部数据</label>
+  <small>加密货币 20 分钟、利率和新闻 30 分钟、汇率 6 小时、宏观 12 小时更新；轮播只读本地缓存。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const saved = typeof pluginSettings !== 'undefined' ? pluginSettings : {};
+  for (const key of ['symbols', 'coins', 'secContact', 'fontFamily', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    if (saved[key] === undefined) {
+      if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+      continue;
+    }
+    if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(saved[key]);
+    else el.value = saved[key];
+  }
+});
+</script>

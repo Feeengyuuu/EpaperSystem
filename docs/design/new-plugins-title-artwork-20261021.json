@@ -1,0 +1,69 @@
+{
+  "mode": "Creative Claw image/gpt-image-2.5-sunburst, transparent PNG, quality high, 3:1",
+  "date": "2026-10-21",
+  "scope": "Title artwork for the new Bay Alerts, Money Radar and Tech & Play pages. A first round in the shared white/navy family was rejected as too similar; this second round gives each theme its own personality. Nature Nearby, named 湾区德鲁伊 by the owner, added later in the same round with an organic field-guide style.",
+  "post_processing": "Cropped to alpha>8 bounds with a 6px pad and reduced to at most 1200x400.",
+  "header_slots": {
+    "bay_alerts": [
+      14,
+      6,
+      214,
+      50
+    ],
+    "money_radar": [
+      12,
+      2,
+      206,
+      51
+    ],
+    "tech_play": [
+      14,
+      6,
+      214,
+      50
+    ],
+    "nature_nearby": [
+      12,
+      4,
+      232,
+      50
+    ]
+  },
+  "assets": [
+    {
+      "key": "bay_alerts",
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/bay_alerts/assets/title_wordmark.png",
+      "sha256": "bb40e061020a6041cd75d8074f047287fb727199447b77a9248a452a99d4bf09",
+      "job_id": "2d03645c-61db-4625-a7c9-bf928a5dcca9",
+      "creative_claw_asset_id": "bdf6727d-0e41-4560-b944-f9c1fa1795b7",
+      "prompt": "Use case: logo-brand. ONE finished transparent PNG title wordmark for a Bay Area hazard-alerts page (earthquakes, weather warnings, wildfires) on an 800x480 color e-paper display. Personality: urgent emergency-broadcast signage — simple, modern, minimal, unmistakably about danger and alerts. Exact text: \"湾区要紧事\" — five simplified Chinese characters 湾 区 要 紧 事, precisely this order, ONE horizontal line. Lettering: bespoke sharp, angular, heavy condensed Chinese display strokes with clipped 45-degree corners like modern safety signage, upright, tight even spacing, broad open counters. Color: flat solid signal-red letter faces (#e0201c), a thin white inline border hugging each glyph, then a continuous ink-black outer outline (#0b0f14) — so it reads on both a cream background and a dark navy background. Signature detail: ONE crisp jagged seismic fracture line runs horizontally through the middle of the whole word as a thin transparent cut, the upper and lower halves of every character offset by a tiny amount along it, like an earthquake crack; the characters must remain fully legible. No other ornaments. Every character must stay correct and immediately readable when the whole visible artwork is reduced to 200 x 46 pixels. Compact visible content about 4.3:1, modest transparent padding. Flat vector-like graphic only. No subtitle, Latin letters, numbers, separate icon, warning triangle, badge, enclosing border or box, shadows, glow, gradients, texture, 3D or checkerboard. True transparent alpha background and transparent letter gaps. One title only, large and fully inside the canvas."
+    },
+    {
+      "key": "money_radar",
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/money_radar/assets/title_wordmark.png",
+      "sha256": "73d91b35f24a9bbd91612df7eaae7e0701580a750f3034c9c9b3f6f76d0f36c5",
+      "job_id": "1e8bf8cf-b63a-4dac-a564-a19553583fdc",
+      "creative_claw_asset_id": "58f867a4-005f-47c3-a2ee-de5997fafacb",
+      "prompt": "Use case: logo-brand. ONE finished transparent PNG title wordmark for a personal money dashboard page (exchange rates, crypto, Treasury yields, macro data) on an 800x480 color e-paper display. Personality: refined, precise, premium financial-terminal — calm, elegant, simple and modern, clearly different from loud display type. Exact text: \"资金雷达\" — four simplified Chinese characters 资 金 雷 达, precisely this order, ONE horizontal line. Lettering: bespoke upright modern Chinese display type with crisp high-precision geometry, moderate stroke weight, subtle wedge-cut terminals inspired by modern Song-style elegance, generous open counters, perfectly even rhythm. Color: flat solid warm gold letter faces (#f2b705) with a continuous deep-navy outline (#0f2a4a) — readable on both cream and dark navy backgrounds. Signature detail: a thin deep-navy radar scope sits BEHIND the word — one perfect circle ring centered on the third character 雷 with a fine crosshair and one thin sweep line rising to the upper right — plus ONE small solid cobalt-blue blip dot (#1f5fd8) near the ring; the ring and lines are thin and never cover letter faces. Every character must stay correct and immediately readable when the whole visible artwork is reduced to 184 x 46 pixels. Visible content about 4:1 overall (the ring may extend slightly above and below the letters), modest transparent padding. Flat vector-like graphic only. No subtitle, Latin letters, numbers, currency symbols, coins, chart, badge, enclosing border or box, shadows, glow, gradients, metallic shine, texture, 3D or checkerboard. True transparent alpha background and transparent letter gaps. One title only, large and fully inside the canvas.",
+      "night_asset": "inkypi-weather/package/InkyPi/src/plugins/money_radar/assets/title_wordmark_night.png",
+      "night_sha256": "eee33c8f5b3859e8479f264f32026ae99e4d78ed88eba5eda27bd58f061f2c28",
+      "post_processing": "gold pixels blended 70% toward #FFCE00 (native e-paper yellow); night variant recolors pixels darker than luminance 90 (navy outline, radar ring) to #BACEE8"
+    },
+    {
+      "key": "tech_play",
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/tech_play/assets/title_wordmark.png",
+      "sha256": "c3aa2792832411936530747998dac53667f19c04507bbf99d4a3115aeb6e5231",
+      "job_id": "ccdbaa92-b191-47d4-a4ad-5c6d083b05b4",
+      "creative_claw_asset_id": "861de5ab-3bc7-4003-a605-ff4d27dd8b23",
+      "prompt": "Use case: logo-brand. ONE finished transparent PNG title wordmark for a tech-and-games page (service status, free games, new releases, AI papers, speedrun records) on an 800x480 color e-paper display. Personality: playful retro arcade / pixel-game — simple, modern and clean, instantly reads as games and tech. Exact text: \"科技与游戏\" — five simplified Chinese characters 科 技 与 游 戏, precisely this order, ONE horizontal line. Lettering: bespoke chunky pixel-bitmap Chinese characters built from crisp square pixels on a strict grid (like a bold 16x16 bitmap font scaled up), stepped staircase edges, perfectly legible structure. Color: flat solid white letter faces, a continuous one-pixel-step ink-black outline (#0b0f14), and a solid electric-blue (#1f4fff) stepped pixel extrusion / drop block offset down-right behind every character, giving a flat retro 3D-block look without gradients — readable on both cream and dark navy backgrounds. Signature detail: ONE tiny four-point pixel spark in bright yellow (#ffd400) near the top-right of the last character 戏. Every character must stay correct and immediately readable when the whole visible artwork is reduced to 200 x 46 pixels. Compact visible content about 4.3:1, modest transparent padding. Flat pixel-art graphic only, hard edges, no anti-aliased blur. No subtitle, Latin letters, numbers, game controller, joystick, separate icon, badge, enclosing border or box, soft shadows, glow, gradients, texture, scanlines or checkerboard. True transparent alpha background and transparent letter gaps. One title only, large and fully inside the canvas."
+    },
+    {
+      "key": "nature_nearby",
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/nature_nearby/assets/title_wordmark.png",
+      "sha256": "9308eaf85e9a99c03b71e60f71d9cb0b8af6556882c04f0b43b6319b9c75132d",
+      "job_id": "b28b00a8-ab11-407b-8133-2e5bdd9fe802",
+      "creative_claw_asset_id": "af5393e5-de48-4021-a53b-f08b875190e3",
+      "prompt": "Use case: logo-brand. ONE finished transparent PNG title wordmark for a nature page showing what plants, birds, insects and animals people are observing around the San Francisco Bay Area, on an 800x480 color e-paper display. The page is named after a nature-guardian druid. Personality: fresh, organic, modern field-guide with a light touch of nature magic — calm and alive, clearly different from bold signage, finance or pixel styles. Exact text: \"湾区德鲁伊\" — five simplified Chinese characters 湾 区 德 鲁 伊, precisely this order, ONE horizontal line. Lettering: bespoke rounded organic Chinese display strokes with soft leaf-shaped terminals, upright, gentle stroke contrast, generous open counters, perfectly legible; the dense character 德 must stay clear. Color: flat solid fresh leaf-green letter faces (#1f9a3e), a thin white inline hugging each glyph, and a continuous deep forest-green outer outline (#0f2a1a) — readable on both a cream background and a dark green-black background. Signature detail: ONE small curling sprout rises from the top-right stroke of the last character 伊, its tip spiralling like the head of a druid's staff with two small leaves, flat leaf-green with the same forest outline, plus ONE tiny ladybug-red dot (#d42020) sitting on one leaf. Every character must stay correct and immediately readable when the whole visible artwork is reduced to 210 x 46 pixels. Compact visible content about 4.6:1 (the sprout may rise slightly above the letters), modest transparent padding. Flat vector-like graphic only. No subtitle, Latin letters, numbers, robed figure, separate staff or plant illustration beyond the small sprout, badge, enclosing border or box, shadows, glow, gradients, texture, 3D or checkerboard. True transparent alpha background and transparent letter gaps. One title only, large and fully inside the canvas."
+    }
+  ]
+}

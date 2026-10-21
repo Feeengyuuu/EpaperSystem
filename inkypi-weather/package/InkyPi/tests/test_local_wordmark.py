@@ -103,3 +103,18 @@ def test_three_asset_cache_reuses_fitted_art_and_does_not_retain_decoded_sources
     assert local_wordmark._load_fitted_wordmark.cache_info().currsize == 3
     gc.collect()
     assert all(reference() is None for reference in decoded)
+
+
+def test_left_alignment_pins_the_artwork_and_reports_its_box(tmp_path):
+    path = tmp_path / "tall.png"
+    with Image.new("RGBA", (30, 20)) as source:
+        ImageDraw.Draw(source).rectangle((0, 0, 29, 19), fill=(242, 183, 5, 255))
+        source.save(path)
+    canvas = Image.new("RGB", (100, 40), (255, 255, 255))
+
+    centered = local_wordmark.paste_local_wordmark(canvas.copy(), path, (10, 10, 90, 30))
+    pinned = local_wordmark.paste_local_wordmark(canvas, path, (10, 10, 90, 30), align="left")
+
+    assert centered == (35, 10, 65, 30)
+    assert pinned == (10, 10, 40, 30)
+    assert ImageChops.difference(canvas, Image.new("RGB", canvas.size, "white")).getbbox() == (10, 10, 40, 30)

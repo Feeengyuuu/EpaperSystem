@@ -149,8 +149,9 @@ def test_liveradar_twitch_credentials_are_canonical_schema_entries():
     schema = SecretSchema.load(DEFAULT_SCHEMA_PATH)
     entries = {entry.canonical: entry for entry in schema.entries}
 
-    assert entries["TWITCH_CLIENT_ID"].features == ("LiveRadar",)
-    assert entries["TWITCH_CLIENT_SECRET"].features == ("LiveRadar",)
+    # Tech & Play reuses the same Twitch app for IGDB's upcoming-release data.
+    assert entries["TWITCH_CLIENT_ID"].features == ("LiveRadar", "Tech & Play")
+    assert entries["TWITCH_CLIENT_SECRET"].features == ("LiveRadar", "Tech & Play")
     assert entries["TWITCH_CLIENT_ID"].value_type == "secret"
     assert entries["TWITCH_CLIENT_SECRET"].value_type == "secret"
 

@@ -1,0 +1,97 @@
+{
+  "schema": 1,
+  "fetched_at": "2026-10-21T20:21:27.030987+00:00",
+  "note": "Official marks used only to identify each service or currency on a personal display; trademarks belong to their owners. Flags from flagcdn (public domain).",
+  "assets": {
+    "logo-claude": {
+      "file": "logo-claude.png",
+      "source_url": "https://claude.ai/apple-touch-icon.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "b74fccbc3095ef247bd86f434f70a28d302c741af1b206af03d05137ac761bad"
+    },
+    "logo-github": {
+      "file": "logo-github.png",
+      "source_url": "https://github.githubassets.com/apple-touch-icon-180x180.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "d5a9c622b10160d787553081b7b7f6b627308958c579f42fdb185925b8a6c1ec"
+    },
+    "logo-openai": {
+      "file": "logo-openai.png",
+      "source_url": "https://status.openai.com/favicon.ico",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "f228deade96c30df7eaac611e3fa14c61448091562337b8985d0a124f73dc734"
+    },
+    "logo-cloudflare": {
+      "file": "logo-cloudflare.png",
+      "source_url": "https://www.cloudflarestatus.com/favicon.ico",
+      "size": [
+        64,
+        29
+      ],
+      "sha256": "0b846a5d2e84964860b83387e67d20a0b3df4848f40eb1d547bf2381f3bafcb0"
+    },
+    "logo-discord": {
+      "file": "logo-discord.png",
+      "source_url": "https://discord.com/assets/favicon.ico",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "fec05f948a00828ebacd57de7060750965f6b7171ef067a4b00606a96e91d92f"
+    },
+    "logo-epic": {
+      "file": "logo-epic.png",
+      "source_url": "https://commons.wikimedia.org/wiki/Special:FilePath/Epic_Games_logo.svg",
+      "size": [
+        62,
+        72
+      ],
+      "sha256": "e76c85c623585066a69d10936a57c066bcfb0fcae200c0e0e77caa577788bb8c"
+    },
+    "logo-igdb": {
+      "file": "logo-igdb.png",
+      "source_url": "https://commons.wikimedia.org/wiki/Special:FilePath/IGDB_logo.svg",
+      "size": [
+        96,
+        46
+      ],
+      "sha256": "825e9d50e6f41e5f77d1ed071e6a63bcc9621b4a0b0464e484826fde11982c04"
+    },
+    "logo-arxiv": {
+      "file": "logo-arxiv.png",
+      "source_url": "https://arxiv.org/static/browse/0.3.4/images/icons/apple-touch-icon.png",
+      "size": [
+        48,
+        64
+      ],
+      "sha256": "b0ceab39cb0b2e49fed3ea10969019c26a317c6cf982561ee6ec8456a6bce4d3"
+    },
+    "logo-speedrun": {
+      "file": "logo-speedrun.png",
+      "source_url": "https://www.speedrun.com/favicon.ico",
+      "size": [
+        64,
+        56
+      ],
+      "sha256": "f80057c74f76f52b9bd0f0cab380cc9f7d74f6016dee48694ac4d167e00c1625"
+    },
+    "logo-steam": {
+      "file": "logo-steam.png",
+      "source_url": "https://store.steampowered.com/favicon.ico",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "0a0488ff67f1c995feb74787c5bf0b7b0ac6d61932680e06d8df162d7bb7d3a8"
+    }
+  }
+}

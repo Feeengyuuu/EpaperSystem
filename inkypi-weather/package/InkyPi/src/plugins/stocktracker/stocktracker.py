@@ -38,6 +38,7 @@ Note:
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
+from plugins.context_cache import write_context
 
 import os
 import sys
@@ -418,6 +419,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			stock_data.extend(self._portfolio_meta_rows(portfolio_meta, stock_data))
 			if not stock_data:
 				raise RuntimeError("No valid stock data retrieved")
+			self._publish_holdings_context(stock_data)
 			updated_at = datetime.now()
 			history_points = self._record_portfolio_snapshot(
 				stock_data,
@@ -452,6 +454,20 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			provenance = SourceProvenance.FRESH_CACHE if theme_render_only else SourceProvenance.LIVE
 			return attach_source_provenance(image, provenance)
 		return image
+
+	def _publish_holdings_context(self, stock_data):
+		"""Share only the held ticker symbols (largest first) so Money Radar can follow the portfolio."""
+		equities = [data for data in stock_data if not self._is_cash_holding(data)]
+		equities.sort(key=lambda data: -self._finite_float(data.get("total_value")))
+		symbols = [str(data.get("symbol") or "").strip().upper() for data in equities]
+		symbols = [symbol for symbol in dict.fromkeys(symbols) if symbol]
+		if symbols:
+			write_context(
+				"stocktracker",
+				{"kind": "portfolio_symbols", "source": "Stock Tracker", "symbols": symbols[:20],
+				 "summary": f"{len(symbols)} holdings"},
+				ttl_seconds=7 * 86400,
+			)
 
 	@staticmethod
 	def _enabled(value):

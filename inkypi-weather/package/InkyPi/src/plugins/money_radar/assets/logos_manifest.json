@@ -1,0 +1,79 @@
+{
+  "schema": 1,
+  "fetched_at": "2026-10-21T20:21:26.967239+00:00",
+  "note": "Official marks used only to identify each service or currency on a personal display; trademarks belong to their owners. Flags from flagcdn (public domain).",
+  "assets": {
+    "flag-us": {
+      "file": "flag-us.png",
+      "source_url": "https://flagcdn.com/w160/us.png",
+      "size": [
+        64,
+        34
+      ],
+      "sha256": "eb763fade1e7ac4edf7139d10c2d03a9949d705c874fcc4d34556f08517330a0"
+    },
+    "flag-cn": {
+      "file": "flag-cn.png",
+      "source_url": "https://flagcdn.com/w160/cn.png",
+      "size": [
+        64,
+        43
+      ],
+      "sha256": "9dca89c459b1de1f1f35112f0738cdeda38219060278fa0e7e51904ae121cebc"
+    },
+    "flag-eu": {
+      "file": "flag-eu.png",
+      "source_url": "https://flagcdn.com/w160/eu.png",
+      "size": [
+        64,
+        43
+      ],
+      "sha256": "110b48ce294b8bb4fc5bb6e237f2658d96d8ee752d38f1658d77370298b00146"
+    },
+    "flag-jp": {
+      "file": "flag-jp.png",
+      "source_url": "https://flagcdn.com/w160/jp.png",
+      "size": [
+        64,
+        43
+      ],
+      "sha256": "e47379083530402bd123c867a97f760a5135a64b4376e8352f20ce2422fbfa89"
+    },
+    "flag-hk": {
+      "file": "flag-hk.png",
+      "source_url": "https://flagcdn.com/w160/hk.png",
+      "size": [
+        64,
+        43
+      ],
+      "sha256": "3d672a2368867090436d556f62df2ff9e84e706a385702aa6a3700dd812df37d"
+    },
+    "coin-bitcoin": {
+      "file": "coin-bitcoin.png",
+      "source_url": "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "fb27db7e5d033d93f5c86ff07e441ff0561165c536530a9b2cbdc9df6f12ddb1"
+    },
+    "coin-ethereum": {
+      "file": "coin-ethereum.png",
+      "source_url": "https://coin-images.coingecko.com/coins/images/279/large/ethereum.png",
+      "size": [
+        40,
+        64
+      ],
+      "sha256": "1786934c5656a120db61c62be856e5088347e25c638021bca1288b529b550f08"
+    },
+    "coin-solana": {
+      "file": "coin-solana.png",
+      "source_url": "https://coin-images.coingecko.com/coins/images/4128/large/solana.png",
+      "size": [
+        64,
+        56
+      ],
+      "sha256": "47111e784a61aec767d20f5c36c96b6a20e1e8e7b56a052215ab5a2836a7a2e6"
+    }
+  }
+}

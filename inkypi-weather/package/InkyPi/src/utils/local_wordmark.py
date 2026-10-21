@@ -32,11 +32,12 @@ def _load_fitted_wordmark(path, modified_ns, byte_size, width, height):
         return fitted
 
 
-def paste_local_wordmark(image, path, box):
-    """Paste original-color artwork inside box, or return False for text fallback.
+def paste_local_wordmark(image, path, box, *, align="center"):
+    """Paste original-color artwork inside box; return its pasted box, or False for text fallback.
 
-    Near-transparent outer dust is excluded from layout, content is only shrunk,
-    and each axis is centered. At most three small RGBA images remain cached.
+    Near-transparent outer dust is excluded from layout and content is only shrunk.
+    It is centered vertically, and horizontally unless ``align="left"`` pins it to the
+    box's left edge. At most three small RGBA images remain cached.
     """
     left, top, right, bottom = box
     width, height = right - left, bottom - top
@@ -51,8 +52,9 @@ def paste_local_wordmark(image, path, box):
         fitted = _load_fitted_wordmark(str(asset), info.st_mtime_ns, info.st_size, width, height)
         if fitted is None:
             return False
-        image.paste(fitted, (left + (width - fitted.width) // 2,
-                             top + (height - fitted.height) // 2), fitted)
-        return True
+        x = left if align == "left" else left + (width - fitted.width) // 2
+        y = top + (height - fitted.height) // 2
+        image.paste(fitted, (x, y), fitted)
+        return (x, y, x + fitted.width, y + fitted.height)
     except (OSError, ValueError, SyntaxError):
         return False

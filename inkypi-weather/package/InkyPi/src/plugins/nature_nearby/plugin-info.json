@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "id": "nature_nearby",
+  "class": "NatureNearby",
+  "display_name": "湾区德鲁伊",
+  "refresh_on_display": false,
+  "recommended_refresh": {"interval": 1800},
+  "capabilities": {
+    "supports_live_refresh": false,
+    "supports_presentation_refresh": false,
+    "supports_day_night_theme": true,
+    "supports_cached_display_redraw": true
+  },
+  "theme": {
+    "presentation": "ui",
+    "day": {"background": "#f9f8f1", "accent": "#00a83a"},
+    "night": {"background": "#0c1712", "accent": "#6fd38f"}
+  }
+}
