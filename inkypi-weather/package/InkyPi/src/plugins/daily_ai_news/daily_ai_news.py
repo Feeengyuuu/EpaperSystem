@@ -2152,6 +2152,13 @@ class DailyAINews(BasePlugin):
             canonical = term.replace(".", "").replace("-", "").upper()
             if canonical in VISIBLE_ENGLISH_ALLOWLIST:
                 return term
+            # Brand and agency names stay as Chinese media print them: camel case
+            # (SpaceX, OpenAI, iPhone) or a short all-caps acronym (FAA, NASA).
+            if any(char.isupper() for char in term[1:]) and any(char.islower() for char in term):
+                return term
+            letters = term.replace(".", "").replace("-", "")
+            if letters.isalpha() and letters.isupper() and 2 <= len(letters) <= 6:
+                return term
             # A word between numbers is a model designation, e.g. 737 MAX 10.
             before = match.string[: match.start()].rstrip()[-1:]
             after = match.string[match.end():].lstrip()[:1]
@@ -2161,11 +2168,13 @@ class DailyAINews(BasePlugin):
 
         cleaned = VISIBLE_ENGLISH_WORD_RE.sub(replace_match, cleaned)
         cleaned = re.sub(r"\s{2,}", " ", cleaned)
-        cleaned = re.sub(r"\b(ABC|AI|API|BBC|G7|G20|NPR|PBS|RSS)\s+(?=[\u4e00-\u9fff])", r"\1", cleaned)
+        cleaned = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[A-Za-z0-9])|(?<=[A-Za-z0-9])\s+(?=[\u4e00-\u9fff])", "", cleaned)
         cleaned = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])", "", cleaned)
         cleaned = re.sub(r"\s+([，。；：、])", r"\1", cleaned)
         cleaned = re.sub(r"([（(])\s+", r"\1", cleaned)
         cleaned = re.sub(r"\s+([）)])", r"\1", cleaned)
+        # A removed word can leave its separator behind, e.g. "/特斯拉".
+        cleaned = re.sub(r"^[\s/／、，,·]+|[\s/／、，,·]+$", "", cleaned)
         return cleaned.strip()
 
     def _rss_news_cards(

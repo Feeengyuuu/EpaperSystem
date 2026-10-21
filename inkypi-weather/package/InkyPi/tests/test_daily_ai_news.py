@@ -2398,3 +2398,17 @@ def test_hourly_fallback_measures_from_the_previous_days_last_bar_not_a_stale_me
     row = plugin._fetch_yahoo_quote("399006.SZ", "创业板指")
 
     assert row["change_pct"] == pytest.approx((2711.33 / 2739.69 - 1) * 100, abs=0.005)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("SpaceX/特斯拉合并传闻受关注", "SpaceX/特斯拉合并传闻受关注"),
+        ("OpenAI 发布新模型", "OpenAI发布新模型"),
+        ("美国FAA批准 NASA 新任务", "美国FAA批准NASA新任务"),
+        ("unknownword/特斯拉合并传闻受关注", "特斯拉合并传闻受关注"),
+        ("特斯拉合并传闻、 unknownword", "特斯拉合并传闻"),
+    ],
+)
+def test_sanitizer_keeps_brand_names_and_cleans_dangling_separators(text, expected):
+    assert _plugin()._strip_untranslated_english_terms(text) == expected
