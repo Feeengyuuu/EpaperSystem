@@ -7,7 +7,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -510,7 +510,16 @@ def test_disabled_media_and_history_do_not_download_or_draw_hidden_content(plugi
     assert audit["complete"] is True
 
 
-def test_native_wordmark_alpha_is_preserved_and_day_night_shapes_match(plugin, payload):
+def assert_tones_follow_theme(plugin, day_pixels, night_pixels):
+    """Paper, ink and accent map one-to-one between themes, so both tones keep their exact shapes."""
+    pairs = set(zip(day_pixels, night_pixels))
+    day_palette, night_palette = plugin._palette(settings("day")), plugin._palette(settings("night"))
+    for role in ("background", "ink", "accent"):
+        assert day_pixels.count(day_palette[role]) >= 20
+        assert {night for day, night in pairs if day == day_palette[role]} == {night_palette[role]}
+
+
+def test_two_tone_wordmark_alpha_is_preserved_and_day_night_shapes_match(plugin, payload):
     asset_path = swiss_renderer.TITLE_ASSET_PATH
     before = hashlib.sha256(asset_path.read_bytes()).hexdigest()
     with Image.open(asset_path) as native:
@@ -531,13 +540,40 @@ def test_native_wordmark_alpha_is_preserved_and_day_night_shapes_match(plugin, p
     assert day_title["bounds"] == night_title["bounds"]
     assert tuple(day_title["source_size"]) == source_size
     assert tuple(day_title["alpha_source_bounds"]) == alpha_bounds
-    day_mask = ImageOps.invert(day.crop(day_title["bounds"]).convert("L"))
-    night_mask = night.crop(night_title["bounds"]).convert("L")
-    assert ImageChops.difference(day_mask, night_mask).getbbox() is None
-    # Both glyphs and internal transparent counters remain distinguishable.
-    assert day_mask.getextrema()[0] <= 5
-    assert day_mask.getextrema()[1] >= 245
+    # Glyphs, the accent slash and the transparent counters all stay distinguishable.
+    assert_tones_follow_theme(plugin, list(day.crop(day_title["bounds"]).get_flattened_data()),
+                              list(night.crop(night_title["bounds"]).get_flattened_data()))
     assert hashlib.sha256(asset_path.read_bytes()).hexdigest() == before
+
+
+def test_header_ornament_fills_the_gap_between_title_and_date(plugin, payload):
+    day = plugin._render_page((800, 480), payload, settings("day"), NOW)
+    night = plugin._render_page((800, 480), payload, settings("night"), NOW)
+    header = day.info["daily_wiki_layout"]["header"]
+    ornament = header["ornament"]
+    assert ornament == night.info["daily_wiki_layout"]["header"]["ornament"]
+    left_rule, right_rule = ornament["rules"]
+    bounds = ornament["bounds"]
+    assert header["title"]["bounds"][2] < left_rule[0] < left_rule[2] < bounds[0]
+    assert bounds[2] < right_rule[0] < right_rule[2] < header["date"]["bounds"][0]
+    assert 0 <= bounds[1] and bounds[3] < 70
+    assert_tones_follow_theme(plugin, list(day.crop(bounds).get_flattened_data()),
+                              list(night.crop(bounds).get_flattened_data()))
+
+
+def test_header_ornament_stays_clear_on_the_smallest_page(plugin, payload):
+    header = plugin._render_page((480, 280), payload, settings(), NOW).info["daily_wiki_layout"]["header"]
+    ornament = header["ornament"]
+    assert header["title"]["bounds"][2] < ornament["rules"][0][0]
+    assert ornament["rules"][1][2] < header["date"]["bounds"][0]
+    assert ornament["bounds"][3] < 41  # the header rule sits at px(70) = 41 on this page
+
+
+def test_missing_header_ornament_leaves_a_complete_page(plugin, payload, monkeypatch, tmp_path):
+    monkeypatch.setattr(swiss_renderer, "ORNAMENT_ASSET_PATH", tmp_path / "missing-ornament.png")
+    audit = plugin._render_page((800, 480), payload, settings(), NOW).info["daily_wiki_layout"]
+    assert audit["header"]["ornament"] is None
+    assert audit["complete"] is True
 
 
 def test_swiss_typography_uses_real_noto_variable_weights(plugin, payload, monkeypatch):

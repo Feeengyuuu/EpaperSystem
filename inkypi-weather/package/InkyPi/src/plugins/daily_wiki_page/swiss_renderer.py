@@ -24,6 +24,9 @@ SENTENCE_END = re.compile(r"[。！？!?]|\.(?=\s)")
 CLAUSE_END = re.compile(r"[，；：、,;:]")
 SWISS_FONT_PATH = Path(__file__).resolve().parents[2] / "static" / "fonts" / "NotoSansSC-VF.ttf"
 TITLE_ASSET_PATH = Path(__file__).resolve().parent / "assets" / "daily_image_wordmark.png"
+# Shape strip between the title and the date; its end rules are drawn here so they stay crisp,
+# and the asset is cropped symmetrically about the rules' axis.
+ORNAMENT_ASSET_PATH = Path(__file__).resolve().parent / "assets" / "daily_image_header_ornament.png"
 
 
 class LayoutOverflowError(ValueError):
@@ -240,26 +243,63 @@ class _Page:
         return {"bounds": [x, y, x + fitted.width, y + fitted.height],
                 "slot_bounds": list(box), "source_size": list(source.size), "fit": "contain"}
 
+    def two_tone_artwork(self, path, size, crop=True):
+        """Fit black + accent-blue artwork into ``size`` and recolour it with this palette.
+
+        The asset's blue channel is the accent share (black ink is 0, the accent is 255),
+        so day and night keep identical shapes with their own ink and accent.
+        """
+        with Image.open(path) as original:
+            source_size = list(original.size)
+            artwork = original.convert("RGBA")
+        bbox = artwork.getchannel("A").getbbox()
+        if bbox is None:
+            return None
+        if crop:
+            artwork = artwork.crop(bbox)
+        artwork = ImageOps.contain(artwork, size, method=RESAMPLE)
+        layer = Image.composite(Image.new("RGB", artwork.size, self.palette["accent"]),
+                                Image.new("RGB", artwork.size, self.palette["ink"]), artwork.getchannel("B"))
+        return layer, artwork.getchannel("A"), source_size, list(bbox)
+
     def title_asset(self, title, available):
         if not self.cjk:
             return None
         try:
-            with Image.open(TITLE_ASSET_PATH) as original:
-                source_size = list(original.size)
-                alpha = original.convert("RGBA").getchannel("A")
-            bbox = alpha.getbbox()
-            if bbox is None:
+            artwork = self.two_tone_artwork(TITLE_ASSET_PATH,
+                                            (min(self.px(248), available), self.rule_y - self.px(12)))
+            if artwork is None:
                 return None
-            mask = ImageOps.contain(alpha.crop(bbox),
-                                    (min(self.px(248), available), self.rule_y - self.px(12)),
-                                    method=RESAMPLE)
+            layer, mask, source_size, bbox = artwork
             y = self.rule_y - self.px(6) - mask.height
-            self.image.paste(self.palette["ink"], (self.margin, y), mask)
+            self.image.paste(layer, (self.margin, y), mask)
             return {"text": title, "bounds": [self.margin, y, self.margin + mask.width, y + mask.height],
                     "asset": TITLE_ASSET_PATH.name, "asset_used": True, "fit": "contain",
-                    "source_size": source_size, "alpha_source_bounds": list(bbox)}
+                    "source_size": source_size, "alpha_source_bounds": bbox}
         except (OSError, ValueError):
             return None
+
+    def header_ornament(self, left, right, axis):
+        """Fill the header gap with the shape strip, ruled out to ``left`` and ``right`` on ``axis``."""
+        gap = self.px(12)
+        if right - left < self.px(160):
+            return None
+        try:
+            artwork = self.two_tone_artwork(ORNAMENT_ASSET_PATH, (right - left - self.px(64), self.px(48)),
+                                            crop=False)
+        except (OSError, ValueError):
+            return None
+        if artwork is None:
+            return None
+        layer, mask, source_size, _bbox = artwork
+        x = (left + right - mask.width) // 2
+        y = axis - mask.height // 2
+        self.image.paste(layer, (x, y), mask)
+        rules = [[x1, axis, x2, axis] for x1, x2 in ((left, x - gap), (x + mask.width + gap, right))]
+        for rule in rules:
+            self.draw.line(rule, fill=self.palette["ink"], width=self.px(2))
+        return {"asset": ORNAMENT_ASSET_PATH.name, "bounds": [x, y, x + mask.width, y + mask.height],
+                "rules": rules, "source_size": source_size}
 
     def year_ink(self, text, x, y, font):
         if not re.fullmatch(r"-?\d+", text):
@@ -294,6 +334,9 @@ class _Page:
         self.audit["header"]["title"] = title_record
         date_y = self.rule_y - self.px(11) - self.glyph_height(date_text, date_font)
         self.audit["header"]["date"] = self.ink(date_text, date_x, date_y, date_font)
+        title_bounds = title_record["bounds"]
+        self.audit["header"]["ornament"] = self.header_ornament(
+            title_bounds[2] + self.px(16), date_x - self.px(16), (title_bounds[1] + title_bounds[3]) // 2)
         self.draw.line((self.margin, self.rule_y, self.right, self.rule_y),
                        fill=self.palette["ink"], width=self.px(2))
         for x in (self.rail_right, self.divider):

@@ -1,0 +1,25 @@
+{
+  "mode": "Creative Claw image/gpt-image-2.5-sunburst, transparent PNG, quality high, 3:1",
+  "date": "2026-10-21",
+  "scope": "Daily Wiki (每日图片) Swiss header: a two-tone title wordmark whose blue slash echoes the date rail's slash, and a shape strip that fills the empty header gap between the title and the date.",
+  "rendering": "Both assets hold only black ink and cobalt accent (#0052ff). swiss_renderer.two_tone_artwork reads the blue channel as the accent share and repaints the artwork with the palette's ink and accent, so night mode keeps the same shapes in white and light blue. The strip is drawn with crisp px(2) rules out to the title and the date on its axis.",
+  "post_processing": "The generator added a soft blue glow in alpha: alpha is remapped linearly from 48..224 to 0..255, and colour is snapped to black or #0052ff (blended only across a 0.4..0.6 blue share). The wordmark is cropped to its alpha bounds with an 8px pad. The strip drops its thin end rules and is cropped symmetrically about their axis (y=362.5 in the 2112x704 source), so the axis is the asset's vertical centre.",
+  "assets": [
+    {
+      "key": "title",
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/daily_wiki_page/assets/daily_image_wordmark.png",
+      "sha256": "ac3d8aa64716851ab0f9f5021c99eee58fd1f633376423d27f9e18e047050791",
+      "job_id": "1b7cd594-e856-447f-a340-2f1a8a9ff78f",
+      "creative_claw_asset_id": "3c669441-aa46-489e-9f41-ae471724ed83",
+      "prompt": "Use case: logo-brand. ONE finished transparent PNG title wordmark for a \"daily picture\" page laid out in strict Swiss International typographic style (white page, heavy black type, bold cobalt-blue geometric accents, thin black rules) on an 800x480 e-paper display. Exact text: \"每日图片\" — four simplified Chinese characters 每 日 图 片, precisely this order, ONE horizontal line. Lettering: bespoke ultra-heavy, tightly spaced, upright grotesque Chinese display type with strictly geometric straight strokes, square terminals and minimal counters kept open, modernist and objective, perfectly legible. Color: flat solid pure black (#000000) letters only — no outline, no inline. Signature detail: ONE bold cobalt-blue (#0052ff) parallelogram bar, slanted like a forward slash, cutting cleanly behind the lower part of the last character 片 and extending slightly past it, as a Swiss poster accent; the blue is flat and never covers the black strokes. Every character must stay correct and immediately readable when the whole visible artwork is reduced to 240 x 54 pixels. Compact visible content about 4.4:1, minimal transparent padding. Flat vector graphic with crisp hard edges, exactly two colors (black and cobalt blue). No subtitle, Latin letters, numbers, camera icon, photo frame, badge, border, box, shadows, gradients, glow, texture, 3D or checkerboard. True transparent alpha background and transparent letter gaps. One title only, large and fully inside the canvas."
+    },
+    {
+      "key": "header_ornament",
+      "asset": "inkypi-weather/package/InkyPi/src/plugins/daily_wiki_page/assets/daily_image_header_ornament.png",
+      "sha256": "a5c94f7677af3fb030d99b6793cae1bf361bbf872c415caea3b8c60794dbfb41",
+      "job_id": "f7d114a0-a823-42e8-b035-84f4cf7ce288",
+      "creative_claw_asset_id": "b9039a70-65a6-4c5c-ad3b-6c4d43b5186d",
+      "prompt": "Use case: decorative header banner. ONE transparent PNG decorative strip for the header of a \"daily picture / on this day in history\" page laid out in strict Swiss International style (white page, heavy black type, bold cobalt-blue accents, thin black rules). Composition: ONE long, thin horizontal band that occupies only the middle third of the canvas height and spans almost the full width, with fully transparent space above and below it. Inside the band, a calm modernist geometric sequence read left to right: a stylized camera aperture made of six flat blades, a solid cobalt-blue circle, a short row of thin black vertical bars like a film-strip or timeline ticks, a black half-circle, a small blue square, three small black dots, and a thin black horizontal rule tying the shapes together along the baseline. Balanced asymmetry, generous negative space, Bauhaus / Swiss poster spirit, playful but restrained. Exactly two flat colors: pure black (#000000) and cobalt blue (#0052ff). Crisp hard vector edges, readable at 420 x 50 pixels. No text, letters, numbers, photo, people, landscape, shadows, gradients, glow, texture, 3D, border, box or checkerboard. True transparent alpha background. One strip only."
+    }
+  ]
+}
