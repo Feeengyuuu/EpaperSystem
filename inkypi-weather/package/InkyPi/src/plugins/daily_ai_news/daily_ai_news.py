@@ -37,6 +37,8 @@ from utils.massive_market_data import MassiveMarketData, MassiveMarketDataError,
 from utils.plugin_cache import read_json, write_json
 from utils.theme_utils import get_theme_palette
 
+from .news_layout import NewsPage, date_text as news_date_text
+
 logger = logging.getLogger(__name__)
 
 MAX_PROVIDER_IO_WORKERS = 4
@@ -50,21 +52,7 @@ TITLE_BACKGROUND_IMAGE = "title_bg_global_radar.png"
 TITLE_BACKGROUND_SIZE = (325, 65)
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
 TITLE_WORDMARK_SIZE = (220, 58)
-SECTION_WORDMARK_IMAGES = {
-    "top": "section_top_wordmark.png",
-    "quick": "section_quick_wordmark.png",
-    "a_share": "section_a_share_wordmark.png",
-    "us_stock": "section_us_stock_wordmark.png",
-}
-SECTION_WORDMARK_SIZES = {
-    "top": (122, 28),
-    "quick": (132, 28),
-    "a_share": (108, 28),
-    "us_stock": (108, 28),
-}
-SECTION_WORDMARK_Y_OFFSET = -3
-SECTION_HEADER_RULE_Y_OFFSET = 27
-SUMMARY_SCHEMA_VERSION = "mainland-world-rss-only-dedupe-v16"
+SUMMARY_SCHEMA_VERSION = "mainland-world-lead-tags-v17"
 DEFAULT_FEED_FETCH_TIMEOUT_SECONDS = 8
 DEFAULT_AI_TIMEOUT_SECONDS = 30
 DEFAULT_MAX_FEEDS = 16
@@ -129,15 +117,27 @@ MASSIVE_INDEX_TICKERS = {
     "^IXIC": {"I:COMP", "I:NDX"},
     "^DJI": {"I:DJI"},
 }
-NEWS_FIT_TITLE_SIZES = (26, 24, 22, 18, 16, 14, 12, 10, 8, 6)
-
-SECTION_LABELS = {
-    "top": "大陆新闻",
-    "quick": "世界快报",
-    "a_share": "A股今日",
-    "us_stock": "美股今日",
+MARKET_SHORT_NAMES = {
+    "上证指数": "上证",
+    "深证成指": "深成",
+    "创业板指": "创业板",
+    "标普500": "标普",
+    "纳斯达克": "纳指",
+    "道琼斯": "道指",
 }
-
+# Daily closes kept per index for the market tile sparkline.
+MARKET_CLOSES_KEPT = 22
+# Each story is a short concrete title, a one-sentence fact and a 2-4 character tag.
+NEWS_TITLE_MAX_CHARS = 30
+NEWS_FACT_MAX_CHARS = 44
+NEWS_TAG_MAX_CHARS = 4
+# Tag for an RSS-only card, from its chinanews.com.cn desk.
+SOURCE_DESK_TAGS = {"要闻": "要闻", "国内": "时政", "财经": "财经", "社会": "社会", "即时": "快讯"}
+# Accents are the panel's own primaries, which it shows solidly instead of dithering;
+# gains are red and losses green, as Chinese market quotes show them.
+PAGE_ACCENTS = {"lead": (255, 0, 0), "domestic": (0, 255, 0), "world": (0, 0, 255), "up": (255, 0, 0), "down": (0, 255, 0)}
+PAGE_DAY_COLOURS = {**PAGE_ACCENTS, "card": (255, 255, 255)}
+PAGE_NIGHT_COLOURS = {**PAGE_ACCENTS, "card": (0, 0, 0), "panel": (0, 0, 0)}
 FEED_SECTION_PREFIXES = {
     "大陆": "mainland",
     "大陆新闻": "mainland",
@@ -874,6 +874,8 @@ class DailyAINews(BasePlugin):
         context_news = self._as_list(payload.get("top"), MAINLAND_NEWS_MAX + WORLD_NEWS_MAX)
         if not context_news:
             context_news = self._as_list(payload.get("mainland"), MAINLAND_NEWS_MAX) + self._as_list(payload.get("world"), WORLD_NEWS_MAX)
+        if isinstance(payload.get("lead"), dict):
+            context_news = [payload["lead"], *context_news]
 
         items = []
         for item in context_news[:MAINLAND_NEWS_MAX + WORLD_NEWS_MAX]:
@@ -1209,15 +1211,18 @@ class DailyAINews(BasePlugin):
             if isinstance(entry, dict)
         }
         additions = []
+        lead = brief.get("lead") if isinstance(brief.get("lead"), dict) else None
+        stories = [(str(lead.get("section") or "world"), lead)] if lead else []
         for section, limit in (("mainland", MAINLAND_NEWS_MAX), ("world", WORLD_NEWS_MAX)):
-            for item in self._as_list(brief.get(section), limit):
-                title, _why = self._news_text(item)
-                title = title.strip()
-                key = self._news_history_key(title)
-                if not title or not key or (date_key, key) in existing:
-                    continue
-                additions.append({"date": date_key, "section": section, "title": title[:120], "key": key})
-                existing.add((date_key, key))
+            stories.extend((section, item) for item in self._as_list(brief.get(section), limit))
+        for section, item in stories:
+            title, _why = self._news_text(item)
+            title = title.strip()
+            key = self._news_history_key(title)
+            if not title or not key or (date_key, key) in existing:
+                continue
+            additions.append({"date": date_key, "section": section, "title": title[:120], "key": key})
+            existing.add((date_key, key))
 
         if additions:
             entries.extend(additions)
@@ -1538,7 +1543,14 @@ class DailyAINews(BasePlugin):
                 symbol,
             )
             row = None
-        return row or self._fetch_yahoo_quote(symbol, name)
+        if not row:
+            return self._fetch_yahoo_quote(symbol, name)
+        if not row.get("closes"):
+            # Massive gives the quote; Yahoo's daily closes only feed the sparkline.
+            history = self._fetch_yahoo_quote(symbol, name)
+            if history and history.get("closes"):
+                row = {**row, "closes": history["closes"]}
+        return row
 
     def _fetch_massive_quote(self, massive_client, symbol: str, name: str) -> dict[str, Any] | None:
         if massive_client is None:
@@ -1574,7 +1586,7 @@ class DailyAINews(BasePlugin):
             resp = get_http_client().request_json(
                 "GET",
                 url,
-                params={"range": "5d", "interval": "1d"},
+                params={"range": "1mo", "interval": "1d"},
                 timeout=10,
                 headers={"User-Agent": "InkyPi Daily AI News/1.0"},
             )
@@ -1584,29 +1596,28 @@ class DailyAINews(BasePlugin):
             return None
 
         meta = result.get("meta") or {}
-        timestamps = result.get("timestamp") or []
         quote_data = ((result.get("indicators") or {}).get("quote") or [{}])[0]
-        closes = [value for value in quote_data.get("close", []) if isinstance(value, (int, float))]
-
+        series = [
+            (stamp, float(close))
+            for stamp, close in zip(result.get("timestamp") or [], quote_data.get("close") or [])
+            if isinstance(stamp, (int, float)) and isinstance(close, (int, float))
+        ]
         price = meta.get("regularMarketPrice")
-        if not isinstance(price, (int, float)) and closes:
-            price = closes[-1]
-        previous = meta.get("chartPreviousClose") or meta.get("previousClose")
-        if not isinstance(previous, (int, float)) and len(closes) >= 2:
-            previous = closes[-2]
+        if not isinstance(price, (int, float)) and series:
+            price = series[-1][1]
         if not isinstance(price, (int, float)):
             return None
 
-        change = None
-        change_pct = None
-        if isinstance(previous, (int, float)) and previous:
+        previous = self._previous_session_close(series, meta.get("regularMarketTime"), meta.get("gmtoffset"))
+        change = change_pct = None
+        if previous:
             change = price - previous
             change_pct = change / previous * 100
 
         as_of = ""
-        if timestamps:
+        if series:
             try:
-                as_of = datetime.fromtimestamp(timestamps[-1], tz=pytz.UTC).isoformat()
+                as_of = datetime.fromtimestamp(series[-1][0], tz=pytz.UTC).isoformat()
             except Exception:
                 as_of = ""
 
@@ -1620,7 +1631,28 @@ class DailyAINews(BasePlugin):
             "currency": meta.get("currency") or "",
             "exchange": meta.get("exchangeName") or meta.get("fullExchangeName") or "",
             "source": "yahoo",
+            "closes": [round(close, 2) for _stamp, close in series[-MARKET_CLOSES_KEPT:]],
         }
+
+    @staticmethod
+    def _previous_session_close(series, market_time: Any, gmtoffset: Any) -> float | None:
+        """The close the latest price changed from: the bar before today's, or the last bar.
+
+        Yahoo stamps each daily bar at its session open; when the last bar is the
+        current price's session, the previous session is the bar before it. The
+        chart's chartPreviousClose precedes the whole range, so it is never used.
+        """
+        if not series:
+            return None
+        offset = gmtoffset if isinstance(gmtoffset, (int, float)) else 0
+
+        def session_day(stamp):
+            return datetime.fromtimestamp(stamp + offset, tz=pytz.UTC).date()
+
+        last_is_current = not isinstance(market_time, (int, float)) or session_day(series[-1][0]) == session_day(market_time)
+        if last_is_current:
+            return series[-2][1] if len(series) >= 2 else None
+        return series[-1][1]
 
     def _summarize_with_ai(
         self,
@@ -1707,9 +1739,9 @@ class DailyAINews(BasePlugin):
             "style": settings.get("region_focus") or "china_global",
             "recent_titles": list(recent_titles or [])[:24],
             "output_schema": {
-                "lede": "不超过32字的总览",
-                "mainland": [{"title": "大陆新闻标题", "why": "为什么重要"}],
-                "world": [{"title": "世界新闻标题", "why": "为什么重要"}],
+                "lead": {"section": "mainland 或 world", "tag": "2到4字分类", "title": "头条标题，不超过18字", "why": "一句话事实，不超过30字"},
+                "mainland": [{"tag": "2到4字分类", "title": "大陆新闻标题，不超过18字", "why": "一句话事实，不超过30字"}],
+                "world": [{"tag": "2到4字分类", "title": "世界新闻标题，不超过24字", "why": "一句话事实，不超过30字"}],
                 "sources": ["来源名"],
             },
             "rules": [
@@ -1717,8 +1749,12 @@ class DailyAINews(BasePlugin):
                 "不要留下英文单词或英文地名，例如 Moscow 必须写成莫斯科，United States 必须写成美国，Iran 必须写成伊朗",
                 "如果无法确定某个英文术语的标准中文译名，必须改写句子，不要把英文原词放进 title、why 或 lede",
                 "中文词内部不要加空格，例如写“美伊谈判”，不要写“美 伊谈判”",
+                "lead 是两个分区中今天最重要的一条新变化，必须来自 RSS 条目，section 写它来自 mainland 还是 world；lead 不得再出现在 mainland 或 world 中",
                 "mainland 给 2 到 4 条，只能选择 section=mainland 的 RSS 条目，优先大陆时政、经济、社会、公共安全和重大政策更新",
                 "world 给 3 到 5 条，只能选择 section=world 的 RSS 条目，优先国际冲突、外交、政策、事故、市场、法律和重大科技治理",
+                "tag 用 2 到 4 个字的新闻分类，例如 两岸、外交、冲突、中东、经济、金融、产业、基建、科技、航空、公共卫生、灾害、司法、选举、社会",
+                "title 中大陆新闻和 lead 不超过18字，世界新闻不超过24字，写清主体和动作，不要标点堆砌",
+                "why 写一句话事实：谁、做了什么、关键数字或结果，不超过30字；不要写意义、影响、体现、凸显、彰显之类的评价",
                 "如果某个分区素材不足，宁可少写，不得跨区挪用，也不得编造新闻",
                 "mainland 和 world 不允许使用 market_snapshot、股票指数或你自己的背景知识生成新闻",
                 "不得写 RSS items 中不存在的人名、机构、政策或市场事件",
@@ -1727,7 +1763,6 @@ class DailyAINews(BasePlugin):
                 "title 必须包含具体人物/机构/地点/事件动作/结果，禁止只写宏观分类",
                 "避免使用“引发讨论”“风险升级”“议题焦点”“全球媒体聚焦”这类宽泛标题，除非同时写清具体事件",
                 "不要把人生、心理健康、生活方式、科普解释稿、旧背景稿放进新闻列表，除非它们是当天重大政策或公共事件",
-                "lede 必须概括今天最重要的新变化，不要写“今日新闻简报已生成”",
                 "尽量保留素材里的数字、地点、人物、机构和动作",
                 "sources 只能从 items 里已有的 source 字段原样选择，最多5个，不得自造来源名",
             ],
@@ -1786,17 +1821,18 @@ class DailyAINews(BasePlugin):
             data.get("world") or data.get("world_news") or data.get("quick") or data.get("international"),
             WORLD_NEWS_MAX,
         )
-        lede = str(data.get("lede") or "").strip()
+        lead = data.get("lead") if isinstance(data.get("lead"), dict) else None
+        lead = lead if lead and str(lead.get("title") or "").strip() else None
+        lede = str((lead or {}).get("title") or data.get("lede") or "").strip()
         top_items = self._merge_section_news(mainland, world) or top
         if not lede or lede == "今日新闻简报已生成。":
             lede = self._fallback_lede(top_items)
         return self._simplify_chinese_payload({
             "lede": lede[:48],
+            "lead": lead,
             "mainland": mainland,
             "world": world,
             "top": top_items,
-            "a_share": self._as_market_block(data.get("a_share")),
-            "us_stock": self._as_market_block(data.get("us_stock")),
             "sources": self._as_list(data.get("sources"), 5),
         })
 
@@ -1902,12 +1938,57 @@ class DailyAINews(BasePlugin):
             )
             mainland, world = self._split_legacy_top_sections(top)
 
-        payload["mainland"] = mainland
-        payload["world"] = world
-        payload["top"] = top
+        lead = self._checked_lead(payload.get("lead"), mainland_sources)
+        if lead:
+            mainland = [item for item in mainland if not self._similar_news_title(self._news_text(item)[0], lead["title"])]
+            world = [item for item in world if not self._similar_news_title(self._news_text(item)[0], lead["title"])]
+            top = self._merge_section_news(mainland, world)
+            payload["lede"] = lead["title"]
+
+        payload["lead"] = lead
+        payload["mainland"] = [self._trimmed_news_item(item) for item in mainland]
+        payload["world"] = [self._trimmed_news_item(item) for item in world]
+        payload["top"] = [self._trimmed_news_item(item) for item in top]
         if not str(payload.get("lede") or "").strip():
             payload["lede"] = self._fallback_lede(top)
         return payload
+
+    def _checked_lead(self, lead: Any, mainland_sources: list[dict[str, str]]) -> dict[str, str] | None:
+        """The AI's lead story, kept only when it is one of the RSS items.
+
+        A mainland lead must match a mainland RSS title, as mainland items do; a world
+        lead is a translation of an English item, so like world items it cannot be
+        matched by title and is accepted as world.
+        """
+        if not isinstance(lead, dict):
+            return None
+        lead = self._trimmed_news_item(lead)
+        if not lead.get("title"):
+            return None
+        source_titles = [str(source.get("title") or "") for source in mainland_sources]
+        matches_mainland = self._matches_source_title(lead["title"], source_titles)
+        section = str(lead.get("section") or "").strip().lower()
+        if section == "mainland" and not matches_mainland:
+            return None
+        lead["section"] = "mainland" if matches_mainland else "world"
+        return lead
+
+    @staticmethod
+    def _trimmed_news_item(item: Any) -> Any:
+        """Bound a story's visible fields: short title, one-sentence fact, 2-4 character tag."""
+        if not isinstance(item, dict):
+            return item
+        trimmed = dict(item)
+        limits = {"title": NEWS_TITLE_MAX_CHARS, "why": NEWS_FACT_MAX_CHARS, "tag": NEWS_TAG_MAX_CHARS}
+        for key, limit in limits.items():
+            if key in trimmed:
+                trimmed[key] = str(trimmed.get(key) or "").strip()[:limit]
+        return trimmed
+
+    def _source_tag(self, source: Any) -> str:
+        """An RSS-only card's tag: its chinanews desk, else a generic 要闻."""
+        desk = re.sub(r"^(中国新闻网|中新网)", "", str(source or "").strip())
+        return SOURCE_DESK_TAGS.get(desk, "要闻")
 
     def _split_legacy_top_sections(self, top: Any) -> tuple[list[Any], list[Any]]:
         top_items = self._as_list(top, MAINLAND_NEWS_MAX + WORLD_NEWS_MAX)
@@ -1945,6 +2026,13 @@ class DailyAINews(BasePlugin):
         sanitized = dict(brief)
         sanitized["lede"] = self._strip_untranslated_english_terms(str(sanitized.get("lede") or ""))
 
+        def cleaned_story(item: dict[str, Any]) -> dict[str, Any]:
+            cleaned_item = dict(item)
+            for key in ("title", "why", "tag"):
+                if key in cleaned_item or key != "tag":
+                    cleaned_item[key] = self._strip_untranslated_english_terms(str(cleaned_item.get(key) or ""))
+            return cleaned_item
+
         for list_name, limit in (
             ("mainland", MAINLAND_NEWS_MAX),
             ("world", WORLD_NEWS_MAX),
@@ -1953,21 +2041,12 @@ class DailyAINews(BasePlugin):
             cleaned_items = []
             for item in self._as_list(sanitized.get(list_name), limit):
                 if isinstance(item, dict):
-                    cleaned_item = dict(item)
-                    cleaned_item["title"] = self._strip_untranslated_english_terms(str(cleaned_item.get("title") or ""))
-                    cleaned_item["why"] = self._strip_untranslated_english_terms(str(cleaned_item.get("why") or ""))
-                    cleaned_items.append(cleaned_item)
+                    cleaned_items.append(cleaned_story(item))
                 else:
                     cleaned_items.append(self._strip_untranslated_english_terms(str(item or "")))
             sanitized[list_name] = cleaned_items
-
-        for block_name in ("a_share", "us_stock"):
-            block = sanitized.get(block_name)
-            if isinstance(block, dict):
-                cleaned_block = dict(block)
-                cleaned_block["summary"] = self._strip_untranslated_english_terms(str(cleaned_block.get("summary") or ""))
-                cleaned_block["analysis"] = self._strip_untranslated_english_terms(str(cleaned_block.get("analysis") or ""))
-                sanitized[block_name] = cleaned_block
+        if isinstance(sanitized.get("lead"), dict):
+            sanitized["lead"] = cleaned_story(sanitized["lead"])
 
         return sanitized
 
@@ -1990,21 +2069,6 @@ class DailyAINews(BasePlugin):
         cleaned = re.sub(r"\s+([）)])", r"\1", cleaned)
         return cleaned.strip()
 
-    def _as_text_list(self, value: Any, limit: int) -> list[str]:
-        return [self._module_text(item) for item in self._as_list(value, limit) if self._module_text(item)]
-
-    def _as_market_block(self, value: Any) -> dict[str, str]:
-        if isinstance(value, dict):
-            return {
-                "summary": str(value.get("summary") or value.get("title") or value.get("text") or "")[:48],
-                "analysis": str(value.get("analysis") or value.get("why") or value.get("reason") or "")[:56],
-            }
-        items = self._as_text_list(value, 2)
-        return {
-            "summary": items[0] if items else "",
-            "analysis": items[1] if len(items) > 1 else "",
-        }
-
     def _rss_news_cards(
         self,
         items: list[dict[str, str]],
@@ -2016,14 +2080,14 @@ class DailyAINews(BasePlugin):
         delayed_recent = []
         for item in items:
             title = str(item.get("title") or "").strip()
-            if not title or not self._has_cjk(title):
+            if not title or not self._is_chinese_title(title):
                 continue
             if any(self._similar_news_title(title, self._news_text(existing_item)[0]) for existing_item in result):
                 continue
             source = str(item.get("source") or "").strip()
             summary = str(item.get("summary") or "").strip()
             why = summary[:36] if summary else (source[:36] or "来自 RSS 源。")
-            card = {"title": title[:32], "why": why}
+            card = {"title": title[:32], "why": why, "tag": self._source_tag(source)}
             if self._matches_recent_news_title(title, recent_titles):
                 delayed_recent.append(card)
                 continue
@@ -2063,8 +2127,7 @@ class DailyAINews(BasePlugin):
             "mainland": mainland,
             "world": world,
             "top": top,
-            "a_share": {"summary": "A股行情由行情接口补充", "analysis": "AI 不可用时仍显示可抓取数据。"},
-            "us_stock": {"summary": "美股行情由行情接口补充", "analysis": "AI 不可用时仍显示可抓取数据。"},
+            "lead": None,
             "sources": sources[:5],
             "_model": "rss-fallback",
             "_used_ai": False,
@@ -2117,10 +2180,11 @@ class DailyAINews(BasePlugin):
 
         for source in source_items:
             title = str(source.get("title") or "").strip()
-            if not title or not self._has_cjk(title):
+            if not title or not self._is_chinese_title(title):
                 continue
             summary = str(source.get("summary") or source.get("source") or "").strip()
-            append_candidate({"title": title[:32], "why": summary[:36]}, title)
+            card = {"title": title[:32], "why": summary[:36], "tag": self._source_tag(source.get("source"))}
+            append_candidate(card, title)
             if len(result) >= limit:
                 break
 
@@ -2167,8 +2231,6 @@ class DailyAINews(BasePlugin):
                 "mainland": [{"title": "新闻简报生成失败", "why": error[:48]}],
                 "world": [],
                 "top": [{"title": "新闻简报生成失败", "why": error[:48]}],
-                "a_share": {"summary": "A股行情暂不可用", "analysis": "等待下一次刷新。"},
-                "us_stock": {"summary": "美股行情暂不可用", "analysis": "等待下一次刷新。"},
                 "sources": [],
             },
             "from_cache": False,
@@ -2198,150 +2260,111 @@ class DailyAINews(BasePlugin):
         return simplified.translate(TRADITIONAL_TO_SIMPLIFIED)
 
     def _render(self, dimensions, settings, payload: dict[str, Any], now: datetime, theme_context=None) -> Image.Image:
-        width, height = dimensions
         raw_title = str(settings.get("brief_title") or "").strip()
         title = DEFAULT_TITLE if not raw_title or raw_title == "二狗新闻" else raw_title
         title = self._simplify_chinese_text(title)
         payload = self._simplify_chinese_payload(payload)
         brief = payload.get("brief") or {}
-
-        palette = self._render_palette(theme_context)
-        bg = palette["background"]
-        header_bg = palette["header"]
-        ink = palette["ink"]
-        muted = palette["muted"]
-        dim = palette["dim"]
-        rule = palette["rule"]
-        red = palette["red"]
-        gold = palette["gold"]
-        cyan = palette["cyan"]
-        green = palette["green"]
-
-        img = self._base_background(dimensions, bg, (theme_context or {}).get("mode", "day"))
-        draw = ImageDraw.Draw(img)
-
-        font_family = DEFAULT_FONT
-        title_font = self._font(font_family, 44, "bold")
-        meta_font = self._font(font_family, 14)
-        lede_font = self._font(font_family, 25, "bold")
-        section_font = self._font(font_family, 18, "bold")
-        headline_font = self._font(font_family, 19, "bold")
-        side_font = self._font(font_family, 18, "bold")
-        body_font = self._font(font_family, 17)
-        small_font = self._font(font_family, 16)
-        footer_font = self._font(font_family, 13)
-
-        margin = 24
-        draw.rectangle((0, 0, width, 74), fill=header_bg)
-        date_label = self._date_label(payload, now)
-        meta = f"{date_label}  |  智能生成"
-        if payload.get("from_cache"):
-            meta += "  |  缓存"
-        theme_label = self._theme_label(theme_context)
-        meta_left = width - margin - max(self._tw(draw, meta, meta_font), self._tw(draw, theme_label, meta_font))
-
-        title_wordmark_box = self._draw_title_wordmark(img, margin, 8, TITLE_WORDMARK_SIZE, ink)
-        if title_wordmark_box is None:
-            draw.text((margin, 17), title, font=title_font, fill=ink)
-            draw.line((margin, 64, margin + min(210, self._tw(draw, title, title_font)), 64), fill=red, width=3)
-            title_right = margin + self._tw(draw, title, title_font)
-        else:
-            title_right = title_wordmark_box[2]
-        self._draw_title_background(
-            img,
-            (
-                int(title_right + 12),
-                8,
-                int(meta_left - 12),
-                73,
-            ),
+        palette = self._page_palette(theme_context)
+        img = self._base_background(dimensions, palette["background"], (theme_context or {}).get("mode", "day"))
+        lead, mainland, world = self._page_news(brief, payload)
+        NewsPage(self, img, palette, DEFAULT_FONT).render(
+            title=title,
+            lead=lead,
+            mainland=mainland,
+            world=world,
+            quotes=self._page_quotes(payload),
+            meta=self._page_meta(payload, now),
         )
-        draw.text((width - margin - self._tw(draw, meta, meta_font), 20), meta, font=meta_font, fill=muted)
-        draw.text((width - margin - self._tw(draw, theme_label, meta_font), 45), theme_label, font=meta_font, fill=cyan)
-
-        lede = str(brief.get("lede") or "")
-        draw.line((margin, 88, margin, 124), fill=gold, width=4)
-        lede_end = self._draw_wrapped_full(draw, lede, margin + 14, 86, width - margin * 2 - 14, lede_font, ink, 30)
-
-        mainland_items = self._render_news_section_items(brief, payload, "mainland")
-        world_items = self._render_news_section_items(brief, payload, "world")
-        main_gap = 14
-        side_w = 350
-        main_w = width - margin * 2 - main_gap - side_w
-        top_x = margin
-        side_x = top_x + main_w + main_gap
-        y = max(136, lede_end + 8)
-        top_limit_y = module_y = 360
-
-        self._section_header(draw, "◆ " + SECTION_LABELS["top"], top_x, y, main_w, section_font, red, rule, image=img, asset_key="top")
-        self._section_header(draw, "◇ " + SECTION_LABELS["quick"], side_x, y, side_w, section_font, cyan, rule, image=img, asset_key="quick")
-        self._draw_news_items(
-            draw,
-            mainland_items,
-            top_x,
-            y + 28,
-            main_w,
-            headline_font,
-            small_font,
-            gold,
-            ink,
-            muted,
-            max_y=top_limit_y,
-            start_index=1,
-            force_all=True,
-            fit_family=font_family,
-            drop_why_if_needed=True,
-        )
-
-        self._draw_news_items(
-            draw,
-            world_items,
-            side_x,
-            y + 28,
-            side_w,
-            side_font,
-            small_font,
-            cyan,
-            ink,
-            muted,
-            max_y=top_limit_y,
-            start_index=1,
-            compact=True,
-            force_all=True,
-            fit_family=font_family,
-        )
-        module_h = 96
-        gap = 20
-        col_w = (width - margin * 2 - gap) // 2
-        modules = [
-            (SECTION_LABELS["a_share"], "a_share", red),
-            (SECTION_LABELS["us_stock"], "us_stock", green),
-        ]
-        for i, (label, key, color) in enumerate(modules):
-            x = margin + i * (col_w + gap)
-            self._draw_market_module(
-                draw,
-                label,
-                brief,
-                payload,
-                key,
-                x,
-                module_y + 6,
-                col_w,
-                section_font,
-                body_font,
-                color,
-                ink,
-                dim,
-                green,
-                red,
-                max_y=module_y + module_h,
-                target_image=img,
-            )
-
-        footer = self._footer_text(payload, brief)
-        draw.text((margin, height - 20), footer, font=footer_font, fill=dim)
         return img
+
+    def _page_palette(self, theme_context) -> dict[str, Any]:
+        palette = dict(self._render_palette(theme_context))
+        night = isinstance(theme_context, dict) and theme_context.get("mode") == "night"
+        palette.update(PAGE_NIGHT_COLOURS if night else PAGE_DAY_COLOURS)
+        return palette
+
+    @staticmethod
+    def _contrast_ink(colour, palette) -> tuple[int, int, int]:
+        red, green, blue = [int(value) for value in tuple(colour)[:3]]
+        return (0, 0, 0) if 0.299 * red + 0.587 * green + 0.114 * blue > 150 else (255, 255, 255)
+
+    def _page_news(self, brief: dict[str, Any], payload: dict[str, Any]):
+        """The lead story and the two columns, the lead never repeated in a column."""
+        mainland = [self._page_item(item) for item in self._render_news_section_items(brief, payload, "mainland")]
+        world = [self._page_item(item) for item in self._render_news_section_items(brief, payload, "world")]
+        mainland = [item for item in mainland if item]
+        world = [item for item in world if item]
+        raw_lead = brief.get("lead") if isinstance(brief.get("lead"), dict) else None
+        lead = self._page_item(raw_lead) if raw_lead else None
+        section = str((raw_lead or {}).get("section") or "")
+        if lead:
+            mainland = [item for item in mainland if not self._similar_news_title(item["title"], lead["title"])]
+            world = [item for item in world if not self._similar_news_title(item["title"], lead["title"])]
+        elif mainland:
+            lead, section = mainland.pop(0), "mainland"
+        elif world:
+            lead, section = world.pop(0), "world"
+        if lead:
+            lead["section_label"] = "国际" if section == "world" else "国内"
+        return lead, mainland, world
+
+    def _page_item(self, item) -> dict[str, str] | None:
+        title, why = self._news_text(item)
+        title = title.strip()
+        if not title:
+            return None
+        tag = str(item.get("tag") or "").strip() if isinstance(item, dict) else ""
+        return {"title": title, "why": why.strip(), "tag": tag[:NEWS_TAG_MAX_CHARS]}
+
+    def _page_quotes(self, payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        groups = (payload.get("market_snapshot") or {}).get("groups") or {}
+        quotes = {}
+        for key in MARKET_GROUPS:
+            rows = groups.get(key) if isinstance(groups.get(key), list) else []
+            quotes[key] = [
+                {
+                    "label": MARKET_SHORT_NAMES.get(str(row.get("name") or ""), str(row.get("name") or row.get("symbol") or "")),
+                    "price": row.get("price"),
+                    "change_pct": row.get("change_pct"),
+                    "closes": row.get("closes") or [],
+                    "as_of_label": self._month_day(row.get("as_of")),
+                }
+                for row in rows[:3]
+                if isinstance(row, dict)
+            ]
+        return quotes
+
+    @staticmethod
+    def _month_day(value: Any) -> str:
+        match = re.match(r"\d{4}-(\d{2})-(\d{2})", str(value or ""))
+        return f"{match.group(1)}/{match.group(2)}" if match else ""
+
+    def _page_meta(self, payload: dict[str, Any], now: datetime) -> dict[str, Any]:
+        try:
+            generated = datetime.fromisoformat(str(payload.get("generated_at") or ""))
+        except ValueError:
+            generated = now
+        sources = {"mainland": [], "world": []}
+        for item in payload.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            source = str(item.get("source") or "").strip().replace("中国新闻网", "中新网")
+            names = sources[self._item_section(item)]
+            if source and source not in names:
+                names.append(source)
+        count = len(sources["mainland"]) + len(sources["world"])
+        detail = f"{generated:%H:%M} 更新" + (f" · {count} 个信源" if count else "")
+        if payload.get("from_cache"):
+            detail += " · 缓存"
+        warning = str(payload.get("warning") or "").strip()
+        return {
+            "date_text": news_date_text(generated),
+            "detail": warning or detail,
+            "warning": bool(warning),
+            "mainland_sources": sources["mainland"],
+            "world_sources": sources["world"],
+        }
 
     @staticmethod
     def _render_palette(theme_context):
@@ -2377,7 +2400,9 @@ class DailyAINews(BasePlugin):
     def _render_news_section_items(self, brief: dict[str, Any], payload: dict[str, Any], section: str) -> list[Any]:
         max_count = MAINLAND_NEWS_MAX if section == "mainland" else WORLD_NEWS_MAX
         existing = self._as_list(brief.get(section), max_count)
-        if not existing:
+        # Only a brief from before the two sections splits its "top" list; an empty
+        # section of a current brief must not borrow the other section's stories.
+        if not existing and "mainland" not in brief and "world" not in brief:
             legacy_mainland, legacy_world = self._split_legacy_top_sections(brief.get("top"))
             existing = legacy_mainland if section == "mainland" else legacy_world
 
@@ -2519,572 +2544,19 @@ class DailyAINews(BasePlugin):
             bold=str(weight or "normal").lower() == "bold",
         )
 
-    def _date_label(self, payload: dict[str, Any], now: datetime) -> str:
-        date = payload.get("date") or now.strftime("%Y-%m-%d")
-        try:
-            return datetime.fromisoformat(date).strftime("%Y.%m.%d")
-        except ValueError:
-            return now.strftime("%Y.%m.%d")
-
-    def _theme_label(self, theme_context) -> str:
-        return "午夜简报" if (theme_context or {}).get("mode") == "night" else "日间简报"
-
-    def _draw_section_wordmark(self, image: Image.Image, key: str, x: int, y: int, accent):
-        source = self._load_section_wordmark(key)
-        if source is None:
-            return None
-        size = SECTION_WORDMARK_SIZES.get(key)
-        if not size:
-            return None
-        try:
-            target_w, target_h = [int(value) for value in size]
-            resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
-            art = ImageOps.contain(source.copy(), (target_w, target_h), method=resample)
-            art = self._prepare_section_wordmark(art, accent)
-            layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
-            paste_x = int((target_w - art.width) / 2)
-            paste_y = int((target_h - art.height) / 2)
-            layer.paste(art, (paste_x, paste_y), art)
-            out_y = int(y + SECTION_WORDMARK_Y_OFFSET)
-            image.paste(layer, (int(x), out_y), layer)
-            return (int(x), out_y, int(x) + target_w, out_y + target_h)
-        except Exception as exc:
-            logger.warning("Could not draw Daily AI News section wordmark %s: %s", key, exc)
-            return None
-
-    @staticmethod
-    def _prepare_section_wordmark(source: Image.Image, accent):
-        wordmark = source.convert("RGBA")
-        accent_rgb = DailyAINews._readable_section_color(accent)
-        pixels = wordmark.load()
-        for py in range(wordmark.height):
-            for px in range(wordmark.width):
-                red, green, blue, alpha = pixels[px, py]
-                if alpha <= 0:
-                    continue
-                luma = (red * 299 + green * 587 + blue * 114) / 1000
-                if luma < 190:
-                    pixels[px, py] = accent_rgb + (alpha,)
-        return wordmark
-
-    @staticmethod
-    def _readable_section_color(color):
-        rgb = tuple(int(value) for value in tuple(color)[:3])
-        luma = (rgb[0] * 299 + rgb[1] * 587 + rgb[2] * 114) / 1000
-        if luma >= 170 or max(rgb) < 220:
-            return rgb
-        target_luma = 185
-        mix = max(0.0, min(1.0, (target_luma - luma) / max(1, 255 - luma)))
-        return tuple(max(0, min(255, int(round(value + (255 - value) * mix)))) for value in rgb)
-    @staticmethod
-    @lru_cache(maxsize=8)
-    def _load_section_wordmark(key: str):
-        filename = SECTION_WORDMARK_IMAGES.get(str(key or ""))
-        if not filename:
-            return None
-        path = PLUGIN_DIR / filename
-        if not path.is_file():
-            return None
-        try:
-            return Image.open(path).convert("RGBA")
-        except Exception as exc:
-            logger.warning("Could not load Daily AI News section wordmark %s: %s", path, exc)
-            return None
-    def _footer_text(self, payload: dict[str, Any], brief: dict[str, Any]) -> str:
-        sources = brief.get("sources") or []
-        if sources:
-            source_text = " / ".join(str(s) for s in sources[:2])
-        else:
-            source_text = "新闻源 + AI摘要"
-        warning = payload.get("warning")
-        if warning:
-            return f"来源: {source_text}  |  {warning[:54]}"
-        generated_at = str(payload.get("generated_at") or "")[:16].replace("T", " ")
-        return f"来源: {source_text}  |  生成: {generated_at}"
-
-    def _section_header(self, draw, label: str, x: int, y: int, width: int, font, accent, rule, image=None, asset_key=None) -> None:
-        if image is not None and asset_key:
-            wordmark_box = self._draw_section_wordmark(image, asset_key, x, y, accent)
-            if wordmark_box is not None:
-                self._draw_section_header_rule(draw, x, y, width, rule)
-                return
-        draw.text((x, y), label, font=font, fill=accent)
-        self._draw_section_header_rule(draw, x, y, width, rule)
-
-    @staticmethod
-    def _draw_section_header_rule(draw, x: int, y: int, width: int, rule) -> None:
-        line_y = int(y + SECTION_HEADER_RULE_Y_OFFSET)
-        draw.line((int(x), line_y, int(x + width), line_y), fill=rule, width=1)
-
-    def _market_section_header(self, draw, label: str, key: str, x: int, y: int, width: int, font, accent, rule, image=None) -> None:
-        if image is not None:
-            wordmark_box = self._draw_section_wordmark(image, key, x, y, accent)
-            if wordmark_box is not None:
-                return
-        icon_size = 12
-        icon_x = x + 1
-        icon_y = y + 5
-        if key == "a_share":
-            draw.rectangle((icon_x, icon_y, icon_x + icon_size, icon_y + icon_size), outline=accent, width=2)
-            draw.line((icon_x + 3, icon_y + 8, icon_x + 6, icon_y + 5, icon_x + 9, icon_y + 7), fill=accent, width=2)
-        else:
-            draw.ellipse((icon_x, icon_y, icon_x + icon_size, icon_y + icon_size), outline=accent, width=2)
-            center = icon_x + icon_size // 2
-            draw.ellipse((center - 2, icon_y + 4, center + 2, icon_y + 8), fill=accent)
-        text_x = x + icon_size + 9
-        draw.text((text_x, y), label, font=font, fill=accent)
-        underline_w = min(width, max(48, icon_size + 9 + self._tw(draw, label, font) + 8))
-        draw.line((x, y + 22, x + underline_w, y + 22), fill=accent, width=2)
-
-    def _market_rows(self, payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
-        rows = (((payload.get("market_snapshot") or {}).get("groups") or {}).get(key) or [])
-        return rows if isinstance(rows, list) else []
-
-    def _market_lines(self, brief: dict[str, Any], payload: dict[str, Any], key: str) -> list[str]:
-        block = brief.get(key) if isinstance(brief.get(key), dict) else {}
-        rows = self._market_rows(payload, key)
-        if rows:
-            summary = self._market_summary(key, rows, str(payload.get("date") or ""))
-            analysis = self._market_tone(rows)
-            return [summary, analysis]
-
-        lines = [
-            str(block.get("summary") or "").strip(),
-            str(block.get("analysis") or "").strip(),
-        ]
-        lines = [line for line in lines if line]
-        if lines:
-            return lines[:2]
-
-        label = "A股" if key == "a_share" else "美股"
-        return [f"{label}行情暂不可用", "等待下一次刷新。"]
-
-    def _market_summary(self, key: str, rows: list[dict[str, Any]], date_key: str) -> str:
-        prefix, parts = self._market_summary_parts(key, rows, date_key)
-        if not parts:
-            return "行情数据暂不可用"
-        return prefix + " ".join(f"{name}{self._market_pct(pct)}" for name, pct in parts)
-
-    def _market_summary_parts(self, key: str, rows: list[dict[str, Any]], date_key: str) -> tuple[str, list[tuple[str, float]]]:
-        names = {
-            "上证指数": "上证",
-            "深证成指": "深成",
-            "创业板指": "创业板",
-            "标普500": "标普",
-            "纳斯达克": "纳指",
-            "道琼斯": "道指",
-        }
-        parts = []
-        latest_date = ""
-        for row in rows[:3]:
-            name = names.get(str(row.get("name") or ""), str(row.get("name") or row.get("symbol") or "指数"))
-            pct = row.get("change_pct")
-            if not isinstance(pct, (int, float)):
-                continue
-            parts.append((name, float(pct)))
-            as_of = str(row.get("as_of") or "")[:10]
-            if as_of > latest_date:
-                latest_date = as_of
-        prefix = "上日 " if key == "us_stock" and date_key and latest_date and latest_date < date_key else ""
-        return prefix, parts
-
-    def _market_pct(self, pct: float) -> str:
-        text = f"{pct:+.2f}%"
-        return text.replace("+0.", "+.").replace("-0.", "-.")
-
-    def _market_change_color(self, pct: float, up_color, down_color, neutral_color):
-        if pct > 0:
-            return up_color
-        if pct < 0:
-            return down_color
-        return neutral_color
-
-    def _market_tone(self, rows: list[dict[str, Any]]) -> str:
-        pct_values = [row.get("change_pct") for row in rows if isinstance(row.get("change_pct"), (int, float))]
-        if not pct_values:
-            return "指数方向不明，等待更多数据。"
-        positive = sum(1 for pct in pct_values if pct > 0)
-        negative = sum(1 for pct in pct_values if pct < 0)
-        if positive == len(pct_values):
-            return "主要指数同步走强，风险偏好改善。"
-        if negative == len(pct_values):
-            return "主要指数同步走弱，避险情绪升温。"
-        if positive > negative:
-            return "指数分化偏强，资金仍在选择方向。"
-        if negative > positive:
-            return "指数分化偏弱，市场情绪较谨慎。"
-        return "涨跌互现，市场缺少一致主线。"
-
-    def _draw_market_module(
-        self,
-        draw,
-        label,
-        brief,
-        payload,
-        key,
-        x,
-        y,
-        width,
-        section_font,
-        body_font,
-        accent,
-        ink,
-        rule,
-        up_color,
-        down_color,
-        max_y=None,
-        target_image=None,
-    ) -> int:
-        self._market_section_header(draw, label, key, x, y, width, section_font, accent, rule, image=target_image)
-        y += 31
-        rows = self._market_rows(payload, key)
-        prefix, parts = self._market_summary_parts(key, rows, str(payload.get("date") or "")) if rows else ("", [])
-        if parts:
-            y = self._draw_market_change_line(draw, prefix, parts, x, y, width, body_font, ink, up_color, down_color, max_y=max_y)
-            return self._draw_module_lines(draw, [self._market_tone(rows)], x, y, width, body_font, ink, max_y=max_y)
-        return self._draw_module_lines(draw, self._market_lines(brief, payload, key), x, y, width, body_font, ink, max_y=max_y)
-
-    def _draw_market_change_line(self, draw, prefix, parts, x, y, width, body_font, ink, up_color, down_color, max_y=None) -> int:
-        groups = [[("— ", ink)]]
-        if prefix:
-            groups[0].append((prefix, ink))
-        for index, (name, pct) in enumerate(parts):
-            group = [
-                (name, ink),
-                (self._market_pct(pct), self._market_change_color(pct, up_color, down_color, ink)),
-            ]
-            if index < len(parts) - 1:
-                group.append((" ", ink))
-            groups.append(group)
-
-        line_h = 20
-        if max_y is not None and y + line_h > max_y:
-            return y
-
-        cursor_x = x
-        limit_x = x + width
-        for group in groups:
-            group_w = sum(self._tw(draw, text, body_font) for text, _color in group)
-            if cursor_x > x and cursor_x + group_w > limit_x:
-                y += line_h
-                if max_y is not None and y + line_h > max_y:
-                    return y
-                cursor_x = x
-            for text, color in group:
-                draw.text((cursor_x, y), text, font=body_font, fill=color)
-                cursor_x += self._tw(draw, text, body_font)
-        return y + line_h + 3
-
-    def _draw_module_lines(self, draw, items, x, y, width, body_font, ink, max_y=None) -> int:
-        for item in list(items)[:2]:
-            text = self._module_text(item)
-            if not text:
-                continue
-            lines = self._wrap(draw, f"— {text}", body_font, width)
-            needed = len(lines) * 20 + 3
-            if max_y is not None and y + needed > max_y:
-                break
-            for line in lines:
-                draw.text((x, y), line, font=body_font, fill=ink)
-                y += 20
-            y += 3
-        return y
-
-    def _draw_wrapped_full(self, draw, text, x, y, max_width, font, fill, line_height) -> int:
-        for line in self._wrap(draw, text, font, max_width):
-            draw.text((x, y), line, font=font, fill=fill)
-            y += line_height
-        return y
-
-    def _draw_news_items(
-        self,
-        draw,
-        items,
-        x,
-        y,
-        width,
-        headline_font,
-        why_font,
-        marker_color,
-        ink,
-        muted,
-        max_y,
-        start_index=1,
-        compact=False,
-        force_all=False,
-        fit_family=None,
-        drop_why_if_needed=False,
-    ) -> int:
-        if force_all:
-            return self._draw_news_items_fit(
-                draw,
-                items,
-                x,
-                y,
-                width,
-                marker_color,
-                ink,
-                muted,
-                max_y,
-                start_index,
-                fit_family or DEFAULT_FONT,
-                drop_why_if_needed,
-            )
-
-        markers = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
-        marker_w = 34 if compact else 40
-        title_h = 22 if compact else 24
-        why_h = 19 if compact else 20
-        gap = 4 if compact else 7
-        for offset, item in enumerate(items):
-            headline, why = self._news_text(item)
-            if not headline and not why:
-                continue
-            title_lines = self._wrap(draw, headline, headline_font, width - marker_w)
-            why_lines = self._wrap(draw, why, why_font, width - marker_w) if why else []
-            needed = len(title_lines) * title_h + len(why_lines) * why_h + gap
-            if y + needed > max_y:
-                break
-            number = start_index + offset
-            marker = markers[number - 1] if 0 < number <= len(markers) else f"{number}."
-            draw.text((x, y - 1), marker, font=headline_font, fill=marker_color)
-            text_x = x + marker_w
-            for line in title_lines:
-                draw.text((text_x, y), line, font=headline_font, fill=ink)
-                y += title_h
-            for line in why_lines:
-                draw.text((text_x, y), line, font=why_font, fill=muted)
-                y += why_h
-            y += gap
-        return y
-
-    def _draw_news_items_fit(
-        self,
-        draw,
-        items,
-        x,
-        y,
-        width,
-        marker_color,
-        ink,
-        muted,
-        max_y,
-        start_index,
-        font_family,
-        drop_why_if_needed=False,
-    ) -> int:
-        item_list = list(items or [])
-        news_count = self._renderable_news_count(item_list)
-        prepared = []
-        available = max_y - y
-        allowed_available = available + 4
-        best_score: tuple[int, int, int] | None = None
-        for title_size in NEWS_FIT_TITLE_SIZES:
-            style = self._news_fit_style(title_size, news_count)
-            base_rows, base_needed = self._prepare_news_rows_for_style(
-                draw,
-                item_list,
-                width,
-                font_family,
-                style,
-            )
-            candidates = [(style, base_rows, base_needed)]
-            if drop_why_if_needed:
-                for why_line_limit in (2, 1, 0):
-                    limited_rows, limited_needed, limited_style = self._limit_prepared_why_rows(
-                        base_rows,
-                        style,
-                        why_line_limit,
-                    )
-                    candidates.append((limited_style, limited_rows, limited_needed))
-
-            for candidate_style, candidate_rows, needed_total in candidates:
-                if needed_total <= allowed_available:
-                    why_penalty = self._why_limit_penalty(
-                        candidate_style.get("why_line_limit")
-                    )
-                    score = (
-                        abs(allowed_available - needed_total) + why_penalty,
-                        -candidate_style["title"],
-                        why_penalty,
-                    )
-                    if best_score is None or score < best_score:
-                        prepared = candidate_rows
-                        best_score = score
-                elif best_score is None:
-                    prepared = candidate_rows
-
-        # Distribute any leftover height as extra leading and inter-item spacing
-        # so the column ends near max_y instead of leaving a void above it.
-        line_bump = 0
-        gap_bump = 0
-        if prepared and best_score is not None:
-            leftover = available - sum(row[2] for row in prepared)
-            if leftover > 0:
-                total_lines = sum(len(title_lines) + len(why_lines) for title_lines, why_lines, *_rest in prepared)
-                if total_lines:
-                    line_bump = min(3, leftover // total_lines)
-                    leftover -= line_bump * total_lines
-                if len(prepared) > 1:
-                    gap_bump = min(10, leftover // (len(prepared) - 1))
-
-        markers = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
-        for offset, (title_lines, why_lines, _needed, headline_font, why_font, style) in enumerate(prepared):
-            number = start_index + offset
-            marker = markers[number - 1] if 0 < number <= len(markers) else f"{number}."
-            draw.text((x, y - 1), marker, font=headline_font, fill=marker_color)
-            text_x = x + style["marker_w"]
-            for line in title_lines:
-                draw.text((text_x, y), line, font=headline_font, fill=ink)
-                y += style["title_h"] + line_bump
-            for line in why_lines:
-                draw.text((text_x, y), line, font=why_font, fill=muted)
-                y += style["why_h"] + line_bump
-            y += style["gap"]
-            if offset < len(prepared) - 1:
-                y += gap_bump
-        return y
-
-    @staticmethod
-    def _limit_prepared_why_rows(rows, style, why_line_limit):
-        limited_style = dict(style)
-        limited_style["why_line_limit"] = int(why_line_limit)
-        limited_rows = []
-        needed_total = 0
-        for title_lines, why_lines, needed, headline_font, why_font, _row_style in rows:
-            visible_why = list(why_lines)[: max(0, int(why_line_limit))]
-            removed_lines = max(0, len(why_lines) - len(visible_why))
-            limited_needed = max(
-                0,
-                int(needed) - removed_lines * int(style["why_h"]),
-            )
-            limited_rows.append(
-                (
-                    title_lines,
-                    visible_why,
-                    limited_needed,
-                    headline_font,
-                    why_font,
-                    limited_style,
-                )
-            )
-            needed_total += limited_needed
-        return limited_rows, needed_total, limited_style
-
-    @staticmethod
-    def _why_limit_penalty(why_line_limit) -> int:
-        if why_line_limit is None:
-            return 0
-        limit = int(why_line_limit)
-        if limit >= 2:
-            return 10
-        if limit == 1:
-            return 20
-        return 50
-
-    def _renderable_news_count(self, items) -> int:
-        return sum(1 for item in items if any(self._news_text(item)))
-
-
-    def _prepare_news_rows_for_style(self, draw, items, width: int, font_family: str, style: dict[str, int]):
-        headline_font = self._font(font_family, style["title"], "bold")
-        why_font = self._font(font_family, style["why"])
-        rows = []
-        needed_total = 0
-        text_w = max(1, width - style["marker_w"])
-        for item in list(items or []):
-            headline, why = self._news_text(item)
-            if not headline and not why:
-                continue
-            title_lines = self._wrap(draw, headline, headline_font, text_w)
-            why_lines = self._wrap(draw, why, why_font, text_w) if why else []
-            why_line_limit = style.get("why_line_limit")
-            if why_line_limit is not None:
-                why_lines = why_lines[:max(0, int(why_line_limit))]
-            needed = (
-                len(title_lines) * style["title_h"]
-                + len(why_lines) * style["why_h"]
-                + style["gap"]
-            )
-            rows.append((title_lines, why_lines, needed, headline_font, why_font, style))
-            needed_total += needed
-        return rows, needed_total
-
-    @staticmethod
-    def _news_body_size_cap(news_count: int) -> int:
-        news_count = max(0, int(news_count))
-        if news_count <= 1:
-            return 23
-        if news_count == 2:
-            return 22
-        if news_count == 3:
-            return 20
-        if news_count == 4:
-            return 18
-        return 15
-
-    @staticmethod
-    def _news_fit_style(title_size: int, news_count: int | None = None) -> dict[str, int]:
-        title_size = max(6, int(title_size))
-        why_size = max(6, title_size - 3)
-        if news_count is not None:
-            why_size = min(why_size, DailyAINews._news_body_size_cap(news_count))
-        if title_size <= 14:
-            title_h = title_size + 1
-            why_h = why_size + 1
-            gap = 1
-        else:
-            title_h = title_size + 3
-            why_h = why_size + 2
-            gap = max(0, min(7, (title_size - 11) // 2))
-        return {
-            "title": title_size,
-            "why": why_size,
-            "marker_w": max(18, title_size * 2 + 2),
-            "title_h": title_h,
-            "why_h": why_h,
-            "gap": gap,
-        }
-
     def _news_text(self, item) -> tuple[str, str]:
         if isinstance(item, dict):
             return str(item.get("title") or ""), str(item.get("why") or "")
         return str(item), ""
 
-    def _module_text(self, item) -> str:
-        if isinstance(item, dict):
-            primary = (
-                item.get("risk")
-                or item.get("signal")
-                or item.get("watch")
-                or item.get("title")
-                or item.get("text")
-                or item.get("summary")
-                or ""
-            )
-            why = item.get("why") or item.get("reason") or ""
-            if primary and why:
-                return f"{primary}，{why}"
-            return str(primary or why)
-        return str(item)
+    def _is_chinese_title(self, text: str) -> bool:
+        """A displayable RSS title: mostly Chinese, not an English one with a translated word."""
+        cjk = len(re.findall(r"[\u3400-\u9fff]", text))
+        latin = len(re.findall(r"[A-Za-z]", text))
+        return cjk >= 2 and cjk * 2 >= latin
 
     def _has_cjk(self, text: str) -> bool:
         return bool(re.search(r"[\u3400-\u9fff]", text))
-
-    def _wrap(self, draw, text: str, font, max_width: int) -> list[str]:
-        text = re.sub(r"\s+", " ", str(text)).strip()
-        lines = []
-        current = ""
-        for char in text:
-            candidate = current + char
-            if self._tw(draw, candidate, font) <= max_width or not current:
-                current = candidate
-            else:
-                lines.append(current)
-                current = char
-        if current:
-            lines.append(current)
-        return lines or [""]
 
     def _tw(self, draw, text: str, font) -> int:
         return text_width(draw, text, font)

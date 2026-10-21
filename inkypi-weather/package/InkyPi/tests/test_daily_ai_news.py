@@ -10,7 +10,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import plugins.daily_ai_news.daily_ai_news as daily_ai_news_module
-from plugins.daily_ai_news.daily_ai_news import DailyAINews, TITLE_BACKGROUND_IMAGE, TITLE_BACKGROUND_SIZE, TITLE_WORDMARK_IMAGE, TITLE_WORDMARK_SIZE, SECTION_WORDMARK_IMAGES, SECTION_WORDMARK_SIZES
+from plugins.daily_ai_news.daily_ai_news import DailyAINews, TITLE_BACKGROUND_IMAGE, TITLE_BACKGROUND_SIZE, TITLE_WORDMARK_IMAGE, TITLE_WORDMARK_SIZE
+from plugins.daily_ai_news import news_art, news_layout
 from plugins.base_plugin.presentation import PresentationMode
 from plugins.base_plugin.render_provenance import read_source_provenance
 
@@ -704,32 +705,6 @@ def test_theme_only_generate_propagates_cold_cache_failure(monkeypatch, tmp_path
         )
 
 
-def test_market_summary_parts_keep_previous_us_close_label_and_values():
-    plugin = _plugin()
-    rows = [
-        {"name": "标普500", "change_pct": 1.69, "as_of": "2026-06-01"},
-        {"name": "纳斯达克", "change_pct": 2.82, "as_of": "2026-06-01"},
-        {"name": "道琼斯", "change_pct": -0.99, "as_of": "2026-06-01"},
-    ]
-
-    prefix, parts = plugin._market_summary_parts("us_stock", rows, "2026-06-02")
-
-    assert prefix == "上日 "
-    assert parts == [("标普", 1.69), ("纳指", 2.82), ("道指", -0.99)]
-    assert plugin._market_summary("us_stock", rows, "2026-06-02") == "上日 标普+1.69% 纳指+2.82% 道指-.99%"
-
-
-def test_market_change_color_uses_us_convention():
-    plugin = _plugin()
-    up = (0, 180, 90)
-    down = (220, 40, 50)
-    neutral = (30, 30, 30)
-
-    assert plugin._market_change_color(0.01, up, down, neutral) == up
-    assert plugin._market_change_color(-0.01, up, down, neutral) == down
-    assert plugin._market_change_color(0.0, up, down, neutral) == neutral
-
-
 def test_market_snapshot_prefers_massive_and_keeps_yahoo_fallback(monkeypatch):
     plugin = _plugin()
 
@@ -765,6 +740,7 @@ def test_market_snapshot_prefers_massive_and_keeps_yahoo_fallback(monkeypatch):
             "change_pct": 1.0,
             "as_of": "2026-06-02",
             "source": "yahoo",
+            "closes": [99.0, 100.0],
         }
 
     monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.load_massive_api_key", lambda device_config: "massive-key")
@@ -779,7 +755,10 @@ def test_market_snapshot_prefers_massive_and_keeps_yahoo_fallback(monkeypatch):
     }
     assert snapshot["groups"]["us_stock"][0]["source"] == "massive"
     assert snapshot["groups"]["us_stock"][0]["massive_symbol"] == "I:SPX"
-    assert "^GSPC" not in yahoo_calls
+    assert snapshot["groups"]["us_stock"][0]["price"] == 6000.0
+    assert snapshot["groups"]["us_stock"][0]["change_pct"] == 0.5
+    # Massive has no history; Yahoo's daily closes only feed the sparkline.
+    assert snapshot["groups"]["us_stock"][0]["closes"] == [99.0, 100.0]
     assert "^IXIC" in yahoo_calls
     assert "000001.SS" in yahoo_calls
 
@@ -1016,7 +995,7 @@ def test_sanitize_brief_visible_text_removes_untranslated_english_leaks():
         "top": [
             {"title": "美国拟对伊朗 unknownword 提案", "why": "NPR 关注 sanctions 与 Gaza"},
         ],
-        "a_share": {"summary": "AI 摘要可用", "analysis": "RSS 条目已更新"},
+        "lead": {"tag": "外交 Iran", "title": "美国与 Iran 会谈", "why": "BBC中文关注 sanctions"},
         "sources": ["BBC中文"],
     }
 
@@ -1025,18 +1004,7 @@ def test_sanitize_brief_visible_text_removes_untranslated_english_leaks():
     assert sanitized["lede"] == "BBC中文关注美国与伊朗重建方案"
     assert sanitized["top"][0]["title"] == "美国拟对伊朗提案"
     assert sanitized["top"][0]["why"] == "NPR关注制裁与加沙"
-    assert sanitized["a_share"]["summary"] == "AI摘要可用"
-    assert sanitized["a_share"]["analysis"] == "RSS条目已更新"
-
-
-def test_static_render_labels_use_simplified_chinese():
-    plugin = _plugin()
-
-    assert daily_ai_news_module.SECTION_LABELS["top"] == "大陆新闻"
-    assert daily_ai_news_module.SECTION_LABELS["quick"] == "世界快报"
-    assert plugin._theme_label({"mode": "night"}) == "午夜简报"
-    assert plugin._theme_label({"mode": "day"}) == "日间简报"
-    assert plugin._footer_text({"generated_at": "2026-06-17T21:12:00"}, {"sources": []}).startswith("来源: 新闻源 + AI摘要")
+    assert sanitized["lead"] == {"tag": "外交伊朗", "title": "美国与伊朗会谈", "why": "BBC中文关注制裁"}
 
 
 def test_daily_ai_news_uses_shared_base_ui_resolver(monkeypatch):
@@ -1095,413 +1063,6 @@ def test_daily_ai_news_render_forces_microsoft_yahei(monkeypatch):
     assert font_calls
     assert {family for family, _size, _weight in font_calls} == {"Microsoft YaHei"}
 
-def test_draw_news_items_fit_prefers_style_that_uses_available_height(monkeypatch):
-    plugin = _plugin()
-    image = Image.new("RGB", (420, 360), "white")
-    draw = ImageDraw.Draw(image)
-    selected_sizes = []
-
-    def fake_prepare(_draw, _items, _width, font_family, style):
-        needed_by_title_size = {24: 360, 23: 150, 22: 292, 21: 230}
-        needed_total = needed_by_title_size.get(style["title"], 90)
-        headline_font = plugin._font(font_family, style["title"], "bold")
-        why_font = plugin._font(font_family, style["why"])
-        rows = [([f"title-size-{style['title']}"], [], needed_total, headline_font, why_font, style)]
-        return rows, needed_total
-
-    original_text = ImageDraw.ImageDraw.text
-
-    def capture_text(self, xy, text, *args, **kwargs):
-        value = str(text)
-        if value.startswith("title-size-"):
-            selected_sizes.append(int(value.rsplit("-", 1)[-1]))
-        return original_text(self, xy, text, *args, **kwargs)
-
-    monkeypatch.setattr(plugin, "_prepare_news_rows_for_style", fake_prepare)
-    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
-
-    plugin._draw_news_items(
-        draw,
-        [{"title": "短新闻", "why": "短正文"}],
-        0,
-        0,
-        360,
-        plugin._font("Microsoft YaHei", 18, "bold"),
-        plugin._font("Microsoft YaHei", 16),
-        (180, 120, 20),
-        (0, 0, 0),
-        (70, 70, 70),
-        max_y=300,
-        force_all=True,
-        fit_family="Microsoft YaHei",
-    )
-
-    assert selected_sizes == [22]
-
-
-def test_draw_news_items_fit_uses_bounded_representative_font_sizes(monkeypatch):
-    plugin = _plugin()
-    image = Image.new("RGB", (420, 360), "white")
-    draw = ImageDraw.Draw(image)
-    prepared_styles = []
-
-    def fake_prepare(_draw, _items, _width, font_family, style):
-        prepared_styles.append(dict(style))
-        headline_font = plugin._font(font_family, style["title"], "bold")
-        why_font = plugin._font(font_family, style["why"])
-        rows = [(["headline"], ["detail one", "detail two"], 120, headline_font, why_font, style)]
-        return rows, 120
-
-    monkeypatch.setattr(plugin, "_prepare_news_rows_for_style", fake_prepare)
-
-    plugin._draw_news_items_fit(
-        draw,
-        [{"title": "headline", "why": "detail"}],
-        0,
-        0,
-        360,
-        (180, 120, 20),
-        (0, 0, 0),
-        (70, 70, 70),
-        300,
-        1,
-        "Microsoft YaHei",
-        drop_why_if_needed=True,
-    )
-
-    assert [style["title"] for style in prepared_styles] == [
-        26,
-        24,
-        22,
-        18,
-        16,
-        14,
-        12,
-        10,
-        8,
-        6,
-    ]
-    assert all("why_line_limit" not in style for style in prepared_styles)
-
-
-def test_draw_news_items_fit_uses_larger_type_for_sparse_news(monkeypatch):
-    plugin = _plugin()
-    image = Image.new("RGB", (420, 220), "white")
-    draw = ImageDraw.Draw(image)
-    original_font = plugin._font
-    font_calls = []
-
-    def record_font(family, size, weight="normal"):
-        font_calls.append((family, size, weight))
-        return original_font(family, size, weight)
-
-    monkeypatch.setattr(plugin, "_font", record_font)
-
-    y = plugin._draw_news_items(
-        draw,
-        [
-            {"title": "短标题一", "why": "短正文一"},
-            {"title": "短标题二", "why": "短正文二"},
-        ],
-        0,
-        0,
-        360,
-        original_font("Microsoft YaHei", 18, "bold"),
-        original_font("Microsoft YaHei", 16),
-        (180, 120, 20),
-        (0, 0, 0),
-        (70, 70, 70),
-        max_y=196,
-        force_all=True,
-        fit_family="Microsoft YaHei",
-    )
-
-    assert y <= 196
-    # Sparse news should scale type up beyond the 18/16 defaults; exact sizes
-    # vary with the rendering environment's font metrics.
-    assert max(size for _family, size, weight in font_calls if weight == "bold") > 18
-    assert max(size for _family, size, weight in font_calls if weight == "normal") > 16
-
-
-def test_draw_news_items_fit_caps_body_size_for_many_short_news(monkeypatch):
-    plugin = _plugin()
-    image = Image.new("RGB", (420, 360), "white")
-    draw = ImageDraw.Draw(image)
-    original_text = ImageDraw.ImageDraw.text
-    why_sizes = []
-
-    def capture_text(self, xy, text, *args, **kwargs):
-        if str(text).startswith("多新闻正文"):
-            font = kwargs.get("font")
-            why_sizes.append(getattr(font, "size", None))
-        return original_text(self, xy, text, *args, **kwargs)
-
-    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
-    items = [
-        {"title": f"多新闻标题{index}", "why": f"多新闻正文{index}"}
-        for index in range(1, 6)
-    ]
-
-    y = plugin._draw_news_items(
-        draw,
-        items,
-        0,
-        0,
-        360,
-        plugin._font("Microsoft YaHei", 18, "bold"),
-        plugin._font("Microsoft YaHei", 16),
-        (20, 120, 180),
-        (0, 0, 0),
-        (70, 70, 70),
-        max_y=320,
-        force_all=True,
-        fit_family="Microsoft YaHei",
-    )
-
-    assert y <= 320
-    assert len(why_sizes) == 5
-    assert max(size for size in why_sizes if size is not None) <= 15
-
-
-def test_draw_news_items_fit_shrinks_without_dropping_body(monkeypatch):
-    plugin = _plugin()
-    image = Image.new("RGB", (420, 240), "white")
-    draw = ImageDraw.Draw(image)
-    original_text = ImageDraw.ImageDraw.text
-    drawn_text = []
-
-    def capture_text(self, xy, text, *args, **kwargs):
-        drawn_text.append(str(text))
-        return original_text(self, xy, text, *args, **kwargs)
-
-    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
-    items = [
-        {"title": f"第{index}条国际新闻标题包含较多事实细节与地点", "why": f"第{index}条正文说明影响范围和后续观察重点"}
-        for index in range(1, 5)
-    ]
-
-    y = plugin._draw_news_items(
-        draw,
-        items,
-        0,
-        0,
-        330,
-        plugin._font("Microsoft YaHei", 18, "bold"),
-        plugin._font("Microsoft YaHei", 16),
-        (20, 120, 180),
-        (0, 0, 0),
-        (70, 70, 70),
-        max_y=196,
-        start_index=4,
-        force_all=True,
-        fit_family="Microsoft YaHei",
-    )
-
-    rendered = "".join(drawn_text)
-    assert y <= 196
-    assert "..." not in rendered
-    for item in items:
-        assert item["title"][:8] in rendered
-        assert item["why"] in rendered
-
-def test_draw_news_items_fit_keeps_four_item_news_readable_when_given_full_news_area(monkeypatch):
-    plugin = _plugin()
-    image = Image.new("RGB", (430, 340), "white")
-    draw = ImageDraw.Draw(image)
-    original_text = ImageDraw.ImageDraw.text
-    why_sizes = []
-    title_sizes = []
-    drawn_text = []
-
-    def capture_text(self, xy, text, *args, **kwargs):
-        value = str(text)
-        drawn_text.append(value)
-        font = kwargs.get("font")
-        if font is not None:
-            if value.startswith("第") and "标题" in value:
-                title_sizes.append(getattr(font, "size", None))
-            if value.startswith("第") and "正文" in value:
-                why_sizes.append(getattr(font, "size", None))
-        return original_text(self, xy, text, *args, **kwargs)
-
-    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
-    items = [
-        {"title": f"第{index}条新闻标题包含较多事实细节", "why": f"第{index}条正文说明影响范围"}
-        for index in range(1, 5)
-    ]
-
-    y = plugin._draw_news_items(
-        draw,
-        items,
-        0,
-        0,
-        360,
-        plugin._font("Microsoft YaHei", 18, "bold"),
-        plugin._font("Microsoft YaHei", 16),
-        (20, 120, 180),
-        (0, 0, 0),
-        (70, 70, 70),
-        max_y=296,
-        force_all=True,
-        fit_family="Microsoft YaHei",
-    )
-
-    rendered = "".join(drawn_text)
-    # Allow one text line of overflow tolerance: absolute pixel height varies
-    # with the rendering environment's font metrics.
-    assert y <= 296 + 8
-    assert "..." not in rendered
-    assert why_sizes and min(size for size in why_sizes if size is not None) >= 15
-    assert title_sizes and min(size for size in title_sizes if size is not None) >= 18
-
-
-def test_draw_news_items_fit_fills_column_when_short_titles_undershoot():
-    plugin = _plugin()
-    image = Image.new("RGB", (800, 480), "white")
-    draw = ImageDraw.Draw(image)
-    items = [
-        {"title": "王毅同芬兰外长瓦尔托宁会谈", "why": ""},
-        {"title": "中国成功发射千帆极轨15组卫星", "why": ""},
-        {"title": "四川绵竹连发三次四级以上地震", "why": ""},
-        {"title": "全国农业普查通知印发", "why": ""},
-    ]
-
-    end_y = plugin._draw_news_items_fit(
-        draw,
-        items,
-        24,
-        164,
-        388,
-        (200, 60, 40),
-        (0, 0, 0),
-        (90, 90, 90),
-        360,
-        1,
-        "Microsoft YaHei",
-        True,
-    )
-
-    assert end_y <= 360 + 4
-    # the column should end near its bottom edge instead of leaving a large void
-    assert 360 - end_y <= 16
-
-
-def test_draw_news_items_fit_fills_column_for_two_long_items():
-    plugin = _plugin()
-    image = Image.new("RGB", (800, 480), "white")
-    draw = ImageDraw.Draw(image)
-    items = [
-        {
-            "title": "河南三门峡水利枢纽开启前汛调水调沙，4小时后下泄增至3200立方米/秒",
-            "why": "报道聚焦黄河主汛前调水调沙的最新进展和水库调度水平，关系区域防汛与生态安全。",
-        },
-        {
-            "title": "新疆调研强调产业赋能与就业导向，推动中央企业援疆再出发",
-            "why": "报道中央企业在新疆产业布局与吸纳就业的具体动向和新举措，影响区域经济和民生。",
-        },
-    ]
-
-    end_y = plugin._draw_news_items_fit(
-        draw,
-        items,
-        24,
-        164,
-        388,
-        (200, 60, 40),
-        (0, 0, 0),
-        (90, 90, 90),
-        360,
-        1,
-        "Microsoft YaHei",
-        True,
-    )
-
-    assert end_y <= 360 + 4
-    assert 360 - end_y <= 16
-
-
-def test_render_keeps_market_modules_while_shrinking_dense_news(monkeypatch):
-    plugin = _plugin()
-    market_calls = []
-    drawn_text = []
-    original_text = ImageDraw.ImageDraw.text
-
-    def capture_market_module(*args, **kwargs):
-        market_calls.append(args)
-        return 0
-
-    def capture_text(self, xy, text, *args, **kwargs):
-        drawn_text.append(str(text))
-        return original_text(self, xy, text, *args, **kwargs)
-
-    monkeypatch.setattr(plugin, "_draw_market_module", capture_market_module)
-    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
-    mainland = [
-        {"title": f"第{index}条大陆新闻标题包含较多事实细节与地点", "why": f"第{index}条大陆正文说明影响范围和后续观察重点"}
-        for index in range(1, 5)
-    ]
-    world = [
-        {"title": f"第{index}条世界新闻标题包含较多事实细节与地点", "why": f"第{index}条世界正文说明影响范围和后续观察重点"}
-        for index in range(1, 5)
-    ]
-    payload = {
-        "date": "2026-07-01",
-        "generated_at": "2026-07-01T08:00:00",
-        "model": "gpt-5-nano",
-        "brief": {
-            "lede": "整点新闻摘要",
-            "mainland": mainland,
-            "world": world,
-            "a_share": {},
-            "us_stock": {},
-            "sources": ["测试来源"],
-        },
-        "items": [],
-        "market_snapshot": {},
-    }
-
-    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 7, 1), {"mode": "night"})
-
-    rendered = "".join(drawn_text)
-    assert image.size == (800, 480)
-    assert len(market_calls) == 2
-    assert "..." not in rendered
-    for item in mainland + world:
-        assert item["why"] in rendered
-
-def test_render_includes_seventh_top_item_in_quick_sidebar(monkeypatch):
-    plugin = _plugin()
-    news_calls = []
-
-    def capture_news_items(draw, items, x, y, *args, **kwargs):
-        news_calls.append([item["title"] for item in items])
-        return y
-
-    monkeypatch.setattr(plugin, "_draw_news_items", capture_news_items)
-    payload = {
-        "date": "2026-06-27",
-        "generated_at": "2026-06-27T08:00:00",
-        "model": "gpt-5-nano",
-        "brief": {
-            "lede": "整点新闻摘要",
-            "top": [
-                {"title": f"新闻标题{index}", "why": f"新闻正文{index}"}
-                for index in range(1, 8)
-            ],
-            "a_share": {},
-            "us_stock": {},
-        },
-        "items": [],
-        "market_snapshot": {},
-    }
-
-    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 27), {"mode": "day"})
-
-    assert image.size == (800, 480)
-    assert news_calls[0] == ["新闻标题1", "新闻标题2", "新闻标题3"]
-    assert news_calls[1] == ["新闻标题4", "新闻标题5", "新闻标题6", "新闻标题7"]
-
-
 def test_postprocess_brief_news_prefers_fresh_mainland_sources_over_recent_ai_title():
     plugin = _plugin()
     brief = {
@@ -1551,73 +1112,6 @@ def test_render_news_section_items_do_not_force_backfill_when_summary_is_sparse(
     assert [item["title"] for item in items] == ["大陆新闻一", "大陆新闻二"]
 
 
-def test_render_prefers_mainland_and_world_sections_over_legacy_top(monkeypatch):
-    plugin = _plugin()
-    news_calls = []
-
-    def capture_news_items(draw, items, x, y, *args, **kwargs):
-        news_calls.append([item["title"] for item in items])
-        return y
-
-    monkeypatch.setattr(plugin, "_draw_news_items", capture_news_items)
-    payload = {
-        "date": "2026-06-28",
-        "generated_at": "2026-06-28T08:00:00",
-        "model": "gpt-5-nano",
-        "brief": {
-            "lede": "整点新闻摘要",
-            "mainland": [
-                {"title": "大陆新闻一", "why": "国内更新"},
-                {"title": "大陆新闻二", "why": "政策进展"},
-            ],
-            "world": [
-                {"title": "世界新闻一", "why": "国际进展"},
-                {"title": "世界新闻二", "why": "外交动态"},
-                {"title": "世界新闻三", "why": "地区变化"},
-            ],
-            "top": [{"title": "旧头条", "why": "不应优先"}],
-            "a_share": {},
-            "us_stock": {},
-        },
-        "items": [],
-        "market_snapshot": {},
-    }
-
-    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 28), {"mode": "day"})
-
-    assert image.size == (800, 480)
-    assert news_calls[0] == ["大陆新闻一", "大陆新闻二"]
-    assert news_calls[1] == ["世界新闻一", "世界新闻二", "世界新闻三"]
-
-def test_daily_ai_news_market_headers_use_plain_text_labels(monkeypatch):
-    plugin = _plugin()
-    seen_labels = []
-
-    def capture_market_module(draw, label, brief, payload, key, x, y, width, section_font, body_font, accent, ink, rule, up_color, down_color, max_y=None, target_image=None):
-        seen_labels.append(label)
-        return y
-
-    monkeypatch.setattr(plugin, "_draw_market_module", capture_market_module)
-    payload = {
-        "date": "2026-06-18",
-        "generated_at": "2026-06-18T05:53:00",
-        "model": "gpt-5-nano",
-        "brief": {
-            "lede": "多方新闻聚焦地区安全与能源流动。",
-            "top": [],
-            "a_share": {"summary": "A股上涨", "analysis": "主要指数同步走强。"},
-            "us_stock": {"summary": "美股走弱", "analysis": "主要指数同步走弱。"},
-        },
-        "items": [],
-        "market_snapshot": {},
-    }
-
-    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 18), {"mode": "day"})
-
-    assert image.size == (800, 480)
-    assert seen_labels == ["A股今日", "美股今日"]
-
-
 def test_title_background_asset_is_transparent_measured_strip():
     path = daily_ai_news_module.PLUGIN_DIR / TITLE_BACKGROUND_IMAGE
 
@@ -1638,122 +1132,6 @@ def test_title_wordmark_asset_is_transparent_measured_strip():
         assert alpha.getbbox() is not None
         assert alpha.getpixel((0, 0)) == 0
         assert alpha.getpixel((image.width - 1, 0)) == 0
-
-def test_section_wordmark_assets_are_transparent_measured_strips():
-    assert set(SECTION_WORDMARK_IMAGES) == {"top", "quick", "a_share", "us_stock"}
-
-    for key, filename in SECTION_WORDMARK_IMAGES.items():
-        path = daily_ai_news_module.PLUGIN_DIR / filename
-        with Image.open(path) as image:
-            assert image.mode == "RGBA"
-            assert image.size == SECTION_WORDMARK_SIZES[key]
-            alpha = image.getchannel("A")
-            assert alpha.getextrema()[0] == 0
-            assert alpha.getbbox() is not None
-            assert alpha.getpixel((0, 0)) == 0
-            assert alpha.getpixel((image.width - 1, 0)) == 0
-
-
-def test_section_wordmarks_are_recolored_for_night_readability():
-    plugin = _plugin()
-    accents = {
-        "top": (255, 82, 74),
-        "quick": (107, 204, 255),
-        "a_share": (255, 82, 74),
-        "us_stock": (146, 221, 166),
-    }
-
-    for key, accent in accents.items():
-        source = plugin._load_section_wordmark(key)
-        assert source is not None
-        prepared = plugin._prepare_section_wordmark(source, accent)
-        alpha = prepared.getchannel("A")
-        dark_panel = Image.new("RGBA", prepared.size, (0, 0, 0, 255))
-        dark_panel.alpha_composite(prepared)
-        bbox = alpha.getbbox()
-        assert bbox is not None
-        luminance_values = []
-        solid_luminance_values = []
-        for py in range(prepared.height):
-            for px in range(prepared.width):
-                alpha_value = alpha.getpixel((px, py))
-                if alpha_value < 128:
-                    continue
-                red, green, blue = dark_panel.getpixel((px, py))[:3]
-                luminance = (red * 299 + green * 587 + blue * 114) / 1000
-                luminance_values.append(luminance)
-                if alpha_value >= 220:
-                    solid_luminance_values.append(luminance)
-        assert luminance_values
-        assert solid_luminance_values
-        assert min(solid_luminance_values) >= 150
-        assert sum(luminance_values) / len(luminance_values) >= 150
-
-def test_section_wordmark_headers_draw_thin_divider(monkeypatch):
-    plugin = _plugin()
-    image = Image.new("RGB", (220, 70), "white")
-    draw = ImageDraw.Draw(image)
-    rule = (185, 188, 194)
-
-    def fake_wordmark(target_image, key, x, y, accent):
-        return (x, y, x + 80, y + 24)
-
-    monkeypatch.setattr(plugin, "_draw_section_wordmark", fake_wordmark)
-    plugin._section_header(
-        draw,
-        "大陆新闻",
-        10,
-        12,
-        180,
-        plugin._font("Microsoft YaHei", 18, "bold"),
-        (166, 38, 48),
-        rule,
-        image=image,
-        asset_key="top",
-    )
-
-    assert image.getpixel((10, 39)) == rule
-    assert image.getpixel((190, 39)) == rule
-
-def test_render_uses_section_wordmarks_for_fixed_headers(monkeypatch):
-    plugin = _plugin()
-    seen_keys = []
-    text_calls = []
-
-    def fake_draw_section_wordmark(image, key, x, y, accent):
-        seen_keys.append(key)
-        return (int(x), int(y), int(x) + SECTION_WORDMARK_SIZES[key][0], int(y) + SECTION_WORDMARK_SIZES[key][1])
-
-    original_text = ImageDraw.ImageDraw.text
-
-    def capture_text(self, xy, text, *args, **kwargs):
-        text_calls.append(str(text))
-        return original_text(self, xy, text, *args, **kwargs)
-
-    monkeypatch.setattr(plugin, "_draw_section_wordmark", fake_draw_section_wordmark)
-    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
-
-    payload = {
-        "date": "2026-06-26",
-        "generated_at": "2026-06-26T05:51:00",
-        "model": "gpt-5-nano",
-        "brief": {"lede": "新闻摘要", "top": [], "a_share": {}, "us_stock": {}},
-        "items": [],
-        "market_snapshot": {},
-    }
-
-    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 26), {"mode": "day"})
-
-    assert image.size == (800, 480)
-    assert seen_keys == ["top", "quick", "a_share", "us_stock"]
-    assert "大陆新闻" not in text_calls
-    assert "世界新闻" not in text_calls
-    assert "世界快报" not in text_calls
-    assert "今日头条" not in text_calls
-    assert "快讯补充" not in text_calls
-    assert "A股今日" not in text_calls
-    assert "美股今日" not in text_calls
-
 
 def test_render_uses_title_wordmark_instead_of_plain_title(monkeypatch):
     plugin = _plugin()
@@ -1786,7 +1164,7 @@ def test_render_uses_title_wordmark_instead_of_plain_title(monkeypatch):
     image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 8), {"mode": "day"})
 
     assert image.size == (800, 480)
-    assert seen["wordmark"] == (24, 8, TITLE_WORDMARK_SIZE)
+    assert seen["wordmark"] == (18, 6, (152, 42))
     assert "整点新闻" not in text_calls
 
 
@@ -1815,52 +1193,6 @@ def test_render_falls_back_to_plain_title_when_wordmark_missing(monkeypatch):
     plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 8), {"mode": "day"})
 
     assert "整点新闻" in text_calls
-
-def test_render_positions_title_background_between_title_and_meta(monkeypatch):
-    plugin = _plugin()
-    seen = {}
-
-    def fake_draw_title_background(image, box):
-        seen["box"] = tuple(int(value) for value in box)
-        return True
-
-    monkeypatch.setattr(plugin, "_draw_title_background", fake_draw_title_background)
-    payload = {
-        "date": "2026-06-08",
-        "generated_at": "2026-06-08T05:51:00",
-        "model": "gpt-5-nano",
-        "from_cache": True,
-        "brief": {
-            "lede": "朝韩互访成为最新热点，平壤迎来中国领导人访问并再度举行高规格接待",
-            "top": [],
-            "a_share": {"summary": "上证-2.84%", "analysis": "主要指数同步走弱。"},
-            "us_stock": {"summary": "标普-2.58%", "analysis": "主要指数同步走弱。"},
-        },
-        "items": [],
-        "market_snapshot": {},
-    }
-
-    now = datetime(2026, 6, 8)
-    theme_context = {"mode": "day"}
-    image = plugin._render((800, 480), {"brief_title": ""}, payload, now, theme_context)
-
-    assert image.size == (800, 480)
-    left, top, right, bottom = seen["box"]
-    measure = ImageDraw.Draw(Image.new("RGB", (800, 480), "white"))
-    meta_font = plugin._font("Microsoft YaHei", 14)
-    meta = f"{plugin._date_label(payload, now)}  |  \u667a\u80fd\u751f\u6210  |  \u7f13\u5b58"
-    theme_label = plugin._theme_label(theme_context)
-    expected_meta_left = 800 - 24 - max(
-        plugin._tw(measure, meta, meta_font),
-        plugin._tw(measure, theme_label, meta_font),
-    )
-    assert right - left >= 290
-    assert bottom - top == TITLE_BACKGROUND_SIZE[1]
-    assert 250 <= left <= 260
-    assert top == 8
-    assert right == expected_meta_left - 12
-    assert bottom == 73
-
 
 def test_daily_ai_presentation_is_explicit_no_change(monkeypatch):
     plugin = _plugin()
@@ -2198,3 +1530,464 @@ def test_theme_only_still_rejects_a_brief_built_for_other_settings(
         moment["value"] = value
         with pytest.raises(RuntimeError, match="matching Daily AI News cache"):
             plugin.generate_image(night_settings, _ThemeDeviceConfig())
+
+
+class _ChartResponse:
+    def __init__(self, data):
+        self.data = data
+
+
+def _yahoo_chart(closes, timestamps, market_time, price, gmtoffset=-14400):
+    return {
+        "chart": {
+            "result": [
+                {
+                    "meta": {
+                        "regularMarketPrice": price,
+                        "regularMarketTime": market_time,
+                        "chartPreviousClose": 1.0,
+                        "gmtoffset": gmtoffset,
+                        "currency": "USD",
+                        "exchangeName": "SNP",
+                    },
+                    "timestamp": timestamps,
+                    "indicators": {"quote": [{"close": closes}]},
+                }
+            ]
+        }
+    }
+
+
+def _patch_chart(monkeypatch, chart):
+    seen = {}
+
+    class _Client:
+        def request_json(self, method, url, params=None, **_kwargs):
+            seen["params"] = params
+            return _ChartResponse(chart)
+
+    monkeypatch.setattr(daily_ai_news_module, "get_http_client", lambda: _Client())
+    return seen
+
+
+DAY = 86400
+# 2026-10-19 and 2026-10-20 13:30 UTC session opens (09:30 New York).
+MONDAY_OPEN, TUESDAY_OPEN = 1792416600, 1792416600 + DAY
+
+
+def test_yahoo_quote_change_compares_consecutive_daily_closes(monkeypatch):
+    plugin = _plugin()
+    seen = _patch_chart(
+        monkeypatch,
+        _yahoo_chart([7600.0, None, 7690.73, 7712.57], [MONDAY_OPEN - 2 * DAY, MONDAY_OPEN - DAY, MONDAY_OPEN, TUESDAY_OPEN],
+                     TUESDAY_OPEN + 6 * 3600 + 1800, 7712.57),
+    )
+
+    row = plugin._fetch_yahoo_quote("^GSPC", "标普500")
+
+    assert seen["params"]["range"] == "1mo"
+    assert row["change_pct"] == pytest.approx(0.28, abs=0.005)
+    assert row["change"] == pytest.approx(21.84, abs=0.01)
+    assert row["closes"] == [7600.0, 7690.73, 7712.57]
+    assert row["as_of"].startswith("2026-10-20")
+
+
+def test_yahoo_quote_without_todays_bar_compares_with_the_last_close(monkeypatch):
+    plugin = _plugin()
+    _patch_chart(
+        monkeypatch,
+        _yahoo_chart([7690.73, 7712.57], [MONDAY_OPEN, TUESDAY_OPEN], TUESDAY_OPEN + DAY + 3600, 7750.0),
+    )
+
+    row = plugin._fetch_yahoo_quote("^GSPC", "标普500")
+
+    assert row["change_pct"] == pytest.approx((7750.0 / 7712.57 - 1) * 100, abs=0.005)
+
+
+def test_yahoo_quote_with_one_close_has_no_daily_change(monkeypatch):
+    plugin = _plugin()
+    _patch_chart(monkeypatch, _yahoo_chart([2736.6], [TUESDAY_OPEN], TUESDAY_OPEN + 3600, 2736.6, gmtoffset=28800))
+
+    row = plugin._fetch_yahoo_quote("399006.SZ", "创业板指")
+
+    assert row["price"] == 2736.6
+    assert row["change_pct"] is None
+    assert row["closes"] == [2736.6]
+
+
+def test_parse_brief_json_reads_lead_and_tags():
+    plugin = _plugin()
+    content = """
+    {
+      "lead": {"tag": "公共卫生", "title": "尼日利亚确诊埃博拉病例", "why": "患者自乌干达抵达阿布贾", "section": "world"},
+      "mainland": [{"tag": "金融", "title": "数字人民币体系全面升级", "why": "推出央行端系统"}],
+      "world": [{"tag": "中东", "title": "英国派战机协防沙特", "why": "应对胡塞武装袭击"}],
+      "sources": ["BBC世界"]
+    }
+    """
+
+    brief = plugin._parse_brief_json(content)
+
+    assert brief["lead"]["title"] == "尼日利亚确诊埃博拉病例"
+    assert brief["lead"]["tag"] == "公共卫生"
+    assert brief["lede"] == "尼日利亚确诊埃博拉病例"
+    assert brief["mainland"][0]["tag"] == "金融"
+    assert "a_share" not in brief
+
+
+def test_postprocess_keeps_a_sourced_mainland_lead_out_of_the_columns():
+    plugin = _plugin()
+    brief = {
+        "lead": {"tag": "基建", "title": "前三季度全国铁路完成投资6012亿元", "why": "同比增长1.3%"},
+        "mainland": [
+            {"tag": "基建", "title": "全国铁路前三季度完成投资6012亿元", "why": "重复的头条"},
+            {"tag": "金融", "title": "数字人民币基础设施服务体系全面升级", "why": "推出央行端系统"},
+        ],
+        "world": [],
+    }
+    items = [
+        {"source": "中国新闻网要闻", "section": "mainland", "title": "今年前三季度全国铁路完成固定资产投资6012亿元", "summary": ""},
+        {"source": "中国新闻网财经", "section": "mainland", "title": "数字人民币基础设施服务体系全面升级", "summary": ""},
+    ]
+
+    result = plugin._postprocess_brief_news(brief, items)
+
+    assert result["lead"]["section"] == "mainland"
+    assert [item["title"] for item in result["mainland"]] == ["数字人民币基础设施服务体系全面升级"]
+    assert result["lede"] == "前三季度全国铁路完成投资6012亿元"
+
+
+def test_postprocess_drops_a_mainland_lead_without_a_source():
+    plugin = _plugin()
+    brief = {
+        "lead": {"tag": "政策", "title": "国务院出台全新住房补贴政策", "why": "编造的头条", "section": "mainland"},
+        "mainland": [{"tag": "金融", "title": "数字人民币基础设施服务体系全面升级", "why": "推出央行端系统"}],
+        "world": [],
+    }
+    items = [{"source": "中国新闻网财经", "section": "mainland", "title": "数字人民币基础设施服务体系全面升级", "summary": ""}]
+
+    result = plugin._postprocess_brief_news(brief, items)
+
+    assert result["lead"] is None
+
+
+def test_postprocess_trims_titles_facts_and_tags():
+    plugin = _plugin()
+    brief = {
+        "mainland": [],
+        "world": [{"tag": "国际公共卫生事件", "title": "标" * 40, "why": "事" * 60}],
+    }
+
+    result = plugin._postprocess_brief_news(brief, [{"source": "BBC世界", "section": "world", "title": "Ebola", "summary": ""}])
+
+    item = result["world"][0]
+    assert len(item["tag"]) == daily_ai_news_module.NEWS_TAG_MAX_CHARS
+    assert len(item["title"]) == daily_ai_news_module.NEWS_TITLE_MAX_CHARS
+    assert len(item["why"]) == daily_ai_news_module.NEWS_FACT_MAX_CHARS
+
+
+def test_rss_cards_take_their_tag_from_the_chinanews_desk():
+    plugin = _plugin()
+    items = [
+        {"source": "中国新闻网财经", "section": "mainland", "title": "数字人民币基础设施服务体系全面升级", "summary": "推出央行端系统"},
+        {"source": "地方日报", "section": "mainland", "title": "某地举办秋季农产品交易会", "summary": "吸引众多客商"},
+    ]
+
+    cards = plugin._rss_news_cards(items, 4)
+
+    assert [card["tag"] for card in cards] == ["财经", "要闻"]
+
+
+def test_prompt_asks_for_a_lead_tags_and_one_sentence_facts(monkeypatch):
+    plugin = _plugin()
+    captured = {}
+
+    class _Responses:
+        @staticmethod
+        def create(**kwargs):
+            captured.update(kwargs)
+
+            class _Response:
+                output_text = '{"lead":{"tag":"金融","title":"数字人民币体系升级","why":"推出央行端系统"},"mainland":[],"world":[]}'
+
+            return _Response()
+
+    class _Client:
+        responses = _Responses()
+
+    monkeypatch.setattr(daily_ai_news_module, "OpenAI", lambda **_kwargs: _Client())
+
+    plugin._summarize_with_openai("key", "gpt-5-nano", {}, [], {}, datetime(2026, 10, 21, 7, 0))
+
+    request = captured["input"]
+    assert '"lead"' in request and '"tag"' in request
+    assert "一句话事实" in request
+    assert "不得再出现在 mainland 或 world" in request
+
+
+def test_page_news_uses_the_first_mainland_story_as_lead_for_legacy_briefs():
+    plugin = _plugin()
+    brief = {
+        "mainland": [{"title": "大陆新闻一", "why": "国内更新"}, {"title": "大陆新闻二", "why": "政策进展"}],
+        "world": [{"title": "世界新闻一", "why": "国际进展"}],
+    }
+
+    lead, mainland, world = plugin._page_news(brief, {"items": []})
+
+    assert lead["title"] == "大陆新闻一" and lead["section_label"] == "国内"
+    assert [item["title"] for item in mainland] == ["大陆新闻二"]
+    assert [item["title"] for item in world] == ["世界新闻一"]
+
+
+def test_page_news_keeps_an_explicit_world_lead():
+    plugin = _plugin()
+    brief = {
+        "lead": {"tag": "公共卫生", "title": "尼日利亚确诊埃博拉病例", "why": "患者自乌干达抵达", "section": "world"},
+        "mainland": [{"title": "大陆新闻一", "why": "国内更新", "tag": "金融"}],
+        "world": [{"title": "尼日利亚确诊埃博拉病例，疫情扩散", "why": "重复"}, {"title": "英国派战机协防沙特", "why": "应对袭击"}],
+    }
+
+    lead, mainland, world = plugin._page_news(brief, {"items": []})
+
+    assert lead["section_label"] == "国际" and lead["tag"] == "公共卫生"
+    assert [item["title"] for item in mainland] == ["大陆新闻一"]
+    assert [item["title"] for item in world] == ["英国派战机协防沙特"]
+
+
+def _page_payload(**overrides):
+    payload = {
+        "date": "2026-10-21",
+        "generated_at": "2026-10-21T07:34:00-07:00",
+        "model": "gpt-5-nano",
+        "brief": {
+            "lead": {"tag": "公共卫生", "title": "尼日利亚确诊埃博拉病例", "why": "患者自乌干达抵达阿布贾", "section": "world"},
+            "mainland": [
+                {"tag": "金融", "title": f"大陆新闻{index}", "why": f"国内事实{index}"} for index in range(1, 5)
+            ],
+            "world": [{"tag": "中东", "title": "英国派战机协防沙特", "why": "应对胡塞武装袭击"}],
+        },
+        "items": [
+            {"source": "中国新闻网要闻", "section": "mainland", "title": "大陆新闻1"},
+            {"source": "BBC世界", "section": "world", "title": "UK jets"},
+            {"source": "NPR新闻", "section": "world", "title": "Ebola"},
+        ],
+        "market_snapshot": {
+            "groups": {
+                "a_share": [{"name": "上证指数", "price": 3733.52, "change_pct": -0.05, "as_of": "2026-10-21T01:30:00+00:00",
+                             "closes": [3735.37, 3733.52]}],
+                "us_stock": [{"name": "标普500", "price": 7712.57, "change_pct": 0.28, "as_of": "2026-10-20T13:30:00+00:00",
+                              "closes": [7690.73, 7712.57]}],
+            }
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _rendered_text(monkeypatch, plugin, payload, theme=None):
+    seen = []
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        seen.append(str(text))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 10, 21, 8, 0), theme or {"mode": "day"})
+    return image, seen
+
+
+def test_render_draws_lead_columns_meta_and_market_tiles(monkeypatch):
+    plugin = _plugin()
+
+    image, seen = _rendered_text(monkeypatch, plugin, _page_payload())
+
+    assert image.size == (800, 480)
+    assert "10月21日 周三" in seen
+    assert "07:34 更新 · 3 个信源" in seen
+    assert "头条 · 国际 · 公共卫生" in seen
+    assert "尼日利亚确诊埃博拉病例" in seen
+    assert {"大陆新闻1", "大陆新闻4", "英国派战机协防沙特"} <= set(seen)
+    assert {"上证", "-0.05%", "3,733.52", "标普", "+0.28%", "截至 10/21", "截至 10/20"} <= set(seen)
+    assert "午夜简报" not in seen
+
+
+def test_render_marks_cache_and_shows_warnings_in_the_header(monkeypatch):
+    plugin = _plugin()
+
+    _image, cached = _rendered_text(monkeypatch, plugin, _page_payload(from_cache=True))
+    _image, warned = _rendered_text(monkeypatch, plugin, _page_payload(warning="AI 摘要失败，使用 RSS 兜底"))
+
+    assert "07:34 更新 · 3 个信源 · 缓存" in cached
+    assert "AI 摘要失败，使用 RSS 兜底" in warned
+
+
+def test_render_fills_a_short_column_with_the_globe_and_its_sources(monkeypatch):
+    plugin = _plugin()
+    globes = []
+    monkeypatch.setattr(news_art, "draw_globe", lambda draw, cx, cy, radius, *args, **kwargs: globes.append((cx, cy, radius)))
+
+    _image, seen = _rendered_text(monkeypatch, plugin, _page_payload())
+
+    assert len(globes) == 1 and globes[0][0] > 400
+    assert "国际信源持续追踪" in seen
+    assert any("BBC世界" in text and "NPR新闻" in text for text in seen)
+
+
+def test_render_skips_the_globe_when_both_columns_are_full(monkeypatch):
+    plugin = _plugin()
+    globes = []
+    monkeypatch.setattr(news_art, "draw_globe", lambda *args, **kwargs: globes.append(args))
+    payload = _page_payload()
+    payload["brief"]["world"] = [
+        {"tag": "中东", "title": f"世界新闻标题足够长需要折成两行显示的内容{index}", "why": "事实"} for index in range(1, 6)
+    ]
+
+    plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 10, 21), {"mode": "day"})
+
+    assert globes == []
+
+
+def test_render_positions_the_radar_band_between_title_and_meta(monkeypatch):
+    plugin = _plugin()
+    seen = {}
+
+    def fake_draw_title_background(image, box):
+        seen["box"] = tuple(int(value) for value in box)
+        return True
+
+    monkeypatch.setattr(plugin, "_draw_title_background", fake_draw_title_background)
+    monkeypatch.setattr(plugin, "_draw_title_wordmark", lambda image, x, y, size, ink: (18, 10, 168, 46))
+
+    plugin._render((800, 480), {"brief_title": ""}, _page_payload(), datetime(2026, 10, 21), {"mode": "day"})
+
+    left, top, right, bottom = seen["box"]
+    assert left == 168 + 12
+    assert (top, bottom) == (4, 52)
+    # The band ends 14 px before the date and update line at the right edge.
+    assert 620 <= right <= 680
+
+
+def test_market_changes_are_solid_red_and_green_pills(monkeypatch):
+    plugin = _plugin()
+    chips = {}
+    original_chip = news_layout.NewsPage.chip
+
+    def record_chip(self, x, y, text, colour, *args, **kwargs):
+        chips[text] = (colour, kwargs.get("solid", True))
+        return original_chip(self, x, y, text, colour, *args, **kwargs)
+
+    monkeypatch.setattr(news_layout.NewsPage, "chip", record_chip)
+
+    plugin._render((800, 480), {"brief_title": "整点新闻"}, _page_payload(), datetime(2026, 10, 21), {"mode": "day"})
+
+    assert chips["+0.28%"] == ((255, 0, 0), True)
+    assert chips["-0.05%"] == ((0, 255, 0), True)
+
+
+def test_small_text_is_pure_ink_and_accents_are_panel_primaries(monkeypatch):
+    plugin = _plugin()
+    fills = {}
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        fills.setdefault(str(text), kwargs.get("fill"))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, _page_payload(), datetime(2026, 10, 21), {"mode": "day"})
+
+    ink = daily_ai_news_module.get_theme_palette("day")["ink"]
+    assert fills["01"] == ink
+    assert fills["金融"] == ink
+    assert fills["头条 · 国际 · 公共卫生"] == (255, 255, 255)
+    primaries = {(0, 0, 0), (255, 255, 255), (255, 255, 0), (255, 0, 0), (0, 0, 255), (0, 255, 0)}
+    palette = plugin._page_palette({"mode": "day"})
+    assert {palette[key] for key in ("lead", "domestic", "world", "up", "down", "card")} <= primaries
+    assert image.getpixel((400, 100)) == (255, 255, 255)
+
+
+def test_night_render_keeps_a_black_canvas(monkeypatch):
+    plugin = _plugin()
+    night = _canonical_theme(
+        "night", background=(7, 9, 12), panel=(22, 26, 32), ink=(245, 246, 248),
+        muted=(178, 182, 190), rule=(58, 64, 72), accent=(93, 198, 178),
+    )
+
+    image = plugin._render((800, 480), {"brief_title": "整点新闻"}, _page_payload(), datetime(2026, 10, 21), night)
+
+    assert image.getpixel((0, 479)) == (0, 0, 0)
+    assert image.getpixel((799, 300)) == (0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    ("tag", "title", "kind"),
+    [
+        ("公共卫生", "尼日利亚确诊埃博拉病例", "health"),
+        ("中东", "英国派战机协防沙特", "conflict"),
+        ("航空", "波音737获批", "aviation"),
+        ("金融", "数字人民币体系升级", "economy"),
+        ("两岸", "国台办回应", "politics"),
+        ("", "某地举办秋季农产品交易会", "news"),
+    ],
+)
+def test_topic_kind_reads_the_tag_before_the_title(tag, title, kind):
+    assert news_art.topic_kind(tag, title) == kind
+
+
+def test_recent_titles_and_news_context_include_the_lead(monkeypatch, tmp_path):
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
+    written = {}
+    monkeypatch.setattr(daily_ai_news_module, "write_context", lambda key, payload, **_kwargs: written.update(payload))
+    now = datetime(2026, 10, 21, 7, 34)
+    brief = {
+        "lede": "尼日利亚确诊埃博拉病例",
+        "lead": {"tag": "公共卫生", "title": "尼日利亚确诊埃博拉病例", "why": "患者自乌干达抵达", "section": "world"},
+        "mainland": [{"tag": "金融", "title": "数字人民币体系升级", "why": "推出央行端系统"}],
+        "world": [],
+    }
+
+    plugin._record_recent_news_titles({"brief": brief}, now)
+    plugin._write_news_context({"brief": brief}, now)
+
+    assert "尼日利亚确诊埃博拉病例" in plugin._load_recent_news_titles(now)
+    assert [item["title"] for item in written["items"]] == ["尼日利亚确诊埃博拉病例", "数字人民币体系升级"]
+
+
+def test_an_empty_world_section_never_borrows_mainland_stories():
+    plugin = _plugin()
+    titles = ["台当局禁赴陆参加孙中山诞辰纪念活动", "数字人民币基础设施服务体系全面升级",
+              "工信部建设专精特新赋能中心", "我国应对气候变化工作取得显著成效"]
+    items = [
+        {"source": "中国新闻网要闻", "section": "mainland", "title": title, "summary": "摘要"} for title in titles
+    ] + [{"source": "BBC世界", "section": "world", "title": "English only headline", "summary": ""}]
+    brief = plugin._rss_only_brief(items, "", [])
+
+    world = plugin._render_news_section_items(brief, {"items": items}, "world")
+
+    assert world == []
+
+
+def test_legacy_top_only_briefs_still_split_into_both_columns():
+    plugin = _plugin()
+    brief = {"top": [{"title": f"旧新闻{index}", "why": ""} for index in range(1, 6)]}
+
+    mainland = plugin._render_news_section_items(brief, {"items": []}, "mainland")
+    world = plugin._render_news_section_items(brief, {"items": []}, "world")
+
+    assert [item["title"] for item in mainland] == ["旧新闻1", "旧新闻2", "旧新闻3"]
+    assert [item["title"] for item in world] == ["旧新闻4", "旧新闻5"]
+
+
+def test_rss_cards_skip_english_titles_with_a_translated_word():
+    plugin = _plugin()
+    items = [
+        {"source": "BBC世界", "section": "world", "title": "Zelensky says 美国 intelligence sharing works now", "summary": ""},
+        {"source": "中国新闻网财经", "section": "mainland", "title": "数字人民币基础设施服务体系全面升级", "summary": ""},
+        {"source": "法国24", "section": "world", "title": "波音737 MAX 10获美国联邦航空局批准", "summary": ""},
+    ]
+
+    cards = plugin._rss_news_cards(items, 5)
+
+    assert [card["title"] for card in cards] == ["数字人民币基础设施服务体系全面升级", "波音737 MAX 10获美国联邦航空局批准"]
