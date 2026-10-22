@@ -19,8 +19,9 @@ from plugins.steam_daily_art.presentation_bank import (
     settings_fingerprint,
 )
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
+from utils.app_utils import get_font
 from utils.safe_image import ImageLimits, safe_open_image
-from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageStat
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps, ImageStat
 from datetime import datetime
 import hashlib
 import ipaddress
@@ -44,7 +45,28 @@ logger = logging.getLogger(__name__)
 STEAM_FEATURED_CATEGORIES_URL = "https://store.steampowered.com/api/featuredcategories"
 STEAM_CDN_APP_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/{image_name}.jpg"
 STEAM_CDN_ASSET_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}/{filename}"
+# Newer apps keep their store art only under hashed paths; the unhashed CDN
+# names above exist for older apps.
+STEAM_STORE_ITEMS_URL = "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/"
+STEAM_STORE_ASSET_ROOT = "https://shared.akamai.steamstatic.com/store_item_assets/"
+STEAM_JSON_HOSTS = ("store.steampowered.com", "api.steampowered.com")
 STEAM_DAILY_ART_VERSION = "fresh-frontpage-ranked-live-list-v1"
+STEAM_DAILY_ART_RENDER_VERSION = "same-game-lit-scene-v2"
+STEAM_ITEM_KINDS = {0: "app", 1: "sub", 2: "bundle"}
+MAX_STORE_ITEM_BYTES = 512 * 1024
+MAX_ART_GAMES = 3
+MAX_SCENE_SCREENSHOTS = 6
+# Brightness is the brightest channel, so saturated ink colours count as lit.
+# A crop failing either bound prints as an almost black panel on the e-paper.
+SCENE_DARK_LEVEL = 48
+SCENE_MIN_BRIGHTNESS = 40
+SCENE_MAX_DARK_SHARE = 0.8
+ART_SCENE = "scene"
+ART_TITLED = "titled"
+LOGO_MIN_CONTRAST = 64
+LOGO_HALO_WIDTH = 3
+ASSET_FILENAME_RE = re.compile(r"[0-9A-Za-z_.-]+(?:/[0-9A-Za-z_.-]+)?")
+STORE_APP_LINK_RE = re.compile(r"https://store\.steampowered\.com/app/(\d{1,12})(?:[/?#]|$)")
 MAX_DATA_NEW_MEDIA = 8
 MAX_DATA_ATTEMPTS = 16
 MAX_DATA_SECONDS = 45
@@ -67,6 +89,31 @@ class _OptionalMediaUnavailable(RuntimeError):
     def __init__(self, message, *, status_code=None):
         super().__init__(message)
         self.status_code = status_code
+
+
+class _UnusableArtwork(RuntimeError):
+    """Every art candidate of a game is missing or too dark; try another game."""
+
+
+class _ArtSearch:
+    """One game's art lookup: its app id, store assets fetched once, failures."""
+
+    def __init__(self, appid, fetch_assets):
+        self.appid = appid
+        self.download_failed = False
+        self._fetch_assets = fetch_assets
+        self._assets = None
+
+    def assets(self):
+        if self._assets is None:
+            self._assets = {}
+            if self.appid is not None:
+                try:
+                    self._assets = self._fetch_assets(self.appid)
+                except Exception as exc:
+                    self.download_failed = True
+                    logger.warning("Steam store art lookup failed for app %s: %s", self.appid, exc)
+        return self._assets
 
 
 class SteamDailyArt(BasePlugin):
@@ -180,19 +227,18 @@ class SteamDailyArt(BasePlugin):
 
         item = None
         try:
-            item = self._select_item(settings, rotation_key)
-            image_url, image = self._download_first_available_image(item, settings)
+            skipped = set()
+            while True:
+                item = self._select_item(settings, rotation_key, exclude=frozenset(skipped))
+                try:
+                    image_url, logo_url, image = self._render_item(item, settings, dimensions)
+                    break
+                except _UnusableArtwork as exc:
+                    skipped.add(self._item_identity(item))
+                    if len(skipped) >= MAX_ART_GAMES:
+                        raise
+                    logger.info("%s; trying the next Steam game", exc)
             logger.info(f"Selected Steam art: {item.get('name', 'Unknown')} | {image_url}")
-            image = self._smart_cover(image, dimensions)
-
-            logo_url = None
-            if settings.get("logoOverlay", "show") != "hide":
-                logo_url, logo = self._download_first_available_logo(item)
-                if logo:
-                    image = self._overlay_logo(image, logo, settings)
-
-            if settings.get("showCaption") == "true":
-                image = self._add_caption(image, item.get("name", "Steam"))
 
             image_path = self._cache_image_path(rotation_key)
             os.makedirs(os.path.dirname(image_path), exist_ok=True)
@@ -234,23 +280,90 @@ class SteamDailyArt(BasePlugin):
                 return self._metadata_fallback(dimensions, item)
             raise RuntimeError(f"Steam Daily Art failed: {str(e)}")
 
-    @staticmethod
-    def _metadata_fallback(dimensions, item):
-        image = Image.new("RGB", tuple(dimensions), (24, 32, 43))
+    @classmethod
+    def _metadata_fallback(cls, dimensions, item):
+        """A light title card in pure inks for when no game art can be shown."""
+        width, height = (int(value) for value in dimensions)
+        image = Image.new("RGB", (width, height), (255, 255, 255))
         draw = ImageDraw.Draw(image)
-        title = str(item.get("name") or "Steam promotion")[:80]
-        draw.rectangle((0, 0, image.width, 72), fill=(35, 76, 112))
-        draw.text((24, 24), "STEAM DAILY ART", fill=(255, 255, 255))
-        draw.text((24, 132), title, fill=(240, 244, 248))
-        draw.text((24, 174), "Artwork unavailable - metadata preserved", fill=(166, 185, 204))
+        margin = max(24, width // 20)
+        band = max(56, height // 7)
+        draw.rectangle((0, 0, width, band), fill=(0, 0, 255))
+        draw.text(
+            (margin, band // 2),
+            "STEAM DAILY ART",
+            font=cls._card_font(max(18, band * 2 // 5), bold=True),
+            fill=(255, 255, 255),
+            anchor="lm",
+        )
+        title = " ".join(str(item.get("name") or "Steam promotion").split())[:120]
+        font, lines = cls._fit_card_title(draw, title, width - 2 * margin, max(40, height // 8))
+        line_height = int(font.size * 1.18)
+        y = band + margin
+        for line in lines:
+            draw.text((margin, y), line, font=font, fill=(0, 0, 0))
+            y += line_height
+        draw.rectangle((margin, y + 14, margin + max(48, width // 7), y + 24), fill=(255, 0, 0))
+        draw.text(
+            (margin, height - margin),
+            "Store art is unavailable right now",
+            font=cls._card_font(max(16, height // 22)),
+            fill=(0, 0, 0),
+            anchor="ls",
+        )
         image.info["inkypi_skip_cache"] = True
         return attach_source_provenance(image, SourceProvenance.LOCAL_FALLBACK)
 
+    @staticmethod
+    def _card_font(size, bold=False):
+        font = get_font("Jost", int(size), "bold" if bold else "normal")
+        return font if font is not None else ImageFont.load_default(int(size))
+
+    @classmethod
+    def _fit_card_title(cls, draw, title, max_width, start_size, max_lines=3):
+        """The largest title size that wraps into max_lines; the last size truncates."""
+        for size in range(int(start_size), 23, -4):
+            font = cls._card_font(size, bold=True)
+            lines = cls._wrap_words(draw, title, font, max_width)
+            if len(lines) <= max_lines:
+                return font, lines
+        lines = lines[:max_lines]
+        while lines[-1] and draw.textlength(lines[-1] + "...", font=font) > max_width:
+            lines[-1] = lines[-1][:-1]
+        lines[-1] += "..."
+        return font, lines
+
+    @staticmethod
+    def _wrap_words(draw, text, font, max_width):
+        lines = []
+        line = ""
+        for word in text.split(" "):
+            candidate = f"{line} {word}".strip()
+            if draw.textlength(candidate, font=font) <= max_width:
+                line = candidate
+                continue
+            if line:
+                lines.append(line)
+            line = word
+            # Titles without spaces (CJK, long compounds) break between characters.
+            while len(line) > 1 and draw.textlength(line, font=font) > max_width:
+                cut = len(line) - 1
+                while cut > 1 and draw.textlength(line[:cut], font=font) > max_width:
+                    cut -= 1
+                lines.append(line[:cut])
+                line = line[cut:]
+        if line:
+            lines.append(line)
+        return lines
+
     def _generate_stateless_preview(self, settings, device_config):
         dimensions = tuple(int(value) for value in self.get_dimensions(device_config))
-        item = self._select_item_without_state(settings)
-        _url, image = self._download_first_available_image(item, settings)
-        return self._render_downloaded_item(item, image, settings, dimensions)
+        for item in self._items_without_state(settings)[:MAX_ART_GAMES]:
+            try:
+                return self._render_item(item, settings, dimensions)[2]
+            except _UnusableArtwork as exc:
+                logger.info("%s; trying the next Steam game", exc)
+        raise RuntimeError("No Steam promotional art is fit for the display.")
 
     def _generate_banked_image(self, settings, device_config):
         deadline = time.monotonic() + MAX_DATA_SECONDS
@@ -329,11 +442,13 @@ class SteamDailyArt(BasePlugin):
                 attempts += 1
                 try:
                     self._check_data_deadline(deadline)
-                    image_url, source = self._download_first_available_image(item, settings)
+                    image_url, _logo_url, rendered = self._render_item(item, settings, dimensions)
                     self._check_data_deadline(deadline)
-                    rendered = self._render_downloaded_item(item, source, settings, dimensions)
-                    self._check_data_deadline(deadline)
-                    record = bank.ingest(profile, {**item, "image_url": image_url}, rendered)
+                    record = bank.ingest(
+                        profile,
+                        {**item, "image_url": image_url, "artwork_id": identity},
+                        rendered,
+                    )
                 except Exception as exc:
                     if time.monotonic() >= deadline:
                         raise RuntimeError("Steam DATA deadline is exhausted") from exc
@@ -360,22 +475,146 @@ class SteamDailyArt(BasePlugin):
             SourceProvenance.LIVE if downloaded else SourceProvenance.FRESH_CACHE,
         )
 
-    def _render_downloaded_item(self, item, image, settings, dimensions):
-        rendered = self._smart_cover(image, dimensions)
-        if settings.get("logoOverlay", "show") != "hide":
-            _logo_url, logo = self._download_first_available_logo(item)
-            if logo:
-                rendered = self._overlay_logo(rendered, logo, settings)
-        if settings.get("showCaption") == "true":
-            rendered = self._add_caption(rendered, item.get("name", "Steam"))
-        return rendered
+    def _render_item(self, item, settings, dimensions):
+        """Compose one game's art; its logo only ever sits on that game's own scene.
 
-    def _select_item_without_state(self, settings):
+        Returns (image_url, logo_url, image). Raises _UnusableArtwork when every
+        candidate is missing or too dark, so the caller can move to another game.
+        """
+        wants_logo = settings.get("logoOverlay", "show") != "hide"
+        logo_url, logo = self._download_first_available_logo(item) if wants_logo else (None, None)
+        # A bare scene without its logo would not say which game it is, so the
+        # store capsule, whose art carries the title, goes first then.
+        scenes_first = settings.get("imageMode", "library_hero") not in {"header", "large_capsule"} and (
+            logo is not None or not wants_logo
+        )
+        tiers = (ART_SCENE, ART_TITLED) if scenes_first else (ART_TITLED, ART_SCENE)
+        image_url, image, art_kind = self._choose_artwork(item, settings, dimensions, tiers)
+        if logo is not None and art_kind == ART_SCENE:
+            image = self._overlay_logo(image, logo, settings)
+        else:
+            logo_url = None
+        if settings.get("showCaption") == "true":
+            image = self._add_caption(image, item.get("name", "Steam"))
+        return image_url, logo_url, image
+
+    def _choose_artwork(self, item, settings, dimensions, tiers):
+        """The first lit art of this game, tier by tier: (url, fitted image, tier)."""
+        search = _ArtSearch(self._app_id(item), lambda appid: self._fetch_store_assets(appid, settings))
+        tried = set()
+        for tier in tiers:
+            urls = self._scene_urls(search) if tier == ART_SCENE else self._titled_urls(item, settings, search)
+            for url in urls:
+                if not url or url.split("?", 1)[0] in tried:
+                    continue
+                tried.add(url.split("?", 1)[0])
+                source = self._download_artwork(url, search)
+                if source is None:
+                    continue
+                image = self._fit_artwork(source, dimensions, tier)
+                # A scene is judged by the crop it shows; titled art by its own
+                # pixels, since a contain canvas would pad it with light backdrop.
+                if self._is_lit(self._scene_light(image if tier == ART_SCENE else source, dimensions)):
+                    return url, image, tier
+                logger.info("Steam art is too dark for the e-paper: %s", url)
+            if tier == ART_SCENE:
+                screenshot = self._best_screenshot(search, dimensions)
+                if screenshot is not None:
+                    return (*screenshot, ART_SCENE)
+        name = item.get("name") or self._item_identity(item)
+        if search.download_failed:
+            raise RuntimeError(f"Steam art for {name} could not be downloaded")
+        raise _UnusableArtwork(f"No Steam art for {name} is fit for the display")
+
+    def _scene_urls(self, search):
+        """Textless key art the logo can sit on; legacy names need no store lookup."""
+        if search.appid is None:
+            return
+        yield self._steam_app_image(search.appid, "library_hero")
+        yield search.assets().get("library_hero")
+
+    def _titled_urls(self, item, settings, search):
+        """Store capsules and headers, whose art already carries the game's title."""
+        headers_first = settings.get("imageMode") == "header"
+        if headers_first:
+            yield from self._header_urls(item, search)
+        if search.appid is not None:
+            yield search.assets().get("main_capsule_2x")
+        yield item.get("large_capsule_image")
+        yield self._steam_app_image(search.appid, "capsule_616x353")
+        if not headers_first:
+            yield from self._header_urls(item, search)
+
+    def _header_urls(self, item, search):
+        yield item.get("header_image")
+        yield self._steam_app_image(search.appid, "header")
+
+    def _best_screenshot(self, search, dimensions):
+        """The brightest lit screenshot among the store's first few, at full size."""
+        ranked = []
+        for full_url, thumbnail_url in search.assets().get("screenshots", [])[:MAX_SCENE_SCREENSHOTS]:
+            thumbnail = self._download_artwork(thumbnail_url, search)
+            if thumbnail is None:
+                continue
+            light = self._scene_light(thumbnail, dimensions)
+            if self._is_lit(light):
+                brightness, dark_share = light
+                ranked.append((brightness * (1 - dark_share), full_url))
+        for _score, url in sorted(ranked, reverse=True):
+            source = self._download_artwork(url, search)
+            if source is None:
+                continue
+            image = self._smart_cover(source, dimensions)
+            if self._is_lit(self._scene_light(image, dimensions)):
+                return url, image
+        return None
+
+    def _download_artwork(self, url, search):
+        if self._optional_media_negative_hit(url):
+            return None
+        try:
+            return self._download_image(url)
+        except Exception as e:
+            if self._is_not_found_error(e):
+                self._remember_optional_media_negative(url)
+                logger.info("Optional Steam image candidate is unavailable: %s", url)
+            else:
+                search.download_failed = True
+                logger.warning(f"Steam image candidate failed: {url} | {e}")
+            return None
+
+    def _fit_artwork(self, image, dimensions, tier):
+        target_width, target_height = dimensions
+        if tier == ART_TITLED and image.width / image.height > target_width / target_height * 1.12:
+            # Cropping a wide header to the display would cut its painted title.
+            return self._contain_on_canvas(image, dimensions)
+        return self._smart_cover(image, dimensions)
+
+    @staticmethod
+    def _scene_light(image, dimensions):
+        """(mean brightness, dark share) of the image as cropped for the display."""
+        width, height = dimensions
+        sample = ImageOps.fit(
+            image.convert("RGB"),
+            (160, max(1, round(160 * height / width))),
+            Image.Resampling.BILINEAR,
+        )
+        red, green, blue = sample.split()
+        brightness = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+        dark = sum(brightness.histogram()[:SCENE_DARK_LEVEL])
+        return ImageStat.Stat(brightness).mean[0], dark / (sample.width * sample.height)
+
+    @staticmethod
+    def _is_lit(light):
+        brightness, dark_share = light
+        return brightness >= SCENE_MIN_BRIGHTNESS and dark_share <= SCENE_MAX_DARK_SHARE
+
+    def _items_without_state(self, settings):
         data = self._fetch_featured_categories(settings)
         items = self._collect_items(data, settings.get("sourceCategory", "fresh_frontpage"))
         if not items:
             raise RuntimeError("No Steam promotional items found.")
-        return items[0]
+        return items
 
     def _check_data_deadline(self, deadline):
         if time.monotonic() >= deadline:
@@ -587,6 +826,7 @@ class SteamDailyArt(BasePlugin):
             selection_mode = "current"
         parts = [
             STEAM_DAILY_ART_VERSION,
+            STEAM_DAILY_ART_RENDER_VERSION,
             rotation_key,
             str(dimensions),
             settings.get("sourceCategory", "fresh_frontpage"),
@@ -602,11 +842,72 @@ class SteamDailyArt(BasePlugin):
         ]
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
-    def _fetch_featured_categories(self, settings):
+    @staticmethod
+    def _store_locale(settings):
         country_code = (settings.get("countryCode") or "US").strip().upper()[:2]
         language = (settings.get("language") or "english").strip() or "english"
+        return country_code, language
+
+    def _fetch_featured_categories(self, settings):
+        country_code, language = self._store_locale(settings)
         params = {"cc": country_code, "l": language}
         url = f"{STEAM_FEATURED_CATEGORIES_URL}?{urlencode(params)}"
+        return self._fetch_json(url, label="featured", max_bytes=MAX_JSON_BYTES)
+
+    def _fetch_store_assets(self, appid, settings):
+        """This app's current store art: hashed hero and capsule paths, screenshots."""
+        country_code, language = self._store_locale(settings)
+        query = {
+            "ids": [{"appid": int(appid)}],
+            "context": {"language": language, "country_code": country_code},
+            "data_request": {"include_assets": True, "include_screenshots": True},
+        }
+        params = {"input_json": json.dumps(query, separators=(",", ":"))}
+        url = f"{STEAM_STORE_ITEMS_URL}?{urlencode(params)}"
+        payload = self._fetch_json(url, label="store item", max_bytes=MAX_STORE_ITEM_BYTES)
+        return self._parse_store_assets(payload, appid)
+
+    @staticmethod
+    def _parse_store_assets(payload, appid):
+        response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+        store_items = response.get("store_items") if isinstance(response.get("store_items"), list) else []
+        entry = next(
+            (
+                item
+                for item in store_items
+                if isinstance(item, dict) and str(item.get("appid")) == str(appid)
+            ),
+            None,
+        )
+        if entry is None or entry.get("success") != 1:
+            return {}
+        # Every path must name this app, so no scene can come from another game.
+        prefix = f"steam/apps/{appid}/"
+        found = {}
+        assets = entry.get("assets") if isinstance(entry.get("assets"), dict) else {}
+        url_format = str(assets.get("asset_url_format") or "")
+        if url_format.startswith(prefix) and "${FILENAME}" in url_format and ".." not in url_format:
+            for key in ("library_hero", "main_capsule_2x", "header"):
+                filename = assets.get(key)
+                if isinstance(filename, str) and ASSET_FILENAME_RE.fullmatch(filename) and ".." not in filename:
+                    found[key] = STEAM_STORE_ASSET_ROOT + url_format.replace("${FILENAME}", filename)
+        screenshots = entry.get("screenshots") if isinstance(entry.get("screenshots"), dict) else {}
+        found["screenshots"] = []
+        # Mature screenshots sit behind Steam's age gate; only all-ages ones are used.
+        shots = screenshots.get("all_ages_screenshots")
+        for shot in shots if isinstance(shots, list) else []:
+            filename = shot.get("filename") if isinstance(shot, dict) else None
+            path, _, query = str(filename or "").partition("?")
+            if not path.startswith(prefix) or not path.endswith(".jpg") or ".." in path:
+                continue
+            suffix = f"?{query}" if query else ""
+            found["screenshots"].append((
+                STEAM_STORE_ASSET_ROOT + path + suffix,
+                STEAM_STORE_ASSET_ROOT + path[:-len(".jpg")] + ".600x338.jpg" + suffix,
+            ))
+        return found
+
+    def _fetch_json(self, url, *, label, max_bytes):
         deadline = getattr(self, "_active_data_deadline", None)
         approved = get_ssrf_policy().resolve_and_validate(url)
         self._validate_steam_target(approved, kind="json")
@@ -619,25 +920,25 @@ class SteamDailyArt(BasePlugin):
         try:
             response.raise_for_status()
             content_length = response.headers.get("Content-Length")
-            if content_length is not None and int(content_length) > MAX_JSON_BYTES:
-                raise RuntimeError("Steam featured response exceeds its object budget")
+            if content_length is not None and int(content_length) > max_bytes:
+                raise RuntimeError(f"Steam {label} response exceeds its object budget")
             payload = bytearray()
             for chunk in response.iter_content(chunk_size=8192):
                 if deadline is not None:
                     self._check_data_deadline(deadline)
                 if not chunk:
                     continue
-                if len(payload) + len(chunk) > MAX_JSON_BYTES:
-                    raise RuntimeError("Steam featured response exceeds its object budget")
+                if len(payload) + len(chunk) > max_bytes:
+                    raise RuntimeError(f"Steam {label} response exceeds its object budget")
                 payload.extend(chunk)
         finally:
             response.close()
         try:
             value = json.loads(payload.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RuntimeError("Steam featured response is not JSON") from exc
+            raise RuntimeError(f"Steam {label} response is not JSON") from exc
         if not isinstance(value, dict):
-            raise RuntimeError("Steam featured response has an invalid shape")
+            raise RuntimeError(f"Steam {label} response has an invalid shape")
         return value
 
     def _collect_items(self, data, source_category):
@@ -663,6 +964,11 @@ class SteamDailyArt(BasePlugin):
                     continue
 
                 item = dict(item)
+                if not (item.get("id") or item.get("appid")):
+                    # Spotlights carry no id, only a link to the game they promote.
+                    linked = STORE_APP_LINK_RE.match(str(item.get("url") or ""))
+                    if linked:
+                        item["id"] = int(linked.group(1))
                 item["_category_key"] = category_key
                 item["_category_id"] = category_id
                 item["_category_name"] = category_name
@@ -706,10 +1012,8 @@ class SteamDailyArt(BasePlugin):
         seen = set()
         unique = []
         for item in items:
-            appid = str(item.get("id") or item.get("appid") or "")
-            image = item.get("large_capsule_image") or item.get("header_image") or ""
-            key = appid or image
-            if not key or key in seen:
+            key = self._item_identity(item)
+            if key in seen:
                 continue
             seen.add(key)
             unique.append(item)
@@ -724,10 +1028,14 @@ class SteamDailyArt(BasePlugin):
             or item.get("appid")
         )
 
-    def _select_item(self, settings, today_key):
+    def _select_item(self, settings, today_key, exclude=frozenset()):
         source_category = settings.get("sourceCategory", "fresh_frontpage")
         data = self._fetch_featured_categories(settings)
-        items = self._collect_items(data, source_category)
+        items = [
+            item
+            for item in self._collect_items(data, source_category)
+            if self._item_identity(item) not in exclude
+        ]
         if not items:
             raise RuntimeError("No Steam promotional items found.")
 
@@ -805,50 +1113,31 @@ class SteamDailyArt(BasePlugin):
         ]
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _item_kind(item):
+        try:
+            item_type = int(item.get("type") or 0)
+        except (TypeError, ValueError):
+            return "other"
+        return STEAM_ITEM_KINDS.get(item_type, "other")
+
     def _item_identity(self, item):
         appid = item.get("id")
         if appid is None or not str(appid).strip():
             appid = item.get("appid")
         if appid is not None and str(appid).strip():
-            return f"app:{appid}"
+            return f"{self._item_kind(item)}:{appid}"
         image = item.get("large_capsule_image") or item.get("header_image") or item.get("small_capsule_image")
         if image:
             return f"image:{image}"
         return f"name:{item.get('name', '')}"
 
-    def _candidate_image_urls(self, item, settings):
-        image_mode = settings.get("imageMode", "library_hero")
-        appid = item.get("id") or item.get("appid")
-
-        if image_mode == "header":
-            return [
-                item.get("header_image"),
-                self._steam_app_image(appid, "header"),
-                self._steam_app_image(appid, "library_hero"),
-                item.get("large_capsule_image"),
-            ]
-        if image_mode == "large_capsule":
-            return [
-                item.get("large_capsule_image"),
-                self._steam_app_image(appid, "capsule_616x353"),
-                self._steam_app_image(appid, "library_hero"),
-                item.get("header_image"),
-            ]
-        if image_mode == "auto":
-            return [
-                self._steam_app_image(appid, "library_hero"),
-                item.get("large_capsule_image"),
-                item.get("header_image"),
-                item.get("small_capsule_image"),
-                self._steam_app_image(appid, "capsule_616x353"),
-            ]
-
-        return [
-            self._steam_app_image(appid, "library_hero"),
-            item.get("large_capsule_image"),
-            item.get("header_image"),
-            self._steam_app_image(appid, "capsule_616x353"),
-        ]
+    def _app_id(self, item):
+        """The Steam app behind an item; bundle and package ids name other apps."""
+        if self._item_kind(item) != "app":
+            return None
+        appid = str(item.get("id") or item.get("appid") or "").strip()
+        return appid if appid.isdecimal() else None
 
     def _steam_app_image(self, appid, image_name):
         if not appid:
@@ -860,27 +1149,8 @@ class SteamDailyArt(BasePlugin):
             return None
         return STEAM_CDN_ASSET_URL.format(appid=appid, filename=filename)
 
-    def _download_first_available_image(self, item, settings):
-        errors = []
-        for url in self._candidate_image_urls(item, settings):
-            if not url:
-                continue
-            if self._optional_media_negative_hit(url):
-                continue
-            try:
-                return url, self._download_image(url)
-            except Exception as e:
-                errors.append(f"{url}: {type(e).__name__}")
-                if self._is_not_found_error(e):
-                    self._remember_optional_media_negative(url)
-                    logger.info("Optional Steam image candidate is unavailable: %s", url)
-                else:
-                    logger.warning(f"Steam image candidate failed: {url} | {e}")
-
-        raise RuntimeError("No usable Steam image found. " + "; ".join(errors[:3]))
-
     def _logo_candidate_urls(self, item):
-        appid = item.get("id") or item.get("appid")
+        appid = self._app_id(item)
         return [
             item.get("logo"),
             item.get("logo_url"),
@@ -1042,7 +1312,7 @@ class SteamDailyArt(BasePlugin):
 
     def _request_approved_target(self, approved, *, headers, timeout, deadline):
         hostname = str(getattr(approved, "hostname", "") or "").lower().rstrip(".")
-        kind = "json" if hostname == "store.steampowered.com" else "media"
+        kind = "json" if hostname in STEAM_JSON_HOSTS else "media"
         self._validate_steam_target(approved, kind=kind)
         return _PinnedHTTPSResponse.open(
             approved,
@@ -1058,7 +1328,7 @@ class SteamDailyArt(BasePlugin):
             raise RuntimeError("Steam target must use HTTPS on port 443")
         hostname = str(getattr(approved, "hostname", "") or "").lower().rstrip(".")
         if kind == "json":
-            allowed = hostname == "store.steampowered.com"
+            allowed = hostname in STEAM_JSON_HOSTS
         else:
             allowed = any(hostname == suffix or hostname.endswith(f".{suffix}") for suffix in STEAM_MEDIA_HOST_SUFFIXES)
         if not allowed:
@@ -1112,10 +1382,12 @@ class SteamDailyArt(BasePlugin):
 
         fitted = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
 
-        canvas = image.resize((target_width, target_height), Image.Resampling.BILINEAR)
-        canvas = ImageOps.fit(canvas, (target_width, target_height), method=Image.Resampling.BILINEAR, centering=(0.5, 0.5))
-        canvas = canvas.filter(ImageFilter.GaussianBlur(radius=18))
-        canvas = Image.blend(canvas, Image.new("RGB", dimensions, (245, 245, 245)), 0.45)
+        # A solid black or white mat, matched to the art's edges, prints cleanly;
+        # a pale blurred backdrop would dither into noise on the e-paper.
+        edge_mask = Image.new("L", fitted.size, 255)
+        edge_mask.paste(0, (4, 4, max(4, new_width - 4), max(4, new_height - 4)))
+        edge_light = ImageStat.Stat(fitted.convert("L"), mask=edge_mask).mean[0]
+        canvas = Image.new("RGB", (target_width, target_height), (0, 0, 0) if edge_light < 128 else (255, 255, 255))
 
         x = (target_width - new_width) // 2
         y = (target_height - new_height) // 2
@@ -1167,16 +1439,21 @@ class SteamDailyArt(BasePlugin):
             return image
 
         size_name = settings.get("logoSize", "normal")
+        # Share of the canvas area, so square marks are not shrunk like wide
+        # wordmarks, then width and height caps.
         scale_map = {
-            "compact": (0.34, 0.14),
-            "normal": (0.46, 0.18),
-            "large": (0.58, 0.24),
+            "compact": (0.045, 0.34, 0.26),
+            "normal": (0.07, 0.46, 0.34),
+            "large": (0.10, 0.58, 0.42),
         }
-        max_width_factor, max_height_factor = scale_map.get(size_name, scale_map["normal"])
+        area_share, max_width_factor, max_height_factor = scale_map.get(size_name, scale_map["normal"])
 
-        max_width = int(image.width * max_width_factor)
-        max_height = int(image.height * max_height_factor)
-        scale = min(max_width / logo.width, max_height / logo.height, 1.0)
+        scale = min(
+            (image.width * image.height * area_share / (logo.width * logo.height)) ** 0.5,
+            image.width * max_width_factor / logo.width,
+            image.height * max_height_factor / logo.height,
+            1.0,
+        )
         new_size = (max(1, int(logo.width * scale)), max(1, int(logo.height * scale)))
         logo = logo.resize(new_size, Image.Resampling.LANCZOS)
 
@@ -1188,15 +1465,39 @@ class SteamDailyArt(BasePlugin):
         )
 
         composed = image.convert("RGBA")
-
-        shadow = Image.new("RGBA", logo.size, (0, 0, 0, 0))
         alpha = logo.getchannel("A")
-        shadow_alpha = alpha.filter(ImageFilter.GaussianBlur(radius=3))
-        shadow.putalpha(shadow_alpha.point(lambda value: int(value * 0.55)))
-        composed.alpha_composite(shadow, (x + 3, y + 3))
+        halo_ink = self._logo_halo_ink(image, logo, (x, y))
+        if halo_ink is not None:
+            # A crisp pure-ink outline keeps a logo readable on art of its own
+            # brightness; a soft shadow would dither into noise there.
+            pad = LOGO_HALO_WIDTH
+            solid = alpha.point(lambda value: 255 if value >= 96 else 0)
+            halo_alpha = ImageOps.expand(solid, border=pad, fill=0).filter(ImageFilter.MaxFilter(pad * 2 + 1))
+            halo = Image.new("RGBA", halo_alpha.size, halo_ink)
+            halo.putalpha(halo_alpha)
+            composed.alpha_composite(halo, (x - pad, y - pad))
+        else:
+            shadow = Image.new("RGBA", logo.size, (0, 0, 0, 0))
+            shadow_alpha = alpha.filter(ImageFilter.GaussianBlur(radius=3))
+            shadow.putalpha(shadow_alpha.point(lambda value: int(value * 0.55)))
+            composed.alpha_composite(shadow, (x + 3, y + 3))
         composed.alpha_composite(logo, (x, y))
 
         return composed.convert("RGB")
+
+    @staticmethod
+    def _logo_halo_ink(image, logo, position):
+        """Black or white outline ink when logo and backdrop share a brightness."""
+        x, y = position
+        backdrop = image.convert("L").crop((x, y, x + logo.width, y + logo.height))
+        mask = logo.getchannel("A").point(lambda value: 255 if value >= 96 else 0)
+        if mask.getbbox() is None:
+            return None
+        logo_light = ImageStat.Stat(logo.convert("L"), mask=mask).mean[0]
+        backdrop_light = ImageStat.Stat(backdrop, mask=mask).mean[0]
+        if abs(logo_light - backdrop_light) >= LOGO_MIN_CONTRAST:
+            return None
+        return (0, 0, 0, 255) if backdrop_light >= 128 else (255, 255, 255, 255)
 
     def _trim_transparent_edges(self, logo):
         if logo.mode != "RGBA":
