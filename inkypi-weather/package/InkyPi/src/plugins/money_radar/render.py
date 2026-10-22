@@ -17,13 +17,15 @@ from .sources import CURVE_POINTS, EARNINGS_HOURS, FORM_NAMES, ITEM_NAMES, days_
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 _LIMITS = ImageLimits(max_bytes=256 * 1024, max_width=512, max_height=512, max_pixels=512 * 512)
+# Pure white or black paper and neutral grey rules: an off-white or navy ground, or a tinted
+# grey, dithers into scattered yellow, blue or green dots on the panel.
 DAY = {
-    "paper": "#fbfaf5", "panel": "#f0eee6", "ink": "#121a20", "muted": "#222c34", "rule": "#a3aab0",
+    "paper": "#ffffff", "panel": "#f0eee6", "ink": "#121a20", "muted": "#222c34", "rule": "#a6a6a6",
     "up": "#00a83a", "down": "#d42020", "accent": "#1f5fbf", "past": "#8a949b", "gold": "#ffde00",
     "badge_ink": "#ffffff",
 }
 NIGHT = {
-    "paper": "#0e171f", "panel": "#16232d", "ink": "#edf1ea", "muted": "#c6d0d5", "rule": "#4f606b",
+    "paper": "#000000", "panel": "#16232d", "ink": "#edf1ea", "muted": "#c6d0d5", "rule": "#5a5a5a",
     "up": "#6fd38f", "down": "#ff6b6b", "accent": "#7fb8ff", "past": "#7d8b94", "gold": "#ffd84a",
     "badge_ink": "#0e171f",
 }
@@ -101,11 +103,17 @@ def _direction(change):
     return ("up", "up") if change > 0 else ("down", "down")
 
 
-def _change_line(canvas, xy, change, text, *, colored=True):
+def _change_line(canvas, xy, change, figure, note=""):
+    """A change in its direction's colour (green up, red down, grey flat), then a grey note.
+
+    Every changing figure on the page uses this colour, so direction reads at a glance;
+    the note says over what period.
+    """
     icon, tone = _direction(change)
-    color = canvas.color(tone if colored else "ink")
-    draw_icon(canvas.draw, icon, (xy[0], xy[1] - 6), 11, color, canvas.color("paper"))
-    canvas.text((xy[0] + 15, xy[1]), text, 13, anchor="lm")
+    draw_icon(canvas.draw, icon, (xy[0], xy[1] - 6), 11, canvas.color(tone), canvas.color("paper"))
+    width = canvas.text((xy[0] + 15, xy[1]), figure, 13, tone, anchor="lm")
+    if note:
+        canvas.text((xy[0] + 15 + width + 5, xy[1]), note, 13, "muted", anchor="lm", bold=False)
 
 
 def _tile_frame(canvas, left, right, title, mark=None, mark_text=None):
@@ -135,8 +143,7 @@ def _fx_tile(canvas, payload, box):
     latest, first = series[-1][1], series[0][1]
     canvas.text((left + 10, 112), f"{latest:.4f}", 28, anchor="lm")
     change = (latest / first - 1) * 100
-    # An exchange rate has no good or bad direction, so it stays neutral ink and blue.
-    _change_line(canvas, (left + 10, 138), change, f"{change:+.2f}% · {len(series)} 个交易日", colored=False)
+    _change_line(canvas, (left + 10, 138), change, f"{change:+.2f}%", f"{len(series)} 个交易日")
     sparkline(canvas, (left + 12, 150, right - 12, 176), [value for _day, value in series], canvas.color("accent"))
     others = []
     for code, label in (("EUR", "欧元"), ("JPY", "日元"), ("HKD", "港币")):
@@ -153,12 +160,14 @@ def _coin_tile(canvas, coin, box):
     canvas.text((right - 10, 79), coin["symbol"], 12, "muted", anchor="rm", bold=False)
     canvas.text((left + 10, 112), price_text(coin["price"]), 28, anchor="lm", width=right - left - 20)
     day, week = coin.get("change_24h"), coin.get("change_7d")
-    text = f"{day:+.2f}% 24 小时" if day is not None else "24 小时 —"
-    _change_line(canvas, (left + 10, 138), day, text)
+    _change_line(canvas, (left + 10, 138), day, f"{day:+.2f}%" if day is not None else "—", "24 小时")
     color = canvas.color("up" if (week or 0) >= 0 else "down")
     sparkline(canvas, (left + 12, 150, right - 12, 176), coin.get("sparkline"), color)
-    canvas.text((left + 10, 187), f"7 天 {week:+.1f}%" if week is not None else "7 天走势", 11, "muted",
-                anchor="lm", bold=False)
+    if week is None:
+        canvas.text((left + 10, 187), "7 天走势", 11, "muted", anchor="lm", bold=False)
+    else:
+        label = canvas.text((left + 10, 187), "7 天", 11, "muted", anchor="lm", bold=False)
+        canvas.text((left + 10 + label + 4, 187), f"{week:+.1f}%", 11, _direction(week)[1], anchor="lm")
 
 
 def _yield_tile(canvas, payload, box):
@@ -171,7 +180,7 @@ def _yield_tile(canvas, payload, box):
         return
     canvas.text((left + 10, 112), f"{ten['last']:.2f}%", 28, anchor="lm")
     change_bp = (ten["last"] - ten["month_ago"]) * 100
-    _change_line(canvas, (left + 10, 138), change_bp, f"{change_bp:+.0f} 基点 · 30 天", colored=False)
+    _change_line(canvas, (left + 10, 138), change_bp, f"{change_bp:+.0f} 基点", "30 天")
     sparkline(canvas, (left + 12, 150, right - 12, 176), ten.get("series"), canvas.color("accent"))
     rest = [f"{label} {quotes[symbol]['last']:.2f}" for symbol, label in CURVE_POINTS
             if symbol != "^TNX" and symbol in quotes]
@@ -221,7 +230,10 @@ def _curve(canvas, payload):
     canvas.draw.line(now_points, fill=canvas.color("accent"), width=3, joint="curve")
     for (x, y), (label, quote) in zip(now_points, points):
         canvas.draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=canvas.color("accent"))
-        canvas.text((x, y - 8), f"{quote['last']:.2f}", 11, anchor="mb", stroke="paper")
+        # Each yield is coloured by its move since a month ago, like every other change.
+        tone = _direction(quote["last"] - quote["month_ago"])[1]
+        canvas.text((x, y - 8), f"{quote['last']:.2f}", 11, "ink" if tone == "muted" else tone, anchor="mb",
+                    stroke="paper")
         canvas.text((x, bottom - 10), label, 12, anchor="mm", bold=False)
 
 
@@ -254,10 +266,10 @@ def _macro_tiles(canvas, payload):
         canvas.text((left + 10, top + 39), value, 22, anchor="lm")
         if previous is not None:
             change = current - previous
-            icon, _tone = _direction(change)
-            draw_icon(canvas.draw, icon, (left + 120, top + 33), 11, canvas.color("ink"), canvas.color("paper"))
+            icon, tone = _direction(change)
+            draw_icon(canvas.draw, icon, (left + 120, top + 33), 11, canvas.color(tone), canvas.color("paper"))
             canvas.text((left + 135, top + 39), f"{change:+.2f}" if abs(change) < 10 else f"{change:+,.0f}",
-                        12, anchor="lm", bold=False)
+                        13, tone, anchor="lm")
     if not tiles:
         canvas.text((594, 268), "宏观数据暂不可用", 14, "muted", anchor="mm")
 
