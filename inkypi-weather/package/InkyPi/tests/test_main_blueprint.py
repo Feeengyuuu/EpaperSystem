@@ -197,7 +197,9 @@ def test_home_renders_large_preview_cards_without_plugin_settings(tmp_path, monk
     assert "never-render-me" not in html
     assert "12.3456" not in html
     assert 'data-playlist-tab="Night"' in html
-    assert "<title>Now Playing \u00b7 Test InkyPi</title>" in html
+    assert "<title>\u25b6 Kitchen Clock \u00b7 Now Playing \u00b7 Test InkyPi</title>" in html
+    assert 'data-rendered-at="2026-10-06T12:00:00+00:00"' in html
+    assert 'id="heroLive"' in html
 
 
 def test_playlist_route_renders_the_same_page_and_selects_requested_tab(tmp_path, monkeypatch):
@@ -228,6 +230,34 @@ def test_now_playing_api_reports_display_without_hash(tmp_path, monkeypatch):
         "refresh_time": "2026-10-06T12:05:00+00:00",
         "refresh_type": "Playlist",
     }
+
+
+def test_now_playing_previews_carry_only_names_and_render_times(tmp_path, monkeypatch):
+    response = _rich_app(tmp_path, monkeypatch).test_client().get("/api/now-playing/previews")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    body = response.get_json()
+    assert body["now_playing"]["plugin_instance"] == "Kitchen Clock"
+    assert body["active_playlist"] == "Default"
+    assert body["instances"] == [
+        {
+            "playlist": "Default",
+            "plugin_id": "clock",
+            "name": "Kitchen Clock",
+            "latest_refresh_time": "2026-10-06T12:00:00+00:00",
+        },
+        {
+            "playlist": "Default",
+            "plugin_id": "weather",
+            "name": "Home Weather",
+            "latest_refresh_time": None,
+        },
+    ]
+    text = response.get_data(as_text=True)
+    assert "never-render-me" not in text
+    assert "12.3456" not in text
+    assert "instance_uuid" not in text
 
 
 def test_plugins_page_lists_plugins_in_the_shared_shell(tmp_path, monkeypatch):

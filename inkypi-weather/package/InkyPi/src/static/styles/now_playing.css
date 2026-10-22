@@ -37,6 +37,58 @@
 
 .hero.is-empty .hero-media img { visibility: hidden; }
 .hero-info { min-width: 0; }
+.hero-eyebrow { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+
+/* Auto-sync indicator: pulses while the page follows the device. */
+.live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px 2px 7px;
+    border-radius: var(--r-pill);
+    background: var(--c-ok-soft);
+    color: var(--c-ok);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    transition: color 0.3s ease, background-color 0.3s ease;
+}
+
+.live-badge-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: live-pulse 2s ease-out infinite;
+}
+
+.live-badge[data-state="offline"] { background: var(--c-raised); color: var(--c-muted); }
+.live-badge[data-state="offline"] .live-badge-dot { animation: none; opacity: 0.6; }
+
+@keyframes live-pulse {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 60%, transparent); }
+    70%, 100% { box-shadow: 0 0 0 6px transparent; }
+}
+
+/* One-shot highlights when the display or a card picks up a new render. */
+.hero.is-fresh .hero-media img { animation: render-in 0.8s ease-out; }
+.hero-title.is-fresh { animation: title-in 0.5s ease-out; }
+.preview-card.is-fresh { animation: card-glow 1.6s ease-out; }
+.preview-card.is-fresh .preview-media img { animation: render-in 0.7s ease-out; }
+
+@keyframes render-in { from { opacity: 0.2; filter: blur(6px) saturate(0.6); } }
+@keyframes title-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes card-glow {
+    from { border-color: var(--c-accent); box-shadow: 0 0 0 3px var(--c-accent-soft), var(--shadow-1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .live-badge-dot,
+    .hero.is-fresh .hero-media img,
+    .hero-title.is-fresh,
+    .preview-card.is-fresh,
+    .preview-card.is-fresh .preview-media img { animation: none; }
+}
 .hero-title { font-size: 26px; font-weight: 700; margin-top: var(--s-1); overflow-wrap: anywhere; }
 .hero-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); margin-top: var(--s-2); color: var(--c-muted); }
 .hero-updated { margin-top: var(--s-2); font-size: var(--fs-xs); min-height: 1.5em; }

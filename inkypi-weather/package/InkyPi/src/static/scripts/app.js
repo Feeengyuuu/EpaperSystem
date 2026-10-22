@@ -391,28 +391,50 @@
         return (job && (job.error || job.error_code)) || "The device could not finish this request.";
     }
 
-    /* Call `tick` now and every `intervalMs` while the page is visible. */
-    function poll(tick, intervalMs) {
+    /* Call `tick` now and every `intervalMs` while the page is visible.
+     * With `options.hiddenIntervalMs` it keeps ticking at that slower pace
+     * while the tab is in the background, and catches up on return. */
+    function poll(tick, intervalMs, options) {
+        const hiddenIntervalMs = (options && options.hiddenIntervalMs) || 0;
         let timer = null;
         let stopped = false;
+        let running = false;
+
+        function schedule() {
+            const delay = document.hidden ? hiddenIntervalMs : intervalMs;
+            if (!stopped && delay) {
+                timer = window.setTimeout(run, delay);
+            }
+        }
 
         async function run() {
             timer = null;
-            if (stopped || document.hidden) {
+            if (stopped || (document.hidden && !hiddenIntervalMs)) {
                 return;
             }
+            running = true;
             try {
                 await tick();
             } catch (error) {
                 /* the next tick retries */
             }
-            if (!stopped && !document.hidden) {
-                timer = window.setTimeout(run, intervalMs);
+            running = false;
+            if (!timer) {
+                schedule();
             }
         }
 
         function onVisibility() {
-            if (!document.hidden && !timer && !stopped) {
+            if (stopped || running) {
+                return;
+            }
+            if (timer) {
+                window.clearTimeout(timer);
+                timer = null;
+            }
+            if (document.hidden) {
+                schedule();
+            } else {
                 run();
             }
         }

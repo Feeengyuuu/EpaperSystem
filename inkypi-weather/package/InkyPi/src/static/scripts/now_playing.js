@@ -45,6 +45,27 @@
         return "Manual refresh";
     }
 
+    function translate(text) {
+        const i18n = window.InkyPiI18n;
+        return i18n ? i18n.translateValue(text, i18n.getLanguage()) : text;
+    }
+
+    function reducedMotion() {
+        return typeof window.matchMedia === "function"
+            && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    }
+
+    /* Replay a one-shot CSS highlight such as `is-fresh`. */
+    function flash(node, className) {
+        if (reducedMotion()) {
+            return;
+        }
+        node.classList.remove(className);
+        void node.offsetWidth;
+        node.classList.add(className);
+        window.setTimeout(() => node.classList.remove(className), 1800);
+    }
+
     /* ---------- Display card ---------- */
     let imageTag = null;
     let objectUrl = null;
@@ -64,18 +85,101 @@
         const url = URL.createObjectURL(blob);
         const previous = objectUrl;
         objectUrl = url;
+        const changed = imageTag !== null;
         heroImage.addEventListener("load", () => {
             if (previous) {
                 URL.revokeObjectURL(previous);
             }
+            if (changed) {
+                flash(hero, "is-fresh");
+            }
         }, { once: true });
         heroImage.src = url;
-        const changed = imageTag !== null;
         imageTag = response.headers.get("ETag");
         hero.classList.remove("is-empty");
         hero.querySelector("[data-hero-empty]").hidden = true;
         return changed;
     }
+
+    /* ---------- Browser tab: title and favicon follow the display ---------- */
+    let unseenChange = false;
+
+    function updateTabTitle() {
+        const device = hero.dataset.deviceName || "InkyPi";
+        const instance = nowPlaying.plugin_instance;
+        let title = `${translate("Now Playing")} · ${device}`;
+        if (instance) {
+            const plugin = nowPlaying.display_name && nowPlaying.display_name !== instance
+                ? translate(nowPlaying.display_name)
+                : device;
+            title = `▶ ${instance} · ${plugin}`;
+        }
+        document.title = unseenChange ? `● ${title}` : title;
+    }
+
+    /* Draw what the e-paper shows as the tab icon, with a live dot. */
+    function paintFavicon() {
+        if (!heroImage.naturalWidth || typeof document.createElement !== "function") {
+            return;
+        }
+        const size = 64;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const context = canvas.getContext && canvas.getContext("2d");
+        if (!context) {
+            return;
+        }
+        context.beginPath();
+        if (context.roundRect) {
+            context.roundRect(0, 0, size, size, 14);
+        } else {
+            context.rect(0, 0, size, size);
+        }
+        context.clip();
+        const scale = Math.max(size / heroImage.naturalWidth, size / heroImage.naturalHeight);
+        const width = heroImage.naturalWidth * scale;
+        const height = heroImage.naturalHeight * scale;
+        context.drawImage(heroImage, (size - width) / 2, (size - height) / 2, width, height);
+        const styles = window.getComputedStyle(document.documentElement);
+        context.fillStyle = styles.getPropertyValue("--c-bg").trim() || "#111316";
+        context.beginPath();
+        context.arc(50, 50, 12, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = styles.getPropertyValue("--c-accent").trim() || "#1abc9c";
+        context.beginPath();
+        context.arc(50, 50, 8, 0, Math.PI * 2);
+        context.fill();
+        let link = document.getElementById("liveFavicon");
+        if (!link) {
+            document.querySelectorAll('link[rel~="icon"]').forEach((node) => node.remove());
+            link = document.createElement("link");
+            link.id = "liveFavicon";
+            link.rel = "icon";
+            link.type = "image/png";
+            document.head.appendChild(link);
+        }
+        try {
+            link.href = canvas.toDataURL("image/png");
+        } catch (error) {
+            /* a tainted canvas keeps the previous icon */
+        }
+    }
+
+    heroImage.addEventListener("load", paintFavicon);
+    if (heroImage.complete && heroImage.naturalWidth) {
+        paintFavicon();
+    }
+
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden && unseenChange) {
+            unseenChange = false;
+            updateTabTitle();
+        }
+    });
+    document.getElementById("languageToggle").addEventListener("click", () => {
+        window.setTimeout(updateTabTitle, 0);
+    });
 
     function renderNowPlaying() {
         const title = nowPlaying.plugin_instance || nowPlaying.display_name || "—";
@@ -101,6 +205,7 @@
             card.querySelector("[data-now-flag]").hidden = !current;
         });
         ui.updateRelativeTimes(hero);
+        updateTabTitle();
     }
 
     async function loadNowPlaying() {
@@ -112,12 +217,103 @@
         }
     }
 
-    ui.poll(async () => {
-        const changed = await refreshHeroImage();
-        if (changed) {
-            await loadNowPlaying();
+    /* ---------- Live sync: display, cards and tab update in place ---------- */
+    function displayKey(state) {
+        return [state.plugin_id, state.playlist, state.plugin_instance, state.refresh_time].join("\u0000");
+    }
+
+    function cardKey(playlist, pluginId, name) {
+        return `${playlist}\u0000${pluginId}\u0000${name}`;
+    }
+
+    function timeValue(iso) {
+        const value = Date.parse(iso || "");
+        return Number.isNaN(value) ? 0 : value;
+    }
+
+    function setLive(online) {
+        const badge = document.getElementById("heroLive");
+        if (!badge || badge.dataset.state === (online ? "live" : "offline")) {
+            return;
         }
-    }, 10000);
+        badge.dataset.state = online ? "live" : "offline";
+        const label = badge.querySelector("[data-live-label]");
+        if (label) {
+            label.textContent = online ? "Live" : "Reconnecting…";
+        }
+    }
+
+    function setCardStamp(card, iso) {
+        card.dataset.renderedAt = iso;
+        const wrap = card.querySelector("[data-refresh-stamp]");
+        if (wrap) {
+            wrap.hidden = false;
+        }
+        const stamp = card.querySelector("[data-relative-time]");
+        if (stamp) {
+            stamp.setAttribute("data-relative-time", iso);
+            ui.updateRelativeTimes(card);
+        }
+    }
+
+    /* Load the new render off-screen first so the card never flashes empty. */
+    function showNewRender(card, renderedAt) {
+        setCardStamp(card, renderedAt);
+        const image = card.querySelector("[data-preview-image]");
+        const url = `${card.dataset.imageUrl}?v=${encodeURIComponent(renderedAt)}`;
+        const panel = card.closest("[data-playlist-panel]");
+        if ((panel && panel.hidden) || typeof window.Image !== "function") {
+            image.src = url;
+            return;
+        }
+        const loader = new window.Image();
+        loader.onload = () => {
+            image.src = url;
+            flash(card, "is-fresh");
+        };
+        loader.src = url;
+    }
+
+    function applyPreviews(state) {
+        const latest = new Map((state.instances || []).map((row) => [
+            cardKey(row.playlist, row.plugin_id, row.name),
+            row.latest_refresh_time,
+        ]));
+        cards().forEach((card) => {
+            const renderedAt = latest.get(cardKey(card.dataset.playlist, card.dataset.pluginId, card.dataset.instance));
+            if (renderedAt && timeValue(renderedAt) > timeValue(card.dataset.renderedAt)) {
+                showNewRender(card, renderedAt);
+            }
+        });
+        const current = state.now_playing;
+        if (current && displayKey(current) !== displayKey(nowPlaying)) {
+            const switched = current.plugin_instance !== nowPlaying.plugin_instance
+                || current.playlist !== nowPlaying.playlist;
+            nowPlaying = current;
+            if (switched && document.hidden) {
+                unseenChange = true;
+            }
+            renderNowPlaying();
+            if (switched) {
+                flash(document.getElementById("heroTitle"), "is-fresh");
+            }
+        }
+    }
+
+    async function syncLive() {
+        const [image, previews] = await Promise.allSettled([
+            refreshHeroImage(),
+            ui.api("/api/now-playing/previews", { quiet: true }),
+        ]);
+        setLive(image.status === "fulfilled" || previews.status === "fulfilled");
+        if (previews.status === "fulfilled") {
+            applyPreviews(previews.value);
+        }
+    }
+
+    // Keep the tab title and icon current in the background too, at a slower pace.
+    ui.poll(syncLive, 10000, { hiddenIntervalMs: 60000 });
+    updateTabTitle();
 
     function heroCaption() {
         return [nowPlaying.plugin_instance || nowPlaying.display_name, nowPlaying.playlist].filter(Boolean).join(" · ");
@@ -215,11 +411,7 @@
                 return false;
             }
             reloadCardImage(card);
-            const stamp = card.querySelector("[data-relative-time]");
-            if (stamp) {
-                stamp.setAttribute("data-relative-time", new Date().toISOString());
-                ui.updateRelativeTimes(card);
-            }
+            setCardStamp(card, new Date().toISOString());
             ui.toast("Data refreshed.", "ok");
             return true;
         } finally {

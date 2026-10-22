@@ -4,7 +4,7 @@ from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, render_template, request, send_file
 
-from blueprints.playlist import now_playing_payload, render_now_playing
+from blueprints.playlist import now_playing_context, now_playing_payload, render_now_playing
 
 main_bp = Blueprint("main", __name__)
 
@@ -64,6 +64,33 @@ def now_playing():
     plugins = {p["id"]: p for p in device_config.get_plugins()}
     payload = now_playing_payload(device_config.get_refresh_info().to_dict(), plugins)
     response = jsonify(payload)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@main_bp.route('/api/now-playing/previews')
+def now_playing_previews():
+    """What the display shows plus each card's newest render time.
+
+    The Now Playing page polls this to swap preview images in place. It
+    carries only the names and timestamps the page already renders.
+    """
+    context = now_playing_context()
+    instances = [
+        {
+            "playlist": playlist["name"],
+            "plugin_id": item["plugin_id"],
+            "name": item["name"],
+            "latest_refresh_time": item["latest_refresh_time"],
+        }
+        for playlist in context["playlists"]
+        for item in playlist["plugins"]
+    ]
+    response = jsonify({
+        "now_playing": context["now_playing"],
+        "active_playlist": context["active_playlist"],
+        "instances": instances,
+    })
     response.headers["Cache-Control"] = "no-store"
     return response
 

@@ -10,6 +10,7 @@
          data-refresh='{{ item.refresh | tojson }}'
          data-before-display="{{ 'true' if item.data_before_display else 'false' }}"
          data-edit-url="{{ url_for('plugin.plugin_page', plugin_id=item.plugin_id, instance=item.name) }}"
+         data-rendered-at="{{ item.latest_refresh_time or '' }}"
          data-image-url="{{ url_for('plugin.plugin_instance_image', playlist_name=playlist.name, plugin_id=item.plugin_id, instance_name=item.name) }}">
     <button type="button" class="preview-media" data-action="preview" aria-label="View full size">
         <img loading="lazy" alt="" data-preview-image
@@ -23,7 +24,7 @@
         <div class="grow">
             <div class="preview-name truncate" data-i18n-skip="true" title="{{ item.name }}">{{ item.name }}</div>
             <div class="preview-meta truncate">
-                <span data-refresh-label>{{ item.refresh_label }}</span>{% if item.latest_refresh_time %}<span> · </span><span data-relative-time="{{ item.latest_refresh_time }}"></span>{% endif %}
+                <span data-refresh-label>{{ item.refresh_label }}</span><span data-refresh-stamp{% if not item.latest_refresh_time %} hidden{% endif %}><span> · </span><span data-relative-time="{{ item.latest_refresh_time or '' }}"></span></span>
             </div>
         </div>
         <div class="preview-actions">

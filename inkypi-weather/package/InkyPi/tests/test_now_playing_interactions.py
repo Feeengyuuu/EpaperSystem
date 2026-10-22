@@ -57,6 +57,7 @@ card.dataset = {
     playlist: 'Default', pluginId: 'simple_calendar', instance: 'Calendar',
     refresh: JSON.stringify({interval: 3600}), beforeDisplay: 'false',
     displayName: 'Simple Calendar', imageUrl: '/preview/calendar',
+    renderedAt: '2026-10-06T10:00:00Z',
 };
 const image = new Element();
 image.src = '/preview/calendar';
@@ -69,6 +70,7 @@ card.queries = {
 };
 card.closest = () => card;
 get('hero').dataset.nowPlaying = JSON.stringify({playlist: 'Default', plugin_instance: 'Calendar'});
+get('hero').dataset.deviceName = 'Frame';
 get('hero').queries = {'.hero-media img': new Element(), '[data-hero-empty]': new Element()};
 const menu = new Element();
 document.querySelectorAll = selector => selector === '[data-instance-card]' ? [card] : [];
@@ -109,6 +111,9 @@ const context = vm.createContext({
             status = 304;
         } else if (url === '/api/now-playing') {
             body = {playlist: 'Default', plugin_instance: 'Calendar'};
+        } else if (url === '/api/now-playing/previews') {
+            status = input.previews ? 200 : 503;
+            body = input.previews || {error: 'unavailable'};
         } else {
             throw new Error(`Unexpected request ${url}`);
         }
@@ -120,8 +125,9 @@ for (const filename of ['app.js', 'refresh_settings_manager.js']) {
     vm.runInContext(fs.readFileSync(path.join(input.scripts, filename), 'utf8'), context, {filename});
 }
 const ui = context.window.InkyUI;
-// Polling and visual mounting are outside the clicked action under test.
-ui.poll = () => () => {};
+// Polls are captured instead of scheduled; the live-sync scenario runs one tick.
+const polls = [];
+ui.poll = (tick, intervalMs, options) => { polls.push({tick, intervalMs, options}); return () => {}; };
 ui.toast = (message, tone) => toasts.push({message, tone});
 ui.openSheet = () => {};
 ui.closeSheet = () => {};
@@ -150,13 +156,20 @@ if (input.action === 'save_schedule') {
     get('modal-scheduled').value = '09:00';
     get('refreshSave').dispatchEvent({type: 'click'});
 }
+const initialTitle = document.title;
 (async () => {
+    if (input.action === 'live_sync') {
+        await polls[0].tick();
+    }
     // Drain the requests, polling promises and event handler continuations.
     for (let i = 0; i < 40; i += 1) await new Promise(resolve => setImmediate(resolve));
     if (input.action === 'save_schedule') {
         clickCard('more'); clickMenu('refresh-schedule');
     }
     process.stdout.write(JSON.stringify({requests, toasts, reloads,
+        initialTitle, title: document.title, livePoll: polls[0].options,
+        liveState: get('heroLive').dataset.state,
+        heroTitle: get('heroTitle').textContent,
         refreshedAt: stamp.getAttribute('data-relative-time'), imageSrc: image.src,
         refresh: JSON.parse(card.dataset.refresh),
         refreshLabel: card.querySelector('[data-refresh-label]').textContent,
@@ -209,6 +222,53 @@ def test_schedule_save_displays_and_reopens_the_server_normalized_plan():
     assert result["interval"] == 1
     assert result["unit"] == "hour"
     assert result["reloads"] == 0
+
+
+LIVE_DISPLAY = {
+    "plugin_id": "weather",
+    "display_name": "Weather",
+    "playlist": "Default",
+    "plugin_instance": "Home Weather",
+    "refresh_time": "2026-10-06T11:05:00Z",
+}
+
+
+def _previews(rendered_at):
+    return {
+        "now_playing": LIVE_DISPLAY,
+        "active_playlist": "Default",
+        "instances": [{
+            "playlist": "Default",
+            "plugin_id": "simple_calendar",
+            "name": "Calendar",
+            "latest_refresh_time": rendered_at,
+        }],
+    }
+
+
+def test_tab_title_names_the_instance_on_the_display():
+    result = run_page()
+
+    assert result["initialTitle"] == "▶ Calendar · Frame"
+    # The tab keeps following the display while it sits in the background.
+    assert result["livePoll"] == {"hiddenIntervalMs": 60000}
+
+
+def test_live_sync_swaps_a_newer_card_render_and_retitles_the_tab():
+    result = run_page(action="live_sync", previews=_previews("2026-10-06T11:00:00Z"))
+
+    assert result["imageSrc"] == "/preview/calendar?v=2026-10-06T11%3A00%3A00Z"
+    assert result["refreshedAt"] == "2026-10-06T11:00:00Z"
+    assert result["heroTitle"] == "Home Weather"
+    assert result["title"] == "▶ Home Weather · Weather"
+    assert result["liveState"] == "live"
+
+
+def test_live_sync_keeps_a_card_whose_render_is_not_newer():
+    result = run_page(action="live_sync", previews=_previews("2026-10-06T09:00:00Z"))
+
+    assert result["imageSrc"] == "/preview/calendar"
+    assert result["refreshedAt"] == "2026-10-06T10:00:00Z"
 
 
 def test_schedule_save_without_a_persisted_plan_reloads_instead_of_guessing():

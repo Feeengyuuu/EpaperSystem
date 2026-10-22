@@ -2,20 +2,23 @@
 {%- from 'components/icons.html' import icon -%}
 {%- from 'components/preview_card.html' import preview_card -%}
 {% set nav_active = 'now' %}
-{% block title %}Now Playing · {{ inkypi_device_name | default('InkyPi') }}{% endblock %}
+{% block title %}{% if now_playing.plugin_instance %}▶ {{ now_playing.plugin_instance }} · {% endif %}Now Playing · {{ inkypi_device_name | default('InkyPi') }}{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="{{ url_for('static', filename='styles/now_playing.css') }}">
 {% endblock %}
 {% block page_title %}Now Playing{% endblock %}
 
 {% block content %}
-<section class="hero card" id="hero" data-now-playing='{{ now_playing | tojson }}'>
+<section class="hero card" id="hero" data-now-playing='{{ now_playing | tojson }}' data-device-name="{{ inkypi_device_name | default('InkyPi') }}">
     <button type="button" class="hero-media" id="heroMedia" aria-label="View full size">
         <img src="/api/current_image" alt="Current Image">
         <span class="preview-empty" data-hero-empty hidden>{{ icon('image') }}<span>Nothing on the display yet</span></span>
     </button>
     <div class="hero-info">
-        <div class="eyebrow">On the display</div>
+        <div class="hero-eyebrow">
+            <span class="eyebrow">On the display</span>
+            <span class="live-badge" id="heroLive" data-state="live" title="Updates automatically"><span class="live-badge-dot" aria-hidden="true"></span><span data-live-label>Live</span></span>
+        </div>
         <h2 class="hero-title" id="heroTitle" data-i18n-skip="true">{{ now_playing.plugin_instance or now_playing.display_name or '—' }}</h2>
         <div class="hero-meta">
             <span class="hero-plugin" id="heroPlugin"{% if not now_playing.plugin_instance or now_playing.display_name == now_playing.plugin_instance %} hidden{% endif %}>{{ now_playing.display_name or '' }}</span>
