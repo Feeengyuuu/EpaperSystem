@@ -41,6 +41,9 @@ STORY_ICON_RADIUS = 15
 RED = (255, 0, 0)
 BLUE = (0, 0, 255)
 SECTION_ACCENTS = {"国内": RED, "A股": RED, "国际": BLUE, "美股": BLUE}
+# Each board is coloured the way its own market quotes it: mainland boards show
+# gains red and losses green, US boards gains green and losses red.
+GAINS_IN_RED = {"A股": True, "美股": False}
 TOPIC_ACCENTS = {
     "conflict": RED,
     "climate": RED,
@@ -316,25 +319,24 @@ class NewsPage:
         top, bottom = MARKET_TOP + 14, height - 12
         self.d.line((x, top, x + width, top), fill=c["rule"], width=1)
         tile_w = (width - 16) // 3
+        gains_in_red = GAINS_IN_RED.get(label, True)
         for index in range(3):
             left = x + index * (tile_w + 8)
             box = (left, top, left + tile_w, bottom)
             if index:
                 self.d.line((left - 4, top + 6, left - 4, bottom), fill=c["rule"], width=1)
             if index < len(rows):
-                self.quote(box, rows[index])
+                self.quote(box, rows[index], gains_in_red)
             else:
                 self.text(((box[0] + box[2]) // 2, (top + bottom) // 2), "暂无行情", 11, True, c["ink"], "mm")
 
-    def quote(self, box, row):
+    def quote(self, box, row, gains_in_red=True):
         c = self.c
         left, top, right, bottom = box
         pct = row.get("change_pct")
         middle = top + 13
-        mark = None
-        change_left = self.change_figure(right - 2, middle, pct)
-        if isinstance(pct, (int, float)) and round(pct, 2):
-            mark = c["up"] if pct > 0 else c["down"]
+        change_left = self.change_figure(right - 2, middle, pct, gains_in_red)
+        mark = self.change_colour(pct, gains_in_red)
         # The index's own mark leads; the short name follows when the row has room for it.
         label_x = left + 1
         logo_w = self.paste_logo(row.get("logo"), label_x, middle)
@@ -346,13 +348,20 @@ class NewsPage:
         self.text((left + 2, top + 24), f"{price:,.2f}" if isinstance(price, (int, float)) else "--", 14, True)
         self.sparkline((left + 2, bottom - 15, right - 6, bottom - 6), row.get("closes") or [], mark)
 
-    def change_figure(self, right, middle, pct):
-        """The day's change ending at ``right``: a small triangle and the figure, red up and
-        green down as Chinese quotes show them, ink when flat. Returns its left edge."""
-        if isinstance(pct, (int, float)) and round(pct, 2):
-            text, colour = f"{pct:+.2f}%", self.c["up"] if pct > 0 else self.c["down"]
+    def change_colour(self, pct, gains_in_red=True):
+        """The day's direction colour in the board's convention, or None when flat or unknown."""
+        if not isinstance(pct, (int, float)) or not round(pct, 2):
+            return None
+        return self.c["red"] if (pct > 0) == gains_in_red else self.c["green"]
+
+    def change_figure(self, right, middle, pct, gains_in_red=True):
+        """The day's change ending at ``right``: a small triangle and the figure in the
+        board's direction colour, ink when flat. Returns its left edge."""
+        colour = self.change_colour(pct, gains_in_red)
+        if colour is not None:
+            text = f"{pct:+.2f}%"
         else:
-            text, colour = ("0.00%" if isinstance(pct, (int, float)) else "--"), None
+            text = "0.00%" if isinstance(pct, (int, float)) else "--"
         text_left = right - self.width(text, 12)
         self.text((right, middle), text, 12, True, colour or self.c["ink"], "rm")
         if colour is None:

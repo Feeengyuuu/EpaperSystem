@@ -231,16 +231,17 @@ class NewsMarketMixin:
                 previous_close = hourly_meta.get("previousClose")
                 if len(daily) < 2 and isinstance(previous_close, (int, float)) and previous_close:
                     previous = float(previous_close)
+        market_time = meta.get("regularMarketTime")
         if previous is None:
-            previous = self._previous_session_close(series, meta.get("regularMarketTime"), meta.get("gmtoffset"))
+            previous = self._previous_session_close(series, market_time, meta.get("gmtoffset"))
         change = change_pct = None
         if previous:
             change = price - previous
             change_pct = change / previous * 100
+        closes = self._closes_ending_at_price(series, price, market_time, meta.get("gmtoffset"))
 
         as_of = ""
         stamps = [series[-1][0]] if series else []
-        market_time = meta.get("regularMarketTime")
         if isinstance(market_time, (int, float)):
             # The price can come from a session the daily bars do not show yet.
             stamps.append(market_time)
@@ -260,25 +261,50 @@ class NewsMarketMixin:
             "currency": meta.get("currency") or "",
             "exchange": meta.get("exchangeName") or meta.get("fullExchangeName") or "",
             "source": "yahoo",
-            "closes": [round(close, 2) for _stamp, close in series[-MARKET_CLOSES_KEPT:]],
+            "closes": [round(close, 2) for close in closes[-MARKET_CLOSES_KEPT:]],
         }
 
     @staticmethod
-    def _previous_session_close(series, market_time: Any, gmtoffset: Any) -> float | None:
-        """The close the latest price changed from: the bar before today's, or the last bar.
+    def _last_bar_is_current(series, market_time: Any, gmtoffset: Any) -> bool:
+        """Whether the last daily bar is the current price's session.
 
-        Yahoo stamps each daily bar at its session open; when the last bar is the
-        current price's session, the previous session is the bar before it. The
-        chart's chartPreviousClose precedes the whole range, so it is never used.
+        Yahoo stamps each daily bar at its session open, in exchange-local days.
         """
-        if not series:
-            return None
+        if not isinstance(market_time, (int, float)):
+            return True
         offset = gmtoffset if isinstance(gmtoffset, (int, float)) else 0
 
         def session_day(stamp):
             return datetime.fromtimestamp(stamp + offset, tz=pytz.UTC).date()
 
-        last_is_current = not isinstance(market_time, (int, float)) or session_day(series[-1][0]) == session_day(market_time)
-        if last_is_current:
+        return session_day(series[-1][0]) == session_day(market_time)
+
+    @classmethod
+    def _previous_session_close(cls, series, market_time: Any, gmtoffset: Any) -> float | None:
+        """The close the latest price changed from: the bar before today's, or the last bar.
+
+        When the last bar is the current price's session, the previous session is
+        the bar before it. The chart's chartPreviousClose precedes the whole range,
+        so it is never used.
+        """
+        if not series:
+            return None
+        if cls._last_bar_is_current(series, market_time, gmtoffset):
             return series[-2][1] if len(series) >= 2 else None
         return series[-1][1]
+
+    @classmethod
+    def _closes_ending_at_price(cls, series, price: float, market_time: Any, gmtoffset: Any) -> list[float]:
+        """The daily closes with the current price as the last point.
+
+        Daily bars can lag the price by a session; the sparkline must still end where
+        the quote's figure and direction colour say the day stands.
+        """
+        closes = [close for _stamp, close in series]
+        if not closes:
+            return [float(price)]
+        if cls._last_bar_is_current(series, market_time, gmtoffset):
+            closes[-1] = float(price)
+        else:
+            closes.append(float(price))
+        return closes

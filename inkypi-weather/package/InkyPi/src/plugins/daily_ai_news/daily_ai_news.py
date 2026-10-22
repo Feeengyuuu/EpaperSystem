@@ -58,9 +58,9 @@ TITLE_WORDMARK_SIZE = (220, 58)
 MARKET_LOGO_DIR = PLUGIN_DIR / "market_logos"
 SUMMARY_SCHEMA_VERSION = "mainland-world-lead-tags-v19"
 # The page keeps the masthead's two inks: the panel's own red, which it shows solidly
-# instead of dithering, is the one accent. Gains are red and losses green, as Chinese
-# market quotes show them, but only as small solid marks.
-PAGE_ACCENTS = {"lead": (255, 0, 0), "up": (255, 0, 0), "down": (0, 255, 0)}
+# instead of dithering, is the one accent. Market moves add the panel's red and green
+# as small solid marks, each board in its own convention (see news_layout).
+PAGE_ACCENTS = {"lead": (255, 0, 0), "red": (255, 0, 0), "green": (0, 255, 0)}
 # The page is laid out for the 800x480 panel; other displays get it scaled to fit.
 PAGE_SIZE = (800, 480)
 PAGE_DAY_COLOURS = dict(PAGE_ACCENTS)

@@ -1609,6 +1609,21 @@ def test_yahoo_quote_without_todays_bar_compares_with_the_last_close(monkeypatch
     row = plugin._fetch_yahoo_quote("^GSPC", "标普500")
 
     assert row["change_pct"] == pytest.approx((7750.0 / 7712.57 - 1) * 100, abs=0.005)
+    # The sparkline still ends at the price the figure and its colour describe.
+    assert row["closes"] == [7690.73, 7712.57, 7750.0]
+
+
+def test_yahoo_quote_sparkline_ends_at_the_live_price_within_todays_bar(monkeypatch):
+    plugin = _plugin()
+    _patch_chart(
+        monkeypatch,
+        _yahoo_chart([7690.73, 7712.57], [MONDAY_OPEN, TUESDAY_OPEN], TUESDAY_OPEN + 3600, 7701.0),
+    )
+
+    row = plugin._fetch_yahoo_quote("^GSPC", "标普500")
+
+    assert row["closes"] == [7690.73, 7701.0]
+    assert row["change_pct"] == pytest.approx((7701.0 / 7690.73 - 1) * 100, abs=0.005)
 
 
 def test_yahoo_quote_with_one_close_has_no_daily_change(monkeypatch):
@@ -1962,7 +1977,7 @@ def test_render_positions_the_radar_band_between_title_and_meta(monkeypatch):
     assert 620 <= right <= 680
 
 
-def test_market_changes_are_red_and_green_figures_beside_the_index_mark(monkeypatch):
+def test_market_changes_are_coloured_figures_beside_the_index_mark(monkeypatch):
     plugin = _plugin()
     logos = []
     original_logo = news_layout.NewsPage.paste_logo
@@ -1975,9 +1990,50 @@ def test_market_changes_are_red_and_green_figures_beside_the_index_mark(monkeypa
     monkeypatch.setattr(news_layout.NewsPage, "paste_logo", record_logo)
     _image, fills = _rendered_fills(monkeypatch, plugin)
 
-    # Chinese quotes: gains are red and losses green, as words, never as filled blocks.
-    assert fills["+0.28%"] == (255, 0, 0) and fills["-0.05%"] == (0, 255, 0)
+    # As words, never as filled blocks: the A-share loss is green, the US gain green too.
+    assert fills["-0.05%"] == (0, 255, 0) and fills["+0.28%"] == (0, 255, 0)
     assert ("sse", 16) in logos and ("sp500", 29) in logos
+
+
+def test_each_market_is_coloured_in_its_own_convention(monkeypatch):
+    plugin = _plugin()
+    dots = {}
+    original_sparkline = news_layout.NewsPage.sparkline
+
+    def record_dot(self, box, closes, mark=None):
+        dots[closes[-1]] = mark
+        return original_sparkline(self, box, closes, mark)
+
+    monkeypatch.setattr(news_layout.NewsPage, "sparkline", record_dot)
+    fills = {}
+    original_text = ImageDraw.ImageDraw.text
+
+    def capture_text(self, xy, text, *args, **kwargs):
+        fills.setdefault(str(text), kwargs.get("fill"))
+        return original_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+
+    def quote(name, pct, last):
+        return {"name": name, "price": last, "change_pct": pct, "as_of": "2026-10-22T07:00:00+00:00",
+                "closes": [last - pct, last]}
+
+    payload = _page_payload(market_snapshot={"groups": {
+        "a_share": [quote("上证指数", 1.2, 3001.0), quote("深证成指", -0.5, 11002.0), quote("创业板指", 0.0, 2003.0)],
+        "us_stock": [quote("标普500", -1.54, 7004.0), quote("纳斯达克", 0.3, 25005.0), quote("道琼斯", 0.0, 52006.0)],
+    }})
+    plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 10, 22), {"mode": "day"})
+
+    red, green = (255, 0, 0), (0, 255, 0)
+    # Mainland boards: gains red, losses green.
+    assert fills["+1.20%"] == dots[3001.0] == red
+    assert fills["-0.50%"] == dots[11002.0] == green
+    # US boards: gains green, losses red.
+    assert fills["-1.54%"] == dots[7004.0] == red
+    assert fills["+0.30%"] == dots[25005.0] == green
+    # A flat day stays in ink with an ink dot.
+    ink = daily_ai_news_module.get_theme_palette("day")["ink"]
+    assert fills["0.00%"] == ink and dots[2003.0] is None and dots[52006.0] is None
 
 
 def test_every_index_has_a_mark_in_pure_panel_inks():
@@ -2019,7 +2075,7 @@ def test_words_stay_ink_with_red_and_blue_as_sparing_accents(monkeypatch):
     # The lead's seal is the panel's red with white characters.
     assert fills["头"] == fills["条"] == (255, 255, 255)
     palette = plugin._page_palette({"mode": "day"})
-    assert palette["lead"] == palette["up"] == (255, 0, 0) and palette["down"] == (0, 255, 0)
+    assert palette["lead"] == palette["red"] == (255, 0, 0) and palette["green"] == (0, 255, 0)
     assert "domestic" not in palette and "world" not in palette
     assert image.getpixel((22, 100)) == (255, 0, 0)
     assert image.getpixel((400, 100)) == (255, 255, 255)
