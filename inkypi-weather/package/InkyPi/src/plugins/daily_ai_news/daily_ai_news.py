@@ -40,7 +40,7 @@ from utils.image_utils import text_width
 from utils.theme_utils import get_theme_palette
 
 from . import news_common as common
-from .news_brief import DEFAULT_MODEL, NEWS_TAG_MAX_CHARS, NewsBriefMixin
+from .news_brief import DEFAULT_MODEL, NEWS_TAG_MAX_CHARS, NewsBriefMixin, summary_model  # noqa: F401
 from .news_common import MAINLAND_NEWS_MAX, WORLD_NEWS_MAX
 from .news_layout import NewsPage, date_text as news_date_text
 from .news_market import MARKET_GROUPS, MARKET_LOGOS, MARKET_SHORT_NAMES, NewsMarketMixin
@@ -150,7 +150,7 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
         )
 
     def _get_brief(self, settings, device_config, now: datetime) -> dict[str, Any]:
-        model = (settings.get("model") or DEFAULT_MODEL).strip()
+        model = summary_model(settings.get("model"))
         feeds_text = self._effective_feeds_text(settings.get("feed_urls"))
         max_items = common._parse_int(settings.get("max_items"), 22, 6, 40)
         theme_render_only = common._enabled(settings.get("_theme_render_only"))
@@ -205,7 +205,7 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
         device_config,
         now: datetime,
     ) -> dict[str, Any]:
-        model = (settings.get("model") or DEFAULT_MODEL).strip()
+        model = summary_model(settings.get("model"))
         feeds_text = self._effective_feeds_text(settings.get("feed_urls"))
         max_items = common._parse_int(settings.get("max_items"), 22, 6, 40)
         theme_render_only = common._enabled(settings.get("_theme_render_only"))

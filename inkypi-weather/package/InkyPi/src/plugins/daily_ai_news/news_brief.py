@@ -23,9 +23,13 @@ from .news_text import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gpt-5-nano"
+DEFAULT_MODEL = "gpt-5-mini"
+# Earlier defaults; a setting saved with one of them follows the current default.
+LEGACY_DEFAULT_MODELS = ("gpt-5-nano",)
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
-DEFAULT_AI_TIMEOUT_SECONDS = 30
+# gpt-5-mini reasons briefly before answering, so it gets more time than nano did.
+DEFAULT_AI_TIMEOUT_SECONDS = 60
+AI_MAX_OUTPUT_TOKENS = 6000
 # Each story is a short concrete title, a one-sentence fact and a 2-4 character tag.
 NEWS_TITLE_MAX_CHARS = 30
 NEWS_FACT_MAX_CHARS = 44
@@ -158,6 +162,39 @@ NEWS_RULES = {
 }
 
 
+def _story_schema(*, lead=False):
+    properties = {
+        "ref": {"type": "string", "description": "所依据 RSS 条目的 id"},
+        "tag": {"type": "string", "enum": list(dict.fromkeys((*NEWS_TAGS, FALLBACK_NEWS_TAG)))},
+        "title": {"type": "string"},
+        "why": {"type": "string", "description": "两句话事实" if lead else "一句话事实"},
+    }
+    if lead:
+        properties["section"] = {"type": "string", "enum": ["mainland", "world"]}
+    return {"type": "object", "additionalProperties": False, "properties": properties, "required": list(properties)}
+
+
+# The reply's shape, enforced by the OpenAI Responses API (Structured Outputs), so the
+# brief always parses and every story carries its ref, a vocabulary tag and its section.
+NEWS_JSON_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "lead": _story_schema(lead=True),
+        "mainland": {"type": "array", "items": _story_schema()},
+        "world": {"type": "array", "items": _story_schema()},
+        "sources": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["lead", "mainland", "world", "sources"],
+}
+
+
+def summary_model(value: Any) -> str:
+    """The summary model a setting asks for; a saved earlier default follows the current one."""
+    model = str(value or "").strip()
+    return DEFAULT_MODEL if not model or model in LEGACY_DEFAULT_MODELS else model
+
+
 def news_request(items: list[dict[str, str]], recent_titles: list[str] | None, now: datetime,
                  style: Any = None) -> dict[str, Any]:
     """The user message: date, recent titles to avoid, the output shape, every rule and the
@@ -254,11 +291,15 @@ class NewsBriefMixin:
                 "model": model,
                 "instructions": system,
                 "input": user_text,
-                "max_output_tokens": 3000,
+                "max_output_tokens": AI_MAX_OUTPUT_TOKENS,
+                "text": {"format": {"type": "json_schema", "name": "news_brief", "strict": True,
+                                    "schema": NEWS_JSON_SCHEMA}},
             }
             if model.startswith("gpt-5"):
-                response_kwargs["reasoning"] = {"effort": "minimal"}
-                response_kwargs["text"] = {"verbosity": "low"}
+                # Low, not minimal: a short think noticeably improves the lead choice,
+                # the two-sentence lead fact and the translations.
+                response_kwargs["reasoning"] = {"effort": "low"}
+                response_kwargs["text"]["verbosity"] = "low"
             if provider == "openai":
                 response = client.responses.create(**response_kwargs)
                 content = (getattr(response, "output_text", "") or "").strip()
@@ -861,7 +902,7 @@ class NewsBriefMixin:
         return {
             "date": now.strftime("%Y-%m-%d"),
             "generated_at": now.isoformat(),
-            "model": settings.get("model") or DEFAULT_MODEL,
+            "model": summary_model(settings.get("model")),
             "brief": {
                 "lede": "AI新闻暂不可用，等待下次刷新。",
                 "mainland": [{"title": "新闻简报生成失败", "why": error[:48]}],

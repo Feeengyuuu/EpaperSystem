@@ -535,7 +535,8 @@ def test_forced_refresh_treats_today_policy_limited_cache_as_fresh(monkeypatch, 
     }
     cache_key = plugin._cache_key(
         "2026-06-17",
-        "gpt-5-nano",
+        # A saved gpt-5-nano setting now means the current default model.
+        daily_ai_news_module.DEFAULT_MODEL,
         plugin._effective_feeds_text(settings["feed_urls"]),
         6,
         None,
@@ -2304,6 +2305,44 @@ def test_a_one_sentence_lead_shows_its_source_and_time_on_the_second_line(monkey
 
     assert "喝大水风潮被疾控提醒" in seen
     assert "中新网要闻 · 10:52 发布" in seen
+
+
+def test_openai_call_enforces_the_brief_schema_with_a_short_think(monkeypatch):
+    plugin = _plugin()
+    captured = {}
+
+    class _Responses:
+        @staticmethod
+        def create(**kwargs):
+            captured.update(kwargs)
+
+            class _Response:
+                output_text = '{"lead":null,"mainland":[],"world":[],"sources":[]}'
+
+            return _Response()
+
+    class _Client:
+        responses = _Responses()
+
+    monkeypatch.setattr(news_brief, "OpenAI", lambda **_kwargs: _Client())
+
+    plugin._summarize_with_openai("key", "gpt-5-mini", {}, [], {}, datetime(2026, 10, 22, 7, 0))
+
+    text_format = captured["text"]["format"]
+    assert text_format["type"] == "json_schema" and text_format["strict"] is True
+    schema = text_format["schema"]
+    assert schema["required"] == ["lead", "mainland", "world", "sources"]
+    story = schema["properties"]["world"]["items"]
+    assert story["additionalProperties"] is False and set(story["required"]) == {"ref", "tag", "title", "why"}
+    assert news_brief.FALLBACK_NEWS_TAG in story["properties"]["tag"]["enum"]
+    assert schema["properties"]["lead"]["properties"]["section"]["enum"] == ["mainland", "world"]
+    assert captured["reasoning"] == {"effort": "low"}
+
+
+@pytest.mark.parametrize(("saved", "used"), [(None, "gpt-5-mini"), ("", "gpt-5-mini"), ("gpt-5-nano", "gpt-5-mini"),
+                                             ("gpt-5", "gpt-5")])
+def test_a_saved_earlier_default_model_follows_the_current_default(saved, used):
+    assert news_brief.summary_model(saved) == used
 
 
 def test_a_reply_with_a_raw_newline_inside_a_string_still_parses():
