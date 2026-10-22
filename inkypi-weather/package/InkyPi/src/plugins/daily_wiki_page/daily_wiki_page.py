@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
@@ -286,6 +286,10 @@ class DailyWikiPage(BasePlugin):
                 "Daily Wiki theme-only render requires matching cached source data."
             )
 
+        # A recent page in the chosen language beats a fresh one in the fallback language:
+        # a Chinese page should not turn English because one fetch failed.
+        if self._recent_cached_language(cache, language, now):
+            fallback_language = ""
         try:
             payload = self._fetch_live_payload(now, language, fallback_language, settings)
             payload.update({"date": date_key, "source_state": "live", "cache_key": cache_key})
@@ -303,6 +307,21 @@ class DailyWikiPage(BasePlugin):
         payload["source_state"] = "local"
         payload["cache_key"] = cache_key
         return payload
+
+    def _recent_cached_language(self, cache, language, now):
+        """Whether the cache holds a page in ``language`` generated within the last 36 hours."""
+        cached = cache.get("payload")
+        if cache.get("schema") != CACHE_SCHEMA_VERSION or not isinstance(cached, dict):
+            return False
+        if self._feed_language(cached.get("language")) != self._feed_language(language):
+            return False
+        try:
+            generated = datetime.fromisoformat(str(cache.get("generated_at")))
+        except (TypeError, ValueError):
+            return False
+        if generated.tzinfo is None or now.tzinfo is None:
+            generated, now = generated.replace(tzinfo=None), now.replace(tzinfo=None)
+        return timedelta(0) <= now - generated <= timedelta(hours=36)
 
     def _fetch_live_payload(self, now, language, fallback_language, settings):
         errors = []
@@ -329,7 +348,7 @@ class DailyWikiPage(BasePlugin):
             except Exception as exc:
                 errors.append(f"{current_language}: {self._failure_summary(exc)}")
                 if current_language == language:
-                    primary_failure_type = type(exc).__name__
+                    primary_failure_type = self._failure_summary(exc)
         raise RuntimeError("; ".join(errors) or "no Wikimedia payload")
 
     @staticmethod
@@ -355,7 +374,9 @@ class DailyWikiPage(BasePlugin):
             article = self._first_most_read_article(feed)
             article_source = "most read"
         if not article:
-            raise WikiSourceError("no_article", "Wikimedia feed did not include an article")
+            # The feed's own keys say whether it was empty, partial or a different shape.
+            raise WikiSourceError("no_article_keys_" + "-".join(sorted(map(str, feed)))[:60],
+                                  "Wikimedia feed did not include an article")
 
         featured_image = feed.get("image") if isinstance(feed.get("image"), dict) else {}
         title = self._page_title(article)
@@ -960,14 +981,19 @@ class DailyWikiPage(BasePlugin):
         try:
             return response.json()
         except ValueError as exc:
-            raise WikiSourceError("not_json", f"response from {url} was not JSON") from exc
+            raise WikiSourceError("not_json_" + self._response_kind(response), f"response from {url} was not JSON") from exc
+    @staticmethod
+    def _response_kind(response):
+        """Status and media type of a response, safe to log: e.g. 200_text-html."""
+        media = str(response.headers.get("Content-Type") or "none").split(";", 1)[0].strip().lower()
+        return f"{response.status_code}_{re.sub(r'[^a-z0-9.+-]+', '-', media)[:40]}"
     def _post_json(self, url, data=None):
         response = get_http_session().post(url, data=data, headers=REQUEST_HEADERS, timeout=(5, 12))
         response.raise_for_status()
         try:
             return response.json()
         except ValueError as exc:
-            raise WikiSourceError("not_json", f"response from {url} was not JSON") from exc
+            raise WikiSourceError("not_json_" + self._response_kind(response), f"response from {url} was not JSON") from exc
     def _write_context(self, payload, now):
         try:
             write_context(

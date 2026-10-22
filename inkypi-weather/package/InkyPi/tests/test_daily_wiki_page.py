@@ -1787,3 +1787,35 @@ def test_live_fetch_failures_name_the_failed_check_and_cause_without_message_tex
 
     assert summary == "WikiSourceError[not_json] from ValueError"
     assert DailyWikiPage._failure_summary(TimeoutError("credential=do-not-log")) == "TimeoutError"
+
+
+def test_feed_failures_carry_safe_details(tmp_path):
+    plugin = make_plugin(tmp_path)
+
+    with pytest.raises(wiki_module.WikiSourceError) as error:
+        plugin._payload_from_feed({"onthisday": [], "image": {}}, "zh-cn", {})
+    response = type("Response", (), {"status_code": 200, "headers": {"Content-Type": "text/html; charset=UTF-8"}})()
+
+    assert error.value.code == "no_article_keys_image-onthisday"
+    assert DailyWikiPage._response_kind(response) == "200_text-html"
+
+
+def test_a_recent_chinese_page_is_kept_instead_of_switching_to_english(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    now = datetime(2026, 10, 21, 19, 25)
+    settings = {"language": "zh-cn", "fallbackLanguage": "en"}
+    plugin._write_cache({"schema": wiki_module.CACHE_SCHEMA_VERSION, "cache_key": "earlier",
+                         "generated_at": datetime(2026, 10, 21, 0, 16).isoformat(),
+                         "payload": {"language": "zh-cn", "title": "中文页面", "extract": "中文内容"}})
+    requested = []
+
+    def fake_fetch(_now, language, fallback_language, _settings):
+        requested.append((language, fallback_language))
+        raise RuntimeError("zh-cn: WikiSourceError[not_json_200_text-html]")
+
+    monkeypatch.setattr(plugin, "_fetch_live_payload", fake_fetch)
+
+    payload = plugin._daily_payload(settings, now)
+
+    assert requested == [("zh-cn", "")]
+    assert (payload["title"], payload["source_state"]) == ("中文页面", "cache")
