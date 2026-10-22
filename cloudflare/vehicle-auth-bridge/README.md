@@ -124,6 +124,22 @@ Never paste these values into source, issue trackers, chat, logs, or Worker
 plaintext variables. The corresponding local recovery material belongs only in
 ignored, ACL-restricted `.private/` storage.
 
+## Connect InkyPi
+
+After deploying the Worker and completing the Tesla authorization, add two
+entries in the InkyPi web UI under **API Keys** (or in `/etc/inkypi/inkypi.env`):
+
+```text
+EPAPER_VEHICLE_BRIDGE_TOKEN=<your BRIDGE_READ_TOKEN>
+EPAPER_VEHICLE_BRIDGE_ORIGIN=https://<your-worker>.<your-subdomain>.workers.dev
+```
+
+The Vehicle Status plugin only calls `<origin>/api/vehicle-summary` with the
+read token. The origin must be `https://` with a public host name and no path;
+anything else is rejected and the page says to check the bridge address. Without
+`EPAPER_VEHICLE_BRIDGE_ORIGIN` the plugin uses the project maintainer's
+deployment, which only accepts the maintainer's token.
+
 ## Local verification
 
 ```powershell

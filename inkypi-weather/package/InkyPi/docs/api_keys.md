@@ -135,6 +135,7 @@ These are all the keys the installer and the web UI know about, matching
 | `RAPIDAPI_KEY` | RapidAPI | Flight Radar, Daily Knowledge | <https://rapidapi.com/hub> |
 | `BAMBU_ACCESS_CODE` | Bambu Lab printer (LAN access code shown on the printer's screen) | Bambu Monitor | <https://wiki.bambulab.com/en/general/find-sn> |
 | `EPAPER_VEHICLE_BRIDGE_TOKEN` | Your own Tesla bridge Worker (read-only token) | Vehicle Status | [cloudflare/vehicle-auth-bridge](../../../../cloudflare/vehicle-auth-bridge) |
+| `EPAPER_VEHICLE_BRIDGE_ORIGIN` | Address of your own bridge Worker, such as `https://vehicle-bridge.<you>.workers.dev` (empty uses the project maintainer's bridge) | Vehicle Status | [cloudflare/vehicle-auth-bridge](../../../../cloudflare/vehicle-auth-bridge) |
 
 ### Developers
 

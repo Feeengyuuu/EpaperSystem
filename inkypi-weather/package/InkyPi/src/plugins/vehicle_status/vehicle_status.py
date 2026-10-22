@@ -8,13 +8,14 @@ from datetime import datetime, timezone
 from io import BytesIO
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import math
 from pathlib import Path
 import threading
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
@@ -23,6 +24,7 @@ from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     attach_source_provenance,
 )
+from security.ssrf import get_ssrf_policy
 from utils.app_utils import get_base_ui_font
 from utils.atomic_file import atomic_write_json
 from utils.http_client import HttpStatusError, get_http_client
@@ -31,8 +33,13 @@ from utils.safe_image import ImageLimits, safe_open_image
 
 logger = logging.getLogger(__name__)
 
+# The bridge is a Worker you deploy yourself (cloudflare/vehicle-auth-bridge).
+# EPAPER_VEHICLE_BRIDGE_ORIGIN names its https origin; without it the
+# maintainer's deployment is used.
 BRIDGE_ORIGIN = "https://epaper-vehicle-bridge.superxfy.workers.dev"
-BRIDGE_SUMMARY_URL = f"{BRIDGE_ORIGIN}/api/vehicle-summary?schema_version=3"
+BRIDGE_ORIGIN_ENV = "EPAPER_VEHICLE_BRIDGE_ORIGIN"
+BRIDGE_SUMMARY_PATH = "/api/vehicle-summary?schema_version=3"
+BRIDGE_SUMMARY_URL = f"{BRIDGE_ORIGIN}{BRIDGE_SUMMARY_PATH}"
 BRIDGE_TOKEN_ENV = "EPAPER_VEHICLE_BRIDGE_TOKEN"
 GOOGLE_MAPS_KEY_ENVS = ("GOOGLE_MAPS_API_KEY", "Google_KEY", "GOOGLE_KEY")
 GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
@@ -379,6 +386,8 @@ _UI_TEXT = {
         "setup_footer": "Read-only / no wake / no commands",
         "connect_bridge_title": "CONNECT BRIDGE",
         "connect_bridge_message": "Add {token} in API Keys.",
+        "bridge_origin_invalid_title": "CHECK BRIDGE ADDRESS",
+        "bridge_origin_invalid_message": "{setting} must be https://<bridge host>.",
         "status_old_title": "STATUS TOO OLD",
         "status_old_message": "Refresh the bridge before trusting vehicle status.",
         "status_unavailable_title": "STATUS UNAVAILABLE",
@@ -504,6 +513,8 @@ _UI_TEXT = {
         "setup_footer": "只读 / 不唤醒 / 不发送指令",
         "connect_bridge_title": "连接车辆桥接",
         "connect_bridge_message": "请在 API 密钥中添加 {token}。",
+        "bridge_origin_invalid_title": "请检查桥接地址",
+        "bridge_origin_invalid_message": "{setting} 应为 https://<桥接域名>。",
         "status_old_title": "车辆状态已过期",
         "status_old_message": "请刷新桥接后再使用车辆信息。",
         "status_unavailable_title": "车辆状态不可用",
@@ -635,6 +646,45 @@ class SummaryContractError(ValueError):
     """The bridge returned data outside the public sanitized contract."""
 
 
+class BridgeOriginError(ValueError):
+    """EPAPER_VEHICLE_BRIDGE_ORIGIN is not a bare https origin of a named host."""
+
+
+def bridge_origin(value):
+    """The bridge origin to call: the configured https origin, or the default one.
+
+    Only ``https://host[:port]`` is accepted, so the token is never sent in clear,
+    the summary path stays fixed, and an IP address or local name cannot be used
+    to reach the device's own network.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return BRIDGE_ORIGIN
+    try:
+        parsed = urlsplit(text)
+        port = parsed.port
+    except ValueError as exc:
+        raise BridgeOriginError("not a URL") from exc
+    if parsed.scheme.lower() != "https":
+        raise BridgeOriginError("must use https")
+    if parsed.username is not None or parsed.password is not None:
+        raise BridgeOriginError("must not contain credentials")
+    if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+        raise BridgeOriginError("must be an origin without a path or query")
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if not host:
+        raise BridgeOriginError("has no host")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        raise BridgeOriginError("must use a host name, not an IP address")
+    if "." not in host or host == "localhost" or host.endswith((".localhost", ".local", ".internal")):
+        raise BridgeOriginError("must be a public host name")
+    return f"https://{host}" if port in (None, 443) else f"https://{host}:{port}"
+
+
 class VehicleStatus(BasePlugin):
     def generate_settings_template(self):
         params = super().generate_settings_template()
@@ -709,10 +759,25 @@ class VehicleStatus(BasePlugin):
                 )
 
             try:
+                origin = bridge_origin(device_config.load_env_key(BRIDGE_ORIGIN_ENV))
+            except BridgeOriginError as exc:
+                logger.warning("Vehicle bridge origin rejected reason=%s", exc)
+                return self._render_local_message(
+                    dimensions,
+                    theme,
+                    _t(language, "bridge_origin_invalid_title"),
+                    _t(language, "bridge_origin_invalid_message", setting=BRIDGE_ORIGIN_ENV),
+                    language,
+                )
+
+            try:
+                if origin != BRIDGE_ORIGIN:
+                    # A configured bridge must resolve only to public addresses.
+                    get_ssrf_policy().resolve_and_validate(origin)
                 client = get_http_client()
                 result = client.request_json(
                     "GET",
-                    BRIDGE_SUMMARY_URL,
+                    f"{origin}{BRIDGE_SUMMARY_PATH}",
                     headers={"Authorization": f"Bearer {token}"},
                     allow_redirects=False,
                     timeout=(4, 12),

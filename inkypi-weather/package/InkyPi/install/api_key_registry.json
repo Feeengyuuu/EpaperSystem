@@ -679,6 +679,18 @@
       "value_type": "secret"
     },
     {
+      "key": "EPAPER_VEHICLE_BRIDGE_ORIGIN",
+      "service": "Epaper Vehicle Bridge address",
+      "features": [
+        "Vehicle Status"
+      ],
+      "required": false,
+      "aliases": [],
+      "signup_url": "https://github.com/Feeengyuuu/EpaperSystem/tree/main/cloudflare/vehicle-auth-bridge",
+      "notes": "https origin of your own bridge Worker, such as https://vehicle-bridge.example.workers.dev. Leave empty to use the project maintainer's bridge.",
+      "value_type": "secret"
+    },
+    {
       "key": "TWITCH_CLIENT_ID",
       "service": "Twitch application client ID",
       "features": [

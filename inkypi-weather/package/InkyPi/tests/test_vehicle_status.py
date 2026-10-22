@@ -25,6 +25,7 @@ from plugins.vehicle_status.vehicle_status import (  # noqa: E402
     BRIDGE_SUMMARY_URL,
     VehicleStatus,
 )
+from security.ssrf import UnsafeTarget  # noqa: E402
 
 
 class DeviceConfig:
@@ -455,7 +456,7 @@ def test_live_fetch_is_fixed_bounded_and_never_follows_redirects(tmp_path, monke
     assert image.size == (800, 480)
     assert image.mode == "RGB"
     assert read_source_provenance(image) is SourceProvenance.LIVE
-    assert device.loaded == ["EPAPER_VEHICLE_BRIDGE_TOKEN"]
+    assert device.loaded == ["EPAPER_VEHICLE_BRIDGE_TOKEN", "EPAPER_VEHICLE_BRIDGE_ORIGIN"]
     assert len(client.calls) == 1
     method, url, kwargs = client.calls[0]
     assert (method, url) == ("GET", BRIDGE_SUMMARY_URL)
@@ -496,6 +497,7 @@ def test_v3_location_fetches_google_address_and_native_map_without_leaking_secre
     assert read_source_provenance(image) is SourceProvenance.LIVE
     assert device.loaded == [
         "EPAPER_VEHICLE_BRIDGE_TOKEN",
+        "EPAPER_VEHICLE_BRIDGE_ORIGIN",
         "GOOGLE_MAPS_API_KEY",
     ]
     assert len(client.calls) == 3
@@ -790,7 +792,7 @@ def test_live_location_outside_the_display_window_never_calls_google(
 
     assert read_source_provenance(image) is SourceProvenance.LIVE
     assert len(client.calls) == 1
-    assert device.loaded == ["EPAPER_VEHICLE_BRIDGE_TOKEN"]
+    assert device.loaded == ["EPAPER_VEHICLE_BRIDGE_TOKEN", "EPAPER_VEHICLE_BRIDGE_ORIGIN"]
     assert _visible_color_bbox(image, (0, 0, 800, 480), (255, 0, 255)) is None
     cache_payload = json.loads(plugin._cache_file().read_text(encoding="utf-8"))
     assert "location_fingerprint" not in cache_payload
@@ -1563,6 +1565,128 @@ def test_missing_token_renders_local_setup_without_network(tmp_path, monkeypatch
     assert client.calls == []
     assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
     assert image.info["inkypi_skip_cache"] is True
+
+
+class RecordingSSRFPolicy:
+    def __init__(self, error=None):
+        self.error = error
+        self.validated = []
+
+    def resolve_and_validate(self, url):
+        self.validated.append(url)
+        if self.error:
+            raise self.error
+        return SimpleNamespace(normalized_url=url)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("", vehicle_module.BRIDGE_ORIGIN),
+        ("  ", vehicle_module.BRIDGE_ORIGIN),
+        ("https://My-Bridge.Example.workers.dev/", "https://my-bridge.example.workers.dev"),
+        ("https://bridge.example.com.", "https://bridge.example.com"),
+        ("https://bridge.example.com:443", "https://bridge.example.com"),
+        ("https://bridge.example.com:8443", "https://bridge.example.com:8443"),
+    ],
+)
+def test_bridge_origin_normalizes_a_bare_https_origin(value, expected):
+    assert vehicle_module.bridge_origin(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "http://bridge.example.com",
+        "bridge.example.com",
+        "ftp://bridge.example.com",
+        "https://user:secret@bridge.example.com",
+        "https://bridge.example.com/api/vehicle-summary",
+        "https://bridge.example.com/?next=1",
+        "https://bridge.example.com/#top",
+        "https://203.0.113.7",
+        "https://[2001:db8::1]",
+        "https://localhost",
+        "https://bridge.localhost",
+        "https://raspberrypi.local",
+        "https://bridge",
+        "https://bridge.example.com:99999",
+    ],
+)
+def test_bridge_origin_rejects_anything_but_a_public_https_origin(value):
+    with pytest.raises(vehicle_module.BridgeOriginError):
+        vehicle_module.bridge_origin(value)
+
+
+def test_custom_bridge_origin_is_validated_and_gets_the_fixed_summary_path(tmp_path, monkeypatch):
+    client = FakeHttpClient(_summary())
+    policy = RecordingSSRFPolicy()
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+    monkeypatch.setattr(vehicle_module, "get_ssrf_policy", lambda: policy)
+    plugin = _plugin(tmp_path)
+    device = DeviceConfig(env={"EPAPER_VEHICLE_BRIDGE_ORIGIN": "https://my-bridge.example.workers.dev/"})
+
+    image = plugin.generate_image({"cacheSeconds": 0}, device)
+
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+    assert policy.validated == ["https://my-bridge.example.workers.dev"]
+    method, url, kwargs = client.calls[0]
+    assert (method, url) == ("GET", "https://my-bridge.example.workers.dev/api/vehicle-summary?schema_version=3")
+    assert kwargs["headers"] == {"Authorization": "Bearer bridge-token"}
+    assert kwargs["allow_redirects"] is False
+    assert kwargs["max_bytes"] == 64 * 1024
+
+
+def test_default_bridge_skips_the_dns_check(tmp_path, monkeypatch):
+    client = FakeHttpClient(_summary())
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+    monkeypatch.setattr(
+        vehicle_module, "get_ssrf_policy", lambda: (_ for _ in ()).throw(AssertionError("policy used"))
+    )
+
+    plugin = _plugin(tmp_path)
+    plugin.generate_image({"cacheSeconds": 0}, DeviceConfig())
+
+    assert client.calls[0][1] == BRIDGE_SUMMARY_URL
+
+
+def test_invalid_bridge_origin_shows_a_local_message_and_never_sends_the_token(
+    tmp_path, monkeypatch, caplog
+):
+    client = FakeHttpClient(error=AssertionError("network called"))
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+    plugin = _plugin(tmp_path)
+    shown = []
+    render_message = plugin._render_local_message
+    monkeypatch.setattr(
+        plugin,
+        "_render_local_message",
+        lambda dimensions, theme, title, message, language: shown.append((title, message))
+        or render_message(dimensions, theme, title, message, language),
+    )
+    device = DeviceConfig(env={"EPAPER_VEHICLE_BRIDGE_ORIGIN": "http://my-bridge.example.workers.dev"})
+
+    image = plugin.generate_image({"cacheSeconds": 0, "language": "en"}, device)
+
+    assert client.calls == []
+    assert shown == [("CHECK BRIDGE ADDRESS", "EPAPER_VEHICLE_BRIDGE_ORIGIN must be https://<bridge host>.")]
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+    assert "bridge-token" not in caplog.text
+
+
+def test_bridge_origin_resolving_to_a_private_address_is_not_called(tmp_path, monkeypatch):
+    client = FakeHttpClient(error=AssertionError("network called"))
+    policy = RecordingSSRFPolicy(error=UnsafeTarget("target resolves to a private address"))
+    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+    monkeypatch.setattr(vehicle_module, "get_ssrf_policy", lambda: policy)
+    plugin = _plugin(tmp_path)
+    device = DeviceConfig(env={"EPAPER_VEHICLE_BRIDGE_ORIGIN": "https://rebind.example.com"})
+
+    image = plugin.generate_image({"cacheSeconds": 0}, device)
+
+    assert policy.validated == ["https://rebind.example.com"]
+    assert client.calls == []
+    assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
 
 
 def test_worker_stale_snapshot_stays_stale_and_non_cacheable(tmp_path, monkeypatch):

@@ -121,6 +121,7 @@ sudo systemctl restart inkypi
 | `RAPIDAPI_KEY` | RapidAPI | Flight Radar、Daily Knowledge | <https://rapidapi.com/hub> |
 | `BAMBU_ACCESS_CODE` | Bambu Lab 打印机（局域网访问码，在打印机屏幕上查看） | Bambu Monitor | <https://wiki.bambulab.com/en/general/find-sn> |
 | `EPAPER_VEHICLE_BRIDGE_TOKEN` | 自建的 Tesla 桥接 Worker（只读令牌） | Vehicle Status | [cloudflare/vehicle-auth-bridge](../../../../cloudflare/vehicle-auth-bridge) |
+| `EPAPER_VEHICLE_BRIDGE_ORIGIN` | 自建桥接 Worker 的地址，如 `https://vehicle-bridge.<你的子域>.workers.dev`（不填则使用项目维护者的桥接） | Vehicle Status | [cloudflare/vehicle-auth-bridge](../../../../cloudflare/vehicle-auth-bridge) |
 
 ### 开发者
 
