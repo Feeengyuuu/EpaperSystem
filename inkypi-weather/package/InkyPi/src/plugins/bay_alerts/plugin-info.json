@@ -13,7 +13,7 @@
   },
   "theme": {
     "presentation": "ui",
-    "day": {"background": "#fbfaf4", "accent": "#d0251f"},
-    "night": {"background": "#0f1a22", "accent": "#ff6b6b"}
+    "day": {"background": "#ffffff", "accent": "#d0251f"},
+    "night": {"background": "#000000", "accent": "#ff6b6b"}
   }
 }

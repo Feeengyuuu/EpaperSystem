@@ -15,18 +15,20 @@ from .map_view import quake_age_class, render_bay_map, render_california_map
 from .sources import PACIFIC, distance_km, local_now, parse_time
 
 
+# Pure white or black paper and neutral grey rules: an off-white or tinted ground, or a tinted
+# grey, dithers into scattered yellow, blue or green dots on the panel.
 DAY = {
-    "paper": "#fbfaf4", "panel": "#efede4", "ink": "#141c22", "muted": "#232d35", "rule": "#9aa3a8",
+    "paper": "#ffffff", "panel": "#efede4", "ink": "#141c22", "muted": "#232d35", "rule": "#a0a0a0",
     "water": "#eef3fb", "water_line": "#1f5fbf", "relief": "#141c22", "relief_density": 0.42,
     "fault": "#e02020", "alert": "#d0251f", "quake_day": "#e02020", "quake_recent": "#ffde00",
     # Greens and yellows sit near the panel's native inks so fills stay solid after dithering.
     "home": "#1f5fbf", "ok": "#00af2d", "minor": "#1f5fbf", "moderate": "#ffde00", "badge_ink": "#ffffff",
 }
 NIGHT = {
-    "paper": "#0f1a22", "panel": "#182730", "ink": "#eef2ea", "muted": "#c3cdd2", "rule": "#55656f",
+    "paper": "#000000", "panel": "#182730", "ink": "#eef2ea", "muted": "#c3cdd2", "rule": "#5a5a5a",
     "water": "#14304a", "water_line": "#7fb8ff", "relief": "#eef2ea", "relief_density": 0.26,
     "fault": "#ff6b6b", "alert": "#ff6b6b", "quake_day": "#ff5a5a", "quake_recent": "#ffd84a",
-    "home": "#7fb8ff", "ok": "#6fd38f", "minor": "#7fb8ff", "moderate": "#ffd84a", "badge_ink": "#0f1a22",
+    "home": "#7fb8ff", "ok": "#6fd38f", "minor": "#7fb8ff", "moderate": "#ffd84a", "badge_ink": "#000000",
 }
 TITLE_WORDMARK = Path(__file__).resolve().parent / "assets" / "title_wordmark.png"
 SEVERITY = {"Extreme": ("极端", "alert"), "Severe": ("严重", "alert"), "Moderate": ("中等", "moderate"),
