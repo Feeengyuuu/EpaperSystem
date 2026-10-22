@@ -245,15 +245,6 @@ def test_date_hero_overlay_defaults_to_comic_weather_styles():
     }) is False
 
 
-def test_date_hero_cutout_selection_rotates_by_date():
-    plugin = SimpleCalendar({"id": "simple_calendar"})
-
-    first = Path(plugin._date_hero_cutout_path(date(2026, 5, 28))).name
-    next_day = Path(plugin._date_hero_cutout_path(date(2026, 5, 29))).name
-
-    assert first != next_day
-
-
 def test_date_hero_cutouts_are_transparent_pngs():
     plugin = SimpleCalendar({"id": "simple_calendar"})
     paths = plugin._date_hero_cutout_paths()

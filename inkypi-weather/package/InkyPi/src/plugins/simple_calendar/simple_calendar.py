@@ -26,6 +26,8 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import read_contexts
+from plugins.simple_calendar import panel_scene
+from plugins.simple_calendar.panel_stage import PanelStageMixin
 from plugins.simple_calendar.game_events import GameEventProvider, enabled as game_events_enabled
 from plugins.simple_calendar.apple_events import AppleEventProvider
 from plugins.simple_calendar.game_event_sources import SERIES as GAME_EVENT_SERIES
@@ -37,12 +39,12 @@ from utils.theme_utils import contrast_ratio, relative_luminance
 logger = logging.getLogger(__name__)
 
 # The only local raster inputs are one weather background and one optional
-# hero cutout.  They live under independent roots and are each consumed once,
+# host drawing.  They live under independent roots and are each consumed once,
 # so forming separate one-item batches would add staging/IPC without parallel
 # work.  Keep this plugin on its existing parent-serial render path.
 PARALLEL_IMAGE_STAGE_ELIGIBLE = False
 PARALLEL_IMAGE_STAGE_RATIONALE = (
-    "weather background and hero cutout are single assets under independent roots"
+    "weather background and host drawing are single assets under independent roots"
 )
 
 DEFAULT_DATA_DIR = Path("/var/lib/inkypi/data")
@@ -156,16 +158,6 @@ ICAL_WEEKDAY_INDEX = {
     "SU": 6,
 }
 RECURRENCE_ITERATION_LIMIT = 20000
-DATE_HERO_CUTOUT_DIR = "date_hero_cutouts"
-DATE_HERO_PLACEMENTS = (
-    (-0.20, -0.12, 0.38),
-    (0.20, -0.12, 0.38),
-    (-0.18, 0.10, 0.36),
-    (0.18, 0.10, 0.36),
-    (-0.03, -0.18, 0.35),
-    (-0.21, 0.00, 0.36),
-    (0.21, 0.00, 0.36),
-)
 
 LOCALE_DATA = {
     "de": {
@@ -223,11 +215,14 @@ _LETTER_W, _LETTER_H = 5, 7
 
 
 
-class SimpleCalendar(BasePlugin):
+class SimpleCalendar(PanelStageMixin, BasePlugin):
 
     _CACHED_EVENTS_SETTING = "_inkypi_simple_calendar_cached_events"
     _SOURCE_PROVENANCE_SETTING = "_inkypi_simple_calendar_source_provenance"
     _DISPLAY_RENDER_SETTING = "_inkypiDisplayRender"
+    # The moment a prepared presentation is for, so the panel's host speaks to
+    # the time it will be on screen even though the date is pinned.
+    _SCENE_TIME_SETTING = "_inkypi_simple_calendar_scene_time"
 
     def __init__(self, config, **dependencies):
         self.game_events = dependencies.pop("game_event_provider", None) or GameEventProvider()
@@ -274,6 +269,7 @@ class SimpleCalendar(BasePlugin):
         )
         render_settings = dict(settings or {})
         render_settings["customDate"] = selected_date.isoformat()
+        render_settings[self._SCENE_TIME_SETTING] = requested_at.astimezone(tz).isoformat()
         render_settings["_theme_render_only"] = True
         render_settings["_inkypi_theme"] = resolved_theme_context
         render_settings[self._CACHED_EVENTS_SETTING] = events
@@ -346,8 +342,23 @@ class SimpleCalendar(BasePlugin):
             provenance = self._worst_source_provenance([
                 provenance or SourceProvenance.LIVE, event_result.provenance
             ])
-        weather_panel_background_path = self._get_weather_panel_background_path(settings, device_config, selected_date)
+        # The panel's art and host follow the moment it is shown: the background
+        # turns over with the time of day, and the host reacts to today's plans.
+        weather_slug = self._weather_panel_slug(settings, device_config)
         date_hero_overlay_enabled = self._date_hero_overlay_enabled(settings)
+        scene_time = self._scene_time(settings, selected_date, tz, reference_dt)
+        scene = (
+            panel_scene.choose_scene(holiday_events, selected_date, scene_time, weather_slug)
+            if date_hero_overlay_enabled
+            else None
+        )
+        weather_panel_background_path = self._weather_panel_background_for(
+            weather_slug,
+            settings,
+            selected_date,
+            daypart=panel_scene.daypart(scene_time),
+            free_stage=bool(scene and scene.costume),
+        )
 
         image = self._render_calendar(
             dimensions,
@@ -362,6 +373,7 @@ class SimpleCalendar(BasePlugin):
             date_hero_overlay_enabled,
             reference_dt,
             theme_palette,
+            scene,
         )
         if provenance is not None:
             image = attach_source_provenance(image, provenance)
@@ -385,6 +397,7 @@ class SimpleCalendar(BasePlugin):
         date_hero_overlay_enabled=False,
         reference_dt=None,
         theme_palette=None,
+        scene=None,
     ):
         W, H = dimensions
         holiday_events = holiday_events or []
@@ -529,19 +542,6 @@ class SimpleCalendar(BasePlugin):
             draw, (panel_cx, day_y), day_str, clean_day_font, text_color,
             surface if outlined else None, text_color,
         )
-        if date_hero_overlay_enabled:
-            self._draw_focus_date_hero(
-                img,
-                selected_date,
-                p_left,
-                p_top,
-                p_right,
-                p_bottom,
-                panel_cx,
-                day_y,
-                panel_w,
-                panel_h,
-            )
         rule_width = max(int(W * 0.004), 2)
         rule_points = [(panel_cx - rule_w // 2, rule_y), (panel_cx + rule_w // 2, rule_y)]
         if outlined:
@@ -554,10 +554,35 @@ class SimpleCalendar(BasePlugin):
                 width=1,
             )
         draw.line(rule_points, fill=accent, width=rule_width)
+        month_year = f"{month_name} {selected_date.year}"
         self._draw_focus_text(
-            draw, (panel_cx, date_y), f"{month_name} {selected_date.year}", clean_date_font, focus_muted,
+            draw, (panel_cx, date_y), month_year, clean_date_font, focus_muted,
             surface if outlined else None, text_color,
         )
+        if date_hero_overlay_enabled and scene is not None:
+            # The host stands under the month line and never covers the date.
+            def text_box(xy, text, font):
+                left, top, right, bottom = draw.textbbox(xy, text, font=font, anchor="mm")
+                return (left - 6, top - 6, right + 6, bottom + 6)
+
+            month_box = text_box((panel_cx, date_y), month_year, clean_date_font)
+            stripe = max(int(panel_px * 0.018), 4)
+            stage_left = p_left + (stripe if layout_position == "left" else 0) + 6
+            stage_right = p_right - (0 if layout_position == "left" else stripe) - 6
+            self._draw_panel_stage(
+                img,
+                scene,
+                (stage_left, month_box[3], stage_right, p_bottom - 5),
+                [
+                    text_box((panel_cx, weekday_y), weekday_str, clean_weekday_font),
+                    text_box((panel_cx, day_y), day_str, clean_day_font),
+                    (rule_points[0][0] - 6, rule_y - 8, rule_points[1][0] + 6, rule_y + 8),
+                    month_box,
+                ],
+                weather_panel_background_path,
+                self._stage_colors(theme_palette, surface, text_color, muted_text),
+                side_seed=self._stage_side_seed(selected_date, scene),
+            )
 
         # === CALENDAR CONTENT (inside light area) ===
         grid_side_pad = int(cal_w * 0.04)
@@ -718,32 +743,6 @@ class SimpleCalendar(BasePlugin):
         except TypeError:
             return False
 
-    def _draw_focus_date_hero(self, img, selected_date, left, top, right, bottom, panel_cx, day_y, panel_w, panel_h):
-        hero_path = self._date_hero_cutout_path(selected_date)
-        if not hero_path:
-            return
-
-        try:
-            hero = Image.open(hero_path).convert("RGBA")
-            placement = DATE_HERO_PLACEMENTS[selected_date.toordinal() % len(DATE_HERO_PLACEMENTS)]
-            x_factor, y_factor, scale = placement
-            target_side = max(56, int(panel_w * scale))
-            target_side = min(target_side, int(panel_h * 0.34), int(panel_w * 0.50))
-            hero.thumbnail((target_side, target_side), Image.LANCZOS)
-            if hero.width <= 0 or hero.height <= 0:
-                return
-
-            margin = max(int(panel_w * 0.025), 4)
-            center_x = panel_cx + panel_w * x_factor
-            center_y = day_y + panel_h * y_factor
-            max_x = max(left + margin, right - margin - hero.width)
-            max_y = max(top + margin, bottom - margin - hero.height)
-            x = int(max(left + margin, min(center_x - hero.width / 2, max_x)))
-            y = int(max(top + margin, min(center_y - hero.height / 2, max_y)))
-            img.paste(hero, (x, y), hero)
-        except Exception as exc:
-            logger.debug("Could not draw Simple Calendar date hero %s: %s", hero_path, exc)
-
     def _date_hero_overlay_enabled(self, settings):
         settings = settings or {}
         if "dateHeroOverlays" in settings:
@@ -752,23 +751,41 @@ class SimpleCalendar(BasePlugin):
             return self._setting_enabled(settings.get("dateHeroOverlay"))
         return self._weather_panel_background_style(settings) != "classic"
 
-    def _date_hero_cutout_path(self, selected_date):
-        paths = self._date_hero_cutout_paths()
-        if not paths:
-            return None
-        try:
-            date_number = selected_date.toordinal()
-        except AttributeError:
-            date_number = date.today().toordinal()
-        return paths[date_number % len(paths)]
-
-    def _date_hero_cutout_paths(self):
-        directory = Path(__file__).resolve().parent / DATE_HERO_CUTOUT_DIR
-        if not directory.is_dir():
-            return []
-        return sorted(path for path in directory.glob("*.png") if path.is_file())
+    def _scene_time(self, settings, selected_date, tz, reference_dt=None):
+        """The moment the panel's host speaks to, on the selected date."""
+        moment = None
+        raw = (settings or {}).get(self._SCENE_TIME_SETTING)
+        if raw:
+            try:
+                moment = datetime.fromisoformat(str(raw))
+            except ValueError:
+                moment = None
+            if moment is not None and moment.tzinfo is None:
+                moment = tz.localize(moment)
+        if moment is None:
+            moment = reference_dt
+        if moment is None:
+            # A pinned date without a moment (previews, tests) reads as midday.
+            return tz.localize(datetime(selected_date.year, selected_date.month, selected_date.day, 12))
+        moment = moment.astimezone(tz)
+        if moment.date() != selected_date:
+            moment = tz.localize(datetime.combine(selected_date, moment.time()))
+        return moment
 
     def _get_weather_panel_background_path(self, settings, device_config, selected_date=None):
+        return self._weather_panel_background_for(
+            self._weather_panel_slug(settings, device_config), settings, selected_date
+        )
+
+    def _weather_panel_background_for(self, slug, settings, selected_date=None, daypart=None, free_stage=False):
+        if not slug:
+            return None
+        return self._weather_background_path(
+            slug, settings, selected_date, daypart=daypart, free_stage=free_stage
+        )
+
+    def _weather_panel_slug(self, settings, device_config):
+        """The weather the panel shows, or None when its background is turned off."""
         if not self._weather_panel_background_enabled(settings):
             return None
 
@@ -790,10 +807,8 @@ class SimpleCalendar(BasePlugin):
             source = "fallback"
             slug = settings.get("weatherPanelFallback") or WEATHER_PANEL_BACKGROUND_DEFAULT
 
-        background_path = self._weather_background_path(slug, settings, selected_date)
-        if background_path:
-            logger.info("Simple Calendar weather panel background: %s (%s)", slug, source)
-        return background_path
+        logger.info("Simple Calendar weather panel background: %s (%s)", slug, source)
+        return slug
 
     def _weather_panel_background_enabled(self, settings):
         if "weatherPanelBackground" not in settings:
@@ -959,17 +974,28 @@ class SimpleCalendar(BasePlugin):
 
         return self._normalize_weather_background_slug(slug)
 
-    def _weather_background_path(self, slug, settings=None, selected_date=None):
+    def _weather_background_path(self, slug, settings=None, selected_date=None, daypart=None, free_stage=False):
+        """One background for the weather, stable for the date and time of day.
+
+        With a daypart the default pool also takes the clean plates drawn for
+        that time of day, and each daypart shows a different picture. A
+        free_stage asks for a background whose bottom corners are clear for the
+        host, when the pool has one.
+        """
         normalized = self._normalize_weather_background_slug(slug)
         if not normalized:
             return None
         style = self._weather_panel_background_style(settings)
         candidates = self._weather_background_candidates(normalized, style)
+        if daypart and style == WEATHER_PANEL_BACKGROUND_STYLE_DEFAULT:
+            candidates = list(dict.fromkeys(candidates + self._clean_plate_candidates(normalized, daypart)))
+        if free_stage and style != "classic":
+            candidates = [path for path in candidates if not self._occupied_corners(path)] or candidates
         if not candidates:
             logger.debug("Simple Calendar weather panel background missing: %s (%s)", normalized, style)
             return None
-        path = candidates[self._stable_weather_background_index(normalized, style, selected_date, len(candidates))]
-        return str(path)
+        index = self._stable_weather_background_index(normalized, style, selected_date, len(candidates), daypart)
+        return str(candidates[index])
 
     def _weather_panel_background_style(self, settings):
         style = str((settings or {}).get("weatherPanelBackgroundStyle") or WEATHER_PANEL_BACKGROUND_STYLE_DEFAULT).strip()
@@ -999,7 +1025,7 @@ class SimpleCalendar(BasePlugin):
             candidates.extend(path for path in variant_dir.glob("*.png") if path.is_file())
         return sorted(dict.fromkeys(candidates))
 
-    def _stable_weather_background_index(self, slug, style, selected_date, count):
+    def _stable_weather_background_index(self, slug, style, selected_date, count, daypart=None):
         if count <= 1:
             return 0
         if hasattr(selected_date, "isoformat"):
@@ -1008,6 +1034,11 @@ class SimpleCalendar(BasePlugin):
             date_number = date.today().toordinal()
         digest = hashlib.sha256(f"{slug}|{style}".encode("utf-8")).hexdigest()
         offset = int(digest[:12], 16)
+        if daypart:
+            # Each daypart starts a quarter of the pool further on, so a day
+            # shows different pictures while every daypart still steps through
+            # the whole pool one picture per day.
+            offset += panel_scene.daypart_index(daypart) * max(count // len(panel_scene.DAYPARTS), 1)
         return (date_number + offset) % count
 
     def _normalize_weather_background_slug(self, value):

@@ -48,6 +48,13 @@ BOUNDARIES = {
     "plugins/stocktracker/trend_chart.py": {
         "__future__", "collections.abc",
     },
+    "plugins/simple_calendar/panel_scene.py": {
+        "__future__", "dataclasses", "datetime", "hashlib", "re",
+    },
+    "plugins/simple_calendar/panel_stage.py": {
+        "__future__", "functools", "json", "logging", "math", "pathlib", "PIL",
+        "plugins.simple_calendar",
+    },
 }
 
 
@@ -97,7 +104,7 @@ def check_source(source: str, module: str) -> list[str]:
 # cooperative cancellation and keep the single refresh worker busy past its
 # deadline. Existing debt is ratcheted: guard new handlers with
 # ``except TaskCancelled: raise`` (or re-raise) and lower this ceiling.
-PLUGIN_CANCELLATION_SWALLOW_CEILING = 678
+PLUGIN_CANCELLATION_SWALLOW_CEILING = 677
 _CANCELLATION_TYPES = {"TaskCancelled", "TaskDeadlineExceeded"}
 _CANCELLATION_CATCHERS = {"BaseException", "Exception", "RuntimeError"}
 
