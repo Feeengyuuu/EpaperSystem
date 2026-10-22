@@ -56,8 +56,9 @@ def test_public_information_pages_preserve_serial_memory_admission():
 
 
 def test_nested_provider_plugins_do_not_create_more_than_four_local_workers():
+    # The news plugin's quote pool lives with its market code.
     daily_ai_news = (
-        PLUGIN_ROOT / "daily_ai_news" / "daily_ai_news.py"
+        PLUGIN_ROOT / "daily_ai_news" / "news_market.py"
     ).read_text(encoding="utf-8")
     steam_charts = (
         PLUGIN_ROOT / "steam_charts" / "steam_charts.py"
