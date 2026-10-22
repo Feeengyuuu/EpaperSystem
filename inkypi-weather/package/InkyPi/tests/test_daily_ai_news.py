@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import plugins.daily_ai_news.daily_ai_news as daily_ai_news_module
 from plugins.daily_ai_news.daily_ai_news import DailyAINews, TITLE_BACKGROUND_IMAGE, TITLE_BACKGROUND_SIZE, TITLE_WORDMARK_IMAGE, TITLE_WORDMARK_SIZE
-from plugins.daily_ai_news import news_art, news_layout
+from plugins.daily_ai_news import news_art, news_brief, news_common, news_layout, news_market, news_sources
 from plugins.base_plugin.presentation import PresentationMode
 from plugins.base_plugin.render_provenance import read_source_provenance
 
@@ -70,7 +70,7 @@ def test_ai_client_has_bounded_timeout_and_no_automatic_retries(monkeypatch):
         created.update(kwargs)
         return _Client()
 
-    monkeypatch.setattr(daily_ai_news_module, "OpenAI", fake_openai)
+    monkeypatch.setattr(news_brief, "OpenAI", fake_openai)
 
     plugin._summarize_with_openai(
         "fake-key",
@@ -81,7 +81,7 @@ def test_ai_client_has_bounded_timeout_and_no_automatic_retries(monkeypatch):
         datetime(2026, 7, 15, 2, 0),
     )
 
-    assert created["timeout"] == daily_ai_news_module.DEFAULT_AI_TIMEOUT_SECONDS
+    assert created["timeout"] == news_brief.DEFAULT_AI_TIMEOUT_SECONDS
     assert created["max_retries"] == 0
 
 
@@ -106,7 +106,7 @@ def test_effective_feeds_expands_legacy_bbc_only_settings():
 def test_effective_feeds_expands_previous_default_feed_set():
     plugin = _plugin()
 
-    effective = plugin._effective_feeds_text(daily_ai_news_module.LEGACY_DEFAULT_FEEDS)
+    effective = plugin._effective_feeds_text(news_sources.LEGACY_DEFAULT_FEEDS)
     urls = {url for _name, url in plugin._parse_feeds(effective)}
 
     assert "https://www.chinanews.com.cn/rss/importnews.xml" in urls
@@ -119,7 +119,7 @@ def test_effective_feeds_expands_previous_default_feed_set():
 def test_effective_feeds_expands_world_only_previous_default_feed_set():
     plugin = _plugin()
 
-    effective = plugin._effective_feeds_text(daily_ai_news_module.LEGACY_WORLD_ONLY_DEFAULT_FEEDS)
+    effective = plugin._effective_feeds_text(news_sources.LEGACY_WORLD_ONLY_DEFAULT_FEEDS)
     urls = {url for _name, url in plugin._parse_feeds(effective)}
 
     assert "https://www.chinanews.com.cn/rss/importnews.xml" in urls
@@ -174,7 +174,7 @@ def test_effective_feeds_upgrades_saved_regional_default_missing_instant_mainlan
 
 def test_default_feeds_tag_mainland_and_world_sections():
     plugin = _plugin()
-    feeds = plugin._parse_feeds(daily_ai_news_module.DEFAULT_FEEDS)
+    feeds = plugin._parse_feeds(news_sources.DEFAULT_FEEDS)
     sections = [plugin._feed_source_and_section(name, url) for name, url in feeds]
 
     assert ("中国新闻网要闻", "mainland") in sections
@@ -186,7 +186,7 @@ def test_default_feeds_tag_mainland_and_world_sections():
 
 def test_default_mainland_feeds_replace_dead_sources_with_fresh_desks():
     plugin = _plugin()
-    urls = {url for _name, url in plugin._parse_feeds(daily_ai_news_module.DEFAULT_MAINLAND_FEEDS)}
+    urls = {url for _name, url in plugin._parse_feeds(news_sources.DEFAULT_MAINLAND_FEEDS)}
 
     # 新华网时政 froze in 2022 and 人民网时政 froze in 2025-06; both keep serving
     # the same stale entries forever, which is what caused repeated mainland news.
@@ -256,11 +256,11 @@ def test_fetch_items_samples_all_configured_sources(monkeypatch):
         return type("FakeFeed", (), {"entries": entries})()
 
     monkeypatch.setattr(
-        daily_ai_news_module,
+        news_sources,
         "get_http_client",
         lambda: FakeClient(),
     )
-    monkeypatch.setattr(daily_ai_news_module.feedparser, "parse", fake_parse)
+    monkeypatch.setattr(news_sources.feedparser, "parse", fake_parse)
 
     items = plugin._fetch_items(feeds_text, 6)
 
@@ -284,11 +284,11 @@ def test_fetch_items_strips_source_section_prefix_and_tags_items(monkeypatch):
         return type("FakeFeed", (), {"entries": [{"title": f"{url} 标题", "summary": "摘要", "published": "", "link": url}]})()
 
     monkeypatch.setattr(
-        daily_ai_news_module,
+        news_sources,
         "get_http_client",
         lambda: FakeClient(),
     )
-    monkeypatch.setattr(daily_ai_news_module.feedparser, "parse", fake_parse)
+    monkeypatch.setattr(news_sources.feedparser, "parse", fake_parse)
 
     items = plugin._fetch_items(feeds_text, 4)
 
@@ -447,7 +447,7 @@ def test_get_brief_uses_new_rss_when_api_limit_blocks_stale_cache(monkeypatch, t
     plugin = _plugin()
     cache_file = tmp_path / "brief.json"
     cache_file.write_text(
-        daily_ai_news_module.json.dumps(
+        json.dumps(
             {
                 "cache_key": "old-cache-key",
                 "brief": {"top": [{"title": "old", "why": "old"}], "sources": ["BBC"]},
@@ -472,7 +472,7 @@ def test_get_brief_uses_new_rss_when_api_limit_blocks_stale_cache(monkeypatch, t
     monkeypatch.setattr(plugin, "_allow_api_call", lambda _settings, _date_key: False)
 
     brief = plugin._get_brief(
-        {"model": "gpt-5-nano", "feed_urls": daily_ai_news_module.DEFAULT_FEEDS, "max_items": "6"},
+        {"model": "gpt-5-nano", "feed_urls": news_sources.DEFAULT_FEEDS, "max_items": "6"},
         FakeDeviceConfig(),
         datetime(2026, 6, 17),
     )
@@ -487,7 +487,7 @@ def test_get_brief_keeps_stale_chinese_cache_instead_of_showing_english_rss(monk
     plugin = _plugin()
     cache_file = tmp_path / "brief.json"
     cache_file.write_text(
-        daily_ai_news_module.json.dumps(
+        json.dumps(
             {
                 "cache_key": "old-cache-key",
                 "brief": {"top": [{"title": "旧中文新闻", "why": "中文摘要"}], "sources": ["BBC中文"]},
@@ -513,7 +513,7 @@ def test_get_brief_keeps_stale_chinese_cache_instead_of_showing_english_rss(monk
     monkeypatch.setattr(plugin, "_allow_api_call", lambda _settings, _date_key: False)
 
     brief = plugin._get_brief(
-        {"model": "gpt-5-nano", "feed_urls": daily_ai_news_module.DEFAULT_FEEDS, "max_items": "6"},
+        {"model": "gpt-5-nano", "feed_urls": news_sources.DEFAULT_FEEDS, "max_items": "6"},
         FakeDeviceConfig(),
         datetime(2026, 6, 17),
     )
@@ -528,7 +528,7 @@ def test_forced_refresh_treats_today_policy_limited_cache_as_fresh(monkeypatch, 
     now = datetime(2026, 6, 17, 8, 0)
     settings = {
         "model": "gpt-5-nano",
-        "feed_urls": daily_ai_news_module.DEFAULT_FEEDS,
+        "feed_urls": news_sources.DEFAULT_FEEDS,
         "max_items": "6",
         "force_refresh": "true",
     }
@@ -540,7 +540,7 @@ def test_forced_refresh_treats_today_policy_limited_cache_as_fresh(monkeypatch, 
         None,
     )
     (tmp_path / "brief.json").write_text(
-        daily_ai_news_module.json.dumps(
+        json.dumps(
             {
                 "cache_key": cache_key,
                 "date": "2026-06-17",
@@ -621,7 +621,7 @@ def test_theme_only_warm_brief_uses_injected_palette_without_provider_calls(monk
     ]
     monkeypatch.setattr(plugin, "_fetch_items", lambda *_args: items)
     monkeypatch.setattr(plugin, "_fetch_market_snapshot", lambda *_args: {})
-    settings = {"feed_urls": daily_ai_news_module.DEFAULT_FEEDS, "max_items": "8"}
+    settings = {"feed_urls": news_sources.DEFAULT_FEEDS, "max_items": "8"}
 
     plugin.generate_image(settings, device)
 
@@ -674,7 +674,7 @@ def test_theme_only_brief_cache_miss_fails_without_provider_calls(monkeypatch, t
 
     with pytest.raises(RuntimeError, match="warm .*cache"):
         plugin._get_brief(
-            {"_theme_render_only": True, "feed_urls": daily_ai_news_module.DEFAULT_FEEDS},
+            {"_theme_render_only": True, "feed_urls": news_sources.DEFAULT_FEEDS},
             _ThemeDeviceConfig(),
             datetime(2026, 7, 11, 9, 0),
         )
@@ -747,8 +747,8 @@ def test_market_snapshot_prefers_massive_and_keeps_yahoo_fallback(monkeypatch):
             "closes": [99.0, 100.0],
         }
 
-    monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.load_massive_api_key", lambda device_config: "massive-key")
-    monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.MassiveMarketData", FakeMassiveClient)
+    monkeypatch.setattr("plugins.daily_ai_news.news_market.load_massive_api_key", lambda device_config: "massive-key")
+    monkeypatch.setattr("plugins.daily_ai_news.news_market.MassiveMarketData", FakeMassiveClient)
     monkeypatch.setattr(plugin, "_fetch_yahoo_quote", fake_yahoo)
 
     snapshot = plugin._fetch_market_snapshot(datetime(2026, 6, 3), object())
@@ -791,8 +791,8 @@ def test_market_snapshot_rejects_massive_etf_proxy_for_index(monkeypatch):
         # Same session as Massive, so an accepted Massive index quote is kept.
         return {"symbol": symbol, "name": name, "price": prices.get(symbol, 100.0), "change_pct": 1.0, "as_of": "2026-06-18", "source": "yahoo"}
 
-    monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.load_massive_api_key", lambda device_config: "massive-key")
-    monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.MassiveMarketData", FakeMassiveClient)
+    monkeypatch.setattr("plugins.daily_ai_news.news_market.load_massive_api_key", lambda device_config: "massive-key")
+    monkeypatch.setattr("plugins.daily_ai_news.news_market.MassiveMarketData", FakeMassiveClient)
     monkeypatch.setattr(plugin, "_fetch_yahoo_quote", fake_yahoo)
 
     snapshot = plugin._fetch_market_snapshot(datetime(2026, 6, 19), object())
@@ -813,7 +813,7 @@ def test_market_snapshot_fetches_independent_quotes_concurrently(monkeypatch):
     barrier = threading.Barrier(2)
 
     monkeypatch.setattr(
-        "plugins.daily_ai_news.daily_ai_news.load_massive_api_key",
+        "plugins.daily_ai_news.news_market.load_massive_api_key",
         lambda _device_config: "",
     )
 
@@ -1216,7 +1216,7 @@ def test_daily_ai_presentation_is_explicit_no_change(monkeypatch):
 def test_daily_ai_provenance_covers_fresh_stale_live_and_local(monkeypatch, tmp_path):
     plugin = _plugin()
     now = datetime(2026, 7, 12, 8, 0)
-    settings = {"feed_urls": daily_ai_news_module.DEFAULT_FEEDS, "max_items": "6"}
+    settings = {"feed_urls": news_sources.DEFAULT_FEEDS, "max_items": "6"}
     monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
 
     class Device:
@@ -1236,11 +1236,11 @@ def test_daily_ai_provenance_covers_fresh_stale_live_and_local(monkeypatch, tmp_
         "brief": {"top": [{"title": "cached", "why": "cached"}]},
         "items": [{"source": "cached", "title": "cached"}],
     }
-    cache_file.write_text(daily_ai_news_module.json.dumps(cached), encoding="utf-8")
+    cache_file.write_text(json.dumps(cached), encoding="utf-8")
     fresh = plugin._get_brief(settings, Device(), now)
 
     cached["cache_key"] = "wrong-key"
-    cache_file.write_text(daily_ai_news_module.json.dumps(cached), encoding="utf-8")
+    cache_file.write_text(json.dumps(cached), encoding="utf-8")
     monkeypatch.setattr(plugin, "_fetch_items", lambda *_args: [])
     stale = plugin._get_brief(settings, Device(), now)
 
@@ -1292,7 +1292,7 @@ def test_daily_ai_theme_provenance_is_cache_only_and_context_has_health_label(
     monkeypatch.setattr(daily_ai_news_module, "datetime", FrozenDateTime)
     now = FrozenDateTime.now()
     settings = {
-        "feed_urls": daily_ai_news_module.DEFAULT_FEEDS,
+        "feed_urls": news_sources.DEFAULT_FEEDS,
         "max_items": "6",
         "_theme_render_only": True,
         "_inkypi_theme": _canonical_theme(
@@ -1315,7 +1315,7 @@ def test_daily_ai_theme_provenance_is_cache_only_and_context_has_health_label(
     )
     cache_file = tmp_path / "brief.json"
     cache_file.write_text(
-        daily_ai_news_module.json.dumps(
+        json.dumps(
             {
                 "cache_key": key,
                 "brief": {"top": [{"title": "cached", "why": "cached"}]},
@@ -1345,7 +1345,7 @@ def test_daily_ai_theme_provenance_is_cache_only_and_context_has_health_label(
 
     monkeypatch.setattr(plugin, "_fetch_items", forbidden)
     monkeypatch.setattr(plugin, "_write_news_context", forbidden)
-    monkeypatch.setattr(daily_ai_news_module, "_safe_json_write", forbidden)
+    monkeypatch.setattr(news_common, "_safe_json_write", forbidden)
     monkeypatch.setattr(
         plugin,
         "_render",
@@ -1369,10 +1369,10 @@ def test_daily_ai_news_cold_theme_render_does_not_create_cache_tree(
     def forbidden(*_args, **_kwargs):
         raise AssertionError("cold theme-only render must not fetch or write")
 
-    data_writer = daily_ai_news_module._safe_json_write
+    data_writer = news_common._safe_json_write
     monkeypatch.setattr(plugin, "_fetch_items", forbidden)
     monkeypatch.setattr(plugin, "_write_news_context", forbidden)
-    monkeypatch.setattr(daily_ai_news_module, "_safe_json_write", forbidden)
+    monkeypatch.setattr(news_common, "_safe_json_write", forbidden)
 
     with pytest.raises(RuntimeError, match="warm Daily AI News cache"):
         plugin.generate_image(
@@ -1470,7 +1470,7 @@ def _forbid_daily_ai_news_side_effects(monkeypatch, plugin):
         "_record_api_call",
     ):
         monkeypatch.setattr(plugin, name, forbidden)
-    monkeypatch.setattr(daily_ai_news_module, "_safe_json_write", forbidden)
+    monkeypatch.setattr(news_common, "_safe_json_write", forbidden)
 
 
 def test_theme_catchup_after_local_midnight_redraws_the_scheduled_brief(
@@ -1480,7 +1480,7 @@ def test_theme_catchup_after_local_midnight_redraws_the_scheduled_brief(
     plugin = _plugin()
     monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
     moment = _freeze_daily_ai_news_clock(monkeypatch)
-    settings = {"feed_urls": daily_ai_news_module.DEFAULT_FEEDS, "max_items": "8"}
+    settings = {"feed_urls": news_sources.DEFAULT_FEEDS, "max_items": "8"}
     _seed_scheduled_daily_brief(monkeypatch, plugin, moment, settings)
     cache_file = tmp_path / "brief.json"
     before = cache_file.read_bytes()
@@ -1514,7 +1514,7 @@ def test_theme_only_still_rejects_a_brief_built_for_other_settings(
     plugin = _plugin()
     monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
     moment = _freeze_daily_ai_news_clock(monkeypatch)
-    settings = {"feed_urls": daily_ai_news_module.DEFAULT_FEEDS, "max_items": "8"}
+    settings = {"feed_urls": news_sources.DEFAULT_FEEDS, "max_items": "8"}
     _seed_scheduled_daily_brief(monkeypatch, plugin, moment, settings)
     _forbid_daily_ai_news_side_effects(monkeypatch, plugin)
     night_settings = {
@@ -1571,7 +1571,7 @@ def _patch_chart(monkeypatch, chart):
             seen["params"] = params
             return _ChartResponse(chart)
 
-    monkeypatch.setattr(daily_ai_news_module, "get_http_client", lambda: _Client())
+    monkeypatch.setattr(news_market, "get_http_client", lambda: _Client())
     return seen
 
 
@@ -1687,8 +1687,8 @@ def test_postprocess_trims_titles_facts_and_tags():
 
     item = result["world"][0]
     assert item["tag"] == "公卫"
-    assert len(item["title"]) == daily_ai_news_module.NEWS_TITLE_MAX_CHARS
-    assert len(item["why"]) == daily_ai_news_module.NEWS_FACT_MAX_CHARS
+    assert len(item["title"]) == news_brief.NEWS_TITLE_MAX_CHARS
+    assert len(item["why"]) == news_brief.NEWS_FACT_MAX_CHARS
 
 
 def test_rss_cards_take_their_tag_from_the_chinanews_desk():
@@ -1720,7 +1720,7 @@ def test_prompt_asks_for_a_lead_tags_and_one_sentence_facts(monkeypatch):
     class _Client:
         responses = _Responses()
 
-    monkeypatch.setattr(daily_ai_news_module, "OpenAI", lambda **_kwargs: _Client())
+    monkeypatch.setattr(news_brief, "OpenAI", lambda **_kwargs: _Client())
 
     plugin._summarize_with_openai("key", "gpt-5-nano", {}, [], {}, datetime(2026, 10, 21, 7, 0))
 
@@ -1747,7 +1747,7 @@ def test_prompt_numbers_items_and_asks_each_story_for_its_ref(monkeypatch):
     class _Client:
         responses = _Responses()
 
-    monkeypatch.setattr(daily_ai_news_module, "OpenAI", lambda **_kwargs: _Client())
+    monkeypatch.setattr(news_brief, "OpenAI", lambda **_kwargs: _Client())
     items = [{"source": "BBC世界", "section": "world", "title": "Earthquake hits Chile", "summary": ""},
              {"source": "NPR新闻", "section": "world", "title": "Pope recovers", "summary": ""}]
 
@@ -2149,7 +2149,7 @@ def test_prompt_bans_vague_commentary_in_facts(monkeypatch):
     class _Client:
         responses = _Responses()
 
-    monkeypatch.setattr(daily_ai_news_module, "OpenAI", lambda **_kwargs: _Client())
+    monkeypatch.setattr(news_brief, "OpenAI", lambda **_kwargs: _Client())
 
     plugin._summarize_with_openai("key", "gpt-5-nano", {}, [], {}, datetime(2026, 10, 21, 7, 0))
 
@@ -2176,8 +2176,8 @@ def test_market_uses_yahoo_when_massive_lags_a_session(monkeypatch):
         return {"symbol": symbol, "name": name, "price": 26424.82, "change_pct": -0.02, "as_of": "2026-10-20T13:30:00+00:00",
                 "source": "yahoo", "closes": [26430.89, 26424.82]}
 
-    monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.load_massive_api_key", lambda device_config: "massive-key")
-    monkeypatch.setattr("plugins.daily_ai_news.daily_ai_news.MassiveMarketData", FakeMassiveClient)
+    monkeypatch.setattr("plugins.daily_ai_news.news_market.load_massive_api_key", lambda device_config: "massive-key")
+    monkeypatch.setattr("plugins.daily_ai_news.news_market.MassiveMarketData", FakeMassiveClient)
     monkeypatch.setattr(plugin, "_fetch_yahoo_quote", fake_yahoo)
 
     row = plugin._fetch_market_snapshot(datetime(2026, 10, 21), object())["groups"]["us_stock"][1]
@@ -2204,7 +2204,7 @@ def test_yahoo_quote_without_daily_history_uses_hourly_bars(monkeypatch):
             seen.append(params)
             return _ChartResponse(responses[params["interval"]])
 
-    monkeypatch.setattr(daily_ai_news_module, "get_http_client", lambda: _Client())
+    monkeypatch.setattr(news_market, "get_http_client", lambda: _Client())
 
     row = plugin._fetch_yahoo_quote("399006.SZ", "创业板指")
 
@@ -2460,7 +2460,7 @@ def test_prompt_steers_the_lead_to_hard_news_and_mainland_to_china(monkeypatch):
     class _Client:
         responses = _Responses()
 
-    monkeypatch.setattr(daily_ai_news_module, "OpenAI", lambda **_kwargs: _Client())
+    monkeypatch.setattr(news_brief, "OpenAI", lambda **_kwargs: _Client())
 
     plugin._summarize_with_openai("key", "gpt-5-nano", {}, [], {}, datetime(2026, 10, 21, 7, 0))
 
@@ -2491,7 +2491,7 @@ def test_hourly_fallback_measures_from_the_previous_days_last_bar_not_a_stale_me
         def request_json(self, method, url, params=None, **_kwargs):
             return _ChartResponse(responses[params["interval"]])
 
-    monkeypatch.setattr(daily_ai_news_module, "get_http_client", lambda: _Client())
+    monkeypatch.setattr(news_market, "get_http_client", lambda: _Client())
 
     row = plugin._fetch_yahoo_quote("399006.SZ", "创业板指")
 
@@ -2607,12 +2607,12 @@ def test_prompt_lists_the_fixed_tag_vocabulary(monkeypatch):
     class _Client:
         responses = _Responses()
 
-    monkeypatch.setattr(daily_ai_news_module, "OpenAI", lambda **_kwargs: _Client())
+    monkeypatch.setattr(news_brief, "OpenAI", lambda **_kwargs: _Client())
 
     plugin._summarize_with_openai("key", "gpt-5-nano", {}, [], {}, datetime(2026, 10, 21, 7, 0))
 
     assert "只能从" in captured["input"]
-    assert all(tag in captured["input"] for tag in daily_ai_news_module.NEWS_TAGS)
+    assert all(tag in captured["input"] for tag in news_brief.NEWS_TAGS)
 
 
 @pytest.mark.parametrize(
