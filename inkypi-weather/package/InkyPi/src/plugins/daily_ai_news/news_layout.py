@@ -54,6 +54,8 @@ LEAD_TITLE_SIZES = (26, 24, 22, 20)
 LEAD_FACT_SIZE = 15
 LEAD_FACT_LINE = 19
 GLOBE_MIN_HEIGHT = 46
+# The most a short column widens each gap between its stories.
+JUSTIFY_GAP_MAX = 12
 WEEKDAYS = "一二三四五六日"
 
 
@@ -212,8 +214,15 @@ class NewsPage:
         size = self.fit_size(lead["title"], LEAD_TITLE_SIZES, title_w)
         self.text((title_x, top + 4 + (largest - size) // 2), self.clip(lead["title"], size, title_w), size, True)
         brief_w = art_left - 12 - text_x
-        for index, line in enumerate(self.wrap(lead.get("why"), LEAD_FACT_SIZE, brief_w, 2, False)):
+        fact = self.wrap(lead.get("why"), LEAD_FACT_SIZE, brief_w, 2, False)
+        for index, line in enumerate(fact):
             self.text((text_x, top + 40 + index * LEAD_FACT_LINE), line, LEAD_FACT_SIZE, False)
+        note = lead.get("source_note")
+        if note and len(fact) < 2:
+            # A one-sentence fact leaves its second line to the story's source and time.
+            note_y = top + 40 + len(fact) * LEAD_FACT_LINE + 2
+            self.d.line((text_x, note_y + 8, text_x + 14, note_y + 8), fill=c["ink"], width=1)
+            self.text((text_x + 20, note_y + 8), self.clip(note, 12, brief_w - 20, False), 12, False, c["ink"], "lm")
         kind = news_art.topic_kind(lead.get("tag"), lead["title"])
         news_art.draw_topic_art(self.d, (art_left, top + 4, width - MARGIN - 6, bottom - 4), kind,
                                 c["ink"], c["panel"], c["rule"], c["lead"])
@@ -228,6 +237,12 @@ class NewsPage:
         self.d.line((x, COLUMN_TOP + 22, x + width, COLUMN_TOP + 22), fill=c["rule"], width=1)
         y = COLUMN_TOP + 32
         plan, gap = self.plan_column(items, width - 26 - STORY_ICON_SLOT, COLUMN_BOTTOM - y)
+        used = sum(lines * TITLE_LINE + ITEM_FOOTER for lines in plan) + gap * max(0, len(plan) - 1)
+        spare = COLUMN_BOTTOM - y - used
+        if len(plan) > 1 and spare < GLOBE_MIN_HEIGHT:
+            # Too little room for the globe: spread the stories down the column, as a
+            # newspaper justifies one, instead of leaving a band at its foot.
+            gap += min(spare // (len(plan) - 1), JUSTIFY_GAP_MAX)
         for number, (item, title_lines) in enumerate(zip(items, plan), 1):
             y += self.item(x, y, width, number, item, title_lines, mark) + gap
         self.text((count_x, COLUMN_TOP + 2), str(len(plan)), 11, True, mark)

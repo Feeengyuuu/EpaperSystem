@@ -2272,6 +2272,40 @@ def test_a_full_column_shows_five_one_line_stories():
     assert gap == news_layout.COMPACT_ITEM_GAP
 
 
+def test_a_short_column_spreads_its_stories_to_the_foot(monkeypatch):
+    plugin = _plugin()
+    tops = []
+    original_item = news_layout.NewsPage.item
+
+    def record_item(self, x, y, *args, **kwargs):
+        height = original_item(self, x, y, *args, **kwargs)
+        if x < 400:
+            tops.append((y, height))
+        return height
+
+    monkeypatch.setattr(news_layout.NewsPage, "item", record_item)
+    plugin._render((800, 480), {"brief_title": "整点新闻"}, _page_payload(), datetime(2026, 10, 21), {"mode": "day"})
+
+    # Four one-line stories end near the column's foot instead of leaving a band below.
+    assert len(tops) == 4
+    last_top, last_height = tops[-1]
+    assert news_layout.COLUMN_BOTTOM - (last_top + last_height) < news_layout.ITEM_GAP + 4
+
+
+def test_a_one_sentence_lead_shows_its_source_and_time_on_the_second_line(monkeypatch):
+    plugin = _plugin()
+    payload = _page_payload()
+    payload["brief"]["lead"] = {"tag": "社会", "title": "中新健康：喝大水风潮被疾控提醒", "why": "疾控提醒过量饮水的风险",
+                                "section": "mainland"}
+    payload["items"].append({"source": "中国新闻网要闻", "section": "mainland", "title": "中新健康｜喝大水风潮被疾控提醒",
+                             "published": "Wed, 21 Oct 2026 17:52:00 GMT"})
+
+    _image, seen = _rendered_text(monkeypatch, plugin, payload)
+
+    assert "喝大水风潮被疾控提醒" in seen
+    assert "中新网要闻 · 10:52 发布" in seen
+
+
 def test_the_lead_keeps_a_two_sentence_fact():
     plugin = _plugin()
     fact = "台湾多地宣布23日停班停课，台股也休市一天。气象部门预计台风将在东部沿海登陆，最大风力可达14级。"

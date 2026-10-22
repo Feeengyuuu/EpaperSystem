@@ -407,7 +407,28 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             lead, section = world.pop(0), "world"
         if lead:
             lead["section_label"] = "国际" if section == "world" else "国内"
+            lead["source_note"] = self._lead_source_note(lead["title"], payload)
         return lead, mainland, world
+
+    def _lead_source_note(self, title: str, payload: dict[str, Any]) -> str:
+        """Where and when the lead's RSS item was published, e.g. "中新网要闻 · 10:52 发布"."""
+        item = next(
+            (item for item in payload.get("items") or []
+             if isinstance(item, dict) and self._similar_news_title(title, str(item.get("title") or ""))),
+            None,
+        )
+        if item is None:
+            return ""
+        source = str(item.get("source") or "").strip().replace("中国新闻网", "中新网")
+        published = self._parse_published(str(item.get("published") or ""))
+        if published is not None:
+            try:
+                zone = datetime.fromisoformat(str(payload.get("generated_at") or "")).tzinfo
+            except ValueError:
+                zone = None
+            published = published.astimezone(zone) if zone else published
+        when = f"{published:%H:%M} 发布" if published is not None else ""
+        return " · ".join(part for part in (source, when) if part)
 
     def _page_item(self, item) -> dict[str, str] | None:
         title, why = self._news_text(item)

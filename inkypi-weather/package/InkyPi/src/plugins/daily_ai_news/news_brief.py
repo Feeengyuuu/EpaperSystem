@@ -687,6 +687,8 @@ class NewsBriefMixin:
         """Drop the space between Latin text and Chinese characters, and any separator a
         removed word left at either end, e.g. "/特斯拉". Safe on already-clean text."""
         text = re.sub(r"(?<=[\u4e00-\u9fff])\s+(?=[A-Za-z0-9])|(?<=[A-Za-z0-9])\s+(?=[\u4e00-\u9fff])", "", str(text or ""))
+        # A 中新网 channel prefix such as "中新健康：" names the desk, not the story.
+        text = re.sub(r"^中新[^\s:：|｜]{0,3}\s*[:：|｜]\s*", "", text)
         return re.sub(r"^[\s/／、，,·]+|[\s/／、，,·]+$", "", text).strip()
 
     def _rss_news_cards(
