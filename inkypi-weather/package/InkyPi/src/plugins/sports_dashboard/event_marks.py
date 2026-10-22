@@ -7,9 +7,13 @@ artwork carries a year are looked up by edition, so a 2026 logo never lands
 on a 2027 event; an event without a mark simply draws none.
 """
 
+from PIL import ImageFilter
+
 from .common import *
 
 SportsDashboard = None
+# Width of the light contour that keeps a colour mark's dark strokes visible at night.
+EVENT_MARK_HALO_PX = 2
 
 EVENT_MARK_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "events")
 MLB_SERIES_MARKS = {
@@ -112,8 +116,9 @@ class EventMarksMixin:
         """Fit a mark into box; returns the drawn box or None.
 
         Line art (circuit outlines) is re-inked in the theme's ink and panel
-        colours. Colour logos get a light plate on dark themes so their dark
-        parts stay visible.
+        colours. On dark themes a colour logo gets a thin light contour that
+        follows its own outline, so its dark strokes stay visible without a
+        box behind it.
         """
         if not path:
             return None
@@ -131,11 +136,21 @@ class EventMarksMixin:
             left = x1 + (x2 - x1 - mark.width) // 2
         top = y1 + (y2 - y1 - mark.height) // 2
         if not line_art and SportsDashboard._event_mark_dark_theme():
-            ImageDraw.Draw(image).rounded_rectangle(
-                (left - 3, top - 3, left + mark.width + 2, top + mark.height + 2), radius=4, fill=COLORS["text"]
-            )
+            halo = SportsDashboard._event_mark_halo(mark, COLORS["text"])
+            image.paste(halo, (left - EVENT_MARK_HALO_PX, top - EVENT_MARK_HALO_PX), halo)
         image.paste(mark, (left, top), mark)
         return left, top, left + mark.width, top + mark.height
+
+    @staticmethod
+    def _event_mark_halo(mark, color):
+        """The mark's silhouette grown by EVENT_MARK_HALO_PX, filled with color."""
+        pad = EVENT_MARK_HALO_PX
+        alpha = Image.new("L", (mark.width + 2 * pad, mark.height + 2 * pad), 0)
+        alpha.paste(mark.getchannel("A"), (pad, pad))
+        grown = alpha.filter(ImageFilter.MaxFilter(2 * pad + 1)).point(lambda value: 255 if value >= 96 else 0)
+        halo = Image.new("RGBA", grown.size, tuple(color[:3]) + (255,))
+        halo.putalpha(grown)
+        return halo
 
     @staticmethod
     def _event_mark_reinked(mark):

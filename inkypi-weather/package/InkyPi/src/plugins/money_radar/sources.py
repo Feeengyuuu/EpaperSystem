@@ -217,8 +217,8 @@ def fetch_markets(context):
             payload = _get("GET", YAHOO_CHART_URL.format(symbol=symbol), context, max_bytes=256 * 1024,
                            params={"range": "3mo", "interval": "1d"})
             quotes[symbol] = normalize_chart(payload)
-        except (ValueError, KeyError, TypeError):
-            continue
+        except (HttpClientError, ValueError, KeyError, TypeError):
+            continue  # one unavailable symbol leaves the others standing
     if "^TNX" not in quotes:
         raise ValueError("Yahoo returned no 10-year yield")
     return {"quotes": quotes}
@@ -247,7 +247,25 @@ def _yoy(points, period):
     lookup = dict(points)
     year, month = (int(part) for part in period.split("-"))
     previous = lookup.get(f"{year - 1}-{month:02d}")
-    return None if not previous else round((lookup[period] / previous - 1) * 100, 1)
+    return None if not previous or period not in lookup else round((lookup[period] / previous - 1) * 100, 1)
+
+
+def _month_before(period):
+    year, month = (int(part) for part in period.split("-"))
+    return f"{year - 1}-12" if month == 1 else f"{year}-{month - 1:02d}"
+
+
+def cpi_reading(points):
+    """Year-over-year CPI for the newest month that has a year-ago reading.
+
+    Months are matched by date, never by position: BLS published no October 2025 CPI,
+    so October 2026 has nothing to compare with and the month before it is shown.
+    """
+    for period, _value in reversed(points):
+        value = _yoy(points, period)
+        if value is not None:
+            return {"value": value, "previous": _yoy(points, _month_before(period)), "period": period}
+    raise ValueError("CPI series has no month with a year-ago reading")
 
 
 def normalize_bls(cpi_payload, unemployment_payload):
@@ -256,12 +274,11 @@ def normalize_bls(cpi_payload, unemployment_payload):
         return _monthly_observations(results[0].get("data"))
 
     cpi, unemployment = series(cpi_payload), series(unemployment_payload)
-    if len(cpi) < 14 or len(unemployment) < 2:
+    if len(cpi) < 13 or len(unemployment) < 2:
         raise ValueError("BLS returned too few observations")
-    latest, previous = cpi[-1][0], cpi[-2][0]
     return {
         "source": "BLS",
-        "cpi": {"value": _yoy(cpi, latest), "previous": _yoy(cpi, previous), "period": latest},
+        "cpi": cpi_reading(cpi),
         "unemployment": {"value": unemployment[-1][1], "previous": unemployment[-2][1],
                          "period": unemployment[-1][0]},
     }
@@ -278,16 +295,16 @@ def _fred_series(series_id, api_key, context, limit):
 
 def fetch_macro(fred_key, context):
     if fred_key:
-        cpi = _fred_series("CPIAUCSL", fred_key, context, 14)
-        unrate = _fred_series("UNRATE", fred_key, context, 2)
+        # Two years of months, so a skipped month still leaves a year-ago match.
+        cpi = _fred_series("CPIAUCSL", fred_key, context, 26)
+        unrate = _fred_series("UNRATE", fred_key, context, 4)
         fed = _fred_series("DFF", fred_key, context, 30)
         mortgage = _fred_series("MORTGAGE30US", fred_key, context, 5)
-        if len(cpi) < 14 or len(unrate) < 2:
+        if len(cpi) < 13 or len(unrate) < 2:
             raise ValueError("FRED returned too few observations")
         return {
             "source": "FRED",
-            "cpi": {"value": round((cpi[0][1] / cpi[12][1] - 1) * 100, 1),
-                    "previous": round((cpi[1][1] / cpi[13][1] - 1) * 100, 1), "period": cpi[0][0][:7]},
+            "cpi": cpi_reading(sorted((day[:7], value) for day, value in cpi)),
             "unemployment": {"value": unrate[0][1], "previous": unrate[1][1], "period": unrate[0][0][:7]},
             "fed_funds": {"value": fed[0][1], "previous": fed[-1][1], "period": fed[0][0]} if fed else None,
             "mortgage30": {"value": mortgage[0][1], "previous": mortgage[-1][1], "period": mortgage[0][0]}
@@ -454,3 +471,9 @@ def days_until(day, now):
     except (TypeError, ValueError):
         return None
     return (target - now.date()).days
+
+
+def upcoming_earnings(items, now):
+    """Reports from today on; a cache kept past a report date no longer lists it."""
+    return [item for item in items or []
+            if (remaining := days_until(item.get("date"), now)) is not None and remaining >= 0]

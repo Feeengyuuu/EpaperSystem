@@ -13,7 +13,6 @@ import pytest
 
 from plugins.sports_dashboard.common import _ACTIVE_COLORS, COLORS, DAY_COLORS, DEEP_NIGHT_COLORS
 from plugins.sports_dashboard.event_marks import EVENT_MARK_DIR
-from plugins.sports_dashboard.lower_panel import LOWER_LIVE_ROTATION_MINUTES
 from plugins.sports_dashboard.sports_dashboard import SportsDashboard
 from tests.test_sports_dashboard import (
     _plugin,
@@ -49,54 +48,115 @@ def test_no_method_is_defined_by_two_mixins():
 # Which league owns the panel --------------------------------------------------
 
 
+def _game(sport, state="pre", start=None, **fields):
+    return {"sport": sport, "event_id": f"{sport}-{state}", "state": state,
+            "start": start or NOW + timedelta(days=2), **fields}
+
+
+def _card(sport, status, *events):
+    events = list(events) or [_game(sport, "in" if status == "LIVE" else "pre",
+                                    NOW - timedelta(hours=1) if status == "LIVE" else None)]
+    live = [event for event in events if event["state"] == "in"]
+    upcoming = [event for event in events if event["state"] == "pre"]
+    recent = [event for event in events if event["state"] == "post"]
+    return {"sport": sport, "status": status, "main": (live or upcoming or recent)[0],
+            "live": live, "upcoming": upcoming, "recent": recent, "events": events}
+
+
 def _hub(*statuses, source="HUB LIVE"):
-    cards = [{"sport": sport, "status": status, "main": {"start": NOW + timedelta(days=2)}} for sport, status in statuses]
-    pool = [card["sport"] for card in cards if card["status"] == "LIVE"] or [card["sport"] for card in cards if card["status"] != "BREAK"]
-    return {"cards": cards, "primary": next((card for card in cards if card["sport"] == (pool or [None])[0]), None), "rotation_pool": pool}, source
+    cards = [item if isinstance(item, dict) else _card(*item) for item in statuses]
+    return {"cards": cards, "primary": cards[0] if cards else None,
+            "rotation_pool": [card["sport"] for card in cards]}, source
 
 
-def _choose(nba=None, hub=(None, ""), f1=None, settings=None, now=NOW):
-    return SportsDashboard._choose_lower_panel(settings or {}, nba or {"offseason": False, "live": []}, hub[0], hub[1], f1, now)
+def _nba(*events, offseason=False):
+    return {"offseason": offseason,
+            "live": [event for event in events if event["state"] == "in"],
+            "upcoming": [event for event in events if event["state"] == "pre"],
+            "recent": [event for event in events if event["state"] == "post"]}
 
 
-def test_f1_session_in_progress_beats_every_other_live_game():
-    choice = _choose(nba={"offseason": False, "live": [{"event_id": "1"}]}, hub=_hub(("NFL", "LIVE")), f1={"status": "LIVE", "weekend": True})
+def _choose(nba=None, hub=(None, ""), f1=None, settings=None, now=NOW, shown=()):
+    return SportsDashboard._choose_lower_panel(settings or {}, nba or _nba(), hub[0], hub[1], f1, now,
+                                               recent_shown=shown)
+
+
+def _shown(choice):
+    return choice["kind"] if choice["kind"] in {"f1", "nba", "wall"} else choice["card"]["sport"]
+
+
+def test_an_f1_race_in_progress_outranks_regular_season_live_games():
+    nba = _nba(_game("NBA", "in", NOW - timedelta(hours=1)))
+    choice = _choose(nba=nba, hub=_hub(("NFL", "LIVE")), f1={"status": "LIVE", "live_session": {"title": "RACE"}})
     assert choice["kind"] == "f1"
 
 
-def test_live_games_take_the_panel_and_rotate():
-    hub = _hub(("NFL", "LIVE"), ("MLB", "LIVE"), ("NCAA", "NEXT"))
-    nba = {"offseason": False, "live": [{"event_id": "nba"}]}
-    seen = []
-    for slot in range(3):
-        moment = datetime.fromtimestamp(slot * LOWER_LIVE_ROTATION_MINUTES * 60 + 1_800_000_000, tz=timezone.utc)
-        choice = _choose(nba=nba, hub=hub, now=moment)
-        seen.append(choice["kind"] if choice["kind"] == "nba" else choice["card"]["sport"])
-    assert sorted(seen) == ["MLB", "NFL", "nba"]
+def test_a_practice_session_does_not_hide_a_board_of_live_games():
+    nba = _nba(_game("NBA", "in", NOW - timedelta(hours=1)))
+    choice = _choose(nba=nba, hub=_hub(("NFL", "LIVE")), f1={"status": "LIVE", "live_session": {"title": "FP1"}})
+    assert choice["kind"] == "wall"
 
 
-def test_nfl_live_takes_the_panel_during_the_nba_season():
+def test_several_live_games_share_a_score_wall_biggest_first():
+    world_series = _game("MLB", "in", NOW - timedelta(hours=2), series_game="World Series Game 1")
+    nba = _nba(_game("NBA", "in", NOW - timedelta(minutes=30)))
+    choice = _choose(nba=nba, hub=_hub(("NFL", "LIVE"), _card("MLB", "LIVE", world_series), ("NCAA", "NEXT")))
+
+    assert choice["kind"] == "wall"
+    assert [game["sport"] for game in choice["games"]] == ["MLB", "NFL", "NBA"]
+    assert choice["games"][0]["tier"] == "S"
+
+
+def test_a_single_live_game_keeps_its_league_panel():
     choice = _choose(hub=_hub(("NFL", "LIVE")))
     assert (choice["kind"], choice["card"]["sport"]) == ("hub", "NFL")
 
 
-def test_f1_race_weekend_comes_before_the_nba_when_nothing_is_live():
+def test_a_big_game_on_its_day_outranks_a_sooner_regular_season_game():
+    nba = _nba(_game("NBA", "pre", NOW + timedelta(hours=4)))
+    world_series = _game("MLB", "pre", NOW + timedelta(hours=20), series_game="World Series Game 1")
+    assert _shown(_choose(nba=nba, hub=_hub(_card("MLB", "NEXT", world_series)))) == "MLB"
+    # Two days out it is not yet its day, so the game tonight stays ahead.
+    later = _game("MLB", "pre", NOW + timedelta(hours=48), series_game="World Series Game 1")
+    assert _shown(_choose(nba=nba, hub=_hub(_card("MLB", "NEXT", later)))) == "nba"
+    # Without a big game the nearer regular-season game stays ahead.
+    regular = _game("MLB", "pre", NOW + timedelta(hours=20))
+    assert _shown(_choose(nba=nba, hub=_hub(_card("MLB", "NEXT", regular)))) == "nba"
+
+
+def test_golf_counts_as_live_only_while_someone_is_on_the_course():
+    overnight = _game("PGA", "in", NOW - timedelta(hours=10), leaderboard=[{"name": "A", "thru": ""}])
+    playing = _game("PGA", "in", NOW - timedelta(hours=10), leaderboard=[{"name": "A", "thru": "7"}])
+    nba = _nba(_game("NBA", "in", NOW - timedelta(minutes=30)))
+
+    assert _choose(nba=nba, hub=_hub(_card("PGA", "LIVE", overnight)))["kind"] == "nba"
+    assert _choose(nba=nba, hub=_hub(_card("PGA", "LIVE", playing)))["kind"] == "wall"
+
+
+def test_f1_race_weekend_comes_before_a_distant_game_when_nothing_is_live():
     assert _choose(hub=_hub(("NFL", "NEXT")), f1={"status": "NEXT", "weekend": True})["kind"] == "f1"
-    assert _choose(hub=_hub(("NFL", "NEXT")), f1={"status": "NEXT", "weekend": False})["kind"] == "nba"
+    # Outside a weekend, with no session times, F1 has nothing to show.
+    assert _shown(_choose(hub=_hub(("NFL", "NEXT")), f1={"status": "NEXT", "weekend": False})) == "NFL"
 
 
 def test_placeholder_hub_data_never_preempts_the_nba():
     assert _choose(hub=_hub(("MLB", "LIVE"), source="HUB FALLBACK"))["kind"] == "nba"
 
 
-def test_nba_offseason_rotates_the_hub_with_the_next_grand_prix():
+def test_a_league_shown_at_the_last_display_gives_way_to_a_close_runner_up():
     hub = _hub(("NFL", "NEXT"), ("MLB", "NEXT"))
-    kinds = set()
-    for slot in range(6):
-        moment = NOW + timedelta(minutes=30 * slot)
-        choice = _choose(nba={"offseason": True, "live": []}, hub=hub, f1={"status": "NEXT", "weekend": False}, now=moment)
-        kinds.add(choice["kind"] if choice["kind"] == "f1" else choice["card"]["sport"])
-    assert kinds == {"NFL", "MLB", "f1"}
+    f1 = {"status": "NEXT", "next_race": {"race_start": NOW + timedelta(days=2)}}
+    offseason = _nba(offseason=True)
+
+    first = _choose(nba=offseason, hub=hub, f1=f1)
+    second = _choose(nba=offseason, hub=hub, f1=f1, shown=[(first["key"],)])
+    third = _choose(nba=offseason, hub=hub, f1=f1, shown=[(second["key"],), (first["key"],)])
+
+    # F1 leads; once it has been shown NFL gets the next display, then MLB.
+    assert [_shown(choice) for choice in (first, second, third)] == ["f1", "NFL", "MLB"]
+    # The wall clock alone never changes the choice.
+    assert {_shown(_choose(nba=offseason, hub=hub, f1=f1, now=NOW + timedelta(minutes=30 * slot)))
+            for slot in range(6)} == {"f1"}
 
 
 def test_panel_modes_pin_a_league():
@@ -297,6 +357,53 @@ def test_each_panel_renders_with_every_text_inside_its_box(panel, colors, boxes)
     assert tuple(colors["text"]) in content
 
 
+def _wall_games(count):
+    sample_now = datetime(2026, 6, 14, 13, 30, tzinfo=LA)
+    mlb = SportsDashboard._parse_mlb_scoreboard(_sample_mlb_scoreboard_payload(), LA)["events"]
+    wnba = SportsDashboard._parse_wnba_scoreboard(_sample_wnba_scoreboard_payload(), LA)["events"]
+    ncaa = SportsDashboard._parse_football_scoreboard(_sample_ncaa_scoreboard_payload(), LA, "NCAA")["events"]
+    nba = SportsDashboard._parse_nba_espn_events(_sample_nba_scoreboard_payload(), LA)
+    pool = [("MLB", event) for event in mlb] + [("WNBA", event) for event in wnba] + \
+        [("NCAA", event) for event in ncaa] + [("NBA", event) for event in nba]
+    pool = (pool * (1 + count // max(1, len(pool))))[:count]
+    in_play = {"MLB": {"inning": 7, "inning_state": "top", "outs": 2},
+               "NCAA": {"period": 3, "clock": "4:12"}}
+    games = [{"sport": sport,
+              "event": {**event, "state": "in", "wins_a": 3 + index, "wins_b": 2,
+                        **in_play.get(sport, {"period": 4, "clock": "2:31"})},
+              "tier": "S" if index == 0 else "C", "score": 160.0 if index == 0 else 100.0}
+             for index, (sport, event) in enumerate(pool)]
+    return games, sample_now
+
+
+@pytest.mark.parametrize("count", [2, 3, 5, 9, 16])
+@pytest.mark.parametrize("colors", [DAY_COLORS, DEEP_NIGHT_COLORS], ids=["day", "night"])
+def test_live_wall_fits_every_game_label_in_its_box(count, colors, boxes):
+    games, now = _wall_games(count)
+    image, draw = _render(lambda plugin, image, draw: plugin._draw_lower_live_wall(image, draw, (0, 0, 555, 267), games, now), colors)
+
+    _assert_fits(draw, boxes)
+    assert any(f"{count} 场进行中" in text for _box, text, _font in boxes)
+    assert tuple(colors["text"]) in set(image.crop((12, 57, 543, 260)).get_flattened_data())
+
+
+def test_live_wall_decorates_empty_slots_with_league_art(monkeypatch):
+    games, now = _wall_games(5)
+    placeholders = []
+    original = SportsDashboard._draw_wall_placeholder
+
+    def spy(self, image, draw, box, sport):
+        placeholders.append(sport)
+        return original(self, image, draw, box, sport)
+
+    monkeypatch.setattr(SportsDashboard, "_draw_wall_placeholder", spy)
+    _render(lambda plugin, image, draw: plugin._draw_lower_live_wall(image, draw, (0, 0, 555, 267), games, now))
+
+    # A featured game plus four cards leave two of six card slots empty.
+    assert len(placeholders) == 2
+    assert set(placeholders) <= {game["sport"] for game in games}
+
+
 def _ticker_game(code_a, code_b, hours, **overrides):
     return {
         "event_id": f"{code_a}-{code_b}", "state": "pre", "start": NOW + timedelta(hours=hours),
@@ -462,16 +569,24 @@ def test_circuit_outline_is_reinked_in_the_theme_colours(colors):
     assert tuple(colors["text"]) in pixels
 
 
-def test_colour_marks_get_a_light_plate_at_night():
+def test_colour_marks_get_a_light_contour_not_a_plate_at_night():
     plugin = _plugin()
-    path = SportsDashboard._mlb_series_mark_path({"series_game": "ALCS Game 5", "start": _at(2026)})
+    path = str(Path(EVENT_MARK_DIR) / "wnba" / "2026_finals.png")
     token = _ACTIVE_COLORS.set(DEEP_NIGHT_COLORS)
     try:
-        image = Image.new("RGB", (140, 60), DEEP_NIGHT_COLORS["panel"])
-        drawn = plugin._draw_event_mark(image, path, (10, 10, 130, 50))
+        image = Image.new("RGB", (140, 80), DEEP_NIGHT_COLORS["panel"])
+        drawn = plugin._draw_event_mark(image, path, (10, 10, 130, 70))
     finally:
         _ACTIVE_COLORS.reset(token)
-    assert image.getpixel((drawn[0] - 2, drawn[1] - 2)) == tuple(DEEP_NIGHT_COLORS["text"])
+    light, panel = tuple(DEEP_NIGHT_COLORS["text"]), tuple(DEEP_NIGHT_COLORS["panel"])
+    # The logo's transparent corners stay the panel colour: no box behind it.
+    assert image.getpixel((drawn[0], drawn[1])) == panel
+    assert image.getpixel((drawn[0] - 2, drawn[1] - 2)) == panel
+    # Its silhouette is ringed in light ink just outside the dark outline.
+    middle = (drawn[1] + drawn[3]) // 2
+    row = [image.getpixel((x, middle)) for x in range(drawn[0] - 3, drawn[2] + 3)]
+    assert light in row
+    assert row[0] == panel
 
 
 def test_layouts_draw_their_competition_marks(monkeypatch):

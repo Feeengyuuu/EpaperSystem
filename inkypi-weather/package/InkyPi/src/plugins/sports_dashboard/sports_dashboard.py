@@ -24,6 +24,7 @@ from . import baseball_render as _baseball_render_module
 from . import golf_render as _golf_render_module
 from . import f1_render as _f1_render_module
 from . import lower_panel as _lower_panel_module
+from . import lower_wall_render as _lower_wall_render_module
 from .worldcup import WorldCupMixin
 from .worldcup_render import WorldCupRenderMixin
 from .csl import CSL_LIVE_STATE_VERSION, CSLMixin
@@ -48,6 +49,8 @@ from .baseball_render import BaseballRenderMixin
 from .golf_render import GolfRenderMixin
 from .f1_render import F1RenderMixin
 from .lower_panel import LowerPanelMixin
+from .lower_wall_render import LowerWallRenderMixin
+from .display_rotation import DisplayRotationMixin
 from plugins.base_plugin.presentation import PresentationMode, PresentationPreparation
 from plugins.base_plugin.render_provenance import SourceProvenance, read_source_provenance
 from utils.safe_image import safe_open_image
@@ -82,6 +85,8 @@ class SportsDashboard(
     GolfRenderMixin,
     F1RenderMixin,
     LowerPanelMixin,
+    LowerWallRenderMixin,
+    DisplayRotationMixin,
     BasePlugin,
 ):
     def presentation_mode(self, settings):
@@ -346,44 +351,6 @@ class SportsDashboard(
         return parsed.astimezone(timezone.utc)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _html_text(value):
         text = str(value or "")
@@ -392,21 +359,6 @@ class SportsDashboard(
         text = re.sub(r"<[^>]+>", " ", text)
         text = html_lib.unescape(text)
         return re.sub(r"\s+", " ", text).strip()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
     @staticmethod
@@ -423,99 +375,6 @@ class SportsDashboard(
         return False
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _ordinal_text(value):
         value = int(value)
@@ -524,95 +383,6 @@ class SportsDashboard(
         else:
             suffix = {1: "st", 2: "nd", 3: "rd"}.get(value % 10, "th")
         return f"{value}{suffix}"
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
     @staticmethod
@@ -638,7 +408,6 @@ class SportsDashboard(
         if text in {"false", "0", "no", "n"}:
             return False
         return None
-
 
 
     @staticmethod
@@ -684,84 +453,6 @@ class SportsDashboard(
         return str(venue.get("fullName") or venue.get("displayName") or venue.get("name") or "").strip()
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _team_info(teams, index):
         if index >= len(teams):
@@ -773,122 +464,11 @@ class SportsDashboard(
         return name, SportsDashboard._lpl_int_value(result.get("gameWins")), logo
 
 
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _countdown_days(now, start):
         if not isinstance(now, datetime) or not isinstance(start, datetime):
             return 0
         return max(0, (start.date() - now.date()).days)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
     @staticmethod
@@ -926,15 +506,6 @@ class SportsDashboard(
         return ""
 
 
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _normalized_alias_set(values):
         aliases = set()
@@ -948,19 +519,6 @@ class SportsDashboard(
         return aliases
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _parse_cached_utc(value):
         if not value:
@@ -972,10 +530,6 @@ class SportsDashboard(
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(timezone.utc)
-
-
-
-
 
 
     @staticmethod
@@ -1007,7 +561,6 @@ class SportsDashboard(
             if value:
                 return value
         return ""
-
 
 
     def _fetch_the_odds_api_payload(self, settings, api_key, cache_key, now_utc):
@@ -1102,23 +655,6 @@ class SportsDashboard(
         return response.json()
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _pick_odds_api_io_ml_odds(bookmakers, preferred_bookmakers):
         bookmaker_items = list(bookmakers.items())
@@ -1178,10 +714,6 @@ class SportsDashboard(
         return f"{number:.2f}"
 
 
-
-
-
-
     @staticmethod
     def _normalize_odds_team_name(value):
         text = str(value or "").strip()
@@ -1191,11 +723,6 @@ class SportsDashboard(
         text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
         parts = [part for part in text.lower().replace("-", " ").split() if part != "and"]
         return "".join(ch for part in parts for ch in part if ch.isalnum())
-
-
-
-
-
 
 
     @staticmethod
@@ -1278,29 +805,6 @@ class SportsDashboard(
         return aliases
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _api_team_name(team):
         return SportsDashboard._localized_country_name(team, SportsDashboard._api_team_tla(team))
@@ -1351,51 +855,6 @@ class SportsDashboard(
         return None
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _sport_header_cutout_path(sport):
         paths = {
@@ -1437,45 +896,6 @@ class SportsDashboard(
             return None
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _load_flag_image(flag_url, size):
         if not flag_url:
@@ -1511,50 +931,6 @@ class SportsDashboard(
         return flag
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _standalone_sport_source_label(sport, card, source_state):
         source_label = SportsDashboard._source_label(source_state)
@@ -1584,143 +960,6 @@ class SportsDashboard(
         }.get(str(sport or "").upper())
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _event_team_logo_fallback(event, side, sport=None):
         event = event or {}
@@ -1748,183 +987,11 @@ class SportsDashboard(
         return SportsDashboard._event_team_logo_fallback(event, side)
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     @staticmethod
     def _score_label(event):
         if event.get("wins_a") is None or event.get("wins_b") is None:
             return "vs"
         return f"{event['wins_a']}-{event['wins_b']}"
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 _SPLIT_MODULES = (
@@ -1949,6 +1016,7 @@ _SPLIT_MODULES = (
     _golf_render_module,
     _f1_render_module,
     _lower_panel_module,
+    _lower_wall_render_module,
 )
 for _module in _SPLIT_MODULES:
     _module.SportsDashboard = SportsDashboard

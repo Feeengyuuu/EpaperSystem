@@ -17,6 +17,7 @@ from types import MappingProxyType
 from typing import Mapping
 from uuid import uuid4
 
+from display.display_history import HISTORY_NAME, record_display
 from runtime.cache_lifecycle import (
     CleanupBudget,
     LifecycleAggregate,
@@ -275,8 +276,15 @@ class DisplayTransaction:
             )
             self._publish_revision_marker(prepared.commit_id)
             self._publish_compatibility_image(prepared.image_path)
+            self._record_display_history(commit)
             self._prune_objects(current_path=prepared.image_path)
             return commit
+
+    def _record_display_history(self, commit: DisplayCommit) -> None:
+        try:
+            record_display(self.display_dir, commit.logical_target, commit.committed_at)
+        except Exception as error:  # the commit is already authoritative
+            logger.warning("Display history was not recorded: %s", type(error).__name__)
 
     def current(self) -> DisplayCommit | None:
         try:
@@ -344,7 +352,7 @@ class DisplayTransaction:
             display_root = Path(os.path.abspath(self.display_dir))
             objects_root = Path(os.path.abspath(self.objects_dir))
             compatibility_path = Path(os.path.abspath(self.compatibility_image_path))
-            display_targets = {self.manifest_path.name}
+            display_targets = {self.manifest_path.name, HISTORY_NAME}
             roots = []
             if compatibility_path.parent == display_root:
                 display_targets.add(compatibility_path.name)

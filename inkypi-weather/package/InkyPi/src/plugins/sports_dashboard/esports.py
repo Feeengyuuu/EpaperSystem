@@ -1,5 +1,6 @@
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
+from . import event_ranking
 from html.parser import HTMLParser
 import ctypes
 import gc
@@ -2490,7 +2491,7 @@ class EsportsMixin:
         return ""
 
     @staticmethod
-    def _select_lol_esports_sidebar(cards, now, league_override=None):
+    def _select_lol_esports_sidebar(cards, now, league_override=None, recent_shown=()):
         cards = [dict(card) for card in (cards or []) if card and card.get("selected") is not None]
         if not cards:
             return SportsDashboard._right_sidebar_default_lpl_choice(cards, now)
@@ -2511,25 +2512,45 @@ class EsportsMixin:
 
         live_cards = [card for card in displayable if SportsDashboard._lol_sidebar_candidate_phase(card) == 0]
         if live_cards:
-            return sorted(live_cards, key=SportsDashboard._right_sidebar_lol_sort_key)[0]
+            # International events and playoffs first, then the league order.
+            return sorted(
+                live_cards,
+                key=lambda card: (SportsDashboard._lol_card_tier_rank(card), *SportsDashboard._right_sidebar_lol_sort_key(card)),
+            )[0]
 
-        # With nothing live, the league whose next match starts first wins.
+        # With nothing live, the next match ranked by how soon it starts and how big it is.
         upcoming_cards = [card for card in displayable if SportsDashboard._lol_sidebar_candidate_phase(card) == 1]
         if upcoming_cards:
-            return sorted(upcoming_cards, key=SportsDashboard._right_sidebar_lol_upcoming_sort_key)[0]
+            return sorted(
+                upcoming_cards,
+                key=lambda card: (
+                    -SportsDashboard._right_sidebar_upcoming_score(
+                        SportsDashboard._right_sidebar_lol_tie_value(card),
+                        SportsDashboard._lol_card_tier(card),
+                        SportsDashboard._lol_card_key(card),
+                        now,
+                        recent_shown,
+                    ),
+                    *SportsDashboard._right_sidebar_lol_upcoming_sort_key(card),
+                ),
+            )[0]
 
         return SportsDashboard._right_sidebar_default_lpl_choice(displayable, now)
 
     @staticmethod
-    def _select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now, ewc_card=None):
+    def _select_right_esports_sidebar(lol_cards, valve_selected, valve_source_state, now, ewc_card=None,
+                                      recent_shown=()):
         """Pick the right esports sidebar. In order:
 
         1. Worlds on a match day (a match live, or the next within
            WORLDS_PIN_LEAD) is pinned above everything.
-        2. A live match; when several are live, LoL (LPL > LCK > MSI >
-           Worlds) > EWC > CS2 > TI > other Valve events.
-        3. Otherwise the earliest next match across every league and event
-           (Worlds rest days included); equal starts keep the order above.
+        2. A live match; when several are live, the bigger event first
+           (Worlds, TI and CS2 Majors, then MSI, EWC and playoffs, then the
+           regular season), then LoL (LPL > LCK > MSI > Worlds) > EWC > CS2 >
+           TI > other Valve events.
+        3. Otherwise the next match ranked by event_ranking: how soon it
+           starts plus how big the event is, and a league shown at the last
+           display gives way to a close runner-up (Worlds rest days included).
         4. With nothing scheduled, a recent tournament result (Valve, then
            EWC), else the LPL page.
 
@@ -2539,9 +2560,9 @@ class EsportsMixin:
         """
         lol_cards = [dict(card) for card in (lol_cards or []) if card and card.get("selected") is not None]
         candidates = []
-        # Resolve one LoL card first (live by league order, else the earliest
-        # next match), then compare it with EWC and Valve on the same terms.
-        lol_choice = SportsDashboard._select_lol_esports_sidebar(lol_cards, now)
+        # Resolve one LoL card first (live by event size and league order, else
+        # the best-ranked next match), then compare it with EWC and Valve.
+        lol_choice = SportsDashboard._select_lol_esports_sidebar(lol_cards, now, recent_shown=recent_shown)
         phase = SportsDashboard._lol_sidebar_candidate_phase(lol_choice)
         if phase is not None:
             lol_candidate = {
@@ -2650,8 +2671,80 @@ class EsportsMixin:
         if candidates:
             if not SportsDashboard._right_sidebar_has_active_competition(candidates):
                 return {"kind": "lol", "choice": SportsDashboard._right_sidebar_default_lpl_choice(lol_cards, now)}
-            return sorted(candidates, key=SportsDashboard._right_sidebar_candidate_sort_key)[0]
+            return sorted(
+                candidates,
+                key=lambda item: SportsDashboard._right_sidebar_ranked_key(item, now, recent_shown),
+            )[0]
         return {"kind": "lol", "choice": SportsDashboard._right_sidebar_default_lpl_choice(lol_cards, now)}
+
+    @staticmethod
+    def _right_sidebar_ranked_key(item, now, recent_shown=()):
+        """Event size decides between live matches, event_ranking between upcoming ones."""
+        base = SportsDashboard._right_sidebar_candidate_sort_key(item)
+        phase = base[0]
+        tier = SportsDashboard._right_sidebar_candidate_tier(item)
+        if phase == 0:
+            return (0, "SABC".index(tier), *base[1:])
+        if phase == 1:
+            schedule_rank = base[2] if str((item or {}).get("kind") or "").lower() in {"lol", "ewc", "valve"} else 0
+            score = SportsDashboard._right_sidebar_upcoming_score(
+                (item or {}).get("tie"), tier, SportsDashboard._right_sidebar_candidate_key(item), now, recent_shown,
+            )
+            return (1, schedule_rank, -score, *base[1:])
+        return base
+
+    @staticmethod
+    def _right_sidebar_upcoming_score(timestamp, tier, key, now, recent_shown=()):
+        try:
+            value = float(timestamp)
+        except (TypeError, ValueError):
+            value = float("inf")
+        start = None
+        if value == value and value not in {float("inf"), float("-inf")} and isinstance(now, datetime):
+            start = datetime.fromtimestamp(value, tz=now.tzinfo or timezone.utc)
+        score = event_ranking.score("scheduled", start, now, tier)
+        return score - event_ranking.fairness_penalty(key, recent_shown)
+
+    @staticmethod
+    def _right_sidebar_candidate_tier(item):
+        item = item or {}
+        kind = str(item.get("kind") or "").lower()
+        if kind == "lol":
+            return SportsDashboard._lol_card_tier(item.get("choice"))
+        if kind == "ewc":
+            return event_ranking.esports_tier("ewc")
+        if kind == "valve":
+            card = (item.get("selected") or {}).get("primary") or {}
+            main = card.get("main") or {}
+            name = f"{card.get('event_name') or ''} {main.get('stage') or ''}"
+            return event_ranking.esports_tier("valve", card.get("series"), name)
+        return "C"
+
+    @staticmethod
+    def _right_sidebar_candidate_key(item):
+        """The content key display_rotation records for this sidebar choice."""
+        item = item or {}
+        kind = str(item.get("kind") or "").lower()
+        if kind == "lol":
+            return SportsDashboard._lol_card_key(item.get("choice"))
+        if kind == "valve":
+            card = (item.get("selected") or {}).get("primary") or {}
+            return str(card.get("series") or "VALVE").upper()
+        return kind.upper()
+
+    @staticmethod
+    def _lol_card_key(card):
+        return str((card or {}).get("league_key") or "LPL").upper()
+
+    @staticmethod
+    def _lol_card_tier(card):
+        selected = (card or {}).get("selected") or {}
+        event = selected.get("main") or (selected.get("live") or selected.get("upcoming") or [{}])[0]
+        return event_ranking.esports_tier("lol", SportsDashboard._lol_card_key(card), (event or {}).get("block"))
+
+    @staticmethod
+    def _lol_card_tier_rank(card):
+        return "SABC".index(SportsDashboard._lol_card_tier(card))
 
     @staticmethod
     def _right_sidebar_candidate_sort_key(item):

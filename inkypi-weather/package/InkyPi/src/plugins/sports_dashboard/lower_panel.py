@@ -1,14 +1,19 @@
-"""Which league owns the lower-left panel.
+"""Which content owns the lower-left panel.
 
-Live first: an F1 session in progress wins; otherwise any live game (NBA or
-one of the hub leagues: MLB, WNBA, PGA, NFL, college football) takes the
-panel, rotating every few minutes when several are live. With nothing live,
-an F1 race weekend (first practice to the end of the race) comes next, then
-the NBA during its season. In the NBA offseason the hub leagues rotate and
-the next Grand Prix joins the rotation.
+Every league with something to show (NBA, the hub leagues MLB, WNBA, PGA, NFL
+and college football, and F1) is scored by event_ranking: live first, then
+how soon a game starts or how recently it ended, with finals and the
+postseason above the regular season. So the World Series opener a day away
+outranks tonight's regular-season NBA game.
+
+When two or more games are live at once the panel becomes a live score wall
+showing all of them (lower_wall_render); a single live game keeps its
+league's own layout. An F1 session in progress wins when it outranks the
+best live game. Otherwise the best-scored league is shown, and a league shown
+at the last display gives way to a close runner-up (display_rotation).
 
 ``nbaOffseasonPanelMode`` keeps its meaning: ``nba``/``off`` pins the NBA,
-``hub``/``always`` always uses the hub rotation. ``f1PanelMode`` ``off``
+``hub``/``always`` leaves the NBA out of the ranking. ``f1PanelMode`` ``off``
 removes F1 and ``always`` pins it.
 """
 
@@ -16,12 +21,15 @@ from runtime.refresh_contracts import TaskCancelled
 
 from .common import *
 from .common import _safe_exception_text
+from . import event_ranking
 
 SportsDashboard = None
 
-LOWER_LIVE_ROTATION_MINUTES = 10
 _NBA_ONLY_MODES = {"off", "false", "disabled", "disable", "none", "nba"}
 _HUB_ALWAYS_MODES = {"always", "on", "true", "hub", "live-hub", "offseason"}
+_HUB_TEAM_SPORTS = ("MLB", "WNBA", "NFL", "NCAA")
+# An F1 weekend whose session times are unknown still sits within hours of running.
+_F1_WEEKEND_FALLBACK_POINTS = 50.0
 
 
 class LowerPanelMixin:
@@ -38,7 +46,10 @@ class LowerPanelMixin:
             except Exception as exc:
                 logger.warning("Lower panel hub load failed: %s", _safe_exception_text(exc))
         f1_selected, f1_source_state = self._load_lower_f1(settings, timezone_info, now)
-        choice = SportsDashboard._choose_lower_panel(settings, nba_selected, hub_selected, hub_source_state, f1_selected, now)
+        choice = SportsDashboard._choose_lower_panel(
+            settings, nba_selected, hub_selected, hub_source_state, f1_selected, now,
+            recent_shown=self._region_recent_shown(settings, "lower"),
+        )
         # Every loaded league records its live state so the live refresh
         # cadence follows whichever source is live, shown or not.
         if hub_selected is not None:
@@ -46,7 +57,14 @@ class LowerPanelMixin:
         if f1_selected is not None:
             self._write_f1_live_state(f1_selected, now, f1_source_state)
         kind = choice.get("kind")
+        self._record_region_choice("lower", now, [choice.get("key") or kind])
         try:
+            if kind == "wall":
+                self._draw_lower_live_wall(image, draw, box, choice["games"], now)
+                self._write_nba_live_state(nba_selected, now, nba_source_state)
+                return SportsDashboard._lower_wall_provenance(
+                    choice["games"], nba_source_state, hub_source_state,
+                )
             if kind == "f1":
                 if f1_selected.get("live_session"):
                     self._attach_f1_openf1_snapshot(f1_selected, settings)
@@ -94,46 +112,143 @@ class LowerPanelMixin:
         return "auto"
 
     @staticmethod
-    def _choose_lower_panel(settings, nba_selected, hub_selected, hub_source_state, f1_selected, now):
-        """{"kind": "nba" | "hub" | "f1", "card": hub card or None}."""
+    def _choose_lower_panel(settings, nba_selected, hub_selected, hub_source_state, f1_selected, now, recent_shown=()):
+        """{"kind": "nba" | "hub" | "f1" | "wall", "key", "card", "games"}."""
         settings = settings or {}
         nba_selected = nba_selected or {}
         mode = str(settings.get("nbaOffseasonPanelMode") or "auto").strip().lower()
         f1_mode = SportsDashboard._f1_panel_mode(settings)
         nba_offseason = bool(nba_selected.get("offseason"))
         f1 = f1_selected if f1_mode != "off" else None
-        f1_status = str((f1 or {}).get("status") or "").upper()
         if f1 is not None and f1_mode == "always":
-            return {"kind": "f1", "card": None}
+            return {"kind": "f1", "key": "F1", "card": None}
         if mode in _NBA_ONLY_MODES:
-            return {"kind": "nba", "card": None}
-        if f1_status == "LIVE":
-            return {"kind": "f1", "card": None}
+            return {"kind": "nba", "key": "NBA", "card": None}
         # Placeholder hub data (fetch failed) never pre-empts the NBA.
         trusted_hub = hub_selected if hub_selected and (nba_offseason or hub_source_state != "HUB FALLBACK") else None
-        hub_cards = list((trusted_hub or {}).get("cards") or [])
-        live = []
-        if not nba_offseason and nba_selected.get("live"):
-            live.append({"kind": "nba", "card": None})
-        live.extend({"kind": "hub", "card": card} for card in hub_cards if str(card.get("status") or "").upper() == "LIVE")
-        if live:
-            slot = int(now.timestamp() // (LOWER_LIVE_ROTATION_MINUTES * 60))
-            return live[slot % len(live)]
-        if f1 is not None and f1.get("weekend"):
-            return {"kind": "f1", "card": None}
-        if not nba_offseason and mode not in _HUB_ALWAYS_MODES:
-            return {"kind": "nba", "card": None}
-        if not trusted_hub:
-            return {"kind": "f1", "card": None} if f1 is not None and f1_status in {"NEXT", "RECENT"} else {"kind": "nba", "card": None}
-        primary = trusted_hub.get("primary")
-        by_sport = {card.get("sport"): card for card in hub_cards}
-        pool = [by_sport[sport] for sport in trusted_hub.get("rotation_pool") or [] if sport in by_sport]
-        if any(SportsDashboard._offseason_hub_is_urgent_next_card(card, now) for card in pool):
-            return {"kind": "hub", "card": primary}
-        entries = [{"kind": "hub", "card": card} for card in pool]
-        if f1 is not None and f1_status == "NEXT":
-            entries.append({"kind": "f1", "card": None})
-        if not entries:
-            return {"kind": "hub", "card": primary} if primary else {"kind": "nba", "card": None}
-        slot = int(now.timestamp() // max(1, OFFSEASON_HUB_ROTATION_MINUTES * 60))
-        return entries[slot % len(entries)]
+        hub_cards = [card for card in (trusted_hub or {}).get("cards") or [] if card]
+        include_nba = not nba_offseason and mode not in _HUB_ALWAYS_MODES
+
+        live_games = SportsDashboard._lower_live_games(nba_selected if include_nba else {}, hub_cards, now)
+        f1_candidate = SportsDashboard._lower_f1_candidate(f1, now)
+        f1_live = f1_candidate is not None and str((f1 or {}).get("status") or "").upper() == "LIVE"
+        # The wall has no F1 row, so a session in progress that outranks every
+        # live game keeps its own panel; otherwise F1 is ranked like any league.
+        if len(live_games) >= 2 and not (f1_live and f1_candidate["score"] >= live_games[0]["score"]):
+            return {"kind": "wall", "key": "WALL", "card": None, "games": live_games}
+
+        candidates = []
+        if include_nba:
+            candidates.append(SportsDashboard._lower_nba_candidate(nba_selected, now))
+        for card in hub_cards:
+            candidate = SportsDashboard._lower_hub_candidate(card, now)
+            if candidate is not None:
+                candidates.append(candidate)
+        if f1_candidate is not None:
+            candidates.append(f1_candidate)
+        if not candidates:
+            return {"kind": "nba", "key": "NBA", "card": None}
+        best = event_ranking.rank(candidates, recent_shown)[0]
+        return {"kind": best["kind"], "key": best["key"], "card": best.get("card")}
+
+    # Candidates ---------------------------------------------------------------
+
+    @staticmethod
+    def _lower_event_state(event):
+        state = SportsDashboard._hub_event_state(event)
+        return state if state in {"live", "final"} else "scheduled"
+
+    @staticmethod
+    def _lower_event_score(sport, event, now):
+        event = event or {}
+        state = SportsDashboard._lower_event_state(event)
+        start = event.get("start")
+        if sport == "PGA" and state == "live" and not event_ranking.golf_in_play(event):
+            # Between rounds: worth a look, not a live game.
+            state, start = "scheduled", now + timedelta(hours=8)
+        tier = event_ranking.team_sport_tier(sport, event)
+        return event_ranking.score(state, start, now, tier, end=event.get("end")), state, tier
+
+    @staticmethod
+    def _lower_live_games(nba_selected, hub_cards, now):
+        """Every game in play across the lower-panel leagues, best first."""
+        games = []
+        for event in (nba_selected or {}).get("live") or []:
+            score, _state, tier = SportsDashboard._lower_event_score("NBA", event, now)
+            games.append({"sport": "NBA", "event": event, "score": score, "tier": tier})
+        for card in hub_cards:
+            sport = str(card.get("sport") or "").upper()
+            for event in card.get("live") or []:
+                score, state, tier = SportsDashboard._lower_event_score(sport, event, now)
+                if state == "live":
+                    games.append({"sport": sport, "event": event, "score": score, "tier": tier})
+        order = {"NBA": 0, "NFL": 1, "MLB": 2, "WNBA": 3, "NCAA": 4, "PGA": 5}
+
+        def start_value(game):
+            start = game["event"].get("start")
+            return start.timestamp() if isinstance(start, datetime) else 0.0
+
+        return sorted(games, key=lambda game: (-game["score"], order.get(game["sport"], 9), -start_value(game)))
+
+    @staticmethod
+    def _lower_nba_candidate(nba_selected, now):
+        # The season calendar holds every game; only the next week can matter.
+        horizon = now + timedelta(days=7)
+        upcoming = [event for event in nba_selected.get("upcoming") or []
+                    if isinstance(event.get("start"), datetime) and event["start"] <= horizon]
+        events = [*(nba_selected.get("live") or []), *upcoming, *(nba_selected.get("recent") or [])[:3]]
+        best = max((SportsDashboard._lower_event_score("NBA", event, now)[0] for event in events), default=0.0)
+        return {"kind": "nba", "key": "NBA", "card": None, "score": best, "order": 0}
+
+    @staticmethod
+    def _lower_hub_candidate(card, now):
+        sport = str(card.get("sport") or "").upper()
+        if str(card.get("status") or "").upper() == "BREAK" or not card.get("main"):
+            return None
+        events = [*(card.get("live") or []), *(card.get("upcoming") or [])[:6], *(card.get("recent") or [])[:3]]
+        if not events:
+            events = [card["main"]]
+        best = max(SportsDashboard._lower_event_score(sport, event, now)[0] for event in events)
+        order = 1 + (SportsDashboard._coerce_int(card.get("order")) or 0)
+        return {"kind": "hub", "key": sport, "card": card, "score": best, "order": order}
+
+    @staticmethod
+    def _lower_f1_candidate(f1, now):
+        if not f1:
+            return None
+        status = str(f1.get("status") or "").upper()
+        live_session = f1.get("live_session")
+        if status == "LIVE":
+            tier = event_ranking.f1_session_tier((live_session or {}).get("title") or (live_session or {}).get("key")) \
+                if live_session else "B"
+            return {"kind": "f1", "key": "F1", "card": None, "order": 6,
+                    "score": event_ranking.score("live", None, now, tier)}
+        scores = []
+        race = f1.get("main_race") or f1.get("next_race") or {}
+        race_start = race.get("race_start")
+        if isinstance(race_start, datetime):
+            state = "final" if race_start < now else "scheduled"
+            scores.append(event_ranking.score(state, race_start, now, "A", end=race_start + timedelta(hours=2)))
+        session = f1.get("next_session") or {}
+        if isinstance(session.get("start"), datetime):
+            tier = event_ranking.f1_session_tier(session.get("title") or session.get("key"))
+            scores.append(event_ranking.score("scheduled", session["start"], now, tier))
+        if not scores:
+            if f1.get("weekend"):
+                scores.append(_F1_WEEKEND_FALLBACK_POINTS + event_ranking.tier_points("A"))
+            else:
+                return None
+        return {"kind": "f1", "key": "F1", "card": None, "score": max(scores), "order": 6}
+
+    @staticmethod
+    def _lower_wall_provenance(games, nba_source_state, hub_source_state):
+        states = []
+        if any(game["sport"] == "NBA" for game in games):
+            states.append(nba_source_state)
+        if any(game["sport"] != "NBA" for game in games):
+            states.append(hub_source_state)
+        provenances = [SportsDashboard._sports_source_state_provenance(state) for state in states]
+        order = [SourceProvenance.LOCAL_FALLBACK, SourceProvenance.STALE_CACHE,
+                 SourceProvenance.FRESH_CACHE, SourceProvenance.LIVE]
+        known = [value for value in provenances if value in order]
+        return min(known, key=order.index) if known else SourceProvenance.LOCAL_FALLBACK

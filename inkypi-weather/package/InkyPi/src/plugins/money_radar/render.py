@@ -12,7 +12,9 @@ from utils.local_wordmark import paste_local_wordmark
 from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_image
 
-from .sources import CURVE_POINTS, EARNINGS_HOURS, FORM_NAMES, ITEM_NAMES, days_until, local_now, parse_time
+from .sources import (
+    CURVE_POINTS, EARNINGS_HOURS, FORM_NAMES, ITEM_NAMES, days_until, local_now, parse_time, upcoming_earnings,
+)
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -303,7 +305,7 @@ def _weekday_date(day):
 
 
 def _earnings(canvas, payload, now, left, right, top, rows):
-    items = payload["earnings"]["data"].get("items", [])[:rows]
+    items = upcoming_earnings(payload["earnings"]["data"].get("items"), now)[:rows]
     if not items:
         canvas.text((left, top), "45 天内持仓无财报", 13, "muted", anchor="lm")
         return 1

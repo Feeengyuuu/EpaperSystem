@@ -20,6 +20,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
+from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import DEFAULT_FONT_FAMILY, bounded_int, coerce_bool, get_available_font_names, get_font
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
@@ -191,6 +192,8 @@ class TechPulse(BasePlugin):
             payload["cache_key"] = cache_key
             self._write_json(cache_file, payload)
             return payload
+        except TaskCancelled:
+            raise
         except Exception as exc:
             live_error = str(exc)
             logger.warning("Tech Pulse live fetch failed: %s", exc)
@@ -227,6 +230,8 @@ class TechPulse(BasePlugin):
                 item_response.raise_for_status()
                 item = item_response.json()
                 story = self._parse_story_item(item, now=now)
+            except TaskCancelled:
+                raise  # a cancelled refresh must not cache the stories fetched so far
             except Exception as exc:
                 logger.debug("Skipping HN item %s: %s", raw_id, exc)
                 continue
@@ -264,6 +269,8 @@ class TechPulse(BasePlugin):
                 )
                 response.raise_for_status()
                 comment = self._parse_comment_item(response.json(), now=now)
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 logger.debug("Skipping HN comment %s: %s", raw_id, exc)
                 continue

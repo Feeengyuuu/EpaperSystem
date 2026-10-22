@@ -36,6 +36,15 @@ BOUNDARIES = {
     "plugins/sports_dashboard/f1_domain.py": {
         "__future__", "collections.abc", "datetime", "typing",
     },
+    "plugins/sports_dashboard/event_ranking.py": {
+        "__future__", "collections.abc", "datetime", "re",
+    },
+    "plugins/sports_dashboard/display_rotation.py": {
+        "__future__", "datetime", "logging",
+    },
+    "display/display_history.py": {
+        "__future__", "collections.abc", "datetime", "json", "logging", "pathlib", "utils.atomic_file",
+    },
     "plugins/stocktracker/trend_chart.py": {
         "__future__", "collections.abc",
     },
@@ -88,7 +97,7 @@ def check_source(source: str, module: str) -> list[str]:
 # cooperative cancellation and keep the single refresh worker busy past its
 # deadline. Existing debt is ratcheted: guard new handlers with
 # ``except TaskCancelled: raise`` (or re-raise) and lower this ceiling.
-PLUGIN_CANCELLATION_SWALLOW_CEILING = 715
+PLUGIN_CANCELLATION_SWALLOW_CEILING = 678
 _CANCELLATION_TYPES = {"TaskCancelled", "TaskDeadlineExceeded"}
 _CANCELLATION_CATCHERS = {"BaseException", "Exception", "RuntimeError"}
 

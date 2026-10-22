@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from .common import *
 from .common import _normalize_country_alias, _safe_exception_text
 from .football_espn import fetch_scoreboard
+from . import event_ranking
 from .club_football_localization import (
     CLUB_FOOTBALL_TEAM_LOCALIZATIONS,
     contains_chinese,
@@ -2409,6 +2410,15 @@ class ClubFootballMixin:
         return candidates[0][4]
 
     @staticmethod
+    def _club_timeline_focus_points(event, now, recent_shown=()):
+        """Within one status, how soon (or how recently) the match is, less a
+        penalty for a league the panel showed at its last display."""
+        state = {0: "live", 1: "scheduled", 2: "final"}.get(event.get("_selection_priority"), "")
+        start = event.get("start_utc")
+        points = event_ranking.state_points(state, start, now) if state else 0.0
+        return points - event_ranking.fairness_penalty(str(event.get("league_code") or ""), recent_shown)
+
+    @staticmethod
     def _select_club_football_timeline_events(
         by_league,
         enabled_leagues,
@@ -2416,6 +2426,7 @@ class ClubFootballMixin:
         rotation_seed,
         *,
         source_state="",
+        recent_shown=(),
     ):
         candidates = []
         league_events = []
@@ -2459,15 +2470,19 @@ class ClubFootballMixin:
                 "priority": "NO SCHEDULE",
             }
 
-        best_rank = min(
-            SportsDashboard._club_event_selection_rank(event) for event in candidates
-        )
-        best_priority = best_rank[0]
-        eligible = [
-            event
-            for event in candidates
-            if SportsDashboard._club_event_selection_rank(event) == best_rank
-        ]
+        # Live, then upcoming, then results; within that status the nearest
+        # match, unless its league was on the panel at the last display.
+        current = now if isinstance(now, datetime) else datetime.now(timezone.utc)
+        if current.tzinfo is None:
+            current = current.replace(tzinfo=timezone.utc)
+
+        def focus_key(event):
+            rank = SportsDashboard._club_event_selection_rank(event)
+            points = SportsDashboard._club_timeline_focus_points(event, current, recent_shown)
+            return rank[0], -round(points, 6), rank[1:]
+
+        best_key = min(focus_key(event) for event in candidates)
+        eligible = [event for event in candidates if focus_key(event) == best_key]
         focus_index = int(rotation_seed or 0) % len(eligible)
         previous_league = getattr(rotation_seed, "previous_league", None)
         if (

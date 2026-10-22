@@ -10,6 +10,7 @@ import math
 import os
 import threading
 
+from display.display_history import RECENT_DISPLAYS_SETTING, recent_displays
 from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     attach_source_provenance,
@@ -171,6 +172,17 @@ def _device_payload(device_config):
     if env_file is None:
         env_file = os.environ.get("INKYPI_ENV_FILE")
     return values, None if env_file is None else str(env_file)
+
+
+def _recent_display_times(device_config, instance_identity):
+    try:
+        return recent_displays(
+            getattr(device_config, "display_dir", None),
+            getattr(instance_identity, "instance_uuid", None),
+        )
+    except Exception:
+        logger.debug("Sports Dashboard display history is unavailable.", exc_info=True)
+        return ()
 
 
 def _normalized_bool_setting(settings, key):
@@ -359,6 +371,10 @@ def render_sports_dashboard_isolated(
         render_settings["_inkypi_theme"] = normalize_palette_colors(
             thaw_payload(resolved_theme_context)
         )
+    # The page rotates its content by what actually reached the panel.
+    render_settings[RECENT_DISPLAYS_SETTING] = list(
+        _recent_display_times(device_config, instance_identity)
+    )
     device_values, env_file = _device_payload(device_config)
     if checkpoint_store is None:
         checkpoint_store = SportsRegionCheckpointStore.for_device(

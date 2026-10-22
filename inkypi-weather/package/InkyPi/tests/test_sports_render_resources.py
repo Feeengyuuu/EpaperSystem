@@ -127,7 +127,7 @@ def test_valve_tracking_sees_all_candidates_but_drawing_only_owns_primary(monkey
     monkeypatch.setattr(
         plugin,
         "_select_right_esports_sidebar",
-        lambda lol, selected, source, now: {"kind": "valve", "selected": selected, "source_state": source},
+        lambda lol, selected, source, now, **_kwargs: {"kind": "valve", "selected": selected, "source_state": source},
     )
     monkeypatch.setattr(
         plugin, "_write_valve_esports_live_state", lambda selected, *args: tracked.append(len(selected["cards"]))

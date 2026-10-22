@@ -3611,7 +3611,7 @@ def test_right_sidebar_prefers_active_valve_over_ewc_schedule_overview():
     assert choice["choice"]["league_key"] == "LPL"
 
 
-def test_right_sidebar_keeps_live_lpl_ahead_of_live_ti():
+def test_right_sidebar_puts_a_live_world_championship_ahead_of_live_lpl():
     now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
     lpl_match = {"start": now, "state": "inProgress", "team_a": "TES", "team_b": "AL"}
     ti_match = {"start": now - timedelta(minutes=20), "state": "inProgress", "team_a": "Yandex", "team_b": "Spirit"}
@@ -3641,14 +3641,16 @@ def test_right_sidebar_keeps_live_lpl_ahead_of_live_ti():
         now,
     )
 
-    assert choice["kind"] == "lol"
+    # The International is Dota 2's world championship; a regular LPL week is not.
+    assert choice["kind"] == "valve"
 
 
 @pytest.mark.parametrize(
     ("lpl_offset", "ti_offset", "expected_kind"),
-    [(8, 2, "valve"), (2, 8, "lol")],
+    # On its day TI goes first even when LPL starts sooner; two days out it waits.
+    [(8, 2, "valve"), (2, 8, "valve"), (2, 40, "lol")],
 )
-def test_right_sidebar_uses_earliest_trusted_upcoming_between_lpl_and_ti(
+def test_right_sidebar_ranks_upcoming_lpl_and_ti_by_time_and_event_size(
     lpl_offset,
     ti_offset,
     expected_kind,
@@ -21450,3 +21452,38 @@ def test_default_enabled_live_refresh_checkboxes_submit_explicit_false():
     }
     for key in default_enabled:
         assert f'<input type="hidden" name="{key}" value="false">' in html, key
+
+
+def test_club_timeline_hands_the_focus_to_another_league_after_a_display():
+    now = datetime(2026, 8, 29, 13, tzinfo=timezone.utc)
+    by_league = {
+        "PL": [_club_selection_event("PL", "SCHEDULED", now + timedelta(hours=1), suffix="pl")],
+        "BL1": [_club_selection_event("BL1", "SCHEDULED", now + timedelta(hours=3), suffix="bl1")],
+    }
+
+    def focus(shown=()):
+        return SportsDashboard._select_club_football_timeline_events(
+            by_league, ("PL", "BL1"), now, 0, source_state="CLUB LIVE", recent_shown=shown,
+        )["focus"]["league_code"]
+
+    assert focus() == "PL"
+    assert focus([("PL",)]) == "BL1"
+    # A status still outranks fairness: a live match keeps the focus after being shown.
+    by_league["PL"] = [_club_selection_event("PL", "LIVE", now - timedelta(minutes=20), confirmed=True, suffix="pl")]
+    assert focus([("PL",)]) == "PL"
+
+
+def test_right_sidebar_gives_a_close_runner_up_the_next_display():
+    now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
+
+    def lol(league, hours, priority):
+        match = {"start": now + timedelta(hours=hours), "state": "unstarted", "team_a": "A", "team_b": "B"}
+        return {"league_key": league, "selected": SportsDashboard._select_lpl_events([match], now),
+                "source_state": "LIVE DATA", "priority": priority}
+
+    cards = [lol("LPL", 2, 0), lol("LCK", 3, 1)]
+    first = SportsDashboard._select_right_esports_sidebar(cards, None, "", now)
+    second = SportsDashboard._select_right_esports_sidebar(cards, None, "", now, recent_shown=[("LPL",)])
+
+    assert first["choice"]["league_key"] == "LPL"
+    assert second["choice"]["league_key"] == "LCK"

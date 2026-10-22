@@ -31,6 +31,7 @@ from plugins.tech_pulse.tech_pulse import (  # noqa: E402
 )
 from plugins.base_plugin.presentation import PresentationMode  # noqa: E402
 from plugins.base_plugin.render_provenance import read_source_provenance  # noqa: E402
+from runtime.refresh_contracts import TaskCancelled  # noqa: E402
 
 
 def test_background_layer_stays_flat_for_color_epaper():
@@ -258,6 +259,30 @@ def test_fetch_live_payload_uses_feed_order_filters_min_score_and_user_agent(tmp
     assert payload["status"]["source_state"] == "live"
     assert HN_DOCS_URL in payload["status"]["source_urls"]
     assert any(call[1]["headers"]["User-Agent"].startswith("InkyPi TechPulse") for call in session.urls)
+
+
+def test_cancelled_refresh_stops_instead_of_caching_a_partial_feed(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    now = datetime.fromtimestamp(1782523800, timezone.utc)
+
+    class CancellingSession(FakeSession):
+        def get(self, url, **kwargs):
+            if "/item/2.json" in url:
+                raise TaskCancelled("task was canceled")
+            return super().get(url, **kwargs)
+
+    session = CancellingSession({
+        "topstories.json": [1, 2, 3],
+        "/item/1.json": _story(1, "Fetched before the cancel"),
+        "/item/3.json": _story(3, "Never requested"),
+    })
+    monkeypatch.setattr("plugins.tech_pulse.tech_pulse.get_http_session", lambda: session)
+
+    with pytest.raises(TaskCancelled):
+        plugin._payload({"feed": "topstories", "maxStories": "5"}, now)
+
+    assert not (tmp_path / "state.json").exists()
+    assert not any("/item/3.json" in url for url, _kwargs in session.urls)
 
 
 def test_story_preview_url_uses_title_target_and_hn_fallback(tmp_path):

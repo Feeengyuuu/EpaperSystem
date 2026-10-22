@@ -614,3 +614,36 @@ def test_posix_worker_refuses_heavy_import_without_oom_preference(monkeypatch):
 
     with pytest.raises(RuntimeError, match="OOM isolation"):
         isolated_refresh._require_worker_oom_preference()
+
+
+def test_each_region_learns_when_this_page_was_last_on_the_panel(monkeypatch, tmp_path):
+    from display import display_history
+
+    executor = _RecordingExecutor()
+    monkeypatch.setattr(sports_isolated_renderer, "_get_executor", lambda: executor)
+    monkeypatch.setattr(sports_isolated_renderer, "_release_parent_transient_memory", lambda: (0, False))
+    shown = "2026-07-27T15:30:00+00:00"
+    display_history.record_display(tmp_path, {"instance_uuid": "sports", "plugin_id": "sports_dashboard"}, shown)
+    display_history.record_display(tmp_path, {"instance_uuid": "other", "plugin_id": "weather"},
+                                   "2026-07-27T15:35:00+00:00")
+    device = _DeviceConfig()
+    device.display_dir = tmp_path
+    identity = InstanceIdentity("sports", 1, 2)
+
+    sports_isolated_renderer.render_sports_dashboard_isolated(
+        settings={"id": "sports_dashboard"},
+        device_config=device,
+        resolved_theme_context=None,
+        context=_context(),
+        instance_identity=identity,
+        identity_validator=lambda candidate: candidate == identity,
+        resource_sampler=lambda: SimpleNamespace(available_mb=240, swap_percent=10),
+        start_min_available_mb=180,
+        start_max_swap_percent=60,
+        abort_min_available_mb=150,
+        abort_max_swap_percent=70,
+        now=SimpleNamespace(isoformat=lambda: "2026-07-27T09:00:00-07:00"),
+    )
+
+    settings = [submission[1]["settings"] for submission in executor.submissions]
+    assert settings and all(item[display_history.RECENT_DISPLAYS_SETTING] == [shown] for item in settings)

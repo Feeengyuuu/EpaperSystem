@@ -2504,6 +2504,7 @@ class SportsDashboardCommonMixin:
                 now,
                 self._club_football_rotation_seed(now),
                 source_state=source_state,
+                recent_shown=self._region_recent_shown(settings, "football"),
             )
         except Exception as exc:
             logger.warning(
@@ -2588,6 +2589,7 @@ class SportsDashboardCommonMixin:
                     now,
                     self._club_football_rotation_seed(now),
                     source_state=source_state,
+                    recent_shown=self._region_recent_shown(settings, "football"),
                 )
             if not isinstance(selected, Mapping):
                 selected = self._select_club_football_timeline_events(
@@ -2620,6 +2622,8 @@ class SportsDashboardCommonMixin:
             source_state,
             fetched_at,
         )
+        focus_league = str(((selected or {}).get("focus") or {}).get("league_code") or "CLUB").upper()
+        self._record_region_choice("football", now, [focus_league])
         sections = self._build_club_football_event_sections(
             by_league,
             selected,
@@ -2801,6 +2805,8 @@ class SportsDashboardCommonMixin:
                 csl_summary,
                 club_summary,
             )
+        if panel_kind != "club":
+            self._record_region_choice("football", now, ["CSL" if panel_kind == "csl" else "WORLDCUP"])
         if panel_kind == "csl":
             panel, provenance, source = self._render_csl_slot(
                 settings,
@@ -3145,11 +3151,13 @@ class SportsDashboardCommonMixin:
             tracked_valve_selected = early_valve_selected
             tracked_valve_source_state = early_source_state
             should_write_valve_state = bool(early_valve_cards) or should_clear_early_state
+            recent_shown = self._region_recent_shown(settings, "esports")
             esports_choice = self._select_right_esports_sidebar(
                 lol_cards,
                 early_valve_selected,
                 early_source_state,
                 now,
+                recent_shown=recent_shown,
             )
             choice_kind = str(
                 (esports_choice or {}).get("kind") or ""
@@ -3218,6 +3226,7 @@ class SportsDashboardCommonMixin:
                     valve_selected,
                     valve_source_state,
                     now,
+                    recent_shown=recent_shown,
                 )
 
         if tracked_valve_selected is not None and should_write_valve_state:
@@ -3241,6 +3250,7 @@ class SportsDashboardCommonMixin:
         self, image, settings, device_config, timezone_info, now, left_width,
     ):
         esports_choice = self._prepare_right_esports_panel(settings, device_config, timezone_info, now)
+        self._record_region_choice("esports", now, [self._right_sidebar_candidate_key(esports_choice)])
 
         if esports_choice.get("kind") == "valve":
             self._release_worlds_sidebar_pin()

@@ -10,6 +10,7 @@ from plugins.money_radar import money_radar as money_module  # noqa: E402
 from plugins.money_radar import sources  # noqa: E402
 from plugins.money_radar.money_radar import MoneyRadar  # noqa: E402
 from plugins.money_radar.render import price_text, render_page  # noqa: E402
+from utils.http_client import HttpStatusError  # noqa: E402
 
 NOW = datetime(2026, 10, 21, 13, 0, tzinfo=sources.PACIFIC)
 
@@ -65,6 +66,83 @@ def test_bls_year_over_year_and_unemployment():
     assert data["cpi"]["period"] == "2026-09"
     assert data["cpi"]["value"] == pytest.approx(round((120 / 108 - 1) * 100, 1))
     assert data["unemployment"] == {"value": 4.2, "previous": 4.0, "period": "2026-09"}
+
+
+def _monthly(values_by_period):
+    rows = [{"year": period[:4], "period": f"M{period[5:]}", "value": str(value)}
+            for period, value in values_by_period.items()]
+    return {"Results": {"series": [{"data": rows}]}}
+
+
+def _months(first, count):
+    year, month = (int(part) for part in first.split("-"))
+    periods = []
+    for _ in range(count):
+        periods.append(f"{year}-{month:02d}")
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    return periods
+
+
+def test_cpi_falls_back_past_a_month_without_a_year_ago_reading():
+    # BLS never published October 2025 CPI (the 2025 lapse in appropriations); its value is "-".
+    values = {period: 300 + index for index, period in enumerate(_months("2024-09", 26))}
+    values["2025-10"] = "-"
+    unemployment = _monthly({"2026-09": 4.3, "2026-10": 4.4})
+
+    october = sources.normalize_bls(_monthly(values), unemployment)
+    values["2026-11"] = 330
+    november = sources.normalize_bls(_monthly(values), unemployment)
+
+    # October 2026 has no year-ago base, so the newest comparable month is shown instead of nothing.
+    assert october["cpi"]["period"] == "2026-09"
+    assert october["cpi"]["value"] == pytest.approx(round((324 / 312 - 1) * 100, 1))
+    assert october["cpi"]["previous"] == pytest.approx(round((323 / 311 - 1) * 100, 1))
+    # November compares with November; the month before it has no reading to compare with.
+    assert november["cpi"] == {"value": pytest.approx(round((330 / 314 - 1) * 100, 1)),
+                               "previous": None, "period": "2026-11"}
+
+
+def test_fred_cpi_compares_each_month_with_the_same_month_a_year_earlier(monkeypatch):
+    cpi = {period: 300 + index for index, period in enumerate(_months("2024-09", 26))}
+    del cpi["2025-10"]  # FRED leaves the unpublished month out of the series
+
+    def fake_series(series_id, _key, _context, limit):
+        rows = {"CPIAUCSL": cpi, "UNRATE": {"2026-09": 4.3, "2026-10": 4.4},
+                "DFF": {"2026-10": 4.1}, "MORTGAGE30US": {"2026-10": 6.2}}[series_id]
+        return [(f"{period}-01", value) for period, value in sorted(rows.items(), reverse=True)][:limit]
+
+    monkeypatch.setattr(sources, "_fred_series", fake_series)
+    data = sources.fetch_macro("key", None)
+
+    assert data["cpi"] == {"value": pytest.approx(round((324 / 312 - 1) * 100, 1)),
+                           "previous": pytest.approx(round((323 / 311 - 1) * 100, 1)), "period": "2026-09"}
+    assert data["unemployment"] == {"value": 4.4, "previous": 4.3, "period": "2026-10"}
+
+
+def test_one_failing_market_symbol_keeps_the_others(monkeypatch):
+    chart = {"chart": {"result": [{
+        "meta": {"regularMarketPrice": 4.2},
+        "timestamp": [1758000000 + day * 86400 for day in range(5)],
+        "indicators": {"quote": [{"close": [4.0, 4.1, 4.2, 4.1, 4.2]}]},
+    }]}}
+
+    def fake_get(_method, url, _context, **_kwargs):
+        if "DX-Y.NYB" in url:
+            raise HttpStatusError("GET", url, 404)
+        return chart
+
+    monkeypatch.setattr(sources, "_get", fake_get)
+    quotes = sources.fetch_markets(None)["quotes"]
+
+    assert "DX-Y.NYB" not in quotes
+    assert set(quotes) == set(sources.MARKET_SYMBOLS) - {"DX-Y.NYB"}
+
+
+def test_earnings_already_reported_drop_out_of_a_kept_cache():
+    items = [{"symbol": "TSLA", "date": "2026-10-20"}, {"symbol": "AAPL", "date": "2026-10-21"},
+             {"symbol": "NVDA", "date": "2026-11-19"}, {"symbol": "BAD", "date": "soon"}]
+
+    assert [item["symbol"] for item in sources.upcoming_earnings(items, NOW)] == ["AAPL", "NVDA"]
 
 
 def test_news_rss_and_sec_submissions_normalize():
