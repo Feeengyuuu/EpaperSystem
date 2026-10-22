@@ -72,6 +72,17 @@ sudo systemctl restart inkypi
 
 See [API keys](api_keys.md). Runtime keys live in `/etc/inkypi/inkypi.env`, not a new source-checkout `.env`.
 
+### Optional: Chinese fonts
+
+The project ships open-source CJK fonts (Noto Sans SC and LXGW WenKai), so Chinese text works out of the box. The project's screenshots use Microsoft YaHei, which cannot be redistributed. If you have a properly licensed copy (`msyh.ttf` and `msyhbd.ttf`, or the `.ttc` files), put it in the device's font folder and every page switches to it:
+
+```bash
+sudo install -o root -g inkypi -m 0640 msyh.ttf msyhbd.ttf /var/lib/inkypi/data/fonts/
+sudo systemctl restart inkypi
+```
+
+Rerunning the installer also corrects the permissions of fonts in that folder and keeps your configuration.
+
 ## Updates and data
 
 Online installations can rerun the same command. A different repository or uncommitted local changes stop automatic updates; commit or preserve personal source changes first. Manual clones should run `git pull --ff-only`, then `sudo bash install.sh --lang en`.

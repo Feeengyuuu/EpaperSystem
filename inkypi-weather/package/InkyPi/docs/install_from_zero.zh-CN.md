@@ -100,6 +100,17 @@ sudo systemctl restart inkypi
 
 注册地址和各项用途见 [API Key 配置指南](api_keys.zh-CN.md)。运行中的密钥位于 `/etc/inkypi/inkypi.env`，不要在源码目录新建另一份 `.env` 当作运行配置。
 
+### 可选：中文字体
+
+项目自带开源中文字体（思源黑体 Noto Sans SC、霞鹜文楷），装好就能显示中文。项目截图里用的是微软雅黑；它不能随开源项目分发。如果你有合法授权的雅黑字体文件（`msyh.ttf` 与 `msyhbd.ttf`，或对应的 `.ttc`），可以放进设备的字体目录，各页面会自动改用雅黑：
+
+```bash
+sudo install -o root -g inkypi -m 0640 msyh.ttf msyhbd.ttf /var/lib/inkypi/data/fonts/
+sudo systemctl restart inkypi
+```
+
+重新运行安装命令也会修正这个目录里字体文件的权限，并保留现有配置。
+
 ## 6. 更新与数据位置
 
 使用在线安装命令的用户，可重新运行同一命令更新。下载目录必须是对应仓库且没有未提交修改；检测到个人源码修改时，安装器会停止自动更新，请先提交或妥善保存修改。
