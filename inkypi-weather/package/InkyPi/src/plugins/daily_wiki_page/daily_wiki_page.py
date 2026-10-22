@@ -35,6 +35,18 @@ from utils.safe_image import ImageLimits
 logger = logging.getLogger(__name__)
 
 
+class WikiSourceError(RuntimeError):
+    """A Wikimedia response this plugin cannot use, named by a fixed code.
+
+    Fetch failures are logged by type only (messages can carry credentials); the code says
+    which check failed without repeating any response text.
+    """
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
 class _HTMLTextExtractor(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -315,10 +327,22 @@ class DailyWikiPage(BasePlugin):
                 if current_language == language:
                     primary_failure_type = "EmptyArticle"
             except Exception as exc:
-                errors.append(f"{current_language}: {type(exc).__name__}")
+                errors.append(f"{current_language}: {self._failure_summary(exc)}")
                 if current_language == language:
                     primary_failure_type = type(exc).__name__
         raise RuntimeError("; ".join(errors) or "no Wikimedia payload")
+
+    @staticmethod
+    def _failure_summary(exc):
+        """A fetch failure by type, its fixed code and its cause's type; never message text,
+        which can carry credentials."""
+        summary = type(exc).__name__
+        if isinstance(exc, WikiSourceError):
+            summary += f"[{exc.code}]"
+        cause = exc.__cause__ or exc.__context__
+        if cause is not None:
+            summary += f" from {type(cause).__name__}"
+        return summary
 
     def _fetch_feed(self, now, language):
         return self._get_json(FEED_URL.format(language=language, year=now.strftime("%Y"), month=now.strftime("%m"), day=now.strftime("%d")))
@@ -331,7 +355,7 @@ class DailyWikiPage(BasePlugin):
             article = self._first_most_read_article(feed)
             article_source = "most read"
         if not article:
-            raise RuntimeError("Wikimedia feed did not include an article")
+            raise WikiSourceError("no_article", "Wikimedia feed did not include an article")
 
         featured_image = feed.get("image") if isinstance(feed.get("image"), dict) else {}
         title = self._page_title(article)
@@ -898,10 +922,10 @@ class DailyWikiPage(BasePlugin):
         data = self._get_json(ZH_ACTION_API_URL, params=params)
         pages = data.get("query", {}).get("pages") if isinstance(data, dict) else None
         if not isinstance(pages, list) or not pages:
-            raise RuntimeError("zh-cn query returned no pages")
+            raise WikiSourceError("zh_query_no_pages", "zh-cn query returned no pages")
         page = pages[0]
         if page.get("missing"):
-            raise RuntimeError("zh-cn query page is missing")
+            raise WikiSourceError("zh_query_page_missing", "zh-cn query page is missing")
         return page
 
     def _fetch_zh_cn_display_title(self, article, page):
@@ -928,7 +952,7 @@ class DailyWikiPage(BasePlugin):
         title = self._page_title(article)
         if title:
             return {"titles": title}
-        raise RuntimeError("article has no pageid or title")
+        raise WikiSourceError("article_without_id", "article has no pageid or title")
 
     def _get_json(self, url, params=None):
         response = get_http_session().get(url, params=params, headers=REQUEST_HEADERS, timeout=(5, 12))
@@ -936,14 +960,14 @@ class DailyWikiPage(BasePlugin):
         try:
             return response.json()
         except ValueError as exc:
-            raise RuntimeError(f"response from {url} was not JSON") from exc
+            raise WikiSourceError("not_json", f"response from {url} was not JSON") from exc
     def _post_json(self, url, data=None):
         response = get_http_session().post(url, data=data, headers=REQUEST_HEADERS, timeout=(5, 12))
         response.raise_for_status()
         try:
             return response.json()
         except ValueError as exc:
-            raise RuntimeError(f"response from {url} was not JSON") from exc
+            raise WikiSourceError("not_json", f"response from {url} was not JSON") from exc
     def _write_context(self, payload, now):
         try:
             write_context(

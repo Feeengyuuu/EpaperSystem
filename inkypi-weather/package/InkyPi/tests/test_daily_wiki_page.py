@@ -1774,3 +1774,16 @@ def test_cached_display_keeps_original_source_date_after_device_timezone_changes
     assert image.info["daily_wiki_layout"]["date"] == "2026-10-05"
     assert image.info["daily_wiki_layout"]["complete"] is True
     assert cached_display_snapshot(tmp_path) == before
+
+
+def test_live_fetch_failures_name_the_failed_check_and_cause_without_message_text():
+    try:
+        try:
+            raise ValueError("token=do-not-log")
+        except ValueError as cause:
+            raise wiki_module.WikiSourceError("not_json", "response from https://x.test/?key=do-not-log") from cause
+    except RuntimeError as error:
+        summary = DailyWikiPage._failure_summary(error)
+
+    assert summary == "WikiSourceError[not_json] from ValueError"
+    assert DailyWikiPage._failure_summary(TimeoutError("credential=do-not-log")) == "TimeoutError"
