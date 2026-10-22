@@ -2,12 +2,14 @@
 
 The plugin prepares plain data (lead, sections, quotes, meta); this module only
 draws it. Spare column space gets a small globe with that column's sources, the
-lead band carries a topic medallion and every story a topic disc from ``news_art``.
+lead band carries a topic medallion and every story a topic ring from ``news_art``.
 
-Text stays in the theme's ink; colour comes only from the panel's solid inks, which
-it shows without dithering. 国内 and A股 are red and 国际 and 美股 blue; a story's
-tag chip and disc share its topic's colour; a market change is a red (up) or green
-(down) pill, as Chinese quotes show them, beside the index's own mark.
+The page reads as an ink newspaper with two sparing accents in the panel's solid
+inks, which it shows without dithering: red for 国内 and A股, blue for 国际 and 美股.
+They mark section bars, counts and story numbers, the lead's kicker, and the tag and
+ring glyph of hard-news (red) or business and technology (blue) stories. A market
+change is a red (up) or green (down) figure, as Chinese quotes show them, beside the
+index's own mark. No colour is ever a filled block except the 头条 seal.
 """
 
 from __future__ import annotations
@@ -32,25 +34,21 @@ COMPACT_ITEM_GAP = 4
 # A story is its title lines plus a footer row with the tag chip and the one-line fact.
 TITLE_LINE = 18
 ITEM_FOOTER = 20
-# Each story ends in a topic disc; its text stops short of this right-hand slot.
+# Each story ends in a topic ring; its text stops short of this right-hand slot.
 STORY_ICON_SLOT = 40
 STORY_ICON_RADIUS = 15
-# The panel's solid inks as (fill, text on it) pairs; anything unlisted uses the theme ink.
-RED_INK = ((255, 0, 0), (255, 255, 255))
-BLUE_INK = ((0, 0, 255), (255, 255, 255))
-YELLOW_INK = ((255, 255, 0), (0, 0, 0))
-GREEN_INK = ((0, 255, 0), (0, 0, 0))
-SECTION_INKS = {"国内": RED_INK, "A股": RED_INK, "国际": BLUE_INK, "美股": BLUE_INK}
-TOPIC_INKS = {
-    "conflict": RED_INK,
-    "climate": YELLOW_INK,
-    "health": GREEN_INK,
-    "sports": GREEN_INK,
-    "economy": BLUE_INK,
-    "tech": BLUE_INK,
-    "aviation": BLUE_INK,
+# The panel's solid accents; anything unlisted stays in the theme's ink.
+RED = (255, 0, 0)
+BLUE = (0, 0, 255)
+SECTION_ACCENTS = {"国内": RED, "A股": RED, "国际": BLUE, "美股": BLUE}
+TOPIC_ACCENTS = {
+    "conflict": RED,
+    "climate": RED,
+    "health": RED,
+    "economy": BLUE,
+    "tech": BLUE,
+    "aviation": BLUE,
 }
-MARKET_PILL_HEIGHT = 17
 # The lead's headline shrinks through these sizes to fit; its two-sentence fact wraps.
 LEAD_TITLE_SIZES = (26, 24, 22, 20)
 LEAD_FACT_SIZE = 15
@@ -113,29 +111,25 @@ class NewsPage:
         box = (x, y, x + width, y + height)
         if solid:
             self.d.rounded_rectangle(box, radius=height // 2, fill=colour)
-            ink = ink or self.p._contrast_ink(colour, self.c)
+            ink = self.p._contrast_ink(colour, self.c)
         else:
             self.d.rounded_rectangle(box, radius=height // 2, outline=colour, width=1)
-            ink = self.c["ink"]
+            ink = ink or self.c["ink"]
         self.text((x + 7, y + height / 2), text, size, True, ink, "lm")
         return width
 
     # -- colour helpers -----------------------------------------------------
-    def dark(self):
-        return sum(tuple(self.c["panel"])[:3]) < 384
+    def accent(self, colour):
+        """A solid accent, or the theme's ink for none; blue is too dark to read on a night page."""
+        if colour is None:
+            return self.c["ink"]
+        if colour == BLUE and sum(tuple(self.c["panel"])[:3]) < 384:
+            return self.c["ink"]
+        return colour
 
-    def ink_pair(self, pair):
-        """A (fill, text) pair, with the theme's ink and page colour for no pair."""
-        return pair if pair else (self.c["ink"], self.c["panel"])
-
-    def section_mark(self, label):
-        """The section's colour for marks and words; blue is too dark to read on a night page."""
-        fill = self.ink_pair(SECTION_INKS.get(label))[0]
-        return self.c["ink"] if self.dark() and fill == BLUE_INK[0] else fill
-
-    def topic_inks(self, tag, title):
+    def topic_accent(self, tag, title):
         kind = news_art.topic_kind(tag, title)
-        return kind, self.ink_pair(TOPIC_INKS.get(kind))
+        return kind, self.accent(TOPIC_ACCENTS.get(kind))
 
     def paste_logo(self, key, x, middle):
         """Paste an index mark left-aligned at ``x``, centred on ``middle``; returns its width."""
@@ -198,17 +192,21 @@ class NewsPage:
         for index, char in enumerate("头条"):
             self.text((MARGIN + seal_w / 2, top + 9 + seal_h * (1 + 2 * index) / 4), char, 17, True, seal_ink, "mm")
         text_x = MARGIN + seal_w + 14
-        # The section and topic sit as solid chips before the headline.
+        # A newspaper kicker before the headline: the section in its accent, then the topic.
         title_x = text_x
+        kicker_y = top + 20
         section = lead.get("section_label")
         if section:
-            fill, ink = self.ink_pair(SECTION_INKS.get(section))
-            title_x += self.chip(title_x, top + 9, section, fill, size=11, ink=ink) + 5
+            self.text((title_x, kicker_y), section, 13, True, self.accent(SECTION_ACCENTS.get(section)), "lm")
+            title_x += self.width(section, 13)
+        if section and lead.get("tag"):
+            self.d.line((title_x + 6, kicker_y - 6, title_x + 6, kicker_y + 6), fill=c["ink"], width=1)
+            title_x += 12
         if lead.get("tag"):
-            _kind, (fill, ink) = self.topic_inks(lead["tag"], lead["title"])
-            title_x += self.chip(title_x, top + 9, lead["tag"], fill, size=11, ink=ink) + 5
+            self.text((title_x, kicker_y), lead["tag"], 13, True, c["ink"], "lm")
+            title_x += self.width(lead["tag"], 13)
         if title_x > text_x:
-            title_x += 5
+            title_x += 12
         title_w = art_left - 12 - title_x
         largest = LEAD_TITLE_SIZES[0]
         size = self.fit_size(lead["title"], LEAD_TITLE_SIZES, title_w)
@@ -222,8 +220,9 @@ class NewsPage:
 
     def column(self, x, width, label, items, *, sources):
         c = self.c
-        mark = self.section_mark(label)
-        self.d.rectangle((x, COLUMN_TOP + 2, x + 4, COLUMN_TOP + 16), fill=self.ink_pair(SECTION_INKS.get(label))[0])
+        mark = self.accent(SECTION_ACCENTS.get(label))
+        # The bar keeps the section's colour even at night, where blue words fall back to ink.
+        self.d.rectangle((x, COLUMN_TOP + 3, x + 3, COLUMN_TOP + 15), fill=SECTION_ACCENTS.get(label, c["ink"]))
         self.text((x + 10, COLUMN_TOP), label, 14, True)
         count_x = x + 14 + self.width(label, 14)
         self.d.line((x, COLUMN_TOP + 22, x + width, COLUMN_TOP + 22), fill=c["rule"], width=1)
@@ -271,15 +270,15 @@ class NewsPage:
             self.text((text_x, y + index * TITLE_LINE), line, 15, True)
         row_y = y + len(lines) * TITLE_LINE + 1
         tag = item.get("tag") or ""
-        kind, (fill, ink) = self.topic_inks(tag, item["title"])
+        kind, accent = self.topic_accent(tag, item["title"])
         # The tag sits under the number, so the fact gets the full row after it.
-        fact_x = x + self.chip(x, row_y, tag, fill, size=10, ink=ink) + 6 if tag else text_x
+        fact_x = x + self.chip(x, row_y, tag, accent, size=10, solid=False, ink=accent) + 6 if tag else text_x
         why = self.clip(item.get("why"), 12, text_right - fact_x, False)
         if why:
             self.text((fact_x, row_y + 9), why, 12, False, c["ink"], "lm")
         height = len(lines) * TITLE_LINE + ITEM_FOOTER
         news_art.draw_story_icon(self.d, x + width - STORY_ICON_RADIUS - 2, y + height // 2 - 1,
-                                 STORY_ICON_RADIUS, kind, fill, ink)
+                                 STORY_ICON_RADIUS, kind, c["ink"], accent, c["panel"])
         return height
 
     def globe_filler(self, x, top, width, bottom, label, sources):
@@ -294,8 +293,8 @@ class NewsPage:
 
     def market(self, x, width, label, rows, height):
         c = self.c
-        self.d.rectangle((x, MARKET_TOP + 1, x + 3, MARKET_TOP + 12), fill=self.ink_pair(SECTION_INKS.get(label))[0])
-        self.text((x + 8, MARKET_TOP), label, 11, True)
+        self.d.rectangle((x, MARKET_TOP + 2, x + 2, MARKET_TOP + 12), fill=SECTION_ACCENTS.get(label, c["ink"]))
+        self.text((x + 7, MARKET_TOP), label, 11, True)
         as_of = next((row.get("as_of_label") for row in rows if row.get("as_of_label")), "")
         if as_of:
             self.text((x + width, MARKET_TOP), f"截至 {as_of}", 10, True, c["ink"], "ra")
@@ -318,38 +317,36 @@ class NewsPage:
         pct = row.get("change_pct")
         middle = top + 13
         mark = None
-        pill_left = self.change_pill(right - 2, middle, pct)
+        change_left = self.change_figure(right - 2, middle, pct)
         if isinstance(pct, (int, float)) and round(pct, 2):
             mark = c["up"] if pct > 0 else c["down"]
         # The index's own mark leads; the short name follows when the row has room for it.
-        label_x = left + 2
+        label_x = left + 1
         logo_w = self.paste_logo(row.get("logo"), label_x, middle)
-        label_x += logo_w + 4 if logo_w else 0
+        label_x += logo_w + 3 if logo_w else 0
         label = row.get("label") or ""
-        if label_x + self.width(label, 11) <= pill_left - 4 or not logo_w:
+        if label_x + self.width(label, 11) <= change_left - 3 or not logo_w:
             self.text((label_x, middle), label, 11, True, c["ink"], "lm")
         price = row.get("price")
         self.text((left + 2, top + 24), f"{price:,.2f}" if isinstance(price, (int, float)) else "--", 14, True)
         self.sparkline((left + 2, bottom - 15, right - 6, bottom - 6), row.get("closes") or [], mark)
 
-    def change_pill(self, right, middle, pct):
-        """The day's change as a solid pill ending at ``right``: red up, green down.
-
-        Returns the pill's left edge."""
+    def change_figure(self, right, middle, pct):
+        """The day's change ending at ``right``: a small triangle and the figure, red up and
+        green down as Chinese quotes show them, ink when flat. Returns its left edge."""
         if isinstance(pct, (int, float)) and round(pct, 2):
-            text = f"{pct:+.2f}%"
-            fill, ink = (self.c["up"], RED_INK[1]) if pct > 0 else (self.c["down"], GREEN_INK[1])
+            text, colour = f"{pct:+.2f}%", self.c["up"] if pct > 0 else self.c["down"]
         else:
-            text = "0.00%" if isinstance(pct, (int, float)) else "--"
-            fill, ink = None, self.c["ink"]
-        width = self.width(text, 11) + 10
-        box = (right - width, middle - MARKET_PILL_HEIGHT // 2, right, middle + MARKET_PILL_HEIGHT // 2)
-        if fill is None:
-            self.d.rounded_rectangle(box, radius=MARKET_PILL_HEIGHT // 2, outline=self.c["rule"], width=1)
-        else:
-            self.d.rounded_rectangle(box, radius=MARKET_PILL_HEIGHT // 2, fill=fill)
-        self.text((right - width / 2, middle), text, 11, True, ink, "mm")
-        return right - width
+            text, colour = ("0.00%" if isinstance(pct, (int, float)) else "--"), None
+        text_left = right - self.width(text, 12)
+        self.text((right, middle), text, 12, True, colour or self.c["ink"], "rm")
+        if colour is None:
+            return text_left
+        cx, half = text_left - 6, 4
+        points = ((cx - half, middle + 3), (cx + half, middle + 3), (cx, middle - 4)) if pct > 0 else \
+            ((cx - half, middle - 3), (cx + half, middle - 3), (cx, middle + 4))
+        self.d.polygon(points, fill=colour)
+        return cx - half
 
     def sparkline(self, box, closes, mark=None):
         """An ink trend line; its end dot carries the day's direction colour when there is one."""

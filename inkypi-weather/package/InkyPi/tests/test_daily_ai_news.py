@@ -1961,30 +1961,22 @@ def test_render_positions_the_radar_band_between_title_and_meta(monkeypatch):
     assert 620 <= right <= 680
 
 
-def test_market_changes_are_red_and_green_pills_beside_the_index_mark(monkeypatch):
+def test_market_changes_are_red_and_green_figures_beside_the_index_mark(monkeypatch):
     plugin = _plugin()
-    pills, logos = [], []
-    original_pill = news_layout.NewsPage.change_pill
+    logos = []
     original_logo = news_layout.NewsPage.paste_logo
-
-    def record_pill(self, right, middle, pct):
-        left = original_pill(self, right, middle, pct)
-        pills.append((pct, self.img.getpixel((left + 3, middle))))
-        return left
 
     def record_logo(self, key, x, middle):
         width = original_logo(self, key, x, middle)
         logos.append((key, width))
         return width
 
-    monkeypatch.setattr(news_layout.NewsPage, "change_pill", record_pill)
     monkeypatch.setattr(news_layout.NewsPage, "paste_logo", record_logo)
     _image, fills = _rendered_fills(monkeypatch, plugin)
 
-    # Chinese quotes: gains are red, losses green, each with its readable ink.
-    assert (0.28, (255, 0, 0)) in pills and (-0.05, (0, 255, 0)) in pills
-    assert fills["+0.28%"] == (255, 255, 255) and fills["-0.05%"] == (0, 0, 0)
-    assert ("sse", 16) in logos and ("sp500", 32) in logos
+    # Chinese quotes: gains are red and losses green, as words, never as filled blocks.
+    assert fills["+0.28%"] == (255, 0, 0) and fills["-0.05%"] == (0, 255, 0)
+    assert ("sse", 16) in logos and ("sp500", 29) in logos
 
 
 def test_every_index_has_a_mark_in_pure_panel_inks():
@@ -2013,17 +2005,16 @@ def _rendered_fills(monkeypatch, plugin):
     return image, fills
 
 
-def test_words_stay_ink_and_colour_comes_from_solid_panel_inks(monkeypatch):
+def test_words_stay_ink_with_red_and_blue_as_sparing_accents(monkeypatch):
     plugin = _plugin()
 
     image, fills = _rendered_fills(monkeypatch, plugin)
 
     ink = daily_ai_news_module.get_theme_palette("day")["ink"]
-    assert fills["大陆新闻1"] == fills["尼日利亚确诊埃博拉病例"] == ink
-    # 国内 numbers are red; chips carry their section's or topic's solid colour.
+    assert fills["大陆新闻1"] == fills["尼日利亚确诊埃博拉病例"] == fills["公卫"] == ink
+    # 国内 numbers are red; the 国际 kicker and a business tag are blue.
     assert fills["01"] == (255, 0, 0)
-    assert fills["金融"] == fills["国际"] == (255, 255, 255)
-    assert fills["公卫"] == (0, 0, 0)
+    assert fills["国际"] == fills["金融"] == (0, 0, 255)
     # The lead's seal is the panel's red with white characters.
     assert fills["头"] == fills["条"] == (255, 255, 255)
     palette = plugin._page_palette({"mode": "day"})
