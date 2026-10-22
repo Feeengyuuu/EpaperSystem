@@ -327,7 +327,8 @@ class NewsBriefMixin:
             repaired = self._strip_trailing_json_commas(candidate)
             for payload in (candidate, repaired):
                 try:
-                    data = json.loads(payload)
+                    # strict=False: models sometimes leave a raw newline or tab inside a string.
+                    data = json.loads(payload, strict=False)
                 except json.JSONDecodeError as exc:
                     last_error = exc
                     continue

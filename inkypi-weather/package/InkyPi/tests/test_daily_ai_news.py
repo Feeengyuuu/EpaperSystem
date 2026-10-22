@@ -2306,6 +2306,16 @@ def test_a_one_sentence_lead_shows_its_source_and_time_on_the_second_line(monkey
     assert "中新网要闻 · 10:52 发布" in seen
 
 
+def test_a_reply_with_a_raw_newline_inside_a_string_still_parses():
+    plugin = _plugin()
+    # The device's 11:27 refresh failed on exactly this: "Invalid control character".
+    content = '{"lead": {"title": "台风临近", "why": "第一句。\n第二句。", "section": "mainland"}, "mainland": [], "world": []}'
+
+    data = plugin._load_brief_json_object(content)
+
+    assert data["lead"]["why"] == "第一句。\n第二句。"
+
+
 def test_the_lead_keeps_a_two_sentence_fact():
     plugin = _plugin()
     fact = "台湾多地宣布23日停班停课，台股也休市一天。气象部门预计台风将在东部沿海登陆，最大风力可达14级。"
