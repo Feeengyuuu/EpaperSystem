@@ -42,6 +42,15 @@ MARKET_SHORT_NAMES = {
     "纳斯达克": "纳指",
     "道琼斯": "道指",
 }
+# The exchange or index mark beside each tile's name, from market_logos/.
+MARKET_LOGOS = {
+    "上证指数": "sse",
+    "深证成指": "szse",
+    "创业板指": "szse",
+    "标普500": "sp500",
+    "纳斯达克": "nasdaq",
+    "道琼斯": "dowjones",
+}
 # Daily closes kept per index for the market tile sparkline.
 MARKET_CLOSES_KEPT = 22
 

@@ -43,7 +43,7 @@ from . import news_common as common
 from .news_brief import DEFAULT_MODEL, NEWS_TAG_MAX_CHARS, NewsBriefMixin
 from .news_common import MAINLAND_NEWS_MAX, WORLD_NEWS_MAX
 from .news_layout import NewsPage, date_text as news_date_text
-from .news_market import MARKET_GROUPS, MARKET_SHORT_NAMES, NewsMarketMixin
+from .news_market import MARKET_GROUPS, MARKET_LOGOS, MARKET_SHORT_NAMES, NewsMarketMixin
 from .news_sources import NewsSourcesMixin
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,8 @@ TITLE_BACKGROUND_IMAGE = "title_bg_global_radar.png"
 TITLE_BACKGROUND_SIZE = (325, 65)
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
 TITLE_WORDMARK_SIZE = (220, 58)
-SUMMARY_SCHEMA_VERSION = "mainland-world-lead-tags-v18"
+MARKET_LOGO_DIR = PLUGIN_DIR / "market_logos"
+SUMMARY_SCHEMA_VERSION = "mainland-world-lead-tags-v19"
 # The page keeps the masthead's two inks: the panel's own red, which it shows solidly
 # instead of dithering, is the one accent. Gains are red and losses green, as Chinese
 # market quotes show them, but only as small solid marks.
@@ -426,6 +427,7 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             quotes[key] = [
                 {
                     "label": MARKET_SHORT_NAMES.get(str(row.get("name") or ""), str(row.get("name") or row.get("symbol") or "")),
+                    "logo": MARKET_LOGOS.get(str(row.get("name") or "")),
                     "price": row.get("price"),
                     "change_pct": row.get("change_pct"),
                     "closes": row.get("closes") or [],
@@ -603,6 +605,19 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             return Image.open(path).convert("RGBA")
         except Exception as exc:
             logger.warning("Could not load Daily AI News title wordmark %s: %s", path, exc)
+            return None
+
+    @staticmethod
+    @lru_cache(maxsize=8)
+    def _load_market_logo(key):
+        """An index mark from market_logos/: one pure panel ink plus white, or None."""
+        path = MARKET_LOGO_DIR / f"{key}.png"
+        if not key or not path.is_file():
+            return None
+        try:
+            return Image.open(path).convert("RGBA")
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not load Daily AI News market logo %s: %s", path, exc)
             return None
 
     @staticmethod

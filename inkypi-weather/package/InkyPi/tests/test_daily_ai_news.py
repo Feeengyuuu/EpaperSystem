@@ -1898,7 +1898,7 @@ def test_render_draws_lead_columns_meta_and_market_tiles(monkeypatch):
     assert image.size == (800, 480)
     assert "10月21日 周三" in seen
     assert "07:34 更新 · 3 个信源" in seen
-    assert {"头", "条", "国际 · 公卫"} <= set(seen)
+    assert {"头", "条", "国际", "公卫"} <= set(seen)
     assert "尼日利亚确诊埃博拉病例" in seen
     assert {"大陆新闻1", "大陆新闻4", "英国派战机协防沙特"} <= set(seen)
     assert {"上证", "-0.05%", "3,733.52", "标普", "+0.28%", "截至 10/21", "截至 10/20"} <= set(seen)
@@ -1961,21 +1961,43 @@ def test_render_positions_the_radar_band_between_title_and_meta(monkeypatch):
     assert 620 <= right <= 680
 
 
-def test_market_changes_are_ink_figures_with_red_and_green_marks(monkeypatch):
+def test_market_changes_are_red_and_green_pills_beside_the_index_mark(monkeypatch):
     plugin = _plugin()
-    marks = []
-    original_mark = news_layout.NewsPage.change_mark
+    pills, logos = [], []
+    original_pill = news_layout.NewsPage.change_pill
+    original_logo = news_layout.NewsPage.paste_logo
 
-    def record_mark(self, cx, cy, up, colour):
-        marks.append((up, colour))
-        return original_mark(self, cx, cy, up, colour)
+    def record_pill(self, right, middle, pct):
+        left = original_pill(self, right, middle, pct)
+        pills.append((pct, self.img.getpixel((left + 3, middle))))
+        return left
 
-    monkeypatch.setattr(news_layout.NewsPage, "change_mark", record_mark)
+    def record_logo(self, key, x, middle):
+        width = original_logo(self, key, x, middle)
+        logos.append((key, width))
+        return width
+
+    monkeypatch.setattr(news_layout.NewsPage, "change_pill", record_pill)
+    monkeypatch.setattr(news_layout.NewsPage, "paste_logo", record_logo)
     _image, fills = _rendered_fills(monkeypatch, plugin)
 
-    assert (True, (255, 0, 0)) in marks and (False, (0, 255, 0)) in marks
-    ink = daily_ai_news_module.get_theme_palette("day")["ink"]
-    assert fills["+0.28%"] == fills["-0.05%"] == ink
+    # Chinese quotes: gains are red, losses green, each with its readable ink.
+    assert (0.28, (255, 0, 0)) in pills and (-0.05, (0, 255, 0)) in pills
+    assert fills["+0.28%"] == (255, 255, 255) and fills["-0.05%"] == (0, 0, 0)
+    assert ("sse", 16) in logos and ("sp500", 32) in logos
+
+
+def test_every_index_has_a_mark_in_pure_panel_inks():
+    names = [name for rows in news_market.MARKET_GROUPS.values() for _symbol, name in rows]
+    inks = {(255, 255, 255), (255, 0, 0), (0, 0, 255)}
+
+    for name in names:
+        logo = daily_ai_news_module.DailyAINews._load_market_logo(news_market.MARKET_LOGOS[name])
+        assert logo is not None and logo.height <= 16
+        pixels = logo.load()
+        seen = [pixels[x, y] for y in range(logo.height) for x in range(logo.width)]
+        assert {pixel[:3] for pixel in seen if pixel[3]} <= inks
+        assert {pixel[3] for pixel in seen} <= {0, 255}
 
 
 def _rendered_fills(monkeypatch, plugin):
@@ -1991,13 +2013,17 @@ def _rendered_fills(monkeypatch, plugin):
     return image, fills
 
 
-def test_small_text_is_pure_ink_and_red_is_the_one_accent(monkeypatch):
+def test_words_stay_ink_and_colour_comes_from_solid_panel_inks(monkeypatch):
     plugin = _plugin()
 
     image, fills = _rendered_fills(monkeypatch, plugin)
 
     ink = daily_ai_news_module.get_theme_palette("day")["ink"]
-    assert fills["01"] == fills["金融"] == fills["国际 · 公卫"] == ink
+    assert fills["大陆新闻1"] == fills["尼日利亚确诊埃博拉病例"] == ink
+    # 国内 numbers are red; chips carry their section's or topic's solid colour.
+    assert fills["01"] == (255, 0, 0)
+    assert fills["金融"] == fills["国际"] == (255, 255, 255)
+    assert fills["公卫"] == (0, 0, 0)
     # The lead's seal is the panel's red with white characters.
     assert fills["头"] == fills["条"] == (255, 255, 255)
     palette = plugin._page_palette({"mode": "day"})

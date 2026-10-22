@@ -2,8 +2,9 @@
 
 Flat shapes without anti-aliasing in the page's two inks, like its masthead: the
 theme's ink and panel, plus the panel's own red for one small mark, so the art
-stays crisp after dithering. A topic medallion sits beside the lead story and a
-small globe fills spare column space.
+stays crisp after dithering. A topic medallion sits beside the lead story, a small
+topic disc in the panel's solid colours ends every column story and a small globe
+fills spare column space.
 """
 
 from __future__ import annotations
@@ -68,6 +69,12 @@ def draw_topic_art(draw, box, kind, ink, panel, rule, accent):
     mx, my = cx + math.cos(angle) * ring, cy + math.sin(angle) * ring
     dot = max(3, radius // 6)
     draw.ellipse((mx - dot, my - dot, mx + dot, my + dot), fill=accent)
+
+
+def draw_story_icon(draw, cx, cy, radius, kind, fill, glyph):
+    """A small disc in the story's topic colour with its topic glyph in ``glyph``."""
+    draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=fill)
+    GLYPHS.get(kind, _newspaper)(draw, cx, cy, radius - 2, glyph, fill)
 
 
 def draw_globe(draw, cx, cy, radius, ink, panel, accent):
