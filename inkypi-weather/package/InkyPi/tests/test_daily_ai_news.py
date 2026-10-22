@@ -1810,7 +1810,7 @@ def test_render_draws_lead_columns_meta_and_market_tiles(monkeypatch):
     assert image.size == (800, 480)
     assert "10月21日 周三" in seen
     assert "07:34 更新 · 3 个信源" in seen
-    assert "头条 · 国际 · 公卫" in seen
+    assert {"头", "条", "国际 · 公卫"} <= set(seen)
     assert "尼日利亚确诊埃博拉病例" in seen
     assert {"大陆新闻1", "大陆新闻4", "英国派战机协防沙特"} <= set(seen)
     assert {"上证", "-0.05%", "3,733.52", "标普", "+0.28%", "截至 10/21", "截至 10/20"} <= set(seen)
@@ -1873,25 +1873,24 @@ def test_render_positions_the_radar_band_between_title_and_meta(monkeypatch):
     assert 620 <= right <= 680
 
 
-def test_market_changes_are_solid_red_and_green_pills(monkeypatch):
+def test_market_changes_are_ink_figures_with_red_and_green_marks(monkeypatch):
     plugin = _plugin()
-    chips = {}
-    original_chip = news_layout.NewsPage.chip
+    marks = []
+    original_mark = news_layout.NewsPage.change_mark
 
-    def record_chip(self, x, y, text, colour, *args, **kwargs):
-        chips[text] = (colour, kwargs.get("solid", True))
-        return original_chip(self, x, y, text, colour, *args, **kwargs)
+    def record_mark(self, cx, cy, up, colour):
+        marks.append((up, colour))
+        return original_mark(self, cx, cy, up, colour)
 
-    monkeypatch.setattr(news_layout.NewsPage, "chip", record_chip)
+    monkeypatch.setattr(news_layout.NewsPage, "change_mark", record_mark)
+    _image, fills = _rendered_fills(monkeypatch, plugin)
 
-    plugin._render((800, 480), {"brief_title": "整点新闻"}, _page_payload(), datetime(2026, 10, 21), {"mode": "day"})
+    assert (True, (255, 0, 0)) in marks and (False, (0, 255, 0)) in marks
+    ink = daily_ai_news_module.get_theme_palette("day")["ink"]
+    assert fills["+0.28%"] == fills["-0.05%"] == ink
 
-    assert chips["+0.28%"] == ((255, 0, 0), True)
-    assert chips["-0.05%"] == ((0, 255, 0), True)
 
-
-def test_small_text_is_pure_ink_and_accents_are_panel_primaries(monkeypatch):
-    plugin = _plugin()
+def _rendered_fills(monkeypatch, plugin):
     fills = {}
     original_text = ImageDraw.ImageDraw.text
 
@@ -1901,14 +1900,22 @@ def test_small_text_is_pure_ink_and_accents_are_panel_primaries(monkeypatch):
 
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
     image = plugin._render((800, 480), {"brief_title": "整点新闻"}, _page_payload(), datetime(2026, 10, 21), {"mode": "day"})
+    return image, fills
+
+
+def test_small_text_is_pure_ink_and_red_is_the_one_accent(monkeypatch):
+    plugin = _plugin()
+
+    image, fills = _rendered_fills(monkeypatch, plugin)
 
     ink = daily_ai_news_module.get_theme_palette("day")["ink"]
-    assert fills["01"] == ink
-    assert fills["金融"] == ink
-    assert fills["头条 · 国际 · 公卫"] == (255, 255, 255)
-    primaries = {(0, 0, 0), (255, 255, 255), (255, 255, 0), (255, 0, 0), (0, 0, 255), (0, 255, 0)}
+    assert fills["01"] == fills["金融"] == fills["国际 · 公卫"] == ink
+    # The lead's seal is the panel's red with white characters.
+    assert fills["头"] == fills["条"] == (255, 255, 255)
     palette = plugin._page_palette({"mode": "day"})
-    assert {palette[key] for key in ("lead", "domestic", "world", "up", "down", "card")} <= primaries
+    assert palette["lead"] == palette["up"] == (255, 0, 0) and palette["down"] == (0, 255, 0)
+    assert "domestic" not in palette and "world" not in palette
+    assert image.getpixel((22, 100)) == (255, 0, 0)
     assert image.getpixel((400, 100)) == (255, 255, 255)
 
 

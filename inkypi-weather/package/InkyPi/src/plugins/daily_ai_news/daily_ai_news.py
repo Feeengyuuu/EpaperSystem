@@ -185,13 +185,14 @@ HOT_NEWS_TERM_GROUPS = (
 )
 # Tag for an RSS-only card, from its chinanews.com.cn desk.
 SOURCE_DESK_TAGS = {"要闻": "要闻", "国内": "时政", "财经": "经济", "社会": "社会", "即时": "要闻"}
-# Accents are the panel's own primaries, which it shows solidly instead of dithering;
-# gains are red and losses green, as Chinese market quotes show them.
-PAGE_ACCENTS = {"lead": (255, 0, 0), "domestic": (0, 255, 0), "world": (0, 0, 255), "up": (255, 0, 0), "down": (0, 255, 0)}
+# The page keeps the masthead's two inks: the panel's own red, which it shows solidly
+# instead of dithering, is the one accent. Gains are red and losses green, as Chinese
+# market quotes show them, but only as small solid marks.
+PAGE_ACCENTS = {"lead": (255, 0, 0), "up": (255, 0, 0), "down": (0, 255, 0)}
 # The page is laid out for the 800x480 panel; other displays get it scaled to fit.
 PAGE_SIZE = (800, 480)
-PAGE_DAY_COLOURS = {**PAGE_ACCENTS, "card": (255, 255, 255)}
-PAGE_NIGHT_COLOURS = {**PAGE_ACCENTS, "card": (0, 0, 0), "panel": (0, 0, 0)}
+PAGE_DAY_COLOURS = dict(PAGE_ACCENTS)
+PAGE_NIGHT_COLOURS = {**PAGE_ACCENTS, "panel": (0, 0, 0)}
 FEED_SECTION_PREFIXES = {
     "大陆": "mainland",
     "大陆新闻": "mainland",

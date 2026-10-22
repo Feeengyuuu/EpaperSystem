@@ -1,20 +1,14 @@
 """Procedural spot art for the 整点新闻 page.
 
-Flat shapes without anti-aliasing in the six colours the Spectra 6 panel shows
-solidly (plus the theme's ink and panel), so the art stays crisp after dithering:
-a topic medallion beside the lead story and a small globe for spare column space.
+Flat shapes without anti-aliasing in the page's two inks, like its masthead: the
+theme's ink and panel, plus the panel's own red for one small mark, so the art
+stays crisp after dithering. A topic medallion sits beside the lead story and a
+small globe fills spare column space.
 """
 
 from __future__ import annotations
 
 import math
-
-BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
-YELLOW = (255, 255, 0)
-RED = (255, 0, 0)
-BLUE = (0, 0, 255)
-GREEN = (0, 255, 0)
 
 # Keyword groups, checked in order against the lead's tag and then its title.
 TOPIC_KEYWORDS = (
@@ -29,18 +23,6 @@ TOPIC_KEYWORDS = (
                  "央行", "关税", "就业", "消费", "制造")),
     ("politics", ("外交", "选举", "公投", "政治", "两岸", "会谈", "峰会", "政府", "议会", "国台办", "总统", "首相")),
 )
-TOPIC_COLOURS = {
-    "health": RED,
-    "conflict": BLACK,
-    "aviation": BLUE,
-    "tech": BLUE,
-    "climate": GREEN,
-    "justice": BLACK,
-    "sports": GREEN,
-    "economy": GREEN,
-    "politics": RED,
-    "news": BLACK,
-}
 
 
 # Topics too broad to picture a story on their own; a title with a specific topic wins.
@@ -65,8 +47,8 @@ def topic_kind(tag, title=""):
     return kind
 
 
-def draw_topic_art(draw, box, kind, ink, panel, rule):
-    """A topic medallion with a ring, an accent bubble and a dot grid inside ``box``."""
+def draw_topic_art(draw, box, kind, ink, panel, rule, accent):
+    """An ink topic medallion with an open ring, a red marker and a dot grid inside ``box``."""
     left, top, right, bottom = [int(value) for value in box]
     height = bottom - top
     radius = max(12, min(height // 2 - 6, (right - left) // 4))
@@ -79,18 +61,17 @@ def draw_topic_art(draw, box, kind, ink, panel, rule):
                 draw.ellipse((x - 1, y - 1, x + 1, y + 1), fill=rule)
     ring = radius + 7
     draw.arc((cx - ring, cy - ring, cx + ring, cy + ring), 150, 330, fill=ink, width=2)
-    colour = TOPIC_COLOURS.get(kind, BLACK)
-    draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=colour, outline=ink, width=2)
-    glyph = WHITE if colour in (BLACK, RED, BLUE) else BLACK
-    GLYPHS.get(kind, _newspaper)(draw, cx, cy, radius, glyph, colour)
-    bubble = max(5, radius // 3)
-    bx, by = cx - radius + 2, cy - radius + 4
-    draw.ellipse((bx - bubble, by - bubble, bx + bubble, by + bubble), fill=YELLOW, outline=ink, width=1)
-    _sparkle(draw, cx + radius + 4, cy + radius - 2, max(3, radius // 6), ink)
+    draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=ink)
+    GLYPHS.get(kind, _newspaper)(draw, cx, cy, radius, panel, ink)
+    # The marker sits where the ring ends, like a pin on the radar band above it.
+    angle = math.radians(330)
+    mx, my = cx + math.cos(angle) * ring, cy + math.sin(angle) * ring
+    dot = max(3, radius // 6)
+    draw.ellipse((mx - dot, my - dot, mx + dot, my + dot), fill=accent)
 
 
-def draw_globe(draw, cx, cy, radius, ink, panel, pins=(RED, BLUE, YELLOW)):
-    """A small wireframe globe with location pins and an orbiting satellite."""
+def draw_globe(draw, cx, cy, radius, ink, panel, accent):
+    """A small wireframe globe with one red location pin and an orbit."""
     orbit = (cx - radius - 12, cy - radius // 3 - 2, cx + radius + 12, cy + radius // 3 + 2)
     draw.arc(orbit, 180, 360, fill=ink, width=1)
     draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=panel, outline=ink, width=2)
@@ -101,21 +82,11 @@ def draw_globe(draw, cx, cy, radius, ink, panel, pins=(RED, BLUE, YELLOW)):
         y = cy + round(radius * ratio)
         half = round(math.sqrt(max(0.0, radius * radius - (y - cy) ** 2)))
         draw.line((cx - half, y, cx + half, y), fill=ink, width=1)
-    for (dx, dy), colour in zip(((-0.42, -0.35), (0.34, 0.1), (-0.1, 0.48)), pins):
-        px, py = cx + round(radius * dx), cy + round(radius * dy)
-        draw.ellipse((px - 4, py - 4, px + 4, py + 4), fill=colour, outline=ink, width=1)
+    px, py = cx + round(radius * 0.34), cy + round(radius * 0.1)
+    draw.ellipse((px - 4, py - 4, px + 4, py + 4), fill=accent, outline=panel, width=1)
     draw.arc(orbit, 0, 180, fill=ink, width=1)
     sx, sy = orbit[2] - 2, cy
-    draw.rectangle((sx - 3, sy - 2, sx + 3, sy + 2), fill=YELLOW, outline=ink)
-
-
-def _sparkle(draw, cx, cy, radius, ink):
-    points = []
-    for index in range(8):
-        reach = radius if index % 2 == 0 else max(1, radius // 3)
-        angle = -math.pi / 2 + index * math.pi / 4
-        points.append((cx + math.cos(angle) * reach, cy + math.sin(angle) * reach))
-    draw.polygon(points, fill=YELLOW, outline=ink)
+    draw.ellipse((sx - 2, sy - 2, sx + 2, sy + 2), fill=ink)
 
 
 def _cross(draw, cx, cy, r, glyph, _fill):
@@ -191,7 +162,7 @@ def _storm(draw, cx, cy, r, glyph, fill):
     bolt = [(cx + 2, cy + 2), (cx - round(r * 0.2), cy + round(r * 0.45)), (cx - 1, cy + round(r * 0.42)),
             (cx - round(r * 0.08), cy + round(r * 0.78)), (cx + round(r * 0.25), cy + round(r * 0.3)),
             (cx + 2, cy + round(r * 0.33))]
-    draw.polygon(bolt, fill=YELLOW if fill != YELLOW else BLACK)
+    draw.polygon(bolt, fill=fill)
 
 
 def _scales(draw, cx, cy, r, glyph, _fill):

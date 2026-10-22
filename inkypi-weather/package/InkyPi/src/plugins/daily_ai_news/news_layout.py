@@ -3,6 +3,10 @@
 The plugin prepares plain data (lead, sections, quotes, meta); this module only
 draws it. Spare column space gets a small globe with that column's sources, and
 the lead band carries a topic medallion from ``news_art``.
+
+The page keeps the masthead's two inks: every word in the theme's ink, and the
+panel's red only for the lead's 头条 seal, small markers and market gains. Losses
+keep the market's green, but only as a small solid mark beside an ink figure.
 """
 
 from __future__ import annotations
@@ -15,6 +19,8 @@ MARGIN = 20
 RULE_Y = 56
 LEAD_BOX = (64, 146)
 LEAD_ART_WIDTH = 170
+# A vertical red seal reading 头条 marks the lead story.
+SEAL_SIZE = (28, 54)
 COLUMN_TOP = 156
 COLUMN_GAP = 24
 COLUMN_BOTTOM = 388
@@ -98,8 +104,8 @@ class NewsPage:
         self.lead(lead, width, art_left)
         column_width = (width - 2 * MARGIN - COLUMN_GAP) // 2
         left_x, right_x = MARGIN, MARGIN + column_width + COLUMN_GAP
-        self.column(left_x, column_width, "国内", self.c["domestic"], mainland, sources=meta.get("mainland_sources") or [])
-        self.column(right_x, column_width, "国际", self.c["world"], world, sources=meta.get("world_sources") or [])
+        self.column(left_x, column_width, "国内", mainland, sources=meta.get("mainland_sources") or [])
+        self.column(right_x, column_width, "国际", world, sources=meta.get("world_sources") or [])
         self.market(left_x, column_width, "A股", quotes.get("a_share") or [], height)
         self.market(right_x, column_width, "美股", quotes.get("us_stock") or [], height)
 
@@ -120,39 +126,44 @@ class NewsPage:
         self.text((right, 33), detail, 11, True, detail_colour, "ra")
         meta_left = right - max(self.width(date_text, 17), self.width(detail, 11))
         self.p._draw_title_background(self.img, (title_right + 12, 4, meta_left - 14, RULE_Y - 4))
-        self.d.line((MARGIN, RULE_Y, right, RULE_Y), fill=c["rule"], width=1)
+        self.d.line((MARGIN, RULE_Y, right, RULE_Y), fill=c["ink"], width=2)
 
     def lead(self, lead, width, art_left):
         c = self.c
         top, bottom = LEAD_BOX
-        self.d.rounded_rectangle((MARGIN, top, width - MARGIN, bottom), radius=12, fill=c["card"], outline=c["rule"])
-        self.d.rounded_rectangle((MARGIN, top, MARGIN + 6, bottom), radius=3, fill=c["lead"])
         if not lead:
-            self.text((MARGIN + 18, top + 28), "新闻源暂无更新", 20, True)
+            self.text((MARGIN, top + 28), "新闻源暂无更新", 20, True)
             return
-        label = " · ".join(part for part in ("头条", lead.get("section_label"), lead.get("tag")) if part)
-        chip_w = self.chip(MARGIN + 18, top + 9, label, c["lead"], size=11)
-        title_x = MARGIN + 18 + chip_w + 12
+        seal_w, seal_h = SEAL_SIZE
+        self.d.rounded_rectangle((MARGIN, top + 9, MARGIN + seal_w, top + 9 + seal_h), radius=3, fill=c["lead"])
+        seal_ink = self.p._contrast_ink(c["lead"], c)
+        for index, char in enumerate("头条"):
+            self.text((MARGIN + seal_w / 2, top + 9 + seal_h * (1 + 2 * index) / 4), char, 17, True, seal_ink, "mm")
+        text_x = MARGIN + seal_w + 14
+        label = " · ".join(part for part in (lead.get("section_label"), lead.get("tag")) if part)
+        title_x = text_x + (self.width(label, 12) + 10 if label else 0)
+        if label:
+            self.text((text_x, top + 19), label, 12, True, c["ink"], "lm")
         title_w = art_left - 12 - title_x
         size = self.fit_size(lead["title"], (23, 21, 19), title_w)
         self.text((title_x, top + 7 + (23 - size) // 2), self.clip(lead["title"], size, title_w), size, True)
-        brief_w = art_left - 12 - (MARGIN + 18)
+        brief_w = art_left - 12 - text_x
         for index, line in enumerate(self.wrap(lead.get("why"), 14, brief_w, 2, False)):
-            self.text((MARGIN + 18, top + 44 + index * 19), line, 14, False)
+            self.text((text_x, top + 44 + index * 19), line, 14, False)
         kind = news_art.topic_kind(lead.get("tag"), lead["title"])
         news_art.draw_topic_art(self.d, (art_left, top + 4, width - MARGIN - 6, bottom - 4), kind,
-                                c["ink"], c["panel"], c["rule"])
+                                c["ink"], c["panel"], c["rule"], c["lead"])
 
-    def column(self, x, width, label, colour, items, *, sources):
+    def column(self, x, width, label, items, *, sources):
         c = self.c
-        self.d.rounded_rectangle((x, COLUMN_TOP + 3, x + 4, COLUMN_TOP + 15), radius=2, fill=colour)
+        self.d.rectangle((x, COLUMN_TOP + 3, x + 3, COLUMN_TOP + 15), fill=c["ink"])
         self.text((x + 10, COLUMN_TOP), label, 14, True)
         count_x = x + 14 + self.width(label, 14)
         self.d.line((x, COLUMN_TOP + 22, x + width, COLUMN_TOP + 22), fill=c["rule"], width=1)
         y = COLUMN_TOP + 32
         plan, gap = self.plan_column(items, width - 26, COLUMN_BOTTOM - y)
         for number, (item, title_lines) in enumerate(zip(items, plan), 1):
-            y += self.item(x, y, width, number, item, colour, title_lines) + gap
+            y += self.item(x, y, width, number, item, title_lines) + gap
         self.text((count_x, COLUMN_TOP + 2), str(len(plan)), 11, True)
         if COLUMN_BOTTOM - y >= GLOBE_MIN_HEIGHT:
             self.globe_filler(x, y, width, COLUMN_BOTTOM, label, sources)
@@ -183,7 +194,7 @@ class NewsPage:
                 best = (lines, gap, whole)
         return best[0], best[1]
 
-    def item(self, x, y, width, number, item, colour, title_lines):
+    def item(self, x, y, width, number, item, title_lines):
         c = self.c
         self.text((x, y + 1), f"{number:02d}", 13, True)
         text_x, text_w = x + 26, width - 26
@@ -193,7 +204,7 @@ class NewsPage:
         row_y = y + len(lines) * TITLE_LINE + 1
         tag = item.get("tag") or ""
         # The tag sits under the number, so the fact gets the full row after it.
-        fact_x = x + self.chip(x, row_y, tag, colour, size=10, solid=False) + 6 if tag else text_x
+        fact_x = x + self.chip(x, row_y, tag, c["ink"], size=10, solid=False) + 6 if tag else text_x
         why = self.clip(item.get("why"), 12, x + width - fact_x, False)
         if why:
             self.text((fact_x, row_y + 9), why, 12, False, c["ink"], "lm")
@@ -203,7 +214,7 @@ class NewsPage:
         c = self.c
         middle = (top + bottom) // 2
         radius = max(12, min(20, (bottom - top) // 2 - 6))
-        news_art.draw_globe(self.d, x + 34, middle, radius, c["ink"], c["panel"])
+        news_art.draw_globe(self.d, x + 34, middle, radius, c["ink"], c["panel"], c["lead"])
         text_x = x + 34 + radius + 22
         self.text((text_x, middle - 18), f"{label}信源持续追踪", 12, True)
         names = " · ".join(sources) if sources else "每次刷新重新汇总"
@@ -216,11 +227,13 @@ class NewsPage:
         if as_of:
             self.text((x + width, MARKET_TOP), f"截至 {as_of}", 10, True, c["ink"], "ra")
         top, bottom = MARKET_TOP + 14, height - 12
+        self.d.line((x, top, x + width, top), fill=c["rule"], width=1)
         tile_w = (width - 16) // 3
         for index in range(3):
             left = x + index * (tile_w + 8)
             box = (left, top, left + tile_w, bottom)
-            self.d.rounded_rectangle(box, radius=10, fill=c["card"], outline=c["rule"], width=1)
+            if index:
+                self.d.line((left - 4, top + 6, left - 4, bottom), fill=c["rule"], width=1)
             if index < len(rows):
                 self.quote(box, rows[index])
             else:
@@ -230,20 +243,29 @@ class NewsPage:
         c = self.c
         left, top, right, bottom = box
         pct = row.get("change_pct")
-        colour = c["ink"]
-        self.text((left + 10, top + 7), row.get("label") or "", 11, True)
+        mark = None
+        self.text((left + 2, top + 7), row.get("label") or "", 11, True)
         if isinstance(pct, (int, float)) and round(pct, 2):
-            # A solid primary pill with contrasting text stays crisp on the panel.
-            colour = c["up"] if pct > 0 else c["down"]
+            mark = c["up"] if pct > 0 else c["down"]
             text = f"{pct:+.2f}%"
-            self.chip(right - 8 - (self.width(text, 11) + 14), top + 5, text, colour, size=11)
+            text_left = right - 4 - self.width(text, 12)
+            self.text((right - 4, top + 7), text, 12, True, c["ink"], "ra")
+            self.change_mark(text_left - 10, top + 14, pct > 0, mark)
         else:
-            self.text((right - 10, top + 7), "0.00%" if isinstance(pct, (int, float)) else "--", 12, True, c["ink"], "ra")
+            self.text((right - 4, top + 7), "0.00%" if isinstance(pct, (int, float)) else "--", 12, True, c["ink"], "ra")
         price = row.get("price")
-        self.text((left + 10, top + 23), f"{price:,.2f}" if isinstance(price, (int, float)) else "--", 14, True)
-        self.sparkline((left + 10, bottom - 15, right - 10, bottom - 6), row.get("closes") or [], colour)
+        self.text((left + 2, top + 23), f"{price:,.2f}" if isinstance(price, (int, float)) else "--", 14, True)
+        self.sparkline((left + 2, bottom - 15, right - 6, bottom - 6), row.get("closes") or [], mark)
 
-    def sparkline(self, box, closes, colour):
+    def change_mark(self, cx, cy, up, colour):
+        """A small solid triangle: the only place a market's colour appears."""
+        half = 5
+        points = ((cx - half, cy + 3), (cx + half, cy + 3), (cx, cy - 5)) if up else \
+            ((cx - half, cy - 4), (cx + half, cy - 4), (cx, cy + 4))
+        self.d.polygon(points, fill=colour)
+
+    def sparkline(self, box, closes, mark=None):
+        """An ink trend line; its end dot carries the day's direction colour when there is one."""
         left, top, right, bottom = box
         values = [value for value in closes if isinstance(value, (int, float))]
         if len(values) < 2:
@@ -257,9 +279,9 @@ class NewsPage:
             (left + (right - left) * index / (len(values) - 1), bottom - (bottom - top) * (value - low) / span)
             for index, value in enumerate(values)
         ]
-        self.d.line(points, fill=colour, width=2)
+        self.d.line(points, fill=self.c["ink"], width=1)
         end_x, end_y = points[-1]
-        self.d.ellipse((end_x - 2, end_y - 2, end_x + 2, end_y + 2), fill=colour)
+        self.d.ellipse((end_x - 3, end_y - 3, end_x + 3, end_y + 3), fill=mark or self.c["ink"])
 
 
 def date_text(moment):
