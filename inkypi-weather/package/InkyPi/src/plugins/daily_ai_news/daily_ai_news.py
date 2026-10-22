@@ -55,7 +55,7 @@ TITLE_BACKGROUND_IMAGE = "title_bg_global_radar.png"
 TITLE_BACKGROUND_SIZE = (325, 65)
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
 TITLE_WORDMARK_SIZE = (220, 58)
-SUMMARY_SCHEMA_VERSION = "mainland-world-lead-tags-v17"
+SUMMARY_SCHEMA_VERSION = "mainland-world-lead-tags-v18"
 # The page keeps the masthead's two inks: the panel's own red, which it shows solidly
 # instead of dithering, is the one accent. Gains are red and losses green, as Chinese
 # market quotes show them, but only as small solid marks.

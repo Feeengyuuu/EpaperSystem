@@ -401,7 +401,8 @@ def test_drop_recently_shown_items_excludes_repeats_when_section_pool_is_fresh()
             "summary": "",
             "published": "Sun, 05 Jul 2026 07:30:00 GMT",
         }
-        for index in range(1, 7)
+        # Two more fresh stories than the column shows is a fresh pool.
+        for index in range(1, daily_ai_news_module.MAINLAND_NEWS_MAX + 3)
     ]
 
     result = plugin._drop_recently_shown_items(
@@ -2237,9 +2238,33 @@ def test_a_full_column_keeps_every_story_on_one_line_before_adding_second_lines(
 
     lines, gap = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
 
-    # All four stories stay; the tighter gap frees room for the first clipped title's second line.
-    assert lines == [2, 1, 1, 1]
+    # All four stories stay; the tighter gap frees room for two clipped titles' second lines.
+    assert lines == [2, 2, 1, 1]
     assert gap == news_layout.COMPACT_ITEM_GAP
+
+
+def test_a_full_column_shows_five_one_line_stories():
+    plugin = _plugin()
+    page = news_layout.NewsPage(plugin, Image.new("RGB", (800, 480), "white"), plugin._page_palette({"mode": "day"}), "Microsoft YaHei")
+    items = [{"title": f"足够长的标题需要两行才能完整显示在栏目里的第{index}条新闻内容", "why": "", "tag": ""} for index in range(5)]
+
+    lines, gap = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
+
+    # Every story is shown before any title gets a second line.
+    assert lines == [1, 1, 1, 1, 1]
+    assert gap == news_layout.COMPACT_ITEM_GAP
+
+
+def test_the_lead_keeps_a_two_sentence_fact():
+    plugin = _plugin()
+    fact = "台湾多地宣布23日停班停课，台股也休市一天。气象部门预计台风将在东部沿海登陆，最大风力可达14级。"
+    lead = {"tag": "两岸", "title": "台风蔷琵临近台湾多地停课", "why": fact, "section": "mainland"}
+    items = [{"source": "中国新闻网要闻", "section": "mainland", "title": "台风蔷琵临近台湾多地停课", "summary": ""}]
+
+    checked = plugin._checked_lead(lead, items, items)
+
+    assert len(fact) > news_brief.NEWS_FACT_MAX_CHARS
+    assert checked["why"] == fact
 
 
 def test_a_column_keeps_the_normal_gap_when_no_title_is_clipped():

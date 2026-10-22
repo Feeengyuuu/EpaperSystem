@@ -30,6 +30,8 @@ DEFAULT_AI_TIMEOUT_SECONDS = 30
 NEWS_TITLE_MAX_CHARS = 30
 NEWS_FACT_MAX_CHARS = 44
 NEWS_TAG_MAX_CHARS = 4
+# The lead's fact is two sentences: it fills the two summary lines of the lead band.
+LEAD_FACT_MAX_CHARS = 64
 # The fixed tag vocabulary the AI picks from, with the meaning the prompt gives it.
 NEWS_TAG_DEFINITIONS = (
     ("时政", "国内政策、政府与人事、重要会议"),
@@ -108,10 +110,10 @@ NEWS_SYSTEM_PROMPT = (
 )
 NEWS_OUTPUT_SCHEMA = {
     "lead": {"ref": "所依据条目的 id", "section": "mainland 或 world", "tag": "固定分类之一",
-             "title": "头条标题，不超过18字", "why": "一句话事实，不超过30字"},
+             "title": "头条标题，不超过18字", "why": "两句话事实，共40到56字"},
     "mainland": [{"ref": "所依据条目的 id", "tag": "固定分类之一", "title": "大陆新闻标题，不超过18字",
                   "why": "一句话事实，不超过30字"}],
-    "world": [{"ref": "所依据条目的 id", "tag": "固定分类之一", "title": "世界新闻标题，不超过24字",
+    "world": [{"ref": "所依据条目的 id", "tag": "固定分类之一", "title": "世界新闻标题，不超过22字",
                "why": "一句话事实，不超过30字"}],
     "sources": ["来源名"],
 }
@@ -135,8 +137,8 @@ NEWS_RULES = {
         "lead 选重大硬新闻（重大政策、冲突、灾害、关键经济数据、外交），不要选人物表彰、企业宣传、活动启幕、纪念活动这类软新闻",
         "section=mainland 的素材里如果是外国新闻（例如乌克兰、美国、中东的事件），不要放进 mainland；mainland 只写中国大陆的事件",
         "表彰、荣誉、先进个人评选和企业宣传不进 mainland，除非没有其他素材",
-        "mainland 给 2 到 4 条，只能选择 section=mainland 的 RSS 条目，优先大陆时政、经济、社会、公共安全和重大政策更新",
-        "world 按重要性给 4 到 6 条（页面显示通过核对的前 4 条），只能选择 section=world 的 RSS 条目，优先国际冲突、外交、政策、事故、市场、法律和重大科技治理",
+        "mainland 给 3 到 5 条，只能选择 section=mainland 的 RSS 条目，优先大陆时政、经济、社会、公共安全和重大政策更新",
+        "world 按重要性给 5 到 7 条（页面显示通过核对的前 5 条），只能选择 section=world 的 RSS 条目，优先国际冲突、外交、政策、事故、市场、法律和重大科技治理",
         "同一事件只能出现一次，不要用不同标题重复同一军事行动、谈判或事故",
         "优先避开 recent_titles 中的近几天已展示标题，除非该分区没有足够新素材",
         "不要把人生、心理健康、生活方式、科普解释稿、旧背景稿放进新闻列表，除非它们是当天重大政策或公共事件",
@@ -144,10 +146,11 @@ NEWS_RULES = {
     "writing": (
         "world 的 title 是所依据英文标题的中文译写：保留主体、地点、动作、结果和数字，例如 Earthquake kills 12 in central Chile 写成“智利中部地震致12人死亡”；why 从同一条的 summary 里取标题以外的一个事实",
         "禁止把新闻写成话题概括，例如“国际局势”“地区局势”“相关报道增多”“多方报道显示”“持续变化”“再度波动”；每条都必须是一件具体的事",
-        "title 中大陆新闻和 lead 不超过18字，世界新闻不超过24字，写清主体和动作，不要标点堆砌",
+        "title 中大陆新闻和 lead 不超过18字，世界新闻不超过22字，写清主体和动作，不要标点堆砌",
         "title 必须包含具体人物/机构/地点/事件动作/结果，禁止只写宏观分类",
         "避免使用“引发讨论”“风险升级”“议题焦点”“全球媒体聚焦”这类宽泛标题，除非同时写清具体事件",
         "why 写一句话事实：谁、做了什么、关键数字或结果，不超过30字；不要写意义、影响、体现、凸显、彰显之类的评价，也不要写“成为关注焦点”“引发关注”“引发讨论”“持续发酵”“局势紧张”这类空话；why 要补充标题以外的信息，不能复述标题",
+        "lead 的 why 写两句话，共40到56字：第一句写发生了什么，第二句写关键数字、原因、各方回应或下一步；两句都只取所依据条目 summary 里的事实",
         "尽量保留素材里的数字、地点、人物、机构和动作",
         "tag 只能从以下分类中选一个：" + "；".join(f"{tag}（{meaning}）" for tag, meaning in NEWS_TAG_DEFINITIONS)
         + "；都不合适时写 要闻",
@@ -467,7 +470,7 @@ class NewsBriefMixin:
         if not isinstance(lead, dict):
             return None
         ref = self._story_ref(lead)
-        lead = self._trimmed_news_item(lead)
+        lead = self._trimmed_news_item(lead, fact_max=LEAD_FACT_MAX_CHARS)
         if not lead.get("title"):
             return None
         source_titles = [str(source.get("title") or "") for source in mainland_sources]
@@ -517,8 +520,9 @@ class NewsBriefMixin:
         return any(phrase in title for phrase in VAGUE_NEWS_PHRASES)
 
     @staticmethod
-    def _trimmed_news_item(item: Any) -> Any:
-        """Bound a story's visible fields: short title, one-sentence fact, 2-4 character tag."""
+    def _trimmed_news_item(item: Any, fact_max: int = NEWS_FACT_MAX_CHARS) -> Any:
+        """Bound a story's visible fields: short title, one-sentence fact (the lead's is two),
+        2-4 character tag."""
         if not isinstance(item, dict):
             return item
         trimmed = dict(item)
@@ -527,7 +531,7 @@ class NewsBriefMixin:
         if "tag" in trimmed:
             # Mapped from the AI's full tag, before any truncation.
             trimmed["tag"] = NewsBriefMixin._normalized_tag(trimmed["tag"], trimmed.get("title"))
-        limits = {"title": NEWS_TITLE_MAX_CHARS, "why": NEWS_FACT_MAX_CHARS, "tag": NEWS_TAG_MAX_CHARS}
+        limits = {"title": NEWS_TITLE_MAX_CHARS, "why": fact_max, "tag": NEWS_TAG_MAX_CHARS}
         for key, limit in limits.items():
             if key in trimmed:
                 trimmed[key] = NewsBriefMixin._field_text(trimmed.get(key))[:limit]

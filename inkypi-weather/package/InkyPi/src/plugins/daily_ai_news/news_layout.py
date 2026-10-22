@@ -21,16 +21,20 @@ LEAD_BOX = (64, 146)
 LEAD_ART_WIDTH = 170
 # A vertical red seal reading 头条 marks the lead story.
 SEAL_SIZE = (28, 54)
-COLUMN_TOP = 156
+COLUMN_TOP = 150
 COLUMN_GAP = 24
-COLUMN_BOTTOM = 388
+COLUMN_BOTTOM = 390
 MARKET_TOP = 396
-ITEM_GAP = 9
-# The tighter gap a full column may use to give a clipped title its second line.
-COMPACT_ITEM_GAP = 5
+ITEM_GAP = 8
+# The tighter gap a full column uses to fit all five stories or a clipped title's second line.
+COMPACT_ITEM_GAP = 4
 # A story is its title lines plus a footer row with the tag chip and the one-line fact.
-TITLE_LINE = 19
+TITLE_LINE = 18
 ITEM_FOOTER = 20
+# The lead's headline shrinks through these sizes to fit; its two-sentence fact wraps.
+LEAD_TITLE_SIZES = (26, 24, 22, 20)
+LEAD_FACT_SIZE = 15
+LEAD_FACT_LINE = 19
 GLOBE_MIN_HEIGHT = 46
 WEEKDAYS = "一二三四五六日"
 
@@ -145,11 +149,12 @@ class NewsPage:
         if label:
             self.text((text_x, top + 19), label, 12, True, c["ink"], "lm")
         title_w = art_left - 12 - title_x
-        size = self.fit_size(lead["title"], (23, 21, 19), title_w)
-        self.text((title_x, top + 7 + (23 - size) // 2), self.clip(lead["title"], size, title_w), size, True)
+        largest = LEAD_TITLE_SIZES[0]
+        size = self.fit_size(lead["title"], LEAD_TITLE_SIZES, title_w)
+        self.text((title_x, top + 4 + (largest - size) // 2), self.clip(lead["title"], size, title_w), size, True)
         brief_w = art_left - 12 - text_x
-        for index, line in enumerate(self.wrap(lead.get("why"), 14, brief_w, 2, False)):
-            self.text((text_x, top + 44 + index * 19), line, 14, False)
+        for index, line in enumerate(self.wrap(lead.get("why"), LEAD_FACT_SIZE, brief_w, 2, False)):
+            self.text((text_x, top + 40 + index * LEAD_FACT_LINE), line, LEAD_FACT_SIZE, False)
         kind = news_art.topic_kind(lead.get("tag"), lead["title"])
         news_art.draw_topic_art(self.d, (art_left, top + 4, width - MARGIN - 6, bottom - 4), kind,
                                 c["ink"], c["panel"], c["rule"], c["lead"])
