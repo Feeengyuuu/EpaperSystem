@@ -1,4 +1,5 @@
 import hashlib
+import json
 import sys
 import threading
 from datetime import datetime
@@ -1727,6 +1728,92 @@ def test_prompt_asks_for_a_lead_tags_and_one_sentence_facts(monkeypatch):
     assert '"lead"' in request and '"tag"' in request
     assert "一句话事实" in request
     assert "不得再出现在 mainland 或 world" in request
+
+
+def test_prompt_numbers_items_and_asks_each_story_for_its_ref(monkeypatch):
+    plugin = _plugin()
+    captured = {}
+
+    class _Responses:
+        @staticmethod
+        def create(**kwargs):
+            captured.update(kwargs)
+
+            class _Response:
+                output_text = '{"lead":null,"mainland":[],"world":[]}'
+
+            return _Response()
+
+    class _Client:
+        responses = _Responses()
+
+    monkeypatch.setattr(daily_ai_news_module, "OpenAI", lambda **_kwargs: _Client())
+    items = [{"source": "BBC世界", "section": "world", "title": "Earthquake hits Chile", "summary": ""},
+             {"source": "NPR新闻", "section": "world", "title": "Pope recovers", "summary": ""}]
+
+    plugin._summarize_with_openai("key", "gpt-5-nano", {}, items, {}, datetime(2026, 10, 21, 7, 0))
+
+    request = json.loads(captured["input"])
+    assert [item["id"] for item in request["items"]] == ["1", "2"]
+    assert all("ref" in request["output_schema"][key][0] for key in ("mainland", "world"))
+    assert "ref" in request["output_schema"]["lead"]
+    rules = "".join(request["rules"])
+    assert "同一个 ref 只能用一次" in rules and "国际局势" in rules and "相关报道增多" in rules
+    assert items[0] == {"source": "BBC世界", "section": "world", "title": "Earthquake hits Chile", "summary": ""}
+
+
+WORLD_SOURCE_ITEMS = [
+    {"source": "中国新闻网要闻", "section": "mainland", "title": "数字人民币基础设施服务体系全面升级", "summary": ""},
+    {"source": "BBC世界", "section": "world", "title": "Missiles hit Kyiv after Russia agrees to resume talks", "summary": ""},
+    {"source": "半岛电视台", "section": "world", "title": "One killed in attack on Saudi airport", "summary": ""},
+    {"source": "德国之声", "section": "world", "title": "Pope will not need further cancer treatment", "summary": ""},
+]
+
+
+def test_world_stories_must_each_name_one_world_item_and_a_specific_story():
+    plugin = _plugin()
+    brief = {
+        "mainland": [],
+        "world": [
+            {"ref": "2", "tag": "冲突", "title": "俄同意恢复和谈后基辅遭导弹袭击", "why": "莫斯科称原则上准备恢复谈判"},
+            {"ref": "2", "tag": "冲突", "title": "基辅再遭袭击", "why": "同一条的重复"},
+            {"ref": "1", "tag": "金融", "title": "借用国内条目的世界新闻", "why": "跨区挪用"},
+            {"ref": "9", "tag": "要闻", "title": "编号不存在的新闻", "why": "编造"},
+            {"ref": "4", "tag": "冲突", "title": "加剧冲突风险的国际局势", "why": "多方报道显示局势变化"},
+            {"ref": 3, "tag": "航空", "title": "沙特法赫德国王机场遇袭致1死8伤", "why": "伤者已送医"},
+        ],
+    }
+
+    result = plugin._postprocess_brief_news(brief, WORLD_SOURCE_ITEMS)
+
+    assert [item["title"] for item in result["world"]] == ["俄同意恢复和谈后基辅遭导弹袭击", "沙特法赫德国王机场遇袭致1死8伤"]
+    assert all("ref" not in item for item in result["world"])
+
+
+def test_a_world_lead_is_checked_by_ref_and_keeps_its_story_out_of_the_column():
+    plugin = _plugin()
+    world = [{"ref": "2", "tag": "冲突", "title": "基辅在恢复和谈前夕遭导弹袭击", "why": "同一条"},
+             {"ref": "4", "tag": "公卫", "title": "教宗利奥术后无需进一步癌症治疗", "why": "梵蒂冈称手术成功"}]
+    lead = {"ref": "2", "section": "world", "tag": "冲突", "title": "俄同意恢复和谈后基辅遭袭", "why": "莫斯科表态"}
+
+    result = plugin._postprocess_brief_news({"lead": lead, "mainland": [], "world": world}, WORLD_SOURCE_ITEMS)
+
+    assert result["lead"]["title"] == "俄同意恢复和谈后基辅遭袭" and "ref" not in result["lead"]
+    assert [item["title"] for item in result["world"]] == ["教宗利奥术后无需进一步癌症治疗"]
+    for bad_lead in ({**lead, "ref": "1"}, {**lead, "ref": "9"}, {**lead, "title": "美加强对乌克兰的地区局势应对"}):
+        assert plugin._postprocess_brief_news({"lead": bad_lead, "mainland": [], "world": []}, WORLD_SOURCE_ITEMS)["lead"] is None
+
+
+def test_a_brief_without_refs_keeps_its_world_stories_but_not_vague_ones():
+    plugin = _plugin()
+    brief = {"mainland": [], "world": [
+        {"tag": "冲突", "title": "俄同意恢复和谈后基辅遭导弹袭击", "why": "莫斯科表态"},
+        {"tag": "能源", "title": "能源与地缘冲突报道增多", "why": "区域能源供应相关报道增多"},
+    ]}
+
+    result = plugin._postprocess_brief_news(brief, WORLD_SOURCE_ITEMS)
+
+    assert [item["title"] for item in result["world"]] == ["俄同意恢复和谈后基辅遭导弹袭击"]
 
 
 def test_page_news_uses_the_first_mainland_story_as_lead_for_legacy_briefs():

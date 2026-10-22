@@ -213,6 +213,15 @@ MAINLAND_FEED_HOST_HINTS = (
 )
 MAINLAND_NEWS_MAX = 4
 WORLD_NEWS_MAX = 4
+# The AI offers a few more world stories than the column shows, so one dropped by the
+# ref and vagueness checks below leaves the next candidate instead of a gap.
+WORLD_CANDIDATES_MAX = WORLD_NEWS_MAX + 2
+# Topic summaries the AI writes in place of a story when it abstracts the names away
+# ("加剧冲突风险的国际局势", "能源与地缘冲突报道增多"); such a world story is dropped.
+VAGUE_NEWS_PHRASES = (
+    "国际局势", "地区局势", "局势再度", "局势持续", "报道增多", "多方报道", "持续变化",
+    "动向持续", "再度波动", "争议扩散", "引发关注", "引关注", "成为焦点",
+)
 
 TRADITIONAL_PHRASE_REPLACEMENTS = (
     ("繁體中文", "简体中文"),
@@ -1835,22 +1844,25 @@ class DailyAINews(BasePlugin):
             "style": settings.get("region_focus") or "china_global",
             "recent_titles": list(recent_titles or [])[:24],
             "output_schema": {
-                "lead": {"section": "mainland 或 world", "tag": "固定分类之一", "title": "头条标题，不超过18字", "why": "一句话事实，不超过30字"},
-                "mainland": [{"tag": "固定分类之一", "title": "大陆新闻标题，不超过18字", "why": "一句话事实，不超过30字"}],
-                "world": [{"tag": "固定分类之一", "title": "世界新闻标题，不超过24字", "why": "一句话事实，不超过30字"}],
+                "lead": {"ref": "所依据条目的 id", "section": "mainland 或 world", "tag": "固定分类之一", "title": "头条标题，不超过18字", "why": "一句话事实，不超过30字"},
+                "mainland": [{"ref": "所依据条目的 id", "tag": "固定分类之一", "title": "大陆新闻标题，不超过18字", "why": "一句话事实，不超过30字"}],
+                "world": [{"ref": "所依据条目的 id", "tag": "固定分类之一", "title": "世界新闻标题，不超过24字", "why": "一句话事实，不超过30字"}],
                 "sources": ["来源名"],
             },
             "rules": [
+                "lead、mainland、world 的每一条都用 ref 写出它所依据的那一条 RSS 条目的 id；一条新闻只写一个条目，同一个 ref 只能用一次，不得把几条合并或概括成一条",
+                "world 的 title 是所依据英文标题的中文译写：保留主体、地点、动作、结果和数字，例如 Earthquake kills 12 in central Chile 写成“智利中部地震致12人死亡”；why 从同一条的 summary 里取标题以外的一个事实",
+                "禁止把新闻写成话题概括，例如“国际局势”“地区局势”“相关报道增多”“多方报道显示”“持续变化”“再度波动”；每条都必须是一件具体的事",
                 "所有输出字段只使用简体中文；如果素材是繁体中文，必须转换为简体中文再写入 JSON",
                 "不要留下英文单词或英文地名，例如 Moscow 必须写成莫斯科，United States 必须写成美国，Iran 必须写成伊朗",
-                "如果无法确定某个英文术语的标准中文译名，必须改写句子，不要把英文原词放进 title、why 或 lede",
+                "人名、地名、机构名用通用中文译名；拿不准译名时写成身份或类别（例如“美国一亲以色列游说团体”“沙特一机场”），不要因此删掉事件本身，也不要把英文原词放进 title、why 或 lede",
                 "中文词内部不要加空格，例如写“美伊谈判”，不要写“美 伊谈判”",
                 "lead 是两个分区中今天最重要的一条新变化，必须来自 RSS 条目，section 写它来自 mainland 还是 world；lead 不得再出现在 mainland 或 world 中",
                 "lead 选重大硬新闻（重大政策、冲突、灾害、关键经济数据、外交），不要选人物表彰、企业宣传、活动启幕、纪念活动这类软新闻",
                 "section=mainland 的素材里如果是外国新闻（例如乌克兰、美国、中东的事件），不要放进 mainland；mainland 只写中国大陆的事件",
                 "表彰、荣誉、先进个人评选和企业宣传不进 mainland，除非没有其他素材",
                 "mainland 给 2 到 4 条，只能选择 section=mainland 的 RSS 条目，优先大陆时政、经济、社会、公共安全和重大政策更新",
-                "world 给 3 到 4 条，只能选择 section=world 的 RSS 条目，优先国际冲突、外交、政策、事故、市场、法律和重大科技治理",
+                "world 按重要性给 4 到 6 条（页面显示通过核对的前 4 条），只能选择 section=world 的 RSS 条目，优先国际冲突、外交、政策、事故、市场、法律和重大科技治理",
                 "tag 只能从以下分类中选一个：" + "；".join(f"{tag}（{meaning}）" for tag, meaning in NEWS_TAG_DEFINITIONS) + "；都不合适时写 要闻",
                 "title 中大陆新闻和 lead 不超过18字，世界新闻不超过24字，写清主体和动作，不要标点堆砌",
                 "why 写一句话事实：谁、做了什么、关键数字或结果，不超过30字；不要写意义、影响、体现、凸显、彰显之类的评价，也不要写“成为关注焦点”“引发关注”“引发讨论”“持续发酵”“局势紧张”这类空话；why 要补充标题以外的信息，不能复述标题",
@@ -1865,7 +1877,8 @@ class DailyAINews(BasePlugin):
                 "尽量保留素材里的数字、地点、人物、机构和动作",
                 "sources 只能从 items 里已有的 source 字段原样选择，最多5个，不得自造来源名",
             ],
-            "items": items,
+            # Numbered so every story can name the one item it comes from.
+            "items": [{"id": str(index), **item} for index, item in enumerate(items, 1)],
         }
 
         user_text = json.dumps(user, ensure_ascii=False)
@@ -1918,7 +1931,7 @@ class DailyAINews(BasePlugin):
         )
         world = self._as_list(
             data.get("world") or data.get("world_news") or data.get("quick") or data.get("international"),
-            WORLD_NEWS_MAX,
+            WORLD_CANDIDATES_MAX,
         )
         lead = data.get("lead") if isinstance(data.get("lead"), dict) else None
         lead = lead if lead and str(lead.get("title") or "").strip() else None
@@ -2009,11 +2022,12 @@ class DailyAINews(BasePlugin):
         mainland_sources = [item for item in items if self._item_section(item) == "mainland"]
         world_sources = [item for item in items if self._item_section(item) == "world"]
         mainland = self._as_list(payload.get("mainland"), MAINLAND_NEWS_MAX)
-        world = self._as_list(payload.get("world"), WORLD_NEWS_MAX)
+        world = self._as_list(payload.get("world"), WORLD_CANDIDATES_MAX)
 
         if not mainland and not world:
             mainland, world = self._split_legacy_top_sections(payload.get("top"))
 
+        world = self._grounded_world_stories(world, items)
         mainland = self._dedupe_top_items(
             mainland,
             mainland_sources,
@@ -2039,13 +2053,15 @@ class DailyAINews(BasePlugin):
 
         mainland = self._without_world_copies(mainland, world)
         top = self._merge_section_news(mainland, world) or top
-        lead = self._checked_lead(payload.get("lead"), mainland_sources)
+        lead = self._checked_lead(payload.get("lead"), mainland_sources, items)
         if not lead:
             # Without a checked lead the page promotes the first de-duplicated story.
             payload["lede"] = ""
         if lead:
+            lead_ref = self._story_ref(payload.get("lead"))
             mainland = [item for item in mainland if not self._similar_news_title(self._news_text(item)[0], lead["title"])]
-            world = [item for item in world if not self._similar_news_title(self._news_text(item)[0], lead["title"])]
+            world = [item for item in world if not self._similar_news_title(self._news_text(item)[0], lead["title"])
+                     and not (lead_ref and self._story_ref(item) == lead_ref)]
             top = self._merge_section_news(mainland, world)
             payload["lede"] = lead["title"]
 
@@ -2070,15 +2086,17 @@ class DailyAINews(BasePlugin):
             if item and not any(self._similar_news_title(self._news_text(item)[0], title) for title in world_titles)
         ]
 
-    def _checked_lead(self, lead: Any, mainland_sources: list[dict[str, str]]) -> dict[str, str] | None:
+    def _checked_lead(self, lead: Any, mainland_sources: list[dict[str, str]],
+                      items: list[dict[str, str]] = ()) -> dict[str, str] | None:
         """The AI's lead story, kept only when it is one of the RSS items.
 
         A mainland lead must match a mainland RSS title, as mainland items do; a world
-        lead is a translation of an English item, so like world items it cannot be
-        matched by title and is accepted as world.
+        lead is a translation of an English item, so like world items it is checked by
+        its ref (when it gives one) and must name a specific story.
         """
         if not isinstance(lead, dict):
             return None
+        ref = self._story_ref(lead)
         lead = self._trimmed_news_item(lead)
         if not lead.get("title"):
             return None
@@ -2087,8 +2105,46 @@ class DailyAINews(BasePlugin):
         section = str(lead.get("section") or "").strip().lower()
         if section == "mainland" and not matches_mainland:
             return None
+        if not matches_mainland:
+            source = self._referenced_item(ref, items)
+            if (ref and (source is None or self._item_section(source) != "world")) or self._is_vague_story(lead):
+                return None
         lead["section"] = "mainland" if matches_mainland else "world"
         return lead
+
+    def _grounded_world_stories(self, world: list[Any], items: list[dict[str, str]]) -> list[Any]:
+        """World stories that each name one world RSS item by ref, once, as a specific story.
+
+        A world story is a translation of an English headline, so its title cannot be
+        matched against the source; the ref is the check instead. A brief without any
+        refs comes from before they were asked for and keeps its stories.
+        """
+        if not any(self._story_ref(story) for story in world):
+            return [story for story in world if not self._is_vague_story(story)]
+        used, grounded = set(), []
+        for story in world:
+            ref = self._story_ref(story)
+            source = self._referenced_item(ref, items)
+            if source is None or self._item_section(source) != "world" or ref in used or self._is_vague_story(story):
+                continue
+            used.add(ref)
+            grounded.append(story)
+        return grounded
+
+    @staticmethod
+    def _story_ref(story: Any) -> str:
+        return DailyAINews._field_text(story.get("ref")) if isinstance(story, dict) else ""
+
+    @staticmethod
+    def _referenced_item(ref: str, items: list[dict[str, str]]) -> dict[str, str] | None:
+        """The RSS item a story's ref names; refs are the 1-based ids the prompt numbered."""
+        if not ref.isdigit() or not 1 <= int(ref) <= len(items):
+            return None
+        return items[int(ref) - 1]
+
+    def _is_vague_story(self, story: Any) -> bool:
+        title = self._news_text(story)[0]
+        return any(phrase in title for phrase in VAGUE_NEWS_PHRASES)
 
     @staticmethod
     def _trimmed_news_item(item: Any) -> Any:
@@ -2096,6 +2152,8 @@ class DailyAINews(BasePlugin):
         if not isinstance(item, dict):
             return item
         trimmed = dict(item)
+        # The ref only checks a story against its source; it is not shown or cached.
+        trimmed.pop("ref", None)
         if "tag" in trimmed:
             # Mapped from the AI's full tag, before any truncation.
             trimmed["tag"] = DailyAINews._normalized_tag(trimmed["tag"], trimmed.get("title"))
