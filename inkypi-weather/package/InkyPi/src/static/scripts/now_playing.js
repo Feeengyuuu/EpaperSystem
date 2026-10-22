@@ -117,18 +117,11 @@
         document.title = unseenChange ? `● ${title}` : title;
     }
 
-    function roundedRect(context, x, y, size, radius) {
-        context.beginPath();
-        if (context.roundRect) {
-            context.roundRect(x, y, size, size, radius);
-        } else {
-            context.rect(x, y, size, size);
+    /* Draw what the e-paper shows as the tab icon, with a live dot. */
+    function paintFavicon() {
+        if (!heroImage.naturalWidth || typeof document.createElement !== "function") {
+            return;
         }
-    }
-
-    /* Tab icon: the playing plugin's icon on a paper tile in an accent frame,
-     * so it reads on light and dark tab strips alike. */
-    function paintFavicon(icon) {
         const size = 64;
         const canvas = document.createElement("canvas");
         canvas.width = size;
@@ -137,19 +130,26 @@
         if (!context) {
             return;
         }
-        const styles = window.getComputedStyle(document.documentElement);
-        context.fillStyle = styles.getPropertyValue("--c-accent").trim() || "#1abc9c";
-        roundedRect(context, 0, 0, size, 16);
-        context.fill();
-        context.fillStyle = "#fbfaf7";
-        roundedRect(context, 5, 5, size - 10, 11);
-        context.fill();
+        context.beginPath();
+        if (context.roundRect) {
+            context.roundRect(0, 0, size, size, 14);
+        } else {
+            context.rect(0, 0, size, size);
+        }
         context.clip();
-        const box = 44;
-        const scale = Math.min(box / icon.naturalWidth, box / icon.naturalHeight);
-        const width = icon.naturalWidth * scale;
-        const height = icon.naturalHeight * scale;
-        context.drawImage(icon, (size - width) / 2, (size - height) / 2, width, height);
+        const scale = Math.max(size / heroImage.naturalWidth, size / heroImage.naturalHeight);
+        const width = heroImage.naturalWidth * scale;
+        const height = heroImage.naturalHeight * scale;
+        context.drawImage(heroImage, (size - width) / 2, (size - height) / 2, width, height);
+        const styles = window.getComputedStyle(document.documentElement);
+        context.fillStyle = styles.getPropertyValue("--c-bg").trim() || "#111316";
+        context.beginPath();
+        context.arc(50, 50, 12, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = styles.getPropertyValue("--c-accent").trim() || "#1abc9c";
+        context.beginPath();
+        context.arc(50, 50, 8, 0, Math.PI * 2);
+        context.fill();
         let link = document.getElementById("liveFavicon");
         if (!link) {
             document.querySelectorAll('link[rel~="icon"]').forEach((node) => node.remove());
@@ -166,21 +166,9 @@
         }
     }
 
-    let faviconPlugin = null;
-
-    function updateFavicon() {
-        const pluginId = nowPlaying.plugin_id;
-        if (!pluginId || pluginId === faviconPlugin || typeof window.Image !== "function") {
-            return;
-        }
-        faviconPlugin = pluginId;
-        const icon = new window.Image();
-        icon.onload = () => {
-            if (faviconPlugin === pluginId && icon.naturalWidth) {
-                paintFavicon(icon);
-            }
-        };
-        icon.src = `/images/${encodeURIComponent(pluginId)}/icon.png`;
+    heroImage.addEventListener("load", paintFavicon);
+    if (heroImage.complete && heroImage.naturalWidth) {
+        paintFavicon();
     }
 
     document.addEventListener("visibilitychange", () => {
@@ -218,7 +206,6 @@
         });
         ui.updateRelativeTimes(hero);
         updateTabTitle();
-        updateFavicon();
     }
 
     async function loadNowPlaying() {
@@ -327,7 +314,6 @@
     // Keep the tab title and icon current in the background too, at a slower pace.
     ui.poll(syncLive, 10000, { hiddenIntervalMs: 60000 });
     updateTabTitle();
-    updateFavicon();
 
     function heroCaption() {
         return [nowPlaying.plugin_instance || nowPlaying.display_name, nowPlaying.playlist].filter(Boolean).join(" · ");
