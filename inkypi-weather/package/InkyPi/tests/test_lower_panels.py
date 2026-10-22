@@ -417,8 +417,8 @@ def test_ticker_rows_put_each_team_logo_beside_its_name(boxes):
     games = [_ticker_game("ATL", "ORL", 4), _ticker_game("DEN", "UTA", 4), _ticker_game("MIN", "MIA", 5)]
     logos = []
     spec = _plugin()._basketball_spec("NBA")
-    shown = {
-        game[f"team_{side}_code"]: (side, spec.hook("team_name", game, side, False))
+    names_by_code = {
+        game[f"team_{side}_code"]: (side, spec.hook("team_name", game, side, True), spec.hook("team_name", game, side, False))
         for game in games for side in ("a", "b")
     }
 
@@ -433,8 +433,11 @@ def test_ticker_rows_put_each_team_logo_beside_its_name(boxes):
         f"https://logos.test/{code}.png" for game in games for code in (game["team_a_code"], game["team_b_code"])
     ]
     names = {text: (box, font) for box, text, font in boxes}
+    # Full names (亚特兰大老鹰) where they fit the row, short ones (老鹰) otherwise.
+    assert any(full in names for _side, full, _short in names_by_code.values())
     for url, x, y, size, _fallback in logos:
-        side, name = shown[url.rsplit("/", 1)[1][:3]]
+        side, full, short = names_by_code[url.rsplit("/", 1)[1][:3]]
+        name = full if full in names else short
         (left, top, right, bottom), font = names[name]
         name_w = SportsDashboard._text_width(image_draw, name, font)
         assert size >= 11 and top <= y and y + size <= bottom + 2

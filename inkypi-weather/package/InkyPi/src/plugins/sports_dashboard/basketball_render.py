@@ -391,9 +391,8 @@ class BasketballRenderMixin:
             prefix = f"team_{side}"
             logo_x = inner_x1 if side == "a" else inner_x2 - 30
             self._draw_team_logo(image, draw, main.get(f"{prefix}_logo"), logo_x, score_y + 2, 30, spec.hook("logo_fallback", main, side))
-            name = spec.hook("team_name", main, side, False)
             name_box = (inner_x1 + 36, score_y + 4, middle - 34, score_y + 32) if side == "a" else (middle + 34, score_y + 4, inner_x2 - 36, score_y + 32)
-            name, name_font = self._fit_text(draw, name, name_box[2] - name_box[0], 14, bold=True, min_size=9)
+            name, name_font = self._kit_team_name(draw, spec, main, side, name_box[2] - name_box[0], 14, True, min_size=9)
             self._draw_text_in_box(draw, name_box, name, name_font, COLORS["text"], align="left" if side == "a" else "right")
             win_box = (middle - 30, score_y, middle - 8, score_y + 34) if side == "a" else (middle + 8, score_y, middle + 30, score_y + 34)
             self._draw_text_in_box(draw, win_box, str(wins[side]), self._font(28, wins[side] >= wins["b" if side == "a" else "a"]), COLORS["text"], align=align)
@@ -445,11 +444,10 @@ class BasketballRenderMixin:
         self._draw_text_in_box(draw, (x1 + 26, y1, x1 + 112, y2), when, when_font, COLORS[key])
         if state == "scheduled":
             text = str(event.get("broadcast") or "").strip()
+            text, font = self._fit_text_ellipsis(draw, text, x2 - x1 - 116, 10, bold=False, min_size=8)
         else:
-            name_a = spec.hook("team_name", event, "a", False)
-            name_b = spec.hook("team_name", event, "b", False)
-            text = f"{name_a} {event.get('wins_a')}-{event.get('wins_b')} {name_b}"
-        text, font = self._fit_text_ellipsis(draw, text, x2 - x1 - 116, 10, bold=state != "scheduled", min_size=8)
+            text, font = self._kit_team_pair_text(draw, spec, event, f"{event.get('wins_a')}-{event.get('wins_b')}",
+                                                  x2 - x1 - 116, 10, True)
         self._draw_text_in_box(draw, (x1 + 114, y1, x2, y2), text, font, COLORS["text"], align="right")
 
     def _draw_wnba_series_game_card(self, image, draw, box, event, now, spec, state):
@@ -473,8 +471,8 @@ class BasketballRenderMixin:
                 value = "-" if event.get(f"wins_{side}") is None else str(event.get(f"wins_{side}"))
                 value_font = self._font(22, not dimmed)
             value_w = self._text_width(draw, value, value_font) if value else 0
-            name = spec.hook("team_name", event, side, False)
-            name, name_font = self._fit_text(draw, name, right - value_w - 8 - (left + 36), 14, bold=not dimmed, min_size=9)
+            name, name_font = self._kit_team_name(draw, spec, event, side, right - value_w - 8 - (left + 36), 14,
+                                                  not dimmed, min_size=9)
             self._draw_text_in_box(draw, (left + 36, y, right - value_w - 8, y + 28), name, name_font, COLORS["text"])
             if value:
                 self._draw_text_in_box(draw, (right - value_w, y, right, y + 28), value, value_font, COLORS["text"], align="right")

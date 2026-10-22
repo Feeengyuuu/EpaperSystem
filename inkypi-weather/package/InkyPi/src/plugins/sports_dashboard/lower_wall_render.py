@@ -111,8 +111,7 @@ class LowerWallRenderMixin:
         score_text, score_font = self._fit_text(draw, score_text, 44, 24, bold=True, min_size=14)
         score_w = self._text_width(draw, score_text, score_font)
         self._draw_text_in_box(draw, (x2 - score_w, y1, x2, y2), score_text, score_font, COLORS["text"], align="right")
-        name = spec.hook("team_name", event, side, False, default=event.get(f"team_{side}") or "TBD")
-        name, name_font = self._fit_text_ellipsis(draw, name, x2 - score_w - 8 - (x1 + logo + 6), 14, bold=True, min_size=9)
+        name, name_font = self._kit_team_name(draw, spec, event, side, x2 - score_w - 8 - (x1 + logo + 6), 14, True, min_size=9)
         self._draw_text_in_box(draw, (x1 + logo + 6, y1, x2 - score_w - 8, y2), name, name_font, COLORS["text"])
 
     def _draw_wall_golf_card(self, draw, box, event):
@@ -236,8 +235,7 @@ class LowerWallRenderMixin:
         score_text, score_font = self._fit_text(draw, "-" if score is None else str(score), 34, 17, bold=True, min_size=11)
         score_w = self._text_width(draw, score_text, score_font)
         self._draw_text_in_box(draw, (x2 - score_w, y1, x2, y2), score_text, score_font, COLORS["text"], align="right")
-        name = spec.hook("team_name", event, side, False, default=event.get(f"team_{side}") or "TBD")
-        name, name_font = self._fit_text_ellipsis(draw, name, x2 - score_w - 6 - (x1 + logo + 5), 12, bold=True, min_size=8)
+        name, name_font = self._kit_team_name(draw, spec, event, side, x2 - score_w - 6 - (x1 + logo + 5), 12, True, min_size=8)
         self._draw_text_in_box(draw, (x1 + logo + 5, y1, x2 - score_w - 6, y2), name, name_font, COLORS["text"])
 
     def _draw_wall_row(self, image, draw, box, game, now, last):
@@ -286,8 +284,7 @@ class LowerWallRenderMixin:
                                   ("b", center + score_w // 2 + 6, middle_x2)):
             logo = 26
             fallback = spec.hook("logo_fallback", event, side, default=event.get(f"team_{side}_code"))
-            name = spec.hook("team_name", event, side, False, default=event.get(f"team_{side}") or "TBD")
-            name, name_font = self._fit_text_ellipsis(draw, name, max(20, right - left - logo - 6), 13, bold=True, min_size=8)
+            name, name_font = self._kit_team_name(draw, spec, event, side, max(20, right - left - logo - 6), 13, True, min_size=8)
             name_w = self._text_width(draw, name, name_font)
             if side == "a":
                 logo_x = right - name_w - 6 - logo

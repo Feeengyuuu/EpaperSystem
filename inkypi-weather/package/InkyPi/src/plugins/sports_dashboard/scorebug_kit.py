@@ -321,8 +321,7 @@ class ScorebugKitMixin:
             score_w = self._text_width(draw, score_text, score_font) if score_text else 0
             name_x = team_x + 15
             name_budget = x2 - 2 - score_w - 6 - name_x - (9 if offense == side else 0)
-            name = spec.hook("team_name", event, side, False, default=event.get(prefix) or "TBD")
-            name, font = self._fit_text_ellipsis(draw, name, name_budget, 11, bold=not dimmed, min_size=9)
+            name, font = self._kit_team_name(draw, spec, event, side, name_budget, 11, not dimmed)
             self._draw_text_in_box(draw, (name_x, line_y1, name_x + name_budget, line_y2), name, font, COLORS["text"])
             if offense == side:
                 dot_x = name_x + self._text_width(draw, name, font) + 4
@@ -331,6 +330,32 @@ class ScorebugKitMixin:
                 self._draw_text_in_box(draw, (x2 - 2 - score_w, line_y1, x2 - 2, line_y2), score_text, score_font, COLORS["text"], align="right")
         if not last:
             draw.line((x1, y2, x2, y2), fill=COLORS["line"], width=1)
+
+    def _kit_team_name(self, draw, spec, event, side, budget, size, bold, min_size=None):
+        """The team's full name (新英格兰爱国者) when it fits ``budget`` at ``size`` or one
+        point smaller, else its short name (爱国者) shrunk or clipped to fit.
+
+        Both teams of a game switch together: a full name is used only when the
+        opponent's full name fits the same room, so a matchup never mixes the two."""
+        short = spec.hook("team_name", event, side, False, default=None) or event.get(f"team_{side}") or "TBD"
+        full = spec.hook("team_name", event, side, True, default=None)
+        other = spec.hook("team_name", event, "b" if side == "a" else "a", True, default=None)
+        if full and full != short:
+            for candidate in (size, size - 1):
+                font = self._font(candidate, bold)
+                if all(self._text_width(draw, name, font) <= budget for name in (full, other) if name):
+                    return full, font
+        return self._fit_text_ellipsis(draw, short, budget, size, bold=bold, min_size=min_size or max(7, size - 3))
+
+    def _kit_team_pair_text(self, draw, spec, event, middle, budget, size, bold):
+        """"A 3-1 B" with full names when the whole line fits, else with short names."""
+        for full in (True, False):
+            names = [spec.hook("team_name", event, side, full, default=None) or event.get(f"team_{side}") or "TBD"
+                     for side in ("a", "b")]
+            text = f"{names[0]} {middle} {names[1]}"
+            if full and self._text_width(draw, text, self._font(size, bold)) > budget:
+                continue
+            return self._fit_text_ellipsis(draw, text, budget, size, bold=bold, min_size=max(7, size - 2))
 
     def _draw_kit_ticker(self, image, draw, box, games, now, spec, title=None):
         """Compact one-line rows for the other games: clock, teams, score."""
@@ -352,8 +377,6 @@ class ScorebugKitMixin:
             if state == "live" and spec.hook("row_flag", event, default=False):
                 draw.rectangle((x1 + 55, top + 3, x1 + 56, top + 12), fill=COLORS[spec.live])
             winner = spec.hook("winner_side", event, default="") if state == "final" else ""
-            name_a = spec.hook("team_name", event, "a", False)
-            name_b = spec.hook("team_name", event, "b", False)
             if state == "scheduled":
                 middle_text = "vs"
             else:
@@ -365,11 +388,12 @@ class ScorebugKitMixin:
             self._draw_text_in_box(draw, (center - middle_w // 2 - 1, top, center + middle_w // 2 + 2, top + 15), middle_text, middle_font, COLORS["text"], align="center")
             # Each team's logo sits on the outer side of its name.
             logo_room = KIT_TICKER_LOGO_SIZE + KIT_TICKER_LOGO_GAP
-            for side, name, box_side, align in (
-                ("a", name_a, (team_x1 + logo_room, top, center - middle_w // 2 - 5, top + 15), "right"),
-                ("b", name_b, (center + middle_w // 2 + 5, top, x2 - logo_room, top + 15), "left"),
+            for side, box_side, align in (
+                ("a", (team_x1 + logo_room, top, center - middle_w // 2 - 5, top + 15), "right"),
+                ("b", (center + middle_w // 2 + 5, top, x2 - logo_room, top + 15), "left"),
             ):
-                text, font = self._fit_text_ellipsis(draw, name, box_side[2] - box_side[0], 10, bold=winner in ("", side), min_size=8)
+                text, font = self._kit_team_name(draw, spec, event, side, box_side[2] - box_side[0], 10,
+                                                 winner in ("", side), min_size=8)
                 self._draw_text_in_box(draw, box_side, text, font, COLORS["text"], align=align)
                 text_w = self._text_width(draw, text, font)
                 if side == "a":
