@@ -2634,3 +2634,12 @@ def test_prompt_lists_the_fixed_tag_vocabulary(monkeypatch):
 )
 def test_a_decisive_title_keyword_overrides_a_wrong_vocabulary_tag(tag, title, expected):
     assert DailyAINews._normalized_tag(tag, title) == expected
+
+
+def test_english_written_against_chinese_is_translated_or_dropped():
+    plugin = _plugin()
+
+    assert plugin._strip_untranslated_english_terms("Kyiv遭导弹袭击后美方谈判意向") == "基辅遭导弹袭击后美方谈判意向"
+    assert plugin._strip_untranslated_english_terms("总统Trump宣布新关税") == "总统宣布新关税"
+    assert plugin._strip_untranslated_english_terms("AIPAC调整捐助策略") == "AIPAC调整捐助策略"
+    assert plugin._strip_untranslated_english_terms("US大选进入最后一周") == "美国大选进入最后一周"
