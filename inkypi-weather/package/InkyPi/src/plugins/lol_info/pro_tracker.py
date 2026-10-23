@@ -65,8 +65,7 @@ class ProTrackerMixin:
         top20 = (state or self._read_json(self._cache_dir() / CS2_STATE, {})).get("top20") or []
         if len(top20) >= 10:
             return top20
-        return [{"rank": rank, "nick": nick, "name": name, "country": country, "team": "", "team_logo": "",
-                 "bodyshot": ""} for rank, nick, name, country in CS2_TOP20_2025]
+        return [dict(row) for row in CS2_TOP20_2025]
 
     def _tracked_pool(self, settings):
         picks = [{"kind": "lol", "id": "lol|" + account["id"], "account": account}
