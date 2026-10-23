@@ -1,14 +1,20 @@
-"""Procedural spot art for the 整点新闻 page.
+"""Spot art for the 整点新闻 page.
 
-Flat shapes without anti-aliasing in the page's two inks, like its masthead: the
-theme's ink and panel, plus the panel's own red for one small mark, so the art
-stays crisp after dithering. A topic medallion sits beside the lead story, a hairline
-topic ring ends every column story and a small globe fills spare column space.
+Each topic has a generated badge (GPT Image 2.5, in topic_icons/): a bold white
+glyph on a circle in the topic's accent tone. A topic medallion sits beside the lead
+story, a badge ends every column story and a small globe fills spare column space.
+The flat procedural shapes below draw the same art when a badge file is missing.
 """
 
 from __future__ import annotations
 
+from functools import lru_cache
 import math
+from pathlib import Path
+
+from PIL import Image
+
+ICON_DIR = Path(__file__).resolve().parent / "topic_icons"
 
 # Keyword groups, checked in order against the lead's tag and then its title.
 TOPIC_KEYWORDS = (
@@ -47,8 +53,31 @@ def topic_kind(tag, title=""):
     return kind
 
 
-def draw_topic_art(draw, box, kind, ink, panel, rule, accent):
-    """An ink topic medallion with an open ring, a red marker and a dot grid inside ``box``."""
+@lru_cache(maxsize=64)
+def badge(name, width, height):
+    """A generated badge (a topic, ``globe`` or ``seal``) at width x height, or None when missing."""
+    try:
+        with Image.open(ICON_DIR / f"{name}.png") as source:
+            return source.convert("RGBA").resize((width, height), Image.LANCZOS)
+    except (OSError, ValueError):
+        return None
+
+
+def paste_badge(image, name, cx, cy, width, height=None):
+    """Paste a generated badge centred on (cx, cy); False when there is no image or file."""
+    art = badge(name, int(width), int(height or width)) if image is not None else None
+    if art is None:
+        return False
+    image.paste(art, (round(cx - art.width / 2), round(cy - art.height / 2)), art)
+    return True
+
+
+def _dark(colour):
+    return sum(tuple(colour)[:3]) < 384
+
+
+def draw_topic_art(draw, box, kind, ink, panel, rule, accent, image=None):
+    """A topic medallion with an open ring, a red marker and a dot grid inside ``box``."""
     left, top, right, bottom = [int(value) for value in box]
     height = bottom - top
     radius = max(12, min(height // 2 - 6, (right - left) // 4))
@@ -61,8 +90,9 @@ def draw_topic_art(draw, box, kind, ink, panel, rule, accent):
                 draw.ellipse((x - 1, y - 1, x + 1, y + 1), fill=rule)
     ring = radius + 7
     draw.arc((cx - ring, cy - ring, cx + ring, cy + ring), 150, 330, fill=ink, width=2)
-    draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=ink)
-    GLYPHS.get(kind, _newspaper)(draw, cx, cy, radius, panel, ink)
+    if not paste_badge(image, kind if kind in GLYPHS else "news", cx, cy, 2 * radius + 1):
+        draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=ink)
+        GLYPHS.get(kind, _newspaper)(draw, cx, cy, radius, panel, ink)
     # The marker sits where the ring ends, like a pin on the radar band above it.
     angle = math.radians(330)
     mx, my = cx + math.cos(angle) * ring, cy + math.sin(angle) * ring
@@ -70,14 +100,21 @@ def draw_topic_art(draw, box, kind, ink, panel, rule, accent):
     draw.ellipse((mx - dot, my - dot, mx + dot, my + dot), fill=accent)
 
 
-def draw_story_icon(draw, cx, cy, radius, kind, ring, glyph, panel):
-    """A hairline ink ring holding the story's topic glyph, drawn in ``glyph``."""
+def draw_story_icon(draw, cx, cy, radius, kind, ring, glyph, panel, image=None):
+    """The story's topic badge, or a hairline ink ring holding its glyph drawn in ``glyph``."""
+    if paste_badge(image, kind if kind in GLYPHS else "news", cx, cy, 2 * radius + 1):
+        if _dark(panel):
+            # A hairline keeps the charcoal badges apart from a black page.
+            draw.ellipse((cx - radius - 1, cy - radius - 1, cx + radius + 1, cy + radius + 1), outline=ring, width=1)
+        return
     draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=panel, outline=ring, width=1)
     GLYPHS.get(kind, _newspaper)(draw, cx, cy, radius - 3, glyph, panel)
 
 
-def draw_globe(draw, cx, cy, radius, ink, panel, accent):
-    """A small wireframe globe with one red location pin and an orbit."""
+def draw_globe(draw, cx, cy, radius, ink, panel, accent, image=None):
+    """A small globe with one red location pin and an orbit."""
+    if paste_badge(image, "globe", cx, cy, 2 * radius + 24):
+        return
     orbit = (cx - radius - 12, cy - radius // 3 - 2, cx + radius + 12, cy + radius // 3 + 2)
     draw.arc(orbit, 180, 360, fill=ink, width=1)
     draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=panel, outline=ink, width=2)

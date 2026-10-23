@@ -178,10 +178,13 @@ class NewsPage:
             self.text((MARGIN, top + 28), "新闻源暂无更新", 20, True)
             return
         seal_w, seal_h = SEAL_SIZE
-        self.d.rounded_rectangle((MARGIN, top + 9, MARGIN + seal_w, top + 9 + seal_h), radius=3, fill=c["lead"])
-        seal_ink = self.p._contrast_ink(c["lead"], c)
-        for index, char in enumerate("头条"):
-            self.text((MARGIN + seal_w / 2, top + 9 + seal_h * (1 + 2 * index) / 4), char, 17, True, seal_ink, "mm")
+        # The generated 头条 badge is 1:2; drawn as a plain seal when the file is missing.
+        if not news_art.paste_badge(self.img, "seal", MARGIN + seal_w / 2, top + 9 + seal_h / 2, seal_h // 2, seal_h):
+            self.d.rounded_rectangle((MARGIN, top + 9, MARGIN + seal_w, top + 9 + seal_h), radius=3, fill=c["lead"])
+            seal_ink = self.p._contrast_ink(c["lead"], c)
+            for index, char in enumerate("头条"):
+                self.text((MARGIN + seal_w / 2, top + 9 + seal_h * (1 + 2 * index) / 4), char, 17, True, seal_ink,
+                          "mm")
         text_x = MARGIN + seal_w + 14
         # A newspaper kicker before the headline: the section in its accent, then the topic.
         title_x = text_x
@@ -214,7 +217,7 @@ class NewsPage:
             self.text((text_x + 20, note_y + 8), self.clip(note, 12, brief_w - 20, False), 12, False, c["ink"], "lm")
         kind = news_art.topic_kind(lead.get("tag"), lead["title"])
         news_art.draw_topic_art(self.d, (art_left, top + 4, width - MARGIN - 6, bottom - 4), kind,
-                                c["ink"], c["panel"], c["rule"], c["lead"])
+                                c["ink"], c["panel"], c["rule"], c["lead"], image=self.img)
 
     def column(self, x, width, label, items, *, sources):
         c = self.c
@@ -281,14 +284,14 @@ class NewsPage:
             self.text((fact_x, row_y + 9), why, 12, False, c["ink"], "lm")
         height = len(lines) * TITLE_LINE + ITEM_FOOTER
         news_art.draw_story_icon(self.d, x + width - STORY_ICON_RADIUS - 2, y + height // 2 - 1,
-                                 STORY_ICON_RADIUS, kind, c["ink"], accent, c["panel"])
+                                 STORY_ICON_RADIUS, kind, c["ink"], accent, c["panel"], image=self.img)
         return height
 
     def globe_filler(self, x, top, width, bottom, label, sources):
         c = self.c
         middle = (top + bottom) // 2
         radius = max(12, min(20, (bottom - top) // 2 - 6))
-        news_art.draw_globe(self.d, x + 34, middle, radius, c["ink"], c["panel"], c["lead"])
+        news_art.draw_globe(self.d, x + 34, middle, radius, c["ink"], c["panel"], c["lead"], image=self.img)
         text_x = x + 34 + radius + 22
         self.text((text_x, middle - 18), f"{label}信源持续追踪", 12, True)
         names = " · ".join(sources) if sources else "每次刷新重新汇总"

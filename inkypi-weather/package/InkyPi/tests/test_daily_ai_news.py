@@ -1914,7 +1914,8 @@ def test_render_draws_lead_columns_meta_and_market_tiles(monkeypatch):
     assert image.size == (800, 480)
     assert "10月21日 周三" in seen
     assert "07:34 更新 · 3 个信源" in seen
-    assert {"头", "条", "国际", "公卫"} <= set(seen)
+    # 头条 is the generated badge now, so only the kicker and tag are drawn as words.
+    assert {"国际", "公卫"} <= set(seen)
     assert "尼日利亚确诊埃博拉病例" in seen
     assert {"大陆新闻1", "大陆新闻4", "英国派战机协防沙特"} <= set(seen)
     assert {"上证", "-0.05%", "3,733.52", "标普", "+0.28%", "截至 10/21", "截至 10/20"} <= set(seen)
@@ -2082,14 +2083,15 @@ def test_words_stay_ink_with_red_and_blue_as_sparing_accents(monkeypatch):
     crimson, cobalt, emerald = (200, 30, 50), (37, 84, 199), (5, 150, 105)
     assert fills["01"] == crimson
     assert fills["国际"] == fills["金融"] == cobalt
-    # The lead's seal is the crimson with white characters.
-    assert fills["头"] == fills["条"] == (255, 255, 255)
+    # The lead's seal is the generated crimson 头条 badge: crimson ground, white strokes.
+    seal = [image.getpixel((x, y)) for x in range(17, 42) for y in range(76, 126)]
+    assert sum(1 for r, g, b in seal if r > 150 and g < 90 and b < 100) > len(seal) * 0.4
+    assert any(min(pixel) > 225 for pixel in seal)
     palette = plugin._page_palette({"mode": "day"})
     assert palette["lead"] == palette["red"] == crimson and palette["green"] == emerald
     # Refined tones rather than the panel's pure inks.
     assert not {palette["red"], palette["blue"], palette["green"]} & {(255, 0, 0), (0, 0, 255), (0, 255, 0)}
     assert "domestic" not in palette and "world" not in palette
-    assert image.getpixel((22, 100)) == crimson
     assert image.getpixel((400, 100)) == (255, 255, 255)
 
 
@@ -2836,3 +2838,24 @@ def test_english_written_against_chinese_is_translated_or_dropped():
     assert plugin._strip_untranslated_english_terms("总统Trump宣布新关税") == "总统宣布新关税"
     assert plugin._strip_untranslated_english_terms("AIPAC调整捐助策略") == "AIPAC调整捐助策略"
     assert plugin._strip_untranslated_english_terms("US大选进入最后一周") == "美国大选进入最后一周"
+
+
+def test_every_topic_has_a_generated_badge_with_a_transparent_ground():
+    for name in [*news_art.GLYPHS, "globe", "seal"]:
+        art = news_art.badge(name, 30, 60 if name == "seal" else 30)
+        assert art is not None, name
+        assert art.getpixel((0, 0))[3] == 0, name
+        assert art.getchannel("A").getextrema()[1] == 255, name
+
+
+def test_the_drawn_seal_and_glyphs_stand_in_when_the_badges_are_missing(monkeypatch, tmp_path):
+    plugin = _plugin()
+    monkeypatch.setattr(news_art, "ICON_DIR", tmp_path)
+    news_art.badge.cache_clear()
+    try:
+        image, fills = _rendered_fills(monkeypatch, plugin)
+    finally:
+        news_art.badge.cache_clear()
+
+    assert fills["头"] == fills["条"] == (255, 255, 255)
+    assert image.getpixel((22, 100)) == daily_ai_news_module.PAGE_DAY_COLOURS["lead"]

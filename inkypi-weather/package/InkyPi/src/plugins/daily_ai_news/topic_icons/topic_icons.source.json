@@ -1,0 +1,98 @@
+{
+  "health.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "c4731a46-c4b4-4d87-b14d-13d58dcf0da7",
+    "generated": "2026-10-23",
+    "source_sha256": "6e0ac2b83b067c5700936ca011e869b0ec491b43f96647af8e6e5ded0ac3da45",
+    "processing": "cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "9c88b51d650de33ee9c55f1b1a3df0f4cf93523190c59c74f614f60cbf572710"
+  },
+  "conflict.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "dcf6a239-1006-4d70-8132-4d0ea61e4088",
+    "generated": "2026-10-23",
+    "source_sha256": "a22ab6f52cb990d413bf8f77efac3354cbb3e1a4c8f3629979062bf21a2b6e10",
+    "processing": "cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "d070511415f9a0acb162d27bed9132e5984d99e7837c0a7676e6683a63bbb7fd"
+  },
+  "climate.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "21240fa1-7196-4e18-8a7b-0e3a5bfe9689",
+    "generated": "2026-10-23",
+    "source_sha256": "7714439dfc47b25c6431ed781f1d316121466813610eda6db02af8380051aa72",
+    "processing": "cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "c4d93ed3524528e5e3c0613cf22079edae5cf4f58e67d2eaf6ad7f02d753178f"
+  },
+  "economy.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "125bfbec-4c39-40bb-9cbe-6777f910021a",
+    "generated": "2026-10-23",
+    "source_sha256": "d152d9f4b1f94b8d3b1c60f2e9970ace41e501012665974ce2cbdeed4094bc32",
+    "processing": "cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "f14cf1354370f64bf2bad3a0e29302e7fe2a23093b85a0b3abb1bce5bd051238"
+  },
+  "tech.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "0c35acf1-0549-4afa-b61b-df9446742953",
+    "generated": "2026-10-23",
+    "source_sha256": "61e1992b60e06ea2264e5197cb8ce15e1b34feb57b85d02f1baccccf3c6e7b38",
+    "processing": "cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "42a9098c68f4aa5f5b1d0b94b2636a376db689da54290dc7a4bfdbee4fc7749b"
+  },
+  "aviation.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "3546a63a-193b-4fda-84de-e415e753d197",
+    "generated": "2026-10-23",
+    "source_sha256": "928b9530b6949c2985007e3ffb15e49aaa123d88fb4b643aa0b66f0ceba1c36b",
+    "processing": "cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "70dd11867b23ecf58aa344909277fee0a5c51ae31d90007ceaca3e61e75ca78e"
+  },
+  "politics.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "7559f8e6-f97b-49a5-90b4-edcde619343d",
+    "generated": "2026-10-23",
+    "source_sha256": "4facd3aa134596511cbe3b1b47d76c7eb1c9ce43fbcbb9f912b1dd0049882fb9",
+    "processing": "cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "8a9274eb91d60556e1929b321b8db7a9815a6390d1c8cdc6919f27beac48f5b2"
+  },
+  "justice.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "b04d0e2f-beb2-4137-9915-d1876ee1cc7d",
+    "generated": "2026-10-23",
+    "source_sha256": "eb0551c6223906ab92f14e33ef1d916f7efbf5ce747fd3b709f248179ffc5551",
+    "processing": "cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "67046bd30ad4b335b3c26d6d9882f6002cb4aaf217ed08733a80e65d551ea4d6"
+  },
+  "sports.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "b103f841-edb4-4d4c-986e-44f737671d89",
+    "generated": "2026-10-23",
+    "source_sha256": "47433a64baab00c6f4aa5709b33762ef1f6191222f0e9773cbca1292a7abf2c0",
+    "processing": "cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "027f75f0664df034ead156bb1d7d9dff773ffd6524cd6f12abfd9e0aba9cdf57"
+  },
+  "news.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "9ba4c85a-a33b-48e6-b344-71aeabd74cd3",
+    "generated": "2026-10-23",
+    "source_sha256": "da8aa61ddb14182893854b745f1b2f79a15bfc6468fac14f75dc438745472821",
+    "processing": "cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "695c5ccbf6841bbb43ebb6fbfce1e49198f6f25cf355b7a7d186328021ffc7bb"
+  },
+  "globe.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "e0732da5-70e1-47d7-90dd-3e0f8fc0bc44",
+    "generated": "2026-10-23",
+    "source_sha256": "72fe04e2873071cba0c39edae869c7bbe4252b62e82126f53529d2226cf56e6d",
+    "processing": "cropped to the alpha bounding box, fitted to 128x128 with LANCZOS, transparent margin",
+    "sha256": "c342139abccb69c5248e944a8cc2b5ef99575f91376a0898bb07ac14ca2904ff"
+  },
+  "seal.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "e5e7a12f-c944-45fe-bff8-209f3df52a4e",
+    "generated": "2026-10-23",
+    "source_sha256": "c020f00fa6b1623904b13d97ed858eb556004918dd0ece0cadf8ecebcac846ff",
+    "processing": "cropped to the alpha bounding box, fitted to 72x144 with LANCZOS, transparent margin",
+    "sha256": "d8ed9ead3dfe46c56e5f6541fa4451278968d889e3ce2012c81427763540ef04"
+  }
+}
