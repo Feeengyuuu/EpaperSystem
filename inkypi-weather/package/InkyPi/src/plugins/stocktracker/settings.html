@@ -36,7 +36,7 @@
     <label for="holdings_pin_symbols">Pinned Visible Holdings</label>
     <input type="text" id="holdings_pin_symbols" name="holdings_pin_symbols"
            placeholder="e.g., SPCX">
-    <small>Optional. Comma-separated symbols to keep at the top of the visible holdings table.</small>
+    <small>Optional. Comma-separated symbols always kept on the holdings table (and first when ordering by value).</small>
 </div>
 
 <div class="form-group">
@@ -44,6 +44,15 @@
     <input type="text" id="holdings_sink_symbols" name="holdings_sink_symbols"
            placeholder="e.g., SPY">
     <small>Optional. Comma-separated symbols to move below other holdings in the table.</small>
+</div>
+
+<div class="form-group">
+    <label for="holdings_order">Holdings Order</label>
+    <select id="holdings_order" name="holdings_order">
+        <option value="smart">Smart: today's biggest impact first</option>
+        <option value="value">By value (pinned first)</option>
+    </select>
+    <small>Smart ranks rows by their share of today's P/L, raised when a move is unusual for that holding; lower-priority symbols follow and cash comes last.</small>
 </div>
 
 <div class="form-group">
@@ -246,6 +255,9 @@
             }
             if (pluginSettings.holdings_sink_symbols) {
                 document.getElementById('holdings_sink_symbols').value = pluginSettings.holdings_sink_symbols;
+            }
+            if (pluginSettings.holdings_order) {
+                document.getElementById('holdings_order').value = pluginSettings.holdings_order;
             }
             if (pluginSettings.cash_balance) {
                 document.getElementById('cash_balance').value = pluginSettings.cash_balance;

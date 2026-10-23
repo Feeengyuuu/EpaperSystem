@@ -449,6 +449,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			theme_context=theme_context,
 			updated_at=updated_at,
 			portfolio_meta=portfolio_meta,
+			holdings_order=settings.get("holdings_order") or "smart",
 		)
 		if hasattr(image, "info"):
 			provenance = SourceProvenance.FRESH_CACHE if theme_render_only else SourceProvenance.LIVE
@@ -1871,6 +1872,41 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 
 		return sorted(stock_data, key=sort_key)
 
+	def _smart_order(self, metrics, portfolio_total, pin_symbols=None, sink_symbols=None):
+		"""Rows by how much each matters today: its share of the day's P/L, raised when the move is unusual.
+
+		A move counts as unusual against the holding's own daily swings over the window, so a 4%
+		day for a steady fund ranks above the same 4% for a volatile stock. Lower-priority symbols
+		follow the rest and cash comes last; pinned symbols are only kept on the table (never
+		pushed into the overflow ticker), not forced to the top.
+		"""
+		pins = set(self._symbols_setting(pin_symbols))
+		sinks = set(self._symbols_setting(sink_symbols))
+
+		def sort_key(item):
+			symbol = str(item["data"].get("symbol") or "").upper()
+			bucket = 3 if item["is_cash"] else 2 if symbol in sinks and symbol not in pins else 1
+			return (bucket, -self._attention(item, portfolio_total), -item["value"], symbol)
+
+		return sorted(metrics, key=sort_key)
+
+	@classmethod
+	def _attention(cls, item, portfolio_total):
+		if item["is_cash"] or item["day_pl"] is None or not portfolio_total:
+			return 0.0
+		impact = abs(item["day_pl"]) / portfolio_total * 100
+		swing = cls._daily_swing(item["closes"])
+		surprise = abs(item["day_percent"] or 0.0) / swing if swing else 1.0
+		return impact * (1.0 + 0.5 * max(0.0, surprise - 1.0))
+
+	@staticmethod
+	def _daily_swing(closes):
+		"""The typical size of one day's move (%) over the window, without today's live point."""
+		returns = [abs(b - a) / a * 100 for a, b in zip(closes[:-2], closes[1:-1]) if a]
+		if len(returns) < 5:
+			return None
+		return max(0.25, sum(returns) / len(returns))
+
 	@staticmethod
 	def _is_cash_holding(item):
 		symbol = str(item.get("symbol") or "").strip().lower()
@@ -2126,6 +2162,8 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		ticker_theme=None,
 		theme_context=None,
 		window_short="1M",
+		sorted_by_day=False,
+		keep_symbols=None,
 	):
 		colors = _active_stock_colors()
 		left, top, right, bottom = box
@@ -2157,6 +2195,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			if align == "right":
 				x -= self._text_width(draw, label, header_font)
 			draw.text((x, self._centered_text_y(draw, label, header_font, header_center)), label, fill=colors["ink"], font=header_font)
+			if sorted_by_day and key == "day_pl":
+				# The rows follow today's impact: a small sort mark before the column's name.
+				draw.polygon(((x - 10, header_center - 2), (x - 4, header_center - 2), (x - 7, header_center + 2)),
+							 fill=colors["ink"])
 		rows_top = top + 50
 		draw.line((table_left, rows_top - 1, table_right, rows_top - 1), fill=colors["ink"], width=1)
 
@@ -2167,7 +2209,16 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		if len(visible) > max_rows:
 			rows_bottom = bottom - 40
 			max_rows = max(int((rows_bottom - rows_top) // HOLDING_ROW_MIN_HEIGHT), 1)
-			visible, hidden = visible[:max_rows], visible[max_rows:]
+			# Pinned symbols stay on the table: they take the places of the lowest-ranked others.
+			keep = set(keep_symbols or ())
+			pinned = {id(item) for item in visible if str(item["data"].get("symbol") or "").upper() in keep}
+			others = [item for item in visible if id(item) not in pinned]
+			room = max(0, max_rows - len(pinned))
+			on_table = pinned | {id(item) for item in others[:room]}
+			ranked = visible
+			visible = [item for item in ranked if id(item) in on_table][:max_rows]
+			shown = {id(item) for item in visible}
+			hidden = [item for item in ranked if id(item) not in shown]
 		if visible:
 			row_height = min((rows_bottom - rows_top) / len(visible), HOLDING_ROW_MAX_HEIGHT)
 			max_weight = max((item["weight"] for item in visible), default=0.0)
@@ -2325,8 +2376,13 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		theme_context=None,
 		updated_at=None,
 		portfolio_meta=None,
+		holdings_order="smart",
 	):
-		"""Account summary and trend on top, every holding with its day and window movement below."""
+		"""Account summary and trend on top, every holding with its day and window movement below.
+
+		``holdings_order`` "smart" ranks the rows by today's impact (see _smart_order); "value"
+		keeps the pinned symbols first and the rest by value.
+		"""
 		colors = _stock_render_colors(theme_context)
 		token = _ACTIVE_STOCK_COLORS.set(colors)
 		try:
@@ -2342,8 +2398,13 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				stock_data,
 				account_value_override=account_value_override,
 			)
-			ordered = self._ordered_holdings(stock_data, holdings_pin_symbols, holdings_sink_symbols)
-			metrics = [self._holding_metrics(data, total_value) for data in ordered]
+			smart = str(holdings_order or "smart").strip().lower() != "value"
+			if smart:
+				metrics = self._smart_order([self._holding_metrics(data, total_value) for data in stock_data],
+											total_value, holdings_pin_symbols, holdings_sink_symbols)
+			else:
+				ordered = self._ordered_holdings(stock_data, holdings_pin_symbols, holdings_sink_symbols)
+				metrics = [self._holding_metrics(data, total_value) for data in ordered]
 			day_change = sum(item["day_pl"] or 0.0 for item in metrics)
 			day_base = total_value - day_change
 			day_percent = self._finite_float(day_change / day_base * 100 if day_base else 0.0)
@@ -2396,6 +2457,8 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				ticker_theme,
 				theme_context,
 				window_short=window_short,
+				sorted_by_day=smart,
+				keep_symbols=self._symbols_setting(holdings_pin_symbols) if smart else None,
 			)
 
 			return img

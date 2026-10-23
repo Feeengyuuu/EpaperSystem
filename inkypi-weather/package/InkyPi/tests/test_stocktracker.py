@@ -205,6 +205,71 @@ def test_stock_tracker_declares_and_prepares_fresh_before_display(monkeypatch):
     assert preparation.image.size == (800, 480)
 
 
+def _moving(symbol, previous, today_percent, swing_percent, shares):
+    closes = [previous]
+    for index in range(21):
+        closes.insert(0, closes[0] / (1 + (swing_percent if index % 2 else -swing_percent) / 100))
+    return _stock(symbol, closes + [previous * (1 + today_percent / 100)], shares)
+
+
+def test_smart_order_ranks_by_todays_impact_and_unusual_moves():
+    plugin = StockTracker({"id": "stocktracker"})
+    cash = _stock("CASH", [1.0], 5_000)
+    cash["is_cash"] = True
+    stock_data = [
+        _moving("AAPL", 100, 1.0, 1.0, 800),    # the largest holding, an ordinary day: +$800
+        _moving("NVDA", 100, -4.0, 2.0, 300),   # -$1,200 and twice its usual swing
+        _moving("BOND", 100, 0.8, 0.1, 500),    # +$400, but eight times its usual swing
+        _moving("FUND", 100, 0.6, 1.0, 800),    # +$480, an ordinary day
+        _moving("SPY", 100, -3.0, 1.0, 600),    # -$1,800, set as lower priority
+        cash,
+    ]
+    total = sum(row["total_value"] for row in stock_data)
+    metrics = [plugin._holding_metrics(row, total) for row in stock_data]
+
+    ordered = plugin._smart_order(metrics, total, "AAPL", "SPY")
+
+    assert [item["data"]["symbol"] for item in ordered] == ["NVDA", "BOND", "AAPL", "FUND", "SPY", "CASH"]
+
+
+def test_smart_order_keeps_pinned_symbols_on_an_overflowing_table():
+    plugin = StockTracker({"id": "stocktracker"})
+    stock_data = [_moving(f"S{index:02d}", 100, -(20 - index) / 10, 1.0, 10) for index in range(20)]
+    stock_data.append(_moving("SPCX", 100, 0.0, 1.0, 1))
+
+    image = plugin._create_dashboard(stock_data, (800, 480), holdings_pin_symbols="SPCX", ticker_theme="day")
+    tables = []
+    original = plugin._draw_holding_row
+
+    def record(img, draw, box, item, *args, **kwargs):
+        tables.append(item["data"]["symbol"])
+        return original(img, draw, box, item, *args, **kwargs)
+
+    plugin._draw_holding_row = record
+    plugin._create_dashboard(stock_data, (800, 480), holdings_pin_symbols="SPCX", ticker_theme="day")
+
+    assert image.size == (800, 480)
+    assert tables[0] == "S00" and "SPCX" in tables and len(tables) < len(stock_data)
+
+
+def test_value_order_is_still_available():
+    plugin = StockTracker({"id": "stocktracker"})
+    stock_data = [_moving("AAPL", 100, 0.1, 1.0, 800), _moving("NVDA", 100, -5.0, 1.0, 300)]
+    shown = []
+    original = plugin._draw_holding_row
+
+    def record(img, draw, box, item, *args, **kwargs):
+        shown.append(item["data"]["symbol"])
+        return original(img, draw, box, item, *args, **kwargs)
+
+    plugin._draw_holding_row = record
+    plugin._create_dashboard(stock_data, (800, 480), ticker_theme="day", holdings_order="value")
+    assert shown == ["AAPL", "NVDA"]
+    shown.clear()
+    plugin._create_dashboard(stock_data, (800, 480), ticker_theme="day")
+    assert shown == ["NVDA", "AAPL"]
+
+
 def test_stock_tracker_keeps_spcx_visible_by_default():
     plugin = StockTracker({"id": "stocktracker"})
     stock_data = [
@@ -401,11 +466,13 @@ def test_stock_dashboard_draws_hidden_holdings_as_horizontal_night_ticker():
 
 def test_stock_dashboard_draws_hidden_holdings_as_horizontal_day_ticker():
     plugin = StockTracker({"id": "stocktracker"})
+    # By value, so the fixture's same holdings overflow into the ticker.
     image = plugin._create_dashboard(
         _hidden_ticker_stock_data(),
         (800, 480),
         tracking_window_label="WINDOW: LAST MONTH",
         ticker_theme="day",
+        holdings_order="value",
     )
     ticker_region = TICKER_REGION
 
