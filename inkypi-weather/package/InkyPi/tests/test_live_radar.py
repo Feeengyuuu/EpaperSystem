@@ -4138,6 +4138,25 @@ def test_without_replays_the_offline_column_keeps_its_layout():
     assert "REPLAY" not in titles
 
 
+def test_busy_hours_drop_the_replay_wall_for_more_live_tiles():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    walls = []
+
+    def queue(_image, _draw, box, title, cards, _theme, max_items, **_kwargs):
+        walls.append((title, box))
+        return plugin._live_queue_visible_count(box, len(cards), max_items)
+
+    plugin._draw_live_queue_section = queue
+    cards = _live_cards(22) + _replay_cards(7) + _offline_cards(4)
+    plugin._render_dashboard(cards, (800, 480), theme, datetime.now(timezone.utc), False, None)
+
+    # Nineteen queued streams overflow any wall, so the replays give their width back to LIVE TOO.
+    assert [title for title, _box in walls] == ["LIVE TOO"]
+    shown = plugin._live_queue_visible_count(walls[0][1], 19, live_radar_module.LIVE_QUEUE_MAX_ITEMS)
+    assert shown == live_radar_module.LIVE_QUEUE_MAX_ITEMS
+
+
 def test_replay_tiles_carry_a_replay_tag_and_the_wall_an_amber_frame():
     plugin = _plugin()
     theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())

@@ -432,14 +432,15 @@ def _holdings(canvas, payload, now):
         canvas.rule((middle, body - 8, middle, bottom - 8))
         return
     if not filings_on:
-        # Earnings keep two rows; below them the news runs the full width of the box.
+        # Two earnings rows head the left half; the news reads on below them and down the right half.
         _earnings(canvas, payload, now, left + 10, middle - 10, body, EARNINGS_ROWS)
         split = body + EARNINGS_ROWS * 19 - 10
-        canvas.rule((middle, body - 8, middle, split))
-        canvas.rule((left + 8, split, right - 8, split))
-        _news(canvas, news[:EARNINGS_ROWS], now, middle + 10, right - 10, body, EARNINGS_ROWS)
-        if len(news) > EARNINGS_ROWS:
-            _news(canvas, news[EARNINGS_ROWS:], now, left + 10, right - 10, split + 10, rows - EARNINGS_ROWS)
+        canvas.rule((left + 8, split, middle - 8, split))
+        canvas.rule((middle, body - 8, middle, bottom - 8))
+        below = rows - EARNINGS_ROWS
+        _news(canvas, news, now, left + 10, middle - 10, split + 10, below)
+        if len(news) > below:
+            _news(canvas, news[below:], now, middle + 10, right - 10, body, rows)
         return
     left_rows = rows
     y = body

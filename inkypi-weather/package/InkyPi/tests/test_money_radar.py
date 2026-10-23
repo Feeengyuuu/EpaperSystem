@@ -322,7 +322,7 @@ def test_macro_tiles_put_the_icon_before_the_title():
     assert any(r > 180 and g < 140 for r, g, _b in corner.get_flattened_data())
 
 
-def test_holdings_keep_two_earnings_rows_and_widen_the_news_below(monkeypatch):
+def test_holdings_keep_two_earnings_rows_and_give_the_rest_to_the_news(monkeypatch):
     canvas = PageCanvas(money_render._palette({}), family="Microsoft YaHei")
     earnings_rows, news_calls = [], []
     monkeypatch.setattr(money_render, "_earnings", lambda *args: earnings_rows.append(args[-1]))
@@ -335,5 +335,5 @@ def test_holdings_keep_two_earnings_rows_and_widen_the_news_below(monkeypatch):
     money_render._holdings(canvas, payload, NOW)
 
     assert earnings_rows == [money_render.EARNINGS_ROWS]
-    # Two stories sit beside the earnings; the rest run across the whole box below them.
-    assert news_calls == [(2, 410, 778, 2), (4, 22, 778, 3)]
+    # The halves stay split: three stories under the earnings, the next five down the right half.
+    assert news_calls == [(6, 22, 390, 3), (3, 410, 778, 5)]

@@ -217,6 +217,8 @@ OFFLINE_LIST_MIN_ROW_H = 24
 OFFLINE_CARDS_MIN_W = 300
 # Replays get a wall of their own beside a slim OFFLINE list once the right
 # column has room for both; the wall keeps the LIVE TOO tiles in a replay frame.
+# Replays are quiet-hour filler: once LIVE TOO cannot show every live stream
+# beside them, the wall is dropped and LIVE TOO takes the width back.
 OFFLINE_SLIM_MIN_W = 150
 REPLAY_SECTION_MIN_W = 190
 REPLAY_SECTION_SHARE = 0.55
@@ -1346,27 +1348,29 @@ class LiveRadar(BasePlugin):
         bottom_h = footer_y - bottom_y - 8
         row_w = width - 2 * margin - col_gap
         landscape_wall = bool(queued_live_cards) and width > height
+        show_replays = bool(replay_cards)
         if landscape_wall:
             wall_count = min(len(queued_live_cards), LIVE_QUEUE_MAX_ITEMS)
             wall_rows = min(2, max(1, int((bottom_h - 24) // LIVE_QUEUE_MIN_TILE_H)))
-            # Replays need room for a slim OFFLINE and their own wall on the right.
-            right_min = OFFLINE_SLIM_MIN_W + col_gap + REPLAY_SECTION_MIN_W if replay_cards else LIVE_WALL_OFFLINE_MIN_W
-            widest_wall = row_w - right_min
-            if (
-                wall_count <= LIVE_QUEUE_ONE_ROW_MAX
-                and wall_count * LIVE_QUEUE_ROW_TILE_MIN_W <= widest_wall
-            ):
-                wall_w = wall_count * LIVE_QUEUE_LARGE_TILE_W
-            else:
-                wall_w = int(math.ceil(wall_count / wall_rows)) * LIVE_QUEUE_TILE_W
-            live_w = min(wall_w, widest_wall)
+            live_w = self._live_wall_width(row_w, LIVE_WALL_OFFLINE_MIN_W, wall_count, wall_rows)
+            if show_replays:
+                # Replays only fill quiet hours: they need room for a slim OFFLINE and their
+                # own wall, and get it only while LIVE TOO still shows every live stream.
+                replay_right = OFFLINE_SLIM_MIN_W + col_gap + REPLAY_SECTION_MIN_W
+                replay_live_w = self._live_wall_width(row_w, replay_right, wall_count, wall_rows)
+                shown = self._live_queue_visible_count(
+                    (margin, bottom_y, replay_live_w, bottom_h), len(queued_live_cards), LIVE_QUEUE_MAX_ITEMS
+                )
+                show_replays = shown >= len(queued_live_cards)
+                if show_replays:
+                    live_w = replay_live_w
             offline_w = row_w - live_w
         else:
             live_w = offline_w = int(row_w / 2)
         live_queue_box = (margin, bottom_y, live_w, bottom_h)
         offline_box = (margin + live_w + col_gap, bottom_y, offline_w, bottom_h)
         replay_box = None
-        if replay_cards and offline_w >= OFFLINE_SLIM_MIN_W + col_gap + REPLAY_SECTION_MIN_W:
+        if show_replays and offline_w >= OFFLINE_SLIM_MIN_W + col_gap + REPLAY_SECTION_MIN_W:
             replay_w = max(REPLAY_SECTION_MIN_W, int((offline_w - col_gap) * REPLAY_SECTION_SHARE))
             replay_w = min(replay_w, offline_w - col_gap - OFFLINE_SLIM_MIN_W)
             offline_list_w = offline_w - col_gap - replay_w
@@ -2233,6 +2237,16 @@ class LiveRadar(BasePlugin):
 
     def _live_queue_visible_count(self, box, card_count, max_items):
         return self._live_queue_layout(box, card_count, max_items)["visible_count"]
+
+    @staticmethod
+    def _live_wall_width(row_w, right_min, wall_count, wall_rows):
+        """LIVE TOO's width when the sections to its right need at least right_min."""
+        widest_wall = row_w - right_min
+        if wall_count <= LIVE_QUEUE_ONE_ROW_MAX and wall_count * LIVE_QUEUE_ROW_TILE_MIN_W <= widest_wall:
+            wall_w = wall_count * LIVE_QUEUE_LARGE_TILE_W
+        else:
+            wall_w = int(math.ceil(wall_count / wall_rows)) * LIVE_QUEUE_TILE_W
+        return min(wall_w, widest_wall)
 
     @staticmethod
     def _top_live_overflow_cards(live_cards, top_count, queue_count):
