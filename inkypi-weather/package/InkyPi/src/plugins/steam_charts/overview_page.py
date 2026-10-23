@@ -26,8 +26,8 @@ METRIC_W = 112
 # drawn larger than its own pixels and its skyline grown into what is left, both standing on the
 # header rule so their underline and the rule are one line.
 LOGO_BOX = (10, 4, 48)
-WORDMARK_LEFT, WORDMARK_RIGHT, WORDMARK_BASELINE = 64, 370, HEADER_H + 2
-LETTERING_SCALE = 1.15
+WORDMARK_LEFT, WORDMARK_RIGHT, WORDMARK_BASELINE = 64, 420, HEADER_H + 2
+LETTERING_SCALE = 1.45
 # Where the wordmark's pieces sit in its own 320x72 pixels: the skyline's first building,
 # the end of the lettering, the row below "STEAM CHARTS" and the underline's first row.
 SKYLINE_X, LETTERING_END, LETTERING_BOTTOM, UNDERLINE_TOP = 116, 158, 58, 70
@@ -212,8 +212,15 @@ class LiveOverviewMixin:
         width = text_right - text_x
         store = game.get("store") or {}
         name = str(game.get("name") or "")
-        draw.text((text_x, top + 2), self._overview_clip(draw, name, self._font(15, "bold"), width),
-                  font=self._font(15, "bold"), fill=colors["ink"])
+        current = game.get("current_players")
+        number = f"{current:,}" if isinstance(current, (int, float)) else str(game.get("current_players_fmt") or "--")
+        number_font = self._font(18, "bold")
+        # The name runs on to the player count beside it, smaller before it is cut short.
+        name_width = right - draw.textlength(number, font=number_font) - 10 - text_x
+        name_font = next((self._font(size, "bold") for size in (15, 14, 13)
+                          if draw.textlength(name, font=self._font(size, "bold")) <= name_width), self._font(12, "bold"))
+        draw.text((text_x, top + 2 + (15 - name_font.size) // 2), self._overview_clip(draw, name, name_font, name_width),
+                  font=name_font, fill=colors["ink"])
         # Line two is the English name, or the developer when there is none; line three the genres.
         secondary = str(game.get("secondary_name") or "")
         developer = str(store.get("developer") or "")
@@ -232,10 +239,8 @@ class LiveOverviewMixin:
                   font=self._font(10), fill=colors["ink"])
         self._overview_detail_line(image, draw, (text_x, top + 50, text_right), game, store, trending, colors)
 
-        current = game.get("current_players")
-        number = f"{current:,}" if isinstance(current, (int, float)) else str(game.get("current_players_fmt") or "--")
-        font = self._font(18, "bold")
-        draw.text((right - draw.textlength(number, font=font), top + 1), number, font=font, fill=colors["ink"])
+        draw.text((right - draw.textlength(number, font=number_font), top + 1), number, font=number_font,
+                  fill=colors["ink"])
         # The trending board ranks by steamcharts' own 24-hour gain, so its figure is shown as given.
         change = self._overview_change(game)
         if trending and isinstance(change, (int, float)):

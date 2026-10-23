@@ -144,3 +144,21 @@ def test_overview_draws_both_boards_with_totals_and_store_facts(monkeypatch):
     assert {"3563万", "5,979", "+320%", "1,146,659", "峰值 1,274,983", "Valve"} <= set(drawn)
     assert "$15.99 -20%" in drawn and "动作 / 免费开玩 · 月均 80.8万" in drawn
     assert any(text.startswith("181.8万") for text in drawn)
+
+
+def test_a_long_game_name_runs_on_to_the_player_count(monkeypatch):
+    plugin = _plugin()
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+
+    def capture(self, xy, text, *args, **kwargs):
+        drawn.append((str(text), xy))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture)
+    game = {"rank": 1, "name": "Waifusitter - Furry Collection", "current_players": 3201,
+            "change_24h_fmt": "+1,515%", "spark": [1, 2, 3]}
+    plugin._render_live_overview((800, 480), [{"table_variant": "trending", "games": [game]},
+                                              {"table_variant": "top_games", "games": []}], {}, {"mode": "day"}, "")
+
+    assert "Waifusitter - Furry Collection" in [text for text, _xy in drawn]
