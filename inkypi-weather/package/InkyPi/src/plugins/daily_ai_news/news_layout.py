@@ -37,20 +37,18 @@ ITEM_FOOTER = 20
 # Each story ends in a topic ring; its text stops short of this right-hand slot.
 STORY_ICON_SLOT = 40
 STORY_ICON_RADIUS = 15
-# The panel's solid accents; anything unlisted stays in the theme's ink.
-RED = (255, 0, 0)
-BLUE = (0, 0, 255)
-SECTION_ACCENTS = {"国内": RED, "A股": RED, "国际": BLUE, "美股": BLUE}
+# Accents are palette roles (the plugin's page colours fill them); anything unlisted stays in ink.
+SECTION_ACCENTS = {"国内": "red", "A股": "red", "国际": "blue", "美股": "blue"}
 # Each board is coloured the way its own market quotes it: mainland boards show
 # gains red and losses green, US boards gains green and losses red.
 GAINS_IN_RED = {"A股": True, "美股": False}
 TOPIC_ACCENTS = {
-    "conflict": RED,
-    "climate": RED,
-    "health": RED,
-    "economy": BLUE,
-    "tech": BLUE,
-    "aviation": BLUE,
+    "conflict": "red",
+    "climate": "red",
+    "health": "red",
+    "economy": "blue",
+    "tech": "blue",
+    "aviation": "blue",
 }
 # The lead's headline shrinks through these sizes to fit; its two-sentence fact wraps.
 LEAD_TITLE_SIZES = (26, 24, 22, 20)
@@ -124,13 +122,9 @@ class NewsPage:
         return width
 
     # -- colour helpers -----------------------------------------------------
-    def accent(self, colour):
-        """A solid accent, or the theme's ink for none; blue is too dark to read on a night page."""
-        if colour is None:
-            return self.c["ink"]
-        if colour == BLUE and sum(tuple(self.c["panel"])[:3]) < 384:
-            return self.c["ink"]
-        return colour
+    def accent(self, role):
+        """The page colour for an accent role, or the theme's ink for none."""
+        return self.c[role] if role else self.c["ink"]
 
     def topic_accent(self, tag, title):
         kind = news_art.topic_kind(tag, title)
@@ -225,8 +219,7 @@ class NewsPage:
     def column(self, x, width, label, items, *, sources):
         c = self.c
         mark = self.accent(SECTION_ACCENTS.get(label))
-        # The bar keeps the section's colour even at night, where blue words fall back to ink.
-        self.d.rectangle((x, COLUMN_TOP + 3, x + 3, COLUMN_TOP + 15), fill=SECTION_ACCENTS.get(label, c["ink"]))
+        self.d.rectangle((x, COLUMN_TOP + 3, x + 3, COLUMN_TOP + 15), fill=mark)
         self.text((x + 10, COLUMN_TOP), label, 14, True)
         count_x = x + 14 + self.width(label, 14)
         self.d.line((x, COLUMN_TOP + 22, x + width, COLUMN_TOP + 22), fill=c["rule"], width=1)
@@ -303,7 +296,7 @@ class NewsPage:
 
     def market(self, x, width, label, rows, height):
         c = self.c
-        self.d.rectangle((x, MARKET_TOP + 2, x + 2, MARKET_TOP + 12), fill=SECTION_ACCENTS.get(label, c["ink"]))
+        self.d.rectangle((x, MARKET_TOP + 2, x + 2, MARKET_TOP + 12), fill=self.accent(SECTION_ACCENTS.get(label)))
         self.text((x + 7, MARKET_TOP), label, 11, True)
         as_of = next((row.get("as_of_label") for row in rows if row.get("as_of_label")), "")
         if as_of:

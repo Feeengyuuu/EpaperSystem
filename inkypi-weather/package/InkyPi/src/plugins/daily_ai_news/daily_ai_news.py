@@ -57,14 +57,15 @@ TITLE_WORDMARK_IMAGE = "title_wordmark.png"
 TITLE_WORDMARK_SIZE = (220, 58)
 MARKET_LOGO_DIR = PLUGIN_DIR / "market_logos"
 SUMMARY_SCHEMA_VERSION = "mainland-world-lead-tags-v19"
-# The page keeps the masthead's two inks: the panel's own red, which it shows solidly
-# instead of dithering, is the one accent. Market moves add the panel's red and green
-# as small solid marks, each board in its own convention (see news_layout).
-PAGE_ACCENTS = {"lead": (255, 0, 0), "red": (255, 0, 0), "green": (0, 255, 0)}
+# The page's accents are refined modern tones, not the panel's six pure inks: a crimson
+# for the 头条 seal and mainland news, a cobalt for world news, and an emerald that
+# pairs with the crimson for market moves (each board in its own convention, see
+# news_layout). Night lifts each tone so it reads on black.
+PAGE_DAY_COLOURS = {"lead": (200, 30, 50), "red": (200, 30, 50), "blue": (37, 84, 199), "green": (5, 150, 105)}
+PAGE_NIGHT_COLOURS = {"lead": (220, 48, 66), "red": (255, 99, 112), "blue": (122, 162, 255),
+                      "green": (52, 211, 153), "panel": (0, 0, 0)}
 # The page is laid out for the 800x480 panel; other displays get it scaled to fit.
 PAGE_SIZE = (800, 480)
-PAGE_DAY_COLOURS = dict(PAGE_ACCENTS)
-PAGE_NIGHT_COLOURS = {**PAGE_ACCENTS, "panel": (0, 0, 0)}
 
 
 class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin):

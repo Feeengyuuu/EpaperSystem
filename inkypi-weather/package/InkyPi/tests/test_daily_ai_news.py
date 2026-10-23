@@ -1991,7 +1991,8 @@ def test_market_changes_are_coloured_figures_beside_the_index_mark(monkeypatch):
     _image, fills = _rendered_fills(monkeypatch, plugin)
 
     # As words, never as filled blocks: the A-share loss is green, the US gain green too.
-    assert fills["-0.05%"] == (0, 255, 0) and fills["+0.28%"] == (0, 255, 0)
+    green = daily_ai_news_module.PAGE_DAY_COLOURS["green"]
+    assert fills["-0.05%"] == green and fills["+0.28%"] == green
     assert ("sse", 16) in logos and ("sp500", 29) in logos
 
 
@@ -2024,7 +2025,7 @@ def test_each_market_is_coloured_in_its_own_convention(monkeypatch):
     }})
     plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 10, 22), {"mode": "day"})
 
-    red, green = (255, 0, 0), (0, 255, 0)
+    red, green = daily_ai_news_module.PAGE_DAY_COLOURS["red"], daily_ai_news_module.PAGE_DAY_COLOURS["green"]
     # Mainland boards: gains red, losses green.
     assert fills["+1.20%"] == dots[3001.0] == red
     assert fills["-0.50%"] == dots[11002.0] == green
@@ -2077,15 +2078,18 @@ def test_words_stay_ink_with_red_and_blue_as_sparing_accents(monkeypatch):
 
     ink = daily_ai_news_module.get_theme_palette("day")["ink"]
     assert fills["大陆新闻1"] == fills["尼日利亚确诊埃博拉病例"] == fills["公卫"] == ink
-    # 国内 numbers are red; the 国际 kicker and a business tag are blue.
-    assert fills["01"] == (255, 0, 0)
-    assert fills["国际"] == fills["金融"] == (0, 0, 255)
-    # The lead's seal is the panel's red with white characters.
+    # 国内 numbers are crimson; the 国际 kicker and a business tag are cobalt.
+    crimson, cobalt, emerald = (200, 30, 50), (37, 84, 199), (5, 150, 105)
+    assert fills["01"] == crimson
+    assert fills["国际"] == fills["金融"] == cobalt
+    # The lead's seal is the crimson with white characters.
     assert fills["头"] == fills["条"] == (255, 255, 255)
     palette = plugin._page_palette({"mode": "day"})
-    assert palette["lead"] == palette["red"] == (255, 0, 0) and palette["green"] == (0, 255, 0)
+    assert palette["lead"] == palette["red"] == crimson and palette["green"] == emerald
+    # Refined tones rather than the panel's pure inks.
+    assert not {palette["red"], palette["blue"], palette["green"]} & {(255, 0, 0), (0, 0, 255), (0, 255, 0)}
     assert "domestic" not in palette and "world" not in palette
-    assert image.getpixel((22, 100)) == (255, 0, 0)
+    assert image.getpixel((22, 100)) == crimson
     assert image.getpixel((400, 100)) == (255, 255, 255)
 
 
