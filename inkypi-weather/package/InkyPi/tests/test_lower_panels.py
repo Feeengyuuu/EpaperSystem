@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw
 import pytest
 
+from plugins.sports_dashboard.baseball_icons import BASEBALL_ICON_FILLS, BASEBALL_ICON_SIZE, BASEBALL_ICONS, baseball_icon
 from plugins.sports_dashboard.common import _ACTIVE_COLORS, COLORS, DAY_COLORS, DEEP_NIGHT_COLORS
 from plugins.sports_dashboard.event_marks import EVENT_MARK_DIR
 from plugins.sports_dashboard.sports_dashboard import SportsDashboard
@@ -223,7 +224,74 @@ def test_mlb_labels():
     assert SportsDashboard._mlb_batting_side({**live, "inning_state": "Middle"}) == ""
     extra = {"state": "final", "innings": [(0, 0)] * 10, "scheduled_innings": 9}
     assert SportsDashboard._mlb_pill_label(extra, NOW) == "FINAL/10"
-    assert SportsDashboard._mlb_series_label({"series_summary": "Series tied 2-2"}) == "TIED 2-2"
+    assert SportsDashboard._mlb_series_label({"series_summary": "Series tied 2-2"}) == "2-2 平"
+
+
+def test_mlb_series_and_probables_name_teams_in_chinese():
+    event = {"team_a_code": "TB", "team_b_code": "MIL", "probable_a": "N. Martinez", "probable_b": "J. Misiorowski"}
+    assert SportsDashboard._mlb_series_label({**event, "series_summary": "TB leads 2-1"}, True) == "坦帕湾光芒 2-1 领先"
+    assert SportsDashboard._mlb_series_label({**event, "series_summary": "MIL wins 4-0"}) == "酿酒人 4-0 胜出"
+    # A team outside this game still reads in Chinese; an unknown code keeps statsapi's text.
+    assert SportsDashboard._mlb_series_label({"series_summary": "CLE leads 2-1"}) == "守护者 2-1 领先"
+    assert SportsDashboard._mlb_series_label({"series_summary": "XYZ leads 1-0"}) == "XYZ LEADS 1-0"
+    assert SportsDashboard._mlb_probables_label(event, True) == "N. Martinez (坦帕湾光芒)  vs  J. Misiorowski (密尔沃基酿酒人)"
+    assert SportsDashboard._mlb_probables_label(event) == "N. Martinez (光芒)  vs  J. Misiorowski (酿酒人)"
+
+
+@pytest.mark.parametrize(("innings", "names"), [
+    (9, ("坦帕湾光芒", "密尔沃基酿酒人")),
+    (12, ("光芒", "酿酒人")),
+])
+@pytest.mark.parametrize("state", ["in", "post"])
+def test_mlb_line_table_names_both_teams_in_full_chinese_while_the_innings_fit(innings, names, state, boxes):
+    event = {"state": state, "team_a_code": "TB", "team_b_code": "MIL", "scheduled_innings": 9, "inning": innings,
+             "inning_state": "Top", "innings": [(0, 1)] * innings, "wins_a": innings, "wins_b": innings}
+    image, draw = _render(lambda plugin, image, draw: plugin._draw_mlb_line_table(
+        image, draw, (28, 41, 342), event, "live" if state == "in" else "final", plugin._mlb_spec()))
+
+    _assert_fits(draw, boxes)
+    assert [text for _box, text, _font in boxes if not text.isascii()] == list(names)
+    assert not {"TB", "MIL"} & {text for _box, text, _font in boxes}
+
+
+@pytest.mark.parametrize(("event", "draw_row", "expected"), [
+    ({"state": "post", "wins_a": 3, "wins_b": 4, "decisions": [
+        {"label": "W", "name": "T. Megill"}, {"label": "L", "name": "P. Fairbanks"}, {"label": "S", "name": "D. Williams"}]},
+     "_draw_mlb_decisions", [("W", "T. Megill", "mil.png"), ("L", "P. Fairbanks", "tb.png"), ("S", "D. Williams", "mil.png")]),
+    ({"state": "in", "inning_state": "Top", "current_pitcher": "J. Misiorowski", "current_batter": "J. Caminero"},
+     "_draw_mlb_matchup", [("P", "J. Misiorowski", "mil.png"), ("AB", "J. Caminero", "tb.png")]),
+    ({"state": "in", "inning_state": "Middle", "current_pitcher": "J. Misiorowski", "current_batter": "J. Caminero"},
+     "_draw_mlb_matchup", [("P", "J. Misiorowski", None), ("AB", "J. Caminero", None)]),
+])
+def test_mlb_people_rows_put_an_icon_before_each_name_and_the_team_logo_after(event, draw_row, expected, boxes):
+    event = {"team_a_code": "TB", "team_b_code": "MIL", "team_a_logo": "tb.png", "team_b_logo": "mil.png", **event}
+    logos = []
+    plugin = _plugin()
+    plugin._draw_team_logo = lambda _image, _draw, url, x, *_args: logos.append((x, url))
+    image = Image.new("RGB", (556, 268), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    getattr(plugin, draw_row)(image, draw, (28, 150, 342, 166), event, plugin._mlb_spec())
+
+    _assert_fits(draw, boxes)
+    assert not {label for label, _name, _url in expected} & {text for _box, text, _font in boxes}
+    names = [(box, text, font) for box, text, font in boxes if text in {name for _label, name, _url in expected}]
+    assert [text for _box, text, _font in names] == [name for _label, name, _url in expected]
+    signature = {"W": "G", "L": "R", "S": "O", "P": "R", "AB": "T"}
+    for (box, _text, _font), (label, _name, _url) in zip(names, expected):
+        icon = set(image.crop((box[0] - BASEBALL_ICON_SIZE - 4, 150, box[0] - 4, 166)).get_flattened_data())
+        assert BASEBALL_ICON_FILLS[signature[label]] in icon, label
+    assert [url for _x, url in logos] == [url for _label, _name, url in expected if url]
+    for (x, _url), (box, text, font) in zip(logos, names):
+        assert x >= box[0] + SportsDashboard._text_width(draw, text, font)
+
+
+def test_baseball_icons_are_whole_16px_tiles_with_a_theme_outline():
+    for name, rows in BASEBALL_ICONS.items():
+        assert len(rows) == BASEBALL_ICON_SIZE and {len(row) for row in rows} == {BASEBALL_ICON_SIZE}, name
+        assert set("".join(rows)) <= {".", "K", *BASEBALL_ICON_FILLS}, name
+        night = baseball_icon(name, DEEP_NIGHT_COLORS["border"])
+        assert night.size == (BASEBALL_ICON_SIZE, BASEBALL_ICON_SIZE)
+        assert (*DEEP_NIGHT_COLORS["border"], 255) in set(night.get_flattened_data()), name
 
 
 def test_basketball_leaders_per_team_and_for_the_game():
@@ -506,7 +574,7 @@ def test_mlb_live_panel_lights_the_situation(boxes):
     texts = [text for _box, text, _font in boxes]
     assert "ON FIELD" in texts
     assert {"B", "S", "O"} <= set(texts)
-    assert any(text.startswith("P ") or "AB " in text for text in texts)
+    assert {BASEBALL_ICON_FILLS["R"], BASEBALL_ICON_FILLS["T"]} <= set(_image.crop((12, 150, 360, 185)).get_flattened_data())
 
 
 def test_f1_live_panel_shows_the_session_order(boxes):

@@ -42,6 +42,9 @@ BOUNDARIES = {
     "plugins/sports_dashboard/display_rotation.py": {
         "__future__", "datetime", "logging",
     },
+    "plugins/sports_dashboard/baseball_icons.py": {
+        "__future__", "functools", "PIL",
+    },
     "display/display_history.py": {
         "__future__", "collections.abc", "datetime", "json", "logging", "pathlib", "utils.atomic_file",
     },

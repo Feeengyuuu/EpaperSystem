@@ -9,6 +9,7 @@ and ball/strike/out lights) during a game, otherwise the postseason series
 game by game, then the other games of the day.
 """
 
+from .baseball_icons import BASEBALL_ICON_SIZE, BASEBALL_ICONS, baseball_icon
 from .common import *
 from .scorebug_kit import ScorebugSpec
 
@@ -17,6 +18,7 @@ SportsDashboard = None
 MLB_CARD_WIDTH = 340
 MLB_TABLE_ROW_HEIGHT = 24
 MLB_TABLE_HEADER_HEIGHT = 14
+MLB_TABLE_MIN_INNING_WIDTH = 13
 
 
 class BaseballRenderMixin:
@@ -70,18 +72,18 @@ class BaseballRenderMixin:
         state = SportsDashboard._hub_event_state(event)
         left, top, right, bottom = self._draw_kit_card(draw, box, spec, state)
         context = str(event.get("broadcast") or "").strip() if state == "live" else SportsDashboard._mlb_context_label(event, state)
-        self._draw_kit_status_row(draw, left, top + 8, right, spec, state, SportsDashboard._mlb_pill_label(event, now), context, SportsDashboard._mlb_series_label(event))
+        series = self._mlb_first_fitting(draw, [SportsDashboard._mlb_series_label(event, full) for full in (True, False)], 110, 11, bold=False)
+        self._draw_kit_status_row(draw, left, top + 8, right, spec, state, SportsDashboard._mlb_pill_label(event, now), context, series)
         table_bottom = self._draw_mlb_line_table(image, draw, (left, top + 33, right), event, state, spec)
         y = table_bottom + 8
         if state == "live":
-            matchup = SportsDashboard._mlb_matchup_label(event)
-            if matchup:
-                self._draw_kit_labeled_line(draw, (left, y, right, y + 14), "", matchup)
+            self._draw_mlb_matchup(image, draw, (left, y, right, y + 16), event, spec)
             self._draw_event_mark(image, SportsDashboard._mlb_series_mark_path(event), (right - 110, y + 20, right, bottom - 22), align="right")
         elif state == "final":
-            self._draw_mlb_decisions(draw, (left, y, right, y + 16), event, spec)
+            self._draw_mlb_decisions(image, draw, (left, y, right, y + 16), event, spec)
         else:
-            probables = SportsDashboard._mlb_probables_label(event)
+            budget = right - left - self._text_width(draw, "SP", self._font(8, False)) - 6
+            probables = self._mlb_first_fitting(draw, [SportsDashboard._mlb_probables_label(event, full) for full in (True, False)], budget, 10)
             if probables:
                 self._draw_kit_labeled_line(draw, (left, y, right, y + 14), "SP", probables)
                 y += 20
@@ -97,13 +99,14 @@ class BaseballRenderMixin:
         x1, y1, x2 = [int(value) for value in box]
         innings = list(event.get("innings") or [])
         count = max(int(event.get("scheduled_innings") or 9), len(innings))
-        team_w = 60
+        live = state == "live"
         total_w = 23
         totals_x1 = x2 - 3 * total_w
+        slot = 14 if live else 6
+        names, name_size, team_w = self._mlb_table_names(draw, event, spec, slot, count, totals_x1 - 4 - x1)
         col_w = (totals_x1 - 4 - (x1 + team_w)) / max(1, count)
         y2 = y1 + MLB_TABLE_HEADER_HEIGHT + 2 * MLB_TABLE_ROW_HEIGHT
         draw.rounded_rectangle((x1, y1, x2, y2), radius=4, fill=COLORS[spec.tint], outline=COLORS["border"], width=1)
-        live = state == "live"
         current = len(innings) if live else 0
         if live and current:
             left = int(x1 + team_w + (current - 1) * col_w)
@@ -130,9 +133,9 @@ class BaseballRenderMixin:
             ink = COLORS[self._kit_team_ink_key(event.get(f"{prefix}_color"), spec.accent)]
             draw.rectangle((x1 + 3, row_y1 + 4, x1 + 5, row_y2 - 4), fill=ink)
             self._draw_team_logo(image, draw, event.get(f"{prefix}_logo"), x1 + 9, row_y1 + 4, 16, spec.hook("logo_fallback", event, side))
-            code = str(event.get(f"{prefix}_code") or "")[:4]
             dimmed = bool(winner) and winner != side
-            self._draw_text_in_box(draw, (x1 + 28, row_y1, x1 + team_w - 10, row_y2), code, self._font(12, not dimmed), COLORS["text"])
+            name, font = self._fit_text_ellipsis(draw, names[row], team_w - 28 - slot, name_size, bold=not dimmed, min_size=8)
+            self._draw_text_in_box(draw, (x1 + 28, row_y1, x1 + team_w - slot, row_y2), name, font, COLORS["text"])
             if batting == side:
                 self._draw_mlb_ball_icon(draw, x1 + team_w - 10, row_y1 + 8)
             for index in range(count):
@@ -157,18 +160,67 @@ class BaseballRenderMixin:
                 self._draw_centered_in_box(draw, (left, row_y1, left + total_w, row_y2), "-" if value is None else str(value), font, COLORS["text"])
         return y2
 
-    def _draw_mlb_decisions(self, draw, box, event, spec):
+    def _mlb_table_names(self, draw, event, spec, slot, count, room):
+        """Both rows' names, their size and the team column width.
+
+        Full names (坦帕湾光芒) at 12 or 11 points while every inning column keeps
+        MLB_TABLE_MIN_INNING_WIDTH, else the short names (光芒); both rows switch
+        together. ``slot`` is the room kept right of the name for the bat icon."""
+        for full in (True, False):
+            names = [spec.hook("team_name", event, side, full, default=None) or str(event.get(f"team_{side}_code") or "TBD")
+                     for side in ("a", "b")]
+            for size in (12, 11):
+                widest = max(self._text_width(draw, name, self._font(size, True)) for name in names)
+                team_w = max(60, 28 + widest + slot)
+                if room - team_w >= count * MLB_TABLE_MIN_INNING_WIDTH:
+                    return names, size, team_w
+        return names, 11, 60
+
+    def _mlb_first_fitting(self, draw, texts, budget, size, bold=True):
+        """The first of ``texts`` (full names, then short) that fits ``budget`` at
+        ``size`` or a point smaller, as the kit's team names do; else the last."""
+        for text in texts[:-1]:
+            if any(self._text_width(draw, text, self._font(candidate, bold)) <= budget for candidate in (size, size - 1)):
+                return text
+        return texts[-1]
+
+    def _draw_mlb_decisions(self, image, draw, box, event, spec):
+        """W/L/S pitchers; W and S pitch for the winner, L for the loser."""
+        winner = SportsDashboard._mlb_winner_side(event)
+        loser = {"a": "b", "b": "a"}.get(winner, "")
+        people = [(str(item.get("label") or ""), str(item.get("name") or ""), loser if item.get("label") == "L" else winner)
+                  for item in event.get("decisions") or []]
+        self._draw_mlb_people(image, draw, box, event, people, spec)
+
+    def _draw_mlb_matchup(self, image, draw, box, event, spec):
+        """The pitcher (fielding side) facing the batter (batting side)."""
+        batting = SportsDashboard._mlb_batting_side(event)
+        fielding = {"a": "b", "b": "a"}.get(batting, "")
+        people = [("P", str(event.get("current_pitcher") or "").strip(), fielding),
+                  ("AB", str(event.get("current_batter") or "").strip(), batting)]
+        self._draw_mlb_people(image, draw, box, event, people, spec)
+
+    def _draw_mlb_people(self, image, draw, box, event, people, spec):
+        """``(label, name, side)`` as the label's icon (trophy, arrow, lifebuoy,
+        pitch, bat), the name and then that side's team logo, sharing the row
+        evenly."""
         x1, y1, x2, y2 = [int(value) for value in box]
+        people = [person for person in people if person[1] and person[0] in BASEBALL_ICONS]
+        logo = y2 - y1 - 2
         cursor = x1
-        for item in event.get("decisions") or []:
-            label, name = item.get("label") or "", item.get("name") or ""
-            if not name or cursor > x2 - 40:
+        for index, (label, name, side) in enumerate(people):
+            logo_w = logo + 3 if side else 0
+            room = (x2 - cursor) // (len(people) - index)
+            if room < 40:
                 break
-            draw.rounded_rectangle((cursor, y1 + 1, cursor + 14, y2 - 1), radius=3, fill=COLORS[spec.tag], outline=COLORS["border"], width=1)
-            self._draw_centered_in_box(draw, (cursor, y1 + 1, cursor + 14, y2 - 1), label, self._font(8, True), COLORS["text"])
-            name, font = self._fit_text_ellipsis(draw, name, min(110, x2 - cursor - 20), 10, bold=True, min_size=8)
-            self._draw_text_in_box(draw, (cursor + 18, y1, x2, y2), name, font, COLORS["text"])
-            cursor += 18 + self._text_width(draw, name, font) + 12
+            icon = baseball_icon(label, tuple(COLORS["border"]))
+            image.paste(icon, (cursor, y1 + (y2 - y1 - BASEBALL_ICON_SIZE) // 2), icon)
+            name, font = self._fit_text_ellipsis(draw, name, min(110, room - BASEBALL_ICON_SIZE - 4 - logo_w - 8), 10, bold=True, min_size=8)
+            self._draw_text_in_box(draw, (cursor + BASEBALL_ICON_SIZE + 4, y1, x2, y2), name, font, COLORS["text"])
+            cursor += BASEBALL_ICON_SIZE + 4 + self._text_width(draw, name, font)
+            if side:
+                self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), cursor + 3, y1 + 1, logo, spec.hook("logo_fallback", event, side))
+            cursor += logo_w + 10
 
     # Right column -------------------------------------------------------------
 
@@ -205,7 +257,7 @@ class BaseballRenderMixin:
         """The postseason series game by game; returns the bottom."""
         x1, y1, x2, y2 = [int(value) for value in box]
         title = str(main.get("series_game") or "").split(" Game")[0].strip().upper() or "SERIES"
-        status = SportsDashboard._mlb_series_label(main)
+        status = self._mlb_first_fitting(draw, [SportsDashboard._mlb_series_label(main, full) for full in (True, False)], (x2 - x1) // 2, 11)
         mark = self._draw_event_mark(image, SportsDashboard._mlb_series_mark_path(main), (x1, y1, x1 + 96, y1 + 34), align="left")
         if mark:
             status, status_font = self._fit_text(draw, status, x2 - mark[2] - 6, 11, bold=True, min_size=8)
@@ -225,9 +277,11 @@ class BaseballRenderMixin:
                 text = f"{top} {bottom}".strip() if not top.endswith("M") else top
             else:
                 winner = SportsDashboard._mlb_winner_side(event)
-                code = str(event.get(f"team_{winner}_code") or "") if winner else ""
                 runs = sorted((event.get("wins_a") or 0, event.get("wins_b") or 0), reverse=True)
-                text = f"{code} {runs[0]}-{runs[1]}" if state == "final" and code else SportsDashboard._mlb_inning_label(event)
+                text = SportsDashboard._mlb_inning_label(event)
+                if state == "final" and winner:
+                    text = self._mlb_first_fitting(draw, [f"{SportsDashboard._mlb_display_team_from_event(event, winner, full=full)} {runs[0]}-{runs[1]}"
+                                                         for full in (True, False)], x2 - x1 - 26, 10)
             text, font = self._fit_text_ellipsis(draw, text, x2 - x1 - 26, 10, bold=state != "scheduled" or event is main, min_size=8)
             self._draw_text_in_box(draw, (x1 + 24, y, x2, y + 15), text, font, COLORS["mlb_live" if state == "live" else "text"], align="right")
             y += 16
@@ -309,31 +363,36 @@ class BaseballRenderMixin:
         return ""
 
     @staticmethod
-    def _mlb_series_label(event):
-        """'TIED 2-2' / 'CLE LEADS 2-1' from statsapi's series result."""
-        summary = str((event or {}).get("series_summary") or "").strip().upper()
-        return summary.replace("SERIES ", "") if summary else ""
+    def _mlb_series_label(event, full=False):
+        """'2-2 平' / '守护者 2-1 领先' / '酿酒人 4-0 胜出' from statsapi's series
+        result ('Series tied 2-2', 'CLE leads 2-1', 'MIL wins 4-0')."""
+        summary = str((event or {}).get("series_summary") or "").strip()
+        tied = re.match(r"(?:series\s+)?tied\s+(?:series\s+)?(\d+-\d+)$", summary, flags=re.IGNORECASE)
+        if tied:
+            return f"{tied.group(1)} 平"
+        match = re.match(r"(\S+)\s+(leads?|wins?|won)\s+(?:series\s+)?(\d+-\d+)$", summary, flags=re.IGNORECASE)
+        team = SportsDashboard._mlb_series_team(event, match.group(1), full) if match else ""
+        if team:
+            return f"{team} {match.group(3)} {'领先' if match.group(2).lower().startswith('lead') else '胜出'}"
+        return summary.upper().replace("SERIES ", "")
 
     @staticmethod
-    def _mlb_probables_label(event):
+    def _mlb_series_team(event, code, full):
+        code = str(code or "").strip().upper()
+        for side in ("a", "b"):
+            if code == str((event or {}).get(f"team_{side}_code") or "").strip().upper():
+                return SportsDashboard._mlb_display_team_from_event(event, side, full=full)
+        return SportsDashboard._mlb_display_team_name(code, full=full) if code in MLB_TEAM_ZH_NAMES else ""
+
+    @staticmethod
+    def _mlb_probables_label(event, full=False):
         event = event or {}
         away = str(event.get("probable_a") or "").strip() or "TBD"
         home = str(event.get("probable_b") or "").strip() or "TBD"
         if away == "TBD" and home == "TBD":
             return ""
-        return f"{away} ({event.get('team_a_code') or 'AWAY'})  vs  {home} ({event.get('team_b_code') or 'HOME'})"
-
-    @staticmethod
-    def _mlb_matchup_label(event):
-        event = event or {}
-        parts = []
-        pitcher = str(event.get("current_pitcher") or "").strip()
-        batter = str(event.get("current_batter") or "").strip()
-        if pitcher:
-            parts.append(f"P {pitcher}")
-        if batter:
-            parts.append(f"AB {batter}")
-        return "  ·  ".join(parts)
+        teams = [SportsDashboard._mlb_display_team_from_event(event, side, full=full) for side in ("a", "b")]
+        return f"{away} ({teams[0]})  vs  {home} ({teams[1]})"
 
     @staticmethod
     def _mlb_footer_label(event, state):
