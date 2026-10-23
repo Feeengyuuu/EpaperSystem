@@ -59,6 +59,14 @@ F1_GRAND_PRIX_ZH = (
     ("sao paulo", "圣保罗"),
     ("united states", "美国"),
 )
+# The drivers' usual simplified Chinese names (mainland broadcasts), by their three-letter code.
+F1_DRIVER_ZH = {
+    "ALB": "阿尔本", "ALO": "阿隆索", "ANT": "安东内利", "BEA": "贝尔曼", "BOR": "博尔托莱托",
+    "BOT": "博塔斯", "COL": "科拉平托", "DOO": "杜汉", "GAS": "加斯利", "HAD": "哈贾尔",
+    "HAM": "汉密尔顿", "HUL": "霍肯伯格", "LAW": "劳森", "LEC": "勒克莱尔", "LIN": "林德布拉德",
+    "NOR": "诺里斯", "OCO": "奥康", "PER": "佩雷兹", "PIA": "皮亚斯特里", "RUS": "拉塞尔",
+    "SAI": "塞恩斯", "STR": "斯特罗尔", "TSU": "角田裕毅", "VER": "维斯塔潘", "ZHO": "周冠宇",
+}
 
 
 class F1RenderMixin:
@@ -195,18 +203,22 @@ class F1RenderMixin:
             self._draw_text_in_box(draw, (x1 + 4, y, x2, y + 14), "积分榜更新中", self._font(9, True), COLORS["muted"])
             return
         leader_points = max(1.0, SportsDashboard._f1_points(standings[0].get("points")))
-        for row in standings:
+        name_font = self._font(11, True)
+        names = [SportsDashboard._f1_driver_zh(row) for row in standings]
+        # The bars start after the widest shown name, so a five-character name still fits.
+        name_w = min(66, max([32] + [self._text_width(draw, name, name_font) for name in names]))
+        for row, name in zip(standings, names):
             if y + F1_ROW_HEIGHT > y2 + 1:
                 break
             ink_key = SportsDashboard._f1_team_ink_key(row.get("constructor"))
             self._draw_text_in_box(draw, (x1, y, x1 + 14, y + 13), str(row.get("position") or ""), self._font(10, True), COLORS["text"])
             draw.rectangle((x1 + 17, y + 2, x1 + 19, y + 11), fill=COLORS[ink_key])
-            self._draw_text_in_box(draw, (x1 + 23, y, x1 + 55, y + 13), str(row.get("driver_code") or ""), self._font(11, True), COLORS["text"])
+            self._draw_text_in_box(draw, (x1 + 23, y, x1 + 23 + name_w, y + 13), name, name_font, COLORS["text"])
             points = SportsDashboard._f1_points(row.get("points"))
             points_text = str(row.get("points") or "0").removesuffix(".0")
             points_font = self._font(10, True)
             points_w = self._text_width(draw, points_text, points_font)
-            bar_x1, bar_x2 = x1 + 58, x2 - points_w - 6
+            bar_x1, bar_x2 = x1 + 26 + name_w, x2 - points_w - 6
             if bar_x2 - bar_x1 > 10:
                 filled = bar_x1 + int((bar_x2 - bar_x1) * points / leader_points)
                 draw.rectangle((bar_x1, y + 4, bar_x2, y + 9), fill=COLORS["panel"], outline=COLORS["line"], width=1)
@@ -232,9 +244,7 @@ class F1RenderMixin:
             gap = SportsDashboard._f1_gap_label(row, position, live)
             gap_font = self._font(9, position == 1)
             gap_w = self._text_width(draw, gap, gap_font) if gap else 0
-            name = str(row.get("driver_code") or "")
-            surname = str(row.get("driver_name") or "").split(" ")[-1] if row.get("driver_name") else ""
-            label = f"{name} {surname}".strip() if surname and surname.upper()[:3] != name else name
+            label = SportsDashboard._f1_driver_zh(row)
             label, label_font = self._fit_text_ellipsis(draw, label, x2 - gap_w - 8 - (x1 + 30), 10, bold=True, min_size=8)
             self._draw_text_in_box(draw, (x1 + 30, y, x2 - gap_w - 6, y + 13), label, label_font, COLORS["text"])
             if gap:
@@ -251,6 +261,15 @@ class F1RenderMixin:
             if key in lowered:
                 return f"{zh}大奖赛"
         return text or "Formula 1"
+
+    @staticmethod
+    def _f1_driver_zh(row):
+        """The driver's simplified Chinese name, else the code, else the surname."""
+        code = str(row.get("driver_code") or "").strip().upper()
+        if code in F1_DRIVER_ZH:
+            return F1_DRIVER_ZH[code]
+        surname = str(row.get("driver_name") or "").split(" ")[-1]
+        return code or surname
 
     @staticmethod
     def _f1_short_race_name(name):

@@ -47,6 +47,7 @@ from plugins.base_plugin.render_provenance import (
     read_source_provenance,
 )
 from plugins.base_plugin.presentation import PresentationMode
+from plugins.sports_dashboard.scorebug_kit import ScorebugSpec
 from plugins.sports_dashboard.sports_dashboard import (
     COLORS,
     DAY_COLORS,
@@ -8097,6 +8098,34 @@ def test_f1_compact_panel_draws_core_labels():
     assert "FORMULA 1" not in seen_texts
     assert "\u5df4\u585e\u7f57\u90a3\u5927\u5956\u8d5b" in seen_texts
     assert "RACE" in seen_texts
+
+
+def test_f1_drivers_read_in_simplified_chinese():
+    assert SportsDashboard._f1_driver_zh({"driver_code": "ANT"}) == "安东内利"
+    assert SportsDashboard._f1_driver_zh({"driver_code": "ver", "driver_name": "Max Verstappen"}) == "维斯塔潘"
+    # A driver without a Chinese name keeps the code, else the surname.
+    assert SportsDashboard._f1_driver_zh({"driver_code": "XYZ", "driver_name": "New Rookie"}) == "XYZ"
+    assert SportsDashboard._f1_driver_zh({"driver_name": "New Rookie"}) == "Rookie"
+
+    plugin = _plugin()
+    image = Image.new("RGB", (400, 90), COLORS["panel"])
+    drawn = []
+    original = plugin._draw_text_in_box
+
+    def record(draw_arg, box, text, *args, **kwargs):
+        drawn.append((str(text), box))
+        return original(draw_arg, box, text, *args, **kwargs)
+
+    plugin._draw_text_in_box = record
+    standings = [{"position": 1, "driver_code": "ANT", "constructor": "Mercedes", "points": "340"},
+                 {"position": 2, "driver_code": "PIA", "constructor": "McLaren", "points": "238"}]
+    plugin._draw_f1_standings(ImageDraw.Draw(image), (0, 0, 399, 89), standings,
+                              ScorebugSpec("F1", "f1_accent", "f1_live", "f1_tag", "panel_blue"))
+
+    names = {text: box for text, box in drawn}
+    assert "安东内利" in names and "皮亚斯特里" in names
+    # The name column widens to the longest name instead of clipping it.
+    assert names["皮亚斯特里"][2] - names["皮亚斯特里"][0] > 50
 
 
 def test_f1_logo_draws_uploaded_asset_without_border():
