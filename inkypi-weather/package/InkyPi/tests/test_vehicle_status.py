@@ -96,7 +96,7 @@ class LocationHttpClient:
 
 
 def _map_png(color=(255, 0, 255)):
-    image = Image.new("RGB", (208, 58), color)
+    image = Image.new("RGB", vehicle_module.LOCATION_MAP_SIZE, color)
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -336,6 +336,17 @@ def _summary_v2(*, freshness="live", connectivity="online"):
     }
 
 
+# The redesigned page's regions: three columns under the header, the vehicle strip, the footer.
+ENERGY_REGION = (36, 66, 320, 396)
+SECURITY_REGION = (338, 66, 518, 208)
+CLIMATE_REGION = (538, 66, 765, 208)
+TIRES_REGION = (338, 214, 518, 392)
+RIGHT_COLUMN_REGION = (538, 66, 765, 396)
+STRIP_REGION = (36, 399, 765, 436)
+HEADER_STATUS_REGION = (560, 24, 765, 56)
+FOOTER_REGION = (36, 436, 330, 460)
+BODY_REGION = (36, 66, 765, 396)
+
 def _summary_v3(*, freshness="live", connectivity="online", location=True):
     payload = _summary_v2(freshness=freshness, connectivity=connectivity)
     payload["schema_version"] = 3
@@ -528,19 +539,14 @@ def test_v3_location_fetches_google_address_and_native_map_without_leaking_secre
         "maps.googleapis.com",
         "/maps/api/staticmap",
     )
-    assert map_query["size"] == ["208x58"]
+    assert map_query["size"] == ["{}x{}".format(*vehicle_module.LOCATION_MAP_SIZE)]
     assert map_query["scale"] == ["1"]
     assert map_query["key"] == ["google-maps-test-secret"]
     assert map_query["markers"] == ["color:red|37.501235,-122.001235"]
     assert map_call[3]["allow_redirects"] is False
     assert map_call[3]["max_bytes"] == 128 * 1024
 
-    assert _visible_color_bbox(image, (0, 0, 800, 480), (255, 0, 255)) == (
-        394,
-        18,
-        602,
-        76,
-    )
+    assert _visible_color_bbox(image, (0, 0, 800, 480), (255, 0, 255)) == vehicle_module.LOCATION_MAP_BOX
 
     summary_text = plugin._cache_file().read_text(encoding="utf-8")
     summary_payload = json.loads(summary_text)
@@ -579,12 +585,7 @@ def test_v3_location_fetches_google_address_and_native_map_without_leaking_secre
     )
     assert theme_device.loaded == []
     assert no_network.calls == []
-    assert _visible_color_bbox(themed, (0, 0, 800, 480), (255, 0, 255)) == (
-        394,
-        18,
-        602,
-        76,
-    )
+    assert _visible_color_bbox(themed, (0, 0, 800, 480), (255, 0, 255)) == vehicle_module.LOCATION_MAP_BOX
 
 
 def test_v3_location_contract_is_exact_and_bounded():
@@ -841,89 +842,32 @@ def test_location_presentation_is_language_specific(tmp_path, monkeypatch):
     assert _visible_color_bbox(chinese, (0, 0, 800, 480), (0, 255, 0)) is not None
 
 
-@pytest.mark.parametrize(
-    ("freshness", "age_seconds"),
-    [
-        ("fresh_cache", 3_600),
-        ("stale_cache", 86_400),
-    ],
-)
-def test_english_freshness_status_never_overwrites_location_map(
-    tmp_path,
-    monkeypatch,
-    freshness,
-    age_seconds,
-):
-    now = datetime.fromisoformat("2026-08-08T20:00:00+00:00").timestamp()
-    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
-    payload = _summary_v3(freshness=freshness)
-    payload["snapshot"]["age_seconds"] = age_seconds
-    map_color = (255, 0, 255)
-    client = LocationHttpClient(payload, _map_png(map_color))
-    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
-
-    image = _plugin(tmp_path).generate_image(
-        {"cacheSeconds": 0, "language": "en"},
-        DeviceConfig(env={"GOOGLE_MAPS_API_KEY": "google-maps-test-secret"}),
-    )
-
-    map_box = (394, 18, 602, 76)
-    expected_map = Image.new("RGB", (208, 58), map_color)
-    assert ImageChops.difference(image.crop(map_box), expected_map).getbbox() is None
-
-
-def test_header_identity_vehicle_map_and_status_have_even_visual_gaps(
-    tmp_path,
-    monkeypatch,
-):
-    vehicle_color = (255, 0, 255)
-    map_color = (0, 255, 0)
-    vehicle = Image.new("RGBA", (231, 100), (*vehicle_color, 255))
+def test_header_reads_wordmark_model_then_status_on_one_ruled_line(tmp_path, monkeypatch):
     wordmark = Image.new("RGBA", (736, 172), (0, 0, 0, 255))
     real_safe_open_image = vehicle_module.safe_open_image
 
-    def load_header_sentinels(path, *args, **kwargs):
+    def load_wordmark_sentinel(path, *args, **kwargs):
         name = Path(path).name if isinstance(path, (str, os.PathLike)) else ""
-        if name == "vehicle.png":
-            return vehicle.copy()
         if name == "grey_bullet_wordmark.png":
             return wordmark.copy()
         return real_safe_open_image(path, *args, **kwargs)
 
-    monkeypatch.setattr(vehicle_module, "safe_open_image", load_header_sentinels)
-    now = datetime.fromisoformat("2026-08-08T20:00:00+00:00").timestamp()
-    monkeypatch.setattr(vehicle_module.time, "time", lambda: now)
-    client = LocationHttpClient(_summary_v3(), _map_png(map_color))
-    monkeypatch.setattr(vehicle_module, "get_http_client", lambda: client)
+    monkeypatch.setattr(vehicle_module, "safe_open_image", load_wordmark_sentinel)
+    image = _render_payload(tmp_path, monkeypatch, _summary_v2(),
+                            {"language": "en", "_inkypi_theme": {"mode": "day", "palette": {}}})
 
-    image = _plugin(tmp_path).generate_image(
-        {
-            "cacheSeconds": 0,
-            "language": "en",
-            "_inkypi_theme": {"mode": "day", "palette": {}},
-        },
-        DeviceConfig(env={"GOOGLE_MAPS_API_KEY": "google-maps-test-secret"}),
-    )
-
-    identity_crop = (40, 18, 230, 62)
-    identity = _visible_color_bbox(image, identity_crop, (24, 28, 33))
-    vehicle_bbox = _visible_color_bbox(image, (0, 0, 800, 100), vehicle_color)
-    map_bbox = _visible_color_bbox(image, (0, 0, 800, 100), map_color)
-    status_crop = (600, 20, 761, 60)
-    status = _visible_color_bbox(image, status_crop, (35, 116, 79))
-
-    assert identity is not None
-    assert vehicle_bbox is not None
-    assert map_bbox is not None
-    assert status is not None
-    identity_right = identity_crop[0] + identity[2]
-    status_left = status_crop[0] + status[0]
-    gaps = (
-        vehicle_bbox[0] - identity_right,
-        map_bbox[0] - vehicle_bbox[2],
-        status_left - map_bbox[2],
-    )
-    assert gaps == (18, 18, 18)
+    ink, muted, good = (24, 28, 33), (91, 96, 102), (35, 116, 79)
+    wordmark_bbox = _visible_color_bbox(image, (30, 16, 260, 60), ink)
+    model_bbox = _visible_color_bbox(image, (200, 16, 520, 60), muted)
+    status_bbox = _visible_color_bbox(image, (540, 16, 770, 60), good)
+    assert wordmark_bbox is not None and model_bbox is not None and status_bbox is not None
+    wordmark_right = 30 + wordmark_bbox[2]
+    assert wordmark_right - (30 + wordmark_bbox[0]) >= 130
+    assert 200 + model_bbox[0] - wordmark_right >= 8
+    assert 540 + status_bbox[0] > 200 + model_bbox[2]
+    # The header rule spans the page under all three.
+    rule = image.crop((36, 62, 764, 63))
+    assert set(getattr(rule, "get_flattened_data", rule.getdata)()) == {ink}
 
 
 @pytest.mark.parametrize("theme_mode", ["day", "night"])
@@ -956,11 +900,11 @@ def test_full_v2_dashboard_public_render_populates_every_region(
     assert read_source_provenance(full) is SourceProvenance.LIVE
     difference = ImageChops.difference(full, empty)
     for region in (
-        (40, 112, 301, 417),
-        (334, 112, 533, 255),
-        (564, 112, 761, 255),
-        (334, 278, 533, 417),
-        (564, 278, 761, 417),
+        ENERGY_REGION,
+        SECURITY_REGION,
+        CLIMATE_REGION,
+        STRIP_REGION,
+        TIRES_REGION,
     ):
         assert difference.crop(region).getbbox() is not None
 
@@ -1089,10 +1033,12 @@ def test_long_chinese_v2_payload_keeps_panel_gutters_clean(tmp_path, monkeypatch
 
     assert read_source_provenance(image) is SourceProvenance.LIVE
     surface = (251, 249, 244)
+    # Either side of the two column rules stays clear of the long copy.
     for gutter in (
-        (305, 112, 330, 417),
-        (536, 112, 560, 417),
-        (334, 258, 761, 275),
+        (319, 66, 327, 396),
+        (329, 66, 337, 396),
+        (517, 66, 526, 396),
+        (528, 66, 537, 396),
     ):
         crop = image.crop(gutter)
         assert crop.getcolors(maxcolors=crop.width * crop.height) == [(crop.width * crop.height, surface)]
@@ -1118,9 +1064,9 @@ def test_v2_unknown_openings_never_render_as_all_closed(tmp_path, monkeypatch):
     closed_image = _render_payload(tmp_path / "closed", monkeypatch, closed)
 
     difference = ImageChops.difference(unknown_image, closed_image)
-    assert difference.crop((334, 112, 533, 255)).getbbox() is not None
-    assert difference.crop((40, 112, 301, 417)).getbbox() is None
-    assert difference.crop((564, 112, 761, 417)).getbbox() is None
+    assert difference.crop(SECURITY_REGION).getbbox() is not None
+    assert difference.crop(ENERGY_REGION).getbbox() is None
+    assert difference.crop(RIGHT_COLUMN_REGION).getbbox() is None
 
 
 def test_v2_rr_hard_warning_changes_only_tire_region(tmp_path, monkeypatch):
@@ -1133,7 +1079,7 @@ def test_v2_rr_hard_warning_changes_only_tire_region(tmp_path, monkeypatch):
     safe_image = _render_payload(tmp_path / "safe", monkeypatch, safe)
     warning_image = _render_payload(tmp_path / "warning", monkeypatch, warning)
 
-    _assert_change_is_inside(safe_image, warning_image, (564, 278, 761, 417))
+    _assert_change_is_inside(safe_image, warning_image, TIRES_REGION)
 
 
 def test_v2_charging_values_change_only_energy_region(tmp_path, monkeypatch):
@@ -1158,7 +1104,7 @@ def test_v2_charging_values_change_only_energy_region(tmp_path, monkeypatch):
     )
     charging_image = _render_payload(tmp_path / "charging", monkeypatch, charging)
 
-    _assert_change_is_inside(disconnected_image, charging_image, (40, 112, 301, 417))
+    _assert_change_is_inside(disconnected_image, charging_image, ENERGY_REGION)
 
 
 def test_v2_charge_rate_matches_worker_5000_upper_bound(tmp_path, monkeypatch):
@@ -1341,9 +1287,9 @@ def test_local_cache_hit_displays_effective_freshness(tmp_path, monkeypatch):
     assert read_source_provenance(live_image) is SourceProvenance.LIVE
     assert read_source_provenance(cached_image) is SourceProvenance.FRESH_CACHE
     difference = ImageChops.difference(live_image, cached_image)
-    assert difference.crop((620, 60, 761, 96)).getbbox() is not None
-    assert difference.crop((40, 430, 330, 457)).getbbox() is not None
-    assert difference.crop((40, 112, 761, 417)).getbbox() is None
+    assert difference.crop(HEADER_STATUS_REGION).getbbox() is not None
+    assert difference.crop(FOOTER_REGION).getbbox() is not None
+    assert difference.crop(BODY_REGION).getbbox() is None
 
 
 def test_failed_refresh_displays_stale_effective_freshness(tmp_path, monkeypatch):
@@ -1371,9 +1317,9 @@ def test_failed_refresh_displays_stale_effective_freshness(tmp_path, monkeypatch
     assert read_source_provenance(stale_image) is SourceProvenance.STALE_CACHE
     assert stale_image.info["inkypi_skip_cache"] is True
     difference = ImageChops.difference(cached_image, stale_image)
-    assert difference.crop((620, 60, 761, 96)).getbbox() is not None
-    assert difference.crop((40, 430, 330, 457)).getbbox() is not None
-    assert difference.crop((40, 112, 761, 417)).getbbox() is None
+    assert difference.crop(HEADER_STATUS_REGION).getbbox() is not None
+    assert difference.crop(FOOTER_REGION).getbbox() is not None
+    assert difference.crop(BODY_REGION).getbbox() is None
 
 
 def test_live_footer_renders_with_portable_ascii_status_font(tmp_path, monkeypatch):
@@ -1399,7 +1345,7 @@ def test_vehicle_dashboard_renders_every_public_v1_information_group(
     energy = deepcopy(baseline)
     energy["battery"].update({"time_to_full_minutes": 95, "power_kw": 11})
     energy_image = _render_payload(tmp_path, monkeypatch, energy)
-    _assert_change_is_inside(baseline_image, energy_image, (40, 112, 301, 417))
+    _assert_change_is_inside(baseline_image, energy_image, ENERGY_REGION)
 
     security = deepcopy(baseline)
     security["closures"] = {
@@ -1408,12 +1354,12 @@ def test_vehicle_dashboard_renders_every_public_v1_information_group(
         "charge_port_open": False,
     }
     security_image = _render_payload(tmp_path, monkeypatch, security)
-    _assert_change_is_inside(baseline_image, security_image, (334, 112, 532, 254))
+    _assert_change_is_inside(baseline_image, security_image, SECURITY_REGION)
 
     climate = deepcopy(baseline)
     climate["climate"]["is_climate_on"] = True
     climate_image = _render_payload(tmp_path, monkeypatch, climate)
-    _assert_change_is_inside(baseline_image, climate_image, (564, 112, 761, 254))
+    _assert_change_is_inside(baseline_image, climate_image, CLIMATE_REGION)
 
     vehicle = deepcopy(baseline)
     vehicle["vehicle"].update(
@@ -1423,7 +1369,7 @@ def test_vehicle_dashboard_renders_every_public_v1_information_group(
         }
     )
     vehicle_image = _render_payload(tmp_path, monkeypatch, vehicle)
-    _assert_change_is_inside(baseline_image, vehicle_image, (334, 278, 761, 417))
+    _assert_change_is_inside(baseline_image, vehicle_image, STRIP_REGION)
 
 
 def test_setup_message_renders_with_portable_ascii_status_font(tmp_path, monkeypatch):
@@ -2016,7 +1962,8 @@ def test_vehicle_art_is_a_real_transparent_cutout_without_chroma_fringe():
     flattened = getattr(image, "get_flattened_data", image.getdata)
     visible = [pixel for pixel in flattened() if pixel[3] > 32]
 
-    assert image.width > image.height * 2
+    # A 3/4 view of the owner's wrapped car, cut from the Tesla app.
+    assert image.width > image.height * 1.4
     assert alpha.getextrema() == (0, 255)
     assert all(
         alpha.getpixel(point) == 0
@@ -2027,10 +1974,10 @@ def test_vehicle_art_is_a_real_transparent_cutout_without_chroma_fringe():
 
 
 @pytest.mark.parametrize(
-    ("language", "theme_mode", "ink", "muted", "panel"),
+    ("language", "theme_mode", "ink", "muted", "surface"),
     [
-        ("zh-CN", "day", (24, 28, 33), (91, 96, 102), (242, 237, 228)),
-        ("en", "night", (240, 244, 247), (161, 174, 188), (11, 16, 23)),
+        ("zh-CN", "day", (24, 28, 33), (91, 96, 102), (251, 249, 244)),
+        ("en", "night", (240, 244, 247), (161, 174, 188), (22, 29, 38)),
     ],
 )
 @pytest.mark.parametrize("level", [78, 100])
@@ -2041,7 +1988,7 @@ def test_battery_percent_keeps_a_visible_gap_after_level(
     theme_mode,
     ink,
     muted,
-    panel,
+    surface,
     level,
 ):
     payload = _summary_v2()
@@ -2057,13 +2004,13 @@ def test_battery_percent_keeps_a_visible_gap_after_level(
         },
     )
 
-    hero_box = (50, 145, 190, 211)
+    hero_box = (36, 92, 200, 150)  # below the section heading
     number_bbox = _visible_color_bbox(image, hero_box, ink)
     percent_bbox = _visible_color_bbox(image, hero_box, muted)
-    usable_box = (50, 208, 190, 228)
+    usable_box = (200, 128, 320, 150)
     usable_bbox = _visible_color_bbox(image, usable_box, muted)
-    bar_box = (50, 224, 290, 250)
-    bar_bbox = _visible_non_background_bbox(image, bar_box, panel)
+    bar_box = (36, 150, 320, 172)
+    bar_bbox = _visible_non_background_bbox(image, bar_box, surface)
 
     assert number_bbox is not None
     assert percent_bbox is not None
@@ -2071,112 +2018,34 @@ def test_battery_percent_keeps_a_visible_gap_after_level(
     assert bar_bbox is not None
     assert number_bbox[2] + 8 <= percent_bbox[0]
     assert abs(number_bbox[3] - percent_bbox[3]) <= 1
-    number_bottom = hero_box[1] + number_bbox[3]
-    usable_top = usable_box[1] + usable_bbox[1]
-    usable_bottom = usable_box[1] + usable_bbox[3]
     bar_top = bar_box[1] + bar_bbox[1]
-    assert usable_top - number_bottom >= 3
-    assert bar_top - usable_bottom >= 3
+    assert bar_top - (hero_box[1] + number_bbox[3]) >= 3
+    assert bar_top - (usable_box[1] + usable_bbox[3]) >= 1
 
 
-@pytest.mark.parametrize(
-    ("language", "theme_mode", "surface"),
-    [
-        ("zh-CN", "day", (251, 249, 244)),
-        ("zh-CN", "night", (22, 29, 38)),
-        ("en", "day", (251, 249, 244)),
-        ("en", "night", (22, 29, 38)),
-    ],
-)
-def test_header_vehicle_is_centered_between_identity_and_location_map(
-    tmp_path,
-    monkeypatch,
-    language,
-    theme_mode,
-    surface,
-):
-    payload = _summary_v2()
-    payload["vehicle"].update(
-        {
-            "display_name": "W" * 64,
-            "model": "W" * 40,
-            "trim": "W" * 40,
-        }
-    )
-
-    image = _render_payload(
-        tmp_path,
-        monkeypatch,
-        payload,
-        {
-            "language": language,
-            "_inkypi_theme": {"mode": theme_mode, "palette": {}},
-        },
-    )
-
-    identity_header = (40, 18, 246, 92)
-    identity_bbox = _visible_non_background_bbox(image, identity_header, surface)
-    middle_header = (246, 26, 376, 92)
-    visible_bbox = _visible_non_background_bbox(image, middle_header, surface)
-
-    assert identity_bbox is not None
-    assert visible_bbox is not None
-    identity_right = identity_header[0] + identity_bbox[2]
-    left = middle_header[0] + visible_bbox[0]
-    top = middle_header[1] + visible_bbox[1]
-    right = middle_header[0] + visible_bbox[2]
-    bottom = middle_header[1] + visible_bbox[3]
-    assert 246 <= left < right <= 376
-    assert 26 <= top < bottom <= 92
-    assert right - left >= 130
-    assert bottom - top >= 55
-    assert abs(((left + right) / 2) - 311) <= 1
-    assert left - identity_right >= 18
-
-
-def test_header_vehicle_is_prominent_centered_and_clear_of_neighbors(
-    tmp_path,
-    monkeypatch,
-):
-    sentinel_color = (255, 0, 255)
-    sentinel = Image.new("RGBA", (231, 100), (*sentinel_color, 255))
+def test_car_art_sits_between_the_gauge_and_charging_and_amid_the_tyres(tmp_path, monkeypatch):
+    side_color, top_color = (255, 0, 255), (0, 255, 0)
+    side = Image.new("RGBA", (231, 100), (*side_color, 255))
+    top = Image.new("RGBA", (60, 120), (*top_color, 255))
     real_safe_open_image = vehicle_module.safe_open_image
 
-    def load_sentinel_vehicle(path, *args, **kwargs):
-        if Path(path).name == "vehicle.png":
-            return sentinel.copy()
+    def load_sentinels(path, *args, **kwargs):
+        name = Path(path).name
+        if name == "vehicle.png":
+            return side.copy()
+        if name == "vehicle_top.png":
+            return top.copy()
         return real_safe_open_image(path, *args, **kwargs)
 
-    monkeypatch.setattr(
-        vehicle_module,
-        "safe_open_image",
-        load_sentinel_vehicle,
-    )
+    monkeypatch.setattr(vehicle_module, "safe_open_image", load_sentinels)
+    image = _render_payload(tmp_path, monkeypatch, _summary_v2(),
+                            {"language": "zh-CN", "_inkypi_theme": {"mode": "day", "palette": {}}})
 
-    image = _render_payload(
-        tmp_path,
-        monkeypatch,
-        _summary_v2(),
-        {
-            "language": "zh-CN",
-            "_inkypi_theme": {"mode": "day", "palette": {}},
-        },
-    )
-    bbox = _visible_color_bbox(image, (0, 0, 800, 480), sentinel_color)
-
-    assert bbox is not None
-    left, top, right, bottom = bbox
-    width = right - left
-    height = bottom - top
-
-    assert 128 <= width <= 130
-    assert 55 <= height <= 57
-    assert 2.28 <= width / height <= 2.34
-    assert abs(((left + right) / 2) - 311) <= 1
-    assert left >= 246
-    assert right <= 376
-    assert top >= 26
-    assert bottom <= 92
+    left, top_y, right, bottom = _visible_color_bbox(image, (0, 0, 800, 480), side_color)
+    assert 185 <= top_y and bottom <= 268  # below the gauge's ruler, above the charging rule
+    assert right - left >= 160 and abs((left + right) / 2 - 177) <= 1
+    left, top_y, right, bottom = _visible_color_bbox(image, (0, 0, 800, 480), top_color)
+    assert (left, top_y, right, bottom) == (397, 238, 457, 358)
 
 
 @pytest.mark.parametrize(
@@ -2206,14 +2075,11 @@ def test_grey_bullet_uses_a_prominent_theme_aware_wordmark(
             "_inkypi_theme": {"mode": theme_mode, "palette": {}},
         },
     )
-    name_box = (40, 18, 230, 62)
-    visible = _visible_color_bbox(image, name_box, ink)
+    visible = _visible_color_bbox(image, vehicle_module.VEHICLE_WORDMARK_BOX, ink)
 
     assert visible is not None
-    width = visible[2] - visible[0]
-    height = visible[3] - visible[1]
-    assert width >= 160
-    assert height >= 30
+    assert visible[2] - visible[0] >= 120
+    assert visible[3] - visible[1] >= 26
 
 
 def test_grey_bullet_wordmark_failure_falls_back_to_dynamic_name(
@@ -2242,8 +2108,9 @@ def test_grey_bullet_wordmark_failure_falls_back_to_dynamic_name(
     assert fallback.mode == "RGB"
     assert read_source_provenance(fallback) is SourceProvenance.LIVE
     assert difference is not None
-    assert 40 <= difference[0] < difference[2] <= 230
-    assert 18 <= difference[1] < difference[3] <= 62
+    # The name and the model line after it change; nothing below the header does.
+    assert 36 <= difference[0] < difference[2] <= 524
+    assert 16 <= difference[1] < difference[3] <= 60
 
 
 def test_other_vehicle_names_do_not_use_the_grey_bullet_wordmark(
@@ -2436,18 +2303,16 @@ def test_dashboard_icons_are_static_scan_anchors_with_clean_title_gaps(
     }
     full = _render_payload(tmp_path, monkeypatch, _summary_v2(), settings)
     empty = _render_payload(tmp_path, monkeypatch, _null_v2_summary(), settings)
-    icon_boxes = (
-        ((58, 124, 78, 144), (78, 124, 84, 144)),
-        ((350, 124, 370, 144), (370, 124, 376, 144)),
-        ((580, 124, 600, 144), (600, 124, 606, 144)),
-        ((350, 290, 370, 310), (370, 290, 376, 310)),
-        ((580, 290, 600, 310), (600, 290, 606, 310)),
+    # Battery, security, climate, tyres, location, charging and the vehicle strip.
+    icon_boxes = tuple(
+        ((left, top, left + 20, top + 20), (left + 20, top, left + 26, top + 20))
+        for left, top in ((36, 69), (338, 69), (538, 69), (338, 217), (538, 217), (36, 278), (36, 406))
     )
 
     for icon_box, gap_box in icon_boxes:
         full_icon = full.crop(icon_box)
         empty_icon = empty.crop(icon_box)
-        visible = _visible_non_background_bbox(full, icon_box, panel)
+        visible = _visible_non_background_bbox(full, icon_box, surface)
         assert visible is not None
         visible_width = visible[2] - visible[0]
         visible_height = visible[3] - visible[1]
@@ -2456,10 +2321,10 @@ def test_dashboard_icons_are_static_scan_anchors_with_clean_title_gaps(
         assert ImageChops.difference(full_icon, empty_icon).getbbox() is None
         gap = full.crop(gap_box)
         gap_pixels = getattr(gap, "get_flattened_data", gap.getdata)
-        assert set(gap_pixels()) == {panel}
+        assert set(gap_pixels()) == {surface}
 
-    freshness_box = (40, 434, 56, 450)
-    freshness_gap_box = (56, 434, 62, 450)
+    freshness_box = (36, 439, 52, 455)
+    freshness_gap_box = (52, 439, 58, 455)
     freshness_visible = _visible_non_background_bbox(full, freshness_box, surface)
     assert freshness_visible is not None
     assert freshness_visible[2] - freshness_visible[0] >= 12
@@ -2525,7 +2390,7 @@ def test_one_broken_dashboard_icon_falls_back_without_losing_live_page(
     assert degraded.mode == "RGB"
     assert degraded.size == (800, 480)
     assert read_source_provenance(degraded) is SourceProvenance.LIVE
-    for box in ((350, 122, 470, 145), (40, 432, 220, 455)):
+    for box in ((338, 66, 460, 90), (36, 436, 220, 458)):
         assert (
             ImageChops.difference(
                 degraded.crop(box),
@@ -2561,3 +2426,28 @@ def test_security_card_lists_open_items_on_one_line_above_the_port_status():
     head, _, count = line.partition(" / ")
     assert crowded[0].startswith(head.removesuffix("...").rstrip())
     assert count == f"+{len(crowded) - 1} MORE"
+
+
+@pytest.mark.parametrize(("level", "role"), [(78, "battery_high"), (40, "battery_mid"), (12, "battery_low")])
+def test_battery_gauge_uses_battery_colours_and_marks_the_limit(level, role):
+    colors = vehicle_module._render_colors({"mode": "day"})
+    image = Image.new("RGB", (300, 40), colors["surface"])
+    draw = ImageDraw.Draw(image)
+
+    vehicle_module._battery_gauge(draw, (10, 12, 290, 24), level, 80, colors)
+
+    filled = image.getpixel((14, 18))
+    assert filled == colors[role]
+    # The charge limit is an ink line through the bar at 80%; the ruler sits below it.
+    assert image.getpixel((10 + round(280 * 0.8), 18)) == colors["ink"]
+    assert _visible_color_bbox(image, (0, 25, 300, 40), colors["muted"]) is not None
+
+
+def test_padlock_reads_locked_unlocked_and_unknown_apart():
+    shapes = []
+    for state in (True, False, None):
+        image = Image.new("L", (40, 40), 0)
+        vehicle_module._draw_padlock(ImageDraw.Draw(image), (8, 6, 30, 32), state, 255, 0)
+        shapes.append(image.tobytes())
+
+    assert len(set(shapes)) == 3

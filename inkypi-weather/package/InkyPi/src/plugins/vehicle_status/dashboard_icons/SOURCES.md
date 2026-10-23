@@ -24,3 +24,11 @@ At runtime the plugin uses only each glyph's alpha channel and recolors it from
 the active day/night palette. Static icons remain neutral; live states such as
 charging, unlocked, open closures, and tire warnings continue to be conveyed
 by explicit text rather than by the icon artwork alone.
+
+`charging.png` and `location.png` were added on 2026-10-23 for the redesigned
+page's charging and location sections: a two-glyph atlas (EV plug, map pin over
+a folded map) generated with GPT Image 2.5 on a transparent background in the
+set's solid style (SHA-256
+`da81520bd062c20161d606f5c3c73fb8508c25526297d4a10e72b6e914fac0ad`). Each half
+was cropped to its visible alpha, fitted inside 48x48, centered on 64x64 and
+reduced to a binary alpha mask like the others.

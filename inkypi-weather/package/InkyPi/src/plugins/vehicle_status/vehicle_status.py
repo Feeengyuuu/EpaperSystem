@@ -55,7 +55,7 @@ LOCATION_MAP_MAX_BYTES = 128 * 1024
 LOCATION_ADDRESS_MAX_CHARS = 256
 LOCATION_MAX_AGE_SECONDS = 86_400
 LOCATION_FUTURE_TOLERANCE_SECONDS = 300
-LOCATION_MAP_BOX = (394, 18, 602, 76)
+LOCATION_MAP_BOX = (538, 240, 764, 318)
 LOCATION_MAP_SIZE = (
     LOCATION_MAP_BOX[2] - LOCATION_MAP_BOX[0],
     LOCATION_MAP_BOX[3] - LOCATION_MAP_BOX[1],
@@ -77,6 +77,8 @@ DASHBOARD_ICON_FILES = {
     "vehicle": "vehicle_info.png",
     "tires": "tires.png",
     "freshness": "freshness.png",
+    "charging": "charging.png",
+    "location": "location.png",
 }
 DASHBOARD_ICON_LIMITS = ImageLimits(
     max_bytes=64 * 1024,
@@ -94,11 +96,7 @@ VEHICLE_WORDMARK_LIMITS = ImageLimits(
 )
 SKIP_CACHE_IMAGE_INFO_KEY = "inkypi_skip_cache"
 LOCAL_MAX_STALE_SECONDS = 86_400
-VEHICLE_ART_BOX = (246, 26, 376, 92)
-VEHICLE_WORDMARK_BOX = (40, 18, 230, 62)
-HEADER_IDENTITY_RIGHT = VEHICLE_ART_BOX[0] - 18
-HEADER_STATUS_LEFT = 620
-HEADER_STATUS_RIGHT = 760
+VEHICLE_WORDMARK_BOX = (36, 22, 196, 54)
 GREY_BULLET_NAMES = frozenset({"gray bullet", "grey bullet"})
 
 _CACHE_LOCK = threading.RLock()
@@ -270,7 +268,25 @@ _OPEN_CLOSURES = {
 _UI_TEXT = {
     "en": {
         "vehicle_fallback": "Vehicle",
-        "energy": "ENERGY",
+        "charging": "CHARGING",
+        "cable": "CABLE {value}",
+        "cable_unknown": "CABLE TYPE UNKNOWN",
+        "sentry_mode": "SENTRY",
+        "charge_port": "CHARGE PORT",
+        "special_modes": "MODES",
+        "open_state": "OPEN",
+        "closed_state": "CLOSED",
+        "off_state": "OFF",
+        "driver_target": "DRIVER",
+        "passenger_target": "PASSENGER",
+        "auto_hvac": "AUTO",
+        "fan": "FAN",
+        "defrost": "DEFROST",
+        "overheat_protect": "OVERHEAT",
+        "location": "LOCATION",
+        "screen": "SCREEN",
+        "progress_line": "DL {download} / INSTALL {install} / EST {duration}",
+        "energy": "BATTERY",
         "rated_range": "RATED RANGE",
         "estimated_range": "EST. RANGE",
         "usable": "USABLE {value}%",
@@ -278,8 +294,8 @@ _UI_TEXT = {
         "power_added": "POWER / ADDED",
         "input": "INPUT",
         "request_max": "REQUEST / MAX",
-        "rate": "RATE",
-        "status": "STATUS",
+        "rate": "CHARGE RATE",
+        "status": "CHARGING",
         "limit": "LIMIT",
         "time_left": "TIME LEFT",
         "power": "POWER",
@@ -397,16 +413,34 @@ _UI_TEXT = {
     },
     "zh-CN": {
         "vehicle_fallback": "车辆",
-        "energy": "能源",
+        "charging": "充电",
+        "cable": "接口 {value}",
+        "cable_unknown": "接口类型未知",
+        "sentry_mode": "哨兵模式",
+        "charge_port": "充电口",
+        "special_modes": "特殊模式",
+        "open_state": "开启",
+        "closed_state": "关闭",
+        "off_state": "关闭",
+        "driver_target": "主驾目标",
+        "passenger_target": "副驾目标",
+        "auto_hvac": "自动开启",
+        "fan": "风量",
+        "defrost": "除霜",
+        "overheat_protect": "过热保护",
+        "location": "位置",
+        "screen": "屏幕",
+        "progress_line": "下载 {download} / 安装 {install} / 预计 {duration}",
+        "energy": "电量",
         "rated_range": "标称续航",
         "estimated_range": "预估续航",
         "usable": "可用电量 {value}%",
         "limit_left": "上限 / 剩余",
-        "power_added": "功率 / 已充",
+        "power_added": "功率 / 已补能",
         "input": "输入",
         "request_max": "请求 / 最大",
-        "rate": "速度",
-        "status": "状态",
+        "rate": "充电速度",
+        "status": "充电功能",
         "limit": "上限",
         "time_left": "剩余时间",
         "power": "功率",
@@ -1346,560 +1380,7 @@ class VehicleStatus(BasePlugin):
         language = _language(settings)
         canvas = Image.new("RGB", (800, 480), colors["background"])
         draw = ImageDraw.Draw(canvas)
-        vehicle = summary["vehicle"]
-        battery = summary["battery"]
-        climate = summary["climate"]
-        closures = summary["closures"]
-        snapshot = summary["snapshot"]
-        has_extended_status = summary["schema_version"] in {2, 3}
-        if has_extended_status:
-            charging = summary["charging"]
-            preferences = summary["preferences"]
-            tires = summary["tires"]
-            software_update = summary["software_update"]
-            hero_range = battery["rated_range"] or battery["estimated_range"]
-            hero_range_label = "RATED RANGE" if battery["rated_range"] is not None else "EST. RANGE"
-        else:
-            charging = {
-                "state": battery["charging_state"],
-                "charge_limit_percent": battery["charge_limit_percent"],
-                "time_to_full_minutes": battery["time_to_full_minutes"],
-                "power_kw": battery["power_kw"],
-            }
-            preferences = {}
-            tires = None
-            software_update = None
-            hero_range = battery["estimated_range"]
-            hero_range_label = "EST. RANGE"
-
-        draw.rounded_rectangle(
-            (20, 16, 780, 464),
-            radius=18,
-            fill=colors["surface"],
-            outline=colors["rule"],
-            width=2,
-        )
-
-        name_font = _font(28, True)
-        model_font = _font(15)
-        name = _ellipsize_text(
-            draw,
-            vehicle["display_name"],
-            name_font,
-            HEADER_IDENTITY_RIGHT - 40,
-        )
-        model_line = " / ".join(
-            _enum_text(language, "provider", item) for item in (vehicle["model"], vehicle["trim"]) if item
-        ) or _t(language, "vehicle_fallback")
-        model_line = _ellipsize_text(
-            draw,
-            model_line,
-            model_font,
-            HEADER_IDENTITY_RIGHT - 42,
-        )
-        if not _draw_vehicle_wordmark(canvas, vehicle["display_name"], colors):
-            draw.text((40, 27), name, font=name_font, fill=colors["ink"])
-        draw.text((42, 67), model_line, font=model_font, fill=colors["muted"])
-
-        vehicle_art = _load_vehicle_art()
-        alpha_bounds = vehicle_art.getchannel("A").getbbox()
-        if alpha_bounds is not None:
-            vehicle_art = vehicle_art.crop(alpha_bounds)
-        art_left, art_top, art_right, art_bottom = VEHICLE_ART_BOX
-        vehicle_art.thumbnail(
-            (art_right - art_left, art_bottom - art_top),
-            Image.Resampling.LANCZOS,
-        )
-        art_x = art_left + ((art_right - art_left - vehicle_art.width) // 2)
-        art_y = art_top + ((art_bottom - art_top - vehicle_art.height) // 2)
-        if isinstance(theme, dict) and theme.get("mode") == "night":
-            alpha = vehicle_art.getchannel("A")
-            expanded = alpha.filter(ImageFilter.MaxFilter(5))
-            outline_mask = ImageChops.subtract(expanded, alpha)
-            outline = Image.new("RGBA", vehicle_art.size, (*colors["muted"], 0))
-            outline.putalpha(outline_mask)
-            canvas.paste(outline, (art_x, art_y), outline)
-        canvas.paste(vehicle_art, (art_x, art_y), vehicle_art)
-
-        map_left, map_top, map_right, map_bottom = LOCATION_MAP_BOX
-        if location_presentation is not None:
-            location_map = location_presentation.get("map_image")
-            if isinstance(location_map, Image.Image) and location_map.size == LOCATION_MAP_SIZE:
-                canvas.paste(location_map.convert("RGB"), (map_left, map_top))
-                location_age = max(0, location_presentation.get("age_seconds", 0))
-                location_label = (
-                    _t(language, "location_current")
-                    if location_age <= 900
-                    else _t(
-                        language,
-                        "location_last_known",
-                        age=_age_text(location_age, language),
-                    )
-                )
-                draw.text(
-                    (map_left, map_bottom + 1),
-                    _ellipsize_text(
-                        draw,
-                        location_label,
-                        _font(8, True),
-                        map_right - map_left,
-                    ),
-                    font=_font(8, True),
-                    fill=colors["muted"],
-                )
-                draw.text(
-                    (map_left, map_bottom + 11),
-                    _ellipsize_text(
-                        draw,
-                        location_presentation["formatted_address"],
-                        _font(9, True),
-                        map_right - map_left,
-                    ),
-                    font=_font(9, True),
-                    fill=colors["ink"],
-                )
-            else:
-                location_presentation = None
-        if location_presentation is None:
-            draw.rounded_rectangle(
-                LOCATION_MAP_BOX,
-                radius=6,
-                outline=colors["rule"],
-                width=1,
-            )
-            _center_text(
-                draw,
-                (map_left + map_right) // 2,
-                map_top + 21,
-                _t(language, "location_unavailable"),
-                _font(9, True),
-                colors["muted"],
-            )
-
-        status_label = _enum_text(
-            language,
-            "connectivity",
-            snapshot["vehicle_connectivity"],
-        )
-        status_color = _connectivity_color(snapshot["vehicle_connectivity"], colors)
-        _pill(
-            draw,
-            (HEADER_STATUS_LEFT, 27, HEADER_STATUS_RIGHT, 58),
-            status_label,
-            status_color,
-            colors["surface"],
-        )
-        freshness = _enum_text(language, "freshness", snapshot["freshness"])
-        freshness_text = f"{freshness} / {_age_text(snapshot['age_seconds'], language)}"
-        freshness_max_width = HEADER_STATUS_RIGHT - HEADER_STATUS_LEFT
-        for freshness_font_size in range(13, 9, -1):
-            freshness_font = _font(freshness_font_size, True)
-            if draw.textbbox((0, 0), freshness_text, font=freshness_font)[2] <= freshness_max_width:
-                break
-        freshness_text = _ellipsize_text(
-            draw,
-            freshness_text,
-            freshness_font,
-            freshness_max_width,
-        )
-        _right_text(
-            draw,
-            HEADER_STATUS_RIGHT,
-            68,
-            freshness_text,
-            freshness_font,
-            colors["muted"],
-        )
-        draw.line((40, 100, 760, 100), fill=colors["rule"], width=1)
-
-        _dashboard_panel(draw, (40, 112, 300, 416), colors)
-        _section_label(canvas, draw, 58, 127, _t(language, "energy"), colors, "energy")
-        level = battery["level_percent"]
-        level_text = "--" if level is None else str(int(round(level)))
-        level_font = _font(52 if len(level_text) >= 3 else 58, True)
-        level_baseline = 208
-        draw.text(
-            (58, level_baseline),
-            level_text,
-            font=level_font,
-            fill=colors["ink"],
-            anchor="ls",
-        )
-        level_bbox = draw.textbbox(
-            (58, level_baseline),
-            level_text,
-            font=level_font,
-            anchor="ls",
-        )
-        draw.text(
-            (level_bbox[2] + 8, level_baseline),
-            "%",
-            font=_font(20, True),
-            fill=colors["muted"],
-            anchor="ls",
-        )
-        draw.text(
-            (280, 151),
-            _t(
-                language,
-                "rated_range" if hero_range_label == "RATED RANGE" else "estimated_range",
-            ),
-            font=_font(10, True),
-            fill=colors["muted"],
-            anchor="ra",
-        )
-        _right_text(
-            draw,
-            280,
-            173,
-            _measurement_text(hero_range, settings, preferences, language),
-            _font(22, True),
-            colors["ink"],
-        )
-        if has_extended_status and battery["usable_level_percent"] is not None:
-            usable = int(round(battery["usable_level_percent"]))
-            draw.text(
-                (58, 211),
-                _t(language, "usable", value=usable),
-                font=_font(10, True),
-                fill=colors["muted"],
-            )
-        _battery_bar(draw, (58, 228, 282, 246), level, colors)
-
-        charge = charging["state"] or "unknown"
-        charge_color = _charging_state_color(charge, colors)
-        cable = charging.get("cable_type") if has_extended_status else None
-        charge_width = 142 if cable else 224
-        charge_text = _ellipsize_text(
-            draw,
-            _enum_text(language, "charging", charge),
-            _font(16, True),
-            charge_width,
-        )
-        draw.text((58, 248), charge_text, font=_font(16, True), fill=charge_color)
-        if cable:
-            _right_text(
-                draw,
-                282,
-                252,
-                str(cable).upper(),
-                _font(10, True),
-                colors["muted"],
-            )
-
-        limit = charging["charge_limit_percent"]
-        limit_text = "--" if limit is None else f"{int(round(limit))}%"
-        power = charging["power_kw"]
-        power_text = _number_with_unit(power, "unit_kw", None, language)
-        if has_extended_status:
-            rows = _v2_energy_rows(
-                battery,
-                charging,
-                settings,
-                preferences,
-                limit_text,
-                power_text,
-                language,
-            )
-            for index, (label, value) in enumerate(rows):
-                _dashboard_row(
-                    draw,
-                    58,
-                    282,
-                    274 + (index * 20),
-                    label,
-                    value,
-                    colors,
-                    label_size=10,
-                    value_size=10,
-                    label_width=78,
-                )
-        else:
-            rows = (
-                (_t(language, "limit"), limit_text),
-                (
-                    _t(language, "time_left"),
-                    _minutes_text(charging["time_to_full_minutes"], language),
-                ),
-                (_t(language, "power"), power_text),
-            )
-            for index, (label, value) in enumerate(rows):
-                _dashboard_row(
-                    draw,
-                    58,
-                    282,
-                    286 + (index * 36),
-                    label,
-                    value,
-                    colors,
-                )
-
-        _dashboard_panel(draw, (334, 112, 532, 254), colors)
-        _section_label(
-            canvas,
-            draw,
-            350,
-            127,
-            _t(language, "security"),
-            colors,
-            "security",
-        )
-        lock_text = _bool_status(
-            vehicle["locked"],
-            _t(language, "locked"),
-            _t(language, "unlocked"),
-            _t(language, "unknown"),
-        )
-        lock_color = (
-            colors["accent"]
-            if vehicle["locked"] is False
-            else colors["warning"]
-            if vehicle["locked"] is None
-            else colors["ink"]
-        )
-        draw.text((350, 149), lock_text, font=_font(19, True), fill=lock_color)
-        sentry_text = (
-            _t(
-                language,
-                "sentry",
-                value=_enum_text(language, "state", vehicle["sentry_mode"]),
-            )
-            if has_extended_status
-            else _t(language, "sentry_not_reported")
-        )
-        sentry_text = _ellipsize_text(draw, sentry_text, _font(10, True), 92)
-        _right_text(draw, 516, 153, sentry_text, _font(10, True), colors["muted"])
-        closure_text = _closure_status_text(closures, language)
-        confirmed_open = bool(closures["open"]) or closures["charge_port_open"] is True
-        closure_color = (
-            colors["accent"]
-            if closures["all_closed"] is False or confirmed_open
-            else colors["warning"]
-            if closures["all_closed"] is None
-            else colors["ink"]
-        )
-        draw.text(
-            (350, 178),
-            _ellipsize_text(draw, closure_text, _font(14, True), 166),
-            font=_font(14, True),
-            fill=closure_color,
-        )
-        # One line: a second detail row would collide with the charge-port line at y=232.
-        draw.text(
-            (350, 202),
-            _closure_detail_line(draw, _closure_detail_lines(closures, language), _font(11, True), 166, language),
-            font=_font(11, True),
-            fill=colors["muted"],
-        )
-        port_text = _bool_status(
-            closures["charge_port_open"],
-            _t(language, "port_open"),
-            _t(language, "port_closed"),
-            _t(language, "unknown"),
-        )
-        draw.text((350, 232), port_text, font=_font(10, True), fill=colors["muted"])
-        if has_extended_status:
-            security_flag = _security_flag_text(
-                vehicle,
-                settings,
-                preferences,
-                language,
-            )
-            security_flag = _ellipsize_text(
-                draw,
-                security_flag,
-                _font(10, True),
-                83,
-            )
-            _right_text(
-                draw,
-                516,
-                233,
-                security_flag,
-                _font(10, True),
-                colors["muted"],
-            )
-
-        _dashboard_panel(draw, (564, 112, 760, 254), colors)
-        _section_label(
-            canvas,
-            draw,
-            580,
-            127,
-            _t(language, "climate"),
-            colors,
-            "climate",
-        )
-        climate_status = _bool_status(
-            climate["is_climate_on"],
-            _t(language, "hvac_on"),
-            _t(language, "hvac_off"),
-            _t(language, "unknown"),
-        )
-        draw.text((580, 149), climate_status, font=_font(19, True), fill=colors["ink"])
-        if has_extended_status:
-            keeper = _enum_text(language, "keeper", climate["keeper_mode"])
-            _right_text(
-                draw,
-                744,
-                153,
-                _ellipsize_text(draw, keeper, _font(10, True), 74),
-                _font(10, True),
-                colors["muted"],
-            )
-        temperature_line = _t(
-            language,
-            "inside_outside",
-            inside=_temperature_text(
-                climate["inside_temp_c"],
-                settings,
-                preferences,
-                language,
-            ),
-            outside=_temperature_text(
-                climate["outside_temp_c"],
-                settings,
-                preferences,
-                language,
-            ),
-        )
-        draw.text((580, 178), temperature_line, font=_font(14, True), fill=colors["ink"])
-        if has_extended_status:
-            climate_lines = _v2_climate_lines(
-                climate,
-                settings,
-                preferences,
-                language,
-            )
-            for index, line in enumerate(climate_lines):
-                font = _font(10 if index >= 2 else 11, True)
-                draw.text(
-                    (580, 199 + (index * 17)),
-                    _ellipsize_text(draw, line, font, 164),
-                    font=font,
-                    fill=colors["muted"],
-                )
-
-        _dashboard_panel(draw, (334, 278, 532, 416), colors)
-        _section_label(
-            canvas,
-            draw,
-            350,
-            293,
-            _t(language, "vehicle"),
-            colors,
-            "vehicle",
-        )
-        if has_extended_status:
-            display_state = vehicle["center_display_state"]
-            _right_text(
-                draw,
-                516,
-                294,
-                _t(
-                    language,
-                    "display",
-                    value=(
-                        _enum_text(language, "state", display_state)
-                        if display_state is not None
-                        else _t(language, "not_reported")
-                    ),
-                ),
-                _font(10, True),
-                colors["muted"],
-            )
-            vehicle_rows = _v2_vehicle_rows(
-                vehicle,
-                software_update,
-                settings,
-                preferences,
-                language,
-            )
-            for index, (label, value) in enumerate(vehicle_rows):
-                _dashboard_row(
-                    draw,
-                    350,
-                    516,
-                    312 + (index * 15),
-                    label,
-                    value,
-                    colors,
-                    label_size=10,
-                    value_size=10,
-                    label_width=64,
-                )
-        else:
-            _dashboard_row(
-                draw,
-                350,
-                516,
-                330,
-                _t(language, "odometer"),
-                _measurement_text(vehicle["odometer"], settings, preferences, language),
-                colors,
-            )
-            _dashboard_row(
-                draw,
-                350,
-                516,
-                370,
-                _t(language, "software"),
-                vehicle["software_version"] or "--",
-                colors,
-            )
-
-        _dashboard_panel(draw, (564, 278, 760, 416), colors)
-        _section_label(
-            canvas,
-            draw,
-            580,
-            293,
-            _t(language, "tires"),
-            colors,
-            "tires",
-        )
-        if has_extended_status:
-            _render_tires(draw, tires, settings, preferences, colors, language)
-        else:
-            draw.text(
-                (580, 340),
-                _t(language, "not_reported_v1"),
-                font=_font(11, True),
-                fill=colors["muted"],
-            )
-
-        draw.line((40, 428, 760, 428), fill=colors["rule"], width=1)
-        freshness_left = (
-            62
-            if _draw_dashboard_icon(
-                canvas,
-                "freshness",
-                40,
-                434,
-                colors,
-                size=16,
-            )
-            else 40
-        )
-        draw.text(
-            (freshness_left, 438),
-            _t(
-                language,
-                "updated",
-                age=_age_text(snapshot["age_seconds"], language),
-                freshness=freshness,
-            ),
-            font=_font(12, True),
-            fill=colors["muted"],
-        )
-        _right_text(
-            draw,
-            760,
-            438,
-            _t(language, "read_only_footer"),
-            _font(12, True),
-            colors["accent"],
-        )
+        _draw_dashboard(canvas, draw, summary, theme, settings, colors, language, location_presentation)
 
         if dimensions != (800, 480):
             canvas = canvas.resize(dimensions, Image.Resampling.LANCZOS)
@@ -2952,6 +2433,9 @@ def _render_colors(theme):
         "good": (35, 116, 79) if not night else (91, 207, 146),
         "warning": (138, 79, 0) if not night else (239, 179, 83),
         "track": (219, 215, 206) if not night else (50, 59, 70),
+        "battery_high": (46, 160, 82) if not night else (88, 214, 128),
+        "battery_mid": (230, 168, 0) if not night else (247, 199, 64),
+        "battery_low": (214, 48, 38) if not night else (255, 104, 90),
     }
 
 
@@ -2979,9 +2463,12 @@ def _dashboard_panel(draw, box, colors):
 
 
 def _section_label(canvas, draw, left, top, text, colors, icon_kind):
+    """The section's icon and name; returns the name's right edge."""
     has_icon = _draw_dashboard_icon(canvas, icon_kind, left, top - 3, colors)
     text_left = left + 27 if has_icon else left
-    draw.text((text_left, top), text, font=_font(12, True), fill=colors["muted"])
+    font = _font(13, True)
+    draw.text((text_left, top), text, font=font, fill=colors["muted"])
+    return text_left + draw.textbbox((0, 0), text, font=font)[2]
 
 
 def _dashboard_row(
@@ -2996,13 +2483,14 @@ def _dashboard_row(
     label_size=11,
     value_size=12,
     label_width=72,
+    value_color=None,
 ):
     label_font = _font(label_size, True)
     value_font = _font(value_size, True)
     draw.text((left, top), label, font=label_font, fill=colors["muted"])
     available = max(24, right - left - label_width)
     value_text = _ellipsize_text(draw, str(value), value_font, available)
-    _right_text(draw, right, top - 1, value_text, value_font, colors["ink"])
+    _right_text(draw, right, top - 1, value_text, value_font, value_color or colors["ink"])
 
 
 def _v2_energy_rows(
@@ -3453,17 +2941,6 @@ def _pill(draw, box, text, fill, surface):
     draw.text(((left + right - width) / 2, (top + bottom - height) / 2 - 2), text, font=font, fill=surface)
 
 
-def _battery_bar(draw, box, level, colors):
-    left, top, right, bottom = box
-    draw.rounded_rectangle(box, radius=9, fill=colors["track"])
-    if level is None:
-        return
-    ratio = max(0, min(100, level)) / 100
-    width = max(0, int((right - left) * ratio))
-    if width > 0:
-        draw.rounded_rectangle((left, top, left + width, bottom), radius=9, fill=colors["accent"])
-
-
 def _connectivity_color(connectivity, colors):
     if connectivity == "online":
         return colors["good"]
@@ -3622,7 +3099,7 @@ def _draw_vehicle_wordmark(canvas, display_name, colors):
     glyph.putalpha(fitted_mask)
     y = top + ((bottom - top - fitted_mask.height) // 2)
     canvas.paste(glyph, (left, y), glyph)
-    return True
+    return left + fitted_mask.width
 
 
 def _load_vehicle_wordmark_mask():
@@ -3757,3 +3234,429 @@ def _right_text(draw, right, top, text, font, fill):
 def _center_text(draw, center_x, top, text, font, fill):
     bounds = draw.textbbox((0, 0), text, font=font)
     draw.text((center_x - (bounds[2] - bounds[0]) / 2, top), text, font=font, fill=fill)
+
+
+# -- The dashboard page --------------------------------------------------------------------
+# Three columns under a one-line header: battery and charging with the car; security above
+# a top-down tyre map; climate above the location map. A strip of vehicle facts and the
+# freshness footer close the page.
+PAGE_LEFT, PAGE_RIGHT = 36, 764
+HEADER_RULE_Y = 62
+COLUMNS = ((36, 318), (338, 516), (538, 764))
+COLUMN_TOP, COLUMN_SPLIT_Y, COLUMN_BOTTOM = 72, 212, 392
+STRIP_RULE_Y = 398
+FOOTER_Y = 441
+VEHICLE_TOP_IMAGE_NAME = "vehicle_top.png"
+
+
+def _draw_dashboard(canvas, draw, summary, theme, settings, colors, language, location_presentation):
+    vehicle = summary["vehicle"]
+    snapshot = summary["snapshot"]
+    extended = summary["schema_version"] in {2, 3}
+    battery = summary["battery"]
+    if extended:
+        charging, preferences = summary["charging"], summary["preferences"]
+        tires, software_update = summary["tires"], summary["software_update"]
+    else:
+        charging = {
+            "state": battery["charging_state"],
+            "charge_limit_percent": battery["charge_limit_percent"],
+            "time_to_full_minutes": battery["time_to_full_minutes"],
+            "power_kw": battery["power_kw"],
+        }
+        preferences, tires, software_update = {}, None, None
+
+    draw.rounded_rectangle((20, 16, 780, 464), radius=18, fill=colors["surface"], outline=colors["rule"], width=2)
+    _draw_dashboard_header(canvas, draw, vehicle, snapshot, colors, language)
+    for x in (COLUMNS[0][1] + 10, COLUMNS[1][1] + 11):
+        draw.line((x, COLUMN_TOP - 4, x, COLUMN_BOTTOM), fill=colors["rule"], width=1)
+    _draw_energy_column(canvas, draw, summary, charging, extended, settings, preferences, colors, language)
+    _draw_security_column(canvas, draw, vehicle, summary["closures"], extended, settings, preferences, colors, language)
+    _draw_tires_column(canvas, draw, tires, settings, preferences, colors, language)
+    _draw_climate_column(canvas, draw, summary["climate"], extended, settings, preferences, colors, language)
+    _draw_location_column(canvas, draw, location_presentation, colors, language)
+    _draw_vehicle_strip(canvas, draw, vehicle, software_update, extended, settings, preferences, colors, language)
+    _draw_dashboard_footer(canvas, draw, snapshot, colors, language)
+
+
+def _draw_dashboard_header(canvas, draw, vehicle, snapshot, colors, language):
+    wordmark_right = _draw_vehicle_wordmark(canvas, vehicle["display_name"], colors)
+    if not wordmark_right:
+        name_font = _font(26, True)
+        name = _ellipsize_text(draw, vehicle["display_name"], name_font, 260)
+        draw.text((PAGE_LEFT, 22), name, font=name_font, fill=colors["ink"])
+        wordmark_right = PAGE_LEFT + draw.textbbox((0, 0), name, font=name_font)[2]
+    model_line = " / ".join(
+        _enum_text(language, "provider", item) for item in (vehicle["model"], vehicle["trim"]) if item
+    ) or _t(language, "vehicle_fallback")
+    model_font = _font(15)
+    model_left = wordmark_right + 12
+    draw.text((model_left, 33), _ellipsize_text(draw, model_line, model_font, 520 - model_left),
+              font=model_font, fill=colors["muted"])
+
+    freshness = _enum_text(language, "freshness", snapshot["freshness"])
+    freshness_text = f"{freshness} / {_age_text(snapshot['age_seconds'], language)}"
+    status_font = _font(14, True)
+    freshness_width = draw.textbbox((0, 0), freshness_text, font=status_font)[2]
+    _right_text(draw, PAGE_RIGHT, 30, freshness_text, status_font, colors["muted"])
+    divider_x = PAGE_RIGHT - freshness_width - 12
+    draw.line((divider_x, 30, divider_x, 48), fill=colors["rule"], width=1)
+    status_label = _enum_text(language, "connectivity", snapshot["vehicle_connectivity"])
+    status_color = _connectivity_color(snapshot["vehicle_connectivity"], colors)
+    label_width = draw.textbbox((0, 0), status_label, font=status_font)[2]
+    label_left = divider_x - 12 - label_width
+    draw.text((label_left, 30), status_label, font=status_font, fill=status_color)
+    draw.ellipse((label_left - 15, 35, label_left - 6, 44), fill=status_color)
+    draw.line((PAGE_LEFT, HEADER_RULE_Y, PAGE_RIGHT, HEADER_RULE_Y), fill=colors["ink"], width=1)
+
+
+def _draw_energy_column(canvas, draw, summary, charging, extended, settings, preferences, colors, language):
+    left, right = COLUMNS[0]
+    battery = summary["battery"]
+    _section_label(canvas, draw, left, COLUMN_TOP, _t(language, "energy"), colors, "energy")
+    level = battery["level_percent"]
+    level_text = "--" if level is None else str(int(round(level)))
+    level_font = _font(54 if len(level_text) >= 3 else 62, True)
+    draw.text((left - 2, 142), level_text, font=level_font, fill=colors["ink"], anchor="ls")
+    level_right = draw.textbbox((left - 2, 142), level_text, font=level_font, anchor="ls")[2]
+    draw.text((level_right + 6, 142), "%", font=_font(24, True), fill=colors["muted"], anchor="ls")
+
+    rated = extended and battery["rated_range"] is not None
+    hero_range = battery["rated_range"] if rated else battery["estimated_range"]
+    _right_text(draw, right, 92, _t(language, "rated_range" if rated else "estimated_range"),
+                _font(11, True), colors["muted"])
+    _right_text(draw, right, 106, _measurement_text(hero_range, settings, preferences, language),
+                _font(25, True), colors["ink"])
+    if extended and battery["usable_level_percent"] is not None:
+        _right_text(draw, right, 134, _t(language, "usable", value=int(round(battery["usable_level_percent"]))),
+                    _font(11, True), colors["muted"])
+    limit = charging["charge_limit_percent"]
+    _battery_gauge(draw, (left, 156, right, 168), level, limit, colors)
+    _paste_vehicle_art(canvas, _load_vehicle_art(), (left + 22, 192, right - 22, 266))
+
+    draw.line((left, 273, right, 273), fill=colors["rule"], width=1)
+    heading_right = _section_label(canvas, draw, left, 281, _t(language, "charging"), colors, "charging")
+    state = charging["state"] or "unknown"
+    draw.text((heading_right + 16, 278), _ellipsize_text(draw, _enum_text(language, "charging", state),
+                                                          _font(15, True), 110),
+              font=_font(15, True), fill=_charging_state_color(state, colors))
+    cable = charging.get("cable_type") if extended else None
+    if cable:
+        cable_text = (_t(language, "cable_unknown") if str(cable).strip().lower() == "unknown"
+                      else _t(language, "cable", value=str(cable).upper()))
+        _right_text(draw, right, 283, _ellipsize_text(draw, cable_text, _font(10, True), 104),
+                    _font(10, True), colors["muted"])
+
+    limit_text = "--" if limit is None else f"{int(round(limit))}%"
+    power_text = _number_with_unit(charging["power_kw"], "unit_kw", None, language)
+    if extended:
+        rows = _v2_energy_rows(battery, charging, settings, preferences, limit_text, power_text, language)
+    else:
+        rows = ((_t(language, "limit"), limit_text),
+                (_t(language, "time_left"), _minutes_text(charging["time_to_full_minutes"], language)),
+                (_t(language, "power"), power_text))
+    for index, (label, value) in enumerate(rows):
+        _dashboard_row(draw, left, right, 301 + index * 13, label, value, colors,
+                       label_size=10, value_size=10, label_width=82)
+
+
+def _battery_gauge(draw, box, level, limit, colors):
+    """The battery bar on a 0-100 ruler (a tick per 10%, numbers per 20%), the charge limit marked.
+
+    The fill takes a battery's usual colours: green above half, amber down to 20%, red below.
+    """
+    left, top, right, bottom = box
+    span = right - left
+    radius = (bottom - top) // 2
+    draw.rounded_rectangle(box, radius=radius, fill=colors["track"])
+    if level is not None:
+        filled = round(span * max(0, min(100, level)) / 100)
+        fill = (colors["battery_high"] if level > 50 else colors["battery_mid"] if level > 20
+                else colors["battery_low"])
+        if filled > 0:
+            draw.rounded_rectangle((left, top, left + max(filled, 2 * radius), bottom), radius=radius, fill=fill)
+    font = _font(9, True)
+    for step in range(11):
+        x = round(left + span * step / 10)
+        if 0 < step < 10:
+            draw.line((x, top + 2, x, bottom - 2), fill=colors["surface"], width=1)
+        draw.line((x, bottom + 2, x, bottom + (6 if step % 2 == 0 else 4)), fill=colors["muted"], width=1)
+        if step % 2 == 0:
+            label = str(step * 10)
+            width = draw.textbbox((0, 0), label, font=font)[2]
+            label_x = left if step == 0 else right - width if step == 10 else x - width / 2
+            draw.text((label_x, bottom + 7), label, font=font, fill=colors["muted"])
+    if limit is not None:
+        x = round(left + span * max(0, min(100, limit)) / 100)
+        draw.line((x, top - 3, x, bottom + 3), fill=colors["ink"], width=2)
+        draw.polygon(((x - 4, top - 8), (x + 4, top - 8), (x, top - 3)), fill=colors["ink"])
+
+
+def _draw_security_column(canvas, draw, vehicle, closures, extended, settings, preferences, colors, language):
+    left, right = COLUMNS[1]
+    _section_label(canvas, draw, left, COLUMN_TOP, _t(language, "security"), colors, "security")
+    lock_text = _bool_status(vehicle["locked"], _t(language, "locked"), _t(language, "unlocked"),
+                             _t(language, "unknown"))
+    lock_color = (colors["accent"] if vehicle["locked"] is False
+                  else colors["warning"] if vehicle["locked"] is None else colors["ink"])
+    _draw_padlock(draw, (left, 94, left + 22, 120), vehicle["locked"], lock_color, colors["surface"])
+    draw.text((left + 30, 92), lock_text, font=_font(25, True), fill=lock_color)
+    confirmed_open = bool(closures["open"]) or closures["charge_port_open"] is True
+    closure_color = (colors["accent"] if closures["all_closed"] is False or confirmed_open
+                     else colors["warning"] if closures["all_closed"] is None else colors["ink"])
+    detail_font = _font(13, True)
+    draw.text((left, 124), _closure_detail_line(draw, _closure_detail_lines(closures, language), detail_font,
+                                                right - left, language),
+              font=detail_font, fill=closure_color)
+
+    if extended:
+        sentry = _enum_text(language, "state", vehicle["sentry_mode"])
+        flags = _security_flag_text(vehicle, settings, preferences, language)
+        special = _t(language, "off_state") if flags == _t(language, "modes_off") else flags
+    else:
+        sentry = special = _t(language, "not_reported")
+    port = _bool_status(closures["charge_port_open"], _t(language, "open_state"), _t(language, "closed_state"),
+                        _t(language, "unknown"))
+    rows = ((_t(language, "sentry_mode"), sentry, colors["ink"]),
+            (_t(language, "charge_port"), port,
+             colors["accent"] if closures["charge_port_open"] is True else colors["ink"]),
+            (_t(language, "special_modes"), special, colors["ink"]))
+    _ruled_rows(draw, left, right, 148, rows, colors)
+
+
+def _draw_padlock(draw, box, locked, color, knockout):
+    """A padlock beside the lock state: shackle down when locked, lifted open when not, a ? when unknown."""
+    left, top, right, bottom = box
+    width, height = right - left, bottom - top
+    body_top = top + round(height * 0.44)
+    stroke = max(2, round(width * 0.16))
+    shackle_left, shackle_right = left + round(width * 0.2), right - round(width * 0.2)
+    lift = 0 if locked is True else round(height * 0.16)
+    arc_box = (shackle_left, top - lift, shackle_right, body_top + (shackle_right - shackle_left) // 2 - lift)
+    draw.arc(arc_box, 180, 360, fill=color, width=stroke)
+    arc_middle = (arc_box[1] + arc_box[3]) // 2
+    # The right leg always reaches the body; the left one only when the shackle is shut.
+    draw.line((shackle_right - stroke // 2, arc_middle, shackle_right - stroke // 2, body_top), fill=color, width=stroke)
+    if locked is True:
+        draw.line((shackle_left + stroke // 2, arc_middle, shackle_left + stroke // 2, body_top), fill=color,
+                  width=stroke)
+    draw.rounded_rectangle((left, body_top, right, bottom), radius=max(2, width // 6), fill=color)
+    center_x = (left + right) // 2
+    if locked is None:
+        font = _font(max(9, height // 2), True)
+        bounds = draw.textbbox((0, 0), "?", font=font)
+        draw.text((center_x - (bounds[2] - bounds[0]) / 2 - bounds[0], body_top + 1 - bounds[1] + 1), "?",
+                  font=font, fill=knockout)
+        return
+    hole = max(2, width // 7)
+    hole_y = body_top + (bottom - body_top) // 2 - 1
+    draw.ellipse((center_x - hole, hole_y - hole, center_x + hole, hole_y + hole), fill=knockout)
+    draw.rectangle((center_x - hole // 2, hole_y, center_x + hole // 2, hole_y + hole * 2), fill=knockout)
+
+
+def _ruled_rows(draw, left, right, top, rows, colors, step=21):
+    for index, (label, value, value_color) in enumerate(rows):
+        y = top + index * step
+        if index:
+            draw.line((left, y - 5, right, y - 5), fill=colors["rule"], width=1)
+        _dashboard_row(draw, left, right, y, label, value, colors, label_size=11, value_size=11,
+                       label_width=74, value_color=value_color)
+
+
+def _draw_tires_column(canvas, draw, tires, settings, preferences, colors, language):
+    left, right = COLUMNS[1]
+    draw.line((left, COLUMN_SPLIT_Y, right, COLUMN_SPLIT_Y), fill=colors["rule"], width=1)
+    _section_label(canvas, draw, left, COLUMN_SPLIT_Y + 8, _t(language, "tires"), colors, "tires")
+    center = (left + right) // 2
+    if tires is None:
+        _center_text(draw, center, 300, _t(language, "not_reported_v1"), _font(11, True), colors["muted"])
+        return
+    unit = _preferred_unit(settings, preferences, "pressureUnit", "pressure_unit", {"psi", "bar"}) or "bar"
+    _right_text(draw, right, COLUMN_SPLIT_Y + 10, _t(language, "unit_psi" if unit == "psi" else "unit_bar"),
+                _font(10, True), colors["muted"])
+    car_box = _paste_vehicle_art(canvas, _load_vehicle_top_art(), (center - 32, 238, center + 32, 358))
+    car_left, car_top, car_right, car_bottom = car_box or (center - 22, 238, center + 22, 358)
+    for position, row_top, wheel_y in (("front_left", 240, car_top + (car_bottom - car_top) * 0.2),
+                                       ("front_right", 240, car_top + (car_bottom - car_top) * 0.2),
+                                       ("rear_left", 298, car_top + (car_bottom - car_top) * 0.74),
+                                       ("rear_right", 298, car_top + (car_bottom - car_top) * 0.74)):
+        warning = _tire_warning_level(tires, position)
+        color = (colors["accent"] if warning == "hard"
+                 else colors["warning"] if warning in {"soft", "unknown"} else colors["ink"])
+        pressure = _pressure_text(tires["pressures"][position], settings, preferences, language).split(" ", 1)[0]
+        label = _tire_abbreviation(position, language)
+        value_font = _font(22, True)
+        if position.endswith("left"):
+            draw.text((left + 2, row_top), label, font=_font(10, True), fill=colors["muted"])
+            draw.text((left + 2, row_top + 13), pressure, font=value_font, fill=color)
+            text_right = left + 4 + draw.textbbox((0, 0), pressure, font=value_font)[2]
+            draw.line((text_right + 6, wheel_y, car_left - 4, wheel_y), fill=colors["rule"], width=1)
+            draw.line((car_left - 4, wheel_y - 8, car_left - 4, wheel_y + 8), fill=colors["muted"], width=2)
+        else:
+            _right_text(draw, right - 2, row_top, label, _font(10, True), colors["muted"])
+            _right_text(draw, right - 2, row_top + 13, pressure, value_font, color)
+            text_left = right - 4 - draw.textbbox((0, 0), pressure, font=value_font)[2]
+            draw.line((car_right + 4, wheel_y, text_left - 6, wheel_y), fill=colors["rule"], width=1)
+            draw.line((car_right + 4, wheel_y - 8, car_right + 4, wheel_y + 8), fill=colors["muted"], width=2)
+    status, status_color = _tire_status(tires, colors, language)
+    _center_text(draw, center, 366, _ellipsize_text(draw, status, _font(12, True), right - left), _font(12, True),
+                 status_color)
+
+
+def _draw_climate_column(canvas, draw, climate, extended, settings, preferences, colors, language):
+    left, right = COLUMNS[2]
+    _section_label(canvas, draw, left, COLUMN_TOP, _t(language, "climate"), colors, "climate")
+    status = _bool_status(climate["is_climate_on"], _t(language, "hvac_on"), _t(language, "hvac_off"),
+                          _t(language, "unknown"))
+    draw.text((left, 92), status, font=_font(25, True), fill=colors["ink"])
+    if extended:
+        keeper = _enum_text(language, "keeper", climate["keeper_mode"])
+        _right_text(draw, right, 100, _ellipsize_text(draw, keeper, _font(10, True), 80), _font(10, True),
+                    colors["muted"])
+    temperature_line = _t(language, "inside_outside",
+                          inside=_temperature_text(climate["inside_temp_c"], settings, preferences, language),
+                          outside=_temperature_text(climate["outside_temp_c"], settings, preferences, language))
+    draw.text((left, 124), _ellipsize_text(draw, temperature_line, _font(14, True), right - left),
+              font=_font(14, True), fill=colors["ink"])
+
+    middle = (left + right) // 2
+    for index, cells in enumerate(_climate_cells(climate, extended, settings, preferences, language)):
+        y = 148 + index * 21
+        if index:
+            draw.line((left, y - 5, right, y - 5), fill=colors["rule"], width=1)
+        for (label, value), (cell_left, cell_right) in zip(cells, ((left, middle - 8), (middle + 8, right))):
+            _dashboard_row(draw, cell_left, cell_right, y, label, value, colors, label_size=10, value_size=11,
+                           label_width=50)
+    draw.line((middle, 144, middle, 200), fill=colors["rule"], width=1)
+
+
+def _climate_cells(climate, extended, settings, preferences, language):
+    if not extended:
+        unknown = _t(language, "not_reported")
+        return (((_t(language, "driver_target"), unknown), (_t(language, "passenger_target"), unknown)),)
+    fan = "--" if climate["fan_status"] is None else f"{climate['fan_status']:g}"
+    overheat = climate["cabin_overheat"]
+    overheat_text = "--"
+    if overheat["mode"]:
+        overheat_text = _enum_text(language, "state", overheat["mode"])
+        if overheat["temp_limit"]:
+            overheat_text += f"/{_enum_text(language, 'state', overheat['temp_limit'])}"
+    return (
+        ((_t(language, "driver_target"),
+          _temperature_text(climate["driver_target_temp_c"], settings, preferences, language)),
+         (_t(language, "passenger_target"),
+          _temperature_text(climate["passenger_target_temp_c"], settings, preferences, language))),
+        ((_t(language, "auto_hvac"), _enum_text(language, "state", climate["hvac_auto_mode"])),
+         (_t(language, "fan"), fan)),
+        ((_t(language, "defrost"), _enum_text(language, "state", climate["defrost_mode"])),
+         (_t(language, "overheat_protect"), overheat_text)),
+    )
+
+
+def _draw_location_column(canvas, draw, location_presentation, colors, language):
+    left, right = COLUMNS[2]
+    draw.line((left, COLUMN_SPLIT_Y, right, COLUMN_SPLIT_Y), fill=colors["rule"], width=1)
+    _section_label(canvas, draw, left, COLUMN_SPLIT_Y + 8, _t(language, "location"), colors, "location")
+    map_left, map_top, map_right, map_bottom = LOCATION_MAP_BOX
+    location_map = (location_presentation or {}).get("map_image")
+    if not (isinstance(location_map, Image.Image) and location_map.size == LOCATION_MAP_SIZE):
+        draw.rounded_rectangle(LOCATION_MAP_BOX, radius=6, outline=colors["rule"], width=1)
+        _center_text(draw, (map_left + map_right) // 2, (map_top + map_bottom) // 2 - 7,
+                     _t(language, "location_unavailable"), _font(11, True), colors["muted"])
+        return
+    canvas.paste(location_map.convert("RGB"), (map_left, map_top))
+    address_font = _font(13, True)
+    lines = _address_lines(draw, location_presentation["formatted_address"], address_font, right - left)
+    for index, line in enumerate(lines):
+        draw.text((left, map_bottom + 6 + index * 17), line, font=address_font, fill=colors["ink"])
+    age = max(0, location_presentation.get("age_seconds", 0))
+    if age > 900:
+        draw.text((left, map_bottom + 6 + len(lines) * 17),
+                  _ellipsize_text(draw, _t(language, "location_last_known", age=_age_text(age, language)),
+                                  _font(9, True), right - left),
+                  font=_font(9, True), fill=colors["muted"])
+
+
+def _address_lines(draw, address, font, width):
+    """The address on two lines, broken after the street when it has one."""
+    text = str(address or "").strip()
+    if draw.textbbox((0, 0), text, font=font)[2] <= width:
+        return [text]
+    street, comma, rest = text.partition(",")
+    if comma and draw.textbbox((0, 0), street + ",", font=font)[2] <= width:
+        return [street + ",", _ellipsize_text(draw, rest.strip(), font, width)]
+    return [_ellipsize_text(draw, text, font, width)]
+
+
+def _draw_vehicle_strip(canvas, draw, vehicle, software_update, extended, settings, preferences, colors, language):
+    draw.line((PAGE_LEFT, STRIP_RULE_Y, PAGE_RIGHT, STRIP_RULE_Y), fill=colors["rule"], width=1)
+    heading_right = _section_label(canvas, draw, PAGE_LEFT, STRIP_RULE_Y + 11, _t(language, "vehicle"), colors,
+                                   "vehicle")
+    not_reported = _t(language, "not_reported")
+    display_state = vehicle["center_display_state"] if extended else None
+    update = software_update or {}
+    cells = [
+        (_t(language, "odometer"), _measurement_text(vehicle["odometer"], settings, preferences, language)),
+        (_t(language, "software"), vehicle["software_version"] or not_reported),
+        (_t(language, "screen"),
+         _enum_text(language, "state", display_state) if display_state is not None else not_reported),
+        (_t(language, "update"), update.get("version") or not_reported),
+    ]
+    if extended:
+        cells += [(_t(language, "body_wheel"), _vehicle_appearance_text(vehicle, language)),
+                  (_t(language, "config"), _vehicle_config_text(vehicle, language))]
+    widths = (74, 96, 54, 140, 134, 0)
+    x = max(heading_right + 18, 112)
+    for index, (label, value) in enumerate(cells):
+        cell_right = PAGE_RIGHT if index == len(cells) - 1 else x + widths[index]
+        draw.text((x, STRIP_RULE_Y + 5), label, font=_font(9, True), fill=colors["muted"])
+        draw.text((x, STRIP_RULE_Y + 17), _ellipsize_text(draw, str(value), _font(11, True), cell_right - x - 6),
+                  font=_font(11, True), fill=colors["ink"])
+        if label == _t(language, "update") and any(
+            update.get(key) is not None for key in ("download_percent", "install_percent", "expected_duration_minutes")
+        ):
+            progress = _t(language, "progress_line", download=_percent_text(update["download_percent"]),
+                          install=_percent_text(update["install_percent"]),
+                          duration=_minutes_text(update["expected_duration_minutes"], language))
+            draw.text((x, STRIP_RULE_Y + 31), _ellipsize_text(draw, progress, _font(9, True), cell_right - x - 6),
+                      font=_font(9, True), fill=colors["muted"])
+        x = cell_right + 6
+
+
+def _draw_dashboard_footer(canvas, draw, snapshot, colors, language):
+    left = PAGE_LEFT + 22 if _draw_dashboard_icon(canvas, "freshness", PAGE_LEFT, FOOTER_Y - 2, colors, size=16) \
+        else PAGE_LEFT
+    freshness = _enum_text(language, "freshness", snapshot["freshness"])
+    draw.text((left, FOOTER_Y), _t(language, "updated", age=_age_text(snapshot["age_seconds"], language),
+                                   freshness=freshness),
+              font=_font(12, True), fill=colors["muted"])
+    _right_text(draw, PAGE_RIGHT, FOOTER_Y, _t(language, "read_only_footer"), _font(12, True), colors["accent"])
+
+
+def _paste_vehicle_art(canvas, art, box):
+    """The car art fitted into ``box`` (centred) as it is, by day and night; its pasted bounds."""
+    if art is None:
+        return None
+    bounds = art.getchannel("A").getbbox()
+    if bounds is not None:
+        art = art.crop(bounds)
+    left, top, right, bottom = box
+    art = art.copy()
+    art.thumbnail((right - left, bottom - top), Image.Resampling.LANCZOS)
+    x = left + (right - left - art.width) // 2
+    y = top + (bottom - top - art.height) // 2
+    canvas.paste(art, (x, y), art)
+    return x, y, x + art.width, y + art.height
+
+
+def _load_vehicle_top_art():
+    try:
+        image = safe_open_image(
+            Path(__file__).with_name(VEHICLE_TOP_IMAGE_NAME),
+            limits=ImageLimits(max_bytes=512 * 1024, max_width=512, max_height=1024, max_pixels=400_000,
+                               allowed_formats=frozenset({"PNG"})),
+        )
+        return image.convert("RGBA")
+    except (OSError, TypeError, ValueError) as exc:
+        logger.warning("Vehicle top view unavailable type=%s", type(exc).__name__)
+        return None
