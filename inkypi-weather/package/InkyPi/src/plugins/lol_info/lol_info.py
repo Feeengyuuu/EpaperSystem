@@ -18,8 +18,11 @@ from utils.fonts import load_font
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
+from plugins.lol_info.pro_render import ProRenderMixin
+from plugins.lol_info.pro_tracker import ProTrackerMixin
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.context_cache import write_context
+from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import coerce_bool, get_base_ui_font
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
@@ -30,7 +33,7 @@ from utils.glyph_text import font_supports_text
 logger = logging.getLogger(__name__)
 
 PLUGIN_ID = "lol_info"
-STYLE_VERSION = "lol-info-v18-bounded-local-assets"
+STYLE_VERSION = "lol-info-v19-pro-tracker"
 DEFAULT_GAME_NAME = "Hide on bush"
 DEFAULT_TAG_LINE = "KR1"
 DEFAULT_PLATFORM = "kr"
@@ -84,7 +87,7 @@ QUEUE_LABELS = {
 }
 
 
-class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
+class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin, BasePlugin):
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = False
@@ -95,7 +98,12 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
 
     def generate_image(self, settings, device_config):
         settings = settings or {}
-        effective_settings = self._settings_for_selected_pro_account(settings)
+        theme_render_only = self._enabled(settings.get("_theme_render_only"), default=False)
+        # A theme redraw shows the same player again; only a real refresh draws the next one.
+        pick = self._pick(settings, advance=not theme_render_only)
+        if pick and pick["kind"] == "cs2":
+            return self._generate_cs2_image(pick, settings, device_config, theme_render_only)
+        effective_settings = self._settings_for_pick(settings, pick)
         dimensions = self.get_dimensions(device_config)
 
         identity = self._identity(effective_settings)
@@ -103,10 +111,6 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
         refresh_minutes = self._bounded_int(effective_settings.get("refreshMinutes"), 120, 15, 1440)
         cache_key = self._cache_key(effective_settings, dimensions, identity)
         cache = self._read_json(self._cache_path(cache_key), {})
-        theme_render_only = self._enabled(
-            effective_settings.get("_theme_render_only"),
-            default=False,
-        )
         force_refresh = (
             self._enabled(effective_settings.get("forceRefresh"), default=False)
             and not theme_render_only
@@ -148,14 +152,16 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
                     provenance = SourceProvenance.LOCAL_FALLBACK
             data = self._with_pro_account_context(data, effective_settings)
             theme_context = self._theme_context(effective_settings, device_config)
+            live = not theme_render_only and not self._enabled(effective_settings.get("useMockData"), default=False)
+            featured = None
+            if live and pick:
+                featured = (pick["account"]["id"], data.get("ranked"), data.get("active_game"))
+            board = self._lol_board(settings, device_config, featured=featured, refresh=live)
+            if pick:
+                pick = {**pick, "photo": self._lol_photo(pick["account"], refresh=live)}
             media_token = _ALLOW_PROVIDER_MEDIA.set(not theme_render_only)
             try:
-                image = self._render_dashboard(
-                    data,
-                    dimensions,
-                    effective_settings,
-                    theme_context,
-                )
+                image = self._render_lol_pro(data, dimensions, theme_context, pick or {}, board)
             finally:
                 _ALLOW_PROVIDER_MEDIA.reset(media_token)
             if theme_render_only:
@@ -1131,345 +1137,6 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
             "red": (255, 82, 74) if night else (164, 43, 43),
         }
 
-    def _render_dashboard(self, data, dimensions, settings=None, theme_context=None):
-        width, height = dimensions
-        colors = self._render_colors(theme_context)
-        bg = colors["background"]
-        panel = colors["panel"]
-        border = colors["rule"]
-        ink = colors["ink"]
-        muted = colors["muted"]
-        gold = colors["gold"]
-        cyan = colors["cyan"]
-        green = colors["green"]
-        red = colors["red"]
-
-        image = Image.new("RGB", dimensions, bg)
-        draw = ImageDraw.Draw(image)
-        self._draw_background(draw, width, height, colors["background_stripe"])
-        fonts = {
-            "title": self._font(25, bold=True),
-            "section": self._font(20, bold=True),
-            "body": self._font(15),
-            "small": self._font(13),
-            "skin_label": self._font(14),
-            "tiny": self._font(10),
-            "micro": self._font(9),
-        }
-
-        margin = 22
-        gap = 14
-        top_y = 22
-        top_h = 242
-        left_w = 208
-        center_w = 344
-        left_box = (margin, top_y, margin + left_w, top_y + top_h)
-        center_box = (left_box[2] + gap, top_y, left_box[2] + gap + center_w, top_y + top_h)
-        right_box = (center_box[2] + gap, top_y, width - margin, top_y + top_h)
-        bottom_box = (margin, top_y + top_h + 16, width - margin, height - 24)
-        for box in (left_box, center_box, right_box, bottom_box):
-            self._rect(draw, box, panel, border)
-
-        self._draw_profile(
-            image,
-            draw,
-            data,
-            left_box,
-            fonts,
-            ink,
-            muted,
-            gold,
-            cyan,
-            green,
-            surface=colors["surface"],
-            rule=border,
-        )
-        self._draw_recent(image, draw, data, center_box, fonts, ink, muted, gold, green, red, cyan)
-        self._draw_rank_mastery(
-            image,
-            draw,
-            data,
-            right_box,
-            fonts,
-            ink,
-            muted,
-            gold,
-            green,
-            cyan,
-            bar_fill=colors["bar"],
-        )
-        self._draw_overview(
-            image,
-            draw,
-            data,
-            bottom_box,
-            fonts,
-            ink,
-            muted,
-            gold,
-            green,
-            cyan,
-            red,
-            rule=border,
-        )
-        return image
-
-    def _draw_profile(
-        self,
-        image,
-        draw,
-        data,
-        box,
-        fonts,
-        ink,
-        muted,
-        gold,
-        cyan,
-        green,
-        surface=None,
-        rule=None,
-    ):
-        x0, y0, x1, y1 = box
-        surface = surface or (12, 17, 27)
-        rule = rule or (78, 68, 40)
-        account = data.get("account") or {}
-        summoner = data.get("summoner") or {}
-        ranked = data.get("ranked") or {}
-        game_name = account.get("gameName") or DEFAULT_GAME_NAME
-        tagline = account.get("tagLine") or DEFAULT_TAG_LINE
-        route_text = f"{data.get('platform') or '-'} / {data.get('region') or '-'}"
-        active = bool(data.get("active_game"))
-        status_text = "对局中" if active else "空闲"
-        status_color = green if active else muted
-
-        logo_w = 124
-        logo_left = x0 + (x1 - x0 - logo_w) // 2
-        self._paste_asset_logo(image, LOL_LOGO_FILE, (logo_left, y0 + 9, logo_left + logo_w, y0 + 43))
-        draw.line((x0 + 14, y0 + 53, x1 - 14, y0 + 53), fill=rule, width=1)
-
-        icon_size = 68
-        icon_x = x0 + 15
-        icon_y = y0 + 65
-        icon = self._profile_icon(summoner.get("profileIconId"), data.get("champions") or {}, icon_size)
-        image.paste(icon, (icon_x, icon_y), icon)
-
-        info_x = x0 + 94
-        info_w = x1 - info_x - 14
-        self._single(draw, (info_x, y0 + 63), game_name, fonts["body"], ink, info_w, 9)
-        self._single(draw, (info_x, y0 + 85), f"#{tagline}", fonts["tiny"], muted, info_w, 8)
-        self._single(draw, (info_x, y0 + 104), route_text, fonts["tiny"], cyan, info_w, 8)
-        draw.ellipse((info_x, y0 + 126, info_x + 7, y0 + 133), fill=status_color)
-        self._text(draw, (info_x + 13, y0 + 122), status_text, fonts["small"], status_color)
-
-        stat_y0 = y0 + 147
-        stat_y1 = y0 + 195
-        stat_mid = x0 + 104
-        draw.rectangle(
-            (x0 + 14, stat_y0, x1 - 14, stat_y1),
-            fill=surface,
-            outline=rule,
-            width=1,
-        )
-        draw.line((stat_mid, stat_y0 + 5, stat_mid, stat_y1 - 5), fill=rule, width=1)
-        self._text(draw, (x0 + 23, stat_y0 + 7), "等级", fonts["tiny"], gold)
-        self._single(draw, (x0 + 23, stat_y0 + 22), self._fmt(summoner.get("summonerLevel")), fonts["section"], ink, stat_mid - x0 - 33, 10)
-        self._text(draw, (stat_mid + 11, stat_y0 + 7), "排位", fonts["tiny"], cyan)
-        self._single(draw, (stat_mid + 11, stat_y0 + 22), self._rank_text(ranked) or "暂无", fonts["section"], ink, x1 - stat_mid - 25, 10)
-
-        source_label = str(data.get("source") or "Riot API")
-        source_label = source_label.replace("Riot API", "API").replace("本机记录", "本机").replace(" + ", "+")
-        updated = str(data.get("updated_at") or "-")
-        if len(updated) >= 16 and updated[:2] == "20":
-            updated = updated[5:]
-        self._single(draw, (x0 + 16, y1 - 35), f"来源 {source_label} · {data.get('api_calls', 0)}次", fonts["tiny"], muted, x1 - x0 - 32, 8)
-        self._single(draw, (x0 + 16, y1 - 19), f"更新 {updated}", fonts["tiny"], muted, x1 - x0 - 32, 8)
-
-    def _draw_recent(self, image, draw, data, box, fonts, ink, muted, gold, green, red, cyan):
-        x0, y0, x1, y1 = box
-        self._text(draw, (x0 + 14, y0 + 12), "最近比赛", fonts["section"], ink)
-        champions = data.get("champions") or {}
-        name_x = x0 + 52
-        kda_x = x0 + 213
-        result_x = x0 + 274
-        position_x = x0 + 306
-        headers = [("英雄", name_x), ("K/D/A", kda_x), ("结果", result_x - 2), ("位置", position_x)]
-        for label, x in headers:
-            self._text(draw, (x, y0 + 40), label, fonts["tiny"], muted)
-        y = y0 + 62
-        for match in (data.get("matches") or [])[:5]:
-            if y > y1 - 34:
-                break
-            icon = self._icon_from_url(match.get("champion_icon"), 30, match.get("champion_name"))
-            image.paste(icon, (x0 + 14, y - 2), icon)
-            champion_name = self._champion_full_name_from_match(match, champions)
-            self._single(draw, (name_x, y), champion_name, fonts["small"], ink, kda_x - name_x - 8, 8)
-            self._text(draw, (kda_x, y), f"{match['kills']}/{match['deaths']}/{match['assists']}", fonts["small"], ink)
-            self._text(draw, (result_x, y), "胜" if match.get("win") else "负", fonts["small"], green if match.get("win") else red)
-            self._text(draw, (position_x, y), self._lane_label(match.get("lane")), fonts["tiny"], muted)
-            self._text(draw, (position_x, y + 14), self._relative(match.get("timestamp")), fonts["micro"], muted)
-            y += 35
-        if not data.get("matches"):
-            self._text(draw, (x0 + 16, y0 + 70), "没有可显示的近期比赛", fonts["body"], muted)
-
-    def _draw_rank_mastery(
-        self,
-        image,
-        draw,
-        data,
-        box,
-        fonts,
-        ink,
-        muted,
-        gold,
-        green,
-        cyan,
-        bar_fill=None,
-    ):
-        x0, y0, x1, y1 = box
-        bar_fill = bar_fill or (55, 51, 42)
-        self._text(draw, (x0 + 12, y0 + 12), "排位 / 熟练度", fonts["section"], ink)
-        ranked = data.get("ranked") or {}
-        rank_text = self._rank_text(ranked)
-        lp = int(ranked.get("leaguePoints") or 0) if ranked else 0
-        wins = int(ranked.get("wins") or 0)
-        losses = int(ranked.get("losses") or 0)
-        rate = wins / max(1, wins + losses) * 100 if ranked else 0
-        emblem = self._rank_emblem_image(ranked, 74) if ranked else None
-        if emblem:
-            emblem_x = x0 + 12
-            emblem_y = y0 + 41
-            image.paste(emblem, (emblem_x, emblem_y), emblem)
-            self._single(draw, (emblem_x, emblem_y + emblem.height + 3), rank_text, fonts["tiny"], gold, emblem.width, 7)
-            info_x = emblem_x + emblem.width + 6
-            info_w = max(42, x1 - info_x - 12)
-            self._single(draw, (info_x, y0 + 51), f"{lp} LP", fonts["body"], gold, info_w, 9)
-            self._single(draw, (info_x, y0 + 75), f"{wins}W/{losses}L", fonts["small"], ink, info_w, 8)
-            self._single(draw, (info_x, y0 + 97), f"{rate:.1f}%", fonts["tiny"], green if rate >= 50 else muted, info_w, 8)
-        else:
-            self._single(draw, (x0 + 14, y0 + 48), rank_text or "暂无排位", fonts["title"], gold if ranked else muted, x1 - x0 - 28, 12)
-            self._text(draw, (x0 + 16, y0 + 80), f"{lp} LP · {wins}W/{losses}L", fonts["small"], ink if ranked else muted)
-            self._text(draw, (x0 + 16, y0 + 102), f"胜率 {rate:.1f}%", fonts["small"], green if rate >= 50 else muted)
-        self._text(draw, (x0 + 12, y0 + 140), "常用英雄", fonts["small"], cyan)
-        mastery = data.get("mastery") or []
-        max_points = max([int(item.get("points") or 0) for item in mastery] + [1])
-        y = y0 + 158
-        row_step = 28
-        for item in mastery[:3]:
-            icon = self._icon_from_url(item.get("champion_icon"), 24, item.get("champion_name"))
-            image.paste(icon, (x0 + 12, y), icon)
-            self._single(draw, (x0 + 44, y - 1), item.get("champion_name"), fonts["tiny"], ink, 72, 8)
-            bar_x = x0 + 112
-            bar_right = x1 - 20
-            bar_w = max(10, int((bar_right - bar_x) * int(item.get("points") or 0) / max_points))
-            draw.rectangle((bar_x, y + 9, bar_right, y + 15), fill=bar_fill)
-            draw.rectangle((bar_x, y + 9, bar_x + bar_w, y + 15), fill=gold)
-            self._text(draw, (x0 + 44, y + 12), f"L{item.get('level', 0)} · {self._compact(item.get('points'))}", fonts["micro"], muted)
-            y += row_step
-    def _draw_overview(
-        self,
-        image,
-        draw,
-        data,
-        box,
-        fonts,
-        ink,
-        muted,
-        gold,
-        green,
-        cyan,
-        red,
-        rule=None,
-    ):
-        x0, y0, x1, y1 = box
-        summary = data.get("summary") or {}
-        content_x1, logo_box, art_box = self._overview_layout(box)
-        self._text(draw, (x0 + 14, y0 + 12), f"数据总览（最近 {summary.get('games', 0)} 场）", fonts["section"], cyan)
-        self._paste_asset_logo(image, RIOT_LOGO_FILE, logo_box, tint=(255, 82, 74), remove_light=True)
-        metrics = [
-            ("KDA", f"{summary.get('kda', 0):.2f}", f"{summary.get('kills', 0)}/{summary.get('deaths', 0)}/{summary.get('assists', 0)}", gold),
-            ("胜率", f"{summary.get('winrate', 0):.1f}%", f"{summary.get('wins', 0)} 胜 / {summary.get('losses', 0)} 负", green if summary.get("winrate", 0) >= 50 else red),
-            ("参团率", f"{summary.get('kp', 0):.1f}%", "按近期比赛估算", cyan),
-            ("补刀", f"{summary.get('cs_per_min', 0):.1f}/min", "平均每分钟", gold),
-            ("挑战点数", self._fmt(data.get("challenge_points")), "Challenges", cyan),
-            ("在线状态", "对局中" if data.get("active_game") else "未在对局中", "Spectator-V5", green if data.get("active_game") else muted),
-        ]
-        col_w = (content_x1 - x0 - 28) // 3
-        row_y = y0 + 48
-        for idx, (label, value, sub, color) in enumerate(metrics):
-            col = idx % 3
-            row = idx // 3
-            x = x0 + 14 + col * col_w
-            y = row_y + row * 54
-            self._text(draw, (x, y), label, fonts["tiny"], muted)
-            self._single(draw, (x, y + 15), value, fonts["section"], color, col_w - 12, 11)
-            self._single(draw, (x, y + 39), sub, fonts["tiny"], ink, col_w - 12, 8)
-        selected_skin_art = self._draw_skin_art_feature(
-            image,
-            draw,
-            data,
-            art_box,
-            fonts,
-            ink,
-            muted,
-            gold,
-            cyan,
-            rule=rule,
-        )
-        self._draw_skin_art_label(draw, selected_skin_art, logo_box, box, fonts, ink)
-
-    def _overview_layout(self, box):
-        x0, y0, x1, y1 = box
-        total_w = max(1, x1 - x0)
-        art_w = min(270, max(245, int(total_w * 0.35)))
-        art_box = (x1 - 12 - art_w, y0 + 16, x1 - 12, y1 - 12)
-        logo_w = min(96, max(82, int(total_w * 0.12)))
-        logo_box = (art_box[0] - 22 - logo_w, y1 - 110, art_box[0] - 22, y1 - 69)
-        content_x1 = max(x0 + 320, logo_box[0] - 14)
-        return content_x1, logo_box, art_box
-
-    def _draw_skin_art_feature(
-        self,
-        image,
-        draw,
-        data,
-        box,
-        fonts,
-        ink,
-        muted,
-        gold,
-        cyan,
-        rule=None,
-    ):
-        x0, y0, x1, y1 = box
-        width = max(1, x1 - x0)
-        height = max(1, y1 - y0)
-        selected = self._choose_skin_art(data)
-        raw = self._image_from_url((selected or {}).get("splash_url"), (selected or {}).get("skin_name"))
-        if raw is None:
-            raw = self._placeholder_splash(width, height, (selected or {}).get("champion_name") or "LoL")
-        art = ImageOps.fit(ImageOps.exif_transpose(raw).convert("RGB"), (width, height), method=Image.Resampling.LANCZOS, centering=(0.42, 0.5))
-        image.paste(art, (x0, y0))
-        draw.rectangle(
-            (x0, y0, x1, y1),
-            outline=rule or (236, 232, 206),
-            width=2,
-        )
-        return selected
-
-    def _draw_skin_art_label(self, draw, selected, logo_box, overview_box, fonts, ink):
-        skin_name = str((selected or {}).get("skin_name") or "").strip()
-        if not skin_name:
-            return
-        x0, _y0, x1, y1 = logo_box
-        _ox0, _oy0, _ox1, overview_y1 = overview_box
-        label_x0 = x0 + 7
-        label_x1 = x1 - 4
-        label_y1 = min(overview_y1 - 15, y1 + 42)
-        label_y0 = max(y1 + 17, label_y1 - 20)
-        if label_x1 - label_x0 < 24 or label_y1 - label_y0 < 14:
-            return
-        self._single(draw, (label_x0, label_y0 + 5), skin_name, fonts["skin_label"], ink, label_x1 - label_x0, 8)
-
     def _write_context(self, data, generated_at, refresh_minutes):
         account = data.get("account") or {}
         summary = data.get("summary") or {}
@@ -1503,17 +1170,6 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
             generated_at=datetime.fromtimestamp(float(generated_at), timezone.utc),
             ttl_seconds=int(refresh_minutes) * 60,
         )
-
-    def _profile_icon(self, profile_icon_id, champions, size):
-        base = (champions or {}).get("profile_icon_base") or ""
-        url = f"{base}/{profile_icon_id}.png" if base and str(profile_icon_id or "").isdigit() else ""
-        icon = self._icon_from_url(url, size, "LoL")
-        mask = Image.new("L", (size, size), 0)
-        ImageDraw.Draw(mask).ellipse((0, 0, size - 1, size - 1), fill=255)
-        result = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        result.paste(icon, (0, 0), mask)
-        ImageDraw.Draw(result).ellipse((1, 1, size - 2, size - 2), outline=(236, 190, 78), width=3)
-        return result
 
     def _paste_asset_logo(self, image, filename, box, tint=None, remove_light=False):
         logo = self._asset_logo(filename, (box[2] - box[0], box[3] - box[1]), tint=tint, remove_light=remove_light)
@@ -1711,14 +1367,6 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
                                   label="lol_images", protected=(path,))
         return image
 
-    def _placeholder_splash(self, width, height, label=""):
-        image = Image.new("RGB", (width, height), (12, 14, 22))
-        draw = ImageDraw.Draw(image)
-        for offset in range(-height, width, 18):
-            draw.line((offset, height, offset + height, 0), fill=(35, 36, 44), width=3)
-        draw.rectangle((0, 0, width - 1, height - 1), outline=(255, 205, 54), width=2)
-        return image
-
     def _rank_text(self, ranked):
         if not ranked:
             return ""
@@ -1748,10 +1396,6 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
         if seconds < 86400:
             return f"{int(seconds // 3600)}小时前"
         return f"{int(seconds // 86400)}天前"
-
-    def _stat_line(self, draw, x, y, label, value, fonts, accent, ink, max_x):
-        self._text(draw, (x, y), label, fonts["tiny"], accent)
-        self._single(draw, (x + 50, y - 4), value, fonts["body"], ink, max_x - x - 52, 9)
 
     def _text(self, draw, position, text, font, fill):
         text = str(text)
@@ -1798,12 +1442,6 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
         path = str(getattr(font, "path", "") or "").lower()
         return "bd" in path or "bold" in path
 
-    def _rect(self, draw, box, fill, outline):
-        draw.rectangle(box, fill=fill, outline=outline, width=2)
-
-    def _draw_background(self, draw, width, height, stripe=(18, 16, 20)):
-        return None
-
     def _font(self, size, bold=False, prefer_hangul=False):
         font = get_base_ui_font(int(size), bold=bool(bold))
         if not prefer_hangul or self._font_supports_text(font, "\ud55c"):
@@ -1830,59 +1468,55 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
 
     _font_supports_text = staticmethod(font_supports_text)
 
-    def _settings_for_selected_pro_account(self, settings):
+    def _settings_for_pick(self, settings, pick):
         effective = dict(settings or {})
-        selected = self._select_pro_account(settings)
-        if not selected:
+        if not pick or pick.get("kind") != "lol":
             return effective
+        account = pick["account"]
         effective.update({
-            "gameName": selected["gameName"],
-            "tagLine": selected["tagLine"],
-            "platformRoute": selected["platformRoute"],
-            "regionalRoute": selected["regionalRoute"],
-            "_proAccountLabel": selected["label"],
-            "_proAccountId": selected["id"],
-            "_proAccountPoolSize": selected.get("pool_size", 0),
-            "_proAccountPoolSignature": selected.get("pool_signature", ""),
+            "gameName": account["gameName"],
+            "tagLine": account["tagLine"],
+            "platformRoute": account["platformRoute"],
+            "regionalRoute": account["regionalRoute"],
+            "_proAccountLabel": account["label"],
+            "_proAccountId": account["id"],
+            "_proAccountPoolSize": pick.get("size", 0),
         })
         return effective
 
-    def _select_pro_account(self, settings):
-        accounts = self._pro_accounts(settings)
-        if not accounts:
-            return None
-        pool_ids = [item["id"] for item in accounts]
-        pool_signature = hashlib.sha256("\n".join(pool_ids).encode("utf-8")).hexdigest()[:16]
-        by_id = {item["id"]: item for item in accounts}
-        if len(accounts) == 1:
-            selected = dict(accounts[0])
-            selected["pool_signature"] = pool_signature
-            selected["pool_size"] = 1
-            return selected
-
-        state_path = self._pro_account_rotation_path(pool_signature)
-        state = self._read_json(state_path, {})
-        previous_pool_ids = state.get("pool_ids")
-        queue = [str(item_id) for item_id in (state.get("queue") or []) if str(item_id) in by_id]
-        if previous_pool_ids != pool_ids or not queue:
-            queue = pool_ids[:]
-            random.shuffle(queue)
-
-        selected_id = queue.pop(0)
-        selected = dict(by_id[selected_id])
-        selected["pool_signature"] = pool_signature
-        selected["pool_size"] = len(pool_ids)
-        recent = [str(item_id) for item_id in (state.get("recent") or []) if str(item_id) in by_id]
-        recent.append(selected_id)
-        self._write_json(state_path, {
-            "pool_ids": pool_ids,
-            "queue": queue,
-            "last": selected_id,
-            "recent": recent[-len(pool_ids):],
-            "pool_size": len(pool_ids),
-            "updated_ts": time.time(),
-        })
-        return selected
+    def _generate_cs2_image(self, pick, settings, device_config, theme_render_only):
+        dimensions = self.get_dimensions(device_config)
+        theme_context = self._theme_context(settings, device_config)
+        media_token = _ALLOW_PROVIDER_MEDIA.set(not theme_render_only)
+        try:
+            data = self._cs2_data(pick, refresh=not theme_render_only)
+            image = self._render_cs2_pro(data, dimensions, theme_context, pick)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.error("LoLInfo CS2 page failed: %s", exc)
+            raise RuntimeError(f"LoLInfo CS2 页面生成失败：{exc}") from exc
+        finally:
+            _ALLOW_PROVIDER_MEDIA.reset(media_token)
+        player = data.get("player") or {}
+        if theme_render_only:
+            provenance = SourceProvenance.FRESH_CACHE
+        elif isinstance(player.get("rating"), (int, float)):
+            provenance = SourceProvenance.LIVE
+        else:
+            provenance = SourceProvenance.LOCAL_FALLBACK
+        if not theme_render_only:
+            try:
+                write_context(PLUGIN_ID, {
+                    "kind": "cs2",
+                    "player": {key: player.get(key) for key in ("nick", "name", "team", "rank", "rating", "maps", "roles")},
+                    "board": [{key: row.get(key) for key in ("rank", "nick", "team", "rating")} for row in data.get("board") or []],
+                }, generated_at=datetime.now(timezone.utc), ttl_seconds=12 * 3600)
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.debug("Could not write LoLInfo CS2 context: %s", exc)
+        return attach_source_provenance(image, provenance)
 
     def _pro_accounts(self, settings):
         raw = (settings or {}).get("proAccounts")
@@ -1944,10 +1578,6 @@ class LoLInfo(RefreshOnDisplayPresentationMixin, BasePlugin):
             "platformRoute": platform,
             "regionalRoute": region,
         }
-
-    def _pro_account_rotation_path(self, pool_signature):
-        signature = str(pool_signature or "default").strip() or "default"
-        return self._cache_dir() / f"pro_account_rotation_{signature}.json"
 
     def _with_pro_account_context(self, data, settings):
         if not isinstance(data, dict):

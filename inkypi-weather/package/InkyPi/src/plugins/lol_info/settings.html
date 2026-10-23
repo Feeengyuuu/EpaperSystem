@@ -15,7 +15,12 @@
 <div class="form-group">
   <label class="form-label" for="proAccounts">Pro account rotation</label>
   <textarea id="proAccounts" name="proAccounts" class="form-input" rows="5" spellcheck="false" placeholder="Faker|Hide on bush|KR1|kr|asia">{{ defaultProAccounts }}</textarea>
-  <small>One per line: Label|GameName|TagLine|Platform|Region. Leave empty to use the single Riot ID above.</small>
+  <small>One per line: Label|GameName|TagLine|Platform|Region. These accounts come first; the tracker adds other top pros (each labelled with the player, team and role) up to 20.</small>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="includeCs2" id="includeCs2" value="true" checked> Also track HLTV's Top 20 CS2 players</label>
+  <input type="hidden" name="includeCs2" value="false">
+  <small>Each refresh shows one tracked player at random: a LoL pro's account or a CS2 player from HLTV.</small>
 </div>
 
 <div class="form-group nowrap">
@@ -107,7 +112,7 @@
         const element = document.getElementById(id);
         if (element && pluginSettings[id] !== undefined) element.value = pluginSettings[id];
       });
-      ['includeLatestSkins', 'includeChallenges', 'includeActiveGame', 'useMockData', 'forceRefresh'].forEach((id) => {
+      ['includeCs2', 'includeLatestSkins', 'includeChallenges', 'includeActiveGame', 'useMockData', 'forceRefresh'].forEach((id) => {
         const element = document.getElementById(id);
         if (element && pluginSettings[id] !== undefined) {
           element.checked = pluginSettings[id] === true || pluginSettings[id] === 'true' || pluginSettings[id] === 'on';

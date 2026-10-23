@@ -16,23 +16,6 @@ from plugins.lol_info.lol_info import (  # noqa: E402
 )
 
 
-def test_dashboard_background_layer_stays_flat_for_color_epaper():
-    plugin = LoLInfo({"id": "lol_info"})
-    background = (8, 20, 22)
-    image = Image.new("RGB", (96, 64), background)
-
-    plugin._draw_background(
-        ImageDraw.Draw(image),
-        image.width,
-        image.height,
-        stripe=(16, 31, 34),
-    )
-
-    assert image.getcolors(maxcolors=image.width * image.height) == [
-        (image.width * image.height, background)
-    ]
-
-
 class FakeDeviceConfig:
     def get_resolution(self):
         return (800, 480)
@@ -102,32 +85,20 @@ def test_lol_renderer_uses_original_day_and_injected_night_palette(
     night_theme = _theme_context("night", requested_mode="night")
     auto_theme = _theme_context("night")
 
-    day = plugin._render_dashboard(
-        payload,
-        (800, 480),
-        {"_inkypi_theme": day_theme},
-        day_theme,
-    )
-    night = plugin._render_dashboard(
-        payload,
-        (800, 480),
-        {"_inkypi_theme": night_theme},
-        night_theme,
-    )
-    auto = plugin._render_dashboard(
-        payload,
-        (800, 480),
-        {"_inkypi_theme": auto_theme},
-        auto_theme,
-    )
+    pick = plugin._tracked_pool({"includeCs2": "false"})[0]
+    board = plugin._lol_board({}, FakeDeviceConfig(), refresh=False)
+    day = plugin._render_lol_pro(payload, (800, 480), day_theme, pick, board)
+    night = plugin._render_lol_pro(payload, (800, 480), night_theme, pick, board)
+    auto = plugin._render_lol_pro(payload, (800, 480), auto_theme, pick, board)
 
     assert day.size == night.size == auto.size == (800, 480)
-    assert day.getpixel((420, 10)) == (5, 7, 12)
-    assert night.getpixel((420, 10)) == night_theme["palette"]["background"]
-    assert day.getpixel((22, 22)) == (236, 232, 206)
-    assert night.getpixel((22, 22)) == night_theme["palette"]["rule"]
-    assert auto.getpixel((420, 10)) == auto_theme["palette"]["background"]
-    assert auto.getpixel((22, 22)) == auto_theme["palette"]["rule"]
+    # Outside the panels the page shows its ground; the panels' edges show the rule.
+    assert day.getpixel((797, 300)) == (5, 7, 12)
+    assert night.getpixel((797, 300)) == night_theme["palette"]["background"]
+    assert day.getpixel((408, 300)) == (236, 232, 206)
+    assert night.getpixel((408, 300)) == night_theme["palette"]["rule"]
+    assert auto.getpixel((797, 300)) == auto_theme["palette"]["background"]
+    assert auto.getpixel((408, 300)) == auto_theme["palette"]["rule"]
     assert day.tobytes() != night.tobytes()
 
 
@@ -167,8 +138,9 @@ def test_lol_theme_only_render_uses_expired_cache_and_injected_context(
         calls["context"] += 1
         raise AssertionError("theme-only render ignored injected theme context")
 
-    def fake_render(data, dimensions, settings=None, theme_context=None):
+    def fake_render(data, dimensions, theme_context, pick, board):
         calls["render"] += 1
+        assert pick["account"]["label"] == "Faker" and len(board) == 20
         assert data["source"] == "Mock Riot API"
         assert theme_context == settings["_inkypi_theme"]
         return Image.new("RGB", dimensions, theme_context["palette"]["background"])
@@ -178,7 +150,7 @@ def test_lol_theme_only_render_uses_expired_cache_and_injected_context(
         raise AssertionError("theme-only render rewrote provider context")
 
     plugin._fetch_dashboard_data = fail_fetch
-    plugin._render_dashboard = fake_render
+    plugin._render_lol_pro = fake_render
     plugin._write_context = fail_write_context
     monkeypatch.setattr(lol_info_module, "get_theme_context", fail_context)
 
@@ -193,7 +165,7 @@ def test_lol_theme_only_render_uses_expired_cache_and_injected_context(
 def test_mock_generate_image_renders_branded_dashboard(tmp_path):
     plugin = make_plugin(tmp_path)
 
-    image = plugin.generate_image({"useMockData": "true"}, FakeDeviceConfig())
+    image = plugin.generate_image({"useMockData": "true", "includeCs2": "false"}, FakeDeviceConfig())
 
     assert isinstance(image, Image.Image)
     assert image.size == (800, 480)
@@ -337,17 +309,18 @@ def test_pro_account_rotation_random_queue_removes_displayed_accounts(tmp_path):
         ])
     }
 
-    selected = [plugin._select_pro_account(settings)["label"] for _ in range(3)]
+    settings["includeCs2"] = "false"
+    # The recorded accounts lead and the roster tops the pool up to twenty pros.
+    selected = [plugin._pick(settings)["account"]["label"] for _ in range(20)]
 
-    assert set(selected) == {"A", "B", "C"}
-    assert len(selected) == len(set(selected))
-    state_path = next(tmp_path.glob("pro_account_rotation_*.json"))
-    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert {"A", "B", "C"} <= set(selected) and len(set(selected)) == 20
+    state = json.loads((tmp_path / "pro_pool_rotation.json").read_text(encoding="utf-8"))
     assert state["queue"] == []
-    next_selected = plugin._select_pro_account(settings)
-    assert next_selected["label"] in {"A", "B", "C"}
-    refreshed_state = json.loads(state_path.read_text(encoding="utf-8"))
-    assert len(refreshed_state["queue"]) == 2
+    next_selected = plugin._pick(settings)["account"]["label"]
+    assert next_selected != selected[-1]
+    assert len(json.loads((tmp_path / "pro_pool_rotation.json").read_text(encoding="utf-8"))["queue"]) == 19
+    # A theme redraw shows the same player again.
+    assert plugin._pick(settings, advance=False)["account"]["label"] == next_selected
 
 
 def test_selected_pro_account_settings_override_single_riot_id(tmp_path):
@@ -360,7 +333,8 @@ def test_selected_pro_account_settings_override_single_riot_id(tmp_path):
         "proAccounts": "Chovy|" + chr(0xD5C8) + chr(0xAC70) + chr(0xB369) + "|0303|kr|asia",
     }
 
-    effective = plugin._settings_for_selected_pro_account(settings)
+    pick = next(item for item in plugin._tracked_pool(settings) if item["account"]["label"] == "Chovy")
+    effective = plugin._settings_for_pick(settings, pick)
 
     assert effective["gameName"] == chr(0xD5C8) + chr(0xAC70) + chr(0xB369)
     assert effective["tagLine"] == "0303"
@@ -861,73 +835,6 @@ def test_skin_art_pool_dedupes_owned_and_latest_skins(tmp_path):
     assert pool[0]["pool_source"] == "owned"
 
 
-def test_overview_layout_places_art_large_on_right_and_logo_before_it(tmp_path):
-    plugin = make_plugin(tmp_path)
-
-    content_x1, logo_box, art_box = plugin._overview_layout((22, 280, 778, 456))
-
-    assert content_x1 < logo_box[0]
-    assert logo_box[2] < art_box[0]
-    assert 340 <= logo_box[1] <= 360
-    assert art_box[0] >= 490
-    assert art_box[2] == 766
-    assert art_box[3] == 444
-
-
-def test_overview_draws_selected_skin_name_text_below_riot_logo(tmp_path):
-    plugin = make_plugin(tmp_path)
-    image = Image.new("RGB", (800, 480), (5, 7, 12))
-    draw = ImageDraw.Draw(image)
-    fonts = {
-        "title": plugin._font(25, bold=True),
-        "section": plugin._font(20, bold=True),
-        "body": plugin._font(15),
-        "small": plugin._font(13),
-        "skin_label": plugin._font(14),
-        "tiny": plugin._font(10),
-        "micro": plugin._font(9),
-    }
-    selected = {
-        "id": "Ahri:1",
-        "skin_name": "Arcade Ahri",
-        "champion_name": "Ahri",
-        "splash_url": "https://example.test/ahri.jpg",
-    }
-    plugin._choose_skin_art = lambda _data: selected
-    plugin._image_from_url = lambda _url, _label="": Image.new("RGB", (160, 90), (24, 180, 240))
-    seen = {}
-    original_single = plugin._single
-
-    def record_single(draw_obj, position, text, font, fill, max_width, min_size=8):
-        if text == "Arcade Ahri":
-            seen["skin_label"] = {"position": position, "font_size": getattr(font, "size", None), "min_size": min_size}
-        return original_single(draw_obj, position, text, font, fill, max_width, min_size)
-
-    plugin._single = record_single
-    box = (22, 280, 778, 456)
-    _content_x1, logo_box, _art_box = plugin._overview_layout(box)
-
-    plugin._draw_overview(
-        image,
-        draw,
-        {"summary": {"games": 5}, "skin_art_pool": [selected]},
-        box,
-        fonts,
-        (255, 250, 222),
-        (202, 190, 150),
-        (255, 205, 54),
-        (82, 202, 128),
-        (107, 204, 255),
-        (255, 82, 74),
-    )
-
-    assert seen["skin_label"]["font_size"] == 14
-    assert seen["skin_label"]["min_size"] == 8
-    assert seen["skin_label"]["position"][0] > logo_box[0]
-    assert seen["skin_label"]["position"][1] > logo_box[3]
-    assert image.getpixel((logo_box[0] + 7, logo_box[3] + 22)) != (255, 82, 74)
-
-
 def test_skin_art_choice_rotates_without_immediate_repeat(tmp_path):
     plugin = make_plugin(tmp_path)
     data = {
@@ -989,81 +896,3 @@ def test_rank_emblem_url_uses_communitydragon_shared_image(tmp_path):
 
     assert url == "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-shared-components/global/default/images/grandmaster.png"
     assert plugin._rank_emblem_url({"tier": "UNRANKED"}) == ""
-
-
-def test_rank_mastery_draws_rank_emblem_with_exact_rank_label_below_icon(tmp_path):
-    plugin = make_plugin(tmp_path)
-    image = Image.new("RGB", (800, 480), (5, 7, 12))
-    draw = ImageDraw.Draw(image)
-    fonts = {
-        "title": plugin._font(25, bold=True),
-        "section": plugin._font(20, bold=True),
-        "body": plugin._font(15),
-        "small": plugin._font(13),
-        "skin_label": plugin._font(14),
-        "tiny": plugin._font(10),
-        "micro": plugin._font(9),
-    }
-    ranked = {"tier": "GRANDMASTER", "rank": "I", "leaguePoints": 1684, "wins": 274, "losses": 227}
-    rank_label = plugin._rank_text(ranked)
-    seen = []
-    original_single = plugin._single
-
-    def record_single(draw_obj, position, text, font, fill, max_width, min_size=8):
-        seen.append({"text": str(text), "position": position, "font_size": getattr(font, "size", None), "max_width": max_width, "min_size": min_size})
-        return original_single(draw_obj, position, text, font, fill, max_width, min_size)
-
-    plugin._single = record_single
-    plugin._rank_emblem_image = lambda _ranked, size: Image.new("RGBA", (size, size), (14, 188, 214, 255))
-
-    plugin._draw_rank_mastery(
-        image,
-        draw,
-        {"ranked": ranked, "mastery": []},
-        (602, 22, 778, 264),
-        fonts,
-        (255, 250, 222),
-        (202, 190, 150),
-        (255, 205, 54),
-        (82, 202, 128),
-        (107, 204, 255),
-    )
-
-    rank_record = next(item for item in seen if item["text"] == rank_label)
-    assert rank_record["position"] == (614, 140)
-    assert rank_record["font_size"] == 10
-    assert rank_record["max_width"] == 74
-    assert rank_record["min_size"] == 7
-    assert any(item["text"] == "1684 LP" for item in seen)
-    assert image.getpixel((618, 68)) == (14, 188, 214)
-def test_valid_data_cache_still_rerenders_image_without_refetch(tmp_path):
-    plugin = make_plugin(tmp_path)
-    settings = {}
-    dimensions = (800, 480)
-    cache_key = plugin._cache_key(settings, dimensions, plugin._identity(settings))
-    old_image = tmp_path / "old.png"
-    Image.new("RGB", dimensions, (1, 2, 3)).save(old_image)
-    plugin._write_json(plugin._cache_path(cache_key), {
-        "schema": STYLE_VERSION,
-        "updated_ts": time.time(),
-        "identity": plugin._identity(settings),
-        "image_path": str(old_image),
-        "data": plugin._sample_payload(),
-    })
-
-    def fail_fetch(*_args, **_kwargs):
-        raise AssertionError("cached data should avoid Riot API calls")
-
-    render_calls = []
-
-    def fake_render(data, dimensions, settings=None, theme_context=None):
-        render_calls.append(data)
-        return Image.new("RGB", dimensions, (9, 8, 7))
-
-    plugin._fetch_dashboard_data = fail_fetch
-    plugin._render_dashboard = fake_render
-
-    image = plugin.generate_image(settings, FakeDeviceConfig())
-
-    assert len(render_calls) == 1
-    assert image.getpixel((0, 0)) == (9, 8, 7)

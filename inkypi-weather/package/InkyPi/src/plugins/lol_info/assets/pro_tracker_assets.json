@@ -1,0 +1,109 @@
+{
+  "roles/top.png": {
+    "source": "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-clash/global/default/assets/images/position-selector/positions/icon-position-top.png",
+    "owner": "Riot Games (League of Legends client position icon, via CommunityDragon)",
+    "sha256": "4594885d4c4e313aca44f52f9109c69a56bcc61b8e48e9f125c6545318de8939"
+  },
+  "roles/jungle.png": {
+    "source": "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-clash/global/default/assets/images/position-selector/positions/icon-position-jungle.png",
+    "owner": "Riot Games (League of Legends client position icon, via CommunityDragon)",
+    "sha256": "63bdec37012a563fa3f24119b6e00e404f7f62dbe95fd06ba8fc98e44f688b20"
+  },
+  "roles/mid.png": {
+    "source": "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-clash/global/default/assets/images/position-selector/positions/icon-position-middle.png",
+    "owner": "Riot Games (League of Legends client position icon, via CommunityDragon)",
+    "sha256": "931c54c03b3f5c6c1834353c4361f7c29ffa43cad724786bedb66aecfd9cd1eb"
+  },
+  "roles/bottom.png": {
+    "source": "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-clash/global/default/assets/images/position-selector/positions/icon-position-bottom.png",
+    "owner": "Riot Games (League of Legends client position icon, via CommunityDragon)",
+    "sha256": "0fc922ce4d56f9f97f9361e5bbd23f49c3ca8a725f13d0a300c73a9bce54e22f"
+  },
+  "roles/support.png": {
+    "source": "https://raw.communitydragon.org/latest/plugins/rcp-fe-lol-clash/global/default/assets/images/position-selector/positions/icon-position-utility.png",
+    "owner": "Riot Games (League of Legends client position icon, via CommunityDragon)",
+    "sha256": "0d51dbaa116bf963a43e2cf5c0364a361e051fd264be00144ac59f52b0ce7363"
+  },
+  "cs2-logo.png": {
+    "source": "https://commons.wikimedia.org/wiki/File:Counter-Strike_2_logo.svg",
+    "file": "https://upload.wikimedia.org/wikipedia/commons/b/b8/Counter-Strike_2_logo.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "render": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b8/Counter-Strike_2_logo.svg/960px-Counter-Strike_2_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "license": "Public domain",
+    "sha256": "4a336606e878756d10dbffa2e950fa97eeb0bbf54d85a0f8b1bbcdd115d76335",
+    "asset_sha256": "ae01403544e2f1b6090f2f2044efa085a32d1681bec8108fa13506f80f4d4b8e"
+  },
+  "teams/t1.png": {
+    "copied_from": "plugins/sports_dashboard/assets/logos/lck/t1.png",
+    "provenance": "see plugins/sports_dashboard/assets/logos/lck/manifest.json",
+    "sha256": "6670cb3b92955cb089bcbe9507bc9d4dc0859a4bdcc67ef5f1de1eb4a8ece611"
+  },
+  "teams/gen.png": {
+    "copied_from": "plugins/sports_dashboard/assets/logos/lck/gen.png",
+    "provenance": "see plugins/sports_dashboard/assets/logos/lck/manifest.json",
+    "sha256": "5491bd56454d8c81aa1042eb28c77634263d961265f692b65343e72937e37da0"
+  },
+  "teams/hle.png": {
+    "copied_from": "plugins/sports_dashboard/assets/logos/lck/hle.png",
+    "provenance": "see plugins/sports_dashboard/assets/logos/lck/manifest.json",
+    "sha256": "5bb1907c4df63d486c23fa88f817c10876aa3e5efbd4427f85232833efc11096"
+  },
+  "teams/dk.png": {
+    "copied_from": "plugins/sports_dashboard/assets/logos/lck/dk.png",
+    "provenance": "see plugins/sports_dashboard/assets/logos/lck/manifest.json",
+    "sha256": "2bea2eb85d8cf7a05859e4d56fc657664d32d6171f95097942ede09f494017be"
+  },
+  "teams/blg.png": {
+    "copied_from": "plugins/sports_dashboard/assets/logos/lpl/blg.png",
+    "provenance": "see plugins/sports_dashboard/assets/logos/lpl/manifest.json",
+    "sha256": "86bec7c42ffac90feac3555e2e15741660d734f1168715e88cbc8cbd2404dfe1"
+  },
+  "teams/tes.png": {
+    "copied_from": "plugins/sports_dashboard/assets/logos/lpl/tes.png",
+    "provenance": "see plugins/sports_dashboard/assets/logos/lpl/manifest.json",
+    "sha256": "b45234426fcce4afb03007f0e32517e98d5d9fd57e8a8743bda4d54ab2017a21"
+  },
+  "teams/g2.png": {
+    "copied_from": "plugins/sports_dashboard/assets/logos/cs2/g2.png",
+    "provenance": "see plugins/sports_dashboard/assets/logos/cs2/manifest.json",
+    "sha256": "c26dda8ca545f9451df127ac259fc9cbcdb603714d35d57210be6acbd2d688d0"
+  },
+  "art-cs2-hero.png": {
+    "scene": "sniper rifle, smoke grenade, planted bomb, crosshair, trophy",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "add99c11-ebf1-440e-9294-60430146e29f",
+    "generated": "2026-10-23",
+    "processing": "split into its five props by transparent columns; rifle on top, smoke, bomb, crosshair and trophy below; scaled to 260 px high",
+    "source_sha256": "4ae8da02504a01dfeb576428e31bc9aa4e0bb37f995d3daeb573e754805746e5",
+    "sha256": "1d3dcc3170e03d472a2ff14e1c54b48e46c4f15b090ac48cd45c080b6c7c6ec1",
+    "size": [
+      509,
+      260
+    ]
+  },
+  "art-cs2-filler.png": {
+    "scene": "tactics board, map pin, headset, stopwatch, trophy",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "1a7c11bf-cd4c-4cc7-9532-38d3d494053d",
+    "generated": "2026-10-23",
+    "processing": "cropped to alpha bbox, scaled to 200 px high",
+    "source_sha256": "94d75e63fb55d810ea19c074747c268d3d4cd46e2baff460f9dd3aa317999653",
+    "sha256": "5eb165fb79cbf8e88a3aa1ede77cece8bbdbaa0bc34837076b6573842f3f6a55",
+    "size": [
+      347,
+      200
+    ]
+  },
+  "art-lol-filler.png": {
+    "scene": "crystal on a pedestal, stone tower, health potion, gold coins",
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+    "job_id": "3c8e87fb-94e2-4249-b9ce-b29a1403d733",
+    "generated": "2026-10-23",
+    "processing": "cropped to alpha bbox, scaled to 160 px high",
+    "source_sha256": "bcabeaf301cd57eef4df3f7278a559d5df01ec8cb2223d02540d82ff7ab0dc81",
+    "sha256": "b55ae61e02392be1ecf4db0c431bbf820e67c189e4e865fd39a039cb64e252ff",
+    "size": [
+      304,
+      160
+    ]
+  }
+}
