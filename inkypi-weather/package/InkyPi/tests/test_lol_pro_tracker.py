@@ -11,6 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.lol_info import hltv_players, pro_tracker  # noqa: E402
+from plugins.lol_info import lol_info as lol_info_module  # noqa: E402
 from plugins.lol_info.lol_info import LoLInfo  # noqa: E402
 from plugins.lol_info.pro_roster import LOL_ROSTER, TRACKED_LOL_PLAYERS, tracked_lol_accounts  # noqa: E402
 
@@ -64,6 +65,43 @@ def test_recorded_accounts_lead_and_the_roster_fills_twenty_labelled_pros():
     assert accounts[1]["team"] == "" and len({account["label"] for account in accounts}) == 20
     assert all(account["team"] and account["role"] for account in accounts[2:])
     assert len(LOL_ROSTER) == 20
+
+
+def test_a_saved_account_is_labelled_with_the_player_who_owns_it():
+    # The owner recorded Knight's account under Bin; the roster knows whose it is and adds Bin's own.
+    saved = [{"label": "Bin", "gameName": "BLG 온", "tagLine": "KR1", "platformRoute": "kr"}]
+
+    accounts = tracked_lol_accounts(saved)
+
+    assert (accounts[0]["label"], accounts[0]["team"], accounts[0]["role"]) == ("Knight", "BLG", "MID")
+    bin_account = next(account for account in accounts if account["label"] == "Bin")
+    assert (bin_account["gameName"], bin_account["tagLine"]) == ("빈 스토리", "KR1")
+    assert len(accounts) == TRACKED_LOL_PLAYERS
+
+
+def test_a_renamed_account_is_marked_missing_and_the_next_player_is_shown(plugin, monkeypatch):
+    settings = {"includeCs2": "false"}
+    shown = []
+    gone = {}
+
+    def fetch(effective, _device):
+        if not gone:
+            gone["id"] = effective["_proAccountId"]
+            raise lol_info_module.RiotAccountMissing(f"{effective['gameName']}#{effective['tagLine']}")
+        shown.append(effective["_proAccountId"])
+        return plugin._sample_payload()
+
+    monkeypatch.setattr(plugin, "_fetch_dashboard_data", fetch)
+    monkeypatch.setattr(plugin, "_lol_photo", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(plugin, "_write_context", lambda *_args, **_kwargs: None)
+
+    image = plugin.generate_image(settings, FakeDevice(key=""))
+
+    assert image.size == (800, 480) and len(shown) == 1 and shown[0] != gone["id"]
+    board = plugin._lol_board(settings, FakeDevice(key=""), refresh=False)
+    assert next(row for row in board if row["id"] == gone["id"])["missing"]
+    # The bag passes over it until the ladder refresh finds the account again.
+    assert all(plugin._pick(settings)["account"]["id"] != gone["id"] for _ in range(40))
 
 
 def test_the_pick_is_a_shuffle_bag_over_lol_and_cs2(plugin):

@@ -86,9 +86,11 @@ class ProTrackerMixin:
         if not advance:
             return {**by_id.get(state.get("last"), pool[0]), "position": state.get("position", 1), "size": len(pool)}
         ids = [item["id"] for item in pool]
-        queue = [item for item in state.get("queue") or [] if item in by_id]
+        # An account Riot no longer knows sits out until the ladder refresh finds it again.
+        missing = self._missing_lol_ids()
+        queue = [item for item in state.get("queue") or [] if item in by_id and item not in missing]
         if sorted(state.get("pool_ids") or []) != sorted(ids) or not queue:
-            queue = ids[:]
+            queue = [item for item in ids if item not in missing] or ids[:]
             random.shuffle(queue)
             if len(queue) > 1 and queue[0] == state.get("last"):
                 queue.append(queue.pop(0))
@@ -183,6 +185,17 @@ class ProTrackerMixin:
                          "checked_ts": entry.get("checked_ts")})
         rows.sort(key=lambda row: self._rank_score(row), reverse=True)
         return rows
+
+    def _missing_lol_ids(self):
+        state = self._read_json(self._cache_dir() / LOL_BOARD_STATE, {})
+        return {"lol|" + key for key, entry in state.items() if isinstance(entry, dict) and entry.get("missing")}
+
+    def _mark_lol_missing(self, account):
+        """Record that Riot answered 404 for this Riot ID, for the board and the next picks."""
+        path = self._cache_dir() / LOL_BOARD_STATE
+        state = self._read_json(path, {})
+        state[account["id"]] = {**(state.get(account["id"]) or {}), "missing": True, "checked_ts": time.time()}
+        self._write_json(path, state)
 
     @staticmethod
     def _ladder_entry(ranked):

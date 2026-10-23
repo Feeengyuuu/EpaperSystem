@@ -1,10 +1,11 @@
 """Who the pro tracker follows: twenty LoL pros' solo queue accounts and HLTV's Top 20 CS2 players.
 
 LoL accounts are the best solo queue account each pro is tied to on lolprofile.net/pros
-(which keeps only accounts public pro records tie to the player), checked 2026-10-23.
-The owner's own recorded accounts come first and keep their saved Riot IDs; the roster
-fills the rest up to twenty. The CS2 list is HLTV's Top 20 players of 2025, used when
-HLTV's own page cannot be read.
+(which keeps only accounts public pro records tie to the player), each checked on op.gg's
+pro tag and Leaguepedia's soloqueue IDs on 2026-10-23.
+The owner's own recorded accounts come first and keep their saved Riot IDs; one the roster
+knows is labelled with the player who owns it. The roster fills the rest up to twenty.
+The CS2 list is HLTV's Top 20 players of 2025, used when HLTV's own page cannot be read.
 """
 
 from __future__ import annotations
@@ -14,7 +15,8 @@ TRACKED_LOL_PLAYERS = 20
 # player, team, role, game name, tag line, platform route, regional route
 LOL_ROSTER = (
     ("Faker", "T1", "MID", "Hide on bush", "KR1", "kr", "asia"),
-    ("Bin", "BLG", "TOP", "BLG 온", "KR1", "kr", "asia"),
+    ("Knight", "BLG", "MID", "BLG 온", "KR1", "kr", "asia"),
+    ("Bin", "BLG", "TOP", "빈 스토리", "KR1", "kr", "asia"),
     ("ShowMaker", "DK", "MID", "DK ShowMaker", "KR1", "kr", "asia"),
     ("Chovy", "GEN", "MID", "허거덩", "0303", "kr", "asia"),
     ("Keria", "T1", "SUPPORT", "Ciro", "KR10", "kr", "asia"),
@@ -22,11 +24,10 @@ LOL_ROSTER = (
     ("Kiin", "GEN", "TOP", "kiin", "KR1", "kr", "asia"),
     ("Canyon", "GEN", "JUNGLE", "JUGKlNG", "kr", "kr", "asia"),
     ("Ruler", "GEN", "BOTTOM", "강 철", "샤 넬", "kr", "asia"),
-    ("Duro", "GEN", "SUPPORT", "Duro", "Gen", "kr", "asia"),
     ("Zeus", "HLE", "TOP", "Athene", "lll", "kr", "asia"),
     ("Zeka", "HLE", "MID", "suis", "kr7", "kr", "asia"),
     ("Gumayusi", "HLE", "BOTTOM", "HLE Gumayusi", "0298", "kr", "asia"),
-    ("Kanavi", "HLE", "JUNGLE", "PoAtan", "ASP", "kr", "asia"),
+    ("Kanavi", "HLE", "JUNGLE", "vinaka", "KR1", "kr", "asia"),
     ("Delight", "HLE", "SUPPORT", "플레이리스트겨울", "KR1", "kr", "asia"),
     ("Viper", "BLG", "BOTTOM", "Blue", "KR33", "kr", "asia"),
     ("ON", "BLG", "SUPPORT", "키보드에음료쏟아서고장내는이도윤", "KR1", "kr", "asia"),
@@ -116,14 +117,20 @@ def tracked_lol_accounts(saved):
     """The owner's recorded accounts first, then the roster's other pros, up to twenty players.
 
     ``saved`` are parsed setting entries (label, gameName, tagLine, routes); each is matched
-    to its roster player by label to add the team and role.
+    to its roster player by Riot ID (which also corrects a saved label naming the wrong
+    player), else by label, to add the team and role.
     """
     by_player = {row[0].casefold(): row for row in LOL_ROSTER}
+    by_riot_id = {(row[3].casefold(), row[4].casefold(), row[5]): row for row in LOL_ROSTER}
     accounts, seen = [], set()
     for entry in saved:
-        key = str(entry.get("label") or "").casefold()
-        row = by_player.get(key)
+        row = by_riot_id.get((str(entry.get("gameName") or "").casefold(),
+                              str(entry.get("tagLine") or "").casefold(), entry.get("platformRoute")))
         account = dict(entry)
+        if row:
+            account["label"] = row[0]
+        key = str(account.get("label") or "").casefold()
+        row = row or by_player.get(key)
         account.setdefault("team", row[1] if row else "")
         account.setdefault("role", row[2] if row else "")
         accounts.append(account)

@@ -292,7 +292,7 @@ def test_pro_accounts_parse_default_pool_with_korean_names(tmp_path):
 
     accounts = plugin._pro_accounts({"proAccounts": lol_info_module.DEFAULT_PRO_ACCOUNTS_TEXT})
 
-    assert [account["label"] for account in accounts] == ["Faker", "Bin", "ShowMaker", "Chovy"]
+    assert [account["label"] for account in accounts] == ["Faker", "Knight", "ShowMaker", "Chovy"]
     assert accounts[1]["gameName"] == "BLG " + chr(0xC628)
     assert accounts[3]["gameName"] == chr(0xD5C8) + chr(0xAC70) + chr(0xB369)
     assert all(account["platformRoute"] == "kr" for account in accounts)

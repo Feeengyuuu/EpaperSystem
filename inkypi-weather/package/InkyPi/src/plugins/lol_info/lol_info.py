@@ -40,7 +40,7 @@ DEFAULT_PLATFORM = "kr"
 DEFAULT_REGION = "asia"
 DEFAULT_PRO_ACCOUNTS = [
     {"label": "Faker", "gameName": "Hide on bush", "tagLine": "KR1", "platformRoute": "kr", "regionalRoute": "asia"},
-    {"label": "Bin", "gameName": "BLG \uc628", "tagLine": "KR1", "platformRoute": "kr", "regionalRoute": "asia"},
+    {"label": "Knight", "gameName": "BLG \uc628", "tagLine": "KR1", "platformRoute": "kr", "regionalRoute": "asia"},
     {"label": "ShowMaker", "gameName": "DK ShowMaker", "tagLine": "KR1", "platformRoute": "kr", "regionalRoute": "asia"},
     {"label": "Chovy", "gameName": "\ud5c8\uac70\ub369", "tagLine": "0303", "platformRoute": "kr", "regionalRoute": "asia"},
 ]
@@ -85,6 +85,12 @@ QUEUE_LABELS = {
     "RANKED_FLEX_SR": "灵活排位",
     "RANKED_FLEX_TT": "灵活排位",
 }
+# How many renamed accounts one render passes over before giving up.
+MISSING_ACCOUNT_SKIPS = 3
+
+
+class RiotAccountMissing(RuntimeError):
+    """Riot answered 404 for the Riot ID: the account was renamed or never existed."""
 
 
 class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin, BasePlugin):
@@ -97,7 +103,9 @@ class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin
         return params
 
     def generate_image(self, settings, device_config):
-        settings = settings or {}
+        return self._generate_pick_image(settings or {}, device_config, skipped=0)
+
+    def _generate_pick_image(self, settings, device_config, skipped):
         theme_render_only = self._enabled(settings.get("_theme_render_only"), default=False)
         # A theme redraw shows the same player again; only a real refresh draws the next one.
         pick = self._pick(settings, advance=not theme_render_only)
@@ -180,6 +188,13 @@ class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin
             if not theme_render_only:
                 self._write_context(data, data_updated_ts, refresh_minutes)
             return attach_source_provenance(image, provenance)
+        except RiotAccountMissing as exc:
+            if not pick or skipped >= MISSING_ACCOUNT_SKIPS:
+                raise RuntimeError(f"LoLInfo 生成失败：Riot ID {exc} 不存在") from exc
+            # A renamed account must not blank the page: mark it on the board and show the next player.
+            logger.warning("LoL account %s (%s) not found; showing the next player", exc, pick["account"]["label"])
+            self._mark_lol_missing(pick["account"])
+            return self._generate_pick_image(settings, device_config, skipped + 1)
         except Exception as exc:
             logger.error("LoLInfo generation failed: %s", exc)
             if theme_render_only:
@@ -217,6 +232,8 @@ class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin
                 response = get_http_session().get(f"{base}{path}", headers=headers, params=params or {}, timeout=35)
                 if optional and response.status_code in {404, 403}:
                     return None
+                if response.status_code == 404 and path.startswith("/riot/account/"):
+                    raise RiotAccountMissing(f"{game_name}#{tag_line}")
                 response.raise_for_status()
                 return response.json()
             except Exception:
