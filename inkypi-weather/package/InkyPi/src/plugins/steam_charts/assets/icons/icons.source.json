@@ -1,0 +1,94 @@
+{
+  "generator": "GPT Image 2.5 (owner-generated from the Steam Charts icon prompts, 2026-10-23)",
+  "processing": "cropped to the alpha>16 bounds, squared, LANCZOS to 64px, alpha>=240 made opaque",
+  "icons": {
+    "users": {
+      "source_sha256": "3a8c9451f1994910cfe0da845a4f268a4860ebb25546f03d2b6a38252b0b831d",
+      "source_bounds": [
+        82,
+        91,
+        1172,
+        1180
+      ],
+      "sha256": "47b2f33c3bb9bbb2d7a544a401ac594deceaa6892ca9ce2931c7c9a8a451b03f",
+      "bytes": 6219
+    },
+    "ingame": {
+      "source_sha256": "b8b532517ff4fdfd54360f9218c14f68e61441d61f238633adbba28a3ad1ca70",
+      "source_bounds": [
+        68,
+        80,
+        1186,
+        1204
+      ],
+      "sha256": "8bb8701c476e9b9d60a96cd4fde73ac3701b07fedcf26cbaa6cb65e735b08766",
+      "bytes": 6899
+    },
+    "trending": {
+      "source_sha256": "07cd3d6ad866188886895b8e5a800e13824bf4c0549e270615022456d7395369",
+      "source_bounds": [
+        68,
+        76,
+        1186,
+        1197
+      ],
+      "sha256": "2fd497870e9a21da89e5048357fe11f1759d03cba7af7ae3096cb4ef80789a76",
+      "bytes": 6183
+    },
+    "live": {
+      "source_sha256": "475dad70a97bc1691741c47ec9a68e7ac9dea2cc2c2bdf803647977ef3a261b8",
+      "source_bounds": [
+        59,
+        75,
+        1194,
+        1215
+      ],
+      "sha256": "2f4439414534238cf8f33fdd1215f92e91cc5416e962415e23d59d6d5178be01",
+      "bytes": 5560
+    },
+    "peak": {
+      "source_sha256": "64f8cf7603252c81de39386687b1a1dd2ea0c47f91619899798916ae01ba0a0f",
+      "source_bounds": [
+        44,
+        49,
+        1209,
+        1207
+      ],
+      "sha256": "6efb4b4a146014e84203f2b5d1f975213180faf82dafad258f6ffcfd6f1656a8",
+      "bytes": 6308
+    },
+    "release": {
+      "source_sha256": "69311581bc1a2e4be8ed691d9ba4cd9151d7d54942bca7853f947ae15c34988d",
+      "source_bounds": [
+        65,
+        76,
+        1189,
+        1197
+      ],
+      "sha256": "3c901392f7d99d991bd4a0c1211d4cc6ec619366dcc430733b3c6fa47b457094",
+      "bytes": 5694
+    },
+    "price": {
+      "source_sha256": "fb2b9369b5f849e9996a8b214f5a39d5956574e84b3435432c3a8ca64a651c06",
+      "source_bounds": [
+        46,
+        55,
+        1208,
+        1218
+      ],
+      "sha256": "fb1493d30602a0109a5e2256f451fbb45687ec2b4b2a177a3026c0753a9b0872",
+      "bytes": 5845
+    },
+    "reviews": {
+      "source_sha256": "fc6376a1eb1af4c4d17f0f42fed2c6f328e8c28ca6806a6b2fa70a71b7488e44",
+      "source_bounds": [
+        64,
+        78,
+        1190,
+        1210
+      ],
+      "sha256": "6d7f3ba0106fa92fc8db412a8b5337366223bfad75e1786271a891f95e83c1de",
+      "bytes": 5565
+    }
+  }
+}

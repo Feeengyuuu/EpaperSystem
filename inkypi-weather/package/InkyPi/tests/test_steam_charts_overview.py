@@ -1,5 +1,6 @@
 """The native live overview: Steam-wide totals, store facts, peaks and the two boards."""
 
+import json
 import sys
 from pathlib import Path
 
@@ -73,6 +74,19 @@ def test_counts_read_in_wan_and_yi():
 def test_trending_chip_shows_steamcharts_own_gain():
     assert overview_page.LiveOverviewMixin._overview_change({"change_24h_fmt": "+1,424.3%", "change_24h": -11.8}) == 1424.3
     assert overview_page.LiveOverviewMixin._overview_change({"change_24h_fmt": "--", "change_24h": 5.0}) == 5.0
+
+
+def test_every_overview_icon_is_a_generated_badge_with_its_provenance():
+    names = ("users", "ingame", "trending", "live", "peak", "release", "price", "reviews")
+    record = json.loads((overview_page.ICON_DIR / "icons.source.json").read_text(encoding="utf-8"))
+
+    assert set(record["icons"]) == set(names)
+    for name in names:
+        icon = overview_page._icon(name, 18)
+        assert icon is not None and icon.size == (18, 18) and icon.mode == "RGBA"
+        # A round badge: clear corners, an opaque middle.
+        assert icon.getpixel((0, 0))[3] == 0 and icon.getpixel((9, 9))[3] == 255
+    assert overview_page._icon("no-such-icon", 18) is None
 
 
 def test_overview_draws_both_boards_with_totals_and_store_facts(monkeypatch):

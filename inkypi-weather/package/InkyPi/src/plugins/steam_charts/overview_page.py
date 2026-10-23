@@ -9,6 +9,7 @@ average, and the player count over its own trend line.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
@@ -30,6 +31,19 @@ ACCENTS = {
 
 def _blend(colour, other, amount):
     return tuple(round(a * amount + b * (1 - amount)) for a, b in zip(colour, other))
+
+
+@lru_cache(maxsize=32)
+def _icon(name, size):
+    """The badge at this size, decoded once per process (the rows reuse three of them)."""
+    path = ICON_DIR / f"{name}.png"
+    if not path.is_file():
+        return None
+    try:
+        with Image.open(path) as source:
+            return ImageOps.contain(source.convert("RGBA"), (size, size), method=Image.Resampling.LANCZOS)
+    except (OSError, ValueError):
+        return None
 
 
 def wan(value):
@@ -64,15 +78,10 @@ class LiveOverviewMixin:
     # -- pieces ----------------------------------------------------------------------
     def _overview_icon(self, image, draw, name, fallback, xy, size, colour, colors):
         """A generated icon from assets/icons when present, else the flat procedural one."""
-        path = ICON_DIR / f"{name}.png"
-        if path.is_file():
-            try:
-                with Image.open(path) as source:
-                    icon = ImageOps.contain(source.convert("RGBA"), (size, size), method=Image.Resampling.LANCZOS)
-                image.paste(icon, (int(xy[0]), int(xy[1])), icon)
-                return
-            except (OSError, ValueError):
-                pass
+        icon = _icon(name, size)
+        if icon is not None:
+            image.paste(icon, (int(xy[0]), int(xy[1])), icon)
+            return
         draw_icon(draw, fallback, xy, size, colour, colors["paper"])
 
     def _overview_header(self, image, draw, totals, colors, updated_at_text):
