@@ -661,13 +661,16 @@ def _count(image, color):
     return sum(1 for pixel in image.get_flattened_data() if pixel == tuple(color))
 
 
-def test_white_on_transparent_team_logo_gets_a_dark_backdrop_on_the_light_theme():
+def test_white_team_logo_takes_the_page_ink_without_a_backdrop_on_the_light_theme():
     plugin = _plugin()
 
     white = _draw_logo_from_png(plugin, _logo_png((255, 255, 255, 255)), DAY_COLORS["panel"])
     blue = _draw_logo_from_png(plugin, _logo_png((0, 92, 185, 255)), DAY_COLORS["panel"])
 
-    assert _count(white, DAY_COLORS["text"]) > 40
+    # The white mark itself turns to ink, and nothing is drawn beyond the logo's own shape.
+    footprint = 80 * 80 - _count(blue, DAY_COLORS["panel"])
+    assert 40 < _count(white, DAY_COLORS["text"]) <= footprint
+    assert _count(white, (255, 255, 255)) == 0
     assert _count(blue, DAY_COLORS["text"]) == 0
 
 
@@ -692,7 +695,7 @@ def test_light_logo_flag_is_measured_on_the_decoded_source():
     dark_thumbnail = Image.new("RGBA", (16, 9), (40, 40, 40, 255))
     dark_thumbnail.putpixel((0, 0), (0, 0, 0, 0))
     dark_thumbnail.info[TEAM_LOGO_LIGHT_INFO_KEY] = True
-    assert SportsDashboard._team_logo_needs_dark_backdrop(dark_thumbnail) is True
+    assert SportsDashboard._team_logo_needs_ink(dark_thumbnail) is True
 
 
 def test_worlds_header_emblem_uses_the_theme_ink_at_night():

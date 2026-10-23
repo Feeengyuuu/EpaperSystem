@@ -139,7 +139,7 @@ def test_team_without_any_logo_gets_a_solid_acronym_badge(monkeypatch, palette):
     assert ink == ((0, 0, 0) if fill in {(255, 255, 0), (0, 255, 0)} else (255, 255, 255))
 
 
-def test_white_team_logo_gets_a_dark_backdrop_on_the_light_board(monkeypatch):
+def test_white_team_logo_shows_in_ink_without_a_backing_on_the_light_board(monkeypatch):
     plugin = SportsDashboard({"id": "sports_dashboard"})
     with Image.new("RGBA", (30, 30), (0, 0, 0, 0)) as logo:
         ImageDraw.Draw(logo).rectangle((8, 8, 21, 21), fill=(255, 255, 255, 255))
@@ -150,8 +150,8 @@ def test_white_team_logo_gets_a_dark_backdrop_on_the_light_board(monkeypatch):
             with Image.new("RGB", (60, 60), board) as canvas:
                 event = {"series": "CS", "team_a": "White", "team_a_logo": "https://cdn.pandascore.co/white.png"}
                 plugin._draw_valve_team_icon(canvas, ImageDraw.Draw(canvas), event, "a", 10, 10, 30)
-                assert canvas.getpixel((25, 25)) == (255, 255, 255)
-                assert sum(canvas.getpixel((14, 25))) < sum(board) - 150, "the white mark needs a darker backing"
+                assert canvas.getpixel((25, 25)) == common.DAY_COLORS["text"]
+                assert canvas.getpixel((14, 25)) == board, "no backing is drawn around the mark"
         finally:
             common._ACTIVE_COLORS.reset(token)
 

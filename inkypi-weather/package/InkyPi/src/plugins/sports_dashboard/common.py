@@ -166,9 +166,12 @@ OFFSEASON_HUB_DEFAULT_LIVE_WINDOW = timedelta(hours=5)
 OFFSEASON_HUB_START_DETECTION_WINDOW = timedelta(minutes=30)
 OFFSEASON_HUB_PGA_POST_EVENT_WINDOW = timedelta(hours=18)
 TEAM_LOGO_FETCH_TIMEOUT_SECONDS = 2
-# Logos made for dark backgrounds (mostly near-white strokes) get a dark
-# backdrop on the light theme so they do not vanish into the card.
+# Logos made for dark backgrounds (mostly near-white strokes) take the page ink
+# on the light theme, like a team's own on-light version, instead of vanishing
+# into the card; no backdrop is added behind any logo.
 TEAM_LOGO_LIGHT_PIXEL_LUMINANCE = 225
+TEAM_LOGO_INK_MIN_LUMINANCE = 150
+TEAM_LOGO_INK_MAX_CHROMA = 48
 TEAM_LOGO_LIGHT_PIXEL_FRACTION = 0.6
 TEAM_LOGO_LIGHT_PROBE_SIZE = 128
 TEAM_LOGO_LIGHT_INFO_KEY = "inkypi_light_on_transparent"
@@ -3860,13 +3863,7 @@ class SportsDashboardCommonMixin:
         if logo:
             paste_x = draw_x + (draw_size - logo.width) // 2
             paste_y = draw_y + (draw_size - logo.height) // 2
-            if self._team_logo_needs_dark_backdrop(logo):
-                pad = max(2, draw_size // 12)
-                draw.rounded_rectangle(
-                    (paste_x - pad, paste_y - pad, paste_x + logo.width + pad - 1, paste_y + logo.height + pad - 1),
-                    radius=max(3, draw_size // 6),
-                    fill=COLORS["text"],
-                )
+            logo = self._team_logo_for_panel(logo)
             image.paste(logo, (paste_x, paste_y), logo)
             return
         draw.rounded_rectangle((draw_x, draw_y, draw_x + draw_size, draw_y + draw_size), radius=4, fill=COLORS["panel_gold"], outline=COLORS["border"], width=1)
@@ -3876,7 +3873,25 @@ class SportsDashboardCommonMixin:
 
 
     @staticmethod
-    def _team_logo_needs_dark_backdrop(logo):
+    def _team_logo_for_panel(logo):
+        """The team's own logo; one drawn white for dark backgrounds shows its white in the page ink."""
+        if not SportsDashboard._team_logo_needs_ink(logo):
+            return logo
+        rgb = logo.convert("RGB")
+        red, green, blue = rgb.split()
+        chroma = ImageChops.subtract(ImageChops.lighter(ImageChops.lighter(red, green), blue),
+                                     ImageChops.darker(ImageChops.darker(red, green), blue))
+        # Only the white and pale-grey strokes change; any coloured detail keeps its colour.
+        whites = ImageChops.multiply(
+            rgb.convert("L").point(lambda value: 255 if value >= TEAM_LOGO_INK_MIN_LUMINANCE else 0),
+            chroma.point(lambda value: 255 if value <= TEAM_LOGO_INK_MAX_CHROMA else 0),
+        )
+        inked = Image.composite(Image.new("RGB", logo.size, COLORS["text"]), rgb, whites).convert("RGBA")
+        inked.putalpha(logo.getchannel("A"))
+        return inked
+
+    @staticmethod
+    def _team_logo_needs_ink(logo):
         panel = COLORS["panel"]
         if 0.299 * panel[0] + 0.587 * panel[1] + 0.114 * panel[2] < 128:
             return False

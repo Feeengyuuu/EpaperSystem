@@ -1429,13 +1429,7 @@ class EsportsRenderMixin:
         if logo:
             paste_x = int(x) + (int(size) - logo.width) // 2
             paste_y = int(y) + (int(size) - logo.height) // 2
-            if self._team_logo_needs_dark_backdrop(logo):
-                pad = max(2, int(size) // 12)
-                draw.rounded_rectangle(
-                    (paste_x - pad, paste_y - pad, paste_x + logo.width + pad - 1, paste_y + logo.height + pad - 1),
-                    radius=max(3, int(size) // 6),
-                    fill=COLORS["text"],
-                )
+            logo = self._team_logo_for_panel(logo)
             image.paste(logo, (paste_x, paste_y), logo)
             return
         self._draw_valve_team_badge(draw, event, side, x, y, size)
