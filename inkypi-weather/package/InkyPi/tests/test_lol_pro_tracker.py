@@ -276,3 +276,15 @@ def test_both_pages_render_with_the_shown_player_highlighted(plugin):
     gold = plugin._render_colors({"mode": "night"})["gold"]
     # The first board cell (the shown player in both) carries the gold highlight outline.
     assert lol.getpixel((418, 210)) == gold or gold in {lol.getpixel((x, 196)) for x in range(416, 600)}
+
+
+def test_each_turn_in_the_rotation_prepares_a_new_pro_before_display():
+    manifest = json.loads((Path(lol_info_module.__file__).with_name("plugin-info.json")).read_text(encoding="utf-8"))
+
+    # The device keeps display-triggered provider work off by default; this plugin is an audited exception,
+    # so its next player is fetched and drawn just before its turn on screen.
+    assert manifest["refresh_on_display"] is True
+    assert manifest["capabilities"]["supports_presentation_refresh"] is True
+    assert manifest["capabilities"]["allows_display_triggered_provider_refresh"] is True
+    plugin = LoLInfo({"id": "lol_info"})
+    assert plugin.presentation_mode({"refreshOnDisplay": True}).name == "PREPARED_BANK"
