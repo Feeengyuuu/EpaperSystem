@@ -177,6 +177,7 @@ SECTION_TITLE_WORDMARK_FILES = {
     "LIVE NOW": "liveradar_section_live_now.png",
     "LIVE TOO": "liveradar_section_live_too.png",
     "OFFLINE": "liveradar_section_offline.png",
+    "REPLAY": "liveradar_section_replay.png",
 }
 # Largest offline doodle drawn in a compact card's free space.
 COMPACT_PLACEHOLDER_SIZE = (150, 24)
@@ -214,6 +215,12 @@ LIVE_QUEUE_ONE_ROW_MAX = 5
 LIVE_WALL_OFFLINE_MIN_W = 176
 OFFLINE_LIST_MIN_ROW_H = 24
 OFFLINE_CARDS_MIN_W = 300
+# Replays get a wall of their own beside a slim OFFLINE list once the right
+# column has room for both; the wall keeps the LIVE TOO tiles in a replay frame.
+OFFLINE_SLIM_MIN_W = 150
+REPLAY_SECTION_MIN_W = 190
+REPLAY_SECTION_SHARE = 0.55
+REPLAY_FRAME_WIDTH = 3
 LIVE_QUEUE_MIN_TILE_H = 40
 LIVE_QUEUE_NAME_STRIP_H = 15
 LIVE_QUEUE_BRAND_LINE_H = 3
@@ -1342,7 +1349,9 @@ class LiveRadar(BasePlugin):
         if landscape_wall:
             wall_count = min(len(queued_live_cards), LIVE_QUEUE_MAX_ITEMS)
             wall_rows = min(2, max(1, int((bottom_h - 24) // LIVE_QUEUE_MIN_TILE_H)))
-            widest_wall = row_w - LIVE_WALL_OFFLINE_MIN_W
+            # Replays need room for a slim OFFLINE and their own wall on the right.
+            right_min = OFFLINE_SLIM_MIN_W + col_gap + REPLAY_SECTION_MIN_W if replay_cards else LIVE_WALL_OFFLINE_MIN_W
+            widest_wall = row_w - right_min
             if (
                 wall_count <= LIVE_QUEUE_ONE_ROW_MAX
                 and wall_count * LIVE_QUEUE_ROW_TILE_MIN_W <= widest_wall
@@ -1356,6 +1365,13 @@ class LiveRadar(BasePlugin):
             live_w = offline_w = int(row_w / 2)
         live_queue_box = (margin, bottom_y, live_w, bottom_h)
         offline_box = (margin + live_w + col_gap, bottom_y, offline_w, bottom_h)
+        replay_box = None
+        if replay_cards and offline_w >= OFFLINE_SLIM_MIN_W + col_gap + REPLAY_SECTION_MIN_W:
+            replay_w = max(REPLAY_SECTION_MIN_W, int((offline_w - col_gap) * REPLAY_SECTION_SHARE))
+            replay_w = min(replay_w, offline_w - col_gap - OFFLINE_SLIM_MIN_W)
+            offline_list_w = offline_w - col_gap - replay_w
+            replay_box = (offline_box[0] + offline_list_w + col_gap, bottom_y, replay_w, bottom_h)
+            offline_box = (offline_box[0], bottom_y, offline_list_w, bottom_h)
         live_queue_max = LIVE_QUEUE_MAX_ITEMS
         live_queue_count = self._live_queue_visible_count(live_queue_box, len(queued_live_cards), live_queue_max)
 
@@ -1412,7 +1428,7 @@ class LiveRadar(BasePlugin):
                 live_queue_box,
                 "SNAPSHOT MINI",
                 self._snapshot_mini_candidates(
-                    replay_cards + offline_cards + error_cards,
+                    (offline_cards + error_cards) if replay_box else (replay_cards + offline_cards + error_cards),
                     live_cards[:live_limit],
                     max_items=4,
                 ),
@@ -1423,7 +1439,21 @@ class LiveRadar(BasePlugin):
                 caption="quiet slots",
                 live_count=len(live_cards),
             )
-        if landscape_wall and offline_w < OFFLINE_CARDS_MIN_W:
+        if replay_box:
+            self._draw_live_queue_section(
+                image,
+                draw,
+                replay_box,
+                "REPLAY",
+                replay_cards,
+                theme,
+                max_items=LIVE_QUEUE_MAX_ITEMS,
+                avatar_cache_seconds=avatar_cache_seconds,
+                show_snapshot=show_snapshots,
+                snapshot_cache_seconds=snapshot_cache_seconds,
+                replay=True,
+            )
+        if replay_box or (landscape_wall and offline_w < OFFLINE_CARDS_MIN_W):
             self._draw_offline_list_section(
                 image,
                 draw,
@@ -1891,7 +1921,10 @@ class LiveRadar(BasePlugin):
         show_snapshot=True,
         snapshot_cache_seconds=90,
         live_total=None,
+        replay=False,
     ):
+        """A wall of cover tiles. ``replay`` frames it in the replay amber and
+        leaves spare cells empty instead of the who-is-live tile."""
         x, y, w, h = box
         sub_font = self._font(13, "bold")
         self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font)
@@ -1940,7 +1973,7 @@ class LiveRadar(BasePlugin):
                 avatar_cache_seconds=avatar_cache_seconds,
             )
         last = len(visible) % columns
-        if last:
+        if last and not replay:
             # Free cells only ever sit at the end of the last row: one tile says who is live.
             status = (
                 col_edges[last],
@@ -1953,12 +1986,16 @@ class LiveRadar(BasePlugin):
             )
         for edge in col_edges[1:-1]:
             # The status tile spans its cells, so no divider runs through it.
-            lower = row_edges[-2] if last and edge > col_edges[last] else bottom
+            lower = row_edges[-2] if last and not replay and edge > col_edges[last] else bottom
             draw.line((edge, top, edge, lower), fill=theme["line"], width=1)
         for edge in row_edges[1:-1]:
             draw.line((left, edge, right, edge), fill=theme["line"], width=1)
         self._clip_outside_round(image, wall, LIVE_QUEUE_RADIUS, theme["bg"])
-        self._rounded_rectangle(draw, wall, radius=LIVE_QUEUE_RADIUS, outline=theme["line"], width=1)
+        if replay:
+            self._rounded_rectangle(draw, wall, radius=LIVE_QUEUE_RADIUS, outline=STATUS_TOTAL_FILLS["replay"],
+                                    width=REPLAY_FRAME_WIDTH)
+        else:
+            self._rounded_rectangle(draw, wall, radius=LIVE_QUEUE_RADIUS, outline=theme["line"], width=1)
 
         if len(cards) > len(visible):
             self._draw_text_right(draw, f"+{len(cards) - len(visible)}", x + w, y, sub_font, theme["muted"])
@@ -2257,6 +2294,8 @@ class LiveRadar(BasePlugin):
             )
         if card["status"] == "live":
             self._draw_uptime_chip(draw, x + w - 4, strip_top - 4, card)
+        elif card["status"] == "replay":
+            self._draw_replay_chip(draw, x + w - 5, y + 5)
 
         draw.rectangle((x, strip_top, x + w - 1, y + h - 1), fill=theme["panel"])
         body_top = strip_top + LIVE_QUEUE_BRAND_LINE_H
@@ -2318,6 +2357,14 @@ class LiveRadar(BasePlugin):
         chip = (right - text_w - 6, bottom - 11, right, bottom)
         self._rounded_rectangle(draw, chip, radius=3, fill=placeholder_art.BLACK)
         draw.text((chip[0] + 3, chip[1] - 1), text, fill=placeholder_art.WHITE, font=font)
+
+    def _draw_replay_chip(self, draw, right, top):
+        """An amber 'REPLAY' tag pinned to a replay tile's cover."""
+        font = self._font(8, "bold")
+        text_w = int(draw.textlength("REPLAY", font=font))
+        chip = (right - text_w - 8, top, right, top + 12)
+        self._rounded_rectangle(draw, chip, radius=3, fill=STATUS_TOTAL_FILLS["replay"], outline=placeholder_art.BLACK)
+        draw.text((chip[0] + 4, chip[1]), "REPLAY", fill=placeholder_art.BLACK, font=font)
 
     @staticmethod
     def _clip_outside_round(image, box, radius, colour):

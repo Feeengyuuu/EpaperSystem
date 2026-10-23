@@ -1,0 +1,45 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "generated": "2026-10-23",
+  "source": "opaque PNG, 1536x1024",
+  "processing": "scaled to 768x512 with LANCZOS, JPEG quality 88",
+  "rendering": "an event without a usable poster shows its segment's artwork (music alternates by event id)",
+  "placeholders": {
+    "music_a.jpg": {
+      "scene": "rock concert from the crowd under stage lights",
+      "job_id": "dddf51b0-f151-412a-b438-46b337b3e735",
+      "source_sha256": "5f7fd9bf9c2790ac20efe583bb6fe3483675badfeaabac31d2617ff4f404e539",
+      "sha256": "aa9d85bb1837561e2f995078b1bb77711f4a33354fdcae7babdd822805f23bfc"
+    },
+    "music_b.jpg": {
+      "scene": "music club with a DJ booth and a jazz trio",
+      "job_id": "885b5a96-8c5e-4730-b9e8-b40b5bcd6296",
+      "source_sha256": "118e30be774bf819397269af13d77a8b9a008da04f2427c6e57e1360c451de94",
+      "sha256": "411f35f78445cf5c897ec25f5342c226dfc5db809085f0e0ecf2bfd9e59673ed"
+    },
+    "sports.jpg": {
+      "scene": "packed arena at game night",
+      "job_id": "c15b7fb5-194b-48df-b110-730680e293f2",
+      "source_sha256": "1b81e308793d125e17e02f3efdc9dbe83f0968a39f8c377e2755775f6dd5f977",
+      "sha256": "c96a24c92335e7a1df4aa8d7be85ca2f07df28477e15dbf5d4b6a98d2f069a59"
+    },
+    "arts_theatre.jpg": {
+      "scene": "theatre stage with velvet curtains, a dancer and an actor",
+      "job_id": "af2ac80d-6ca8-4e15-bf14-4cc69ad79e09",
+      "source_sha256": "53fe18f39a476b5567f696b4501946827eb21adfb095ff5b3ce235f9d9893e0a",
+      "sha256": "9d9f312f271352f86c3159c0585c98faf0b7581234cf20c0245f8b6df80519d8"
+    },
+    "film.jpg": {
+      "scene": "vintage cinema with a projector beam and popcorn",
+      "job_id": "c9ecb522-8287-44ec-9ace-4bf7fbaf49fb",
+      "source_sha256": "825d7ac5f01c9fabc12384eea2fb90743a25729605146c6f521530b83da32f82",
+      "sha256": "a5151229147a29f5ecaaf311c7b5cbce4a2f6733cd1265bf63191e19a6b7f9f6"
+    },
+    "miscellaneous.jpg": {
+      "scene": "evening fairground with a ferris wheel and an ice rink",
+      "job_id": "797df58f-1411-419e-82e8-c4ae8f0a3969",
+      "source_sha256": "6e3b8524649d0207670a5a6297060e1efdff54abceed149b661b208575f8fd39",
+      "sha256": "e5c02008151e7808c857d485d87677c74b62b36c8fd2815fe1c5d9645f4633f0"
+    }
+  }
+}

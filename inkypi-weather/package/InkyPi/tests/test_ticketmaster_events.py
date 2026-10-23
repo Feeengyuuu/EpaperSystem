@@ -898,3 +898,19 @@ def test_plugin_info_and_settings_defaults_are_declared():
     assert '<option value="3" selected>3 hours</option>' in settings
     assert 'name="themeMode"' not in settings
     assert "getElementById('themeMode')" not in settings
+
+
+def test_event_without_a_poster_shows_its_segments_generated_artwork():
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({"_inkypi_theme": _canonical_theme("day")})
+
+    def artwork(segment, event_id):
+        event = TicketmasterEvent(rank=1, title="No poster", segment=segment, event_id=event_id)
+        return plugin._placeholder_event_image(event, (80, 48), colors)
+
+    sports = artwork("Sports", "a")
+    assert sports.size == (768, 512)
+    assert artwork("Sports", "b").tobytes() == sports.tobytes()
+    music = {artwork("Music", f"event-{index}").tobytes() for index in range(12)}
+    assert len(music) == 2
+    assert artwork("Undefined", "x").tobytes() == artwork("Miscellaneous", "y").tobytes()

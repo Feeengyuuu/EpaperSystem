@@ -45,6 +45,16 @@ POSTER_CACHE_BUDGET = CacheBudget(
     max_files=64,
     max_bytes=16 * 1024 * 1024,
 )
+# Artwork for an event without a usable poster, by Ticketmaster segment; a
+# segment with two pieces alternates them by event id.
+PLACEHOLDER_DIR = Path(__file__).with_name("placeholders")
+SEGMENT_PLACEHOLDERS = {
+    "music": ("music_a", "music_b"),
+    "sports": ("sports",),
+    "arts & theatre": ("arts_theatre",),
+    "film": ("film",),
+}
+DEFAULT_PLACEHOLDER = ("miscellaneous",)
 DEFAULT_POSTAL_CODE = "94539"
 DEFAULT_CITY = "Fremont"
 DEFAULT_STATE_CODE = "CA"
@@ -656,8 +666,14 @@ class TicketmasterEvents(BoxOfficeTopMovies):
             return None
 
     def _placeholder_event_image(self, event, size, colors):
-        w, h = size
         key = hashlib.sha256((event.event_id or event.title).encode("utf-8")).digest()
+        choices = SEGMENT_PLACEHOLDERS.get((event.segment or "").strip().lower(), DEFAULT_PLACEHOLDER)
+        try:
+            with Image.open(PLACEHOLDER_DIR / f"{choices[key[3] % len(choices)]}.jpg") as artwork:
+                return artwork.convert("RGB")
+        except OSError:
+            pass
+        w, h = size
         base = (36 + key[0] // 7, 36 + key[1] // 8, 36 + key[2] // 8)
         if colors["mode"] == "paper":
             base = (180 + key[0] // 6, 176 + key[1] // 8, 166 + key[2] // 10)

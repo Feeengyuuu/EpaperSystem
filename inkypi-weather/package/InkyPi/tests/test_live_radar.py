@@ -4093,3 +4093,60 @@ def test_status_tile_spanning_two_cells_has_no_divider_through_it():
     # The centred caption may cross the old divider column, so sample the tile's free top and bottom edges.
     edges = [*range(top + 1, top + 4), *range(top + height - 4, top + height - 1)]
     assert all(image.getpixel((middle_divider, y)) == theme["panel"] for y in edges)
+
+
+def _replay_cards(count):
+    return [dict(card, id=f"replay{index}", status="replay", title="Replay")
+            for index, card in enumerate(_live_cards(count, platform="bilibili"))]
+
+
+@pytest.mark.parametrize("live", [3, 7])
+def test_replays_get_a_framed_wall_beside_a_slim_offline_list(live):
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    walls, slim, compact, mini = [], [], [], []
+
+    def queue(_image, _draw, box, title, cards, _theme, max_items, **kwargs):
+        walls.append((title, box, [card["id"] for card in cards], kwargs.get("replay", False)))
+        return len(cards)
+
+    plugin._draw_live_queue_section = queue
+    plugin._draw_offline_list_section = lambda _image, _draw, box, *_args, **_kwargs: slim.append(box)
+    plugin._draw_compact_section = lambda *_args, **_kwargs: compact.append(True)
+    plugin._draw_snapshot_mini_section = lambda _i, _d, _b, _t, cards, *_a, **_k: mini.extend(card["id"] for card in cards)
+
+    cards = _live_cards(live) + _replay_cards(5) + _offline_cards(4)
+    plugin._render_dashboard(cards, (800, 480), theme, datetime.now(timezone.utc), False, None)
+
+    replay = [wall for wall in walls if wall[0] == "REPLAY"]
+    assert len(replay) == 1 and replay[0][3] is True
+    assert replay[0][2] == [f"replay{index}" for index in range(5)]
+    assert slim and not compact
+    offline_box, replay_box = slim[0], replay[0][1]
+    assert offline_box[0] + offline_box[2] < replay_box[0]
+    assert replay_box[2] >= 190 and offline_box[2] >= 150
+    assert not any(card_id.startswith("replay") for card_id in mini)
+
+
+def test_without_replays_the_offline_column_keeps_its_layout():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    titles = []
+    plugin._draw_live_queue_section = lambda _i, _d, _b, title, cards, *_a, **_k: titles.append(title) or len(cards)
+    plugin._render_dashboard(_live_cards(7) + _offline_cards(4), (800, 480), theme, datetime.now(timezone.utc), False, None)
+
+    assert "REPLAY" not in titles
+
+
+def test_replay_tiles_carry_a_replay_tag_and_the_wall_an_amber_frame():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "dark"}, FakeDeviceConfig())
+    image = Image.new("RGB", (400, 200), theme["bg"])
+    draw = ImageDraw.Draw(image)
+    plugin._draw_live_queue_section(image, draw, (10, 10, 220, 170), "REPLAY", _replay_cards(4), theme, 12,
+                                    show_snapshot=False, replay=True)
+
+    amber = STATUS_TOTAL_FILLS["replay"]
+    pixels = set(image.crop((10, 34, 230, 180)).get_flattened_data())
+    assert amber in pixels
+    assert image.getpixel((11, 100)) == amber
