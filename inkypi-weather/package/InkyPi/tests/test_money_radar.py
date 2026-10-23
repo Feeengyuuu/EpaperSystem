@@ -300,3 +300,20 @@ def test_price_text_scales_decimals():
     assert price_text(3512.4) == "$3,512"
     assert price_text(23.456) == "$23.46"
     assert price_text(0.12345) == "$0.1235"
+
+
+@pytest.mark.parametrize("key", ["cpi", "unemployment", "dxy", "gold", "fed_funds", "mortgage30"])
+def test_every_macro_indicator_has_its_own_icon(key):
+    icon = money_render._asset(f"macro-{key}", money_render.MACRO_ICON_SIZE)
+    assert icon is not None and icon.height <= money_render.MACRO_ICON_SIZE
+    assert icon.getchannel("A").getextrema()[0] == 0
+
+
+def test_macro_tiles_put_the_icon_before_the_title():
+    canvas = PageCanvas(money_render._palette({}), family="Microsoft YaHei")
+    payload = {"macro": {"data": {"cpi": {"value": 3.7, "previous": 3.4, "period": "2026-09"}, "source": "BLS"}},
+               "markets": {"data": {"quotes": {"GC=F": {"last": 4030.0, "month_ago": 4318.0}}}}}
+    money_render._macro_tiles(canvas, payload)
+    # The cart's warm red-orange sits left of where the title text starts.
+    corner = canvas.image.crop((408, 206, 430, 226)).convert("RGB")
+    assert any(r > 180 and g < 140 for r, g, _b in corner.get_flattened_data())

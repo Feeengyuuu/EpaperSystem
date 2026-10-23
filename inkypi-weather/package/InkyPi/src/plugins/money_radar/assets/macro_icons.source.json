@@ -1,0 +1,62 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "generated": "2026-10-23",
+  "processing": "cropped to the alpha bounding box, scaled to 96 px on the long side with LANCZOS, alpha kept",
+  "rendering": "macro tile icons left of the title, drawn 18 px high",
+  "icons": {
+    "macro-cpi.png": {
+      "job_id": "e04642e6-44ce-4e04-a69f-79440b0dcb7b",
+      "source_sha256": "a5ec5b5cac514643b15b8f6e2b40189b02c1c39c20e6e46cb354a255c7d8c319",
+      "sha256": "bec981b0a11db540db741d5525fe9f6a8e7a48b1b0e926af1a21c860ae5650a2",
+      "size": [
+        96,
+        95
+      ]
+    },
+    "macro-unemployment.png": {
+      "job_id": "889f3ccd-2fed-4cba-8605-5f8040e8e2c6",
+      "source_sha256": "b9a6442c84722aba7c71d42d8d29cdf83ae6719682fe4497c196c957a3ad75ad",
+      "sha256": "02f018641359b06461513ea38cddee1bc012f1f15dae70d8c108056f61b159f5",
+      "size": [
+        96,
+        87
+      ]
+    },
+    "macro-dxy.png": {
+      "job_id": "5b9ae797-50c5-4378-8c11-03c39946e578",
+      "source_sha256": "703aa9b9271d463631ccc0d6e78f8f5471f25f78543d87e7094702f175e69d6d",
+      "sha256": "3517dd138e7e18c3fac9957c3ef32a7210db719f74ae846ee805dfd8bb823334",
+      "size": [
+        96,
+        96
+      ]
+    },
+    "macro-gold.png": {
+      "job_id": "4ec2f438-ada5-4012-b68e-56b9caa67396",
+      "source_sha256": "8e4b1da14fc72ab247013aa42c677e45622f1ea36d4f1656452c328304a1941e",
+      "sha256": "d7d8eb89e115d910a2655bdde8f4275cd06df0233a376e8b5343195cc5ba0e2a",
+      "size": [
+        96,
+        63
+      ]
+    },
+    "macro-fed_funds.png": {
+      "job_id": "9b0538dc-a893-4160-99f2-2fa784c13f5b",
+      "source_sha256": "d1462655fc5cfd1d7b4691bff7105cf9fe660e8a7b1b10962828b7dec5cef8d5",
+      "sha256": "da8669b16fd15ab602587e61f70747834ea3914542354b828dd8ea2ac7c32a36",
+      "size": [
+        96,
+        92
+      ]
+    },
+    "macro-mortgage30.png": {
+      "job_id": "ee493c07-82b3-436f-b929-5edd04b2dd1b",
+      "source_sha256": "1c235177e4f5367bc3f5e96c6e220e5039f7f5fd215891e3a24b7d833de2af06",
+      "sha256": "a19d20498c862a1721b014d2e7802b6aa6bc41099f3c3c4f28fb0175370e0694",
+      "size": [
+        96,
+        89
+      ]
+    }
+  }
+}

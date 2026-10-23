@@ -32,6 +32,7 @@ NIGHT = {
     "badge_ink": "#0e171f",
 }
 COIN_NAMES = {"bitcoin": "比特币", "ethereum": "以太坊", "solana": "Solana"}
+MACRO_ICON_SIZE = 18
 # Ticker chips in each brand's own published colour, as is (no snapping to the panel's
 # inks): (fill, text, outline). Brands whose colours are close keep apart by the shape of
 # their mark: Nintendo is a red outlined pill, SpaceX black on white, Apple plain black.
@@ -280,24 +281,27 @@ def _macro_tiles(canvas, payload):
     for key, label, unit in (("cpi", "CPI 同比", "%"), ("unemployment", "失业率", "%")):
         item = macro.get(key)
         if item and item.get("value") is not None:
-            tiles.append((label, f"{item['value']:.1f}{unit}", item.get("previous"), item["value"],
+            tiles.append((key, label, f"{item['value']:.1f}{unit}", item.get("previous"), item["value"],
                           f"{str(item.get('period'))[-2:].lstrip('0')} 月 · {macro.get('source', '')}"))
     if macro.get("fed_funds") or macro.get("mortgage30"):
         for key, label in (("fed_funds", "联邦基金利率"), ("mortgage30", "30 年房贷利率")):
             item = macro.get(key)
             if item:
-                tiles.append((label, f"{item['value']:.2f}%", item.get("previous"), item["value"], "FRED"))
+                tiles.append((key, label, f"{item['value']:.2f}%", item.get("previous"), item["value"], "FRED"))
     else:
-        for symbol, label, fmt in (("DX-Y.NYB", "美元指数", "{:.1f}"), ("GC=F", "黄金", "${:,.0f}")):
+        for key, symbol, label, fmt in (("dxy", "DX-Y.NYB", "美元指数", "{:.1f}"), ("gold", "GC=F", "黄金", "${:,.0f}")):
             quote = quotes.get(symbol)
             if quote:
-                tiles.append((label, fmt.format(quote["last"]), quote["month_ago"], quote["last"], "30 天"))
-    for index, (label, value, previous, current, note) in enumerate(tiles[:4]):
+                tiles.append((key, label, fmt.format(quote["last"]), quote["month_ago"], quote["last"], "30 天"))
+    for index, (key, label, value, previous, current, note) in enumerate(tiles[:4]):
         column, row = index % 2, index // 2
         left = 400 + column * 197
         top = 204 + row * 64
         canvas.draw.rounded_rectangle((left, top, left + 191, top + 58), radius=6, outline=canvas.color("rule"))
-        canvas.text((left + 10, top + 13), label, 13, anchor="lm", width=110)
+        # Each indicator carries its own picture (cart, briefcase, dollar coin, gold bars, bank, house).
+        icon = _asset(f"macro-{key}", MACRO_ICON_SIZE)
+        label_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 13 - icon.height // 2)) + 5 if icon else 0)
+        canvas.text((label_x, top + 13), label, 13, anchor="lm", width=left + 118 - label_x)
         canvas.text((left + 181, top + 13), note, 11, "muted", anchor="rm", bold=False, width=80)
         canvas.text((left + 10, top + 39), value, 22, anchor="lm")
         if previous is not None:
