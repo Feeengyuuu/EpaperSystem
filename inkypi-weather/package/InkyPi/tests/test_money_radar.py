@@ -306,7 +306,10 @@ def test_price_text_scales_decimals():
 def test_every_macro_indicator_has_its_own_icon(key):
     icon = money_render._asset(f"macro-{key}", money_render.MACRO_ICON_SIZE)
     assert icon is not None and icon.height <= money_render.MACRO_ICON_SIZE
-    assert icon.getchannel("A").getextrema()[0] == 0
+    assert icon.getchannel("A").getextrema()[1] == 255
+    # The stored artwork keeps a transparent background (a card icon only at its rounded corners).
+    with money_render.Image.open(money_render.ASSETS / f"macro-{key}.png") as source:
+        assert source.convert("RGBA").getchannel("A").getextrema()[0] == 0
 
 
 def test_macro_tiles_put_the_icon_before_the_title():
