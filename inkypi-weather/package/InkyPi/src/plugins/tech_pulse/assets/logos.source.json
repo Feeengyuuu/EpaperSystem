@@ -1,0 +1,53 @@
+{
+  "logo-hn.png": {
+    "source": "https://commons.wikimedia.org/wiki/File:Y_Combinator_logo.svg",
+    "file": "https://upload.wikimedia.org/wikipedia/commons/b/b2/Y_Combinator_logo.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "render": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b2/Y_Combinator_logo.svg/250px-Y_Combinator_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "license": "Public domain",
+    "sha256": "54e1c4cb0f8cbab458f3933fe5bfb603e56b2523069ac5ddaacfbdf5b22cbc09",
+    "processing": "cropped to alpha bbox, fitted to 64 px with LANCZOS",
+    "asset_sha256": "b17913be1d057c8549366b49d4c8200dcb8ff658548547983668e3fd47c016c2",
+    "size": [
+      64,
+      64
+    ]
+  },
+  "logo-github.png": {
+    "source": "https://commons.wikimedia.org/wiki/File:Octicons-mark-github.svg",
+    "file": "https://upload.wikimedia.org/wikipedia/commons/9/91/Octicons-mark-github.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "render": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/91/Octicons-mark-github.svg/250px-Octicons-mark-github.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "license": "MIT",
+    "sha256": "e029c64fd999eba783547fd6b5d23cbbd3826e4b3d564baefe27f7ff85aad4b4",
+    "processing": "cropped to alpha bbox, fitted to 64 px with LANCZOS",
+    "asset_sha256": "6be653df7b535b091595beb8f9bc45e6a8eadf105d7cf7cf82973ee466b7aa2d",
+    "size": [
+      64,
+      62
+    ]
+  },
+  "logo-huggingface.png": {
+    "source": "https://commons.wikimedia.org/wiki/File:Hf-logo-without-title.svg",
+    "file": "https://upload.wikimedia.org/wikipedia/commons/3/3f/Hf-logo-without-title.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "render": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3f/Hf-logo-without-title.svg/250px-Hf-logo-without-title.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+    "license": "Public domain",
+    "sha256": "1aee9068cc3a2153edcd2049910e7feb513ec5e04f751b5ad5a07b4bceba4763",
+    "processing": "cropped to alpha bbox, fitted to 64 px with LANCZOS",
+    "asset_sha256": "ae429638154111b3851a0499f3436535ad5a106af65aa85e39b8d0e04cd12422",
+    "size": [
+      64,
+      60
+    ]
+  },
+  "logo-skills.png": {
+    "source": "https://www.skills.sh/",
+    "file": "https://www.skills.sh/favicon.ico (256x256 frame)",
+    "license": "site icon, used to label the skills.sh data",
+    "sha256": "2b8ad2d33455a8f736fc3a8ebf8f0bdea8848ad4c0db48a2833bd0f9cd775932",
+    "processing": "cropped to alpha bbox, fitted to 64 px with LANCZOS",
+    "asset_sha256": "fbe77c8f4aa1ab2441f407dbdc361934212fbbcf32523486b3f2508f343c09d9",
+    "size": [
+      64,
+      64
+    ]
+  }
+}

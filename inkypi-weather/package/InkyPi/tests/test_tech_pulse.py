@@ -22,6 +22,8 @@ except ModuleNotFoundError:
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.tech_pulse import tech_pulse as tech_pulse_module  # noqa: E402
+from plugins.tech_pulse import trends  # noqa: E402
+from plugins.ai_ecosystem_pulse.ai_ecosystem_pulse import AiEcosystemPulse  # noqa: E402
 from plugins.tech_pulse.tech_pulse import (  # noqa: E402
     CACHE_SCHEMA_VERSION,
     HN_DOCS_URL,
@@ -102,6 +104,7 @@ class FakeSession:
 def _plugin(tmp_path):
     plugin = TechPulse({"id": "tech_pulse"})
     plugin._cache_dir = lambda create=True: tmp_path
+    plugin._data_dir = lambda create=True: tmp_path
     return plugin
 
 
@@ -426,9 +429,9 @@ def test_render_page_returns_nonblank_800x480_and_draws_labels(tmp_path, monkeyp
     original_story_list = plugin._draw_story_list
     original_preview = plugin._draw_hn_story_preview
 
-    def capture(draw, xy, text, font, fill):
+    def capture(draw, xy, text, font, fill, **kwargs):
         drawn.append(str(text))
-        return original(draw, xy, text, font, fill)
+        return original(draw, xy, text, font, fill, **kwargs)
 
     def capture_story_list(draw, box, story_list, *args):
         story_list_ranks.extend(story.get("rank") for story in story_list)
@@ -442,14 +445,15 @@ def test_render_page_returns_nonblank_800x480_and_draws_labels(tmp_path, monkeyp
     monkeypatch.setattr(plugin, "_draw_story_list", capture_story_list)
     monkeypatch.setattr(plugin, "_draw_hn_story_preview", capture_preview)
 
-    image = plugin._render_page((800, 480), payload, {}, now)
+    image = plugin._render_page((800, 480), payload, {}, now, _ai_boards(), {})
 
     assert isinstance(image, Image.Image)
     assert image.size == (800, 480)
     assert image.getbbox() is not None
     assert len(image.getcolors(maxcolors=1_000_000)) > 8
-    assert "Hacker News v0 current signal" in drawn
-    assert "HN TOP 5" in drawn
+    assert {"HACKER NEWS", "AGENT SKILLS", "HUGGING FACE", "GITHUB"} <= set(drawn)
+    assert {"hyperframes", "acme/tiny-ocr", "morluto/rea"} <= set(drawn)
+    assert "+6.5k/24H" in drawn and "NEW" in drawn
     assert story_list_ranks == [2, 3]
     assert preview_urls == ["https://example.com/sqlite"]
 
@@ -742,9 +746,8 @@ def test_story_row_text_stays_inside_row_without_overlap(tmp_path, monkeypatch):
     image = Image.new("RGB", (800, 480), (0, 0, 0))
     draw = ImageDraw.Draw(image)
     palette = plugin._palette({})
-    row_font = plugin._load_font("Jost", 14, "bold")
-    small_font = plugin._load_font("Jost", 12)
-    label_font = plugin._load_font("Jost", 12, "bold")
+    fonts = {name: plugin._load_font("Jost", size, weight) for name, (size, weight) in tech_pulse_module.FONT_SPECS.items()}
+    now = datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc)
     story = plugin._parse_story_item(
         _story(
             99,
@@ -752,52 +755,27 @@ def test_story_row_text_stays_inside_row_without_overlap(tmp_path, monkeypatch):
             score=1234,
             descendants=567,
         ),
-        now=datetime(2026, 6, 27, 12, 0, tzinfo=timezone.utc),
+        now=now,
     )
     story["rank"] = 5
     boxes = []
     original = plugin._draw_text
 
-    def capture(local_draw, xy, text, font, fill):
-        bbox = local_draw.textbbox(xy, str(text), font=font)
-        boxes.append((str(text), bbox))
-        return original(local_draw, xy, text, font, fill)
+    def capture(local_draw, xy, text, font, fill, **kwargs):
+        boxes.append((str(text), local_draw.textbbox(xy, str(text), font=font, anchor=kwargs.get("anchor"))))
+        return original(local_draw, xy, text, font, fill, **kwargs)
 
     monkeypatch.setattr(plugin, "_draw_text", capture)
-    row_box = (390, 180, 760, 227)
+    row_box = (26, 270, 392, 316)
 
-    plugin._story_row(draw, row_box, story, {}, palette, row_font, small_font, label_font, 1.0)
+    plugin._story_row(draw, row_box, story, {}, palette, fonts, {}, now)
 
+    assert {"5", "1.2k", "567"} <= {text for text, _bbox in boxes}
     for _, bbox in boxes:
         assert bbox[0] >= row_box[0]
         assert bbox[1] >= row_box[1]
         assert bbox[2] <= row_box[2]
         assert bbox[3] <= row_box[3]
-
-
-def test_metric_card_labels_and_values_are_centered(tmp_path, monkeypatch):
-    plugin = _plugin(tmp_path)
-    image = Image.new("RGB", (240, 90), (0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    palette = plugin._palette({})
-    label_font = plugin._load_font("Jost", 12, "bold")
-    metric_font = plugin._load_font("Jost", 17, "bold")
-    box = (20, 20, 180, 68)
-    centers = {}
-    original = plugin._draw_text
-
-    def capture(local_draw, xy, text, font, fill):
-        bbox = local_draw.textbbox(xy, str(text), font=font)
-        centers[str(text)] = (bbox[0] + bbox[2]) / 2
-        return original(local_draw, xy, text, font, fill)
-
-    monkeypatch.setattr(plugin, "_draw_text", capture)
-
-    plugin._metric_card(draw, box, "COMMENTS", "742", palette, label_font, metric_font, 1.0)
-
-    expected_center = (box[0] + box[2]) / 2
-    assert abs(centers["COMMENTS"] - expected_center) <= 1.5
-    assert abs(centers["742"] - expected_center) <= 1.5
 
 
 def test_generate_image_uses_payload_and_returns_image(tmp_path, monkeypatch):
@@ -808,9 +786,149 @@ def test_generate_image_uses_payload_and_returns_image(tmp_path, monkeypatch):
     payload = plugin._build_payload("topstories", [story], "local_sample", now, [HN_DOCS_URL])
     monkeypatch.setattr(plugin, "_now_for_device", lambda device: now)
     monkeypatch.setattr(plugin, "_payload", lambda settings, current: payload)
-    monkeypatch.setattr(plugin, "_write_context", lambda payload, current: None)
+    monkeypatch.setattr(plugin, "_ai_payload", lambda settings, device, current: _ai_boards())
+    monkeypatch.setattr(plugin, "_write_context", lambda *_args: None)
 
     image = plugin.generate_image({}, FakeDeviceConfig())
 
     assert isinstance(image, Image.Image)
     assert image.size == (800, 480)
+
+
+def _ai_boards(states=None):
+    return {
+        "skills": [
+            {"rank": 1, "name": "hyperframes", "source": "heygen-com/hyperframes", "installs": 23700,
+             "installs_display": "23.7K"},
+            {"rank": 5, "name": "find-skills", "source": "vercel-labs/skills", "installs": 21100,
+             "installs_display": "21.1K"},
+        ],
+        "models": [{"id": "acme/tiny-ocr", "pipeline_tag": "image-text-to-text", "trending_score": 2147,
+                    "likes": 2509, "downloads_30d": 57715}],
+        "repos": [
+            {"id": 1, "full_name": "morluto/rea", "stars": 371228, "language": "TypeScript", "stars_24h": 6530},
+            {"id": 2, "full_name": "stablyai/orca", "stars": 103426, "language": "TypeScript", "stars_24h": None},
+        ],
+        "status": {"aggregate": "LIVE",
+                   "sources": states or {"skills": "live", "huggingface": "live", "github": "live"}},
+    }
+
+
+def test_trend_history_keeps_one_point_per_hour_and_measures_a_day():
+    now = datetime(2026, 10, 23, 12, 30, tzinfo=timezone.utc)
+    points = []
+    for hours_ago, score in ((24 * 8, 5), (30, 100), (24, 200), (2, 900), (1.84, 950), (0, 1000), (-1, 9999)):
+        points = trends.record(points, {"score": score}, (now - timedelta(hours=hours_ago)).isoformat(), now)
+
+    # Past the week and in the future are dropped; two snapshots in one hour keep the later one.
+    assert trends.series(points, "score", now) == [100, 200, 950, 1000]
+    assert trends.change(points, "score", now) == (800, 24.0)
+    assert trends.change(points[-1:], "score", now) is None
+    board = trends.prune({"old": points[:1], "new": points, "gone": []}, {"new"}, now)
+    assert set(board) == {"old", "new"}
+
+
+def test_history_snapshots_each_fetch_once_and_theme_renders_only_read(tmp_path):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+    story = plugin._parse_story_item(_story(7, "Tracked story", score=300), now=now)
+    story["rank"] = 1
+    payload = plugin._build_payload("topstories", [story], "live", now - timedelta(hours=2), [HN_DOCS_URL])
+    ai = {**_ai_boards({"skills": "live", "huggingface": "fixture", "github": "live"}),
+          "_fetched_at": {"skills": (now - timedelta(hours=3)).isoformat()}}
+
+    state = plugin._history(payload, ai, now)
+    again = plugin._history(payload, ai, now)
+
+    assert again["hn"]["7"] == state["hn"]["7"] and len(state["hn"]["7"]) == 1
+    assert state["hn"]["7"][0]["v"] == {"score": 300, "comments": 25}
+    assert set(state["skills"]) == {"heygen-com/hyperframes/hyperframes", "vercel-labs/skills/find-skills"}
+    # Demo rows stand in for a failed source and are never recorded as history.
+    assert state["models"] == {}
+    before = (tmp_path / "trends.json").read_bytes()
+    plugin._write_json = lambda *_args: pytest.fail("a theme render must not write history")
+    assert plugin._history(payload, ai, now, record=False)["hn"]["7"] == state["hn"]["7"]
+    assert (tmp_path / "trends.json").read_bytes() == before
+
+
+def test_story_velocity_prefers_snapshots_over_the_average_since_posting(tmp_path):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+    story = {"id": 3, "score": 400, "age_hours": 8}
+    history = {"3": [{"t": (now - timedelta(hours=2)).isoformat(), "v": {"score": 340}},
+                     {"t": now.isoformat(), "v": {"score": 400}}]}
+
+    assert plugin._rate_text(*plugin._velocity(story, {}, now)) == "~50/h"
+    assert plugin._rate_text(*plugin._velocity(story, history, now)) == "+30/h"
+
+
+def test_boards_hide_demo_rows_and_say_they_are_unavailable(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    demo = _ai_boards({"skills": "fixture", "huggingface": "live", "github": "stale_cache"})
+
+    assert plugin._board_rows(demo, "skills", "skills") is None
+    assert plugin._board_rows(demo, "github", "repos")[0]["full_name"] == "morluto/rea"
+    assert plugin._board_rows(None, "huggingface", "models") is None
+    drawn = []
+    original = plugin._draw_text
+
+    def capture(draw, xy, text, font, fill, **kwargs):
+        drawn.append(str(text))
+        return original(draw, xy, text, font, fill, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_text", capture)
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+    payload = plugin._local_sample_payload("topstories", 5, None, now, "key")
+    plugin._render_page((800, 480), payload, {}, now, None, {})
+    assert drawn.count("暂时无法获取") == 3
+
+
+def test_dark_source_marks_turn_light_on_the_night_page(tmp_path):
+    plugin = _plugin(tmp_path)
+    night, day = (12, 17, 28), (245, 240, 226)
+
+    assert plugin._mark_luminance(plugin._logo("github", 16, night)) > 180
+    assert plugin._mark_luminance(plugin._logo("github", 16, day)) < 60
+    red, _green, blue = plugin._logo("hn", 16, night).convert("RGB").getpixel((2, 13))
+    assert red > 200 and blue < 80
+
+
+def test_wordmark_lettering_takes_the_ink_on_a_light_page(tmp_path):
+    plugin = _plugin(tmp_path)
+    source = plugin._load_title_wordmark()
+    inked = plugin._ink_pale_lettering(source, (24, 27, 31))
+
+    assert plugin._mark_luminance(source) > 150
+    assert plugin._mark_luminance(inked) < 110
+
+    def orange(image):
+        return sum(1 for r, g, b, a in image.get_flattened_data() if a > 200 and r > 200 and 90 < g < 190 and b < 60)
+
+    assert orange(inked) == orange(source) > 0
+
+
+def test_ai_boards_carry_fetch_times_and_star_history(tmp_path, monkeypatch):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path / "data"))
+    now = datetime(2026, 10, 23, 12, 0, tzinfo=timezone.utc)
+    plugin = TechPulse({"id": "tech_pulse"})
+
+    assert plugin._ai_payload({"_theme_render_only": True}, FakeDeviceConfig(), now) is None
+    assert not (tmp_path / "cache").exists() and not (tmp_path / "data").exists()
+
+    monkeypatch.setattr(AiEcosystemPulse, "_payload", lambda _self, _settings, _device, _now: _ai_boards())
+    source = AiEcosystemPulse({"id": "ai_ecosystem_pulse"})
+    source._write_json(source._cache_dir() / "skills.json", {"fetched_at": "2026-10-23T10:00:00+00:00"})
+    source._write_json(source._data_dir() / "github-stars.json",
+                       {"1": [{"captured_at": "2026-10-23T11:00:00+00:00", "stars": 370000}]})
+    ai = plugin._ai_payload({}, FakeDeviceConfig(), now)
+
+    assert ai["_fetched_at"] == {"skills": "2026-10-23T10:00:00+00:00", "huggingface": None, "github": None}
+    assert ai["_star_history"]["morluto/rea"][0]["stars"] == 370000
+    assert ai["_star_history"]["stablyai/orca"] == []
+
+    def broken(*_args):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr(AiEcosystemPulse, "_payload", broken)
+    assert plugin._ai_payload({}, FakeDeviceConfig(), now) is None

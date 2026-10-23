@@ -146,6 +146,34 @@ def _arrow(direction):
     return draw_arrow
 
 
+def _comment(draw, x, y, s, color, knockout):
+    draw.rounded_rectangle(_p(x, y, s, [(0.04, 0.1), (0.96, 0.72)]), radius=max(1, s * 0.16), fill=color)
+    draw.polygon(_p(x, y, s, [(0.22, 0.6), (0.48, 0.66), (0.2, 0.94)]), fill=color)
+    for left in (0.24, 0.44, 0.64):
+        draw.rectangle(_p(x, y, s, [(left, 0.36), (left + 0.12, 0.48)]), fill=knockout)
+
+
+def _heart(draw, x, y, s, color, knockout):
+    draw.ellipse(_p(x, y, s, [(0.04, 0.1), (0.54, 0.6)]), fill=color)
+    draw.ellipse(_p(x, y, s, [(0.46, 0.1), (0.96, 0.6)]), fill=color)
+    draw.polygon(_p(x, y, s, [(0.07, 0.46), (0.93, 0.46), (0.5, 0.94)]), fill=color)
+
+
+def _star(draw, x, y, s, color, knockout):
+    points = []
+    for index in range(10):
+        radius = 0.48 if index % 2 == 0 else 0.2
+        angle = math.radians(-90 + index * 36)
+        points.append((0.5 + radius * math.cos(angle), 0.54 + radius * math.sin(angle)))
+    draw.polygon(_p(x, y, s, points), fill=color)
+
+
+def _download(draw, x, y, s, color, knockout):
+    draw.rectangle(_p(x, y, s, [(0.4, 0.04), (0.6, 0.42)]), fill=color)
+    draw.polygon(_p(x, y, s, [(0.18, 0.38), (0.82, 0.38), (0.5, 0.72)]), fill=color)
+    draw.rectangle(_p(x, y, s, [(0.06, 0.82), (0.94, 0.96)]), fill=color)
+
+
 def _paper(draw, x, y, s, color, knockout):
     draw.polygon(_p(x, y, s, [(0.14, 0.02), (0.64, 0.02), (0.88, 0.26), (0.88, 0.98), (0.14, 0.98)]), fill=color)
     draw.polygon(_p(x, y, s, [(0.64, 0.02), (0.64, 0.26), (0.88, 0.26)]), fill=knockout)
@@ -287,7 +315,7 @@ ICONS = {
     "paper": _paper, "gift": _gift, "trophy": _trophy, "rocket": _rocket, "pulse": _pulse,
     "outage": _cross, "maintenance": _wrench, "leaf": _leaf, "bug": _bug, "bird": _bird,
     "mushroom": _mushroom, "spider": _spider, "paw": _paw, "lizard": _lizard, "fish": _fish, "frog": _frog,
-    "snail": _snail,
+    "snail": _snail, "comment": _comment, "heart": _heart, "star": _star, "download": _download,
 }
 
 

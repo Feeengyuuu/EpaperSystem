@@ -5,13 +5,13 @@ import logging
 import math
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html import unescape
 from pathlib import Path
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps, ImageStat
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import PresentationMode
@@ -19,11 +19,15 @@ from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     attach_source_provenance,
 )
+from plugins.ai_ecosystem_pulse.ai_ecosystem_pulse import AiEcosystemPulse
 from plugins.context_cache import write_context
+from plugins.tech_pulse import trends
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import DEFAULT_FONT_FAMILY, bounded_int, coerce_bool, get_available_font_names, get_font
+from utils.flat_icons import draw_icon
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
+from utils.local_wordmark import paste_header_art
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,46 @@ FEED_LABELS = {
     "newstories": "New Stories",
 }
 USER_AGENT = "InkyPi TechPulse/1.0 (+https://github.com/HackerNews/API)"
+# The AI boards come from AI Ecosystem Pulse's sources and caches, so both pages share
+# one fetch schedule and GitHub's star history.
+AI_PLUGIN_ID = "ai_ecosystem_pulse"
+ASSET_DIR = Path(__file__).with_name("assets")
+TRENDS_FILE = "trends.json"
+PAGE_SIZE = (800, 480)
+HN_BOX = (14, 62, 404, 458)
+SKILLS_BOX = (414, 62, 786, 208)
+MODELS_BOX = (414, 214, 786, 334)
+REPOS_BOX = (414, 340, 786, 458)
+FONT_SPECS = {
+    "lead": (17, "bold"),
+    "row": (13, "bold"),
+    "section": (13, "bold"),
+    "name": (12, "bold"),
+    "label": (12, "bold"),
+    "chip": (12, "bold"),
+    "body": (12, "normal"),
+    "metric": (11, "bold"),
+    "small": (11, "normal"),
+    "tiny": (10, "normal"),
+    "tiny_bold": (10, "bold"),
+}
+# GitHub's own language colours (github-linguist).
+LANGUAGE_COLOURS = {
+    "Python": (53, 114, 165),
+    "TypeScript": (49, 120, 198),
+    "JavaScript": (241, 224, 90),
+    "Go": (0, 173, 216),
+    "Rust": (222, 165, 132),
+    "Java": (176, 114, 25),
+    "C++": (243, 75, 125),
+    "C": (85, 85, 85),
+    "Jupyter Notebook": (218, 91, 11),
+    "Shell": (137, 224, 81),
+    "Swift": (240, 81, 56),
+    "Kotlin": (169, 123, 255),
+    "HTML": (227, 76, 38),
+    "MDX": (252, 179, 44),
+}
 
 LOCAL_SAMPLE_STORIES = (
     {
@@ -118,9 +162,12 @@ class TechPulse(BasePlugin):
         dimensions = self.get_dimensions(device_config)
         now = self._now_for_device(device_config)
         payload = self._payload(settings, now)
-        if not settings.get("_theme_render_only"):
-            self._write_context(payload, now)
-        image = self._render_page(dimensions, payload, settings, now)
+        ai = self._ai_payload(settings, device_config, now)
+        theme_only = bool(settings.get("_theme_render_only"))
+        history = self._history(payload, ai, now, record=not theme_only)
+        if not theme_only:
+            self._write_context(payload, now, ai)
+        image = self._render_page(dimensions, payload, settings, now, ai, history)
         return attach_source_provenance(
             image,
             payload.get("_source_provenance", SourceProvenance.LOCAL_FALLBACK),
@@ -157,6 +204,82 @@ class TechPulse(BasePlugin):
         result = dict(payload)
         result["_source_provenance"] = provenance.value
         return result
+
+    def _ai_payload(self, settings, device_config, now):
+        """Skills, models and repos from AI Ecosystem Pulse's sources, or None when unavailable.
+
+        A theme-only render reads that plugin's last aggregate and touches neither network nor disk.
+        """
+        source = AiEcosystemPulse({"id": AI_PLUGIN_ID})
+        try:
+            if settings.get("_theme_render_only"):
+                cached = self._read_json(source._cache_dir(create=False) / "aggregate.json", {})
+                payload = cached if source._valid_aggregate_payload(cached) else None
+            else:
+                payload = source._payload({"forceRefresh": settings.get("forceRefresh")}, device_config, now)
+            if not payload:
+                return None
+            cache_dir = source._cache_dir(create=False)
+            payload = dict(payload)
+            payload["_fetched_at"] = {}
+            for name in ("skills", "huggingface", "github"):
+                cached = self._read_json(cache_dir / f"{name}.json", {})
+                payload["_fetched_at"][name] = cached.get("fetched_at") if isinstance(cached, dict) else None
+            stars = self._read_json(source._data_dir(create=False) / "github-stars.json", {})
+            stars = stars if isinstance(stars, dict) else {}
+            payload["_star_history"] = {
+                str(repo.get("full_name")): stars.get(source._github_candidate_key(repo)) or []
+                for repo in payload.get("repos") or []
+            }
+            return payload
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Tech Pulse AI boards unavailable: %s", exc)
+            return None
+
+    def _history(self, payload, ai, now, record=True):
+        """The boards' snapshot history; a refresh first adds what this fetch saw."""
+        path = self._data_dir(create=record) / TRENDS_FILE
+        state = trends.normalise_state(self._read_json(path, {}))
+        if not record:
+            return state
+        keep = {board: set() for board in trends.BOARDS}
+        status = payload.get("status") or {}
+        if status.get("source_state") in ("live", "cache"):
+            for story in payload.get("stories") or []:
+                key = str(story.get("id") or "")
+                if key:
+                    keep["hn"].add(key)
+                    values = {"score": int(story.get("score") or 0), "comments": int(story.get("comments") or 0)}
+                    state["hn"][key] = trends.record(state["hn"].get(key), values, status.get("generated_at"), now)
+        sources = ((ai or {}).get("status") or {}).get("sources") or {}
+        fetched = (ai or {}).get("_fetched_at") or {}
+        if sources.get("skills") not in (None, "fixture"):
+            for skill in ai.get("skills") or []:
+                key = self._skill_key(skill)
+                keep["skills"].add(key)
+                values = {"installs": int(skill.get("installs") or 0), "rank": int(skill.get("rank") or 0)}
+                state["skills"][key] = trends.record(state["skills"].get(key), values, fetched.get("skills"), now)
+        if sources.get("huggingface") not in (None, "fixture"):
+            for index, model in enumerate(ai.get("models") or []):
+                key = str(model.get("id") or "")
+                keep["models"].add(key)
+                values = {
+                    "trend": int(model.get("trending_score") or 0),
+                    "likes": int(model.get("likes") or 0),
+                    "downloads": int(model.get("downloads_30d") or 0),
+                    "rank": index + 1,
+                }
+                state["models"][key] = trends.record(state["models"].get(key), values,
+                                                     fetched.get("huggingface"), now)
+        for board in trends.BOARDS:
+            state[board] = trends.prune(state[board], keep[board], now)
+        try:
+            self._write_json(path, state)
+        except OSError as exc:
+            logger.warning("Tech Pulse could not save its trend history: %s", exc)
+        return state
 
     def _payload_unclassified(self, settings, now):
         feed = self._feed(settings)
@@ -382,187 +505,411 @@ class TechPulse(BasePlugin):
             },
         }
 
-    def _render_page(self, dimensions, payload, settings, now):
-        width, height = dimensions
-        scale = max(0.72, min(width / 800, height / 480))
+    def _render_page(self, dimensions, payload, settings, now, ai=None, history=None):
         palette = self._palette(settings)
-        image = Image.new("RGB", dimensions, palette["background"])
+        image = Image.new("RGB", PAGE_SIZE, palette["background"])
         draw = ImageDraw.Draw(image)
+        family = settings.get("fontFamily") or settings.get("font_family") or DEFAULT_FONT
+        fonts = {name: self._load_font(family, size, weight) for name, (size, weight) in FONT_SPECS.items()}
+        history = history or {}
 
-        font_family = settings.get("fontFamily") or settings.get("font_family") or DEFAULT_FONT
-        title_font = self._load_font(font_family, int(31 * scale), "bold")
-        label_font = self._load_font(font_family, int(12 * scale), "bold")
-        small_font = self._load_font(font_family, int(12 * scale))
-        row_title_font = self._load_font(font_family, int(14 * scale), "bold")
-        metric_font = self._load_font(font_family, int(17 * scale), "bold")
-        hero_font = self._load_font(font_family, int(23 * scale), "bold")
-
-        margin = int(24 * scale)
-        header_y = int(22 * scale)
-        header_h = int(58 * scale)
-        footer_h = int(42 * scale)
-        gap = int(14 * scale)
-        left_w = int(width * 0.43)
-        content_top = header_y + header_h + int(14 * scale)
-        content_bottom = height - margin - footer_h
-
-        self._draw_background_grid(draw, width, height, palette, scale)
-        self._draw_header(image, draw, payload, now, margin, header_y, width - margin, palette, title_font, label_font, small_font, scale)
-
-        stories = payload.get("stories") or []
-        hero = stories[0] if stories else {}
-        preview_story = hero
-        left_box = (margin, content_top, margin + left_w, content_bottom)
-        right_box = (left_box[2] + gap, content_top, width - margin, content_bottom)
-        self._draw_lead_story(image, draw, left_box, hero, settings, palette, label_font, hero_font, small_font, metric_font, scale, preview_story=preview_story)
-        self._draw_story_list(draw, right_box, stories[1:], settings, payload, palette, label_font, row_title_font, small_font, metric_font, scale)
-        self._draw_footer(draw, payload, margin, height - margin - footer_h + int(9 * scale), width - margin, palette, small_font, label_font, scale)
+        self._draw_background_grid(draw, *PAGE_SIZE, palette, 1.0)
+        self._draw_header(image, draw, payload, ai, now, palette, fonts)
+        self._draw_hn_panel(image, draw, HN_BOX, payload, settings, palette, fonts, history, now)
+        self._draw_skills(image, draw, SKILLS_BOX, ai, palette, fonts, history, now)
+        self._draw_models(image, draw, MODELS_BOX, ai, palette, fonts, history, now)
+        self._draw_repos(image, draw, REPOS_BOX, ai, palette, fonts, now)
+        self._draw_footer(draw, payload, palette, fonts)
+        if tuple(dimensions) != PAGE_SIZE:
+            image = image.resize(tuple(dimensions), Image.LANCZOS)
         return image
 
-    def _draw_header(self, image, draw, payload, now, x0, y0, x1, palette, title_font, label_font, small_font, scale):
-        wordmark_drawn = self._draw_title_wordmark(
-            image,
-            x0,
-            y0 - int(3 * scale),
-            (int(TITLE_WORDMARK_DISPLAY_SIZE[0] * scale), int(TITLE_WORDMARK_DISPLAY_SIZE[1] * scale)),
-        )
-        if not wordmark_drawn:
-            icon_size = int(38 * scale)
-            draw.rounded_rectangle((x0, y0 + int(2 * scale), x0 + icon_size, y0 + icon_size + int(2 * scale)), radius=int(7 * scale), fill=palette["orange"])
-            self._draw_text(draw, (x0 + int(13 * scale), y0 + int(7 * scale)), "Y", title_font, palette["background"])
-            self._draw_text(draw, (x0 + icon_size + int(13 * scale), y0 - int(2 * scale)), "Tech Pulse", title_font, palette["ink"])
+    def _draw_header(self, image, draw, payload, ai, now, palette, fonts):
+        light_page = sum(palette["background"]) > 600
+        if not self._draw_title_wordmark(image, 14, 8, (214, 40), ink=palette["ink"] if light_page else None):
+            self._draw_text(draw, (14, 30), "Tech Pulse", fonts["lead"], palette["ink"], anchor="lm")
+        title, subtitle = "HACKER NEWS + AI", "stories / skills / models / repos"
+        self._draw_text(draw, (238, 22), title, fonts["label"], palette["ink"], anchor="lm")
+        self._draw_text(draw, (238, 38), subtitle, fonts["small"], palette["muted"], anchor="lm")
+        subtitle_right = 238 + max(self._text_width(draw, title, fonts["label"]),
+                                   self._text_width(draw, subtitle, fonts["small"]))
 
-        self._draw_text(draw, (x0 + int(61 * scale), y0 + int(38 * scale)), "Hacker News v0 current signal", small_font, palette["muted"])
+        status = self._status_label(payload, ai)
+        chip = f"{status}  {now.strftime('%H:%M')}"
+        chip_box = (786 - self._text_width(draw, chip, fonts["chip"]) - 34, 16, 786, 42)
+        self._pill(draw, chip_box, palette["panel"], palette["rule"], 13)
+        dot = palette["up"] if status == "LIVE" else palette["amber"]
+        draw.ellipse((chip_box[0] + 11, 25, chip_box[0] + 19, 33), fill=dot)
+        self._draw_text(draw, (chip_box[0] + 25, 29), chip, fonts["chip"], palette["ink"], anchor="lm")
+        paste_header_art(image, ASSET_DIR / "header_art.png", subtitle_right, chip_box[0], top=4, bottom=52)
+        draw.line((14, 55, 786, 55), fill=palette["rule"], width=2)
 
-        status = (payload.get("status") or {}).get("source_state") or "local_sample"
-        generated = self._format_generated_at((payload.get("status") or {}).get("generated_at"), now)
-        chip = f"{status.upper()}  {generated}"
-        chip_w = self._text_width(draw, chip, label_font) + int(22 * scale)
-        self._pill(draw, (x1 - chip_w, y0 + int(8 * scale), x1, y0 + int(34 * scale)), palette["chip"], palette["rule"], int(10 * scale))
-        self._draw_text(draw, (x1 - chip_w + int(11 * scale), y0 + int(14 * scale)), chip, label_font, palette["ink"])
+    def _status_label(self, payload, ai):
+        hn = (payload.get("status") or {}).get("source_state")
+        boards = ((ai or {}).get("status") or {}).get("aggregate")
+        if hn == "local_sample" and boards in (None, "DEMO"):
+            return "DEMO"
+        if hn in ("live", "cache") and boards == "LIVE":
+            return "LIVE"
+        return "PARTIAL"
 
-    def _draw_lead_story(self, image, draw, box, story, settings, palette, label_font, hero_font, small_font, metric_font, scale, preview_story=None):
+    def _section_title(self, image, draw, box, logo, title, detail, colour, palette, fonts):
+        """The panel with a source logo, title and detail line; returns the title's centre line."""
+        x0, y0, _x1, _y1 = box
+        self._panel(draw, box, palette, 1.0)
+        centre = y0 + 14
+        self._paste_logo(image, logo, (x0 + 12, centre - 8), 16, palette)
+        self._draw_text(draw, (x0 + 34, centre), title, fonts["section"], colour, anchor="lm")
+        title_right = x0 + 34 + self._text_width(draw, title, fonts["section"])
+        self._draw_text(draw, (title_right + 8, centre + 1), detail, fonts["tiny"], palette["muted"], anchor="lm")
+        return centre
+
+    def _draw_hn_panel(self, image, draw, box, payload, settings, palette, fonts, history, now):
         x0, y0, x1, y1 = box
-        self._panel(draw, box, palette, scale)
-        pad = int(18 * scale)
-        self._draw_text(draw, (x0 + pad, y0 + int(15 * scale)), "LEAD STORY", label_font, palette["orange"])
-        rank = f"#{int(story.get('rank') or 1):02d}"
-        rank_w = self._text_width(draw, rank, label_font) + int(18 * scale)
-        self._pill(draw, (x1 - pad - rank_w, y0 + int(12 * scale), x1 - pad, y0 + int(36 * scale)), palette["chip"], palette["rule"], int(9 * scale))
-        self._draw_text(draw, (x1 - pad - rank_w + int(9 * scale), y0 + int(18 * scale)), rank, label_font, palette["muted"])
-
-        title = story.get("title") or "No story available"
-        lines = self._wrap_text(draw, title, hero_font, x1 - x0 - pad * 2, max_lines=2)
-        line_y = y0 + int(53 * scale)
-        for line in lines:
-            self._draw_text(draw, (x0 + pad, line_y), line, hero_font, palette["ink"])
-            line_y += int(29 * scale)
-
-        metric_y = y1 - int(62 * scale)
-        meta_y = metric_y - int(26 * scale)
-        preview_top = y0 + int(118 * scale)
-        preview_bottom = meta_y - int(8 * scale)
-        if preview_bottom > preview_top + int(42 * scale):
-            self._draw_hn_story_preview(
-                image,
-                draw,
-                (x0 + pad, preview_top, x1 - pad, preview_bottom),
-                preview_story or story,
-                palette,
-                scale,
-                label_font,
-                small_font,
-            )
-
-        meta_line = []
-        if self._enabled(settings.get("showDomain"), default=True):
-            meta_line.append(story.get("domain") or "news.ycombinator.com")
-        if self._enabled(settings.get("showByline"), default=True):
-            meta_line.append(self._byline(story))
-        if meta_line:
-            self._draw_text(draw, (x0 + pad, meta_y), self._fit_text(draw, " | ".join(meta_line), small_font, x1 - x0 - pad * 2), small_font, palette["muted"])
-
-        score = self._compact_number(story.get("score") or 0)
-        comments = self._compact_number(story.get("comments") or 0)
-        half = (x1 - x0 - pad * 2 - int(10 * scale)) // 2
-        self._metric_card(draw, (x0 + pad, metric_y, x0 + pad + half, y1 - pad), "SCORE", score, palette, label_font, metric_font, scale)
-        self._metric_card(draw, (x0 + pad + half + int(10 * scale), metric_y, x1 - pad, y1 - pad), "COMMENTS", comments, palette, label_font, metric_font, scale)
-
-    def _draw_story_list(self, draw, box, stories, settings, payload, palette, label_font, row_title_font, small_font, metric_font, scale):
-        x0, y0, x1, y1 = box
-        self._panel(draw, box, palette, scale)
-        pad = int(16 * scale)
-        self._draw_text(draw, (x0 + pad, y0 + int(14 * scale)), "HN TOP 5", label_font, palette["orange"])
-        feed_label = payload.get("feed_label") or "Top Stories"
-        self._draw_text(draw, (x0 + pad + int(78 * scale), y0 + int(14 * scale)), feed_label.upper(), label_font, palette["muted"])
-
-        row_top = y0 + int(43 * scale)
-        row_gap = int(6 * scale)
-        display = (stories or [])[:5]
-        if display:
-            row_count = len(display)
-            row_h = int((y1 - row_top - pad - row_gap * max(0, row_count - 1)) / row_count)
-            for index, story in enumerate(display):
-                top = row_top + index * (row_h + row_gap)
-                bottom = min(top + row_h, y1 - pad)
-                self._story_row(draw, (x0 + pad, top, x1 - pad, bottom), story, settings, palette, row_title_font, small_font, label_font, scale)
-        else:
-            self._draw_text(draw, (x0 + pad, row_top + int(30 * scale)), "No stories available", metric_font, palette["muted"])
-
-    def _story_row(self, draw, box, story, settings, palette, row_title_font, small_font, label_font, scale):
-        x0, y0, x1, y1 = box
-        radius = int(8 * scale)
-        draw.rounded_rectangle(box, radius=radius, fill=palette["row"], outline=palette["rule"], width=max(1, int(scale)))
-        rank = str(int(story.get("rank") or 0))
-        rank_box = (x0 + int(8 * scale), y0 + int(8 * scale), x0 + int(32 * scale), y0 + int(32 * scale))
-        draw.rounded_rectangle(rank_box, radius=int(7 * scale), fill=palette["orange"])
-        self._draw_text(draw, (rank_box[0] + int(7 * scale), rank_box[1] + int(5 * scale)), rank, label_font, palette["background"])
-
-        metrics_w = int(78 * scale)
-        title_x = x0 + int(41 * scale)
-        title_w = x1 - title_x - metrics_w - int(10 * scale)
-        title = self._fit_text(draw, story.get("title") or "", row_title_font, title_w)
-        self._draw_text(draw, (title_x, y0 + int(7 * scale)), title, row_title_font, palette["ink"])
-
-        meta = []
-        if self._enabled(settings.get("showDomain"), default=True):
-            meta.append(story.get("domain") or "news.ycombinator.com")
-        if self._enabled(settings.get("showByline"), default=True):
-            meta.append(self._byline(story))
-        if meta:
-            meta_text = self._fit_text(draw, " | ".join(meta), small_font, title_w)
-            self._draw_text(draw, (title_x, y0 + int(29 * scale)), meta_text, small_font, palette["muted"])
-
-        score = self._compact_number(story.get("score") or 0)
-        comments = self._compact_number(story.get("comments") or 0)
-        metric_x = x1 - metrics_w
-        self._draw_text(draw, (metric_x, y0 + int(8 * scale)), f"{score} pts", label_font, palette["amber"])
-        self._draw_text(draw, (metric_x, y0 + int(28 * scale)), f"{comments} cmt", label_font, palette["cyan"])
-
-    def _draw_footer(self, draw, payload, x0, y0, x1, palette, small_font, label_font, scale):
+        stories = payload.get("stories") or []
         stats = payload.get("stats") or {}
-        source = (payload.get("status") or {}).get("source_state") or "local_sample"
-        parts = [
-            f"{stats.get('count', 0)} stories",
-            f"{self._compact_number(stats.get('total_score', 0))} total pts",
-            f"{self._compact_number(stats.get('total_comments', 0))} comments",
-            f"source {source}",
-        ]
-        text = "  /  ".join(parts)
-        self._draw_text(draw, (x0, y0 + int(11 * scale)), self._fit_text(draw, text, small_font, x1 - x0), small_font, palette["muted"])
-        docs = "Official Hacker News Firebase API"
-        docs_w = self._text_width(draw, docs, label_font)
-        self._draw_text(draw, (x1 - docs_w, y0 + int(11 * scale)), docs, label_font, palette["cyan"])
+        feed = (payload.get("feed_label") or "Top Stories").upper()
+        centre = self._section_title(image, draw, box, "hn", "HACKER NEWS", feed, palette["orange"], palette, fonts)
+        total = (f"{self._compact_number(stats.get('total_score', 0))} pts"
+                 f" / {self._compact_number(stats.get('total_comments', 0))} cmt")
+        self._draw_text(draw, (x1 - 12, centre), total, fonts["small"], palette["muted"], anchor="rm")
+        if not stories:
+            self._draw_text(draw, (x0 + 12, y0 + 60), "No stories available", fonts["row"], palette["muted"])
+            return
+        board = history.get("hn") or {}
+        lead_bottom = self._draw_lead(image, draw, (x0 + 12, y0 + 30, x1 - 12, y1), stories[0], settings, palette,
+                                      fonts, board, now)
+        draw.line((x0 + 12, lead_bottom + 6, x1 - 12, lead_bottom + 6), fill=palette["rule"], width=1)
+        self._draw_story_list(draw, (x0 + 12, lead_bottom + 8, x1 - 12, y1 - 4), stories[1:5], settings, palette,
+                              fonts, board, now)
 
-    def _metric_card(self, draw, box, label, value, palette, label_font, metric_font, scale):
-        draw.rounded_rectangle(box, radius=int(9 * scale), fill=palette["metric"], outline=palette["rule"], width=max(1, int(scale)))
+    def _draw_lead(self, image, draw, box, story, settings, palette, fonts, history, now):
+        """The top story: title, meta, points trend and top comment; returns its bottom edge."""
+        x0, y0, x1, _y1 = box
+        badge = (x0, y0, x0 + 22, y0 + 22)
+        draw.rounded_rectangle(badge, radius=5, fill=palette["orange"])
+        self._draw_text(draw, (x0 + 11, y0 + 11), str(story.get("rank") or 1), fonts["label"], (255, 255, 255),
+                        anchor="mm")
+        lines = self._wrap_text(draw, story.get("title") or "No story available", fonts["lead"], x1 - x0 - 30,
+                                max_lines=2, ellipsis=True)
+        for index, line in enumerate(lines):
+            self._draw_text(draw, (x0 + 30, y0 + 11 + index * 23), line, fonts["lead"], palette["ink"], anchor="lm")
+
+        meta_y = y0 + 11 + len(lines) * 23 + 2
+        right = self._draw_story_metrics(draw, x1, meta_y, story, palette, fonts)
+        meta = self._story_meta(story, settings, byline=True)
+        if meta:
+            self._draw_text(draw, (x0, meta_y), self._fit_text(draw, meta, fonts["small"], right - x0 - 10),
+                            fonts["small"], palette["muted"], anchor="lm")
+
+        trend_y = meta_y + 20
+        rate, measured = self._velocity(story, history, now)
+        rate_text = self._rate_text(rate, measured)
+        rate_left = x1
+        if rate_text:
+            rate_left = self._draw_text(draw, (x1, trend_y), rate_text, fonts["metric"],
+                                        palette["up"] if measured and rate > 0 else palette["muted"], anchor="rm")
+        self._draw_text(draw, (x0, trend_y), "POINTS", fonts["tiny_bold"], palette["muted"], anchor="lm")
+        spark_box = (x0 + 46, trend_y - 7, rate_left - 12, trend_y + 7)
+        values = trends.series(history.get(str(story.get("id"))), "score", now)
+        if not self._sparkline(draw, spark_box, values, palette):
+            self._dotted(draw, spark_box[0], spark_box[2], trend_y, palette["rule"])
+
+        preview_top = trend_y + 13
+        self._draw_hn_story_preview(image, draw, (x0, preview_top, x1, preview_top + 78), story, palette, 1.0,
+                                    fonts["label"], fonts["body"])
+        return preview_top + 78
+
+    def _draw_story_list(self, draw, box, stories, settings, palette, fonts, history, now):
         x0, y0, x1, y1 = box
-        label_text = str(label)
-        value_text = str(value)
-        label_x = x0 + max(0, ((x1 - x0) - self._text_width(draw, label_text, label_font)) // 2)
-        value_x = x0 + max(0, ((x1 - x0) - self._text_width(draw, value_text, metric_font)) // 2)
-        self._draw_text(draw, (label_x, y0 + int(3 * scale)), label_text, label_font, palette["muted"])
-        self._draw_text(draw, (value_x, y0 + int(17 * scale)), value_text, metric_font, palette["ink"])
+        row_h = (y1 - y0) / 4
+        for index, story in enumerate(stories):
+            top = y0 + index * row_h
+            self._story_row(draw, (x0, top, x1, top + row_h), story, settings, palette, fonts, history, now)
+            if index < len(stories) - 1:
+                self._dotted(draw, x0, x1, top + row_h, palette["rule"])
+
+    def _story_row(self, draw, box, story, settings, palette, fonts, history, now):
+        x0, y0, x1, y1 = box
+        middle = (y0 + y1) / 2
+        title_y, meta_y = middle - 9, middle + 10
+        badge = (x0, title_y - 9, x0 + 19, title_y + 9)
+        draw.rounded_rectangle(badge, radius=4, outline=palette["orange"], width=2)
+        self._draw_text(draw, (x0 + 9.5, title_y), str(story.get("rank") or ""), fonts["tiny_bold"], palette["orange"],
+                        anchor="mm")
+        title = self._fit_text(draw, story.get("title") or "", fonts["row"], x1 - x0 - 27)
+        self._draw_text(draw, (x0 + 27, title_y), title, fonts["row"], palette["ink"], anchor="lm")
+
+        right = self._draw_story_metrics(draw, x1, meta_y, story, palette, fonts)
+        rate, measured = self._velocity(story, history, now)
+        rate_text = self._rate_text(rate, measured)
+        if rate_text:
+            right = self._draw_text(draw, (right - 8, meta_y), rate_text, fonts["tiny_bold"],
+                                    palette["up"] if measured and rate > 0 else palette["muted"], anchor="rm")
+        values = trends.series(history.get(str(story.get("id"))), "score", now)
+        if self._sparkline(draw, (right - 44, meta_y - 5, right - 6, meta_y + 5), values, palette):
+            right -= 44
+        meta = self._story_meta(story, settings, byline=False)
+        if meta:
+            self._draw_text(draw, (x0 + 27, meta_y), self._fit_text(draw, meta, fonts["small"], right - x0 - 35),
+                            fonts["small"], palette["muted"], anchor="lm")
+
+    def _draw_story_metrics(self, draw, right, y, story, palette, fonts):
+        """Points and comments ending at ``right``; returns where they start."""
+        right = self._metric(draw, right, y, "comment", self._compact_number(story.get("comments") or 0),
+                             palette["cyan"], palette, fonts)
+        return self._metric(draw, right - 8, y, "up", self._compact_number(story.get("score") or 0),
+                            palette["orange"], palette, fonts)
+
+    def _metric(self, draw, right, y, icon, text, colour, palette, fonts, font="metric"):
+        """An icon and a number ending at ``right``; returns the icon's left edge."""
+        # One pixel in: a right-anchored glyph's ink can overhang its advance by a pixel.
+        left = self._draw_text(draw, (right - 1, y), text, fonts[font], palette["ink"], anchor="rm")
+        draw_icon(draw, icon, (left - 13, y - 5), 10, colour, palette["panel"])
+        return left - 13
+
+    def _story_meta(self, story, settings, byline):
+        parts = []
+        if self._enabled(settings.get("showDomain"), default=True):
+            parts.append(story.get("domain") or "news.ycombinator.com")
+        if self._enabled(settings.get("showByline"), default=True):
+            parts.append(self._byline(story) if byline else self._age_text(story.get("age_hours")))
+        return " | ".join(parts)
+
+    def _velocity(self, story, history, now):
+        """(points per hour, whether it was measured between snapshots) for a story."""
+        found = trends.change(history.get(str(story.get("id"))), "score", now, hours=3)
+        if found and found[1] >= 1:
+            return found[0] / found[1], True
+        age = self._optional_int(story.get("age_hours")) or 0
+        score = self._optional_int(story.get("score")) or 0
+        if age >= 1 and score:
+            return score / age, False
+        return None, False
+
+    def _rate_text(self, rate, measured):
+        """'+42/h' between snapshots, '~42/h' averaged since posting."""
+        if rate is None:
+            return ""
+        value = f"{round(rate):d}/h"
+        return f"+{value}" if measured and rate > 0 else f"~{value}"
+
+    def _draw_skills(self, image, draw, box, ai, palette, fonts, history, now):
+        x0, y0, x1, y1 = box
+        centre = self._section_title(image, draw, box, "skills", "AGENT SKILLS", "skills.sh / 24H", palette["violet"],
+                                     palette, fonts)
+        self._draw_text(draw, (x1 - 12, centre), "INSTALLS", fonts["tiny_bold"], palette["muted"], anchor="rm")
+        rows = self._board_rows(ai, "skills", "skills")
+        if rows is None:
+            return self._board_offline(draw, box, palette, fonts)
+        board = history.get("skills") or {}
+        row_h = (y1 - y0 - 32) / 6
+        for index, skill in enumerate(rows[:6]):
+            middle = y0 + 29 + row_h * (index + 0.5)
+            if index == 0:
+                draw.rounded_rectangle((x0 + 6, middle - row_h / 2, x1 - 6, middle + row_h / 2), radius=4,
+                                       fill=palette["violet_tint"])
+            points = board.get(self._skill_key(skill))
+            self._draw_text(draw, (x0 + 30, middle), str(skill.get("rank") or ""), fonts["name"],
+                            palette["violet"] if index == 0 else palette["ink"], anchor="rm")
+            self._rank_move(draw, x0 + 34, middle, points, now, palette, fonts)
+            installs = skill.get("installs_display") or self._compact_number(skill.get("installs") or 0)
+            right = self._metric(draw, x1 - 12, middle, "download", installs, palette["violet"], palette, fonts,
+                                 font="name")
+            right = self._delta(draw, right - 6, middle, trends.change(points, "installs", now), palette, fonts)
+            if self._sparkline(draw, (right - 40, middle - 5, right - 6, middle + 5),
+                               trends.series(points, "installs", now), palette):
+                right -= 40
+            # The name keeps its full width while the source can still show ~40 px after it.
+            room = right - (x0 + 56) - 8
+            name = self._fit_text(draw, skill.get("name") or "", fonts["name"], room - 46)
+            self._draw_text(draw, (x0 + 56, middle), name, fonts["name"], palette["ink"], anchor="lm")
+            source_x = x0 + 62 + self._text_width(draw, name, fonts["name"])
+            if right - source_x - 8 >= 24:
+                source = self._fit_text(draw, skill.get("source") or "", fonts["tiny"], right - source_x - 8)
+                self._draw_text(draw, (source_x, middle + 1), source, fonts["tiny"], palette["muted"], anchor="lm")
+
+    def _draw_models(self, image, draw, box, ai, palette, fonts, history, now):
+        x0, y0, x1, y1 = box
+        self._section_title(image, draw, box, "huggingface", "HUGGING FACE", "TRENDING MODELS", palette["hf_text"],
+                            palette, fonts)
+        rows = self._board_rows(ai, "huggingface", "models")
+        if rows is None:
+            return self._board_offline(draw, box, palette, fonts)
+        board = history.get("models") or {}
+        row_h = (y1 - y0 - 30) / 3
+        columns = (("trend", "fire", "trending_score", palette["orange"]),
+                   ("likes", "heart", "likes", palette["down"]),
+                   ("downloads", "download", "downloads_30d", palette["cyan"]))
+        for index, model in enumerate(rows[:3]):
+            top = y0 + 28 + row_h * index
+            line1, line2 = top + row_h * 0.33, top + row_h * 0.74
+            points = board.get(str(model.get("id") or ""))
+            badge = (x0 + 12, line1 - 9, x0 + 30, line1 + 9)
+            draw.rounded_rectangle(badge, radius=4, fill=palette["hf"])
+            self._draw_text(draw, (x0 + 21, line1), str(index + 1), fonts["tiny_bold"], (24, 27, 31), anchor="mm")
+            self._rank_move(draw, x0 + 13, line2, points, now, palette, fonts)
+            right = x1 - 12
+            for metric, icon, field, colour in reversed(columns):
+                self._metric(draw, right, line1, icon, self._compact_number(model.get(field) or 0), colour, palette,
+                             fonts)
+                self._delta(draw, right, line2, trends.change(points, metric, now), palette, fonts)
+                right -= 60
+            width = right - (x0 + 38)
+            self._draw_text(draw, (x0 + 38, line1), self._fit_text(draw, model.get("id") or "", fonts["name"], width),
+                            fonts["name"], palette["ink"], anchor="lm")
+            tag = str(model.get("pipeline_tag") or "model")
+            self._draw_text(draw, (x0 + 38, line2), self._fit_text(draw, tag, fonts["tiny"], width), fonts["tiny"],
+                            palette["muted"], anchor="lm")
+            if index < 2:
+                self._dotted(draw, x0 + 12, x1 - 12, top + row_h, palette["rule"])
+
+    def _draw_repos(self, image, draw, box, ai, palette, fonts, now):
+        x0, y0, x1, y1 = box
+        self._section_title(image, draw, box, "github", "GITHUB", "AI RISING / STARS", palette["gh"], palette, fonts)
+        rows = self._board_rows(ai, "github", "repos")
+        if rows is None:
+            return self._board_offline(draw, box, palette, fonts)
+        stars = (ai or {}).get("_star_history") or {}
+        row_h = (y1 - y0 - 30) / 3
+        for index, repo in enumerate(rows[:3]):
+            top = y0 + 28 + row_h * index
+            line1, line2 = top + row_h * 0.33, top + row_h * 0.74
+            self._draw_text(draw, (x0 + 21, line1), str(index + 1), fonts["name"], palette["gh"], anchor="mm")
+            delta = repo.get("stars_24h")
+            badge = "NEW" if delta is None else f"{self._signed(delta) if delta else '+0'}/24H"
+            badge_w = self._text_width(draw, badge, fonts["tiny_bold"]) + 14
+            badge_box = (x1 - 12 - badge_w, line1 - 8, x1 - 12, line1 + 8)
+            draw.rounded_rectangle(badge_box, radius=8, fill=palette["gh"] if delta else palette["muted"])
+            self._draw_text(draw, ((badge_box[0] + badge_box[2]) / 2, line1), badge, fonts["tiny_bold"],
+                            palette["panel"], anchor="mm")
+            right = self._metric(draw, badge_box[0] - 8, line1, "star", self._compact_number(repo.get("stars") or 0),
+                                 palette["amber"], palette, fonts)
+            values = self._star_series(stars.get(str(repo.get("full_name"))), now)
+            if not self._sparkline(draw, (right, line2 - 5, x1 - 12, line2 + 5), values, palette):
+                self._draw_text(draw, (x1 - 12, line2), "tracking stars", fonts["tiny"], palette["muted"], anchor="rm")
+            width = right - (x0 + 38) - 8
+            self._draw_text(draw, (x0 + 38, line1), self._fit_text(draw, repo.get("full_name") or "", fonts["name"],
+                                                                    width), fonts["name"], palette["ink"], anchor="lm")
+            language = str(repo.get("language") or "Other")
+            draw.ellipse((x0 + 38, line2 - 4, x0 + 46, line2 + 4), fill=LANGUAGE_COLOURS.get(language, palette["muted"]))
+            self._draw_text(draw, (x0 + 51, line2), language, fonts["tiny"], palette["muted"], anchor="lm")
+            if index < 2:
+                self._dotted(draw, x0 + 12, x1 - 12, top + row_h, palette["rule"])
+
+    def _board_rows(self, ai, source, key):
+        """The board's rows, or None when only demo data stands in for them."""
+        if not ai:
+            return None
+        states = (ai.get("status") or {}).get("sources") or {}
+        rows = ai.get(key) or []
+        if states.get(source) == "fixture" or not rows:
+            return None
+        return rows
+
+    def _board_offline(self, draw, box, palette, fonts):
+        x0, y0, x1, y1 = box
+        self._draw_text(draw, ((x0 + x1) / 2, (y0 + 28 + y1) / 2), "暂时无法获取", fonts["small"], palette["muted"],
+                        anchor="mm")
+
+    def _skill_key(self, skill):
+        return f"{skill.get('source') or ''}/{skill.get('name') or ''}".casefold()
+
+    def _rank_move(self, draw, x, y, points, now, palette, fonts):
+        found = trends.change(points, "rank", now)
+        moved = -int(found[0]) if found else 0
+        if not moved:
+            return
+        colour = palette["up"] if moved > 0 else palette["down"]
+        draw_icon(draw, "up" if moved > 0 else "down", (x, y - 4), 7, colour, palette["panel"])
+        self._draw_text(draw, (x + 8, y), str(abs(moved)), fonts["tiny_bold"], colour, anchor="lm")
+
+    def _delta(self, draw, right, y, found, palette, fonts):
+        """A coloured signed change ending at ``right``; returns its left edge (``right`` when there is none)."""
+        if not found or not round(found[0]):
+            return right
+        colour = palette["up"] if found[0] > 0 else palette["down"]
+        return self._draw_text(draw, (right, y), self._signed(found[0]), fonts["tiny_bold"], colour, anchor="rm")
+
+    def _sparkline(self, draw, box, values, palette):
+        """A trend line coloured by its direction; False when there are fewer than two points."""
+        x0, y0, x1, y1 = box
+        values = [float(value) for value in values or []]
+        if len(values) < 2 or x1 - x0 < 12:
+            return False
+        low, high = min(values), max(values)
+        points = [
+            (x0 + (x1 - x0) * index / (len(values) - 1),
+             (y0 + y1) / 2 if high == low else y1 - (y1 - y0) * (value - low) / (high - low))
+            for index, value in enumerate(values)
+        ]
+        colour = self._trend_colour(values[-1] - values[0], palette)
+        draw.line(points, fill=colour, width=2, joint="curve")
+        end_x, end_y = points[-1]
+        draw.ellipse((end_x - 2.5, end_y - 2.5, end_x + 2.5, end_y + 2.5), fill=colour)
+        return True
+
+    def _star_series(self, history, now):
+        start = self._to_utc(now) - timedelta(hours=trends.HOURLY_HOURS)
+        points = []
+        for point in history if isinstance(history, list) else []:
+            if not isinstance(point, dict):
+                continue
+            captured = trends.parse_time(point.get("captured_at"))
+            stars = self._optional_int(point.get("stars"))
+            if captured is not None and stars is not None and captured >= start:
+                points.append((captured, stars))
+        return [stars for _captured, stars in sorted(points)]
+
+    def _trend_colour(self, change, palette):
+        if change > 0:
+            return palette["up"]
+        if change < 0:
+            return palette["down"]
+        return palette["muted"]
+
+    def _signed(self, value):
+        number = int(round(value))
+        return f"+{self._compact_number(number)}" if number >= 0 else f"-{self._compact_number(-number)}"
+
+    def _dotted(self, draw, x0, x1, y, colour):
+        for x in range(int(x0), int(x1), 4):
+            draw.point((x, int(y)), fill=colour)
+
+    def _draw_footer(self, draw, payload, palette, fonts):
+        stats = payload.get("stats") or {}
+        left = (f"HN {stats.get('count', 0)} stories / {self._compact_number(stats.get('total_score', 0))} pts"
+                f" / {self._compact_number(stats.get('total_comments', 0))} comments")
+        self._draw_text(draw, (14, 469), left, fonts["small"], palette["muted"], anchor="lm")
+        self._draw_text(draw, (786, 469), "HN Firebase API / skills.sh / Hugging Face Hub / GitHub Search",
+                        fonts["tiny"], palette["cyan"], anchor="rm")
+
+    def _paste_logo(self, image, key, xy, size, palette):
+        logo = self._logo(key, size, palette["background"])
+        if logo is not None:
+            image.paste(logo.convert("RGB"), (int(xy[0]), int(xy[1])), logo.getchannel("A"))
+
+    def _logo(self, key, size, background):
+        """A source's official logo; a dark mark turns to its light form on a dark page."""
+        try:
+            with Image.open(ASSET_DIR / f"logo-{key}.png") as source:
+                logo = ImageOps.contain(source.convert("RGBA"), (size, size), method=Image.LANCZOS)
+        except (OSError, ValueError):
+            return None
+        layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        layer.alpha_composite(logo, ((size - logo.width) // 2, (size - logo.height) // 2))
+        if sum(background) < 240 and self._mark_luminance(layer) < 60:
+            red, green, blue, alpha = layer.split()
+            inverted = ImageOps.invert(Image.merge("RGB", (red, green, blue)))
+            layer = Image.merge("RGBA", (*inverted.split(), alpha))
+        return layer
+
+    @staticmethod
+    def _mark_luminance(layer):
+        mask = layer.getchannel("A").point(lambda alpha: 255 if alpha > 128 else 0)
+        if mask.getbbox() is None:
+            return 255
+        return ImageStat.Stat(layer.convert("L"), mask=mask).mean[0]
 
     def _draw_hn_story_preview(self, image, draw, box, story, palette, scale, label_font, body_font):
         x0, y0, x1, y1 = [int(value) for value in box]
@@ -631,12 +978,15 @@ class TechPulse(BasePlugin):
     def _pill(self, draw, box, fill, outline, radius):
         draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=1)
 
-    def _draw_title_wordmark(self, image, x, y, size):
+    def _draw_title_wordmark(self, image, x, y, size, ink=None):
+        """Paste the wordmark; with ``ink`` its pale lettering takes that colour (for a light page)."""
         source = self._load_title_wordmark()
         if source is None:
             return False
         try:
             target_w, target_h = [max(1, int(value)) for value in size]
+            if ink is not None:
+                source = self._ink_pale_lettering(source, ink)
             fitted = ImageOps.contain(source, (target_w, target_h), method=Image.LANCZOS)
             layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
             layer.alpha_composite(fitted, ((target_w - fitted.width) // 2, (target_h - fitted.height) // 2))
@@ -645,6 +995,20 @@ class TechPulse(BasePlugin):
         except Exception as exc:
             logger.debug("Could not draw Tech Pulse title wordmark: %s", exc)
             return False
+
+    @staticmethod
+    def _ink_pale_lettering(source, ink):
+        """Recolour the near-white, unsaturated pixels; the orange prompt and cyan brackets keep theirs."""
+        rgb = source.convert("RGB")
+        low = ImageChops.darker(ImageChops.darker(*rgb.split()[:2]), rgb.split()[2])
+        high = ImageChops.lighter(ImageChops.lighter(*rgb.split()[:2]), rgb.split()[2])
+        pale = low.point(lambda value: 255 if value >= 170 else 0)
+        neutral = ImageChops.subtract(high, low).point(lambda value: 255 if value <= 40 else 0)
+        mask = ImageChops.multiply(pale, neutral)
+        inked = source.copy()
+        inked.paste(Image.new("RGBA", source.size, (*ink, 255)), (0, 0), mask)
+        inked.putalpha(source.getchannel("A"))
+        return inked
 
     def _load_title_wordmark(self):
         path = self._title_wordmark_path()
@@ -664,6 +1028,7 @@ class TechPulse(BasePlugin):
 
     def _palette(self, settings):
         theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)
+        # Gains, losses and each source keep their own colours rather than the panel's six inks.
         if theme.get("mode") != "night":
             return {
                 "background": (245, 240, 226),
@@ -677,8 +1042,15 @@ class TechPulse(BasePlugin):
                 "muted": (91, 96, 104),
                 "dim": (128, 128, 128),
                 "orange": (255, 102, 0),
-                "amber": (176, 102, 12),
-                "cyan": (0, 108, 135),
+                "amber": (204, 138, 0),
+                "cyan": (0, 120, 150),
+                "up": (22, 150, 96),
+                "down": (214, 62, 72),
+                "violet": (108, 74, 226),
+                "violet_tint": (236, 230, 255),
+                "hf": (255, 210, 30),
+                "hf_text": (196, 120, 0),
+                "gh": (31, 136, 61),
             }
         roles = {
             name: tuple(value)
@@ -691,12 +1063,20 @@ class TechPulse(BasePlugin):
             "chip": roles["panel"],
             "grid": roles["rule"],
             "dim": roles["muted"],
-            "orange": roles["accent"],
-            "amber": roles["accent"],
-            "cyan": roles["accent"],
+            "orange": (255, 122, 40),
+            "amber": (255, 190, 70),
+            "cyan": (92, 200, 232),
+            "up": (78, 212, 138),
+            "down": (255, 107, 112),
+            "violet": (172, 150, 255),
+            "violet_tint": (38, 34, 70),
+            "hf": (255, 210, 30),
+            "hf_text": (255, 210, 30),
+            "gh": (72, 196, 106),
         }
 
-    def _write_context(self, payload, now):
+    def _write_context(self, payload, now, ai=None):
+        boards = {key: (ai or {}).get(key) or [] for key in ("skills", "models", "repos")}
         try:
             write_context(
                 PLUGIN_ID,
@@ -706,6 +1086,7 @@ class TechPulse(BasePlugin):
                     "stats": payload.get("stats") or {},
                     "status": payload.get("status") or {},
                     "source_provenance": payload.get("_source_provenance"),
+                    "ai": {**boards, "status": (ai or {}).get("status") or {}},
                 },
                 generated_at=now,
                 ttl_seconds=2 * 60 * 60,
@@ -717,6 +1098,14 @@ class TechPulse(BasePlugin):
         return self.cache_dir(
             env_var="TECH_PULSE_CACHE_DIR",
             leaf="cache",
+            create=create,
+            strip=True,
+        )
+
+    def _data_dir(self, create=True):
+        return self.data_dir(
+            env_var="TECH_PULSE_DATA_DIR",
+            leaf="state",
             create=create,
             strip=True,
         )
@@ -858,6 +1247,8 @@ class TechPulse(BasePlugin):
             number = int(value or 0)
         except Exception:
             number = 0
+        if number >= 1_000_000:
+            return f"{number / 1_000_000:.1f}M".replace(".0M", "M")
         if number >= 1000:
             whole = number / 1000
             return f"{whole:.1f}k".replace(".0k", "k")
@@ -919,8 +1310,13 @@ class TechPulse(BasePlugin):
     def _text_width(self, draw, text, font):
         return text_width(draw, str(text), font)
 
-    def _draw_text(self, draw, xy, text, font, fill):
-        draw.text(xy, str(text), font=font, fill=fill)
+    def _draw_text(self, draw, xy, text, font, fill, anchor=None):
+        """Draw ``text`` and return its left edge (handy with a right anchor)."""
+        if anchor is None:
+            draw.text(xy, str(text), font=font, fill=fill)
+            return xy[0]
+        draw.text(xy, str(text), font=font, fill=fill, anchor=anchor)
+        return draw.textbbox(xy, str(text), font=font, anchor=anchor)[0]
 
     def _enabled(self, value, default=False):
         return coerce_bool(value, default=default, truthy=("1", "true", "yes", "on"))

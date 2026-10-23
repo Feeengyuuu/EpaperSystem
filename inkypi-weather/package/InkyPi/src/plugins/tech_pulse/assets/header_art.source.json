@@ -1,0 +1,16 @@
+{
+  "asset": "header_art.png",
+  "scene": "pixel-art row: terminal, upvote arrow, robot head, AI chip, speech bubble, rocket, star",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "554f58f0-fd7d-4e0a-ae7d-bcb1ae9b7115",
+  "generated": "2026-10-23",
+  "background": "transparent PNG, 1536x512",
+  "processing": "cropped to the alpha bounding box, scaled to 96 px high with LANCZOS, alpha kept",
+  "rendering": "full colour, centred between the header subtitle and the status chip",
+  "source_sha256": "7ca8a78e6501fa1bdb9ea242061d82cb95ea4d7731ef0f0d4aa7d8bbea45635a",
+  "sha256": "6374328c51ae1b349bdd743d41415903e7533befc891c10ae864b15c432dac17",
+  "size": [
+    275,
+    96
+  ]
+}
