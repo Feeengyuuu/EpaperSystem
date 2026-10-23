@@ -442,13 +442,13 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-game-hue-v45"
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-profile-backdrop-v46"
     assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:5] == (
+        "midnight-console-game-hue-v45",
         "midnight-console-outlined-hero-title-v44",
         "midnight-console-presence-ordered-friends-v43",
         "midnight-console-breakout-avatar-frames-v42",
         "midnight-console-rotating-avatar-frames-v41",
-        "midnight-console-gilded-avatar-v40",
     )
 
 
@@ -486,3 +486,37 @@ def test_the_page_takes_the_colours_of_the_game_being_played(plugin, data, monke
     # The panel colour beside the friends' heading follows each game's own hue.
     assert abs(_hue(playing.getpixel((700, 120))) - _hue((200, 40, 30))) < 0.05
     assert abs(_hue(other.getpixel((700, 120))) - _hue((40, 150, 140))) < 0.05
+
+
+def test_equipped_profile_background_becomes_a_still_image_record():
+    record = SteamProfileDashboard._profile_background_record({"response": {"profile_background": {
+        "image_large": "items/1091500/2f2692d068cb37afb353e8577b2c039da9fe7944.jpg",
+        "movie_webm": "items/1091500/994eb96bd85c1204e49f38da6e8e90180bdb93c4.webm",
+        "item_title": "Consumerism"}}})
+
+    assert record == {"url": "https://shared.akamai.steamstatic.com/community_assets/images/items/1091500/"
+                             "2f2692d068cb37afb353e8577b2c039da9fe7944.jpg", "name": "Consumerism"}
+    for equipped in ({}, {"response": {"profile_background": {}}},
+                     {"response": {"profile_background": {"image_large": "https://evil.example/x.jpg"}}}):
+        assert SteamProfileDashboard._profile_background_record(equipped) is None
+
+
+def test_rail_lays_the_profile_background_blurred_and_dimmed_behind_the_rail(plugin, data, monkeypatch):
+    monkeypatch.setattr(console_renderer, "game_palette", lambda _art: None)
+    plain = render_console(plugin, deepcopy(data), (800, 480))
+    loaded = []
+
+    def background(url):
+        loaded.append(url)
+        return Image.new("RGB", (853, 480), (240, 200, 0))
+
+    monkeypatch.setattr(plugin, "_profile_background_image", background, raising=False)
+    data["profile_background"] = {"url": "https://example.test/bg.jpg", "name": "Bg"}
+    image = render_console(plugin, data, (800, 480))
+
+    assert loaded == ["https://example.test/bg.jpg"]
+    top, bottom = image.getpixel((10, 230)), image.getpixel((10, 470))
+    # A dimmed yellow, darker toward the stats; the rest of the page is untouched.
+    assert top[0] > top[2] + 40 and sum(bottom) < sum(top)
+    assert top != plain.getpixel((10, 230))
+    assert ImageChops.difference(image.crop((183, 0, 800, 480)), plain.crop((183, 0, 800, 480))).getbbox() is None

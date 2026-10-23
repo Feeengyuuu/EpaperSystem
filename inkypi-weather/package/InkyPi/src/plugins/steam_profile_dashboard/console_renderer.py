@@ -8,7 +8,7 @@ does not contain game-specific images, names, or network requests.
 import colorsys
 import math
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from plugins.steam_profile_dashboard.avatar_frame import AVATAR_BOX, AVATAR_SIZE, FRAME_ORIGIN
 from plugins.steam_profile_dashboard.sidebar_assets import sidebar_asset
@@ -27,6 +27,10 @@ GREEN = (129, 237, 105)
 FRIEND_GAME_ICON = 14
 # Black ink around the hero title keeps it legible over busy game artwork.
 TITLE_OUTLINE = 2
+RAIL_SIZE = (181, 480)
+# The profile background behind the rail: blur radius, and dimming at its top and bottom.
+BACKDROP_BLUR = 5
+BACKDROP_DIM = (0.5, 0.72)
 # The navy console; a game's own hue replaces it when its artwork has one (game_palette).
 DEFAULT_PALETTE = {"canvas": CANVAS, "navy": NAVY, "panel": PANEL, "header": HEADER, "border": BORDER,
                    "accent": CYAN, "muted": MUTED, "glow": None}
@@ -344,9 +348,25 @@ class _Console:
             self.image.paste(avatar.convert("RGB"), AVATAR_BOX[:2], frame.mask)
         self.image.paste(frame.image, FRAME_ORIGIN, frame.image)
 
+    def profile_backdrop(self):
+        """The owner's equipped Steam profile background, blurred and dimmed behind the rail."""
+        record = self.data.get("profile_background") or {}
+        loader = getattr(self.plugin, "_profile_background_image", None)
+        source = loader(record.get("url")) if loader is not None and record.get("url") else None
+        if source is None:
+            return False
+        backdrop = ImageOps.fit(source.convert("RGB"), RAIL_SIZE, method=Image.Resampling.LANCZOS)
+        backdrop = backdrop.filter(ImageFilter.GaussianBlur(BACKDROP_BLUR))
+        # Dimmed toward the page canvas, deeper down the stats, so white type reads on any picture.
+        shade = Image.linear_gradient("L").resize(RAIL_SIZE).point(
+            lambda value: round(255 * (BACKDROP_DIM[0] + (BACKDROP_DIM[1] - BACKDROP_DIM[0]) * value / 255)))
+        backdrop.paste(Image.new("RGB", RAIL_SIZE, self.c["canvas"]), (0, 0), shade)
+        self.image.paste(backdrop, (0, 0))
+        return True
+
     def rail(self):
         data, profile = self.data, self.data.get("profile") or {}
-        if not self.c.get("glow"):
+        if not self.profile_backdrop() and not self.c.get("glow"):
             self.draw.rectangle((0, 0, 181, 479), fill=self.c["canvas"])
         self.draw.line((181, 0, 181, 480), fill=self.c["border"], width=2)
         url = profile.get("avatarfull") or profile.get("avatarmedium") or profile.get("avatar")

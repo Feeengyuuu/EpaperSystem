@@ -29,13 +29,15 @@ import time
 logger = logging.getLogger(__name__)
 
 STEAM_API_BASE = "https://api.steampowered.com"
+STEAM_PROFILE_ITEM_IMAGE_BASE = "https://shared.akamai.steamstatic.com/community_assets/images/"
 STEAM_STORE_APPDETAILS = "https://store.steampowered.com/api/appdetails"
 STEAM_COMMUNITY_BADGES_URL = "https://steamcommunity.com/profiles/{steam_id}/badges/"
 STEAM_COMMUNITY_PROFILE_URL = "https://steamcommunity.com/profiles/{steam_id}/"
 DEFAULT_STEAM_ID = "76561198176386838"
 STEAM_NAME_DISPLAY_VERSION = "zh-store-full-single-fetch-v1"
-STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-game-hue-v45"
+STEAM_DASHBOARD_STYLE_VERSION = "midnight-console-profile-backdrop-v46"
 STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES = (
+    "midnight-console-game-hue-v45",
     "midnight-console-outlined-hero-title-v44",
     "midnight-console-presence-ordered-friends-v43",
     "midnight-console-breakout-avatar-frames-v42",
@@ -515,6 +517,8 @@ class SteamProfileDashboard(BasePlugin):
                 {"steamid": steam_id, "count": recent_limit},
             )
 
+        equipped = call("/IPlayerService/GetProfileItemsEquipped/v1/", {"steamid": steam_id})
+
         bans_data = {}
         if self._bool_setting(settings, "includeBans", True):
             bans_data = call("/ISteamUser/GetPlayerBans/v1/", {"steamids": steam_id})
@@ -567,6 +571,7 @@ class SteamProfileDashboard(BasePlugin):
             "online_friend_count": online_friend_count,
             "spotlight_game": spotlight_game,
             "app_details": app_details,
+            "profile_background": self._profile_background_record(equipped),
             "api_calls": api_calls,
             "warnings": warnings,
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -864,6 +869,34 @@ class SteamProfileDashboard(BasePlugin):
             logger.info("Steam avatar frame: %s %s", frame.frame_id, frame.title)
         return frame
 
+    @staticmethod
+    def _profile_background_record(equipped):
+        """The equipped profile background's still image (Steam also offers a video), or None."""
+        background = ((equipped or {}).get("response") or {}).get("profile_background") or {}
+        image = str(background.get("image_large") or "").strip()
+        if not re.fullmatch(r"items/\d+/[0-9a-f]{40}\.(?:jpg|png)", image):
+            return None
+        name = str(background.get("item_title") or background.get("name") or "")[:80]
+        return {"url": STEAM_PROFILE_ITEM_IMAGE_BASE + image, "name": name}
+
+    def _profile_background_image(self, url):
+        """The equipped profile background reduced to the page's height, cached for a week."""
+        if not url:
+            return None
+        digest = hashlib.sha256(str(url).encode("utf-8")).hexdigest()[:24]
+        path = os.path.join(self._cache_dir(), f"profilebg_{digest}.png")
+
+        def fetch():
+            response = get_http_session().get(url, timeout=25, stream=True)
+            image = measured_image_response(response).convert("RGB")
+            # A 1920 x 1080 background is kept at 480 px tall: the page never shows more.
+            image.thumbnail((4096, 480), Image.Resampling.LANCZOS)
+            return image
+
+        read_only = bool(getattr(self, "_media_read_only", False))
+        return cached_resource_image(path, fetch, ttl=7 * 24 * 3600, label="steam_profile_background",
+                                     read_only=read_only)
+
     def _profile_avatar_image(self, url, size):
         source = self._cached_profile_media(
             url, self._avatar_cache_path(url), 7 * 24 * 3600, "RGB",
@@ -1016,7 +1049,7 @@ class SteamProfileDashboard(BasePlugin):
         read_only = bool(getattr(self, "_media_read_only", False))
         image = cached_resource_image(path, fetch, ttl=ttl, label="steam_profile_media", read_only=read_only)
         if not read_only:
-            prune_resource_images(Path(path).parent, prefixes=("avatar_", "gameicon_", "badgeicon_"),
+            prune_resource_images(Path(path).parent, prefixes=("avatar_", "gameicon_", "badgeicon_", "profilebg_"),
                                   max_files=384, max_bytes=32 * 1024 * 1024,
                                   max_age=90 * 24 * 3600, label="steam_profile_media", protected=(path,))
         return image
