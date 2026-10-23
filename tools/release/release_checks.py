@@ -61,6 +61,8 @@ def config_identity(config: dict, without_plugins=()) -> dict:
 
     ``without_plugins`` leaves those plugins' instances out, so a migration that
     only adds instances can be proven to leave every other instance untouched.
+    ``plugin_instances`` breaks the instances down per plugin, so a later migration
+    that removes a plugin's instances can be proven to leave the others untouched.
     """
     instances = []
     for playlist in config.get("playlist_config", {}).get("playlists", []):
@@ -73,10 +75,15 @@ def config_identity(config: dict, without_plugins=()) -> dict:
                               "refresh": instance.get("refresh"),
                               "settings_revision": instance.get("settings_revision"),
                               "structural_generation": instance.get("structural_generation")})
+    by_plugin = {}
+    for instance in instances:
+        by_plugin.setdefault(str(instance["plugin_id"]), []).append(instance)
     top = {key: value for key, value in config.items()
            if key not in ("playlist_config", "refresh_info", "config_revision")}
     return {"top_level_settings_without_revision_sha256": digest(top),
             "instance_settings_sha256": digest(instances), "instance_count": len(instances),
+            "plugin_instances": {plugin: {"count": len(items), "sha256": digest(items)}
+                                 for plugin, items in sorted(by_plugin.items())},
             "cycle_seconds": config.get("plugin_cycle_interval_seconds"),
             "open_display_control": config.get("open_display_control"),
             "stable_top_level_settings_sha256": digest(
@@ -97,26 +104,29 @@ REBASELINE_CHANGES = ("stable_top_level_settings_sha256", "instance_settings_sha
 
 
 def rebaseline_configuration(ctx: TaskContext, device: Device, reason: str, migration: str,
-                             added_plugins=()) -> dict:
+                             added_plugins=(), removed_plugins=()) -> dict:
     """Accept the deployed release's own startup migration as the acceptance configuration.
 
     Only settings may change (cycle and display control may not), and the
     migration's runtime marker must be on the device. The instance count may
-    grow only by one new instance for each of ``added_plugins``, and every other
-    instance must then be exactly as before. The original identity stays in
+    grow only by one new instance for each of ``added_plugins``, or shrink only
+    by every instance of each of ``removed_plugins``; every other instance must
+    then be exactly as before. The original identity stays in
     configuration-rebaseline.json and preflight.json.
     """
     reason = str(reason or "").strip()
     require(reason, "A configuration rebaseline needs a reason")
     added = sorted(set(added_plugins or ()))
-    require(all(PLUGIN_ID.fullmatch(plugin) for plugin in added), f"Unsafe plugin id in {added}")
+    removed = sorted(set(removed_plugins or ()))
+    require(all(PLUGIN_ID.fullmatch(plugin) for plugin in added + removed), f"Unsafe plugin id in {added + removed}")
+    require(not set(added) & set(removed), "A plugin cannot be both added and removed")
     ctx.require_deployed()
     preflight = ctx.load("preflight.json")
     config = device.document(CONFIG)
     before, after = preflight["configuration"], config_identity(config)
     changed = [key for key in STABLE_CONFIGURATION if before.get(key) != after.get(key)]
     require(changed, "The live configuration did not change; nothing to rebaseline")
-    accepted = REBASELINE_CHANGES + (("instance_count",) if added else ())
+    accepted = REBASELINE_CHANGES + (("instance_count",) if added or removed else ())
     refused = [key for key in changed if key not in accepted]
     require(not refused, f"A rebaseline cannot accept changes to {refused}")
     if added:
@@ -129,11 +139,21 @@ def rebaseline_configuration(ctx: TaskContext, device: Device, reason: str, migr
         kept = config_identity(config, without_plugins=added)
         require(kept["instance_settings_sha256"] == before["instance_settings_sha256"],
                 "Instances other than the added plugins changed")
+    if removed:
+        per_plugin = before.get("plugin_instances")
+        require(isinstance(per_plugin, dict),
+                "The baseline has no per-plugin instance identity; re-run baseline with this toolkit")
+        require(all(per_plugin.get(plugin, {}).get("count") for plugin in removed),
+                f"Each of {removed} must have had an instance to remove")
+        require(not set(removed) & set(after["plugin_instances"]), f"Instances of {removed} are still saved")
+        kept = {plugin: entry for plugin, entry in per_plugin.items() if plugin not in removed}
+        require(after["plugin_instances"] == kept, "Instances other than the removed plugins changed")
     migrations = config.get("runtime_migrations")
     require(isinstance(migrations, dict) and migrations.get(migration) is True,
             f"Migration {migration} is not recorded on the device")
     record = {"rebaselined_at": datetime.now(timezone.utc).isoformat(), "reason": reason, "migration": migration,
-              "changed": changed, "added_plugins": added, "before": before, "after": after}
+              "changed": changed, "added_plugins": added, "removed_plugins": removed, "before": before,
+              "after": after}
     preflight["configuration"] = after
     preflight.setdefault("configuration_rebaselines", []).append(record)
     ctx.save("configuration-rebaseline.json", record)

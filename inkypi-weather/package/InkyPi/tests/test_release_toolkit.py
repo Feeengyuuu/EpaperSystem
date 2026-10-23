@@ -899,13 +899,75 @@ def test_rebaseline_refuses_added_instances_beyond_the_named_plugins(ctx, make, 
     assert not ctx.has("configuration-rebaseline.json")
 
 
+def without_pages(document, *plugins, migration="retired_v1"):
+    changed = _copy(document)
+    changed["runtime_migrations"] = {migration: True}
+    playlist = changed["playlist_config"]["playlists"][0]
+    playlist["plugins"] = [item for item in playlist["plugins"] if item["plugin_id"] not in plugins]
+    return changed
+
+
+def test_rebaseline_accepts_a_migration_that_removes_every_instance_of_a_plugin(ctx):
+    before = config(weather=600, ai_ecosystem_pulse=3600, tech_pulse=1800)
+    deployed_with_preflight(ctx, before)
+
+    record = release_checks.rebaseline_configuration(
+        ctx, ConfigDevice(without_pages(before, "ai_ecosystem_pulse")), "Merged into Tech Pulse", "retired_v1",
+        removed_plugins=["ai_ecosystem_pulse"])
+
+    assert record["changed"] == ["stable_top_level_settings_sha256", "instance_settings_sha256", "instance_count"]
+    assert record["removed_plugins"] == ["ai_ecosystem_pulse"] and record["added_plugins"] == []
+    configuration = ctx.load("preflight.json")["configuration"]
+    assert configuration["instance_count"] == 2
+    assert set(configuration["plugin_instances"]) == {"weather", "tech_pulse"}
+
+
+@pytest.mark.parametrize("make, removed, message", [
+    (lambda before: (lambda after: (after["playlist_config"]["playlists"][0]["plugins"][0].update(
+        plugin_settings={"city": "y"}), after)[1])(without_pages(before, "ai_ecosystem_pulse")),
+     ["ai_ecosystem_pulse"], "other than the removed plugins"),
+    (lambda before: without_pages(before, "ai_ecosystem_pulse", "tech_pulse"), ["ai_ecosystem_pulse"],
+     "other than the removed plugins"),
+    (lambda before: without_pages(before, "ai_ecosystem_pulse"), ["ai_ecosystem_pulse", "apod"],
+     "must have had an instance"),
+    (lambda before: with_pages(before, "apod", migration="retired_v1"), ["ai_ecosystem_pulse"], "still saved"),
+])
+def test_rebaseline_refuses_removals_beyond_the_named_plugins(ctx, make, removed, message):
+    before = config(weather=600, ai_ecosystem_pulse=3600, tech_pulse=1800)
+    deployed_with_preflight(ctx, before)
+    original = ctx.load("preflight.json")
+
+    with pytest.raises(ReleaseError, match=message):
+        release_checks.rebaseline_configuration(ctx, ConfigDevice(make(before)), "reason", "retired_v1",
+                                                removed_plugins=removed)
+
+    assert ctx.load("preflight.json") == original
+    assert not ctx.has("configuration-rebaseline.json")
+
+
+def test_a_removal_needs_a_baseline_with_per_plugin_identity(ctx):
+    before = config(weather=600, ai_ecosystem_pulse=3600)
+    deployed_with_preflight(ctx, before)
+    preflight = ctx.load("preflight.json")
+    del preflight["configuration"]["plugin_instances"]
+    ctx.save("preflight.json", preflight)
+
+    with pytest.raises(ReleaseError, match="re-run baseline"):
+        release_checks.rebaseline_configuration(ctx, ConfigDevice(without_pages(before, "ai_ecosystem_pulse")),
+                                                "reason", "retired_v1", removed_plugins=["ai_ecosystem_pulse"])
+
+
 def test_rebaseline_command_requires_reason_and_migration(capsys):
     parsed = parse("rebaseline-config", "--task-dir", "outputs/r", "--reason", "Kick room", "--migration", "m_v1")
 
-    assert (parsed.reason, parsed.migration, parsed.added_plugins) == ("Kick room", "m_v1", [])
+    assert (parsed.reason, parsed.migration, parsed.added_plugins, parsed.removed_plugins) == (
+        "Kick room", "m_v1", [], [])
     added = parse("rebaseline-config", "--task-dir", "outputs/r", "--reason", "Pages", "--migration", "m_v1",
                   "--added-plugins", "tech_play", "bay_alerts")
     assert added.added_plugins == ["tech_play", "bay_alerts"]
+    removed = parse("rebaseline-config", "--task-dir", "outputs/r", "--reason", "Merged", "--migration", "m_v1",
+                    "--removed-plugins", "ai_ecosystem_pulse")
+    assert removed.removed_plugins == ["ai_ecosystem_pulse"]
     with pytest.raises(SystemExit):
         parse("rebaseline-config", "--task-dir", "outputs/r", "--migration", "m_v1")
     with pytest.raises(SystemExit):
