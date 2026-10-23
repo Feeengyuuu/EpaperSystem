@@ -139,7 +139,7 @@ class BasketballRenderMixin:
                 ("O/U", str(event.get("over_under") or "").replace("O/U", "").strip() or "--"),
             ]
             # The venue already sits on the strip above the tiles.
-            self._draw_kit_tiles(draw, (x1, lower_y1 + 4, split_x, y2), tiles, spec, tile_h=min(KIT_TILE_HEIGHT + 10, y2 - lower_y1 - 8))
+            self._draw_kit_tiles(draw, (x1, lower_y1 + 4, split_x, y2), tiles, spec, tile_h=min(KIT_TILE_HEIGHT + 10, y2 - lower_y1 - 8), image=image)
         else:
             self._draw_basketball_leader_duel(draw, (x1, lower_y1, split_x, y2), event, spec)
         self._draw_kit_ticker(image, draw, (split_x + 14, lower_y1 - 2, x2, y2), others, now, spec)

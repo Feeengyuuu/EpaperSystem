@@ -73,14 +73,15 @@ class BaseballRenderMixin:
         left, top, right, bottom = self._draw_kit_card(draw, box, spec, state)
         context = str(event.get("broadcast") or "").strip() if state == "live" else SportsDashboard._mlb_context_label(event, state)
         series = self._mlb_first_fitting(draw, [SportsDashboard._mlb_series_label(event, full) for full in (True, False)], 110, 11, bold=False)
-        self._draw_kit_status_row(draw, left, top + 8, right, spec, state, SportsDashboard._mlb_pill_label(event, now), context, series)
+        series_side = SportsDashboard._mlb_series_side(event)
+        series_logo = (lambda x, y: self._draw_mlb_team_logo(image, draw, event, series_side, x, y, 14, spec)) if series_side else None
+        self._draw_kit_status_row(draw, left, top + 8, right, spec, state, SportsDashboard._mlb_pill_label(event, now), context, series, series_logo)
         table_bottom = self._draw_mlb_line_table(image, draw, (left, top + 33, right), event, state, spec)
         y = table_bottom + 8
-        if state == "live":
-            self._draw_mlb_matchup(image, draw, (left, y, right, y + 16), event, spec)
-            self._draw_event_mark(image, SportsDashboard._mlb_series_mark_path(event), (right - 110, y + 20, right, bottom - 22), align="right")
-        elif state == "final":
-            self._draw_mlb_decisions(image, draw, (left, y, right, y + 16), event, spec)
+        if state in {"live", "final"}:
+            people = self._draw_mlb_matchup if state == "live" else self._draw_mlb_decisions
+            people(image, draw, (left, y, right, y + 16), event, spec)
+            self._draw_mlb_ballpark(image, (left, y + 20, right, bottom - 22), event)
         else:
             budget = right - left - self._text_width(draw, "SP", self._font(8, False)) - 6
             probables = self._mlb_first_fitting(draw, [SportsDashboard._mlb_probables_label(event, full) for full in (True, False)], budget, 10)
@@ -91,8 +92,19 @@ class BaseballRenderMixin:
                 ("FIRST PITCH", SportsDashboard._kit_countdown_label(event.get("start"), now)),
                 ("TV", str(event.get("broadcast") or "").strip() or "TBD"),
             ]
-            self._draw_kit_tiles(draw, (left, y, right, bottom - 22), tiles, spec, tile_h=min(36, bottom - 22 - y))
+            self._draw_kit_tiles(draw, (left, y, right, bottom - 22), tiles, spec, tile_h=min(36, bottom - 22 - y), image=image)
         self._draw_kit_footer(draw, (left, bottom - 19, right, bottom - 7), SportsDashboard._mlb_footer_label(event, state))
+
+    def _draw_mlb_ballpark(self, image, box, event):
+        """The card's spare band: the postseason series mark on the right and
+        the ballpark strip filling the room left of it."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        mark = self._draw_event_mark(image, SportsDashboard._mlb_series_mark_path(event), (x2 - 110, y1, x2, y2), align="right")
+        if mark:
+            x2 = mark[0] - 10
+        strip = self._load_local_logo(LOCAL_MLB_BALLPARK_STRIP_PATH, (x2 - x1, y2 - y1), alpha_threshold=8) if x2 - x1 >= 80 and y2 - y1 >= 24 else None
+        if strip:
+            image.paste(strip, (x1 + (x2 - x1 - strip.width) // 2, y2 - strip.height), strip)
 
     def _draw_mlb_line_table(self, image, draw, box, event, state, spec):
         """Inning grid with R/H/E; returns the table bottom."""
@@ -219,8 +231,11 @@ class BaseballRenderMixin:
             self._draw_text_in_box(draw, (cursor + BASEBALL_ICON_SIZE + 4, y1, x2, y2), name, font, COLORS["text"])
             cursor += BASEBALL_ICON_SIZE + 4 + self._text_width(draw, name, font)
             if side:
-                self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), cursor + 3, y1 + 1, logo, spec.hook("logo_fallback", event, side))
+                self._draw_mlb_team_logo(image, draw, event, side, cursor + 3, y1 + 1, logo, spec)
             cursor += logo_w + 10
+
+    def _draw_mlb_team_logo(self, image, draw, event, side, x, y, size, spec):
+        self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), x, y, size, spec.hook("logo_fallback", event, side))
 
     # Right column -------------------------------------------------------------
 
@@ -260,8 +275,11 @@ class BaseballRenderMixin:
         status = self._mlb_first_fitting(draw, [SportsDashboard._mlb_series_label(main, full) for full in (True, False)], (x2 - x1) // 2, 11)
         mark = self._draw_event_mark(image, SportsDashboard._mlb_series_mark_path(main), (x1, y1, x1 + 96, y1 + 34), align="left")
         if mark:
-            status, status_font = self._fit_text(draw, status, x2 - mark[2] - 6, 11, bold=True, min_size=8)
+            side = SportsDashboard._mlb_series_side(main)
+            status, status_font = self._fit_text(draw, status, x2 - mark[2] - 6 - (18 if side else 0), 11, bold=True, min_size=8)
             self._draw_text_in_box(draw, (mark[2] + 6, y1, x2, y1 + 34), status, status_font, COLORS[spec.live], align="right")
+            if side and status:
+                self._draw_mlb_team_logo(image, draw, main, side, x2 - self._text_width(draw, status, status_font) - 18, y1 + 10, 14, spec)
             draw.line((x1, y1 + 37, x2, y1 + 37), fill=COLORS["border"], width=1)
             y = y1 + 41
         else:
@@ -363,26 +381,43 @@ class BaseballRenderMixin:
         return ""
 
     @staticmethod
-    def _mlb_series_label(event, full=False):
-        """'2-2 平' / '守护者 2-1 领先' / '酿酒人 4-0 胜出' from statsapi's series
-        result ('Series tied 2-2', 'CLE leads 2-1', 'MIL wins 4-0')."""
+    def _mlb_series_status(event):
+        """statsapi's series result ('Series tied 2-2', 'CLE leads 2-1',
+        'MIL wins 4-0') as (verb, team code, games): verb is 'tied', 'leads',
+        'wins' or '' when the text has another shape."""
         summary = str((event or {}).get("series_summary") or "").strip()
         tied = re.match(r"(?:series\s+)?tied\s+(?:series\s+)?(\d+-\d+)$", summary, flags=re.IGNORECASE)
         if tied:
-            return f"{tied.group(1)} 平"
+            return "tied", "", tied.group(1)
         match = re.match(r"(\S+)\s+(leads?|wins?|won)\s+(?:series\s+)?(\d+-\d+)$", summary, flags=re.IGNORECASE)
-        team = SportsDashboard._mlb_series_team(event, match.group(1), full) if match else ""
-        if team:
-            return f"{team} {match.group(3)} {'领先' if match.group(2).lower().startswith('lead') else '胜出'}"
-        return summary.upper().replace("SERIES ", "")
+        if match:
+            return ("leads" if match.group(2).lower().startswith("lead") else "wins"), match.group(1).upper(), match.group(3)
+        return "", "", ""
 
     @staticmethod
-    def _mlb_series_team(event, code, full):
-        code = str(code or "").strip().upper()
+    def _mlb_series_side(event):
+        """The side ('a'/'b') of the team the series result names, else ''."""
+        _verb, code, _games = SportsDashboard._mlb_series_status(event)
         for side in ("a", "b"):
-            if code == str((event or {}).get(f"team_{side}_code") or "").strip().upper():
-                return SportsDashboard._mlb_display_team_from_event(event, side, full=full)
-        return SportsDashboard._mlb_display_team_name(code, full=full) if code in MLB_TEAM_ZH_NAMES else ""
+            if code and code == str((event or {}).get(f"team_{side}_code") or "").strip().upper():
+                return side
+        return ""
+
+    @staticmethod
+    def _mlb_series_label(event, full=False):
+        """'2-2 平' / '守护者 2-1 领先' / '酿酒人 4-0 胜出'; statsapi's own text
+        when the team is unknown."""
+        verb, code, games = SportsDashboard._mlb_series_status(event)
+        if verb == "tied":
+            return f"{games} 平"
+        side = SportsDashboard._mlb_series_side(event)
+        if side:
+            team = SportsDashboard._mlb_display_team_from_event(event, side, full=full)
+        else:
+            team = SportsDashboard._mlb_display_team_name(code, full=full) if code in MLB_TEAM_ZH_NAMES else ""
+        if verb and team:
+            return f"{team} {games} {'领先' if verb == 'leads' else '胜出'}"
+        return str((event or {}).get("series_summary") or "").strip().upper().replace("SERIES ", "")
 
     @staticmethod
     def _mlb_probables_label(event, full=False):

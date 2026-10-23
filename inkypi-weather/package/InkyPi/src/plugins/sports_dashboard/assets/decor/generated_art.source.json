@@ -1,0 +1,82 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "generated": "2026-10-23",
+  "background": "transparent PNG, 1536x512",
+  "processing": "cropped to the alpha bounding box, scaled to a fixed height with LANCZOS, alpha kept",
+  "rendering": {
+    "club_*_header_cutout.png": "alpha-only art, tinted with the league accent in the football region header",
+    "mlb_ballpark_strip.png": "full colour, pasted in the MLB card's spare band"
+  },
+  "assets": {
+    "club_pl_header_cutout.png": {
+      "scene": "winger cross, diving header, goalkeeper, goal",
+      "job_id": "362dce9e-3d93-4be3-99f3-20210f079cee",
+      "source_sha256": "e070e277915afeedf5dbb1463a93edb5d2221d08d58f09a7c80c632ef6f6ffa1",
+      "sha256": "2cbab28c80b80cc6f3d9c2601166dcd427563aa878d460fbaad2c59832f68ad1",
+      "size": [
+        498,
+        96
+      ]
+    },
+    "club_pd_header_cutout.png": {
+      "scene": "step-over, sliding tackle, hurdle, curled shot, corner flag",
+      "job_id": "e2c500ad-df6c-40f4-916b-a91947c94462",
+      "source_sha256": "3c59f008ef7d30b93750fcf543762b4b87910b389c02ede4194be33975c72ae3",
+      "sha256": "6139915ab846a547162d952830af70670df7d488453d79430d5649b3e23849fd",
+      "size": [
+        473,
+        96
+      ]
+    },
+    "club_bl1_header_cutout.png": {
+      "scene": "goalkeeper drop-kick, heading duel, forward sprint, goal",
+      "job_id": "43fa3a9f-6518-449d-9f75-5c1c9fb1cd10",
+      "source_sha256": "7b249f92c97f3c05fae662c81b02128f50a5ba2e66162967abfb2fc142921cc7",
+      "sha256": "bc5f196f563e4f1c21896241fbf508b3be14bff2e6be36b02e708614784bdd42",
+      "size": [
+        468,
+        96
+      ]
+    },
+    "club_sa_header_cutout.png": {
+      "scene": "free kick over a four-man wall, diving goalkeeper, goal",
+      "job_id": "02beaf57-9315-48ab-aafc-cb6d894e2835",
+      "source_sha256": "bc07201561dd147ffb9416bf8139a6fddb91132a430909ff03978a9acbeb4f2c",
+      "sha256": "ec213c2dc620f966189cf076df94a45d9a3763ac506add0878c69ce22ea65286",
+      "size": [
+        487,
+        96
+      ]
+    },
+    "club_fl1_header_cutout.png": {
+      "scene": "knee juggle, bicycle kick, diving goalkeeper, goal",
+      "job_id": "87e96e3f-444a-4d84-9e85-b70fc5117415",
+      "source_sha256": "0c4731d18af58ee3cb5b0d19b8c724e22f5fce1f76d4c2e475a032a87c2a98d7",
+      "sha256": "fcaf99bd4e421a444e2a3281f5c471653817674040a752960457425a52ea2e83",
+      "size": [
+        497,
+        96
+      ]
+    },
+    "club_mls_header_cutout.png": {
+      "scene": "through ball, sprint, shot, net bulge, knee-slide celebration",
+      "job_id": "5efe438e-f05a-4581-aa7d-96a9ca177b94",
+      "source_sha256": "d120620024367ec178610f58e570890422dffe883b6dd660e1161978178902c8",
+      "sha256": "bb61708b1de2ccc86c7f13139e8b39d51bea4cb59050e45905d7258058067d72",
+      "size": [
+        629,
+        96
+      ]
+    },
+    "mlb_ballpark_strip.png": {
+      "scene": "ballpark panorama: wall, pennants, light towers, scoreboard, home run",
+      "job_id": "a23d4977-bf0d-465a-8550-9de923868c64",
+      "source_sha256": "e0da8fa75a70576a3ec0963f2517d9ed3123cc11710f0e1ff53060414066fb4f",
+      "sha256": "dc80e8539fd750381f990d6dba45fa437eb5e3caaafbdf016f1790ca23b26ad0",
+      "size": [
+        430,
+        120
+      ]
+    }
+  }
+}

@@ -45,6 +45,9 @@ BOUNDARIES = {
     "plugins/sports_dashboard/baseball_icons.py": {
         "__future__", "functools", "PIL",
     },
+    "plugins/sports_dashboard/tv_networks.py": {
+        "__future__", "re",
+    },
     "display/display_history.py": {
         "__future__", "collections.abc", "datetime", "json", "logging", "pathlib", "utils.atomic_file",
     },

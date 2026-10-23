@@ -13,6 +13,7 @@ small text dither into specks.
 """
 
 from .common import *
+from .tv_networks import tv_network_parts
 
 SportsDashboard = None
 
@@ -29,6 +30,31 @@ KIT_TICKER_LOGO_GAP = 3
 # Pure panel inks a team colour may map to; white is left out so every team
 # stripe stays visible on paper.
 KIT_TEAM_INK_KEYS = ("red", "blue", "green", "amber", "text")
+# A logo pixel fainter than this against its tile takes the theme's ink.
+KIT_LOGO_MIN_CONTRAST = 2.0
+
+
+def _kit_luminance(rgb):
+    channels = [value / 255 for value in rgb[:3]]
+    channels = [value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _kit_inked_where_faint(logo, background):
+    """``logo`` with the pixels that vanish on ``background`` (black type on a
+    dark tile) in the theme's ink; the brand colours that read stay as they are."""
+    ground = _kit_luminance(background)
+    logo = logo.copy()
+    pixels = logo.load()
+    for y in range(logo.height):
+        for x in range(logo.width):
+            pixel = pixels[x, y]
+            if pixel[3] < 8:
+                continue
+            lighter, darker = sorted((_kit_luminance(pixel), ground), reverse=True)
+            if (lighter + 0.05) / (darker + 0.05) < KIT_LOGO_MIN_CONTRAST:
+                pixels[x, y] = (*COLORS["text"], pixel[3])
+    return logo
 
 
 class ScorebugSpec:
@@ -80,7 +106,9 @@ class ScorebugKitMixin:
 
     # Status row ---------------------------------------------------------------
 
-    def _draw_kit_status_row(self, draw, x1, y, x2, spec, state, pill, context="", right=""):
+    def _draw_kit_status_row(self, draw, x1, y, x2, spec, state, pill, context="", right="", right_icon=None):
+        """Pill, context and a right-aligned note; ``right_icon(x, y)`` draws a
+        14 px mark just left of the note."""
         # Live keeps the dashboard's LIVE-pill idiom (light pill, red block,
         # black text): solid red behind small text dithers into specks.
         marker = 9 if state == "live" else 0
@@ -99,6 +127,9 @@ class ScorebugKitMixin:
             right, right_font = self._fit_text(draw, right, 110, 11, bold=False, min_size=8)
             right_w = self._text_width(draw, right, right_font)
             self._draw_text_in_box(draw, (x2 - right_w, y, x2, y + 18), right, right_font, COLORS["text"], align="right")
+            if right_icon:
+                right_w += 18
+                right_icon(x2 - right_w, y + 2)
         budget = x2 - right_w - 10 - (x1 + pill_w + 8)
         if context and budget > 16:
             context, context_font = self._fit_text_ellipsis(draw, context, budget, 11, bold=True, min_size=8)
@@ -186,7 +217,9 @@ class ScorebugKitMixin:
 
     # Details ------------------------------------------------------------------
 
-    def _draw_kit_tiles(self, draw, box, tiles, spec, tile_h=KIT_TILE_HEIGHT):
+    def _draw_kit_tiles(self, draw, box, tiles, spec, tile_h=KIT_TILE_HEIGHT, image=None):
+        """Label-over-value tiles; with ``image`` a TV tile shows the networks'
+        logos."""
         x1, y1, x2, _y2 = [int(value) for value in box]
         tiles = [tile for tile in tiles if tile]
         if not tiles:
@@ -199,9 +232,34 @@ class ScorebugKitMixin:
             right = left + tile_w
             draw.rounded_rectangle((left, y1, right, y1 + tile_h), radius=4, fill=COLORS[spec.tint], outline=COLORS["border"], width=1)
             self._draw_text_in_box(draw, (left + 7, y1 + 3, right - 4, y1 + 13), label, label_font, COLORS["text"])
+            value_box = (left + 7, y1 + 14, right - 4, y1 + tile_h - 3)
+            if image is not None and label == "TV" and self._draw_kit_tv_logos(image, draw, value_box, value, COLORS[spec.tint]):
+                continue
             value, value_font = self._fit_text_ellipsis(draw, str(value or "--"), tile_w - 12, 15, bold=True, min_size=9)
-            self._draw_text_in_box(draw, (left + 7, y1 + 14, right - 4, y1 + tile_h - 3), value, value_font, COLORS["text"])
+            self._draw_text_in_box(draw, value_box, value, value_font, COLORS["text"])
         return y1 + tile_h
+
+    def _draw_kit_tv_logos(self, image, draw, box, label, background):
+        """Each network of a broadcast label as its logo, left to right, with
+        the name in text for a network without one. False when no logo applies."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        parts = [(name, os.path.join(LOCAL_TV_LOGO_DIR, f"{key}.png") if key else None) for name, key in tv_network_parts(label)]
+        if not any(path and os.path.exists(path) for _name, path in parts):
+            return False
+        height, x = y2 - y1, x1
+        for name, path in parts:
+            if x2 - x < 14:
+                break
+            logo = self._load_local_logo(path, (min(x2 - x, height * 4), height), alpha_threshold=8) if path else None
+            if logo:
+                logo = _kit_inked_where_faint(logo, background)
+                image.paste(logo, (x, y1 + (height - logo.height) // 2), logo)
+                x += logo.width + 7
+            else:
+                text, font = self._fit_text_ellipsis(draw, name, x2 - x, 13, bold=True, min_size=9)
+                self._draw_text_in_box(draw, (x, y1, x2, y2), text, font, COLORS["text"])
+                x += self._text_width(draw, text, font) + 7
+        return True
 
     def _draw_kit_leader_rows(self, image, draw, x1, y, x2, y_limit, event, leaders, spec, max_rows=3):
         label_font = self._font(8, True)

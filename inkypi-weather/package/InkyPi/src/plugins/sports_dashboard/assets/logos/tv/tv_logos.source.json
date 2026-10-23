@@ -1,0 +1,461 @@
+{
+  "source": "Each network's logo from its English Wikipedia infobox (PNG render of the file)",
+  "processing": "cropped to the alpha bounding box, scaled to 48 px high (max 192 wide) with LANCZOS",
+  "logos": {
+    "abc": {
+      "article": "American Broadcasting Company",
+      "file": "ABC 2021 Red.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c7/ABC_2021_Red.svg/960px-ABC_2021_Red.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/c/c7/ABC_2021_Red.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "02af8fe11db8b2f6667fff3df981a5ac1d52ae92",
+      "source_png_sha256": "8c2fccf711e0d79eec921357400f3fa6a992fea5075f8d1a9dc04dfa4d28601f",
+      "sha256": "f6a7c9d61503850f07ce1092fa49d57d04d1c9aae23d5f510b5f83cc8ed39844",
+      "size": [
+        48,
+        48
+      ]
+    },
+    "acc_network": {
+      "article": "ACC Network",
+      "file": "ACC Network ESPN logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fd/ACC_Network_ESPN_logo.svg/960px-ACC_Network_ESPN_logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/f/fd/ACC_Network_ESPN_logo.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "6f8fd53e158f7df0c2bb1fb5acd63d05610ca89e",
+      "source_png_sha256": "4c5b7a69bb8a6a3b57315d368005328f911d08dba4ba54c3767b1fa5b4b5935e",
+      "sha256": "09002f433d4449d8e50b3eb31be1cdf89f00d87167369d046e469f06ec165802",
+      "size": [
+        163,
+        48
+      ]
+    },
+    "apple_tv": {
+      "article": "Apple TV (streaming service)",
+      "file": "Apple TV (logo).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/a/ae/Apple_TV_%28logo%29.svg/960px-Apple_TV_%28logo%29.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/en/a/ae/Apple_TV_%28logo%29.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "5d153603dd681b496f0e45c24ad48d0a36ae596b",
+      "source_png_sha256": "90b634f26fa2debf67a374d6343d610de6338e5ff4a5eb5dc927583a9186c76e",
+      "sha256": "62dc8366c7883be404811147baf57d261ca358685dbde7b7609e5f24caf0d10a",
+      "size": [
+        103,
+        48
+      ]
+    },
+    "bein": {
+      "article": "BeIN Sports USA",
+      "file": "BeIN Sports logo (horizontal version).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d4/BeIN_Sports_logo_%28horizontal_version%29.svg/960px-BeIN_Sports_logo_%28horizontal_version%29.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/d/d4/BeIN_Sports_logo_%28horizontal_version%29.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "02c42778f71d681a94e559840bc701a5bb620818",
+      "source_png_sha256": "4c93364335802dfbf8d00ea814e2387fbdfac4265e16035577e85162482785f7",
+      "sha256": "9497d52d1819fb5cb424c0ac52c27361fb6f095ead43691efb0e6a8ea7468869",
+      "size": [
+        192,
+        34
+      ]
+    },
+    "btn": {
+      "article": "Big Ten Network",
+      "file": "Big Ten Network Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/3/39/Big_Ten_Network_Logo.svg/960px-Big_Ten_Network_Logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/en/3/39/Big_Ten_Network_Logo.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "e026c560509fde855a40966135677355c81063d3",
+      "source_png_sha256": "d8be7dd128f7fb79b41b81c024ed0ec5a99a6614ab09ed66f75b115e73b096d6",
+      "sha256": "ff076cc346cecdc4c1d47b16dea76a8d9794fcc9d051ab92c4d539f9e08910ab",
+      "size": [
+        80,
+        48
+      ]
+    },
+    "cbs": {
+      "article": "CBS",
+      "file": "CBS logo (2020).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ee/CBS_logo_%282020%29.svg/960px-CBS_logo_%282020%29.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/e/ee/CBS_logo_%282020%29.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "06b0840c67d2e14a88bed0b880d87f4bbe606cdb",
+      "source_png_sha256": "9645acd82745cb0567570c03ac014c3b00a31d7f4fdb8944c485a8b0dc91349a",
+      "sha256": "c9965ade69d81f3c38f6e7cc8a7ca182dd01f6be74d95ae5011c0d1488a57dd5",
+      "size": [
+        166,
+        48
+      ]
+    },
+    "cbssn": {
+      "article": "CBS Sports Network",
+      "file": "CBS Sports Network 2021.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/04/CBS_Sports_Network_2021.svg/960px-CBS_Sports_Network_2021.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/0/04/CBS_Sports_Network_2021.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "8b3befe67330f61de49708197ae8d34ba580d069",
+      "source_png_sha256": "912a9fc08d1a466653944fba5deac032634c180359e235d989a998d241111c75",
+      "sha256": "97e62f8438b158d2a7367ac9a0874afb60cbb4b794bbeb4f70bc4ae3001c99ef",
+      "size": [
+        186,
+        48
+      ]
+    },
+    "cnbc": {
+      "article": "CNBC",
+      "file": "CNBC_2025.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bc/CNBC_2025.svg/960px-CNBC_2025.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/b/bc/CNBC_2025.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "29590e175252b860a8f488027386e6763b722fda",
+      "source_png_sha256": "edc1ec1b0cdf031027e8ae0e0a2e0349fc6477e3697c2ae755a567c5432199fb",
+      "sha256": "863685340ecc2c187c696310b4893e9c659fe9965157192f17305419a9c589e0",
+      "size": [
+        150,
+        48
+      ]
+    },
+    "cw": {
+      "article": "The CW",
+      "file": "The CW 2024.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b1/The_CW_2024.svg/960px-The_CW_2024.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/b/b1/The_CW_2024.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "56d265f0e1427be4db8511f0ca3f13971961ffeb",
+      "source_png_sha256": "94b2f0cb62f2e70c02ddbe080e4d0657c2fb1845a60e15bbe82dd4c5cc413a69",
+      "sha256": "83a4b54a24c79c0d3c0d26a289a47c88f2cc0be38464b36b571934af6c608a32",
+      "size": [
+        109,
+        48
+      ]
+    },
+    "dazn": {
+      "article": "DAZN",
+      "file": "DAZN Logo Master.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/06/DAZN_Logo_Master.svg/960px-DAZN_Logo_Master.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/0/06/DAZN_Logo_Master.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "b13b8386cba25657ad6753a6e7eeca2fb1727108",
+      "source_png_sha256": "a6e85e7ebe52260f8c6507e0483d9ffe81ad90518eeeb67c63c86638cf124af2",
+      "sha256": "67abd687a17ac271046a0adfa0be8361abf1de989d724b480f9c319edc885e2c",
+      "size": [
+        48,
+        48
+      ]
+    },
+    "disney_plus": {
+      "article": "Disney+",
+      "file": "Disney+ 2024.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/64/Disney%2B_2024.svg/960px-Disney%2B_2024.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/6/64/Disney%2B_2024.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "e750c4323edf1a8524039aab63930bc2c82c16d9",
+      "source_png_sha256": "1ae44944e6746390c389e805fd2f23696b70e9feb35b8c31b074f1793b1be568",
+      "sha256": "8884ba3c8152228998d4a2b6fe76d68857ff693e52b03b41c76df93da59962aa",
+      "size": [
+        88,
+        48
+      ]
+    },
+    "espn": {
+      "article": "ESPN",
+      "file": "ESPN wordmark.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2f/ESPN_wordmark.svg/960px-ESPN_wordmark.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/2/2f/ESPN_wordmark.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "e1ac134512cbc4f1257612ebda9ec74a686d5b2b",
+      "source_png_sha256": "a00882a6629bbc3a64ab07bddfcad31c22005fa9b9a6a3bd52d0d51e8f95ee2b",
+      "sha256": "e7bbf66a722741f1d907b66bfeb763c91003ee8a136af14c173802579bf13da0",
+      "size": [
+        192,
+        48
+      ]
+    },
+    "espn2": {
+      "article": "ESPN2",
+      "file": "ESPN2 logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bf/ESPN2_logo.svg/960px-ESPN2_logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/b/bf/ESPN2_logo.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "b6bf248856d0debf4fa6d08c57e155a795b27f4d",
+      "source_png_sha256": "884126da40e0675e7a65f3a1bc9c135db9f7cff8c7be4e34016734166ddca467",
+      "sha256": "66a3ff88e2a084c4c9eb3604d18a24a2d025d6312e356f8d2e8e46323d182df7",
+      "size": [
+        192,
+        36
+      ]
+    },
+    "espn_deportes": {
+      "article": "ESPN Deportes",
+      "file": "ESPN Deportes.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d5/ESPN_Deportes.svg/960px-ESPN_Deportes.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/d/d5/ESPN_Deportes.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "7b213e43b966049aedc7ecd7ba07b7fc21e1744f",
+      "source_png_sha256": "8db0473f374db9fdfb21f7d4d8d3fcaec2e3b29ac03806380b2adfd29d793e0e",
+      "sha256": "d961d583d2e95b31fce33a71e1247ac6a1a234175fcb9c93806d77685619b1f8",
+      "size": [
+        129,
+        48
+      ]
+    },
+    "espn_plus": {
+      "article": "ESPN+",
+      "file": "ESPN Plus.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/80/ESPN_Plus.svg/960px-ESPN_Plus.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/8/80/ESPN_Plus.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "dbff30de03a0648f5f54064d996171d08f19933c",
+      "source_png_sha256": "1583c35ec9c3fb34d93ba19fb317c20c335a541f98025a94d1650df97d2cb322",
+      "sha256": "e728a0a0a0129f0037dc544a96312b0b644e783e8bffeb7f66767359c44d4a50",
+      "size": [
+        192,
+        39
+      ]
+    },
+    "espnu": {
+      "article": "ESPNU",
+      "file": "ESPN U logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/ca/ESPN_U_logo.svg/960px-ESPN_U_logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/c/ca/ESPN_U_logo.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "a0cc04d31bc1b776040dfc76f1fe979208c59e12",
+      "source_png_sha256": "c11540d6d4326c47c0cf94fd9d0f2fbea66cde93b0548a5ed579e3a16fff0ff9",
+      "sha256": "2a3594dfe1b11934861f283108082dd9543d282452d7bc9339aa7a8eafc850f3",
+      "size": [
+        48,
+        48
+      ]
+    },
+    "fandango": {
+      "article": "Fandango at Home",
+      "file": "Fandango 2014.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/23/Fandango_2014.svg/960px-Fandango_2014.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/2/23/Fandango_2014.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "437527d93d17f71b14f53e30abe9e6db81243f23",
+      "source_png_sha256": "4c5725503164a62e414a5f8df1b5491f50bd9eb051e8fdaa046408d4193c9e7b",
+      "sha256": "108bd5632551f91611b634ade662ebb69902f9607cdbcf2b1e9790d2fb7f4fbf",
+      "size": [
+        96,
+        48
+      ]
+    },
+    "fox": {
+      "article": "Fox Broadcasting Company",
+      "file": "Fox Broadcasting Company logo (2019).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c0/Fox_Broadcasting_Company_logo_%282019%29.svg/960px-Fox_Broadcasting_Company_logo_%282019%29.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/c/c0/Fox_Broadcasting_Company_logo_%282019%29.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "5d2f34f8fead601da77876d5ed879b88a793d953",
+      "source_png_sha256": "3111a81b18e539bc4773bcfeb68d6450d5534ad0195a76f292b08941e34244d2",
+      "sha256": "9d2f0f79c21ae0df927ea4692be2c56e614a09ae2f464a667385c0c1a4020841",
+      "size": [
+        113,
+        48
+      ]
+    },
+    "fs1": {
+      "article": "Fox Sports 1",
+      "file": "2015 Fox Sports 1 logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/37/2015_Fox_Sports_1_logo.svg/960px-2015_Fox_Sports_1_logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/3/37/2015_Fox_Sports_1_logo.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "19d3de1d82eb41a946a6f13f9c49e577fcfb9f79",
+      "source_png_sha256": "e1edaefce753c453f01ae0aa7b5bf68be8074972a88413e28721c625268ed2de",
+      "sha256": "1a51e39d6a89c3704988636c393a0b60d94558b96a7c387f76a6ae92c3277016",
+      "size": [
+        91,
+        48
+      ]
+    },
+    "golf_channel": {
+      "article": "Golf Channel",
+      "file": "Golf Channel logo 2025.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fb/Golf_Channel_logo_2025.svg/960px-Golf_Channel_logo_2025.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/f/fb/Golf_Channel_logo_2025.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "0f0bc6b7da51bd6f450197700119d1744ca1e002",
+      "source_png_sha256": "639d5b9b33f2354633b9b3b1fb4490e3b3fb7425c9ea66248450c7701c13287f",
+      "sha256": "49b01cd0164faf66daa929a75c6544a669e62c65f2bbdfb23aeb0b8a0d369bf9",
+      "size": [
+        154,
+        48
+      ]
+    },
+    "hbo_max": {
+      "article": "HBO Max",
+      "file": "HBO Max (2025).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b3/HBO_Max_%282025%29.svg/960px-HBO_Max_%282025%29.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/b/b3/HBO_Max_%282025%29.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "677574ed504dc648eaa27c69f3dbae0d7f5087bc",
+      "source_png_sha256": "8922cd4ba322c6a0af26b99db7fecbf73d4657bface9e893842abbe95191b34f",
+      "sha256": "b8ada44ad77989556e6200d0f362c313fe8667f59326c0346a51acaf3bf08604",
+      "size": [
+        66,
+        48
+      ]
+    },
+    "mlb_network": {
+      "article": "MLB Network",
+      "file": "MLBNetworkLogo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/a/ac/MLBNetworkLogo.svg/960px-MLBNetworkLogo.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/en/a/ac/MLBNetworkLogo.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "2cfa46edec2df378bcf443eb6f6d0706b52ea47b",
+      "source_png_sha256": "361aeb878ffd8c9a19f85965abd687021444e1d59be3f1e12b036a6fc2d2bc34",
+      "sha256": "00334a70bebe7e5c5dd01bd3b44dcc100725507e23221c55042d7a6dae4cbb2d",
+      "size": [
+        47,
+        48
+      ]
+    },
+    "nba_tv": {
+      "article": "NBA TV",
+      "file": "NBA TV.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/d/d2/NBA_TV.svg/960px-NBA_TV.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/en/d/d2/NBA_TV.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "7f9788caf0249ac36fae9cfc5a4970d83d20d413",
+      "source_png_sha256": "9287b4cfba6bce43870790f076bc5f4c9fb1a7546ba5c111a6865938c950f3ae",
+      "sha256": "2647b260ab131d2f92912022f107edaddaab6c5c1ab43d8cf9e328d0eb416856",
+      "size": [
+        48,
+        48
+      ]
+    },
+    "nbc": {
+      "article": "NBC",
+      "file": "NBC logo 2022.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0b/NBC_logo_2022.svg/960px-NBC_logo_2022.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/0/0b/NBC_logo_2022.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "42157353a7c7ea3559379c34a25a7a615f439f1a",
+      "source_png_sha256": "db25b8ea2fe32ad7edd198df34ac579ad56004fa25c4d85cf515172a321d9419",
+      "sha256": "17a394e64355dc29e5a84b0f5d0efd1c16884548b2e65abb80300e79844fa29a",
+      "size": [
+        192,
+        47
+      ]
+    },
+    "netflix": {
+      "article": "Netflix",
+      "file": "Netflix 2015 logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/08/Netflix_2015_logo.svg/960px-Netflix_2015_logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/0/08/Netflix_2015_logo.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "1d3f5d21a4252e6bee31360b15a6e3659edd58be",
+      "source_png_sha256": "0c98b31ad91db85b99cbb7711eb0f6651b5be62ca44b663329a3f139d7731900",
+      "sha256": "735e186e2badb38c30deff971fa4ab71e1c09eb8f57a9ba61b15cd4c4072abdc",
+      "size": [
+        177,
+        48
+      ]
+    },
+    "nfl_network": {
+      "article": "NFL Network",
+      "file": "NFL Network logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/8/8f/NFL_Network_logo.svg/960px-NFL_Network_logo.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/en/8/8f/NFL_Network_logo.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "4a822f6311b87bbda83a07bd99b68c9405d50c55",
+      "source_png_sha256": "c9ac9b9b154a92c90842308cda7eee77b5a25f6d54122933092c6dffb6f167af",
+      "sha256": "61ab642681def62b9a7fefc17b6aab7134917d87c995c46d07f14e743f04ec20",
+      "size": [
+        123,
+        48
+      ]
+    },
+    "paramount_plus": {
+      "article": "Paramount+",
+      "file": "Paramount Plus.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a5/Paramount_Plus.svg/960px-Paramount_Plus.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/a/a5/Paramount_Plus.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "8f3294df1b6efe5163007177b843914ffa34eabf",
+      "source_png_sha256": "3afc8bd8f2daea5ba35442d41bfd1ac98eec63f288e5eeaad8b70eca73b0934b",
+      "sha256": "ac178495b3f1b26be793cfa0bd350f129eb8b006ed082ceb41707693f53561f0",
+      "size": [
+        77,
+        48
+      ]
+    },
+    "peacock": {
+      "article": "Peacock (streaming service)",
+      "file": "NBCUniversal Peacock Logo (2026).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/20/NBCUniversal_Peacock_Logo_%282026%29.svg/960px-NBCUniversal_Peacock_Logo_%282026%29.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/2/20/NBCUniversal_Peacock_Logo_%282026%29.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "bb0a269bd9a0b55b33c1cf283662ae015a48fe2e",
+      "source_png_sha256": "f3783c812e026046cc389448b3da655ee851eecc70d023143cb997ce5aa9f703",
+      "sha256": "393b35e5cf66288e57a32f8ac0f469c7e9215c37dd79454c59cf92dc259d0f58",
+      "size": [
+        192,
+        48
+      ]
+    },
+    "prime_video": {
+      "article": "Amazon Prime Video",
+      "file": "Prime Video logo (2024).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/90/Prime_Video_logo_%282024%29.svg/960px-Prime_Video_logo_%282024%29.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/9/90/Prime_Video_logo_%282024%29.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "53e6b00e5c9b9a64871eb57217f1f52747a22a3e",
+      "source_png_sha256": "2a4a457de8833e222d9e43c954df97b11de3862fa1fd983be2d3630ac2550d0c",
+      "sha256": "009d1ae41f03f99280b1ed8a94d3c483552986552ae1bf710b5b18d7cb64ca37",
+      "size": [
+        152,
+        48
+      ]
+    },
+    "sec_network": {
+      "article": "SEC Network",
+      "file": "SEC Network (2024).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fd/SEC_Network_%282024%29.svg/960px-SEC_Network_%282024%29.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/f/fd/SEC_Network_%282024%29.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "322fbf5f740629b158cc7fe9bae2b2c5c9ac06cc",
+      "source_png_sha256": "998b38ca5037f84bbaeac2fd023f3ce46ad767cbf0149f2bf2a52bc6ff1c5466",
+      "sha256": "4c7983a64fa97b0236480b9d8c317bb87765a7ee47f6bcd580de674d0a87a387",
+      "size": [
+        93,
+        48
+      ]
+    },
+    "tbs": {
+      "article": "TBS (American TV channel)",
+      "file": "TBS 2020.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2c/TBS_2020.svg/960px-TBS_2020.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/2/2c/TBS_2020.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "4f2ccdb64370a86e1068b119d4706fefa1184d87",
+      "source_png_sha256": "2e10411b5ac1e554971442a0fcd8732a2bd0645833b78fde8f052b27e7e1e0b1",
+      "sha256": "484336cc915d3b8b7c6fce142be30b917e308b15ddbc78c07e8e8214b6970edc",
+      "size": [
+        84,
+        48
+      ]
+    },
+    "tnt": {
+      "article": "TNT (American TV network)",
+      "file": "TNT Logo 2016.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/24/TNT_Logo_2016.svg/960px-TNT_Logo_2016.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/2/24/TNT_Logo_2016.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "e5da4001c0902efc6778c796ca0a30ebda517988",
+      "source_png_sha256": "aa65dedd87cad867c9d6c99acb11a496780777591e1347a5f3deb620aa49651b",
+      "sha256": "dff2bb04d2ed620e3b8e466523a441c2fdba9167435f6892c5343f6576222615",
+      "size": [
+        48,
+        48
+      ]
+    },
+    "trutv": {
+      "article": "TruTV",
+      "file": "TruTV 2014.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/36/TruTV_2014.svg/960px-TruTV_2014.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/3/36/TruTV_2014.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "9ede8bb0ea7142b29e5727dc9c901858832d7ae5",
+      "source_png_sha256": "1ecd8da23c0e0438a92cc8860e00e36451098403ded99fa3f272da1f70be55bf",
+      "sha256": "0892ef38a46569b09c032e593531477f0b729dabe00309391e00656fa11891a9",
+      "size": [
+        124,
+        48
+      ]
+    },
+    "universo": {
+      "article": "Universo (TV network)",
+      "file": "Universo 2017.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/88/Universo_2017.svg/960px-Universo_2017.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/8/88/Universo_2017.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "16fdb598daa6c9f8e40c0836941c9d58b6656a6f",
+      "source_png_sha256": "f4c48066deb7483d0740d36cf8b7e6817c4beb3a2ce8b54b227f232a3309dc0e",
+      "sha256": "07b9bb9993fda2d3418688aed7b534aa28ee585cc7d5c7f7429f172af9d81550",
+      "size": [
+        90,
+        48
+      ]
+    },
+    "usa": {
+      "article": "USA Network",
+      "file": "USA Network 2020.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/84/USA_Network_2020.svg/960px-USA_Network_2020.svg.png?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "original": "https://upload.wikimedia.org/wikipedia/commons/8/84/USA_Network_2020.svg?utm_source=en.wikipedia.org&utm_campaign=imageinfo&utm_content=original",
+      "original_sha1": "118893e4cb8f1626750e78ab1aec5741315a47dd",
+      "source_png_sha256": "fc242ae9f62fa2dce2c4dbb88fc3a93a7968c8a91d8cf8e72243fa1c84e6bc4b",
+      "sha256": "db8bc1b5accd5eec2f771c2b4ed32f3e03350340df7d079e44ea5123ee35f74f",
+      "size": [
+        110,
+        48
+      ]
+    }
+  }
+}

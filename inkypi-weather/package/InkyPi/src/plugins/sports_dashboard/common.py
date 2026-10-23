@@ -417,6 +417,12 @@ LOCAL_CLUB_LEAGUE_WORDMARK_PATHS = {
     "FL1": os.path.join(LOCAL_DECOR_DIR, "club_fl1_title_wordmark.png"),
     "MLS": os.path.join(LOCAL_DECOR_DIR, "club_mls_title_wordmark.png"),
 }
+LOCAL_CLUB_HEADER_CUTOUT_PATHS = {
+    code: os.path.join(LOCAL_DECOR_DIR, f"club_{code.lower()}_header_cutout.png")
+    for code in ("PL", "PD", "BL1", "SA", "FL1", "MLS")
+}
+LOCAL_MLB_BALLPARK_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_ballpark_strip.png")
+LOCAL_TV_LOGO_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "logos", "tv"))
 LOCAL_NBA_COURT_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_court_strip.png")
 LOCAL_TI_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "the_international_title_wordmark.png")
 LOCAL_MLB_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_header_cutout.png")

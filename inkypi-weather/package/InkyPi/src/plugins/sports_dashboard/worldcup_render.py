@@ -205,6 +205,11 @@ class WorldCupRenderMixin:
         draw.text((title_x, source_y), source_text, font=source_font, fill=COLORS["muted"])
         if not presentation or bool(presentation.get("show_worldcup_banner")):
             self._draw_worldcup_header_banner(image, x1 + 225, y1, x2 - 90, y1 + 47)
+        elif competition == "club":
+            league_code = str(presentation.get("league_code") or "").upper()
+            self._draw_standalone_sport_header_cutout(
+                image, f"CLUB_{league_code}", x1 + 225, y1 + 2, x2 - 96, y1 + 46, self._club_league_accent(league_code)
+            )
 
         live = selected.get("live") or []
         upcoming = selected.get("upcoming") or []

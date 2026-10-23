@@ -12,8 +12,18 @@ from PIL import Image, ImageDraw
 import pytest
 
 from plugins.sports_dashboard.baseball_icons import BASEBALL_ICON_FILLS, BASEBALL_ICON_SIZE, BASEBALL_ICONS, baseball_icon
-from plugins.sports_dashboard.common import _ACTIVE_COLORS, COLORS, DAY_COLORS, DEEP_NIGHT_COLORS
+from plugins.sports_dashboard import scorebug_kit as scorebug_kit_module
+from plugins.sports_dashboard.common import (
+    _ACTIVE_COLORS,
+    COLORS,
+    DAY_COLORS,
+    DEEP_NIGHT_COLORS,
+    LOCAL_CLUB_HEADER_CUTOUT_PATHS,
+    LOCAL_MLB_BALLPARK_STRIP_PATH,
+    LOCAL_TV_LOGO_DIR,
+)
 from plugins.sports_dashboard.event_marks import EVENT_MARK_DIR
+from plugins.sports_dashboard.tv_networks import TV_NETWORK_ALIASES, tv_network_parts
 from plugins.sports_dashboard.sports_dashboard import SportsDashboard
 from tests.test_sports_dashboard import (
     _plugin,
@@ -292,6 +302,72 @@ def test_baseball_icons_are_whole_16px_tiles_with_a_theme_outline():
         night = baseball_icon(name, DEEP_NIGHT_COLORS["border"])
         assert night.size == (BASEBALL_ICON_SIZE, BASEBALL_ICON_SIZE)
         assert (*DEEP_NIGHT_COLORS["border"], 255) in set(night.get_flattened_data()), name
+
+
+def test_mlb_series_side_names_the_team_in_statsapis_result():
+    event = {"team_a_code": "TB", "team_b_code": "MIL"}
+    assert SportsDashboard._mlb_series_side({**event, "series_summary": "MIL wins 4-0"}) == "b"
+    assert SportsDashboard._mlb_series_side({**event, "series_summary": "TB leads 2-1"}) == "a"
+    assert SportsDashboard._mlb_series_side({**event, "series_summary": "Series tied 2-2"}) == ""
+    assert SportsDashboard._mlb_series_side({**event, "series_summary": "CLE leads 2-1"}) == ""
+
+
+def test_mlb_live_and_final_cards_fill_the_spare_band_with_the_ballpark():
+    assert Path(LOCAL_MLB_BALLPARK_STRIP_PATH).is_file()
+    event = {"state": "post", "team_a_code": "TB", "team_b_code": "MIL", "wins_a": 3, "wins_b": 4,
+             "innings": [(0, 1)] * 9, "scheduled_innings": 9, "decisions": [{"label": "W", "name": "T. Megill"}]}
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_mlb_scoreboard_card(
+        image, draw, (12, 57, 352, 260), event, NOW, plugin._mlb_spec()))
+
+    band = image.crop((28, 185, 342, 236))
+    assert sum(1 for pixel in band.get_flattened_data() if pixel != COLORS["panel"]) > 2000
+
+
+@pytest.mark.parametrize("code", ["PL", "PD", "BL1", "SA", "FL1", "MLS"])
+def test_club_header_cutouts_are_white_alpha_art(code):
+    path = SportsDashboard._sport_header_cutout_path(f"CLUB_{code}")
+    assert path == LOCAL_CLUB_HEADER_CUTOUT_PATHS[code]
+    with Image.open(path) as source:
+        cutout = source.convert("RGBA")
+    assert cutout.height >= 38 and cutout.width > 3 * cutout.height
+    opaque = {pixel[:3] for pixel in cutout.get_flattened_data() if pixel[3] > 0}
+    assert opaque == {(255, 255, 255)}
+
+
+def test_tv_network_parts_read_each_feeds_shorthand():
+    assert tv_network_parts("ESPN/ABC/Disney+") == [("ESPN", "espn"), ("ABC", "abc"), ("Disney+", "disney_plus")]
+    assert tv_network_parts("TBS / HBO MAX") == [("TBS", "tbs"), ("HBO MAX", "hbo_max")]
+    assert [key for _name, key in tv_network_parts("NFL Net")] == ["nfl_network"]
+    assert [key for _name, key in tv_network_parts("ESPN+")] == ["espn_plus"]
+    assert [key for _name, key in tv_network_parts("Golf Chnl")] == ["golf_channel"]
+    assert tv_network_parts("KJZZ-TV") == [("KJZZ-TV", None)]
+    assert tv_network_parts("") == []
+
+
+def test_tv_network_aliases_point_at_bundled_logos():
+    assert set(TV_NETWORK_ALIASES) == {path.stem for path in Path(LOCAL_TV_LOGO_DIR).glob("*.png")}
+
+
+def test_tv_tile_shows_network_logos_and_names_a_network_without_one(monkeypatch, tmp_path, boxes):
+    logo = Image.new("RGBA", (40, 20), (0, 0, 0, 0))
+    logo.paste((200, 30, 30, 255), (4, 4, 36, 16))
+    logo.save(tmp_path / "nfl_network.png")
+    monkeypatch.setattr(scorebug_kit_module, "LOCAL_TV_LOGO_DIR", str(tmp_path))
+    spec = _plugin()._football_spec("NFL")
+    image, draw = _render(lambda plugin, image, draw: plugin._draw_kit_tiles(
+        draw, (20, 20, 320, 60), [("KICKOFF", "IN 2D"), ("TV", "NFL Net/Peacock")], spec, image=image))
+
+    texts = [text for _box, text, _font in boxes]
+    assert "NFL Net" not in texts and "Peacock" in texts
+    assert (200, 30, 30) in set(image.crop((170, 34, 320, 56)).get_flattened_data())
+
+
+def test_tv_tile_keeps_the_text_when_no_network_has_a_logo(monkeypatch, tmp_path, boxes):
+    monkeypatch.setattr(scorebug_kit_module, "LOCAL_TV_LOGO_DIR", str(tmp_path))
+    spec = _plugin()._football_spec("NFL")
+    _render(lambda plugin, image, draw: plugin._draw_kit_tiles(draw, (20, 20, 320, 60), [("TV", "KJZZ-TV")], spec, image=image))
+
+    assert "KJZZ-TV" in [text for _box, text, _font in boxes]
 
 
 def test_basketball_leaders_per_team_and_for_the_game():

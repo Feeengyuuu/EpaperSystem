@@ -321,7 +321,7 @@ class FootballRenderMixin:
             ("TV", str(event.get("broadcast") or "").strip() or "TBD"),
             ("O/U", str(event.get("over_under") or "").replace("O/U", "").strip() or "--"),
         ]
-        tiles_bottom = self._draw_kit_tiles(draw, (x1, y1, x2, y2), tiles, spec)
+        tiles_bottom = self._draw_kit_tiles(draw, (x1, y1, x2, y2), tiles, spec, image=image)
         # Before kickoff ESPN's leaders are season totals for the two teams.
         self._draw_kit_leader_rows(image, draw, x1, tiles_bottom + 6, x2, y2 - 14, event, event.get("leaders"), spec, max_rows=2)
         self._draw_kit_footer(draw, (x1, y2 - 12, x2, y2), SportsDashboard._football_footer_label(event, sport, include_tv=False))

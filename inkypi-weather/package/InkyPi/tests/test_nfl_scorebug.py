@@ -416,7 +416,8 @@ def test_pregame_panel_shows_kickoff_tiles_spread_and_season_leaders(parsed, ren
 
     for expected in ("TODAY 1:05 PM", "KICKOFF", "IN 1H 40M", "TV", "O/U", "51.5", "+12.5", "-12.5", "C. Williams"):
         assert expected in texts
-    assert "Fox" in texts
+    # Fox's broadcast reads as the network's logo, not its name.
+    assert "Fox" not in texts
     _assert_texts_fit(draw, render.boxes)
 
 
