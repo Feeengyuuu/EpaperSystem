@@ -1,8 +1,8 @@
 # Market tile logos
 
 Small marks that identify each index on the 整点新闻 market strip. Each is cropped to the
-mark, scaled to tile size and snapped to one pure panel ink plus white (drawn as the page
-colour), so the Spectra panel shows it solid.
+mark and scaled to tile size in its owner's original colours (gradients included); only
+the alpha is cut to on/off so the edges stay crisp on the day and night pages.
 
 | File | Index | Source |
 | --- | --- | --- |

@@ -141,15 +141,7 @@ class NewsPage:
         logo = self.p._load_market_logo(key) if key else None
         if logo is None:
             return 0
-        panel = tuple(self.c["panel"])[:3]
-        if panel != (255, 255, 255):
-            # The marks' white parts are the page showing through.
-            logo = logo.copy()
-            pixels = logo.load()
-            for py in range(logo.height):
-                for px in range(logo.width):
-                    if pixels[px, py][:3] == (255, 255, 255):
-                        pixels[px, py] = (*panel, pixels[px, py][3])
+        # Marks keep their owners' colours in both themes; white inside a mark is part of it.
         self.img.paste(logo.convert("RGB"), (int(x), int(middle - logo.height / 2)), logo.getchannel("A"))
         return logo.width
 

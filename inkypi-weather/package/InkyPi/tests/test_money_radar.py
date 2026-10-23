@@ -9,7 +9,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from plugins.money_radar import money_radar as money_module  # noqa: E402
 from plugins.money_radar import sources  # noqa: E402
 from plugins.money_radar.money_radar import MoneyRadar  # noqa: E402
-from plugins.money_radar.render import price_text, render_page  # noqa: E402
+from plugins.money_radar import render as money_render  # noqa: E402
+from plugins.money_radar.render import chip_style, price_text, render_page  # noqa: E402
+from utils.page_canvas import PageCanvas  # noqa: E402
 from utils.http_client import HttpStatusError  # noqa: E402
 
 NOW = datetime(2026, 10, 21, 13, 0, tzinfo=sources.PACIFIC)
@@ -248,6 +250,49 @@ def test_keys_and_contact_switch_on_earnings_and_filings(monkeypatch, tmp_path):
     assert payload["earnings"]["state"] == payload["filings"]["state"] == "live"
     image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "night"}}, NOW)
     assert image.size == (800, 480)
+
+
+def _canvas(mode):
+    return PageCanvas(money_render._palette({"_inkypi_theme": {"mode": mode}}))
+
+
+def _luminance(colour):
+    def channel(value):
+        value /= 255
+        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+    red, green, blue = (channel(value) for value in colour[:3])
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def _hex(colour):
+    return "#" + "".join(f"{channel:02X}" for channel in colour[:3])
+
+
+def test_holding_chips_wear_their_brands_published_colours_unchanged():
+    canvas = _canvas("day")
+    ink, paper = canvas.color("ink"), canvas.color("paper")
+
+    assert _hex(chip_style(canvas, "NVDA")[0]) == "#76B900"
+    assert _hex(chip_style(canvas, "TSLA")[0]) == "#E82127"
+    assert _hex(chip_style(canvas, "SPY")[0]) == "#001AFF"
+    assert chip_style(canvas, "NTDOY") == (paper, (0xE6, 0x00, 0x12), (0xE6, 0x00, 0x12))
+    assert chip_style(canvas, "AAPL") == (ink, paper, None)
+    assert chip_style(canvas, "SPCX") == (paper, ink, ink)
+    # Vanguard's funds share its maroon; an unknown ticker keeps the plain ink chip.
+    assert chip_style(canvas, "VTI") == chip_style(canvas, "vxus")
+    assert _hex(chip_style(canvas, "VTI")[0]) == "#96151D"
+    assert chip_style(canvas, "ZZZZ") == (ink, paper, None)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_every_brand_chip_keeps_its_text_legible(mode):
+    canvas = _canvas(mode)
+    for symbol in [*money_render.BRAND_CHIPS, "ZZZZ"]:
+        fill, text, _outline = chip_style(canvas, symbol)
+        lighter, darker = sorted((_luminance(fill), _luminance(text)), reverse=True)
+        assert (lighter + 0.05) / (darker + 0.05) >= 3, symbol
+    # At night the monochrome chips invert with the page instead of vanishing into it.
+    assert chip_style(canvas, "AAPL")[0] == canvas.color("ink")
 
 
 def test_price_text_scales_decimals():

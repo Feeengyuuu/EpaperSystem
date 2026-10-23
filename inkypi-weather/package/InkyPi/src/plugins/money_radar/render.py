@@ -32,6 +32,40 @@ NIGHT = {
     "badge_ink": "#0e171f",
 }
 COIN_NAMES = {"bitcoin": "比特币", "ethereum": "以太坊", "solana": "Solana"}
+# Ticker chips in each brand's own published colour, as is (no snapping to the panel's
+# inks): (fill, text, outline). Brands whose colours are close keep apart by the shape of
+# their mark: Nintendo is a red outlined pill, SpaceX black on white, Apple plain black.
+# Strings are theme roles, which swap at night so monochrome marks stay visible.
+NVIDIA_GREEN = (0x76, 0xB9, 0x00)        # nvidia.com accent
+TESLA_RED = (0xE8, 0x21, 0x27)           # Tesla logo red
+NINTENDO_RED = (0xE6, 0x00, 0x12)        # Nintendo red
+VANGUARD_RED = (0x96, 0x15, 0x1D)        # Vanguard maroon, shared by its funds
+STATE_STREET_BLUE = (0x00, 0x1A, 0xFF)   # State Street logo (SPDR ETFs)
+MICROSOFT_BLUE = (0x00, 0x78, 0xD4)
+GOOGLE_BLUE = (0x42, 0x85, 0xF4)
+AMAZON_ORANGE = (0xFF, 0x99, 0x00)
+NETFLIX_RED = (0xE5, 0x09, 0x14)
+CHIP_LIGHT, CHIP_DARK = (255, 255, 255), (0, 0, 0)
+BRAND_CHIPS = {
+    "AAPL": ("ink", "paper", None),
+    "AMD": ("ink", "paper", None),
+    "SPCX": ("paper", "ink", "ink"),
+    "NVDA": (NVIDIA_GREEN, CHIP_DARK, None),
+    "TSLA": (TESLA_RED, CHIP_LIGHT, None),
+    "NTDOY": ("paper", NINTENDO_RED, NINTENDO_RED),
+    "MSFT": (MICROSOFT_BLUE, CHIP_LIGHT, None),
+    "GOOGL": (GOOGLE_BLUE, CHIP_LIGHT, None),
+    "GOOG": (GOOGLE_BLUE, CHIP_LIGHT, None),
+    "AMZN": (AMAZON_ORANGE, CHIP_DARK, None),
+    "NFLX": (NETFLIX_RED, CHIP_LIGHT, None),
+    "SPY": (STATE_STREET_BLUE, CHIP_LIGHT, None),
+    "VTI": (VANGUARD_RED, CHIP_LIGHT, None),
+    "VXUS": (VANGUARD_RED, CHIP_LIGHT, None),
+    "VOO": (VANGUARD_RED, CHIP_LIGHT, None),
+    "VT": (VANGUARD_RED, CHIP_LIGHT, None),
+    "BND": (VANGUARD_RED, CHIP_LIGHT, None),
+}
+DEFAULT_CHIP = ("ink", "paper", None)
 WEEKDAYS = "一二三四五六日"
 TILES = ((12, 200), (206, 394), (400, 588), (594, 788))
 
@@ -276,9 +310,21 @@ def _macro_tiles(canvas, payload):
         canvas.text((594, 268), "宏观数据暂不可用", 14, "muted", anchor="mm")
 
 
+def chip_style(canvas, symbol):
+    """(fill, text, outline) colours of a ticker's chip in this theme."""
+    fill, text, outline = BRAND_CHIPS.get(str(symbol or "").upper(), DEFAULT_CHIP)
+    return canvas.color(fill), canvas.color(text), canvas.color(outline) if outline else None
+
+
+def _draw_chip(canvas, box, symbol, radius):
+    fill, text, outline = chip_style(canvas, symbol)
+    canvas.draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=1 if outline else 0)
+    centre = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+    canvas.text(centre, symbol or "—", 10, text, anchor="mm", width=box[2] - box[0] - 4)
+
+
 def _ticker_chip(canvas, x, y, symbol, width=42):
-    canvas.draw.rounded_rectangle((x, y - 8, x + width, y + 8), radius=3, fill=canvas.color("ink"))
-    canvas.text((x + width / 2, y), symbol or "—", 10, "paper", anchor="mm", width=width - 4)
+    _draw_chip(canvas, (x, y - 8, x + width, y + 8), symbol, 3)
     return width
 
 
@@ -366,8 +412,8 @@ def _holdings(canvas, payload, now):
         width = canvas.width(symbol, 10) + 10
         if x + width > right - 16 - detail_width:
             break
-        canvas.draw.rounded_rectangle((x, top + 8, x + width, top + 22), radius=7, outline=canvas.color("ink"))
-        canvas.text((x + width / 2, top + 15), symbol, 10, anchor="mm")
+        # The holdings row doubles as the colour key for the chips below.
+        _draw_chip(canvas, (x, top + 8, x + width, top + 22), symbol, 7)
         x += width + 4
     canvas.rule((left + 8, top + 28, right - 8, top + 28))
     body, rows = top + 42, 5

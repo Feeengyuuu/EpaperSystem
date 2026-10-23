@@ -2036,17 +2036,25 @@ def test_each_market_is_coloured_in_its_own_convention(monkeypatch):
     assert fills["0.00%"] == ink and dots[2003.0] is None and dots[52006.0] is None
 
 
-def test_every_index_has_a_mark_in_pure_panel_inks():
+def test_every_index_has_a_mark_in_its_original_colours():
     names = [name for rows in news_market.MARKET_GROUPS.values() for _symbol, name in rows]
-    inks = {(255, 255, 255), (255, 0, 0), (0, 0, 255)}
+    # The owners' marks: the SSE and S&P are red, SZSE, Nasdaq and Dow Jones blue.
+    reds = {"sse", "sp500"}
 
     for name in names:
-        logo = daily_ai_news_module.DailyAINews._load_market_logo(news_market.MARKET_LOGOS[name])
+        key = news_market.MARKET_LOGOS[name]
+        logo = daily_ai_news_module.DailyAINews._load_market_logo(key)
         assert logo is not None and logo.height <= 16
         pixels = logo.load()
         seen = [pixels[x, y] for y in range(logo.height) for x in range(logo.width)]
-        assert {pixel[:3] for pixel in seen if pixel[3]} <= inks
+        visible = [pixel[:3] for pixel in seen if pixel[3]]
         assert {pixel[3] for pixel in seen} <= {0, 255}
+        mean = [sum(pixel[channel] for pixel in visible) / len(visible) for channel in range(3)]
+        assert (mean[0] > mean[2]) == (key in reds), key
+    # Not reduced to a single panel ink: the gradient marks keep their shades.
+    sse = daily_ai_news_module.DailyAINews._load_market_logo("sse")
+    shades = {sse.getpixel((x, y))[:3] for y in range(sse.height) for x in range(sse.width) if sse.getpixel((x, y))[3]}
+    assert len(shades) > 8
 
 
 def _rendered_fills(monkeypatch, plugin):

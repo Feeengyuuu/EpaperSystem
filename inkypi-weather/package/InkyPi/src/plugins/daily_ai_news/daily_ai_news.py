@@ -631,7 +631,7 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
     @staticmethod
     @lru_cache(maxsize=8)
     def _load_market_logo(key):
-        """An index mark from market_logos/: one pure panel ink plus white, or None."""
+        """An index mark from market_logos/ in its original colours, or None."""
         path = MARKET_LOGO_DIR / f"{key}.png"
         if not key or not path.is_file():
             return None
