@@ -42,85 +42,6 @@ def _plugin():
 
 
 _FINAL_IMAGE_COVER_COLOR = (211, 59, 49)
-_LEFT_COMPACT_COVER_BOX = (40, 120, 143, 175)
-_LEFT_COMPACT_TITLE_WITH_COVER_BOX = (143, 120, 290, 175)
-_LEFT_COMPACT_TITLE_WITHOUT_COVER_BOX = (42, 120, 290, 175)
-
-
-def _solid_cover_data_uri():
-    output = BytesIO()
-    Image.new("RGB", (80, 30), _FINAL_IMAGE_COVER_COLOR).save(output, format="PNG")
-    return "data:image/png;base64," + base64.b64encode(output.getvalue()).decode("ascii")
-
-
-def _render_final_compact_title(name, secondary_name="", image=""):
-    plugin = _plugin()
-
-    def fake_fetch(_source, _count):
-        return [
-            {
-                "rank": 1,
-                "app_id": 570,
-                "name": name,
-                "secondary_name": secondary_name,
-                "image": image,
-                "current_players_fmt": "123,456",
-                "peak_players_fmt": "234,567",
-                "change_24h_fmt": "+1.0%",
-                "sparkline_svg": "",
-            }
-        ]
-
-    plugin._fetch_games = fake_fetch
-    plugin._apply_store_metadata = lambda games, include_images: None
-    plugin._write_combined_context = lambda *args, **kwargs: None
-    plugin.render_image = lambda *args, **kwargs: (_ for _ in ()).throw(
-        AssertionError("PIL-first rendering should not call the HTML renderer")
-    )
-    return plugin.generate_image(
-        {
-            "mode": "live_overview",
-            "itemsCount": "1",
-            "showImages": "true",
-            "themeMode": "day",
-            "preferPilFallback": "true",
-        },
-        FakeDeviceConfig(),
-    )
-
-
-def _pixel_bbox(image, box, predicate):
-    points = [
-        (x, y)
-        for y in range(box[1], box[3])
-        for x in range(box[0], box[2])
-        if predicate(image.getpixel((x, y)))
-    ]
-    assert points, f"expected matching pixels inside {box}"
-    return (
-        min(x for x, _y in points),
-        min(y for _x, y in points),
-        max(x for x, _y in points) + 1,
-        max(y for _x, y in points) + 1,
-    )
-
-
-def _title_ink_bbox(image, box):
-    return _pixel_bbox(image, box, lambda pixel: max(pixel) < 90)
-
-
-def _cover_bbox(image):
-    return _pixel_bbox(
-        image,
-        _LEFT_COMPACT_COVER_BOX,
-        lambda pixel: pixel == _FINAL_IMAGE_COVER_COLOR,
-    )
-
-
-def _vertical_midline_twice(box):
-    return box[1] + box[3]
-
-
 def test_scrape_trending_extracts_games_and_formats_players():
     plugin = _plugin()
     plugin._fetch_homepage = lambda message: """
@@ -299,45 +220,25 @@ def test_generate_image_combined_mode_renders_two_top_five_live_groups():
     def fake_apply(games, include_images):
         calls["metadata_batches"].append(([game["app_id"] for game in games], include_images))
 
-    def fake_render(dimensions, html_file, css_file, template_params):
-        calls["template_params"] = template_params
-        return "combined-rendered"
+    def fail_render(*_args, **_kwargs):
+        raise AssertionError("the live overview is drawn natively, not through the browser")
 
     plugin._fetch_games = fake_fetch
     plugin._apply_store_metadata = fake_apply
-    plugin.render_image = fake_render
-    plugin._font_file_uri = lambda weight="normal": (
-        "file:///fonts/msyhbd.ttc" if weight == "bold" else "file:///fonts/msyh.ttc"
-    )
+    plugin.render_image = fail_render
+    plugin._steam_totals = lambda: {"online": 35_700_000, "online_peak": 40_100_000, "spark": [1, 3, 2]}
 
     result = plugin.generate_image(
         {"mode": "live_overview", "itemsCount": "4", "showImages": "false", "themeMode": "day"},
         FakeDeviceConfig(),
     )
 
-    assert result == "combined-rendered"
+    assert result.size == (800, 480)
     assert calls["sources"] == [
         ("steamcharts_trending", 5),
         ("steamcharts_top_games", 5),
     ]
     assert calls["metadata_batches"] == [([730], False), ([570], False)]
-    params = calls["template_params"]
-    assert params["layout_variant"] == "combined"
-    assert params["table_variant"] == "combined"
-    assert params["subtitle"] == "Live Overview"
-    assert [group["key"] for group in params["chart_groups"]] == [
-        "trending",
-        "player_count",
-    ]
-    assert params["chart_groups"][0]["games"][0]["primary_metric"] == "1,234,567"
-    assert params["chart_groups"][0]["games"][0]["secondary_metric"] == "24h +12.5%"
-    assert params["chart_groups"][1]["games"][0]["primary_metric"] == "555,555"
-    assert params["chart_groups"][1]["games"][0]["secondary_metric"] == "Peak 777,777"
-    assert params["chart_groups"][0]["games"][0]["name_font_scale"]
-    left_metric_scale = params["chart_groups"][0]["games"][0]["metric_font_scale"]
-    right_metric_scale = params["chart_groups"][1]["games"][0]["metric_font_scale"]
-    assert left_metric_scale
-    assert left_metric_scale == right_metric_scale
 
 
 def _polyline_y_span(svg):
@@ -379,25 +280,6 @@ def test_pil_fallback_draws_line_and_bar_sparklines():
     assert SteamCharts._draw_sparkline_svg(draw, line_svg, (130, 0, 240, 30), (0, 0, 0))
     colors = dict((color, count) for count, color in image.getcolors(maxcolors=image.width * image.height))
     assert colors[(0, 0, 0)] > 50
-
-def test_compact_sparkline_widths_match_group_shape():
-    assert SteamCharts._compact_sparkline_width_ratio("trending", '<polyline points="0,10 120,20" />') == 0.64
-    assert SteamCharts._compact_sparkline_width_ratio("top_records", '<polyline points="0,10 120,20" />') == 0.64
-    assert SteamCharts._compact_sparkline_width_ratio("top_games", '<rect x="0" y="4" width="3" height="26" />') == 0.64
-    assert SteamCharts._compact_sparkline_y_offset("trending") == 0
-    assert SteamCharts._compact_sparkline_y_offset("top_records") == 0
-    assert SteamCharts._compact_sparkline_y_offset("top_games") == 5
-
-def test_metric_font_scale_prioritizes_full_player_counts():
-    short = SteamCharts._metric_font_scale("821")
-    current_count = SteamCharts._metric_font_scale("1,146,000")
-    peak_count = SteamCharts._metric_font_scale("Peak 1,754,724")
-
-    assert short > current_count > peak_count
-    assert current_count <= 1.04
-    assert peak_count >= 0.9
-    assert peak_count < 1
-
 
 def test_compact_font_scales_expand_short_text_and_shrink_long_text():
     short_game, long_game = SteamCharts._prepare_compact_games(
@@ -514,59 +396,6 @@ def test_generate_image_uses_pil_fallback_when_html_render_fails():
     assert image.info["inkypi_visual_fallback"] == "steam_charts_pillow"
 
 
-def test_generate_image_centers_english_title_on_loaded_cover_midline():
-    image = _render_final_compact_title("Dota 2", image=_solid_cover_data_uri())
-
-    title_bbox = _title_ink_bbox(image, _LEFT_COMPACT_TITLE_WITH_COVER_BOX)
-    cover_bbox = _cover_bbox(image)
-
-    assert abs(_vertical_midline_twice(title_bbox) - _vertical_midline_twice(cover_bbox)) <= 4
-
-
-def test_generate_image_centers_bilingual_title_block_on_loaded_cover_midline():
-    image = _render_final_compact_title(
-        "\u5200\u5854",
-        secondary_name="Dota 2",
-        image=_solid_cover_data_uri(),
-    )
-
-    title_bbox = _title_ink_bbox(image, _LEFT_COMPACT_TITLE_WITH_COVER_BOX)
-    cover_bbox = _cover_bbox(image)
-
-    assert abs(_vertical_midline_twice(title_bbox) - _vertical_midline_twice(cover_bbox)) <= 4
-
-
-def test_generate_image_keeps_chinese_title_top_aligned_with_or_without_cover():
-    loaded_image = _render_final_compact_title("\u5200\u5854", image=_solid_cover_data_uri())
-    missing_image = _render_final_compact_title("\u5200\u5854", image="")
-
-    loaded_title_bbox = _title_ink_bbox(loaded_image, _LEFT_COMPACT_TITLE_WITH_COVER_BOX)
-    missing_title_bbox = _title_ink_bbox(
-        missing_image,
-        _LEFT_COMPACT_TITLE_WITHOUT_COVER_BOX,
-    )
-
-    assert loaded_title_bbox[1] == missing_title_bbox[1]
-
-
-def test_generate_image_does_not_center_title_for_missing_or_broken_cover():
-    loaded_image = _render_final_compact_title("Dota 2", image=_solid_cover_data_uri())
-    missing_image = _render_final_compact_title("Dota 2", image="")
-    broken_image = _render_final_compact_title(
-        "Dota 2",
-        image="data:image/png;base64,not-a-valid-image",
-    )
-
-    loaded_title_bbox = _title_ink_bbox(loaded_image, _LEFT_COMPACT_TITLE_WITH_COVER_BOX)
-    missing_title_bbox = _title_ink_bbox(
-        missing_image,
-        _LEFT_COMPACT_TITLE_WITHOUT_COVER_BOX,
-    )
-    broken_title_bbox = _title_ink_bbox(broken_image, _LEFT_COMPACT_TITLE_WITH_COVER_BOX)
-
-    assert missing_title_bbox[1] == broken_title_bbox[1] < loaded_title_bbox[1]
-
-
 def test_steam_charts_css_prefers_embedded_yahei_font():
     css = (
         Path(__file__).resolve().parents[1]
@@ -616,7 +445,6 @@ def test_steam_charts_cover_images_are_scaled_up():
     assert "--image-width: 18.85vw;" in css
     assert "grid-template-columns: minmax(104px, 14.4vw) minmax(0, 1fr);" in css
     assert "cover_width = int(width * 0.1885)" in source
-    assert "cover_width = max(88, int(col_width * 0.255))" in source
 
 
 def test_steam_charts_compact_metric_divider_favors_title_space():
@@ -637,7 +465,6 @@ def test_steam_charts_compact_metric_divider_favors_title_space():
     ).read_text(encoding="utf-8")
 
     assert "minmax(6.75rem, 7.65rem)" in css
-    assert "metric_max_width = max(94, int(col_width * 0.27))" in source
 
 
 def test_steam_charts_primary_game_title_minimum_is_scaled_up():
@@ -673,7 +500,6 @@ def test_steam_charts_primary_game_title_minimum_is_scaled_up():
     assert 'class="compact-title" data-fit-text data-fit-min="13.8"' in template
     assert 'class="game-name-primary" data-fit-text data-fit-min="15"' in template
     assert "self._scaled_font_size(name_font_size, name_scale, 13)" in source
-    assert "self._scaled_font_size(name_font_size, name_scale, 14)" in source
 
 
 def test_steam_charts_combined_template_draws_compact_sparklines():
@@ -722,16 +548,11 @@ def test_steam_charts_combined_template_draws_compact_sparklines():
     assert "SPARKLINE_INK = (6, 78, 59)" in source
     assert "LINE_SPARKLINE_AMPLIFICATION = 1.55" in source
     assert "LINE_SPARKLINE_EDGE_PADDING = 2.0" in source
-    assert "chart_ink = SPARKLINE_INK" in source
-    assert "sparkline_y_offset = self._compact_sparkline_y_offset" in source
-    assert "sparkline_bottom_gap = max(3, int(height * 0.006))" in source
     assert "BOLD_SAFE_MIDDLE_DOT = \"\\u2027\"" in source
     assert "MIDDLE_DOT_DISPLAY_TRANSLATION" in source
     assert "WORD_JOINER" not in source
     assert "CJK_MIDDLE_DOT_RE" not in source
     assert "def _draw_sparkline_svg" in source
-    assert "def _compact_sparkline_width_ratio" in source
-    assert "def _compact_sparkline_y_offset" in source
 
 def test_steam_charts_template_embeds_yahei_font_faces():
     template = (
@@ -848,36 +669,6 @@ def test_steam_charts_title_wordmark_tints_for_night_theme():
     assert (255, 255, 255) in opaque_colors
 
 
-def test_steam_charts_combined_fallback_places_logo_in_title_gap(monkeypatch):
-    logo_calls = []
-    wordmark_calls = []
-    assert not hasattr(SteamCharts, "_paste_pixel_kaiju")  # the fallback header has no kaiju
-
-    def fake_paste_wordmark(_target, x, y, max_size, _theme_colors):
-        wordmark_calls.append((x, y, max_size))
-        return True
-
-    monkeypatch.setattr(SteamCharts, "_paste_title_wordmark", staticmethod(fake_paste_wordmark))
-
-    def fake_paste_logo(_target, x, y, size, _theme_colors):
-        logo_calls.append((x, y, size))
-
-    monkeypatch.setattr(SteamCharts, "_paste_steam_logo", staticmethod(fake_paste_logo))
-
-    plugin = _plugin()
-    plugin._render_combined_fallback_image(
-        (800, 480),
-        "Live Overview",
-        [{"title": "Trending Top 5", "subtitle": "24h movers", "games": []}],
-    )
-
-    assert logo_calls == [(26, 22, 42)]
-    assert wordmark_calls == [(71, 18, (288, 51))]
-    logo_y, logo_size = logo_calls[0][1], logo_calls[0][2]
-    wordmark_y, wordmark_height = wordmark_calls[0][1], wordmark_calls[0][2][1]
-    assert abs((logo_y + logo_size / 2) - (wordmark_y + wordmark_height / 2)) <= 1
-
-
 def test_steam_charts_native_title_fitting_preserves_full_name_without_ellipsis():
     draw = ImageDraw.Draw(Image.new("RGB", (240, 80), "white"))
     title = "Counter-Strike 2 / 反恐精英：全球攻势"
@@ -896,56 +687,6 @@ def test_steam_charts_native_title_fitting_preserves_full_name_without_ellipsis(
     assert all("..." not in line and "…" not in line for line in lines)
     assert len(lines) <= 2
     assert all(draw.textlength(line, font=font) <= 172 for line in lines)
-
-
-def test_steam_charts_native_centers_single_and_bilingual_title_blocks_on_cover_midline():
-    assert SteamCharts._compact_row_content_top(100, 66) == 103
-
-    assert SteamCharts._compact_title_block_top(
-        103, 39, 15, 1, center_title_block=True
-    ) == 115
-    assert SteamCharts._compact_title_block_top(
-        103, 39, 15, 2, center_title_block=True
-    ) == 107
-    assert SteamCharts._compact_title_block_top(
-        103,
-        39,
-        15,
-        1,
-        secondary_line_height=9,
-        secondary_line_count=1,
-        center_title_block=True,
-    ) == 110
-    assert SteamCharts._compact_title_block_top(
-        103, 39, 15, 1, center_title_block=False
-    ) == 103
-    assert SteamCharts._compact_secondary_title_top(
-        100,
-        66,
-        110,
-        15,
-        center_title_block=True,
-        has_cover=True,
-    ) == 126
-    assert SteamCharts._compact_secondary_title_top(
-        100,
-        66,
-        103,
-        15,
-        center_title_block=True,
-        has_cover=False,
-    ) == 131
-
-    source = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "plugins"
-        / "steam_charts"
-        / "steam_charts.py"
-    ).read_text(encoding="utf-8")
-    assert "cover_y = content_top" in source
-    assert "name_top = content_top" in source
-    assert "name_top = self._compact_title_block_top(" in source
 
 
 def test_steam_charts_html_centers_marked_title_blocks_only_with_a_loaded_cover():

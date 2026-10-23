@@ -174,6 +174,26 @@ def _download(draw, x, y, s, color, knockout):
     draw.rectangle(_p(x, y, s, [(0.06, 0.82), (0.94, 0.96)]), fill=color)
 
 
+def _users(draw, x, y, s, color, knockout):
+    draw.ellipse(_p(x, y, s, [(0.5, 0.12), (0.8, 0.42)]), fill=color)
+    draw.pieslice(_p(x, y, s, [(0.36, 0.48), (0.94, 1.06)]), 180, 360, fill=color)
+    draw.ellipse(_p(x, y, s, [(0.18, 0.2), (0.5, 0.52)]), fill=color, outline=knockout, width=_w(s, 0.06))
+    draw.pieslice(_p(x, y, s, [(0.02, 0.58), (0.66, 1.18)]), 180, 360, fill=color, outline=knockout, width=_w(s, 0.06))
+
+
+def _gamepad(draw, x, y, s, color, knockout):
+    draw.rounded_rectangle(_p(x, y, s, [(0.04, 0.28), (0.96, 0.76)]), radius=max(1, s * 0.2), fill=color)
+    draw.rectangle(_p(x, y, s, [(0.2, 0.47), (0.38, 0.55)]), fill=knockout)
+    draw.rectangle(_p(x, y, s, [(0.25, 0.42), (0.33, 0.6)]), fill=knockout)
+    for cx, cy in ((0.66, 0.45), (0.78, 0.57)):
+        draw.ellipse(_p(x, y, s, [(cx - 0.05, cy - 0.05), (cx + 0.05, cy + 0.05)]), fill=knockout)
+
+
+def _tag(draw, x, y, s, color, knockout):
+    draw.polygon(_p(x, y, s, [(0.08, 0.08), (0.52, 0.08), (0.94, 0.5), (0.5, 0.94), (0.08, 0.52)]), fill=color)
+    draw.ellipse(_p(x, y, s, [(0.22, 0.22), (0.36, 0.36)]), fill=knockout)
+
+
 def _paper(draw, x, y, s, color, knockout):
     draw.polygon(_p(x, y, s, [(0.14, 0.02), (0.64, 0.02), (0.88, 0.26), (0.88, 0.98), (0.14, 0.98)]), fill=color)
     draw.polygon(_p(x, y, s, [(0.64, 0.02), (0.64, 0.26), (0.88, 0.26)]), fill=knockout)
@@ -316,6 +336,7 @@ ICONS = {
     "outage": _cross, "maintenance": _wrench, "leaf": _leaf, "bug": _bug, "bird": _bird,
     "mushroom": _mushroom, "spider": _spider, "paw": _paw, "lizard": _lizard, "fish": _fish, "frog": _frog,
     "snail": _snail, "comment": _comment, "heart": _heart, "star": _star, "download": _download,
+    "users": _users, "gamepad": _gamepad, "tag": _tag,
 }
 
 

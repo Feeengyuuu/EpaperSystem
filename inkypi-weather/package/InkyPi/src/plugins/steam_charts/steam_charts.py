@@ -2,6 +2,7 @@ from utils.resource_cache import cached_resource_image, prune_resource_images
 import hashlib
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.context_cache import write_context
+from plugins.steam_charts.overview_page import LiveOverviewMixin
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import (
     font_file_uri,
@@ -67,6 +68,7 @@ STEAM_HEADER_BAR_PATH = os.path.join(PLUGIN_DIR, "assets", "steam_header_pixel_b
 STEAMCHARTS_HOME_URL = "https://steamcharts.com"
 STEAMCHARTS_CHART_URL = "https://steamcharts.com/app/{appid}/chart-data.json"
 STEAM_STORE_APPDETAILS = "https://store.steampowered.com/api/appdetails"
+STEAM_USER_STATS_URL = "https://store.steampowered.com/stats/userdata.json"
 STEAM_CAPSULE_URL = "https://cdn.akamai.steamstatic.com/steam/apps/{appid}/capsule_sm_120.jpg"
 STEAM_CAPSULE_TIMEOUT = 15
 STEAM_CAPSULE_CACHE_SIZE = 128
@@ -188,7 +190,7 @@ class _RateLimiter:
 steamcharts_rate_limiter = _RateLimiter(STEAMCHARTS_REQUESTS_PER_SECOND)
 
 
-class SteamCharts(BasePlugin):
+class SteamCharts(LiveOverviewMixin, BasePlugin):
     def generate_settings_template(self):
         template_params = super().generate_settings_template()
         template_params["chart_modes"] = CHART_MODES
@@ -222,6 +224,10 @@ class SteamCharts(BasePlugin):
         if table_variant == "combined":
             chart_groups = self._fetch_combined_chart_groups(items_count, show_images)
             self._write_combined_context(mode_config, chart_groups, updated_at_text)
+            # The live overview is drawn natively: Steam-wide totals, store facts and peaks
+            # need more room than the HTML table had, and it spares the Pi a browser.
+            return self._render_live_overview(dimensions, chart_groups, self._steam_totals(), theme_context,
+                                              updated_at_text)
         else:
             games = self._fetch_games(mode_config["source"], items_count)
             self._apply_store_metadata(games, include_images=show_images)
@@ -273,24 +279,15 @@ class SteamCharts(BasePlugin):
         else:
             logger.info("Steam Charts using PIL fallback renderer first on constrained display runtime.")
 
-        if table_variant == "combined":
-            fallback_image = self._render_combined_fallback_image(
-                dimensions,
-                mode_config["label"],
-                chart_groups,
-                theme_context,
-                updated_at_text,
-            )
-        else:
-            fallback_image = self._render_fallback_image(
-                dimensions,
-                mode_config["label"],
-                table_variant,
-                games,
-                show_images,
-                theme_context,
-                updated_at_text,
-            )
+        fallback_image = self._render_fallback_image(
+            dimensions,
+            mode_config["label"],
+            table_variant,
+            games,
+            show_images,
+            theme_context,
+            updated_at_text,
+        )
 
         fallback_image.info["inkypi_visual_fallback"] = "steam_charts_pillow"
         if html_render_failed:
@@ -739,239 +736,6 @@ class SteamCharts(BasePlugin):
 
         return image
 
-    def _render_combined_fallback_image(self, dimensions, subtitle, chart_groups, theme_context=None, updated_at_text=""):
-        width, height = dimensions
-        theme_colors = self._theme_colors(theme_context)
-        ink = theme_colors["ink"]
-        paper = theme_colors["paper"]
-        chart_ink = SPARKLINE_INK
-        image = Image.new("RGB", dimensions, paper)
-        draw = ImageDraw.Draw(image)
-
-        margin = max(14, int(width * 0.026))
-        title_font = self._font(max(24, int(height * 0.072)), "bold")
-        subtitle_font = self._font(max(13, int(height * 0.032)), "normal")
-        meta_font = self._font(max(11, int(height * 0.028)), "normal")
-        panel_font = self._font(max(17, int(height * 0.041)), "bold")
-        panel_sub_font = self._font(max(11, int(height * 0.027)), "normal")
-        rank_font = self._font(max(16, int(height * 0.039)), "bold")
-        name_font_size = max(16, int(height * 0.037))
-        secondary_font_size = max(9, int(height * 0.023))
-        metric_font_size = max(17, int(height * 0.0395))
-        small_font_size = max(10, int(height * 0.025))
-
-        title_y = margin
-        logo_size = max(36, int(height * 0.0884))
-        logo_y = title_y + max(1, int(height * 0.004))
-        header_text_x = margin + logo_size + max(8, int(width * 0.012))
-        subtitle_y = title_y + int(height * 0.066)
-
-        logo_slot_x = margin + int(width * 0.008)
-        wordmark_x = margin + logo_size + max(8, int(width * 0.012))
-
-        wordmark_y = max(0, title_y - int(height * 0.006))
-        wordmark_size = (max(210, int(width * 0.36)), max(44, int(height * 0.108)))
-        title_wordmark_drawn = self._paste_title_wordmark(
-            image,
-            wordmark_x,
-            wordmark_y,
-            wordmark_size,
-            theme_colors,
-        )
-        if title_wordmark_drawn:
-            self._paste_steam_logo(
-                image,
-                logo_slot_x,
-                self._centered_logo_y(wordmark_y, wordmark_size, logo_size),
-                logo_size,
-                theme_colors,
-            )
-        else:
-            self._paste_steam_logo(image, margin, logo_y, logo_size, theme_colors)
-            draw.text((header_text_x, title_y), "STEAM CHARTS", fill=ink, font=title_font)
-            draw.text((header_text_x, subtitle_y), subtitle.upper(), fill=ink, font=subtitle_font)
-
-        if updated_at_text:
-            updated_bbox = draw.textbbox((0, 0), updated_at_text, font=meta_font)
-            updated_width = updated_bbox[2] - updated_bbox[0]
-            updated_x = width - margin - updated_width
-            draw.rectangle(
-                (updated_x - 4, subtitle_y - 2, width - margin + 4, subtitle_y + updated_bbox[3] - updated_bbox[1] + 2),
-                fill=paper,
-            )
-            draw.text((updated_x, subtitle_y), updated_at_text, fill=ink, font=meta_font)
-
-        top = subtitle_y + max(22, int(height * 0.055))
-        group_count = max(1, len(chart_groups))
-        col_gap = max(14, int(width * 0.018))
-        col_width = int((width - margin * 2 - col_gap * (group_count - 1)) / group_count)
-        line_width = max(1, int(height * 0.003))
-        panel_header_height = max(36, int(height * 0.078))
-        bottom = height - margin
-
-        for group_index, group in enumerate(chart_groups):
-            left = margin + group_index * (col_width + col_gap)
-            right = left + col_width
-            draw.line((left, top, right, top), fill=ink, width=line_width)
-            title = str(group.get("title") or "Chart").upper()
-            subtitle_text = str(group.get("subtitle") or "")
-            draw.text((left, top + max(5, int(height * 0.01))), title, fill=ink, font=panel_font)
-            if subtitle_text:
-                sub_width = draw.textlength(subtitle_text, font=panel_sub_font)
-                draw.text((right - sub_width, top + max(9, int(height * 0.014))), subtitle_text, fill=ink, font=panel_sub_font)
-
-            games = group.get("games") or []
-            rows_top = top + panel_header_height
-            row_height = max(38, int((bottom - rows_top) / max(1, len(games))))
-            rank_x = left
-            # The native renderer is the production path on constrained Pi
-            # displays.  Keep artwork useful, but reserve enough horizontal
-            # space for complete game titles instead of forcing ellipses.
-            cover_width = max(88, int(col_width * 0.255))
-            cover_height = max(29, int(cover_width * 3 / 8))
-            cover_gap = max(6, int(width * 0.007))
-            metric_x = right
-            title_x = left + max(22, int(col_width * 0.06))
-            if any(game.get("image") for game in games):
-                title_x += cover_width + cover_gap
-            metric_max_width = max(94, int(col_width * 0.27))
-            name_max_width = max(92, metric_x - title_x - metric_max_width - int(col_width * 0.025))
-
-            for row_index, game in enumerate(games):
-                y = rows_top + row_index * row_height
-                content_top = self._compact_row_content_top(y, row_height)
-                draw.text((rank_x, y + int(row_height * 0.2)), str(game.get("rank") or row_index + 1), fill=ink, font=rank_font)
-
-                cover = self._decode_data_image(game.get("image"))
-                if cover:
-                    cover_x = left + max(24, int(col_width * 0.075))
-                    cover_y = content_top
-                    cover = ImageOps.fit(cover.convert("RGB"), (cover_width, cover_height), method=Image.Resampling.LANCZOS)
-                    image.paste(cover, (cover_x, cover_y))
-
-                name_scale = self._coerce_font_scale(game.get("name_font_scale", 1))
-                metric_scale = self._coerce_font_scale(game.get("metric_font_scale", 1))
-
-                name_text = str(game.get("name") or "Unknown")
-                row_name_font, name_lines = self._fit_complete_lines(
-                    draw,
-                    name_text,
-                    max_width=name_max_width,
-                    start_size=self._scaled_font_size(name_font_size, name_scale, 14),
-                    min_size=11,
-                    max_lines=2,
-                    weight="bold",
-                )
-                name_bbox = draw.textbbox((0, 0), "Ag国", font=row_name_font)
-                name_line_height = max(1, name_bbox[3] - name_bbox[1])
-                secondary_text = str(game.get("secondary_name") or "")
-                row_secondary_font, secondary_lines = self._fit_complete_lines(
-                    draw,
-                    secondary_text,
-                    max_width=name_max_width,
-                    start_size=self._scaled_font_size(secondary_font_size, name_scale, 9),
-                    min_size=7,
-                    max_lines=1,
-                    weight="normal",
-                )
-                # Two primary lines already use the available title block; in
-                # that case the complete primary title takes precedence over a
-                # duplicate translated/English alias.
-                visible_secondary_lines = secondary_lines if len(name_lines) == 1 else []
-                secondary_line_height = 0
-                if visible_secondary_lines:
-                    secondary_bbox = draw.textbbox((0, 0), "Ag国", font=row_secondary_font)
-                    secondary_line_height = max(1, secondary_bbox[3] - secondary_bbox[1])
-                name_top = content_top
-                if cover:
-                    name_top = self._compact_title_block_top(
-                        content_top,
-                        cover_height,
-                        name_line_height,
-                        len(name_lines),
-                        center_title_block=game.get("center_title_block", False),
-                        secondary_line_height=secondary_line_height,
-                        secondary_line_count=len(visible_secondary_lines),
-                    )
-                for line_index, name_line in enumerate(name_lines):
-                    draw.text(
-                        (title_x, name_top + line_index * (name_line_height + 1)),
-                        name_line,
-                        fill=ink,
-                        font=row_name_font,
-                    )
-                if visible_secondary_lines:
-                    primary_block_height = (
-                        len(name_lines) * name_line_height + max(0, len(name_lines) - 1)
-                    )
-                    secondary_top = self._compact_secondary_title_top(
-                        y,
-                        row_height,
-                        name_top,
-                        primary_block_height,
-                        center_title_block=game.get("center_title_block", False),
-                        has_cover=bool(cover),
-                    )
-                    draw.text(
-                        (title_x, secondary_top),
-                        visible_secondary_lines[0],
-                        fill=ink,
-                        font=row_secondary_font,
-                    )
-
-                metric = str(game.get("primary_metric") or "--")
-                row_metric_font = self._font_to_fit(
-                    draw,
-                    metric,
-                    metric_max_width,
-                    self._scaled_font_size(metric_font_size, metric_scale, 12),
-                    12,
-                    "bold",
-                )
-                metric_width = draw.textlength(metric, font=row_metric_font)
-                draw.text((metric_x - metric_width, y + int(row_height * 0.10)), metric, fill=ink, font=row_metric_font)
-                secondary_metric = str(game.get("secondary_metric") or "")
-                row_small_font = self._font_to_fit(
-                    draw,
-                    secondary_metric,
-                    metric_max_width,
-                    self._scaled_font_size(small_font_size, metric_scale, 9),
-                    9,
-                    "normal",
-                )
-                if secondary_metric:
-                    secondary_width = draw.textlength(secondary_metric, font=row_small_font)
-                    draw.text((metric_x - secondary_width, y + int(row_height * 0.54)), secondary_metric, fill=ink, font=row_small_font)
-
-                sparkline_height = max(7, int(row_height * 0.16))
-                sparkline_y_offset = self._compact_sparkline_y_offset(group.get("table_variant"))
-                sparkline_bottom_gap = max(3, int(height * 0.006))
-                sparkline_y = min(
-                    y + int(row_height * 0.74) + sparkline_y_offset,
-                    y + row_height - sparkline_height - sparkline_bottom_gap,
-                )
-                sparkline_svg = game.get("sparkline_svg")
-                sparkline_width = max(
-                    1,
-                    int(
-                        metric_max_width
-                        * self._compact_sparkline_width_ratio(group.get("table_variant"), sparkline_svg)
-                    ),
-                )
-                self._draw_sparkline_svg(
-                    draw,
-                    sparkline_svg,
-                    (metric_x - sparkline_width, sparkline_y, metric_x, sparkline_y + sparkline_height),
-                    chart_ink,
-                    max(1, line_width),
-                )
-
-                if row_index < len(games) - 1:
-                    separator_y = y + row_height - max(4, int(height * 0.008))
-                    draw.line((title_x, separator_y, min(title_x + int(col_width * 0.34), metric_x - int(col_width * 0.22)), separator_y), fill=ink, width=line_width)
-
-        return image
-
     @staticmethod
     def _format_updated_at(device_config, now=None):
         current = SteamCharts._device_local_datetime(device_config, now)
@@ -1096,7 +860,6 @@ class SteamCharts(BasePlugin):
         )
         target.paste(wordmark, (int(x), int(y)), wordmark)
         return True
-
 
     @staticmethod
     def _theme_title_wordmark(theme_colors):
@@ -1426,56 +1189,6 @@ class SteamCharts(BasePlugin):
         return True
 
     @staticmethod
-    def _compact_row_content_top(row_y, row_height):
-        return int(row_y) + max(3, int(row_height * 0.04))
-
-    @staticmethod
-    def _compact_title_block_top(
-        content_top,
-        cover_height,
-        line_height,
-        line_count,
-        center_title_block=False,
-        secondary_line_height=0,
-        secondary_line_count=0,
-    ):
-        if not center_title_block:
-            return int(content_top)
-
-        line_count = max(1, int(line_count or 1))
-        line_height = max(1, int(line_height))
-        block_height = line_count * line_height + max(0, line_count - 1)
-        secondary_line_count = max(0, int(secondary_line_count or 0))
-        if secondary_line_count:
-            secondary_line_height = max(1, int(secondary_line_height))
-            block_height += 1 + (
-                secondary_line_count * secondary_line_height
-                + max(0, secondary_line_count - 1)
-            )
-        return int(content_top) + max(0, (int(cover_height) - block_height) // 2)
-
-    @staticmethod
-    def _compact_secondary_title_top(
-        row_y,
-        row_height,
-        name_top,
-        primary_block_height,
-        center_title_block=False,
-        has_cover=False,
-    ):
-        if center_title_block and has_cover:
-            return int(name_top) + int(primary_block_height) + 1
-        return int(row_y) + int(row_height * 0.48)
-
-    @staticmethod
-    def _compact_sparkline_width_ratio(table_variant, sparkline_svg=""):
-        return 0.64
-
-    @staticmethod
-    def _compact_sparkline_y_offset(table_variant):
-        return 5 if table_variant == "top_games" else 0
-
-    @staticmethod
     def _primary_metric(table_variant, game):
         if table_variant == "top_records":
             return str(game.get("peak_players_fmt", "--"))
@@ -1517,6 +1230,8 @@ class SteamCharts(BasePlugin):
             app_id = game["app_id"]
             stats = chart_data.get(app_id, {})
             game["sparkline_svg"] = stats.get("sparkline_svg")
+            for key in ("current_players", "change_24h", "peak_24h", "peak_all", "peak_all_ts", "avg_30d", "spark"):
+                game.setdefault(key, stats.get(key))
             if source == "steamcharts_trending" and "change_24h_fmt" not in game:
                 game["change_24h_fmt"] = self._format_change(stats.get("change_24h"))
             if source in {"steamcharts_trending", "steamcharts_top_games"} and "current_players_fmt" not in game:
@@ -1549,11 +1264,55 @@ class SteamCharts(BasePlugin):
                 game["secondary_name"] = fallback_name
             else:
                 game["secondary_name"] = ""
+            game["store"] = self._store_facts(primary or secondary)
 
             if not include_images:
                 continue
 
             game["image"] = self._resolve_cover_image(app_id, primary, secondary)
+
+    @staticmethod
+    def _store_facts(details):
+        """Genres, developer, price, release date and review count from a store appdetails entry."""
+        details = details if isinstance(details, dict) else {}
+        price = details.get("price_overview") or {}
+        if details.get("is_free"):
+            price_text = "免费"
+        else:
+            price_text = str(price.get("final_formatted") or "")
+        return {
+            "genres": [str(item.get("description")) for item in details.get("genres") or []
+                       if isinstance(item, dict) and item.get("description")][:2],
+            "developer": str((details.get("developers") or [""])[0] or ""),
+            "price": price_text,
+            "discount": int(price.get("discount_percent") or 0),
+            "release": str((details.get("release_date") or {}).get("date") or ""),
+            "recommendations": (details.get("recommendations") or {}).get("total"),
+        }
+
+    def _steam_totals(self):
+        """Steam-wide users logged in and in game over the last 48 hours (store stats page data)."""
+        try:
+            payload = get_http_client().request_json("GET", STEAM_USER_STATS_URL, timeout=STEAM_STORE_TIMEOUT,
+                                                     max_bytes=512 * 1024).data
+        except TaskCancelled:
+            raise
+        except Exception as error:
+            logger.warning("Steam user totals unavailable: %s", error)
+            return {}
+        totals = {}
+        for series in payload if isinstance(payload, list) else []:
+            label = str((series or {}).get("label") or "").lower()
+            points = [point for point in (series or {}).get("data") or []
+                      if isinstance(point, list) and len(point) == 2 and isinstance(point[1], (int, float))]
+            if not points:
+                continue
+            key = "ingame" if "game" in label else "online"
+            totals[key] = int(points[-1][1])
+            totals[f"{key}_peak"] = int(max(point[1] for point in points))
+            if key == "online":
+                totals["spark"] = [point[1] for point in self._downsample_chart_points(points, target_points=48)]
+        return totals
 
     def _resolve_cover_image(self, app_id, primary, secondary):
         """Try real store assets before the legacy CDN path, which newer apps lack."""
@@ -1576,9 +1335,10 @@ class SteamCharts(BasePlugin):
                     logger.debug("Steam cover candidate failed for app %s: %s", app_id, error)
             return ""
 
+        # The 460x215 header art stays sharp at row size; the small capsule is a fallback.
         image = try_images((
-            primary.get("capsule_image"), secondary.get("capsule_image"),
             primary.get("header_image"), secondary.get("header_image"),
+            primary.get("capsule_image"), secondary.get("capsule_image"),
         ))
         if image:
             return image
@@ -1935,12 +1695,33 @@ class SteamCharts(BasePlugin):
                 change_24h = ((current_players - target_24h[1]) / target_24h[1]) * 100
 
         sparkline_svg = self._generate_sparkline_svg(recent_window, chart_style=sparkline_style)
+        # The whole history comes with every chart, so the page can also show the day's
+        # and all-time peaks and the 30-day average, and draw its own trend line.
+        day = [p[1] for p in data if p[0] >= latest_ts - 24 * 3600 * 1000] or [current_players]
+        month = [p[1] for p in data if p[0] >= latest_ts - 30 * 24 * 3600 * 1000]
+        peak_all = max(data, key=lambda p: p[1])
 
         return {
             "current_players": current_players,
             "change_24h": change_24h,
             "sparkline_svg": sparkline_svg,
+            "peak_24h": max(day),
+            "peak_all": peak_all[1],
+            "peak_all_ts": peak_all[0],
+            "avg_30d": round(sum(month) / len(month)) if month else None,
+            "spark": self._spark_values(recent_window, daily=sparkline_style == "bars"),
         }
+
+    @staticmethod
+    def _spark_values(points, daily=False):
+        """The trend line's values: a 48-hour line as is, a 30-day window as each day's peak."""
+        if not daily:
+            return [p[1] for p in SteamCharts._downsample_chart_points(points, target_points=40)]
+        days = {}
+        for timestamp, count in points:
+            day = int(timestamp // 86_400_000)
+            days[day] = max(days.get(day, 0), count)
+        return [days[day] for day in sorted(days)]
 
     @staticmethod
     def _generate_sparkline_svg(data_points, width=120, height=30, chart_style="line"):

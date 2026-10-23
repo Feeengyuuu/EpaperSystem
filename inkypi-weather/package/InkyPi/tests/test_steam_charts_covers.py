@@ -58,8 +58,8 @@ def test_live_missing_cover_recovers_from_identity_checked_store_page(monkeypatc
 def test_cover_tries_next_candidate_after_download_or_negative_cache_miss(monkeypatch, failure):
     plugin = SteamCharts({"id": "steam_charts"})
     monkeypatch.setattr(plugin, "_fetch_store_appdetails", lambda app, language: {
-        "name": "Bongo Cat", "capsule_image": "https://example.test/broken.jpg",
-        "header_image": "https://example.test/header.jpg",
+        "name": "Bongo Cat", "header_image": "https://example.test/broken.jpg",
+        "capsule_image": "https://example.test/capsule.jpg",
     })
     calls = []
 
@@ -75,7 +75,8 @@ def test_cover_tries_next_candidate_after_download_or_negative_cache_miss(monkey
     games = [{"app_id": 3419430, "name": "Bongo Cat"}]
     plugin._apply_store_metadata(games)
     assert games[0]["image"].startswith("data:image/"), calls
-    assert calls == ["https://example.test/broken.jpg", "https://example.test/header.jpg"]
+    # The sharper header art is tried first; a miss falls through to the capsule.
+    assert calls == ["https://example.test/broken.jpg", "https://example.test/capsule.jpg"]
 
 
 @pytest.mark.parametrize("first", ["wrong_id", "unsuccessful", "transport", "wrong_data_id"])
@@ -283,8 +284,8 @@ def test_disk_negative_cache_does_not_hide_cached_fallback_on_next_refresh(monke
     plugin = SteamCharts({"id": "steam_charts"})
     monkeypatch.setattr(plugin, "cache_dir", lambda **kwargs: tmp_path)
     monkeypatch.setattr(plugin, "_fetch_store_appdetails", lambda *args: {
-        "name": "Bongo Cat", "capsule_image": "https://example.test/broken.jpg",
-        "header_image": "https://example.test/header.jpg",
+        "name": "Bongo Cat", "header_image": "https://example.test/broken.jpg",
+        "capsule_image": "https://example.test/capsule.jpg",
     })
     output = BytesIO()
     Image.new("RGB", (64, 32), "red").save(output, format="PNG")
@@ -302,7 +303,8 @@ def test_disk_negative_cache_does_not_hide_cached_fallback_on_next_refresh(monke
         games = [{"app_id": 3419430, "name": "Bongo Cat"}]
         plugin._apply_store_metadata(games)
         assert games[0]["image"].startswith("data:image/png;base64,")
-    assert calls == ["https://example.test/broken.jpg", "https://example.test/header.jpg"]
+    # The sharper header art is tried first; a miss falls through to the capsule.
+    assert calls == ["https://example.test/broken.jpg", "https://example.test/capsule.jpg"]
 
 
 def test_all_cover_candidates_unavailable_leaves_no_browser_network_url(monkeypatch):
