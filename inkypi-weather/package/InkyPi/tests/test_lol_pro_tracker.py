@@ -157,6 +157,30 @@ def test_a_theme_redraw_neither_calls_riot_nor_writes_the_ladder(plugin, monkeyp
     assert len(board) == 20 and not (tmp_path / pro_tracker.LOL_BOARD_STATE).exists()
 
 
+def test_a_cs2_player_without_hltv_stats_hands_over_to_the_next_player(plugin, monkeypatch):
+    pool = plugin._tracked_pool({})
+    cs2 = next(item for item in pool if item["kind"] == "cs2")
+    lol = next(item for item in pool if item["kind"] == "lol")
+    shown = []
+    monkeypatch.setattr(plugin, "_cs2_data", lambda pick, refresh=True: {
+        "player": dict(pick["player"]), "board": plugin._cs2_roster(), "top20_year": 2025})
+    monkeypatch.setattr(plugin, "_fetch_dashboard_data",
+                        lambda effective, _device: shown.append(effective["_proAccountId"]) or plugin._sample_payload())
+    monkeypatch.setattr(plugin, "_lol_photo", lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(plugin, "_write_context", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(lol_info_module, "write_context", lambda *_args, **_kwargs: True)
+
+    picks = iter([cs2, lol])
+    monkeypatch.setattr(plugin, "_pick", lambda _settings, advance=True: {**next(picks), "position": 1, "size": 40})
+    plugin.generate_image({}, FakeDevice(key=""))
+    assert shown == [lol["account"]["id"]]
+
+    # With nothing but stat-less CS2 players, the fourth is shown from the built-in Top 20.
+    picks = iter([cs2] * 4)
+    image = plugin.generate_image({}, FakeDevice(key=""))
+    assert image.size == (800, 480) and next(picks, None) is None
+
+
 TOP20_ROW = ('<tr><td class="text-ellipsis"><div class="top20-year-player-wrapper"><img alt="x" '
              'src="https://img-cdn.hltv.org/playerbodyshot/a.png?w=100" class="top20-table-img"><a href="/news/1/x" '
              'class="top20-year-playername-wrapper text-ellipsis"><b class="top20-year-playernick">ZywOo</b>'

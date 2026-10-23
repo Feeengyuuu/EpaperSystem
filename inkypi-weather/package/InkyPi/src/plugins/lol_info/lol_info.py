@@ -85,12 +85,16 @@ QUEUE_LABELS = {
     "RANKED_FLEX_SR": "灵活排位",
     "RANKED_FLEX_TT": "灵活排位",
 }
-# How many renamed accounts one render passes over before giving up.
+# How many renamed accounts or stat-less CS2 players one render passes over before giving up.
 MISSING_ACCOUNT_SKIPS = 3
 
 
 class RiotAccountMissing(RuntimeError):
     """Riot answered 404 for the Riot ID: the account was renamed or never existed."""
+
+
+class Cs2StatsUnavailable(RuntimeError):
+    """The CS2 player has no HLTV stats yet, only the built-in Top 20 entry."""
 
 
 class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin, BasePlugin):
@@ -110,7 +114,14 @@ class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin
         # A theme redraw shows the same player again; only a real refresh draws the next one.
         pick = self._pick(settings, advance=not theme_render_only)
         if pick and pick["kind"] == "cs2":
-            return self._generate_cs2_image(pick, settings, device_config, theme_render_only)
+            try:
+                return self._generate_cs2_image(pick, settings, device_config, theme_render_only,
+                                                allow_fallback=theme_render_only or skipped >= MISSING_ACCOUNT_SKIPS)
+            except Cs2StatsUnavailable as exc:
+                # While HLTV is refusing, a player it was never read for would show only the built-in
+                # Top 20 entry, which the refresh counts as degraded: show the next player instead.
+                logger.warning("CS2 %s has no HLTV stats yet; showing the next player", exc)
+                return self._generate_pick_image(settings, device_config, skipped + 1)
         effective_settings = self._settings_for_pick(settings, pick)
         dimensions = self.get_dimensions(device_config)
 
@@ -1501,7 +1512,7 @@ class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin
         })
         return effective
 
-    def _generate_cs2_image(self, pick, settings, device_config, theme_render_only):
+    def _generate_cs2_image(self, pick, settings, device_config, theme_render_only, allow_fallback=True):
         dimensions = self.get_dimensions(device_config)
         theme_context = self._theme_context(settings, device_config)
         media_token = _ALLOW_PROVIDER_MEDIA.set(not theme_render_only)
@@ -1522,6 +1533,8 @@ class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin
             provenance = SourceProvenance.LIVE
         else:
             provenance = SourceProvenance.LOCAL_FALLBACK
+            if not allow_fallback:
+                raise Cs2StatsUnavailable(pick["player"]["nick"])
         if not theme_render_only:
             try:
                 write_context(PLUGIN_ID, {
