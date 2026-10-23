@@ -3,10 +3,12 @@
 Usage:
     python -I tools/build_steam_avatar_frames.py <source dir> [<output dir>]
 
-The source directory holds square RGBA PNGs named ``NN_标题.png``. For each one
-this writes ``frame_NN.png`` (the overlay for the rail's top-left corner) and
-``mask_NN.png`` (where the 146 px avatar photo shows through) plus a
-``frames.json`` manifest.
+The source directory holds square RGBA PNGs named ``NN_标题.png`` (two or three
+digits). For each one this writes ``frame_NN.png`` (the overlay for the rail's
+top-left corner) and ``mask_NN.png`` (where the 146 px avatar photo shows through)
+and records it in the ``frames.json`` manifest. Frames already in the manifest
+that this source directory does not rebuild are kept, so a new batch can be added
+without the earlier batches' artwork.
 
 Each frame is scaled so its opening matches the avatar at its original size and
 centred on it, so a heavy frame grows past its old box: it may run off the top
@@ -41,7 +43,7 @@ BODY_ALPHA = 64
 CLOSING_RADII = (0, 1, 2, 3, 4, 6, 8, 11, 15, 20, 26, 34, 44)
 MIN_OPENING_SHARE = 0.08
 TUCK_RADIUS = 2
-NAME_PATTERN = re.compile(r"^(\d{2})_(.+)\.png$")
+NAME_PATTERN = re.compile(r"^(\d{2,3})_(.+)\.png$")
 DEFAULT_OUTPUT = (
     Path(__file__).resolve().parents[1]
     / "inkypi-weather/package/InkyPi/src/plugins/steam_profile_dashboard/assets/avatar_frames"
@@ -207,9 +209,16 @@ def main(argv):
         print(f"{frame_id} {title}: {method}, {scale}x the old 178 px frame")
     if not entries:
         raise ValueError(f"no frame artwork in {source_dir}")
+    manifest_path = output_dir / "frames.json"
+    rebuilt = {entry["id"] for entry in entries}
+    if manifest_path.is_file():
+        kept = [entry for entry in json.loads(manifest_path.read_text(encoding="utf-8")).get("frames", [])
+                if entry.get("id") not in rebuilt]
+        entries = kept + entries
+    entries.sort(key=lambda entry: int(entry["id"]))
     manifest = {"version": 2, "overlay_size": list(OVERLAY_SIZE), "avatar_box": list(AVATAR_BOX),
                 "frames": entries}
-    (output_dir / "frames.json").write_text(
+    manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n",
     )
     return 0

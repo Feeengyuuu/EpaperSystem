@@ -178,7 +178,7 @@ def test_each_display_redraw_deals_a_new_avatar_frame_from_the_data_dir(tmp_path
     assert rails[0].tobytes() != rails[1].tobytes() != rails[2].tobytes()
     state_path = tmp_path / "data" / "plugins" / "steam_profile_dashboard" / ".steam_avatar_frame_rotation.json"
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    assert state["last"] == dealt[-1] and len(state["queue"]) == 27
+    assert state["last"] == dealt[-1] and len(state["queue"]) == len(avatar_frame.frame_catalog()) - 3
     # The rotation is presentation state; the saved Steam source stays untouched.
     assert tree_snapshot(root) == before
 

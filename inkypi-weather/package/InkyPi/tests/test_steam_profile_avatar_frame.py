@@ -17,7 +17,8 @@ from plugins.steam_profile_dashboard.avatar_frame import (
     next_frame_id,
 )
 
-FRAME_IDS = [f"{number:02d}" for number in range(1, 31)]
+# The bundled set grows in batches (01-30 freestyle, 31-79 freestyle, 81-100 game themes).
+FRAME_IDS = [frame_id for frame_id, _ in frame_catalog()]
 
 
 @pytest.fixture(autouse=True)
@@ -30,12 +31,14 @@ def forget_process_memory(monkeypatch):
     monkeypatch.setattr(avatar_frame, "_memory_states", {})
 
 
-def test_catalog_bundles_the_thirty_frames_in_order():
+def test_catalog_bundles_every_batch_in_numeric_order():
     catalog = frame_catalog()
 
-    assert [frame_id for frame_id, _ in catalog] == FRAME_IDS
+    assert len(catalog) >= 99
+    assert [int(frame_id) for frame_id, _ in catalog] == sorted(int(frame_id) for frame_id, _ in catalog)
     assert catalog[0] == ("01", "橘子汽水")
-    assert catalog[-1] == ("30", "糖纸没拆完")
+    assert ("30", "糖纸没拆完") in catalog and ("31", "彩窗残角") in catalog
+    assert catalog[-1] == ("100", "风之旅人")
 
 
 @pytest.mark.parametrize("frame_id", FRAME_IDS)
@@ -75,7 +78,7 @@ def test_heavy_frames_break_out_of_the_old_box():
 
 
 def test_unknown_frame_ids_are_not_loaded():
-    assert load_avatar_frame("31") is None
+    assert load_avatar_frame("80") is None  # not bundled (awaiting its artwork)
     assert load_avatar_frame("../01") is None
 
 
@@ -84,8 +87,8 @@ def test_each_round_deals_every_frame_once():
     first = [next_frame_id(None, rng) for _ in FRAME_IDS]
     second = [next_frame_id(None, rng) for _ in FRAME_IDS]
 
-    assert sorted(first) == FRAME_IDS
-    assert sorted(second) == FRAME_IDS
+    assert sorted(first, key=int) == FRAME_IDS
+    assert sorted(second, key=int) == FRAME_IDS
     assert first != second
 
 
@@ -105,7 +108,7 @@ def test_round_survives_a_restart(tmp_path, monkeypatch):
     forget_process_memory(monkeypatch)
     after = [next_frame_id(state_path, rng) for _ in range(len(FRAME_IDS) - 12)]
 
-    assert sorted(before + after) == FRAME_IDS
+    assert sorted(before + after, key=int) == FRAME_IDS
     saved = json.loads(state_path.read_text(encoding="utf-8"))
     assert saved == {"version": 1, "queue": [], "last": after[-1]}
     forget_process_memory(monkeypatch)
@@ -120,12 +123,12 @@ def test_corrupt_state_starts_a_fresh_round(tmp_path, content):
 
     dealt = [next_frame_id(state_path, random.Random(5)) for _ in FRAME_IDS]
 
-    assert sorted(dealt) == FRAME_IDS
+    assert sorted(dealt, key=int) == FRAME_IDS
 
 
 def test_state_from_a_previous_catalog_keeps_only_known_frames(tmp_path):
     state_path = tmp_path / "rotation.json"
-    state_path.write_text(json.dumps({"version": 1, "queue": ["99", "05", "06"], "last": "98"}),
+    state_path.write_text(json.dumps({"version": 1, "queue": ["999", "05", "06"], "last": "998"}),
                           encoding="utf-8")
 
     assert [next_frame_id(state_path) for _ in range(2)] == ["05", "06"]
@@ -139,7 +142,7 @@ def test_unwritable_state_keeps_rotating_in_memory(tmp_path, monkeypatch, caplog
     rng = random.Random(11)
     dealt = [next_frame_id(tmp_path / "rotation.json", rng) for _ in range(len(FRAME_IDS) * 2)]
 
-    assert sorted(dealt[:30]) == FRAME_IDS
+    assert sorted(dealt[:len(FRAME_IDS)]) == sorted(FRAME_IDS)
     assert all(previous != current for previous, current in zip(dealt, dealt[1:]))
     assert sum("memory only" in record.getMessage() for record in caplog.records) == 1
 

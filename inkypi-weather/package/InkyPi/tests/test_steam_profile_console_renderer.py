@@ -410,7 +410,7 @@ def test_consecutive_renders_change_the_avatar_frame(plugin, data, monkeypatch):
     monkeypatch.setattr(plugin, "_next_avatar_frame", rotate)
     rails = [render_console(plugin, data, (800, 480)).crop((0, 0, 182, 178)) for _ in range(31)]
 
-    assert sorted(dealt[:30]) == [f"{number:02d}" for number in range(1, 31)]
+    assert len(set(dealt[:30])) == 30  # one round deals each frame once
     assert all(previous != current for previous, current in zip(dealt, dealt[1:]))
     assert all(ImageChops.difference(a, b).getbbox() is not None for a, b in zip(rails, rails[1:]))
 

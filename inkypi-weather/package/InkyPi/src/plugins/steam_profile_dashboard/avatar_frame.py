@@ -40,7 +40,7 @@ AVATAR_SIZE = AVATAR_BOX[2] - AVATAR_BOX[0]
 FRAME_ORIGIN = (0, 0)
 OVERLAY_SIZE = (190, 174)
 STATE_VERSION = 1
-_ID_PATTERN = re.compile(r"\d{2}\Z")
+_ID_PATTERN = re.compile(r"\d{2,3}\Z")
 _MANIFEST_MAX_BYTES = 64 * 1024
 _STATE_MAX_BYTES = 16 * 1024
 _LIMITS = ImageLimits(max_bytes=512 * 1024, max_width=OVERLAY_SIZE[0],
