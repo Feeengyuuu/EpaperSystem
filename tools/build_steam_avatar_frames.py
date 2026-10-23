@@ -8,12 +8,13 @@ digits). For each one this writes ``frame_NN.png`` (the overlay for the rail's
 top-left corner) and ``mask_NN.png`` (where the 146 px avatar photo shows through)
 and records it in the ``frames.json`` manifest. Frames already in the manifest
 that this source directory does not rebuild are kept, so a new batch can be added
-without the earlier batches' artwork.
+without the earlier batches' artwork; a kept overlay from a smaller canvas is
+padded to the current one.
 
 Each frame is scaled so its opening matches the avatar at its original size and
 centred on it, so a heavy frame grows past its old box: it may run off the top
-and left screen edges and across the rail divider, and fades out just before
-the persona name and the right-hand panels.
+and left screen edges, across the rail divider and over the persona name. The
+canvas holds the whole frame, which the console draws over everything it reaches.
 
 The opening is the frame's enclosed hole. Frames drawn as open shapes (a C, a
 torn edge, three matches) are closed with the smallest morphological closing
@@ -36,9 +37,8 @@ from PIL import Image, ImageDraw
 WORK_SIZE = 356
 # The console rail's original avatar; the photo keeps this size and place.
 AVATAR_BOX = (16, 16, 162, 162)
-# A few pixels clear of the hero panel (x 194) and above the persona name (y 175).
-OVERLAY_SIZE = (190, 174)
-EDGE_FADE = 8
+# Room for the whole of every frame: the widest reach x 208 and the deepest y 207.
+OVERLAY_SIZE = (210, 210)
 BODY_ALPHA = 64
 CLOSING_RADII = (0, 1, 2, 3, 4, 6, 8, 11, 15, 20, 26, 34, 44)
 MIN_OPENING_SHARE = 0.08
@@ -142,14 +142,17 @@ def _scaled(image, size, offset, canvas_size):
     return canvas
 
 
-def _fade_edges(alpha):
-    """Fade the overlay out towards the persona name and the hero panel."""
-    width, height = alpha.shape[1], alpha.shape[0]
-    ramp = np.clip(np.arange(EDGE_FADE, 0, -1) / (EDGE_FADE + 1), 0, 1)
-    weight = np.ones_like(alpha, dtype=np.float32)
-    weight[height - EDGE_FADE:, :] *= ramp[:, None]
-    weight[:, width - EDGE_FADE:] *= ramp[None, :]
-    return (alpha * weight).round().astype(np.uint8)
+def _pad_kept_overlay(output_dir, frame_id):
+    """Pad a kept overlay built for a smaller canvas; its artwork stays where it was."""
+    path = output_dir / f"frame_{frame_id}.png"
+    with Image.open(path) as opened:
+        if opened.size == OVERLAY_SIZE:
+            return
+        if opened.width > OVERLAY_SIZE[0] or opened.height > OVERLAY_SIZE[1]:
+            raise ValueError(f"{path.name} is larger than the overlay canvas")
+        canvas = Image.new("RGBA", OVERLAY_SIZE, 0)
+        canvas.paste(opened.convert("RGBA"), (0, 0))
+    canvas.save(path, optimize=True)
 
 
 def build_one(source_path, frame_id, output_dir):
@@ -178,7 +181,9 @@ def build_one(source_path, frame_id, output_dir):
     frame = _scaled(source, size, offset, OVERLAY_SIZE)
     alpha = np.asarray(frame.getchannel("A"))
     # LANCZOS rings faintly past hard edges; drop the imperceptible alpha.
-    alpha = _fade_edges(np.where(alpha < 8, 0, alpha))
+    alpha = np.where(alpha < 8, 0, alpha).astype(np.uint8)
+    if alpha[-1].any() or alpha[:, -1].any():
+        raise ValueError(f"{source_path.name}: frame runs past the {OVERLAY_SIZE} overlay")
     frame.putalpha(Image.fromarray(alpha))
 
     tucked_image = Image.fromarray((tucked * 255).astype(np.uint8))
@@ -214,6 +219,8 @@ def main(argv):
     if manifest_path.is_file():
         kept = [entry for entry in json.loads(manifest_path.read_text(encoding="utf-8")).get("frames", [])
                 if entry.get("id") not in rebuilt]
+        for entry in kept:
+            _pad_kept_overlay(output_dir, entry["id"])
         entries = kept + entries
     entries.sort(key=lambda entry: int(entry["id"]))
     manifest = {"version": 2, "overlay_size": list(OVERLAY_SIZE), "avatar_box": list(AVATAR_BOX),

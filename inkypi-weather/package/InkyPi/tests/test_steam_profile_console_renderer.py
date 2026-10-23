@@ -127,8 +127,8 @@ def test_game_art_and_icons_are_preserved_over_a_solid_page_canvas(plugin, data,
     # The requested flat colour belongs to the page underneath the game cards.
     # The game artwork itself remains present, with the existing navy shading.
     # The generated 54 px level frame reaches x=9; the canvas around it stays black.
-    # The avatar frame may cross the rail divider above the persona name, but
-    # keeps four pixels clear of the hero panel.
+    # Frame 12, kept from before the whole-frame canvas, crosses the rail divider
+    # above the persona name and stops four pixels short of the hero panel.
     for box in ((183, 174, 193, 480), (190, 0, 193, 480), (791, 0, 800, 480), (0, 178, 9, 480),
                 (0, 178, 12, 237), (0, 292, 12, 480)):
         crop = image.crop(box)
@@ -401,10 +401,24 @@ def test_rail_avatar_keeps_its_size_inside_the_breakout_frame(plugin, data, monk
                 assert shown == frame.image.getpixel((x, y))[:3]
             elif opacity == 0 and mask == 255:
                 assert shown == (105, 120, 90)
-            elif opacity == 0 and mask == 0 and not 179 <= x <= 183:
-                # Outside the opening nothing shows, apart from the rail divider.
+            elif opacity == 0 and mask == 0 and not 179 <= x <= 183 and x < 190 and y < 175:
+                # Outside the opening nothing shows above the name, apart from the rail divider.
                 assert shown == CANVAS
     assert image.getpixel((89, 89)) == (105, 120, 90)
+
+
+def test_the_whole_avatar_frame_lies_over_the_persona_name_and_hero_panel(plugin, data, monkeypatch):
+    monkeypatch.setattr(console_renderer, "game_palette", lambda _art: None)
+    frame = load_avatar_frame("90")
+    monkeypatch.setattr(plugin, "_next_avatar_frame", lambda: frame)
+    image = render_console(plugin, data, (800, 480))
+
+    # Every solid pixel of the frame shows as drawn, down over the name and across the panel's edge.
+    solid = [(x, y) for x in range(OVERLAY_SIZE[0]) for y in range(OVERLAY_SIZE[1])
+             if frame.image.getpixel((x, y))[3] == 255]
+    assert any(y >= 175 for _x, y in solid) and any(x >= 194 for x, _y in solid)
+    for x, y in solid:
+        assert image.getpixel((FRAME_ORIGIN[0] + x, FRAME_ORIGIN[1] + y)) == frame.image.getpixel((x, y))[:3]
 
 
 def test_consecutive_renders_change_the_avatar_frame(plugin, data, monkeypatch):
@@ -442,8 +456,9 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-profile-backdrop-v46"
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:5] == (
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-whole-avatar-frame-v47"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:6] == (
+        "midnight-console-profile-backdrop-v46",
         "midnight-console-game-hue-v45",
         "midnight-console-outlined-hero-title-v44",
         "midnight-console-presence-ordered-friends-v43",

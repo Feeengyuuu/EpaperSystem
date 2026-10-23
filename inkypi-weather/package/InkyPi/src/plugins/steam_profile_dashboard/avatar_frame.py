@@ -7,9 +7,9 @@ never share a frame.
 
 The avatar photo keeps its original 146 px box. Each frame is pre-scaled so its
 opening fits that photo, which lets heavy frames break out of the old box: an
-overlay may run off the screen's top and left edges and across the rail
-divider, and fades out before the persona name and the hero panel. A mask
-per frame limits the photo to the frame's opening.
+overlay may run off the screen's top and left edges, across the rail divider
+and over the persona name, and the console draws the whole of it above the
+rest of the page. A mask per frame limits the photo to the frame's opening.
 
 The round survives restarts in a small JSON file. Without a writable state
 file the rotation continues in memory for the life of the process.
@@ -36,9 +36,9 @@ FRAME_ROOT = Path(__file__).resolve().parent / "assets" / "avatar_frames"
 MANIFEST_VERSION = 2
 AVATAR_BOX = (16, 16, 162, 162)
 AVATAR_SIZE = AVATAR_BOX[2] - AVATAR_BOX[0]
-# Pasted at the rail's top-left corner, clear of the hero panel and the name.
+# Pasted at the rail's top-left corner; the canvas holds the whole of every frame.
 FRAME_ORIGIN = (0, 0)
-OVERLAY_SIZE = (190, 174)
+OVERLAY_SIZE = (210, 210)
 STATE_VERSION = 1
 _ID_PATTERN = re.compile(r"\d{2,3}\Z")
 _MANIFEST_MAX_BYTES = 64 * 1024

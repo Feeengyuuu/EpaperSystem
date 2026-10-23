@@ -168,6 +168,7 @@ class _Console:
         self.image = Image.new("RGB", SIZE, self.c["canvas"])
         self.draw = ImageDraw.Draw(self.image)
         self.fonts = {}
+        self.avatar_frame = None
         if self.c.get("glow"):
             self._wash()
 
@@ -346,7 +347,12 @@ class _Console:
         # The photo keeps its size; the frame's opening decides what shows of it.
         if avatar is not None:
             self.image.paste(avatar.convert("RGB"), AVATAR_BOX[:2], frame.mask)
-        self.image.paste(frame.image, FRAME_ORIGIN, frame.image)
+        self.avatar_frame = frame
+
+    def frame_overlay(self):
+        """The avatar frame goes on last, whole, over the persona name and any panel edge it reaches."""
+        if self.avatar_frame is not None:
+            self.image.paste(self.avatar_frame.image, FRAME_ORIGIN, self.avatar_frame.image)
 
     def profile_backdrop(self):
         """The owner's equipped Steam profile background, blurred and dimmed behind the rail."""
@@ -585,6 +591,7 @@ def render_console(plugin, data, dimensions, theme_context=None):
     # Finish the bounded game-art acquisition before optional friend avatars can
     # spend time on the network.  These panels do not overlap visually.
     console.friends()
+    console.frame_overlay()
     if tuple(dimensions) != SIZE:
         return console.image.resize(tuple(dimensions), Image.Resampling.LANCZOS)
     return console.image

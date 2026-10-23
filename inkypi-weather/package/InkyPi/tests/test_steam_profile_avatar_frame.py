@@ -56,15 +56,24 @@ def test_every_frame_opening_fits_the_original_avatar(frame_id):
 
 
 @pytest.mark.parametrize("frame_id", FRAME_IDS)
-def test_frames_fade_out_before_the_persona_name_and_hero_panel(frame_id):
-    origin_x, origin_y = FRAME_ORIGIN
-    # The hero panel starts at x=194 and the persona name at y=175.
-    assert origin_x + OVERLAY_SIZE[0] <= 190 and origin_y + OVERLAY_SIZE[1] <= 174
+def test_the_overlay_holds_the_whole_frame(frame_id):
+    # Anchored at the rail's corner, the canvas reaches past the persona name (y 175) and
+    # into the hero panel (x 194), so no frame is cut at its right or bottom edge.
+    assert FRAME_ORIGIN == (0, 0) and OVERLAY_SIZE[0] > 194 and OVERLAY_SIZE[1] > 207
     alpha = load_avatar_frame(frame_id).image.getchannel("A")
     width, height = alpha.size
 
-    assert alpha.crop((0, height - 1, width, height)).getextrema()[1] <= 32
-    assert alpha.crop((width - 1, 0, width, height)).getextrema()[1] <= 32
+    assert alpha.crop((0, height - 1, width, height)).getbbox() is None
+    assert alpha.crop((width - 1, 0, width, height)).getbbox() is None
+
+
+def test_rebuilt_frames_run_on_over_the_name_and_into_the_hero_panel():
+    def solid(frame_id, box):
+        alpha = load_avatar_frame(frame_id).image.getchannel("A")
+        return alpha.crop(box).point(lambda value: 255 if value == 255 else 0).getbbox() is not None
+
+    assert solid("85", (0, 175, *OVERLAY_SIZE))
+    assert solid("90", (0, 175, *OVERLAY_SIZE)) and solid("90", (194, 0, *OVERLAY_SIZE))
 
 
 def test_heavy_frames_break_out_of_the_old_box():
