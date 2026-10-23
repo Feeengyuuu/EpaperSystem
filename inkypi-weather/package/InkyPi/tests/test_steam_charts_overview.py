@@ -89,6 +89,23 @@ def test_every_overview_icon_is_a_generated_badge_with_its_provenance():
     assert overview_page._icon("no-such-icon", 18) is None
 
 
+def test_the_wordmark_skyline_grows_into_the_header_space():
+    plugin = _plugin()
+    source = plugin._theme_title_wordmark({"ink": (0, 0, 0), "paper": (255, 255, 255)})
+    lettering, skyline = overview_page._split_wordmark(source)
+    # Every shown pixel lands in one half or the other (both keep the underline where they join).
+    for x in range(0, source.width, 3):
+        for y in range(source.height):
+            if source.getpixel((x, y))[3] > 24:
+                assert lettering.getpixel((x, y))[3] or skyline.getpixel((x, y))[3]
+
+    image = plugin._render_live_overview((800, 480), [{"games": []}, {"games": []}], {"online": 35_000_000},
+                                         {"mode": "day"}, "")
+    inked = [x for x in range(160, 296) if any(sum(image.getpixel((x, y))) < 600 for y in range(2, 52))]
+    # The skyline now reaches across the gap up to the users-online badge.
+    assert min(inked) < 170 and max(inked) > 280
+
+
 def test_overview_draws_both_boards_with_totals_and_store_facts(monkeypatch):
     plugin = _plugin()
     drawn = []
