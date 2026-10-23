@@ -29,8 +29,8 @@ FRIEND_GAME_ICON = 14
 TITLE_OUTLINE = 2
 RAIL_SIZE = (181, 480)
 # The profile background behind the rail: blur radius, and dimming at its top and bottom.
-BACKDROP_BLUR = 5
-BACKDROP_DIM = (0.5, 0.72)
+BACKDROP_BLUR = 7
+BACKDROP_DIM = (0.78, 0.9)
 # The navy console; a game's own hue replaces it when its artwork has one (game_palette).
 DEFAULT_PALETTE = {"canvas": CANVAS, "navy": NAVY, "panel": PANEL, "header": HEADER, "border": BORDER,
                    "accent": CYAN, "muted": MUTED, "glow": None}

@@ -516,7 +516,7 @@ def test_rail_lays_the_profile_background_blurred_and_dimmed_behind_the_rail(plu
 
     assert loaded == ["https://example.test/bg.jpg"]
     top, bottom = image.getpixel((10, 230)), image.getpixel((10, 470))
-    # A dimmed yellow, darker toward the stats; the rest of the page is untouched.
-    assert top[0] > top[2] + 40 and sum(bottom) < sum(top)
+    # A deep shade with the picture's yellow cast, darker toward the stats; the rest of the page is untouched.
+    assert top[0] > top[2] + 20 and sum(bottom) < sum(top)
     assert top != plain.getpixel((10, 230))
     assert ImageChops.difference(image.crop((183, 0, 800, 480)), plain.crop((183, 0, 800, 480))).getbbox() is None
