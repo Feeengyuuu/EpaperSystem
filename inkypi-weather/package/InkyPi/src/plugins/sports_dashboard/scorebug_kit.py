@@ -36,6 +36,9 @@ KIT_LOGO_MIN_CONTRAST = 2.0
 # its left edge, so the tabs, rails and times line up from row to row.
 KIT_DAY_TAB_WIDTH = 26
 KIT_DAY_RAIL_OFFSET = 4
+# Mascot art fills the room under a short list once it is at least this tall.
+KIT_SPARE_FILLER_MIN_HEIGHT = 50
+KIT_SPARE_FILLER_MAX_HEIGHT = 130
 
 
 def _kit_luminance(rgb):
@@ -407,9 +410,11 @@ class ScorebugKitMixin:
         row_y = self._draw_kit_column_header(draw, x1, y1, x2, spec, title, f"{live_count} LIVE" if live_count else "")
         if not games:
             self._draw_text_in_box(draw, (x1 + 10, row_y + 2, x2, row_y + 18), empty, self._font(10, True), COLORS["muted"])
+            self._draw_kit_spare_filler(image, (x1, row_y + 22, x2, y2), spec)
             return
         capacity = max(0, (y2 - row_y + 1) // KIT_SCOREBOARD_ROW_HEIGHT)
         shown = games[:capacity]
+        self._draw_kit_spare_filler(image, (x1, row_y + len(shown) * KIT_SCOREBOARD_ROW_HEIGHT + 4, x2, y2), spec)
         slots = [SportsDashboard._kit_day_slot(event, now) for event in shown]
         for index, event in enumerate(shown):
             top = row_y + index * KIT_SCOREBOARD_ROW_HEIGHT
@@ -494,6 +499,17 @@ class ScorebugKitMixin:
                 draw.line((rail_x, top + 13, rail_x, bottom), fill=accent, width=2)
         self._draw_kit_slot_time(draw, (x + KIT_DAY_TAB_WIDTH + 3, top, x + 54, top + 15), time)
 
+    def _draw_kit_spare_filler(self, image, box, spec):
+        """The sport's mascot spot art, centred in the room a short ticker or
+        scoreboard leaves below its rows."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        path = LOCAL_SPARE_FILLER_PATHS.get(str(spec.sport or "").upper())
+        if not path or x2 - x1 < 80 or y2 - y1 < KIT_SPARE_FILLER_MIN_HEIGHT:
+            return
+        art = self._load_local_logo(path, (x2 - x1, min(y2 - y1, KIT_SPARE_FILLER_MAX_HEIGHT)), alpha_threshold=8)
+        if art:
+            image.paste(art, (x1 + (x2 - x1 - art.width) // 2, y1 + (y2 - y1 - art.height) // 2), art)
+
     def _draw_kit_day_tab(self, draw, x, y, day, fill):
         draw.rounded_rectangle((x, y, x + KIT_DAY_TAB_WIDTH, y + 10), radius=3, fill=fill, outline=COLORS["border"], width=1)
         self._draw_centered_in_box(draw, (x, y, x + KIT_DAY_TAB_WIDTH, y + 10), day, self._font(8, True), _kit_ink_on(fill))
@@ -537,9 +553,11 @@ class ScorebugKitMixin:
         y = self._draw_kit_column_header(draw, x1, y1, x2, spec, title, f"{live_count} LIVE" if live_count else "")
         if not games:
             self._draw_text_in_box(draw, (x1 + 4, y, x2, y + 14), f"No other {spec.sport} games", self._font(9, True), COLORS["muted"])
+            self._draw_kit_spare_filler(image, (x1, y + 18, x2, y2), spec)
             return
         capacity = max(0, (y2 - y + 1) // KIT_TICKER_ROW_HEIGHT)
         slots = [SportsDashboard._kit_day_slot(event, now) for event in games[:capacity]]
+        self._draw_kit_spare_filler(image, (x1, y + len(slots) * KIT_TICKER_ROW_HEIGHT + 4, x2, y2), spec)
         for index, event in enumerate(games[:capacity]):
             top = y + index * KIT_TICKER_ROW_HEIGHT
             state = SportsDashboard._hub_event_state(event)

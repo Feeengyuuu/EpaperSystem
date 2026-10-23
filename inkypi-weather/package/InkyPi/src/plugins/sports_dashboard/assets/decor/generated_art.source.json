@@ -5,7 +5,8 @@
   "processing": "cropped to the alpha bounding box, scaled to a fixed height with LANCZOS, alpha kept",
   "rendering": {
     "club_*_header_cutout.png": "alpha-only art, tinted with the league accent in the football region header",
-    "mlb_ballpark_strip.png": "full colour, pasted in the MLB card's spare band"
+    "mlb_ballpark_strip.png": "full colour, pasted in the MLB card's spare band",
+    "*_spare_filler.png": "full colour mascot spot art for the space under a short ticker or scoreboard column"
   },
   "assets": {
     "club_pl_header_cutout.png": {
@@ -76,6 +77,36 @@
       "size": [
         430,
         120
+      ]
+    },
+    "mlb_spare_filler.png": {
+      "scene": "baseball mascot with pennant, hot dog, popcorn, peanuts",
+      "job_id": "dcc26408-5a44-43cf-bbed-b0fd8b7a734d",
+      "source_sha256": "2960dd2533f03af71bad2a1c2655d318d4498c646228dc32964be0a74f409713",
+      "sha256": "d63839345d4a5aaaac2193b116fc3b7722b566d6d89355f55c177df6820dbde9",
+      "size": [
+        223,
+        160
+      ]
+    },
+    "basketball_spare_filler.png": {
+      "scene": "basketball mascot dunking, foam finger, popcorn",
+      "job_id": "d00fa6c4-7e8d-436a-938d-c479c81f9d36",
+      "source_sha256": "795f287f3def5f2838149189ddc881364cef4c5bed24523cb697a7c1c0f982a1",
+      "sha256": "40c2045a3a285b6093f837f5b94d585aecbcd15632813fee04a101b480868727",
+      "size": [
+        169,
+        160
+      ]
+    },
+    "football_spare_filler.png": {
+      "scene": "football mascot kicking off toward a goalpost, pennant, foam finger",
+      "job_id": "ff9b0ee2-4ffb-42d5-af2c-cdbe2a6cdd22",
+      "source_sha256": "3e4afbb72616bf55136d2cecda8d4cc6159cd914d82db79938d42b647a2a2fc4",
+      "sha256": "34b5edd5ee1d064985dc833afebc1b6662de2e86a41676814ff11997b5cb0c13",
+      "size": [
+        245,
+        160
       ]
     }
   }

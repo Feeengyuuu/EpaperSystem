@@ -20,6 +20,7 @@ from plugins.sports_dashboard.common import (
     DEEP_NIGHT_COLORS,
     LOCAL_CLUB_HEADER_CUTOUT_PATHS,
     LOCAL_MLB_BALLPARK_STRIP_PATH,
+    LOCAL_SPARE_FILLER_PATHS,
     LOCAL_TV_LOGO_DIR,
 )
 from plugins.sports_dashboard.event_marks import EVENT_MARK_DIR
@@ -384,6 +385,23 @@ def test_scoreboard_groups_later_games_under_one_day_tab_and_each_kickoff_once(b
     _assert_fits(ImageDraw.Draw(Image.new("RGB", (1, 1))), boxes)
     assert texts.count("SUN") == 1 and texts.count("10AM") == 1
     assert "1:05PM" in texts and "MON" in texts and "5:15PM" in texts
+
+
+@pytest.mark.parametrize("sport", ["MLB", "NBA", "WNBA", "NFL", "NCAA"])
+def test_every_ticker_sport_has_mascot_filler_art(sport):
+    with Image.open(LOCAL_SPARE_FILLER_PATHS[sport]) as source:
+        art = source.convert("RGBA")
+    assert art.height >= 130 and art.getchannel("A").getextrema() == (0, 255)
+
+
+@pytest.mark.parametrize("count", [0, 1, 3])
+def test_short_ticker_fills_the_room_below_its_rows_with_mascot_art(count):
+    games = [_ticker_game("TB", "MIL", 4 + index) for index in range(count)]
+    spec = _plugin()._mlb_spec()
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_kit_ticker(image, draw, (300, 20, 480, 260), games, NOW, spec))
+
+    below = image.crop((300, 43 + max(1, count) * 17 + 8, 480, 260))
+    assert sum(1 for pixel in below.get_flattened_data() if pixel != COLORS["paper"]) > 3000
 
 
 def test_countdown_and_total_tiles_draw_cards_and_units(boxes):
