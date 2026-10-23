@@ -302,7 +302,7 @@ def test_price_text_scales_decimals():
     assert price_text(0.12345) == "$0.1235"
 
 
-@pytest.mark.parametrize("key", ["cpi", "unemployment", "dxy", "gold", "fed_funds", "mortgage30"])
+@pytest.mark.parametrize("key", ["cpi", "unemployment", "dxy", "gold", "fed_funds", "mortgage30", "curve"])
 def test_every_macro_indicator_has_its_own_icon(key):
     icon = money_render._asset(f"macro-{key}", money_render.MACRO_ICON_SIZE)
     assert icon is not None and icon.height <= money_render.MACRO_ICON_SIZE

@@ -227,7 +227,9 @@ def _yield_tile(canvas, payload, box):
 def _curve(canvas, payload):
     left, top, right, bottom = 12, 204, 392, 330
     canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
-    canvas.text((left + 10, top + 14), "美债收益率曲线", 15, anchor="lm")
+    icon = _asset("macro-curve", MACRO_ICON_SIZE)
+    title_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 14 - icon.height // 2)) + 6 if icon else 0)
+    canvas.text((title_x, top + 14), "美债收益率曲线", 15, anchor="lm")
     quotes = payload["markets"]["data"].get("quotes") or {}
     points = [(label, quotes[symbol]) for symbol, label in CURVE_POINTS if symbol in quotes]
     legend_x = right - 10

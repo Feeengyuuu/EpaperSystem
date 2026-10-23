@@ -2,7 +2,7 @@
   "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
   "generated": "2026-10-23",
   "processing": "cropped to the alpha bounding box, scaled to 96 px on the long side with LANCZOS, alpha kept",
-  "rendering": "macro tile icons left of the title, drawn 18 px high",
+  "rendering": "macro tile icons and the yield-curve title icon, drawn 18 px high",
   "icons": {
     "macro-cpi.png": {
       "job_id": "e04642e6-44ce-4e04-a69f-79440b0dcb7b",
@@ -56,6 +56,15 @@
       "size": [
         96,
         89
+      ]
+    },
+    "macro-curve.png": {
+      "job_id": "767ef872-9f51-45dd-9a20-00e8243c3136",
+      "source_sha256": "683d29f5e17af1a7106bda676ca43a90204fffacdb86ce25bd49f2e33ffc2f26",
+      "sha256": "ccaaa48500f4a347cb269f5580d89ddcb0004d99578eabcbdd8c3b984bc3592d",
+      "size": [
+        96,
+        94
       ]
     }
   }
