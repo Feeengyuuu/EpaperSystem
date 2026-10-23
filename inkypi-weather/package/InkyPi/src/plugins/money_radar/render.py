@@ -33,6 +33,7 @@ NIGHT = {
 }
 COIN_NAMES = {"bitcoin": "比特币", "ethereum": "以太坊", "solana": "Solana"}
 MACRO_ICON_SIZE = 18
+EARNINGS_ROWS = 2
 # Ticker chips in each brand's own published colour, as is (no snapping to the panel's
 # inks): (fill, text, outline). Brands whose colours are close keep apart by the shape of
 # their mark: Nintendo is a red outlined pill, SpaceX black on white, Apple plain black.
@@ -430,10 +431,20 @@ def _holdings(canvas, payload, now):
         _news(canvas, news[rows:], now, middle + 10, right - 10, body, rows)
         canvas.rule((middle, body - 8, middle, bottom - 8))
         return
+    if not filings_on:
+        # Earnings keep two rows; below them the news runs the full width of the box.
+        _earnings(canvas, payload, now, left + 10, middle - 10, body, EARNINGS_ROWS)
+        split = body + EARNINGS_ROWS * 19 - 10
+        canvas.rule((middle, body - 8, middle, split))
+        canvas.rule((left + 8, split, right - 8, split))
+        _news(canvas, news[:EARNINGS_ROWS], now, middle + 10, right - 10, body, EARNINGS_ROWS)
+        if len(news) > EARNINGS_ROWS:
+            _news(canvas, news[EARNINGS_ROWS:], now, left + 10, right - 10, split + 10, rows - EARNINGS_ROWS)
+        return
     left_rows = rows
     y = body
     if earnings_on:
-        used = _earnings(canvas, payload, now, left + 10, middle - 10, y, 2 if filings_on else rows)
+        used = _earnings(canvas, payload, now, left + 10, middle - 10, y, EARNINGS_ROWS)
         y += max(used, 1) * 19 + 2
         left_rows -= max(used, 1)
     if filings_on:

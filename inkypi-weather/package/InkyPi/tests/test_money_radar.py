@@ -320,3 +320,20 @@ def test_macro_tiles_put_the_icon_before_the_title():
     # The cart's warm red-orange sits left of where the title text starts.
     corner = canvas.image.crop((408, 206, 430, 226)).convert("RGB")
     assert any(r > 180 and g < 140 for r, g, _b in corner.get_flattened_data())
+
+
+def test_holdings_keep_two_earnings_rows_and_widen_the_news_below(monkeypatch):
+    canvas = PageCanvas(money_render._palette({}), family="Microsoft YaHei")
+    earnings_rows, news_calls = [], []
+    monkeypatch.setattr(money_render, "_earnings", lambda *args: earnings_rows.append(args[-1]))
+    monkeypatch.setattr(money_render, "_news", lambda _canvas, items, _now, left, right, _top, rows:
+                        news_calls.append((len(items), left, right, rows)))
+    news = [{"symbol": "TSLA", "title": f"Story {index}", "time": "2026-10-21T20:05:00+00:00"} for index in range(6)]
+    payload = {"earnings": {"state": "live", "data": {}}, "filings": {"state": "disabled", "data": {}},
+               "news": {"data": {"items": news}}, "symbols": ["TSLA"], "symbols_from_portfolio": True}
+
+    money_render._holdings(canvas, payload, NOW)
+
+    assert earnings_rows == [money_render.EARNINGS_ROWS]
+    # Two stories sit beside the earnings; the rest run across the whole box below them.
+    assert news_calls == [(2, 410, 778, 2), (4, 22, 778, 3)]
