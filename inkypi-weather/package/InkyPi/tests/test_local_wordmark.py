@@ -1,4 +1,5 @@
 import gc
+from pathlib import Path
 import weakref
 
 from PIL import Image, ImageChops, ImageDraw
@@ -118,3 +119,24 @@ def test_left_alignment_pins_the_artwork_and_reports_its_box(tmp_path):
     assert centered == (35, 10, 65, 30)
     assert pinned == (10, 10, 40, 30)
     assert ImageChops.difference(canvas, Image.new("RGB", canvas.size, "white")).getbbox() == (10, 10, 40, 30)
+
+
+def test_header_art_centres_in_the_free_span_and_skips_a_narrow_one(tmp_path):
+    path = tmp_path / "header.png"
+    Image.new("RGBA", (300, 60), (200, 40, 40, 255)).save(path)
+    canvas = Image.new("RGB", (800, 60), (255, 255, 255))
+
+    assert local_wordmark.paste_header_art(canvas, path, 500, 590) is False
+    pasted = local_wordmark.paste_header_art(canvas, path, 300.4, 660.6)
+    assert pasted and pasted[0] >= 314 and pasted[2] <= 646 and pasted[1] >= 6 and pasted[3] <= 50
+    assert pasted[0] - 314 in {646 - pasted[2], 646 - pasted[2] - 1}
+
+
+@pytest.mark.parametrize("plugin", ["money_radar", "nature_nearby", "tech_play"])
+def test_aggregate_pages_ship_their_header_art(plugin):
+    assets = Path(local_wordmark.__file__).resolve().parents[1] / "plugins" / plugin / "assets"
+    with Image.open(assets / "header_art.png") as source:
+        art = source.convert("RGBA")
+    assert art.height == 96 and art.width > 3 * art.height
+    assert art.getchannel("A").getextrema() == (0, 255)
+    assert (assets / "header_art.source.json").is_file()

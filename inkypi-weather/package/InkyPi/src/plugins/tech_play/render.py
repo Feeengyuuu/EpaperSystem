@@ -12,7 +12,7 @@ from pathlib import Path
 from PIL import Image, ImageOps
 
 from utils.flat_icons import draw_icon
-from utils.local_wordmark import paste_local_wordmark
+from utils.local_wordmark import paste_header_art, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_image
 
@@ -342,8 +342,10 @@ def render_page(dimensions, payload, settings, now, images):
         title_right = pasted[2]
     else:
         title_right = 16 + canvas.text((16, 27), "科技与游戏", 30, anchor="lm")
-    canvas.text((title_right + 14, 30), "服务状态 · 免费游戏 · 新作 · 论文 · 速通", 14, "muted", anchor="lm", bold=False)
-    canvas.text((788, 27), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
+    subtitle_right = title_right + 14 + canvas.text((title_right + 14, 30), "服务状态 · 免费游戏 · 新作 · 论文 · 速通", 14, "muted",
+                                                    anchor="lm", bold=False)
+    date_left = 788 - canvas.text((788, 27), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
+    paste_header_art(canvas.image, ASSETS / "header_art.png", subtitle_right, date_left)
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _status(canvas, payload)
     _papers(canvas, payload, now)

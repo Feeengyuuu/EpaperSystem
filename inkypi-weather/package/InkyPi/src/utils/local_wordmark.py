@@ -58,3 +58,12 @@ def paste_local_wordmark(image, path, box, *, align="center"):
         return (x, y, x + fitted.width, y + fitted.height)
     except (OSError, ValueError, SyntaxError):
         return False
+
+
+def paste_header_art(image, path, left, right, *, top=6, bottom=50, gap=14, min_width=80):
+    """Centre decorative artwork in a page header's free span between ``left``
+    (the subtitle's end) and ``right`` (the date's start); False when too narrow."""
+    left, right = int(left) + gap, int(right) - gap
+    if right - left < min_width:
+        return False
+    return paste_local_wordmark(image, path, (left, top, right, bottom))

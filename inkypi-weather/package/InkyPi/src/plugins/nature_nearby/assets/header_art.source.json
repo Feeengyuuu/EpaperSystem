@@ -1,0 +1,16 @@
+{
+  "asset": "header_art.png",
+  "scene": "druid with a magnifier and a California newt, poppies, monarch, quail, banana slug, oak sapling",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "9202b1bf-ead2-49a1-ab36-5b0915484c1c",
+  "generated": "2026-10-23",
+  "background": "transparent PNG, 1536x512",
+  "processing": "cropped to the alpha bounding box, scaled to 96 px high with LANCZOS, alpha kept",
+  "rendering": "full colour, centred between the header subtitle and the date",
+  "source_sha256": "f8cc022ca0202968c2300c27c22b81f44cf3a9ef1e18f83ff63ab9046c1d0ce1",
+  "sha256": "b51e77e77a2210ef6169cb39e6b02b313578f2681ca4933fa77a34e98955c219",
+  "size": [
+    411,
+    96
+  ]
+}
