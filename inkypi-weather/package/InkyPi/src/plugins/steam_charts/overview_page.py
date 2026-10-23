@@ -158,9 +158,14 @@ class LiveOverviewMixin:
         x = round(text_left - 14 - sum(block[-1] for block in blocks) - 18 * max(0, len(blocks) - 1))
         spark = totals.get("spark") or []
         if len(spark) > 1 and x - 16 - (WORDMARK_RIGHT + 12) > 60:
-            # Its label above it, and the filled line standing on the header rule like the skyline.
-            draw.text((WORDMARK_RIGHT + 12, 3), "48 小时", font=self._font(11), fill=colors["muted"])
-            self._overview_spark(draw, (WORDMARK_RIGHT + 12, 21, x - 16, HEADER_H - 1), spark, colors["blue"], colors)
+            # The filled line stands on the header rule like the skyline; its label lies over it, haloed,
+            # and a dashed cursor drops from the latest point as if it were being hovered.
+            left = WORDMARK_RIGHT + 12
+            end_x, end_y = self._overview_spark(draw, (left, 8, x - 16, HEADER_H - 1), spark, colors["blue"], colors)
+            for y in range(round(end_y) + 5, HEADER_H - 1, 4):
+                draw.line((end_x, y, end_x, min(y + 1, HEADER_H - 2)), fill=colors["blue"], width=1)
+            draw.text((left + 4, HEADER_H - 18), "48 小时", font=self._font(11, "bold"), fill=colors["ink"],
+                      stroke_width=2, stroke_fill=colors["paper"])
         for key, label, icon, fallback, width in blocks:
             self._overview_icon(image, draw, icon, fallback, (x, 10), 18, colors["blue"], colors)
             draw.text((x + 24, 7), label, font=self._font(11), fill=colors["muted"])
@@ -291,6 +296,7 @@ class LiveOverviewMixin:
         draw.line(points, fill=colour, width=2, joint="curve")
         end_x, end_y = points[-1]
         draw.ellipse((end_x - 2.5, end_y - 2.5, end_x + 2.5, end_y + 2.5), fill=colour)
+        return end_x, end_y
 
     @staticmethod
     def _overview_change(game):
