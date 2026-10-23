@@ -158,8 +158,9 @@ class LiveOverviewMixin:
         x = round(text_left - 14 - sum(block[-1] for block in blocks) - 18 * max(0, len(blocks) - 1))
         spark = totals.get("spark") or []
         if len(spark) > 1 and x - 16 - (WORDMARK_RIGHT + 12) > 60:
-            self._overview_spark(draw, (WORDMARK_RIGHT + 12, 14, x - 16, 44), spark, colors["blue"], colors)
-            draw.text((WORDMARK_RIGHT + 12, 45), "48 小时", font=self._font(9), fill=colors["muted"])
+            # Its label above it, and the filled line standing on the header rule like the skyline.
+            draw.text((WORDMARK_RIGHT + 12, 3), "48 小时", font=self._font(9), fill=colors["muted"])
+            self._overview_spark(draw, (WORDMARK_RIGHT + 12, 18, x - 16, HEADER_H - 1), spark, colors["blue"], colors)
         for key, label, icon, fallback, width in blocks:
             self._overview_icon(image, draw, icon, fallback, (x, 10), 18, colors["blue"], colors)
             draw.text((x + 24, 7), label, font=self._font(11), fill=colors["muted"])
