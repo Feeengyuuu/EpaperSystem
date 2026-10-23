@@ -105,10 +105,16 @@ def test_the_wordmark_skyline_grows_into_the_header_space():
     def inked(x_range, y_range):
         return [(x, y) for x in x_range for y in y_range if sum(image.getpixel((x, y))) < 600]
 
-    # "STEAM CHARTS" stands about twice its old height, and the skyline reaches on to the users badge.
-    lettering = inked(range(70, 230), range(2, 52))
-    assert min(y for _x, y in lettering) < 24
-    assert max(x for x, _y in inked(range(236, overview_page.WORDMARK_RIGHT + 1), range(2, 52))) > 340
+    # "STEAM CHARTS" stands about twice its old height on the header rule (its underline and the
+    # rule are one line), and the skyline reaches on to WORDMARK_RIGHT.
+    lettering = inked(range(70, 230), range(2, overview_page.HEADER_H - 3))
+    assert min(y for _x, y in lettering) < 30
+    assert not inked(range(70, 230), range(overview_page.HEADER_H + 3, overview_page.HEADER_H + 6))
+    assert max(x for x, _y in inked(range(236, overview_page.WORDMARK_RIGHT + 1), range(2, 52))) > 350
+    # The users-online badge sits right of the 48-hour line, by the source and refresh time.
+    badge = [x for x, _y in inked(range(380, 700), range(10, 28))
+             if image.getpixel((x, _y))[2] > 150 and image.getpixel((x, _y))[0] < 80]
+    assert badge and min(badge) > 500
 
 
 def test_overview_draws_both_boards_with_totals_and_store_facts(monkeypatch):

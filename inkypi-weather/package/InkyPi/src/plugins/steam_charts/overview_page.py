@@ -22,9 +22,11 @@ SECTION_TOP = 62
 ROWS_TOP = 90
 COVER = (112, 52)
 METRIC_W = 112
-# The wordmark fills the header from the Steam logo to WORDMARK_RIGHT, standing on the baseline:
-# its lettering drawn larger than its own pixels, its skyline grown into what is left.
-WORDMARK_LEFT, WORDMARK_RIGHT, WORDMARK_BASELINE = 60, 356, 51
+# The Steam logo (x, y, size), then the wordmark from WORDMARK_LEFT to WORDMARK_RIGHT: its lettering
+# drawn larger than its own pixels and its skyline grown into what is left, both standing on the
+# header rule so their underline and the rule are one line.
+LOGO_BOX = (10, 4, 48)
+WORDMARK_LEFT, WORDMARK_RIGHT, WORDMARK_BASELINE = 64, 370, HEADER_H + 2
 LETTERING_SCALE = 1.15
 # Where the wordmark's pieces sit in its own 320x72 pixels: the skyline's first building,
 # the end of the lettering, the row below "STEAM CHARTS" and the underline's first row.
@@ -137,27 +139,34 @@ class LiveOverviewMixin:
         image.paste(skyline, (left, WORDMARK_BASELINE - skyline.height), skyline)
 
     def _overview_header(self, image, draw, totals, colors, updated_at_text):
-        self._paste_steam_logo(image, 12, 8, 40, colors)
+        """Logo and wordmark standing on the header rule, the 48-hour line, then the totals by the source."""
+        self._paste_steam_logo(image, *LOGO_BOX, colors)
         self._overview_wordmark(image, colors)
-        x = WORDMARK_RIGHT + 6
-        for key, label, icon, fallback in (("online", "在线", "users", "users"), ("ingame", "游戏中", "ingame", "gamepad")):
-            if key not in totals:
-                continue
-            self._overview_icon(image, draw, icon, fallback, (x, 10), 18, colors["blue"], colors)
-            draw.text((x + 24, 7), label, font=self._font(11), fill=colors["muted"])
-            draw.text((x + 24, 21), wan(totals[key]), font=self._font(19, "bold"), fill=colors["ink"])
-            peak = f"峰值 {wan(totals.get(key + '_peak'))}"
-            draw.text((x + 24, 43 - 1), peak, font=self._font(9), fill=colors["muted"])
-            x += 24 + max(draw.textlength(wan(totals[key]), font=self._font(19, "bold")), 70) + 18
-        spark = totals.get("spark") or []
-        if len(spark) > 1 and x < 640:
-            self._overview_spark(draw, (x, 14, 650, 44), spark, colors["blue"], colors)
-            draw.text((x, 45), "48 小时", font=self._font(9), fill=colors["muted"])
+        site = "steamcharts.com"
+        draw.text((788 - draw.textlength(site, font=self._font(9)), 12), site, font=self._font(9), fill=colors["muted"])
+        text_left = 788 - draw.textlength(site, font=self._font(9))
         if updated_at_text:
             width = draw.textlength(updated_at_text, font=self._font(11))
             draw.text((788 - width, 38), updated_at_text, font=self._font(11), fill=colors["muted"])
-        draw.text((788 - draw.textlength("steamcharts.com", font=self._font(9)), 12), "steamcharts.com",
-                  font=self._font(9), fill=colors["muted"])
+            text_left = min(text_left, 788 - width)
+
+        number_font = self._font(19, "bold")
+        blocks = [(key, label, icon, fallback, 24 + max(draw.textlength(wan(totals[key]), font=number_font), 70))
+                  for key, label, icon, fallback in (("online", "在线", "users", "users"),
+                                                     ("ingame", "游戏中", "ingame", "gamepad")) if key in totals]
+        # The totals sit just left of the source and refresh time; the 48-hour line takes the space before them.
+        x = round(text_left - 14 - sum(block[-1] for block in blocks) - 18 * max(0, len(blocks) - 1))
+        spark = totals.get("spark") or []
+        if len(spark) > 1 and x - 16 - (WORDMARK_RIGHT + 12) > 60:
+            self._overview_spark(draw, (WORDMARK_RIGHT + 12, 14, x - 16, 44), spark, colors["blue"], colors)
+            draw.text((WORDMARK_RIGHT + 12, 45), "48 小时", font=self._font(9), fill=colors["muted"])
+        for key, label, icon, fallback, width in blocks:
+            self._overview_icon(image, draw, icon, fallback, (x, 10), 18, colors["blue"], colors)
+            draw.text((x + 24, 7), label, font=self._font(11), fill=colors["muted"])
+            draw.text((x + 24, 21), wan(totals[key]), font=number_font, fill=colors["ink"])
+            peak = f"峰值 {wan(totals.get(key + '_peak'))}"
+            draw.text((x + 24, 43 - 1), peak, font=self._font(9), fill=colors["muted"])
+            x += width + 18
         draw.line((12, HEADER_H, 788, HEADER_H), fill=colors["ink"], width=2)
 
     def _overview_board(self, image, draw, columns, group, colors):
