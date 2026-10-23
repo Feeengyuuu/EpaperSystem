@@ -31,6 +31,7 @@ import plugins.orbital_signal.launch_photo as launch_photo_module  # noqa: E402
 from plugins.orbital_signal.orbital_signal import (  # noqa: E402
     DAY_PALETTE,
     DEFAULT_FONT,
+    LAUNCH_SPLIT_X,
     NIGHT_PALETTE,
     PLUGIN_ID,
     OrbitalSignal,
@@ -322,7 +323,52 @@ def test_normalize_launches_keeps_displayable_global_fields_and_order():
         "fallback_image_credit": "",
         "fallback_image_license": "",
         "fallback_image_source": "",
+        "provider_abbrev": "",
+        "mission_type": "",
+        "country_code": "",
+        "window_start": "",
+        "window_end": "",
+        "weather_go": None,
+        "provider_launches_year": None,
+        "orbital_launches_year": None,
     }
+
+
+def test_normalize_launches_reads_window_weather_and_yearly_counts():
+    payload = launch_payload()
+    payload["results"][0].update({
+        "window_start": "2026-07-18T06:00:00Z",
+        "window_end": "2026-07-18T07:30:00Z",
+        "probability": 90,
+        "agency_launch_attempt_count_year": 3,
+        "orbital_launch_attempt_count_year": 181,
+    })
+    payload["results"][0]["launch_service_provider"]["abbrev"] = "SKY"
+    payload["results"][0]["mission"]["type"] = "Test Flight"
+    payload["results"][0]["pad"]["country"] = {"alpha_2_code": "IN"}
+
+    row = normalize_launches(payload, now=NOW)[0]
+
+    assert row["window_start"] == "2026-07-18T06:00:00+00:00"
+    assert row["window_end"] == "2026-07-18T07:30:00+00:00"
+    assert (row["weather_go"], row["provider_launches_year"], row["orbital_launches_year"]) == (90, 3, 181)
+    assert (row["provider_abbrev"], row["mission_type"], row["country_code"]) == ("SKY", "Test Flight", "IN")
+    facts = dict(OrbitalSignal._launch_facts({**row, "pad": "Space Launch Complex 4E"}))
+    assert facts["WINDOW"] == "06:00-07:30 UTC"
+    assert facts["PAD"] == "SLC-4E / IN"
+    # Names past 14 characters give way to the provider's abbreviation.
+    assert facts["PROVIDER"] == "SKY / #3 YTD"
+    assert facts["MISSION"] == "Test Flight"
+    assert facts["WEATHER"] == "90% GO"
+
+
+def test_launch_facts_fall_back_to_the_world_count_without_a_forecast():
+    facts = dict(OrbitalSignal._launch_facts({"orbital_launches_year": 247, "provider": "China Aerospace Science "
+                                              "and Technology Corporation", "provider_abbrev": "CASC"}))
+    assert facts["WORLD"] == "ORBITAL #247 YTD"
+    assert facts["PROVIDER"] == "CASC"
+    assert OrbitalSignal._short_pad("Rocket Lab Launch Complex 1B") == "LC-1B"
+    assert OrbitalSignal._launch_site({"location": "Taiyuan Satellite Launch Center, People's Republic of China"}) == "Taiyuan"
 
 
 def test_normalize_launches_prefers_launch_image_and_keeps_launcher_fallback():
@@ -730,8 +776,8 @@ def test_countdown_and_fixed_800x480_panel_geometry_match_mockup():
     assert plugin._format_countdown(NOW, launch_time) == "T- 08H 40M"
     assert plugin._panel_boxes(800, 480) == {
         "header": (0, 0, 800, 58),
-        "launch": (0, 58, 440, 448),
-        "markets": (440, 58, 800, 448),
+        "launch": (0, 58, 462, 448),
+        "markets": (462, 58, 800, 448),
         "footer": (0, 448, 800, 480),
     }
 
@@ -760,8 +806,9 @@ def test_cached_launch_photo_renders_in_color_for_day_and_night(tmp_path):
 
     assert day.getpixel((60, 130)) == (20, 170, 230)
     assert night.getpixel((60, 130)) == (20, 170, 230)
-    assert day.getpixel((139, 120)) == DAY_PALETTE["rule"]
-    assert night.getpixel((139, 120)) == NIGHT_PALETTE["rule"]
+    # The photo column keeps a one-pixel rule frame.
+    assert day.getpixel((123, 120)) == DAY_PALETTE["rule"]
+    assert night.getpixel((123, 120)) == NIGHT_PALETTE["rule"]
 
 
 def test_launch_photo_credit_is_one_line_and_empty_credit_draws_no_label(tmp_path):
@@ -926,9 +973,13 @@ def test_market_card_keeps_representative_title_and_leader_complete():
 
     plugin._draw_markets(draw, (440, 58, 800, 448), [market], DAY_PALETTE, None)
 
-    rendered = {call["text"] for call in draw.text_calls}
-    assert title in rendered
-    assert leader in rendered
+    # Question and leader wrap onto lines of their own, every word kept.
+    lines = [call["text"] for call in draw.text_calls]
+    title_lines = [call["text"] for call in draw.text_calls if 58 + 40 < call["xy"][1] < 58 + 86]
+    leader_lines = [call["text"] for call in draw.text_calls if 58 + 186 < call["xy"][1] < 58 + 216]
+    assert " ".join(title_lines) == title
+    assert " ".join(leader_lines) == leader
+    assert not any(line.endswith("...") for line in lines)
 
 
 def _representative_launches():
@@ -1054,3 +1105,27 @@ def test_generate_image_attaches_local_fallback_provenance(monkeypatch):
     assert isinstance(image, Image.Image)
     assert image.size == (800, 480)
     assert read_source_provenance(image) is SourceProvenance.LOCAL_FALLBACK
+
+
+def test_timeline_spaces_launches_evenly_and_labels_the_real_gaps():
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    draw = RecordingDraw()
+    launches = _representative_launches()
+
+    plugin._draw_timeline(draw, (16, 356, 444, 442), launches, NOW, DAY_PALETTE, None)
+
+    rendered = [call["text"] for call in draw.text_calls]
+    assert "+1D 16H" in rendered and "+1D 0H" in rendered
+    assert OrbitalSignal._gap_label(NOW, NOW + timedelta(hours=3, minutes=5)) == "+3H 05M"
+    assert OrbitalSignal._gap_label(NOW, NOW + timedelta(minutes=45)) == "+45M"
+    names = [call for call in draw.text_calls if call["text"] in {"VIKRAM-I", "FALCON 9 BLOCK 5", "STARSHIP V3"}]
+    assert len(names) == 3
+    centres = sorted((call["bbox"][0] + call["bbox"][2]) / 2 for call in names)
+    assert abs((centres[1] - centres[0]) - (centres[2] - centres[1])) <= 2
+
+
+def test_rendered_page_fills_the_room_under_the_market_columns_with_art():
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    page = plugin._render_page((800, 480), plugin._fixture_payload(NOW), {}, NOW)
+    room = page.crop((LAUNCH_SPLIT_X + 10, 58 + 306, 790, 442))
+    assert sum(1 for pixel in room.get_flattened_data() if pixel != DAY_PALETTE["paper"]) > 2500

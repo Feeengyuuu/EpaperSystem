@@ -94,6 +94,11 @@ def _json_list(value):
     return list(value) if isinstance(value, list) else []
 
 
+def _count(value):
+    number = _number(value)
+    return int(number) if number is not None and number >= 0 else None
+
+
 def normalize_launches(payload, now=None, limit=4):
     now_utc = _utc(now or datetime.now(timezone.utc))
     results = payload.get("results") if isinstance(payload, dict) else None
@@ -120,6 +125,9 @@ def normalize_launches(payload, now=None, limit=4):
         mission_name = _text(mission.get("name"))
         if not mission_name and "|" in name:
             mission_name = name.split("|", 1)[1].strip()
+        country = _mapping(pad.get("country")) or _mapping(location.get("country"))
+        window_start = _parse_time(raw.get("window_start"))
+        window_end = _parse_time(raw.get("window_end"))
         launch_image = _image_metadata(raw.get("image"), "launch")
         launcher_image = _image_metadata(
             configuration.get("image"),
@@ -144,6 +152,14 @@ def normalize_launches(payload, now=None, limit=4):
                 "pad": _text(pad.get("name"), "Pad TBD"),
                 "location": _text(location.get("name"), "Location TBD"),
                 "webcast_live": bool(raw.get("webcast_live", False)),
+                "provider_abbrev": _text(provider.get("abbrev")),
+                "mission_type": _text(mission.get("type")),
+                "country_code": _text(country.get("alpha_2_code")),
+                "window_start": window_start.isoformat() if window_start else "",
+                "window_end": window_end.isoformat() if window_end else "",
+                "weather_go": _count(raw.get("probability")),
+                "provider_launches_year": _count(raw.get("agency_launch_attempt_count_year")),
+                "orbital_launches_year": _count(raw.get("orbital_launch_attempt_count_year")),
                 "image_url": primary_image.get("image_url", ""),
                 "thumbnail_url": primary_image.get("thumbnail_url", ""),
                 "image_credit": primary_image.get("image_credit", ""),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -41,6 +42,16 @@ LAUNCH_PHOTO_CACHE_BUDGET = CacheBudget(
     24,
     48 * 1024 * 1024,
 )
+
+# Mission-control layout: the launch side with a photo, flip-clock countdown,
+# fact grid and launch timeline; the market side with three gauge columns.
+LAUNCH_SPLIT_X = 462
+PHOTO_BOX = (16, 72, 124, 272)
+FLIP_CARD = (34, 58)
+MARKET_COLUMNS_HEIGHT = 300
+MARKET_ART_PATH = Path(__file__).with_name("assets") / "market-console.png"
+CATEGORY_COLORS = {"ECONOMY": "blue", "SPORT": "orange", "MATCH": "orange", "POLITICS": "red",
+                   "CRYPTO": "orange", "TECH": "green"}
 
 DAY_PALETTE = {
     "paper": (247, 244, 236),
@@ -115,8 +126,8 @@ class OrbitalSignal(BasePlugin):
         if (width, height) == (800, 480):
             return {
                 "header": (0, 0, 800, 58),
-                "launch": (0, 58, 440, 448),
-                "markets": (440, 58, 800, 448),
+                "launch": (0, 58, LAUNCH_SPLIT_X, 448),
+                "markets": (LAUNCH_SPLIT_X, 58, 800, 448),
                 "footer": (0, 448, 800, 480),
             }
         scale_x = width / 800
@@ -546,7 +557,7 @@ class OrbitalSignal(BasePlugin):
             palette,
             family,
         )
-        self._draw_markets(draw, boxes["markets"], payload.get("markets") or [], palette, family)
+        self._draw_markets(draw, boxes["markets"], payload.get("markets") or [], palette, family, image=image)
         self._draw_footer(draw, boxes["footer"], palette, family)
         return image
 
@@ -585,24 +596,18 @@ class OrbitalSignal(BasePlugin):
         updated = _parse_time((payload.get("status") or {}).get("updated_at")) or _utc(now)
         draw.text((638, 21), updated.strftime("%d %b / %H:%M UTC").upper(), font=meta_font, fill=palette["ink"])
 
-    def _draw_rocket(self, draw, origin, palette):
-        x, y = origin
-        draw.arc((x - 34, y + 6, x + 78, y + 228), 102, 262, fill=palette["orange"], width=4)
-        draw.ellipse((x + 66, y + 49, x + 77, y + 60), fill=palette["orange"])
-        draw.polygon(
-            [(x + 23, y), (x + 13, y + 31), (x + 13, y + 154), (x + 33, y + 154), (x + 33, y + 31)],
-            fill=palette["white"],
-            outline=palette["ink"],
-        )
-        draw.line((x + 23, y, x + 23, y + 154), fill=palette["ink"], width=2)
-        draw.rectangle((x + 13, y + 54, x + 33, y + 66), fill=palette["ink"])
-        draw.line((x + 13, y + 52, x + 33, y + 52), fill=palette["orange"], width=3)
-        draw.polygon([(x + 13, y + 128), (x - 3, y + 157), (x + 13, y + 151)], fill=palette["ink"])
-        draw.polygon([(x + 33, y + 128), (x + 49, y + 157), (x + 33, y + 151)], fill=palette["ink"])
-        draw.polygon([(x + 17, y + 155), (x + 23, y + 188), (x + 29, y + 155)], fill=palette["orange"])
-        draw.ellipse((x + 6, y + 177, x + 40, y + 210), fill=palette["orange"])
-        draw.ellipse((x - 7, y + 195, x + 55, y + 226), fill=palette["orange"])
-        draw.ellipse((x + 13, y + 179, x + 33, y + 226), fill=palette["white"])
+    def _draw_rocket_icon(self, draw, center_x, top, height, color, palette):
+        """A flat rocket ``height`` px tall: nose, body, fins and a flame."""
+        width = max(4, height // 4)
+        left, right = center_x - width // 2, center_x + width // 2
+        body_top, body_bottom = top + height // 4, top + height * 3 // 4
+        draw.polygon([(center_x, top), (right, body_top), (left, body_top)], fill=color)
+        draw.rectangle((left, body_top, right, body_bottom), fill=color)
+        fin = max(2, width // 2)
+        draw.polygon([(left, body_bottom - fin * 2), (left - fin, body_bottom + 1), (left, body_bottom)], fill=color)
+        draw.polygon([(right, body_bottom - fin * 2), (right + fin, body_bottom + 1), (right, body_bottom)], fill=color)
+        draw.polygon([(left + 1, body_bottom + 1), (center_x, top + height), (right - 1, body_bottom + 1)],
+                     fill=palette["orange"] if color != palette["orange"] else palette["red"])
 
     def _load_cached_launch_photo(self, launch):
         return launch_photo.load_cached_photo(
@@ -610,54 +615,128 @@ class OrbitalSignal(BasePlugin):
             (launch or {}).get("photo_cache_key"),
         )
 
-    def _draw_launch_photo(self, image, draw, primary, top, palette, family):
+    def _draw_launch_photo(self, image, draw, primary, palette, family):
+        """The next launch's photo in the left column, or a drawn rocket on an orbit arc."""
+        left, top, right, bottom = PHOTO_BOX
         photo = self._load_cached_launch_photo(primary)
-        if photo is None:
-            return False
-        try:
-            fitted = launch_photo.rocket_preserving_crop(photo, (113, 247))
-        except Exception as exc:
-            logger.warning(
-                "Orbital Signal launch photo crop failed: %s",
-                type(exc).__name__,
-            )
-            return False
-        finally:
-            photo.close()
+        fitted = None
+        if photo is not None:
+            try:
+                fitted = launch_photo.rocket_preserving_crop(photo, (right - left, bottom - top))
+            except Exception as exc:
+                logger.warning("Orbital Signal launch photo crop failed: %s", type(exc).__name__)
+            finally:
+                photo.close()
+        if fitted is None:
+            draw.rectangle(PHOTO_BOX, fill=palette["panel"])
+            draw.arc((left - 40, top + 30, right + 20, bottom + 60), 200, 320, fill=palette["orange"], width=3)
+            self._draw_rocket_icon(draw, (left + right) // 2, top + 34, 132, palette["ink"], palette)
+        else:
+            image.paste(fitted, (left, top))
+            fitted.close()
+            credit = str(primary.get("photo_credit") or "").strip()
+            if credit:
+                credit_font = self._font(8, bold=True, family=family)
+                label = self._fit_text(draw, f"PHOTO: {credit.upper()}", credit_font, right - left - 7)
+                draw.rectangle((left + 1, bottom - 17, right - 2, bottom - 2), fill=palette["ink"])
+                draw.text((left + 3, bottom - 15), label, font=credit_font, fill=palette["paper"])
+        draw.rectangle((left, top, right - 1, bottom - 1), outline=palette["rule"], width=1)
 
-        photo_left = 16
-        photo_top = top + 18
-        photo_right = photo_left + fitted.width
-        photo_bottom = photo_top + fitted.height
-        image.paste(fitted, (photo_left, photo_top))
-        fitted.close()
+    @staticmethod
+    def _countdown_units(now, launch_time):
+        """(('00', 'H'), ('53', 'M')) inside a day, (('02', 'D'), ('08', 'H')) beyond it."""
+        minutes = max(0, int((_utc(launch_time) - _utc(now)).total_seconds())) // 60
+        days, remainder = divmod(minutes, 24 * 60)
+        hours, mins = divmod(remainder, 60)
+        if days:
+            return (f"{min(days, 99):02d}", "D"), (f"{hours:02d}", "H")
+        return (f"{hours:02d}", "H"), (f"{mins:02d}", "M")
 
-        credit = str(primary.get("photo_credit") or "").strip()
-        if credit:
-            credit_font = self._font(8, bold=True, family=family)
-            label = self._fit_text(
-                draw,
-                f"PHOTO: {credit.upper()}",
-                credit_font,
-                photo_right - photo_left - 7,
-            )
-            strip_top = photo_bottom - 18
-            draw.rectangle(
-                (photo_left + 1, strip_top, photo_right - 2, photo_bottom - 2),
-                fill=palette["ink"],
-            )
-            draw.text(
-                (photo_left + 3, strip_top + 3),
-                label,
-                font=credit_font,
-                fill=palette["paper"],
-            )
-        draw.rectangle(
-            (photo_left, photo_top, photo_right - 1, photo_bottom - 1),
-            outline=palette["rule"],
-            width=1,
-        )
-        return True
+    def _draw_flip_countdown(self, draw, x, y, units, palette, family):
+        """'T-' then two flip-card pairs split by a colon, each pair's unit below it."""
+        card_w, card_h = FLIP_CARD
+        prefix_font = self._font(34, True, family)
+        draw.text((x, y + 8), "T-", font=prefix_font, fill=palette["ink"])
+        x += draw.textbbox((0, 0), "T-", font=prefix_font)[2] + 8
+        digit_font = self._font(44, True, family)
+        unit_font = self._font(10, True, family)
+        middle = y + card_h // 2
+        for index, (digits, unit) in enumerate(units):
+            if index:
+                for dot_y in (middle - 12, middle + 6):
+                    draw.rectangle((x + 2, dot_y, x + 7, dot_y + 5), fill=palette["ink"])
+                x += 12
+            pair_left = x
+            for digit in digits:
+                draw.rounded_rectangle((x, y, x + card_w, y + card_h), radius=4, fill=palette["ink"])
+                bounds = draw.textbbox((0, 0), digit, font=digit_font)
+                draw.text((x + (card_w - (bounds[2] - bounds[0])) / 2 - bounds[0],
+                           y + (card_h - (bounds[3] - bounds[1])) / 2 - bounds[1]),
+                          digit, font=digit_font, fill=palette["paper"])
+                # Hinge notches on both sides, as on a split-flap card.
+                draw.rectangle((x, middle, x + 2, middle + 1), fill=palette["paper"])
+                draw.rectangle((x + card_w - 2, middle, x + card_w, middle + 1), fill=palette["paper"])
+                x += card_w + 3
+            unit_w = draw.textbbox((0, 0), unit, font=unit_font)[2]
+            draw.text((pair_left + (x - 3 - pair_left - unit_w) / 2, y + card_h + 2), unit, font=unit_font,
+                      fill=palette["ink"])
+        return x
+
+    @staticmethod
+    def _short_pad(name):
+        """'Rocket Lab Launch Complex 1B' → 'LC-1B', 'Space Launch Complex 4E' → 'SLC-4E'."""
+        name = str(name or "").strip()
+        for long_form, short_form in (("Space Launch Complex ", "SLC-"), ("Launch Complex ", "LC-"),
+                                      ("Launch Pad ", "LP-")):
+            if long_form.casefold() in name.casefold():
+                return short_form + name[name.casefold().index(long_form.casefold()) + len(long_form):].strip()
+        return name
+
+    @staticmethod
+    def _launch_site(launch):
+        """The place of a pad location: 'Mahia Peninsula', 'Taiyuan', 'Vandenberg SFB'."""
+        parts = [part.strip() for part in str(launch.get("location") or "").split(",") if part.strip()]
+        place = next((part for part in parts if "launch complex" not in part.casefold()), parts[0] if parts else "")
+        for suffix in (" Satellite Launch Center", " Space Launch Center", " Launch Center", " Space Center"):
+            if place.casefold().endswith(suffix.casefold()):
+                return place[: -len(suffix)].strip()
+        return place
+
+    @staticmethod
+    def _launch_facts(launch):
+        """Label/value pairs for the fact grid under the next launch."""
+        start, end = _parse_time(launch.get("window_start")), _parse_time(launch.get("window_end"))
+        if start and end and end > start:
+            window = f"{start:%H:%M}-{end:%H:%M} UTC"
+        elif start:
+            window = f"{start:%H:%M} UTC INSTANT"
+        else:
+            window = "TBD"
+        country = str(launch.get("country_code") or "").strip()
+        pad = " / ".join(part for part in (OrbitalSignal._short_pad(launch.get("pad")), country) if part) or "TBD"
+        provider = str(launch.get("provider") or "").strip()
+        if len(provider) > 14 or not provider:
+            provider = str(launch.get("provider_abbrev") or provider or "TBD").strip()
+        count = launch.get("provider_launches_year")
+        if isinstance(count, int) and count > 0:
+            provider = f"{provider} / #{count} YTD"
+        weather = launch.get("weather_go")
+        world = launch.get("orbital_launches_year")
+        if isinstance(weather, int):
+            last = ("WEATHER", f"{weather}% GO")
+        elif isinstance(world, int) and world > 0:
+            last = ("WORLD", f"ORBITAL #{world} YTD")
+        else:
+            last = ("WEATHER", "NO FORECAST")
+        mission_type = str(launch.get("mission_type") or "").strip()
+        return [
+            ("WINDOW", window),
+            ("PAD", pad),
+            ("ORBIT", str(launch.get("orbit") or "TBD")),
+            ("PROVIDER", provider),
+            ("MISSION", mission_type if mission_type and mission_type.casefold() != "unknown" else "TBD"),
+            last,
+        ]
 
     def _draw_launch(self, image, draw, box, launches, now, palette, family):
         left, top, right, bottom = box
@@ -669,64 +748,127 @@ class OrbitalSignal(BasePlugin):
 
         primary = launches[0]
         launch_time = _parse_time(primary.get("net")) or _utc(now)
-        if not self._draw_launch_photo(image, draw, primary, top, palette, family):
-            self._draw_rocket(draw, (49, top + 21), palette)
-        draw.line((139, top + 18, 139, top + 265), fill=palette["rule"], width=2)
+        self._draw_launch_photo(image, draw, primary, palette, family)
+        text_left, text_right = PHOTO_BOX[2] + 12, right - 16
 
-        tab_font = self._font(13, bold=True, family=family)
-        draw.rectangle((153, top + 18, 282, top + 49), fill=palette["orange"])
-        draw.text((165, top + 25), "NEXT LAUNCH", font=tab_font, fill=palette["white"])
-        countdown = self._format_countdown(now, launch_time)
-        draw.text((151, top + 57), countdown, font=self._font(39, True, family), fill=palette["ink"])
+        tab_font = self._font(12, bold=True, family=family)
+        tab_w = draw.textbbox((0, 0), "NEXT LAUNCH", font=tab_font)[2] + 18
+        draw.rectangle((text_left, PHOTO_BOX[1], text_left + tab_w, PHOTO_BOX[1] + 21), fill=palette["orange"])
+        draw.text((text_left + 9, PHOTO_BOX[1] + 3), "NEXT LAUNCH", font=tab_font, fill=palette["white"])
+        if primary.get("webcast_live"):
+            live_left = text_left + tab_w + 8
+            live_w = draw.textbbox((0, 0), "WEBCAST LIVE", font=tab_font)[2] + 24
+            draw.rectangle((live_left, PHOTO_BOX[1], live_left + live_w, PHOTO_BOX[1] + 21), outline=palette["red"],
+                           width=2)
+            draw.ellipse((live_left + 7, PHOTO_BOX[1] + 7, live_left + 14, PHOTO_BOX[1] + 14), fill=palette["red"])
+            draw.text((live_left + 18, PHOTO_BOX[1] + 3), "WEBCAST LIVE", font=tab_font, fill=palette["red"])
 
-        rocket = str(primary.get("rocket") or "UPCOMING").strip().upper()
-        rocket_font = self._fit_font(draw, rocket, 270, 31, 12, family)
-        mission = self._fit_text(draw, str(primary.get("mission") or "MISSION"), self._font(22, True, family), 270)
-        draw.text((151, top + 111), rocket, font=rocket_font, fill=palette["ink"])
-        draw.text((153, top + 150), mission.upper(), font=self._font(22, True, family), fill=palette["ink"])
+        clock_top = PHOTO_BOX[1] + 30
+        clock_right = self._draw_flip_countdown(
+            draw, text_left, clock_top, self._countdown_units(now, launch_time), palette, family
+        )
 
         status = str(primary.get("status") or "TBD").upper()
         status_color = palette["green"] if status in {"GO", "SUCCESS"} else palette["orange"]
-        status_font = self._font(22, True, family)
-        status_width = max(62, draw.textbbox((0, 0), status, font=status_font)[2] + 24)
-        draw.rounded_rectangle(
-            (153, top + 184, 153 + status_width, top + 226),
-            radius=6,
-            fill=palette["white"],
-            outline=status_color,
-            width=3,
-        )
-        draw.text((165, top + 191), status, font=status_font, fill=status_color)
+        status_font = self._fit_font(draw, status, text_right - clock_right - 30, 26, 12, family)
+        status_box = (max(clock_right + 6, text_right - 86), clock_top + 4, text_right, clock_top + FLIP_CARD[1] - 4)
+        draw.rounded_rectangle(status_box, radius=6, fill=palette["white"], outline=status_color, width=3)
+        bounds = draw.textbbox((0, 0), status, font=status_font)
+        draw.text(((status_box[0] + status_box[2] - (bounds[2] - bounds[0])) / 2 - bounds[0],
+                   (status_box[1] + status_box[3] - (bounds[3] - bounds[1])) / 2 - bounds[1]),
+                  status, font=status_font, fill=status_color)
 
-        meta_font = self._font(15, True, family)
-        date_line = launch_time.strftime("%d %b / %H:%M UTC").upper()
-        location = self._fit_text(draw, str(primary.get("location") or "LOCATION TBD").upper(), meta_font, 270)
-        provider_line = f"{primary.get('provider') or 'PROVIDER TBD'} / {primary.get('orbit') or 'TBD'}".upper()
-        provider_line = self._fit_text(draw, provider_line, meta_font, 270)
-        draw.text((153, top + 235), date_line, font=meta_font, fill=palette["ink"])
-        draw.text((153, top + 258), location, font=meta_font, fill=palette["ink"])
-        draw.text((153, top + 281), provider_line, font=meta_font, fill=palette["ink"])
+        width = text_right - text_left
+        rocket = str(primary.get("rocket") or "UPCOMING").strip().upper()
+        draw.text((text_left, clock_top + FLIP_CARD[1] + 16), rocket,
+                  font=self._fit_font(draw, rocket, width, 30, 14, family), fill=palette["ink"])
+        mission = str(primary.get("mission") or "MISSION").strip().upper()
+        mission_font = self._fit_font(draw, mission, width, 16, 12, family)
+        draw.text((text_left, clock_top + FLIP_CARD[1] + 52), self._fit_text(draw, mission, mission_font, width),
+                  font=mission_font, fill=palette["ink"])
+        local = launch_time.astimezone(now.tzinfo) if now.tzinfo else launch_time
+        parts = [f"{launch_time:%d %b %H:%M} UTC", f"{local:%H:%M} {local.tzname() or 'LOCAL'}",
+                 self._launch_site(primary)]
+        when = " / ".join(part for part in parts if part).upper()
+        when_font = self._fit_font(draw, when, width, 13, 10, family)
+        draw.text((text_left, clock_top + FLIP_CARD[1] + 76), self._fit_text(draw, when, when_font, width),
+                  font=when_font, fill=palette["muted"])
 
-        up_top = top + 310
-        draw.line((16, up_top, right - 18, up_top), fill=palette["rule"], width=2)
-        draw.text((20, up_top + 5), "UP NEXT", font=self._font(17, True, family), fill=palette["ink"])
-        draw.line((16, up_top + 30, right - 18, up_top + 30), fill=palette["rule"], width=2)
-        row_font = self._font(12, True, family)
-        for index, launch in enumerate(launches[1:3]):
-            y = up_top + 34 + index * 23
-            when = _parse_time(launch.get("net"))
-            date = when.strftime("%d %b") if when else "TBD"
-            rocket_name = str(launch.get("rocket") or "ROCKET").upper()
-            mission_name = str(launch.get("mission") or "MISSION").upper()
-            rocket_font = self._fit_font(draw, rocket_name, 115, 12, 8, family)
-            mission_font = self._fit_font(draw, mission_name, 185, 12, 8, family)
-            draw.text((20, y), date.upper(), font=row_font, fill=palette["ink"])
-            draw.rectangle((87, y + 5, 91, y + 14), fill=palette["orange"])
-            draw.text((100, y), rocket_name, font=rocket_font, fill=palette["ink"])
-            draw.rectangle((225, y + 5, 229, y + 14), fill=palette["orange"])
-            draw.text((237, y), mission_name, font=mission_font, fill=palette["ink"])
-            if index == 0:
-                draw.line((16, y + 21, right - 18, y + 21), fill=palette["rule"], width=1)
+        grid_top = PHOTO_BOX[3] + 8
+        draw.line((16, grid_top, right - 18, grid_top), fill=palette["rule"], width=2)
+        label_font = self._font(9, True, family)
+        cell_w = (right - 18 - 16) / 3
+        for index, (label, value) in enumerate(self._launch_facts(primary)):
+            cell_x = 16 + (index % 3) * cell_w + (0 if index % 3 == 0 else 8)
+            cell_y = grid_top + 6 + (index // 3) * 34
+            value = value.upper()
+            value_font = self._fit_font(draw, value, cell_w - 12, 12, 9, family)
+            draw.text((cell_x, cell_y), label, font=label_font, fill=palette["orange"])
+            draw.text((cell_x, cell_y + 12), self._fit_text(draw, value, value_font, cell_w - 12),
+                      font=value_font, fill=palette["ink"])
+        for column in (1, 2):
+            divider = 16 + column * cell_w
+            draw.line((divider, grid_top + 8, divider, grid_top + 68), fill=palette["rule"], width=1)
+        self._draw_timeline(draw, (16, grid_top + 76, right - 18, bottom - 6), launches, now, palette, family)
+
+    @staticmethod
+    def _gap_label(earlier, later):
+        """'+3H 15M', '+2D 4H' or '+45M' between two launch times."""
+        minutes = max(0, int((later - earlier).total_seconds() // 60))
+        days, remainder = divmod(minutes, 24 * 60)
+        hours, mins = divmod(remainder, 60)
+        if days:
+            return f"+{days}D {hours}H"
+        if hours:
+            return f"+{hours}H {mins:02d}M"
+        return f"+{mins}M"
+
+    def _draw_timeline(self, draw, box, launches, now, palette, family):
+        """The coming launches as evenly spaced stops on a line, so close and
+        far launches read alike: each stop's local time above it, rocket and
+        mission below, and the time to the next stop on the line between."""
+        left, top, right, bottom = box
+        draw.line((left, top, right, top), fill=palette["rule"], width=2)
+        title_font = self._font(10, True, family)
+        draw.text((left + 2, top + 5), "NEXT LAUNCHES", font=title_font, fill=palette["ink"])
+        zone = f"LOCAL TIME {now.tzname() or 'UTC'}".upper()
+        draw.text((left + 10 + draw.textbbox((0, 0), "NEXT LAUNCHES", font=title_font)[2], top + 6), zone,
+                  font=self._font(9, True, family), fill=palette["muted"])
+        stops = [(launch, when) for launch in launches[:4] if (when := _parse_time(launch.get("net"))) is not None]
+        if not stops:
+            return
+        line_y, inset = top + 38, 50
+        if len(stops) > 1:
+            xs = [left + inset + (right - left - 2 * inset) * index / (len(stops) - 1) for index in range(len(stops))]
+        else:
+            xs = [(left + right) / 2]
+        draw.line((xs[0], line_y, xs[-1], line_y), fill=palette["ink"], width=2)
+        slot = min(150, (right - left) / len(stops) - 6)
+        gap_font = self._font(8, True, family)
+        for index in range(len(stops) - 1):
+            gap = self._gap_label(stops[index][1], stops[index + 1][1])
+            gap_w = draw.textbbox((0, 0), gap, font=gap_font)[2]
+            middle = (xs[index] + xs[index + 1]) / 2
+            draw.rectangle((middle - gap_w / 2 - 3, line_y - 6, middle + gap_w / 2 + 3, line_y + 6), fill=palette["paper"])
+            draw.text((middle - gap_w / 2, line_y - 6), gap, font=gap_font, fill=palette["muted"])
+
+        def centered(text, x, y, font, fill):
+            text_w = draw.textbbox((0, 0), text, font=font)[2]
+            draw.text((min(max(left, x - text_w / 2), right - text_w), y), text, font=font, fill=fill)
+
+        for index, ((launch, when), x) in enumerate(zip(stops, xs)):
+            status = str(launch.get("status") or "").upper()
+            color = palette["orange"] if index == 0 else palette["green"] if status == "GO" else palette["blue"]
+            local = when.astimezone(now.tzinfo) if now.tzinfo else when
+            stamp = f"{local:%H:%M}" if local.date() == now.date() else f"{local:%a %H:%M}".upper()
+            centered(stamp, x, line_y - 22, self._font(11, True, family), color)
+            draw.ellipse((x - 6, line_y - 6, x + 6, line_y + 6), fill=color, outline=palette["ink"], width=1)
+            for row, (text, size) in enumerate(((launch.get("rocket"), 10), (launch.get("mission"), 9))):
+                text = str(text or "").strip().upper()
+                if text:
+                    font = self._fit_font(draw, text, slot, size, 8, family)
+                    centered(self._fit_text(draw, text, font, slot), x, line_y + 9 + row * 13, font,
+                             palette["ink"] if row == 0 else palette["muted"])
 
     def _heat_color(self, heat, palette):
         if heat >= 80:
@@ -742,89 +884,137 @@ class OrbitalSignal(BasePlugin):
         draw.rectangle((x + 4, y + 10, x + 8, y + 30), fill=palette["red"])
         draw.ellipse((x + 1, y + 26, x + 11, y + 36), fill=palette["red"])
 
-    def _draw_markets(self, draw, box, markets, palette, family):
+    @staticmethod
+    def _money(value):
+        amount = max(0.0, float(value or 0.0))
+        for divisor, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+            if amount >= divisor:
+                return f"${amount / divisor:.1f}{suffix}"
+        return f"${amount:.0f}"
+
+    def _wrap_lines(self, draw, text, font, width, max_lines=2):
+        """Greedy word wrap into at most ``max_lines``, the last one ellipsised."""
+        words, lines, current = str(text or "").split(), [], ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if draw.textbbox((0, 0), candidate, font=font)[2] <= width or not current:
+                current = candidate
+                continue
+            lines.append(current)
+            current = word
+            if len(lines) == max_lines:
+                break
+        if current and len(lines) < max_lines:
+            lines.append(current)
+        consumed = sum(len(line.split()) for line in lines)
+        if lines and consumed < len(words):
+            lines[-1] = self._fit_text(draw, lines[-1] + " ...", font, width)
+        return [self._fit_text(draw, line, font, width) for line in lines]
+
+    def _draw_gauge(self, draw, center, radius, probability, color, palette):
+        """A semicircle dial filled to ``probability`` with a needle."""
+        cx, cy = center
+        bounds = (cx - radius, cy - radius, cx + radius, cy + radius)
+        draw.arc(bounds, 180, 360, fill=palette["muted"], width=3)
+        end = 180 + 180 * probability
+        draw.arc(bounds, 180, end, fill=color, width=9)
+        needle = radius - 9
+        tip = (cx + needle * math.cos(math.radians(end)), cy + needle * math.sin(math.radians(end)))
+        draw.line((cx, cy, *tip), fill=palette["ink"], width=3)
+        draw.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), fill=palette["ink"])
+
+    def _draw_markets(self, draw, box, markets, palette, family, image=None):
+        """MARKET HEAT: three gauge columns, then the console art across the
+        room left below them (when ``image`` is given)."""
         left, top, right, bottom = box
         draw.rectangle(box, fill=palette["paper"])
         title_font = self._font(23, True, family)
         draw.text((left + 15, top + 11), "MARKET HEAT", font=title_font, fill=palette["ink"])
         title_right = draw.textbbox((left + 15, top + 11), "MARKET HEAT", font=title_font)[2]
         # The bulb starts 3 px left of its origin; keep an 8 px optical gap after the title.
-        self._draw_thermometer(draw, (max(left + 197, title_right + 11), top + 8), palette)
-        draw.text((left + 226, top + 22), "VOLUME + 24H MOVE", font=self._font(10, True, family), fill=palette["ink"])
+        self._draw_thermometer(draw, (title_right + 11, top + 8), palette)
+        note_font, note = self._font(9, True, family), "TOP 3 / 24H VOL"
+        note_w = draw.textbbox((0, 0), note, font=note_font)[2]
+        if right - 12 - note_w > title_right + 32:
+            draw.text((right - 12 - note_w, top + 22), note, font=note_font, fill=palette["muted"])
 
         if not markets:
             draw.text((left + 18, top + 72), "NO MARKET DATA", font=self._font(22, True, family), fill=palette["ink"])
             return
 
-        card_top = top + 58
-        card_height = 104
-        gap = 7
-        for index, market in enumerate(markets[:3]):
-            y = card_top + index * (card_height + gap)
-            heat = int(market.get("heat") or 0)
-            color = self._heat_color(heat, palette)
-            draw.rounded_rectangle(
-                (left + 12, y, right - 12, y + card_height),
-                radius=7,
-                fill=palette["panel"],
-                outline=color,
-                width=3,
-            )
+        columns = markets[:3]
+        column_w = (right - left - 24) / 3
+        question_font, tag_font = self._font(10, True, family), self._font(10, True, family)
+        leader_font, fact_font = self._font(11, True, family), self._font(9, True, family)
+        columns_bottom = top + MARKET_COLUMNS_HEIGHT
+        for index, market in enumerate(columns):
+            col_left = left + 12 + index * column_w
+            cx = col_left + column_w / 2
+            width = column_w - 8
+            if index:
+                draw.line((col_left, top + 48, col_left, columns_bottom), fill=palette["rule"], width=1)
+
+            y = top + 46
+            title = str(market.get("title") or "MARKET").upper()
+            for line in self._wrap_lines(draw, title, question_font, width, max_lines=3):
+                line_w = draw.textbbox((0, 0), line, font=question_font)[2]
+                draw.text((cx - line_w / 2, y), line, font=question_font, fill=palette["ink"])
+                y += 12
+
             category = str(market.get("category") or "MARKET").upper()
-            category_font = self._font(10, True, family)
-            category_width = draw.textbbox((0, 0), category, font=category_font)[2] + 18
-            draw.rounded_rectangle(
-                (left + 23, y + 10, left + 23 + category_width, y + 32),
-                radius=3,
-                fill=color,
-            )
-            draw.text((left + 32, y + 14), category, font=category_font, fill=palette["white"])
-            draw.text(
-                (left + 31 + category_width, y + 15),
-                f"HEAT {heat:02d}",
-                font=self._font(9, True, family),
-                fill=color,
-            )
+            tag_color = palette[CATEGORY_COLORS.get(category, "blue")]
+            tag_w = draw.textbbox((0, 0), category, font=tag_font)[2] + 14
+            tag_top = top + 86
+            draw.rectangle((cx - tag_w / 2, tag_top, cx + tag_w / 2, tag_top + 18), fill=tag_color)
+            draw.text((cx - tag_w / 2 + 7, tag_top + 3), category, font=tag_font, fill=palette["white"])
 
-            title_font = self._font(13, True, family)
-            title_width = right - left - 46
-            title = self._fit_text(
-                draw,
-                str(market.get("title") or "MARKET").upper(),
-                title_font,
-                title_width,
-            )
-            draw.text((left + 23, y + 38), title, font=title_font, fill=palette["ink"])
-
-            probability = max(0.0, min(1.0, float(market.get("probability") or 0.0)))
-            percent = f"{probability * 100:.0f}%"
-            percent_font = self._font(28, True, family)
-            percent_width = draw.textbbox((0, 0), percent, font=percent_font)[2]
-            percent_x = right - 24 - percent_width
-
-            leader_font = self._font(18, True, family)
-            leader_width = max(80, percent_x - (left + 23) - 10)
-            leader = self._fit_text(
-                draw,
-                str(market.get("leader") or "TBD").upper(),
-                leader_font,
-                leader_width,
-            )
-            draw.text((left + 23, y + 59), leader, font=leader_font, fill=palette["ink"])
-            draw.text((percent_x, y + 47), percent, font=percent_font, fill=color)
-
-            bar_left, bar_right = left + 23, right - 23
-            bar_top = y + 89
-            draw.rounded_rectangle((bar_left, bar_top, bar_right, bar_top + 9), radius=4, fill=palette["ink"])
-            fill_right = bar_left + max(5, round((bar_right - bar_left) * probability))
-            draw.rounded_rectangle((bar_left, bar_top, fill_right, bar_top + 9), radius=4, fill=color)
-            split = max(bar_left + 3, min(bar_right - 3, fill_right))
-            draw.line((split, bar_top, split, bar_top + 9), fill=palette["white"], width=2)
             change = float(market.get("change_24h") or 0.0) * 100
             change_text = f"{change:+.1f}%"
-            change_font = self._font(11, True, family)
-            change_width = draw.textbbox((0, 0), change_text, font=change_font)[2]
-            draw.text((right - 23 - change_width, y + 13), change_text, font=change_font, fill=color)
+            change_font = self._font(14, True, family)
+            change_w = draw.textbbox((0, 0), change_text, font=change_font)[2]
+            draw.text((cx - change_w / 2, top + 108), change_text, font=change_font,
+                      fill=palette["green"] if change >= 0 else palette["red"])
+
+            probability = max(0.0, min(1.0, float(market.get("probability") or 0.0)))
+            heat = int(market.get("heat") or 0)
+            heat_color = self._heat_color(heat, palette)
+            self._draw_gauge(draw, (round(cx), top + 180), 44, probability, heat_color, palette)
+
+            y = top + 189
+            for line in self._wrap_lines(draw, str(market.get("leader") or "TBD").upper(), leader_font, width):
+                line_w = draw.textbbox((0, 0), line, font=leader_font)[2]
+                draw.text((cx - line_w / 2, y), line, font=leader_font, fill=palette["ink"])
+                y += 13
+
+            percent = f"{probability * 100:.0f}%"
+            percent_font = self._font(30, True, family)
+            percent_w = draw.textbbox((0, 0), percent, font=percent_font)[2]
+            draw.text((cx - percent_w / 2, top + 218), percent, font=percent_font, fill=palette["ink"])
+
+            facts = [f"VOL {self._money(market.get('volume_24h'))}"]
+            ends = _parse_time(market.get("end_date"))
+            if ends is not None:
+                facts.append(f"ENDS {ends:%d %b}".upper())
+            facts.append(f"HEAT {heat:02d}")
+            for row, fact in enumerate(facts):
+                fact_w = draw.textbbox((0, 0), fact, font=fact_font)[2]
+                draw.text((cx - fact_w / 2, top + 258 + row * 14), fact, font=fact_font,
+                          fill=heat_color if fact.startswith("HEAT") else palette["muted"])
+        if image is not None:
+            self._paste_market_art(image, (left + 10, columns_bottom + 6, right - 10, bottom - 6))
+
+    def _paste_market_art(self, image, box):
+        """The console strip centred in the room under the market columns."""
+        left, top, right, bottom = box
+        if right - left < 80 or bottom - top < 24:
+            return
+        try:
+            with safe_open_image(MARKET_ART_PATH) as source:
+                art = source.convert("RGBA")
+        except (OSError, ValueError):
+            return
+        art.thumbnail((right - left, bottom - top), Image.Resampling.LANCZOS)
+        image.paste(art, (left + (right - left - art.width) // 2, bottom - art.height), art)
 
     def _draw_footer(self, draw, box, palette, family):
         left, top, right, bottom = box

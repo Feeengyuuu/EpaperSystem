@@ -34,3 +34,23 @@ Avoid: photorealism, detailed space background, planets, stars clutter, glow, ne
 ```
 
 Saved plugin asset: `icon.png`
+
+## Mission-control redesign (2026-10-23)
+
+The owner picked direction A of three GPT Image 2.5 mockups (mission-control
+timeline, poster hero, departure board), with the launch photo kept and more
+real data. The page now has:
+
+- Left: the launch photo column, a NEXT LAUNCH tab (plus WEBCAST LIVE when The
+  Space Devs reports one), a split-flap countdown (hours and minutes, or days
+  and hours beyond a day), the status badge, rocket, mission, and the launch
+  time in UTC and local time with the launch site.
+- A fact grid: WINDOW, PAD (short pad name and country), ORBIT, PROVIDER (with
+  its launches this year), MISSION type, and WEATHER go-probability or, when
+  there is no forecast, the world's orbital launch count this year.
+- NEXT LAUNCHES: the next four launches as evenly spaced stops, each with its
+  local time, rocket and mission, and the real time between stops written on
+  the line, so launches minutes or days apart read alike.
+- Right: MARKET HEAT as three gauge columns (question, category, 24h move,
+  dial, leader, probability, 24h volume, end date, heat), and the generated
+  `assets/market-console.png` strip in the room below them.
