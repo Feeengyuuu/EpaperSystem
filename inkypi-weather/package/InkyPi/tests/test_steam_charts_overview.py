@@ -101,9 +101,14 @@ def test_the_wordmark_skyline_grows_into_the_header_space():
 
     image = plugin._render_live_overview((800, 480), [{"games": []}, {"games": []}], {"online": 35_000_000},
                                          {"mode": "day"}, "")
-    inked = [x for x in range(160, 296) if any(sum(image.getpixel((x, y))) < 600 for y in range(2, 52))]
-    # The skyline now reaches across the gap up to the users-online badge.
-    assert min(inked) < 170 and max(inked) > 280
+
+    def inked(x_range, y_range):
+        return [(x, y) for x in x_range for y in y_range if sum(image.getpixel((x, y))) < 600]
+
+    # "STEAM CHARTS" stands about twice its old height, and the skyline reaches on to the users badge.
+    lettering = inked(range(70, 230), range(2, 52))
+    assert min(y for _x, y in lettering) < 24
+    assert max(x for x, _y in inked(range(236, overview_page.WORDMARK_RIGHT + 1), range(2, 52))) > 340
 
 
 def test_overview_draws_both_boards_with_totals_and_store_facts(monkeypatch):

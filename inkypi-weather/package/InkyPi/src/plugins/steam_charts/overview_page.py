@@ -22,10 +22,13 @@ SECTION_TOP = 62
 ROWS_TOP = 90
 COVER = (112, 52)
 METRIC_W = 112
-WORDMARK_H = 46
+# The wordmark fills the header from the Steam logo to WORDMARK_RIGHT, standing on the baseline:
+# its lettering drawn larger than its own pixels, its skyline grown into what is left.
+WORDMARK_LEFT, WORDMARK_RIGHT, WORDMARK_BASELINE = 60, 356, 51
+LETTERING_SCALE = 1.15
 # Where the wordmark's pieces sit in its own 320x72 pixels: the skyline's first building,
 # the end of the lettering, the row below "STEAM CHARTS" and the underline's first row.
-SKYLINE_X, LETTERING_END, LETTERING_BOTTOM, UNDERLINE_TOP = 116, 158, 59, 70
+SKYLINE_X, LETTERING_END, LETTERING_BOTTOM, UNDERLINE_TOP = 116, 158, 58, 70
 # Refined accents rather than the panel's pure inks; night lifts each tone.
 ACCENTS = {
     "day": {"up": (5, 150, 105), "down": (200, 30, 50), "blue": (27, 111, 168), "gold": (196, 140, 0)},
@@ -55,6 +58,12 @@ def _split_wordmark(source):
     lettering = source.copy()
     lettering.paste((0, 0, 0, 0), (0, 0, width, height), lettering_mask)
     return lettering, skyline
+
+
+def _shown(part):
+    """The part cropped to what shows: the art carries near-clear specks across its whole canvas."""
+    box = part.getchannel("A").point(lambda alpha: 255 if alpha > 24 else 0).getbbox()
+    return part.crop(box) if box else None
 
 
 @lru_cache(maxsize=32)
@@ -108,31 +117,29 @@ class LiveOverviewMixin:
             return
         draw_icon(draw, fallback, xy, size, colour, colors["paper"])
 
-    def _overview_wordmark(self, image, colors, right):
-        """The wordmark's lettering as drawn, with its skyline lifted out and grown up to ``right``."""
+    def _overview_wordmark(self, image, colors):
+        """The wordmark's lettering enlarged, then its skyline lifted out and grown up to WORDMARK_RIGHT."""
         source = self._theme_title_wordmark(colors)
         if source is None:
             return
-        lettering, skyline = _split_wordmark(source)
-        scale = WORDMARK_H / source.height
-        lettering = lettering.resize((round(source.width * scale), WORDMARK_H), Image.Resampling.LANCZOS)
-        image.paste(lettering, (58, 4), lettering)
-        # The art carries near-clear specks across its whole canvas; bound only what shows.
-        box = skyline.getchannel("A").point(lambda alpha: 255 if alpha > 24 else 0).getbbox()
-        if not box:
+        lettering, skyline = (_shown(part) for part in _split_wordmark(source))
+        if lettering is None:
             return
-        skyline = skyline.crop(box)
+        lettering = lettering.resize((round(lettering.width * LETTERING_SCALE), round(lettering.height * LETTERING_SCALE)),
+                                     Image.Resampling.LANCZOS)
+        image.paste(lettering, (WORDMARK_LEFT, WORDMARK_BASELINE - lettering.height), lettering)
+        if skyline is None:
+            return
         # It starts where the lettering's underline ends and stands on the same line.
-        left = 58 + round(LETTERING_END * scale)
-        bottom = 4 + round(box[3] * scale)
-        grow = min((right - left) / skyline.width, (bottom - 2) / skyline.height)
+        left = WORDMARK_LEFT + lettering.width
+        grow = min((WORDMARK_RIGHT - left) / skyline.width, (WORDMARK_BASELINE - 2) / skyline.height)
         skyline = skyline.resize((round(skyline.width * grow), round(skyline.height * grow)), Image.Resampling.LANCZOS)
-        image.paste(skyline, (left, bottom - skyline.height), skyline)
+        image.paste(skyline, (left, WORDMARK_BASELINE - skyline.height), skyline)
 
     def _overview_header(self, image, draw, totals, colors, updated_at_text):
         self._paste_steam_logo(image, 12, 8, 40, colors)
-        self._overview_wordmark(image, colors, 294)
-        x = 300
+        self._overview_wordmark(image, colors)
+        x = WORDMARK_RIGHT + 6
         for key, label, icon, fallback in (("online", "在线", "users", "users"), ("ingame", "游戏中", "ingame", "gamepad")):
             if key not in totals:
                 continue
