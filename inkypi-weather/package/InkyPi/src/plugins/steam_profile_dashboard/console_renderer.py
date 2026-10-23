@@ -5,6 +5,9 @@ artwork and independent icons are resolved by AppID by the provider; this module
 does not contain game-specific images, names, or network requests.
 """
 
+import colorsys
+import math
+
 from PIL import Image, ImageDraw, ImageOps
 
 from plugins.steam_profile_dashboard.avatar_frame import AVATAR_BOX, AVATAR_SIZE, FRAME_ORIGIN
@@ -24,6 +27,61 @@ GREEN = (129, 237, 105)
 FRIEND_GAME_ICON = 14
 # Black ink around the hero title keeps it legible over busy game artwork.
 TITLE_OUTLINE = 2
+# The navy console; a game's own hue replaces it when its artwork has one (game_palette).
+DEFAULT_PALETTE = {"canvas": CANVAS, "navy": NAVY, "panel": PANEL, "header": HEADER, "border": BORDER,
+                   "accent": CYAN, "muted": MUTED, "glow": None}
+
+
+def game_palette(art):
+    """A dark console palette in the hue of a game's artwork, or None when the art has no clear colour.
+
+    The art is reduced to eight swatches; swatches of nearby hue pool their weight (share of
+    the picture x saturation x brightness), and the heaviest family gives the hue. The
+    console keeps its dark values, so white text and the in-game green read as before.
+    """
+    if art is None:
+        return None
+    small = art.convert("RGB").resize((48, 27), Image.Resampling.BILINEAR)
+    quantized = small.quantize(colors=8, method=Image.Quantize.MEDIANCUT)
+    swatches = quantized.getpalette()
+    tinted = []
+    for count, index in quantized.getcolors() or []:
+        red, green, blue = swatches[index * 3:index * 3 + 3]
+        hue, saturation, value = colorsys.rgb_to_hsv(red / 255, green / 255, blue / 255)
+        if value >= 0.15 and saturation >= 0.15:
+            tinted.append((hue, saturation, count * saturation * (0.4 + value)))
+
+    def near(a, b):
+        return min(abs(a - b), 1 - abs(a - b)) <= 0.06
+
+    family = max(([swatch for swatch in tinted if near(swatch[0], centre[0])] for centre in tinted),
+                 key=lambda members: sum(weight for _hue, _sat, weight in members), default=[])
+    total = sum(weight for _hue, _sat, weight in family)
+    # A hue needs a real share of the picture, not a few highlight pixels.
+    if total < 48 * 27 * 0.05:
+        return None
+    x = sum(weight * math.cos(2 * math.pi * hue) for hue, _sat, weight in family)
+    y = sum(weight * math.sin(2 * math.pi * hue) for hue, _sat, weight in family)
+    hue = (math.atan2(y, x) / (2 * math.pi)) % 1.0
+    saturation = sum(sat * weight for _hue, sat, weight in family) / total
+    saturation = max(0.45, min(0.8, saturation * 1.4))
+
+    def tone(sat, value):
+        return tuple(round(channel * 255) for channel in colorsys.hsv_to_rgb(hue, sat, value))
+
+    return {"canvas": tone(saturation, 0.05), "navy": tone(saturation, 0.12), "panel": tone(saturation * 0.85, 0.16),
+            "header": tone(saturation * 0.8, 0.27), "border": tone(saturation * 0.7, 0.47),
+            "accent": tone(min(0.5, saturation * 0.65), 0.98), "muted": tone(0.16, 0.76),
+            "glow": tone(saturation, 0.24)}
+
+
+def _focus_appid(data, recent):
+    """The game the page is about: the one being played, else the most recent (as the hero shows)."""
+    profile = data.get("profile") or {}
+    if profile.get("gameid") or profile.get("gameextrainfo"):
+        return profile.get("gameid")
+    game = next(iter(recent), None) or data.get("spotlight_game") or {}
+    return game.get("appid")
 
 
 def _appid(value):
@@ -99,12 +157,29 @@ def _recent_games(plugin, data):
 
 
 class _Console:
-    def __init__(self, plugin, data):
+    def __init__(self, plugin, data, palette=None):
         self.plugin = plugin
         self.data = data
-        self.image = Image.new("RGB", SIZE, CANVAS)
+        self.c = palette or DEFAULT_PALETTE
+        self.image = Image.new("RGB", SIZE, self.c["canvas"])
         self.draw = ImageDraw.Draw(self.image)
         self.fonts = {}
+        if self.c.get("glow"):
+            self._wash()
+
+    def _wash(self):
+        """The game's hue glowing from the top right of the page and down the profile rail."""
+        glow, canvas = self.c["glow"], self.c["canvas"]
+        width, height = SIZE
+        page = Image.new("RGB", (64, 40))
+        page.putdata([
+            tuple(round(c + (g - c) * max(0.0, 1 - ((63 - x) / 63 * 0.8 + y / 39 * 0.6))) for g, c in zip(glow, canvas))
+            for y in range(40) for x in range(64)
+        ])
+        self.image.paste(page.resize((width, height), Image.Resampling.BILINEAR))
+        rail = Image.new("RGB", (1, 48))
+        rail.putdata([tuple(round(g + (c - g) * min(1.0, y / 30)) for g, c in zip(glow, canvas)) for y in range(48)])
+        self.image.paste(rail.resize((181, height), Image.Resampling.BILINEAR), (0, 0))
 
     def font(self, size, bold=False):
         key = (size, bold)
@@ -146,7 +221,7 @@ class _Console:
                                                           stroke_width=outline)
             bitmap = Image.new("RGBA", (max(1, right - left), max(1, bottom - top)))
             ImageDraw.Draw(bitmap).text((-left, -top), line, font=font, fill=color, anchor="lt",
-                                        stroke_width=outline, stroke_fill=CANVAS)
+                                        stroke_width=outline, stroke_fill=self.c["canvas"])
             bounds = bitmap.getbbox()
             return bitmap.crop(bounds) if bounds else bitmap
 
@@ -196,13 +271,13 @@ class _Console:
         return result or [""]
 
     def panel(self, box, header=0):
-        self.draw.rounded_rectangle(box, radius=4, fill=PANEL,
-                                    outline=BORDER, width=1)
+        self.draw.rounded_rectangle(box, radius=4, fill=self.c["panel"],
+                                    outline=self.c["border"], width=1)
         if header:
             x, y, right, _ = box
             self.draw.rounded_rectangle((x, y, right, y + header), radius=4,
-                                        fill=HEADER)
-            self.draw.rectangle((x, y + header - 4, right, y + header), fill=HEADER)
+                                        fill=self.c["header"])
+            self.draw.rectangle((x, y + header - 4, right, y + header), fill=self.c["header"])
 
     def art(self, box, appid, strength=145):
         """Keep original game artwork separate from the flat page canvas."""
@@ -210,7 +285,7 @@ class _Console:
         size = (right - x, bottom - y)
         source = self.plugin._game_background(self.data, appid, size) if appid else None
         if source is None:
-            self.draw.rectangle((x, y, right - 1, bottom - 1), fill=PANEL)
+            self.draw.rectangle((x, y, right - 1, bottom - 1), fill=self.c["panel"])
             return
         fitted = ImageOps.fit(source.convert("RGB"), size, method=Image.Resampling.LANCZOS)
         veil = Image.new("RGBA", size)
@@ -218,7 +293,7 @@ class _Console:
         # Preserve the approved art shading regardless of the page canvas colour.
         for column in range(size[0]):
             alpha = int(strength + 45 * (1 - column / max(1, size[0] - 1)))
-            painter.line((column, 0, column, size[1]), fill=(*NAVY, min(225, alpha)))
+            painter.line((column, 0, column, size[1]), fill=(*self.c["navy"], min(225, alpha)))
         fitted.paste(veil, (0, 0), veil)
         self.image.paste(fitted, (x, y))
 
@@ -229,14 +304,15 @@ class _Console:
             self.image.paste(icon, (x, y), icon if icon.mode == "RGBA" else None)
             return
         # An explicit neutral placeholder never borrows a different game's icon.
-        self.draw.rounded_rectangle((x - 1, y - 1, x + size, y + size), radius=3, fill=PANEL)
+        self.draw.rounded_rectangle((x - 1, y - 1, x + size, y + size), radius=3, fill=self.c["panel"])
         self.draw.rectangle((x + size // 4, y + size // 3,
-                             x + size * 3 // 4, y + size * 2 // 3), outline=MUTED)
+                             x + size * 3 // 4, y + size * 2 // 3), outline=self.c["muted"])
         self.draw.line((x + size // 3, y + size // 2,
-                        x + size * 2 // 3, y + size // 2), fill=MUTED)
+                        x + size * 2 // 3, y + size // 2), fill=self.c["muted"])
 
-    def small_symbol(self, kind, x, y, color=CYAN):
+    def small_symbol(self, kind, x, y, color=None):
         draw = self.draw
+        color = color or self.c["accent"]
         if kind == "clock":
             draw.ellipse((x, y, x + 15, y + 15), outline=color, width=2)
             draw.line((x + 7, y + 3, x + 7, y + 8, x + 11, y + 10), fill=color, width=2)
@@ -250,9 +326,9 @@ class _Console:
                 draw.rectangle((x + offset, y + 17 - height, x + offset + 3, y + 17), fill=color)
         else:
             draw.rounded_rectangle((x, y + 3, x + 18, y + 15), radius=4, fill=color)
-            draw.line((x + 3, y + 9, x + 9, y + 9), fill=NAVY, width=2)
-            draw.line((x + 6, y + 6, x + 6, y + 12), fill=NAVY, width=2)
-            draw.ellipse((x + 13, y + 7, x + 15, y + 9), fill=NAVY)
+            draw.line((x + 3, y + 9, x + 9, y + 9), fill=self.c["navy"], width=2)
+            draw.line((x + 6, y + 6, x + 6, y + 12), fill=self.c["navy"], width=2)
+            draw.ellipse((x + 13, y + 7, x + 15, y + 9), fill=self.c["navy"])
 
     def framed_avatar(self, url):
         avatar_method = getattr(self.plugin, "_profile_avatar_image", self.plugin._avatar_image)
@@ -270,23 +346,24 @@ class _Console:
 
     def rail(self):
         data, profile = self.data, self.data.get("profile") or {}
-        self.draw.rectangle((0, 0, 181, 479), fill=CANVAS)
-        self.draw.line((181, 0, 181, 480), fill=BORDER, width=2)
+        if not self.c.get("glow"):
+            self.draw.rectangle((0, 0, 181, 479), fill=self.c["canvas"])
+        self.draw.line((181, 0, 181, 480), fill=self.c["border"], width=2)
         url = profile.get("avatarfull") or profile.get("avatarmedium") or profile.get("avatar")
         self.framed_avatar(url)
         self.text((14, 175, 169, 207), profile.get("personaname") or "Steam User",
                   29, bold=True, min_size=18)
-        self.text((15, 209, 166, 222), "STEAM PLAYER", 10, MUTED)
-        self.draw.line((14, 230, 167, 230), fill=BORDER)
+        self.text((15, 209, 166, 222), "STEAM PLAYER", 10, self.c["muted"])
+        self.draw.line((14, 230, 167, 230), fill=self.c["border"])
         level_frame = sidebar_asset("level_frame", 54)
         if level_frame is not None:
             self.image.paste(level_frame, (9, 237), level_frame)
         else:
             self.draw.polygon(((36, 240), (57, 252), (57, 276), (36, 288), (15, 276), (15, 252)),
-                              outline=CYAN, width=2)
+                              outline=self.c["accent"], width=2)
         self.text((17, 254, 56, 277), _value(data.get("level")), 23,
                   bold=True, min_size=17, align="center")
-        self.text((67, 248, 167, 265), "等级", 14, MUTED)
+        self.text((67, 248, 167, 265), "等级", 14, self.c["muted"])
         self.text((67, 268, 167, 289), _value(data.get("level")), 21, bold=True)
         owned = data.get("owned_games") or []
         recent = data.get("recent_games") or []
@@ -306,9 +383,9 @@ class _Console:
                 self.image.paste(icon, (16 + (20 - size) // 2, y + 1 + (20 - size) // 2), icon)
             else:
                 self.small_symbol(symbol, 17, y)
-            self.text((43, y + 1, 90, y + 19), label, 13, MUTED)
+            self.text((43, y + 1, 90, y + 19), label, 13, self.c["muted"])
             self.text((91, y, 168, y + 22), number, 18, bold=True, min_size=13, align="right")
-        self.draw.line((14, 405, 167, 405), fill=BORDER)
+        self.draw.line((14, 405, 167, 405), fill=self.c["border"])
         badges = data.get("badges") or {}
         badge_count = len(badges.get("badges", [])) if badges else None
         for y, asset, label, number in ((416, "badges", "徽章", badge_count), (444, "xp", "XP", badges.get("player_xp"))):
@@ -316,8 +393,8 @@ class _Console:
             if icon is not None:
                 self.image.paste(icon, (16, y + 1), icon)
             else:
-                self.draw.ellipse((17, y, 34, y + 17), outline=CYAN, width=2)
-            self.text((43, y + 1, 86, y + 20), label, 14, MUTED)
+                self.draw.ellipse((17, y, 34, y + 17), outline=self.c["accent"], width=2)
+            self.text((43, y + 1, 86, y + 20), label, 14, self.c["muted"])
             self.text((87, y, 168, y + 23), _value(number), 20, bold=True, min_size=14, align="right")
 
     def hero(self, recent):
@@ -335,10 +412,10 @@ class _Console:
         heading = "正在玩" if playing else ("游戏精选" if favorite else "最近游玩")
         english = "NOW PLAYING" if playing else ("LIBRARY FAVORITES" if favorite else "RECENT ACTIVITY")
         self.panel((194, 10, 583, 205), header=32)
-        self.small_symbol("game", 204, 17, GREEN if playing else CYAN)
+        self.small_symbol("game", 204, 17, GREEN if playing else self.c["accent"])
         self.text((233, 10, 359, 42), heading,
-                  22, GREEN if playing else CYAN, bold=True)
-        self.text((369, 10, 574, 42), english, 9, MUTED)
+                  22, GREEN if playing else self.c["accent"], bold=True)
+        self.text((369, 10, 574, 42), english, 9, self.c["muted"])
         self.art((195, 43, 583, 205), appid, strength=80)
         if playing:
             status = "游戏中"
@@ -346,7 +423,7 @@ class _Console:
             status, _ = self.plugin._persona_text(profile)
         detail = f"{status} · AppID {appid}" if appid else status
         title = self._text_bitmap(name, 290, 72, 25, WHITE, True, 2, 19, outline=TITLE_OUTLINE)
-        status_line = self._text_bitmap(detail, 290, 24, 15, CYAN, min_size=12)
+        status_line = self._text_bitmap(detail, 290, 24, 15, self.c["accent"], min_size=12)
         group_height = title.height + 13 + status_line.height
         group_y = 43 + (162 - group_height) // 2
         self.icon(appid, 209, 96, 56)
@@ -359,9 +436,9 @@ class _Console:
         data = self.data
         self.panel((594, 10, 790, 205), header=32)
         self.small_symbol("people", 605, 19)
-        self.text((630, 10, 710, 42), "在线好友", 18, CYAN, bold=True)
+        self.text((630, 10, 710, 42), "在线好友", 18, self.c["accent"], bold=True)
         counter = f"{_value(data.get('online_friend_count'))}/{_value(data.get('friend_count'))}"
-        self.text((711, 10, 783, 42), counter, 15, CYAN, min_size=11, align="right")
+        self.text((711, 10, 783, 42), counter, 15, self.c["accent"], min_size=11, align="right")
         # Order at display time so saved data and remarks follow the presence rule.
         friends = sorted((friend for friend in data.get("friends", []) or []
                           if _number(friend.get("personastate")) > 0),
@@ -369,7 +446,7 @@ class _Console:
                                              self.plugin._friend_display_id(friend).casefold()))
         if not friends:
             message = "好友列表暂不可用" if data.get("friend_count") is None else "目前没有在线好友"
-            self.text((607, 110, 780, 148), message, 15, MUTED, lines=2)
+            self.text((607, 110, 780, 148), message, 15, self.c["muted"], lines=2)
             return
         visible = friends[:4]
         # Friend avatars can be slow; resolve every visible friend's game icon
@@ -405,7 +482,7 @@ class _Console:
                 self.draw.rounded_rectangle((645, y + 20, 660, y + 35), radius=2, outline=GREEN)
                 self.image.paste(icon, (646, y + 21), icon if icon.mode == "RGBA" else None)
                 text_x = 665
-            self.text((text_x, y + 21, 783, y + 35), name or "游戏中", 11, CYAN)
+            self.text((text_x, y + 21, 783, y + 35), name or "游戏中", 11, self.c["accent"])
 
     def recent(self, items):
         recent_ids = {_appid(game.get("appid")) for game in self.data.get("recent_games") or []}
@@ -415,12 +492,12 @@ class _Console:
         self.panel((194, 215, 790, 361), header=28)
         self.small_symbol("clock", 205, 221)
         self.text((231, 215, 359, 243), "最近 / 常玩" if has_favorites else "最近游玩",
-                  20, CYAN, bold=True, min_size=18)
-        self.text((369, 215, 568, 243), "RECENT / FAVORITES" if has_favorites else "RECENTLY PLAYED", 9, MUTED)
-        self.text((599, 215, 678, 243), "近2周", 14, CYAN, align="center")
-        self.text((701, 215, 780, 243), "总计", 14, CYAN, align="center")
+                  20, self.c["accent"], bold=True, min_size=18)
+        self.text((369, 215, 568, 243), "RECENT / FAVORITES" if has_favorites else "RECENTLY PLAYED", 9, self.c["muted"])
+        self.text((599, 215, 678, 243), "近2周", 14, self.c["accent"], align="center")
+        self.text((701, 215, 780, 243), "总计", 14, self.c["accent"], align="center")
         if not items:
-            self.text((211, 285, 773, 314), "没有公开的近期游戏数据", 17, MUTED)
+            self.text((211, 285, 773, 314), "没有公开的近期游戏数据", 17, self.c["muted"])
             return
         for index, item in enumerate(items[:4]):
             y = 244 + index * 29
@@ -433,23 +510,23 @@ class _Console:
                       bold=True, lines=2, min_size=11)
             if playing:
                 self.draw.rounded_rectangle((541, y + 4, 586, y + 24), radius=3,
-                                            fill=NAVY, outline=GREEN)
+                                            fill=self.c["navy"], outline=GREEN)
                 self.text((545, y + 4, 584, y + 24), "正在玩", 11, GREEN, bold=True)
             for field, box in (("playtime_2weeks", (599, y, 678, y + 28)),
                                ("playtime_forever", (701, y, 780, y + 28))):
                 self.text(box, _hours(_game_minutes(self.data, appid, field)),
                           15, bold=True, min_size=12, align="center")
             if index < 3:
-                self.draw.line((201, y + 28, 783, y + 28), fill=BORDER)
+                self.draw.line((201, y + 28, 783, y + 28), fill=self.c["border"])
 
     def top(self):
         self.panel((194, 370, 790, 463), header=27)
         self.small_symbol("chart", 205, 375)
-        self.text((231, 370, 388, 397), "常玩 TOP 3", 20, CYAN, bold=True)
-        self.text((399, 370, 565, 397), "TOP GAMES", 9, MUTED)
+        self.text((231, 370, 388, 397), "常玩 TOP 3", 20, self.c["accent"], bold=True)
+        self.text((399, 370, 565, 397), "TOP GAMES", 9, self.c["muted"])
         items = self.plugin._top_game_items(self.data)[:3]
         if not items:
-            self.text((212, 420, 777, 444), "暂无公开的累计游玩记录", 16, MUTED)
+            self.text((212, 420, 777, 444), "暂无公开的累计游玩记录", 16, self.c["muted"])
             return
         for index, item in enumerate(items):
             x = 199 + index * 197
@@ -458,7 +535,7 @@ class _Console:
             rank_color = ((249, 202, 77), (181, 205, 223), (210, 153, 88))[index]
             self.draw.polygon(((x, 399), (x + 19, 399), (x + 12, 459), (x, 459)), fill=rank_color)
             self.text((x + 2, 400, x + 15, 459), item.get("rank", index + 1),
-                      17, NAVY, bold=True, align="center")
+                      17, self.c["navy"], bold=True, align="center")
             self.icon(appid, x + 23, 412, 33)
             title = self._text_bitmap(item.get("name"), 124, 29, 13, WHITE, True, 2, 11)
             hours = item.get("suffix") or _hours(_game_minutes(self.data, appid, "playtime_forever"))
@@ -469,14 +546,18 @@ class _Console:
             hours_y = group_y + title.height + 5
             self.text((x + 63, hours_y, x + 187, hours_y + hours_line.height),
                       hours, prepared=hours_line)
-            self.draw.rounded_rectangle((x, 399, x + 192, 459), radius=3, outline=BORDER)
+            self.draw.rounded_rectangle((x, 399, x + 192, 459), radius=3, outline=self.c["border"])
 
 
 def render_console(plugin, data, dimensions, theme_context=None):
     """Return the selected navy console at the device's requested resolution."""
-    # This visual design is intentionally consistent across day/night modes.
-    console = _Console(plugin, data or {})
-    recent = _recent_games(plugin, console.data)
+    # This visual design is intentionally consistent across day/night modes; its colours
+    # follow the game being played (else the most recent one) when that art has a clear hue.
+    data = data or {}
+    recent = _recent_games(plugin, data)
+    appid = _focus_appid(data, recent)
+    palette = game_palette(plugin._game_background(data, appid, (96, 54))) if appid else None
+    console = _Console(plugin, data, palette)
     console.rail()
     console.hero(recent)
     console.recent(recent)

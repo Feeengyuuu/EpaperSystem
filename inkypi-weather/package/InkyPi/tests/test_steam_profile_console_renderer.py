@@ -6,7 +6,7 @@ from copy import deepcopy
 from PIL import Image, ImageChops, ImageDraw
 import pytest
 
-from plugins.steam_profile_dashboard import avatar_frame
+from plugins.steam_profile_dashboard import avatar_frame, console_renderer
 from plugins.steam_profile_dashboard.avatar_frame import (
     AVATAR_BOX,
     AVATAR_SIZE,
@@ -84,6 +84,10 @@ def plugin(monkeypatch):
     return plugin
 
 
+def _first_avatar_call(plugin):
+    return next(call for call in plugin.asset_calls if call[0] == "avatar")
+
+
 @pytest.fixture
 def displayed(monkeypatch):
     records = []
@@ -97,7 +101,9 @@ def displayed(monkeypatch):
     return records
 
 
-def test_game_art_and_icons_are_preserved_over_a_solid_page_canvas(plugin, data):
+def test_game_art_and_icons_are_preserved_over_a_solid_page_canvas(plugin, data, monkeypatch):
+    # The navy console's flat canvas; a game's hue washes the gaps instead (tested below).
+    monkeypatch.setattr(console_renderer, "game_palette", lambda _art: None)
     data["owned_games"].append({"appid": 99999, "name": "Not on screen", "playtime_forever": 1})
     image = render_console(plugin, data, (800, 480))
     assert image.mode == "RGB"
@@ -106,7 +112,8 @@ def test_game_art_and_icons_are_preserved_over_a_solid_page_canvas(plugin, data)
     icons = Counter(appid for kind, appid, _ in plugin.asset_calls if kind == "icon")
     expected = Counter({"108600": 2, "3751260": 1, "1867240": 1, "292030": 1,
                         "1454400": 1, "730": 1, "431960": 1})
-    assert backgrounds == expected
+    # The game being played lends its art once more, small, for the page's colours.
+    assert backgrounds == expected + Counter({"108600": 1})
     assert icons == expected
     # The live friend's total belongs in the heading; only four visible avatars
     # should cause asset work even when more friends are online.
@@ -376,12 +383,14 @@ def test_official_asset_budget_covers_main_panels_and_four_friend_games(tmp_path
     assert plugin._official_game_assets().max_games >= 12
 
 
-def test_rail_avatar_keeps_its_size_inside_the_breakout_frame(plugin, data):
+def test_rail_avatar_keeps_its_size_inside_the_breakout_frame(plugin, data, monkeypatch):
+    # The navy console, so the rail behind the frame is its plain canvas.
+    monkeypatch.setattr(console_renderer, "game_palette", lambda _art: None)
     image = render_console(plugin, data, (800, 480))
     frame = load_avatar_frame("12")
     avatar_left, avatar_top, avatar_right, avatar_bottom = AVATAR_BOX
 
-    assert plugin.asset_calls[0] == ("avatar", "", AVATAR_SIZE)
+    assert _first_avatar_call(plugin) == ("avatar", "", AVATAR_SIZE)
     for x in range(0, OVERLAY_SIZE[0], 3):
         for y in range(0, OVERLAY_SIZE[1], 3):
             opacity = frame.image.getpixel((x, y))[3]
@@ -417,10 +426,11 @@ def test_consecutive_renders_change_the_avatar_frame(plugin, data, monkeypatch):
 
 def test_rail_keeps_a_plain_avatar_when_no_frame_loads(plugin, data, monkeypatch):
     monkeypatch.setattr(plugin, "_next_avatar_frame", lambda: None)
+    monkeypatch.setattr(console_renderer, "game_palette", lambda _art: None)
 
     image = render_console(plugin, data, (800, 480))
 
-    assert plugin.asset_calls[0] == ("avatar", "", 146)
+    assert _first_avatar_call(plugin) == ("avatar", "", 146)
     for xy in ((16, 16), (89, 89), (161, 161)):
         assert image.getpixel(xy) == (105, 120, 90)
     assert image.getpixel((10, 60)) == CANVAS
@@ -432,11 +442,47 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-outlined-hero-title-v44"
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-game-hue-v45"
     assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:5] == (
+        "midnight-console-outlined-hero-title-v44",
         "midnight-console-presence-ordered-friends-v43",
         "midnight-console-breakout-avatar-frames-v42",
         "midnight-console-rotating-avatar-frames-v41",
         "midnight-console-gilded-avatar-v40",
-        "midnight-console-borderless-friends-v39",
     )
+
+
+def _hue(colour):
+    import colorsys
+
+    return colorsys.rgb_to_hsv(*(channel / 255 for channel in colour))[0]
+
+
+def test_game_palette_takes_the_hue_of_the_art_and_skips_grey_art():
+    red = console_renderer.game_palette(Image.new("RGB", (96, 54), (200, 40, 30)))
+    teal = console_renderer.game_palette(Image.new("RGB", (96, 54), (40, 150, 140)))
+
+    assert console_renderer.game_palette(Image.new("RGB", (96, 54), (120, 120, 120))) is None
+    assert console_renderer.game_palette(None) is None
+    for palette, hue in ((red, _hue((200, 40, 30))), (teal, _hue((40, 150, 140)))):
+        for role in ("canvas", "panel", "header", "border", "accent", "glow"):
+            assert abs(_hue(palette[role]) - hue) < 0.03, role
+        # Dark panels under light accents, so white text still reads.
+        assert max(palette["panel"]) < 60
+        assert sum(palette["accent"]) > 3 * 150
+
+
+def test_the_page_takes_the_colours_of_the_game_being_played(plugin, data, monkeypatch):
+    def background(_data, appid, size):
+        plugin.asset_calls.append(("background", str(appid), size))
+        colour = (200, 40, 30) if str(appid) == "108600" else (40, 150, 140)
+        return Image.new("RGB", size, colour)
+
+    monkeypatch.setattr(plugin, "_game_background", background, raising=False)
+    playing = render_console(plugin, data, (800, 480))
+    data["profile"].update(gameid="730", gameextrainfo="Counter-Strike 2")
+    other = render_console(plugin, data, (800, 480))
+
+    # The panel colour beside the friends' heading follows each game's own hue.
+    assert abs(_hue(playing.getpixel((700, 120))) - _hue((200, 40, 30))) < 0.05
+    assert abs(_hue(other.getpixel((700, 120))) - _hue((40, 150, 140))) < 0.05
