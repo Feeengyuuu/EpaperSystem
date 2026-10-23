@@ -68,6 +68,9 @@ LOCATION_MAP_LIMITS = ImageLimits(
     allowed_formats=frozenset({"PNG"}),
 )
 VEHICLE_IMAGE_NAME = "vehicle.png"
+# The same car plugged in with its charge port lit and energy flowing, shown while it charges.
+VEHICLE_CHARGING_IMAGE_NAME = "vehicle_charging.png"
+VEHICLE_CHARGING_ART_STATES = frozenset({"charging", "starting"})
 VEHICLE_WORDMARK_NAME = "grey_bullet_wordmark.png"
 DASHBOARD_ICON_DIR_NAME = "dashboard_icons"
 DASHBOARD_ICON_FILES = {
@@ -3066,9 +3069,11 @@ def _load_dashboard_icon_mask(kind):
         return None
 
 
-def _load_vehicle_art():
+def _load_vehicle_art(charging_state=None):
+    normalized = str(charging_state or "").strip().lower().replace(" ", "_")
+    name = VEHICLE_CHARGING_IMAGE_NAME if normalized in VEHICLE_CHARGING_ART_STATES else VEHICLE_IMAGE_NAME
     image = safe_open_image(
-        Path(__file__).with_name(VEHICLE_IMAGE_NAME),
+        Path(__file__).with_name(name),
         limits=ImageLimits(
             max_bytes=2 * 1024 * 1024,
             max_width=2048,
@@ -3332,7 +3337,8 @@ def _draw_energy_column(canvas, draw, summary, charging, extended, settings, pre
                     _font(11, True), colors["muted"])
     limit = charging["charge_limit_percent"]
     _battery_gauge(draw, (left, 156, right, 168), level, limit, colors)
-    _paste_vehicle_art(canvas, _load_vehicle_art(), (left + 22, 192, right - 22, 266))
+    # The side-on car spans the column between the gauge's scale and the charging rule.
+    _paste_vehicle_art(canvas, _load_vehicle_art(charging["state"]), (left + 6, 185, right - 6, 270))
 
     draw.line((left, 273, right, 273), fill=colors["rule"], width=1)
     heading_right = _section_label(canvas, draw, left, 281, _t(language, "charging"), colors, "charging")

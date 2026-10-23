@@ -1962,7 +1962,7 @@ def test_vehicle_art_is_a_real_transparent_cutout_without_chroma_fringe():
     flattened = getattr(image, "get_flattened_data", image.getdata)
     visible = [pixel for pixel in flattened() if pixel[3] > 32]
 
-    # A 3/4 view of the owner's wrapped car, cut from the Tesla app.
+    # A low front three-quarter view of the owner's wrapped car, long side on.
     assert image.width > image.height * 1.4
     assert alpha.getextrema() == (0, 255)
     assert all(
@@ -1971,6 +1971,37 @@ def test_vehicle_art_is_a_real_transparent_cutout_without_chroma_fringe():
     )
     assert len(visible) > image.width * image.height * 0.5
     assert not any(red < 50 and green > 235 and blue < 50 for red, green, blue, _alpha in visible)
+
+
+def test_charging_car_art_is_the_same_cutout_plugged_in():
+    plain = Image.open(Path(vehicle_module.__file__).with_name("vehicle.png")).convert("RGBA")
+    charging = Image.open(Path(vehicle_module.__file__).with_name("vehicle_charging.png")).convert("RGBA")
+
+    assert charging.getchannel("A").getextrema() == (0, 255)
+    assert charging.width > charging.height * 1.4
+    assert abs(charging.width / charging.height - plain.width / plain.height) < 0.35
+    # The charge light and energy effects are the green the plain car does not have.
+    def green(image):
+        flattened = getattr(image, "get_flattened_data", image.getdata)
+        return sum(1 for red, grn, blue, alpha in flattened() if alpha > 128 and grn > 160 and grn > red + 60)
+    assert green(charging) > 200 and green(plain) < 50
+
+
+@pytest.mark.parametrize(("state", "expected"), [
+    ("Charging", "vehicle_charging.png"), ("Starting", "vehicle_charging.png"),
+    ("Complete", "vehicle.png"), ("Disconnected", "vehicle.png"), (None, "vehicle.png"),
+])
+def test_the_car_art_shows_the_charging_scene_only_while_charging(monkeypatch, state, expected):
+    opened = []
+
+    def record(path, *args, **kwargs):
+        opened.append(Path(path).name)
+        return Image.new("RGBA", (40, 20), (0, 0, 0, 0))
+
+    monkeypatch.setattr(vehicle_module, "safe_open_image", record)
+    vehicle_module._load_vehicle_art(state)
+
+    assert opened == [expected]
 
 
 @pytest.mark.parametrize(
@@ -2031,7 +2062,7 @@ def test_car_art_sits_between_the_gauge_and_charging_and_amid_the_tyres(tmp_path
 
     def load_sentinels(path, *args, **kwargs):
         name = Path(path).name
-        if name == "vehicle.png":
+        if name in {"vehicle.png", "vehicle_charging.png"}:
             return side.copy()
         if name == "vehicle_top.png":
             return top.copy()
@@ -2042,7 +2073,7 @@ def test_car_art_sits_between_the_gauge_and_charging_and_amid_the_tyres(tmp_path
                             {"language": "zh-CN", "_inkypi_theme": {"mode": "day", "palette": {}}})
 
     left, top_y, right, bottom = _visible_color_bbox(image, (0, 0, 800, 480), side_color)
-    assert 185 <= top_y and bottom <= 268  # below the gauge's ruler, above the charging rule
+    assert 185 <= top_y and bottom <= 270  # below the gauge's ruler, above the charging rule at y 273
     assert right - left >= 160 and abs((left + right) / 2 - 177) <= 1
     left, top_y, right, bottom = _visible_color_bbox(image, (0, 0, 800, 480), top_color)
     assert (left, top_y, right, bottom) == (397, 238, 457, 358)
@@ -2175,7 +2206,7 @@ def test_night_vehicle_keeps_a_visible_outline_after_epd7in3e_quantization(
     real_safe_open_image = vehicle_module.safe_open_image
 
     def load_dark_vehicle(path, *args, **kwargs):
-        if Path(path).name == "vehicle.png":
+        if Path(path).name in {"vehicle.png", "vehicle_charging.png"}:
             return dark_vehicle.copy()
         return real_safe_open_image(path, *args, **kwargs)
 
