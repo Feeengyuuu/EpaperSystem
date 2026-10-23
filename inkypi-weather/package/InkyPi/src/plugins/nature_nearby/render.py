@@ -16,15 +16,16 @@ from .sources import group_info, local_now, parse_time
 
 ASSETS = Path(__file__).resolve().parent / "assets"
 # Pure white or black paper and neutral grey rules: an off-white or tinted ground, or a tinted
-# grey, dithers into scattered yellow, blue or green dots on the panel.
+# grey, dithers into scattered yellow, blue or green dots on the panel. Accents are refined
+# crimson, cobalt, emerald and gold rather than the panel's pure inks (owner's choice).
 DAY = {
     "paper": "#ffffff", "panel": "#e8eadf", "ink": "#14201a", "muted": "#1f2b24", "rule": "#999999",
-    "green": "#00a83a", "yellow": "#ffd400", "blue": "#1f5fbf", "red": "#d42020", "band": "#14201a",
+    "green": "#059669", "yellow": "#e8a90c", "blue": "#2554c7", "red": "#c81e32", "band": "#14201a",
     "badge_ink": "#ffffff",
 }
 NIGHT = {
     "paper": "#000000", "panel": "#18271f", "ink": "#eef3ec", "muted": "#c7d3cb", "rule": "#5a5a5a",
-    "green": "#6fd38f", "yellow": "#ffd84a", "blue": "#7fb8ff", "red": "#ff6b6b", "band": "#05090c",
+    "green": "#34d399", "yellow": "#fbbf24", "blue": "#7aa2ff", "red": "#ff6b78", "band": "#05090c",
     "badge_ink": "#000000",
 }
 WEEKDAYS = "一二三四五六日"

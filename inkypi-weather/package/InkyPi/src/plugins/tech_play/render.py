@@ -22,20 +22,21 @@ from .sources import epic_end_label, flag_url, local_now, parse_time, run_time
 ASSETS = Path(__file__).resolve().parent / "assets"
 _LIMITS = ImageLimits(max_bytes=256 * 1024, max_width=512, max_height=512, max_pixels=512 * 512)
 # Pure white or black paper and neutral grey rules: an off-white or tinted ground, or a tinted
-# grey, dithers into scattered yellow, blue or green dots on the panel.
+# grey, dithers into scattered yellow, blue or green dots on the panel. Accents are refined
+# crimson, cobalt, emerald and gold rather than the panel's pure inks (owner's choice).
 DAY = {
     "paper": "#ffffff", "panel": "#ebe8de", "ink": "#121a20", "muted": "#222c34", "rule": "#999999",
-    "ok": "#00a83a", "minor": "#ffde00", "major": "#d42020", "maintenance": "#1f5fbf", "unknown": "#8a949b",
-    "accent": "#1f5fbf", "gold": "#ffde00", "badge_ink": "#ffffff", "band": "#121a20",
-    "status_bar": "#00a83a", "papers_bar": "#d42020", "epic_bar": "#121a20", "upcoming_bar": "#1f5fbf",
-    "speed_bar": "#ffde00",
+    "ok": "#059669", "minor": "#e8a90c", "major": "#c81e32", "maintenance": "#2554c7", "unknown": "#8a949b",
+    "accent": "#2554c7", "gold": "#e8a90c", "badge_ink": "#ffffff", "band": "#121a20",
+    "status_bar": "#059669", "papers_bar": "#c81e32", "epic_bar": "#121a20", "upcoming_bar": "#2554c7",
+    "speed_bar": "#e8a90c",
 }
 NIGHT = {
     "paper": "#000000", "panel": "#1c2a35", "ink": "#edf1ea", "muted": "#c6d0d5", "rule": "#5a5a5a",
-    "ok": "#6fd38f", "minor": "#ffd84a", "major": "#ff6b6b", "maintenance": "#7fb8ff", "unknown": "#7d8b94",
-    "accent": "#7fb8ff", "gold": "#ffd84a", "badge_ink": "#000000", "band": "#05090c",
-    "status_bar": "#6fd38f", "papers_bar": "#ff6b6b", "epic_bar": "#edf1ea", "upcoming_bar": "#7fb8ff",
-    "speed_bar": "#ffd84a",
+    "ok": "#34d399", "minor": "#fbbf24", "major": "#ff6b78", "maintenance": "#7aa2ff", "unknown": "#7d8b94",
+    "accent": "#7aa2ff", "gold": "#fbbf24", "badge_ink": "#000000", "band": "#05090c",
+    "status_bar": "#34d399", "papers_bar": "#ff6b78", "epic_bar": "#edf1ea", "upcoming_bar": "#7aa2ff",
+    "speed_bar": "#fbbf24",
 }
 STATUS_TEXT = {"none": "正常", "minor": "轻微", "major": "故障", "critical": "严重", "maintenance": "维护",
                "unknown": "未知"}

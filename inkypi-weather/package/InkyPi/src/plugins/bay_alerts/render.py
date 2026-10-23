@@ -19,16 +19,16 @@ from .sources import PACIFIC, distance_km, local_now, parse_time
 # grey, dithers into scattered yellow, blue or green dots on the panel.
 DAY = {
     "paper": "#ffffff", "panel": "#efede4", "ink": "#141c22", "muted": "#232d35", "rule": "#a0a0a0",
-    "water": "#eef3fb", "water_line": "#1f5fbf", "relief": "#141c22", "relief_density": 0.42,
-    "fault": "#e02020", "alert": "#d0251f", "quake_day": "#e02020", "quake_recent": "#ffde00",
-    # Greens and yellows sit near the panel's native inks so fills stay solid after dithering.
-    "home": "#1f5fbf", "ok": "#00af2d", "minor": "#1f5fbf", "moderate": "#ffde00", "badge_ink": "#ffffff",
+    "water": "#eef3fb", "water_line": "#2554c7", "relief": "#141c22", "relief_density": 0.42,
+    "fault": "#c81e32", "alert": "#c81e32", "quake_day": "#c81e32", "quake_recent": "#e8a90c",
+    # Refined crimson, cobalt, emerald and gold rather than the panel's pure inks (owner's choice).
+    "home": "#2554c7", "ok": "#059669", "minor": "#2554c7", "moderate": "#e8a90c", "badge_ink": "#ffffff",
 }
 NIGHT = {
     "paper": "#000000", "panel": "#182730", "ink": "#eef2ea", "muted": "#c3cdd2", "rule": "#5a5a5a",
-    "water": "#14304a", "water_line": "#7fb8ff", "relief": "#eef2ea", "relief_density": 0.26,
-    "fault": "#ff6b6b", "alert": "#ff6b6b", "quake_day": "#ff5a5a", "quake_recent": "#ffd84a",
-    "home": "#7fb8ff", "ok": "#6fd38f", "minor": "#7fb8ff", "moderate": "#ffd84a", "badge_ink": "#000000",
+    "water": "#14304a", "water_line": "#7aa2ff", "relief": "#eef2ea", "relief_density": 0.26,
+    "fault": "#ff6b78", "alert": "#ff6b78", "quake_day": "#ff6b78", "quake_recent": "#fbbf24",
+    "home": "#7aa2ff", "ok": "#34d399", "minor": "#7aa2ff", "moderate": "#fbbf24", "badge_ink": "#000000",
 }
 TITLE_WORDMARK = Path(__file__).resolve().parent / "assets" / "title_wordmark.png"
 SEVERITY = {"Extreme": ("极端", "alert"), "Severe": ("严重", "alert"), "Moderate": ("中等", "moderate"),
