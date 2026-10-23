@@ -1,0 +1,352 @@
+{
+  "fetched": "2026-10-23",
+  "providers_from": "The Space Devs Launch Library 2.3.0 agency logos (featured agencies and the 45 with most launches)",
+  "flags_from": "flagcdn.com w80 PNGs",
+  "processing": "logos: white-field corners cleared, cropped to alpha, at most 80 px tall, colours untouched",
+  "rendering": "logos straight on the page in their own colours; on a paper where they would vanish (PROVIDER_LOGO_SILHOUETTE) as an ink silhouette",
+  "providers": {
+    "17": {
+      "name": "China National Space Administration",
+      "abbrev": "CNSA",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/china2520national2520space2520administration_logo_20190207032431.png",
+      "source_sha256": "5e81808262291d78ac2e0168f00adc5cbce0831006f79b78a369f917a7cfc4f6",
+      "sha256": "49b5bc326430732cb674713758ef257aa8de6630965e62a79127c1f8549b130a",
+      "size": [
+        102,
+        80
+      ]
+    },
+    "31": {
+      "name": "Indian Space Research Organization",
+      "abbrev": "ISRO",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/indian2520space2520research2520organization_logo_20190215225409.png",
+      "source_sha256": "e54d7bc2d24d5aa241b2e7bf1c0162bd3a9f3d7f84418a8ea95ee1c29fd6b7e1",
+      "sha256": "e291df601131158125cea242fcff7e69cef7ac768903209100dc19f2c9dceb9b",
+      "size": [
+        83,
+        80
+      ]
+    },
+    "34": {
+      "name": "Iranian Space Agency",
+      "abbrev": "ISA",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/iranian2520space2520agency_logo_20200422091550.jpg",
+      "source_sha256": "0d60f3fca6f21bf65da37ed1991fe725233b20541d8c68b8ef0b6af786a66a5b",
+      "sha256": "a85fa70f152b5107e3536f698049b7795a97c4471357994d89894468540dd3ab",
+      "size": [
+        80,
+        80
+      ]
+    },
+    "37": {
+      "name": "Japan Aerospace Exploration Agency",
+      "abbrev": "JAXA",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/japan2520aerospace2520exploration2520agency_logo_20190207032440.png",
+      "source_sha256": "34b0d5b8ac8220b6f794cc926c1a4f265c330a80d4d69dc126110a1f54b00e13",
+      "sha256": "ef363f32186913b2d5b6a5bec81045e5cda0ab3369cfeee418ae31ec1b8a5340",
+      "size": [
+        132,
+        80
+      ]
+    },
+    "44": {
+      "name": "National Aeronautics and Space Administration",
+      "abbrev": "NASA",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/national2520aeronautics2520and2520space2520administration_logo_20190207032448.png",
+      "source_sha256": "bb912a47f1a437889508558417e52c2e61fe69bde17b6ab1d116672ba5921bb5",
+      "sha256": "14a1f4ca56c884fd230f093f344ac9b8201c7116534828916a4ab0f77b1b1599",
+      "size": [
+        98,
+        80
+      ]
+    },
+    "63": {
+      "name": "Russian Federal Space Agency (ROSCOSMOS)",
+      "abbrev": "RFSA",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/russian2520federal2520space2520agency25202528roscosmos2529_logo_20190207032459.png",
+      "source_sha256": "a2cc461e71829e80ae36a3934651a9bc397c068e4607b55cb65ae78a876eb164",
+      "sha256": "649fd5b3d93388453b0085a76b05d3aca413a75b1cbc87066bde503104232dcf",
+      "size": [
+        66,
+        80
+      ]
+    },
+    "88": {
+      "name": "China Aerospace Science and Technology Corporation",
+      "abbrev": "CASC",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/china2520aerospace2520science2520and2520technology2520corporation_logo_20220826093937.png",
+      "source_sha256": "4474979a7c29bd100d814b9de4776a8b8cead26e732b90274da796f3e5ca2f93",
+      "sha256": "c848f3123e002ea8d653e0776c021983bb52081977b4e71871327752d4c90c94",
+      "size": [
+        80,
+        80
+      ]
+    },
+    "96": {
+      "name": "Khrunichev State Research and Production Space Center",
+      "abbrev": "KhSC",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/khrunichev2520state2520research2520and2520production2520space2520center_logo_20190207032444.png",
+      "source_sha256": "389517f41566d476c65f6a7e4d54790657fcccce631f3a76bce2e437999efcb5",
+      "sha256": "e3dd37458412b63f52d4822c30d62f0da03463a204fba849521fda289f7dce35",
+      "size": [
+        80,
+        80
+      ]
+    },
+    "98": {
+      "name": "Mitsubishi Heavy Industries",
+      "abbrev": "MHI",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/mitsubishi2520heavy2520industries_logo_20200117065724.png",
+      "source_sha256": "57dacdd58754edb196079c5e5ccc7bd2c128806c84da4559c1375d1598a78fb1",
+      "sha256": "c961004ef01bc9cbddce26824f509ee78bdf2c6548a4aa9622d918d9fecbb818",
+      "size": [
+        396,
+        73
+      ]
+    },
+    "111": {
+      "name": "Progress Rocket Space Center",
+      "abbrev": "PRSC",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/progress2520rocket2520space2520center_logo_20210313175054.png",
+      "source_sha256": "f20d1462b0b228e8b3f84cab147667886316af32b7a709bfdb61c5bb4ab42384",
+      "sha256": "494eeeeb8e8358fc4ee8664890357be7b70a4242c5a7427f5991647d67a6e749",
+      "size": [
+        61,
+        80
+      ]
+    },
+    "115": {
+      "name": "Arianespace",
+      "abbrev": "ASA",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/arianespace_logo_20210603173752.png",
+      "source_sha256": "257a3ad0155cec1c28453f13ffedfe940cf5d5f02461bf6a620c8cc4d4da64c9",
+      "sha256": "708473e7a9d893897f5c985c5d6df17db1c0777a9a8503f6124c0e965f9a8a34",
+      "size": [
+        142,
+        80
+      ]
+    },
+    "121": {
+      "name": "SpaceX",
+      "abbrev": "SpX",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/spacex_logo_20220826094919.png",
+      "source_sha256": "f76363ae3b8395355bd08a43916eb7e02cbca0dfbf31fb27d2220437261868cd",
+      "sha256": "77f8b3f103edc78c4c70c4e8414375275f502eb19fbb6745565ac0e59059055f",
+      "size": [
+        396,
+        48
+      ]
+    },
+    "124": {
+      "name": "United Launch Alliance",
+      "abbrev": "ULA",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/united2520launch2520alliance_logo_20210412195953.png",
+      "source_sha256": "a88dc8b0b319def99cddc3527910cb63209e6a1071c08132013cebbcf7ec94e1",
+      "sha256": "2d2e2d1830c3849a5554bea8140eea783a9c0a7bc818c05844007136e1fb80c0",
+      "size": [
+        226,
+        80
+      ]
+    },
+    "141": {
+      "name": "Blue Origin",
+      "abbrev": "BO",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/blue2520origin_logo_20190207032427.png",
+      "source_sha256": "6bf99b1a673448b3964b0fa5fcb5a9c835e3ef3b16bdb1f04027794125eee5f7",
+      "sha256": "d370f5ee82e2f8d011823d2aaac096105772f293cbdf04829278bbcda7d35b70",
+      "size": [
+        152,
+        80
+      ]
+    },
+    "147": {
+      "name": "Rocket Lab",
+      "abbrev": "RL",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/rocket2520lab2520ltd_logo_20220218075411.png",
+      "source_sha256": "66beae77672a4660edaaccf7adfc2e3a5d8da79954cdaf3f4477b23a5f406a6c",
+      "sha256": "3c33d962288a6e3d47b00b722170667c88cafda16eeae0295e551abb31519925",
+      "size": [
+        216,
+        80
+      ]
+    },
+    "159": {
+      "name": "Avio S.p.A",
+      "abbrev": "Avio",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/avio2520s.p.a_logo_20221130103121.png",
+      "source_sha256": "0d4c2fffdaccb44565759065ab187be99b1a1a536a4310b928d67d9130ebbd48",
+      "sha256": "cde6c5457444a9d60a21bdda09e7b4a4899b24fe5bf76e18d8e2b1aa1a39a2e5",
+      "size": [
+        167,
+        80
+      ]
+    },
+    "193": {
+      "name": "Russian Space Forces",
+      "abbrev": "VKS",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/russian2520space2520forces_logo_20200805185824.png",
+      "source_sha256": "52563cd84dd75d68516f57ce04c8fddb3dae4c0be9bfc470419cbff2aa3f26ba",
+      "sha256": "f215ae18dec2e50f5e1b28f887a7ce2f8b16cd6748cced08e7aca3fbafc9c062",
+      "size": [
+        74,
+        80
+      ]
+    },
+    "257": {
+      "name": "Northrop Grumman Space Systems",
+      "abbrev": "NGSS",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/northrop2520grumman2520innovation2520systems_logo_20190207032451.png",
+      "source_sha256": "562695c93367d4d9c7841024c363f286688b584306414f3226229da960163a86",
+      "sha256": "188b73938eff1e9574072321ee51dcdf5685c8c56bede4f7a198c94fc64bd853",
+      "size": [
+        270,
+        80
+      ]
+    },
+    "259": {
+      "name": "LandSpace",
+      "abbrev": "LS",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/landspace_logo_20220822100731.png",
+      "source_sha256": "b9229c51d4ae6c1a320bdd781899d4cc805058ec9cdd25fc8b023dc587ab352f",
+      "sha256": "bef19f503b8292d42b05df347d225a9fb04a5e492828f08403c75b78b56e38df",
+      "size": [
+        235,
+        80
+      ]
+    },
+    "265": {
+      "name": "Firefly Aerospace",
+      "abbrev": "FA",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/firefly2520aerospace_logo_20220826094423.jpg",
+      "source_sha256": "bf553a8fc532bf98c588df29192bcc12421fdfa8b0d42f94ebcf9f0b711b4954",
+      "sha256": "fcb8c738ba9d7fda28d98528e3e8293247fe631e5a6724aec521e97fe627115c",
+      "size": [
+        149,
+        80
+      ]
+    },
+    "272": {
+      "name": "China Rocket Co. Ltd.",
+      "abbrev": "CHNR",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/china2520rocket2520co.2520ltd._logo_20221001084159.png",
+      "source_sha256": "d131a7dabd8d9bb5b4a4057b88072dd52953b74449356fdb778bf1261f7c3be5",
+      "sha256": "3562ccdae361e4a96ba99eaf9510a25ff3bd413600e6e3b0e79a5fbae20f7cbc",
+      "size": [
+        156,
+        44
+      ]
+    },
+    "1021": {
+      "name": "Galactic Energy",
+      "abbrev": "GE",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/galactic2520energy_logo_20201106095229.png",
+      "source_sha256": "4edf12bcf7dd505d9ef9720f0c034d3d62df05f6586793374cc37ac8a6765cb0",
+      "sha256": "9dd16e212b9643319fa360e1a78b5133f919d030c15b0ac286b7601aa6af8862",
+      "size": [
+        266,
+        80
+      ]
+    },
+    "1040": {
+      "name": "CAS Space",
+      "abbrev": "CAS",
+      "source": "https://thespacedevs-prod.nyc3.digitaloceanspaces.com/media/images/cas2520space_logo_20220727081352.png",
+      "source_sha256": "34e1d5203ef2c6a3dc7362bb0f765e6fedcb903dc69ac75bdb932e1c444d551e",
+      "sha256": "a0a313bdff8f183621fc12e1622888bd7352ce8a32d817750b1aa7cd657c4a9d",
+      "size": [
+        220,
+        80
+      ]
+    }
+  },
+  "flags": {
+    "us": {
+      "source": "https://flagcdn.com/w80/us.png",
+      "sha256": "59ac434b97e6db8b4fcee5c8e1996995562747e76875625f0886f1936488b7c9"
+    },
+    "cn": {
+      "source": "https://flagcdn.com/w80/cn.png",
+      "sha256": "fdbfb0d49ec098827d28f297a4ee3614edd1dcc014bcdf978b7dce73c7b7b4f1"
+    },
+    "ru": {
+      "source": "https://flagcdn.com/w80/ru.png",
+      "sha256": "fe1a82a5145e5fba6982bb14cb20663b888a5feabada2235d036825fa4cbcac8"
+    },
+    "kz": {
+      "source": "https://flagcdn.com/w80/kz.png",
+      "sha256": "9dd15436c71357bfe6059992a9a83cd60e634a3ae99200c7d67a5410e986b9d2"
+    },
+    "nz": {
+      "source": "https://flagcdn.com/w80/nz.png",
+      "sha256": "2a69d660a346b756b26e5faba477f8033901b76b2ccf35d00463620be4a794c4"
+    },
+    "in": {
+      "source": "https://flagcdn.com/w80/in.png",
+      "sha256": "fc3292a3ac5feb33759087d8968441965723068fa7cbbd12226b646b7ff83252"
+    },
+    "jp": {
+      "source": "https://flagcdn.com/w80/jp.png",
+      "sha256": "25c1ac6db4fa0b5e6b79b4efe546683c8589cf060f5f848b27be02944fad8114"
+    },
+    "fr": {
+      "source": "https://flagcdn.com/w80/fr.png",
+      "sha256": "2a539c1a42f160aab68730f4caaa322bd6fbccf42145015bb7544961671a9cbd"
+    },
+    "gf": {
+      "source": "https://flagcdn.com/w80/gf.png",
+      "sha256": "f1aa5be028c8ebd8081e33f8d0b071549740ba9c2f5560b03c68da981ae7ea5f"
+    },
+    "ir": {
+      "source": "https://flagcdn.com/w80/ir.png",
+      "sha256": "2b08721b074f09dd599539aae078ca6b5a59c2b7f18c493b0124bce28daf4f8e"
+    },
+    "kr": {
+      "source": "https://flagcdn.com/w80/kr.png",
+      "sha256": "8a0e8db363c5177c129bdc1140f5c219f17014153a5da592877c4b4c718c248f"
+    },
+    "kp": {
+      "source": "https://flagcdn.com/w80/kp.png",
+      "sha256": "bb7ec927c18eda57e6a8e8eeead2ce817cbef690a9ca4067d8bfba306387ac82"
+    },
+    "gb": {
+      "source": "https://flagcdn.com/w80/gb.png",
+      "sha256": "94f29281d0b2b67b035dd279a4b43b18b8be9e889f5287af2b2c5e3723e0c810"
+    },
+    "au": {
+      "source": "https://flagcdn.com/w80/au.png",
+      "sha256": "eb3cd6aba81315a7db38b55a555938f3d4c1553342eafb3a37e13d4d1fe76450"
+    },
+    "no": {
+      "source": "https://flagcdn.com/w80/no.png",
+      "sha256": "f58edc8912be7c7f5a462809dae326895a9b529bd841475a4aedf0ccf26e6d7f"
+    },
+    "se": {
+      "source": "https://flagcdn.com/w80/se.png",
+      "sha256": "e8433ddb96b727f2b2420f21f588feb88a5f3984b0c2fe65e97e0b5285f3a2ef"
+    },
+    "il": {
+      "source": "https://flagcdn.com/w80/il.png",
+      "sha256": "e9c4bee374d1a69832dc0de7c0dbdc2a2d8ef96d795768b3a2eb967744338e50"
+    },
+    "br": {
+      "source": "https://flagcdn.com/w80/br.png",
+      "sha256": "c9ea019c610713d111f4c81d97f5c0df2caf7ae4c9bda6079f414916dcada975"
+    },
+    "mh": {
+      "source": "https://flagcdn.com/w80/mh.png",
+      "sha256": "7a005e717f16e425fdde84ec61c0cbb3eff71e5c462a682bd5c60ef006fd488f"
+    },
+    "es": {
+      "source": "https://flagcdn.com/w80/es.png",
+      "sha256": "cfd46911c2d8a218317ecfa94d776ca3784def0212332b2c230d0a7cfeb6be41"
+    },
+    "it": {
+      "source": "https://flagcdn.com/w80/it.png",
+      "sha256": "655b1b31b9a3d3b6f659863e6ffebedaf8810e5e97f12fea687e9ede6d298c3d"
+    },
+    "de": {
+      "source": "https://flagcdn.com/w80/de.png",
+      "sha256": "5eb33c86a8f1cd43cbbd990aee89e4ce4fabf7efdece1529be66fb1becf29fc9"
+    }
+  }
+}

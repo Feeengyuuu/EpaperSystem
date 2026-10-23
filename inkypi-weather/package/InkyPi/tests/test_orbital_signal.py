@@ -324,6 +324,7 @@ def test_normalize_launches_keeps_displayable_global_fields_and_order():
         "fallback_image_license": "",
         "fallback_image_source": "",
         "provider_abbrev": "",
+        "provider_id": None,
         "mission_type": "",
         "country_code": "",
         "window_start": "",
@@ -1129,3 +1130,70 @@ def test_rendered_page_fills_the_room_under_the_market_columns_with_art():
     page = plugin._render_page((800, 480), plugin._fixture_payload(NOW), {}, NOW)
     room = page.crop((LAUNCH_SPLIT_X + 10, 58 + 306, 790, 442))
     assert sum(1 for pixel in room.get_flattened_data() if pixel != DAY_PALETTE["paper"]) > 2500
+
+
+def test_fact_cells_get_icons_and_mission_types_read_short():
+    from plugins.orbital_signal import orbital_signal as module
+
+    assert OrbitalSignal._fact_icon("WINDOW", {}) == "clock"
+    assert OrbitalSignal._fact_icon("MISSION", {"mission_type": "Government/Top Secret"}) == "classified"
+    assert OrbitalSignal._fact_icon("MISSION", {"mission_type": "Unknown"}) is None
+    facts = dict(OrbitalSignal._launch_facts({"mission_type": "Government/Top Secret"}))
+    assert facts["MISSION"] == "CLASSIFIED"
+    assert OrbitalSignal._launch_site({"location": "Wenchang Space Launch Site, China"}) == "Wenchang"
+    # Every mapped icon exists.
+    for name in {*module.FACT_ICONS.values(), *module.MISSION_ICONS.values(), "pin"}:
+        assert (module.ICON_DIR / f"{name}.png").is_file(), name
+
+
+def test_two_tone_icons_take_the_page_ink_and_orange():
+    from plugins.orbital_signal.orbital_signal import NIGHT_PALETTE, _two_tone_icon
+
+    icon = _two_tone_icon("pin", 48, NIGHT_PALETTE["ink"], NIGHT_PALETTE["orange"])
+    solid = [pixel[:3] for pixel in getattr(icon, "get_flattened_data", icon.getdata)() if pixel[3] == 255]
+    assert NIGHT_PALETTE["orange"] in solid and NIGHT_PALETTE["ink"] in solid
+
+
+def _provider_cell(palette, provider_id):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    image = Image.new("RGB", (160, 40), palette["paper"])
+    draw = RecordingDraw((160, 40))
+    draw.image = image
+    draw.delegate = ImageDraw.Draw(image)
+    drawn = plugin._draw_provider_cell(image, draw, {"provider_id": provider_id, "provider_launches_year": 122},
+                                       (4, 2, 140), plugin._font(9, True, None), palette, None)
+    return drawn, image, draw
+
+
+def test_provider_logo_sits_straight_on_the_page_and_reverses_where_it_would_vanish():
+    from plugins.orbital_signal.orbital_signal import NIGHT_PALETTE
+
+    drawn, day, draw = _provider_cell(DAY_PALETTE, 121)
+    assert drawn and [call["text"] for call in draw.text_calls] == ["PROVIDER  #122 YTD"]
+    # No plate behind the logo: the paper shows between its letters.
+    logo_area = [day.getpixel((x, y)) for x in range(4, 144) for y in range(14, 32)]
+    assert logo_area.count(DAY_PALETTE["paper"]) > len(logo_area) * 0.3
+    _drawn, night, _draw = _provider_cell(NIGHT_PALETTE, 121)
+    logo_pixels = {night.getpixel((x, y)) for x in range(4, 140) for y in range(14, 32)}
+    assert NIGHT_PALETTE["ink"] in logo_pixels  # SpaceX's dark wordmark turns light by night
+    assert _provider_cell(DAY_PALETTE, 999_999)[0] is False
+
+
+def test_when_line_says_today_and_the_site_carries_its_flag():
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    draw = RecordingDraw()
+    launch = {"location": "Vandenberg SFB, CA, USA", "country_code": "US"}
+    launch_time = NOW + timedelta(hours=1)
+
+    plugin._draw_when_and_where(draw.image, draw, launch, launch_time, NOW, 130, 440, 230, DAY_PALETTE, None)
+
+    texts = [call["text"] for call in draw.text_calls]
+    assert texts[0].startswith("TODAY ") and texts[-1] == "VANDENBERG SFB"
+    # Right after the site's name comes its flag: a small block of many colours.
+    after_name = draw.text_calls[-1]["bbox"][2]
+    flag_area = draw.image.crop((after_name + 2, 250, after_name + 32, 268))
+    assert len(flag_area.getcolors(maxcolors=4096) or []) > 12
+    draw = RecordingDraw()
+    plugin._draw_when_and_where(draw.image, draw, launch, NOW + timedelta(days=1), NOW, 130, 440, 230,
+                                DAY_PALETTE, None)
+    assert draw.text_calls[0]["text"].startswith("TOMORROW ")

@@ -153,6 +153,7 @@ def normalize_launches(payload, now=None, limit=4):
                 "location": _text(location.get("name"), "Location TBD"),
                 "webcast_live": bool(raw.get("webcast_live", False)),
                 "provider_abbrev": _text(provider.get("abbrev")),
+                "provider_id": provider.get("id") if type(provider.get("id")) is int else None,
                 "mission_type": _text(mission.get("type")),
                 "country_code": _text(country.get("alpha_2_code")),
                 "window_start": window_start.isoformat() if window_start else "",

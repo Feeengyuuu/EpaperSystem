@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import PresentationMode
 from plugins.base_plugin.render_provenance import (
@@ -52,6 +52,29 @@ MARKET_COLUMNS_HEIGHT = 300
 MARKET_ART_PATH = Path(__file__).with_name("assets") / "market-console.png"
 CATEGORY_COLORS = {"ECONOMY": "blue", "SPORT": "orange", "MATCH": "orange", "POLITICS": "red",
                    "CRYPTO": "orange", "TECH": "green"}
+# Fact-grid art: two-tone icons (black shapes take the ink, orange accents the page orange),
+# launch providers' official logos by Launch Library agency id, and pad country flags.
+# Logos whose own colours vanish on one paper show there as a one-ink silhouette, as a brand's
+# reversed artwork would: dark wordmarks by night, white-lettered ones by day (Launch Library ids).
+PROVIDER_LOGO_SILHOUETTE = {
+    "night": frozenset({17, 37, 96, 98, 115, 121, 124, 141, 257, 259, 265, 272, 1040}),
+    "day": frozenset({147, 1021}),
+}
+ICON_DIR = Path(__file__).with_name("assets") / "icons"
+PROVIDER_LOGO_DIR = Path(__file__).with_name("assets") / "providers"
+FLAG_DIR = Path(__file__).with_name("assets") / "flags"
+FACT_ICON = 24
+FACT_ICONS = {"WINDOW": "clock", "PAD": "tower", "ORBIT": "orbit", "WORLD": "world", "WEATHER": "weather"}
+MISSION_ICONS = {
+    "communications": "comms", "earth science": "earth", "government/top secret": "classified",
+    "human exploration": "human", "tourism": "human", "resupply": "resupply", "test flight": "test",
+    "technology": "test", "navigation": "navigation", "astrophysics": "science", "heliophysics": "science",
+    "space science": "science", "planetary science": "planetary", "robotic exploration": "planetary",
+    "dedicated rideshare": "rideshare",
+}
+# Mission types too long for a fact cell, in the words a launch broadcast would use.
+MISSION_SHORT = {"government/top secret": "CLASSIFIED", "human exploration": "CREWED", "dedicated rideshare": "RIDESHARE",
+                 "planetary science": "PLANETARY", "robotic exploration": "ROBOTIC", "communications": "COMMS"}
 
 DAY_PALETTE = {
     "paper": (247, 244, 236),
@@ -80,6 +103,48 @@ NIGHT_PALETTE = {
     "green": (85, 188, 120),
     "white": (26, 42, 64),
 }
+
+
+@lru_cache(maxsize=64)
+def _two_tone_icon(name, size, ink, accent):
+    """The icon at ``size``: black shapes in ``ink``, orange accents in ``accent`` (orange share = red - blue)."""
+    try:
+        with safe_open_image(ICON_DIR / f"{name}.png") as source:
+            icon = source.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+    except (OSError, ValueError):
+        return None
+    red, _green, blue, alpha = icon.split()
+    tinted = Image.composite(Image.new("RGB", icon.size, accent), Image.new("RGB", icon.size, ink),
+                             ImageChops.subtract(red, blue))
+    tinted.putalpha(alpha)
+    return tinted
+
+
+@lru_cache(maxsize=32)
+def _provider_logo(provider_id):
+    """The provider's official logo in its own colours, straight on the page."""
+    if type(provider_id) is not int:
+        return None
+    path = PROVIDER_LOGO_DIR / f"{provider_id}.png"
+    if not path.is_file():
+        return None
+    try:
+        with safe_open_image(path) as source:
+            return source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+
+
+@lru_cache(maxsize=32)
+def _flag(country_code):
+    code = str(country_code or "").strip().lower()
+    if len(code) != 2 or not code.isalpha() or not (FLAG_DIR / f"{code}.png").is_file():
+        return None
+    try:
+        with safe_open_image(FLAG_DIR / f"{code}.png") as source:
+            return source.convert("RGB")
+    except (OSError, ValueError):
+        return None
 
 
 class OrbitalSignal(BasePlugin):
@@ -697,7 +762,8 @@ class OrbitalSignal(BasePlugin):
         """The place of a pad location: 'Mahia Peninsula', 'Taiyuan', 'Vandenberg SFB'."""
         parts = [part.strip() for part in str(launch.get("location") or "").split(",") if part.strip()]
         place = next((part for part in parts if "launch complex" not in part.casefold()), parts[0] if parts else "")
-        for suffix in (" Satellite Launch Center", " Space Launch Center", " Launch Center", " Space Center"):
+        for suffix in (" Satellite Launch Center", " Space Launch Center", " Space Launch Site", " Launch Center",
+                       " Space Center"):
             if place.casefold().endswith(suffix.casefold()):
                 return place[: -len(suffix)].strip()
         return place
@@ -734,9 +800,93 @@ class OrbitalSignal(BasePlugin):
             ("PAD", pad),
             ("ORBIT", str(launch.get("orbit") or "TBD")),
             ("PROVIDER", provider),
-            ("MISSION", mission_type if mission_type and mission_type.casefold() != "unknown" else "TBD"),
+            ("MISSION", MISSION_SHORT.get(mission_type.casefold(), mission_type)
+             if mission_type and mission_type.casefold() != "unknown" else "TBD"),
             last,
         ]
+
+    @staticmethod
+    def _fact_icon(label, launch):
+        """The icon for a fact cell; a mission's icon follows its type (none for an unknown type)."""
+        if label == "MISSION":
+            return MISSION_ICONS.get(str(launch.get("mission_type") or "").strip().casefold())
+        return FACT_ICONS.get(label)
+
+    @staticmethod
+    def _paste_icon(image, name, x, y, size, palette):
+        icon = _two_tone_icon(name, size, tuple(palette["ink"]), tuple(palette["orange"]))
+        if icon is not None:
+            image.paste(icon, (int(x), int(y)), icon)
+
+    @staticmethod
+    def _paste_flag(image, draw, flag, x, y, palette, size=(18, 12)):
+        x, y = int(x), int(y)
+        image.paste(flag.resize(size, Image.Resampling.LANCZOS), (x, y))
+        draw.rectangle((x - 1, y - 1, x + size[0], y + size[1]), outline=palette["rule"], width=1)
+
+    def _draw_provider_cell(self, image, draw, launch, cell, label_font, palette, family):
+        """The provider as its official logo, this year's launch count in the label; False without a logo.
+
+        The logo sits straight on the page in its own colours, or as an ink silhouette on the
+        paper where those colours would vanish (PROVIDER_LOGO_SILHOUETTE).
+        """
+        provider_id = launch.get("provider_id")
+        logo = _provider_logo(provider_id)
+        if logo is None:
+            return False
+        x, y, width = cell
+        count = launch.get("provider_launches_year")
+        label = f"PROVIDER  #{count} YTD" if isinstance(count, int) and count > 0 else "PROVIDER"
+        draw.text((x, y), label, font=label_font, fill=palette["orange"])
+        fitted = logo.copy()
+        fitted.thumbnail((int(width), 18), Image.Resampling.LANCZOS)
+        paper = "night" if sum(palette["paper"]) < 300 else "day"
+        if provider_id in PROVIDER_LOGO_SILHOUETTE[paper]:
+            silhouette = Image.new("RGBA", fitted.size, (*palette["ink"], 0))
+            silhouette.putalpha(fitted.getchannel("A"))
+            fitted = silhouette
+        left, top = int(x), int(y + 12)
+        image.paste(fitted, (left, top + 1), fitted)
+        right = left + fitted.width
+        if fitted.width < fitted.height * 2.5:
+            # A badge says little alone: the provider's short name follows it.
+            name = str(launch.get("provider_abbrev") or launch.get("provider") or "").strip().upper()
+            name_font = self._font(12, True, family)
+            room = x + width - right - 5
+            if name and room > 12:
+                draw.text((right + 5, y + 13), self._fit_text(draw, name, name_font, room), font=name_font,
+                          fill=palette["ink"])
+        return True
+
+    def _draw_when_and_where(self, image, draw, launch, launch_time, now, left, right, top, palette, family):
+        """Two plain lines: the local day and time (UTC after it), then the launch site with its flag."""
+        local = launch_time.astimezone(now.tzinfo) if now.tzinfo else launch_time
+        days = (local.date() - (now.astimezone(now.tzinfo) if now.tzinfo else now).date()).days
+        day = "TODAY" if days == 0 else "TOMORROW" if days == 1 else f"{local:%a %d %b}".upper()
+        lead = f"{day} {local:%H:%M} {local.tzname() or 'LOCAL'}".upper()
+        lead_font = self._font(14, True, family)
+        self._paste_icon(image, "clock", left, top, 15, palette)
+        draw.text((left + 20, top - 2), lead, font=lead_font, fill=palette["ink"])
+        if local.utcoffset():
+            utc_left = left + 20 + draw.textbbox((0, 0), lead, font=lead_font)[2] + 8
+            utc = f"{launch_time:%H:%M} UTC"
+            utc_font = self._font(11, True, family)
+            if utc_left + draw.textbbox((0, 0), utc, font=utc_font)[2] <= right:
+                draw.text((utc_left, top + 1), utc, font=utc_font, fill=palette["muted"])
+
+        site = (self._launch_site(launch) or str(launch.get("location") or "")).strip().upper()
+        if not site:
+            return
+        place_top = top + 20
+        flag = _flag(launch.get("country_code"))
+        room = right - left - 20 - (26 if flag is not None else 0)
+        site_font = self._fit_font(draw, site, room, 13, 10, family)
+        shown = self._fit_text(draw, site, site_font, room)
+        self._paste_icon(image, "pin", left, place_top, 15, palette)
+        draw.text((left + 20, place_top - 1), shown, font=site_font, fill=palette["ink"])
+        if flag is not None:
+            self._paste_flag(image, draw, flag, left + 20 + draw.textbbox((0, 0), shown, font=site_font)[2] + 8,
+                             place_top + 2, palette)
 
     def _draw_launch(self, image, draw, box, launches, now, palette, family):
         left, top, right, bottom = box
@@ -780,19 +930,14 @@ class OrbitalSignal(BasePlugin):
 
         width = text_right - text_left
         rocket = str(primary.get("rocket") or "UPCOMING").strip().upper()
-        draw.text((text_left, clock_top + FLIP_CARD[1] + 16), rocket,
+        draw.text((text_left, clock_top + FLIP_CARD[1] + 14), rocket,
                   font=self._fit_font(draw, rocket, width, 30, 14, family), fill=palette["ink"])
         mission = str(primary.get("mission") or "MISSION").strip().upper()
         mission_font = self._fit_font(draw, mission, width, 16, 12, family)
-        draw.text((text_left, clock_top + FLIP_CARD[1] + 52), self._fit_text(draw, mission, mission_font, width),
+        draw.text((text_left, clock_top + FLIP_CARD[1] + 48), self._fit_text(draw, mission, mission_font, width),
                   font=mission_font, fill=palette["ink"])
-        local = launch_time.astimezone(now.tzinfo) if now.tzinfo else launch_time
-        parts = [f"{launch_time:%d %b %H:%M} UTC", f"{local:%H:%M} {local.tzname() or 'LOCAL'}",
-                 self._launch_site(primary)]
-        when = " / ".join(part for part in parts if part).upper()
-        when_font = self._fit_font(draw, when, width, 13, 10, family)
-        draw.text((text_left, clock_top + FLIP_CARD[1] + 76), self._fit_text(draw, when, when_font, width),
-                  font=when_font, fill=palette["muted"])
+        self._draw_when_and_where(image, draw, primary, launch_time, now, text_left, text_right,
+                                  clock_top + FLIP_CARD[1] + 71, palette, family)
 
         grid_top = PHOTO_BOX[3] + 8
         draw.line((16, grid_top, right - 18, grid_top), fill=palette["rule"], width=2)
@@ -801,11 +946,27 @@ class OrbitalSignal(BasePlugin):
         for index, (label, value) in enumerate(self._launch_facts(primary)):
             cell_x = 16 + (index % 3) * cell_w + (0 if index % 3 == 0 else 8)
             cell_y = grid_top + 6 + (index // 3) * 34
+            if label == "PROVIDER" and self._draw_provider_cell(image, draw, primary, (cell_x, cell_y, cell_w - 12),
+                                                                label_font, palette, family):
+                continue
+            icon = self._fact_icon(label, primary)
+            text_x = cell_x + (FACT_ICON + 6 if icon else 0)
+            text_w = cell_w - 12 - (text_x - cell_x)
+            if icon:
+                self._paste_icon(image, icon, cell_x, cell_y + 1, FACT_ICON, palette)
+            draw.text((text_x, cell_y), label, font=label_font, fill=palette["orange"])
             value = value.upper()
-            value_font = self._fit_font(draw, value, cell_w - 12, 12, 9, family)
-            draw.text((cell_x, cell_y), label, font=label_font, fill=palette["orange"])
-            draw.text((cell_x, cell_y + 12), self._fit_text(draw, value, value_font, cell_w - 12),
-                      font=value_font, fill=palette["ink"])
+            flag = _flag(primary.get("country_code")) if label == "PAD" else None
+            if flag is not None:
+                # The pad's country reads from its flag rather than its code.
+                value = self._short_pad(primary.get("pad")).upper() or "TBD"
+                text_w -= 22
+            value_font = self._fit_font(draw, value, text_w, 12, 9, family)
+            shown = self._fit_text(draw, value, value_font, text_w)
+            draw.text((text_x, cell_y + 12), shown, font=value_font, fill=palette["ink"])
+            if flag is not None:
+                flag_x = text_x + draw.textbbox((0, 0), shown, font=value_font)[2] + 6
+                self._paste_flag(image, draw, flag, flag_x, cell_y + 14, palette)
         for column in (1, 2):
             divider = 16 + column * cell_w
             draw.line((divider, grid_top + 8, divider, grid_top + 68), fill=palette["rule"], width=1)

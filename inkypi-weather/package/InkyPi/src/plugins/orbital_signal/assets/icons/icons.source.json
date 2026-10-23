@@ -1,0 +1,27 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), black + orange on transparent",
+  "processing": "4x2 cells, cropped to alpha>24 bounds, fitted in 72x72, centred",
+  "rendering": "black parts take the page ink and orange parts the page orange, by day and night",
+  "atlases": {
+    "atlas-a.png": "8e8c9683d86d9d2b9fb5ed7784fe5f134e468ab325fc82a0016ad093ce6b7402",
+    "atlas-b.png": "afdba8b27c7310b19ed5b38a8ab68f15ac3415211e66dabc21d9a03fb0b691dc"
+  },
+  "icons": {
+    "clock": "a7d4ce8cfdc7d4df06865be82b8c50cb2762dac07ce1366ac1bf65ecf71cc41a",
+    "tower": "b5640553227c62826b8d59c4d8f9caf080b6550508c08facd023810ea4dec481",
+    "orbit": "dc916db5aa4c552f64dd2d3a8f5f247a51cf70132db21eebea8433f70e3e27d3",
+    "world": "15694cdc0dcf06565be39f9035512f454a84f393a0e6e1555f7fd7560c7d04fc",
+    "weather": "8b5efa14afb063db1bfc759109b083f2c2035879cc2400bb8fde81b91f93becf",
+    "pin": "812d9d677157f01d5bf0d46f997c56564a7c48f7a087ef4dc99398f866617338",
+    "comms": "b85eee68e2eafe04d1f1eb0807910428fe8ae49339184a7e98348c8e4b18885e",
+    "earth": "fa8818b2c604efe3e90b2cd479847a1d0dd45bcf4feb35ce14bc79e1f9447a26",
+    "classified": "c2a2454e8dfc4a73dfee8bf0aa89909cecbcdfe5d2dca08e000a17ce577c7f98",
+    "human": "bdae072085f4721c8cf7113350dabd98c75cba76fc1bd03b18a8c5f401d450a9",
+    "resupply": "d89f82ac97b6de88d72187e6c85aaf5afc91372ca3d1607067db1c21daa0fb31",
+    "test": "58296dfe08c13eab7466f8332d9228779cd45ab442d6e91be835a9ecd2e4e059",
+    "navigation": "b92291083a3c3891087209eb9c9e23dbdb8516a390ad0eec483c9d38732bcf0f",
+    "science": "5530f97f1e5046538e7553b67fd419b48125831f0aebb35fe9045d5794787c6a",
+    "planetary": "ccdbe2f7ff3d0bc718479d76da02acdac9b43e867fcdc7d40df164b053fa75e8",
+    "rideshare": "f1556ad396c81d8333b5983c698186f87d3fa39976396078ff3a2941810741ae"
+  }
+}
