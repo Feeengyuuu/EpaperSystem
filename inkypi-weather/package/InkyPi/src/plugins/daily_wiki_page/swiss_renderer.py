@@ -75,7 +75,7 @@ class _Page:
         self.date = _source_date(payload, now)
         self.cjk = plugin._language_is_cjk(payload.get("language"))
         self.family = plugin._resolved_font_family(settings)
-        self.palette = plugin._palette(settings)
+        self.palette = plugin._palette(settings, self.date)
         self.image = Image.new("RGB", (self.width, self.height), self.palette["background"])
         self.draw = ImageDraw.Draw(self.image)
         self.fonts = {}
@@ -93,6 +93,7 @@ class _Page:
         self.audit = {
             "dimensions": [self.width, self.height],
             "mode": "night" if sum(self.palette["background"]) < 100 else "day",
+            "colour_scheme": self.palette["scheme"],
             "date": self.date.strftime("%Y-%m-%d"),
             "min_body_font_size": self.minimum_font,
             "text_complete": True,
@@ -243,11 +244,11 @@ class _Page:
         return {"bounds": [x, y, x + fitted.width, y + fitted.height],
                 "slot_bounds": list(box), "source_size": list(source.size), "fit": "contain"}
 
-    def two_tone_artwork(self, path, size, crop=True):
+    def two_tone_artwork(self, path, size, crop=True, accent="accent"):
         """Fit black + accent-blue artwork into ``size`` and recolour it with this palette.
 
         The asset's blue channel is the accent share (black ink is 0, the accent is 255),
-        so day and night keep identical shapes with their own ink and accent.
+        so day and night keep identical shapes with their own ink and ``accent`` role.
         """
         with Image.open(path) as original:
             source_size = list(original.size)
@@ -258,7 +259,7 @@ class _Page:
         if crop:
             artwork = artwork.crop(bbox)
         artwork = ImageOps.contain(artwork, size, method=RESAMPLE)
-        layer = Image.composite(Image.new("RGB", artwork.size, self.palette["accent"]),
+        layer = Image.composite(Image.new("RGB", artwork.size, self.palette[accent]),
                                 Image.new("RGB", artwork.size, self.palette["ink"]), artwork.getchannel("B"))
         return layer, artwork.getchannel("A"), source_size, list(bbox)
 
@@ -286,7 +287,7 @@ class _Page:
             return None
         try:
             artwork = self.two_tone_artwork(ORNAMENT_ASSET_PATH, (right - left - self.px(64), self.px(48)),
-                                            crop=False)
+                                            crop=False, accent="accent2")
         except (OSError, ValueError):
             return None
         if artwork is None:
@@ -362,7 +363,7 @@ class _Page:
                            (left + self.px(40), slash_top + self.px(48)),
                            (left + self.px(15), slash_top + self.px(48))), fill=self.palette["accent"])
         self.draw.rectangle((left, self.bottom - self.px(47), right - 1, self.bottom - self.px(12)),
-                            fill=self.palette["accent"])
+                            fill=self.palette["accent2"])
 
     def photograph(self, source):
         text = _text(self.payload.get("image_caption") or self.payload.get("daily_image_title")

@@ -510,11 +510,14 @@ def test_disabled_media_and_history_do_not_download_or_draw_hidden_content(plugi
     assert audit["complete"] is True
 
 
-def assert_tones_follow_theme(plugin, day_pixels, night_pixels):
+def assert_tones_follow_theme(plugin, day_pixels, night_pixels, accent="accent"):
     """Paper, ink and accent map one-to-one between themes, so both tones keep their exact shapes."""
     pairs = set(zip(day_pixels, night_pixels))
-    day_palette, night_palette = plugin._palette(settings("day")), plugin._palette(settings("night"))
-    for role in ("background", "ink", "accent"):
+    # The page takes the colour pair of the payload's date (2026-10-05 falls in National Day).
+    page_day = datetime(2026, 10, 5)
+    day_palette = plugin._palette(settings("day"), page_day)
+    night_palette = plugin._palette(settings("night"), page_day)
+    for role in ("background", "ink", accent):
         assert day_pixels.count(day_palette[role]) >= 20
         assert {night for day, night in pairs if day == day_palette[role]} == {night_palette[role]}
 
@@ -558,7 +561,7 @@ def test_header_ornament_fills_the_gap_between_title_and_date(plugin, payload):
     assert bounds[2] < right_rule[0] < right_rule[2] < header["date"]["bounds"][0]
     assert 0 <= bounds[1] and bounds[3] < 70
     assert_tones_follow_theme(plugin, list(day.crop(bounds).get_flattened_data()),
-                              list(night.crop(bounds).get_flattened_data()))
+                              list(night.crop(bounds).get_flattened_data()), accent="accent2")
 
 
 def test_header_ornament_stays_clear_on_the_smallest_page(plugin, payload):

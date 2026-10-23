@@ -24,7 +24,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
-from plugins.daily_wiki_page import zh_daily_picture
+from plugins.daily_wiki_page import day_colours, zh_daily_picture
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import DEFAULT_FONT_FAMILY, coerce_bool, get_available_font_names, get_base_ui_font, get_font
 from utils.cache_manager import CacheBudget, CachePathError
@@ -1075,17 +1075,22 @@ class DailyWikiPage(BasePlugin):
         parts = [payload.get("source") or "Wikimedia", payload.get("language"), payload.get("source_state")]
         return " / ".join(str(part).upper() for part in parts if part)
 
-    def _palette(self, settings):
+    def _palette(self, settings, day=None):
+        """Pure paper and ink, with the accent pair of ``day`` (its festival or weekday)."""
         theme = settings.get("_inkypi_theme") or self.resolve_theme(settings, None)
         night = theme.get("mode") == "night"
+        scheme = day_colours.scheme_for(day)
+        accent, accent2 = scheme.colours(night)
         return {
             "background": (0, 0, 0) if night else (255, 255, 255),
             "panel": (0, 0, 0) if night else (255, 255, 255),
             "ink": (255, 255, 255) if night else (0, 0, 0),
             "dim": (210, 210, 210) if night else (48, 48, 48),
             "muted": (210, 210, 210) if night else (48, 48, 48),
-            "accent": (92, 158, 255) if night else (0, 82, 255),
+            "accent": accent,
+            "accent2": accent2,
             "rule": (255, 255, 255) if night else (0, 0, 0),
+            "scheme": scheme.key,
         }
 
     def _cache_key(self, date_key, settings, language, fallback_language):
