@@ -758,9 +758,26 @@ def test_configuration_identity_separates_runtime_theme_from_user_settings():
 
     assert release_checks.configuration_note(before, release_checks.config_identity(config(weather=600))) is None
     assert release_checks.configuration_note(before, release_checks.config_identity(themed)) == (
-        "Only runtime active_theme_info changed")
+        "Only the runtime theme state changed")
     with pytest.raises(ReleaseError, match="instance_settings_sha256"):
         release_checks.configuration_note(before, release_checks.config_identity(edited))
+
+
+def test_a_sunset_theme_switch_during_a_round_is_not_a_configuration_change():
+    day = config(weather=600)
+    day.update(active_theme="day", active_theme_refresh_failure={"mode": "day", "error": "timeout"})
+    night = config(weather=600)
+    night.update(active_theme="night", active_theme_refresh_failure=None,
+                 active_theme_info={"mode": "night", "sunset": "18:21"})
+    renamed = config(weather=600)
+    renamed.update(active_theme="day", active_theme_refresh_failure={"mode": "day", "error": "timeout"},
+                   name="Another frame")
+
+    before = release_checks.config_identity(day)
+    assert release_checks.configuration_note(before, release_checks.config_identity(night)) == (
+        "Only the runtime theme state changed")
+    with pytest.raises(ReleaseError, match="stable_top_level_settings_sha256"):
+        release_checks.configuration_note(before, release_checks.config_identity(renamed))
 
 
 class ConfigDevice:

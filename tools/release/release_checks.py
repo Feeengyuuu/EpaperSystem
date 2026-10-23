@@ -30,9 +30,12 @@ JOURNAL_MARKERS = (
 APP_ERROR = re.compile(r" - (?:ERROR|CRITICAL) - ")
 LABEL = re.compile(r"[a-zA-Z0-9_-]+")
 PLUGIN_ID = re.compile(r"[a-z0-9_]+")
-RUNTIME_ONLY_SETTINGS = {"active_theme_info", "playlist_config", "refresh_info", "config_revision"}
-# The runtime rewrites active_theme_info (sunrise/sunset, updated_at) on its own,
-# so the top-level hash may move; everything a user configures must not.
+RUNTIME_ONLY_SETTINGS = {"active_theme", "active_theme_info", "active_theme_refresh_failure",
+                         "playlist_config", "refresh_info", "config_revision"}
+# The scheduler rewrites the theme state on its own: active_theme flips at sunrise and
+# sunset, active_theme_info carries the times, active_theme_refresh_failure records and
+# clears a failed theme redraw. No settings page writes them, so a round that spans a
+# theme switch may move the top-level hash; everything a user configures must not.
 STABLE_CONFIGURATION = ("stable_top_level_settings_sha256", "instance_settings_sha256",
                         "instance_count", "cycle_seconds", "open_display_control")
 
@@ -86,7 +89,7 @@ def configuration_note(before: dict, after: dict) -> str | None:
     require(not changed, f"Live configuration changed: {changed}")
     top_level = "top_level_settings_without_revision_sha256"
     if before.get(top_level) != after.get(top_level):
-        return "Only runtime active_theme_info changed"
+        return "Only the runtime theme state changed"
     return None
 
 
