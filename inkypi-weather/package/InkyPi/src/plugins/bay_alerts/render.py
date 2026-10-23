@@ -11,7 +11,7 @@ from utils.flat_icons import draw_icon
 from utils.local_wordmark import paste_local_wordmark
 from utils.page_canvas import PageCanvas
 
-from .map_view import quake_age_class, render_bay_map, render_california_map
+from .map_view import california_map_size, quake_age_class, render_bay_map, render_california_map
 from .sources import PACIFIC, distance_km, local_now, parse_time
 
 
@@ -107,9 +107,84 @@ def _header(canvas, payload, now):
     canvas.rule((12, 52, RIGHT, 52), "ink", 2)
 
 
-ALERT_CARD = (COLUMN, 60, RIGHT, 226)
-QUAKE_CARD = (COLUMN, 232, RIGHT, 350)
-EVENT_CARD = (COLUMN, 356, RIGHT, 467)
+# The right column's three cards share COLUMN_TOP..COLUMN_BOTTOM; their heights follow
+# what each has to show (plan_column). Every card has a 32 px title row, then rows.
+COLUMN_TOP = 60
+COLUMN_BOTTOM = 467
+CARD_GAP = 6
+COLUMN_SPACE = COLUMN_BOTTOM - COLUMN_TOP - 2 * CARD_GAP
+ALERT_ROW = 43
+QUAKE_ROW = 21
+EVENT_ROW = 38
+# The event card's California minimap grows with the card up to this width, which
+# still leaves room for a line like "12 天前 · 距家 625 km · 13,260 英亩".
+EVENT_MAP_MAX_WIDTH = 88
+MORE_LINE = 14
+MAX_ROWS = {"alerts": 6, "quakes": 10, "events": 6}
+CARD_ORDER = ("alerts", "quakes", "events")
+
+
+def _card_height(name, rows, total):
+    """Height of a card showing `rows` of its `total` items."""
+    if name == "alerts":
+        # No alert (or no data) is one compact line; each alert row is 43 px.
+        if rows == 0:
+            return 80
+        return 79 + ALERT_ROW * (rows - 1) + (MORE_LINE if total > rows else 0)
+    if name == "quakes":
+        # The three statistics, then one line per quake (or a "none" line).
+        return 76 + QUAKE_ROW * max(rows, 1)
+    # The California minimap sets the smallest height; two events fit beside it.
+    return max(111, 70 + EVENT_ROW * (rows - 1))
+
+
+def plan_column(counts, space=COLUMN_SPACE):
+    """Rows and heights for the alert, quake and event cards.
+
+    Every card starts at its smallest useful size. Alerts come first: each live alert
+    gets a row while the cards below keep their smallest size, so a busy warning day
+    squeezes quakes and events. The space left goes to quakes and events one row at a
+    time, in turn, and whatever is still left pads those two.
+    """
+    caps = {name: min(counts.get(name, 0), MAX_ROWS[name]) for name in CARD_ORDER}
+    rows = {"alerts": min(caps["alerts"], 1), "quakes": min(caps["quakes"], 1), "events": min(caps["events"], 2)}
+
+    def heights():
+        return {name: _card_height(name, rows[name], counts.get(name, 0)) for name in CARD_ORDER}
+
+    def grow(name):
+        if rows[name] >= caps[name]:
+            return False
+        rows[name] += 1
+        if sum(heights().values()) <= space:
+            return True
+        rows[name] -= 1
+        return False
+
+    while grow("alerts"):
+        pass
+    growing = ["quakes", "events"]
+    while growing:
+        growing = [name for name in growing if grow(name)]
+    planned = heights()
+    spare = max(0, space - sum(planned.values()))
+    planned["quakes"] += spare // 2
+    planned["events"] += spare - spare // 2
+    return rows, planned
+
+
+def _column_boxes(payload):
+    """Card boxes and row counts for this payload's right column."""
+    counts = {
+        name: 0 if payload[name]["state"] == "unavailable" else len(payload[name]["data"].get("items", []))
+        for name in CARD_ORDER
+    }
+    rows, heights = plan_column(counts)
+    boxes, top = {}, COLUMN_TOP
+    for name in CARD_ORDER:
+        boxes[name] = (COLUMN, top, RIGHT, top + heights[name])
+        top += heights[name] + CARD_GAP
+    return boxes, rows
 
 
 def _card(canvas, box, bar, icon, title, detail, source):
@@ -127,23 +202,25 @@ def _card(canvas, box, bar, icon, title, detail, source):
     canvas.rule((left + 8, top + 28, right - 8, top + 28))
 
 
-def _alerts_card(canvas, payload, now):
+def _alerts_card(canvas, payload, now, box, rows):
     source = payload["alerts"]
     items = source["data"].get("items", [])
     counties = source["data"].get("counties") or payload["counties"]
-    _card(canvas, ALERT_CARD, "alert", "alert", "气象预警", f"NWS · {len(items)} 条", source)
-    left, right = ALERT_CARD[0] + 10, ALERT_CARD[2] - 10
+    _card(canvas, box, "alert", "alert", "气象预警", f"NWS · {len(items)} 条", source)
+    top = box[1]
+    left, right = box[0] + 10, box[2] - 10
     if source["state"] == "unavailable":
-        canvas.text((left, 130), "天气局数据暂不可用", 16, "muted", anchor="lm")
+        canvas.text((left, top + 52), "天气局数据暂不可用", 16, "muted", anchor="lm")
         return
     if not items:
-        draw_icon(canvas.draw, "ok", (left + 2, 110), 46, canvas.color("ok"), canvas.color("paper"))
-        canvas.text((left + 60, 124), "湾区暂无生效预警", 18, anchor="lm")
-        canvas.text((left + 60, 148), f"覆盖 {len(counties)} 个县 · 天气局实时数据", 12, "muted",
+        # All clear takes one compact line, leaving the space to the cards below.
+        draw_icon(canvas.draw, "ok", (left + 2, top + 37), 32, canvas.color("ok"), canvas.color("paper"))
+        canvas.text((left + 44, top + 46), "湾区暂无生效预警", 16, anchor="lm")
+        canvas.text((left + 44, top + 66), f"覆盖 {len(counties)} 个县 · 天气局实时数据", 11, "muted",
                     anchor="lm", bold=False)
         return
-    for index, alert in enumerate(items[:3]):
-        y = 94 + index * 43
+    for index, alert in enumerate(items[:rows]):
+        y = top + 34 + index * ALERT_ROW
         label, tone = SEVERITY.get(alert.get("severity"), ("提示", "minor"))
         icon_color = canvas.color("alert") if tone == "alert" else canvas.color("ink")
         draw_icon(canvas.draw, alert.get("kind"), (left, y + 2), 26, icon_color, canvas.color("paper"))
@@ -156,19 +233,27 @@ def _alerts_card(canvas, payload, now):
         ends = parse_time(alert.get("ends"))
         detail = (until(ends, now) + " · " if ends else "") + "、".join(alert.get("counties", []))
         canvas.text((left + 34, y + 29), detail, 12, "muted", anchor="lm", bold=False, width=right - left - 34)
-    if len(items) > 3:
-        canvas.text((right, 222), f"另有 {len(items) - 3} 条", 11, "muted", anchor="rb", bold=False)
+    if len(items) > rows:
+        canvas.text((right, box[3] - 4), f"另有 {len(items) - rows} 条", 11, "muted", anchor="rb", bold=False)
 
 
-def _quakes_card(canvas, payload, now):
+def listed_quakes(items, rows):
+    """The quakes to list, newest first: M2.0 and up before smaller ones fill the rest."""
+    notable = [item for item in items if item.get("mag", 0) >= 2.0][:rows]
+    chosen = notable + [item for item in items if item.get("mag", 0) < 2.0][:rows - len(notable)]
+    return [item for item in items if any(item is pick for pick in chosen)]
+
+
+def _quakes_card(canvas, payload, now, box, rows):
     source = payload["quakes"]
     data = source["data"]
     items = data.get("items", [])
     radius = data.get("radius_km") or payload["radius_km"]
-    _card(canvas, QUAKE_CARD, "ink", "quake", "地震", f"USGS · 半径 {radius} km", source)
-    left, right = QUAKE_CARD[0] + 10, QUAKE_CARD[2] - 10
+    _card(canvas, box, "ink", "quake", "地震", f"USGS · 半径 {radius} km", source)
+    top = box[1]
+    left, right = box[0] + 10, box[2] - 10
     if source["state"] == "unavailable":
-        canvas.text((left, 290), "地震数据暂不可用", 16, "muted", anchor="lm")
+        canvas.text((left, top + 58), "地震数据暂不可用", 16, "muted", anchor="lm")
         return
     day_count = sum(1 for item in items if quake_age_class(item, now) == "day")
     strongest = max(items, key=lambda item: item.get("mag", 0), default=None)
@@ -178,12 +263,14 @@ def _quakes_card(canvas, payload, now):
     width = (right - left - gap * 2) / 3
     for index, (label, value) in enumerate(stats):
         x = left + index * (width + gap)
-        canvas.draw.rounded_rectangle((x, 266, x + width, 298), radius=5, outline=canvas.color("rule"))
-        canvas.text((x + 8, 274), label, 10, "muted", anchor="lm", bold=False)
-        canvas.text((x + 8, 289), value, 16, anchor="lm")
-    recent = [item for item in items if item.get("mag", 0) >= 2.0][:2] or items[:2]
-    for index, quake in enumerate(recent):
-        y = 313 + index * 21
+        canvas.draw.rounded_rectangle((x, top + 34, x + width, top + 66), radius=5, outline=canvas.color("rule"))
+        canvas.text((x + 8, top + 42), label, 10, "muted", anchor="lm", bold=False)
+        canvas.text((x + 8, top + 57), value, 16, anchor="lm")
+    if not items:
+        canvas.text((left, top + 81), f"过去 7 天半径 {radius} km 内没有地震", 12, "muted", anchor="lm", bold=False)
+        return
+    for index, quake in enumerate(listed_quakes(items, rows)):
+        y = top + 81 + index * QUAKE_ROW
         age = quake_age_class(quake, now)
         fill = canvas.color("quake_day" if age == "day" else "quake_recent" if age == "recent" else "panel")
         canvas.draw.rounded_rectangle((left, y - 8, left + 40, y + 8), radius=3, fill=fill)
@@ -196,15 +283,19 @@ def _quakes_card(canvas, payload, now):
                     width=right - left - 56 - meta_width)
 
 
-def _events_card(canvas, payload, now):
+def _events_card(canvas, payload, now, box, rows):
     source = payload["events"]
     items = source["data"].get("items", [])
     detail = "NASA EONET" + (f" · 共 {len(items)} 起" if items else "")
-    _card(canvas, EVENT_CARD, "moderate", "fire", "加州自然事件", detail, source)
-    top = EVENT_CARD[1] + 32
-    mini = render_california_map((66, 76), canvas.palette, items)
-    canvas.image.paste(mini, (EVENT_CARD[0] + 10, top))
-    left, right = EVENT_CARD[0] + 86, EVENT_CARD[2] - 10
+    _card(canvas, box, "moderate", "fire", "加州自然事件", detail, source)
+    top = box[1] + 32
+    # The minimap fills the card's height as far as its width allows, centred in it.
+    space = box[3] - 4 - top
+    size = california_map_size(EVENT_MAP_MAX_WIDTH, space)
+    mini = render_california_map(size, canvas.palette, items)
+    canvas.image.paste(mini, (box[0] + 10, top + (space - size[1]) // 2))
+    canvas.image.info["event_map_box"] = (box[0] + 10, top + (space - size[1]) // 2, *size)
+    left, right = box[0] + 10 + size[0] + 10, box[2] - 10
     if source["state"] == "unavailable":
         canvas.text((left, top + 30), "事件数据暂不可用", 13, "muted", anchor="lm")
         return
@@ -213,8 +304,8 @@ def _events_card(canvas, payload, now):
         canvas.text((left, top + 44), "过去 30 天 · 每 3 小时更新", 11, "muted", anchor="lm", bold=False)
         return
     home = payload["home"]
-    for index, event in enumerate(items[:2]):
-        y = top + 10 + index * 38
+    for index, event in enumerate(items[:rows]):
+        y = top + 10 + index * EVENT_ROW
         draw_icon(canvas.draw, event.get("kind"), (left, y - 7), 15, canvas.color("alert"), canvas.color("paper"))
         canvas.text((left + 21, y), event.get("title"), 13, anchor="lm", width=right - left - 21)
         meta = f"{ago(parse_time(event['date']), now)} · 距家 " \
@@ -237,9 +328,11 @@ def render_page(dimensions, payload, settings, now):
     canvas.image.paste(map_image, (12, 60))
     canvas.image.info["map_markers"] = map_image.info.get("map_markers", [])
     canvas.draw.rectangle((12, 60, 451, 467), outline=canvas.color("ink"), width=1)
-    _alerts_card(canvas, payload, now)
-    _quakes_card(canvas, payload, now)
-    _events_card(canvas, payload, now)
+    boxes, rows = _column_boxes(payload)
+    _alerts_card(canvas, payload, now, boxes["alerts"], rows["alerts"])
+    _quakes_card(canvas, payload, now, boxes["quakes"], rows["quakes"])
+    _events_card(canvas, payload, now, boxes["events"], rows["events"])
+    canvas.image.info["column_cards"] = {name: {"box": boxes[name], "rows": rows[name]} for name in CARD_ORDER}
     result = canvas.image
     if tuple(dimensions) != (800, 480):
         result = result.resize(tuple(dimensions), Image.Resampling.LANCZOS)

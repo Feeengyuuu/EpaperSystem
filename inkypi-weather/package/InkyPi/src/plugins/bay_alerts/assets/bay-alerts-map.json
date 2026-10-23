@@ -11,26 +11,26 @@
     "B": "hillshade_darkness"
   },
   "mercator_bounds": {
-    "xmin": -13730198.469948892,
-    "ymin": 4425177.227865092,
-    "xmax": -13487417.029006487,
-    "ymax": 4650301.836738958
+    "xmin": -13663692.0499065,
+    "ymin": 4478207.371500708,
+    "xmax": -13531659.55089023,
+    "ymax": 4600637.506952158
   },
   "requested_bounds_wgs84": {
-    "west": -123.1,
-    "east": -121.4,
-    "south": 36.9,
-    "north": 38.5
+    "west": -122.743,
+    "east": -121.557,
+    "south": 37.28,
+    "north": 38.15
   },
   "sources": [
-    "https://basemap.nationalmap.gov/arcgis/rest/services/USGSHydroCached/MapServer/export?bbox=-123.10,36.90,-121.40,38.50&bboxSR=4326&imageSR=3857&size=880,816&format=png32&transparent=true&f=pjson",
-    "https://basemap.nationalmap.gov/arcgis/rest/services/USGSShadedReliefOnly/MapServer/export?bbox=-123.10,36.90,-121.40,38.50&bboxSR=4326&imageSR=3857&size=880,816&format=png32&transparent=true&f=pjson",
-    "https://earthquake.usgs.gov/arcgis/rest/services/haz/Qfaults/MapServer/export?bbox=-123.10,36.90,-121.40,38.50&bboxSR=4326&imageSR=3857&size=880,816&format=png32&transparent=true&f=pjson"
+    "https://basemap.nationalmap.gov/arcgis/rest/services/USGSHydroCached/MapServer/export?bbox=-122.7430,37.2800,-121.5570,38.1500&bboxSR=4326&imageSR=3857&size=880,816&format=png32&transparent=true&f=pjson",
+    "https://basemap.nationalmap.gov/arcgis/rest/services/USGSShadedReliefOnly/MapServer/export?bbox=-122.7430,37.2800,-121.5570,38.1500&bboxSR=4326&imageSR=3857&size=880,816&format=png32&transparent=true&f=pjson",
+    "https://earthquake.usgs.gov/arcgis/rest/services/haz/Qfaults/MapServer/export?bbox=-122.7430,37.2800,-121.5570,38.1500&bboxSR=4326&imageSR=3857&size=880,816&format=png32&transparent=true&f=pjson"
   ],
-  "fetched_at": "2026-10-21T20:16:19.224627+00:00",
+  "fetched_at": "2026-10-23T01:42:45.591820+00:00",
   "license": "Public domain (USGS The National Map; USGS Quaternary Fault and Fold Database)",
   "attribution": "USGS",
-  "asset_sha256": "bc1f5d2024dd5e50c42c4822ba7b38a811d7406e3bc56c45fdb0e5c191c1b989",
-  "waterlines_sha256": "c4eaefaf3c44405ac47870f4fc12dd572fbea9dc581ea59464bd5d787ebaec16",
+  "asset_sha256": "30ce961c88b440dd48b3c104b93c9cb62d1419497cab66ef05672d714ba286c1",
+  "waterlines_sha256": "0ab5f6eb021a821eb522d24dfc1818ef2016dc4fb5bec1ba08ca69dbd9d3d68f",
   "notes": "Three static 880x816 exports reduced to 440x408. Runtime never contacts the map services. Faults keep only historic and Holocene traces. Water keeps only areas connected to the ocean; water-lining rings (1, 5, 10 px from the coast) are derived from it."
 }
