@@ -655,6 +655,32 @@ def test_github_history_cap_preserves_current_delta_baselines(tmp_path, monkeypa
     assert {"1", "2"}.issubset(saved)
 
 
+def test_github_board_ranks_by_the_days_gain_and_a_flat_repo_never_outranks_a_popular_new_one(
+    tmp_path, monkeypatch
+):
+    plugin = AiEcosystemPulse({"id": PLUGIN_ID})
+    plugin._data_dir = lambda create=True: tmp_path / "state"
+    now = datetime(2026, 7, 17, 20, 0, tzinfo=timezone.utc)
+    day_ago = (now - timedelta(hours=24)).isoformat()
+    plugin._write_json(plugin._data_dir() / "github-stars.json", {
+        "1": [{"captured_at": day_ago, "stars": 1}],
+        "2": [{"captured_at": day_ago, "stars": 500}],
+    })
+    monkeypatch.setattr(
+        "plugins.ai_ecosystem_pulse.ai_ecosystem_pulse.fetch_github",
+        lambda token="": [
+            {"id": 1, "full_name": "someone/one-star", "stars": 1},
+            {"id": 2, "full_name": "org/rising", "stars": 537},
+            {"id": 3, "full_name": "org/popular-new", "stars": 371228},
+        ],
+    )
+
+    rows = plugin._fetch_github_with_snapshots(FakeDeviceConfig(), now)
+
+    assert [row["full_name"] for row in rows] == ["org/rising", "org/popular-new", "someone/one-star"]
+    assert [row["stars_24h"] for row in rows] == [37, None, 0]
+
+
 def test_github_candidate_catalog_retains_missing_rows_without_fake_observations(
     tmp_path, monkeypatch
 ):

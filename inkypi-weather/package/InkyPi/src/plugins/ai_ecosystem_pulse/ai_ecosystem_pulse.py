@@ -619,10 +619,11 @@ class AiEcosystemPulse(BasePlugin):
             enriched.append(item)
         self._cap_star_state(next_state, current_keys)
         self._write_json(state_file, next_state)
+        # Rank by the day's gain, a repo without a baseline counting as no gain, then by
+        # total stars: a one-star repo that gained nothing must not outrank a popular new one.
         enriched.sort(
             key=lambda row: (
-                row.get("stars_24h") is not None,
-                row.get("stars_24h") or -1,
+                row.get("stars_24h") or 0,
                 row.get("stars") or 0,
                 row.get("pushed_at") or "",
             ),
