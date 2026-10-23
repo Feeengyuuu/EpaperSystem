@@ -414,7 +414,8 @@ def test_pregame_panel_shows_kickoff_tiles_spread_and_season_leaders(parsed, ren
     events = [event for event in parsed["events"] if SportsDashboard._hub_event_state(event) != "live"]
     image, draw, texts = render(_card(parsed, "next", events=events))
 
-    for expected in ("TODAY 1:05 PM", "KICKOFF", "IN 1H 40M", "TV", "O/U", "51.5", "+12.5", "-12.5", "C. Williams"):
+    # The countdown is drawn as flip cards (1 H, 40 M), the total with its unit.
+    for expected in ("TODAY 1:05 PM", "KICKOFF", "1", "H", "40", "M", "TV", "O/U", "51.5", "PTS", "+12.5", "-12.5", "C. Williams"):
         assert expected in texts
     # Fox's broadcast reads as the network's logo, not its name.
     assert "Fox" not in texts
@@ -425,9 +426,9 @@ def test_scoreboard_never_draws_rows_past_its_bottom(parsed, render, monkeypatch
     rows = []
     original = SportsDashboard._draw_kit_scoreboard_row
 
-    def capture_row(self, image, draw, box, event, now, spec, last=False):
+    def capture_row(self, image, draw, box, event, now, spec, last=False, slot=None):
         rows.append(box)
-        return original(self, image, draw, box, event, now, spec, last=last)
+        return original(self, image, draw, box, event, now, spec, last=last, slot=slot)
 
     monkeypatch.setattr(SportsDashboard, "_draw_kit_scoreboard_row", capture_row)
     many = [dict(_by_id(parsed, "monday"), event_id=f"game-{index}") for index in range(20)]

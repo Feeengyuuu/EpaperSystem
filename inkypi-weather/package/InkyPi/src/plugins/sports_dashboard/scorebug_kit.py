@@ -32,12 +32,22 @@ KIT_TICKER_LOGO_GAP = 3
 KIT_TEAM_INK_KEYS = ("red", "blue", "green", "amber", "text")
 # A logo pixel fainter than this against its tile takes the theme's ink.
 KIT_LOGO_MIN_CONTRAST = 2.0
+# Day timeline in the clock column: a fixed-width day tab with a rail below
+# its left edge, so the tabs, rails and times line up from row to row.
+KIT_DAY_TAB_WIDTH = 26
+KIT_DAY_RAIL_OFFSET = 4
 
 
 def _kit_luminance(rgb):
     channels = [value / 255 for value in rgb[:3]]
     channels = [value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
     return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _kit_ink_on(fill):
+    """The theme ink or paper text, whichever reads better on ``fill``."""
+    ground = _kit_luminance(fill)
+    return max((COLORS["text"], COLORS["paper_text"]), key=lambda ink: abs(_kit_luminance(ink) - ground))
 
 
 def _kit_inked_where_faint(logo, background):
@@ -235,9 +245,61 @@ class ScorebugKitMixin:
             value_box = (left + 7, y1 + 14, right - 4, y1 + tile_h - 3)
             if image is not None and label == "TV" and self._draw_kit_tv_logos(image, draw, value_box, value, COLORS[spec.tint]):
                 continue
+            if SportsDashboard._kit_countdown_parts(value):
+                self._draw_kit_countdown(draw, value_box, value, spec)
+                continue
+            if label == "O/U" and re.fullmatch(r"\d+(?:\.\d+)?", str(value or "")):
+                self._draw_kit_total(draw, value_box, str(value))
+                continue
             value, value_font = self._fit_text_ellipsis(draw, str(value or "--"), tile_w - 12, 15, bold=True, min_size=9)
             self._draw_text_in_box(draw, value_box, value, value_font, COLORS["text"])
         return y1 + tile_h
+
+    def _draw_kit_countdown(self, draw, box, value, spec):
+        """'IN 1H 40M' as a stopwatch and flip-clock cards: each number on a
+        dark card with hinge notches on its sides, its unit beside it."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        middle = (y1 + y2) // 2
+        self._draw_kit_stopwatch(draw, x1, middle - 6, spec)
+        number_font, unit_font = self._font(min(14, y2 - y1 - 3), True), self._font(9, True)
+        card, digits, hinge = COLORS["text"], COLORS["paper_text"], COLORS[spec.tint]
+        x = x1 + 15
+        for number, unit in SportsDashboard._kit_countdown_parts(value):
+            card_w = self._text_width(draw, number, number_font) + 6
+            unit_w = self._text_width(draw, unit, unit_font)
+            if x + card_w + 1 + unit_w > x2:
+                break
+            draw.rounded_rectangle((x, y1, x + card_w, y2), radius=3, fill=card)
+            self._draw_centered_in_box(draw, (x, y1, x + card_w, y2), number, number_font, digits)
+            draw.rectangle((x, middle, x + 1, middle + 1), fill=hinge)
+            draw.rectangle((x + card_w - 1, middle, x + card_w, middle + 1), fill=hinge)
+            x += card_w + 1
+            self._draw_text_in_box(draw, (x, middle - 2, x + unit_w, y2), unit, unit_font, COLORS["text"])
+            x += unit_w + 4
+
+    def _draw_kit_total(self, draw, box, total):
+        """The over/under line: an over (green, up) and under (red, down)
+        arrow pair, the total, then 'PTS'."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        middle = (y1 + y2) // 2
+        draw.polygon([(x1, middle - 1), (x1 + 5, middle - 7), (x1 + 10, middle - 1)], fill=COLORS["green"], outline=COLORS["border"])
+        draw.polygon([(x1, middle + 2), (x1 + 5, middle + 8), (x1 + 10, middle + 2)], fill=COLORS["red"], outline=COLORS["border"])
+        unit_font = self._font(8, True)
+        unit_w = self._text_width(draw, "PTS", unit_font)
+        total, total_font = self._fit_text(draw, total, x2 - x1 - 15 - unit_w - 3, 15, bold=True, min_size=9)
+        self._draw_text_in_box(draw, (x1 + 15, y1, x2, y2), total, total_font, COLORS["text"])
+        unit_x = x1 + 15 + self._text_width(draw, total, total_font) + 3
+        self._draw_text_in_box(draw, (unit_x, middle - 1, unit_x + unit_w, y2), "PTS", unit_font, COLORS["text"])
+
+    def _draw_kit_stopwatch(self, draw, x, y, spec):
+        """An 11x13 stopwatch: crown, side button, face and two hands."""
+        ink = COLORS["text"]
+        draw.rectangle((x + 4, y, x + 6, y + 1), fill=ink)
+        draw.point((x + 10, y + 2), fill=ink)
+        draw.ellipse((x, y + 2, x + 11, y + 13), fill=COLORS["panel"], outline=ink, width=2)
+        center_x, center_y = x + 5, y + 8
+        draw.line((center_x, center_y, center_x, center_y - 3), fill=ink, width=1)
+        draw.line((center_x, center_y, center_x + 2, center_y + 2), fill=COLORS[spec.live], width=1)
 
     def _draw_kit_tv_logos(self, image, draw, box, label, background):
         """Each network of a broadcast label as its logo, left to right, with
@@ -348,20 +410,27 @@ class ScorebugKitMixin:
             return
         capacity = max(0, (y2 - row_y + 1) // KIT_SCOREBOARD_ROW_HEIGHT)
         shown = games[:capacity]
+        slots = [SportsDashboard._kit_day_slot(event, now) for event in shown]
         for index, event in enumerate(shown):
             top = row_y + index * KIT_SCOREBOARD_ROW_HEIGHT
-            self._draw_kit_scoreboard_row(image, draw, (x1, top, x2, top + KIT_SCOREBOARD_ROW_HEIGHT - 1), event, now, spec, last=index == len(shown) - 1)
+            previous = slots[index - 1] if index else None
+            following = slots[index + 1] if index + 1 < len(slots) else None
+            self._draw_kit_scoreboard_row(image, draw, (x1, top, x2, top + KIT_SCOREBOARD_ROW_HEIGHT - 1), event, now, spec,
+                                          last=index == len(shown) - 1, slot=(previous, slots[index], following))
 
-    def _draw_kit_scoreboard_row(self, image, draw, box, event, now, spec, last=False):
+    def _draw_kit_scoreboard_row(self, image, draw, box, event, now, spec, last=False, slot=None):
         x1, y1, x2, y2 = [int(value) for value in box]
         state = SportsDashboard._hub_event_state(event)
-        top_label, bottom_label, top_key = spec.hook("state_labels", event, now, default=("", "", "text"))
         state_x2 = x1 + KIT_SCOREBOARD_STATE_WIDTH
-        top_label, top_font = self._fit_text(draw, top_label, KIT_SCOREBOARD_STATE_WIDTH - 4, 10, bold=True, min_size=8)
-        self._draw_text_in_box(draw, (x1 + 2, y1 + 1, state_x2, y1 + 12), top_label, top_font, COLORS[top_key])
-        if bottom_label:
-            bottom_label, bottom_font = self._fit_text(draw, bottom_label, KIT_SCOREBOARD_STATE_WIDTH - 4, 9, bold=False, min_size=7)
-            self._draw_text_in_box(draw, (x1 + 2, y1 + 13, state_x2, y1 + 24), bottom_label, bottom_font, COLORS["text"])
+        if slot and slot[1]:
+            self._draw_kit_day_slot(draw, (x1, y1, state_x2, y2), *slot, spec)
+        else:
+            top_label, bottom_label, top_key = spec.hook("state_labels", event, now, default=("", "", "text"))
+            top_label, top_font = self._fit_text(draw, top_label, KIT_SCOREBOARD_STATE_WIDTH - 4, 10, bold=True, min_size=8)
+            self._draw_text_in_box(draw, (x1 + 2, y1 + 1, state_x2, y1 + 12), top_label, top_font, COLORS[top_key])
+            if bottom_label:
+                bottom_label, bottom_font = self._fit_text(draw, bottom_label, KIT_SCOREBOARD_STATE_WIDTH - 4, 9, bold=False, min_size=7)
+                self._draw_text_in_box(draw, (x1 + 2, y1 + 13, state_x2, y1 + 24), bottom_label, bottom_font, COLORS["text"])
         if state == "live" and spec.hook("row_flag", event, default=False):
             draw.rectangle((state_x2 - 1, y1 + 3, state_x2 + 1, y2 - 3), fill=COLORS[spec.live])
         winner = spec.hook("winner_side", event, default="") if state == "final" else ""
@@ -388,6 +457,50 @@ class ScorebugKitMixin:
                 self._draw_text_in_box(draw, (x2 - 2 - score_w, line_y1, x2 - 2, line_y2), score_text, score_font, COLORS["text"], align="right")
         if not last:
             draw.line((x1, y2, x2, y2), fill=COLORS["line"], width=1)
+
+    def _draw_kit_day_slot(self, draw, box, previous, slot, following, spec):
+        """An upcoming game on a later day as a timeline stop. The day's first
+        game carries the day tab and its kickoff; later games that day hang off
+        a rail with a dot and show their time only when it changes."""
+        x1, y1, _x2, y2 = box
+        day, time = slot
+        accent = COLORS[spec.accent]
+        rail_x, middle = x1 + KIT_DAY_RAIL_OFFSET, (y1 + y2) // 2
+        continues = bool(following) and following[0] == day
+        if previous and previous[0] == day:
+            draw.line((rail_x, y1 - 1, rail_x, y2 if continues else middle), fill=accent, width=2)
+            draw.ellipse((rail_x - 3, middle - 3, rail_x + 3, middle + 3), fill=accent, outline=COLORS["border"], width=1)
+            if previous[1] != time:
+                self._draw_kit_slot_time(draw, (rail_x + 6, middle - 6, x1 + KIT_SCOREBOARD_STATE_WIDTH, middle + 6), time)
+            return
+        self._draw_kit_day_tab(draw, x1, y1 + 1, day, accent)
+        if continues:
+            draw.line((rail_x, y1 + 12, rail_x, y2), fill=accent, width=2)
+        self._draw_kit_slot_time(draw, (rail_x + 6, y1 + 13, x1 + KIT_SCOREBOARD_STATE_WIDTH, y1 + 24), time)
+
+    def _draw_kit_ticker_day(self, draw, x, top, previous, slot, following, spec):
+        """The one-line ticker's version of the day timeline: the day tab on the
+        day's first row, a rail and dot on the rows after it, the time beside."""
+        day, time = slot
+        accent = COLORS[spec.accent]
+        rail_x, bottom = x + KIT_DAY_RAIL_OFFSET, top + KIT_TICKER_ROW_HEIGHT - 1
+        continues = bool(following) and following[0] == day
+        if previous and previous[0] == day:
+            draw.line((rail_x, top - 1, rail_x, bottom if continues else top + 7), fill=accent, width=2)
+            draw.ellipse((rail_x - 3, top + 4, rail_x + 3, top + 10), fill=accent, outline=COLORS["border"], width=1)
+        else:
+            self._draw_kit_day_tab(draw, x, top + 2, day, accent)
+            if continues:
+                draw.line((rail_x, top + 13, rail_x, bottom), fill=accent, width=2)
+        self._draw_kit_slot_time(draw, (x + KIT_DAY_TAB_WIDTH + 3, top, x + 54, top + 15), time)
+
+    def _draw_kit_day_tab(self, draw, x, y, day, fill):
+        draw.rounded_rectangle((x, y, x + KIT_DAY_TAB_WIDTH, y + 10), radius=3, fill=fill, outline=COLORS["border"], width=1)
+        self._draw_centered_in_box(draw, (x, y, x + KIT_DAY_TAB_WIDTH, y + 10), day, self._font(8, True), _kit_ink_on(fill))
+
+    def _draw_kit_slot_time(self, draw, box, time):
+        text, font = self._fit_text(draw, time, box[2] - box[0], 9, bold=True, min_size=7)
+        self._draw_text_in_box(draw, box, text, font, COLORS["text"])
 
     def _kit_team_name(self, draw, spec, event, side, budget, size, bold, min_size=None):
         """The team's full name (新英格兰爱国者) when it fits ``budget`` at ``size`` or one
@@ -426,12 +539,17 @@ class ScorebugKitMixin:
             self._draw_text_in_box(draw, (x1 + 4, y, x2, y + 14), f"No other {spec.sport} games", self._font(9, True), COLORS["muted"])
             return
         capacity = max(0, (y2 - y + 1) // KIT_TICKER_ROW_HEIGHT)
+        slots = [SportsDashboard._kit_day_slot(event, now) for event in games[:capacity]]
         for index, event in enumerate(games[:capacity]):
             top = y + index * KIT_TICKER_ROW_HEIGHT
             state = SportsDashboard._hub_event_state(event)
-            clock, key = SportsDashboard._kit_ticker_clock(event, now, spec)
-            clock, clock_font = self._fit_text(draw, clock, 52, 9, bold=True, min_size=7)
-            self._draw_text_in_box(draw, (x1, top, x1 + 54, top + 15), clock, clock_font, COLORS[key])
+            if slots[index]:
+                following = slots[index + 1] if index + 1 < len(slots) else None
+                self._draw_kit_ticker_day(draw, x1, top, slots[index - 1] if index else None, slots[index], following, spec)
+            else:
+                clock, key = SportsDashboard._kit_ticker_clock(event, now, spec)
+                clock, clock_font = self._fit_text(draw, clock, 52, 9, bold=True, min_size=7)
+                self._draw_text_in_box(draw, (x1, top, x1 + 54, top + 15), clock, clock_font, COLORS[key])
             if state == "live" and spec.hook("row_flag", event, default=False):
                 draw.rectangle((x1 + 55, top + 3, x1 + 56, top + 12), fill=COLORS[spec.live])
             winner = spec.hook("winner_side", event, default="") if state == "final" else ""
@@ -464,6 +582,14 @@ class ScorebugKitMixin:
                 draw.line((x1, top + KIT_TICKER_ROW_HEIGHT - 1, x2, top + KIT_TICKER_ROW_HEIGHT - 1), fill=COLORS["line"], width=1)
 
     # Shared labels ------------------------------------------------------------
+
+    @staticmethod
+    def _kit_day_slot(event, now):
+        """('SUN', '10AM') for a game still to come on a later day, else None."""
+        start = (event or {}).get("start")
+        if SportsDashboard._hub_event_state(event) != "scheduled" or not isinstance(start, datetime) or start.date() == now.date():
+            return None
+        return start.strftime("%a").upper(), SportsDashboard._format_time(start).replace(":00", "").replace(" ", "")
 
     @staticmethod
     def _kit_ticker_clock(event, now, spec):
@@ -517,6 +643,14 @@ class ScorebugKitMixin:
         if 0 < days < 7:
             return f"{start.strftime('%a').upper()} {time_text}"
         return f"{start.strftime('%m/%d')} {time_text}"
+
+    @staticmethod
+    def _kit_countdown_parts(value):
+        """[('1', 'H'), ('40', 'M')] for a countdown label like 'IN 1H 40M', else []."""
+        value = str(value or "")
+        if not re.fullmatch(r"IN(?: \d+[DHM])+", value):
+            return []
+        return re.findall(r"(\d+)([DHM])", value)
 
     @staticmethod
     def _kit_countdown_label(start, now):

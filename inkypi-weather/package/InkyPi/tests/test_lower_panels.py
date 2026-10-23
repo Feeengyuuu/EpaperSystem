@@ -370,6 +370,36 @@ def test_tv_tile_keeps_the_text_when_no_network_has_a_logo(monkeypatch, tmp_path
     assert "KJZZ-TV" in [text for _box, text, _font in boxes]
 
 
+def test_scoreboard_groups_later_games_under_one_day_tab_and_each_kickoff_once(boxes):
+    sunday = (NOW + timedelta(days=7)).replace(hour=10, minute=0)
+    games = [_ticker_game("SF", "ATL", 0, start=sunday), _ticker_game("CLE", "TEN", 0, start=sunday),
+             _ticker_game("TB", "CAR", 0, start=sunday.replace(hour=13, minute=5)),
+             _ticker_game("NYG", "HOU", 0, start=sunday + timedelta(days=1, hours=7, minutes=15))]
+    assert SportsDashboard._kit_day_slot(games[0], NOW) == ("SUN", "10AM")
+    assert SportsDashboard._kit_day_slot(_ticker_game("A", "B", 2), NOW) is None
+    spec = _plugin()._football_spec("NFL")
+    _render(lambda plugin, image, draw: plugin._draw_kit_scoreboard_column(image, draw, (300, 20, 540, 200), games, NOW, spec))
+
+    texts = [text for _box, text, _font in boxes]
+    _assert_fits(ImageDraw.Draw(Image.new("RGB", (1, 1))), boxes)
+    assert texts.count("SUN") == 1 and texts.count("10AM") == 1
+    assert "1:05PM" in texts and "MON" in texts and "5:15PM" in texts
+
+
+def test_countdown_and_total_tiles_draw_cards_and_units(boxes):
+    assert SportsDashboard._kit_countdown_parts("IN 2D 8H") == [("2", "D"), ("8", "H")]
+    assert SportsDashboard._kit_countdown_parts("IN 45M") == [("45", "M")]
+    assert SportsDashboard._kit_countdown_parts("SOON") == []
+    spec = _plugin()._football_spec("NFL")
+    image, draw = _render(lambda plugin, image, draw: plugin._draw_kit_tiles(
+        draw, (20, 20, 320, 56), [("KICKOFF", "IN 1H 40M"), ("O/U", "51.5"), ("SPREAD", "SOON")], spec))
+
+    _assert_fits(draw, boxes)
+    texts = [text for _box, text, _font in boxes]
+    assert ["1", "H", "40", "M"] == [text for text in texts if text in {"1", "H", "40", "M"}]
+    assert "IN 1H 40M" not in texts and "51.5" in texts and "PTS" in texts and "SOON" in texts
+
+
 def test_basketball_leaders_per_team_and_for_the_game():
     def competitor(points, name):
         return {"leaders": [{"name": "points", "leaders": [{"value": points, "displayValue": str(points), "athlete": {"shortName": name}}]}]}
