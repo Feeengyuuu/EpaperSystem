@@ -178,6 +178,9 @@ TEAM_LOGO_LIGHT_INFO_KEY = "inkypi_light_on_transparent"
 TEAM_LOGO_DISK_CACHE_MAX_BYTES = 2 * 1024 * 1024
 TEAM_LOGO_DISK_CACHE_MAX_SIDE = 2048
 ESPN_LOGO_THUMBNAIL_SIDE = 200
+# Riot's image resizer, which lolesports.com itself serves team logos through.
+LOLESPORTS_IMAGE_RESIZER_URL = "https://am-a.akamaihd.net/image"
+LOLESPORTS_LOGO_THUMBNAIL_SIDE = 200
 NCAA_POLL_SIZE = 25
 TEAM_LOGO_DISK_CACHE_MAX_PIXELS = 4 * 1024 * 1024
 TEAM_LOGO_IMAGE_LIMITS = ImageLimits(

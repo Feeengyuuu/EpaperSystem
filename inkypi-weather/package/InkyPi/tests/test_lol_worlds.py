@@ -685,6 +685,19 @@ def test_white_team_logo_has_no_backdrop_on_the_deep_night_theme():
     assert _count(image, DEEP_NIGHT_COLORS["text"]) == 0
 
 
+def test_lolesports_team_logos_come_through_riots_resizer():
+    # LYON's original is 3500 px, past the decode limit; the resizer serves ~200 px.
+    original = "http://static.lolesports.com/teams/1743717443673_isotypelyon-03.png"
+
+    name, _wins, logo = SportsDashboard._team_info([{"code": "LYON", "image": original}], 0)
+
+    assert name == "LYON"
+    assert logo == ("https://am-a.akamaihd.net/image?resize=200%3A&f="
+                    "http%3A%2F%2Fstatic.lolesports.com%2Fteams%2F1743717443673_isotypelyon-03.png")
+    assert SportsDashboard._lolesports_logo_thumbnail_url("https://example.com/blg.png") == "https://example.com/blg.png"
+    assert SportsDashboard._lolesports_logo_thumbnail_url("") == ""
+
+
 def test_light_logo_flag_is_measured_on_the_decoded_source():
     small = SportsDashboard._team_logo_from_bytes(_logo_png((255, 255, 255, 255)), 16)
     colored = SportsDashboard._team_logo_from_bytes(_logo_png((0, 92, 185, 255)), 16)
