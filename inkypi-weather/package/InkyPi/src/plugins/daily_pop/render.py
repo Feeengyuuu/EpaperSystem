@@ -8,6 +8,7 @@ charts mark each entry's move since the previous refresh, the globe follows the 
 from __future__ import annotations
 
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
@@ -31,6 +32,10 @@ CARDS = {"bilibili": (12, 58, 276, 468), "bangumi": (284, 58, 520, 312), "wiki":
          "epic": (528, 58, 788, 262), "songs": (528, 268, 788, 372), "puzzle": (528, 378, 788, 468)}
 TITLES = {"bilibili": "B站热门", "bangumi": "今日新番", "wiki": "维基热读", "epic": "今日地球",
           "songs": "Apple 热歌", "puzzle": "每日棋题"}
+# Each card's official logo (file in assets/logos, height) and the title that follows it.
+LOGOS = {"bilibili": ("bilibili", 16, "热门"), "bangumi": ("bangumi", 18, "今日新番"),
+         "wiki": ("wikipedia", 20, "维基热读"), "epic": ("nasa", 20, "今日地球"),
+         "songs": ("apple_music", 15, "热歌"), "puzzle": ("chesscom", 17, "每日棋题")}
 SHORT_NAMES = {"bilibili": "B站", "bangumi": "新番", "wiki": "维基", "epic": "地球", "songs": "热歌",
                "puzzle": "棋题"}
 WEEKDAYS = "一二三四五六日"
@@ -63,13 +68,33 @@ def count_text(value):
     return str(value)
 
 
-def _card(canvas, name, note=""):
-    """The card's frame, its source colour along the top and its title row; returns the content top."""
+@lru_cache(maxsize=16)
+def _logo(file_name, height, night):
+    """An official logo (assets/logos), its dark-page version by night when there is one."""
+    for name in ((f"{file_name}_night", file_name) if night else (file_name,)):
+        path = ASSETS / "logos" / f"{name}.png"
+        if path.is_file():
+            with Image.open(path) as source:
+                art = source.convert("RGBA")
+            return art.resize((max(1, round(art.width * height / art.height)), height), Image.Resampling.LANCZOS)
+    return None
+
+
+def _card(canvas, name, note="", *, title=None, logo=True):
+    """The card's frame, its source colour along the top and its title row (led by the source's
+    official logo); returns the content top."""
     left, top, right, bottom = CARDS[name]
     canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
     canvas.draw.rounded_rectangle((left, top, right, top + BAR), radius=6, fill=BRANDS[name],
                                   corners=(True, True, False, False))
-    canvas.text((left + 10, top + BAR + 12), TITLES[name], 14, anchor="lm")
+    middle = top + BAR + 12
+    x = left + 10
+    file_name, height, logo_title = LOGOS.get(name, (None, 0, None))
+    art = _logo(file_name, height, sum(canvas.color("paper")) < 200) if logo and file_name else None
+    if art is not None:
+        canvas.image.paste(art, (x, round(middle - art.height / 2)), art)
+        x += art.width + 6
+    canvas.text((x, middle), title or (logo_title if art is not None else TITLES[name]), 14, anchor="lm")
     if note:
         canvas.text((right - 10, top + BAR + 12), note, 11, "muted", anchor="rm", bold=False, width=right - left - 110)
     return top + BAR + 24
@@ -298,7 +323,11 @@ def _songs(canvas, payload, images):
     songs = payload["songs"]["data"].get("songs") or []
     history = (payload.get("history") or {}).get("songs") or {}
     moves = chart_moves(songs, history.get("previous"), "name") if history.get("previous") else {}
-    top = _card(canvas, "songs", "美国 · 播放最多")
+    chart = payload["songs"]["data"].get("chart")
+    if chart == "itunes":
+        top = _card(canvas, "songs", "美国 · 热销榜", title="iTunes 热歌", logo=False)
+    else:
+        top = _card(canvas, "songs", "美国 · 播放最多")
     left, _top, right, bottom = CARDS["songs"]
     if not songs:
         canvas.text(((left + right) / 2, (top + bottom) / 2), "榜单暂不可用", 13, "muted", anchor="mm")

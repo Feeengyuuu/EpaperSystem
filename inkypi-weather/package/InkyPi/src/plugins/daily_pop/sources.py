@@ -7,20 +7,27 @@ and the page draws whatever is cached when a provider is down.
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+from runtime.refresh_contracts import TaskCancelled
 from utils.http_client import get_http_client
 
 
+logger = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
 USER_AGENT = "InkyPi DailyPop/1.0 (personal e-paper display)"
 REQUEST_TIMEOUT = (3, 9)
 BILIBILI_URL = "https://api.bilibili.com/x/web-interface/popular"
 BANGUMI_URL = "https://api.bgm.tv/calendar"
 APPLE_SONGS_URL = "https://rss.marketingtools.apple.com/api/v2/us/music/most-played/10/songs.json"
+# The iTunes Store's own top-songs feed: the stand-in while Apple's marketing RSS is down
+# (it answered 502/504 for hours on 2026-10-24).
+ITUNES_SONGS_URL = "https://itunes.apple.com/us/rss/topsongs/limit=10/json"
+APPLE_SONGS_TIMEOUT = (3, 4)
 WIKI_FEED_URL = "https://api.wikimedia.org/feed/v1/wikipedia/zh/featured/{date:%Y/%m/%d}"
 CHESS_URL = "https://api.chess.com/pub/puzzle"
 EPIC_URL = "https://epic.gsfc.nasa.gov/api/natural"
@@ -58,9 +65,9 @@ def safe_image_url(value):
     return url if parts.scheme == "https" and parts.hostname in IMAGE_HOSTS else None
 
 
-def _get(url, context, *, max_bytes, params=None):
+def _get(url, context, *, max_bytes, params=None, timeout=REQUEST_TIMEOUT):
     context.raise_if_cancelled()
-    response = get_http_client().request_json("GET", url, context=context, timeout=REQUEST_TIMEOUT,
+    response = get_http_client().request_json("GET", url, context=context, timeout=timeout,
                                               max_bytes=max_bytes, params=params,
                                               headers={"User-Agent": USER_AGENT})
     context.raise_if_cancelled()
@@ -148,8 +155,32 @@ def normalize_songs(payload):
     return {"songs": songs[:MAX_SONGS]}
 
 
+def normalize_itunes_songs(payload):
+    entries = (((payload or {}).get("feed") or {}).get("entry")) or []
+    songs = []
+    for row in entries if isinstance(entries, list) else []:
+        name = ((row or {}).get("im:name") or {}).get("label") if isinstance(row, dict) else None
+        if not name:
+            continue
+        images = row.get("im:image") or []
+        artwork = (images[-1] or {}).get("label") if isinstance(images, list) and images else ""
+        songs.append({"name": _clean(name, 50), "artist": _clean((row.get("im:artist") or {}).get("label"), 40),
+                      "artwork": str(artwork or "")})
+    if not songs:
+        raise ValueError("iTunes returned no songs")
+    return {"songs": songs[:MAX_SONGS], "chart": "itunes"}
+
+
 def fetch_songs(context):
-    return normalize_songs(_get(APPLE_SONGS_URL, context, max_bytes=256 * 1024))
+    """Apple Music's most played, or the iTunes Store's top songs when Apple's feed is down."""
+    try:
+        data = normalize_songs(_get(APPLE_SONGS_URL, context, max_bytes=256 * 1024, timeout=APPLE_SONGS_TIMEOUT))
+        return {**data, "chart": "apple_music"}
+    except TaskCancelled:
+        raise
+    except Exception as exc:  # noqa: BLE001 - any Apple failure falls through to the iTunes chart.
+        logger.info("Apple Music chart unavailable (%s); using the iTunes Store chart", type(exc).__name__)
+    return normalize_itunes_songs(_get(ITUNES_SONGS_URL, context, max_bytes=256 * 1024))
 
 
 def valid_songs(data):

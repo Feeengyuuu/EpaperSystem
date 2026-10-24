@@ -1,0 +1,102 @@
+{
+  "assets": [
+    {
+      "name": "bilibili",
+      "description_page": "https://commons.wikimedia.org/wiki/File:Bilibili_2023.svg",
+      "license": "Public domain",
+      "author": "Bilibili Inc.",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/12/Bilibili_2023.svg/330px-Bilibili_2023.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "1261bf8e596a03319c0d850bf418c5100c04c77273fbb1b99d90b306e61c4508",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 40 px tall.",
+      "files": [
+        {
+          "file": "bilibili.png",
+          "sha256": "cac4830f3b1a3732f934d8b4215361b56bc64671b402125db7f179ed948f5a7b"
+        }
+      ]
+    },
+    {
+      "name": "bangumi",
+      "description_page": "https://commons.wikimedia.org/wiki/File:Bangumi_riff_Logo.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/wiki/User:Sebastian_Wallroth\" title=\"User:Sebastian Wallroth\">Sebastian Wallroth</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d3/Bangumi_riff_Logo.svg/330px-Bangumi_riff_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "a6bb12dbee487e90bdb6b94881ec43d993a283e0d9341e47588a7d1b5bbef099",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 40 px tall.",
+      "files": [
+        {
+          "file": "bangumi.png",
+          "sha256": "55de929dd76e3f05fae9dde2ee0b56b63dc87f31fb3880b66998b945ee5eb549"
+        }
+      ]
+    },
+    {
+      "name": "nasa",
+      "description_page": "https://commons.wikimedia.org/wiki/File:NASA_logo.svg",
+      "license": "Public domain",
+      "author": "National Aeronautics and Space Administration",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e5/NASA_logo.svg/330px-NASA_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "47ae901b8566316c7e13d2fa38ecf4c4d24738db01ba6a6739154f514a86a598",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 40 px tall.",
+      "files": [
+        {
+          "file": "nasa.png",
+          "sha256": "0e0b91254fa30ee3a338803ad35a07bc08e494319bf81c7e0dca82c9b3035cf0"
+        }
+      ]
+    },
+    {
+      "name": "wikipedia",
+      "description_page": "https://commons.wikimedia.org/wiki/File:Wikipedia-logo-v2.svg",
+      "license": "CC BY-SA 3.0",
+      "author": "Version 1 by <a href=\"https://meta.wikimedia.org/wiki/User:Nohat\" class=\"extiw\" title=\"meta:User:Nohat\">Nohat</a> (concept by <a href=\"https://meta.wikimedia.org/wiki/User:Paullusmagnus\" class=\"extiw\"",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/330px-Wikipedia-logo-v2.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "08d62c3c952a8c58781a1abdc114ec88549e54244c811b1233eeec8af6902848",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 40 px tall.",
+      "files": [
+        {
+          "file": "wikipedia.png",
+          "sha256": "f96a7ac0752660325b6b7051ab0f70977fb4f6df98c8fc0a73fe1b95153656e9"
+        }
+      ]
+    },
+    {
+      "name": "apple_music",
+      "description_page": "https://commons.wikimedia.org/wiki/File:Apple_Music_logo.svg",
+      "license": "Public domain",
+      "author": "Apple Inc.",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2a/Apple_Music_logo.svg/330px-Apple_Music_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "0ab3a5f8cecb2ffe30f8fcbd87df1243f1fc82a9fa09ba5d3be55677b00cd368",
+      "modifications": "Trimmed, 40 px tall; black on light pages and white on dark ones, as Apple publishes it.",
+      "files": [
+        {
+          "file": "apple_music.png",
+          "sha256": "e4a04ca20c7288f29d7e6773e1189292ea3b562f5fb3da689d773cfb91c52e85"
+        },
+        {
+          "file": "apple_music_night.png",
+          "sha256": "c00a574e50a233cabf299b7093cdce75d289169d0db4d39cd296998db1545454"
+        }
+      ]
+    },
+    {
+      "name": "chesscom",
+      "description_page": "https://commons.wikimedia.org/wiki/File:Chesscom_logo_wordmark_flat.svg",
+      "license": "Public domain",
+      "author": "Chess.com",
+      "source_png": "File:Chesscom logo wordmark flat.svg (Wikimedia PNG render, 320 px)",
+      "source_sha256": "57f89401677ad3d813c335f3b690ee6da411efbc83138cdd11f22b7b80acf6b9",
+      "modifications": "Trimmed, 40 px tall; the white flat mark recoloured to Chess.com's published colours: green pawn #81B64C with the name in #312E2B (white on dark pages).",
+      "files": [
+        {
+          "file": "chesscom.png",
+          "sha256": "167b3e166a06ebc9f81270aa8fe25911ab14359c03637f0d10af52fad3707ced"
+        },
+        {
+          "file": "chesscom_night.png",
+          "sha256": "0b5e9e0fbdccbfbbcdf6899599048ffa1ad5175dc7f10669656d56d921fce6fd"
+        }
+      ]
+    }
+  ]
+}

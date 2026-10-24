@@ -118,7 +118,7 @@ class DailyPop(BasePlugin):
                                    lambda ctx: sources.fetch_bangumi(now, ctx), fresh_seconds=6 * 3600,
                                    usable_seconds=86400, validate=sources.valid_bangumi, timeout_seconds=10)),
             "songs": load(Source("songs", {"chart": "us-most-played"}, sources.fetch_songs, fresh_seconds=6 * 3600,
-                                 usable_seconds=3 * 86400, validate=sources.valid_songs, timeout_seconds=8)),
+                                 usable_seconds=3 * 86400, validate=sources.valid_songs, timeout_seconds=16)),
             "wiki": load(Source("wiki", {"lang": "zh", "day": now.date().isoformat()},
                                 lambda ctx: sources.fetch_most_read(now, ctx), fresh_seconds=6 * 3600,
                                 usable_seconds=2 * 86400, validate=sources.valid_most_read, timeout_seconds=10)),
