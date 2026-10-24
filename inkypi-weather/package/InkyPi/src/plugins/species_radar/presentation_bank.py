@@ -1103,17 +1103,6 @@ class SpeciesPresentationBank:
             )
         return protected
 
-    def _unlink_record_media(self, record):
-        for namespace, field in ((self.photos, "photo_key"), (self.maps, "map_key")):
-            key = record.get(field)
-            if not _valid_hash(key) or key in self._protected_media_keys(field):
-                continue
-            path = namespace.path(key, suffix=".png")
-            try:
-                self._safe_unlink(path, namespace.root)
-            except FileNotFoundError:
-                pass
-
     def _read(self):
         try:
             self.state_path.lstat()
@@ -1392,7 +1381,3 @@ def _bool(value, default):
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _is_reparse_or_link(path, info):
-    reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    attributes = getattr(info, "st_file_attributes", 0)
-    return path.is_symlink() or bool(reparse_flag and attributes & reparse_flag)

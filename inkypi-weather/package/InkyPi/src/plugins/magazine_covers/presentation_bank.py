@@ -616,18 +616,6 @@ class MagazinePresentationBank:
             profile["records"] = survivors[-MAX_RECORDS_PER_PROFILE:]
         return ready
 
-    def stale_current_records(self, profile, *, now=None):
-        current = profile.get("current_selection")
-        if not isinstance(current, dict):
-            return []
-        try:
-            selected = self.selection_records(profile, current, load_media=True, now=now)
-        except RuntimeError:
-            return []
-        if any(self.record_provenance(record, now=now) == "stale_cache" for record, _image in selected):
-            return selected
-        return []
-
     def protected_records(self, profile):
         records = {record["record_key"]: record for record in profile["records"]}
         protected = []

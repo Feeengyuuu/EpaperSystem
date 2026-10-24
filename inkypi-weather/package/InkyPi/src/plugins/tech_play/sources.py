@@ -506,6 +506,3 @@ def epic_end_label(stamp, now):
     return f"至 {local:%m/%d} {local:%H:%M}" + ("（今天）" if local.date() == now.date() else "")
 
 
-def igdb_release_label(stamp):
-    local = stamp.astimezone(PACIFIC)
-    return f"{local:%m/%d}"

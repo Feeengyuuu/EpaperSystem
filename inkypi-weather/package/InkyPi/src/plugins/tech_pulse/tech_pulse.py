@@ -1172,10 +1172,6 @@ class TechPulse(BasePlugin):
                 continue
         return datetime.now(timezone.utc)
 
-    def _format_generated_at(self, value, fallback):
-        parsed = self._parse_datetime(value) or self._to_utc(fallback)
-        return parsed.strftime("%H:%M UTC")
-
     def _published_at(self, raw_time):
         if raw_time is None:
             return None

@@ -2446,25 +2446,6 @@ def _card(draw, box, colors):
     draw.rounded_rectangle(box, radius=17, fill=colors["background"], outline=colors["rule"], width=1)
 
 
-def _metric_card(draw, box, label, value, colors):
-    _card(draw, box, colors)
-    left, top, right, _bottom = box
-    draw.text((left + 18, top + 10), label, font=_font(12, True), fill=colors["muted"])
-    text = str(value)
-    font = _font(20 if len(text) <= 18 else 15, True)
-    _right_text(draw, right - 18, top + 29, text, font, colors["ink"])
-
-
-def _dashboard_panel(draw, box, colors):
-    draw.rounded_rectangle(
-        box,
-        radius=14,
-        fill=colors["background"],
-        outline=colors["rule"],
-        width=1,
-    )
-
-
 def _section_label(canvas, draw, left, top, text, colors, icon_kind):
     """The section's icon and name; returns the name's right edge."""
     has_icon = _draw_dashboard_icon(canvas, icon_kind, left, top - 3, colors)
@@ -2627,156 +2608,6 @@ def _security_flag_text(vehicle, settings, preferences, language):
     return " / ".join(flags) or _t(language, "modes_unknown")
 
 
-def _v2_climate_lines(climate, settings, preferences, language):
-    driver = _temperature_text(
-        climate["driver_target_temp_c"],
-        settings,
-        preferences,
-        language,
-    )
-    passenger = _temperature_text(
-        climate["passenger_target_temp_c"],
-        settings,
-        preferences,
-        language,
-    )
-    auto_mode = _enum_text(language, "state", climate["hvac_auto_mode"])
-    fan = "--" if climate["fan_status"] is None else f"{climate['fan_status']:g}"
-    defrost = _enum_text(language, "state", climate["defrost_mode"])
-    return (
-        _t(language, "target", driver=driver, passenger=passenger),
-        _t(
-            language,
-            "auto_fan_defrost",
-            auto=auto_mode,
-            fan=fan,
-            defrost=defrost,
-        ),
-        _climate_feature_text(climate, language),
-    )
-
-
-def _climate_feature_text(climate, language):
-    active = []
-    if climate["rear_defroster_on"] is True:
-        active.append(_t(language, "rear_defrost"))
-    if climate["battery_heater_on"] is True:
-        active.append(_t(language, "battery_heat"))
-    if climate["wiper_heater_on"] is True:
-        active.append(_t(language, "wiper_heat"))
-    wheel = climate["steering_wheel_heat_level"]
-    if wheel is not None and wheel > 0:
-        active.append(_t(language, "wheel_heat", level=f"{wheel:g}"))
-    seat_labels = {
-        position: _t(language, f"seat_{position}")
-        for position in (
-            "front_left",
-            "front_right",
-            "rear_left",
-            "rear_right",
-            "rear_center",
-        )
-    }
-    seats = [
-        f"{seat_labels[position]}{level:g}"
-        for position, level in climate["seat_heaters"].items()
-        if level is not None and level > 0
-    ]
-    if seats:
-        active.append(_t(language, "seat_heat", value=" ".join(seats)))
-    cooling = [
-        _t(language, f"seat_{position}")
-        for position, level in climate["seat_cooling"].items()
-        if level is not None and level > 0
-    ]
-    if cooling:
-        active.append(_t(language, "seat_cool", value=" ".join(cooling)))
-    overheat = climate["cabin_overheat"]
-    if overheat["mode"]:
-        limit = f"/{_enum_text(language, 'state', overheat['temp_limit'])}" if overheat["temp_limit"] else ""
-        active.append(
-            _t(
-                language,
-                "overheat",
-                mode=_enum_text(language, "state", overheat["mode"]),
-                limit=limit,
-            )
-        )
-    if active:
-        return " / ".join(active[:2])
-    reported = (
-        climate["rear_defroster_on"],
-        climate["battery_heater_on"],
-        climate["wiper_heater_on"],
-        climate["steering_wheel_heat_level"],
-        *climate["seat_heaters"].values(),
-        *climate["seat_cooling"].values(),
-        climate["cabin_overheat"]["mode"],
-    )
-    return (
-        _t(language, "no_active_climate")
-        if any(value is not None for value in reported)
-        else _t(language, "not_reported")
-    )
-
-
-def _v2_vehicle_rows(vehicle, software_update, settings, preferences, language):
-    version = software_update["version"] or _t(language, "not_reported")
-    download = _percent_text(software_update["download_percent"])
-    install = _percent_text(software_update["install_percent"])
-    duration = _minutes_text(
-        software_update["expected_duration_minutes"],
-        language,
-    )
-    progress = (
-        _t(
-            language,
-            "progress_value",
-            download=download,
-            install=install,
-            duration=duration,
-        )
-        if any(
-            software_update[key] is not None
-            for key in (
-                "download_percent",
-                "install_percent",
-                "expected_duration_minutes",
-            )
-        )
-        else _t(language, "not_reported")
-    )
-    return (
-        (
-            _t(language, "odometer"),
-            _measurement_text(
-                vehicle["odometer"],
-                settings,
-                preferences,
-                language,
-            ),
-        ),
-        (
-            _t(language, "software"),
-            vehicle["software_version"] or _t(language, "not_reported"),
-        ),
-        (_t(language, "update"), version),
-        (_t(language, "progress"), progress),
-        (
-            _t(language, "body_wheel"),
-            _vehicle_appearance_text(vehicle, language),
-        ),
-        (
-            _t(language, "config"),
-            _vehicle_config_text(vehicle, language),
-        ),
-        (
-            _t(language, "equipment"),
-            _vehicle_equipment_text(vehicle, language),
-        ),
-    )
-
-
 def _percent_text(value):
     return "--" if value is None else f"{value:.0f}%"
 
@@ -2821,66 +2652,6 @@ def _vehicle_config_text(vehicle, language):
         _compact_provider_text(language, vehicle["charge_port_type"]),
     ]
     return "/".join(values)
-
-
-def _vehicle_equipment_text(vehicle, language):
-    values = [
-        _compact_provider_text(language, value)
-        for value in (
-            vehicle["efficiency_package"],
-            vehicle["sunroof_installed"],
-            vehicle["rear_seat_heaters"],
-        )
-        if value is not None
-    ]
-    return "/".join(values) or _t(language, "not_reported")
-
-
-def _render_tires(draw, tires, settings, preferences, colors, language):
-    unit = (
-        _preferred_unit(
-            settings,
-            preferences,
-            "pressureUnit",
-            "pressure_unit",
-            {"psi", "bar"},
-        )
-        or "bar"
-    )
-    unit_text = _t(language, "unit_psi" if unit == "psi" else "unit_bar")
-    _right_text(draw, 744, 294, unit_text, _font(10, True), colors["muted"])
-    positions = (
-        ("front_left", 580, 322),
-        ("front_right", 674, 322),
-        ("rear_left", 580, 357),
-        ("rear_right", 674, 357),
-    )
-    for position, left, top in positions:
-        label = _tire_abbreviation(position, language)
-        warning = _tire_warning_level(tires, position)
-        color = (
-            colors["accent"]
-            if warning == "hard"
-            else colors["warning"]
-            if warning in {"soft", "unknown"}
-            else colors["ink"]
-        )
-        pressure = _pressure_text(
-            tires["pressures"][position],
-            settings,
-            preferences,
-            language,
-        ).split(" ", 1)[0]
-        draw.text((left, top), label, font=_font(10, True), fill=colors["muted"])
-        draw.text((left + 22, top - 3), pressure, font=_font(15, True), fill=color)
-    status, color = _tire_status(tires, colors, language)
-    status_font = _font(10, True)
-    draw.text(
-        (580, 394),
-        _ellipsize_text(draw, status, status_font, 164),
-        font=status_font,
-        fill=color,
-    )
 
 
 def _tire_warning_level(tires, position):
@@ -2988,13 +2759,6 @@ def _minutes_text(value, language="en"):
         hours=hours,
         minutes=remainder,
     )
-
-
-def _closure_status_text(closures, language="en"):
-    if closures["all_closed"] is True:
-        return _t(language, "all_closed")
-    count = len(closures["open"]) + (1 if closures["charge_port_open"] is True else 0)
-    return _t(language, "open_count", count=count) if count else _t(language, "status_unknown")
 
 
 def _closure_detail_lines(closures, language="en"):
