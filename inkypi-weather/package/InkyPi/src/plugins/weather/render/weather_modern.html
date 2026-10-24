@@ -125,7 +125,7 @@
         <div class="mw-tile-title">生活指数</div>
         <div class="mw-indices">
           {% for index in v.indices %}
-          <div class="mw-index"><span class="mw-index-name">{{ index.name }}</span><span class="mw-stars">{% for star in range(5) %}<span class="mw-star {{ 'on' if star < index.stars else 'off' }}">★</span>{% endfor %}</span></div>
+          <div class="mw-index"><span class="mw-index-name">{{ index.name }}</span><svg class="mw-stars" viewBox="0 0 74 12">{% for star in range(5) %}<polygon transform="translate({{ star * 15.5 }} 0)" points="6,0.6 7.6,4.2 11.5,4.5 8.5,7.1 9.4,11 6,8.9 2.6,11 3.5,7.1 0.5,4.5 4.4,4.2" class="mw-star {{ 'on' if star < index.stars else 'off' }}"/>{% endfor %}</svg></div>
           {% endfor %}
         </div>
       </div>

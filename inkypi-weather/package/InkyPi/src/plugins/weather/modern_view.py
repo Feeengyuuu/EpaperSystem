@@ -454,29 +454,29 @@ def _mascot_line(view, scene, celsius):
     aqi_label = (view.get("aqi") or {}).get("label")
     force = (view.get("wind") or {}).get("force") or 0
     if scene == "thunder":
-        return "打雷啦！尽量待在室内"
+        return "打雷啦！待在室内吧"
     if scene == "rain":
-        return "正在下雨，路上慢一点"
+        return "下雨了，路上慢点哦"
     if soon:
-        return f"{soon['time']} 可能下雨，出门带伞哦"
+        return f"{soon['time']} 要下雨，带伞哦"
     if scene == "snow":
-        return "下雪啦！小心路面结冰"
+        return "下雪啦！小心路滑"
     if scene == "fog":
-        return "雾有点大，开车慢一点"
+        return "雾大，开车慢一点"
     if aqi_label in AQI_LABELS[3:]:
-        return "空气不太好，少开窗"
+        return "空气不好，少开窗"
     if uv >= 6 and not sun.get("night"):
-        return "紫外线很强，记得防晒"
+        return "紫外线强，记得防晒"
     if force >= 5:
-        return "风有点大，帽子抓紧"
+        return "风大，帽子抓紧啦"
     if celsius is not None and celsius <= 6:
-        return "好冷！多穿一件再出门"
+        return "好冷！多穿一件"
     if celsius is not None and celsius >= 30:
-        return "好热！记得多喝水"
+        return "好热！多喝点水"
     if sun.get("night"):
         return f"晚安～明早 {sun.get('rise', '')} 日出"
     if best:
-        return f"天气正好，{best['start']} 后出门走走吧！"
+        return f"{best['start']} 后出门正好！"
     return "今天也要开心呀！"
 
 
