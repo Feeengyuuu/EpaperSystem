@@ -3,6 +3,7 @@
 import json
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 from PIL import Image
@@ -94,6 +95,8 @@ def test_a_renamed_account_is_marked_missing_and_the_next_player_is_shown(plugin
     monkeypatch.setattr(plugin, "_fetch_dashboard_data", fetch)
     monkeypatch.setattr(plugin, "_lol_photo", lambda *_args, **_kwargs: "")
     monkeypatch.setattr(plugin, "_write_context", lambda *_args, **_kwargs: None)
+    # The bag in roster order, so the first pick is a pro with a single account (Faker).
+    monkeypatch.setattr(pro_tracker.random, "shuffle", lambda items: None)
 
     image = plugin.generate_image(settings, FakeDevice(key=""))
 
@@ -147,6 +150,73 @@ def test_the_ladder_rereads_only_a_few_stale_accounts_and_sorts_by_rank(plugin, 
     calls.clear()
     plugin._lol_board(settings, FakeDevice())
     assert sum("/league/v4/" in url for url in calls) == pro_tracker.LOL_BOARD_BATCH
+
+
+def _riot_session(matches=None, ranks=None, calls=None):
+    """A fake Riot API: PUUIDs named after the game name, the given newest match ids and ranks."""
+    def fake_get(url, params=None, headers=None, timeout=None):
+        if calls is not None:
+            calls.append(url)
+        if "/accounts/by-riot-id/" in url:
+            name = urllib.parse.unquote(url.split("/by-riot-id/")[1].split("/")[0])
+            return Response({"puuid": f"p-{name}"})
+        if "/matches/by-puuid/" in url:
+            puuid = url.split("/by-puuid/")[1].split("/")[0]
+            return Response([f"KR_{(matches or {})[puuid[2:]]}"] if puuid[2:] in (matches or {}) else [])
+        puuid = url.split("/by-puuid/")[1]
+        tier, lp = (ranks or {}).get(puuid[2:], ("MASTER", 10))
+        return Response([{"queueType": "RANKED_SOLO_5x5", "tier": tier, "rank": "I", "leaguePoints": lp,
+                          "wins": 10, "losses": 5}])
+
+    return lambda: type("S", (), {"get": staticmethod(fake_get)})()
+
+
+def test_a_pro_may_have_more_than_one_account():
+    kanavi = next(account for account in tracked_lol_accounts([]) if account["label"] == "Kanavi")
+
+    assert (kanavi["gameName"], kanavi["tagLine"]) == ("vinaka", "KR1")
+    assert [(alt["gameName"], alt["tagLine"]) for alt in kanavi["alts"]] == [("PoAtan", "ASP")]
+    assert all(alt["label"] == "Kanavi" for alt in kanavi["alts"])
+
+
+def test_the_ladder_shows_each_pros_best_ranked_account(plugin, monkeypatch):
+    monkeypatch.setattr(pro_tracker, "get_http_session",
+                        _riot_session(ranks={"vinaka": ("DIAMOND", 75), "PoAtan": ("MASTER", 367)}))
+    monkeypatch.setattr(pro_tracker, "LOL_BOARD_BATCH", 40)
+
+    board = plugin._lol_board({"includeCs2": "false"}, FakeDevice())
+
+    kanavi = next(row for row in board if row["player"] == "Kanavi")
+    assert (kanavi["tier"], kanavi["lp"], kanavi["riot_id"]) == ("MASTER", 367, "PoAtan#ASP")
+    assert len(board) == 20
+
+
+def test_the_page_shows_the_account_the_pro_played_on_last(plugin, monkeypatch):
+    monkeypatch.setattr(pro_tracker, "get_http_session",
+                        _riot_session(matches={"vinaka": 7800000000, "PoAtan": 7811111111}))
+    kanavi = next(account for account in plugin._tracked_lol({}) if account["label"] == "Kanavi")
+
+    shown = plugin._freshest_lol_account({}, FakeDevice(), kanavi)
+
+    assert (shown["gameName"], shown["label"], shown["player_id"]) == ("PoAtan", "Kanavi", kanavi["id"])
+    # A theme redraw makes no calls and keeps the account the live render chose.
+    monkeypatch.setattr(pro_tracker, "get_http_session", lambda: pytest.fail("theme redraw called Riot"))
+    assert plugin._freshest_lol_account({}, FakeDevice(), kanavi, refresh=False)["gameName"] == "PoAtan"
+    # A pro with one account is shown on it without asking Riot.
+    faker = next(account for account in plugin._tracked_lol({}) if account["label"] == "Faker")
+    assert plugin._freshest_lol_account({}, FakeDevice(), faker) is faker
+
+
+def test_win_loss_and_stat_icons_are_generated_badges_with_their_source():
+    icons = Path(lol_info_module.__file__).with_name("assets") / "icons"
+    record = json.loads((icons / "icons.source.json").read_text(encoding="utf-8"))
+    names = {"victory", "defeat", "kda", "winrate", "kill_participation", "cs_per_minute"}
+
+    assert set(record["icons"]) == names
+    for name in names:
+        with Image.open(icons / f"{name}.png") as icon:
+            assert icon.mode == "RGBA" and icon.size == (96, 96)
+            assert icon.getpixel((0, 0))[3] == 0 and icon.getpixel((48, 48))[3] == 255
 
 
 def test_a_theme_redraw_neither_calls_riot_nor_writes_the_ladder(plugin, monkeypatch, tmp_path):

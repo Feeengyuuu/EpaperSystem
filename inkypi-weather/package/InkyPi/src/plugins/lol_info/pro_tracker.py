@@ -6,8 +6,10 @@ round and a new round never starts with the player just shown.
 
 How fresh each piece is (the owner's update cadence):
 - the shown LoL account's profile, matches and live game: the instance's refreshMinutes;
+  a pro with more than one account is shown on the one they played on most recently;
 - the LoL ladder of all twenty: up to LOL_BOARD_BATCH stale accounts (older than
-  LOL_BOARD_MINUTES) are re-read on every LoL render, one league call each;
+  LOL_BOARD_MINUTES) are re-read on every LoL render, one league call each, and each
+  pro's row shows their best-ranked account;
 - HLTV's Top 20 list: weekly; the shown CS2 player's page: CS2_PLAYER_HOURS; the CS2
   board's ratings: CS2_BOARD_BATCH stale players (older than CS2_BOARD_HOURS) per CS2 render.
 This keeps a render under ~20 Riot calls, well inside a development key's 100 per 2 minutes.
@@ -58,8 +60,14 @@ class ProTrackerMixin:
         for entry in tracked_lol_accounts(self._pro_accounts(settings)):
             parsed = self._pro_account_from_entry(entry)
             if parsed:
-                accounts.append({**parsed, "team": entry.get("team", ""), "role": entry.get("role", "")})
+                alts = [alt for alt in (self._pro_account_from_entry(item) for item in entry.get("alts") or [])
+                        if alt and alt["id"] != parsed["id"]]
+                accounts.append({**parsed, "team": entry.get("team", ""), "role": entry.get("role", ""), "alts": alts})
         return accounts
+
+    @staticmethod
+    def _account_options(account):
+        return [account] + list(account.get("alts") or [])
 
     def _cs2_roster(self, state=None):
         top20 = (state or self._read_json(self._cache_dir() / CS2_STATE, {})).get("top20") or []
@@ -86,8 +94,8 @@ class ProTrackerMixin:
         if not advance:
             return {**by_id.get(state.get("last"), pool[0]), "position": state.get("position", 1), "size": len(pool)}
         ids = [item["id"] for item in pool]
-        # An account Riot no longer knows sits out until the ladder refresh finds it again.
-        missing = self._missing_lol_ids()
+        # A pro whose every account Riot no longer knows sits out until the ladder refresh finds one again.
+        missing = self._missing_lol_ids(self._tracked_lol(settings))
         queue = [item for item in state.get("queue") or [] if item in by_id and item not in missing]
         if sorted(state.get("pool_ids") or []) != sorted(ids) or not queue:
             queue = [item for item in ids if item not in missing] or ids[:]
@@ -156,8 +164,9 @@ class ProTrackerMixin:
             entry.update(self._ladder_entry(ranked), checked_ts=now, in_game=bool(active))
             state[account_id] = entry
         api_key = self._riot_key(settings, device_config) if refresh else ""
+        options = [option for account in accounts for option in self._account_options(account)]
         if api_key:
-            stale = sorted((account for account in accounts if account["id"] != (featured or ("",))[0]),
+            stale = sorted((account for account in options if account["id"] != (featured or ("",))[0]),
                            key=lambda account: (state.get(account["id"]) or {}).get("checked_ts", 0))
             for account in stale[:LOL_BOARD_BATCH]:
                 entry = dict(state.get(account["id"]) or {})
@@ -173,22 +182,81 @@ class ProTrackerMixin:
                 state[account["id"]] = entry
         if featured or api_key:
             self._write_json(path, {key: value for key, value in state.items()
-                                    if key in {account["id"] for account in accounts}})
+                                    if key in {option["id"] for option in options}})
         rows = []
         for account in accounts:
-            entry = state.get(account["id"]) or {}
+            entries = [(option, state.get(option["id"]) or {}) for option in self._account_options(account)]
+            ranked = [pair for pair in entries if pair[1].get("tier") and not pair[1].get("missing")]
+            option, entry = max(ranked, key=lambda pair: self._rank_score(pair[1])) if ranked else entries[0]
             rows.append({"id": account["id"], "player": account["label"], "team": account.get("team", ""),
-                         "role": account.get("role", ""), "riot_id": f"{account['gameName']}#{account['tagLine']}",
+                         "role": account.get("role", ""), "riot_id": f"{option['gameName']}#{option['tagLine']}",
                          "tier": entry.get("tier"), "rank": entry.get("rank"), "lp": entry.get("lp"),
                          "wins": entry.get("wins"), "losses": entry.get("losses"),
-                         "in_game": bool(entry.get("in_game")), "missing": bool(entry.get("missing")),
+                         "in_game": any(pair[1].get("in_game") for pair in entries),
+                         "missing": all(pair[1].get("missing") for pair in entries),
                          "checked_ts": entry.get("checked_ts")})
         rows.sort(key=lambda row: self._rank_score(row), reverse=True)
         return rows
 
-    def _missing_lol_ids(self):
+    def _missing_lol_ids(self, accounts):
         state = self._read_json(self._cache_dir() / LOL_BOARD_STATE, {})
-        return {"lol|" + key for key, entry in state.items() if isinstance(entry, dict) and entry.get("missing")}
+
+        def missing(option):
+            entry = state.get(option["id"])
+            return isinstance(entry, dict) and entry.get("missing")
+
+        return {"lol|" + account["id"] for account in accounts
+                if all(missing(option) for option in self._account_options(account))}
+
+    def _freshest_lol_account(self, settings, device_config, account, refresh=True):
+        """The pro's account they last played on (by the newest match id); the main one when unsure.
+
+        A theme redraw keeps the account the last live render chose, so it finds that render's cache.
+        """
+        options = self._account_options(account)
+        if len(options) == 1:
+            return account
+        path = self._cache_dir() / LOL_BOARD_STATE
+        state = self._read_json(path, {})
+        chosen = next((option for option in options
+                       if option["id"] == (state.get(account["id"]) or {}).get("shown_id")), account)
+        api_key = self._riot_key(settings, device_config) if refresh else ""
+        if api_key:
+            now, newest = time.time(), -1
+            for option in options:
+                entry = dict(state.get(option["id"]) or {})
+                if entry.get("missing"):
+                    continue
+                try:
+                    entry = self._with_puuid(api_key, option, entry, now)
+                    if entry.get("missing"):
+                        state[option["id"]] = entry
+                        continue
+                    ids = self._riot_json(api_key, option["regionalRoute"],
+                                          f"/lol/match/v5/matches/by-puuid/{entry['puuid']}/ids",
+                                          {"start": 0, "count": 1}) or []
+                except TaskCancelled:
+                    raise
+                except Exception as exc:
+                    logger.warning("Latest match unavailable for %s %s: %s", option["label"], option["gameName"], exc)
+                    continue
+                state[option["id"]] = entry
+                number = self._match_number(ids[0]) if ids else -1
+                if number > newest:
+                    chosen, newest = option, number
+            state[account["id"]] = {**(state.get(account["id"]) or {}), "shown_id": chosen["id"]}
+            self._write_json(path, state)
+        return {**account, **{key: chosen[key] for key in ("id", "gameName", "tagLine", "platformRoute",
+                                                           "regionalRoute")},
+                "player_id": account["id"]}
+
+    @staticmethod
+    def _match_number(match_id):
+        """Riot's match id (like KR_7834512345) as its number, which grows with time within a region."""
+        try:
+            return int(str(match_id).rsplit("_", 1)[-1])
+        except ValueError:
+            return -1
 
     def _mark_lol_missing(self, account):
         """Record that Riot answered 404 for this Riot ID, for the board and the next picks."""
@@ -203,17 +271,23 @@ class ProTrackerMixin:
         return {"tier": ranked.get("tier"), "rank": ranked.get("rank"), "lp": ranked.get("leaguePoints"),
                 "wins": ranked.get("wins"), "losses": ranked.get("losses")}
 
+    def _with_puuid(self, api_key, account, entry, now):
+        """``entry`` with the account's PUUID (looked up again monthly), or marked missing when Riot has none."""
+        if entry.get("puuid") and now - float(entry.get("puuid_ts") or 0) <= PUUID_DAYS * 86400:
+            return entry
+        found = self._riot_json(api_key, account["regionalRoute"],
+                                "/riot/account/v1/accounts/by-riot-id/"
+                                f"{urllib.parse.quote(account['gameName'])}/{urllib.parse.quote(account['tagLine'])}")
+        if not found or not found.get("puuid"):
+            return {**entry, "checked_ts": now, "missing": True}
+        return {**entry, "puuid": found["puuid"], "puuid_ts": now, "missing": False}
+
     def _read_ladder_entry(self, api_key, account, entry, now):
-        puuid = entry.get("puuid")
-        if not puuid or now - float(entry.get("puuid_ts") or 0) > PUUID_DAYS * 86400:
-            found = self._riot_json(api_key, account["regionalRoute"],
-                                    "/riot/account/v1/accounts/by-riot-id/"
-                                    f"{urllib.parse.quote(account['gameName'])}/{urllib.parse.quote(account['tagLine'])}")
-            if not found or not found.get("puuid"):
-                return {"checked_ts": now, "missing": True}
-            puuid = found["puuid"]
-            entry = {**entry, "puuid": puuid, "puuid_ts": now}
-        leagues = self._riot_json(api_key, account["platformRoute"], f"/lol/league/v4/entries/by-puuid/{puuid}") or []
+        entry = self._with_puuid(api_key, account, entry, now)
+        if entry.get("missing"):
+            return {"checked_ts": now, "missing": True}
+        leagues = self._riot_json(api_key, account["platformRoute"],
+                                  f"/lol/league/v4/entries/by-puuid/{entry['puuid']}") or []
         return {**entry, **self._ladder_entry(self._best_rank(leagues)), "checked_ts": now, "missing": False}
 
     # -- CS2: HLTV Top 20 and player pages ---------------------------------------------

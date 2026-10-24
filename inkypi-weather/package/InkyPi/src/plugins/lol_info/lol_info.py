@@ -122,6 +122,9 @@ class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin
                 # Top 20 entry, which the refresh counts as degraded: show the next player instead.
                 logger.warning("CS2 %s has no HLTV stats yet; showing the next player", exc)
                 return self._generate_pick_image(settings, device_config, skipped + 1)
+        if pick and pick.get("kind") == "lol":
+            pick = {**pick, "account": self._freshest_lol_account(settings, device_config, pick["account"],
+                                                                  refresh=not theme_render_only)}
         effective_settings = self._settings_for_pick(settings, pick)
         dimensions = self.get_dimensions(device_config)
 

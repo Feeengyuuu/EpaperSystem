@@ -36,6 +36,17 @@ LOL_ROSTER = (
     ("Caps", "G2", "MID", "G2 Caps", "1323", "euw1", "europe"),
 )
 
+# Each pro's other ranked solo queue accounts on lolprofile.net (checked 2026-10-24), as
+# (game name, tag line, platform route, regional route). The ladder shows a pro's best-ranked
+# account and the page the one they played on most recently.
+LOL_ALT_ACCOUNTS = {
+    "Kanavi": (("PoAtan", "ASP", "kr", "asia"),),
+    "ShowMaker": (("MIDKING", "asd", "kr", "asia"),),
+    "Lucid": (("너무재미있겠다", "KR1", "kr", "asia"),),
+    "Gumayusi": (("thsorre", "2830", "kr", "asia"),),
+    "Zeka": (("Kiruru", "kr7", "kr", "asia"),),
+}
+
 ROLE_LABELS = {"TOP": "上单", "JUNGLE": "打野", "MID": "中单", "BOTTOM": "下路", "SUPPORT": "辅助"}
 
 # lolesports.com team ids whose official rosters carry each pro's photo.
@@ -113,6 +124,13 @@ def roster_entry(player, team, role, game_name, tag_line, platform, region):
             "platformRoute": platform, "regionalRoute": region}
 
 
+def alt_accounts(player):
+    """The pro's other known accounts, each a parseable entry carrying the pro's label."""
+    return [{"label": player, "gameName": game_name, "tagLine": tag_line, "platformRoute": platform,
+             "regionalRoute": region}
+            for game_name, tag_line, platform, region in LOL_ALT_ACCOUNTS.get(player, ())]
+
+
 def tracked_lol_accounts(saved):
     """The owner's recorded accounts first, then the roster's other pros, up to twenty players.
 
@@ -133,12 +151,13 @@ def tracked_lol_accounts(saved):
         row = row or by_player.get(key)
         account.setdefault("team", row[1] if row else "")
         account.setdefault("role", row[2] if row else "")
+        account["alts"] = alt_accounts(row[0]) if row else []
         accounts.append(account)
         seen.add(key)
     for row in LOL_ROSTER:
         if len(accounts) >= max(TRACKED_LOL_PLAYERS, len(saved)):
             break
         if row[0].casefold() not in seen:
-            accounts.append(roster_entry(*row))
+            accounts.append({**roster_entry(*row), "alts": alt_accounts(row[0])})
             seen.add(row[0].casefold())
     return accounts

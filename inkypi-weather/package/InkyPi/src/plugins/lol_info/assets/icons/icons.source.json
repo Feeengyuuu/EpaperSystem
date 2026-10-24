@@ -1,0 +1,85 @@
+{
+  "source": "GPT Image 2.5 (Creative Claw image/gpt-image-2.5-sunburst), one transparent 1536x1024 sheet, 3x2 grid",
+  "sheet_sha256": "fd60d7f61303571543fd405ad09e29cf1ec1d5c73414b2e4b7199da68e34c422",
+  "generated": "2026-10-24",
+  "icons": {
+    "victory": {
+      "cell": [
+        0,
+        0
+      ],
+      "bbox": [
+        72,
+        57,
+        498,
+        507
+      ],
+      "sha256": "cba92a1d265c6545954b066cf8f241d4b47283c8510523971851707ed27a325a"
+    },
+    "defeat": {
+      "cell": [
+        1,
+        0
+      ],
+      "bbox": [
+        50,
+        93,
+        463,
+        508
+      ],
+      "sha256": "14e54c93e357863be7af459024d7434b10186f6b111339fa1a90e7f0539c62d4"
+    },
+    "kda": {
+      "cell": [
+        2,
+        0
+      ],
+      "bbox": [
+        58,
+        131,
+        434,
+        488
+      ],
+      "sha256": "9d67043f7abc0a1170cc524a8cae5c6a731676112577aafb0c1da8996e0b3544"
+    },
+    "winrate": {
+      "cell": [
+        0,
+        1
+      ],
+      "bbox": [
+        85,
+        58,
+        471,
+        422
+      ],
+      "sha256": "8e322ba02a3088a9dbeb76f0736d491fbd4ed1c19aafa3ba69367a6ef5e1a721"
+    },
+    "kill_participation": {
+      "cell": [
+        1,
+        1
+      ],
+      "bbox": [
+        57,
+        40,
+        456,
+        430
+      ],
+      "sha256": "b810b36c6f524825a1b3010f17a00b7cc656ad51136db6feac783476d9588ab9"
+    },
+    "cs_per_minute": {
+      "cell": [
+        2,
+        1
+      ],
+      "bbox": [
+        46,
+        58,
+        430,
+        422
+      ],
+      "sha256": "f92129407a3ba6bfc4b485e16cd16c41b7431f7627a7f87a7bf2bf4ebd28865e"
+    }
+  }
+}

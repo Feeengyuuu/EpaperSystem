@@ -136,6 +136,12 @@ class ProRenderMixin:
         x0, y0, x1, y1 = box
         draw.rectangle(box, fill=colors["panel"], outline=colors["rule"], width=1)
         self._text(draw, (x0 + 12, y0 + 7), "最近比赛", fonts["section"], colors["ink"])
+        latest = (data.get("matches") or [{}])[0].get("timestamp")
+        if latest:
+            # Pros go quiet in solo queue around tournaments: say when the newest game was.
+            note = f"最后一局 {self._relative(latest)}"
+            self._text(draw, (x1 - 12 - self._text_width(draw, note, fonts["tiny"]), y0 + 12), note, fonts["tiny"],
+                       colors["muted"])
         champions = data.get("champions") or {}
         y = y0 + 36
         for match in (data.get("matches") or [])[:5]:
@@ -146,9 +152,13 @@ class ProRenderMixin:
             self._text(draw, (x0 + 186, y + 4), f"{match['kills']}/{match['deaths']}/{match['assists']}", fonts["body"],
                        colors["ink"])
             won = bool(match.get("win"))
-            chip = (x0 + 262, y + 3, x0 + 286, y + 23)
-            draw.rounded_rectangle(chip, radius=4, fill=colors["green"] if won else colors["red"])
-            self._text(draw, (chip[0] + 5, y + 5), "胜" if won else "负", fonts["small_bold"], colors["background"])
+            badge = self._asset_logo(f"icons/{'victory' if won else 'defeat'}.png", (26, 26))
+            if badge:
+                image.paste(badge, (x0 + 261, y), badge)
+            else:
+                chip = (x0 + 262, y + 3, x0 + 286, y + 23)
+                draw.rounded_rectangle(chip, radius=4, fill=colors["green"] if won else colors["red"])
+                self._text(draw, (chip[0] + 5, y + 5), "胜" if won else "负", fonts["small_bold"], colors["background"])
             self._text(draw, (x0 + 296, y + 1), self._lane_label(match.get("lane")), fonts["tiny"], colors["muted"])
             self._text(draw, (x0 + 296, y + 14), self._relative(match.get("timestamp")), fonts["tiny"], colors["muted"])
             y += 32
@@ -170,15 +180,21 @@ class ProRenderMixin:
                 self._text(draw, (left + 26, y1 - 81), self._compact(item.get("points")), fonts["tiny"],
                            colors["muted"])
         summary = data.get("summary") or {}
-        tiles = (("KDA", f"{summary.get('kda', 0):.2f}", colors["gold"]),
-                 ("胜率", f"{summary.get('winrate', 0):.0f}%", colors["green"] if summary.get("winrate", 0) >= 50 else colors["red"]),
-                 ("参团", f"{summary.get('kp', 0):.0f}%", colors["cyan"]),
-                 ("补刀/分", f"{summary.get('cs_per_min', 0):.1f}", colors["gold"]))
+        tiles = (("kda", "KDA", f"{summary.get('kda', 0):.2f}", colors["gold"]),
+                 ("winrate", "胜率", f"{summary.get('winrate', 0):.0f}%",
+                  colors["green"] if summary.get("winrate", 0) >= 50 else colors["red"]),
+                 ("kill_participation", "参团", f"{summary.get('kp', 0):.0f}%", colors["cyan"]),
+                 ("cs_per_minute", "补刀/分", f"{summary.get('cs_per_min', 0):.1f}", colors["gold"]))
         tile_w = (x1 - x0 - 24) / 4
-        for index, (label, value, colour) in enumerate(tiles):
+        for index, (icon_name, label, value, colour) in enumerate(tiles):
             left = x0 + 12 + index * tile_w
             draw.line((left, y1 - 56, left + tile_w - 8, y1 - 56), fill=colors["rule"], width=1)
-            self._text(draw, (left, y1 - 50), label, fonts["tiny"], colors["muted"])
+            icon = self._asset_logo(f"icons/{icon_name}.png", (17, 17))
+            label_x = left
+            if icon:
+                image.paste(icon, (int(left), y1 - 53), icon)
+                label_x = left + 20
+            self._text(draw, (label_x, y1 - 50), label, fonts["tiny"], colors["muted"])
             self._single(draw, (left, y1 - 36), value, fonts["big"], colour, tile_w - 10, 12)
 
     def _draw_lol_board(self, image, draw, board, box, account, colors, fonts):
@@ -186,7 +202,7 @@ class ProRenderMixin:
         self._board_frame(draw, box, "职业天梯", f"{len(board)} 位选手 · {len(known)} 已更新 · 单双排", colors, fonts)
         for index, cell in self._board_cells(box, len(board)):
             row = board[index]
-            if row["id"] == account.get("id"):
+            if row["id"] == account.get("player_id", account.get("id")):
                 self._highlight(draw, cell, colors)
             left, top, right, bottom = cell
             middle = (top + bottom) / 2
