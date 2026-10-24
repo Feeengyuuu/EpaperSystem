@@ -1,0 +1,16 @@
+{
+  "asset": "divider_shore.png",
+  "scene": "waves rolling onto a sandy beach, tapering into a divider line at both ends",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "25d5f00c-ee67-49ba-9a93-84ed0b8a6104",
+  "generated": "2026-10-24",
+  "background": "transparent PNG, 1536x512",
+  "processing": "alpha below 40 cleared, trimmed to alpha, 60 px tall (LANCZOS)",
+  "rendering": "between the next tides and the tide curve, inside SHORE_BOX",
+  "source_sha256": "0c5d98b3acf4ed21093f7cfd47e88fa2f4b027eb5f777ec9cbe84b384b495f12",
+  "sha256": "1e4011794f68f087bf3d4dcb08ee356290d9e8f3bbad7dae7748d1427024a099",
+  "size": [
+    880,
+    60
+  ]
+}

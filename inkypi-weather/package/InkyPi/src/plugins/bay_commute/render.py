@@ -35,6 +35,8 @@ STATUS_TAG_HEIGHT = 24
 TOP = 12
 ROW_TOP, ROW_PITCH, ROW_X = 66, 114, 244
 MAP_BOX = (18, 66, 214, 328)
+# The shoreline divider between the next tides and the curve.
+SHORE_BOX = (484, 207, 786, 237)
 
 
 class Canvas:
@@ -297,6 +299,10 @@ def draw_tides(canvas, payload, settings, now):
             canvas.text((x,134), "—", 34, "muted")
             canvas.text((x,180), "等待预测", 14, "muted")
     canvas.rule((631,95,631,205))
+    # A shoreline parts the next tides from the curve: waves rolling onto sand, tapering at
+    # both ends into the divider it stands for.
+    if not paste_local_wordmark(canvas.image, ASSETS / "divider_shore.png", SHORE_BOX, align="center"):
+        canvas.rule((488, SHORE_BOX[1] + 14, 783, SHORE_BOX[1] + 14))
     draw_chart(canvas, data, now)
     label = "NOAA ‧ MLLW ‧ 英尺"
     if source["state"] == "stale_cache":
