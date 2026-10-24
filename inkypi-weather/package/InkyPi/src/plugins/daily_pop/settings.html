@@ -1,0 +1,26 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <small>一页看今天的热门：B 站热门视频、今日新番、Apple 热门歌曲、维基百科昨日热读、Chess.com 每日棋题和 NASA EPIC 的今日地球。全部来自公开接口，无需密钥。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取全部榜单</label>
+  <small>B 站热门每 30 分钟更新，其余榜单每几小时更新；排名升降与上一次获取的榜单比较。轮播使用本地缓存，不请求网络。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  for (const key of ['fontFamily', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    const value = typeof pluginSettings !== 'undefined' ? pluginSettings[key] : undefined;
+    if (value !== undefined) {
+      if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(value);
+      else el.value = value;
+    } else if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+  }
+});
+</script>

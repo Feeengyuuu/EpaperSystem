@@ -1,0 +1,16 @@
+{
+  "asset": "title_wordmark.png",
+  "scene": "今日热榜 in chunky italic display lettering, dark navy outline, white inner highlight",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "0bfb9091-8c49-49a9-8a91-11109ca5e5b8",
+  "generated": "2026-10-24",
+  "background": "transparent PNG, 1536x512",
+  "processing": "alpha below 40 cleared, cropped to the alpha bounding box, scaled to 96 px high with LANCZOS",
+  "rendering": "full colour at the page's top left, inside (10, 2)-(230, 50)",
+  "source_sha256": "49467812d1446bf6ed0bc470e233f16366cda27b1cada344711227d613873b72",
+  "sha256": "714ef8f6639f1f730761f59410cdf802ee12a84823bcc191d3e205d095233c1e",
+  "size": [
+    297,
+    96
+  ]
+}

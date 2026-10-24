@@ -1,0 +1,375 @@
+"""800 x 480 Daily Pop page: Bilibili trending on the left, today's anime and Wikipedia's most
+read in the middle, today's Earth, Apple's most played and the chess puzzle on the right.
+
+Each card wears its source's colour as a solid bar along its top (titles stay in ink); the
+charts mark each entry's move since the previous refresh, the globe follows the time of day.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageOps
+
+from utils.local_wordmark import paste_local_wordmark
+from utils.page_canvas import PageCanvas
+
+from . import sources
+from .daily_pop import chart_moves
+
+
+ASSETS = Path(__file__).resolve().parent / "assets"
+DAY = {"paper": "#ffffff", "ink": "#121a20", "muted": "#3a454d", "rule": "#a6a6a6", "up": "#0a8f3c",
+       "down": "#d42020", "new": "#d42020", "badge_ink": "#ffffff", "shade": "#121a20"}
+NIGHT = {"paper": "#000000", "ink": "#edf1ea", "muted": "#c6d0d5", "rule": "#5a5a5a", "up": "#6fd38f",
+         "down": "#ff6b6b", "new": "#ff6b6b", "badge_ink": "#000000", "shade": "#000000"}
+# Each source's own colour, as a solid bar on its card.
+BRANDS = {"bilibili": (0xFB, 0x72, 0x99), "bangumi": (0xF0, 0x91, 0x99), "wiki": (0x33, 0x66, 0xCC),
+          "epic": (0x0B, 0x3D, 0x91), "songs": (0xFA, 0x24, 0x3C), "puzzle": (0x81, 0xB6, 0x4C)}
+CARDS = {"bilibili": (12, 58, 276, 468), "bangumi": (284, 58, 520, 312), "wiki": (284, 318, 520, 468),
+         "epic": (528, 58, 788, 262), "songs": (528, 268, 788, 372), "puzzle": (528, 378, 788, 468)}
+TITLES = {"bilibili": "B站热门", "bangumi": "今日新番", "wiki": "维基热读", "epic": "今日地球",
+          "songs": "Apple 热歌", "puzzle": "每日棋题"}
+SHORT_NAMES = {"bilibili": "B站", "bangumi": "新番", "wiki": "维基", "epic": "地球", "songs": "热歌",
+               "puzzle": "棋题"}
+WEEKDAYS = "一二三四五六日"
+BAR = 6
+# The EPIC globe: pixels darker than this are sky; the mask sits this share inside the limb.
+EARTH_SKY_LEVEL = 24
+EARTH_LIMB_INSET = 0.012
+EARTH_SIZE = 136
+
+
+def _rgb(value):
+    if isinstance(value, str) and value.startswith("#") and len(value) == 7:
+        return tuple(int(value[index:index + 2], 16) for index in (1, 3, 5))
+    return value
+
+
+def _palette(settings):
+    theme = (settings or {}).get("_inkypi_theme") or {}
+    palette = NIGHT if theme.get("mode", (settings or {}).get("themeMode")) == "night" else DAY
+    return {key: _rgb(value) for key, value in palette.items()}
+
+
+def count_text(value):
+    """3576212 -> "357.6万", 123456789 -> "1.2亿"."""
+    value = int(value or 0)
+    if value >= 100_000_000:
+        return f"{value / 100_000_000:.1f}亿"
+    if value >= 10_000:
+        return f"{value / 10_000:.1f}万"
+    return str(value)
+
+
+def _card(canvas, name, note=""):
+    """The card's frame, its source colour along the top and its title row; returns the content top."""
+    left, top, right, bottom = CARDS[name]
+    canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
+    canvas.draw.rounded_rectangle((left, top, right, top + BAR), radius=6, fill=BRANDS[name],
+                                  corners=(True, True, False, False))
+    canvas.text((left + 10, top + BAR + 12), TITLES[name], 14, anchor="lm")
+    if note:
+        canvas.text((right - 10, top + BAR + 12), note, 11, "muted", anchor="rm", bold=False, width=right - left - 110)
+    return top + BAR + 24
+
+
+def _paste_fit(canvas, picture, box, *, centering=(0.5, 0.5), radius=5):
+    if picture is None:
+        canvas.draw.rounded_rectangle(box, radius=radius, fill=canvas.color("rule"))
+        return
+    x0, y0, x1, y1 = [int(value) for value in box]
+    size = (max(1, x1 - x0), max(1, y1 - y0))
+    tile = ImageOps.fit(picture, size, method=Image.Resampling.LANCZOS, centering=centering)
+    mask = Image.new("L", size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=radius, fill=255)
+    canvas.image.paste(tile, (x0, y0), mask)
+
+
+def _move_badge(canvas, xy, move, *, anchor_right=False):
+    """NEW in a red pill, or a small triangle and the places gained or lost; returns its width."""
+    x, y = xy
+    if move == "new":
+        width = canvas.width("NEW", 9) + 10
+        left = x - width if anchor_right else x
+        canvas.draw.rounded_rectangle((left, y - 7, left + width, y + 7), radius=7, fill=canvas.color("new"))
+        canvas.text((left + width / 2, y), "NEW", 9, "badge_ink", anchor="mm")
+        return width
+    if not isinstance(move, int) or move == 0:
+        return 0
+    tone = "up" if move > 0 else "down"
+    label = str(abs(move))
+    width = 9 + canvas.width(label, 10)
+    left = x - width if anchor_right else x
+    points = ((left, y + 3), (left + 7, y + 3), (left + 3.5, y - 4)) if move > 0 else \
+        ((left, y - 3), (left + 7, y - 3), (left + 3.5, y + 4))
+    canvas.draw.polygon(points, fill=canvas.color(tone))
+    canvas.text((left + 9, y), label, 10, tone, anchor="lm")
+    return width
+
+
+def _rank_chip(canvas, xy, rank, fill):
+    x, y = xy
+    canvas.draw.rounded_rectangle((x, y, x + 20, y + 18), radius=4, fill=fill)
+    canvas.text((x + 10, y + 9), str(rank), 11, (255, 255, 255), anchor="mm")
+
+
+# --- Bilibili ------------------------------------------------------------------------------------
+
+def _bilibili(canvas, payload, images):
+    data = payload["bilibili"]["data"]
+    videos = data.get("videos") or []
+    history = (payload.get("history") or {}).get("bilibili") or {}
+    moves = chart_moves(videos, history.get("previous"), "title") if history.get("previous") else {}
+    previous_views = {row.get("title"): row.get("views") for row in history.get("previous") or []}
+    top = _card(canvas, "bilibili", "热门推荐 TOP 6")
+    left, _top, right, bottom = CARDS["bilibili"]
+    if not videos:
+        canvas.text(((left + right) / 2, (top + bottom) / 2), "B站数据暂不可用", 14, "muted", anchor="mm")
+        return
+    lead = videos[0]
+    cover_box = (left + 8, top + 4, right - 8, top + 144)
+    _paste_fit(canvas, images.get(sources.safe_image_url(lead.get("cover"))), cover_box)
+    _rank_chip(canvas, (cover_box[0] + 6, cover_box[1] + 6), 1, BRANDS["bilibili"])
+    views = f"{count_text(lead.get('views'))}播放"
+    gain = _view_gain(lead, previous_views)
+    pill = views + (f" · +{gain}" if gain else "")
+    pill_w = canvas.width(pill, 10) + 14
+    canvas.draw.rounded_rectangle((cover_box[0] + 6, cover_box[3] - 24, cover_box[0] + 6 + pill_w, cover_box[3] - 6),
+                                  radius=9, fill=canvas.color("shade"))
+    canvas.text((cover_box[0] + 6 + pill_w / 2, cover_box[3] - 15), pill, 10, (255, 255, 255), anchor="mm")
+    _move_badge(canvas, (cover_box[2] - 6, cover_box[1] + 15), moves.get(lead.get("title")), anchor_right=True)
+    y = cover_box[3] + 6
+    for line in canvas.wrap(lead.get("title"), 13, right - left - 20, 2):
+        canvas.text((left + 10, y), line, 13)
+        y += 18
+    meta = " · ".join(part for part in (lead.get("owner"), lead.get("section"), lead.get("reason")) if part)
+    canvas.text((left + 10, y + 2), meta, 10, "muted", bold=False, width=right - left - 20)
+    row_top = y + 22
+    row_h = (bottom - 8 - row_top) / 3
+    for index, video in enumerate(videos[1:4], start=2):
+        y0 = row_top + (index - 2) * row_h
+        canvas.rule((left + 8, y0 - 3, right - 8, y0 - 3))
+        thumb = (left + 8, int(y0 + 2), left + 96, int(y0 + 2 + 50))
+        _paste_fit(canvas, images.get(sources.safe_image_url(video.get("cover"))), thumb, radius=4)
+        _rank_chip(canvas, (thumb[0] + 2, thumb[1] + 2), index, BRANDS["bilibili"])
+        lines = canvas.wrap(video.get("title"), 11, right - thumb[2] - 16, 2)
+        for number, line in enumerate(lines):
+            canvas.text((thumb[2] + 8, y0 + 2 + number * 15), line, 11)
+        meta_y = y0 + 40
+        x = thumb[2] + 8
+        x += canvas.text((x, meta_y), f"{count_text(video.get('views'))}播放", 10, "muted", bold=False) + 6
+        gain = _view_gain(video, previous_views)
+        if gain:
+            x += canvas.text((x, meta_y), f"+{gain}", 10, "up") + 6
+        _move_badge(canvas, (right - 10, meta_y + 6), moves.get(video.get("title")), anchor_right=True)
+
+
+def _view_gain(video, previous_views):
+    before = previous_views.get(video.get("title"))
+    if not isinstance(before, int):
+        return ""
+    gain = int(video.get("views") or 0) - before
+    return count_text(gain) if gain > 0 else ""
+
+
+# --- Bangumi -------------------------------------------------------------------------------------
+
+def _bangumi(canvas, payload, images, now):
+    data = payload["bangumi"]["data"]
+    shows = data.get("shows") or []
+    note = f"周{WEEKDAYS[now.weekday()]} · 共 {data['count']} 部" if data.get("count") else ""
+    top = _card(canvas, "bangumi", note)
+    left, _top, right, bottom = CARDS["bangumi"]
+    if not shows:
+        canvas.text(((left + right) / 2, (top + bottom) / 2), "番组数据暂不可用", 14, "muted", anchor="mm")
+        return
+    cell_w = (right - left - 16) / 3
+    cell_h = (bottom - 6 - top) / 2
+    for index, show in enumerate(shows[:6]):
+        column, row = index % 3, index // 3
+        x0 = left + 8 + column * cell_w
+        y0 = top + row * cell_h
+        cover = (int(x0 + 3), int(y0 + 2), int(x0 + cell_w - 3), int(y0 + cell_h - 30))
+        _paste_fit(canvas, images.get(sources.safe_image_url(show.get("cover"))), cover, centering=(0.5, 0.2))
+        if show.get("score"):
+            label = f"{show['score']:.1f}"
+            width = canvas.width(label, 10) + 10
+            canvas.draw.rounded_rectangle((cover[2] - width - 3, cover[1] + 3, cover[2] - 3, cover[1] + 18), radius=7,
+                                          fill=BRANDS["bangumi"])
+            canvas.text((cover[2] - 3 - width / 2, cover[1] + 10.5), label, 10, (255, 255, 255), anchor="mm")
+        canvas.text((x0 + 3, cover[3] + 4), show.get("name"), 11, width=cell_w - 6)
+        canvas.text((x0 + 3, cover[3] + 18), f"{count_text(show.get('watching'))}在追", 9, "muted", bold=False,
+                    width=cell_w - 6)
+
+
+# --- Wikipedia most read -------------------------------------------------------------------------
+
+def _wiki(canvas, payload):
+    articles = payload["wiki"]["data"].get("articles") or []
+    top = _card(canvas, "wiki", "中文维基 · 昨日阅读量")
+    left, _top, right, bottom = CARDS["wiki"]
+    if not articles:
+        canvas.text(((left + right) / 2, (top + bottom) / 2), "维基数据暂不可用", 14, "muted", anchor="mm")
+        return
+    most = max(article.get("views") or 1 for article in articles)
+    row_h = (bottom - 6 - top) / 5
+    for index, article in enumerate(articles[:5]):
+        y = top + index * row_h + row_h / 2
+        canvas.text((left + 14, y), str(index + 1), 12, BRANDS["wiki"] if index < 3 else "muted", anchor="mm")
+        views = count_text(article.get("views"))
+        views_w = canvas.width(views, 10, bold=False)
+        bar_right = right - 14 - views_w - 6
+        bar_left = left + 28
+        # How it compares with the most read, as a thin solid bar under the title.
+        share = max(0.08, (article.get("views") or 0) / most)
+        canvas.draw.rectangle((bar_left, y + 7, bar_left + (bar_right - bar_left) * share, y + 9), fill=BRANDS["wiki"])
+        canvas.text((bar_left, y - 2), article.get("title"), 12, anchor="lm", width=bar_right - bar_left)
+        canvas.text((right - 12, y - 2), views, 10, "muted", anchor="rm", bold=False)
+
+
+# --- Earth ---------------------------------------------------------------------------------------
+
+def earth_disc(picture, size):
+    """The globe alone, cut cleanly out of its black sky: an RGBA ``size`` square.
+
+    The disc is found by brightness (the frame's margin is not always even), and the round
+    mask sits a little inside its limb so no dark rim of space is left around it.
+    """
+    gray = picture.convert("L").point(lambda value: 255 if value > EARTH_SKY_LEVEL else 0)
+    box = gray.getbbox() or (0, 0, picture.width, picture.height)
+    disc = picture.crop(box).convert("RGB")
+    side = max(disc.size)
+    square = Image.new("RGB", (side, side), (0, 0, 0))
+    square.paste(disc, ((side - disc.width) // 2, (side - disc.height) // 2))
+    square = square.resize((size, size), Image.Resampling.LANCZOS)
+    scale = 4
+    mask = Image.new("L", (size * scale, size * scale), 0)
+    inset = size * scale * EARTH_LIMB_INSET
+    ImageDraw.Draw(mask).ellipse((inset, inset, size * scale - 1 - inset, size * scale - 1 - inset), fill=255)
+    square.putalpha(mask.resize((size, size), Image.Resampling.LANCZOS))
+    return square
+
+
+def _epic(canvas, payload, images, now):
+    data = payload["epic"]["data"]
+    frames = data.get("frames") or []
+    top = _card(canvas, "epic", "NASA EPIC · DSCOVR")
+    left, _top, right, bottom = CARDS["epic"]
+    index = sources.epic_frame_index(data, now)
+    frame = frames[index] if index is not None else None
+    picture = images.get(sources.safe_image_url(payload.get("epic_frame_url")))
+    size = min(EARTH_SIZE, bottom - top - 22)
+    globe_box = (left + 10, top + 2, left + 10 + size, top + 2 + size)
+    if picture is not None:
+        disc = earth_disc(picture, size)
+        canvas.image.paste(disc, globe_box[:2], disc)
+    else:
+        canvas.draw.ellipse(globe_box, outline=canvas.color("rule"), width=2)
+    if frames:
+        # The day's frames as dots under the globe, the shown one filled: it turns with the clock.
+        step = (globe_box[2] - globe_box[0]) / max(1, len(frames))
+        for number in range(len(frames)):
+            cx = globe_box[0] + step * (number + 0.5)
+            radius = 3.2 if number == index else 2
+            fill = BRANDS["epic"] if number == index else canvas.color("rule")
+            canvas.draw.ellipse((cx - radius, bottom - 11 - radius, cx + radius, bottom - 11 + radius), fill=fill)
+    text_x = globe_box[2] + 12
+    width = right - 10 - text_x
+    if frame:
+        taken = datetime.fromisoformat(frame["taken"]).astimezone(sources.PACIFIC)
+        # EPIC publishes a day or two late: the newest set, the frame nearest this time of day.
+        canvas.text((text_x, top + 10), f"{taken:%H:%M}", 18, width=width)
+        canvas.text((text_x, top + 30), f"{taken:%m/%d} 太平洋时间", 10, "muted", bold=False, width=width)
+        canvas.text((text_x, top + 54), sources.facing(frame["lat"], frame["lon"]), 13, width=width)
+        canvas.text((text_x, top + 72), f"中心 {frame['lat']:.0f}°, {frame['lon']:.0f}°", 10, "muted", bold=False,
+                    width=width)
+        canvas.text((text_x, top + 96), f"第 {index + 1}/{len(frames)} 帧", 12, width=width)
+        canvas.text((text_x, top + 113), "随时刻转动", 10, "muted", bold=False, width=width)
+        canvas.text((text_x, top + 128), "L1 点 · 150 万公里", 10, "muted", bold=False, width=width)
+    else:
+        canvas.text((text_x, top + 40), "地球影像暂不可用", 12, "muted", width=width)
+
+
+# --- Apple Music ---------------------------------------------------------------------------------
+
+def _songs(canvas, payload, images):
+    songs = payload["songs"]["data"].get("songs") or []
+    history = (payload.get("history") or {}).get("songs") or {}
+    moves = chart_moves(songs, history.get("previous"), "name") if history.get("previous") else {}
+    top = _card(canvas, "songs", "美国 · 播放最多")
+    left, _top, right, bottom = CARDS["songs"]
+    if not songs:
+        canvas.text(((left + right) / 2, (top + bottom) / 2), "榜单暂不可用", 13, "muted", anchor="mm")
+        return
+    row_h = (bottom - 4 - top) / 3
+    for index, song in enumerate(songs[:3]):
+        y0 = top + index * row_h
+        art = (left + 10, int(y0 + 2), left + 10 + int(row_h - 4), int(y0 + row_h - 2))
+        _paste_fit(canvas, images.get(sources.safe_image_url(song.get("artwork"))), art, radius=3)
+        x = art[2] + 8
+        middle = y0 + row_h / 2
+        # Name, then its artist greyed on the same line, so three songs fit the short card.
+        name_w = canvas.text((x, middle), f"{index + 1}. {song.get('name')}", 12, anchor="lm", width=right - x - 96)
+        canvas.text((x + name_w + 6, middle + 1), song.get("artist"), 10, "muted", anchor="lm", bold=False,
+                    width=right - x - name_w - 6 - 40)
+        _move_badge(canvas, (right - 10, middle), moves.get(song.get("name")), anchor_right=True)
+
+
+# --- Chess ---------------------------------------------------------------------------------------
+
+def _puzzle(canvas, payload, images):
+    puzzle = payload["puzzle"]["data"]
+    previous = ((payload.get("history") or {}).get("puzzle") or {}).get("previous") or {}
+    top = _card(canvas, "puzzle", "Chess.com")
+    left, _top, right, bottom = CARDS["puzzle"]
+    if not puzzle.get("fen"):
+        canvas.text(((left + right) / 2, (top + bottom) / 2), "棋题暂不可用", 13, "muted", anchor="mm")
+        return
+    side = bottom - top - 4
+    board = (left + 10, top, left + 10 + side, top + side)
+    _paste_fit(canvas, images.get(sources.safe_image_url(puzzle.get("image"))), board, radius=2)
+    x = board[2] + 10
+    width = right - 10 - x
+    mover = "白先" if puzzle.get("to_move") == "w" else "黑先"
+    goal = f"{puzzle['mate_in']} 步杀" if puzzle.get("mate_in") else "找出最佳着法"
+    canvas.text((x, top + 2), f"{mover} · {goal}", 13, width=width)
+    canvas.text((x, top + 20), puzzle.get("title"), 10, "muted", bold=False, width=width)
+    # Yesterday's answer is revealed once today's puzzle replaces it, on one line inside the card.
+    answer = previous.get("solution")
+    label_w = canvas.text((x, top + 36), "昨日答案" if answer else "答案明日揭晓", 10, width=width)
+    if answer:
+        canvas.text((x + label_w + 6, top + 36), answer, 10, "muted", bold=False, width=width - label_w - 6)
+
+
+def _source_key(canvas, left, right):
+    """The header's key: each source's colour square and short name, as far as there is room."""
+    x = left
+    for name in ("bilibili", "bangumi", "wiki", "epic", "songs", "puzzle"):
+        label = SHORT_NAMES[name]
+        width = 14 + canvas.width(label, 11, bold=False)
+        if x + width > right:
+            break
+        canvas.draw.rounded_rectangle((x, 21, x + 10, 31), radius=2, fill=BRANDS[name])
+        canvas.text((x + 14, 26), label, 11, "muted", anchor="lm", bold=False)
+        x += width + 10
+
+
+def render_page(dimensions, payload, settings, now, images):
+    canvas = PageCanvas(_palette(settings), family=(settings or {}).get("fontFamily") or "Microsoft YaHei")
+    placed = paste_local_wordmark(canvas.image, ASSETS / "title_wordmark.png", (10, 2, 230, 50), align="left")
+    title_right = placed[2] if placed else 14 + canvas.text((14, 26), "今日热榜", 28, anchor="lm")
+    date_left = 788 - canvas.text((788, 26), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
+    _source_key(canvas, title_right + 16, date_left - 14)
+    canvas.rule((12, 52, 788, 52), "ink", 2)
+    _bilibili(canvas, payload, images)
+    _bangumi(canvas, payload, images, now)
+    _wiki(canvas, payload)
+    _epic(canvas, payload, images, now)
+    _songs(canvas, payload, images)
+    _puzzle(canvas, payload, images)
+    result = canvas.image
+    if tuple(dimensions) != (800, 480):
+        result = result.resize(tuple(dimensions), Image.Resampling.LANCZOS)
+    return result
