@@ -16,6 +16,7 @@ from plugins.china_box_office_top_movies.china_box_office_top_movies import (
 from plugins.daily_ai_news.daily_ai_news import DailyAINews
 from plugins.daily_wiki_page.daily_wiki_page import DailyWikiPage
 from plugins.daily_word_poem.daily_word_poem import DailyWordPoem
+from plugins.live_radar import comic_art
 from plugins.live_radar.live_radar import LiveRadar
 from plugins.lol_info.lol_info import LoLInfo
 from plugins.simple_calendar.simple_calendar import SimpleCalendar
@@ -110,11 +111,12 @@ def test_daily_word_day_ignores_canonical_override():
     assert colors[2] == original["green"]
 
 
-def test_live_radar_day_uses_original_black_and_white_palette():
+def test_live_radar_day_uses_its_own_comic_paper_and_black_ink():
     colors = LiveRadar.__new__(LiveRadar)._theme(
         {"_inkypi_theme": _theme()}, None
     )
-    assert colors["bg"] == (255, 255, 255)
+    assert colors["comic"] is True and colors["bg"] == comic_art.PAPER
+    assert colors["panel"] == (255, 255, 255)
     assert colors["ink"] == (0, 0, 0)
     assert colors["line"] == (0, 0, 0)
 
