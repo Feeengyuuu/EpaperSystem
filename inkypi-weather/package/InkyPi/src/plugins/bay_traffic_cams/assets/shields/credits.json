@@ -1,0 +1,485 @@
+{
+  "note": "Standard-design reproductions of MUTCD/Caltrans route shields hosted on Wikimedia Commons; not files published by Caltrans or FHWA. Interstate shield trademark notice on each page retained.",
+  "assets": [
+    {
+      "name": "I-205",
+      "description_page": "https://commons.wikimedia.org/wiki/File:I-205.svg",
+      "license": "Public domain",
+      "author": "",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/I-205.svg/250px-I-205.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "14522176939bc8a3b79d9adad58f4b476db31c910a74a04bd9b8307dd89b5bc0",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "I-205.png",
+          "sha256": "20e9492364a02ff1006955f81c2d611290f9610e050e0ff35a198628c4f23b37"
+        }
+      ]
+    },
+    {
+      "name": "I-280",
+      "description_page": "https://commons.wikimedia.org/wiki/File:I-280.svg",
+      "license": "Public domain",
+      "author": "",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/62/I-280.svg/250px-I-280.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "da86dca30505e4c4b4ab2d1d0588fecec8a38dc47f1ecbfe66f6f958d7c45f9d",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "I-280.png",
+          "sha256": "83aa475d84e016af9ecdfce88ab2424fb6bb42467f3fd61b72de2e90654196ed"
+        }
+      ]
+    },
+    {
+      "name": "I-380",
+      "description_page": "https://commons.wikimedia.org/wiki/File:I-380.svg",
+      "license": "Public domain",
+      "author": "",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/90/I-380.svg/250px-I-380.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "5561cfade22685a42a3b28b18007070c61e5fe6641235f448958327de190d45c",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "I-380.png",
+          "sha256": "f957cf074672e73d90c62d1229d36c6f7c8c2ef356142971b29e78b77eec9d59"
+        }
+      ]
+    },
+    {
+      "name": "I-580",
+      "description_page": "https://commons.wikimedia.org/wiki/File:I-580.svg",
+      "license": "Public domain",
+      "author": "",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/17/I-580.svg/250px-I-580.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "46c03fee57476418a8e4e8880581831e34a401004d137178bdff80f0f58f8b28",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "I-580.png",
+          "sha256": "332b6051635793d5c53229f5d824ff68eebbf7ce142f09e3beb3c52c45653f68"
+        }
+      ]
+    },
+    {
+      "name": "I-680",
+      "description_page": "https://commons.wikimedia.org/wiki/File:I-680.svg",
+      "license": "Public domain",
+      "author": "",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/39/I-680.svg/250px-I-680.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "660ab60e07a52a483bf29e1b8baf874884c9aed304b03ad27544283cd30b1025",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "I-680.png",
+          "sha256": "2deb8fba4e612bc83d17e76d63539a85842f936b6fac0c0615fa9e3a4a5936f9"
+        }
+      ]
+    },
+    {
+      "name": "I-780",
+      "description_page": "https://commons.wikimedia.org/wiki/File:I-780.svg",
+      "license": "Public domain",
+      "author": "",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7e/I-780.svg/250px-I-780.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "d187cf2e5dfee2c23b7fa61879a108294498754519470b160739ddfd4789f64a",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "I-780.png",
+          "sha256": "90777901b3c29f6930ea066e7d401fdce680cb7e94e52067d3daeea57e8e904f"
+        }
+      ]
+    },
+    {
+      "name": "I-80",
+      "description_page": "https://commons.wikimedia.org/wiki/File:I-80.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/wiki/User:Ltljltlj\" title=\"User:Ltljltlj\">User:Ltljltlj</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/11/I-80.svg/250px-I-80.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "a80d3266025786bcdb1a9aa1963696e5476c9ed6170aea5a59b2389d34face3d",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "I-80.png",
+          "sha256": "376f1526f262b59ab7a56d1d7629cf790aa7d52e4966ea1f5199781a61969f2f"
+        }
+      ]
+    },
+    {
+      "name": "I-880",
+      "description_page": "https://commons.wikimedia.org/wiki/File:I-880.svg",
+      "license": "Public domain",
+      "author": "",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/I-880.svg/250px-I-880.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "051729513e57cd80d1fd88cfa2533705f392db547dde80dbc3a1f2502f59eb54",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "I-880.png",
+          "sha256": "dcda9923d54a5933f551b241547f9233579b877091b8f6c861f27faa461b9726"
+        }
+      ]
+    },
+    {
+      "name": "I-980",
+      "description_page": "https://commons.wikimedia.org/wiki/File:I-980.svg",
+      "license": "Public domain",
+      "author": "",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9e/I-980.svg/250px-I-980.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "958a66d81f67eeb1dc1849dd9f27079c2789882e0a53b2de9f7335d97f3a331b",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "I-980.png",
+          "sha256": "3123e8b71b5873508bb0ae713a23122883e4a965de1a48cd39ad334d65734324"
+        }
+      ]
+    },
+    {
+      "name": "SR-1",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_1.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/wiki/User:SPUI~commonswiki\" title=\"User:SPUI~commonswiki\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/dd/California_1.svg/250px-California_1.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "81789a57e5dac6edb84f319d07a947065ef135e2bf25e50fa04063791337c91b",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-1.png",
+          "sha256": "c5c663cccb2e1f3e36f1256c4ff9d4c5c006217c68f2fc231fc763a0846c73fb"
+        }
+      ]
+    },
+    {
+      "name": "SR-114",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_114.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1c/California_114.svg/250px-California_114.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "ef4e67924603e5d9343e58c56920cf478817c517ad50500f688f5063da97e3ab",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-114.png",
+          "sha256": "3f6e04d821e2f1c121014ee196f35a6ec88e715be5ec794904c55af88216a50d"
+        }
+      ]
+    },
+    {
+      "name": "SR-12",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_12.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/31/California_12.svg/250px-California_12.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "39b38f9a9b59be02133afcfb64351df343fe6ddacfd5bba6ba77d1a291f692dc",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-12.png",
+          "sha256": "d26f79be8b593308b0536a23a5d6e9adf1e157a5e0fb95993936a8f232e60898"
+        }
+      ]
+    },
+    {
+      "name": "SR-121",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_121.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/California_121.svg/250px-California_121.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "6b4c95a88aee3133a0733e8853dfd9220ac6f1453db818ebdd758989dcd7b0ac",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-121.png",
+          "sha256": "35e1d6f5d5e117f53616bf53925465e63f8211745d8c124c95b0b129819b6ec6"
+        }
+      ]
+    },
+    {
+      "name": "SR-123",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_123.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/05/California_123.svg/250px-California_123.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "36c27d18a10628414468bc481899359e69f77724ed54a9c7006b8dea0584a73b",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-123.png",
+          "sha256": "9d86fe71e8d277a6c2617091620c512ca2f0b2f8d56bbd0d0ac84beb2ea1ff51"
+        }
+      ]
+    },
+    {
+      "name": "SR-13",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_13.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/94/California_13.svg/250px-California_13.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "5679d3b3a3b71485a8b2fe64dbc5d351356fe9f663a3a640143810dfe2a3fbb5",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-13.png",
+          "sha256": "ccbf1f998fd5eac2ed12e665552b9b01c2e6ecc95e9bf6a05d2c3081020008bf"
+        }
+      ]
+    },
+    {
+      "name": "SR-152",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_152.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/wiki/User:SPUI~commonswiki\" title=\"User:SPUI~commonswiki\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a9/California_152.svg/250px-California_152.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "2153b709c54d515c3986a26cb3e9e1d5e06fdb2eaa0fc4b2ca066694b4a40b8f",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-152.png",
+          "sha256": "def90e573f947d314e9bdea62d82a291a36cbe34fb499974d01633aee02afa56"
+        }
+      ]
+    },
+    {
+      "name": "SR-160",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_160.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/wiki/User:SPUI~commonswiki\" title=\"User:SPUI~commonswiki\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d9/California_160.svg/250px-California_160.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "134afee0662e2fa628ed29113c362fcde7ae0d5763f3b7b202250899adb3ee2e",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-160.png",
+          "sha256": "e66a7f43dbc051448472d4debcb4f4cb97f7dd3426454610cc083e83772174aa"
+        }
+      ]
+    },
+    {
+      "name": "SR-17",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_17.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e5/California_17.svg/250px-California_17.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "b78383b1a787d66fd9e4e9c334a170f57d6ef26951792122f5112430da25273d",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-17.png",
+          "sha256": "c5e44d7631437f11562d6ec7c9e67795c739688b5b09b9724ef4bacb60b7c0d3"
+        }
+      ]
+    },
+    {
+      "name": "SR-237",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_237.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/wiki/User:SPUI~commonswiki\" title=\"User:SPUI~commonswiki\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fc/California_237.svg/250px-California_237.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "a0f22f1ee5850c8218d78400d69896cc4ce5d747908c35f937a757195569e711",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-237.png",
+          "sha256": "119a507ca24766d0616dc5d4fffed6a14cdc7dec4194fabb9f3b934836b8d15c"
+        }
+      ]
+    },
+    {
+      "name": "SR-238",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_238.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/wiki/User:SPUI~commonswiki\" title=\"User:SPUI~commonswiki\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1d/California_238.svg/250px-California_238.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "5274a63c31c5605469f63903d615962d9b74ee7a95a02a7eee2f133b3cc275eb",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-238.png",
+          "sha256": "d5959bcfb5ea63e1171929cafa11e259bf336271b2981b6f2e9125f48625af4b"
+        }
+      ]
+    },
+    {
+      "name": "SR-24",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_24.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f0/California_24.svg/250px-California_24.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "2af587c99c255124cd402b695cf535c58f1128960c201b24ee8e442a9cb89cb3",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-24.png",
+          "sha256": "f67a167a31146bf584bb606345f136849f94ece6b0fb97fcdf806b3df35b5dc2"
+        }
+      ]
+    },
+    {
+      "name": "SR-242",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_242.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/wiki/User:SPUI~commonswiki\" title=\"User:SPUI~commonswiki\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/64/California_242.svg/250px-California_242.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "ca2a2975fdb67a26347f4cafab2287c958f4e4473ea1b98d7f4cfe254abd8576",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-242.png",
+          "sha256": "55a117ae40b402b04249eb5ff87cb427e8e51349598a4601d608d36c757c85c3"
+        }
+      ]
+    },
+    {
+      "name": "SR-260",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_260.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/wiki/User:SPUI~commonswiki\" title=\"User:SPUI~commonswiki\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/39/California_260.svg/250px-California_260.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "f088cf46a2cac52bd533f06225a5ed35dff1f570b69f6473fd3c72e46fad6338",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-260.png",
+          "sha256": "29e24caac2ac099c7b543e70e2a07f4266547550b6a73a9dfcd63689a406634a"
+        }
+      ]
+    },
+    {
+      "name": "SR-29",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_29.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/64/California_29.svg/250px-California_29.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "3c5b0bd14251369be739c6b24840c582bfe363b21e690a7055637ec91beafe78",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-29.png",
+          "sha256": "2457b203cc84456c97dc05342e70af04fa772ba1931cdc74a52fcbe7a13823a5"
+        }
+      ]
+    },
+    {
+      "name": "SR-37",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_37.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c2/California_37.svg/250px-California_37.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "883a7cd2cbfff7b689cecaf8f20ff5529eeb153dcff7e9097008cfe8563d333b",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-37.png",
+          "sha256": "5cfff979b2bb74204ddd259d352045e22ecd8a2ae5630ae8c2980a3c327f8977"
+        }
+      ]
+    },
+    {
+      "name": "SR-4",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_4.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/wiki/User:SPUI~commonswiki\" title=\"User:SPUI~commonswiki\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7b/California_4.svg/250px-California_4.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "cb60bf335c6ad6e2158d77b163a9bc48dd2e5cc0f2d6df8b5f4ce12b28f34195",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-4.png",
+          "sha256": "a08e97488f8273e0c67b3430455dacee4ee1a10584d3a8d77543bfa5dac80834"
+        }
+      ]
+    },
+    {
+      "name": "SR-82",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_82.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/31/California_82.svg/250px-California_82.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "e9ef08fa339d5c01d80e0a207e046c3054a04f99f6b650aa517f3282c4208f23",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-82.png",
+          "sha256": "9b29ae0e9d7aa869b5a09ff3f47dae092c638cd8bfee4f738cf67a34039d1ba6"
+        }
+      ]
+    },
+    {
+      "name": "SR-84",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_84.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0c/California_84.svg/250px-California_84.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "c6751d1904c380139c6c8e015bd744ceaf591f833a0b00f720a2fc8d4c061af6",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-84.png",
+          "sha256": "76e120706b9a1477a2f711cd43a8b4a21736ec0b70630099699e0c5efc18548d"
+        }
+      ]
+    },
+    {
+      "name": "SR-85",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_85.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/06/California_85.svg/250px-California_85.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "6f07233273d6d0e05c526de87f6e29e90c508e64e99cd5ebbbfed1f495601085",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-85.png",
+          "sha256": "6bc836e017b3427030ff4c44581a31278820dfe4c680f79c8c70dcf06057363d"
+        }
+      ]
+    },
+    {
+      "name": "SR-87",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_87.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/84/California_87.svg/250px-California_87.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "3065ef4b10ffed334bac56ce5575c67022b7036287fee224a33366a1f1548f59",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-87.png",
+          "sha256": "1437e2c97b694d40ac4493b49dc43eb1e6af7e3dd187d75146facc456b5a8f71"
+        }
+      ]
+    },
+    {
+      "name": "SR-92",
+      "description_page": "https://commons.wikimedia.org/wiki/File:California_92.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:SPUI&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:SPUI (page does not exist)\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d1/California_92.svg/250px-California_92.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "75e9afa9c92f1e56895a4037ef3c74bd8aa67b4981e28787946f575884d1b532",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "SR-92.png",
+          "sha256": "77ddc5c98ff7f1e7ac338427f7928cee83a7f7330e5f75801be0dc1349ce97e9"
+        }
+      ]
+    },
+    {
+      "name": "US-101",
+      "description_page": "https://commons.wikimedia.org/wiki/File:US_101.svg",
+      "license": "Public domain",
+      "author": "<a href=\"//commons.wikimedia.org/wiki/User:Fredddie\" title=\"User:Fredddie\">Fredddie</a>, originally <a href=\"//commons.wikimedia.org/wiki/User:SPUI~commonswiki\" title=\"User:SPUI~commonswiki\">SPUI</a>",
+      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/79/US_101.svg/250px-US_101.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "source_sha256": "0be61882e01d5e9f9a30377897a7c496ae9552cf2cda2dc869fb7ffb5da9bfd7",
+      "modifications": "Wikimedia PNG render trimmed to its alpha, 64 px tall (LANCZOS).",
+      "files": [
+        {
+          "file": "US-101.png",
+          "sha256": "a31494bd0762bd500dadcc10b442287459f3dfd7db963d08055a8913cfdee1e3"
+        }
+      ]
+    }
+  ]
+}

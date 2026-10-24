@@ -1,0 +1,15 @@
+{
+  "assets": [
+    "cctv.png",
+    "timelapse.png",
+    "nav_arrow.png",
+    "signal.png"
+  ],
+  "scene": "CCTV traffic camera, time-lapse stopwatch, GPS navigation arrow, traffic signal head",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "b4db5c01-4ba4-49ca-a12e-fc4e3dec6e92",
+  "generated": "2026-10-24",
+  "background": "transparent PNG, 1536x512, one row of 4 icons",
+  "processing": "alpha below 40 cleared, split at the transparent gaps, trimmed, 64 px tall (LANCZOS)",
+  "source_sha256": "32111362b0ebc36208e866736a9fdc12a63ba7f7181a60df5166dbd59fb82cd2"
+}
