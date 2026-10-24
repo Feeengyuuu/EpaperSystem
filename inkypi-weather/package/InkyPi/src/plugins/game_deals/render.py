@@ -19,6 +19,8 @@ CARD_RECTS = tuple((14 + col * 399, 73 + row * ROW_PITCH, 386 + col * 399, 73 + 
                    for row in range(ROWS) for col in range(2))
 ART_SIZE = (150, 62)
 BADGE_SIZE = (58, 28)
+# Room between the emboldened dollar sign and the digits after it.
+DOLLAR_GAP = 2
 
 
 def _font(size, bold=False):
@@ -45,6 +47,19 @@ def _fitted_font(text, width, preferred, minimum=14, bold=False):
     return _font(minimum, bold)
 
 
+def _draw_dollar(draw, origin, font, colour):
+    """The sale price's "$" in the badge green, emboldened, with a solid bar through it.
+
+    The UI font draws the dollar's bar as a hairline that the panel loses, so the sign
+    read as an "S"; the bar is redrawn two pixels wide from above the S to below it.
+    """
+    x, baseline = origin
+    draw.text((x, baseline), "$", font=font, fill=colour, anchor="ls", stroke_width=1, stroke_fill=colour)
+    left, top, right, bottom = font.getbbox("$", anchor="ls")
+    middle = x + (left + right) / 2
+    draw.rectangle((round(middle) - 1, round(baseline + top) - 1, round(middle), round(baseline + bottom) + 1), fill=colour)
+
+
 def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
     if tuple(dimensions) != SIZE:
         raise ValueError("Game Deals layout requires the device's 800x480 landscape display")
@@ -54,6 +69,8 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
     ink = (250, 250, 240) if night else (8, 12, 10)
     muted = (205, 215, 207) if night else (68, 75, 70)
     green = (20, 108, 58)
+    # The sale price's dollar sign: the badge green, lifted at night to read on the dark page.
+    dollar = (52, 199, 110) if night else green
     image = Image.new("RGB", SIZE, background)
     draw = ImageDraw.Draw(image)
     assets = Path(__file__).with_name("assets")
@@ -99,10 +116,10 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         sale = "$" + deal["sale_price"]
         original = "$" + deal["normal_price"]
         original_font = _font(15)
-        price_font = _fitted_font(sale, prices_limit - 8 - original_font.getlength(original), 26, 17, True)
-        if price_font.getlength(sale) + 8 + original_font.getlength(original) > prices_limit:
-            original_font = _fitted_font(original, prices_limit - 8 - price_font.getlength(sale), 15, 11)
-        sale_w = price_font.getlength(sale)
+        price_font = _fitted_font(sale, prices_limit - 8 - DOLLAR_GAP - original_font.getlength(original), 26, 17, True)
+        if price_font.getlength(sale) + DOLLAR_GAP + 8 + original_font.getlength(original) > prices_limit:
+            original_font = _fitted_font(original, prices_limit - 8 - DOLLAR_GAP - price_font.getlength(sale), 15, 11)
+        sale_w = price_font.getlength(sale) + DOLLAR_GAP
         original_x = text_x + sale_w + 8
 
         title_height = max(title_font.getbbox("Ag", anchor="lt")[3], title_font.getbbox(line, anchor="lt")[3])
@@ -111,7 +128,9 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         draw.text((text_x, group_top), line, font=title_font, fill=ink, anchor="lt")
         _, sale_top, _, sale_bottom = price_font.getbbox(sale, anchor="ls")
         baseline = price_row + badge_h / 2 - (sale_top + sale_bottom) / 2
-        draw.text((text_x, baseline), sale, font=price_font, fill=ink, anchor="ls")
+        _draw_dollar(draw, (text_x, baseline), price_font, dollar)
+        draw.text((text_x + price_font.getlength("$") + DOLLAR_GAP, baseline), sale[1:], font=price_font, fill=ink,
+                  anchor="ls")
         draw.text((original_x, baseline), original, font=original_font, fill=muted, anchor="ls")
         strike_y = round(baseline + original_font.getbbox("0", anchor="ls")[1] / 2)
         draw.line((original_x, strike_y, original_x + int(original_font.getlength(original)), strike_y),
