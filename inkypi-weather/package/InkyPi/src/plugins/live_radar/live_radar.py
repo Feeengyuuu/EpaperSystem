@@ -184,8 +184,12 @@ COMPACT_PLACEHOLDER_SIZE = (150, 24)
 HEADER_ART_SIZE = (270, 64)
 TITLE_WORDMARK_SIZE = (226, 58)
 SECTION_TITLE_WORDMARK_SIZE = (78, 22)
+# Each title is as wide as its own lettering, so the ink tab hugs it.
 SECTION_TITLE_WORDMARK_SIZES = {
-    title: SECTION_TITLE_WORDMARK_SIZE for title in SECTION_TITLE_WORDMARK_FILES
+    "LIVE NOW": (98, 22),
+    "LIVE TOO": (93, 22),
+    "OFFLINE": (87, 22),
+    "REPLAY": (84, 22),
 }
 TITLE_WORDMARK_OFFSET_X = -35
 TITLE_LOGO_SCALE = 1.4
@@ -2782,7 +2786,7 @@ class LiveRadar(BasePlugin):
             return None
 
     @staticmethod
-    @lru_cache(maxsize=3)
+    @lru_cache(maxsize=len(SECTION_TITLE_WORDMARK_FILES))
     def _load_section_title_wordmark(title):
         filename = SECTION_TITLE_WORDMARK_FILES.get(str(title or "").upper())
         if not filename:

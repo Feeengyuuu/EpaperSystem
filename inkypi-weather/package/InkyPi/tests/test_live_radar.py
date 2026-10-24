@@ -27,7 +27,6 @@ from plugins.live_radar.live_radar import (
     HEADER_ART_SIZE,
     LIVE_STATUS_DOT,
     SECTION_TITLE_WORDMARK_FILES,
-    SECTION_TITLE_WORDMARK_SIZE,
     SECTION_TITLE_WORDMARK_SIZES,
     TITLE_WORDMARK_FILE,
     TITLE_WORDMARK_OFFSET_X,
@@ -2015,7 +2014,8 @@ def test_section_title_wordmark_offsets_count_pill(monkeypatch):
     theme = {**plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day")), "comic": False}
     image = Image.new("RGB", (180, 60), theme["bg"])
     draw = ImageDraw.Draw(image)
-    source = Image.new("RGBA", SECTION_TITLE_WORDMARK_SIZE, (0, 0, 0, 255))
+    size = SECTION_TITLE_WORDMARK_SIZES["LIVE TOO"]
+    source = Image.new("RGBA", size, (0, 0, 0, 255))
     seen = {}
 
     monkeypatch.setattr(LiveRadar, "_load_section_title_wordmark", staticmethod(lambda title: source))
@@ -2025,7 +2025,7 @@ def test_section_title_wordmark_offsets_count_pill(monkeypatch):
 
     assert image.getpixel((14, 20)) != theme["bg"]
     assert seen["text"] == "5"
-    assert seen["box"][0] == 10 + SECTION_TITLE_WORDMARK_SIZE[0] + 8
+    assert seen["box"][0] == 10 + size[0] + 8
 
 def test_comic_section_title_sits_on_an_ink_tab_with_a_coloured_count():
     plugin = _plugin()
