@@ -64,6 +64,8 @@ HN_BOX = (14, 62, 404, 458)
 SKILLS_BOX = (414, 62, 786, 208)
 MODELS_BOX = (414, 214, 786, 334)
 REPOS_BOX = (414, 340, 786, 458)
+# The star trend on a repository's second line, just left of its 24-hour chip.
+REPO_TREND_W = 64
 FONT_SPECS = {
     "lead": (17, "bold"),
     "row": (13, "bold"),
@@ -633,12 +635,12 @@ class TechPulse(BasePlugin):
         x0, y0, x1, y1 = box
         middle = (y0 + y1) / 2
         title_y, meta_y = middle - 9, middle + 10
-        badge = (x0, title_y - 9, x0 + 19, title_y + 9)
-        draw.rounded_rectangle(badge, radius=4, outline=palette["orange"], width=2)
-        self._draw_text(draw, (x0 + 9.5, title_y), str(story.get("rank") or ""), fonts["tiny_bold"], palette["orange"],
+        badge = (x0, title_y - 10, x0 + 20, title_y + 10)
+        draw.rounded_rectangle(badge, radius=5, fill=palette["orange"])
+        self._draw_text(draw, (x0 + 10, title_y), str(story.get("rank") or ""), fonts["label"], (255, 255, 255),
                         anchor="mm")
-        title = self._fit_text(draw, story.get("title") or "", fonts["row"], x1 - x0 - 27)
-        self._draw_text(draw, (x0 + 27, title_y), title, fonts["row"], palette["ink"], anchor="lm")
+        title = self._fit_text(draw, story.get("title") or "", fonts["row"], x1 - x0 - 28)
+        self._draw_text(draw, (x0 + 28, title_y), title, fonts["row"], palette["ink"], anchor="lm")
 
         right = self._draw_story_metrics(draw, x1, meta_y, story, palette, fonts)
         rate, measured = self._velocity(story, history, now)
@@ -651,7 +653,7 @@ class TechPulse(BasePlugin):
             right -= 44
         meta = self._story_meta(story, settings, byline=False)
         if meta:
-            self._draw_text(draw, (x0 + 27, meta_y), self._fit_text(draw, meta, fonts["small"], right - x0 - 35),
+            self._draw_text(draw, (x0 + 28, meta_y), self._fit_text(draw, meta, fonts["small"], right - x0 - 36),
                             fonts["small"], palette["muted"], anchor="lm")
 
     def _draw_story_metrics(self, draw, right, y, story, palette, fonts):
@@ -745,10 +747,10 @@ class TechPulse(BasePlugin):
             top = y0 + 28 + row_h * index
             line1, line2 = top + row_h * 0.33, top + row_h * 0.74
             points = board.get(str(model.get("id") or ""))
-            badge = (x0 + 12, line1 - 9, x0 + 30, line1 + 9)
+            badge = (x0 + 12, line1 - 8, x0 + 30, line1 + 8)
             draw.rounded_rectangle(badge, radius=4, fill=palette["hf"])
             self._draw_text(draw, (x0 + 21, line1), str(index + 1), fonts["tiny_bold"], (24, 27, 31), anchor="mm")
-            self._rank_move(draw, x0 + 13, line2, points, now, palette, fonts)
+            moved_w = self._rank_move(draw, x0 + 38, line2, points, now, palette, fonts)
             right = x1 - 12
             for metric, icon, field, colour in reversed(columns):
                 self._metric(draw, right, line1, icon, self._compact_number(model.get(field) or 0), colour, palette,
@@ -759,8 +761,9 @@ class TechPulse(BasePlugin):
             self._draw_text(draw, (x0 + 38, line1), self._fit_text(draw, model.get("id") or "", fonts["name"], width),
                             fonts["name"], palette["ink"], anchor="lm")
             tag = str(model.get("pipeline_tag") or "model")
-            self._draw_text(draw, (x0 + 38, line2), self._fit_text(draw, tag, fonts["tiny"], width), fonts["tiny"],
-                            palette["muted"], anchor="lm")
+            tag_x = x0 + 38 + (moved_w + 6 if moved_w else 0)
+            self._draw_text(draw, (tag_x, line2), self._fit_text(draw, tag, fonts["tiny"], width - (tag_x - x0 - 38)),
+                            fonts["tiny"], palette["muted"], anchor="lm")
             if index < 2:
                 self._dotted(draw, x0 + 12, x1 - 12, top + row_h, palette["rule"])
 
@@ -774,20 +777,23 @@ class TechPulse(BasePlugin):
         row_h = (y1 - y0 - 30) / 3
         for index, repo in enumerate(rows[:3]):
             top = y0 + 28 + row_h * index
-            line1, line2 = top + row_h * 0.33, top + row_h * 0.74
+            # A little more apart than the models' lines: the star count sits right above the chip.
+            line1, line2 = top + row_h * 0.29, top + row_h * 0.78
             self._draw_text(draw, (x0 + 21, line1), str(index + 1), fonts["name"], palette["gh"], anchor="mm")
+            right = self._metric(draw, x1 - 12, line1, "star", self._compact_number(repo.get("stars") or 0),
+                                 palette["amber"], palette, fonts)
             delta = repo.get("stars_24h")
             badge = "NEW" if delta is None else f"{self._signed(delta) if delta else '+0'}/24H"
-            badge_w = self._text_width(draw, badge, fonts["tiny_bold"]) + 14
-            badge_box = (x1 - 12 - badge_w, line1 - 8, x1 - 12, line1 + 8)
-            draw.rounded_rectangle(badge_box, radius=8, fill=palette["gh"] if delta else palette["muted"])
-            self._draw_text(draw, ((badge_box[0] + badge_box[2]) / 2, line1), badge, fonts["tiny_bold"],
+            badge_w = self._text_width(draw, badge, fonts["tiny_bold"]) + 12
+            badge_box = (x1 - 12 - badge_w, line2 - 6, x1 - 12, line2 + 6)
+            draw.rounded_rectangle(badge_box, radius=6, fill=palette["gh"] if delta else palette["muted"])
+            self._draw_text(draw, ((badge_box[0] + badge_box[2]) / 2, line2), badge, fonts["tiny_bold"],
                             palette["panel"], anchor="mm")
-            right = self._metric(draw, badge_box[0] - 8, line1, "star", self._compact_number(repo.get("stars") or 0),
-                                 palette["amber"], palette, fonts)
             values = self._star_series(stars.get(str(repo.get("full_name"))), now)
-            if not self._sparkline(draw, (right, line2 - 5, x1 - 12, line2 + 5), values, palette):
-                self._draw_text(draw, (x1 - 12, line2), "tracking stars", fonts["tiny"], palette["muted"], anchor="rm")
+            trend_box = (badge_box[0] - 8 - REPO_TREND_W, line2 - 5, badge_box[0] - 8, line2 + 5)
+            if not self._sparkline(draw, trend_box, values, palette) and delta is None:
+                self._draw_text(draw, (badge_box[0] - 6, line2), "tracking", fonts["tiny"], palette["muted"],
+                                anchor="rm")
             width = right - (x0 + 38) - 8
             self._draw_text(draw, (x0 + 38, line1), self._fit_text(draw, repo.get("full_name") or "", fonts["name"],
                                                                     width), fonts["name"], palette["ink"], anchor="lm")
@@ -816,13 +822,16 @@ class TechPulse(BasePlugin):
         return f"{skill.get('source') or ''}/{skill.get('name') or ''}".casefold()
 
     def _rank_move(self, draw, x, y, points, now, palette, fonts):
+        """An arrow and the places moved, from ``x``; returns its width (0 when the rank held)."""
         found = trends.change(points, "rank", now)
         moved = -int(found[0]) if found else 0
         if not moved:
-            return
+            return 0
         colour = palette["up"] if moved > 0 else palette["down"]
         draw_icon(draw, "up" if moved > 0 else "down", (x, y - 4), 7, colour, palette["panel"])
-        self._draw_text(draw, (x + 8, y), str(abs(moved)), fonts["tiny_bold"], colour, anchor="lm")
+        label = str(abs(moved))
+        self._draw_text(draw, (x + 8, y), label, fonts["tiny_bold"], colour, anchor="lm")
+        return 8 + self._text_width(draw, label, fonts["tiny_bold"])
 
     def _delta(self, draw, right, y, found, palette, fonts):
         """A coloured signed change ending at ``right``; returns its left edge (``right`` when there is none)."""
