@@ -85,8 +85,10 @@ INLINE_PLUGINS = frozenset(
     {
         "bay_alerts",
         "bay_commute",
+        "bay_traffic_cams",
         "chinese_literature_clock",
         "clock",
+        "daily_pop",
         "flow_progress",
         "game_deals",
         "literature_clock",
