@@ -56,7 +56,7 @@ TITLE_BACKGROUND_SIZE = (325, 65)
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
 TITLE_WORDMARK_SIZE = (220, 58)
 MARKET_LOGO_DIR = PLUGIN_DIR / "market_logos"
-SUMMARY_SCHEMA_VERSION = "mainland-world-lead-tags-v19"
+SUMMARY_SCHEMA_VERSION = "mainland-world-lead-tags-v20"
 # The page's accents are refined modern tones, not the panel's six pure inks: a crimson
 # for the 头条 seal and mainland news, a cobalt for world news, and an emerald that
 # pairs with the crimson for market moves (each board in its own convention, see

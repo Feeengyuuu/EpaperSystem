@@ -2082,10 +2082,11 @@ def test_words_stay_ink_with_red_and_blue_as_sparing_accents(monkeypatch):
 
     ink = daily_ai_news_module.get_theme_palette("day")["ink"]
     assert fills["大陆新闻1"] == fills["尼日利亚确诊埃博拉病例"] == fills["公卫"] == ink
-    # 国内 numbers are crimson; the 国际 kicker and a business tag are cobalt.
+    # 国内 numbers are crimson and the 国际 kicker cobalt; stories carry no tag words.
     crimson, cobalt, emerald = (200, 30, 50), (37, 84, 199), (5, 150, 105)
     assert fills["01"] == crimson
-    assert fills["国际"] == fills["金融"] == cobalt
+    assert fills["国际"] == cobalt
+    assert "金融" not in fills
     # The lead's seal is the generated crimson 头条 badge: crimson ground, white strokes.
     seal = [image.getpixel((x, y)) for x in range(17, 42) for y in range(76, 126)]
     assert sum(1 for r, g, b in seal if r > 150 and g < 90 and b < 100) > len(seal) * 0.4
@@ -2325,25 +2326,27 @@ def test_long_column_titles_take_a_second_line_when_the_column_has_room(monkeypa
 def test_a_full_column_keeps_every_story_on_one_line_before_adding_second_lines():
     plugin = _plugin()
     page = news_layout.NewsPage(plugin, Image.new("RGB", (800, 480), "white"), plugin._page_palette({"mode": "day"}), "Microsoft YaHei")
-    items = [{"title": f"足够长的标题需要两行才能完整显示在栏目里的第{index}条新闻内容", "why": "", "tag": ""} for index in range(4)]
+    items = [{"title": f"足够长的标题需要两行才能完整显示在栏目里的第{index}条新闻内容", "why": "", "tag": ""} for index in range(7)]
 
-    lines, gap = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
+    lines, gap, facts = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
 
-    # All four stories stay; the tighter gap frees room for two clipped titles' second lines.
-    assert lines == [2, 2, 1, 1]
+    # All seven stories stay; the tighter gap frees room for three clipped titles' second lines.
+    assert lines == [2, 2, 2, 1, 1, 1, 1]
     assert gap == news_layout.COMPACT_ITEM_GAP
+    assert facts == [False] * 7
 
 
-def test_a_full_column_shows_five_one_line_stories():
+def test_a_full_column_shows_seven_stories_and_facts_on_the_leading_ones():
     plugin = _plugin()
     page = news_layout.NewsPage(plugin, Image.new("RGB", (800, 480), "white"), plugin._page_palette({"mode": "day"}), "Microsoft YaHei")
-    items = [{"title": f"足够长的标题需要两行才能完整显示在栏目里的第{index}条新闻内容", "why": "", "tag": ""} for index in range(5)]
+    items = [{"title": f"短标题{index}", "why": f"事实说明{index}", "tag": ""} for index in range(7)]
 
-    lines, gap = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
+    lines, gap, facts = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
 
-    # Every story is shown before any title gets a second line.
-    assert lines == [1, 1, 1, 1, 1]
+    # Every story is shown; the later ones keep only their title line to make room.
+    assert lines == [1] * 7
     assert gap == news_layout.COMPACT_ITEM_GAP
+    assert facts == [True, True, True, True, False, False, False]
 
 
 def test_a_short_column_spreads_its_stories_to_the_foot(monkeypatch):
@@ -2445,21 +2448,20 @@ def test_a_column_keeps_the_normal_gap_when_no_title_is_clipped():
     page = news_layout.NewsPage(plugin, Image.new("RGB", (800, 480), "white"), plugin._page_palette({"mode": "day"}), "Microsoft YaHei")
     items = [{"title": f"短标题{index}", "why": "", "tag": ""} for index in range(4)]
 
-    lines, gap = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
+    lines, gap, _facts = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
 
     assert (lines, gap) == ([1, 1, 1, 1], news_layout.ITEM_GAP)
 
 
-def test_story_tag_sits_under_the_number_and_the_fact_follows_it(monkeypatch):
+def test_a_story_shows_its_topic_as_an_icon_and_its_fact_under_the_title(monkeypatch):
     plugin = _plugin()
-    chips, texts = {}, {}
+    chips, texts = [], {}
     original_chip = news_layout.NewsPage.chip
     original_text = ImageDraw.ImageDraw.text
 
     def record_chip(self, x, y, text, colour, *args, **kwargs):
-        width = original_chip(self, x, y, text, colour, *args, **kwargs)
-        chips.setdefault(text, (x, width))
-        return width
+        chips.append(text)
+        return original_chip(self, x, y, text, colour, *args, **kwargs)
 
     def capture_text(self, xy, text, *args, **kwargs):
         texts.setdefault(str(text), xy)
@@ -2472,10 +2474,8 @@ def test_story_tag_sits_under_the_number_and_the_fact_follows_it(monkeypatch):
 
     plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 10, 21), {"mode": "day"})
 
-    number_x = texts["01"][0]
-    chip_x, chip_w = chips["金融"]
-    assert chip_x == number_x == news_layout.MARGIN
-    assert texts["推出央行端系统"][0] == chip_x + chip_w + 6
+    assert "金融" not in chips and "金融" not in texts
+    assert texts["推出央行端系统"][0] == texts["数字人民币体系升级"][0] == news_layout.MARGIN + 26
 
 
 def test_yahoo_as_of_follows_the_price_session_when_it_is_newer_than_the_last_bar(monkeypatch):
@@ -2559,7 +2559,7 @@ def test_world_stories_are_capped_at_what_the_column_shows():
     page = news_layout.NewsPage(plugin, Image.new("RGB", (800, 480), "white"), plugin._page_palette({"mode": "day"}), "Microsoft YaHei")
     items = [{"title": f"世界短新闻{index}", "why": "", "tag": ""} for index in range(daily_ai_news_module.WORLD_NEWS_MAX)]
 
-    lines, _gap = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
+    lines, _gap, _facts = page.plan_column(items, 330, news_layout.COLUMN_BOTTOM - news_layout.COLUMN_TOP - 32)
 
     assert len(lines) == daily_ai_news_module.WORLD_NEWS_MAX
 

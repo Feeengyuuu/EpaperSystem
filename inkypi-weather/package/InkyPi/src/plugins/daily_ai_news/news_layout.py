@@ -28,12 +28,12 @@ COLUMN_TOP = 150
 COLUMN_GAP = 24
 COLUMN_BOTTOM = 390
 MARKET_TOP = 396
-ITEM_GAP = 8
+ITEM_GAP = 6
 # The tighter gap a full column uses to fit all five stories or a clipped title's second line.
-COMPACT_ITEM_GAP = 4
+COMPACT_ITEM_GAP = 3
 # A story is its title lines plus a footer row with the tag chip and the one-line fact.
 TITLE_LINE = 18
-ITEM_FOOTER = 20
+ITEM_FOOTER = 16
 # Each story ends in a topic ring; its text stops short of this right-hand slot.
 STORY_ICON_SLOT = 40
 STORY_ICON_RADIUS = 15
@@ -54,9 +54,9 @@ TOPIC_ACCENTS = {
 LEAD_TITLE_SIZES = (26, 24, 22, 20)
 LEAD_FACT_SIZE = 15
 LEAD_FACT_LINE = 19
-GLOBE_MIN_HEIGHT = 46
+GLOBE_MIN_HEIGHT = 60
 # The most a short column widens each gap between its stories.
-JUSTIFY_GAP_MAX = 12
+JUSTIFY_GAP_MAX = 16
 WEEKDAYS = "一二三四五六日"
 
 
@@ -231,46 +231,64 @@ class NewsPage:
         count_x = x + 14 + self.width(label, 14)
         self.d.line((x, COLUMN_TOP + 22, x + width, COLUMN_TOP + 22), fill=c["rule"], width=1)
         y = COLUMN_TOP + 32
-        plan, gap = self.plan_column(items, width - 26 - STORY_ICON_SLOT, COLUMN_BOTTOM - y)
-        used = sum(lines * TITLE_LINE + ITEM_FOOTER for lines in plan) + gap * max(0, len(plan) - 1)
+        plan, gap, facts = self.plan_column(items, width - 26 - STORY_ICON_SLOT, COLUMN_BOTTOM - y)
+        used = sum(lines * TITLE_LINE + (ITEM_FOOTER if fact else 0) for lines, fact in zip(plan, facts))
+        used += gap * max(0, len(plan) - 1)
         spare = COLUMN_BOTTOM - y - used
         if len(plan) > 1 and spare < GLOBE_MIN_HEIGHT:
             # Too little room for the globe: spread the stories down the column, as a
             # newspaper justifies one, instead of leaving a band at its foot.
             gap += min(spare // (len(plan) - 1), JUSTIFY_GAP_MAX)
-        for number, (item, title_lines) in enumerate(zip(items, plan), 1):
-            y += self.item(x, y, width, number, item, title_lines, mark) + gap
+        for number, (item, title_lines, fact) in enumerate(zip(items, plan, facts), 1):
+            height = self.item(x, y, width, number, item, title_lines, mark, with_fact=fact)
+            if number < len(plan):
+                # A dotted rule in the gap parts one story from the next, as a news digest does.
+                rule_y = y + height + max(1, gap // 2)
+                for dot_x in range(x + 26, x + width - STORY_ICON_SLOT + 6, 4):
+                    self.d.point((dot_x, rule_y), fill=c["rule"])
+            y += height + gap
         self.text((count_x, COLUMN_TOP + 2), str(len(plan)), 11, True, mark)
         if COLUMN_BOTTOM - y >= GLOBE_MIN_HEIGHT:
             self.globe_filler(x, y, width, COLUMN_BOTTOM, label, sources)
 
     def plan_column(self, items, text_width, available):
-        """Title lines per shown story and the gap between stories.
+        """(title lines, gap, fact shown) for each story the column shows.
 
-        As many stories as fit on one line each, then a second line for each clipped
-        title in order while the column has room. When the normal gap leaves a clipped
-        title on one line, the compact gap is used if it lets more titles show whole.
+        As many stories as fit come first: when not all fit with their facts, the later
+        ones keep only their title line, so the column carries more news. Facts stay on
+        as many leading stories as possible, then clipped titles get a second line in
+        order while room is left. The compact gap is used when it shows more.
         """
         clipped = [len(self.wrap(item["title"], 15, text_width, 2)) == 2 for item in items]
+        has_fact = [bool(str(item.get("why") or "").strip()) for item in items]
+
+        def height(count, full, gap):
+            rows = sum(TITLE_LINE + (ITEM_FOOTER if index < full and has_fact[index] else 0) for index in range(count))
+            return rows + gap * max(0, count - 1)
+
         best = None
         for gap in (ITEM_GAP, COMPACT_ITEM_GAP):
-            lines, used = [], 0
-            for _item in items:
-                height = TITLE_LINE + ITEM_FOOTER + (gap if lines else 0)
-                if used + height > available:
+            count, full = 0, 0
+            for candidate in range(len(items), 0, -1):
+                fitting = next((keep for keep in range(candidate, -1, -1) if height(candidate, keep, gap) <= available),
+                               None)
+                if fitting is not None:
+                    count, full = candidate, fitting
                     break
-                lines.append(1)
-                used += height
-            for index in range(len(lines)):
+            used = height(count, full, gap)
+            lines = [1] * count
+            for index in range(count):
                 if clipped[index] and used + TITLE_LINE <= available:
                     lines[index] = 2
                     used += TITLE_LINE
-            whole = sum(1 for index, count in enumerate(lines) if count == 2 or not clipped[index])
-            if best is None or (len(lines), whole) > (len(best[0]), best[2]):
-                best = (lines, gap, whole)
-        return best[0], best[1]
+            facts = [index < full and has_fact[index] for index in range(count)]
+            whole = sum(1 for index, lines_used in enumerate(lines) if lines_used == 2 or not clipped[index])
+            score = (count, sum(facts), whole)
+            if best is None or score > best[3]:
+                best = (lines, gap, facts, score)
+        return best[0], best[1], best[2]
 
-    def item(self, x, y, width, number, item, title_lines, number_colour=None):
+    def item(self, x, y, width, number, item, title_lines, number_colour=None, with_fact=True):
         c = self.c
         self.text((x, y + 1), f"{number:02d}", 13, True, number_colour)
         text_x, text_w = x + 26, width - 26 - STORY_ICON_SLOT
@@ -281,14 +299,14 @@ class NewsPage:
         row_y = y + len(lines) * TITLE_LINE + 1
         tag = item.get("tag") or ""
         kind, accent = self.topic_accent(tag, item["title"])
-        # The tag sits under the number, so the fact gets the full row after it.
-        fact_x = x + self.chip(x, row_y, tag, accent, size=10, solid=False, ink=accent) + 6 if tag else text_x
-        why = self.clip(item.get("why"), 12, text_right - fact_x, False)
+        # The topic shows only as the icon at the right; the fact runs under the title.
+        why = self.clip(item.get("why"), 11, text_right - text_x, False) if with_fact else ""
         if why:
-            self.text((fact_x, row_y + 9), why, 12, False, c["ink"], "lm")
-        height = len(lines) * TITLE_LINE + ITEM_FOOTER
+            self.text((text_x, row_y + 7), why, 11, False, c["ink"], "lm")
+        height = len(lines) * TITLE_LINE + (ITEM_FOOTER if why else 0)
+        radius = min(STORY_ICON_RADIUS, height // 2 - 1)
         news_art.draw_story_icon(self.d, x + width - STORY_ICON_RADIUS - 2, y + height // 2 - 1,
-                                 STORY_ICON_RADIUS, kind, c["ink"], accent, c["panel"], image=self.img)
+                                 radius, kind, c["ink"], accent, c["panel"], image=self.img)
         return height
 
     def globe_filler(self, x, top, width, bottom, label, sources):

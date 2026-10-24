@@ -14,8 +14,8 @@ from utils.app_utils import bounded_int
 from utils.plugin_cache import read_json, write_json
 
 # Stories each column shows.
-MAINLAND_NEWS_MAX = 5
-WORLD_NEWS_MAX = 5
+MAINLAND_NEWS_MAX = 7
+WORLD_NEWS_MAX = 7
 
 
 def _enabled(value: Any) -> bool:
