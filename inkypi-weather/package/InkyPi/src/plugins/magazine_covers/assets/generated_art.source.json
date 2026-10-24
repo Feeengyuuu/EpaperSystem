@@ -1,0 +1,34 @@
+{
+  "model": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "18ff0bad-9062-4d8e-b7c6-15d7faa7e18c",
+  "generated_at": "2026-10-24",
+  "prompt_summary": "4x2 sheet of category icons, a white glyph on a solid coloured circle: palette (art & design), trophy+ball (sports), newspaper+dome (news & politics), dress on hanger (fashion & culture), atom+leaf (science & nature), note+film (entertainment & music), 18+ (adult), hourglass+scroll (history); transparent 1536x1024.",
+  "processing": "Alpha below 40 cleared, cut at the transparent gaps, centred on a square and scaled to 64 px (outputs/bay-commute-badges-20261024/prep_art.py).",
+  "source_sha256": "588d0ed13706a41e4f6ef3965989f45bbc5eea6adc05ce8ed0bd58999d23a178",
+  "files": {
+    "category_adult.png": {
+      "sha256": "1e463dccaffc8581a2a9cae83e50b57e0bd9d1d61f82ecf75968ec3fa9fbc253"
+    },
+    "category_art_design.png": {
+      "sha256": "d4116eeaee1f65bd159340a58f820605c8076832375b14a966c08ba7d11cc53e"
+    },
+    "category_entertainment_music.png": {
+      "sha256": "69c75242bba7ddefb709a3d3200d808fee6f8b400e201f9fd30563fcd97ae868"
+    },
+    "category_fashion_culture.png": {
+      "sha256": "a267db1ea0ed31276ef4d846e68c887e4899b07b50e67d5c449944c9f96d5b2d"
+    },
+    "category_general_history.png": {
+      "sha256": "8e23f4e4abda458409e20fa48ba25b38448cbff89c13883e6d104bdfff61357a"
+    },
+    "category_news_politics.png": {
+      "sha256": "b89e6927534fda246f0a884fe8d586f3de9360f4073d2f150a84f6388389c5f1"
+    },
+    "category_science_nature.png": {
+      "sha256": "5cd056b410ffeadfe84b1ba264e5c3bbf6b423e369eea5b3491c532cc0b8c414"
+    },
+    "category_sports.png": {
+      "sha256": "c8ccf10948b9b605f7f0157dfc97123b141ded7461e8c1c57a6bb4532655ba01"
+    }
+  }
+}

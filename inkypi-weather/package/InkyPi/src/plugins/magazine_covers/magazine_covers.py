@@ -29,6 +29,7 @@ from plugins.base_plugin.render_provenance import SourceProvenance, attach_sourc
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.base_plugin.parallel_image_stage import prepare_local_bank_images
 from plugins.context_cache import write_context
+from plugins.magazine_covers import cover_info
 from plugins.magazine_covers.historical_catalog import (
     CATALOG_TARGET_ITEMS,
     CATEGORY_TARGET_ITEMS,
@@ -916,6 +917,7 @@ class MagazineCovers(BasePlugin):
                             backdrop,
                             dimensions,
                             settings,
+                            records=[record for record, _image in selected],
                         )
                     finally:
                         for staged_image in staged_images:
@@ -938,7 +940,12 @@ class MagazineCovers(BasePlugin):
                 }
                 source_covers.append((source, cover))
             if selection.get("layout") == "triptych" and len(source_covers) >= 2:
-                return self._fit_cover_triptych(source_covers, dimensions, settings)
+                return self._fit_cover_triptych(
+                    source_covers,
+                    dimensions,
+                    settings,
+                    records=[record for record, _image in selected],
+                )
             source, cover = source_covers[0]
             return self._fit_cover(cover["image"], dimensions, settings, source)
         finally:
@@ -961,17 +968,12 @@ class MagazineCovers(BasePlugin):
             for record in records
         ]
         if selection.get("layout") == "triptych" and len(records) >= 2:
-            width, height = dimensions
-            column_width = width // TRIPTYCH_COVER_COUNT
             targets = []
             for index in range(len(records)):
-                x0 = index * column_width
-                target_width = (
-                    column_width
-                    if index < TRIPTYCH_COVER_COUNT - 1
-                    else width - x0
+                _left, _top, box_width, box_height = cover_info.cover_box(
+                    index, TRIPTYCH_COVER_COUNT, dimensions
                 )
-                targets.append((target_width, height))
+                targets.append((box_width, box_height))
             paths.append(paths[0])
             targets.append(None)
         else:
@@ -985,21 +987,25 @@ class MagazineCovers(BasePlugin):
             expected_instance_uuid=expected_instance_uuid,
         )
 
-    def _compose_staged_triptych(self, fitted_images, backdrop, dimensions, settings):
+    def _compose_staged_triptych(self, fitted_images, backdrop, dimensions, settings, records=None):
         canvas = self._triptych_background([backdrop], dimensions, settings)
-        width, height = dimensions
-        column_width = width // TRIPTYCH_COVER_COUNT
         for index, fitted in enumerate(fitted_images):
-            x0 = index * column_width
-            target_width = (
-                column_width
-                if index < TRIPTYCH_COVER_COUNT - 1
-                else width - x0
-            )
-            x = x0 + (target_width - fitted.width) // 2
-            y = (height - fitted.height) // 2
-            canvas.paste(fitted, (x, y))
+            self._paste_triptych_cover(canvas, fitted, index, dimensions)
+        self._draw_triptych_cards(canvas, records or [], dimensions, settings)
         return canvas
+
+    @staticmethod
+    def _paste_triptych_cover(canvas, fitted, index, dimensions):
+        left, top, box_width, box_height = cover_info.cover_box(index, TRIPTYCH_COVER_COUNT, dimensions)
+        canvas.paste(fitted, (left + (box_width - fitted.width) // 2, top + (box_height - fitted.height) // 2))
+
+    def _draw_triptych_cards(self, canvas, records, dimensions, settings):
+        """Each cover's publication, issue, era, category and source on a card beneath it."""
+        dark = (settings.get("backgroundColor") or "white").lower() == "black"
+        this_year = self._now_utc().year
+        for index, record in enumerate(records[:TRIPTYCH_COVER_COUNT]):
+            box = cover_info.card_box(index, TRIPTYCH_COVER_COUNT, dimensions)
+            cover_info.draw_card(canvas, box, cover_info.cover_info(record, this_year), dark=dark)
 
     def _write_records_context(self, records):
         records = list(records or [])
@@ -2189,23 +2195,23 @@ class MagazineCovers(BasePlugin):
     def _fit_mode(self, settings):
         return str(settings.get("fitMode") or DEFAULT_FIT_MODE).strip().lower()
 
-    def _fit_cover_triptych(self, source_covers, dimensions, settings):
+    def _fit_cover_triptych(self, source_covers, dimensions, settings, records=None):
         cover_images = [
             ImageOps.exif_transpose(cover["image"]).convert("RGB")
             for _source, cover in source_covers[:TRIPTYCH_COVER_COUNT]
         ]
         canvas = self._triptych_background(cover_images, dimensions, settings)
-        width, height = dimensions
-        column_width = width // TRIPTYCH_COVER_COUNT
 
         for index, image in enumerate(cover_images):
-            x0 = index * column_width
-            target_width = column_width if index < TRIPTYCH_COVER_COUNT - 1 else width - x0
-            fitted = ImageOps.contain(image, (target_width, height), method=Image.LANCZOS)
-            x = x0 + (target_width - fitted.width) // 2
-            y = (height - fitted.height) // 2
-            canvas.paste(fitted, (x, y))
-
+            _left, _top, box_width, box_height = cover_info.cover_box(index, TRIPTYCH_COVER_COUNT, dimensions)
+            fitted = ImageOps.contain(image, (box_width, box_height), method=Image.LANCZOS)
+            self._paste_triptych_cover(canvas, fitted, index, dimensions)
+        if records is None:
+            records = [
+                {**self._decorate_cover_metadata(source, cover), "source_name": (source or {}).get("name")}
+                for source, cover in source_covers[:TRIPTYCH_COVER_COUNT]
+            ]
+        self._draw_triptych_cards(canvas, records, dimensions, settings)
         return canvas
 
     def _triptych_background(self, cover_images, dimensions, settings):
