@@ -1676,7 +1676,7 @@ def test_generate_image_renders_card_wall_without_network():
 
     assert image.size == (800, 480)
     assert image.mode == "RGB"
-    assert image.getpixel((0, 0)) == (0, 0, 0)
+    assert _page_tint_of(image.getpixel((0, 0)), (0, 0, 0))
     assert any(pixel != (0, 0, 0) for pixel in image.crop((10, 10, 790, 470)).getdata())
 
 
@@ -1727,7 +1727,7 @@ def test_render_themed_image_accepts_frozen_scheduler_theme_context():
         resolved_theme_context=freeze_payload(context),
     )
 
-    assert image.getpixel((0, 0)) == comic_art.PAPER
+    assert _page_tint_of(image.getpixel((0, 0)), comic_art.PAPER)
 
 
 def test_theme_only_stale_status_cache_rerenders_without_provider_calls():
@@ -1787,8 +1787,8 @@ def test_theme_only_stale_status_cache_rerenders_without_provider_calls():
     night_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": night}, FakeDeviceConfig(mode="day"))
 
     assert calls == {"statuses": 1}
-    assert day_image.getpixel((0, 0)) == comic_art.PAPER
-    assert night_image.getpixel((0, 0)) == night["palette"]["background"]
+    assert _page_tint_of(day_image.getpixel((0, 0)), comic_art.PAPER)
+    assert _page_tint_of(night_image.getpixel((0, 0)), night["palette"]["background"])
     assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
 
 
@@ -4209,3 +4209,36 @@ def test_replay_tiles_carry_a_replay_tag_and_the_wall_an_amber_frame():
     pixels = set(image.crop((10, 34, 230, 180)).get_flattened_data())
     assert amber in pixels
     assert image.getpixel((11, 100)) == amber
+
+
+def _page_tint_of(pixel, page):
+    """The page colour as the comic backdrop leaves it: at most the scene's share away from it."""
+    share = max(live_radar_module.LIVE_BACKDROP_SHARE.values())
+    return all(abs(a - b) <= 255 * share + 1 for a, b in zip(pixel, tuple(page)))
+
+
+def test_comic_backdrop_follows_how_many_streamers_are_live():
+    assert [LiveRadar._live_backdrop_name(count) for count in (0, 2, 3, 9, 10, 40)] == [
+        "quiet", "quiet", "steady", "steady", "prime", "prime"]
+    plugin = _plugin()
+    for mode in ("day", "night"):
+        theme = plugin._theme({"themeMode": "light" if mode == "day" else "dark"}, FakeDeviceConfig(mode=mode))
+        image = Image.new("RGB", (800, 480), theme["bg"])
+
+        backdrop = plugin._paint_live_backdrop(image, 12, theme)
+
+        # A faint tint of the scene: never the flat page, never far from it.
+        assert backdrop is not None and image.tobytes() == backdrop.tobytes()
+        pixels = list(image.resize((80, 48), Image.Resampling.BOX).get_flattened_data())
+        assert any(pixel != tuple(theme["bg"]) for pixel in pixels)
+        share = live_radar_module.LIVE_BACKDROP_SHARE["dark" if theme.get("mode") == "dark" else "light"]
+        assert all(abs(a - b) <= 255 * share + 1 for pixel in pixels for a, b in zip(pixel, theme["bg"]))
+
+
+def test_rounded_corners_are_repainted_from_the_backdrop():
+    backdrop = Image.new("RGB", (40, 40), (10, 200, 30))
+    image = Image.new("RGB", (40, 40), (255, 255, 255))
+
+    LiveRadar._clip_outside_round(image, (5, 5, 35, 35), 8, backdrop)
+
+    assert image.getpixel((5, 5)) == (10, 200, 30) and image.getpixel((20, 20)) == (255, 255, 255)

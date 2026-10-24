@@ -179,6 +179,16 @@ SECTION_TITLE_WORDMARK_FILES = {
     "OFFLINE": "liveradar_section_offline.png",
     "REPLAY": "liveradar_section_replay.png",
 }
+# The comic page lies on a scene that follows the room: a buzzing broadcast district once
+# this many streamers are live, an afternoon skyline with a sweeping radar dish from the
+# next count, and a sleeping city under the moon below that.
+LIVE_BACKDROP_FILES = (
+    ("prime", 10, "liveradar_backdrop_prime.jpg"),
+    ("steady", 3, "liveradar_backdrop_steady.jpg"),
+    ("quiet", 0, "liveradar_backdrop_quiet.jpg"),
+)
+# How far the scene is laid over the page: a light tint by day, a little more by night.
+LIVE_BACKDROP_SHARE = {"light": 0.2, "dark": 0.28}
 # Largest offline doodle drawn in a compact card's free space.
 COMPACT_PLACEHOLDER_SIZE = (150, 24)
 HEADER_ART_SIZE = (270, 64)
@@ -1289,6 +1299,10 @@ class LiveRadar(BasePlugin):
         replay_cards = self._sort_cards([card for card in cards if card["status"] == "replay"])
         offline_cards = self._sort_cards([card for card in cards if card["status"] == "offline"])
         error_cards = self._sort_cards([card for card in cards if card["status"] == "error"])
+        if theme.get("comic"):
+            backdrop = self._paint_live_backdrop(image, len(live_cards), theme)
+            if backdrop is not None:
+                theme = {**theme, "backdrop": backdrop}
 
         logo_size, logo_y = self._title_logo_layout(height)
         title_x = margin
@@ -1884,7 +1898,7 @@ class LiveRadar(BasePlugin):
             )
         for edge in row_edges[1:-1]:
             draw.line((left + 8, edge, right - 8, edge), fill=theme["line"], width=1)
-        self._clip_outside_round(image, frame, LIVE_QUEUE_RADIUS, theme["bg"])
+        self._clip_outside_round(image, frame, LIVE_QUEUE_RADIUS, theme.get("backdrop") or theme["bg"])
         self._rounded_rectangle(draw, frame, radius=LIVE_QUEUE_RADIUS, outline=theme["line"], width=1)
         if theme.get("comic"):
             comic_art.ink_shadow(image, frame, LIVE_QUEUE_RADIUS, comic_art.roles(theme)["shadow"])
@@ -2015,7 +2029,7 @@ class LiveRadar(BasePlugin):
             draw.line((edge, top, edge, lower), fill=theme["line"], width=1)
         for edge in row_edges[1:-1]:
             draw.line((left, edge, right, edge), fill=theme["line"], width=1)
-        self._clip_outside_round(image, wall, LIVE_QUEUE_RADIUS, theme["bg"])
+        self._clip_outside_round(image, wall, LIVE_QUEUE_RADIUS, theme.get("backdrop") or theme["bg"])
         if replay:
             self._rounded_rectangle(draw, wall, radius=LIVE_QUEUE_RADIUS, outline=STATUS_TOTAL_FILLS["replay"],
                                     width=REPLAY_FRAME_WIDTH)
@@ -2405,12 +2419,16 @@ class LiveRadar(BasePlugin):
 
     @staticmethod
     def _clip_outside_round(image, box, radius, colour):
-        """Repaint what lies inside ``box`` but outside its rounded corners."""
+        """Repaint what lies inside ``box`` but outside its rounded corners (a colour, or the page backdrop)."""
         left, top, right, bottom = box
         region = image.crop((left, top, right + 1, bottom + 1))
         mask = Image.new("L", region.size, 255)
         ImageDraw.Draw(mask).rounded_rectangle((0, 0, region.width - 1, region.height - 1), radius=radius, fill=0)
-        region.paste(Image.new("RGB", region.size, colour), (0, 0), mask)
+        if isinstance(colour, Image.Image):
+            fill = colour.crop((left, top, right + 1, bottom + 1))
+        else:
+            fill = Image.new("RGB", region.size, colour)
+        region.paste(fill, (0, 0), mask)
         image.paste(region, (left, top))
 
     def _draw_compact_card(self, image, draw, box, card, theme, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
@@ -2772,6 +2790,35 @@ class LiveRadar(BasePlugin):
         except Exception as exc:
             logger.warning("Could not load LiveRadar title logo %s: %s", path, exc)
             return None
+
+    @staticmethod
+    def _live_backdrop_name(live_count):
+        return next(name for name, least, _filename in LIVE_BACKDROP_FILES if live_count >= least)
+
+    @staticmethod
+    @lru_cache(maxsize=len(LIVE_BACKDROP_FILES))
+    def _load_live_backdrop(name):
+        filename = next(filename for key, _least, filename in LIVE_BACKDROP_FILES if key == name)
+        path = os.path.join(PLUGIN_DIR, filename)
+        if not os.path.isfile(path):
+            return None
+        try:
+            with Image.open(path) as source:
+                return source.convert("RGB")
+        except Exception as exc:
+            logger.warning("Could not load LiveRadar backdrop %s: %s", path, exc)
+            return None
+
+    def _paint_live_backdrop(self, image, live_count, theme):
+        """Tint the page with the scene for how busy the room is; returns the painted page, or None."""
+        art = self._load_live_backdrop(self._live_backdrop_name(live_count))
+        if art is None:
+            return None
+        share = LIVE_BACKDROP_SHARE["dark" if theme.get("mode") == "dark" else "light"]
+        scene = ImageOps.fit(art, image.size, method=self._resampling_filter())
+        backdrop = Image.blend(Image.new("RGB", image.size, theme["bg"]), scene, share)
+        image.paste(backdrop)
+        return backdrop
 
     @staticmethod
     @lru_cache(maxsize=1)
