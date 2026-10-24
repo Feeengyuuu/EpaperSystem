@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import subprocess
@@ -20,10 +21,14 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
 SRC_ROOT = Path(__file__).resolve().parents[2]
 WORKER_MODULE = "plugins.telegram_digest.account_worker"
 DEFAULT_TIMEOUT_SECONDS = 120.0
 POLL_SECONDS = 0.25
+# The child is told to finish this much before the parent gives up on it, so it can
+# still reply (and the parent still render) when its optional steps are cut short.
+CHILD_REPLY_RESERVE_SECONDS = 6.0
 _EXCEPTION_PREFIX = re.compile(r"^(?:[A-Za-z_][\w.]*\.)?[A-Za-z_]\w*(?:Error|Exception|Exceeded|Cancelled): ")
 
 
@@ -45,7 +50,9 @@ def run_account_fetch_in_child(request, *, context=None, timeout=DEFAULT_TIMEOUT
         stderr=subprocess.PIPE,
         env=env,
     )
+    request = {**request, "budget_seconds": max(5.0, budget - CHILD_REPLY_RESERVE_SECONDS)}
     pending = json.dumps(request, ensure_ascii=True).encode("utf-8")
+    timed_out = False
     try:
         while True:
             try:
@@ -56,13 +63,24 @@ def run_account_fetch_in_child(request, *, context=None, timeout=DEFAULT_TIMEOUT
                 if context is not None:
                     context.raise_if_cancelled()
                 if time.monotonic() >= deadline:
-                    raise RuntimeError("Telegram account fetch timed out") from None
+                    timed_out = True
+                    break
     except BaseException:
         process.kill()
         process.communicate()
         raise
+    if timed_out:
+        process.kill()
+        _stdout, stderr = process.communicate()
+        # The child's last log line says which step it was still on.
+        last = _last_line(stderr)
+        raise RuntimeError("Telegram account fetch timed out" + (f" during: {last}" if last else ""))
     if process.returncode != 0:
         raise RuntimeError(_failure_detail(stderr, process.returncode))
+    # The child's own progress lines (how many chats, how long) go to the service journal.
+    for line in (stderr or b"").decode("utf-8", "replace").splitlines():
+        if line.startswith("Telegram Digest "):
+            logger.info("Telegram account worker: %s", line.strip()[:200])
     try:
         reply = json.loads(stdout.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
@@ -73,17 +91,24 @@ def run_account_fetch_in_child(request, *, context=None, timeout=DEFAULT_TIMEOUT
     return payload
 
 
+def _last_line(stderr):
+    lines = [line.strip() for line in (stderr or b"").decode("utf-8", "replace").splitlines() if line.strip()]
+    return lines[-1][:200] if lines else ""
+
+
 def _failure_detail(stderr, returncode):
-    lines = [line.strip() for line in stderr.decode("utf-8", "replace").splitlines() if line.strip()]
-    if not lines:
+    last = _last_line(stderr)
+    if not last:
         return f"Telegram account worker exited with status {returncode}"
-    return _EXCEPTION_PREFIX.sub("", lines[-1])[:300]
+    return _EXCEPTION_PREFIX.sub("", last)[:300]
 
 
 def main():
     request = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     reply_stream = sys.stdout
     sys.stdout = sys.stderr  # Library output must never corrupt the reply channel.
+    # Progress goes to stderr: the parent quotes the last line when the child runs out of time.
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(message)s")
 
     from plugins.telegram_digest.telegram_digest import TelegramDigest
 
@@ -96,7 +121,7 @@ def main():
             request["cache"],
             datetime.fromisoformat(request["now"]),
             int(request["max_messages"]),
-            request["config"],
+            {**request["config"], "budget_seconds": request.get("budget_seconds")},
         )
     )
     reply_stream.write(json.dumps({"payload": payload}, ensure_ascii=True))

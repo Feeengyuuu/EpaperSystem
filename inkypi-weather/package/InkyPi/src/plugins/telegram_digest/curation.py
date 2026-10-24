@@ -21,6 +21,8 @@ KIND_TAGS = {"private": "私聊", "group": "群聊"}
 DEFAULT_AI_MODEL = "gpt-5-mini"
 DEFAULT_AI_DAILY_LIMIT = 12
 AI_TIMEOUT_SECONDS = 45
+# What a refresh keeps after the AI call for media and the reply.
+AI_REPLY_RESERVE_SECONDS = 15
 AI_MAX_ITEMS = 40
 AI_TEXT_CHARS = 320
 AI_MAX_OUTPUT_TOKENS = 6000
@@ -215,6 +217,8 @@ class Curator:
         self.filtered_keys = [str(key) for key in previous.get("filtered_keys") or [] if key]
         self._filtered_set = set(self.filtered_keys)
         self.ai_client_factory = ai_client_factory
+        # time.monotonic() by which curation must be done; None means no limit.
+        self.deadline = None
         self.ai_used = False
         self.ai_error = ""
         self.blocked = []
@@ -310,6 +314,12 @@ class Curator:
         if self.ai_calls["count"] >= self.daily_limit:
             self.ai_error = "今日 AI 次数已用完"
             self.ai_used = any(str(item.get("key")) in self.ai_cache for item in items)
+            return
+        if self.deadline is not None and self.deadline - time.monotonic() < AI_TIMEOUT_SECONDS + AI_REPLY_RESERVE_SECONDS:
+            # No time left for a full AI call this refresh: rules now, the AI on a later one.
+            self.ai_error = "本次时间不够，先按规则排序"
+            self.ai_used = any(str(item.get("key")) in self.ai_cache for item in items)
+            logger.info("Telegram Digest AI ranking skipped: too little time left in this refresh.")
             return
         self.ai_calls["count"] += 1
         started = time.monotonic()

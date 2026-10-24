@@ -10,6 +10,7 @@ import math
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,6 +43,9 @@ DEFAULT_DIALOG_LIMIT = 30
 DEFAULT_MESSAGES_PER_DIALOG = 4
 MAX_MESSAGE_CACHE = 30
 ACCOUNT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS = 7
+# A time-limited account fetch stops opening more chats once less than this is left, so
+# curation (with an AI call) and the media still fit.
+ACCOUNT_SCAN_RESERVE_SECONDS = 70
 # Every visible picture: the lead and the list thumbnails. Thumbnails download a
 # small Telegram photo size, so seven cost less than four full photos did.
 DEFAULT_ACCOUNT_MEDIA_DOWNLOAD_LIMIT = 7
@@ -409,6 +413,13 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
         include_text = self._enabled(settings.get("includeText"), default=True)
         display_read_keys = self._display_read_key_set(cache)
         curator = Curator(settings, cache.get("curation"), now, api_key=config.get("openai_key"))
+        budget = config.get("budget_seconds")
+        deadline = time.monotonic() + float(budget) if budget else None
+        curator.deadline = deadline
+
+        def time_left():
+            return float("inf") if deadline is None else deadline - time.monotonic()
+
         existing = {
             str(message.get("key")): dict(message)
             for message in cache.get("messages", [])
@@ -425,7 +436,12 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
             if not authorized:
                 raise RuntimeError("Telegram account session is not authorized yet")
 
+            scan_started = time.monotonic()
             async for dialog in self._aiter(client.iter_dialogs(limit=dialog_limit)):
+                if time_left() < ACCOUNT_SCAN_RESERVE_SECONDS:
+                    # Chats come newest first; the rest wait for the next refresh.
+                    logger.info("Telegram Digest stopped scanning after %d chats to stay within time.", matched_dialogs)
+                    break
                 if not self._account_dialog_matches(dialog, dialog_filter):
                     continue
                 unread_count = max(0, self._optional_int(getattr(dialog, "unread_count", 0)) or 0)
@@ -486,9 +502,13 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
                 key=lambda item: (int(item.get("date") or 0), int(item.get("message_id") or 0)),
                 reverse=True,
             )
+            logger.info("Telegram Digest scanned %d chats, %d messages in %.1fs.", matched_dialogs, scanned,
+                        time.monotonic() - scan_started)
             # The AI client blocks; run it off the loop so Telethon keeps its connection alive.
             ordered = (await asyncio.to_thread(curator.curate, candidates))[:max_messages]
-            await self._hydrate_account_media(client, ordered, message_objects, existing, media_download_limit)
+            logger.info("Telegram Digest curated %d stories; fetching media.", len(ordered))
+            await self._hydrate_account_media(client, ordered, message_objects, existing, media_download_limit,
+                                              time_left=time_left)
 
         payload = self._build_payload(
             settings,
@@ -557,7 +577,8 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
             "unread": True,
         }
 
-    async def _hydrate_account_media(self, client, messages, message_objects, existing_messages, media_download_limit):
+    async def _hydrate_account_media(self, client, messages, message_objects, existing_messages, media_download_limit,
+                                     time_left=None):
         downloaded = 0
         lead, _rest = self._split_page_lead(messages)
         lead_key = str((lead or {}).get("key") or "")
@@ -583,6 +604,9 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
                 item["media_path"] = str(cached_media_path)
                 continue
             if downloaded >= media_download_limit:
+                return
+            if time_left is not None and time_left() < ACCOUNT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS + 2:
+                logger.info("Telegram Digest left the remaining media for the next refresh.")
                 return
             try:
                 cached_media_path = await asyncio.wait_for(

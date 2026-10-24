@@ -103,6 +103,13 @@ def test_child_fetch_stops_at_the_task_deadline(tmp_path, fake_telethon, monkeyp
         account_worker.run_account_fetch_in_child(_request(tmp_path), context=context, timeout=120)
 
 
+def test_child_fetch_without_a_task_gives_up_at_its_own_timeout(tmp_path, fake_telethon, monkeypatch):
+    monkeypatch.setenv("FAKE_TELETHON_MODE", "sleep")
+
+    with pytest.raises(RuntimeError, match="^Telegram account fetch timed out"):
+        account_worker.run_account_fetch_in_child(_request(tmp_path), timeout=4)
+
+
 class DummyDeviceConfig:
     def __init__(self, env):
         self.env = env

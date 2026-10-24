@@ -136,6 +136,20 @@ def test_daily_limit_and_ai_failure_fall_back_to_rule_scores():
     assert broken.state([])["ai_calls"]["count"] == 1
 
 
+def test_a_refresh_short_of_time_ranks_by_rules_and_keeps_its_ai_call():
+    import time
+
+    ai = FakeAI()
+    hurried = curator(ai=ai)
+    hurried.deadline = time.monotonic() + 20
+    ranked = hurried.curate([message("a", "普通资讯")])
+
+    assert ai.calls == []
+    assert ranked[0]["curation"]["source"] == "rules"
+    assert "时间不够" in hurried.ai_error
+    assert hurried.state([])["ai_calls"]["count"] == 0
+
+
 def test_missing_key_or_rules_mode_never_calls_the_ai():
     ai = FakeAI()
 
