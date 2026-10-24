@@ -223,7 +223,12 @@ def _draw_right(draw, x_right, y, text, *, font, fill=INK_COLOR) -> None:
 
 
 def _wrap_complete(draw, text: str, font, max_width: int) -> tuple[str, ...]:
-    """Greedily wrap every source character without truncation or ellipsis."""
+    """Greedily wrap every source character without truncation or ellipsis.
+
+    A line breaks after its last space when the word that follows still fits on the
+    next line (the space stays at the end of the line, so the lines join back to the
+    text); text without spaces, such as Chinese, breaks between any two characters.
+    """
 
     if text == "":
         return ()
@@ -237,7 +242,13 @@ def _wrap_complete(draw, text: str, font, max_width: int) -> tuple[str, ...]:
             current = ""
             continue
         candidate = current + character
-        if current and _text_width(draw, candidate, font) > max_width:
+        if current and _text_width(draw, candidate.rstrip(" "), font) > max_width:
+            space = current.rfind(" ")
+            carry = current[space + 1:] + character if 0 < space < len(current) - 1 else ""
+            if carry and character != " " and _text_width(draw, carry, font) <= max_width:
+                lines.append(current[:space + 1])
+                current = carry
+                continue
             lines.append(current)
             current = character
             if _text_width(draw, current, font) > max_width:

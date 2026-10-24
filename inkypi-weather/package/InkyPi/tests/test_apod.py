@@ -2545,6 +2545,21 @@ def test_apod_page_real_multiline_credit_preserves_every_character_within_budget
     assert rendered.getpixel((page.RIGHT_TEXT_RECT[0] - 9, layout.date_bottom)) == page.ORANGE_COLOR
 
 
+def test_apod_wrap_breaks_english_between_words_and_keeps_every_character():
+    page = _apod_page_module()
+    draw = ImageDraw.Draw(Image.new("RGB", (800, 480)))
+    font = page._font(12, bold=True)
+    text = "NOAA WARNING | Geomagnetic K-index of 4 expected"
+    width = page._text_width(draw, "NOAA WARNING | Geomagnetic K-index of 4 e", font)
+
+    lines = page._wrap_complete(draw, text, font, width)
+
+    assert lines == ("NOAA WARNING | Geomagnetic K-index of 4 ", "expected")
+    assert "".join(lines) == text
+    chinese = page._wrap_complete(draw, "星" * 30, font, 60)
+    assert len(chinese) > 1 and "".join(chinese) == "星" * 30
+
+
 def test_apod_caption_flattens_provider_credit_whitespace_before_wrapping():
     page = _apod_page_module()
     draw = ImageDraw.Draw(Image.new("RGB", (800, 480), "white"))
