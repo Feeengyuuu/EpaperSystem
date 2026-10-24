@@ -143,8 +143,10 @@ def page_poster(html_text, requested_url, response_url):
         return None
     for source, alt in parser.images:
         source = urljoin(identity[0], source)
+        # The publisher's alt text reads "<title> poster".
+        alt_key = re.sub(r" poster$", "", title_key(alt))
         if (official_poster_url(source, identity[0])
-                and title_key(alt) in {title_key(identity[1]), expected_heading}):
+                and alt_key in {title_key(identity[1]), expected_heading}):
             return source
     return None
 

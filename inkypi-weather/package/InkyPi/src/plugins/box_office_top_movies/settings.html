@@ -15,6 +15,15 @@
 </div>
 
 <div class="form-group">
+    <label for="northAmericaColumn" class="form-label">North America column:</label>
+    <select id="northAmericaColumn" name="northAmericaColumn" class="form-input">
+        <option value="true" selected>Show the North America weekly chart beside the official China chart</option>
+        <option value="false">Official China chart only</option>
+    </select>
+    <small>Applies to the official China realtime chart; the column keeps its own cache and posters.</small>
+</div>
+
+<div class="form-group">
     <label for="itemsCount" class="form-label">Number of movies:</label>
     <select id="itemsCount" name="itemsCount" class="form-input">
         <option value="3">3</option>
@@ -89,6 +98,7 @@
     document.addEventListener('DOMContentLoaded', () => {
         if (loadPluginSettings) {
             document.getElementById('sourceMode').value = pluginSettings.sourceMode || 'the_numbers';
+            document.getElementById('northAmericaColumn').value = pluginSettings.northAmericaColumn || 'true';
             document.getElementById('itemsCount').value = pluginSettings.itemsCount || '5';
             document.getElementById('chartUrl').value = pluginSettings.chartUrl || 'https://www.the-numbers.com/weekend-box-office-chart';
             document.getElementById('maoyanUrl').value = pluginSettings.maoyanUrl || 'https://piaofang.maoyan.com/dashboard-ajax';

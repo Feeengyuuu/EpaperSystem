@@ -31,6 +31,13 @@ def test_official_detail_uses_first_movie_heading_and_actual_matching_poster():
     assert canonical_movie_url(MOVIE.replace("(2019)", "%282019%29")) == MOVIE
 
 
+def test_publisher_alt_text_naming_the_poster_still_matches_the_film():
+    page = PAGE.replace("alt='Avengers: Endgame'", "alt='Avengers: Endgame poster'")
+
+    assert page_poster(page, MOVIE, MOVIE) == POSTER
+    assert page_poster(page.replace("Avengers: Endgame poster", "Another Movie poster"), MOVIE, MOVIE) is None
+
+
 @pytest.mark.parametrize("page, response_url", [
     (PAGE, MOVIE.replace("2019", "2026")),
     (PAGE.replace("Avengers: Endgame (2019)", "Another Movie (2019)"), MOVIE),

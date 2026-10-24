@@ -126,7 +126,7 @@ def test_budget_expiry_preserves_old_cache_bytes_and_times(tmp_path, monkeypatch
     monkeypatch.setattr(plugin, "_enrich_with_tmdb", lambda *_a, **_k: None)
     monkeypatch.setattr(plugin, "_download_posters", lambda *_a, **_k: None)
     monkeypatch.setattr(plugin, "_fetch_text", lambda *_a: official_page())
-    settings = {"sourceMode": "official_china", "forceRefresh": True}
+    settings = {"sourceMode": "official_china", "northAmericaColumn": "false", "forceRefresh": True}
     plugin.generate_image(settings, DummyDeviceConfig())
     path = plugin._cache_path()
     before = path.read_bytes()
@@ -173,7 +173,7 @@ def test_optional_enrichment_uses_remaining_budget_without_losing_valid_chart(tm
     monkeypatch.setattr(plugin, "_write_box_office_context", lambda *_a: None)
     monkeypatch.setattr(plugin, "_render_chart", lambda *_a: Image.new("RGB", (32, 16)))
     monkeypatch.setattr(plugin, "_download_posters", lambda *_a, **_k: pytest.fail("exhausted budget must skip posters"))
-    image = plugin.generate_image({"sourceMode": "official_china", "forceRefresh": True}, EnvDeviceConfig({"TMDB_API_KEY": "test-key"}))
+    image = plugin.generate_image({"sourceMode": "official_china", "northAmericaColumn": "false", "forceRefresh": True}, EnvDeviceConfig({"TMDB_API_KEY": "test-key"}))
     assert read_source_provenance(image) is SourceProvenance.LIVE
     assert len(session.calls) == 2
     assert session.calls[-1][2]["timeout"] == (1, 1)
@@ -185,7 +185,7 @@ def test_optional_enrichment_uses_remaining_budget_without_losing_valid_chart(tm
 def test_migrated_first_fetch_preserves_only_matching_mainland_fallback(tmp_path, monkeypatch, drift):
     plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
     device = DummyDeviceConfig()
-    settings = {"sourceMode": "official_china", "forceRefresh": True}
+    settings = {"sourceMode": "official_china", "northAmericaColumn": "false", "forceRefresh": True}
     legacy_settings = {**settings, "sourceMode": "maoyan_china"}
     monkeypatch.setattr(plugin, "_cache_dir", lambda: tmp_path)
     monkeypatch.setattr(plugin, "_source_now", lambda: NOW)

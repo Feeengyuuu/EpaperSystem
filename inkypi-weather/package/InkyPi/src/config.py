@@ -225,6 +225,7 @@ class Config:
         self._migrate_newspaper_chinese_editions()
         self._migrate_aggregate_pages_playlist()
         self._retire_ai_ecosystem_page()
+        self._merge_box_office_pages()
 
     def _migrate_aggregate_pages_playlist(self):
         from aggregate_pages_migration import apply_aggregate_pages_playlist_migration
@@ -235,6 +236,11 @@ class Config:
         from ai_ecosystem_retirement_migration import apply_ai_ecosystem_retirement_migration
 
         apply_ai_ecosystem_retirement_migration(self)
+
+    def _merge_box_office_pages(self):
+        from box_office_two_markets_migration import apply_box_office_two_markets_migration
+
+        apply_box_office_two_markets_migration(self)
 
     def _migrate_newspaper_chinese_editions(self):
         from newspaper_source_migration import apply_newspaper_chinese_editions_migration

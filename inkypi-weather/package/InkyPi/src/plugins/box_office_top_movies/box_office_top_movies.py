@@ -31,6 +31,7 @@ from utils.glyph_text import glyph_safe_text
 from utils.http_client import get_http_session
 from utils.safe_image import safe_open_image_response
 from plugins.box_office_top_movies.poster_store import PosterStore
+from plugins.box_office_top_movies import two_markets
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,18 @@ NORTH_AMERICA_TITLE_WORDMARK_FILE = "boxoffice_na_bauhaus_title_wordmark.png"
 NORTH_AMERICA_TITLE_WORDMARK_SIZE = (384, 86)
 NORTH_AMERICA_TITLE_WORDMARK_DISPLAY_SIZE = (323, 72)
 CJK_FONT_SAMPLE = "\u6d4b\u8bd5\u7535\u5f71\u63ed\u79d8\u65e5"
+
+
+@dataclass
+class MarketSnapshot:
+    """One chart's movies with the freshness the page and the scheduler see."""
+
+    movies: list
+    source_label: str
+    generated_at: datetime
+    stale: bool
+    provenance: SourceProvenance
+    media_ready: int
 
 
 @dataclass
@@ -193,7 +206,18 @@ class BoxOfficeTopMovies(BasePlugin):
         return bool(self._tmdb_auth(settings, device_config) or any(movie.poster_url for movie in movies))
 
     def get_live_refresh_state(self, settings, current_dt):
-        """Offer a bounded media repair only while matching source data is fresh."""
+        """Offer a bounded media repair only while matching source data is fresh.
+
+        The two-market page repairs whichever column still misses posters.
+        """
+        state = self._media_repair_state(settings, current_dt)
+        if state is None and self._shows_two_markets(settings or {}):
+            state = self._north_america_market().get_live_refresh_state(
+                two_markets.north_america_settings(settings), current_dt,
+            )
+        return state
+
+    def _media_repair_state(self, settings, current_dt):
         if not self._supports_movie_media_repair(settings):
             return None
         cache = self._read_cache(quiet=True)
@@ -269,17 +293,94 @@ class BoxOfficeTopMovies(BasePlugin):
             "_inkypi_theme"
         ) or self.resolve_theme(settings, device_config)
         dimensions = self._display_dimensions(device_config)
-        items_count = self._bounded_int(settings.get("itemsCount"), 5, 1, MAX_ITEMS)
+        if self._shows_two_markets(settings):
+            return self._generate_two_markets(settings, device_config, dimensions)
+        market = self._market_snapshot(settings, device_config, dimensions)
+        if market is None:
+            return self._no_chart_image(dimensions)
+        image = self._render_chart(
+            dimensions,
+            market.movies,
+            settings,
+            market.source_label,
+            market.generated_at,
+            market.stale,
+        )
+        return self._finish_image(image, market.provenance, market.media_ready, len(market.movies))
+
+    def _shows_two_markets(self, settings):
+        """The official China chart shares its page with North America unless switched off."""
+        mode = str(settings.get("sourceMode") or "").strip().lower()
+        return mode == "official_china" and self._truthy(settings.get("northAmericaColumn"), True)
+
+    def _north_america_market(self):
+        """The North America weekly chart, with that plugin's own cache, posters and repair."""
+        market = getattr(self, "_north_america", None)
+        if market is None:
+            from plugins.china_box_office_top_movies.china_box_office_top_movies import ChinaBoxOfficeTopMovies
+
+            market = self._north_america = ChinaBoxOfficeTopMovies({"id": two_markets.NORTH_AMERICA_PLUGIN_ID})
+        return market
+
+    def _generate_two_markets(self, settings, device_config, dimensions):
+        north_america = self._north_america_market()
+        china_settings = settings
+        america_settings = two_markets.north_america_settings(settings)
+        if settings.get("_movie_media_only"):
+            china_repair = self._media_repair_ready(settings, device_config, dimensions)
+            america_repair = north_america._media_repair_ready(america_settings, device_config, dimensions)
+            if not (china_repair or america_repair):
+                raise TaskCancelled("Movie media repair source expired or changed; await DATA refresh")
+            # The column that has nothing to repair is drawn from its cache, without fetching.
+            china_settings = settings if china_repair else two_markets.cache_only(settings)
+            america_settings = america_settings if america_repair else two_markets.cache_only(america_settings)
+        try:
+            china = self._market_snapshot(china_settings, device_config, dimensions)
+        except RuntimeError as exc:
+            if china_settings is settings or isinstance(exc, TaskCancelled):
+                raise
+            raise TaskCancelled("China chart cache changed; await DATA refresh") from exc
+        if china is None:
+            return self._no_chart_image(dimensions)
+        america = self._companion_snapshot(north_america, america_settings, device_config, dimensions)
+        image = two_markets.render_two_markets(self, dimensions, china, america, settings)
+        provenance = two_markets.combined_provenance(china, america)
+        ready = china.media_ready + (america.media_ready if america else 0)
+        total = len(china.movies) + (len(america.movies) if america else 0)
+        return self._finish_image(image, provenance, ready, total)
+
+    @staticmethod
+    def _companion_snapshot(market, settings, device_config, dimensions):
+        """The second column's data, or None so the page still shows the first one."""
+        try:
+            return market._market_snapshot(settings, device_config, dimensions)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("North America column unavailable: %s", type(exc).__name__)
+            return None
+
+    def _no_chart_image(self, dimensions):
+        image = self._fallback_image(dimensions, "Box Office", "No chart data")
+        image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, SourceProvenance.LOCAL_FALLBACK)
+
+    @staticmethod
+    def _finish_image(image, provenance, media_ready, media_total):
+        image.info["inkypi_media_ready"] = media_ready
+        image.info["inkypi_media_total"] = media_total
+        if provenance in {
+            SourceProvenance.STALE_CACHE,
+            SourceProvenance.LOCAL_FALLBACK,
+        }:
+            image.info["inkypi_skip_cache"] = True
+        return attach_source_provenance(image, provenance)
+
+    def _cache_state(self, settings, dimensions, items_count, device_config):
+        """The saved chart, its key, whether it matches these settings and whether it is fresh."""
         cache_hours = self._bounded_int(settings.get("cacheHours"), 6, 1, 48)
         cache = self._read_cache()
-
         cache_key = self._cache_key(settings, dimensions, items_count, device_config)
-        movies = []
-        source_label = "The Numbers"
-        generated_at = self._now_for_device(device_config)
-        stale = False
-        theme_render_only = bool(settings.get("_theme_render_only"))
-        force_refresh = self._force_refresh_requested(settings)
         source_cache_ready = (
             cache.get("version") == self._cache_state_version()
             and cache.get("cache_key") == cache_key
@@ -289,10 +390,32 @@ class BoxOfficeTopMovies(BasePlugin):
         if str(settings.get("sourceMode") or "").strip().lower() == "official_china":
             cached_source_date = (cache.get("source_metadata") or {}).get("statistic_date")
             cache_is_fresh = cache_is_fresh and cached_source_date == self._source_now().astimezone(SHANGHAI).date().isoformat()
+        return cache, cache_key, source_cache_ready, cache_is_fresh
+
+    def _media_repair_ready(self, settings, device_config, dimensions):
+        """Whether a media-only refresh may complete this chart's posters from its fresh cache."""
+        items_count = self._bounded_int(settings.get("itemsCount"), 5, 1, MAX_ITEMS)
+        cache, _key, source_cache_ready, cache_is_fresh = self._cache_state(
+            settings, dimensions, items_count, device_config,
+        )
+        return bool(source_cache_ready and cache_is_fresh
+                    and self._supports_movie_media_repair(settings)
+                    and self._movie_media_source_is_current(cache, settings, self._source_now()))
+
+    def _market_snapshot(self, settings, device_config, dimensions):
+        """This chart's movies from cache or source, or None when there is nothing to show."""
+        items_count = self._bounded_int(settings.get("itemsCount"), 5, 1, MAX_ITEMS)
+        cache, cache_key, source_cache_ready, cache_is_fresh = self._cache_state(
+            settings, dimensions, items_count, device_config,
+        )
+        movies = []
+        source_label = "The Numbers"
+        generated_at = self._now_for_device(device_config)
+        stale = False
+        theme_render_only = bool(settings.get("_theme_render_only"))
+        force_refresh = self._force_refresh_requested(settings)
         if settings.get("_movie_media_only"):
-            if (not source_cache_ready or not cache_is_fresh
-                    or not self._supports_movie_media_repair(settings)
-                    or not self._movie_media_source_is_current(cache, settings, self._source_now())):
+            if not self._media_repair_ready(settings, device_config, dimensions):
                 raise TaskCancelled("Movie media repair source expired or changed; await DATA refresh")
             force_refresh = False
         provenance = SourceProvenance.LOCAL_FALLBACK
@@ -354,12 +477,7 @@ class BoxOfficeTopMovies(BasePlugin):
                     )
 
         if not movies:
-            image = self._fallback_image(dimensions, "Box Office", "No chart data")
-            image.info["inkypi_skip_cache"] = True
-            return attach_source_provenance(
-                image,
-                SourceProvenance.LOCAL_FALLBACK,
-            )
+            return None
 
         movies = movies[:items_count]
         self._poster_movies = movies
@@ -372,22 +490,7 @@ class BoxOfficeTopMovies(BasePlugin):
             media_ready = sum(bool(movie.poster_path and Path(movie.poster_path).is_file()) for movie in movies)
         if provenance is not SourceProvenance.LOCAL_FALLBACK:
             self._write_box_office_context(movies, source_label, generated_at, stale)
-        image = self._render_chart(
-            dimensions,
-            movies,
-            settings,
-            source_label,
-            generated_at,
-            stale,
-        )
-        image.info["inkypi_media_ready"] = media_ready
-        image.info["inkypi_media_total"] = len(movies)
-        if provenance in {
-            SourceProvenance.STALE_CACHE,
-            SourceProvenance.LOCAL_FALLBACK,
-        }:
-            image.info["inkypi_skip_cache"] = True
-        return attach_source_provenance(image, provenance)
+        return MarketSnapshot(movies, source_label, generated_at, stale, provenance, media_ready)
 
     def _legacy_mainland_fallback_ready(self, cache, settings, dimensions, items_count, device_config):
         """After a source-only migration, retain old mainland data as STALE only."""

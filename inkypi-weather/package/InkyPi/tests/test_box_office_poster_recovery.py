@@ -104,7 +104,7 @@ def test_official_five_basic_posters_finish_before_optional_enrichment(tmp_path,
 
     image = plugin.generate_image(
         {
-            "sourceMode": "official_china",
+            "sourceMode": "official_china", "northAmericaColumn": "false",
             "forceRefresh": True,
             "tmdbLanguage": "zh-CN",
             "tmdbRegion": "CN",
@@ -212,7 +212,7 @@ def test_missing_search_poster_uses_images_after_basic_posters_and_reuses_id(tmp
     monkeypatch.setattr(plugin, "_now_for_device", lambda _device: NOW)
     monkeypatch.setattr(plugin, "_write_box_office_context", lambda *_args: None)
     settings = {
-        "sourceMode": "official_china", "forceRefresh": True,
+        "sourceMode": "official_china", "northAmericaColumn": "false", "forceRefresh": True,
         "tmdbLanguage": "zh-CN", "tmdbRegion": "CN",
         "_inkypi_theme": canonical_theme("day"),
     }
@@ -314,7 +314,7 @@ def test_slow_images_lookup_does_not_starve_other_identified_movie(tmp_path, mon
     monkeypatch.setattr(plugin, "_now_for_device", lambda _device: NOW)
     monkeypatch.setattr(plugin, "_write_box_office_context", lambda *_args: None)
     settings = {
-        "sourceMode": "official_china", "itemsCount": 2, "forceRefresh": True,
+        "sourceMode": "official_china", "northAmericaColumn": "false", "itemsCount": 2, "forceRefresh": True,
         "tmdbLanguage": "zh-CN", "tmdbRegion": "CN",
         "_inkypi_theme": canonical_theme("day"),
     }

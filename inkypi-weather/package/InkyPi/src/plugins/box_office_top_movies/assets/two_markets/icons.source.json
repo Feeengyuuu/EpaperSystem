@@ -1,0 +1,71 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), white silhouettes on transparent",
+  "processing": "split on transparent gaps (rows, then columns), cropped to alpha>24 bounds, long side scaled to 128px",
+  "rendering": "alpha only: each use tints the silhouette with its column or page colour",
+  "atlas_sha256": "f888c1b37b9552b6e23a2868eeaaa7693697d0eee22755507f2622b63887a21e",
+  "icons": {
+    "pagoda": {
+      "size": [
+        128,
+        112
+      ],
+      "sha256": "3db294a5b8797b3aefc5d0b937e2edbd7af888f9fc836ab56abf7fddd6baef8c"
+    },
+    "liberty": {
+      "size": [
+        44,
+        128
+      ],
+      "sha256": "96de30927c5ced9a797ed610b067d5424fd5cdb45195f2ab3ded482af68e4bf9"
+    },
+    "skyline": {
+      "size": [
+        128,
+        94
+      ],
+      "sha256": "401a838aed5bdf073b0f2bdf0653c5d75f71a2a7adcfec73bbc82d3593da8850"
+    },
+    "bars": {
+      "size": [
+        128,
+        97
+      ],
+      "sha256": "903a4d7bc2683fbc4fdcf43bad64ca609224b87932d0fd02089abe10d50ea556"
+    },
+    "reel": {
+      "size": [
+        128,
+        128
+      ],
+      "sha256": "1aafaa4da6f3cce83cdd9c57f2d4ff597d804cf0ba34e64914d0fcc6b320d3c5"
+    },
+    "calendar": {
+      "size": [
+        126,
+        128
+      ],
+      "sha256": "0ec4012c0728813c0759c32f4e4c68a55e26303b16e47d9ff80bc95e8cdab888"
+    },
+    "seats": {
+      "size": [
+        128,
+        83
+      ],
+      "sha256": "31361147dc2fc1092b008f5a28489538a8be67bb15085cc0425446e52b094c3e"
+    },
+    "camera": {
+      "size": [
+        100,
+        128
+      ],
+      "sha256": "a4823d7f77571f1721770f33d1dfaff3fd74fefbed328231f023e10a024cc6d5"
+    },
+    "ticket": {
+      "size": [
+        128,
+        73
+      ],
+      "sha256": "efeabc4c3d05152ae760bd11f0fe111e1a96f704c83185a5a498affbc8d94e03"
+    }
+  }
+}

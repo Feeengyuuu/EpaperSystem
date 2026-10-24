@@ -56,7 +56,7 @@ def chart(tmp_path, monkeypatch):
             self.result_year = "2026"
             self.rows = [self.row(number) for number in range(1, 6)]
             self.settings = {
-                "sourceMode": "official_china", "tmdbLanguage": "zh-CN", "tmdbRegion": "CN",
+                "sourceMode": "official_china", "northAmericaColumn": "false", "tmdbLanguage": "zh-CN", "tmdbRegion": "CN",
                 "_inkypi_theme": canonical_theme("day"),
             }
             self.device = EnvDeviceConfig({"TMDB_API_KEY": "test-key"})

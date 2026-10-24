@@ -129,10 +129,12 @@ class ChinaBoxOfficeTopMovies(BoxOfficeTopMovies):
             return next((item for item in results if matches_tmdb(movie, item)), None)
         return super()._select_tmdb_search_result(movie, results)
 
-    def generate_image(self, settings, device_config):
+    def _market_snapshot(self, settings, device_config, dimensions):
+        # TMDb fallbacks read the device's keys while this chart loads, also as the
+        # North America column of the two-market page.
         self._device_config_for_source = device_config
         try:
-            return super().generate_image(settings, device_config)
+            return super()._market_snapshot(settings, device_config, dimensions)
         finally:
             self._device_config_for_source = None
 
