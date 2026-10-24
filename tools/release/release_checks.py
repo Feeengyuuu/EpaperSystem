@@ -434,7 +434,9 @@ def show_plugins(ctx: TaskContext, device: Device, plugins: list[str], log=print
         deadline, outcome = time.monotonic() + 420, "timeout"
         while time.monotonic() < deadline:
             time.sleep(10)
-            lane = device.document(RUNTIME)["instances"][instance["instance_uuid"]]["lanes"]["data"]
+            # A brand-new instance (one a migration just added) has no runtime entry until it first runs.
+            entry = (device.document(RUNTIME).get("instances") or {}).get(instance["instance_uuid"]) or {}
+            lane = (entry.get("lanes") or {}).get("data") or {}
             success, failure = parse_time(lane.get("last_success_at")), parse_time(lane.get("last_failure_at"))
             if success and success > requested:
                 outcome = "succeeded"
