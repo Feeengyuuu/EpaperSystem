@@ -504,5 +504,3 @@ def run_time(seconds):
 def epic_end_label(stamp, now):
     local = stamp.astimezone(PACIFIC)
     return f"至 {local:%m/%d} {local:%H:%M}" + ("（今天）" if local.date() == now.date() else "")
-
-

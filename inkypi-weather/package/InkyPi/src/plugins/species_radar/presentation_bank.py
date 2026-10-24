@@ -1379,5 +1379,3 @@ def _bool(value, default):
     if value is None:
         return default
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
