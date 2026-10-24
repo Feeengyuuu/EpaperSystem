@@ -546,7 +546,15 @@ def test_v3_location_fetches_google_address_and_native_map_without_leaking_secre
     assert map_call[3]["allow_redirects"] is False
     assert map_call[3]["max_bytes"] == 128 * 1024
 
-    assert _visible_color_bbox(image, (0, 0, 800, 480), (255, 0, 255)) == vehicle_module.LOCATION_MAP_BOX
+    # The native map fills its box at full strength below its top fade, right across the
+    # attribution strip (Google's logo and credit sit in its corners); its top edge fades
+    # into the panel like the car's own map.
+    map_left, map_top, map_right, map_bottom = vehicle_module.LOCATION_MAP_BOX
+    assert _visible_color_bbox(image, (0, 0, 800, 480), (255, 0, 255)) == (
+        map_left, map_top + vehicle_module.LOCATION_MAP_FADE_TOP, map_right, map_bottom)
+    strip_y = map_bottom - vehicle_module.LOCATION_MAP_ATTRIBUTION_H // 2
+    assert image.getpixel((map_left, strip_y)) == image.getpixel((map_right - 1, strip_y)) == (255, 0, 255)
+    assert image.getpixel(((map_left + map_right) // 2, map_top)) != (255, 0, 255)
 
     summary_text = plugin._cache_file().read_text(encoding="utf-8")
     summary_payload = json.loads(summary_text)
@@ -585,7 +593,8 @@ def test_v3_location_fetches_google_address_and_native_map_without_leaking_secre
     )
     assert theme_device.loaded == []
     assert no_network.calls == []
-    assert _visible_color_bbox(themed, (0, 0, 800, 480), (255, 0, 255)) == vehicle_module.LOCATION_MAP_BOX
+    assert _visible_color_bbox(themed, (0, 0, 800, 480), (255, 0, 255)) == (
+        map_left, map_top + vehicle_module.LOCATION_MAP_FADE_TOP, map_right, map_bottom)
 
 
 def test_v3_location_contract_is_exact_and_bounded():

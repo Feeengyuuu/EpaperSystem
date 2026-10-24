@@ -55,11 +55,18 @@ LOCATION_MAP_MAX_BYTES = 128 * 1024
 LOCATION_ADDRESS_MAX_CHARS = 256
 LOCATION_MAX_AGE_SECONDS = 86_400
 LOCATION_FUTURE_TOLERANCE_SECONDS = 300
-LOCATION_MAP_BOX = (538, 240, 764, 318)
+# The map takes the location section down to its address, which sits on the column's foot.
+LOCATION_MAP_BOX = (538, 240, 764, 350)
 LOCATION_MAP_SIZE = (
     LOCATION_MAP_BOX[2] - LOCATION_MAP_BOX[0],
     LOCATION_MAP_BOX[3] - LOCATION_MAP_BOX[1],
 )
+# Like the car's own map, the location map melts into the panel: its top and sides fade
+# out over these widths. The bottom strip keeps full strength, because Google's logo and
+# attribution sit in its corners and must stay legible.
+LOCATION_MAP_FADE_TOP = 18
+LOCATION_MAP_FADE_SIDE = 18
+LOCATION_MAP_ATTRIBUTION_H = 22
 LOCATION_MAP_LIMITS = ImageLimits(
     max_bytes=LOCATION_MAP_MAX_BYTES,
     max_width=LOCATION_MAP_SIZE[0],
@@ -2442,17 +2449,45 @@ def _render_colors(theme):
     }
 
 
+# One colour per section, so energy, charging, security, tyres, climate, location and the
+# vehicle read apart at a glance (solid tiles only: small text stays in ink).
+SECTION_COLOURS = {
+    "energy": (46, 160, 82),
+    "charging": (224, 140, 0),
+    "security": (31, 95, 191),
+    "tires": (112, 72, 232),
+    "climate": (12, 150, 160),
+    "location": (214, 48, 38),
+    "vehicle_info": (70, 76, 84),
+    "freshness": (70, 76, 84),
+}
+
+
 def _card(draw, box, colors):
     draw.rounded_rectangle(box, radius=17, fill=colors["background"], outline=colors["rule"], width=1)
 
 
 def _section_label(canvas, draw, left, top, text, colors, icon_kind):
-    """The section's icon and name; returns the name's right edge."""
-    has_icon = _draw_dashboard_icon(canvas, icon_kind, left, top - 3, colors)
+    """The section's badge (its icon on its own colour) and name; returns the name's right edge."""
+    has_icon = _draw_section_badge(canvas, draw, icon_kind, left, top - 3, colors)
     text_left = left + 27 if has_icon else left
     font = _font(13, True)
-    draw.text((text_left, top), text, font=font, fill=colors["muted"])
+    draw.text((text_left, top), text, font=font, fill=colors["ink"])
     return text_left + draw.textbbox((0, 0), text, font=font)[2]
+
+
+def _draw_section_badge(canvas, draw, kind, left, top, colors, size=20):
+    """A rounded tile in the section's colour with its icon knocked out in white (the icon's own 20 px box)."""
+    mask = _load_dashboard_icon_mask(kind)
+    if mask is None:
+        return False
+    fill = SECTION_COLOURS.get(kind, colors["muted"])
+    draw.rounded_rectangle((left, top, left + size - 1, top + size - 1), radius=5, fill=fill)
+    glyph_size = size - 6
+    glyph = Image.new("RGBA", (glyph_size, glyph_size), (255, 255, 255, 0))
+    glyph.putalpha(mask.resize((glyph_size, glyph_size), Image.Resampling.LANCZOS))
+    canvas.paste(glyph, (left + 3, top + 3), glyph)
+    return True
 
 
 def _dashboard_row(
@@ -3334,17 +3369,43 @@ def _draw_location_column(canvas, draw, location_presentation, colors, language)
         _center_text(draw, (map_left + map_right) // 2, (map_top + map_bottom) // 2 - 7,
                      _t(language, "location_unavailable"), _font(11, True), colors["muted"])
         return
-    canvas.paste(location_map.convert("RGB"), (map_left, map_top))
+    _paste_faded_map(canvas, location_map.convert("RGB"), (map_left, map_top), colors["surface"])
     address_font = _font(13, True)
     lines = _address_lines(draw, location_presentation["formatted_address"], address_font, right - left)
-    for index, line in enumerate(lines):
-        draw.text((left, map_bottom + 6 + index * 17), line, font=address_font, fill=colors["ink"])
     age = max(0, location_presentation.get("age_seconds", 0))
-    if age > 900:
-        draw.text((left, map_bottom + 6 + len(lines) * 17),
+    stale = age > 900
+    # The address (and how old the fix is) stands on the column's foot, under the map.
+    address_top = COLUMN_BOTTOM + 2 - len(lines) * 17 - (13 if stale else 0)
+    for index, line in enumerate(lines):
+        draw.text((left, address_top + index * 17), line, font=address_font, fill=colors["ink"])
+    if stale:
+        draw.text((left, address_top + len(lines) * 17),
                   _ellipsize_text(draw, _t(language, "location_last_known", age=_age_text(age, language)),
                                   _font(9, True), right - left),
                   font=_font(9, True), fill=colors["muted"])
+
+
+def _faded_map_mask(size):
+    """Opaque in the middle and along the attribution strip, fading out at the top and sides."""
+    width, height = size
+    mask = Image.new("L", size, 255)
+    pixels = mask.load()
+    solid_from = height - LOCATION_MAP_ATTRIBUTION_H
+    for y in range(height):
+        top = min(1.0, y / LOCATION_MAP_FADE_TOP)
+        # The side fade eases off over the 10 px above the attribution strip.
+        side_weight = max(0.0, min(1.0, (solid_from - y) / 10))
+        for x in range(width):
+            edge = min(x, width - 1 - x) / LOCATION_MAP_FADE_SIDE
+            side = 1.0 - side_weight * (1.0 - min(1.0, edge))
+            pixels[x, y] = round(255 * min(top, side) ** 1.6)
+    return mask
+
+
+def _paste_faded_map(canvas, location_map, origin, surface):
+    """Lay the map on the panel through its fade mask, the panel colour showing at its edges."""
+    panel = Image.new("RGB", location_map.size, surface)
+    canvas.paste(Image.composite(location_map, panel, _faded_map_mask(location_map.size)), origin)
 
 
 def _address_lines(draw, address, font, width):
