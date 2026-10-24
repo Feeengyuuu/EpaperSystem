@@ -9,8 +9,10 @@ Labels are Chinese; values keep the provider's units.
 
 from __future__ import annotations
 
+import hashlib
 import math
 import os
+import random
 import re
 from datetime import datetime, timedelta
 
@@ -77,6 +79,11 @@ def build_view(params, now, *, art_dir=None):
         "hourly": hourly,
         "week": _week(forecast[1:8]),
     }
+    celsius = _celsius(feels, units)
+    view["best"] = _best_window(hourly, units)
+    view["indices"] = _life_indices(view, scene, celsius, forecast[1:3])
+    view["mascot"] = _mascot(view, scene, art_dir, celsius)
+    view["effect"] = _page_effect(scene, now)
     return view
 
 
@@ -162,6 +169,7 @@ def _sun(astronomy, now):
         "rise": sunrise.strftime("%H:%M"),
         "set": sunset.strftime("%H:%M"),
         "daylight": f"{minutes // 60}小时{minutes % 60:02d}分",
+        "daylight_short": f"{minutes // 60}:{minutes % 60:02d}",
         "night": night,
         "progress": max(0.0, min(1.0, progress)),
     }
@@ -169,6 +177,14 @@ def _sun(astronomy, now):
     angle = math.pi * (1 - sun["progress"])
     sun["x"] = round(60 + 46 * math.cos(angle), 1)
     sun["y"] = round(58 - 46 * math.sin(angle), 1)
+    # A countdown to whichever comes next: today's sunset, or the next sunrise.
+    if not night:
+        target, label = sunset, "距日落"
+    else:
+        target = sunrise if local_now < sunrise else sunrise + timedelta(days=1)
+        label = "距日出"
+    left = max(0, int((target - local_now).total_seconds() // 60))
+    sun["countdown"] = f"{label} {left // 60}小时{left % 60:02d}分"
     return sun
 
 
@@ -194,6 +210,7 @@ def _wind(point, units):
         # The arrow points where the wind blows to.
         "heading": round((degrees + 180) % 360),
         "name": "无风" if force == 0 else f"{direction}风 {force} 级",
+        "force": force,
     }
 
 
@@ -354,3 +371,146 @@ def _week(days):
             "bar_left": round(start, 1), "bar_width": round(max(4.0, end - start), 1),
         })
     return week
+
+
+# Fun: the mascot's line, life indices, the best hours out and the page's weather effect ----
+
+MASCOTS = {"clear-day": "sunny", "clear-night": "night", "cloudy-night": "night", "cloudy-day": "cloudy",
+           "rain": "rain", "thunder": "thunder", "fog": "fog", "snow": "snow"}
+RAINY_ICON_CODES = {"09", "10", "11", "13", "51", "53", "56", "57", "71", "73", "77"}
+# Comfortable hours out: daylight, a feels-like between these, and little chance of rain.
+BEST_TEMP_C = (14, 27)
+BEST_MAX_RAIN = 20
+
+
+def _best_window(hourly, units):
+    """The longest run of comfortable daylight hours in the next 24, with its chart span."""
+    points = hourly.get("points") or []
+    if len(points) < 2:
+        return {}
+    step = points[1]["x"] - points[0]["x"]
+    best, run = [], []
+    for point in points + [None]:
+        celsius = _celsius(point["temperature"], units) if point else None
+        good = (point is not None and not point["night"] and point["rain_chance"] < BEST_MAX_RAIN
+                and BEST_TEMP_C[0] <= celsius <= BEST_TEMP_C[1])
+        if good:
+            run.append(point)
+            continue
+        if len(run) > len(best):
+            best = run
+        run = []
+    if len(best) < 2:
+        return {}
+    return {"start": best[0]["time"], "end": best[-1]["time"],
+            "x": round(best[0]["x"] - step / 2, 1), "width": round(best[-1]["x"] - best[0]["x"] + step, 1)}
+
+
+def _life_indices(view, scene, celsius, next_days):
+    """Four everyday ratings, one to five stars, from the same readings the page shows."""
+    points = (view.get("hourly") or {}).get("points") or []
+    rain6 = max([point["rain_chance"] for point in points[:6]] or [0])
+    rain24 = max([point["rain_chance"] for point in points] or [0])
+    aqi_level = AQI_LABELS.index(view["aqi"]["label"]) if view.get("aqi") else 0
+    force = (view.get("wind") or {}).get("force") or 0
+    uv = _number((view.get("uv") or {}).get("value")) or 0
+    night = bool((view.get("sun") or {}).get("night"))
+    humidity = (view.get("humidity") or {}).get("value") or 0
+    base = scene.split("-")[0]
+
+    def comfort_penalty():
+        if celsius is None:
+            return 0
+        return 2 if celsius < 5 or celsius > 30 else 1 if celsius < 10 or celsius > 25 else 0
+
+    run = 5 - (3 if rain6 >= 50 else 1 if rain6 >= 20 else 0) - comfort_penalty() \
+        - (2 if aqi_level >= 3 else 1 if aqi_level == 2 else 0) - (1 if force >= 6 else 0)
+    dry = {"clear": 5, "cloudy": 3, "fog": 2}.get(base, 1) - (1 if humidity > 80 else 0)
+    if rain24 >= 40:
+        dry = 1
+    if night:
+        dry = min(dry, 2)
+    rainy_days = any(_icon_code(day.get("icon")) in RAINY_ICON_CODES for day in next_days or [])
+    wash = (1 if rain24 >= 40 else 2 if rainy_days else 5) - (1 if aqi_level >= 3 else 0)
+    outdoor = 5 - (3 if rain6 >= 50 else 1 if rain6 >= 20 else 0) - comfort_penalty() \
+        - (1 if uv >= 8 else 0) - (1 if aqi_level >= 3 else 0) - (1 if force >= 6 else 0) - (1 if night else 0)
+    return [{"name": name, "stars": max(1, min(5, value))}
+            for name, value in (("跑步", run), ("晾晒", dry), ("洗车", wash), ("户外", outdoor))]
+
+
+def _mascot(view, scene, art_dir, celsius):
+    key = MASCOTS.get(scene, "cloudy")
+    path = os.path.join(art_dir, f"mascot-{key}.png") if art_dir else ""
+    return {"key": key, "image": path if path and os.path.isfile(path) else "", "line": _mascot_line(view, scene, celsius)}
+
+
+def _mascot_line(view, scene, celsius):
+    """What the mascot says: the most useful thing about the next few hours, first match wins."""
+    points = (view.get("hourly") or {}).get("points") or []
+    soon = next((point for point in points[1:7] if point["rain_chance"] >= 50), None)
+    sun = view.get("sun") or {}
+    best = view.get("best") or {}
+    uv = _number((view.get("uv") or {}).get("value")) or 0
+    aqi_label = (view.get("aqi") or {}).get("label")
+    force = (view.get("wind") or {}).get("force") or 0
+    if scene == "thunder":
+        return "打雷啦！尽量待在室内"
+    if scene == "rain":
+        return "正在下雨，路上慢一点"
+    if soon:
+        return f"{soon['time']} 可能下雨，出门带伞哦"
+    if scene == "snow":
+        return "下雪啦！小心路面结冰"
+    if scene == "fog":
+        return "雾有点大，开车慢一点"
+    if aqi_label in AQI_LABELS[3:]:
+        return "空气不太好，少开窗"
+    if uv >= 6 and not sun.get("night"):
+        return "紫外线很强，记得防晒"
+    if force >= 5:
+        return "风有点大，帽子抓紧"
+    if celsius is not None and celsius <= 6:
+        return "好冷！多穿一件再出门"
+    if celsius is not None and celsius >= 30:
+        return "好热！记得多喝水"
+    if sun.get("night"):
+        return f"晚安～明早 {sun.get('rise', '')} 日出"
+    if best:
+        return f"天气正好，{best['start']} 后出门走走吧！"
+    return "今天也要开心呀！"
+
+
+def _page_effect(scene, now):
+    """Weather marks across the header band, placed the same way all day."""
+    seed = int(hashlib.sha256(f"{scene}{now:%Y%m%d}".encode()).hexdigest()[:8], 16)
+    rng = random.Random(seed)
+    kind = {"clear-day": "rays", "clear-night": "stars", "cloudy-night": "stars", "cloudy-day": "clouds",
+            "rain": "rain", "thunder": "rain", "snow": "snow", "fog": "fog"}.get(scene, "clouds")
+    marks = []
+    if kind == "rays":
+        for index in range(7):
+            angle = math.radians(188 + index * 9)
+            marks.append({"shape": "ray", "points": f"800,0 {800 + 520 * math.cos(angle - 0.03):.0f},{-520 * math.sin(angle - 0.03):.0f} "
+                                                     f"{800 + 520 * math.cos(angle + 0.03):.0f},{-520 * math.sin(angle + 0.03):.0f}"})
+    elif kind == "stars":
+        for _ in range(34):
+            marks.append({"shape": "star", "x": rng.randint(300, 790), "y": rng.randint(4, 38), "r": rng.choice((1, 1, 1.5, 2))})
+    elif kind == "clouds":
+        for index in range(4):
+            marks.append({"shape": "cloud", "x": 330 + index * 120 + rng.randint(-20, 20), "y": rng.randint(12, 26)})
+    elif kind == "rain":
+        for _ in range(46):
+            x, y = rng.randint(300, 800), rng.randint(-4, 34)
+            marks.append({"shape": "drop", "x1": x, "y1": y, "x2": x - 5, "y2": y + 11})
+        if scene == "thunder":
+            marks.append({"shape": "bolt", "points": "742,2 732,20 741,20 730,40 754,15 744,15 752,2"})
+    elif kind == "snow":
+        for _ in range(26):
+            marks.append({"shape": "flake", "x": rng.randint(300, 790), "y": rng.randint(5, 37), "r": rng.choice((2, 3, 3.5))})
+    elif kind == "fog":
+        for index in range(3):
+            y = 10 + index * 11
+            marks.append({"shape": "wave", "d": " ".join(
+                f"{'M' if step == 0 else 'L'}{300 + step * 20},{y + 3 * math.sin(step * 0.9 + index):.1f}"
+                for step in range(26))})
+    return {"kind": kind, "marks": marks}

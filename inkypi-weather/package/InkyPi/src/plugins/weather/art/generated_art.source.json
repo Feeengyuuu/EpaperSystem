@@ -1,48 +1,84 @@
 {
   "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
   "generated": "2026-10-24",
-  "use": "hero card backdrop of the modern Weather page, chosen by condition and day/night",
-  "processing": "1536x1024 source resized to 640x427 with LANCZOS, JPEG quality 86",
+  "use": "full-page backdrop of the modern Weather page (the hero card is a window onto it), chosen by condition and day/night",
+  "processing": "1536x1024 source cropped to 5:3 around its centre and resized to 960x576 with LANCZOS, JPEG quality 84",
   "assets": {
     "clear-day.jpg": {
       "job_id": "28333ca8-57fd-4ce6-90dc-86bbf74d1091",
       "source_sha256": "c16f8db4016dc112e7cfc0f297039d1f7f7ba7ff0e2ee9a12219d0a122206509",
-      "sha256": "63f03f0b3d7e27eecb0c57d1bd5520ac05a82d4f176ed2527b5c9dcb806fe20d"
+      "sha256": "82d587ea32de419435d00b105edbec83c8001d8465f7a3760840257198a06779"
     },
     "clear-night.jpg": {
       "job_id": "d9609626-04ff-493a-9113-9ed88f6d8bf5",
       "source_sha256": "9b3c8f9ea1152c51844069db712a1c92a60a570b30fd2fef89707abad55e1b5d",
-      "sha256": "658615c0c86bcadcf55d01e550a96c3b8b7e6da3a76469964f4a0b96e206d2ae"
+      "sha256": "8d2f8881c1d9e49469603d0d1ed5fd150157604cb278751294ea07b539fb2982"
     },
     "cloudy-day.jpg": {
       "job_id": "d32edbff-4285-486b-a7c9-7d3ef6cbb397",
       "source_sha256": "f0cd707d122380cb9e24599ac457db54c37676bed5b4da80f94d7a2b1f4ed9d4",
-      "sha256": "f6b85fb4b32626544db502247142e51d9a0d618ac4d405cbe5a3decf00d6d846"
+      "sha256": "c1db76719e1102af4ada569c02ce0212ec8679ed092652b1b8d314513fbf4f31"
     },
     "cloudy-night.jpg": {
       "job_id": "d48fd74b-6323-4de3-90bd-fa4b91ef66fb",
       "source_sha256": "03f5752ec7072642232bef8ed23bc06a8f5c0f14729534ebea6e065ad789cc93",
-      "sha256": "749b5a661ee1b7292680f942bfd9538d77010c064d9e9fe692eb44c71ceb9d45"
+      "sha256": "6423f92080e38f4da173f8e961ae7f5cfb3edf564502b1e111a861f516e66449"
     },
     "rain.jpg": {
       "job_id": "78514b6a-236a-48ed-a50e-e8bf9375db49",
       "source_sha256": "3e104a1730e93f9df6c0c74bace47c7f135bfcdd9980b027310d3aff9365cd49",
-      "sha256": "4a9a4ce931fa1ae52c0b9671f560fdf7dded12bdf148bfda21f35fb0e4ea40dd"
+      "sha256": "c5ee3d47e3f1393222f19bd902a2a080c5f0448f34f1000ed6c032a4be6e623e"
     },
     "thunder.jpg": {
       "job_id": "33156428-f523-46de-8155-cd080827fb6c",
       "source_sha256": "e0fd2981546c0853e53df2d8a068aa02fca859ef6575f9c3ffe385796fe4d8b0",
-      "sha256": "4c98f09522e610b00d8fc40aa97f42a22bb3bc78a62ff379ceef351ac75b6eeb"
+      "sha256": "18f374d255151df3ad1c098f0b906d09fd5fc096687ba8c6d94592ae95041953"
     },
     "fog.jpg": {
       "job_id": "c173c1c9-daae-4ed2-ac67-170e955b6815",
       "source_sha256": "5384fb6872a4b073e4b20d9c58fc9fb0d5ce0bf0500624cbdc4557d85c015c13",
-      "sha256": "fc7fce923e17f05c33d288388c5c0998c2a0f4c72ec28a4fb8aec3f3794506fb"
+      "sha256": "838682b908b15516de3f9f8cf3fe4886eb6299b738c2fb701c97baf64eb8dcac"
     },
     "snow.jpg": {
       "job_id": "653717ec-aaec-426d-a65d-c98d496c5821",
       "source_sha256": "2189c03ad6fe77d3fce96f09493297eee8a46786bfb328374251938d31b709bb",
-      "sha256": "cd5a8c50ed60f4c636a788fb9d7205c511e77b9c4b6ddc94dae3b28f20564a0e"
+      "sha256": "90d542c9f57a0e1ffd6558c5fe63c38422b6beec9596d32bd096e68eb9679074"
+    },
+    "mascot-sunny.png": {
+      "job_id": "8908045b-160c-4895-bf00-199be24086c1",
+      "source_sha256": "5447ae731e5a40ad350641929ae9634e554312aef03754799ae8bd4899066a9c",
+      "sha256": "b85f39b3cf2ec9fa051c6fa9bf33638bcb4cb1e5a68c3526d194bee58865054d"
+    },
+    "mascot-rain.png": {
+      "job_id": "0e636742-10fc-491c-a701-2eeab4e1824b",
+      "source_sha256": "c0a9735f6ba922123ace7978598b5b9ba9ecf674a1001b41646cc9e661623fcb",
+      "sha256": "f2840116562ddac95e583851b5f08c6aeacff06199be3481ee6fdd2af29b39e1"
+    },
+    "mascot-night.png": {
+      "job_id": "37f04e70-21ef-4f43-9d82-485062970f72",
+      "source_sha256": "5f6dc2c3b13f267f401467e34ec82849d763f12d2a6a8b4fda389caee3c8665e",
+      "sha256": "561bc2f5f4e5de28f6b33f0af16d1b4148b5e456af8f028483c04927f2e0aa96"
+    },
+    "mascot-cloudy.png": {
+      "job_id": "9be3d6e6-9f94-40be-832c-f1c00238898b",
+      "source_sha256": "92c451dee162b2dc1617f0aa9c0e13b5b5a9470b76a87872daede065d400f2b4",
+      "sha256": "5141519bf5343b0a4bb05f88837b8e5a42af7a26cb85a6d62b151843196a1ee0"
+    },
+    "mascot-thunder.png": {
+      "job_id": "11f5c504-fbcc-4bf0-b1ee-d92c90992b8c",
+      "source_sha256": "519a42758e4a7068c72c35905acbda1511e5d7a096a5d7d2f8849eb9fedbaa98",
+      "sha256": "7a3a4f6f11cffef2bbb3d275f24d030bd8558b17192aeda98b71843b5a3566f2"
+    },
+    "mascot-fog.png": {
+      "job_id": "f2d13247-07fd-4d45-a849-b440c1c3e394",
+      "source_sha256": "a6e80608b244356a746d280b2526e7b2f7152c583daf3bf58a9e0914ded247a7",
+      "sha256": "eb9355d339e4bb42fd10a8b8eb8c75a2624274701a2f19fe7b209e27adf5154c"
+    },
+    "mascot-snow.png": {
+      "job_id": "22977bcc-2556-4def-83e7-3e434a21fdf5",
+      "source_sha256": "b0748bc6d81a3c4df389090f5d906061ac2265bf428dd6e2ee2efa5e3d61a875",
+      "sha256": "c8550c4d97b3043855e515a18c0021e478346cf8df54574d8a5f5cbbbf975886"
     }
-  }
+  },
+  "mascot": "mascot-*.png: the hero card's cloud mascot per weather, cropped to alpha bounds, 220 px square, transparent"
 }

@@ -7,6 +7,21 @@
      style="--bg: {{ theme.css.background|default('#ffffff') }}; --panel: {{ theme.css.panel|default('#ffffff') }}; --ink: {{ theme.css.ink|default('#111418') }}; --muted: {{ theme.css.muted|default('#4a525c') }};">
   {% set page_scale = [(width or 800) / 800, (height or 480) / 480]|min %}
   <div class="mw-page" style="transform: scale({{ page_scale }});">
+    {# The whole page is the weather's scene; the cards float on it and the hero is a window onto it. #}
+    {% if v.scene_image %}<img class="mw-backdrop" src="{{ v.scene_image }}" alt="">{% endif %}
+
+    <svg class="mw-effect mw-effect-{{ v.effect.kind }}" viewBox="0 0 800 44" preserveAspectRatio="none">
+      {% for m in v.effect.marks %}
+        {% if m.shape == "ray" %}<polygon points="{{ m.points }}" class="mw-fx-ray"/>
+        {% elif m.shape == "star" %}<circle cx="{{ m.x }}" cy="{{ m.y }}" r="{{ m.r }}" class="mw-fx-star"/>
+        {% elif m.shape == "cloud" %}<g class="mw-fx-cloud" transform="translate({{ m.x }} {{ m.y }})"><circle cx="0" cy="6" r="7"/><circle cx="10" cy="2" r="9"/><circle cx="22" cy="6" r="7"/><rect x="0" y="6" width="22" height="7"/></g>
+        {% elif m.shape == "drop" %}<line x1="{{ m.x1 }}" y1="{{ m.y1 }}" x2="{{ m.x2 }}" y2="{{ m.y2 }}" class="mw-fx-drop"/>
+        {% elif m.shape == "bolt" %}<polygon points="{{ m.points }}" class="mw-fx-bolt"/>
+        {% elif m.shape == "flake" %}<g class="mw-fx-flake" transform="translate({{ m.x }} {{ m.y }})"><line x1="-{{ m.r }}" y1="0" x2="{{ m.r }}" y2="0"/><line x1="0" y1="-{{ m.r }}" x2="0" y2="{{ m.r }}"/><line x1="-{{ m.r * 0.7 }}" y1="-{{ m.r * 0.7 }}" x2="{{ m.r * 0.7 }}" y2="{{ m.r * 0.7 }}"/><line x1="-{{ m.r * 0.7 }}" y1="{{ m.r * 0.7 }}" x2="{{ m.r * 0.7 }}" y2="-{{ m.r * 0.7 }}"/></g>
+        {% elif m.shape == "wave" %}<path d="{{ m.d }}" class="mw-fx-wave"/>
+        {% endif %}
+      {% endfor %}
+    </svg>
 
     <header class="mw-top">
       <div class="mw-place">{{ title }}</div>
@@ -15,8 +30,8 @@
     </header>
 
     <section class="mw-hero">
-      {% if v.scene_image %}<img class="mw-hero-art" src="{{ v.scene_image }}" alt="">{% endif %}
       <div class="mw-hero-veil"></div>
+      {% if v.mascot.image %}<img class="mw-mascot" src="{{ v.mascot.image }}" alt="">{% endif %}
       <div class="mw-hero-body">
         <div class="mw-temp">{{ current_temperature }}<span class="mw-temp-unit">{{ temperature_unit }}</span></div>
         <div class="mw-condition">
@@ -26,7 +41,7 @@
           <span>体感 {{ feels_like }}{{ deg }}</span>
         </div>
         <div class="mw-range">最高 {{ v.high }}{{ deg }}　最低 {{ v.low }}{{ deg }}</div>
-        <div class="mw-summary">{{ v.summary }}</div>
+        {% if v.mascot.line %}<div class="mw-bubble">{{ v.mascot.line }}</div>{% endif %}
         <div class="mw-tips">{% for tip in v.tips %}<span class="mw-tip">{{ tip }}</span>{% endfor %}</div>
       </div>
     </section>
@@ -39,7 +54,7 @@
           <img src="{{ v.moon.icon }}" alt="">
           <div><div class="mw-big">{{ v.moon.name }}</div><div class="mw-small">亮面 {{ v.moon.percent }}%</div></div>
         </div>
-        <div class="mw-small mw-foot">明早日出 {{ v.sun.rise }}</div>
+        <div class="mw-small mw-foot mw-countdown">{{ v.sun.countdown }}</div>
         {% else %}
         <div class="mw-tile-title">日出日落</div>
         <svg class="mw-arc" viewBox="0 0 120 66">
@@ -48,7 +63,7 @@
           {% if v.sun.x is defined %}<circle cx="{{ v.sun.x }}" cy="{{ v.sun.y }}" r="7" class="mw-sun"/>{% endif %}
         </svg>
         <div class="mw-arc-times"><span>↑ {{ v.sun.rise }}</span><span>{{ v.sun.set }} ↓</span></div>
-        <div class="mw-small mw-foot">白昼 {{ v.sun.daylight }}</div>
+        <div class="mw-foot"><div class="mw-small mw-countdown">{{ v.sun.countdown }}</div><div class="mw-daylight">白昼 {{ v.sun.daylight }}</div></div>
         {% endif %}
       </div>
 
@@ -103,21 +118,25 @@
           <div><div class="mw-big">{{ v.humidity.value }}<span class="mw-unit">%</span></div><div class="mw-small">{{ v.humidity.feel }}</div></div>
         </div>
         {% endif %}
+        <div class="mw-foot mw-extra">{% if v.pressure %}<div>气压 {{ v.pressure.value }} {{ v.pressure.unit }}</div>{% endif %}{% if v.visibility %}<div>能见度 {{ v.visibility.value }} {{ v.visibility.unit }}</div>{% endif %}</div>
       </div>
 
-      <div class="mw-tile mw-tile-pair">
-        <div><div class="mw-tile-title">气压</div>
-          <div class="mw-mid">{{ v.pressure.value }}<span class="mw-unit">{{ v.pressure.unit }}</span></div></div>
-        <div><div class="mw-tile-title">能见度</div>
-          <div class="mw-mid">{{ v.visibility.value }}<span class="mw-unit">{{ v.visibility.unit }}</span></div></div>
+      <div class="mw-tile">
+        <div class="mw-tile-title">生活指数</div>
+        <div class="mw-indices">
+          {% for index in v.indices %}
+          <div class="mw-index"><span class="mw-index-name">{{ index.name }}</span><span class="mw-stars">{% for star in range(5) %}<span class="mw-star {{ 'on' if star < index.stars else 'off' }}">★</span>{% endfor %}</span></div>
+          {% endfor %}
+        </div>
       </div>
     </section>
 
     <section class="mw-hours">
-      <div class="mw-section-title">24 小时<span class="mw-section-note">{{ v.hourly.low }}°–{{ v.hourly.high }}°{% if v.hourly.any_rain %} · 柱为降雨概率{% endif %}</span></div>
+      <div class="mw-section-title">24 小时<span class="mw-section-note">{{ v.summary }}</span>{% if v.best %}<span class="mw-best-chip">最佳出门 {{ v.best.start }}–{{ v.best.end }}</span>{% endif %}</div>
       {% if v.hourly.points %}
       <svg viewBox="0 0 {{ v.hourly.width }} {{ v.hourly.height }}" class="mw-chart">
         {% for band in v.hourly.night_bands %}<rect x="{{ band.x }}" y="0" width="{{ band.width }}" height="{{ v.hourly.height }}" class="mw-night"/>{% endfor %}
+        {% if v.best %}<rect x="{{ v.best.x }}" y="14" width="{{ v.best.width }}" height="84" rx="6" class="mw-best"/>{% endif %}
         <path d="{{ v.hourly.area }}" class="mw-area"/>
         {% for point in v.hourly.points %}{% if point.rain_height > 0 %}
         <rect x="{{ point.x - v.hourly.bar_width / 2 }}" y="{{ v.hourly.rain_base - point.rain_height }}" width="{{ v.hourly.bar_width }}" height="{{ point.rain_height }}" class="mw-rain"/>

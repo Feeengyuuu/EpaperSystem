@@ -39,10 +39,16 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 /* Hero ----------------------------------------------------------------------------- */
 .mw-hero {
   position: absolute; left: 12px; top: 44px; width: 302px; height: 254px;
-  border-radius: 16px; overflow: hidden; border: 2px solid var(--frame); background: var(--soft);
+  border-radius: 16px; overflow: hidden; border: 2px solid var(--frame); background: transparent;
+}
+.mw-backdrop { position: absolute; left: 0; top: 0; width: 800px; height: 480px; object-fit: cover; }
+/* The header reads over the sky on a soft band of the page colour. */
+.mw-top::before {
+  content: ""; position: absolute; left: -16px; top: -6px; width: 520px; height: 40px; z-index: -1;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--bg) 88%, transparent) 60%, transparent);
 }
 .mw-hero-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 70% 50%; }
-.mw-hero-veil { position: absolute; inset: 0; background: linear-gradient(100deg, rgba(255,255,255,0.94) 0%, rgba(255,255,255,0.86) 42%, rgba(255,255,255,0.15) 78%, rgba(255,255,255,0) 100%); }
+.mw-hero-veil { position: absolute; inset: 0; background: linear-gradient(100deg, rgba(255,255,255,0.86) 0%, rgba(255,255,255,0.62) 40%, rgba(255,255,255,0.08) 75%, rgba(255,255,255,0) 100%); }
 .theme-night .mw-hero-veil { background: linear-gradient(100deg, rgba(8,12,20,0.9) 0%, rgba(8,12,20,0.78) 42%, rgba(8,12,20,0.12) 78%, rgba(8,12,20,0) 100%); }
 .mw-hero-body { position: absolute; inset: 0; padding: 10px 14px; display: flex; flex-direction: column; }
 .mw-temp { font-family: Jost, "Microsoft YaHei", sans-serif; font-size: 92px; font-weight: 500; line-height: 0.95; letter-spacing: -3px; }
@@ -75,11 +81,11 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 .mw-small { font-size: 12px; font-weight: 700; }
 .mw-foot { margin-top: auto; }
 
-.mw-arc { width: 120px; height: 62px; display: block; margin: 2px auto 0; }
+.mw-arc { width: 108px; height: 54px; display: block; margin: 0 auto; }
 .mw-arc-track { fill: none; stroke: var(--rule); stroke-width: 2.5; stroke-dasharray: 4 4; }
 .mw-horizon { stroke: var(--ink); stroke-width: 1.5; }
 .mw-sun { fill: var(--sun); stroke: var(--ink); stroke-width: 1.5; }
-.mw-arc-times { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; }
+.mw-arc-times { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; white-space: nowrap; }
 
 .mw-moon { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .mw-moon img { width: 48px; height: 48px; object-fit: contain; }
@@ -145,4 +151,43 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 .mw-day-bar {
   position: absolute; top: -1px; bottom: -1px; border-radius: 3px;
   background: linear-gradient(90deg, #3d8bfd, #f6a400 60%, #e8701a);
+}
+
+/* Fun -------------------------------------------------------------------------------- */
+.mw-effect { position: absolute; left: 0; top: 0; width: 800px; height: 44px; }
+.mw-top { z-index: 1; }
+.mw-fx-ray { fill: color-mix(in srgb, var(--sun) 30%, transparent); }
+.mw-fx-star { fill: var(--sun); }
+.mw-fx-cloud { fill: color-mix(in srgb, var(--ink) 10%, var(--bg)); }
+.mw-fx-drop { stroke: var(--blue); stroke-width: 1.6; stroke-linecap: round; }
+.mw-fx-bolt { fill: var(--sun); stroke: var(--ink); stroke-width: 1; }
+.mw-fx-flake { stroke: var(--blue); stroke-width: 1.3; stroke-linecap: round; }
+.mw-fx-wave { fill: none; stroke: color-mix(in srgb, var(--ink) 25%, var(--bg)); stroke-width: 2; }
+
+.mw-mascot { position: absolute; right: 2px; bottom: 34px; width: 104px; height: 104px; object-fit: contain; }
+.mw-bubble {
+  position: relative; margin-top: 8px; max-width: 176px; padding: 6px 10px;
+  font-size: 13px; font-weight: 700; line-height: 1.3;
+  background: var(--bg); border: 2px solid var(--ink); border-radius: 12px;
+}
+.mw-bubble::after {
+  content: ""; position: absolute; right: -11px; top: 12px;
+  border-width: 7px 0 7px 11px; border-style: solid; border-color: transparent transparent transparent var(--ink);
+}
+.mw-title-note { float: right; font-size: 11px; }
+.mw-countdown { color: var(--accent); }
+.mw-extra { font-size: 11px; font-weight: 700; white-space: nowrap; line-height: 1.3; }
+.mw-daylight { font-size: 11px; color: var(--muted); }
+.mw-humid { margin-top: 2px !important; }
+
+.mw-indices { display: grid; grid-template-columns: 1fr; gap: 3px; margin-top: 6px; }
+.mw-index { display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 700; }
+.mw-stars { letter-spacing: -1px; font-size: 14px; }
+.mw-star.on { color: var(--sun); -webkit-text-stroke: 0.6px var(--ink); }
+.mw-star.off { color: color-mix(in srgb, var(--ink) 18%, var(--bg)); }
+
+.mw-best { fill: color-mix(in srgb, #2e9e5b 16%, transparent); stroke: #2e9e5b; stroke-width: 1.5; stroke-dasharray: 4 3; }
+.mw-best-chip {
+  margin-left: auto; font-size: 11px; font-weight: 700; color: #ffffff; background: #2e9e5b;
+  padding: 1px 8px; border-radius: 999px;
 }

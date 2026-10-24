@@ -114,6 +114,41 @@ def test_modern_template_renders_every_section():
     html = template.render(**params, view=build_view(params, now), width=800, height=480, theme={"mode": "day", "css": {}},
                            plugin_settings={"displayRefreshTime": "true"}, style_sheets=[], font_faces=[])
 
-    for text in ("日出日落", "西南风 3 级", "空气质量", "紫外线", "湿度", "24 小时", "未来 7 天", "厚外套",
+    for text in ("日出日落", "西南风 3 级", "空气质量", "紫外线", "湿度", "生活指数", "24 小时", "未来 7 天", "厚外套", "mw-bubble", "mw-effect",
                  "scale(1.0)"):
         assert text in html, text
+
+
+def test_fun_features_follow_the_weather():
+    now = LA.localize(datetime(2026, 10, 24, 9, 0))
+    sunny = build_view(_params(now, feels="20"), now, art_dir=str(ART_DIR))
+
+    assert sunny["mascot"]["key"] == "sunny" and sunny["mascot"]["image"].endswith("mascot-sunny.png")
+    assert sunny["sun"]["countdown"].startswith("距日落")
+    assert sunny["best"] and sunny["best"]["width"] > 0
+    assert [index["name"] for index in sunny["indices"]] == ["跑步", "晾晒", "洗车", "户外"]
+    assert all(1 <= index["stars"] <= 5 for index in sunny["indices"])
+    assert sunny["effect"]["kind"] == "rays" and sunny["effect"]["marks"]
+
+    rainy = build_view(_params(now, rain=0.7, icon="10d"), now, art_dir=str(ART_DIR))
+    assert rainy["mascot"]["key"] == "rain" and "下雨" in rainy["mascot"]["line"]
+    assert rainy["effect"]["kind"] == "rain"
+    drying = next(index for index in rainy["indices"] if index["name"] == "晾晒")
+    assert drying["stars"] == 1
+
+    late = LA.localize(datetime(2026, 10, 24, 22, 30))
+    night = build_view(_params(late, icon="01n", feels="12"), late, art_dir=str(ART_DIR))
+    assert night["mascot"]["key"] == "night" and night["mascot"]["line"].startswith("晚安")
+    assert night["sun"]["countdown"].startswith("距日出 8小时")
+    assert night["effect"]["kind"] == "stars"
+
+
+def test_every_weather_has_its_mascot():
+    for key in set(modern_view.MASCOTS.values()):
+        assert (ART_DIR / f"mascot-{key}.png").is_file(), key
+
+
+def test_page_effect_is_stable_through_the_day():
+    morning = LA.localize(datetime(2026, 10, 24, 8, 0))
+    evening = LA.localize(datetime(2026, 10, 24, 17, 0))
+    assert modern_view._page_effect("snow", morning) == modern_view._page_effect("snow", evening)
