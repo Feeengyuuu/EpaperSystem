@@ -10,8 +10,9 @@ How fresh each piece is (the owner's update cadence):
 - the LoL ladder of all twenty: up to LOL_BOARD_BATCH stale accounts (older than
   LOL_BOARD_MINUTES) are re-read on every LoL render, one league call each, and each
   pro's row shows their best-ranked account;
-- HLTV's Top 20 list: weekly; the shown CS2 player's page: CS2_PLAYER_HOURS; the CS2
-  board's ratings: CS2_BOARD_BATCH stale players (older than CS2_BOARD_HOURS) per CS2 render.
+- HLTV's Top 20 list: weekly; the shown CS2 player's page (with their recent loadout):
+  CS2_PLAYER_HOURS; their bo3.gg map pool: CS2_MAP_HOURS; the CS2 board's ratings:
+  CS2_BOARD_BATCH stale players (older than CS2_BOARD_HOURS) per CS2 render.
 This keeps a render under ~20 Riot calls, well inside a development key's 100 per 2 minutes.
 """
 
@@ -28,7 +29,7 @@ from utils.http_client import get_http_session
 
 from plugins.sports_dashboard.common import LOLESPORTS_API_KEY
 
-from . import hltv_players
+from . import bo3_stats, hltv_players
 from .pro_roster import CS2_TOP20_2025, LOLESPORTS_TEAM_SLUGS, tracked_lol_accounts
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ CS2_TOP20_DAYS = 7
 CS2_PLAYER_HOURS = 6
 CS2_BOARD_BATCH = 2
 CS2_BOARD_HOURS = 24
+CS2_MAP_HOURS = 24
 # HLTV answers bursts with a 403/429 challenge; after one, leave it alone for this long.
 HLTV_BACKOFF_HOURS = 6
 RANK_ORDER = {"CHALLENGER": 9, "GRANDMASTER": 8, "MASTER": 7, "DIAMOND": 6, "EMERALD": 5, "PLATINUM": 4,
@@ -328,8 +330,12 @@ class ProTrackerMixin:
                     continue
                 changed = True
                 try:
+                    previous = entry.get("rating")
                     entry.update(self._read_cs2_player(session, name, entry))
                     entry["page_ts"] = now
+                    # The board marks a rating that moved since the last reading.
+                    if isinstance(previous, (int, float)) and previous != entry.get("rating"):
+                        entry["rating_prev"] = previous
                 except TaskCancelled:
                     raise
                 except Exception as exc:
@@ -338,14 +344,40 @@ class ProTrackerMixin:
                     if self._hltv_refused(exc):
                         state["hltv_backoff_until"] = now + HLTV_BACKOFF_HOURS * 3600
                 players[name] = entry
+        if refresh:
+            changed = self._refresh_cs2_maps(get_http_session(), players, pick["player"], now) or changed
         if changed:
             self._write_json(path, state)
         roster = self._cs2_roster(state)
-        board = [{**row, **{key: (players.get(row["nick"]) or {}).get(key) for key in ("rating", "maps", "team")},
-                  "team": (players.get(row["nick"]) or {}).get("team") or row.get("team", "")} for row in roster]
+        board = []
+        for item in roster:
+            entry = players.get(item["nick"]) or {}
+            board.append({**item, "rating": entry.get("rating"), "rating_prev": entry.get("rating_prev"),
+                          "maps": entry.get("maps"), "roles": entry.get("roles") or {},
+                          "team": entry.get("team") or item.get("team", ""),
+                          "team_logo": entry.get("team_logo_night") or item.get("team_logo", "")})
         row = next((item for item in roster if item["nick"] == pick["player"]["nick"]), pick["player"])
         return {"player": {**row, **(players.get(row["nick"]) or {})}, "board": board,
                 "top20_year": state.get("top20_year") or 2025}
+
+    def _refresh_cs2_maps(self, session, players, player, now):
+        """Re-read the shown player's bo3.gg map pool once it is CS2_MAP_HOURS old (False while fresh)."""
+        nick = player["nick"]
+        entry = dict(players.get(nick) or {})
+        if now - float(entry.get("map_pool_ts") or 0) < CS2_MAP_HOURS * 3600:
+            return False
+        try:
+            slug = entry.get("bo3_slug") or bo3_stats.resolve_slug(session, nick, player.get("name") or "")
+            if not slug:
+                raise ValueError("not found on bo3.gg")
+            entry.update(bo3_slug=slug, map_pool=bo3_stats.map_stats(session, slug), map_pool_ts=now)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("bo3.gg map pool of %s unavailable: %s", nick, exc)
+            entry["map_pool_ts"] = now - CS2_MAP_HOURS * 1800  # retry in half the usual wait
+        players[nick] = entry
+        return True
 
     @staticmethod
     def _hltv_refused(exc):

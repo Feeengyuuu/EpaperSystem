@@ -105,5 +105,55 @@
       304,
       160
     ]
+  },
+  "maps/de_ancient.jpg": {
+    "source": "https://raw.githubusercontent.com/ghostcap-gaming/cs2-map-images/main/cs2/de_ancient.png",
+    "owner": "Valve (Counter-Strike 2 map loading screenshot from the game files), scaled to 800x450 JPEG",
+    "sha256": "c91eba236bd6ed1e7a962ded27f98ba1ecb2a33fd0176d18b25e32ebc0201130"
+  },
+  "maps/de_anubis.jpg": {
+    "source": "https://raw.githubusercontent.com/ghostcap-gaming/cs2-map-images/main/cs2/de_anubis.png",
+    "owner": "Valve (Counter-Strike 2 map loading screenshot from the game files), scaled to 800x450 JPEG",
+    "sha256": "3999d050509d2b5cc16a59477d7bc0445d27ca0343c9477bcb70000e8f1db057"
+  },
+  "maps/de_cache.jpg": {
+    "source": "https://raw.githubusercontent.com/ghostcap-gaming/cs2-map-images/main/cs2/de_cache.png",
+    "owner": "Valve (Counter-Strike 2 map loading screenshot from the game files), scaled to 800x450 JPEG",
+    "sha256": "08e91c6f7e509ac0f14d019455f691e024495c6bc0065af176fc069cc36926ea"
+  },
+  "maps/de_dust2.jpg": {
+    "source": "https://raw.githubusercontent.com/ghostcap-gaming/cs2-map-images/main/cs2/de_dust2.png",
+    "owner": "Valve (Counter-Strike 2 map loading screenshot from the game files), scaled to 800x450 JPEG",
+    "sha256": "fea657a7db4b10473a4c4a5474f72c6125e6c6f262959ed2bf71f85df896c06d"
+  },
+  "maps/de_inferno.jpg": {
+    "source": "https://raw.githubusercontent.com/ghostcap-gaming/cs2-map-images/main/cs2/de_inferno.png",
+    "owner": "Valve (Counter-Strike 2 map loading screenshot from the game files), scaled to 800x450 JPEG",
+    "sha256": "9ffff7cfb8163d2162d3ca1d4f8b7a253dd90a5d69b61f982fca8c8f1afcdffb"
+  },
+  "maps/de_mirage.jpg": {
+    "source": "https://raw.githubusercontent.com/ghostcap-gaming/cs2-map-images/main/cs2/de_mirage.png",
+    "owner": "Valve (Counter-Strike 2 map loading screenshot from the game files), scaled to 800x450 JPEG",
+    "sha256": "7be4b9b86cf47704461b0e440649b46529787889c5971b0ad4c204c98c06fdae"
+  },
+  "maps/de_nuke.jpg": {
+    "source": "https://raw.githubusercontent.com/ghostcap-gaming/cs2-map-images/main/cs2/de_nuke.png",
+    "owner": "Valve (Counter-Strike 2 map loading screenshot from the game files), scaled to 800x450 JPEG",
+    "sha256": "08b29588c7a82d24484f1c7666be3649aa9bc2e20f370d7d978bd3ee1b6b703c"
+  },
+  "maps/de_overpass.jpg": {
+    "source": "https://raw.githubusercontent.com/ghostcap-gaming/cs2-map-images/main/cs2/de_overpass.png",
+    "owner": "Valve (Counter-Strike 2 map loading screenshot from the game files), scaled to 800x450 JPEG",
+    "sha256": "0b02803b18b2b59d5d8cd71347a21edd855b083f8c03c9400a603fa31404ccaa"
+  },
+  "maps/de_train.jpg": {
+    "source": "https://raw.githubusercontent.com/ghostcap-gaming/cs2-map-images/main/cs2/de_train.png",
+    "owner": "Valve (Counter-Strike 2 map loading screenshot from the game files), scaled to 800x450 JPEG",
+    "sha256": "4b225fd6b1f83c7bd3a013eb063c57ca17cf6a1c5b6249615973c77d3d89d4f7"
+  },
+  "maps/de_vertigo.jpg": {
+    "source": "https://raw.githubusercontent.com/ghostcap-gaming/cs2-map-images/main/cs2/de_vertigo.png",
+    "owner": "Valve (Counter-Strike 2 map loading screenshot from the game files), scaled to 800x450 JPEG",
+    "sha256": "846647bd15c38d6be9952d396c9fdab53f05e1372d8c842090d576bc1735bd9b"
   }
 }

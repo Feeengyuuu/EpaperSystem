@@ -11,7 +11,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from plugins.lol_info import hltv_players, pro_tracker  # noqa: E402
+from plugins.lol_info import bo3_stats, hltv_players, pro_render, pro_tracker  # noqa: E402
 from plugins.lol_info import lol_info as lol_info_module  # noqa: E402
 from plugins.lol_info.lol_info import LoLInfo  # noqa: E402
 from plugins.lol_info.pro_roster import LOL_ROSTER, TRACKED_LOL_PLAYERS, tracked_lol_accounts  # noqa: E402
@@ -358,3 +358,145 @@ def test_each_turn_in_the_rotation_prepares_a_new_pro_before_display():
     assert manifest["capabilities"]["allows_display_triggered_provider_refresh"] is True
     plugin = LoLInfo({"id": "lol_info"})
     assert plugin.presentation_mode({"refreshOnDisplay": True}).name == "PREPARED_BANK"
+
+
+LOADOUT_PAGE = (
+    '<div class="skins-weapon-columns"><div class="skins-weapon-column ct "><h3>Rifles</h3>'
+    '<div class="skins-wrapper rarity-covert"><div class="skin-top skins-loadout-lightbox">'
+    '<img alt="" src="https://skins-cdn.hltv.org/skin/m4.png" class="skin-img" title=""><div class="skin-title">Printstream</div>'
+    '<div class="skin-more-skins">+1</div><div class="lightbox-content hidden"><div class="weapon-lightbox">'
+    '<div class="skins-wrapper rarity-classified"><a href="/skins/rifle/m4a1-s/hot-rod" class="skin-top">'
+    '<img alt="" src="https://skins-cdn.hltv.org/skin/hot.png" class="skin-img" title=""><div class="skin-title">Hot Rod</div></a>'
+    '<div class="skin-bottom"><a href="https://sih.app/market?item=M4A1-S+|+Hot+Rod+(Factory+New)&amp;x=1">x</a></div></div>'
+    '</div></div></div>'
+    '<div class="skin-bottom"><a href="https://sih.app/market?item=StatTrak%E2%84%A2+M4A1-S+|+Printstream+(Factory+New)'
+    '&amp;sortBy=1">x</a></div></div>'
+    '</div><div class="skins-weapon-column t hidden"><h3>Rifles</h3>'
+    '<div class="skins-wrapper rarity-covert"><a href="/skins/rifle/ak-47/wild-lotus" class="skin-top">'
+    '<img alt="" src="https://skins-cdn.hltv.org/skin/ak.png" class="skin-img" title=""><div class="skin-title">Wild Lotus</div></a>'
+    '<div class="skin-bottom"><a href="https://sih.app/market?item=AK-47+|+Wild+Lotus+(Field-Tested)&amp;a=1">x</a></div></div>'
+    '</div></div>')
+MAP_STATS = [
+    {"map_name": "de_ancient", "maps_count": 14, "avg_player_rating": 7.87, "avg_kills": 0.99, "avg_damage": 102.46},
+    {"map_name": "de_overpass", "maps_count": 3, "avg_player_rating": 9.1, "avg_kills": 1.2, "avg_damage": 120},
+    {"map_name": "de_dust2", "maps_count": 27, "avg_player_rating": 7.15, "avg_kills": 0.87, "avg_damage": 88.6},
+    {"map_name": "cs_office", "maps_count": 9, "avg_player_rating": 8.0, "avg_kills": 1, "avg_damage": 90},
+]
+
+
+class JsonBody:
+    def __init__(self, payload, status=200):
+        self.status_code, self.body = status, json.dumps(payload).encode("utf-8")
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+    def iter_content(self, _size):
+        yield self.body
+
+
+def test_the_loadout_keeps_each_slots_latest_skin_per_side():
+    loadout = hltv_players.parse_loadout(LOADOUT_PAGE)
+
+    assert loadout == {
+        "ct": [{"group": "Rifles", "weapon": "M4A1-S", "skin": "Printstream",
+                "image": "https://skins-cdn.hltv.org/skin/m4.png", "rarity": "covert"}],
+        "t": [{"group": "Rifles", "weapon": "AK-47", "skin": "Wild Lotus",
+               "image": "https://skins-cdn.hltv.org/skin/ak.png", "rarity": "covert"}],
+    }
+    assert hltv_players.parse_player_page(PLAYER_PAGE)["loadout"] == {}
+
+
+def test_bo3_map_pool_ranks_maps_played_often_enough_by_score():
+    pool = bo3_stats.parse_map_stats(MAP_STATS)
+
+    # Overpass scores best but on three maps; Office is not a competitive map.
+    assert [row["map"] for row in pool] == ["de_ancient", "de_dust2", "de_overpass"]
+    assert (pool[0]["name"], pool[0]["english"], pool[0]["maps"], round(pool[0]["adr"])) == ("远古遗迹", "Ancient", 14, 102)
+
+
+def test_bo3_lookup_takes_the_hltv_nickname_and_the_real_surname():
+    results = [{"slug": "frozen-kr", "nickname": "Frozen", "last_name": "Tae-il"},
+               {"slug": "frozen", "nickname": "frozen", "last_name": "Čerňanský"}]
+
+    assert bo3_stats.pick_player(results, "frozen", "David Čerňanský")["slug"] == "frozen"
+    assert bo3_stats.pick_player(results, "frozen", "David Cernansky")["slug"] == "frozen"
+    assert bo3_stats.pick_player(results, "frozen", "Someone Else") is None
+    assert bo3_stats.pick_player([{"slug": "mezil", "nickname": "mezii", "last_name": "Merriman"}], "mezii",
+                                 "William Merriman")["slug"] == "mezil"
+
+
+def test_the_shown_cs2_players_map_pool_is_read_from_bo3_once_a_day(plugin, monkeypatch, tmp_path):
+    calls = []
+
+    class Session:
+        def get(self, url, timeout=None, headers=None, stream=None):
+            calls.append(url)
+            if "/players?" in url:
+                return JsonBody({"results": [{"slug": "donk", "nickname": "donk", "last_name": "Kryshkovets"}]})
+            return JsonBody(MAP_STATS)
+
+    monkeypatch.setattr(pro_tracker, "get_http_session", lambda: Session())
+    # HLTV is resting, so only bo3.gg is asked.
+    (tmp_path / pro_tracker.CS2_STATE).write_text(json.dumps({"hltv_backoff_until": time.time() + 3600}), encoding="utf-8")
+    pick = next(item for item in plugin._tracked_pool({}) if item["kind"] == "cs2" and item["player"]["nick"] == "donk")
+
+    data = plugin._cs2_data(pick)
+
+    assert [urllib.parse.urlsplit(url).path for url in calls] == ["/api/v1/players", "/api/v1/players/donk/map_stats"]
+    assert data["player"]["map_pool"][0]["map"] == "de_ancient" and data["player"]["bo3_slug"] == "donk"
+    calls.clear()
+    assert plugin._cs2_data(pick)["player"]["map_pool"][0]["map"] == "de_ancient" and calls == []
+    plugin._cs2_data(pick, refresh=False)
+    assert calls == []
+
+
+def test_the_loadout_leads_with_the_awp_only_for_a_sniper():
+    def slot(weapon):
+        return {"weapon": weapon, "skin": "x", "image": f"https://skins-cdn.hltv.org/skin/{weapon}.png"}
+
+    loadout = {"t": [slot("Glock-18"), slot("AK-47"), slot("AWP")], "ct": [slot("USP-S"), slot("M4A1-S"), slot("AWP")]}
+
+    rifler = LoLInfo._cs2_guns({"loadout": loadout, "roles": {"Sniping": 3}})
+    sniper = LoLInfo._cs2_guns({"loadout": loadout, "roles": {"Sniping": 92}})
+
+    assert [gun["weapon"] for gun in rifler] == ["AK-47", "M4A1-S", "USP-S"]
+    assert [gun["weapon"] for gun in sniper] == ["AWP", "AK-47", "M4A1-S"]
+    assert LoLInfo._cs2_archetype({"Sniping": 92, "Firepower": 99}) == "主狙手"
+    assert LoLInfo._cs2_archetype({"Sniping": 2, "Firepower": 55, "Closing": 78}) == "残局专家"
+
+
+def test_the_cs2_page_lies_on_the_best_maps_art_with_the_guns_in_the_band(plugin):
+    gun = Image.new("RGBA", (512, 384), (0, 0, 0, 0))
+    gun.paste((200, 60, 40, 255), (40, 150, 470, 230))
+    plugin._image_from_url = lambda url, label="": gun.copy() if "skins-cdn" in str(url) else None
+    cs2_pick = next(item for item in plugin._tracked_pool({}) if item["kind"] == "cs2")
+    roles = {name: 50 for name in hltv_players.ROLE_NAMES}
+    board = [{**row, "rating": 1.0 + index / 100, "roles": dict(roles, Firepower=40 + index)}
+             for index, row in enumerate(plugin._cs2_roster())]
+    player = {**cs2_pick["player"], "rating": 1.21, "maps": 40, "roles": dict(roles, Firepower=98),
+              "loadout": {"t": [{"weapon": "AK-47", "skin": "Wild Lotus", "image": "https://skins-cdn.hltv.org/skin/ak.png"}]},
+              "map_pool": bo3_stats.parse_map_stats(MAP_STATS),
+              "recent": [{"opponent": "MOUZ", "score": "2 : 1", "won": True},
+                         {"opponent": "Aurora", "score": "0 : 2", "won": False}]}
+    colors = plugin._render_colors({"mode": "night"})
+    pick = {**cs2_pick, "position": 1, "size": 40}
+
+    page = plugin._render_cs2_pro({"player": player, "board": board, "top20_year": 2025}, (800, 480), {"mode": "night"}, pick)
+    plain = plugin._render_cs2_pro({"player": {**player, "map_pool": [], "loadout": {}}, "board": board, "top20_year": 2025},
+                                   (800, 480), {"mode": "night"}, pick)
+
+    # The gutter between the panels shows the map; without a map pool it is the flat page colour.
+    assert page.getpixel((403, 320)) != colors["background"] and plain.getpixel((403, 320)) == colors["background"]
+    # The AK's red stands in the hero band between the name block and the rating.
+    assert any(page.getpixel((x, y))[0] > 150 and page.getpixel((x, y))[1] < 90
+               for x in range(380, 600, 3) for y in range(20, 90, 3))
+    assert plugin._cs2_role_average(board)["Firepower"] == pytest.approx(49.5)
+
+
+def test_board_logos_prefer_the_bundled_cs2_logos_over_hltv_svgs():
+    logos = pro_render._bundled_team_logos()
+
+    assert pro_render._team_key("Team Vitality") == "vitality" and pro_render._team_key("NAVI") == "natusvincere"
+    assert logos["vitality"].endswith("vitality.png") and logos["mouz"].endswith("mouz.png")

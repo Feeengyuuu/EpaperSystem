@@ -10,6 +10,7 @@ from __future__ import annotations
 from html import unescape
 import json
 import re
+import urllib.parse
 
 HLTV = "https://www.hltv.org"
 USER_AGENT = "EpaperSystem/ProTracker"
@@ -17,8 +18,10 @@ PLAYER_PAGE_MAX_BYTES = 4 * 1024 * 1024
 ROLE_NAMES = ("Firepower", "Entrying", "Trading", "Opening", "Closing", "Sniping", "Utility")
 ROLE_LABELS = {"Firepower": "火力", "Entrying": "突破", "Trading": "补枪", "Opening": "首杀",
                "Closing": "残局", "Sniping": "狙击", "Utility": "道具"}
+LOADOUT_PER_SIDE = 8
 
 _TAG = re.compile(r"<[^>]+>")
+_DIV = re.compile(r"<(/?)div\b")
 
 
 def _text(value):
@@ -78,10 +81,11 @@ def parse_search(payload, nick):
 
 
 def parse_player_page(page):
-    """Rating 3.0 with its window, the seven role scores, team, age, bodyshot and matches."""
+    """Rating 3.0 with its window, the seven role scores, team, age, bodyshot, matches and loadout."""
     page = str(page or "")
     result = {"rating": None, "window": "", "maps": None, "roles": {}, "team": "", "team_logo_day": "",
-              "team_logo_night": "", "age": "", "country": "", "bodyshot": "", "upcoming": [], "recent": []}
+              "team_logo_night": "", "age": "", "country": "", "bodyshot": "", "upcoming": [], "recent": [],
+              "loadout": parse_loadout(page)}
     window = re.search(r'class="stats-window">\(([^)]*)\)', page)
     if window:
         result["window"] = _text(window.group(1))
@@ -126,6 +130,67 @@ def parse_player_page(page):
             entry["unix_ms"] = int(when.group(1))
             result["upcoming"].append(entry)
     return result
+
+
+def _block(html, begin):
+    """The whole <div> element opening at ``begin``, nested divs and all ("" when it never closes)."""
+    depth = 0
+    for tag in _DIV.finditer(html, begin):
+        depth += -1 if tag.group(1) else 1
+        if depth == 0:
+            return html[begin:html.find(">", tag.end()) + 1]
+    return ""
+
+
+def _blocks(html, opener):
+    """Every top-level <div> in ``html`` whose opening tag starts with ``opener``."""
+    found, cursor = [], 0
+    while (begin := html.find(opener, cursor)) >= 0:
+        block = _block(html, begin)
+        if not block:
+            break
+        found.append(block)
+        cursor = begin + len(block)
+    return found
+
+
+def _skin_weapon(body):
+    """"AK-47" from the skin's market link ("StatTrak™ AK-47 | Redline (Field-Tested)")."""
+    item = re.search(r'sih\.app/market\?item=([^&"]+)', body)
+    if not item:
+        return ""
+    name = urllib.parse.unquote_plus(unescape(item.group(1))).split(" | ")[0]
+    return re.sub(r"^(?:StatTrak™|Souvenir)\s+", "", name).strip()
+
+
+def parse_loadout(page):
+    """The guns HLTV saw the player use in recent matches: {"t"|"ct": [{group, weapon, skin, image, rarity}]}.
+
+    Each slot of the page's loadout is the skin seen most recently; the other skins of that
+    gun sit in a hidden lightbox, dropped here.
+    """
+    page = str(page or "")
+    begin = page.find('<div class="skins-weapon-columns"')
+    loadout = {}
+    if begin < 0:
+        return loadout
+    for column in _blocks(_block(page, begin), '<div class="skins-weapon-column '):
+        side = "ct" if column.startswith('<div class="skins-weapon-column ct') else "t"
+        group = re.search(r"<h3>([^<]+)</h3>", column)
+        slots = []
+        for wrapper in _blocks(column, '<div class="skins-wrapper '):
+            for hidden in _blocks(wrapper, '<div class="lightbox-content hidden">'):
+                wrapper = wrapper.replace(hidden, "")
+            image = re.search(r'<img alt="[^"]*" src="(https://skins-cdn\.hltv\.org/skin/[^"]+)" class="skin-img"', wrapper)
+            skin = re.search(r'class="skin-title">([^<]+)<', wrapper)
+            weapon = _skin_weapon(wrapper)
+            rarity = re.match(r'<div class="skins-wrapper rarity-([a-z-]+)', wrapper)
+            if image and weapon:
+                slots.append({"group": _text(group.group(1)) if group else "", "weapon": weapon,
+                              "skin": _text(skin.group(1)) if skin else "", "image": unescape(image.group(1)),
+                              "rarity": rarity.group(1) if rarity else ""})
+        loadout[side] = (loadout.get(side) or []) + slots
+    return {side: slots[:LOADOUT_PER_SIDE] for side, slots in loadout.items()}
 
 
 def _won(score):
