@@ -41,29 +41,34 @@ def _is_owner_device(instances):
     )
 
 
-def apply_aggregate_pages_playlist_migration(config):
+def add_pages_to_owner_rotation(config, migration_id, pages, interval_seconds, label):
+    """Add each (plugin_id, name) page to the owner's DailyDoseOfDay once.
+
+    A page whose plugin already has an instance anywhere is skipped, other devices and
+    playlists are left alone, and the ``migration_id`` marker stops a second run.
+    """
     markers = config.get_config("runtime_migrations", default={})
-    if isinstance(markers, Mapping) and markers.get(MIGRATION_ID) is True:
+    if isinstance(markers, Mapping) and markers.get(migration_id) is True:
         return
     version, authoritative, playlist, manager = config.capture_detached_playlist_transaction()
     markers = authoritative.get("runtime_migrations", {})
-    if isinstance(markers, Mapping) and markers.get(MIGRATION_ID) is True:
+    if isinstance(markers, Mapping) and markers.get(migration_id) is True:
         return
     if not isinstance(markers, Mapping):
-        raise ValueError("Aggregate pages migration state is malformed")
+        raise ValueError(f"{label} migration state is malformed")
     instances = manager.snapshot_all_instances()
     if manager.get_playlist(PLAYLIST) is None or not _is_owner_device(instances):
         return
     present = {item.plugin_id for item in instances}
     added = []
-    for plugin_id, name in PAGES:
+    for plugin_id, name in pages:
         if plugin_id in present:
             continue
         instance = {
             "plugin_id": plugin_id,
             "name": name,
             "plugin_settings": {},
-            "refresh": {"interval": REFRESH_INTERVAL_SECONDS},
+            "refresh": {"interval": interval_seconds.get(plugin_id, REFRESH_INTERVAL_SECONDS)},
         }
         if manager.add_plugin_to_playlist_snapshot(PLAYLIST, instance) is None:
             raise ValueError(f"Could not add {plugin_id} to {PLAYLIST}")
@@ -73,11 +78,16 @@ def apply_aggregate_pages_playlist_migration(config):
         expected_config_data=authoritative,
         expected_playlist_config=playlist,
         playlist_manager=manager,
-        config_updates={"runtime_migrations": {**_thaw(markers), MIGRATION_ID: True}},
+        config_updates={"runtime_migrations": {**_thaw(markers), migration_id: True}},
     )
     if added:
         logger.warning(
-            "Added the aggregate pages to the rotation. | playlist: %s | pages: %s",
+            "Added the %s to the rotation. | playlist: %s | pages: %s",
+            label,
             PLAYLIST,
             ",".join(added),
         )
+
+
+def apply_aggregate_pages_playlist_migration(config):
+    add_pages_to_owner_rotation(config, MIGRATION_ID, PAGES, {}, "aggregate pages")

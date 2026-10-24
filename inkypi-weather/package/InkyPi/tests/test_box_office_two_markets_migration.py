@@ -10,7 +10,8 @@ import box_office_two_markets_migration as migration  # noqa: E402
 from config import Config  # noqa: E402
 
 OWNER_UUID = "6ce0a56e6ddd4feaa1006be9394daf10"
-MARKERS = {"aggregate_pages_playlist_v1": True, "ai_ecosystem_pulse_retired_v1": True}
+MARKERS = {"aggregate_pages_playlist_v1": True, "ai_ecosystem_pulse_retired_v1": True,
+           "pop_traffic_pages_playlist_v1": True}
 
 
 def _instance(plugin_id, name, uuid, settings=None):

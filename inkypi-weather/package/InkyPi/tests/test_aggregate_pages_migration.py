@@ -21,7 +21,7 @@ def _payload(*extra, playlist="DailyDoseOfDay", live_radar_uuid=OWNER_UUID):
         "schema_version": 1,
         "config_revision": 1,
         "resolution": [800, 480],
-        "runtime_migrations": {"existing_migration_v1": True},
+        "runtime_migrations": {"existing_migration_v1": True, "pop_traffic_pages_playlist_v1": True},
         "playlist_config": {
             "playlists": [{"name": playlist, "start_time": "00:00", "end_time": "24:00",
                            "plugins": [_instance("live_radar", "LiveRadar", live_radar_uuid), *extra]}],
@@ -54,7 +54,8 @@ def test_startup_adds_the_four_pages_to_the_owner_rotation_once(monkeypatch, tmp
     assert plugins[0] == {**_instance("live_radar", "LiveRadar", OWNER_UUID), "latest_refresh_time": None}
     assert all(item["refresh"] == {"interval": 1800} and item["plugin_settings"] == {} for item in plugins[1:])
     assert len({item["instance_uuid"] for item in plugins}) == 5
-    assert saved["runtime_migrations"] == {"existing_migration_v1": True, "aggregate_pages_playlist_v1": True}
+    assert saved["runtime_migrations"] == {"existing_migration_v1": True, "pop_traffic_pages_playlist_v1": True,
+                                           "aggregate_pages_playlist_v1": True}
     assert config.get_playlist_manager().find_plugin("tech_play", "TechPlay") is not None
 
     revision = saved["config_revision"]

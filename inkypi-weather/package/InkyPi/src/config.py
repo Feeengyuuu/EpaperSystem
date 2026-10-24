@@ -226,6 +226,7 @@ class Config:
         self._migrate_aggregate_pages_playlist()
         self._retire_ai_ecosystem_page()
         self._merge_box_office_pages()
+        self._add_pop_and_traffic_pages()
 
     def _migrate_aggregate_pages_playlist(self):
         from aggregate_pages_migration import apply_aggregate_pages_playlist_migration
@@ -241,6 +242,11 @@ class Config:
         from box_office_two_markets_migration import apply_box_office_two_markets_migration
 
         apply_box_office_two_markets_migration(self)
+
+    def _add_pop_and_traffic_pages(self):
+        from pop_and_traffic_pages_migration import apply_pop_and_traffic_pages_migration
+
+        apply_pop_and_traffic_pages_migration(self)
 
     def _migrate_newspaper_chinese_editions(self):
         from newspaper_source_migration import apply_newspaper_chinese_editions_migration
