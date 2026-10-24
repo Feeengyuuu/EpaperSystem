@@ -53,8 +53,14 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 .mw-hero-body { position: absolute; inset: 0; padding: 10px 14px; display: flex; flex-direction: column; }
 .mw-temp { font-family: Jost, "Microsoft YaHei", sans-serif; font-size: 92px; font-weight: 500; line-height: 0.95; letter-spacing: -3px; }
 .mw-temp-unit { font-size: 30px; vertical-align: top; letter-spacing: 0; margin-left: 4px; position: relative; top: 10px; }
+.mw-temp-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+/* Large but no taller than the temperature's line (the negative margins), and it gives way
+   to a wide reading such as 102°F rather than pushing it. */
+.mw-hero-icon {
+  flex: 0 1 104px; min-width: 64px; height: 104px; margin: -10px -4px -8px 0; object-fit: contain;
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.18));
+}
 .mw-condition { display: flex; align-items: center; gap: 6px; font-size: 19px; font-weight: 700; margin-top: 4px; }
-.mw-condition-icon { width: 30px; height: 30px; object-fit: contain; }
 /* Drawn, not typed: Microsoft YaHei Bold has no usable U+00B7 and Chromium showed a box. */
 .mw-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); align-self: center; }
 .mw-range { font-size: 15px; font-weight: 700; margin-top: 4px; }

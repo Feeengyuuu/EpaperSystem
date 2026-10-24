@@ -33,9 +33,12 @@
       <div class="mw-hero-veil"></div>
       {% if v.mascot.image %}<img class="mw-mascot" src="{{ v.mascot.image }}" alt="">{% endif %}
       <div class="mw-hero-body">
-        <div class="mw-temp">{{ current_temperature }}<span class="mw-temp-unit">{{ temperature_unit }}</span></div>
+        {# The weather itself stands large beside the temperature, filling the hero's right. #}
+        <div class="mw-temp-row">
+          <div class="mw-temp">{{ current_temperature }}<span class="mw-temp-unit">{{ temperature_unit }}</span></div>
+          <img class="mw-hero-icon" src="{{ current_day_icon }}" alt="">
+        </div>
         <div class="mw-condition">
-          <img class="mw-condition-icon" src="{{ current_day_icon }}" alt="">
           <span>{{ v.condition }}</span>
           <span class="mw-dot" aria-hidden="true"></span>
           <span>体感 {{ feels_like }}{{ deg }}</span>
