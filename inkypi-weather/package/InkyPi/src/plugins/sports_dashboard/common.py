@@ -437,6 +437,9 @@ LOCAL_WALL_SLOT_FILLER_PATHS = {
     sport: os.path.join(LOCAL_DECOR_DIR, f"{art}_wall_slot_filler.png")
     for sport, art in (("NBA", "nba"), ("WNBA", "wnba"), ("MLB", "mlb"), ("NFL", "nfl"), ("NCAA", "nfl"))
 }
+# The live wall's generated header: its LIVE NOW wordmark and the control-room strip beside it.
+LOCAL_LIVE_NOW_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "live_now_wordmark.png")
+LOCAL_LIVE_WALL_CONTROL_ROOM_PATH = os.path.join(LOCAL_DECOR_DIR, "live_wall_control_room.png")
 LOCAL_TV_LOGO_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "logos", "tv"))
 LOCAL_NBA_COURT_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_court_strip.png")
 LOCAL_TI_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "the_international_title_wordmark.png")

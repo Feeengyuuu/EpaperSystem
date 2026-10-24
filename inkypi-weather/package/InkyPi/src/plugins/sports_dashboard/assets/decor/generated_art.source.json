@@ -150,5 +150,25 @@
         160
       ]
     }
+  },
+  "live_now_wordmark.png": {
+    "scene": "LIVE NOW broadcast wordmark: red LIVE, navy NOW, navy outline, signal waves and swoosh",
+    "job_id": "427792b6-efd8-43cc-9f45-7d2bb0b8c24a",
+    "source_sha256": "6ee3382b3d212b15381fde43288de7c550ffcf25c4b96277448c59fabc57aa4c",
+    "sha256": "6204dfcbd8e13102f64d7f1ecfd5ec2f8aba7eb89c83881127ad71e3b0642861",
+    "size": [
+      383,
+      64
+    ]
+  },
+  "live_wall_control_room.png": {
+    "scene": "pixel-art TV control room: five operators with headsets before six live-game screens",
+    "job_id": "b28a3f20-136b-4ff8-ba1c-1d74f8b5b029",
+    "source_sha256": "6ae81807ff0f486bd492748360eaa02611c79f03547bb90924a79abaf49aa53c",
+    "sha256": "6f5a4bdb6bfac10fff55a18b7529447ae3dcca611353cb2045e1707a50dc5fbe",
+    "size": [
+      647,
+      120
+    ]
   }
 }

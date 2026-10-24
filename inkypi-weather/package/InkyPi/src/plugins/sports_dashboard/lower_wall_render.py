@@ -16,6 +16,8 @@ WALL_ROW_HEIGHT = 26
 WALL_TAG_WIDTH = 26
 WALL_FEATURE_HEIGHT = 56
 WALL_COLUMN_GAP = 8
+# Below this width the control-room strip in the header is left out rather than shrunk.
+WALL_CONTROL_ROOM_MIN_WIDTH = 170
 # Up to six remaining games get a small card each (three per row); more use rows.
 WALL_TILE_LIMIT = 6
 WALL_TILE_COLUMNS = 3
@@ -40,20 +42,56 @@ class LowerWallRenderMixin:
     def _draw_wall_header(self, image, draw, bounds, games, shown):
         x1, y1, x2, _y2 = bounds
         header_y = y1 + 8
-        draw.rectangle((x1 + 14, header_y + 3, x1 + 24, header_y + 27), fill=COLORS["red"], outline=COLORS["border"], width=1)
-        title, title_font = self._fit_text(draw, "LIVE NOW", 150, 22, bold=True, min_size=16)
-        self._draw_text_in_box(draw, (x1 + 32, header_y - 2, x1 + 182, header_y + 24), title, title_font, COLORS["text"])
+        title_right = self._paste_wall_art(image, LOCAL_LIVE_NOW_WORDMARK_PATH, (x1 + 14, header_y - 3, x1 + 182, header_y + 22))
+        if title_right is None:
+            draw.rectangle((x1 + 14, header_y + 3, x1 + 24, header_y + 27), fill=COLORS["red"], outline=COLORS["border"], width=1)
+            title, title_font = self._fit_text(draw, "LIVE NOW", 150, 22, bold=True, min_size=16)
+            self._draw_text_in_box(draw, (x1 + 32, header_y - 2, x1 + 182, header_y + 24), title, title_font, COLORS["text"])
+            title_right = x1 + 182
         sports = list(dict.fromkeys(game["sport"] for game in games))
         hidden = len(games) - shown
-        summary = f"{len(games)} 场进行中" + (f"（另有 {hidden} 场未列出）" if hidden > 0 else " · " + " / ".join(sports))
-        summary, summary_font = self._fit_text_ellipsis(draw, summary, 230, 11, bold=True, min_size=8)
-        self._draw_text_in_box(draw, (x1 + 32, header_y + 24, x1 + 262, header_y + 38), summary, summary_font, COLORS["text"])
+        summary_right = self._draw_wall_summary(image, draw, (x1 + 16, header_y + 24, x1 + 262, header_y + 39), games, sports,
+                                                hidden)
         logo_x = x2 - 96
         for sport in reversed(sports[:4]):
             logo_x -= 34
             self._draw_sport_logo(image, draw, sport, logo_x, header_y + 2, 30, 26)
+        # The control room watching its wall of screens fills the header between the title and the
+        # logos, only when there is room to show it at a readable size.
+        self._paste_wall_art(image, LOCAL_LIVE_WALL_CONTROL_ROOM_PATH,
+                             (max(title_right, summary_right) + 12, header_y - 5, logo_x - 8, header_y + 39), align="center",
+                             min_width=WALL_CONTROL_ROOM_MIN_WIDTH)
         self._draw_status_pill(draw, x2 - 84, header_y + 3, "LIVE", True)
         draw.line((x1 + 12, y1 + 48, x2 - 12, y1 + 48), fill=COLORS["border"], width=1)
+
+    def _draw_wall_summary(self, image, draw, box, games, sports, hidden):
+        """"9 场进行中" then each league's logo with its count; returns where the line ends."""
+        x1, y1, x2, y2 = box
+        lead = f"{len(games)} 场进行中" + (f"（另有 {hidden} 场未列出）" if hidden > 0 else "")
+        lead, font = self._fit_text_ellipsis(draw, lead, x2 - x1, 11, bold=True, min_size=8)
+        self._draw_text_in_box(draw, (x1, y1, x2, y2), lead, font, COLORS["text"])
+        x = x1 + self._text_width(draw, lead, font) + 8
+        counts = {sport: sum(1 for game in games if game["sport"] == sport) for sport in sports}
+        for sport in sports:
+            count = str(counts[sport])
+            if x + 18 + self._text_width(draw, count, font) > x2:
+                break
+            self._draw_sport_logo(image, draw, sport, x, y1, 16, y2 - y1)
+            self._draw_text_in_box(draw, (x + 18, y1, x2, y2), count, font, COLORS["text"])
+            x += 18 + self._text_width(draw, count, font) + 8
+        return int(x)
+
+    def _paste_wall_art(self, image, path, box, align="left", min_width=0):
+        """Paste a decor image contained in box; returns its right edge, or None when it is missing or too narrow."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        if x2 - x1 < max(min_width, 1):
+            return None
+        art = self._load_local_logo(path, (x2 - x1, y2 - y1), alpha_threshold=8)
+        if art is None:
+            return None
+        left = x1 + ((x2 - x1 - art.width) // 2 if align == "center" else 0)
+        image.paste(art, (left, y1 + (y2 - y1 - art.height) // 2), art)
+        return left + art.width
 
     # Two or three games: one card each ------------------------------------------
 

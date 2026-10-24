@@ -872,3 +872,30 @@ def test_cache_only_lower_panel_sources_never_open_a_provider_session(monkeypatc
     assert plugin._load_offseason_hub_payload(settings, LA, NOW)[1] == "HUB STALE"
     assert plugin._load_f1_jolpica_bundle(settings, LA)[1] == "JOLPICA STALE"
     assert plugin._load_f1_openf1_snapshot(settings)[1] == "OPENF1 STALE"
+
+
+def test_live_wall_header_carries_the_wordmark_the_control_room_and_league_counts(monkeypatch, boxes):
+    games, now = _wall_games(2)
+    pasted = []
+    original = SportsDashboard._paste_wall_art
+
+    def spy(self, image, path, box, align="left", min_width=0):
+        right = original(self, image, path, box, align, min_width)
+        pasted.append((Path(path).name, right))
+        return right
+
+    monkeypatch.setattr(SportsDashboard, "_paste_wall_art", spy)
+    _render(lambda plugin, image, draw: plugin._draw_lower_live_wall(image, draw, (0, 0, 555, 267), games, now))
+
+    assert [name for name, right in pasted if right] == ["live_now_wordmark.png", "live_wall_control_room.png"]
+    texts = [text for _box, text, _font in boxes]
+    # The summary names each league by its logo and count instead of its name.
+    assert "2 场进行中" in texts
+    for sport in {game["sport"] for game in games}:
+        assert str(sum(1 for game in games if game["sport"] == sport)) in texts
+
+    # With several leagues' logos in the header there is no room left: the strip is left out.
+    pasted.clear()
+    crowded, now = _wall_games(16)
+    _render(lambda plugin, image, draw: plugin._draw_lower_live_wall(image, draw, (0, 0, 555, 267), crowded, now))
+    assert [name for name, right in pasted if right] == ["live_now_wordmark.png"]
