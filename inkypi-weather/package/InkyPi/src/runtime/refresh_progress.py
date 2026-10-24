@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import math
 import time
 
+from .refresh_planning import LIVE_REFRESH_RENEWS_DATA, with_live_data_freshness
 from .refresh_policy import DueReason, evaluate_data_due
 from .runtime_state import InstanceRuntimeState
 
@@ -118,6 +119,8 @@ class RefreshProgressTracker:
             # Presentation/display failures remain observable independently.
             if instance.instance_uuid in display_owned_instance_uuids:
                 continue
+            if instance.plugin_id in LIVE_REFRESH_RENEWS_DATA:
+                state = with_live_data_freshness(state, now)
             diagnostic = replace(state, data=replace(
                 state.data,
                 last_success_at=(state.data.last_success_at

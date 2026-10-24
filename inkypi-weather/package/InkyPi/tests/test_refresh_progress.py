@@ -92,6 +92,24 @@ def test_display_owned_refresh_is_not_a_stalled_background_interval():
     assert result["data_overdue_count"] == 1
 
 
+def test_live_success_renews_the_data_lane_only_for_plugins_whose_live_refresh_does():
+    tracker = RefreshProgressTracker(clock=Clock())
+    sports = replace(instance("sports", interval=900), plugin_id="sports_dashboard")
+    other = instance("other", interval=900)
+    stale_data_fresh_live = InstanceRuntimeState(
+        data=RefreshLaneState(last_success_at=(NOW - timedelta(hours=1)).isoformat()),
+        live=RefreshLaneState(last_success_at=(NOW - timedelta(minutes=5)).isoformat()),
+    )
+    states = {"sports": stale_data_fresh_live, "other": stale_data_fresh_live}
+
+    result = observe(tracker, [sports, other], states, cache=states)
+
+    # The sports page was rendered by its live refresh 5 minutes ago, so only the other page is overdue.
+    assert result["data_overdue_count"] == 1
+    assert result["data_stalled_count"] == 1
+    assert result["oldest_data_overdue_seconds"] == 2700.0
+
+
 def test_overdue_data_in_backoff_is_stalled_but_daily_data_not_due_is_healthy():
     tracker = RefreshProgressTracker(clock=Clock())
     frequent, daily = instance(), instance("daily", interval=86400)

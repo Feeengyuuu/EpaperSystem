@@ -77,7 +77,7 @@ def collect_due_candidates(inputs: Sequence[InstanceDueInput], *, now: datetime)
             # The display transaction owns this provider request, including a
             # cold start. A saved interval must not also schedule background I/O.
             continue
-        state = _with_live_data_freshness(item.state, now) if item.live_refresh_renews_data else item.state
+        state = with_live_data_freshness(item.state, now) if item.live_refresh_renews_data else item.state
         evaluation = evaluate_data_due(
             item.instance, state, item.has_cache, now,
             first_due_since=item.first_due_since,
@@ -101,11 +101,12 @@ def collect_due_candidates(inputs: Sequence[InstanceDueInput], *, now: datetime)
     return DueCandidates(tuple(data), tuple(presentations), tuple(wakeups), tuple(invalid))
 
 
-def _with_live_data_freshness(state: InstanceRuntimeState, now: datetime) -> InstanceRuntimeState:
+def with_live_data_freshness(state: InstanceRuntimeState, now: datetime) -> InstanceRuntimeState:
     """``state`` with a newer live success counted as the data lane's last success.
 
     Without this the data lane, which only knew its own successes, fetched the sports page
-    again about a minute after every live refresh had just done the same work.
+    again about a minute after every live refresh had just done the same work. The progress
+    diagnostic applies it too, or /readyz reports that renewed data lane as stalled.
     """
     live_text, data_text = state.live.last_success_at, state.data.last_success_at
     live = _parse_time(live_text, now)
