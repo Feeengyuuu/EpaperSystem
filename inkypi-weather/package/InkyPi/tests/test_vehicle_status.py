@@ -2044,23 +2044,24 @@ def test_battery_percent_keeps_a_visible_gap_after_level(
         },
     )
 
-    hero_box = (36, 92, 200, 150)  # below the section heading
+    hero_box = (36, 92, 180, 150)  # below the section heading, left of the range figure
     number_bbox = _visible_color_bbox(image, hero_box, ink)
     percent_bbox = _visible_color_bbox(image, hero_box, muted)
-    usable_box = (200, 128, 320, 150)
-    usable_bbox = _visible_color_bbox(image, usable_box, muted)
+    # Under the range figure, the charge-limit legend in ink explains the gauge's marker.
+    legend_box = (180, 132, 320, 147)  # above the gauge marker, which starts at 148
+    legend_bbox = _visible_color_bbox(image, legend_box, ink)
     bar_box = (36, 150, 320, 172)
     bar_bbox = _visible_non_background_bbox(image, bar_box, surface)
 
     assert number_bbox is not None
     assert percent_bbox is not None
-    assert usable_bbox is not None
+    assert legend_bbox is not None
     assert bar_bbox is not None
     assert number_bbox[2] + 8 <= percent_bbox[0]
     assert abs(number_bbox[3] - percent_bbox[3]) <= 1
     bar_top = bar_box[1] + bar_bbox[1]
     assert bar_top - (hero_box[1] + number_bbox[3]) >= 3
-    assert bar_top - (usable_box[1] + usable_bbox[3]) >= 1
+    assert bar_top - (legend_box[1] + legend_bbox[3]) >= 1
 
 
 def test_car_art_sits_between_the_gauge_and_charging_and_amid_the_tyres(tmp_path, monkeypatch):

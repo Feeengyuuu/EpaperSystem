@@ -55,8 +55,8 @@ LOCATION_MAP_MAX_BYTES = 128 * 1024
 LOCATION_ADDRESS_MAX_CHARS = 256
 LOCATION_MAX_AGE_SECONDS = 86_400
 LOCATION_FUTURE_TOLERANCE_SECONDS = 300
-# The map takes the location section down to its address, which sits on the column's foot.
-LOCATION_MAP_BOX = (538, 240, 764, 350)
+# The map takes the location section down to a rule; the address sits under it on the column's foot.
+LOCATION_MAP_BOX = (538, 240, 764, 344)
 LOCATION_MAP_SIZE = (
     LOCATION_MAP_BOX[2] - LOCATION_MAP_BOX[0],
     LOCATION_MAP_BOX[3] - LOCATION_MAP_BOX[1],
@@ -300,6 +300,9 @@ _UI_TEXT = {
         "rated_range": "RATED RANGE",
         "estimated_range": "EST. RANGE",
         "usable": "USABLE {value}%",
+        "usable_with_label": "USABLE {value}% / {label}",
+        "limit_range": "LIMIT {limit}",
+        "limit_range_projection": "LIMIT {limit} / ~{range}",
         "limit_left": "LIMIT / LEFT",
         "power_added": "POWER / ADDED",
         "input": "INPUT",
@@ -445,6 +448,9 @@ _UI_TEXT = {
         "rated_range": "标称续航",
         "estimated_range": "预估续航",
         "usable": "可用电量 {value}%",
+        "usable_with_label": "可用 {value}% · {label}",
+        "limit_range": "上限 {limit}",
+        "limit_range_projection": "上限 {limit} · 约 {range}",
         "limit_left": "上限 / 剩余",
         "power_added": "功率 / 已补能",
         "input": "输入",
@@ -3127,14 +3133,15 @@ def _draw_energy_column(canvas, draw, summary, charging, extended, settings, pre
 
     rated = extended and battery["rated_range"] is not None
     hero_range = battery["rated_range"] if rated else battery["estimated_range"]
-    _right_text(draw, right, 92, _t(language, "rated_range" if rated else "estimated_range"),
-                _font(11, True), colors["muted"])
-    _right_text(draw, right, 106, _measurement_text(hero_range, settings, preferences, language),
-                _font(25, True), colors["ink"])
-    if extended and battery["usable_level_percent"] is not None:
-        _right_text(draw, right, 134, _t(language, "usable", value=int(round(battery["usable_level_percent"]))),
-                    _font(11, True), colors["muted"])
+    range_label = _t(language, "rated_range" if rated else "estimated_range")
+    usable = battery["usable_level_percent"] if extended else None
+    if usable is not None and level is not None and abs(usable - level) >= 1:
+        # Shown only when it differs from the level: the range is figured on the usable part.
+        range_label = _t(language, "usable_with_label", value=int(round(usable)), label=range_label)
+    _right_text(draw, right, 92, range_label, _font(11, True), colors["muted"])
     limit = charging["charge_limit_percent"]
+    _draw_range_figure(draw, right, 131, hero_range, settings, preferences, colors, language)
+    _draw_limit_legend(draw, right, 141, hero_range, level, limit, settings, preferences, colors, language)
     _battery_gauge(draw, (left, 156, right, 168), level, limit, colors)
     # The side-on car spans the column between the gauge's scale and the charging rule.
     _paste_vehicle_art(canvas, _load_vehicle_art(charging["state"]), (left + 6, 185, right - 6, 270))
@@ -3163,6 +3170,39 @@ def _draw_energy_column(canvas, draw, summary, charging, extended, settings, pre
     for index, (label, value) in enumerate(rows):
         _dashboard_row(draw, left, right, 301 + index * 13, label, value, colors,
                        label_size=10, value_size=10, label_width=82)
+
+
+def _draw_range_figure(draw, right, baseline, measurement, settings, preferences, colors, language):
+    """ "214" large and "英里" small after it, ending at ``right`` on ``baseline``."""
+    number, _space, unit = _measurement_text(measurement, settings, preferences, language).rpartition(" ")
+    if not number:
+        number, unit = unit, ""
+    unit_left = right
+    if unit:
+        unit_font = _font(14, True)
+        unit_left = right - draw.textbbox((0, 0), unit, font=unit_font)[2]
+        draw.text((unit_left, baseline), unit, font=unit_font, fill=colors["muted"], anchor="ls")
+        unit_left -= 4
+    draw.text((unit_left, baseline), number, font=_font(30, True), fill=colors["ink"], anchor="rs")
+
+
+def _draw_limit_legend(draw, right, middle, measurement, level, limit, settings, preferences, colors, language):
+    """ "▼ 上限 80% · 约 241 英里": the gauge's marker, explained, with the range a charge to it gives."""
+    if limit is None:
+        return
+    limit_text = f"{int(round(limit))}%"
+    value = (measurement or {}).get("value")
+    if value is not None and level is not None and level >= 5:
+        projected = {"value": value * limit / level, "unit": measurement["unit"]}
+        legend = _t(language, "limit_range_projection", limit=limit_text,
+                    range=_measurement_text(projected, settings, preferences, language))
+    else:
+        legend = _t(language, "limit_range", limit=limit_text)
+    font = _font(10, True)
+    width = draw.textbbox((0, 0), legend, font=font)[2]
+    draw.text((right, middle), legend, font=font, fill=colors["ink"], anchor="rm")
+    x = right - width - 6
+    draw.polygon(((x - 4, middle - 3), (x + 4, middle - 3), (x, middle + 3)), fill=colors["ink"])
 
 
 def _battery_gauge(draw, box, level, limit, colors):
@@ -3370,16 +3410,20 @@ def _draw_location_column(canvas, draw, location_presentation, colors, language)
                      _t(language, "location_unavailable"), _font(11, True), colors["muted"])
         return
     _paste_faded_map(canvas, location_map.convert("RGB"), (map_left, map_top), colors["surface"])
+    # A rule parts the map (and Google's attribution) from the address under it.
+    draw.line((left, map_bottom + 4, right, map_bottom + 4), fill=colors["rule"], width=1)
     address_font = _font(13, True)
     lines = _address_lines(draw, location_presentation["formatted_address"], address_font, right - left)
     age = max(0, location_presentation.get("age_seconds", 0))
     stale = age > 900
-    # The address (and how old the fix is) stands on the column's foot, under the map.
-    address_top = COLUMN_BOTTOM + 2 - len(lines) * 17 - (13 if stale else 0)
+    address_top = map_bottom + 9
     for index, line in enumerate(lines):
-        draw.text((left, address_top + index * 17), line, font=address_font, fill=colors["ink"])
+        # The street leads in ink; the city and postcode follow smaller and muted.
+        font, fill = (address_font, colors["ink"]) if index == 0 else (_font(11, True), colors["muted"])
+        draw.text((left, address_top + index * 16), line.rstrip(",，") if len(lines) > 1 else line, font=font,
+                  fill=fill)
     if stale:
-        draw.text((left, address_top + len(lines) * 17),
+        draw.text((left, address_top + len(lines) * 16 - 1),
                   _ellipsize_text(draw, _t(language, "location_last_known", age=_age_text(age, language)),
                                   _font(9, True), right - left),
                   font=_font(9, True), fill=colors["muted"])
