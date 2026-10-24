@@ -1,0 +1,20 @@
+{
+  "assets": [
+    "live_now_1.png",
+    "live_now_2.png",
+    "live_now_3.png",
+    "live_now_4.png",
+    "live_now_5.png",
+    "live_now_6.png",
+    "live_now_7.png",
+    "live_now_8.png"
+  ],
+  "scene": "flame, heart, ON AIR lamp, chat bubble, star burst, crown, lightning bolt, gift box",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "8b4be52c-e025-4a39-af7d-fb75377174b5",
+  "generated": "2026-10-24",
+  "background": "transparent PNG, 1536x512, one row of 8 stickers",
+  "processing": "alpha below 40 cleared, split at the transparent gaps, trimmed to alpha, the tallest sticker scaled to 44 px and the rest by the same factor (LANCZOS)",
+  "rendering": "a parade on a dotted track beside the section title, order shuffled each refresh",
+  "source_sha256": "d2da767202eaf4178ec634bf37f8b5970dabca44fc47f816321e992b3a75641e"
+}

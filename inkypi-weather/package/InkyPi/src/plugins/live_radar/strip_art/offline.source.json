@@ -1,0 +1,20 @@
+{
+  "assets": [
+    "offline_1.png",
+    "offline_2.png",
+    "offline_3.png",
+    "offline_4.png",
+    "offline_5.png",
+    "offline_6.png",
+    "offline_7.png",
+    "offline_8.png"
+  ],
+  "scene": "sleepy moon, Zzz, sleeping cat, pillow, coffee mug, alarm clock, star, unplugged plug",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "768e1a05-d29b-44c5-80d0-da85f98f7bd4",
+  "generated": "2026-10-24",
+  "background": "transparent PNG, 1536x512, one row of 8 stickers",
+  "processing": "alpha below 40 cleared, split at the transparent gaps, trimmed to alpha, the tallest sticker scaled to 44 px and the rest by the same factor (LANCZOS)",
+  "rendering": "a parade on a dotted track beside the section title, order shuffled each refresh",
+  "source_sha256": "692ec12f3addb9f29847c8970e042e50422fe9c42121762a84bc563fd7495c8d"
+}
