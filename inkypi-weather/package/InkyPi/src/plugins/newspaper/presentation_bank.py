@@ -25,6 +25,7 @@ from plugins.daily_art.presentation_bank import (
 )
 from utils.atomic_file import atomic_write_bytes
 from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
+from plugins.base_plugin import presentation_bank_kit as kit
 
 
 SCHEMA_VERSION = 1
@@ -49,7 +50,6 @@ MEDIA_IMAGE_LIMITS = ImageLimits(
     max_pixels=MEDIA_MAX_PIXELS,
     allowed_formats=frozenset({"PNG"}),
 )
-_HEX = frozenset("0123456789abcdef")
 
 
 def settings_key(settings, sources):
@@ -90,14 +90,7 @@ def instance_profile_fingerprint(base_fingerprint, instance_uuid):
     )
 
 
-def _json_hash(payload):
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return sha256(encoded).hexdigest()
+_json_hash = kit.json_hash
 
 
 class _MediaTransaction:
@@ -178,7 +171,7 @@ class _MediaTransaction:
             self.document.update(deepcopy(self.document_before))
 
 
-class NewspaperPresentationBank:
+class NewspaperPresentationBank(kit.SelectionBookkeeping):
     def __init__(
         self,
         state_path,
@@ -434,12 +427,6 @@ class NewspaperPresentationBank:
         if record is None:
             raise RuntimeError("Newspaper selected metadata is missing")
         return record, self.load_media(record)
-
-    def pending_for_request(self, profile, request_id):
-        pending = profile.get("pending_selection")
-        if isinstance(pending, dict) and pending.get("request_id") == request_id:
-            return pending
-        return None
 
     def set_pending(self, document, profile, request, selection):
         pending = {
@@ -960,16 +947,7 @@ def _validate_dimensions(size):
         raise RuntimeError("Newspaper image dimensions exceed the safety limit")
 
 
-def _parse_datetime(value):
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        result = datetime.fromisoformat(value.strip())
-    except ValueError:
-        return None
-    if result.tzinfo is None:
-        result = result.replace(tzinfo=timezone.utc)
-    return result.astimezone(timezone.utc)
+_parse_datetime = kit.parse_datetime
 
 
 def _parse_edition_date(value):
@@ -1002,5 +980,4 @@ def record_is_fresh(record, now, local_timezone=timezone.utc):
     return True
 
 
-def _valid_hash(value):
-    return isinstance(value, str) and len(value) == 64 and all(character in _HEX for character in value)
+_valid_hash = kit.valid_hash

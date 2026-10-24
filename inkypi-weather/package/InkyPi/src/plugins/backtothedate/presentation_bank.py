@@ -17,6 +17,7 @@ from PIL import Image, ImageOps
 from utils.atomic_file import atomic_write_json
 from utils.cache_manager import CacheBudget, cache_namespace_for_directory
 from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
+from plugins.base_plugin import presentation_bank_kit as kit
 
 
 SCHEMA_VERSION = 1
@@ -96,28 +97,13 @@ def settings_fingerprint(settings, source_theme_urls, fit_mode, dimensions):
     )
 
 
-def instance_profile_fingerprint(base_fingerprint, instance_uuid):
-    """Partition otherwise identical settings by trusted playlist instance."""
-
-    return _json_hash(
-        {
-            "settings_fingerprint": base_fingerprint,
-            "instance_uuid": instance_uuid,
-        }
-    )
+instance_profile_fingerprint = kit.instance_profile_fingerprint
 
 
-def _json_hash(payload):
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return sha256(encoded).hexdigest()
+_json_hash = kit.json_hash
 
 
-class PosterPresentationBank:
+class PosterPresentationBank(kit.SelectionBookkeeping):
     """Own normalized metadata and bounded media, never authoritative display PNGs."""
 
     def __init__(
@@ -380,12 +366,6 @@ class PosterPresentationBank:
         profile["last_applied_origin_commit_id"] = request.origin_display_commit_id
         self.save(document)
         return True
-
-    def pending_for_request(self, profile, request_id):
-        pending = profile.get("pending_selection")
-        if isinstance(pending, dict) and pending.get("request_id") == request_id:
-            return pending
-        return None
 
     def set_pending(self, document, profile, request, selection):
         pending = {
@@ -743,23 +723,12 @@ class PosterPresentationBank:
         return urlunparse(("https", "chineseposters.net", path, "", parsed.query, ""))
 
     def _normalize_media_image(self, image):
-        if not isinstance(image, Image.Image):
-            raise RuntimeError("BacktotheDate poster media is not an image")
-        self._validate_media_dimensions(image.size)
-        image = ImageOps.exif_transpose(image)
-        self._validate_media_dimensions(image.size)
-        return image.convert("RGB")
+        return kit.normalize_media_image(image, validate_dimensions=self._validate_media_dimensions,
+                                         label="BacktotheDate poster media")
 
     def _validate_media_dimensions(self, size):
-        width, height = size
-        if (
-            width <= 0
-            or height <= 0
-            or width > MEDIA_MAX_DIMENSION
-            or height > MEDIA_MAX_DIMENSION
-            or width * height > MEDIA_MAX_PIXELS
-        ):
-            raise RuntimeError("BacktotheDate poster media dimensions exceed the safety limit")
+        kit.validate_media_dimensions(size, max_dimension=MEDIA_MAX_DIMENSION, max_pixels=MEDIA_MAX_PIXELS,
+                                      label="BacktotheDate poster media")
 
 
 def _commit_records(document, records, committed_at, normalize_history_url):
@@ -802,18 +771,8 @@ def _append_unique(existing, additions, normalize):
 
 
 def validate_state_payload_size(payload):
-    """Reject state that cannot fit the durable JSON budget before opening a writer."""
-
-    validate_state_shape(payload)
-    try:
-        encoded = (json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n").encode(
-            "utf-8"
-        )
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise RuntimeError("BacktotheDate state could not be encoded safely") from exc
-    if len(encoded) > MAX_STATE_BYTES:
-        raise RuntimeError("BacktotheDate state exceeds the size limit")
-    return len(encoded)
+    return kit.validate_state_payload_size(payload, validate_shape=validate_state_shape,
+                                           max_bytes=MAX_STATE_BYTES, label="BacktotheDate state")
 
 
 def validate_state_shape(payload):
@@ -873,13 +832,7 @@ def read_bounded_json_object(path):
 
 
 def _path_exists_no_follow(path):
-    try:
-        Path(path).lstat()
-    except FileNotFoundError:
-        return False
-    except OSError as exc:
-        raise RuntimeError("BacktotheDate state path could not be inspected") from exc
-    return True
+    return kit.path_exists_no_follow(path, "BacktotheDate state path")
 
 
 def _url_list(value):
@@ -890,25 +843,10 @@ def _url_list(value):
     return []
 
 
-def _parse_datetime(value):
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip())
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+_parse_datetime = kit.parse_datetime
 
 
-def _utc_now():
-    return datetime.now(timezone.utc).isoformat()
+_utc_now = kit.utc_now
 
 
-def _valid_request_id(value):
-    return (
-        isinstance(value, str)
-        and len(value) == 32
-        and all(character in _HEX for character in value)
-    )
+_valid_request_id = kit.valid_request_id

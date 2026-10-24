@@ -23,6 +23,7 @@ from plugins.daily_art.presentation_bank import (
     read_bounded_json_object,
 )
 from utils.safe_image import ImageLimitError, safe_open_image
+from plugins.base_plugin import presentation_bank_kit as kit
 
 
 STEAM_MEDIA_HOST_SUFFIXES = (
@@ -86,14 +87,7 @@ def instance_profile_fingerprint(base_fingerprint, instance_uuid):
     )
 
 
-def _json_hash(payload):
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+_json_hash = kit.json_hash
 
 
 class SteamDailyArtPresentationBank(DailyArtPresentationBank):

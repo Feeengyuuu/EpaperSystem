@@ -28,6 +28,7 @@ from plugins.daily_art.presentation_bank import (
 )
 from utils.atomic_file import atomic_write_bytes
 from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
+from plugins.base_plugin import presentation_bank_kit as kit
 
 
 SCHEMA_VERSION = 1
@@ -55,7 +56,6 @@ MEDIA_IMAGE_LIMITS = ImageLimits(
     max_pixels=MEDIA_MAX_PIXELS,
     allowed_formats=frozenset({"PNG"}),
 )
-_HEX = frozenset("0123456789abcdef")
 _ALLOWED_PHOTO_SUFFIXES = (
     "inaturalist.org",
     "inaturalist-open-data.s3.amazonaws.com",
@@ -147,9 +147,7 @@ def _canonical_settings(settings):
     }
 
 
-def _json_hash(payload):
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-    return sha256(encoded).hexdigest()
+_json_hash = kit.json_hash
 
 
 class _SpeciesMediaStore:
@@ -179,7 +177,7 @@ class _SpeciesMediaStore:
         return target
 
 
-class SpeciesPresentationBank:
+class SpeciesPresentationBank(kit.SelectionBookkeeping):
     def __init__(
         self,
         state_path,
@@ -606,10 +604,6 @@ class SpeciesPresentationBank:
         profile["last_applied_origin_commit_id"] = request.origin_display_commit_id
         self.save(document)
         return current
-
-    def pending_for_request(self, profile, request_id):
-        pending = profile.get("pending_selection")
-        return pending if isinstance(pending, dict) and pending.get("request_id") == request_id else None
 
     def set_pending(self, document, profile, request, selection):
         pending = {
@@ -1328,28 +1322,16 @@ def _validate_dimensions(size):
         raise RuntimeError("Species media dimensions exceed the safety limit")
 
 
-def _parse_datetime(value):
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        result = datetime.fromisoformat(value.strip())
-    except ValueError:
-        return None
-    if result.tzinfo is None:
-        result = result.replace(tzinfo=timezone.utc)
-    return result.astimezone(timezone.utc)
+_parse_datetime = kit.parse_datetime
 
 
-def _utc_now():
-    return datetime.now(timezone.utc).isoformat()
+_utc_now = kit.utc_now
 
 
-def _valid_hash(value):
-    return isinstance(value, str) and len(value) == 64 and all(character in _HEX for character in value)
+_valid_hash = kit.valid_hash
 
 
-def _valid_request_id(value):
-    return isinstance(value, str) and len(value) == 32 and all(character in _HEX for character in value)
+_valid_request_id = kit.valid_request_id
 
 
 def _text(value, limit):

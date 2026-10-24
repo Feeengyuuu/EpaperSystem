@@ -36,6 +36,7 @@ from plugins.daily_art.presentation_bank import (
 from runtime.plugin_deferral import PluginRefreshDeferred
 from utils.atomic_file import atomic_write_bytes, fsync_directory
 from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
+from plugins.base_plugin import presentation_bank_kit as kit
 
 
 SCHEMA_VERSION = 1
@@ -59,7 +60,6 @@ MEDIA_IMAGE_LIMITS = ImageLimits(
     max_pixels=MEDIA_MAX_PIXELS,
     allowed_formats=frozenset({"PNG"}),
 )
-_HEX = frozenset("0123456789abcdef")
 _PROFILE_KEYS = {
     "profile_fingerprint",
     "settings_fingerprint",
@@ -139,23 +139,10 @@ def settings_fingerprint(
     )
 
 
-def instance_profile_fingerprint(base_fingerprint, instance_uuid):
-    return _json_hash(
-        {
-            "settings_fingerprint": base_fingerprint,
-            "instance_uuid": instance_uuid,
-        }
-    )
+instance_profile_fingerprint = kit.instance_profile_fingerprint
 
 
-def _json_hash(payload):
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return sha256(encoded).hexdigest()
+_json_hash = kit.json_hash
 
 
 class _PixivMediaStore:
@@ -252,7 +239,7 @@ class _PixivMediaStore:
             pass
 
 
-class PixivPresentationBank:
+class PixivPresentationBank(kit.SelectionBookkeeping):
     """Normalized Pixiv records partitioned by a trusted playlist identity."""
 
     def __init__(
@@ -644,12 +631,6 @@ class PixivPresentationBank:
         profile["last_applied_origin_commit_id"] = request.origin_display_commit_id
         self.save(document)
         return committed
-
-    def pending_for_request(self, profile, request_id):
-        pending = profile.get("pending_selection")
-        if isinstance(pending, dict) and pending.get("request_id") == request_id:
-            return pending
-        return None
 
     def set_pending(self, document, profile, request, selection):
         pending = {
@@ -1224,14 +1205,6 @@ class PixivPresentationBank:
                 if fingerprint == victim:
                     mappings.pop(instance, None)
 
-    def _protected_record_keys(self, profile):
-        protected = set()
-        for name in ("current_selection", "pending_selection"):
-            selection = profile.get(name)
-            if isinstance(selection, dict):
-                protected.update(selection.get("record_keys", []))
-        return protected
-
     def _commit_selection(self, profile, selection, committed_at):
         if not isinstance(selection, dict):
             return None
@@ -1265,23 +1238,12 @@ class PixivPresentationBank:
         return urlunparse(("https", host, parsed.path or "/", "", parsed.query, ""))
 
     def _normalize_media_image(self, image):
-        if not isinstance(image, Image.Image):
-            raise RuntimeError("Pixiv media is not an image")
-        self._validate_media_dimensions(image.size)
-        image = ImageOps.exif_transpose(image)
-        self._validate_media_dimensions(image.size)
-        return image.convert("RGB")
+        return kit.normalize_media_image(image, validate_dimensions=self._validate_media_dimensions,
+                                         label="Pixiv media")
 
     def _validate_media_dimensions(self, size):
-        width, height = size
-        if (
-            width <= 0
-            or height <= 0
-            or width > MEDIA_MAX_DIMENSION
-            or height > MEDIA_MAX_DIMENSION
-            or width * height > MEDIA_MAX_PIXELS
-        ):
-            raise RuntimeError("Pixiv media dimensions exceed the safety limit")
+        kit.validate_media_dimensions(size, max_dimension=MEDIA_MAX_DIMENSION, max_pixels=MEDIA_MAX_PIXELS,
+                                      label="Pixiv media")
 
 
 def _commit_records(profile, records, selection, committed_at):
@@ -1547,14 +1509,8 @@ def _write_all_bytes(descriptor, payload):
 
 
 def validate_state_payload_size(payload):
-    validate_state_shape(payload)
-    try:
-        encoded = (json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise RuntimeError("Pixiv state could not be encoded safely") from exc
-    if len(encoded) > MAX_STATE_BYTES:
-        raise RuntimeError("Pixiv state exceeds the size limit")
-    return len(encoded)
+    return kit.validate_state_payload_size(payload, validate_shape=validate_state_shape,
+                                           max_bytes=MAX_STATE_BYTES, label="Pixiv state")
 
 
 def validate_state_shape(payload):
@@ -1604,18 +1560,7 @@ def _validate_date_buckets(buckets):
 
 
 def _bounded_date_buckets(value):
-    if not isinstance(value, dict):
-        return {}
-    candidates = {
-        str(key): deepcopy(bucket)
-        for key, bucket in value.items()
-        if isinstance(key, str) and isinstance(bucket, dict)
-    }
-    if len(candidates) <= MAX_DATE_BUCKETS:
-        return candidates
-    ranked = sorted(candidates, key=lambda key: (_parse_datetime(candidates[key].get("committed_at")) or datetime.min.replace(tzinfo=timezone.utc), key))
-    retained = set(ranked[-MAX_DATE_BUCKETS:])
-    return {key: bucket for key, bucket in candidates.items() if key in retained}
+    return kit.bounded_date_buckets(value, limit=MAX_DATE_BUCKETS, stamp="committed_at", parse=_parse_datetime, copy=True)
 
 
 def pixiv_host_allowed(hostname):
@@ -1644,16 +1589,10 @@ def validate_pixiv_media_target(approved):
     return approved.normalized_url
 
 
-def _bounded_int(value, default, minimum, maximum):
-    try:
-        number = int(value)
-    except Exception:
-        number = int(default)
-    return max(int(minimum), min(int(maximum), number))
+_bounded_int = kit.bounded_int
 
 
-def _bounded_text(value, limit):
-    return str(value or "").strip()[:limit]
+_bounded_text = kit.bounded_text
 
 
 def _enabled(value, default=False):
@@ -1662,25 +1601,13 @@ def _enabled(value, default=False):
     return value is True or str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _parse_datetime(value):
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip())
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+_parse_datetime = kit.parse_datetime
 
 
-def _utc_now():
-    return datetime.now(timezone.utc).isoformat()
+_utc_now = kit.utc_now
 
 
-def _valid_hash(value):
-    return isinstance(value, str) and len(value) == 64 and all(char in _HEX for char in value)
+_valid_hash = kit.valid_hash
 
 
-def _valid_request_id(value):
-    return isinstance(value, str) and len(value) == 32 and all(char in _HEX for char in value)
+_valid_request_id = kit.valid_request_id

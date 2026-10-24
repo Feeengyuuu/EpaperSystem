@@ -29,6 +29,7 @@ from plugins.daily_art.presentation_bank import (
 )
 from utils.atomic_file import atomic_write_bytes, fsync_directory
 from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
+from plugins.base_plugin import presentation_bank_kit as kit
 
 
 SCHEMA_VERSION = 1
@@ -416,23 +417,10 @@ def settings_fingerprint(settings, sources, dimensions, date_key):
     )
 
 
-def instance_profile_fingerprint(base_fingerprint, instance_uuid):
-    return _json_hash(
-        {
-            "settings_fingerprint": base_fingerprint,
-            "instance_uuid": instance_uuid,
-        }
-    )
+instance_profile_fingerprint = kit.instance_profile_fingerprint
 
 
-def _json_hash(payload):
-    encoded = json.dumps(
-        payload,
-        ensure_ascii=True,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return sha256(encoded).hexdigest()
+_json_hash = kit.json_hash
 
 
 def _record_content_id(record):
@@ -489,7 +477,7 @@ def _unique_content_records(records):
     return unique
 
 
-class MagazinePresentationBank:
+class MagazinePresentationBank(kit.SelectionBookkeeping):
     """Own normalized covers and media partitioned by trusted instance."""
 
     def __init__(
@@ -1405,12 +1393,6 @@ class MagazinePresentationBank:
         del document, profile, request
         return None
 
-    def pending_for_request(self, profile, request_id):
-        pending = profile.get("pending_selection")
-        if isinstance(pending, dict) and pending.get("request_id") == request_id:
-            return pending
-        return None
-
     def set_pending(self, document, profile, request, selection):
         pending = {
             "request_id": request.request_id,
@@ -1891,14 +1873,6 @@ class MagazinePresentationBank:
                 if fingerprint == victim:
                     mappings.pop(instance_uuid, None)
 
-    def _protected_record_keys(self, profile):
-        protected = set()
-        for name in ("current_selection", "pending_selection"):
-            selection = profile.get(name)
-            if isinstance(selection, dict):
-                protected.update(selection.get("record_keys", []))
-        return protected
-
     def _protected_media_keys(self):
         protected = set()
         document = self._loaded_document or {}
@@ -1940,23 +1914,12 @@ class MagazinePresentationBank:
         return records
 
     def _normalize_media_image(self, image):
-        if not isinstance(image, Image.Image):
-            raise RuntimeError("Magazine cover media is not an image")
-        self._validate_media_dimensions(image.size)
-        image = ImageOps.exif_transpose(image)
-        self._validate_media_dimensions(image.size)
-        return image.convert("RGB")
+        return kit.normalize_media_image(image, validate_dimensions=self._validate_media_dimensions,
+                                         label="Magazine cover media")
 
     def _validate_media_dimensions(self, size):
-        width, height = size
-        if (
-            width <= 0
-            or height <= 0
-            or width > MEDIA_MAX_DIMENSION
-            or height > MEDIA_MAX_DIMENSION
-            or width * height > MEDIA_MAX_PIXELS
-        ):
-            raise RuntimeError("Magazine cover media dimensions exceed the safety limit")
+        kit.validate_media_dimensions(size, max_dimension=MEDIA_MAX_DIMENSION, max_pixels=MEDIA_MAX_PIXELS,
+                                      label="Magazine cover media")
 
 
 def _commit_records(profile, records, selection, committed_at):
@@ -2020,14 +1983,8 @@ def _commit_records(profile, records, selection, committed_at):
 
 
 def validate_state_payload_size(payload):
-    validate_state_shape(payload)
-    try:
-        encoded = (json.dumps(payload, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise RuntimeError("Magazine state could not be encoded safely") from exc
-    if len(encoded) > MAX_STATE_BYTES:
-        raise RuntimeError("Magazine state exceeds the size limit")
-    return len(encoded)
+    return kit.validate_state_payload_size(payload, validate_shape=validate_state_shape,
+                                           max_bytes=MAX_STATE_BYTES, label="Magazine state")
 
 
 def validate_state_shape(payload):
@@ -2227,25 +2184,7 @@ def _migrate_seen_content_history(
 
 
 def _bounded_date_buckets(value):
-    if not isinstance(value, dict):
-        return {}
-    candidates = {
-        str(key): bucket
-        for key, bucket in value.items()
-        if isinstance(key, str) and isinstance(bucket, dict)
-    }
-    if len(candidates) <= MAX_DATE_BUCKETS:
-        return candidates
-    minimum = datetime.min.replace(tzinfo=timezone.utc)
-    ranked = sorted(
-        candidates,
-        key=lambda key: (
-            _coerce_datetime(candidates[key].get("committed_at")) or minimum,
-            key,
-        ),
-    )
-    retained = set(ranked[-MAX_DATE_BUCKETS:])
-    return {key: bucket for key, bucket in candidates.items() if key in retained}
+    return kit.bounded_date_buckets(value, limit=MAX_DATE_BUCKETS, stamp="committed_at", parse=_coerce_datetime)
 
 
 def _normalize_category(value):
@@ -2709,13 +2648,10 @@ def _iso_datetime(value=None):
     return (_coerce_datetime(value) or datetime.now(timezone.utc)).isoformat()
 
 
-def _utc_now():
-    return datetime.now(timezone.utc).isoformat()
+_utc_now = kit.utc_now
 
 
-def _valid_hash(value):
-    return isinstance(value, str) and len(value) == 64 and all(character in _HEX for character in value)
+_valid_hash = kit.valid_hash
 
 
-def _valid_request_id(value):
-    return isinstance(value, str) and len(value) == 32 and all(character in _HEX for character in value)
+_valid_request_id = kit.valid_request_id
