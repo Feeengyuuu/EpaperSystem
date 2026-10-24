@@ -188,18 +188,20 @@ def _column_boxes(payload):
 
 
 def _card(canvas, box, bar, icon, title, detail, source):
-    """Outlined card with a coloured accent bar, icon, title and a right-aligned source detail."""
+    """A card in its own colour: a frame, a solid band along the top and the header rule in it,
+    then the section icon, title and a right-aligned detail."""
     left, top, right, _bottom = box
-    canvas.draw.rounded_rectangle(box, radius=6, outline=canvas.color("rule"), width=1)
-    canvas.draw.rectangle((left + 8, top + 8, left + 12, top + 22), fill=canvas.color(bar))
-    draw_icon(canvas.draw, icon, (left + 18, top + 7), 16, canvas.color("ink"), canvas.color("paper"))
-    width = canvas.text((left + 40, top + 15), title, 15, anchor="lm")
+    colour = canvas.color(bar)
+    canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
+    canvas.draw.rounded_rectangle((left, top, right, top + 5), radius=7, fill=colour, corners=(True, True, False, False))
+    draw_icon(canvas.draw, icon, (left + 10, top + 7), 18, colour, canvas.color("paper"))
+    width = canvas.text((left + 34, top + 16), title, 16, anchor="lm")
     if source.get("state") == "stale_cache":
         detail = "缓存 · " + detail
     elif source.get("state") == "unavailable":
         detail = "暂不可用"
-    canvas.text((right - 8, top + 15), detail, 11, "muted", anchor="rm", bold=False, width=right - left - width - 60)
-    canvas.rule((left + 8, top + 28, right - 8, top + 28))
+    canvas.text((right - 8, top + 16), detail, 11, "muted", anchor="rm", bold=False, width=right - left - width - 60)
+    canvas.rule((left + 8, top + 28, right - 8, top + 28), colour)
 
 
 def _alerts_card(canvas, payload, now, box, rows):
@@ -249,7 +251,7 @@ def _quakes_card(canvas, payload, now, box, rows):
     data = source["data"]
     items = data.get("items", [])
     radius = data.get("radius_km") or payload["radius_km"]
-    _card(canvas, box, "ink", "quake", "地震", f"USGS · 半径 {radius} km", source)
+    _card(canvas, box, "home", "quake", "地震", f"USGS · 半径 {radius} km", source)
     top = box[1]
     left, right = box[0] + 10, box[2] - 10
     if source["state"] == "unavailable":
@@ -261,11 +263,21 @@ def _quakes_card(canvas, payload, now, box, rows):
              ("7 天最大", f"M{strongest['mag']:.1f}" if strongest else "—"))
     gap = 8
     width = (right - left - gap * 2) / 3
+    # The week's strongest quake is the card's headline: its box takes the colour its size earns.
+    strongest_mag = strongest["mag"] if strongest else 0
+    hero_tone = ("alert" if strongest_mag >= NOTABLE_QUAKE else "moderate" if strongest_mag >= 2.5 else None)
     for index, (label, value) in enumerate(stats):
         x = left + index * (width + gap)
-        canvas.draw.rounded_rectangle((x, top + 34, x + width, top + 66), radius=5, outline=canvas.color("rule"))
+        box_xy = (x, top + 34, x + width, top + 66)
+        if index == 2 and hero_tone:
+            canvas.draw.rounded_rectangle(box_xy, radius=5, fill=canvas.color(hero_tone))
+            ink = (20, 20, 20) if hero_tone == "moderate" else "badge_ink"
+            canvas.text((x + 8, top + 42), label, 10, ink, anchor="lm", bold=False)
+            canvas.text((x + 8, top + 57), value, 20, ink, anchor="lm")
+            continue
+        canvas.draw.rounded_rectangle(box_xy, radius=5, outline=canvas.color("rule"))
         canvas.text((x + 8, top + 42), label, 10, "muted", anchor="lm", bold=False)
-        canvas.text((x + 8, top + 57), value, 16, anchor="lm")
+        canvas.text((x + 8, top + 57), value, 20, anchor="lm")
     if not items:
         canvas.text((left, top + 81), f"过去 7 天半径 {radius} km 内没有地震", 12, "muted", anchor="lm", bold=False)
         return

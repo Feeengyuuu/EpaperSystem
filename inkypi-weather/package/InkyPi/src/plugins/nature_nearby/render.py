@@ -62,15 +62,18 @@ def _display_name(item):
 
 
 def _card(canvas, box, bar, icon, title, detail=""):
+    """A card in its own colour: a frame, a solid band along the top and the header rule in it,
+    then the section icon, title and a right-aligned detail."""
     left, top, right, _bottom = box
-    canvas.draw.rounded_rectangle(box, radius=6, outline=canvas.color("rule"), width=1)
-    canvas.draw.rectangle((left + 8, top + 8, left + 12, top + 22), fill=canvas.color(bar))
-    draw_icon(canvas.draw, icon, (left + 18, top + 7), 16, canvas.color("ink"), canvas.color("paper"))
-    width = canvas.text((left + 40, top + 15), title, 15, anchor="lm")
+    colour = canvas.color(bar)
+    canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
+    canvas.draw.rounded_rectangle((left, top, right, top + 5), radius=7, fill=colour, corners=(True, True, False, False))
+    draw_icon(canvas.draw, icon, (left + 10, top + 7), 18, colour, canvas.color("paper"))
+    width = canvas.text((left + 34, top + 16), title, 16, anchor="lm")
     if detail:
-        canvas.text((right - 8, top + 15), detail, 11, "muted", anchor="rm", bold=False,
+        canvas.text((right - 8, top + 16), detail, 11, "muted", anchor="rm", bold=False,
                     width=right - left - width - 60)
-    canvas.rule((left + 8, top + HEADER, right - 8, top + HEADER))
+    canvas.rule((left + 8, top + HEADER, right - 8, top + HEADER), colour)
 
 
 def _photo(canvas, images, url, box, group):
@@ -111,7 +114,7 @@ def _hero(canvas, payload, images, now):
     _photo(canvas, images, item["photo"], (left, top, right, top + 158), item["group"])
     y = top + 176
     chip = _group_chip(canvas, right, y, item["group"], right_align=True)
-    canvas.text((left, y), _display_name(item), 20, anchor="lm", width=right - left - chip - 8)
+    canvas.text((left, y), _display_name(item), 23, anchor="lm", width=right - left - chip - 8)
     canvas.text((left, y + 21), item["scientific"], 12, "muted", anchor="lm", bold=False, width=right - left)
     stamp = parse_time(item["time"])
     where = " · ".join(part for part in (item.get("place"), ago(stamp, now) if stamp else "",
@@ -149,7 +152,7 @@ def _species(canvas, payload, images):
             canvas.text((text_left, y + 6 + line_index * 16), line, 13, anchor="la")
         _label, icon, tone = group_info(item["group"])
         draw_icon(canvas.draw, icon, (text_left, y + 46), 15, canvas.color(tone), canvas.color("paper"))
-        canvas.text((text_left + 19, y + 54), f"{item['count']} 次", 15, anchor="lm")
+        canvas.text((text_left + 19, y + 54), f"{item['count']} 次", 18, anchor="lm")
         canvas.text((text_left, y + 72), item["scientific"], 9, "muted", anchor="lm", bold=False, width=text_width)
 
 
@@ -166,18 +169,18 @@ def _groups(canvas, payload):
         _label, _icon, tone = group_info(group["group"])
         width = (right - left) * group["count"] / total
         fill = canvas.color(tone) if tone != "ink" else canvas.color("panel")
-        canvas.draw.rectangle((x, bar_top, x + width, bar_top + 12), fill=fill)
+        canvas.draw.rectangle((x, bar_top, x + width, bar_top + 16), fill=fill)
         x += width
-    canvas.draw.rectangle((left, bar_top, right, bar_top + 12), outline=canvas.color("ink"), width=1)
+    canvas.draw.rectangle((left, bar_top, right, bar_top + 16), outline=canvas.color("ink"), width=1)
     column_width = (right - left) / 2
     for index, group in enumerate(groups[:6]):
         label, icon, tone = group_info(group["group"])
         cx = left + (index % 2) * column_width
-        cy = bar_top + 32 + (index // 2) * 22
+        cy = bar_top + 35 + (index // 2) * 22
         draw_icon(canvas.draw, icon, (cx, cy - 8), 16, canvas.color(tone if tone != "ink" else "ink"),
                   canvas.color("paper"))
         canvas.text((cx + 22, cy), label, 13, anchor="lm")
-        canvas.text((cx + column_width - 10, cy), f"{group['count']} 种", 12, "muted", anchor="rm", bold=False)
+        canvas.text((cx + column_width - 10, cy), f"{group['count']} 种", 13, anchor="rm")
 
 
 def _recent(canvas, payload, images, now):
