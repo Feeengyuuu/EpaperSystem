@@ -16,10 +16,12 @@ from .sources import PACIFIC, local_now, next_tides, parse_time, rank_roads, roa
 
 DAY = {"paper": "#faf9f3", "ink": "#162630", "muted": "#4c5c67", "rule": "#95a1a8",
        "blue": "#00569c", "chart": "#dcedf1", "orange": "#db4e12", "green": "#006c64",
-       "badge_ink": "#ffffff", "red": "#bf282c"}
+       "badge_ink": "#ffffff", "red": "#bf282c", "water_mid": "#b9daea", "water_deep": "#8fc2dc",
+       "foam": "#ffffff"}
 NIGHT = {"paper": "#101b26", "ink": "#f3f3e6", "muted": "#c5d3da", "rule": "#7f939f",
          "blue": "#81c3ff", "chart": "#193a51", "orange": "#ffaf63", "green": "#7bd1cc",
-         "badge_ink": "#132330", "red": "#ed7374"}
+         "badge_ink": "#132330", "red": "#ed7374", "water_mid": "#1f4a66", "water_deep": "#275a7c",
+         "foam": "#cfe8f7"}
 DIRECTIONS = {"North": "北向", "South": "南向", "East": "东向", "West": "西向",
               "North / South": "南北双向", "East / West": "东西双向"}
 KINDS = {"Full": "全部封闭", "One-Way Traffic": "单向交替通行", "Alternating Lanes": "交替封道",
@@ -225,16 +227,17 @@ def draw_chart(canvas, data, now):
         return (left + (parse_time(row["time"]).timestamp()-begin.timestamp())/span*(right-left),
                 bottom - (row["height"]-low)/(high-low)*(bottom-top))
     points = [xy(row) for row in rows]
-    canvas.draw.polygon([(points[0][0], bottom), *points, (points[-1][0], bottom)], fill=canvas.palette["chart"])
     for height in range(low, high+1, 2):
         y = bottom-(height-low)/(high-low)*(bottom-top)
         canvas.text((502, y), str(height), 12, "muted", anchor="rm")
         canvas.rule((left-3,y,right,y))
+    draw_water(canvas, points, bottom)
     canvas.draw.line(points, fill=canvas.palette["blue"], width=3)
     for row in data.get("extremes", []):
         if begin <= parse_time(row["time"]) < end:
             x,y = xy(row)
             canvas.draw.ellipse((x-3,y-3,x+3,y+3), fill=canvas.palette["blue"])
+            label_extreme(canvas, row, (x, y), (left, top, right, bottom))
     canvas.rule((left,top,left,bottom,right,bottom), "ink")
     draw_now_on_tide(canvas, rows, xy, now, (left, top, right, bottom))
     for hour in (0,6,12,18,24):
@@ -243,6 +246,54 @@ def draw_chart(canvas, data, now):
         canvas.text((x,399), f"{hour:02d}", 12, "muted", anchor="mt")
     canvas.text((492, 240), now.strftime("%m/%d") + " 预测曲线", 12, "muted")
     canvas.text((776, 240), "ft", 12, "muted", anchor="rt")
+
+
+# The water under the tide curve, as tide apps draw it: layers that deepen in colour and follow
+# the surface down (shares of the depth below it), a foam line under the surface and two
+# dashed white wave lines rippling through the water.
+WATER_LAYERS = ((0.34, "water_mid"), (0.68, "water_deep"))
+WAVE_LINES = (0.2, 0.52)
+
+
+def draw_water(canvas, points, bottom):
+    floor = [(points[0][0], bottom), *points, (points[-1][0], bottom)]
+    canvas.draw.polygon(floor, fill=canvas.palette["chart"])
+    for share, colour in WATER_LAYERS:
+        layer = [(x, y + (bottom - y) * share) for x, y in points]
+        canvas.draw.polygon([(points[0][0], bottom), *layer, (points[-1][0], bottom)], fill=canvas.palette[colour])
+    canvas.draw.line([(x, y + 3) for x, y in points], fill=canvas.palette["foam"], width=2)
+    for share in WAVE_LINES:
+        for (x0, y0), (x1, y1) in zip(points, points[1:]):
+            steps = max(1, int(x1 - x0))
+            for step in range(steps):
+                x = x0 + (x1 - x0) * step / steps
+                surface = y0 + (y1 - y0) * step / steps
+                # Dashes of 6 px with 4 px gaps, each with a gentle ripple.
+                if int(x) % 10 >= 6:
+                    continue
+                y = surface + (bottom - surface) * share + 1.6 * math.sin(x / 3.2)
+                if y < bottom - 2:
+                    canvas.draw.point((x, y), fill=canvas.palette["foam"])
+
+
+def label_extreme(canvas, row, point, box):
+    """A high tide's time above its peak, a low tide's below its trough, kept inside the chart."""
+    left, top, right, bottom = box
+    x, y = point
+    label = parse_time(row["time"]).astimezone(PACIFIC).strftime("%H:%M")
+    high = row.get("type") == "H"
+    width = canvas.draw.textlength(label, font=canvas.font(10))
+    label_x = max(left + 2, min(right - width - 2, x - width / 2))
+    label_y = y - 16 if high else y + 6
+    if not high and label_y > bottom - 13:
+        # A trough near the floor: the time goes beside it instead of under it.
+        label_x, label_y = min(right - width - 2, x + 7), y - 13
+    if label_y < top + 1:
+        return
+    # A paper-coloured pill keeps the time legible where it crosses the curve or the water.
+    canvas.draw.rounded_rectangle((label_x - 3, label_y - 1, label_x + width + 3, label_y + 13), radius=6,
+                                  fill=canvas.palette["paper"])
+    canvas.text((label_x, label_y), label, 10, "blue", anchor="lt")
 
 
 def tide_now(rows, now):
