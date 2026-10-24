@@ -12,7 +12,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 from utils.app_utils import get_base_ui_font
 from utils.safe_image import ImageLimits, safe_open_image
@@ -22,6 +22,9 @@ INFO_HEIGHT = 84
 # Clear of the 8 px media inset the theme chrome frames.
 PAD = 12
 CARD_RADIUS = 10
+# How much of the page colour the card's wash lays down, and how far its edge fades out.
+CARD_WASH = 0.82
+CARD_FEATHER = 8
 ICON_SIZE = 28
 CATEGORY_LABELS = {
     "art_design": "艺术设计", "sports": "体育", "news_politics": "新闻时政", "fashion_culture": "时尚文化",
@@ -112,10 +115,17 @@ def draw_card(image, box, info, *, dark=False):
     x0, y0, x1, y1 = box
     paper, ink, muted = ((24, 26, 30), (240, 240, 236), (196, 198, 192)) if dark else \
         ((255, 255, 255), (16, 18, 20), (70, 74, 78))
-    region = image.crop(box)
-    image.paste(Image.blend(region, Image.new("RGB", region.size, paper), 0.9), box[:2])
+    # No frame: a wash of the page colour with feathered edges, so the card melts into the
+    # blurred backdrop and only its text stands out.
+    feather = CARD_FEATHER
+    outer = (x0 - feather, y0 - feather, x1 + feather, y1 + feather)
+    mask = Image.new("L", (outer[2] - outer[0], outer[3] - outer[1]), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((feather, feather, feather + x1 - x0, feather + y1 - y0), radius=CARD_RADIUS,
+                                           fill=round(255 * CARD_WASH))
+    mask = mask.filter(ImageFilter.GaussianBlur(feather / 2))
+    region = image.crop(outer)
+    image.paste(Image.composite(Image.new("RGB", region.size, paper), region, mask), outer[:2])
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle(box, radius=CARD_RADIUS, outline=ink, width=2)
     icon = _category_icon(info["category"])
     text_x = x0 + 10
     if icon is not None:
