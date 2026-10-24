@@ -55,7 +55,8 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 .mw-temp-unit { font-size: 30px; vertical-align: top; letter-spacing: 0; margin-left: 4px; position: relative; top: 10px; }
 .mw-condition { display: flex; align-items: center; gap: 6px; font-size: 19px; font-weight: 700; margin-top: 4px; }
 .mw-condition-icon { width: 30px; height: 30px; object-fit: contain; }
-.mw-dot { color: var(--muted); }
+/* Drawn, not typed: Microsoft YaHei Bold has no usable U+00B7 and Chromium showed a box. */
+.mw-dot { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--muted); align-self: center; }
 .mw-range { font-size: 15px; font-weight: 700; margin-top: 4px; }
 .mw-summary { font-size: 13px; font-weight: 700; margin-top: 8px; line-height: 1.35; max-width: 210px; }
 .mw-tips { margin-top: auto; margin-bottom: 4px; display: flex; flex-wrap: wrap; gap: 7px; }
@@ -192,3 +193,25 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
   margin-left: auto; font-size: 11px; font-weight: 700; color: #ffffff; background: #2e9e5b;
   padding: 1px 8px; border-radius: 999px;
 }
+
+/* Card colours ------------------------------------------------------------------------ */
+/* Each card has its own colour, as a thick top edge, its generated icon and a faint tint,
+   so sun, wind, air, UV, humidity, activities, hours and week read apart at a glance.
+   Titles stay in the page ink: small text on the panel is never tinted. */
+.mw-t-sun { --tile: #f08c00; }
+.mw-t-moon { --tile: #5f3dc4; }
+.mw-t-wind { --tile: #0ca5a5; }
+.mw-t-air { --tile: #2f9e44; }
+.mw-t-uv { --tile: #7048e8; }
+.mw-t-humidity { --tile: #1c7ed6; }
+.mw-t-life { --tile: #e0a100; }
+.mw-t-hourly { --tile: #e8590c; }
+.mw-t-week { --tile: #3b5bdb; }
+.mw-tile, .mw-hours, .mw-week {
+  border-top: 6px solid var(--tile, var(--frame));
+  background: color-mix(in srgb, var(--tile, var(--panel)) 8%, var(--panel));
+}
+.mw-tile { padding-top: 5px; }
+.mw-tile-title { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--ink); }
+.mw-section-title { align-items: center; }
+.mw-tile-icon { width: 20px; height: 20px; flex: none; }

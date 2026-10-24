@@ -117,6 +117,8 @@ def test_modern_template_renders_every_section():
     for text in ("日出日落", "西南风 3 级", "空气质量", "紫外线", "湿度", "生活指数", "24 小时", "未来 7 天", "厚外套", "mw-bubble", "mw-effect",
                  "scale(1.0)"):
         assert text in html, text
+    # Microsoft YaHei Bold draws U+00B7 as a box in Chromium, so separators are drawn in CSS.
+    assert "·" not in html
 
 
 def test_fun_features_follow_the_weather():
@@ -152,3 +154,16 @@ def test_page_effect_is_stable_through_the_day():
     morning = LA.localize(datetime(2026, 10, 24, 8, 0))
     evening = LA.localize(datetime(2026, 10, 24, 17, 0))
     assert modern_view._page_effect("snow", morning) == modern_view._page_effect("snow", evening)
+
+
+def test_every_card_has_its_icon_and_colour_class():
+    now = LA.localize(datetime(2026, 10, 24, 12, 50))
+    params = _params(now)
+    view = build_view(params, now, art_dir=str(ART_DIR))
+    assert set(view["icons"]) == set(modern_view.TILE_ICONS)
+    plugin = Weather({"id": "weather"})
+    html = plugin.env.get_template("weather_modern.html").render(
+        **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
+        plugin_settings={"displayRefreshTime": "true"}, style_sheets=[], font_faces=[])
+    for name in ("sun", "wind", "air", "uv", "humidity", "life", "hourly", "week"):
+        assert f"mw-t-{name}" in html and f"icon-{name}.png" in html, name

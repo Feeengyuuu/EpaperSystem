@@ -44,6 +44,10 @@ RAIN_BASE, RAIN_HEIGHT = 96, 22
 LABEL_STEP = 3
 
 
+# Each card's generated icon heading its title (with the card's own colour in the CSS).
+TILE_ICONS = ("sun", "wind", "air", "uv", "humidity", "life", "hourly", "week")
+
+
 def build_view(params, now, *, art_dir=None):
     """The page's view model; ``params`` are the Weather template parameters."""
     params = params or {}
@@ -84,6 +88,7 @@ def build_view(params, now, *, art_dir=None):
     view["indices"] = _life_indices(view, scene, celsius, forecast[1:3])
     view["mascot"] = _mascot(view, scene, art_dir, celsius)
     view["effect"] = _page_effect(scene, now)
+    view["icons"] = _tile_icons(art_dir)
     return view
 
 
@@ -92,6 +97,14 @@ def build_view(params, now, *, art_dir=None):
 def _icon_code(path):
     name = os.path.basename(str(path or "")).split(".")[0]
     return re.sub(r"[dn]$", "", name)
+
+
+def _tile_icons(art_dir):
+    """{card: its generated icon (art/icon-<card>.png)} for the cards whose icon is present."""
+    if not art_dir:
+        return {}
+    paths = {name: os.path.join(art_dir, f"icon-{name}.png") for name in TILE_ICONS}
+    return {name: path for name, path in paths.items() if os.path.isfile(path)}
 
 
 def _scene_path(art_dir, scene):

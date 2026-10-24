@@ -78,7 +78,48 @@
       "job_id": "22977bcc-2556-4def-83e7-3e434a21fdf5",
       "source_sha256": "b0748bc6d81a3c4df389090f5d906061ac2265bf428dd6e2ee2efa5e3d61a875",
       "sha256": "c8550c4d97b3043855e515a18c0021e478346cf8df54574d8a5f5cbbbf975886"
+    },
+    "icon-sun.png": {
+      "job_id": "9a1dbf8e-1df5-49e3-8b95-20311519a8f9",
+      "source_sha256": "c2d51539413823993834aa28eece9d60df83bc81ec8ca6327e54967ce4e56b62",
+      "sha256": "2c4dea3fb14b4b65c89f41bbdb0cafcd04482cee184524510c3780f2ffb9faba"
+    },
+    "icon-wind.png": {
+      "job_id": "9a1dbf8e-1df5-49e3-8b95-20311519a8f9",
+      "source_sha256": "c2d51539413823993834aa28eece9d60df83bc81ec8ca6327e54967ce4e56b62",
+      "sha256": "22e2cdca094d89f80882e85bec2d9f009f8115588fe8b0492c7139eefcecd62d"
+    },
+    "icon-air.png": {
+      "job_id": "9a1dbf8e-1df5-49e3-8b95-20311519a8f9",
+      "source_sha256": "c2d51539413823993834aa28eece9d60df83bc81ec8ca6327e54967ce4e56b62",
+      "sha256": "a91937b3886d4f4d271a60704699e56d7a197b49558417e2e1fd54d7ee5d00f0"
+    },
+    "icon-uv.png": {
+      "job_id": "9a1dbf8e-1df5-49e3-8b95-20311519a8f9",
+      "source_sha256": "c2d51539413823993834aa28eece9d60df83bc81ec8ca6327e54967ce4e56b62",
+      "sha256": "40fca9106a8e2c28e70a10c9d9324e5af81b712a4d3264f3681535322ef3ef0b"
+    },
+    "icon-humidity.png": {
+      "job_id": "9a1dbf8e-1df5-49e3-8b95-20311519a8f9",
+      "source_sha256": "c2d51539413823993834aa28eece9d60df83bc81ec8ca6327e54967ce4e56b62",
+      "sha256": "2061f1a3a57ab7fa286a84c6c4d3b67860879eb30f726af6e07b617cb8e35cba"
+    },
+    "icon-life.png": {
+      "job_id": "9a1dbf8e-1df5-49e3-8b95-20311519a8f9",
+      "source_sha256": "c2d51539413823993834aa28eece9d60df83bc81ec8ca6327e54967ce4e56b62",
+      "sha256": "29ab1e0349a75ad9dbb194e4d058ea1ba6edd0919d90931cd755db7eefba8d8b"
+    },
+    "icon-hourly.png": {
+      "job_id": "9a1dbf8e-1df5-49e3-8b95-20311519a8f9",
+      "source_sha256": "c2d51539413823993834aa28eece9d60df83bc81ec8ca6327e54967ce4e56b62",
+      "sha256": "a721ddb29698c113846992f6b7af12f279bece709c4b373b3ed4098d83609ce3"
+    },
+    "icon-week.png": {
+      "job_id": "9a1dbf8e-1df5-49e3-8b95-20311519a8f9",
+      "source_sha256": "c2d51539413823993834aa28eece9d60df83bc81ec8ca6327e54967ce4e56b62",
+      "sha256": "5189e182750e0b6f20877675b854d60cb8f5662cd3ab66170bed8c69e972419f"
     }
   },
-  "mascot": "mascot-*.png: the hero card's cloud mascot per weather, cropped to alpha bounds, 220 px square, transparent"
+  "mascot": "mascot-*.png: the hero card's cloud mascot per weather, cropped to alpha bounds, 220 px square, transparent",
+  "tile_icons": "icon-*.png: each card's title icon (white glyph on the card colour), cut from one 4x2 transparent sheet, 64 px square"
 }
