@@ -100,6 +100,35 @@ def draw_shield(canvas, x, y, route):
         canvas.text((x, y + 12), route, 14, width=49, anchor="lt")
 
 
+_STICKER_LIMITS = ImageLimits(max_bytes=256 * 1024, max_width=256, max_height=256, max_pixels=256 * 256)
+
+
+def paste_sticker(canvas, name, centre, height):
+    """Paste assets/sticker_<name>.png centred on ``centre`` at ``height``; returns its box or None."""
+    path = ASSETS / f"sticker_{name}.png"
+    if not path.is_file():
+        return None
+    with safe_open_image(path, limits=_STICKER_LIMITS) as source:
+        with source.convert("RGBA") as rgba:
+            art = rgba.resize((max(1, round(rgba.width * height / rgba.height)), height), Image.Resampling.LANCZOS)
+    left, top = round(centre[0] - art.width / 2), round(centre[1] - art.height / 2)
+    canvas.image.paste(art, (left, top), art)
+    box = (left, top, left + art.width, top + art.height)
+    art.close()
+    return box
+
+
+def closure_sticker(row):
+    """The closure's kind as a road-works sticker: a barricade for a closed road, the ramp sign
+    for a ramp or connector, a cone for lanes and everything else."""
+    facility = FACILITIES.get(row.get("facility"), "")
+    if "匝道" in facility:
+        return "ramp"
+    if row.get("kind") == "Full":
+        return "barrier"
+    return "cone"
+
+
 def draw_status(canvas, x, y, state):
     """The state's generated tag, or an outlined orange chip when the art is missing; returns its width."""
     path = ASSETS / f"status_{state}.png"
@@ -157,7 +186,9 @@ def draw_roads(canvas, payload, now):
         # A full ramp closure must never be described as closing the entire highway.
         if row.get("kind") == "Full" and "匝道" in facility:
             kind = facility + "全封闭"
-        canvas.text((ROW_X + 54, y + 31), row.get("place") or row.get("begin"), 16, width=396 - ROW_X, anchor="lt")
+        canvas.text((ROW_X + 54, y + 31), row.get("place") or row.get("begin"), 16, width=376 - ROW_X, anchor="lt")
+        # What the closure is, at a glance: a barricade, a closed ramp or a cone.
+        paste_sticker(canvas, closure_sticker(row), (437, y + 40), 24)
         canvas.text((ROW_X, y + 55), kind, 14, width=448 - ROW_X, anchor="lt")
         start, end = parse_time(row["start"]), parse_time(row.get("end"))
         start = start.astimezone(PACIFIC)
@@ -203,12 +234,46 @@ def draw_chart(canvas, data, now):
             x,y = xy(row)
             canvas.draw.ellipse((x-3,y-3,x+3,y+3), fill=canvas.palette["blue"])
     canvas.rule((left,top,left,bottom,right,bottom), "ink")
+    draw_now_on_tide(canvas, rows, xy, now, (left, top, right, bottom))
     for hour in (0,6,12,18,24):
         stamp = end if hour == 24 else datetime.combine(now.date(), time(hour), PACIFIC)
         x = left+(stamp.timestamp()-begin.timestamp())/span*(right-left)
         canvas.text((x,399), f"{hour:02d}", 12, "muted", anchor="mt")
     canvas.text((492, 240), now.strftime("%m/%d") + " 预测曲线", 12, "muted")
     canvas.text((776, 240), "ft", 12, "muted", anchor="rt")
+
+
+def tide_now(rows, now):
+    """(height now, rising) from the day's curve by linear interpolation; None outside it."""
+    stamps = [(parse_time(row["time"]), row["height"]) for row in rows]
+    for (start, low), (end, high) in zip(stamps, stamps[1:]):
+        if start <= now <= end:
+            share = (now - start).total_seconds() / max(1.0, (end - start).total_seconds())
+            return low + (high - low) * share, high >= low
+    return None
+
+
+def draw_now_on_tide(canvas, rows, xy, now, box):
+    """A dotted line at the present moment, a sailboat riding the curve there and its tide."""
+    found = tide_now(rows, now)
+    if found is None:
+        return
+    height, rising = found
+    left, top, right, bottom = box
+    x, y = xy({"time": now.isoformat(), "height": height})
+    for dot_y in range(round(top), round(bottom), 4):
+        canvas.draw.point((x, dot_y), fill=canvas.palette["muted"])
+    boat = paste_sticker(canvas, "boat", (x, y - 9), 22)
+    if boat is None:
+        canvas.draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=canvas.palette["orange"])
+    label = f"现在 {height:.1f} ft {'涨潮 ↑' if rising else '退潮 ↓'}"
+    width = canvas.draw.textlength(label, font=canvas.font(11))
+    label_x = x + 12 if x + 12 + width <= right else x - 12 - width
+    label_y = max(top + 2, min(bottom - 16, y - 30))
+    canvas.text((label_x, label_y), label, 11, "blue" if rising else "orange", anchor="lt")
+    if rising:
+        # A gull keeps the boat company while the water comes in.
+        paste_sticker(canvas, "gull", (min(right - 10, x + 30), max(top + 8, label_y - 6)), 14)
 
 
 def draw_tides(canvas, payload, settings, now):
