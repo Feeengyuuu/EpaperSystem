@@ -4,6 +4,7 @@ import logging
 import math
 import os
 import re
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
@@ -28,8 +29,27 @@ MASSIVE_SYMBOL_ALIASES = {
 }
 
 
+# A ticker the account's plan does not cover (HTTP 401/403, such as the I: indices) is refused
+# on every request; skip it for this long instead of asking again on each refresh.
+REFUSED_TICKER_SECONDS = 12 * 3600
+_refused_tickers: dict[str, float] = {}
+
+
 class MassiveMarketDataError(RuntimeError):
     pass
+
+
+def massive_ticker_refused(ticker: str) -> bool:
+    """Whether Massive refused ``ticker`` for this plan within the last REFUSED_TICKER_SECONDS."""
+    return _refused_tickers.get(str(ticker or "").upper(), 0.0) > time.monotonic()
+
+
+def _refusal_status(exc: BaseException) -> int | None:
+    cause = exc.__cause__
+    status = getattr(cause, "status", None)
+    if status is None:
+        status = getattr(getattr(cause, "response", None), "status_code", None)
+    return status if isinstance(status, int) and status in (401, 403) else None
 
 
 @dataclass(frozen=True)
@@ -224,10 +244,18 @@ class MassiveMarketData:
 
     def fetch_quote(self, symbol: str, name: str = "") -> dict[str, Any] | None:
         for ticker in massive_ticker_candidates(symbol):
+            if massive_ticker_refused(ticker):
+                continue
             try:
                 bars = self.fetch_daily_bars(ticker, period="5d")
             except MassiveMarketDataError as exc:
-                logger.warning("Massive quote fetch failed for %s: %s", ticker, exc)
+                status = _refusal_status(exc)
+                if status is not None:
+                    _refused_tickers[ticker.upper()] = time.monotonic() + REFUSED_TICKER_SECONDS
+                    logger.warning("Massive refused %s (HTTP %s) for this plan; skipping it for %d hours",
+                                   ticker, status, REFUSED_TICKER_SECONDS // 3600)
+                else:
+                    logger.warning("Massive quote fetch failed for %s: %s", ticker, exc)
                 continue
             if not bars:
                 continue

@@ -133,3 +133,27 @@ def test_massive_errors_do_not_expose_api_key():
 
     assert "secret-key" not in message
     assert "apiKey" not in message
+
+
+def test_a_ticker_the_plan_refuses_is_skipped_for_a_while(monkeypatch):
+    import utils.massive_market_data as massive
+    from utils.http_client import HttpStatusError
+
+    monkeypatch.setattr(massive, "_refused_tickers", {})
+    requested = []
+    bars = {"status": "OK", "results": [{"t": 1780185600000, "c": 100}, {"t": 1780272000000, "c": 101}]}
+
+    class Session:
+        def request_json(self, method, url, params=None, timeout=None, headers=None):
+            requested.append(url.split("/ticker/")[1].split("/")[0])
+            if "I:SPX" in url:
+                raise HttpStatusError(method, url, 403)
+            return type("R", (), {"data": bars})()
+
+    client = MassiveMarketData("key", session=Session())
+
+    assert client.fetch_quote("^GSPC")["massive_symbol"] == "SPY"
+    assert massive.massive_ticker_refused("I:SPX") and not massive.massive_ticker_refused("SPY")
+    client.fetch_quote("^GSPC")
+    # The refused index is not asked for again; a transient failure would be.
+    assert requested == ["I:SPX", "SPY", "SPY"]

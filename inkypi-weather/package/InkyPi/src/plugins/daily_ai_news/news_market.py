@@ -12,7 +12,12 @@ from urllib.parse import quote
 import pytz
 
 from utils.http_client import get_http_client
-from utils.massive_market_data import MassiveMarketData, MassiveMarketDataError, load_massive_api_key
+from utils.massive_market_data import (
+    MassiveMarketData,
+    MassiveMarketDataError,
+    load_massive_api_key,
+    massive_ticker_refused,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +131,7 @@ class NewsMarketMixin:
     def _fetch_market_quote(self, massive_client, symbol: str, name: str):
         row = self._fetch_massive_quote(massive_client, symbol, name)
         if self._is_massive_index_proxy_quote(symbol, row):
-            logger.warning(
+            logger.info(
                 "Discarding Massive ETF proxy %s for index %s; using Yahoo fallback",
                 row.get("massive_symbol"),
                 symbol,
@@ -146,6 +151,10 @@ class NewsMarketMixin:
 
     def _fetch_massive_quote(self, massive_client, symbol: str, name: str) -> dict[str, Any] | None:
         if massive_client is None:
+            return None
+        index_tickers = MASSIVE_INDEX_TICKERS.get(symbol)
+        if index_tickers and all(massive_ticker_refused(ticker) for ticker in index_tickers):
+            # The plan has no real index quote, and its ETF proxy would only be discarded.
             return None
         try:
             return massive_client.fetch_quote(symbol, name)
