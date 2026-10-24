@@ -80,6 +80,7 @@ PLUGIN_FONT_DIR = PLUGIN_DIR / "fonts"
 SRC_DIR = PLUGIN_DIR.parent.parent
 STATIC_FONT_DIR = SRC_DIR / "static" / "fonts"
 CINEMA_PLACEHOLDER_FILE = "boxoffice_cinema_placeholder.png"
+POSTER_PLACEHOLDER_FILE = "poster_placeholder.png"
 CINEMA_PLACEHOLDER_SIZE = (300, 90)
 CHINA_TITLE_WORDMARK_FILE = "boxoffice_china_title_wordmark.png"
 CHINA_TITLE_WORDMARK_SIZE = (384, 86)
@@ -1510,16 +1511,40 @@ class BoxOfficeTopMovies(BasePlugin):
         for i in range(0, h, max(8, h // 10)):
             color = tuple(max(0, min(255, channel + ((i // 8) % 5) * 10)) for channel in base)
             draw.rectangle((0, i, w, min(h, i + max(5, h // 18))), fill=color)
+        # A small poster is just the clapperboard art; a large one also names the film below it.
+        titled = w >= 80
+        art = self._load_poster_placeholder_art()
+        art_bottom = int(h * 0.62) if titled else h
+        if art is not None:
+            fitted = ImageOps.contain(art, (int(w * 0.78), int(art_bottom * 0.82)), method=Image.Resampling.LANCZOS)
+            ink = Image.new("RGB", fitted.size, colors["paper"])
+            image.paste(ink, ((w - fitted.width) // 2, (art_bottom - fitted.height) // 2 + h // 40),
+                        fitted.getchannel("A"))
+        if not titled and art is not None:
+            return image
         font = self._font(max(12, w // 7), bold=True)
-        words = movie.title.upper().split()
-        lines = self._wrap_words(draw, words, font, w - 14, max_lines=4)
+        title = glyph_safe_text(movie.title, font)
+        words = title.upper().split() if " " in title else list(title)
+        lines = self._wrap_words(draw, words, font, w - 14, max_lines=3)
+        if " " not in title:
+            lines = [line.replace(" ", "") for line in lines]
         total_h = len(lines) * (font.size + 2)
-        start_y = max(8, (h - total_h) // 2)
+        start_y = art_bottom + max(4, (h - art_bottom - total_h) // 2) if art is not None else max(8, (h - total_h) // 2)
         for line in lines:
             line_w = draw.textlength(line, font=font)
             draw.text(((w - line_w) / 2, start_y), line, fill=colors["paper"], font=font)
             start_y += font.size + 2
         return image
+
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _load_poster_placeholder_art():
+        """The generated clapperboard silhouette (alpha only matters), or None when it is missing."""
+        try:
+            with Image.open(PLUGIN_DIR / "assets" / POSTER_PLACEHOLDER_FILE) as source:
+                return source.convert("RGBA")
+        except (OSError, ValueError):
+            return None
 
     def _draw_cinema_background(self, image, colors):
         image.paste(colors["paper"], (0, 0, image.width, image.height))
