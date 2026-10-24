@@ -7,6 +7,7 @@ releases, and per-game speedrun world records with box art, trophies and runner 
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageOps
@@ -49,6 +50,10 @@ EPIC_CARD = (280, 58, 788, 196)
 UPCOMING_CARD = (280, 202, 788, 314)
 SPEED_CARD = (280, 320, 788, 468)
 HEADER = 28
+CARD_BAND = 5
+# Each card's generated icon, by its colour key.
+SECTION_ART = {"status_bar": "section-status", "papers_bar": "section-papers", "epic_bar": "section-free",
+               "upcoming_bar": "section-upcoming", "speed_bar": "section-speed"}
 
 
 def _rgb(value):
@@ -91,27 +96,44 @@ def ago(stamp, now):
     return f"{int(seconds // 86400)} 天前"
 
 
+@lru_cache(maxsize=8)
+def _section_art(name, height):
+    """A card's generated section icon (assets/section-<card>.png)."""
+    path = ASSETS / f"{name}.png"
+    if not path.is_file():
+        return None
+    with safe_open_image(path, limits=_LIMITS) as source:
+        image = source.convert("RGBA")
+    return ImageOps.contain(image, (height * 2, height), Image.Resampling.LANCZOS)
+
+
 def _card(canvas, box, bar, title, *, logo=None, icon=None, detail="", chip=None):
-    """Outlined card with a coloured accent bar, a logo or icon, a title and a right-hand detail."""
+    """A card in its own colour: a solid band across the top, a frame and header rule in that
+    colour, its generated icon sitting on the band, then a logo, the title and a detail."""
     left, top, right, bottom = box
-    canvas.draw.rounded_rectangle(box, radius=6, outline=canvas.color("rule"), width=1)
-    canvas.draw.rectangle((left + 8, top + 8, left + 12, top + 22), fill=canvas.color(bar))
-    cursor = left + 18
-    if logo is not None:
-        cursor += _paste(canvas, logo, (cursor, top + 15 - logo.height / 2)) + 6
+    colour = canvas.color(bar)
+    canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
+    canvas.draw.rounded_rectangle((left, top, right, top + CARD_BAND), radius=7, fill=colour,
+                                  corners=(True, True, False, False))
+    cursor = left + 8
+    art = _section_art(SECTION_ART.get(bar, ""), 26)
+    if art is not None:
+        cursor += _paste(canvas, art, (cursor, top + 2)) + 5
     elif icon:
         draw_icon(canvas.draw, icon, (cursor, top + 7), 16, canvas.color("ink"), canvas.color("paper"))
         cursor += 22
-    cursor += canvas.text((cursor, top + 15), title, 15, anchor="lm") + 8
+    if logo is not None:
+        cursor += _paste(canvas, logo, (cursor, top + 16 - logo.height / 2)) + 6
+    cursor += canvas.text((cursor, top + 16), title, 15, anchor="lm") + 8
     if chip:
         width = canvas.width(chip, 11) + 12
-        canvas.draw.rounded_rectangle((cursor, top + 7, cursor + width, top + 23), radius=8,
+        canvas.draw.rounded_rectangle((cursor, top + 8, cursor + width, top + 24), radius=8,
                                       outline=canvas.color("ink"), width=1)
-        canvas.text((cursor + width / 2, top + 15), chip, 11, anchor="mm")
+        canvas.text((cursor + width / 2, top + 16), chip, 11, anchor="mm")
         cursor += width + 8
     if detail:
-        canvas.text((right - 8, top + 15), detail, 11, "muted", anchor="rm", bold=False, width=right - 8 - cursor)
-    canvas.rule((left + 8, top + HEADER, right - 8, top + HEADER))
+        canvas.text((right - 8, top + 16), detail, 11, "muted", anchor="rm", bold=False, width=right - 8 - cursor)
+    canvas.rule((left + 8, top + HEADER, right - 8, top + HEADER), colour)
 
 
 # --- Left column -----------------------------------------------------------------------------------

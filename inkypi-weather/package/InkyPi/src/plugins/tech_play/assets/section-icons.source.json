@@ -1,0 +1,16 @@
+{
+  "assets": [
+    "section-status.png",
+    "section-papers.png",
+    "section-free.png",
+    "section-upcoming.png",
+    "section-speed.png"
+  ],
+  "scene": "server rack with a pulse, papers with an AI chip, gift box with a controller, calendar with a rocket, stopwatch with a trophy",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "2a08c308-0ec8-4f05-9f92-3d5cf596cf4d",
+  "generated": "2026-10-24",
+  "background": "transparent PNG, 1536x512, one row of 5 icons",
+  "processing": "alpha below 40 cleared, split at the transparent gaps, trimmed, 64 px tall (LANCZOS)",
+  "source_sha256": "932a55fae0c2964df209df672125f9745597bbb16c08a9d6ad115a0d1f6a9c51"
+}
