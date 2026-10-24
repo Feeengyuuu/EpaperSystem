@@ -111,9 +111,11 @@ class MoneyRadar(BasePlugin):
             "news": load(Source("news", {"symbols": list(symbols)}, lambda ctx: sources.fetch_news(symbols, ctx),
                                 fresh_seconds=1800, usable_seconds=86400, validate=sources.valid_news,
                                 timeout_seconds=12)),
+            # CPI and unemployment come out once a month: a reading stays current for days, so a
+            # BLS outage (503 "website is busy" on 2026-10-24) no longer turns the page stale.
             "macro": load(Source("macro", {"fred": bool(fred_key)},
-                                 lambda ctx: sources.fetch_macro(fred_key, ctx), fresh_seconds=12 * 3600,
-                                 usable_seconds=10 * 86400, validate=sources.valid_macro, timeout_seconds=10)),
+                                 lambda ctx: sources.fetch_macro(fred_key, ctx), fresh_seconds=3 * 86400,
+                                 usable_seconds=30 * 86400, validate=sources.valid_macro, timeout_seconds=10)),
         }
         ciks = load(Source("sec_ciks", {"symbols": list(symbols)},
                            (lambda ctx: sources.fetch_ciks(symbols, contact, ctx)) if contact else None,
