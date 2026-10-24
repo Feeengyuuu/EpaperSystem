@@ -69,6 +69,26 @@ BRAND_CHIPS = {
 }
 DEFAULT_CHIP = ("ink", "paper", None)
 WEEKDAYS = "一二三四五六日"
+# Each card's colour, drawn as a solid bar across its top so the kinds of figure read apart
+# at a glance (a tinted fill would dither into dots; titles stay in ink). One colour per
+# kind, keyed in the header's subtitle; coins keep their brand colours.
+KIND_COLOURS = {
+    "汇率": (0x0C, 0x85, 0x99),
+    "加密": (0xF7, 0x93, 0x1A),
+    "利率": (0x1F, 0x5F, 0xBF),
+    "宏观": (0xD9, 0x48, 0x2B),
+    "商品": (0xD4, 0xA0, 0x00),
+    "持仓": "ink",
+}
+CARD_ACCENTS = {
+    "fx": KIND_COLOURS["汇率"], "dxy": KIND_COLOURS["汇率"],
+    "bitcoin": KIND_COLOURS["加密"], "ethereum": (0x62, 0x7E, 0xEA), "solana": (0x99, 0x45, 0xFF),
+    "yield": KIND_COLOURS["利率"], "fed_funds": KIND_COLOURS["利率"], "mortgage30": KIND_COLOURS["利率"],
+    "cpi": KIND_COLOURS["宏观"], "unemployment": KIND_COLOURS["宏观"],
+    "gold": KIND_COLOURS["商品"],
+    "holdings": KIND_COLOURS["持仓"],
+}
+ACCENT_BAR = 6
 TILES = ((12, 200), (206, 394), (400, 588), (594, 788))
 
 
@@ -154,8 +174,18 @@ def _change_line(canvas, xy, change, figure, note=""):
         canvas.text((xy[0] + 15 + width + 5, xy[1]), note, 13, "muted", anchor="lm", bold=False)
 
 
-def _tile_frame(canvas, left, right, title, mark=None, mark_text=None):
+def _accent_bar(canvas, box, accent, height=ACCENT_BAR):
+    """The card's colour as a solid bar along its rounded top edge."""
+    if accent is None:
+        return
+    left, top, right, _bottom = box
+    colour = canvas.color(accent) if isinstance(accent, str) else accent
+    canvas.draw.rounded_rectangle((left, top, right, top + height), radius=6, fill=colour, corners=(True, True, False, False))
+
+
+def _tile_frame(canvas, left, right, title, mark=None, mark_text=None, accent=None):
     canvas.draw.rounded_rectangle((left, 60, right, 196), radius=6, outline=canvas.color("rule"), width=1)
+    _accent_bar(canvas, (left, 60, right, 196), accent)
     x = left + 10
     if mark is not None:
         x += _paste(canvas, mark, (x, 68)) + 6
@@ -171,7 +201,7 @@ def _fx_tile(canvas, payload, box):
     data = payload["fx"]["data"]
     series = (data.get("series") or {}).get("CNY") or []
     us, cn = _asset("flag-us", 14), _asset("flag-cn", 14)
-    _tile_frame(canvas, left, right, "美元/人民币")
+    _tile_frame(canvas, left, right, "美元/人民币", accent=CARD_ACCENTS["fx"])
     flag_x = right - 10 - (us.width if us else 0) - (cn.width if cn else 0) - 4
     _paste(canvas, us, (flag_x, 72))
     _paste(canvas, cn, (flag_x + (us.width if us else 0) + 4, 72))
@@ -182,7 +212,7 @@ def _fx_tile(canvas, payload, box):
     canvas.text((left + 10, 112), f"{latest:.4f}", 28, anchor="lm")
     change = (latest / first - 1) * 100
     _change_line(canvas, (left + 10, 138), change, f"{change:+.2f}%", f"{len(series)} 个交易日")
-    sparkline(canvas, (left + 12, 150, right - 12, 176), [value for _day, value in series], canvas.color("accent"))
+    sparkline(canvas, (left + 12, 150, right - 12, 176), [value for _day, value in series], CARD_ACCENTS["fx"])
     others = []
     for code, label in (("EUR", "欧元"), ("JPY", "日元"), ("HKD", "港币")):
         rows = (data.get("series") or {}).get(code) or []
@@ -194,7 +224,8 @@ def _fx_tile(canvas, payload, box):
 def _coin_tile(canvas, coin, box):
     left, right = box
     name = COIN_NAMES.get(coin["id"], coin.get("name") or coin["symbol"])
-    _tile_frame(canvas, left, right, name, _asset(f"coin-{coin['id']}", 22), coin["symbol"][:2])
+    _tile_frame(canvas, left, right, name, _asset(f"coin-{coin['id']}", 22), coin["symbol"][:2],
+                accent=CARD_ACCENTS.get(coin["id"], "ink"))
     canvas.text((right - 10, 79), coin["symbol"], 12, "muted", anchor="rm", bold=False)
     canvas.text((left + 10, 112), price_text(coin["price"]), 28, anchor="lm", width=right - left - 20)
     day, week = coin.get("change_24h"), coin.get("change_7d")
@@ -212,7 +243,7 @@ def _yield_tile(canvas, payload, box):
     left, right = box
     quotes = payload["markets"]["data"].get("quotes") or {}
     ten = quotes.get("^TNX")
-    _tile_frame(canvas, left, right, "10 年期美债", mark_text="%")
+    _tile_frame(canvas, left, right, "10 年期美债", mark_text="%", accent=CARD_ACCENTS["yield"])
     if not ten:
         canvas.text((left + 10, 120), "利率暂不可用", 15, "muted", anchor="lm")
         return
@@ -228,6 +259,7 @@ def _yield_tile(canvas, payload, box):
 def _curve(canvas, payload):
     left, top, right, bottom = 12, 204, 392, 330
     canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
+    _accent_bar(canvas, (left, top, right, bottom), CARD_ACCENTS["yield"])
     icon = _asset("macro-curve", MACRO_ICON_SIZE)
     title_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 14 - icon.height // 2)) + 6 if icon else 0)
     canvas.text((title_x, top + 14), "美债收益率曲线", 15, anchor="lm")
@@ -301,11 +333,12 @@ def _macro_tiles(canvas, payload):
         left = 400 + column * 197
         top = 204 + row * 64
         canvas.draw.rounded_rectangle((left, top, left + 191, top + 58), radius=6, outline=canvas.color("rule"))
+        _accent_bar(canvas, (left, top, left + 191, top + 58), CARD_ACCENTS.get(key), 5)
         # Each indicator carries its own picture (cart, briefcase, dollar coin, gold bars, bank, house).
         icon = _asset(f"macro-{key}", MACRO_ICON_SIZE)
-        label_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 13 - icon.height // 2)) + 5 if icon else 0)
-        canvas.text((label_x, top + 13), label, 13, anchor="lm", width=left + 118 - label_x)
-        canvas.text((left + 181, top + 13), note, 11, "muted", anchor="rm", bold=False, width=80)
+        label_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 15 - icon.height // 2)) + 5 if icon else 0)
+        canvas.text((label_x, top + 15), label, 13, anchor="lm", width=left + 118 - label_x)
+        canvas.text((left + 181, top + 15), note, 11, "muted", anchor="rm", bold=False, width=80)
         canvas.text((left + 10, top + 39), value, 22, anchor="lm")
         if previous is not None:
             change = current - previous
@@ -402,6 +435,7 @@ def _filings(canvas, payload, left, right, top, rows):
 def _holdings(canvas, payload, now):
     left, top, right, bottom = 12, 336, 788, 468
     canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
+    _accent_bar(canvas, (left, top, right, bottom), CARD_ACCENTS["holdings"], 4)
     canvas.draw.rectangle((left + 8, top + 8, left + 12, top + 22), fill=canvas.color("accent"))
     draw_icon(canvas.draw, "paper", (left + 18, top + 7), 16, canvas.color("ink"), canvas.color("paper"))
     x = left + 40 + canvas.text((left + 40, top + 15), "持仓动态", 15, anchor="lm") + 10
@@ -454,6 +488,15 @@ def _holdings(canvas, payload, now):
     _news(canvas, news, now, middle + 10, right - 10, body, rows)
 
 
+def _kind_key(canvas, x, y):
+    """The subtitle as the colour key: each kind of figure after a square in its card colour."""
+    for kind, colour in KIND_COLOURS.items():
+        fill = canvas.color(colour) if isinstance(colour, str) else colour
+        canvas.draw.rounded_rectangle((x, y - 5, x + 10, y + 5), radius=2, fill=fill)
+        x += 14 + canvas.text((x + 14, y), kind, 14, anchor="lm", bold=False) + 10
+    return x - 10
+
+
 def render_page(dimensions, payload, settings, now):
     now = local_now(now)
     canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei")
@@ -465,8 +508,7 @@ def render_page(dimensions, payload, settings, now):
         title_right = pasted[2]
     else:
         title_right = 16 + canvas.text((16, 27), "资金雷达", 30, anchor="lm")
-    subtitle_right = title_right + 14 + canvas.text((title_right + 14, 30), "汇率 · 加密 · 利率 · 宏观 · 持仓", 14, "muted",
-                                                    anchor="lm", bold=False)
+    subtitle_right = _kind_key(canvas, title_right + 14, 30)
     date_left = 788 - canvas.text((788, 27), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
     paste_header_art(canvas.image, ASSETS / "header_art.png", subtitle_right, date_left)
     canvas.rule((12, 52, 788, 52), "ink", 2)

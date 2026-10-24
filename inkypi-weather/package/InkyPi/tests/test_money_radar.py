@@ -317,9 +317,12 @@ def test_macro_tiles_put_the_icon_before_the_title():
     payload = {"macro": {"data": {"cpi": {"value": 3.7, "previous": 3.4, "period": "2026-09"}, "source": "BLS"}},
                "markets": {"data": {"quotes": {"GC=F": {"last": 4030.0, "month_ago": 4318.0}}}}}
     money_render._macro_tiles(canvas, payload)
-    # The cart's warm red-orange sits left of where the title text starts.
-    corner = canvas.image.crop((408, 206, 430, 226)).convert("RGB")
+    # The cart's warm red-orange sits left of where the title text starts (below the card's colour bar).
+    corner = canvas.image.crop((408, 211, 430, 226)).convert("RGB")
     assert any(r > 180 and g < 140 for r, g, _b in corner.get_flattened_data())
+    # Each card's top bar is its kind's colour: macro for CPI, commodity for gold.
+    assert canvas.image.getpixel((450, 206)) == money_render.KIND_COLOURS["宏观"]
+    assert canvas.image.getpixel((647, 206)) == money_render.KIND_COLOURS["商品"]
 
 
 def test_holdings_keep_two_earnings_rows_and_give_the_rest_to_the_news(monkeypatch):
