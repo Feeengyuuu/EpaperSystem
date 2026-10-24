@@ -127,7 +127,7 @@ from runtime.degraded_data import (
 from runtime.long_task_executor import InstanceIdentity
 from runtime.plugin_execution import PluginExecutionContext
 from runtime.refresh_planning import (
-    InstanceDueInput, RefreshPlan, align_datetime_tz, collect_due_candidates,
+    LIVE_REFRESH_RENEWS_DATA, InstanceDueInput, RefreshPlan, align_datetime_tz, collect_due_candidates,
     plan_candidate, plan_reserved_presentation,
 )
 from runtime.bounded_parallel_stage import BoundedParallelStageRunner
@@ -2610,6 +2610,7 @@ class RefreshTask:
                 provider_presentation=plugin_allows_display_triggered_provider_refresh(plugin_config),
                 refresh_data_before_display=plugin_refreshes_data_before_display(plugin_config),
                 theme_mode=resolved_theme.get("mode") if isinstance(resolved_theme, Mapping) else None,
+                live_refresh_renews_data=instance.plugin_id in LIVE_REFRESH_RENEWS_DATA,
             ))
         due = collect_due_candidates(inputs, now=current_dt)
         for wakeup in due.wakeups:

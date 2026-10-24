@@ -205,3 +205,43 @@ def test_provider_presentation_without_a_runnable_candidate_does_not_suppress_da
     result = collect_due_candidates([item], now=NOW)
     assert not result.presentations
     assert len(result.data) == 1
+
+
+def _sports_input(*, data_ago, live_ago, renews=True):
+    from runtime.refresh_planning import InstanceDueInput
+
+    instance = PluginInstanceSnapshot(
+        instance_uuid="sports", plugin_id="sports_dashboard", name="Sports",
+        settings=MappingProxyType({}), refresh=MappingProxyType({"interval": 900}),
+        latest_refresh_time=None, structural_generation=1, settings_revision=1,
+    )
+    state = InstanceRuntimeState(
+        data=RefreshLaneState(last_success_at=(NOW - data_ago).isoformat()),
+        live=RefreshLaneState(last_success_at=(NOW - live_ago).isoformat()) if live_ago is not None
+        else RefreshLaneState(),
+    )
+    return InstanceDueInput(instance=instance, state=state, has_cache=True, live_refresh_renews_data=renews)
+
+
+def test_a_live_refresh_that_renders_the_page_renews_its_data_cadence():
+    from runtime.refresh_planning import LIVE_REFRESH_RENEWS_DATA, collect_due_candidates
+
+    assert "sports_dashboard" in LIVE_REFRESH_RENEWS_DATA
+    assert "box_office_top_movies" not in LIVE_REFRESH_RENEWS_DATA
+    # Data last fetched 20 minutes ago, but a live refresh did the same work a minute ago.
+    renewed = collect_due_candidates([_sports_input(data_ago=timedelta(minutes=20), live_ago=timedelta(minutes=1))],
+                                     now=NOW)
+    assert renewed.data == () and NOW + timedelta(minutes=14) in renewed.wakeups
+    # Without the capability, the data lane only knows its own success and is due again.
+    alone = collect_due_candidates([_sports_input(data_ago=timedelta(minutes=20), live_ago=timedelta(minutes=1),
+                                                  renews=False)], now=NOW)
+    assert len(alone.data) == 1
+
+
+def test_an_older_or_missing_live_success_leaves_the_data_cadence_alone():
+    from runtime.refresh_planning import collect_due_candidates
+
+    older = collect_due_candidates([_sports_input(data_ago=timedelta(minutes=20), live_ago=timedelta(minutes=30))],
+                                   now=NOW)
+    missing = collect_due_candidates([_sports_input(data_ago=timedelta(minutes=20), live_ago=None)], now=NOW)
+    assert len(older.data) == 1 and len(missing.data) == 1

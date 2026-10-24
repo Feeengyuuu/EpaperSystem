@@ -12950,6 +12950,8 @@ def _assert_sports_normal_selected(monkeypatch, background_value):
         _sports_live_runtime(
             f"sports-normal-{background_value}",
             background_value=background_value,
+            # No recent live refresh: a newer one would already have renewed the data.
+            live_age_seconds=3 * 3600,
         )
     )
     task.runtime_state.record_success(
@@ -13409,6 +13411,32 @@ def test_sports_background_live_requires_enabled_hook_and_non_hard_tier(
         assert command.intent is RefreshIntent.LIVE_REFRESH
 
 
+def test_a_recent_sports_live_refresh_stands_in_for_its_data_refresh(monkeypatch):
+    # The live refresh 15 minutes ago rendered the whole page, so the hourly data lane is not due
+    # although its own last success is two hours old.
+    task, _device_config, _playlist, instance, current_dt, _anchor = (
+        _sports_live_runtime("sports-live-renews-data", background_value=False)
+    )
+    task.runtime_state.record_success(
+        instance.instance_uuid,
+        (current_dt - timedelta(hours=2)).isoformat(),
+        lane=RefreshLane.DATA,
+    )
+    monkeypatch.setattr(
+        "refresh_task.get_plugin_instance",
+        lambda _config: FakePlugin([], live_state=None),
+    )
+    monkeypatch.setattr(
+        task,
+        "_resource_sample",
+        lambda: ResourceSample(available_mb=512, swap_percent=0),
+    )
+
+    command = task._select_independent_refresh_command(current_dt)
+
+    assert command is None or command.intent is not RefreshIntent.DATA_REFRESH
+
+
 def test_explicit_false_legacy_background_flag_is_live_master_off_only(
     monkeypatch,
 ):
@@ -13416,6 +13444,8 @@ def test_explicit_false_legacy_background_flag_is_live_master_off_only(
         _sports_live_runtime(
             "sports-live-master-off-data-on",
             background_value=False,
+            # No recent live refresh: a newer one would already have renewed the data.
+            live_age_seconds=3 * 3600,
         )
     )
     task.runtime_state.record_success(

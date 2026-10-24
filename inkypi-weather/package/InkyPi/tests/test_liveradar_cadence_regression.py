@@ -172,7 +172,10 @@ def _run_cadence_scenario(
     }
     assert utilization < (0.7 if sports_live_seconds else 0.5)
     assert len(radar) >= 2
-    assert set(key for key, _ in data) == set(cadences)
+    # Every page with a data cadence is renewed: by its data lane or, for Sports, by a live refresh,
+    # which renders the whole page and so stands in for the data refresh it would repeat.
+    renewed = {key for key, _ in data} | ({"sports_dashboard"} if sports_live_starts else set())
+    assert renewed == set(cadences)
     assert min(write_gaps) >= 300
     assert max(write_gaps) <= 365
     assert task._restart_request is None
@@ -258,6 +261,8 @@ def test_liveradar_cadence_preserves_prepared_commits_and_background_sports(tmp_
     # Sports, whose hook cadence intentionally remains exempt from the floor;
     # exact offscreen 899/900 boundaries have focused coverage.
     assert 6 <= result["sports_live_count"] <= 8
+    # Its live refreshes renew Sports' data, so the data lane no longer repeats each of them.
+    assert result["data_counts"].get("sports_dashboard", 0) <= 1
     # Preserve the prior release's worst physical cadence; allowing 365s here
     # would hide a long LIVE job crossing an unreserved rotation deadline.
     assert result["write_gap_seconds"][1] <= 310

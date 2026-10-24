@@ -10,6 +10,11 @@ from runtime.refresh_contracts import CommandSource, RefreshIntent
 from runtime.refresh_policy import (
     AdmissionState, DueCandidate, ResourceTier, evaluate_data_due, evaluate_presentation_due,
 )
+
+# Plugins whose live refresh renders the whole page through the same provider path as a data
+# refresh (no intent-specific narrowing), so a live success also renews the data lane. The
+# box-office pages are not here: their live refresh only renews media.
+LIVE_REFRESH_RENEWS_DATA = frozenset({"sports_dashboard"})
 from runtime.runtime_state import InstanceRuntimeState, RefreshLane
 
 if TYPE_CHECKING:
@@ -51,6 +56,7 @@ class InstanceDueInput:
     provider_presentation: bool = False
     theme_mode: str | None = None
     refresh_data_before_display: bool = False
+    live_refresh_renews_data: bool = False
 
 
 @dataclass(frozen=True)
@@ -71,8 +77,9 @@ def collect_due_candidates(inputs: Sequence[InstanceDueInput], *, now: datetime)
             # The display transaction owns this provider request, including a
             # cold start. A saved interval must not also schedule background I/O.
             continue
+        state = _with_live_data_freshness(item.state, now) if item.live_refresh_renews_data else item.state
         evaluation = evaluate_data_due(
-            item.instance, item.state, item.has_cache, now,
+            item.instance, state, item.has_cache, now,
             first_due_since=item.first_due_since,
         )
         if evaluation.next_due_at is not None:
@@ -92,6 +99,32 @@ def collect_due_candidates(inputs: Sequence[InstanceDueInput], *, now: datetime)
         if evaluation.candidate is not None and not presentation_due:
             data.append(evaluation.candidate)
     return DueCandidates(tuple(data), tuple(presentations), tuple(wakeups), tuple(invalid))
+
+
+def _with_live_data_freshness(state: InstanceRuntimeState, now: datetime) -> InstanceRuntimeState:
+    """``state`` with a newer live success counted as the data lane's last success.
+
+    Without this the data lane, which only knew its own successes, fetched the sports page
+    again about a minute after every live refresh had just done the same work.
+    """
+    live_text, data_text = state.live.last_success_at, state.data.last_success_at
+    live = _parse_time(live_text, now)
+    if live is None:
+        return state
+    data = _parse_time(data_text, now)
+    if data is not None and data.timestamp() >= live.timestamp():
+        return state
+    return replace(state, data=replace(state.data, last_success_at=live_text))
+
+
+def _parse_time(value: str | None, now: datetime) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return align_datetime_tz(parsed, now)
 
 
 def align_datetime_tz(value: datetime, reference: datetime) -> datetime:
