@@ -60,6 +60,10 @@ JUSTIFY_GAP_MAX = 12
 WEEKDAYS = "一二三四五六日"
 
 
+# How far a market sparkline's direction arrow carries on beyond the line's last close.
+TREND_ARROW_LENGTH = 8
+
+
 class NewsPage:
     def __init__(self, plugin, image, palette, font_family):
         self.p = plugin
@@ -373,22 +377,26 @@ class NewsPage:
             return
         low, high = min(values), max(values)
         span = (high - low) or 1
+        # With an arrow to come, the line stops short so the arrow carries on from its end.
+        arrow = mark is not None and rising is not None
+        line_right = right - TREND_ARROW_LENGTH if arrow else right
         points = [
-            (left + (right - left) * index / (len(values) - 1), bottom - (bottom - top) * (value - low) / span)
+            (left + (line_right - left) * index / (len(values) - 1), bottom - (bottom - top) * (value - low) / span)
             for index, value in enumerate(values)
         ]
         self.d.line(points, fill=self.c["ink"], width=1)
         end_x, end_y = points[-1]
-        if mark is None or rising is None:
+        if not arrow:
             self.d.ellipse((end_x - 3, end_y - 3, end_x + 3, end_y + 3), fill=mark or self.c["ink"])
             return
-        self.trend_arrow((end_x + 3, end_y), rising, mark)
+        self.trend_arrow((end_x, end_y), rising, mark)
 
-    def trend_arrow(self, tip, rising, colour, length=9, head=5):
-        """A small arrow slanting up-right (rising) or down-right, its point at tip."""
-        tip_x, tip_y = tip
+    def trend_arrow(self, tail, rising, colour, length=TREND_ARROW_LENGTH, head=5):
+        """An arrow carrying on from the line's end at tail, slanting up-right (rising) or down-right."""
+        tail_x, tail_y = tail
         slope = -1 if rising else 1
-        self.d.line(((tip_x - length, tip_y - slope * length), (tip_x - 2, tip_y - slope * 2)), fill=colour, width=2)
+        tip_x, tip_y = tail_x + length, tail_y + slope * length
+        self.d.line(((tail_x, tail_y), (tip_x - 2, tip_y - slope * 2)), fill=colour, width=2)
         self.d.polygon(((tip_x, tip_y), (tip_x - head, tip_y), (tip_x, tip_y - slope * head)), fill=colour)
 
 

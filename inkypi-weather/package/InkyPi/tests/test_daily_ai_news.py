@@ -2864,13 +2864,14 @@ def test_the_drawn_seal_and_glyphs_stand_in_when_the_badges_are_missing(monkeypa
     assert image.getpixel((22, 100)) == daily_ai_news_module.PAGE_DAY_COLOURS["lead"]
 
 
-def test_trend_arrows_slant_up_right_and_down_right():
+def test_trend_arrows_carry_on_from_the_line_end_up_right_or_down_right():
     image = Image.new("RGB", (40, 30), (255, 255, 255))
     page = news_layout.NewsPage.__new__(news_layout.NewsPage)
     page.d = ImageDraw.Draw(image)
-    page.trend_arrow((30, 15), True, (200, 0, 0))
-    page.trend_arrow((14, 15), False, (0, 150, 0))
+    page.trend_arrow((20, 22), True, (200, 0, 0))
+    page.trend_arrow((4, 8), False, (0, 150, 0))
 
-    # Rising: the tail sits down-left of the point; falling: up-left of it.
-    assert image.getpixel((22, 22)) == (200, 0, 0) and image.getpixel((30, 15)) == (200, 0, 0)
-    assert image.getpixel((7, 8)) == (0, 150, 0) and image.getpixel((22, 8)) == (255, 255, 255)
+    # The arrow starts at the line's end and points away from it.
+    assert image.getpixel((20, 22)) == (200, 0, 0) and image.getpixel((28, 14)) == (200, 0, 0)
+    assert image.getpixel((5, 9)) == (0, 150, 0) and image.getpixel((12, 16)) == (0, 150, 0)
+    assert image.getpixel((12, 8)) == (255, 255, 255)
