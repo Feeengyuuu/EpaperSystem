@@ -20,6 +20,7 @@ from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     read_source_provenance,
 )
+from plugins.live_radar import comic_art
 from plugins.live_radar.live_radar import (
     DEFAULT_ROOMS_TEXT,
     HEADER_ART_FILE,
@@ -1695,7 +1696,7 @@ def test_theme_uses_original_day_palette_over_conflicting_legacy_alias():
     theme = plugin._theme({"themeMode": "dark", "_inkypi_theme": context}, FakeDeviceConfig(mode="night"))
 
     assert theme["mode"] == "light"
-    assert theme["bg"] == (255, 255, 255)
+    assert theme["comic"] is True and theme["bg"] == comic_art.PAPER
     assert theme["panel"] == (255, 255, 255)
     assert theme["ink"] == (0, 0, 0)
     assert theme["muted"] == (0, 0, 0)
@@ -1727,7 +1728,7 @@ def test_render_themed_image_accepts_frozen_scheduler_theme_context():
         resolved_theme_context=freeze_payload(context),
     )
 
-    assert image.getpixel((0, 0)) == (255, 255, 255)
+    assert image.getpixel((0, 0)) == comic_art.PAPER
 
 
 def test_theme_only_stale_status_cache_rerenders_without_provider_calls():
@@ -1787,7 +1788,7 @@ def test_theme_only_stale_status_cache_rerenders_without_provider_calls():
     night_image = plugin.generate_image({**settings, "_theme_render_only": True, "_inkypi_theme": night}, FakeDeviceConfig(mode="day"))
 
     assert calls == {"statuses": 1}
-    assert day_image.getpixel((0, 0)) == (255, 255, 255)
+    assert day_image.getpixel((0, 0)) == comic_art.PAPER
     assert night_image.getpixel((0, 0)) == night["palette"]["background"]
     assert hashlib.sha256(day_image.tobytes()).digest() != hashlib.sha256(night_image.tobytes()).digest()
 
@@ -2010,7 +2011,8 @@ def test_section_title_wordmark_assets_are_transparent_measured_strips():
 
 def test_section_title_wordmark_offsets_count_pill(monkeypatch):
     plugin = _plugin()
-    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
+    # The plain (non-comic) title: wordmark, then the count pill.
+    theme = {**plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day")), "comic": False}
     image = Image.new("RGB", (180, 60), theme["bg"])
     draw = ImageDraw.Draw(image)
     source = Image.new("RGBA", SECTION_TITLE_WORDMARK_SIZE, (0, 0, 0, 255))
@@ -2024,6 +2026,44 @@ def test_section_title_wordmark_offsets_count_pill(monkeypatch):
     assert image.getpixel((14, 20)) != theme["bg"]
     assert seen["text"] == "5"
     assert seen["box"][0] == 10 + SECTION_TITLE_WORDMARK_SIZE[0] + 8
+
+def test_comic_section_title_sits_on_an_ink_tab_with_a_coloured_count():
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
+    image = Image.new("RGB", (220, 60), theme["bg"])
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_section_title(image, draw, 10, 20, "OFFLINE", 51, theme, plugin._font(13, "bold"))
+
+    title_w = SECTION_TITLE_WORDMARK_SIZES["OFFLINE"][0]
+    assert image.getpixel((7, 37)) == comic_art.INK  # the tab, left of the white lettering
+    assert any(pixel == (255, 255, 255) for pixel in image.crop((10, 18, 10 + title_w, 40)).get_flattened_data())
+    badge = set(image.crop((10 + title_w + 5, 14, 10 + title_w + 40, 40)).get_flattened_data())
+    assert comic_art.SECTION_COUNT_FILLS["OFFLINE"] in badge and comic_art.INK in badge
+
+
+def test_comic_ink_shadow_lies_only_below_and_right_of_its_box():
+    image = Image.new("RGB", (60, 60), comic_art.PAPER)
+    box = (10, 10, 40, 30)
+
+    comic_art.ink_shadow(image, box, 6)
+
+    assert image.getpixel((25, 32)) == comic_art.INK and image.getpixel((42, 20)) == comic_art.INK
+    assert image.getpixel((25, 20)) == comic_art.PAPER  # the box itself is left alone
+    assert image.getpixel((25, 8)) == comic_art.PAPER and image.getpixel((8, 20)) == comic_art.PAPER
+
+
+def test_comic_halftone_band_tints_follow_the_cards_and_fade_at_its_edges():
+    image = Image.new("RGB", (200, 40), comic_art.PAPER)
+
+    comic_art.halftone_band(image, (0, 0, 200, 40), [(40, (255, 119, 0)), (160, (0, 174, 236))])
+
+    left = set(image.crop((0, 15, 30, 25)).get_flattened_data()) - {comic_art.PAPER}
+    right = set(image.crop((170, 15, 200, 25)).get_flattened_data()) - {comic_art.PAPER}
+    assert left and all(red > blue for red, _green, blue in left)
+    assert right and all(blue > red for red, _green, blue in right)
+    assert set(image.crop((0, 0, 200, 2)).get_flattened_data()) == {comic_art.PAPER}
+
 
 def test_dashboard_uses_generated_wordmark_instead_of_plain_header_text(monkeypatch):
     plugin = _plugin()

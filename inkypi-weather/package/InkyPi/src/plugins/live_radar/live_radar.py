@@ -23,7 +23,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
-from plugins.live_radar import placeholder_art
+from plugins.live_radar import comic_art, placeholder_art
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
@@ -1308,6 +1308,10 @@ class LiveRadar(BasePlugin):
             theme,
         )
         header_rule_y = max(73, logo_y + logo_size + 6)
+        if theme.get("comic") and live_cards:
+            # The page's one line of voice, pointing up at the LIVE counter.
+            comic_art.speech_bubble(draw, width - margin, 49, comic_art.BUBBLE_TEXT,
+                                    self._font(10, "bold"), status_left + 26)
         if wordmark_box is not None:
             title_right = wordmark_box[2]
         else:
@@ -1384,6 +1388,10 @@ class LiveRadar(BasePlugin):
             live_visible = live_cards[:live_limit]
             gap = max(8, int(width * 0.012))
             card_w = int((width - 2 * margin - gap * (len(live_visible) - 1)) / len(live_visible))
+            if theme.get("comic"):
+                stops = [(margin + i * (card_w + gap) + card_w / 2, self._brand_line(card, (150, 150, 150)))
+                         for i, card in enumerate(live_visible)]
+                comic_art.halftone_band(image, (0, top_y - 6, width, top_y + top_h + 12), stops, theme["bg"])
             for i, card in enumerate(live_visible):
                 x = margin + i * (card_w + gap)
                 self._draw_card(
@@ -1397,6 +1405,8 @@ class LiveRadar(BasePlugin):
                     snapshot_cache_seconds=snapshot_cache_seconds,
                     avatar_cache_seconds=avatar_cache_seconds,
                 )
+                if theme.get("comic"):
+                    comic_art.ink_shadow(image, (x, top_y, x + card_w, top_y + top_h), 8)
             overflow_cards = self._top_live_overflow_cards(live_cards, len(live_visible), live_queue_count)
             if overflow_cards:
                 section_right = (
@@ -1489,6 +1499,9 @@ class LiveRadar(BasePlugin):
             footer_parts.append(warning.lower())
         footer = " / ".join(footer_parts)
         draw.line((margin, footer_y - 5, width - margin, footer_y - 5), fill=theme["line"], width=1)
+        if theme.get("comic"):
+            footer_box = draw.textbbox((margin, footer_y), "FOR LEARNING & RESEARCH ONLY", font=small_font)
+            comic_art.highlighter(draw, footer_box[0], footer_box[2], footer_box[3])
         draw.text((margin, footer_y), "FOR LEARNING & RESEARCH ONLY", fill=theme["muted"], font=small_font)
         self._draw_text_right(draw, footer, width - margin, footer_y, small_font, theme["muted"])
         return image
@@ -1867,6 +1880,8 @@ class LiveRadar(BasePlugin):
             draw.line((left + 8, edge, right - 8, edge), fill=theme["line"], width=1)
         self._clip_outside_round(image, frame, LIVE_QUEUE_RADIUS, theme["bg"])
         self._rounded_rectangle(draw, frame, radius=LIVE_QUEUE_RADIUS, outline=theme["line"], width=1)
+        if theme.get("comic"):
+            comic_art.ink_shadow(image, frame, LIVE_QUEUE_RADIUS)
         if len(cards) > len(visible):
             self._draw_text_right(draw, f"+{len(cards) - len(visible)}", x + w, y, sub_font, theme["muted"])
         return len(visible)
@@ -2000,6 +2015,8 @@ class LiveRadar(BasePlugin):
                                     width=REPLAY_FRAME_WIDTH)
         else:
             self._rounded_rectangle(draw, wall, radius=LIVE_QUEUE_RADIUS, outline=theme["line"], width=1)
+        if theme.get("comic"):
+            comic_art.ink_shadow(image, wall, LIVE_QUEUE_RADIUS)
 
         if len(cards) > len(visible):
             self._draw_text_right(draw, f"+{len(cards) - len(visible)}", x + w, y, sub_font, theme["muted"])
@@ -2395,6 +2412,8 @@ class LiveRadar(BasePlugin):
         status = card["status"]
         fill, ink, muted, line = self._card_palette(status, theme)
         self._rounded_rectangle(draw, (x, y, x + w, y + h), radius=6, fill=fill, outline=self._brand_line(card, line), width=1)
+        if theme.get("comic"):
+            comic_art.ink_shadow(image, (x, y, x + w, y + h), 6, offset=2)
         draw.line((x + 5, y + 7, x + 5, y + h - 7), fill=ink, width=1)
 
         platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
@@ -2528,6 +2547,8 @@ class LiveRadar(BasePlugin):
         draw.text((x + 24, y + h - 27), "Waiting for the next broadcast window", fill=theme["muted"], font=self._font(13))
 
     def _draw_section_title(self, image, draw, x, y, title, count, theme, font):
+        if theme.get("comic"):
+            return self._draw_comic_section_title(image, draw, x, y, title, count, theme, font)
         title_w = self._paste_section_title_wordmark(image, x, y, title, theme)
         if title_w is None:
             draw.text((x, y), title, fill=theme["ink"], font=font)
@@ -2544,6 +2565,20 @@ class LiveRadar(BasePlugin):
             ink=theme["bg"],
             outline=theme["ink"],
         )
+
+    def _draw_comic_section_title(self, image, draw, x, y, title, count, theme, font):
+        """The title in paper white on an ink tab, its count in a coloured circle."""
+        normalized = str(title or "").upper()
+        target_w, _target_h = SECTION_TITLE_WORDMARK_SIZES.get(normalized, SECTION_TITLE_WORDMARK_SIZE)
+        has_wordmark = self._load_section_title_wordmark(normalized) is not None
+        title_w = target_w if has_wordmark else draw.textlength(title, font=font)
+        comic_art.ink_tab(draw, (x - 4, y - 3, x + title_w + 5, y + 19))
+        if self._paste_section_title_wordmark(image, x, y, title, {"mode": "dark", "ink": comic_art.WHITE}) is None:
+            draw.text((x, y), title, fill=comic_art.WHITE, font=font)
+        fill = comic_art.SECTION_COUNT_FILLS.get(normalized, STATUS_TOTAL_FILLS["live"])
+        count_text = str(count)
+        radius = max(10, int(draw.textlength(count_text, font=font) / 2) + 5)
+        comic_art.count_badge(draw, (x + title_w + 5 + radius, y + 8), count_text, font, fill)
 
     def _paste_section_title_wordmark(self, image, x, y, title, theme):
         normalized = str(title or "").upper()
@@ -2584,7 +2619,13 @@ class LiveRadar(BasePlugin):
             x -= w
             left_edge = min(left_edge, x)
             fill, ink, line = self._status_total_palette(kind, theme)
-            self._draw_pill(draw, (x, y, x + w, y + 25), text, font, fill=fill, ink=ink, outline=line)
+            if theme.get("comic"):
+                # Ticket stubs: an ink rim and a hard ink shadow.
+                self._rounded_rectangle(draw, (x + 2, y + 2, x + w + 2, y + 27), radius=6, fill=comic_art.INK)
+                self._rounded_rectangle(draw, (x, y, x + w, y + 25), radius=6, fill=fill, outline=comic_art.INK, width=2)
+                self._draw_pill(draw, (x + 1, y + 1, x + w - 1, y + 24), text, font, fill=fill, ink=ink, outline=fill)
+            else:
+                self._draw_pill(draw, (x, y, x + w, y + 25), text, font, fill=fill, ink=ink, outline=line)
             x -= 7
         return left_edge
 
@@ -2981,7 +3022,9 @@ class LiveRadar(BasePlugin):
         if context.get("mode") != "night":
             return {
                 "mode": "light",
-                "bg": (255, 255, 255),
+                # The light page is printed comic: cream paper under white cards.
+                "comic": True,
+                "bg": comic_art.PAPER,
                 "ink": (0, 0, 0),
                 "muted": (0, 0, 0),
                 "line": (0, 0, 0),
