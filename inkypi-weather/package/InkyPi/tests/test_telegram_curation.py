@@ -207,3 +207,37 @@ def test_wrap_never_starts_a_line_with_closing_punctuation(tmp_path):
         assert all(line[:1] not in "，。、" for line in lines[1:]), (width, lines)
         assert all(plugin._text_width(draw, line, font) <= width for line in lines)
         assert "".join(lines).replace(" ", "") == text.replace(" ", "")
+
+
+def test_click_bait_and_shortened_links_count_as_ads_but_one_plain_link_does_not():
+    rules = Rules({})
+    spam = ("Click On The Link To Watch Now Watch Link 1 https://lockr.so/nFQD2Zho8 Watch Link 2 "
+            "https://fast-links.org/s?reM8RSw6 VIP Zone - Tap Now for Exclusive Leaks")
+
+    assert rules.ad_reason(message("a", spam)) == "诱导点击"
+    assert rules.ad_reason(message("b", "new drop https://bit.ly/a and https://cutt.ly/b")) == "推广链接"
+    assert rules.ad_reason(message("c", "完整版点击观看")) == "诱导点击"
+    assert rules.ad_reason(message("d", "泡泡 v1.5.1 更新！详见 https://example.com/release")) == ""
+    assert rules.ad_reason(message("e", "commonlyfansubbed anime season")) == ""
+    assert rules.ad_reason(message("f", "click on the link I sent you", kind="private", chat="妈妈")) == ""
+
+
+def test_rows_name_the_chat_kind_by_icon_and_mark_important_stories(tmp_path):
+    plugin = TelegramDigest({"id": "telegram_digest"})
+    image = Image.new("RGB", (800, 480), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    plugin._sx = plugin._sy = plugin._page_scale = 1
+    palette = plugin._palette({"mode": "day"})
+    pasted = []
+    original = plugin._paste_icon
+
+    def record(image, name, x, y, size):
+        pasted.append(name)
+        return original(image, name, x, y, size)
+
+    plugin._paste_icon = record
+    for kind, score in (("private", 90), ("group", 40), ("channel", 85)):
+        item = {**message(kind, "正文", kind=kind), "curation": {"score": score, "tag": "时事"}}
+        plugin._draw_story_row(image, draw, item, (486, 72, 786, 128), palette)
+
+    assert pasted == ["important", "kind_private", "kind_group", "important", "kind_channel"]

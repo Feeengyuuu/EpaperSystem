@@ -45,6 +45,22 @@ AD_KEYWORDS = re.compile(
     )),
     re.IGNORECASE,
 )
+# Click-bait that sells a link: "click on the link to watch now", "VIP zone", leaked videos.
+CLICK_BAIT = re.compile(
+    "|".join((
+        r"click\s+(?:on\s+)?(?:the\s+)?link", r"watch\s+(?:now|link|full)", r"tap\s+now", r"vip\s+zone",
+        r"exclusive\s+leaks?", r"leak(?:ed|s)?\s+(?:video|link)", r"full\s+video", r"link\s+in\s+bio",
+        r"\bonly\s*fans\b", r"免费观看", r"完整版", r"看完整", r"福利视频", r"资源合集", r"点击观看",
+        r"链接在评论", r"戳链接",
+    )),
+    re.IGNORECASE,
+)
+# Link shorteners and click-through pages that spam posts hide their targets behind.
+SHORT_LINK = re.compile(
+    r"https?://(?:www\.)?(?:lockr\.so|fast-links\.org|bit\.ly|cutt\.ly|tinyurl\.com|shorturl\.at|t\.ly|is\.gd|"
+    r"ouo\.io|shrinkme\.io|adf\.ly|exe\.io|linktr\.ee|lnk\.bio|rebrand\.ly|bitly\.ws)/\S*",
+    re.IGNORECASE,
+)
 INVITE_LINK = re.compile(r"(?:t\.me|telegram\.me)/(?:\+|joinchat/)", re.IGNORECASE)
 LINK = re.compile(r"https?://\S+|(?<![\w.])t\.me/\S+", re.IGNORECASE)
 MENTION = re.compile(r"(?<![\w@])@[A-Za-z][A-Za-z0-9_]{3,}")
@@ -133,6 +149,10 @@ class Rules:
             return "邀请链接"
         if AD_KEYWORDS.search(text):
             return "广告"
+        if CLICK_BAIT.search(text):
+            return "诱导点击"
+        if len(SHORT_LINK.findall(text)) >= 2:
+            return "推广链接"
         if len(LINK.findall(text)) >= 3 or len(MENTION.findall(text)) >= 4:
             return "链接过多"
         if item.get("has_buttons") and (LINK.search(text) or MENTION.search(text)):

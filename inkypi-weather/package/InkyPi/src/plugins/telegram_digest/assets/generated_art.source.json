@@ -1,0 +1,22 @@
+{
+  "model": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "4370e7d7-29b3-4474-a6a2-86facfb0cdd0",
+  "generated_at": "2026-10-24",
+  "prompt_summary": "Four flat icons, a white glyph on a coloured rounded square: megaphone on blue (channel), three people on teal (group), speech bubble with a person on violet (private chat), exclamation in a flame on red (important); transparent 1536x512.",
+  "processing": "Alpha below 40 cleared, cut at the transparent gaps, centred on a square and scaled to 48 px (outputs/telegram-distinct-20261024/prep_icons.py).",
+  "source_sha256": "318928bff4841b03a5bddc8ececdb7edf1d4d379819f67c8026b94c6ad33aba1",
+  "files": {
+    "kind_channel.png": {
+      "sha256": "95dcd45316caae55863070b1e302ef511648ae736f94afe1c74d5059914d599c"
+    },
+    "kind_group.png": {
+      "sha256": "18e0cab2c9eea38c6354e43eaec303370981781fea0ebdb88812ed61fb563f89"
+    },
+    "kind_private.png": {
+      "sha256": "1605014e384fa8346cb4c99a5c671b46c5913e6bdf77785c53841d274636c39d"
+    },
+    "important.png": {
+      "sha256": "27224c6782fe658f394552c62d7a93391150d5fb08731ae2915d836a2bb43329"
+    }
+  }
+}

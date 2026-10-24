@@ -8,6 +8,7 @@ coordinate is laid out for 800x480 and scaled to the panel.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
@@ -17,6 +18,11 @@ from plugins.telegram_digest.curation import VISIBLE_COUNT, display_headline, di
 LIST_ROWS = VISIBLE_COUNT - 1
 PORTRAIT_RATIO = 1.05
 KIND_LABELS = {"private": "私聊", "group": "群聊", "channel": "频道"}
+ASSETS = Path(__file__).resolve().parent / "assets"
+# Each story's source line starts with its chat's kind as a generated icon (megaphone for a
+# channel, people for a group, a speech bubble for a private chat); a story scored this
+# high carries the red 重要 mark before its headline.
+IMPORTANT_SCORE = 80
 DEFAULT_REFRESH_LABEL = "每次上屏前刷新"
 # Saved before this page existed; they now read as the Chinese default.
 LEGACY_REFRESH_LABELS = {"refresh on display", "下一次刷新 轮到展示时"}
@@ -30,6 +36,18 @@ NIGHT_TAG_COLOURS = {
     "体育": (96, 214, 220), "本地": (240, 196, 92), "生活": (226, 150, 226), "娱乐": (255, 140, 190),
     "私聊": (196, 160, 255), "群聊": (96, 214, 220), "其他": (178, 184, 192),
 }
+
+
+@lru_cache(maxsize=12)
+def _page_icon(name, size):
+    path = ASSETS / f"{name}.png"
+    if not path.is_file():
+        return None
+    try:
+        with Image.open(path) as source:
+            return source.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+    except OSError:
+        return None
 
 
 class BriefingPageMixin:
@@ -136,16 +154,16 @@ class BriefingPageMixin:
             box = (x0, y0, x0 + self._x(176), y1)
             self._paste_media(image, picture, box, p, centering=(0.5, 0.15))
             self._draw_media_badges(draw, item, box, p, colour)
-            self._draw_lead_text(draw, item, p, (box[2] + self._x(14), y0, x1, y1), 22, 3, 10)
+            self._draw_lead_text(image, draw, item, p, (box[2] + self._x(14), y0, x1, y1), 22, 3, 10)
         elif picture is not None:
             box = (x0, y0, x1, y0 + self._y(214))
             self._paste_media(image, picture, box, p, featured=True)
             self._draw_media_badges(draw, item, box, p, colour)
-            self._draw_lead_text(draw, item, p, (x0, box[3] + self._y(10), x1, y1), 24, 2, 3, show_tag=False)
+            self._draw_lead_text(image, draw, item, p, (x0, box[3] + self._y(10), x1, y1), 24, 2, 3, show_tag=False)
         else:
-            self._draw_lead_text(draw, item, p, (x0, y0, x1, y1), 30, 3, 9)
+            self._draw_lead_text(image, draw, item, p, (x0, y0, x1, y1), 30, 3, 9)
 
-    def _draw_lead_text(self, draw, item, p, box, headline_size, headline_lines, summary_lines, show_tag=True):
+    def _draw_lead_text(self, image, draw, item, p, box, headline_size, headline_lines, summary_lines, show_tag=True):
         x0, y0, x1, y1 = box
         colour = self._tag_colour(item, p)
         y = y0
@@ -169,7 +187,9 @@ class BriefingPageMixin:
             y += line_h
         meta = self._story_meta(item, with_tag=False)
         meta_font = self._f(12, "bold")
-        draw.text((x0, meta_y), self._fit_text(draw, meta, meta_font, x1 - x0 - self._x(44)), font=meta_font, fill=p["muted"])
+        meta_x = self._paste_marks(image, item, x0, meta_y, self._x(16))
+        draw.text((meta_x, meta_y), self._fit_text(draw, meta, meta_font, x1 - meta_x - self._x(44)), font=meta_font,
+                  fill=p["muted"])
         self._score_dots(draw, x1 - self._x(32), meta_y + self._y(8), item, colour, p)
 
     def _draw_media_badges(self, draw, item, box, p, colour):
@@ -219,7 +239,10 @@ class BriefingPageMixin:
             text_right = thumb[0] - self._x(8)
         width = text_right - text_x
         headline_font = self._f(15, "bold")
-        draw.text((text_x, y0), self._fit_text(draw, display_headline(item), headline_font, width),
+        headline_x = text_x
+        if self._important(item):
+            headline_x += self._paste_icon(image, "important", text_x, y0 + self._y(1), self._x(17)) + self._x(5)
+        draw.text((headline_x, y0), self._fit_text(draw, display_headline(item), headline_font, text_right - headline_x),
                   font=headline_font, fill=p["ink"])
         summary = display_summary(item)
         if summary:
@@ -227,10 +250,40 @@ class BriefingPageMixin:
             draw.text((text_x, y0 + self._y(21)), self._fit_text(draw, summary, body_font, width),
                       font=body_font, fill=p["ink"])
         meta_font = self._f(11, "bold")
-        draw.text((text_x, y0 + self._y(39)), self._fit_text(draw, self._story_meta(item), meta_font, width),
-                  font=meta_font, fill=colour)
+        meta_y = y0 + self._y(39)
+        icon_w = self._paste_icon(image, self._kind_icon(item), text_x, meta_y, self._x(14))
+        meta_x = text_x + (icon_w + self._x(4) if icon_w else 0)
+        # The source line in ink: the topic's colour is the bar on the left, small text stays plain.
+        draw.text((meta_x, meta_y), self._fit_text(draw, self._story_meta(item), meta_font, text_right - meta_x),
+                  font=meta_font, fill=p["muted"])
 
     # --- pieces -------------------------------------------------------------------
+
+    def _paste_icon(self, image, name, x, y, size):
+        """Paste a page icon; returns its width (0 when the asset is missing)."""
+        icon = _page_icon(name, max(8, int(size)))
+        if icon is None:
+            return 0
+        image.paste(icon, (int(x), int(y)), icon)
+        return icon.width
+
+    def _paste_marks(self, image, item, x, y, size):
+        """The kind icon, then the 重要 mark when it applies; returns where the text goes."""
+        width = self._paste_icon(image, self._kind_icon(item), x, y, size)
+        x += width + self._x(4) if width else 0
+        if self._important(item):
+            width = self._paste_icon(image, "important", x, y, size)
+            x += width + self._x(4) if width else 0
+        return x
+
+    @staticmethod
+    def _kind_icon(item):
+        kind = str(item.get("chat_kind") or "")
+        return f"kind_{kind}" if kind in KIND_LABELS else "kind_channel"
+
+    @staticmethod
+    def _important(item):
+        return int((item.get("curation") or {}).get("score") or 0) >= IMPORTANT_SCORE
 
     def _chip(self, draw, x, y, text, fill, font, align_right=False):
         pad = self._x(7)
