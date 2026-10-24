@@ -89,6 +89,8 @@ CARD_ACCENTS = {
     "holdings": KIND_COLOURS["持仓"],
 }
 ACCENT_BAR = 6
+# The market tiles' title row, clear of the colour bar along their top (60-66).
+TITLE_Y = 83
 TILES = ((12, 200), (206, 394), (400, 588), (594, 788))
 
 
@@ -188,12 +190,12 @@ def _tile_frame(canvas, left, right, title, mark=None, mark_text=None, accent=No
     _accent_bar(canvas, (left, 60, right, 196), accent)
     x = left + 10
     if mark is not None:
-        x += _paste(canvas, mark, (x, 68)) + 6
+        x += _paste(canvas, mark, (x, TITLE_Y - 11)) + 6
     elif mark_text:
-        canvas.draw.rounded_rectangle((x, 68, x + 22, 90), radius=5, fill=canvas.color("ink"))
-        canvas.text((x + 11, 79), mark_text, 13, "paper", anchor="mm")
+        canvas.draw.rounded_rectangle((x, TITLE_Y - 11, x + 22, TITLE_Y + 11), radius=5, fill=canvas.color("ink"))
+        canvas.text((x + 11, TITLE_Y), mark_text, 13, "paper", anchor="mm")
         x += 28
-    canvas.text((x, 79), title, 14, anchor="lm", width=right - x - 8)
+    canvas.text((x, TITLE_Y), title, 14, anchor="lm", width=right - x - 8)
 
 
 def _fx_tile(canvas, payload, box):
@@ -203,13 +205,13 @@ def _fx_tile(canvas, payload, box):
     us, cn = _asset("flag-us", 14), _asset("flag-cn", 14)
     _tile_frame(canvas, left, right, "美元/人民币", accent=CARD_ACCENTS["fx"])
     flag_x = right - 10 - (us.width if us else 0) - (cn.width if cn else 0) - 4
-    _paste(canvas, us, (flag_x, 72))
-    _paste(canvas, cn, (flag_x + (us.width if us else 0) + 4, 72))
+    _paste(canvas, us, (flag_x, TITLE_Y - 7))
+    _paste(canvas, cn, (flag_x + (us.width if us else 0) + 4, TITLE_Y - 7))
     if len(series) < 2:
         canvas.text((left + 10, 120), "汇率暂不可用", 15, "muted", anchor="lm")
         return
     latest, first = series[-1][1], series[0][1]
-    canvas.text((left + 10, 112), f"{latest:.4f}", 28, anchor="lm")
+    canvas.text((left + 10, 114), f"{latest:.4f}", 28, anchor="lm")
     change = (latest / first - 1) * 100
     _change_line(canvas, (left + 10, 138), change, f"{change:+.2f}%", f"{len(series)} 个交易日")
     sparkline(canvas, (left + 12, 150, right - 12, 176), [value for _day, value in series], CARD_ACCENTS["fx"])
@@ -226,8 +228,8 @@ def _coin_tile(canvas, coin, box):
     name = COIN_NAMES.get(coin["id"], coin.get("name") or coin["symbol"])
     _tile_frame(canvas, left, right, name, _asset(f"coin-{coin['id']}", 22), coin["symbol"][:2],
                 accent=CARD_ACCENTS.get(coin["id"], "ink"))
-    canvas.text((right - 10, 79), coin["symbol"], 12, "muted", anchor="rm", bold=False)
-    canvas.text((left + 10, 112), price_text(coin["price"]), 28, anchor="lm", width=right - left - 20)
+    canvas.text((right - 10, TITLE_Y), coin["symbol"], 12, "muted", anchor="rm", bold=False)
+    canvas.text((left + 10, 114), price_text(coin["price"]), 28, anchor="lm", width=right - left - 20)
     day, week = coin.get("change_24h"), coin.get("change_7d")
     _change_line(canvas, (left + 10, 138), day, f"{day:+.2f}%" if day is not None else "—", "24 小时")
     color = canvas.color("up" if (week or 0) >= 0 else "down")
@@ -247,7 +249,7 @@ def _yield_tile(canvas, payload, box):
     if not ten:
         canvas.text((left + 10, 120), "利率暂不可用", 15, "muted", anchor="lm")
         return
-    canvas.text((left + 10, 112), f"{ten['last']:.2f}%", 28, anchor="lm")
+    canvas.text((left + 10, 114), f"{ten['last']:.2f}%", 28, anchor="lm")
     change_bp = (ten["last"] - ten["month_ago"]) * 100
     _change_line(canvas, (left + 10, 138), change_bp, f"{change_bp:+.0f} 基点", "30 天")
     sparkline(canvas, (left + 12, 150, right - 12, 176), ten.get("series"), canvas.color("accent"))
@@ -261,26 +263,26 @@ def _curve(canvas, payload):
     canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
     _accent_bar(canvas, (left, top, right, bottom), CARD_ACCENTS["yield"])
     icon = _asset("macro-curve", MACRO_ICON_SIZE)
-    title_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 14 - icon.height // 2)) + 6 if icon else 0)
-    canvas.text((title_x, top + 14), "美债收益率曲线", 15, anchor="lm")
+    title_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 18 - icon.height // 2)) + 6 if icon else 0)
+    canvas.text((title_x, top + 18), "美债收益率曲线", 15, anchor="lm")
     quotes = payload["markets"]["data"].get("quotes") or {}
     points = [(label, quotes[symbol]) for symbol, label in CURVE_POINTS if symbol in quotes]
     legend_x = right - 10
     for label, color, dashed in (("一个月前", "past", True), ("今天", "accent", False)):
-        width = canvas.text((legend_x, top + 14), label, 11, "muted", anchor="rm", bold=False)
+        width = canvas.text((legend_x, top + 18), label, 11, "muted", anchor="rm", bold=False)
         line_left = legend_x - width - 22
         if dashed:
             for x in range(int(line_left), int(line_left) + 16, 5):
-                canvas.draw.line((x, top + 14, x + 2, top + 14), fill=canvas.color(color), width=2)
+                canvas.draw.line((x, top + 18, x + 2, top + 18), fill=canvas.color(color), width=2)
         else:
-            canvas.draw.line((line_left, top + 14, line_left + 16, top + 14), fill=canvas.color(color), width=2)
+            canvas.draw.line((line_left, top + 18, line_left + 16, top + 18), fill=canvas.color(color), width=2)
         legend_x = line_left - 10
     if len(points) < 2:
         canvas.text(((left + right) / 2, (top + bottom) / 2 + 8), "收益率暂不可用", 14, "muted", anchor="mm")
         return
     values = [quote["last"] for _label, quote in points] + [quote["month_ago"] for _label, quote in points]
     low, high = min(values) - 0.1, max(values) + 0.1
-    plot = (left + 44, top + 40, right - 16, bottom - 22)
+    plot = (left + 44, top + 44, right - 16, bottom - 22)
 
     def y_of(value):
         return plot[3] - (plot[3] - plot[1]) * (value - low) / (high - low)
@@ -336,15 +338,15 @@ def _macro_tiles(canvas, payload):
         _accent_bar(canvas, (left, top, left + 191, top + 58), CARD_ACCENTS.get(key), 5)
         # Each indicator carries its own picture (cart, briefcase, dollar coin, gold bars, bank, house).
         icon = _asset(f"macro-{key}", MACRO_ICON_SIZE)
-        label_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 15 - icon.height // 2)) + 5 if icon else 0)
-        canvas.text((label_x, top + 15), label, 13, anchor="lm", width=left + 118 - label_x)
-        canvas.text((left + 181, top + 15), note, 11, "muted", anchor="rm", bold=False, width=80)
-        canvas.text((left + 10, top + 39), value, 22, anchor="lm")
+        label_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 18 - icon.height // 2)) + 5 if icon else 0)
+        canvas.text((label_x, top + 18), label, 13, anchor="lm", width=left + 118 - label_x)
+        canvas.text((left + 181, top + 18), note, 11, "muted", anchor="rm", bold=False, width=80)
+        canvas.text((left + 10, top + 41), value, 22, anchor="lm")
         if previous is not None:
             change = current - previous
             icon, tone = _direction(change)
-            draw_icon(canvas.draw, icon, (left + 120, top + 33), 11, canvas.color(tone), canvas.color("paper"))
-            canvas.text((left + 135, top + 39), f"{change:+.2f}" if abs(change) < 10 else f"{change:+,.0f}",
+            draw_icon(canvas.draw, icon, (left + 120, top + 35), 11, canvas.color(tone), canvas.color("paper"))
+            canvas.text((left + 135, top + 41), f"{change:+.2f}" if abs(change) < 10 else f"{change:+,.0f}",
                         13, tone, anchor="lm")
     if not tiles:
         canvas.text((594, 268), "宏观数据暂不可用", 14, "muted", anchor="mm")
