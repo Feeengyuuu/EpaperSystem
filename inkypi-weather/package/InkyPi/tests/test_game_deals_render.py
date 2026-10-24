@@ -172,14 +172,19 @@ def test_manifest_cadence_and_display_redraw_do_not_request_provider_refresh():
     assert not manifest["capabilities"].get("allows_display_triggered_provider_refresh", False)
 
 
-def test_the_sale_price_dollar_sign_is_drawn_in_green_with_a_solid_bar():
+def test_the_sale_price_hangs_on_a_yellow_tag_with_a_green_dollar_sign():
+    from plugins.game_deals import render as deals_render
+
     snapshot = DealSnapshot(offers(), NOW, "live", "steam")
-    for mode, green in (("day", (20, 108, 58)), ("night", (52, 199, 110))):
+    green = (20, 108, 58)
+    for mode in ("day", "night"):
         page = render_page(snapshot, {}, theme={"mode": mode}, now=NOW)
         card = page.info["game_deals_layout"][0]
-        text_x, row = card["box"][0] + 160, card["price_row"]
-        sign = [page.getpixel((x, y)) for x in range(text_x, text_x + 14) for y in range(row, row + 28)]
+        sign_x, row = card["box"][0] + 160 + deals_render.PRICE_TAG_PAD[0], card["price_row"]
+        sign = [page.getpixel((x, y)) for x in range(sign_x, sign_x + 14) for y in range(row, row + 28)]
         assert sign.count(green) >= 40, mode
-        # The digits after it stay in the page's ink.
-        digits = [page.getpixel((x, y)) for x in range(text_x + 18, text_x + 60) for y in range(row, row + 28)]
+        # The digits after it are dark ink on the tag's yellow, by day and by night.
+        digits = [page.getpixel((x, y)) for x in range(sign_x + 18, sign_x + 60) for y in range(row, row + 28)]
         assert green not in digits, mode
+        assert digits.count(deals_render.PRICE_TAG) >= 200, mode
+        assert digits.count(deals_render.PRICE_TAG_INK) >= 40, mode

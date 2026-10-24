@@ -21,6 +21,12 @@ ART_SIZE = (150, 62)
 BADGE_SIZE = (58, 28)
 # Room between the emboldened dollar sign and the digits after it.
 DOLLAR_GAP = 2
+# The sale price hangs on a yellow price tag: a pointed left end with a string hole,
+# the price in dark ink on it whatever the page's mode (yellow is one of the panel's own inks).
+PRICE_TAG = (255, 212, 0)
+PRICE_TAG_INK = (8, 12, 10)
+PRICE_TAG_POINT = 9
+PRICE_TAG_PAD = (PRICE_TAG_POINT + 4, 6)
 
 
 def _font(size, bold=False):
@@ -60,6 +66,15 @@ def _draw_dollar(draw, origin, font, colour):
     draw.rectangle((round(middle) - 1, round(baseline + top) - 1, round(middle), round(baseline + bottom) + 1), fill=colour)
 
 
+def _draw_price_tag(draw, box, hole_colour):
+    """A retail price tag: pointed at the left with a punched hole, square at the right."""
+    left, top, right, bottom = box
+    middle = (top + bottom) / 2
+    draw.polygon(((left, middle), (left + PRICE_TAG_POINT, top), (right, top), (right, bottom),
+                  (left + PRICE_TAG_POINT, bottom)), fill=PRICE_TAG)
+    draw.ellipse((left + 5, middle - 2.5, left + 10, middle + 2.5), fill=hole_colour)
+
+
 def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
     if tuple(dimensions) != SIZE:
         raise ValueError("Game Deals layout requires the device's 800x480 landscape display")
@@ -69,8 +84,6 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
     ink = (250, 250, 240) if night else (8, 12, 10)
     muted = (205, 215, 207) if night else (68, 75, 70)
     green = (20, 108, 58)
-    # The sale price's dollar sign: the badge green, lifted at night to read on the dark page.
-    dollar = (52, 199, 110) if night else green
     image = Image.new("RGB", SIZE, background)
     draw = ImageDraw.Draw(image)
     assets = Path(__file__).with_name("assets")
@@ -116,10 +129,13 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         sale = "$" + deal["sale_price"]
         original = "$" + deal["normal_price"]
         original_font = _font(15)
-        price_font = _fitted_font(sale, prices_limit - 8 - DOLLAR_GAP - original_font.getlength(original), 26, 17, True)
-        if price_font.getlength(sale) + DOLLAR_GAP + 8 + original_font.getlength(original) > prices_limit:
-            original_font = _fitted_font(original, prices_limit - 8 - DOLLAR_GAP - price_font.getlength(sale), 15, 11)
-        sale_w = price_font.getlength(sale) + DOLLAR_GAP
+        tag_pad = sum(PRICE_TAG_PAD)
+        price_font = _fitted_font(sale, prices_limit - 8 - DOLLAR_GAP - tag_pad - original_font.getlength(original),
+                                  26, 17, True)
+        if price_font.getlength(sale) + DOLLAR_GAP + tag_pad + 8 + original_font.getlength(original) > prices_limit:
+            original_font = _fitted_font(original, prices_limit - 8 - DOLLAR_GAP - tag_pad - price_font.getlength(sale),
+                                         15, 11)
+        sale_w = price_font.getlength(sale) + DOLLAR_GAP + tag_pad
         original_x = text_x + sale_w + 8
 
         title_height = max(title_font.getbbox("Ag", anchor="lt")[3], title_font.getbbox(line, anchor="lt")[3])
@@ -128,9 +144,11 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         draw.text((text_x, group_top), line, font=title_font, fill=ink, anchor="lt")
         _, sale_top, _, sale_bottom = price_font.getbbox(sale, anchor="ls")
         baseline = price_row + badge_h / 2 - (sale_top + sale_bottom) / 2
-        _draw_dollar(draw, (text_x, baseline), price_font, dollar)
-        draw.text((text_x + price_font.getlength("$") + DOLLAR_GAP, baseline), sale[1:], font=price_font, fill=ink,
-                  anchor="ls")
+        _draw_price_tag(draw, (text_x, price_row - 1, text_x + sale_w, price_row + badge_h + 1), background)
+        price_x = text_x + PRICE_TAG_PAD[0]
+        _draw_dollar(draw, (price_x, baseline), price_font, green)
+        draw.text((price_x + price_font.getlength("$") + DOLLAR_GAP, baseline), sale[1:], font=price_font,
+                  fill=PRICE_TAG_INK, anchor="ls")
         draw.text((original_x, baseline), original, font=original_font, fill=muted, anchor="ls")
         strike_y = round(baseline + original_font.getbbox("0", anchor="ls")[1] / 2)
         draw.line((original_x, strike_y, original_x + int(original_font.getlength(original)), strike_y),
