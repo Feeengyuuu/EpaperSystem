@@ -103,6 +103,18 @@ def test_child_fetch_stops_at_the_task_deadline(tmp_path, fake_telethon, monkeyp
         account_worker.run_account_fetch_in_child(_request(tmp_path), context=context, timeout=120)
 
 
+def test_child_fetch_takes_a_request_larger_than_the_pipe_buffer(tmp_path, fake_telethon):
+    # The device's cache grew past 64 KB once AI verdicts were kept; the child then waited on a
+    # stdin that was never finished (Linux communicate only writes on the call given the input).
+    request = _request(tmp_path)
+    request["cache"] = {"curation": {"ai": {str(index): {"headline": "x" * 200} for index in range(2000)}}}
+    assert len(json.dumps(request)) > 256 * 1024
+
+    payload = account_worker.run_account_fetch_in_child(request, timeout=60)
+
+    assert payload["status"]["source_state"] == "live"
+
+
 def test_child_fetch_without_a_task_gives_up_at_its_own_timeout(tmp_path, fake_telethon, monkeypatch):
     monkeypatch.setenv("FAKE_TELETHON_MODE", "sleep")
 

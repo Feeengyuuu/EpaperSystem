@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -52,29 +53,35 @@ def run_account_fetch_in_child(request, *, context=None, timeout=DEFAULT_TIMEOUT
     )
     request = {**request, "budget_seconds": max(5.0, budget - CHILD_REPLY_RESERVE_SECONDS)}
     pending = json.dumps(request, ensure_ascii=True).encode("utf-8")
+    # The request is fed and the replies drained on threads. Polling communicate(input) does not
+    # work on Linux: only the call that is handed the input writes it, so a request larger than
+    # the pipe buffer (64 KB) was never finished and the child waited on stdin until the deadline.
+    out, err = [], []
+    threads = [threading.Thread(target=_feed, args=(process.stdin, pending), daemon=True),
+               threading.Thread(target=_drain, args=(process.stdout, out), daemon=True),
+               threading.Thread(target=_drain, args=(process.stderr, err), daemon=True)]
+    for thread in threads:
+        thread.start()
     timed_out = False
     try:
-        while True:
-            try:
-                stdout, stderr = process.communicate(pending, timeout=POLL_SECONDS)
+        while process.poll() is None:
+            if context is not None:
+                context.raise_if_cancelled()
+            if time.monotonic() >= deadline:
+                timed_out = True
                 break
-            except subprocess.TimeoutExpired:
-                pending = None
-                if context is not None:
-                    context.raise_if_cancelled()
-                if time.monotonic() >= deadline:
-                    timed_out = True
-                    break
+            time.sleep(POLL_SECONDS)
     except BaseException:
-        process.kill()
-        process.communicate()
+        _stop(process, threads)
         raise
     if timed_out:
-        process.kill()
-        _stdout, stderr = process.communicate()
+        _stop(process, threads)
         # The child's last log line says which step it was still on.
-        last = _last_line(stderr)
+        last = _last_line(b"".join(err))
         raise RuntimeError("Telegram account fetch timed out" + (f" during: {last}" if last else ""))
+    for thread in threads:
+        thread.join(timeout=5)
+    stdout, stderr = b"".join(out), b"".join(err)
     if process.returncode != 0:
         raise RuntimeError(_failure_detail(stderr, process.returncode))
     # The child's own progress lines (how many chats, how long) go to the service journal.
@@ -89,6 +96,33 @@ def run_account_fetch_in_child(request, *, context=None, timeout=DEFAULT_TIMEOUT
     if not isinstance(payload, dict):
         raise RuntimeError("Telegram account worker returned no payload")
     return payload
+
+
+def _feed(stream, data):
+    try:
+        stream.write(data)
+    except (OSError, ValueError):
+        pass  # the child exited or was killed before it read everything
+    finally:
+        try:
+            stream.close()
+        except OSError:
+            pass
+
+
+def _drain(stream, sink):
+    try:
+        for chunk in iter(lambda: stream.read(65536), b""):
+            sink.append(chunk)
+    except (OSError, ValueError):
+        pass
+
+
+def _stop(process, threads):
+    process.kill()
+    process.wait()
+    for thread in threads:
+        thread.join(timeout=5)
 
 
 def _last_line(stderr):
