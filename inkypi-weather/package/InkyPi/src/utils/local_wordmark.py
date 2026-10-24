@@ -13,7 +13,7 @@ _LIMITS = ImageLimits(max_bytes=4 * 1024 * 1024, max_width=2048, max_height=2048
 _MAX_TARGET = (512, 128)
 
 
-@lru_cache(maxsize=3)
+@lru_cache(maxsize=8)
 def _load_fitted_wordmark(path, modified_ns, byte_size, width, height):
     # The stat fields invalidate an edited asset. Only the small fitted image is
     # retained; the decoded source, alpha channel and transparent padding close here.
@@ -37,7 +37,7 @@ def paste_local_wordmark(image, path, box, *, align="center"):
 
     Near-transparent outer dust is excluded from layout and content is only shrunk.
     It is centered vertically, and horizontally unless ``align="left"`` pins it to the
-    box's left edge. At most three small RGBA images remain cached.
+    box's left edge. At most eight small RGBA images (one page's worth) remain cached.
     """
     left, top, right, bottom = box
     width, height = right - left, bottom - top

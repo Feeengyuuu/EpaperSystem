@@ -82,8 +82,9 @@ def test_unusable_asset_returns_false_without_changing_the_canvas(tmp_path, kind
     assert canvas.tobytes() == before
 
 
-def test_three_asset_cache_reuses_fitted_art_and_does_not_retain_decoded_sources(tmp_path, monkeypatch):
-    paths = [tmp_path / f"{index}.png" for index in range(4)]
+def test_bounded_cache_reuses_fitted_art_and_does_not_retain_decoded_sources(tmp_path, monkeypatch):
+    slots = local_wordmark._load_fitted_wordmark.cache_info().maxsize
+    paths = [tmp_path / f"{index}.png" for index in range(slots + 1)]
     for path in paths:
         with Image.new("RGBA", (1024, 256), (15, 35, 65, 255)) as source:
             source.save(path)
@@ -96,12 +97,14 @@ def test_three_asset_cache_reuses_fitted_art_and_does_not_retain_decoded_sources
         return source
 
     monkeypatch.setattr(local_wordmark, "safe_open_image", track_decode)
+    local_wordmark._load_fitted_wordmark.cache_clear()
     canvas = Image.new("RGB", (40, 20))
-    for index in (0, 1, 2, 0, 3, 1):
+    order = list(range(slots)) + [0, slots, 1]
+    for index in order:
         assert local_wordmark.paste_local_wordmark(canvas, paths[index], (0, 0, 40, 20))
-    # Fourth asset evicts the least recently used of the three slots.
-    assert len(decoded) == 5
-    assert local_wordmark._load_fitted_wordmark.cache_info().currsize == 3
+    # The extra asset evicts the least recently used slot (1), so only it is decoded again.
+    assert len(decoded) == slots + 2
+    assert local_wordmark._load_fitted_wordmark.cache_info().currsize == slots
     gc.collect()
     assert all(reference() is None for reference in decoded)
 

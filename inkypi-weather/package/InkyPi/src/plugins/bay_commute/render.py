@@ -26,6 +26,7 @@ KINDS = {"Full": "全部封闭", "One-Way Traffic": "单向交替通行", "Alter
          "Lane": "车道封闭", "Shoulder": "路肩封闭", "Moving": "移动施工"}
 FACILITIES = {"On Ramp": "入口匝道", "Off Ramp": "出口匝道", "Connector": "连接匝道",
               "Ramp": "匝道", "Mainline": "主线", "Conventional Hwy": "道路"}
+ASSETS = Path(__file__).with_name("assets")
 STATES = {"active": "施工中", "scheduled_now": "计划时段中", "planned": "计划"}
 
 
@@ -93,14 +94,16 @@ def draw_shield(canvas, x, y, route):
 
 
 def draw_roads(canvas, payload, now):
-    from .map_view import render_map
+    from .map_view import draw_marker, render_map
 
     source = payload["roads"]
     data = source.get("data", {})
     ranked = rank_roads(data.get("items", []), now)
     rows = select_roads(ranked, now, 3)
-    canvas.text((18, 77), "道路封闭", 29)
-    canvas.text((171, 90), "CALTRANS ‧ D4", 13, "muted")
+    placed = paste_local_wordmark(canvas.image, ASSETS / "section_roads.png", (16, 74, 216, 116), align="left")
+    if not placed:
+        canvas.text((18, 77), "道路封闭", 29)
+    canvas.text((placed[2] + 12 if placed else 171, 90), "CALTRANS ‧ D4", 13, "muted")
     map_image = render_map(rows, size=(184, 282), night=canvas.palette is NIGHT)
     canvas.image.paste(map_image, (18, 124))
     canvas.image.info["bay_map_markers"] = map_image.info.get("markers", [])
@@ -116,11 +119,13 @@ def draw_roads(canvas, payload, now):
         y = 124 + index * 96
         draw_shield(canvas, 214, y + 1, row["route"])
         state = road_state(row, now)
-        badge = f"{index + 1} {STATES[state]}"
-        badge_width = int(canvas.draw.textlength(badge, font=canvas.font(14))) + 12
-        canvas.draw.rounded_rectangle((268, y, 268 + badge_width, y + 24), radius=3,
-                                      fill=canvas.palette["orange"])
-        canvas.text((274, y + 4), badge, 14, "badge_ink", anchor="lt")
+        # The entry's number is the map's own marker, so the two read as one.
+        draw_marker(canvas.draw, 279, y + 12, index + 1, 11, get_base_ui_font(15, bold=True))
+        status = STATES[state]
+        status_width = int(canvas.draw.textlength(status, font=canvas.font(14))) + 12
+        canvas.draw.rounded_rectangle((296, y + 1, 296 + status_width, y + 23), radius=3,
+                                      outline=canvas.palette["orange"], width=2)
+        canvas.text((302, y + 4), status, 14, "orange", anchor="lt")
         direction = DIRECTIONS.get(row.get("direction"), row.get("direction") or "方向未报")
         canvas.text((450, y + 4), direction, 13, width=70, anchor="rt")
         kind = KINDS.get(row.get("kind"), row.get("kind") or "施工")
@@ -187,7 +192,8 @@ def draw_tides(canvas, payload, settings, now):
     station_name = (str(settings.get("stationName") or "").strip()
                     or ("Redwood City" if station == "9414523" else "NOAA " + station))
     canvas.text((488, 79), station_name.upper(), 13, "muted", width=294)
-    canvas.text((488, 99), "潮汐预测", 31)
+    if not paste_local_wordmark(canvas.image, ASSETS / "section_tides.png", (486, 96, 700, 142), align="left"):
+        canvas.text((488, 99), "潮汐预测", 31)
     upcoming = next_tides(data, now)
     for kind, x, title in (("H",488,"下一次高潮"),("L",642,"下一次低潮")):
         canvas.text((x,154), title, 16)
@@ -218,9 +224,16 @@ def render_page(dimensions, payload, settings, now):
                                 (17, 8, 201, 56)):
         canvas.text((17, 8), "湾区出行", 38)
     canvas.rule((211,17,211,52), "ink")
-    canvas.text((228, 23), "道路封闭 ‧ 潮汐预测", 19)
+    subtitle = "道路封闭 ‧ 潮汐预测"
+    canvas.text((228, 23), subtitle, 19)
     weekday = "一二三四五六日"[now.weekday()]
-    canvas.text((784, 22), now.strftime("%m.%d") + f" 周{weekday}", 23, anchor="rt")
+    date = now.strftime("%m.%d") + f" 周{weekday}"
+    canvas.text((784, 22), date, 23, anchor="rt")
+    # The bay scene fills the header between the subtitle and the date.
+    scene_left = 228 + int(canvas.draw.textlength(subtitle, font=canvas.font(19))) + 16
+    scene_right = 784 - int(canvas.draw.textlength(date, font=canvas.font(23))) - 16
+    if scene_right - scene_left >= 80:
+        paste_local_wordmark(canvas.image, ASSETS / "header_scene.png", (scene_left, 8, scene_right, 60))
     canvas.rule((10,66,790,66), "ink", 2)
     canvas.rule((464,78,464,434), "ink")
     draw_roads(canvas, payload, now)

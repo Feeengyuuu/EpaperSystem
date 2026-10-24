@@ -35,6 +35,15 @@ _CITY_LABELS = (
 )
 
 
+MARKER_FILL = (218, 77, 15)
+
+
+def draw_marker(draw, x, y, number, radius, font):
+    """The numbered closure marker; the road list draws the very same one beside each entry."""
+    draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=MARKER_FILL, outline="white", width=1)
+    draw.text((x, y), str(number), font=font, fill="white", anchor="mm")
+
+
 def read_manifest():
     if MANIFEST_PATH.stat().st_size > 8192:
         raise ValueError("Bay map manifest exceeds its size bound")
@@ -156,8 +165,7 @@ def render_map(rows, size=DEFAULT_SIZE, night=False):
             x, y = point
             marker["pixel"] = [round(x, 3), round(y, 3)]
             # The circle stays centred on the actual coordinate, even at an edge.
-            draw.ellipse((x - 8, y - 8, x + 8, y + 8), fill=(218, 77, 15), outline="white", width=1)
-            draw.text((x, y), str(index), font=number_font, fill="white", anchor="mm")
+            draw_marker(draw, x, y, index, 8, number_font)
         else:
             marker["reason"] = ("missing_coordinates" if row.get("begin_lat") is None
                                 or row.get("begin_lon") is None else "outside_map")
