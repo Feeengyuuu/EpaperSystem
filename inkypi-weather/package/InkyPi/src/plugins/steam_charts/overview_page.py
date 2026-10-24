@@ -217,9 +217,9 @@ class LiveOverviewMixin:
         number_font = self._font(18, "bold")
         # The name runs on to the player count beside it, smaller before it is cut short.
         name_width = right - draw.textlength(number, font=number_font) - 10 - text_x
-        name_font = next((self._font(size, "bold") for size in (15, 14, 13)
-                          if draw.textlength(name, font=self._font(size, "bold")) <= name_width), self._font(12, "bold"))
-        draw.text((text_x, top + 2 + (15 - name_font.size) // 2), self._overview_clip(draw, name, name_font, name_width),
+        name_font = next((self._font(size, "bold") for size in (17, 16, 15, 14)
+                          if draw.textlength(name, font=self._font(size, "bold")) <= name_width), self._font(13, "bold"))
+        draw.text((text_x, top + 1 + (17 - name_font.size) // 2), self._overview_clip(draw, name, name_font, name_width),
                   font=name_font, fill=colors["ink"])
         # Line two is the English name, or the developer when there is none; line three the genres.
         secondary = str(game.get("secondary_name") or "")
@@ -233,11 +233,11 @@ class LiveOverviewMixin:
         if not trending and isinstance(average, (int, float)):
             facts = " · ".join(part for part in (facts, f"月均 {wan(average)}") if part)
         if secondary:
-            draw.text((text_x, top + 21), self._overview_clip(draw, secondary, self._font(10), width),
+            draw.text((text_x, top + 22), self._overview_clip(draw, secondary, self._font(10), width),
                       font=self._font(10), fill=colors["muted"])
-        draw.text((text_x, top + 35), self._overview_clip(draw, facts, self._font(10), width),
+        draw.text((text_x, top + 36), self._overview_clip(draw, facts, self._font(10), width),
                   font=self._font(10), fill=colors["ink"])
-        self._overview_detail_line(image, draw, (text_x, top + 50, text_right), game, store, trending, colors)
+        self._overview_detail_line(image, draw, (text_x, top + 51, text_right), game, store, trending, colors)
 
         draw.text((right - draw.textlength(number, font=number_font), top + 1), number, font=number_font,
                   fill=colors["ink"])
