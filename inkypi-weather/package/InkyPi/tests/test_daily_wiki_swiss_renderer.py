@@ -650,3 +650,17 @@ def test_straight_closing_quote_never_starts_a_line():
     assert "".join(lines) == text[text.index("以"):]
     assert all(not line.startswith(('"', "。")) for line in lines[1:])
     assert all(not line.endswith('"') or line.count('"') % 2 == 0 for line in lines[:-1])
+
+
+def test_the_photograph_melts_into_the_page_through_a_wash_of_itself(plugin, payload):
+    image = plugin._render_page((800, 480), payload, settings(), NOW)
+    audit = image.info["daily_wiki_layout"]
+    left, top, right, bottom = audit["regions"]["daily_image"]["bounds"]
+    slot_left, slot_top, slot_right, _slot_bottom = audit["regions"]["daily_image"]["slot_bounds"]
+    background = tuple(plugin._palette(settings(), swiss_renderer._source_date(payload, NOW))["background"])
+
+    # Beside the contained photograph its own colours glow, between the page and the picture.
+    beside = image.getpixel((left + 20, top - 12)) if top - slot_top > 20 else image.getpixel((left - 12, top + 20))
+    assert beside != background and beside != (80, 120, 160)
+    # The wash has faded to the page at the slot's very edge.
+    assert image.getpixel((slot_left, slot_top)) == background

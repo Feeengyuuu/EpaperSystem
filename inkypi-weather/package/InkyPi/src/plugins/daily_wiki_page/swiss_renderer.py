@@ -6,13 +6,18 @@ import math
 from pathlib import Path
 import re
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 from utils.fonts import load_font
 
 
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 MIN_BODY_FONT_SIZE = 13
 MIN_SHORT_PHOTOGRAPH_HEIGHT = 120
+# The wash behind the photograph: how much of the picture shows through the page colour,
+# how soft it is and how far its edge fades into the page.
+PHOTO_GLOW_STRENGTH = 0.6
+PHOTO_GLOW_BLUR = 14
+PHOTO_GLOW_FEATHER = 22
 # History thumbnails keep this box's proportions as the ladder narrows them.
 HISTORY_THUMBNAIL_BOX = (92, 74)
 # Row padding above and below each history event, normal and compact.
@@ -244,6 +249,26 @@ class _Page:
         return {"bounds": [x, y, x + fitted.width, y + fitted.height],
                 "slot_bounds": list(box), "source_size": list(source.size), "fit": "contain"}
 
+    def photo_glow(self, source, box):
+        """Fill the photograph's slot with a soft, washed-out wash of the photograph itself,
+        fading into the page at the slot's edges, so the picture melts into the page.
+
+        The photograph is then drawn whole on top: its four corners stay sharp.
+        """
+        x1, y1, x2, y2 = box
+        size = (x2 - x1, y2 - y1)
+        if min(size) < 8:
+            return
+        wash = ImageOps.fit(source.convert("RGB"), size, method=RESAMPLE)
+        wash = wash.filter(ImageFilter.GaussianBlur(self.px(PHOTO_GLOW_BLUR)))
+        wash = Image.blend(Image.new("RGB", size, self.palette["background"]), wash, PHOTO_GLOW_STRENGTH)
+        feather = self.px(PHOTO_GLOW_FEATHER)
+        mask = Image.new("L", size, 0)
+        ImageDraw.Draw(mask).rectangle((feather, feather, size[0] - 1 - feather, size[1] - 1 - feather), fill=255)
+        mask = mask.filter(ImageFilter.GaussianBlur(feather / 2))
+        region = self.image.crop(box)
+        self.image.paste(Image.composite(wash, region, mask), (x1, y1))
+
     def two_tone_artwork(self, path, size, crop=True, accent="accent"):
         """Fit black + accent-blue artwork into ``size`` and recolour it with this palette.
 
@@ -401,6 +426,7 @@ class _Page:
                 photo_bottom = caption_y - self.px(9)
         photo_box = (self.photo_left, self.top, self.photo_right, photo_bottom)
         if source is not None:
+            self.photo_glow(source, photo_box)
             self.audit["regions"]["daily_image"] = self.contained_image(source, photo_box)
         else:
             self.audit["regions"]["daily_image"] = {"bounds": list(photo_box), "fit": "contain",
