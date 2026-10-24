@@ -31,6 +31,9 @@ RAIL_SIZE = (181, 480)
 # The profile background behind the rail: blur radius, and dimming at its top and bottom.
 BACKDROP_BLUR = 7
 BACKDROP_DIM = (0.78, 0.9)
+# A mini profile background is a small pattern made to be seen: lighter, so its motifs show.
+MINI_BACKDROP_BLUR = 1.2
+MINI_BACKDROP_DIM = (0.5, 0.74)
 # The navy console; a game's own hue replaces it when its artwork has one (game_palette).
 DEFAULT_PALETTE = {"canvas": CANVAS, "navy": NAVY, "panel": PANEL, "header": HEADER, "border": BORDER,
                    "accent": CYAN, "muted": MUTED, "glow": None}
@@ -355,17 +358,19 @@ class _Console:
             self.image.paste(self.avatar_frame.image, FRAME_ORIGIN, self.avatar_frame.image)
 
     def profile_backdrop(self):
-        """The owner's equipped Steam profile background, blurred and dimmed behind the rail."""
+        """The owner's equipped mini profile (else profile) background, blurred and dimmed behind the rail."""
         record = self.data.get("profile_background") or {}
         loader = getattr(self.plugin, "_profile_background_image", None)
         source = loader(record.get("url")) if loader is not None and record.get("url") else None
         if source is None:
             return False
+        mini = record.get("slot") == "mini_profile_background"
+        blur, (dim_top, dim_bottom) = (MINI_BACKDROP_BLUR, MINI_BACKDROP_DIM) if mini else (BACKDROP_BLUR, BACKDROP_DIM)
         backdrop = ImageOps.fit(source.convert("RGB"), RAIL_SIZE, method=Image.Resampling.LANCZOS)
-        backdrop = backdrop.filter(ImageFilter.GaussianBlur(BACKDROP_BLUR))
+        backdrop = backdrop.filter(ImageFilter.GaussianBlur(blur))
         # Dimmed toward the page canvas, deeper down the stats, so white type reads on any picture.
         shade = Image.linear_gradient("L").resize(RAIL_SIZE).point(
-            lambda value: round(255 * (BACKDROP_DIM[0] + (BACKDROP_DIM[1] - BACKDROP_DIM[0]) * value / 255)))
+            lambda value: round(255 * (dim_top + (dim_bottom - dim_top) * value / 255)))
         backdrop.paste(Image.new("RGB", RAIL_SIZE, self.c["canvas"]), (0, 0), shade)
         self.image.paste(backdrop, (0, 0))
         return True

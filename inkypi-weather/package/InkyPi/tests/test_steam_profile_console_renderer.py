@@ -510,10 +510,29 @@ def test_equipped_profile_background_becomes_a_still_image_record():
         "item_title": "Consumerism"}}})
 
     assert record == {"url": "https://shared.akamai.steamstatic.com/community_assets/images/items/1091500/"
-                             "2f2692d068cb37afb353e8577b2c039da9fe7944.jpg", "name": "Consumerism"}
+                             "2f2692d068cb37afb353e8577b2c039da9fe7944.jpg", "name": "Consumerism",
+                      "slot": "profile_background"}
     for equipped in ({}, {"response": {"profile_background": {}}},
                      {"response": {"profile_background": {"image_large": "https://evil.example/x.jpg"}}}):
         assert SteamProfileDashboard._profile_background_record(equipped) is None
+
+
+def test_equipped_mini_profile_background_is_preferred_for_the_rail():
+    record = SteamProfileDashboard._profile_background_record({"response": {
+        "profile_background": {"image_large": "items/1091500/2f2692d068cb37afb353e8577b2c039da9fe7944.jpg"},
+        "mini_profile_background": {"image_large": "items/1999520/b48f1a22a3752a3fd66c056b0728bcf3b67e740e.jpg",
+                                    "item_title": "Multicato"},
+    }})
+
+    assert record["slot"] == "mini_profile_background"
+    assert record["name"] == "Multicato"
+    assert record["url"].endswith("items/1999520/b48f1a22a3752a3fd66c056b0728bcf3b67e740e.jpg")
+    # An invalid mini background falls back to the profile background.
+    fallback = SteamProfileDashboard._profile_background_record({"response": {
+        "profile_background": {"image_large": "items/1091500/2f2692d068cb37afb353e8577b2c039da9fe7944.jpg"},
+        "mini_profile_background": {"image_large": "https://evil.example/x.jpg"},
+    }})
+    assert fallback["slot"] == "profile_background"
 
 
 def test_rail_lays_the_profile_background_blurred_and_dimmed_behind_the_rail(plugin, data, monkeypatch):

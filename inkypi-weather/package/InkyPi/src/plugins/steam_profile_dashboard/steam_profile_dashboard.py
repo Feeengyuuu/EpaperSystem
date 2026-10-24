@@ -872,13 +872,16 @@ class SteamProfileDashboard(BasePlugin):
 
     @staticmethod
     def _profile_background_record(equipped):
-        """The equipped profile background's still image (Steam also offers a video), or None."""
-        background = ((equipped or {}).get("response") or {}).get("profile_background") or {}
-        image = str(background.get("image_large") or "").strip()
-        if not re.fullmatch(r"items/\d+/[0-9a-f]{40}\.(?:jpg|png)", image):
-            return None
-        name = str(background.get("item_title") or background.get("name") or "")[:80]
-        return {"url": STEAM_PROFILE_ITEM_IMAGE_BASE + image, "name": name}
+        """The rail's backdrop: the equipped mini profile background's still image, else the
+        profile background's (Steam also offers videos of both), or None."""
+        response = (equipped or {}).get("response") or {}
+        for slot in ("mini_profile_background", "profile_background"):
+            background = response.get(slot) or {}
+            image = str(background.get("image_large") or "").strip()
+            if re.fullmatch(r"items/\d+/[0-9a-f]{40}\.(?:jpg|png)", image):
+                name = str(background.get("item_title") or background.get("name") or "")[:80]
+                return {"url": STEAM_PROFILE_ITEM_IMAGE_BASE + image, "name": name, "slot": slot}
+        return None
 
     def _profile_background_image(self, url):
         """The equipped profile background reduced to the page's height, cached for a week."""
