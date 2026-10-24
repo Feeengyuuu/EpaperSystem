@@ -405,8 +405,10 @@ class BasketballRenderMixin:
         for event in series:
             if list_y + 14 > y2 - 6:
                 break
-            self._draw_wnba_series_game_row(draw, (inner_x1, list_y, inner_x2, list_y + 14), event, now, spec)
+            self._draw_wnba_series_game_row(image, draw, (inner_x1, list_y, inner_x2, list_y + 14), event, now, spec)
             list_y += 16
+        # Room left under a short series list takes the league's mascot scene.
+        self._draw_kit_spare_filler(image, (inner_x1, list_y + 2, inner_x2, y2 - 6), spec)
 
         self._draw_wnba_series_game_card(image, draw, (left_x2 + 10, y1, x2, y2), main, now, spec, state)
 
@@ -433,22 +435,27 @@ class BasketballRenderMixin:
             draw.rounded_rectangle((left, y1, right, y2), radius=3, fill=COLORS[spec.tag] if current else COLORS["panel"], outline=COLORS["border"], width=2 if current else 1)
             self._draw_centered_in_box(draw, (left, y1, right, y2), label, self._font(9, current), COLORS["text"])
 
-    def _draw_wnba_series_game_row(self, draw, box, event, now, spec):
+    def _draw_wnba_series_game_row(self, image, draw, box, event, now, spec):
         x1, y1, x2, y2 = [int(value) for value in box]
         state = SportsDashboard._hub_event_state(event)
         number = SportsDashboard._basketball_game_number(event)
         self._draw_text_in_box(draw, (x1, y1, x1 + 24, y2), f"G{number}" if number else "G", self._font(9, True), COLORS["text"])
         top, bottom, key = spec.hook("state_labels", event, now)
+        if state == "scheduled" and str(bottom or "").strip() == str(event.get("broadcast") or "").strip():
+            bottom = ""  # The networks follow as logos.
         when = top if state == "live" else (f"{top} {bottom}".strip() if state == "scheduled" else f"{bottom}")
         when, when_font = self._fit_text(draw, when, 84, 9, bold=state == "live", min_size=7)
         self._draw_text_in_box(draw, (x1 + 26, y1, x1 + 112, y2), when, when_font, COLORS[key])
         if state == "scheduled":
-            text = str(event.get("broadcast") or "").strip()
-            text, font = self._fit_text_ellipsis(draw, text, x2 - x1 - 116, 10, bold=False, min_size=8)
-        else:
-            text, font = self._kit_team_pair_text(draw, spec, event, f"{event.get('wins_a')}-{event.get('wins_b')}",
-                                                  x2 - x1 - 116, 10, True)
+            self._draw_series_row_broadcast(image, draw, (x1 + 114, y1, x2, y2), event)
+            return
+        winner = SportsDashboard._nba_winner_side(event) if state == "final" else ""
+        logo_room = 16 if winner else 0
+        text, font = self._kit_team_pair_text(draw, spec, event, f"{event.get('wins_a')}-{event.get('wins_b')}",
+                                              x2 - x1 - 116 - logo_room, 10, True)
         self._draw_text_in_box(draw, (x1 + 114, y1, x2, y2), text, font, COLORS["text"], align="right")
+        if winner:
+            self._draw_series_row_winner_logo(image, draw, event, winner, x2 - self._text_width(draw, text, font) - logo_room, y1, y2, spec)
 
     def _draw_wnba_series_game_card(self, image, draw, box, event, now, spec, state):
         x1, y1, x2, y2 = [int(value) for value in box]

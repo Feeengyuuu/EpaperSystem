@@ -38,6 +38,7 @@ KIT_DAY_TAB_WIDTH = 26
 KIT_DAY_RAIL_OFFSET = 4
 # Mascot art fills the room under a short list once it is at least this tall.
 KIT_SPARE_FILLER_MIN_HEIGHT = 50
+KIT_SPARE_STRIP_MIN_HEIGHT = 28
 KIT_SPARE_FILLER_MAX_HEIGHT = 130
 
 
@@ -326,6 +327,29 @@ class ScorebugKitMixin:
                 x += self._text_width(draw, text, font) + 7
         return True
 
+    def _draw_series_row_broadcast(self, image, draw, box, event):
+        """A series row's networks as small logos, right-aligned; the label in text without one."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        label = str(event.get("broadcast") or "").strip()
+        if not label:
+            return
+        height = max(9, y2 - y1 - 3)
+        strip = Image.new("RGBA", (x2 - x1, height), (0, 0, 0, 0))
+        strip_draw = ImageDraw.Draw(strip)
+        if self._draw_kit_tv_logos(strip, strip_draw, (0, 0, strip.width, height), label, COLORS["panel"]):
+            bounds = strip.getchannel("A").getbbox()
+            if bounds:
+                used = strip.crop((0, 0, bounds[2], height))
+                image.paste(used, (x2 - used.width, y1 + (y2 - y1 - height) // 2), used)
+                return
+        text, font = self._fit_text_ellipsis(draw, label, x2 - x1, 10, bold=False, min_size=8)
+        self._draw_text_in_box(draw, (x1, y1, x2, y2), text, font, COLORS["text"], align="right")
+
+    def _draw_series_row_winner_logo(self, image, draw, event, side, x, y1, y2, spec):
+        size = min(13, y2 - y1)
+        fallback = spec.hook("logo_fallback", event, side, default=event.get(f"team_{side}_code"))
+        self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), x, y1 + (y2 - y1 - size) // 2, size, fallback)
+
     def _draw_kit_leader_rows(self, image, draw, x1, y, x2, y_limit, event, leaders, spec, max_rows=3):
         label_font = self._font(8, True)
         for leader in list(leaders or [])[:max_rows]:
@@ -503,8 +527,12 @@ class ScorebugKitMixin:
         """The sport's mascot spot art, centred in the room a short ticker or
         scoreboard leaves below its rows."""
         x1, y1, x2, y2 = [int(value) for value in box]
-        path = LOCAL_SPARE_FILLER_PATHS.get(str(spec.sport or "").upper())
-        if not path or x2 - x1 < 80 or y2 - y1 < KIT_SPARE_FILLER_MIN_HEIGHT:
+        sport = str(spec.sport or "").upper()
+        path = LOCAL_SPARE_FILLER_PATHS.get(sport)
+        if y2 - y1 < KIT_SPARE_FILLER_MIN_HEIGHT:
+            # A short, wide band still takes the league's wide scene.
+            path = LOCAL_WALL_SLOT_FILLER_PATHS.get(sport) if y2 - y1 >= KIT_SPARE_STRIP_MIN_HEIGHT else None
+        if not path or not os.path.exists(path) or x2 - x1 < 80:
             return
         art = self._load_local_logo(path, (x2 - x1, min(y2 - y1, KIT_SPARE_FILLER_MAX_HEIGHT)), alpha_threshold=8)
         if art:

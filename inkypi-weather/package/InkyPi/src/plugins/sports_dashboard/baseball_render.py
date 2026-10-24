@@ -291,17 +291,27 @@ class BaseballRenderMixin:
             number = SportsDashboard._mlb_game_number(event)
             self._draw_text_in_box(draw, (x1, y, x1 + 22, y + 15), f"G{number}" if number else "G", self._font(9, True), COLORS["text"])
             if state == "scheduled":
+                # When on the left, the networks as logos on the right.
                 top, bottom, _key = SportsDashboard._mlb_state_labels(event, now)
                 text = f"{top} {bottom}".strip() if not top.endswith("M") else top
-            else:
-                winner = SportsDashboard._mlb_winner_side(event)
-                runs = sorted((event.get("wins_a") or 0, event.get("wins_b") or 0), reverse=True)
-                text = SportsDashboard._mlb_inning_label(event)
-                if state == "final" and winner:
-                    text = self._mlb_first_fitting(draw, [f"{SportsDashboard._mlb_display_team_from_event(event, winner, full=full)} {runs[0]}-{runs[1]}"
-                                                         for full in (True, False)], x2 - x1 - 26, 10)
-            text, font = self._fit_text_ellipsis(draw, text, x2 - x1 - 26, 10, bold=state != "scheduled" or event is main, min_size=8)
+                text, font = self._fit_text_ellipsis(draw, text, (x2 - x1) // 2, 10, bold=event is main, min_size=8)
+                self._draw_text_in_box(draw, (x1 + 24, y, x2, y + 15), text, font, COLORS["text"])
+                broadcast_x1 = x1 + 30 + self._text_width(draw, text, font)
+                self._draw_series_row_broadcast(image, draw, (broadcast_x1, y, x2, y + 15), event)
+                y += 16
+                continue
+            winner = SportsDashboard._mlb_winner_side(event)
+            runs = sorted((event.get("wins_a") or 0, event.get("wins_b") or 0), reverse=True)
+            text = SportsDashboard._mlb_inning_label(event)
+            logo_room = 0
+            if state == "final" and winner:
+                logo_room = 16
+                text = self._mlb_first_fitting(draw, [f"{SportsDashboard._mlb_display_team_from_event(event, winner, full=full)} {runs[0]}-{runs[1]}"
+                                                     for full in (True, False)], x2 - x1 - 26 - logo_room, 10)
+            text, font = self._fit_text_ellipsis(draw, text, x2 - x1 - 26 - logo_room, 10, bold=True, min_size=8)
             self._draw_text_in_box(draw, (x1 + 24, y, x2, y + 15), text, font, COLORS["mlb_live" if state == "live" else "text"], align="right")
+            if logo_room:
+                self._draw_series_row_winner_logo(image, draw, event, winner, x2 - self._text_width(draw, text, font) - logo_room, y, y + 15, spec)
             y += 16
         return y
 

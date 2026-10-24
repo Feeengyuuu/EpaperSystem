@@ -6,7 +6,8 @@
   "rendering": {
     "club_*_header_cutout.png": "alpha-only art, tinted with the league accent in the football region header",
     "mlb_ballpark_strip.png": "full colour, pasted in the MLB card's spare band",
-    "*_spare_filler.png": "full colour mascot spot art for the space under a short ticker or scoreboard column"
+    "*_spare_filler.png": "full colour mascot spot art for the space under a short ticker or scoreboard column",
+    "*_wall_slot_filler.png": "full colour mascot scene for an empty live-wall tile or a short, wide spare band"
   },
   "assets": {
     "club_pl_header_cutout.png": {
@@ -106,6 +107,46 @@
       "sha256": "34b5edd5ee1d064985dc833afebc1b6662de2e86a41676814ff11997b5cb0c13",
       "size": [
         245,
+        160
+      ]
+    },
+    "nba_wall_slot_filler.png": {
+      "scene": "basketball mascot resting courtside on a bench, hoop and ball rack",
+      "job_id": "f45eed67-d1e6-4c26-894a-4ec097852398",
+      "source_sha256": "9e9da8ae587aa82a382f184c1c9d5b6603d5ce04fbc263798ae9423362c5b2a9",
+      "sha256": "1b03112c10403168d8dc9bcbef6954c3cd4941c696ef9536c11619dbfda9bcfc",
+      "size": [
+        371,
+        160
+      ]
+    },
+    "wnba_wall_slot_filler.png": {
+      "scene": "ponytailed basketball mascot dribbling beside a trophy, pennant and hoop",
+      "job_id": "635dcc3e-c79c-4b23-9e7d-94be72a8c2ab",
+      "source_sha256": "59a004fde0fbe47dd9c1bc4d27f47386d4c73a42df592fc0d93ea2baeceb780c",
+      "sha256": "e3874eb3fb4ab9f73eb1c1c1b757bfcbf1aeb521ffd45f709ba3a2d7fc2906ed",
+      "size": [
+        405,
+        160
+      ]
+    },
+    "mlb_wall_slot_filler.png": {
+      "scene": "baseball mascot leaning on a bat, glove, ball bucket, foam finger and hot dog",
+      "job_id": "4872bb07-10c9-4a3a-9d05-83da4024102d",
+      "source_sha256": "b92f425e8a0a28ebef1499a9f8b40796e0727a9eca57c8dfb3055df9b77a7e5b",
+      "sha256": "6adb48a77c42ab70ba3040e8cdeab35fb686dbc27212b54a43d714048bdaa91c",
+      "size": [
+        464,
+        160
+      ]
+    },
+    "nfl_wall_slot_filler.png": {
+      "scene": "helmeted football mascot on a sideline cooler, pylon, tee and goalpost",
+      "job_id": "fdf0dd20-6148-46f4-95a2-3156962dff63",
+      "source_sha256": "b369d9e572009694276540fd61d9914bea9f53dd4476e140b54a31f45521195d",
+      "sha256": "57b948d6b69f95af801cf94d81e6ad5562b11b151b34cfcc905ae3d17efe5efe",
+      "size": [
+        411,
         160
       ]
     }

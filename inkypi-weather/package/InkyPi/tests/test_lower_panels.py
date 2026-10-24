@@ -22,6 +22,7 @@ from plugins.sports_dashboard.common import (
     LOCAL_MLB_BALLPARK_STRIP_PATH,
     LOCAL_SPARE_FILLER_PATHS,
     LOCAL_TV_LOGO_DIR,
+    LOCAL_WALL_SLOT_FILLER_PATHS,
 )
 from plugins.sports_dashboard.event_marks import EVENT_MARK_DIR
 from plugins.sports_dashboard.tv_networks import TV_NETWORK_ALIASES, tv_network_parts
@@ -594,6 +595,32 @@ def test_live_wall_decorates_empty_slots_with_league_art(monkeypatch):
     # A featured game plus four cards leave two of six card slots empty.
     assert len(placeholders) == 2
     assert set(placeholders) <= {game["sport"] for game in games}
+
+
+def test_wall_slot_scenes_exist_for_every_wall_league():
+    for sport, path in LOCAL_WALL_SLOT_FILLER_PATHS.items():
+        with Image.open(path) as scene:
+            assert scene.mode == "RGBA" and scene.height == 160, sport
+            assert 2 <= scene.width / scene.height <= 3.2, sport
+            assert scene.getchannel("A").getextrema()[0] == 0, sport
+
+
+def test_wall_cards_carry_each_teams_colour(boxes):
+    plugin = _plugin()
+    event = {"team_a_color": "#c8102e", "team_b_color": "1d428a"}
+
+    assert plugin._wall_team_colour(event, "a", (0, 0, 0)) == (200, 16, 46)
+    assert plugin._wall_team_colour(event, "b", (0, 0, 0)) == (29, 66, 138)
+    assert plugin._wall_team_colour({"team_a_color": "zzz"}, "a", (1, 2, 3)) == (1, 2, 3)
+    # A near-white colour is darkened so the band still reads on paper.
+    assert max(plugin._wall_team_colour({"team_a_color": "f4f4f4"}, "a", (0, 0, 0))) < 205
+
+    image = Image.new("RGB", (200, 90), (255, 255, 255))
+    plugin._draw_wall_team_colours(ImageDraw.Draw(image), (0, 0, 199, 89), event, (0, 0, 0), 20, 55)
+    assert image.getpixel((20, 8)) == (200, 16, 46)   # band, away side
+    assert image.getpixel((180, 8)) == (29, 66, 138)  # band, home side
+    assert image.getpixel((4, 30)) == (200, 16, 46)   # edge beside the away row
+    assert image.getpixel((4, 70)) == (29, 66, 138)   # edge beside the home row
 
 
 def _ticker_game(code_a, code_b, hours, **overrides):
