@@ -9,6 +9,7 @@ import stat
 import time
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from urllib.parse import unquote, urljoin, urlparse
 
@@ -213,6 +214,35 @@ _DIGIT_W, _DIGIT_H = 5, 7
 # 5×7 dot-matrix letter patterns for weekday abbreviations
 _LETTER_W, _LETTER_H = 5, 7
 
+
+
+# The month's wall-calendar page (calendar_page/): inset, room above for the binder rings,
+# hard shadow, ring size and spacing; four hand-drawn crosses strike off the days gone by.
+CALENDAR_PAGE_DIR = Path(__file__).with_name("calendar_page")
+CALENDAR_PAGE_INSET = 3
+CALENDAR_PAGE_TOP = 8
+CALENDAR_PAGE_SHADOW = 3
+# The page hugs the month's own margins: the rings sit in the space above the title and the
+# content keeps its full box, so the agenda below loses no row.
+CALENDAR_PAGE_CONTENT_TOP = 0
+CALENDAR_RING_HEIGHT = 24
+CALENDAR_RING_PITCH = 42
+CALENDAR_RING_MARGIN = 22
+CALENDAR_CROSS_VARIANTS = 4
+# A cross spans about the today circle, so the struck-off number still reads under it.
+CALENDAR_CROSS_SCALE = 1.7
+
+
+@lru_cache(maxsize=8)
+def _calendar_page_art(name):
+    path = CALENDAR_PAGE_DIR / name
+    if not path.is_file():
+        return None
+    try:
+        with Image.open(path) as source:
+            return source.convert("RGBA")
+    except OSError:
+        return None
 
 
 class SimpleCalendar(PanelStageMixin, BasePlugin):
@@ -585,6 +615,12 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             )
 
         # === CALENDAR CONTENT (inside light area) ===
+        # The month hangs as a wall-calendar page: rings along its top, ink edge, hard shadow.
+        c_left, c_top, c_right, c_bottom = self._draw_wall_calendar_page(
+            img, (c_left, c_top, c_right, c_bottom), surface, text_color)
+        cal_w = c_right - c_left
+        cal_h = c_bottom - c_top
+        cal_cx = c_left + cal_w // 2
         grid_side_pad = int(cal_w * 0.04)
         grid_left = c_left + grid_side_pad
         grid_right_edge = c_right - grid_side_pad
@@ -683,6 +719,14 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
                         (col_cx, row_cy), str(day),
                         fill=selected_text, font=day_font, anchor="mm",
                     )
+                elif day < selected_date.day:
+                    # A day already lived: its number fades and a hand-drawn red cross strikes it off.
+                    draw.text(
+                        (col_cx, row_cy), str(day),
+                        fill=muted_text, font=day_font, anchor="mm",
+                    )
+                    self._cross_off_day(img, selected_date.replace(day=day), (col_cx, row_cy),
+                                        today_circle_r * CALENDAR_CROSS_SCALE)
                 else:
                     draw.text(
                         (col_cx, row_cy), str(day),
@@ -715,6 +759,44 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
             next_month_event_rows=next_month_event_rows,
         )
         return img
+
+    def _draw_wall_calendar_page(self, img, area, surface, ink):
+        """Draw the month's page inside ``area`` and return the box its content goes in.
+
+        The page is inset with a hard comic shadow, an ink edge and binder rings spaced
+        along its top, and runs on past the bottom edge; without the ring art the plain
+        page still frames the month.
+        """
+        left, top, right, bottom = area
+        # The page runs on past the panel's bottom edge, so the agenda's last line is never cut.
+        page = (left + CALENDAR_PAGE_INSET, top + CALENDAR_PAGE_TOP, right - CALENDAR_PAGE_INSET - CALENDAR_PAGE_SHADOW,
+                bottom + 20)
+        draw = ImageDraw.Draw(img)
+        shadow = tuple(page[i] + CALENDAR_PAGE_SHADOW for i in range(4))
+        draw.rounded_rectangle(shadow, radius=10, fill=ink)
+        draw.rounded_rectangle(page, radius=10, fill=surface, outline=ink, width=2)
+        ring = _calendar_page_art("binder_ring.png")
+        if ring is not None:
+            height = CALENDAR_RING_HEIGHT
+            ring = ring.resize((max(1, round(ring.width * height / ring.height)), height), Image.LANCZOS)
+            usable = page[2] - page[0] - 2 * CALENDAR_RING_MARGIN
+            count = max(2, usable // CALENDAR_RING_PITCH + 1)
+            step = usable / (count - 1)
+            for index in range(count):
+                x = round(page[0] + CALENDAR_RING_MARGIN + index * step - ring.width / 2)
+                img.paste(ring, (x, page[1] - round(height * 0.62)), ring)
+        return (left, top + CALENDAR_PAGE_CONTENT_TOP, right, bottom)
+
+    @staticmethod
+    def _cross_off_day(img, day, centre, size):
+        """Paste one of the hand-drawn crosses over a past day, the same one for that date every time."""
+        variant = 1 + (day.toordinal() * 7 + day.day) % CALENDAR_CROSS_VARIANTS
+        mark = _calendar_page_art(f"cross_{variant}.png")
+        if mark is None:
+            return
+        side = max(8, int(size))
+        mark = mark.resize((side, side), Image.LANCZOS)
+        img.paste(mark, (round(centre[0] - side / 2), round(centre[1] - side / 2)), mark)
 
     def _draw_focus_panel_background(self, img, left, top, right, bottom, panel_bg, weather_panel_background_path):
         panel_w = right - left
