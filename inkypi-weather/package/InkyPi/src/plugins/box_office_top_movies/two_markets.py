@@ -145,15 +145,17 @@ def _icon_mask(name, height):
     return alpha.resize((width, height), Image.Resampling.LANCZOS)
 
 
-def paste_icon(canvas, name, x, y, height, color, *, max_width=None):
-    """Tint and paste an icon; the width it took (0 when missing)."""
+def paste_icon(canvas, name, x, y, height, color, *, max_width=None, anchor="left"):
+    """Tint and paste an icon whose left edge, centre or right edge (``anchor``) is ``x``;
+    the width it took (0 when missing)."""
     mask = _icon_mask(name, height)
     if mask is None:
         return 0
     if max_width and mask.width > max_width:
         mask = mask.resize((max_width, max(1, round(mask.height * max_width / mask.width))),
                            Image.Resampling.LANCZOS)
-    canvas.paste(Image.new("RGB", mask.size, color), (int(x), int(y + (height - mask.height) // 2)), mask)
+    left = x - mask.width / 2 if anchor == "center" else x - mask.width if anchor == "right" else x
+    canvas.paste(Image.new("RGB", mask.size, color), (round(left), int(y + (height - mask.height) // 2)), mask)
     return mask.width
 
 
@@ -261,16 +263,21 @@ def _draw_banner(page, left, right, market):
                                 fill=roles["banner"])
     page.draw.rounded_rectangle((page.x(left), page.y(48), page.x(left + 44), page.y(80)), radius=page.x(8),
                                 fill=roles["tile"])
+    # The tile's icon sits on the tile's centre line, whatever its proportions.
+    tile_centre = page.x(left + 22)
     if market == "china":
-        paste_icon(page.canvas, "pagoda", page.x(left + 5), page.y(52), page.y(25), BANNER_TEXT, max_width=page.x(34))
+        paste_icon(page.canvas, "pagoda", tile_centre, page.y(52), page.y(25), BANNER_TEXT, max_width=page.x(34),
+                   anchor="center")
         title_end = left + 54 + page.text((left + 54, 51), "中国内地 · 实时", 18, BANNER_TEXT)
         _banner_caption(page, title_end + 14, right - 12, "CHINA BOX OFFICE")
         return
-    paste_icon(page.canvas, "liberty", page.x(left + 11), page.y(51), page.y(27), BANNER_TEXT, max_width=page.x(24))
+    paste_icon(page.canvas, "liberty", tile_centre, page.y(51), page.y(27), BANNER_TEXT, max_width=page.x(24),
+               anchor="center")
     title_end = left + 54 + page.text((left + 54, 51), "北美 · 本周", 18, BANNER_TEXT)
-    skyline = paste_icon(page.canvas, "skyline", page.x(right - 62), page.y(54), page.y(24), BANNER_TEXT,
-                         max_width=page.x(54))
-    _banner_caption(page, title_end + 14, right - 12 - (skyline / page.sx + 8 if skyline else 0),
+    # The skyline ends at the banner's right margin and the caption stops short of it.
+    skyline = paste_icon(page.canvas, "skyline", page.x(right - 10), page.y(54), page.y(24), BANNER_TEXT,
+                         max_width=page.x(54), anchor="right")
+    _banner_caption(page, title_end + 14, right - 10 - (skyline / page.sx + 8 if skyline else 2),
                     "NORTH AMERICA BOX OFFICE")
 
 
@@ -332,10 +339,11 @@ def _draw_row(page, left, right, market, movie, top, leader, *, first):
     page.text((left + 10, top + 12), f"#{movie.rank}", 19, colors["gold"])
     page.poster(movie, left + 44, top + 1, 34, 48)
     primary, secondary = page.plugin._display_titles(movie)
-    page.text((left + 86, top + 4), primary, 15, colors["text"], max_width=134, sizes=(14, 13))
+    # The Chinese title reads at 18 (1.2x the old 15) and takes a little of the figures' room.
+    page.text((left + 86, top + 2), primary, 18, colors["text"], max_width=142, sizes=(17, 16, 15))
     if secondary:
-        page.text((left + 86, top + 27), secondary, 10, _subtitle_color(colors, accent), max_width=134)
-    metric_x = left + 226
+        page.text((left + 86, top + 29), secondary, 10, _subtitle_color(colors, accent), max_width=142)
+    metric_x = left + 232
     page.text((metric_x, top + 5), movie.weekend_gross or "—", 13, colors["text"], max_width=86)
     value = _metric_value(market, movie)
     share = max(0.0, min(1.0, value / leader)) if value and leader else 0.0

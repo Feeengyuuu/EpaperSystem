@@ -213,6 +213,19 @@ def test_both_themes_render_the_unavailable_column_inside_its_panel(mode):
     assert colors["text"] in {color for _count, color in panel.getcolors(maxcolors=panel.width * panel.height)}
 
 
+def test_banner_icons_sit_on_the_tile_centre_and_the_right_margin():
+    canvas = Image.new("RGB", (120, 40), (0, 0, 0))
+
+    width = two_markets.paste_icon(canvas, "liberty", 22, 4, 27, (255, 255, 255), anchor="center")
+    columns = [x for x in range(120) if any(canvas.getpixel((x, y))[0] > 128 for y in range(40))]
+    assert abs((columns[0] + columns[-1]) / 2 - 22) <= 1.5 and width < 20
+
+    canvas = Image.new("RGB", (120, 40), (0, 0, 0))
+    two_markets.paste_icon(canvas, "skyline", 110, 4, 24, (255, 255, 255), anchor="right")
+    columns = [x for x in range(120) if any(canvas.getpixel((x, y))[0] > 128 for y in range(40))]
+    assert 106 <= columns[-1] <= 110
+
+
 def test_icons_are_transparent_white_silhouettes():
     for name in ("pagoda", "liberty", "skyline", "bars", "reel", "calendar", "seats", "camera", "ticket"):
         with Image.open(two_markets.ICON_DIR / f"{name}.png") as icon:
