@@ -2155,11 +2155,11 @@ def test_apod_header_uses_wordmark_instead_of_plain_title_text(monkeypatch):
         for y in range(page.WORDMARK_RECT[1], page.WORDMARK_RECT[3])
         for x in range(page.WORDMARK_RECT[0], page.WORDMARK_RECT[2])
     )
-    assert all(
-        rendered.getpixel((x, y)) == page.HEADER_COLOR
+    assert {
+        rendered.getpixel((x, y))
         for y in range(0, page.HEADER_RECT[3] - 1)
         for x in range(page.WORDMARK_RECT[2] + 8, 675)
-    )
+    } <= {page.HEADER_COLOR, page.ORBIT_COLOR, page.STAR_COLOR}
     assert all(
         rendered.getpixel((x, page.HEADER_RECT[3] - 1)) == page.DIVIDER_COLOR
         for x in range(page.PAGE_SIZE[0])
@@ -2195,9 +2195,9 @@ def test_apod_header_falls_back_to_plain_title_when_wordmark_is_missing(
 @pytest.mark.parametrize(
     ("source", "photo_size"),
     [
-        (_quadrant_image((1200, 400)), (432, 299)),
-        (_quadrant_image((400, 1200)), (432, 299)),
-        (_quadrant_image((240, 480), orientation=6), (432, 299)),
+        (_quadrant_image((1200, 400)), (460, 415)),
+        (_quadrant_image((400, 1200)), (460, 415)),
+        (_quadrant_image((240, 480), orientation=6), (460, 415)),
     ],
     ids=["wide", "tall", "exif-rotated"],
 )
@@ -2223,12 +2223,14 @@ def test_apod_page_cover_crop_is_centered_and_every_photo_edge_is_content(
     )
 
 
-def test_apod_page_short_caption_has_fixed_photo_and_divider_boundaries():
+def test_apod_page_photo_fades_into_the_panel_and_darkens_under_the_caption():
     page = _apod_page_module()
     source = Image.new("RGB", (960, 640), PHOTO_BLUE)
+    apod = _page_record(title_en="Aurora", title_zh="极光")
+    layout = page.measure_apod_page(apod=apod, title_zh="极光", translation_unavailable=False).caption
 
     rendered = page.render_apod_page(
-        apod=_page_record(title_en="Aurora", title_zh="极光"),
+        apod=apod,
         title_zh="极光",
         translation_unavailable=False,
         weather=_page_weather(),
@@ -2238,12 +2240,20 @@ def test_apod_page_short_caption_has_fixed_photo_and_divider_boundaries():
 
     assert rendered.mode == "RGB"
     assert rendered.size == (800, 480)
-    assert rendered.getpixel((500, 363)) == PHOTO_BLUE
-    assert rendered.getpixel((500, 364)) == page.ORANGE_COLOR
-    assert rendered.getpixel((500, 367)) == page.CAPTION_COLOR
-    assert rendered.getpixel((366, 200)) == page.DIVIDER_COLOR
-    assert rendered.getpixel((367, 200)) == page.DIVIDER_COLOR
-    assert rendered.getpixel((368, 200)) == PHOTO_BLUE
+    # Between the Kp and G/R/S tiles nothing covers the fade.
+    y = (page.KP_RECT[3] + page.GRS_RECT[1]) // 2
+    assert rendered.getpixel((page.PHOTO_LEFT - 1, y)) == page.PAGE_COLOR
+    blues = [rendered.getpixel((x, y))[2] for x in range(page.PHOTO_LEFT, page.PHOTO_LEFT + page.PHOTO_FADE)]
+    assert blues == sorted(blues)
+    assert abs(blues[0] - page.PAGE_COLOR[2]) <= 8
+    assert rendered.getpixel((page.PHOTO_LEFT + page.PHOTO_FADE, y)) == PHOTO_BLUE
+    shade_top = layout.caption_top - page.CAPTION_SHADE_LEAD
+    assert rendered.getpixel((790, shade_top - 1)) == PHOTO_BLUE
+    foot = rendered.getpixel((790, 479))
+    assert sum(abs(a - b) for a, b in zip(foot, page.PAGE_COLOR)) < sum(
+        abs(a - b) for a, b in zip(PHOTO_BLUE, page.PAGE_COLOR)
+    ) // 3
+    assert rendered.getpixel((page.RIGHT_TEXT_RECT[0] - 9, layout.date_bottom)) == page.ORANGE_COLOR
 
 
 def test_apod_page_uses_every_approved_fixed_rectangle_exactly():
@@ -2251,12 +2261,44 @@ def test_apod_page_uses_every_approved_fixed_rectangle_exactly():
 
     assert page.HEADER_RECT == (0, 0, 800, 65)
     assert page.LEFT_RECT == (0, 65, 368, 480)
-    assert page.KP_RECT == (20, 77, 354, 180)
-    assert page.GRS_RECT == (20, 190, 354, 218)
-    assert page.METRICS_RECT == (20, 228, 354, 318)
-    assert page.PROBABILITIES_RECT == (20, 326, 354, 364)
-    assert page.ALERT_RECT == (20, 374, 354, 414)
-    assert page.SOURCE_RECT == (20, 456, 354, 476)
+    assert page.KP_RECT == (16, 74, 352, 190)
+    assert page.GRS_RECT == (16, 198, 352, 236)
+    assert page.METRICS_RECT == (16, 244, 352, 330)
+    assert page.PROBABILITIES_RECT == (16, 338, 352, 384)
+    assert page.ALERT_RECT == (16, 392, 352, 434)
+    assert page.SOURCE_RECT == (16, 448, 352, 472)
+    assert page.PHOTO_RECT == (340, 65, 800, 480)
+
+
+def test_apod_page_icons_are_transparent_and_drawn_in_pure_white():
+    page = _apod_page_module()
+    names = ("solar_wind", "magnet", "compass", "forecast", "alert", "probability", "telescope", "source")
+
+    for name in names:
+        with Image.open(page.ICON_DIR / f"{name}.png") as source:
+            assert source.mode == "RGBA"
+            alpha = source.getchannel("A")
+            assert alpha.getbbox() is not None
+            assert all(alpha.getpixel(corner) == 0 for corner in ((0, 0), (source.width - 1, source.height - 1)))
+        icon = page._icon(name, 26)
+        assert icon is not None and max(icon.size) == 26
+        pixels = (icon.getpixel((x, y)) for y in range(icon.height) for x in range(icon.width))
+        assert {pixel[:3] for pixel in pixels if pixel[3]} == {page.TEXT_COLOR}
+    assert page._icon("missing-icon", 26) is None
+
+
+@pytest.mark.parametrize("mode", ["observed", "estimated", "unavailable"])
+@pytest.mark.parametrize("current_g", ["G0", "G5", "G—"])
+def test_apod_page_kp_state_fits_beside_the_number(mode, current_g):
+    page = _apod_page_module()
+    draw = ImageDraw.Draw(Image.new("RGB", page.PAGE_SIZE))
+    max_width = page.KP_RECT[2] - 12 - (page.KP_RECT[0] + 162)
+
+    text, font = page._fit_kp_state(draw, current_g, mode, max_width=max_width)
+
+    assert text == f"CURRENT {current_g} | {mode}"
+    assert 10 <= font.size <= 12
+    assert page._text_width(draw, text, font) <= max_width
 
 
 @pytest.mark.parametrize(
@@ -2270,10 +2312,12 @@ def test_apod_page_uses_every_approved_fixed_rectangle_exactly():
 )
 def test_apod_page_composed_photo_edges_are_exact_cover_pixels(source):
     page = _apod_page_module()
-    expected = page.fit_photo(source, (432, 299))
+    expected = page.fit_photo(source, (460, 415))
+    apod = _page_record(title_en="Aurora", title_zh="极光")
+    layout = page.measure_apod_page(apod=apod, title_zh="极光", translation_unavailable=False).caption
 
     rendered = page.render_apod_page(
-        apod=_page_record(title_en="Aurora", title_zh="极光"),
+        apod=apod,
         title_zh="极光",
         translation_unavailable=False,
         weather=_page_weather(),
@@ -2281,23 +2325,21 @@ def test_apod_page_composed_photo_edges_are_exact_cover_pixels(source):
         rendered_at_utc=NOW_UTC,
     )
 
+    # Past the fade and above the caption shade, the photo is the exact cover crop.
+    left, top = page.PHOTO_RECT[:2]
+    last_clear = layout.caption_top - page.CAPTION_SHADE_LEAD - 1 - top
     edge_points = {
-        (0, 0),
-        (216, 0),
-        (431, 0),
-        (0, 149),
-        (431, 149),
-        (0, 298),
-        (216, 298),
-        (431, 298),
+        (page.PHOTO_FADE, 0),
+        (230, 0),
+        (459, 0),
+        (page.PHOTO_FADE, 149),
+        (459, 149),
+        (page.PHOTO_FADE, last_clear),
+        (459, last_clear),
     }
     for x, y in edge_points:
-        assert rendered.getpixel((368 + x, 65 + y)) == expected.getpixel((x, y))
-    assert rendered.getpixel((366, 65)) == page.DIVIDER_COLOR
-    assert rendered.getpixel((367, 479)) == page.DIVIDER_COLOR
-    assert rendered.getpixel((368, 364)) == page.ORANGE_COLOR
-    assert rendered.getpixel((799, 364)) == page.ORANGE_COLOR
-    assert rendered.getpixel((500, 367)) == page.CAPTION_COLOR
+        assert rendered.getpixel((left + x, top + y)) == expected.getpixel((x, y))
+    assert all(rendered.getpixel((x, page.HEADER_RECT[3] - 1)) == page.DIVIDER_COLOR for x in range(800))
 
 
 def test_apod_page_maximum_caption_has_fixed_photo_boundary():
@@ -2322,10 +2364,11 @@ def test_apod_page_maximum_caption_has_fixed_photo_boundary():
         measurement=measurement,
     )
 
-    caption_top = measurement.caption.caption_top
+    layout = measurement.caption
+    caption_top = layout.caption_top
     assert page.CAPTION_MIN_TOP <= caption_top <= page.CAPTION_MAX_TOP
-    assert rendered.getpixel((500, caption_top - 1)) == PHOTO_GREEN
-    assert rendered.getpixel((500, caption_top)) == page.ORANGE_COLOR
+    assert rendered.getpixel((790, caption_top - page.CAPTION_SHADE_LEAD - 1)) == PHOTO_GREEN
+    assert rendered.getpixel((page.RIGHT_TEXT_RECT[0] - 9, layout.date_bottom)) == page.ORANGE_COLOR
 
 
 @pytest.mark.parametrize(
@@ -2468,8 +2511,8 @@ def test_apod_page_real_multiline_credit_preserves_every_character_within_budget
     assert layout.title_bottom <= layout.credit_y
     assert layout.credit_bottom <= layout.date_y
     assert layout.date_bottom <= 480
-    assert measurement.photo_rect == (368, 65, 800, layout.caption_top)
-    assert measurement.photo_size == (432, layout.caption_top - 65)
+    assert measurement.photo_rect == page.PHOTO_RECT
+    assert measurement.photo_size == (460, 415)
 
     original_text = ImageDraw.ImageDraw.text
     drawn_text = []
@@ -2479,7 +2522,7 @@ def test_apod_page_real_multiline_credit_preserves_every_character_within_budget
         drawn_text.append(str(text))
         return original_text(draw, xy, text, *args, **kwargs)
 
-    def capture_kp(draw, rect, snapshot, fonts):
+    def capture_kp(canvas, draw, rect, snapshot, fonts):
         kp_calls.append(rect)
 
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
@@ -2498,8 +2541,8 @@ def test_apod_page_real_multiline_credit_preserves_every_character_within_budget
     assert kp_calls == [page.KP_RECT]
     assert all(line in drawn_text for line in layout.credit_lines)
     assert not any("..." in line or "…" in line for line in layout.credit_lines)
-    assert rendered.getpixel((500, layout.caption_top - 1)) == PHOTO_BLUE
-    assert rendered.getpixel((500, layout.caption_top)) == page.ORANGE_COLOR
+    assert rendered.getpixel((790, layout.caption_top - page.CAPTION_SHADE_LEAD - 1)) == PHOTO_BLUE
+    assert rendered.getpixel((page.RIGHT_TEXT_RECT[0] - 9, layout.date_bottom)) == page.ORANGE_COLOR
 
 
 def test_apod_caption_flattens_provider_credit_whitespace_before_wrapping():
@@ -2559,9 +2602,9 @@ def test_apod_page_uses_clear_ascii_separators_without_moving_kp_rect(monkeypatc
         drawn_text.append(str(text))
         return original_text(draw, xy, text, *args, **kwargs)
 
-    def capture_kp(draw, rect, snapshot, fonts):
+    def capture_kp(canvas, draw, rect, snapshot, fonts):
         kp_calls.append(rect)
-        return original_kp(draw, rect, snapshot, fonts)
+        return original_kp(canvas, draw, rect, snapshot, fonts)
 
     original_kp = page._draw_kp_panel
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
@@ -2578,7 +2621,7 @@ def test_apod_page_uses_clear_ascii_separators_without_moving_kp_rect(monkeypatc
 
     assert kp_calls == [page.KP_RECT]
     assert not any("·" in text or "•" in text for text in drawn_text)
-    assert "当前地磁指数 | CURRENT KP" in drawn_text
+    assert "当前地磁指数 | CURRENT GEOMAGNETIC INDEX" in drawn_text
     assert "太阳风 | WIND" in drawn_text
     assert "CREDIT | NASA / APOD" in drawn_text
     assert "NASA APOD | 2026-07-22" in drawn_text
@@ -2680,7 +2723,7 @@ def test_apod_page_kp_rect_is_direct_and_invariant(monkeypatch, scenario):
 
     calls = []
 
-    def capture(draw, rect, snapshot, fonts):
+    def capture(canvas, draw, rect, snapshot, fonts):
         calls.append((rect, snapshot, fonts))
 
     monkeypatch.setattr(page, "_draw_kp_panel", capture)
@@ -2698,12 +2741,12 @@ def test_apod_page_kp_rect_is_direct_and_invariant(monkeypatch, scenario):
     )
 
     assert len(calls) == 1
-    assert calls[0][0] == (20, 77, 354, 180)
+    assert calls[0][0] == (16, 74, 352, 190)
     assert calls[0][0] == page.KP_RECT
     assert calls[0][1] is weather
 
 
-def test_apod_page_left_text_bboxes_stop_at_x_354_and_never_use_ellipsis(
+def test_apod_page_left_text_bboxes_stay_inside_the_tiles_and_never_use_ellipsis(
     monkeypatch,
 ):
     page = _apod_page_module()
@@ -2728,12 +2771,12 @@ def test_apod_page_left_text_bboxes_stop_at_x_354_and_never_use_ellipsis(
 
     left_calls = [call for call in calls if call[0][0] < 368 and call[0][1] >= 65]
     assert left_calls
-    assert all(bbox[2] <= 354 for _xy, _text, bbox in left_calls)
+    assert all(bbox[2] <= page.KP_RECT[2] - 8 for _xy, _text, bbox in left_calls)
     assert not any("..." in text or "…" in text for _xy, text, _bbox in calls)
     all_copy = " | ".join(text for _xy, text, _bbox in calls)
     for required_copy in (
         "4.7",
-        "MODE estimated",
+        "CURRENT G2 | estimated",
         "48H PEAK | Kp 6.3 / G2",
         "G2",
         "R1",
@@ -2846,9 +2889,9 @@ def test_apod_page_draws_every_required_role_at_approved_true_font_size(
     assert "NASAPics × SPACE WEATHER" not in by_text
     assert by_text["2026-07-22 12:20Z"].size >= 10
     assert 36 <= by_text["4.7"].size <= 44
-    assert 16 <= by_text["CURRENT G2 | MODE estimated"].size <= 20
-    assert by_text["太阳风 | WIND"].size >= 12
-    assert 17 <= by_text["455 km/s"].size <= 19
+    assert 10 <= by_text["CURRENT G2 | estimated"].size <= 12
+    assert by_text["太阳风 | WIND"].size >= 10
+    assert 16 <= by_text["455 km/s"].size <= 19
     assert by_text["NOAA WATCH | G2 | Geomagnetic storm watch"].size >= 12
     assert by_text["NOAA SWPC | OBS 12:00Z | CACHE 12:20Z"].size >= 10
     assert by_text["CREDIT | NASA / APOD"].size >= 10

@@ -1,13 +1,15 @@
-"""Fixed 800x480 NASAPics and NOAA space-weather PIL renderer."""
+"""Fixed 800x480 NASAPics and NOAA space-weather PIL renderer, styled as a mission-control display."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
+import math
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 
 from plugins.apod.space_weather import SpaceWeatherSnapshot
 from utils.app_utils import get_base_ui_font
@@ -25,33 +27,58 @@ WORDMARK_PATH = (
 )
 WORDMARK_FALLBACK_TEXT = "NASAPics × SPACE WEATHER"
 LEFT_RECT = (0, 65, 368, 480)
-KP_RECT = (20, 77, 354, 180)
-GRS_RECT = (20, 190, 354, 218)
-METRICS_RECT = (20, 228, 354, 318)
-PROBABILITIES_RECT = (20, 326, 354, 364)
-ALERT_RECT = (20, 374, 354, 414)
-SOURCE_RECT = (20, 456, 354, 476)
+KP_RECT = (16, 74, 352, 190)
+GRS_RECT = (16, 198, 352, 236)
+METRICS_RECT = (16, 244, 352, 330)
+METRIC_GAP = 8
+PROBABILITIES_RECT = (16, 338, 352, 384)
+ALERT_RECT = (16, 392, 352, 434)
+SOURCE_RECT = (16, 448, 352, 472)
 RIGHT_X = 368
+ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
 
 PAGE_SIZE = (800, 480)
 CAPTION_MIN_TOP = 300
 CAPTION_MAX_TOP = 364
 PHOTO_TOP = 65
+# The photo runs under the panel's right edge and fades into it over PHOTO_FADE pixels.
+PHOTO_LEFT = 340
+PHOTO_FADE = 64
+PHOTO_RECT = (PHOTO_LEFT, PHOTO_TOP, PAGE_SIZE[0], PAGE_SIZE[1])
+# The caption sits on the photo, which darkens toward the foot from just above it.
+CAPTION_SHADE_LEAD = 36
+CAPTION_SHADE_ALPHA = 225
 RIGHT_INSET = 12
 RIGHT_TEXT_RECT = (RIGHT_X + RIGHT_INSET, 0, 800 - RIGHT_INSET, 480)
+KICKER_ICON_ROOM = 18
 
-PAGE_COLOR = (249, 249, 246)
-HEADER_COLOR = (252, 253, 252)
-LEFT_COLOR = (246, 241, 232)
-CAPTION_COLOR = (252, 252, 249)
-INK_COLOR = (22, 35, 47)
-MUTED_COLOR = (57, 69, 78)
-RULE_COLOR = (123, 133, 139)
-DIVIDER_COLOR = (24, 39, 52)
-GREEN_COLOR = (28, 158, 72)
-ORANGE_COLOR = (224, 92, 36)
-RED_COLOR = (197, 49, 41)
-BLUE_COLOR = (20, 96, 156)
+PAGE_COLOR = (7, 16, 31)
+HEADER_COLOR = (9, 21, 40)
+TILE_COLOR = (12, 27, 49)
+# Close to the panel's own blue, so a one-pixel outline stays a line instead of dithering to dots.
+TILE_OUTLINE = (0, 60, 230)
+# Small type and the line icons are pure white: a tint or grey dithers to speckle on the panel,
+# so labels and muted copy differ from values by size and weight, not colour.
+TEXT_COLOR = (255, 255, 255)
+INK_COLOR = TEXT_COLOR
+SUBTITLE_COLOR = TEXT_COLOR
+LABEL_COLOR = TEXT_COLOR
+MUTED_COLOR = TEXT_COLOR
+DIVIDER_COLOR = TILE_OUTLINE
+GREEN_COLOR = (62, 214, 120)
+AMBER_COLOR = (255, 182, 62)
+ORANGE_COLOR = (255, 132, 54)
+RED_COLOR = (238, 72, 64)
+CYAN_COLOR = (69, 210, 240)
+BAR_TRACK_COLOR = (30, 50, 78)
+ORBIT_COLOR = (26, 60, 96)
+STAR_COLOR = (120, 152, 194)
+# The NOAA G scale along the Kp dial: below 5 quiet, then G1 to G5.
+KP_ZONES = ((5, GREEN_COLOR), (6, (214, 222, 72)), (7, AMBER_COLOR), (8, ORANGE_COLOR), (9, RED_COLOR),
+            (10, (200, 40, 70)))
+ORBIT_ARCS = (((470, -230, 1130, 130), 105, 178), ((540, -120, 980, 96), 118, 200), ((-220, -300, 560, 112), 22, 74))
+HEADER_STARS = ((488, 14), (523, 40), (571, 22), (612, 51), (655, 12), (702, 33), (741, 52), (768, 15), (452, 58),
+                (690, 58))
 TEXT_SEPARATOR = " | "
 
 
@@ -136,13 +163,14 @@ def _load_fonts() -> Mapping[str, ImageFont.FreeTypeFont]:
         "header_meta": _font(10, bold=True),
         "kp_label": _font(10, bold=True),
         "kp_number": _font(40, bold=True),
-        "kp_state": _font(16, bold=True),
         "kp_peak": _font(10, bold=True),
-        "grs_value": _font(14, bold=True),
-        "metric_label": _font(12, bold=True),
-        "metric_value": _font(17, bold=True),
-        "probability_label": _font(12, bold=True),
-        "probability_value": _font(14, bold=True),
+        "dial": _font(10, bold=True),
+        "grs_value": _font(13, bold=True),
+        "grs_name": _font(10, bold=True),
+        "metric_label": _font(10, bold=True),
+        "metric_value": _font(16, bold=True),
+        "probability_label": _font(10, bold=True),
+        "probability_value": _font(13, bold=True),
         "alert": _font(12, bold=True),
         "source": _font(10, bold=True),
         "caption_kicker": _font(10, bold=True),
@@ -359,7 +387,7 @@ def _layout_caption(
     )
     kicker_copy = warning_copy or "TODAY'S ASTRONOMY PICTURE"
     if _text_width(draw, kicker_copy, kicker_font) > (
-        RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0]
+        RIGHT_TEXT_RECT[2] - RIGHT_TEXT_RECT[0] - KICKER_ICON_ROOM
     ):
         raise ApodPageLayoutError("complete APOD warning exceeds the caption width")
 
@@ -451,7 +479,7 @@ def measure_apod_page(
         apod_date=apod.date,
         warning=apod.warning,
     )
-    photo_rect = (RIGHT_X, PHOTO_TOP, PAGE_SIZE[0], caption.caption_top)
+    photo_rect = PHOTO_RECT
     photo_size = (
         photo_rect[2] - photo_rect[0],
         photo_rect[3] - photo_rect[1],
@@ -485,33 +513,100 @@ def _scale_value(scales, letter: str) -> str:
         return f"{letter.upper()}—"
 
 
-def _severity_color(g_value) -> tuple[int, int, int]:
+def _scale_level(scales, letter: str) -> int | None:
+    value = scales.get(letter.lower()) if isinstance(scales, Mapping) else None
     try:
-        severity = int(g_value)
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _severity_color(level) -> tuple[int, int, int]:
+    """Quiet in aurora green, minor to moderate in amber, strong and beyond in red."""
+    try:
+        severity = int(level)
     except (TypeError, ValueError):
         return MUTED_COLOR
     if severity <= 0:
         return GREEN_COLOR
     if severity <= 2:
-        return ORANGE_COLOR
+        return AMBER_COLOR
     return RED_COLOR
 
 
-def _draw_kp_panel(draw, rect, snapshot, fonts) -> None:
-    """Draw the fixed Kp hero cell directly inside ``rect``."""
+@lru_cache(maxsize=64)
+def _icon(name: str, size: int) -> Image.Image | None:
+    """A generated mission-control line icon, or None when the asset is missing."""
+    try:
+        with Image.open(ICON_DIR / f"{name}.png") as source:
+            icon = source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+    icon = ImageOps.contain(icon, (size, size), method=Image.Resampling.LANCZOS)
+    white = Image.new("RGBA", icon.size, TEXT_COLOR + (255,))
+    white.putalpha(icon.getchannel("A"))
+    return white
+
+
+def _paste_icon(canvas, name, x, y, size) -> int:
+    """Paste an icon centred in a ``size`` square at (x, y); the width it took (0 when missing)."""
+    icon = _icon(name, size)
+    if icon is None:
+        return 0
+    canvas.paste(icon, (int(x + (size - icon.width) // 2), int(y + (size - icon.height) // 2)), icon)
+    return size
+
+
+def _tile(draw, rect, *, outline=TILE_OUTLINE, fill=TILE_COLOR, radius=8) -> None:
+    x1, y1, x2, y2 = rect
+    draw.rounded_rectangle((x1, y1, x2 - 1, y2 - 1), radius=radius, fill=fill, outline=outline, width=1)
+
+
+def _kp_zone_color(kp: float) -> tuple[int, int, int]:
+    """The NOAA G scale along the dial: below 5 quiet, then G1 to G5."""
+    for threshold, color in KP_ZONES:
+        if kp < threshold:
+            return color
+    return KP_ZONES[-1][1]
+
+
+def _draw_kp_gauge(draw, center, radius, kp_value, fonts) -> None:
+    """A semicircular 0-9 dial in G-scale colours with a needle at ``kp_value``."""
+    cx, cy = center
+    box = (cx - radius, cy - radius, cx + radius, cy + radius)
+    steps = 54
+    for step in range(steps):
+        start = 180 + 180 * step / steps
+        end = 180 + 180 * (step + 1) / steps
+        draw.arc(box, start=start, end=end + 0.6, fill=_kp_zone_color(9 * (step + 0.5) / steps), width=7)
+    for tick in range(10):
+        angle = math.radians(180 + 20 * tick)
+        cos, sin = math.cos(angle), math.sin(angle)
+        draw.line((cx + cos * (radius - 11), cy + sin * (radius - 11), cx + cos * (radius - 6), cy + sin * (radius - 6)),
+                  fill=TEXT_COLOR, width=1)
+        label = str(tick)
+        bbox = _text_bbox(draw, (0, 0), label, fonts["dial"])
+        lx = cx + cos * (radius + 9) - (bbox[2] + bbox[0]) / 2
+        ly = cy + sin * (radius + 9) - (bbox[3] + bbox[1]) / 2
+        _draw_text(draw, (lx, ly), label, font=fonts["dial"], fill=LABEL_COLOR)
+    try:
+        value = max(0.0, min(9.0, float(kp_value)))
+    except (TypeError, ValueError):
+        value = None
+    if value is not None:
+        angle = math.radians(180 + 20 * value)
+        tip = (cx + math.cos(angle) * (radius - 14), cy + math.sin(angle) * (radius - 14))
+        draw.line((cx, cy, *tip), fill=TEXT_COLOR, width=3)
+    draw.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), fill=TEXT_COLOR, outline=TILE_OUTLINE)
+
+
+def _draw_kp_panel(canvas, draw, rect, snapshot, fonts) -> None:
+    """The Kp hero tile: the dial on the left, the reading and its context on the right."""
 
     x1, y1, x2, y2 = rect
     current = snapshot.current_kp if isinstance(snapshot.current_kp, Mapping) else {}
-    scales = (
-        snapshot.current_scales
-        if isinstance(snapshot.current_scales, Mapping)
-        else {}
-    )
-    forecast = (
-        snapshot.forecast_48h
-        if isinstance(snapshot.forecast_48h, Mapping)
-        else {}
-    )
+    scales = snapshot.current_scales if isinstance(snapshot.current_scales, Mapping) else {}
+    forecast = snapshot.forecast_48h if isinstance(snapshot.forecast_48h, Mapping) else {}
     color = _severity_color(scales.get("g"))
     kp_value = _format_number(current.get("value"))
     mode = str(current.get("mode") or "unavailable")
@@ -519,92 +614,64 @@ def _draw_kp_panel(draw, rect, snapshot, fonts) -> None:
     peak_kp = _format_number(forecast.get("max_kp"))
     peak_g = str(forecast.get("noaa_scale") or "G—")
 
-    draw.rectangle((x1, y1, x2 - 1, y2 - 1), outline=RULE_COLOR, width=1)
-    _draw_centered(
-        draw,
-        (x1 + 3, y1 + 2, x2 - 3, y1 + 18),
-        f"当前地磁指数{TEXT_SEPARATOR}CURRENT KP",
-        font=fonts["kp_label"],
-        fill=BLUE_COLOR,
-    )
-    _draw_centered(
-        draw,
-        (x1 + 48, y1 + 12, x2 - 48, y1 + 58),
-        kp_value,
-        font=fonts["kp_number"],
-        fill=color,
-    )
-    _draw_text(
-        draw, (x1 + 216, y1 + 42), "Kp", font=fonts["metric_label"], fill=color
-    )
-    _draw_centered(
-        draw,
-        (x1 + 4, y1 + 61, x2 - 4, y1 + 79),
-        f"CURRENT {current_g}{TEXT_SEPARATOR}MODE {mode}",
-        font=fonts["kp_state"],
-        fill=color,
-    )
-    _draw_centered(
-        draw,
-        (x1 + 4, y1 + 81, x2 - 4, y2 - 3),
-        f"48H PEAK{TEXT_SEPARATOR}Kp {peak_kp} / {peak_g}",
-        font=fonts["kp_peak"],
-        fill=INK_COLOR,
-    )
+    _tile(draw, rect)
+    _draw_text(draw, (x1 + 12, y1 + 7), f"当前地磁指数{TEXT_SEPARATOR}CURRENT GEOMAGNETIC INDEX",
+               font=fonts["kp_label"], fill=LABEL_COLOR)
+    _draw_kp_gauge(draw, (x1 + 84, y2 - 16), 58, current.get("value"), fonts)
+
+    right = x1 + 162
+    number_font = fonts["kp_number"]
+    _draw_text(draw, (right, y1 + 24), kp_value, font=number_font, fill=color)
+    number_right = right + _text_width(draw, kp_value, number_font) + _text_bbox(draw, (0, 0), kp_value, number_font)[0]
+    _draw_text(draw, (number_right + 6, y1 + 50), "Kp", font=fonts["metric_label"], fill=color)
+    state_copy, state_font = _fit_kp_state(draw, current_g, mode, max_width=x2 - 12 - right)
+    _draw_text(draw, (right, y1 + 76), state_copy, font=state_font, fill=color)
+    _draw_text(draw, (right, y1 + 94), f"48H PEAK{TEXT_SEPARATOR}Kp {peak_kp} / {peak_g}",
+               font=fonts["kp_peak"], fill=MUTED_COLOR)
+
+
+def _fit_kp_state(draw, current_g, mode, *, max_width):
+    """The current G level and Kp mode on one line beside the number, stepping 12 to 10 px."""
+    for text in (f"CURRENT {current_g}{TEXT_SEPARATOR}{mode}", f"{current_g}{TEXT_SEPARATOR}{mode}"):
+        for size in (12, 11, 10):
+            font = _font(size, bold=True)
+            if _text_width(draw, text, font) <= max_width:
+                return text, font
+    raise ApodPageLayoutError("Kp state does not fit beside the number at 10px")
 
 
 def _draw_grs_panel(draw, snapshot, fonts) -> None:
+    """G, R and S as status lamps coloured by their NOAA level."""
     x1, y1, x2, y2 = GRS_RECT
-    scales = (
-        snapshot.current_scales
-        if isinstance(snapshot.current_scales, Mapping)
-        else {}
-    )
+    scales = snapshot.current_scales if isinstance(snapshot.current_scales, Mapping) else {}
+    _tile(draw, GRS_RECT)
     cell_width = (x2 - x1) / 3
-    for index, letter in enumerate(("G", "R", "S")):
+    middle = (y1 + y2) / 2
+    for index, (letter, name) in enumerate((("G", "地磁暴"), ("R", "无线电中断"), ("S", "太阳辐射"))):
         left = round(x1 + index * cell_width)
-        right = round(x1 + (index + 1) * cell_width)
-        draw.rectangle((left, y1, right - 1, y2 - 1), outline=RULE_COLOR, width=1)
-        _draw_centered(
-            draw,
-            (left + 2, y1 + 7, right - 2, y2 - 2),
-            _scale_value(scales, letter),
-            font=fonts["grs_value"],
-            fill=INK_COLOR,
-        )
+        if index:
+            draw.line((left, y1 + 8, left, y2 - 9), fill=TILE_OUTLINE, width=1)
+        lamp = _severity_color(_scale_level(scales, letter))
+        cx = left + 20
+        draw.ellipse((cx - 11, middle - 11, cx + 11, middle + 11), fill=_mix(lamp, TILE_COLOR, 0.55))
+        draw.ellipse((cx - 7, middle - 7, cx + 7, middle + 7), fill=lamp, outline=_mix(lamp, (255, 255, 255), 0.4))
+        _draw_text(draw, (left + 38, y1 + 4), _scale_value(scales, letter), font=fonts["grs_value"], fill=TEXT_COLOR)
+        _draw_text(draw, (left + 38, y1 + 22), name, font=fonts["grs_name"], fill=LABEL_COLOR)
 
 
-def _draw_metric_cell(draw, rect, label, value, fonts) -> None:
+def _draw_metric_cell(canvas, draw, rect, icon, label, value, fonts) -> None:
     x1, y1, x2, y2 = rect
-    draw.rectangle((x1, y1, x2 - 1, y2 - 1), outline=RULE_COLOR, width=1)
-    _draw_text(
-        draw,
-        (x1 + 6, y1 + 2),
-        label,
-        font=fonts["metric_label"],
-        fill=MUTED_COLOR,
-    )
-    _draw_text(
-        draw,
-        (x1 + 6, y1 + 18),
-        value,
-        font=fonts["metric_value"],
-        fill=INK_COLOR,
-    )
+    _tile(draw, rect)
+    taken = _paste_icon(canvas, icon, x1 + 8, y1 + (y2 - y1 - 24) // 2, 24)
+    text_x = x1 + 10 + (taken + 6 if taken else 0)
+    _draw_text(draw, (text_x, y1 + 4), label, font=fonts["metric_label"], fill=LABEL_COLOR)
+    _draw_text(draw, (text_x, y1 + 18), value, font=fonts["metric_value"], fill=TEXT_COLOR)
 
 
-def _draw_metrics_panel(draw, snapshot, fonts) -> None:
+def _draw_metrics_panel(canvas, draw, snapshot, fonts) -> None:
     speed = snapshot.solar_wind if isinstance(snapshot.solar_wind, Mapping) else {}
-    magnetic = (
-        snapshot.magnetic_field
-        if isinstance(snapshot.magnetic_field, Mapping)
-        else {}
-    )
-    forecast = (
-        snapshot.forecast_48h
-        if isinstance(snapshot.forecast_48h, Mapping)
-        else {}
-    )
+    magnetic = snapshot.magnetic_field if isinstance(snapshot.magnetic_field, Mapping) else {}
+    forecast = snapshot.forecast_48h if isinstance(snapshot.forecast_48h, Mapping) else {}
     wind_value = _format_number(speed.get("speed_km_s"), decimals=0)
     if wind_value != "—":
         wind_value += " km/s"
@@ -622,52 +689,57 @@ def _draw_metrics_panel(draw, snapshot, fonts) -> None:
     x1, y1, x2, y2 = METRICS_RECT
     mid_x = (x1 + x2) // 2
     mid_y = (y1 + y2) // 2
-    _draw_metric_cell(
-        draw,
-        (x1, y1, mid_x, mid_y),
-        f"太阳风{TEXT_SEPARATOR}WIND",
-        wind_value,
-        fonts,
+    gap = METRIC_GAP // 2
+    cells = (
+        ((x1, y1, mid_x - gap, mid_y - gap), "solar_wind", f"太阳风{TEXT_SEPARATOR}WIND", wind_value),
+        ((mid_x + gap, y1, x2, mid_y - gap), "magnet", "磁场 Bz", bz_value),
+        ((x1, mid_y + gap, mid_x - gap, y2), "compass", "磁场强度 Bt", bt_value),
+        ((mid_x + gap, mid_y + gap, x2, y2), "forecast", "48H FORECAST", forecast_value),
     )
-    _draw_metric_cell(draw, (mid_x, y1, x2, mid_y), "磁场 Bz", bz_value, fonts)
-    _draw_metric_cell(draw, (x1, mid_y, mid_x, y2), "磁场强度 Bt", bt_value, fonts)
-    _draw_metric_cell(
-        draw, (mid_x, mid_y, x2, y2), "48H FORECAST", forecast_value, fonts
-    )
+    for rect, icon, label, value in cells:
+        _draw_metric_cell(canvas, draw, rect, icon, label, value, fonts)
 
 
-def _draw_probabilities_panel(draw, snapshot, fonts) -> None:
+def _probability_color(value) -> tuple[int, int, int]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return MUTED_COLOR
+    if number < 25:
+        return GREEN_COLOR
+    if number < 60:
+        return AMBER_COLOR
+    return RED_COLOR
+
+
+def _draw_probabilities_panel(canvas, draw, snapshot, fonts) -> None:
+    """Three storm chances, each with a bar the width of its probability."""
     x1, y1, x2, y2 = PROBABILITIES_RECT
-    probabilities = (
-        snapshot.probabilities
-        if isinstance(snapshot.probabilities, Mapping)
-        else {}
-    )
+    probabilities = snapshot.probabilities if isinstance(snapshot.probabilities, Mapping) else {}
     values = (
         ("R1–R2", probabilities.get("r1_r2")),
         ("R3–R5", probabilities.get("r3_r5")),
         ("S1+", probabilities.get("s1_plus")),
     )
-    cell_width = (x2 - x1) / 3
+    _tile(draw, PROBABILITIES_RECT)
+    taken = _paste_icon(canvas, "probability", x1 + 8, y1 + (y2 - y1 - 22) // 2, 22)
+    cells_left = x1 + 10 + (taken + 4 if taken else 0)
+    cell_width = (x2 - 8 - cells_left) / 3
     for index, (label, value) in enumerate(values):
-        left = round(x1 + index * cell_width)
-        right = round(x1 + (index + 1) * cell_width)
-        draw.rectangle((left, y1, right - 1, y2 - 1), outline=RULE_COLOR, width=1)
-        _draw_centered(
-            draw,
-            (left + 2, y1 + 4, right - 2, y1 + 14),
-            label,
-            font=fonts["probability_label"],
-            fill=MUTED_COLOR,
-        )
+        left = round(cells_left + index * cell_width)
+        right = round(cells_left + (index + 1) * cell_width) - 8
+        _draw_text(draw, (left, y1 + 6), label, font=fonts["probability_label"], fill=LABEL_COLOR)
         probability = "—" if value is None else f"{value}%"
-        _draw_centered(
-            draw,
-            (left + 2, y1 + 17, right - 2, y2 - 2),
-            probability,
-            font=fonts["probability_value"],
-            fill=INK_COLOR,
-        )
+        _draw_right(draw, right, y1 + 4, probability, font=fonts["probability_value"], fill=TEXT_COLOR)
+        bar_y = y2 - 12
+        draw.rounded_rectangle((left, bar_y, right, bar_y + 4), radius=2, fill=BAR_TRACK_COLOR)
+        try:
+            share = max(0.0, min(1.0, float(value) / 100))
+        except (TypeError, ValueError):
+            share = 0.0
+        if share > 0:
+            draw.rounded_rectangle((left, bar_y, left + max(4, round((right - left) * share)), bar_y + 4), radius=2,
+                                   fill=_probability_color(value))
 
 
 def _alert_copy(snapshot) -> tuple[str, tuple[int, int, int]]:
@@ -681,7 +753,7 @@ def _alert_copy(snapshot) -> tuple[str, tuple[int, int, int]]:
             parts.append(severity)
         if headline:
             parts.append(headline)
-        return TEXT_SEPARATOR.join(parts), ORANGE_COLOR
+        return TEXT_SEPARATOR.join(parts), AMBER_COLOR
 
     event = snapshot.donki_event if isinstance(snapshot.donki_event, Mapping) else None
     if event:
@@ -692,39 +764,37 @@ def _alert_copy(snapshot) -> tuple[str, tuple[int, int, int]]:
             or event.get("event_id")
             or "active"
         )
-        return f"NASA DONKI{TEXT_SEPARATOR}{kind} {detail}", BLUE_COLOR
+        return f"NASA DONKI{TEXT_SEPARATOR}{kind} {detail}", CYAN_COLOR
     if snapshot.alert_state == "confirmed_empty":
         return f"NOAA ALERTS{TEXT_SEPARATOR}no active items", GREEN_COLOR
-    return f"NOAA ALERTS{TEXT_SEPARATOR}temporarily unavailable", MUTED_COLOR
+    return f"NOAA ALERTS{TEXT_SEPARATOR}temporarily unavailable", TILE_OUTLINE
 
 
-def _fit_box_copy(draw, text, *, font, max_width, required_active=False):
-    lines = _wrap_complete(draw, text, font, max_width)
-    if len(lines) <= 2:
-        return lines
+def _fit_alert_copy(draw, text, *, max_width, required_active=False):
+    """The complete alert in at most two lines, stepping the type down from 12 to 10 px."""
+    for size in (12, 11, 10):
+        font = _font(size, bold=True)
+        lines = _wrap_complete(draw, text, font, max_width)
+        if len(lines) <= 2:
+            return lines, font
     label = "active alert" if required_active else "alert copy"
-    raise ApodPageLayoutError(
-        f"complete {label} does not fit the fixed cell at 12px"
-    )
+    raise ApodPageLayoutError(f"complete {label} does not fit the fixed cell at 10px")
 
 
-def _draw_alert_panel(draw, snapshot, fonts) -> None:
+def _draw_alert_panel(canvas, draw, snapshot, fonts) -> None:
     x1, y1, x2, y2 = ALERT_RECT
     text, color = _alert_copy(snapshot)
-    draw.rectangle((x1, y1, x2 - 1, y2 - 1), fill=CAPTION_COLOR)
-    draw.rectangle((x1, y1, x1 + 2, y2 - 1), fill=color)
-    font = fonts["alert"]
-    lines = _fit_box_copy(
-        draw,
-        text,
-        font=font,
-        max_width=x2 - x1 - 16,
-        required_active=isinstance(snapshot.alert, Mapping),
+    _tile(draw, ALERT_RECT, outline=color, fill=_mix(color, PAGE_COLOR, 0.82))
+    icon = "alert" if isinstance(snapshot.alert, Mapping) or isinstance(snapshot.donki_event, Mapping) else "source"
+    taken = _paste_icon(canvas, icon, x1 + 9, y1 + (y2 - y1 - 22) // 2, 22)
+    text_x = x1 + 12 + (taken + 6 if taken else 0)
+    lines, font = _fit_alert_copy(
+        draw, text, max_width=x2 - 10 - text_x, required_active=isinstance(snapshot.alert, Mapping),
     )
     line_height = _line_height(draw, font)
     y = y1 + max(3, ((y2 - y1) - line_height * len(lines)) // 2)
     for line in lines:
-        _draw_text(draw, (x1 + 10, y), line, font=font, fill=INK_COLOR)
+        _draw_text(draw, (text_x, y), line, font=font, fill=TEXT_COLOR)
         y += line_height
 
 
@@ -743,7 +813,7 @@ def _utc_stamp(value, *, include_date=False) -> str:
     return converted.strftime("%Y-%m-%d %H:%MZ" if include_date else "%H:%MZ")
 
 
-def _draw_source_panel(draw, snapshot, fonts) -> None:
+def _draw_source_panel(canvas, draw, snapshot, fonts) -> None:
     observed = _utc_stamp(snapshot.oldest_core_observed_at_utc)
     cached = _utc_stamp(snapshot.fetched_at_utc)
     text = (
@@ -751,15 +821,11 @@ def _draw_source_panel(draw, snapshot, fonts) -> None:
         f"{TEXT_SEPARATOR}CACHE {cached}"
     )
     font = fonts["source"]
-    if _text_width(draw, text, font) > SOURCE_RECT[2] - SOURCE_RECT[0]:
+    taken = _paste_icon(canvas, "source", SOURCE_RECT[0], SOURCE_RECT[1] + 2, 16)
+    text_x = SOURCE_RECT[0] + (taken + 6 if taken else 0)
+    if _text_width(draw, text, font) > SOURCE_RECT[2] - text_x:
         raise ApodPageLayoutError("complete NOAA source timestamps do not fit")
-    _draw_text(
-        draw,
-        (SOURCE_RECT[0], SOURCE_RECT[1] + 3),
-        text,
-        font=font,
-        fill=MUTED_COLOR,
-    )
+    _draw_text(draw, (text_x, SOURCE_RECT[1] + 4), text, font=font, fill=MUTED_COLOR)
 
 
 def _load_wordmark() -> Image.Image | None:
@@ -773,6 +839,20 @@ def _load_wordmark() -> Image.Image | None:
     return wordmark.crop(bbox) if bbox else None
 
 
+def _wordmark_on_dark(wordmark: Image.Image) -> Image.Image:
+    """The wordmark's dark lettering turned light; its blue swoosh and orange star keep their colour."""
+    red, green, blue, alpha = wordmark.split()
+    luma = wordmark.convert("L")
+    chroma = ImageChops.subtract(ImageChops.lighter(ImageChops.lighter(red, green), blue),
+                                 ImageChops.darker(ImageChops.darker(red, green), blue))
+    lettering = ImageChops.multiply(luma.point(lambda value: 255 if value < 120 else 0),
+                                    chroma.point(lambda value: 255 if value < 90 else 0))
+    light = Image.new("RGBA", wordmark.size, (*TEXT_COLOR, 255))
+    recoloured = Image.composite(light, wordmark, lettering)
+    recoloured.putalpha(alpha)
+    return recoloured
+
+
 def _draw_wordmark(canvas: Image.Image) -> bool:
     source = _load_wordmark()
     if source is None:
@@ -780,7 +860,7 @@ def _draw_wordmark(canvas: Image.Image) -> bool:
 
     left, top, right, bottom = WORDMARK_RECT
     art = ImageOps.contain(
-        source,
+        _wordmark_on_dark(source),
         (right - left, bottom - top),
         method=Image.Resampling.LANCZOS,
     )
@@ -790,14 +870,26 @@ def _draw_wordmark(canvas: Image.Image) -> bool:
     return True
 
 
+def _draw_orbits(canvas) -> None:
+    """Faint orbital arcs and a few stars behind the header, as in a mission display, kept inside it."""
+    band = Image.new("RGB", (PAGE_SIZE[0], HEADER_RECT[3] - 1), HEADER_COLOR)
+    band_draw = ImageDraw.Draw(band)
+    for box, start, end in ORBIT_ARCS:
+        band_draw.arc(box, start=start, end=end, fill=ORBIT_COLOR, width=1)
+    for x, y in HEADER_STARS:
+        band_draw.point((x, y), fill=STAR_COLOR)
+    canvas.paste(band, (0, 0))
+
+
 def _draw_header(canvas, draw, rendered_at_utc, fonts) -> None:
+    _draw_orbits(canvas)
     if not _draw_wordmark(canvas):
         _draw_text(
             draw,
             (20, 10),
             WORDMARK_FALLBACK_TEXT,
             font=fonts["brand"],
-            fill=INK_COLOR,
+            fill=TEXT_COLOR,
         )
     _draw_right(
         draw,
@@ -805,20 +897,43 @@ def _draw_header(canvas, draw, rendered_at_utc, fonts) -> None:
         24,
         _utc_stamp(rendered_at_utc, include_date=True),
         font=fonts["header_meta"],
-        fill=INK_COLOR,
+        fill=TEXT_COLOR,
     )
     draw.line((0, HEADER_RECT[3] - 1, 799, HEADER_RECT[3] - 1), fill=DIVIDER_COLOR)
 
 
-def _draw_caption(draw, layout) -> None:
+def _place_photo(canvas, photo, caption_top) -> None:
+    """The photo full-bleed on the right, its left edge fading into the panel and its foot darkened for the caption."""
+    left, top = PHOTO_LEFT, PHOTO_TOP
+    width, height = photo.size
+    # Rotated, the gradient runs transparent at the panel to opaque toward the photo.
+    fade = Image.linear_gradient("L").rotate(90, expand=True).resize((PHOTO_FADE, height))
+    mask = Image.new("L", (width, height), 255)
+    mask.paste(fade, (0, 0))
+    canvas.paste(photo, (left, top), mask)
+    shade_top = max(0, caption_top - top - CAPTION_SHADE_LEAD)
+    shade_height = height - shade_top
+    if shade_height > 0:
+        ramp = Image.linear_gradient("L").resize((width, shade_height)).point(
+            lambda value: round(value * CAPTION_SHADE_ALPHA / 255)
+        )
+        region = canvas.crop((left, top + shade_top, left + width, top + height))
+        dark = Image.new("RGB", region.size, PAGE_COLOR)
+        canvas.paste(Image.composite(dark, region, ramp), (left, top + shade_top))
+
+
+def _draw_caption(canvas, draw, layout) -> None:
     x1 = RIGHT_TEXT_RECT[0]
     x2 = RIGHT_TEXT_RECT[2]
-    draw.rectangle((RIGHT_X, layout.caption_top, 799, 479), fill=CAPTION_COLOR)
-    draw.rectangle((RIGHT_X, layout.caption_top, 799, layout.caption_top + 2), fill=ORANGE_COLOR)
+    accent_bottom = layout.date_bottom
+    accent_top = layout.kicker_y if layout.show_kicker and layout.kicker_y is not None else layout.title_zh_y
+    accent_top = layout.title_en_y if accent_top is None else accent_top
+    draw.rectangle((x1 - 10, accent_top, x1 - 8, accent_bottom), fill=ORANGE_COLOR)
     if layout.show_kicker and layout.kicker_y is not None:
+        taken = _paste_icon(canvas, "telescope", x1, layout.kicker_y - 2, 14)
         _draw_text(
             draw,
-            (x1, layout.kicker_y),
+            (x1 + (taken + 4 if taken else 0), layout.kicker_y),
             layout.kicker_copy,
             font=layout.kicker_font,
             fill=ORANGE_COLOR,
@@ -832,12 +947,12 @@ def _draw_caption(draw, layout) -> None:
         y = layout.title_zh_y
         zh_advance = _line_height(draw, layout.title_zh_font)
         for line in layout.title_zh_lines:
-            _draw_text(draw, (x1, y), line, font=layout.title_zh_font, fill=INK_COLOR)
+            _draw_text(draw, (x1, y), line, font=layout.title_zh_font, fill=TEXT_COLOR)
             y += zh_advance
     y = layout.title_en_y
     en_advance = _line_height(draw, layout.title_en_font)
     for line in layout.title_en_lines:
-        _draw_text(draw, (x1, y), line, font=layout.title_en_font, fill=MUTED_COLOR)
+        _draw_text(draw, (x1, y), line, font=layout.title_en_font, fill=SUBTITLE_COLOR)
         y += en_advance
 
     y = layout.credit_y
@@ -858,8 +973,12 @@ def _draw_caption(draw, layout) -> None:
         layout.date_y,
         "FULL-BLEED DAILY",
         font=layout.meta_font,
-        fill=MUTED_COLOR,
+        fill=LABEL_COLOR,
     )
+
+
+def _mix(colour, other, share):
+    return tuple(round(a + (b - a) * share) for a, b in zip(colour, other))
 
 
 def render_apod_page(
@@ -873,7 +992,7 @@ def render_apod_page(
     dimensions: tuple[int, int] = PAGE_SIZE,
     measurement: ApodPageMeasurement | None = None,
 ) -> Image.Image:
-    """Render the approved fixed mirrored page with one full-bleed cover crop."""
+    """Render the mission-control page: instrument tiles on the left, the photo full-bleed on the right."""
 
     if tuple(dimensions) != PAGE_SIZE:
         raise ValueError("APOD page requires the approved 800x480 dimensions")
@@ -892,27 +1011,20 @@ def render_apod_page(
     ):
         raise ValueError("APOD page measurement does not match caption content")
     layout = measured.caption
-    expected_rect = (RIGHT_X, PHOTO_TOP, PAGE_SIZE[0], layout.caption_top)
-    if measured.photo_rect != expected_rect:
-        raise ValueError("APOD page measurement does not match the caption boundary")
+    if measured.photo_rect != PHOTO_RECT:
+        raise ValueError("APOD page measurement does not match the photo rectangle")
 
     canvas = Image.new("RGB", PAGE_SIZE, PAGE_COLOR)
     draw = ImageDraw.Draw(canvas)
     fonts = _load_fonts()
 
-    draw.rectangle((0, 0, 799, HEADER_RECT[3] - 1), fill=HEADER_COLOR)
-    draw.rectangle((0, LEFT_RECT[1], LEFT_RECT[2] - 1, 479), fill=LEFT_COLOR)
-    canvas.paste(fit_photo(source_image, measured.photo_size), (RIGHT_X, PHOTO_TOP))
-
+    _place_photo(canvas, fit_photo(source_image, measured.photo_size), layout.caption_top)
     _draw_header(canvas, draw, rendered_at_utc, fonts)
-    _draw_kp_panel(draw, KP_RECT, weather, fonts)
+    _draw_kp_panel(canvas, draw, KP_RECT, weather, fonts)
     _draw_grs_panel(draw, weather, fonts)
-    _draw_metrics_panel(draw, weather, fonts)
-    _draw_probabilities_panel(draw, weather, fonts)
-    _draw_alert_panel(draw, weather, fonts)
-    _draw_source_panel(draw, weather, fonts)
-    _draw_caption(draw, layout)
-    draw.rectangle(
-        (RIGHT_X - 2, PHOTO_TOP, RIGHT_X - 1, 479), fill=DIVIDER_COLOR
-    )
+    _draw_metrics_panel(canvas, draw, weather, fonts)
+    _draw_probabilities_panel(canvas, draw, weather, fonts)
+    _draw_alert_panel(canvas, draw, weather, fonts)
+    _draw_source_panel(canvas, draw, weather, fonts)
+    _draw_caption(canvas, draw, layout)
     return canvas.convert("RGB")

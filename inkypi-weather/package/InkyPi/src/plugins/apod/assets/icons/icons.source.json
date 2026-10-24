@@ -1,0 +1,111 @@
+{
+  "source": "GPT Image 2.5 (Creative Claw image/gpt-image-2.5-sunburst), one transparent 2048x1024 sheet, 4x2 grid",
+  "sheet_sha256": "885a142b0966e6f4f9cb73417c6e7b535961639b7f8c0a5ed655e1e030685e40",
+  "generated": "2026-10-24",
+  "icons": {
+    "solar_wind": {
+      "cell": [
+        0,
+        0
+      ],
+      "bbox": [
+        93,
+        136,
+        449,
+        458
+      ],
+      "sha256": "38ebac5c08c55ead595a7dbc03dbf990f1768165bce1e48d71506c779d0b2b83"
+    },
+    "magnet": {
+      "cell": [
+        1,
+        0
+      ],
+      "bbox": [
+        44,
+        167,
+        489,
+        429
+      ],
+      "sha256": "bc874b021fc4ec5093506cab7401fe2e004168903b0f76d9171b2cc5c4bba500"
+    },
+    "compass": {
+      "cell": [
+        2,
+        0
+      ],
+      "bbox": [
+        90,
+        107,
+        436,
+        451
+      ],
+      "sha256": "db43fc84e6a697ce6fa4991934713c90f909e73ae6c36f1226e1c83c497dde1e"
+    },
+    "forecast": {
+      "cell": [
+        3,
+        0
+      ],
+      "bbox": [
+        92,
+        115,
+        426,
+        440
+      ],
+      "sha256": "f9c6105ac32460e3993c54e55e693f6bb5454cdb4561dc217064f68f86128dc4"
+    },
+    "alert": {
+      "cell": [
+        0,
+        1
+      ],
+      "bbox": [
+        78,
+        79,
+        434,
+        396
+      ],
+      "sha256": "2ddcd3eb4df558943dcfbb7e5b3b5beaf7086d8ce78f278a500a15b76e8a8013"
+    },
+    "probability": {
+      "cell": [
+        1,
+        1
+      ],
+      "bbox": [
+        95,
+        54,
+        422,
+        406
+      ],
+      "sha256": "7285d3137adda09a5ffbecf388906993f692fd3eb75bc076f1b1aaa14e75b912"
+    },
+    "telescope": {
+      "cell": [
+        2,
+        1
+      ],
+      "bbox": [
+        72,
+        46,
+        455,
+        401
+      ],
+      "sha256": "5fd4836c8ae3fb3efd21b0fba463d69b8de219b802c1b5ff612ed6e907c5ebfa"
+    },
+    "source": {
+      "cell": [
+        3,
+        1
+      ],
+      "bbox": [
+        67,
+        72,
+        450,
+        395
+      ],
+      "sha256": "ef138d26613fd0b6c4a11bce9eb858bbe0bed1170283bb8c509fd9da8d5e2bcb"
+    }
+  }
+}
