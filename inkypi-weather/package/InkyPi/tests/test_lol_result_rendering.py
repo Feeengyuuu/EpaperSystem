@@ -121,8 +121,9 @@ def test_completed_lpl_schedule_renders_final_score_instead_of_next_match(
 @pytest.mark.parametrize(
     "start,state,wins,status,tag,headline,score",
     [
+        # A match still to come shows how long until it starts where a score would go.
         ("2026-09-24T09:00:00Z", "unstarted", (0, 0),
-         "NEXT", "NEXT MATCH", "9:00 AM", "VS"),
+         "NEXT", "NEXT MATCH", "9:00 AM", "1天后"),
         ("2026-09-23T03:00:00Z", "inProgress", (1, 0),
          "LIVE", "NOW PLAYING", "IN PROGRESS", "1-0"),
         ("2026-09-19T09:00:00Z", "completed", (0, 0),
