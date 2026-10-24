@@ -15,7 +15,7 @@ from urllib.parse import unquote, urljoin, urlparse
 
 import icalendar
 import pytz
-from PIL import Image, ImageColor, ImageDraw, ImageOps
+from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageOps
 
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import (
@@ -229,8 +229,37 @@ CALENDAR_RING_HEIGHT = 24
 CALENDAR_RING_PITCH = 42
 CALENDAR_RING_MARGIN = 22
 CALENDAR_CROSS_VARIANTS = 4
+# How strongly the month's border illustration is printed on the page (0-1).
+CALENDAR_BACKDROP_SHARE = 0.42
+# It keeps that strength within this many pixels of the page's edges and falls to this share
+# of it in the middle; the agenda's band at the foot is printed at half again.
+CALENDAR_BACKDROP_EDGE = 46
+CALENDAR_BACKDROP_INNER = 0.32
+CALENDAR_AGENDA_BAND = 70
 # A cross spans about the today circle, so the struck-off number still reads under it.
 CALENDAR_CROSS_SCALE = 1.7
+
+
+@lru_cache(maxsize=4)
+def _backdrop_edge_mask(size, box):
+    """255 along the page's edges, falling to CALENDAR_BACKDROP_INNER inside it, and halved
+    again over the agenda band at the foot (corners excepted)."""
+    width, height = size
+    left, top, right, bottom = box
+    inner = round(255 * CALENDAR_BACKDROP_INNER)
+
+    def ramp(distance):
+        return round(inner + (255 - inner) * max(0.0, 1 - distance / CALENDAR_BACKDROP_EDGE))
+
+    across = Image.new("L", (width, 1))
+    across.putdata([ramp(min(abs(x - left), abs(right - x))) for x in range(width)])
+    down = Image.new("L", (1, height))
+    down.putdata([ramp(min(abs(y - top), abs(bottom - y))) for y in range(height)])
+    mask = ImageChops.lighter(across.resize(size), down.resize(size))
+    agenda = Image.new("L", size, 255)
+    ImageDraw.Draw(agenda).rectangle((left + CALENDAR_BACKDROP_EDGE // 2, bottom - CALENDAR_AGENDA_BAND,
+                                      right - CALENDAR_BACKDROP_EDGE // 2, bottom), fill=128)
+    return ImageChops.multiply(mask, agenda)
 
 
 @lru_cache(maxsize=8)
@@ -617,7 +646,7 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         # === CALENDAR CONTENT (inside light area) ===
         # The month hangs as a wall-calendar page: rings along its top, ink edge, hard shadow.
         c_left, c_top, c_right, c_bottom = self._draw_wall_calendar_page(
-            img, (c_left, c_top, c_right, c_bottom), surface, text_color)
+            img, (c_left, c_top, c_right, c_bottom), surface, text_color, month=selected_date.month)
         cal_w = c_right - c_left
         cal_h = c_bottom - c_top
         cal_cx = c_left + cal_w // 2
@@ -760,12 +789,13 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         )
         return img
 
-    def _draw_wall_calendar_page(self, img, area, surface, ink):
+    def _draw_wall_calendar_page(self, img, area, surface, ink, month=None):
         """Draw the month's page inside ``area`` and return the box its content goes in.
 
         The page is inset with a hard comic shadow, an ink edge and binder rings spaced
-        along its top, and runs on past the bottom edge; without the ring art the plain
-        page still frames the month.
+        along its top, and runs on past the bottom edge; the month's own illustration
+        (calendar_page/backdrop_MM.png) is printed lightly on it. Without the art the
+        plain page still frames the month.
         """
         left, top, right, bottom = area
         # The page runs on past the panel's bottom edge, so the agenda's last line is never cut.
@@ -775,6 +805,9 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         shadow = tuple(page[i] + CALENDAR_PAGE_SHADOW for i in range(4))
         draw.rounded_rectangle(shadow, radius=10, fill=ink)
         draw.rounded_rectangle(page, radius=10, fill=surface, outline=ink, width=2)
+        if month:
+            self._print_month_backdrop(img, page, surface, month, bottom)
+            draw.rounded_rectangle(page, radius=10, outline=ink, width=2)
         ring = _calendar_page_art("binder_ring.png")
         if ring is not None:
             height = CALENDAR_RING_HEIGHT
@@ -786,6 +819,30 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
                 x = round(page[0] + CALENDAR_RING_MARGIN + index * step - ring.width / 2)
                 img.paste(ring, (x, page[1] - round(height * 0.62)), ring)
         return (left, top + CALENDAR_PAGE_CONTENT_TOP, right, bottom)
+
+    @staticmethod
+    def _print_month_backdrop(img, page, surface, month, visible_bottom):
+        """The month's border illustration, printed lightly on the page: as wide as the page,
+        its foot on the panel's bottom edge, clipped to the page and faded toward the paper."""
+        art = _calendar_page_art(f"backdrop_{month:02d}.png")
+        if art is None:
+            return
+        left, top, right, _bottom = page
+        width = right - left - 4
+        scaled = art.resize((width, max(1, round(art.height * width / art.width))), Image.LANCZOS)
+        origin = (left + 2, visible_bottom - scaled.height)
+        layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        layer.paste(scaled, origin)
+        # Printed full strength along the page's edges and faded toward its middle, and fainter
+        # again behind the agenda, so the month's numbers and its events read on top of it.
+        alpha = layer.getchannel("A").point(lambda value: round(value * CALENDAR_BACKDROP_SHARE))
+        alpha = ImageChops.multiply(alpha, _backdrop_edge_mask(img.size, (left, top, right, visible_bottom)))
+        clip = Image.new("L", img.size, 0)
+        ImageDraw.Draw(clip).rounded_rectangle((left + 2, top + 2, right - 2, visible_bottom), radius=9, fill=255)
+        layer.putalpha(ImageChops.multiply(alpha, clip))
+        base = img.convert("RGBA")
+        base.alpha_composite(layer)
+        img.paste(base.convert("RGB"))
 
     @staticmethod
     def _cross_off_day(img, day, centre, size):

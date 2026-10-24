@@ -1,0 +1,153 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "generated": "2026-10-24",
+  "background": "transparent PNG, 1024x1024; art along the bottom and lower corners, centre left empty",
+  "processing": "alpha below 24 cleared, scaled to 480 px wide (LANCZOS)",
+  "rendering": "the selected month's illustration printed on the wall-calendar page at CALENDAR_BACKDROP_SHARE",
+  "assets": [
+    {
+      "asset": "backdrop_01.png",
+      "month": 1,
+      "theme": "deep winter, new year",
+      "job_id": "4b2c9d48-221c-4b8e-8f18-ff84b9f0288e",
+      "source_sha256": "83024d59df24df2abe9d4326ed47dfd2a1703c29076974011fd31681327f94d5",
+      "sha256": "c779b5c8da2e52339d8337af1c6a710294e010a220fd9eb7ba4d3c872c479bd2",
+      "size": [
+        480,
+        480
+      ]
+    },
+    {
+      "asset": "backdrop_02.png",
+      "month": 2,
+      "theme": "Lunar New Year, plum blossoms",
+      "job_id": "d0f0b22e-ad9f-4a5d-bc6a-1087a578599f",
+      "source_sha256": "860837d46a08065126485bf74766faf670d793267c1fb30de75d992789a3e284",
+      "sha256": "4e4e08f7966961e02241888531a32021d012a1fd6f45ca2dcb49b6d7e3e8e59b",
+      "size": [
+        480,
+        480
+      ]
+    },
+    {
+      "asset": "backdrop_03.png",
+      "month": 3,
+      "theme": "early spring, cherry blossoms",
+      "job_id": "cb53b1f1-9f71-40e4-9461-540d09090b18",
+      "source_sha256": "cc0534b3663ed6a6f369b781ca2e1869abc6547b32767bb55cfc8c24b98ab6ac",
+      "sha256": "fcc4fb2a765468116075e378f25c5882ce29765dd103337d1fcff32a8cd1e9e5",
+      "size": [
+        480,
+        480
+      ]
+    },
+    {
+      "asset": "backdrop_04.png",
+      "month": 4,
+      "theme": "spring showers, tulips",
+      "job_id": "ecdc08ad-0b0d-4823-9190-c8ce361e9956",
+      "source_sha256": "b56bc1638fdd95a31fc13a8c3ae6c3366cd6a5fbf1f0415f82570103faf1cf85",
+      "sha256": "9aa30e210fa20ce4ccf3731bb68eaa11ba1a0adfc30bd0afef1d40b2e02ea954",
+      "size": [
+        480,
+        480
+      ]
+    },
+    {
+      "asset": "backdrop_05.png",
+      "month": 5,
+      "theme": "flowers in bloom",
+      "job_id": "5de39afa-80f5-406f-8c98-990ae32d1303",
+      "source_sha256": "5b7eec3f4125460fbc7924a138e4a490d35f4e7551a1f1cf40f078c8947304ec",
+      "sha256": "9067f86ee330b7841147b2d401068457798eddc7456d92e27de3456719e57169",
+      "size": [
+        480,
+        480
+      ]
+    },
+    {
+      "asset": "backdrop_06.png",
+      "month": 6,
+      "theme": "early summer, sunflowers",
+      "job_id": "2a770b96-3d0a-4f5d-9dcb-047c518a16b7",
+      "source_sha256": "c5ad34c57c5ebb703e1eb00cb15c9bdfc6133cbf9793707e2f3ea5cccd49c02e",
+      "sha256": "1da0ee1fbebce0dabe2b36cf8a297f9d876995ef613e28a903a1247551b11ef1",
+      "size": [
+        480,
+        480
+      ]
+    },
+    {
+      "asset": "backdrop_07.png",
+      "month": 7,
+      "theme": "midsummer, Independence Day",
+      "job_id": "70dd43de-7dae-420c-a67d-63accd027e78",
+      "source_sha256": "1f24b092b3af4407577461d69327ecb85295c77c1d57236b6347a459c3ea78e3",
+      "sha256": "e3d3cc7811418ad040b3e6a9d2d0b74417a9e053d87ac7c634b23379a590b7ec",
+      "size": [
+        480,
+        480
+      ]
+    },
+    {
+      "asset": "backdrop_08.png",
+      "month": 8,
+      "theme": "late summer, pool days",
+      "job_id": "09a612dd-2644-4e01-8ee6-03a3a54753cf",
+      "source_sha256": "8546117a2056b77d8c616ee8808591da33edf939d0c07eb9344935f5bb8bf4ae",
+      "sha256": "1b4c5bfd145dc8ad75e746c7aeeb1a93d2df5193d47763d6583997bc569c759c",
+      "size": [
+        480,
+        480
+      ]
+    },
+    {
+      "asset": "backdrop_09.png",
+      "month": 9,
+      "theme": "Mid-Autumn Festival",
+      "job_id": "dc14bee7-3ab5-41f6-922c-da2865b82fb3",
+      "source_sha256": "4644002f8aeeb059d6f1f32252e9744e912c4990fd861aab2bad4988c5df31ca",
+      "sha256": "9ca593f83030541fc5755cfd4b8b10381d615bef28739299c5e77ff2b1c676a6",
+      "size": [
+        480,
+        480
+      ]
+    },
+    {
+      "asset": "backdrop_10.png",
+      "month": 10,
+      "theme": "autumn, Halloween",
+      "job_id": "224d4762-2769-42b8-985a-08739ebedb96",
+      "source_sha256": "bf043e19f88f5ad5169b838c1db2287bcfc28bb6265d6661ca6b8eaf023ce7f8",
+      "sha256": "8d8108df0c1cbbea57c3ccedd73fe0505c470c5e4e3962e0715a5d3c27588550",
+      "size": [
+        480,
+        480
+      ]
+    },
+    {
+      "asset": "backdrop_11.png",
+      "month": 11,
+      "theme": "harvest, Thanksgiving",
+      "job_id": "1e392a55-685d-4bed-a514-4bed18013403",
+      "source_sha256": "d600bbba2a4b48e797545a8311898fff1aa3533cfe976329111d752fef907bd8",
+      "sha256": "a4b802699c7025089fd5ae0ff01974ea26c12d5aea2f85db61334932efb09f90",
+      "size": [
+        480,
+        480
+      ]
+    },
+    {
+      "asset": "backdrop_12.png",
+      "month": 12,
+      "theme": "winter, Christmas",
+      "job_id": "ab7dfe88-4da7-4bc2-8cf0-c24785401746",
+      "source_sha256": "34fb431c6df4a220af3dc022c4203f322adb6abc4c69b29c5b27e12515954945",
+      "sha256": "4260026a206a5660671a206e5dfe5cd72b1027fb4929a94079dd184adf74148a",
+      "size": [
+        480,
+        480
+      ]
+    }
+  ]
+}
