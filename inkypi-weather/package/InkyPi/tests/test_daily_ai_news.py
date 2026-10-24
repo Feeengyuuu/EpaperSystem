@@ -1999,12 +1999,13 @@ def test_market_changes_are_coloured_figures_beside_the_index_mark(monkeypatch):
 
 def test_each_market_is_coloured_in_its_own_convention(monkeypatch):
     plugin = _plugin()
-    dots = {}
+    dots, arrows = {}, {}
     original_sparkline = news_layout.NewsPage.sparkline
 
-    def record_dot(self, box, closes, mark=None):
+    def record_dot(self, box, closes, mark=None, rising=None):
         dots[closes[-1]] = mark
-        return original_sparkline(self, box, closes, mark)
+        arrows[closes[-1]] = rising
+        return original_sparkline(self, box, closes, mark, rising=rising)
 
     monkeypatch.setattr(news_layout.NewsPage, "sparkline", record_dot)
     fills = {}
@@ -2036,6 +2037,8 @@ def test_each_market_is_coloured_in_its_own_convention(monkeypatch):
     # A flat day stays in ink with an ink dot.
     ink = daily_ai_news_module.get_theme_palette("day")["ink"]
     assert fills["0.00%"] == ink and dots[2003.0] is None and dots[52006.0] is None
+    # Each line ends in an arrow slanting the way the day went, whatever the colour convention.
+    assert arrows == {3001.0: True, 11002.0: False, 2003.0: None, 7004.0: False, 25005.0: True, 52006.0: None}
 
 
 def test_every_index_has_a_mark_in_its_original_colours():
@@ -2859,3 +2862,15 @@ def test_the_drawn_seal_and_glyphs_stand_in_when_the_badges_are_missing(monkeypa
 
     assert fills["头"] == fills["条"] == (255, 255, 255)
     assert image.getpixel((22, 100)) == daily_ai_news_module.PAGE_DAY_COLOURS["lead"]
+
+
+def test_trend_arrows_slant_up_right_and_down_right():
+    image = Image.new("RGB", (40, 30), (255, 255, 255))
+    page = news_layout.NewsPage.__new__(news_layout.NewsPage)
+    page.d = ImageDraw.Draw(image)
+    page.trend_arrow((30, 15), True, (200, 0, 0))
+    page.trend_arrow((14, 15), False, (0, 150, 0))
+
+    # Rising: the tail sits down-left of the point; falling: up-left of it.
+    assert image.getpixel((22, 22)) == (200, 0, 0) and image.getpixel((30, 15)) == (200, 0, 0)
+    assert image.getpixel((7, 8)) == (0, 150, 0) and image.getpixel((22, 8)) == (255, 255, 255)

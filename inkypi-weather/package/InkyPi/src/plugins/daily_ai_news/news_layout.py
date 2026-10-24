@@ -334,7 +334,8 @@ class NewsPage:
             self.text((label_x, middle), label, 11, True, c["ink"], "lm")
         price = row.get("price")
         self.text((left + 2, top + 24), f"{price:,.2f}" if isinstance(price, (int, float)) else "--", 14, True)
-        self.sparkline((left + 2, bottom - 15, right - 6, bottom - 6), row.get("closes") or [], mark)
+        self.sparkline((left + 2, bottom - 15, right - 6, bottom - 6), row.get("closes") or [], mark,
+                       rising=pct > 0 if mark is not None else None)
 
     def change_colour(self, pct, gains_in_red=True):
         """The day's direction colour in the board's convention, or None when flat or unknown."""
@@ -360,8 +361,9 @@ class NewsPage:
         self.d.polygon(points, fill=colour)
         return cx - half
 
-    def sparkline(self, box, closes, mark=None):
-        """An ink trend line; its end dot carries the day's direction colour when there is one."""
+    def sparkline(self, box, closes, mark=None, rising=None):
+        """An ink trend line ending in a small slanted arrow, up or down in the day's direction
+        colour; an ink dot when the day is flat or unknown."""
         left, top, right, bottom = box
         values = [value for value in closes if isinstance(value, (int, float))]
         if len(values) < 2:
@@ -377,7 +379,17 @@ class NewsPage:
         ]
         self.d.line(points, fill=self.c["ink"], width=1)
         end_x, end_y = points[-1]
-        self.d.ellipse((end_x - 3, end_y - 3, end_x + 3, end_y + 3), fill=mark or self.c["ink"])
+        if mark is None or rising is None:
+            self.d.ellipse((end_x - 3, end_y - 3, end_x + 3, end_y + 3), fill=mark or self.c["ink"])
+            return
+        self.trend_arrow((end_x + 3, end_y), rising, mark)
+
+    def trend_arrow(self, tip, rising, colour, length=9, head=5):
+        """A small arrow slanting up-right (rising) or down-right, its point at tip."""
+        tip_x, tip_y = tip
+        slope = -1 if rising else 1
+        self.d.line(((tip_x - length, tip_y - slope * length), (tip_x - 2, tip_y - slope * 2)), fill=colour, width=2)
+        self.d.polygon(((tip_x, tip_y), (tip_x - head, tip_y), (tip_x, tip_y - slope * head)), fill=colour)
 
 
 def date_text(moment):
