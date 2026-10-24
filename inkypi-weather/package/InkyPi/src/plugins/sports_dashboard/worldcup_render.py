@@ -713,7 +713,9 @@ class WorldCupRenderMixin:
                 status_text = f"{source} {status_text}"
         status_text, status_font = self._fit_text(draw, status_text, x2 - x1 - 42, 16, bold=True, min_size=10)
         status_y = y1 + 41
-        if main_mode == "next" and (presentation or {}).get("competition") == "club":
+        club = (presentation or {}).get("competition") == "club"
+        # A club card's round, broadcasters and venue run long: its status sits clear of them.
+        if club:
             status_y += 7
         self._draw_centered(draw, ((x1 + x2) / 2, status_y), status_text, status_font, COLORS["text"])
 
@@ -863,13 +865,46 @@ class WorldCupRenderMixin:
         self._draw_worldcup_odds_text(draw, (left_meta_left, points_y, left_meta_left + meta_width, points_y + 11), left_meta, max_size=8)
         self._draw_worldcup_odds_text(draw, (right_meta_right - meta_width, points_y, right_meta_right, points_y + 11), right_meta, max_size=8)
 
-        if self._worldcup_event_has_odds(event):
+        probabilities = self._club_win_probabilities(event) if club else None
+        if probabilities and not left_meta and not right_meta:
+            self._draw_club_probability_bar(draw, (left_area[0], points_y + 1, right_area[1], points_y + 7), probabilities)
+            odds_y = points_y + odds_offset + 2
+            labels = (f"主胜 {probabilities[0]:.0%}", f"平 {probabilities[1]:.0%}", f"客胜 {probabilities[2]:.0%}")
+            self._draw_worldcup_odds_text(draw, (left_area[0], odds_y, left_area[1], odds_y + 12), labels[0], max_size=9)
+            self._draw_worldcup_odds_text(draw, (center_x - 30, odds_y, center_x + 30, odds_y + 12), labels[1], max_size=9)
+            self._draw_worldcup_odds_text(draw, (right_area[0], odds_y, right_area[1], odds_y + 12), labels[2], max_size=9)
+        elif self._worldcup_event_has_odds(event):
             odds_y = points_y + odds_offset
             odds = event.get("odds") or {}
             self._draw_worldcup_odds_text(draw, (left_area[0], odds_y, left_area[1], odds_y + 12), (event.get("odds") or {}).get("team_a"), max_size=9)
             if odds.get("draw"):
                 self._draw_worldcup_odds_text(draw, (center_x - 26, odds_y, center_x + 26, odds_y + 12), f"X {odds.get('draw')}", max_size=9)
             self._draw_worldcup_odds_text(draw, (right_area[0], odds_y, right_area[1], odds_y + 12), (event.get("odds") or {}).get("team_b"), max_size=9)
+
+    @staticmethod
+    def _club_win_probabilities(event):
+        """(home, draw, away) implied by the decimal odds, normalised to sum to one; None without all three."""
+        odds = (event or {}).get("odds") or {}
+        try:
+            prices = [float(str(odds.get(key) or "").strip()) for key in ("team_a", "draw", "team_b")]
+        except ValueError:
+            return None
+        if any(price <= 1.0 for price in prices):
+            return None
+        implied = [1 / price for price in prices]
+        total = sum(implied)
+        return tuple(value / total for value in implied)
+
+    def _draw_club_probability_bar(self, draw, box, probabilities):
+        """Home, draw and away as one solid bar: home blue, draw in the rule colour, away in ink."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        fills = (COLORS["blue"], COLORS["line"], COLORS["text"])
+        left = x1
+        for index, (share, fill) in enumerate(zip(probabilities, fills)):
+            right = x2 if index == len(fills) - 1 else left + round((x2 - x1) * share)
+            if right > left:
+                draw.rectangle((left, y1, right - 1, y2), fill=fill)
+            left = right + 2
 
     def _draw_worldcup_mini_rows(
         self,

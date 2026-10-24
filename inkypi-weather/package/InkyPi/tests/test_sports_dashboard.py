@@ -21516,3 +21516,27 @@ def test_right_sidebar_gives_a_close_runner_up_the_next_display():
 
     assert first["choice"]["league_key"] == "LPL"
     assert second["choice"]["league_key"] == "LCK"
+
+
+def test_club_odds_read_as_normalised_win_probabilities():
+    event = {"odds": {"team_a": "1.87", "draw": "3.90", "team_b": "3.80"}}
+
+    home, draw, away = SportsDashboard._club_win_probabilities(event)
+
+    assert round(home + draw + away, 6) == 1 and home > away > draw
+    assert round(home, 2) == 0.51
+    assert SportsDashboard._club_win_probabilities({"odds": {"team_a": "1.87", "team_b": "3.80"}}) is None
+    assert SportsDashboard._club_win_probabilities({"odds": {"team_a": "x", "draw": "3", "team_b": "2"}}) is None
+
+
+def test_lol_sidebar_countdown_and_result_colours():
+    la = ZoneInfo("America/Los_Angeles")
+    now = datetime(2026, 10, 24, 7, 45, tzinfo=la)
+
+    assert SportsDashboard._lpl_countdown_label(datetime(2026, 10, 24, 10, 0, tzinfo=la), now) == "2时15分后"
+    assert SportsDashboard._lpl_countdown_label(datetime(2026, 10, 24, 8, 25, tzinfo=la), now) == "40分钟后"
+    assert SportsDashboard._lpl_countdown_label(datetime(2026, 10, 27, 8, 0, tzinfo=la), now) == "3天后"
+    assert SportsDashboard._lpl_countdown_label(datetime(2026, 10, 24, 7, 0, tzinfo=la), now) == ""
+    assert SportsDashboard._lpl_result_colours({"wins_a": 0, "wins_b": 1}) == (COLORS["muted"], COLORS["text"])
+    assert SportsDashboard._lpl_result_colours({"wins_a": 2, "wins_b": 1}) == (COLORS["text"], COLORS["muted"])
+    assert SportsDashboard._lpl_result_colours({}) == (COLORS["text"], COLORS["text"])

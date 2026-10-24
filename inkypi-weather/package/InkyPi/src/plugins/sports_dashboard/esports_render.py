@@ -2121,7 +2121,13 @@ class EsportsRenderMixin:
                 stage_font,
                 COLORS[config["accent"]],
             )
-        self._draw_centered(draw, (center_x, y + (98 if not is_live else 86)), center_score, self._font(13, True), COLORS["text"])
+        # Before the match, how long until it starts takes the place of "VS" between the logos.
+        upcoming = not is_live and not is_recent and self._lpl_countdown_label(event["start"], now)
+        if upcoming:
+            self._draw_lpl_countdown(draw, center_x, y + 90, event["start"], now, COLORS[config["accent"]])
+        else:
+            self._draw_centered(draw, (center_x, y + (98 if not is_live else 86)), center_score, self._font(13, True),
+                                COLORS["text"])
         if is_live:
             self._draw_lpl_little_round(draw, center_x, y, event)
 
@@ -2161,6 +2167,31 @@ class EsportsRenderMixin:
         self._draw_centered_in_box(draw, (center_x - 40, y + 96, center_x + 40, y + 106), label, label_font, COLORS["muted"])
         score_text, score_font = self._fit_text(draw, score, 48, 12, bold=True, min_size=9)
         self._draw_centered_in_box(draw, (center_x - 24, y + 106, center_x + 24, y + 119), score_text, score_font, COLORS["amber"])
+
+    @staticmethod
+    def _lpl_countdown_label(start, now):
+        """"2时15分后", "40分钟后", "3天后", or "" once it is due (compact, to fit between the logos)."""
+        if not isinstance(start, datetime) or not isinstance(now, datetime):
+            return ""
+        minutes = int((start - now).total_seconds() // 60)
+        if minutes <= 0:
+            return ""
+        if minutes < 60:
+            return f"{minutes}分钟后"
+        if minutes < 24 * 60:
+            hours, rest = divmod(minutes, 60)
+            return f"{hours}时{rest}分后" if rest else f"{hours}小时后"
+        return f"{round(minutes / 1440)}天后"
+
+    def _draw_lpl_countdown(self, draw, center_x, top, start, now, accent):
+        label = self._lpl_countdown_label(start, now)
+        if not label:
+            return
+        text, font = self._fit_text(draw, label, 48, 10, bold=True, min_size=7)
+        width = self._text_width(draw, text, font) + 10
+        box = (center_x - width / 2, top, center_x + width / 2, top + 15)
+        draw.rounded_rectangle(box, radius=8, outline=accent, width=2, fill=COLORS["panel"])
+        self._draw_centered_in_box(draw, box, text, font, COLORS["text"])
 
     @staticmethod
     def _lpl_focus_tag(is_live):
@@ -2303,9 +2334,11 @@ class EsportsRenderMixin:
         left_text_x = left_logo_x + logo_size + 5
         left_text_w = max(22, score_x - left_text_x - 6)
         self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y + 7, logo_size, event["team_a"])
+        # The winner reads in ink, the loser greyed out.
+        colour_a, colour_b = self._lpl_result_colours(event)
         team_a_label = self._lpl_display_team_from_event(event, "a", league_key=league_key)
         team_a, font_a = self._fit_text(draw, team_a_label, left_text_w, 12, bold=True, min_size=8)
-        self._draw_text_in_box(draw, (left_text_x, y, score_x - 6, y + row_h), team_a, font_a, COLORS["text"])
+        self._draw_text_in_box(draw, (left_text_x, y, score_x - 6, y + row_h), team_a, font_a, colour_a)
         score = self._score_label(event)
         score_text, score_font = self._fit_text(draw, score, score_w, 12, bold=True, min_size=9)
         self._draw_centered_in_box(draw, (score_x, y, score_x + score_w, y + row_h), score_text, score_font, COLORS["text"])
@@ -2316,7 +2349,18 @@ class EsportsRenderMixin:
         self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y + 7, logo_size, event["team_b"])
         team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
         team_b, font_b = self._fit_text(draw, team_b_label, right_text_w, 12, bold=True, min_size=8)
-        self._draw_text_in_box(draw, (right_text_x1, y, right_text_x2, y + row_h), team_b, font_b, COLORS["text"], align="right")
+        self._draw_text_in_box(draw, (right_text_x1, y, right_text_x2, y + row_h), team_b, font_b, colour_b, align="right")
+
+    @staticmethod
+    def _lpl_result_colours(event):
+        """(team a, team b) name colours of a result: the loser muted; both in ink when undecided."""
+        try:
+            wins_a, wins_b = int((event or {}).get("wins_a")), int((event or {}).get("wins_b"))
+        except (TypeError, ValueError):
+            return COLORS["text"], COLORS["text"]
+        if wins_a == wins_b:
+            return COLORS["text"], COLORS["text"]
+        return (COLORS["text"], COLORS["muted"]) if wins_a > wins_b else (COLORS["muted"], COLORS["text"])
 
     @staticmethod
     def _lpl_display_team_name(value):
