@@ -1,0 +1,151 @@
+{% extends "plugin.html" %}
+
+{% block content %}
+{% set v = view %}
+{% set deg = "°" if units != "standard" else "" %}
+<div class="mw theme-{{ theme.mode|default('day') }}"
+     style="--bg: {{ theme.css.background|default('#ffffff') }}; --panel: {{ theme.css.panel|default('#ffffff') }}; --ink: {{ theme.css.ink|default('#111418') }}; --muted: {{ theme.css.muted|default('#4a525c') }};">
+  {% set page_scale = [(width or 800) / 800, (height or 480) / 480]|min %}
+  <div class="mw-page" style="transform: scale({{ page_scale }});">
+
+    <header class="mw-top">
+      <div class="mw-place">{{ title }}</div>
+      <div class="mw-date">{{ v.date }}</div>
+      {% if plugin_settings.displayRefreshTime == "true" and v.updated %}<div class="mw-updated">更新 {{ v.updated }}</div>{% endif %}
+    </header>
+
+    <section class="mw-hero">
+      {% if v.scene_image %}<img class="mw-hero-art" src="{{ v.scene_image }}" alt="">{% endif %}
+      <div class="mw-hero-veil"></div>
+      <div class="mw-hero-body">
+        <div class="mw-temp">{{ current_temperature }}<span class="mw-temp-unit">{{ temperature_unit }}</span></div>
+        <div class="mw-condition">
+          <img class="mw-condition-icon" src="{{ current_day_icon }}" alt="">
+          <span>{{ v.condition }}</span>
+          <span class="mw-dot">·</span>
+          <span>体感 {{ feels_like }}{{ deg }}</span>
+        </div>
+        <div class="mw-range">最高 {{ v.high }}{{ deg }}　最低 {{ v.low }}{{ deg }}</div>
+        <div class="mw-summary">{{ v.summary }}</div>
+        <div class="mw-tips">{% for tip in v.tips %}<span class="mw-tip">{{ tip }}</span>{% endfor %}</div>
+      </div>
+    </section>
+
+    <section class="mw-tiles">
+      <div class="mw-tile">
+        {% if v.sun.night and v.moon %}
+        <div class="mw-tile-title">今夜月相</div>
+        <div class="mw-moon">
+          <img src="{{ v.moon.icon }}" alt="">
+          <div><div class="mw-big">{{ v.moon.name }}</div><div class="mw-small">亮面 {{ v.moon.percent }}%</div></div>
+        </div>
+        <div class="mw-small mw-foot">明早日出 {{ v.sun.rise }}</div>
+        {% else %}
+        <div class="mw-tile-title">日出日落</div>
+        <svg class="mw-arc" viewBox="0 0 120 66">
+          <path d="M14,58 A46,46 0 0,1 106,58" class="mw-arc-track"/>
+          <line x1="6" y1="58" x2="114" y2="58" class="mw-horizon"/>
+          {% if v.sun.x is defined %}<circle cx="{{ v.sun.x }}" cy="{{ v.sun.y }}" r="7" class="mw-sun"/>{% endif %}
+        </svg>
+        <div class="mw-arc-times"><span>↑ {{ v.sun.rise }}</span><span>{{ v.sun.set }} ↓</span></div>
+        <div class="mw-small mw-foot">白昼 {{ v.sun.daylight }}</div>
+        {% endif %}
+      </div>
+
+      <div class="mw-tile">
+        <div class="mw-tile-title">风</div>
+        {% if v.wind %}
+        <div class="mw-wind">
+          <svg viewBox="0 0 64 64" class="mw-compass">
+            <circle cx="32" cy="32" r="27" class="mw-ring"/>
+            <text x="32" y="12" class="mw-cardinal">北</text><text x="56" y="36" class="mw-cardinal">东</text>
+            <text x="32" y="60" class="mw-cardinal">南</text><text x="8" y="36" class="mw-cardinal">西</text>
+            <g transform="rotate({{ v.wind.heading }} 32 32)">
+              <polygon points="32,15 39,40 32,35 25,40" class="mw-needle"/>
+            </g>
+          </svg>
+          <div><div class="mw-big">{{ v.wind.speed }}<span class="mw-unit">{{ v.wind.unit }}</span></div>
+          <div class="mw-small">{{ v.wind.name }}</div></div>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="mw-tile">
+        <div class="mw-tile-title">空气质量</div>
+        {% if v.aqi %}
+        <svg class="mw-gauge" viewBox="0 0 100 52">
+          {% for segment in v.aqi.segments %}<path d="{{ segment.d }}" stroke="{{ segment.colour }}" class="mw-gauge-band"/>{% endfor %}
+          <line x1="50" y1="46" x2="{{ v.aqi.needle_x }}" y2="{{ v.aqi.needle_y }}" class="mw-gauge-needle"/>
+          <circle cx="50" cy="46" r="4" class="mw-gauge-hub"/>
+        </svg>
+        <div class="mw-gauge-value"><span class="mw-big">{{ v.aqi.value }}</span><span class="mw-chip" style="background: {{ v.aqi.colour }}; color: {{ v.aqi.ink }}">{{ v.aqi.label }}</span></div>
+        {% endif %}
+      </div>
+
+      <div class="mw-tile">
+        <div class="mw-tile-title">紫外线</div>
+        {% if v.uv %}
+        <div class="mw-big">{{ v.uv.value }} <span class="mw-word">{{ v.uv.label }}</span></div>
+        <div class="mw-uv-bar"><span class="mw-uv-marker" style="left: {{ v.uv.marker }}%"></span></div>
+        <div class="mw-small mw-foot">{{ v.uv.advice }}</div>
+        {% endif %}
+      </div>
+
+      <div class="mw-tile">
+        <div class="mw-tile-title">湿度</div>
+        {% if v.humidity %}
+        <div class="mw-humid">
+          <svg viewBox="0 0 40 52" class="mw-drop">
+            <defs><clipPath id="mw-drop-clip"><path d="M20,3 C28,16 36,25 36,34 A16,16 0 0,1 4,34 C4,25 12,16 20,3 Z"/></clipPath></defs>
+            <rect x="0" y="{{ 52 - v.humidity.fill * 0.49 }}" width="40" height="52" clip-path="url(#mw-drop-clip)" class="mw-drop-fill"/>
+            <path d="M20,3 C28,16 36,25 36,34 A16,16 0 0,1 4,34 C4,25 12,16 20,3 Z" class="mw-drop-outline"/>
+          </svg>
+          <div><div class="mw-big">{{ v.humidity.value }}<span class="mw-unit">%</span></div><div class="mw-small">{{ v.humidity.feel }}</div></div>
+        </div>
+        {% endif %}
+      </div>
+
+      <div class="mw-tile mw-tile-pair">
+        <div><div class="mw-tile-title">气压</div>
+          <div class="mw-mid">{{ v.pressure.value }}<span class="mw-unit">{{ v.pressure.unit }}</span></div></div>
+        <div><div class="mw-tile-title">能见度</div>
+          <div class="mw-mid">{{ v.visibility.value }}<span class="mw-unit">{{ v.visibility.unit }}</span></div></div>
+      </div>
+    </section>
+
+    <section class="mw-hours">
+      <div class="mw-section-title">24 小时<span class="mw-section-note">{{ v.hourly.low }}°–{{ v.hourly.high }}°{% if v.hourly.any_rain %} · 柱为降雨概率{% endif %}</span></div>
+      {% if v.hourly.points %}
+      <svg viewBox="0 0 {{ v.hourly.width }} {{ v.hourly.height }}" class="mw-chart">
+        {% for band in v.hourly.night_bands %}<rect x="{{ band.x }}" y="0" width="{{ band.width }}" height="{{ v.hourly.height }}" class="mw-night"/>{% endfor %}
+        <path d="{{ v.hourly.area }}" class="mw-area"/>
+        {% for point in v.hourly.points %}{% if point.rain_height > 0 %}
+        <rect x="{{ point.x - v.hourly.bar_width / 2 }}" y="{{ v.hourly.rain_base - point.rain_height }}" width="{{ v.hourly.bar_width }}" height="{{ point.rain_height }}" class="mw-rain"/>
+        {% endif %}{% endfor %}
+        <path d="{{ v.hourly.path }}" class="mw-curve"/>
+        {% for point in v.hourly.points %}{% if point.label %}
+        <circle cx="{{ point.x }}" cy="{{ point.y }}" r="3" class="mw-point"/>
+        <text x="{{ point.x }}" y="{{ point.y - 7 }}" class="mw-temp-label">{{ point.temperature }}°</text>
+        <image href="{{ point.icon }}" x="{{ point.x - 9 }}" y="98" width="18" height="18"/>
+        <text x="{{ point.x }}" y="{{ v.hourly.height - 2 }}" class="mw-time">{{ "现在" if loop.first else point.time }}</text>
+        {% endif %}{% endfor %}
+      </svg>
+      {% endif %}
+    </section>
+
+    <section class="mw-week">
+      <div class="mw-section-title">未来 7 天</div>
+      {% for day in v.week %}
+      <div class="mw-day">
+        <span class="mw-day-name">{{ day.name }}</span>
+        <img class="mw-day-icon" src="{{ day.icon }}" alt="">
+        <span class="mw-day-low">{{ day.low }}{{ deg }}</span>
+        <span class="mw-day-track"><span class="mw-day-bar" style="left: {{ day.bar_left }}%; width: {{ day.bar_width }}%"></span></span>
+        <span class="mw-day-high">{{ day.high }}{{ deg }}</span>
+      </div>
+      {% endfor %}
+    </section>
+
+  </div>
+</div>
+{% endblock %}

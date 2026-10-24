@@ -1,0 +1,48 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "generated": "2026-10-24",
+  "use": "hero card backdrop of the modern Weather page, chosen by condition and day/night",
+  "processing": "1536x1024 source resized to 640x427 with LANCZOS, JPEG quality 86",
+  "assets": {
+    "clear-day.jpg": {
+      "job_id": "28333ca8-57fd-4ce6-90dc-86bbf74d1091",
+      "source_sha256": "c16f8db4016dc112e7cfc0f297039d1f7f7ba7ff0e2ee9a12219d0a122206509",
+      "sha256": "63f03f0b3d7e27eecb0c57d1bd5520ac05a82d4f176ed2527b5c9dcb806fe20d"
+    },
+    "clear-night.jpg": {
+      "job_id": "d9609626-04ff-493a-9113-9ed88f6d8bf5",
+      "source_sha256": "9b3c8f9ea1152c51844069db712a1c92a60a570b30fd2fef89707abad55e1b5d",
+      "sha256": "658615c0c86bcadcf55d01e550a96c3b8b7e6da3a76469964f4a0b96e206d2ae"
+    },
+    "cloudy-day.jpg": {
+      "job_id": "d32edbff-4285-486b-a7c9-7d3ef6cbb397",
+      "source_sha256": "f0cd707d122380cb9e24599ac457db54c37676bed5b4da80f94d7a2b1f4ed9d4",
+      "sha256": "f6b85fb4b32626544db502247142e51d9a0d618ac4d405cbe5a3decf00d6d846"
+    },
+    "cloudy-night.jpg": {
+      "job_id": "d48fd74b-6323-4de3-90bd-fa4b91ef66fb",
+      "source_sha256": "03f5752ec7072642232bef8ed23bc06a8f5c0f14729534ebea6e065ad789cc93",
+      "sha256": "749b5a661ee1b7292680f942bfd9538d77010c064d9e9fe692eb44c71ceb9d45"
+    },
+    "rain.jpg": {
+      "job_id": "78514b6a-236a-48ed-a50e-e8bf9375db49",
+      "source_sha256": "3e104a1730e93f9df6c0c74bace47c7f135bfcdd9980b027310d3aff9365cd49",
+      "sha256": "4a9a4ce931fa1ae52c0b9671f560fdf7dded12bdf148bfda21f35fb0e4ea40dd"
+    },
+    "thunder.jpg": {
+      "job_id": "33156428-f523-46de-8155-cd080827fb6c",
+      "source_sha256": "e0fd2981546c0853e53df2d8a068aa02fca859ef6575f9c3ffe385796fe4d8b0",
+      "sha256": "4c98f09522e610b00d8fc40aa97f42a22bb3bc78a62ff379ceef351ac75b6eeb"
+    },
+    "fog.jpg": {
+      "job_id": "c173c1c9-daae-4ed2-ac67-170e955b6815",
+      "source_sha256": "5384fb6872a4b073e4b20d9c58fc9fb0d5ce0bf0500624cbdc4557d85c015c13",
+      "sha256": "fc7fce923e17f05c33d288388c5c0998c2a0f4c72ec28a4fb8aec3f3794506fb"
+    },
+    "snow.jpg": {
+      "job_id": "653717ec-aaec-426d-a65d-c98d496c5821",
+      "source_sha256": "2189c03ad6fe77d3fce96f09493297eee8a46786bfb328374251938d31b709bb",
+      "sha256": "cd5a8c50ed60f4c636a788fb9d7205c511e77b9c4b6ddc94dae3b28f20564a0e"
+    }
+  }
+}

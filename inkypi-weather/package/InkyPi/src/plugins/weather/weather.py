@@ -12,6 +12,7 @@ from astral import moon
 import pytz
 import math
 from plugins.context_cache import write_context
+from plugins.weather.modern_view import build_view
 from utils.theme_utils import (
     EFFECTIVE_THEME_CONTEXT_INFO_KEY,
     apply_theme_to_plugin_settings,
@@ -290,14 +291,18 @@ class Weather(BasePlugin):
         )
 
         dimensions = self.get_dimensions(device_config)
-        # Weather's browser template is the product UI: its Chart.js graph,
-        # icon placement, metrics grid, and forecast cards must remain exact.
-        # A native redraw is not an acceptable substitute for this plugin.
+        # Weather's browser template is the product UI; a native redraw is not an
+        # acceptable substitute. The modern page draws its gauges and 24-hour
+        # curve as inline SVG from the view model; "classic" keeps the original
+        # Chart.js layout.
+        modern = str(settings.get("layoutStyle") or "modern").strip().lower() != "classic"
+        if modern:
+            template_params["view"] = build_view(template_params, now, art_dir=self.get_plugin_dir("art"))
         with pinned_theme_context(theme_context):
             image = self.render_image(
                 dimensions,
-                "weather.html",
-                "weather.css",
+                "weather_modern.html" if modern else "weather.html",
+                "weather_modern.css" if modern else "weather.css",
                 template_params,
                 retry_once=True,
                 abort_on_hard_pressure=True,
@@ -871,7 +876,8 @@ class Weather(BasePlugin):
             "measurement": weather.get('current', {}).get("wind_speed"),
             "unit": UNITS[units]["speed"],
             "icon": self.get_plugin_dir('icons/wind.png'),
-            "arrow": wind_arrow
+            "arrow": wind_arrow,
+            "degrees": wind_deg,
         })
 
         data_points.append({
@@ -919,7 +925,9 @@ class Weather(BasePlugin):
             "label": "Air Quality",
             "measurement": aqi,
             "unit": ["Good", "Fair", "Moderate", "Poor", "Very Poor"][int(aqi)-1],
-            "icon": self.get_plugin_dir('icons/aqi.png')
+            "icon": self.get_plugin_dir('icons/aqi.png'),
+            # 0 (good) to 4 (very poor) on OpenWeatherMap's five-step index.
+            "level": int(aqi) - 1,
         })
 
         return data_points
@@ -939,7 +947,7 @@ class Weather(BasePlugin):
         wind_unit = UNITS[units]["speed"]
         data_points.append({
             "label": "Wind", "measurement": wind_speed, "unit": wind_unit,
-            "icon": self.get_plugin_dir('icons/wind.png'), "arrow": wind_arrow
+            "icon": self.get_plugin_dir('icons/wind.png'), "arrow": wind_arrow, "degrees": wind_deg,
         })
 
         # Humidity
@@ -1045,11 +1053,13 @@ class Weather(BasePlugin):
                 logger.warning(f"Could not parse time string {time_str} for AQI.")
                 continue
         scale = ""
+        level = None
         if current_aqi and current_aqi != "N/A":
-            scale = ["Good","Fair","Moderate","Poor","Very Poor","Ext Poor"][min(current_aqi//20,5)]
+            level = int(min(current_aqi // 20, 5))
+            scale = ["Good","Fair","Moderate","Poor","Very Poor","Ext Poor"][level]
         data_points.append({
             "label": "Air Quality", "measurement": current_aqi,
-            "unit": scale, "icon": self.get_plugin_dir('icons/aqi.png')
+            "unit": scale, "icon": self.get_plugin_dir('icons/aqi.png'), "level": level,
         })
 
         return data_points

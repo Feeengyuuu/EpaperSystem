@@ -29,6 +29,12 @@
         <option value="metric">Metric (°C)</option>
         <option value="standard">Standard (K)</option>
     </select>
+
+    <label for="layoutStyle" class="form-label">Layout:</label>
+    <select id="layoutStyle" name="layoutStyle" class="form-input">
+        <option value="modern">Modern dashboard (scene art, gauges, 24-hour curve)</option>
+        <option value="classic">Classic (original chart layout)</option>
+    </select>
 </div>
 
 <div class="form-group" id="titleOptionWrapper">
@@ -206,6 +212,7 @@
             document.getElementById('longitude').value = pluginSettings.longitude;
 
             document.getElementById('units').value = pluginSettings.units;
+            document.getElementById('layoutStyle').value = pluginSettings.layoutStyle || 'modern';
 
             document.getElementById('displayRefreshTime').checked = pluginSettings.displayRefreshTime;
             document.getElementById('displayRefreshTime').value = pluginSettings.displayRefreshTime;
