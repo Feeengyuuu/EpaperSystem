@@ -109,14 +109,16 @@ def _section_art(name, height):
 
 def _card(canvas, box, bar, title, *, logo=None, icon=None, detail="", chip=None):
     """A card in its own colour: a solid band across the top, a frame and header rule in that
-    colour, its generated icon sitting on the band, then a logo, the title and a detail."""
+    colour, the source's official logo (or a generated icon on the band where there is none),
+    the title and a detail."""
     left, top, right, bottom = box
     colour = canvas.color(bar)
     canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
     canvas.draw.rounded_rectangle((left, top, right, top + CARD_BAND), radius=7, fill=colour,
                                   corners=(True, True, False, False))
     cursor = left + 8
-    art = _section_art(SECTION_ART.get(bar, ""), 26)
+    # A card with its source's official logo shows only that; the generated icon stands in for one.
+    art = _section_art(SECTION_ART.get(bar, ""), 26) if logo is None else None
     if art is not None:
         cursor += _paste(canvas, art, (cursor, top + 2)) + 5
     elif icon:
