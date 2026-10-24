@@ -161,18 +161,7 @@ def test_tech_pulse_day_uses_original_paper_palette():
 
 def test_telegram_day_uses_solid_white_surfaces():
     colors = TelegramDigest.__new__(TelegramDigest)._palette(_theme())
-    assert {
-        colors[key]
-        for key in (
-            "background",
-            "panel",
-            "chip",
-            "chat_background",
-            "chat_header",
-            "chat_row",
-            "chat_row_alt",
-        )
-    } == {(255, 255, 255)}
+    assert {colors["background"], colors["panel"]} == {(255, 255, 255)}
     assert colors["cyan"] == (0, 135, 170)
     assert colors["amber"] == (188, 116, 32)
 

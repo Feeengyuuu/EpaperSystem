@@ -21,8 +21,8 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
     read_source_provenance,
 )
 from runtime.runtime_state import PresentationCommitReceipt  # noqa: E402
+from plugins.telegram_digest.curation import VISIBLE_COUNT  # noqa: E402
 from plugins.telegram_digest.telegram_digest import (  # noqa: E402
-    CHAT_FEED_MAX_ROWS,
     RENDERED_VISIBLE_KEYS_IMAGE_INFO_KEY,
     STATE_VERSION,
     TelegramDigest,
@@ -146,36 +146,22 @@ def test_telegram_refresh_on_display_uses_prepared_background_render(tmp_path):
     }
 
 
-def test_telegram_prepared_receipt_uses_exact_pixel_layout_keys(tmp_path):
+def test_telegram_prepared_receipt_keys_are_the_drawn_lead_and_rows(tmp_path):
     plugin = _plugin(tmp_path)
     plugin.config["refresh_on_display"] = True
-    long_caption = "long caption " * 80
     messages = [
-        {
-            "key": "lead",
-            "title": "lead",
-            "summary": "featured text",
-            "media_kind": "text",
-            "date": 100,
-        },
+        {"key": "lead", "title": "lead", "raw_text": "lead text", "media_kind": "text", "date": 100},
         *[
             {
-                "key": f"media-{index}",
-                "title": f"media {index}",
-                "summary": long_caption,
+                "key": f"row-{index}",
+                "title": f"row {index}",
+                "raw_text": "row text " * 30,
                 "media_kind": "photo",
                 "media_path": "",
                 "date": 100 - index,
             }
-            for index in range(1, 5)
+            for index in range(1, 10)
         ],
-        {
-            "key": "late-short",
-            "title": "short",
-            "summary": "fits remaining pixels",
-            "media_kind": "text",
-            "date": 1,
-        },
     ]
     payload = {
         "schema": STATE_VERSION,
@@ -207,12 +193,10 @@ def test_telegram_prepared_receipt_uses_exact_pixel_layout_keys(tmp_path):
 
     saved = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     exact_keys = saved["pending_presentation_display"]["keys"]
-    heuristic_keys = plugin._displayed_message_keys(messages)
-    assert exact_keys == list(
-        prepared.image.info["inkypi_rendered_visible_message_keys"]
-    )
-    assert "media-3" in exact_keys
-    assert "media-3" not in heuristic_keys
+    assert exact_keys == list(prepared.image.info["inkypi_rendered_visible_message_keys"])
+    assert exact_keys == plugin._displayed_message_keys(messages)
+    assert len(exact_keys) == VISIBLE_COUNT
+    assert "row-9" not in exact_keys
 
 
 def test_telegram_prepared_refresh_rejects_sample_fallback(tmp_path):
@@ -614,8 +598,12 @@ def test_plugin_info_and_settings_defaults_are_declared():
     assert 'name="unreadOnly"' in settings
     assert 'name="markDisplayedRead"' in settings
     assert 'name="mediaDownloadLimit"' in settings
-    assert 'max="4" step="1" name="mediaDownloadLimit"' in settings
-    assert 'id="mediaDownloadLimit" value="4"' in settings
+    assert 'max="7" step="1" name="mediaDownloadLimit"' in settings
+    assert 'id="mediaDownloadLimit" value="7"' in settings
+    for name in ("includeText", "curationMode", "aiDailyLimit", "blockKeywords", "boostKeywords",
+                 "blockChats", "pinChats"):
+        assert f'name="{name}"' in settings
+    assert "private chats included" in settings
     assert "key === 'mediaDownloadLimit'" in settings
     assert 'name="botToken"' in settings
     assert 'name="chatFilter"' in settings
@@ -653,10 +641,10 @@ def test_telegram_renderer_uses_injected_palette_for_day_night_and_weather_auto(
     assert day.size == night.size == auto.size == (800, 480)
     assert day.getpixel((0, 479)) == (255, 255, 255)
     assert night.getpixel((0, 479)) == night_theme["palette"]["background"]
-    assert day.getpixel((20, 60)) == (255, 255, 255)
-    assert night.getpixel((20, 60)) == night_theme["palette"]["panel"]
+    assert day.getpixel((8, 300)) == (255, 255, 255)
+    assert night.getpixel((8, 300)) == night_theme["palette"]["background"]
     assert auto.getpixel((0, 479)) == auto_theme["palette"]["background"]
-    assert auto.getpixel((20, 60)) == auto_theme["palette"]["panel"]
+    assert auto.getpixel((8, 300)) == auto_theme["palette"]["background"]
     assert day.tobytes() != night.tobytes()
 
 
@@ -675,106 +663,58 @@ def test_telegram_day_page_surfaces_are_solid_native_white(tmp_path):
     gutter_colors = {
         image.getpixel((x, y))
         for x in range(14)
-        for y in range(44, 449)
+        for y in range(48, 449)
     }
     assert gutter_colors == {(255, 255, 255)}
     palette = plugin._palette(_theme_context("day", requested_mode="day"))
-    assert {
-        palette[key]
-        for key in (
-            "background",
-            "panel",
-            "chip",
-            "chat_background",
-            "chat_header",
-            "chat_row",
-            "chat_row_alt",
-        )
-    } == {(255, 255, 255)}
+    assert {palette["background"], palette["panel"]} == {(255, 255, 255)}
 
 
-def test_telegram_render_fills_right_column_with_three_media_cards(tmp_path):
+def test_telegram_page_shows_lead_picture_and_list_thumbnails(tmp_path):
     plugin = _plugin(tmp_path)
     now = datetime(2026, 9, 4, 2, 40, tzinfo=timezone.utc)
-    colors = (
-        (171, 32, 47),
-        (23, 139, 81),
-        (37, 79, 183),
-        (188, 92, 24),
-    )
-    captions = (
-        "主图说明",
-        "",
-        "第二张媒体的文字说明会保留并根据空间换行。",
-        "第三张媒体的文字说明也必须保留，不能留下大块空白。",
-    )
+    colors = ((171, 32, 47), (23, 139, 81), (37, 79, 183), (188, 92, 24))
     messages = []
-    for index, (color, caption) in enumerate(zip(colors, captions), start=1):
+    for index, color in enumerate(colors, start=1):
         media_path = tmp_path / f"media-{index}.png"
         Image.new("RGB", (320, 180), color).save(media_path)
-        messages.append(
-            {
-                "key": f"media-{index}",
-                "message_id": index,
-                "date": int(now.timestamp()) - index,
-                "chat_title": f"Channel {index}",
-                "title": caption or f"Media {index}",
-                "summary": caption,
-                "raw_text": caption,
-                "media_kind": "photo",
-                "media_path": str(media_path),
-            }
-        )
+        messages.append({
+            "key": f"media-{index}",
+            "message_id": index,
+            "date": int(now.timestamp()) - index,
+            "chat_id": f"chat-{index}",
+            "chat_title": f"Channel {index}",
+            "title": f"Story {index}",
+            "raw_text": f"Story {index} details",
+            "media_kind": "photo",
+            "media_path": str(media_path),
+            "curation": {"score": 90 - index, "tag": "科技", "headline": f"要闻 {index}", "summary": "摘要"},
+        })
+    messages.append({
+        "key": "text-1", "message_id": 9, "date": int(now.timestamp()) - 9, "chat_id": "chat-9",
+        "chat_title": "Friend", "chat_kind": "private", "raw_text": "周日回家吃饭吗？", "media_kind": "text",
+        "curation": {"score": 50, "tag": "私聊", "headline": "周日回家吃饭吗？", "summary": ""},
+    })
     state = {
         "schema": STATE_VERSION,
         "messages": messages,
-        "stats": {"message_count": len(messages)},
-        "status": {
-            "source_state": "live",
-            "generated_at": now.isoformat(),
-            "account_api": True,
-        },
+        "stats": {"message_count": len(messages), "blocked_count": 3, "dialog_count": 5},
+        "status": {"source_state": "live", "generated_at": now.isoformat(), "account_api": True},
     }
-    (tmp_path / "state.json").write_text(
-        json.dumps(state),
-        encoding="utf-8",
-    )
+    (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
     image = plugin.generate_image(
-        {
-            "_theme_render_only": True,
-            "_inkypi_theme": _theme_context("day", requested_mode="day"),
-        },
+        {"_theme_render_only": True, "_inkypi_theme": _theme_context("day", requested_mode="day")},
         DummyDeviceConfig(),
     )
 
     assert image.info[RENDERED_VISIBLE_KEYS_IMAGE_INFO_KEY] == (
-        "media-1",
-        "media-2",
-        "media-3",
-        "media-4",
+        "media-1", "media-2", "media-3", "media-4", "text-1",
     )
-    right_column = (498, 44, 786, 449)
-    for color in colors[1:]:
-        assert any(
-            image.getpixel((x, y)) == color
-            for y in range(right_column[1], right_column[3])
-            for x in range(right_column[0], right_column[2])
-        )
-    third_image_rows = [
-        y
-        for y in range(right_column[1], right_column[3])
-        if any(
-            image.getpixel((x, y)) == colors[3]
-            for x in range(right_column[0], right_column[2])
-        )
-    ]
-    assert max(third_image_rows) >= 415
-    assert any(
-        image.getpixel((x, y)) == (29, 33, 38)
-        for y in range(max(third_image_rows) + 1, 444)
-        for x in range(514, 770)
-    )
+    lead_area = {image.getpixel((x, y)) for x in range(20, 460, 8) for y in range(60, 260, 8)}
+    assert colors[0] in lead_area
+    thumbnails = {image.getpixel((x, y)) for x in range(724, 786, 4) for y in range(72, 452, 4)}
+    assert all(color in thumbnails for color in colors[1:])
 
 
 def test_telegram_day_dim_text_has_small_text_contrast_on_all_surfaces(tmp_path):
@@ -1058,7 +998,7 @@ def test_account_mode_requests_newest_unread_message_first(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize("unread_only", [True, False])
-def test_account_mode_skips_text_only_unread_messages(
+def test_account_mode_with_text_off_skips_text_only_unread_messages(
     tmp_path,
     monkeypatch,
     unread_only,
@@ -1129,6 +1069,7 @@ def test_account_mode_skips_text_only_unread_messages(
             "dialogFilter": "@daily_signal",
             "messagesPerDialog": "1",
             "unreadOnly": unread_only,
+            "includeText": "false",
         },
         DummyDeviceConfig(),
         now,
@@ -1148,15 +1089,54 @@ def test_account_mode_skips_text_only_unread_messages(
     assert len(FakeTelegramClient.download_calls) == 1
 
 
-def test_account_mode_downloads_four_visible_media_with_hard_cap(tmp_path, monkeypatch):
+def test_account_mode_keeps_text_only_unread_messages_by_default(tmp_path, monkeypatch):
     plugin = _plugin(tmp_path)
     now = datetime(2026, 6, 27, 18, 42, tzinfo=timezone.utc)
     session_base = tmp_path / "telegram_account"
     session_base.with_suffix(".session").write_text("authorized", encoding="utf-8")
     entity = SimpleNamespace(id=-100123, username="daily_signal", title="Daily Signal")
-    dialog = SimpleNamespace(entity=entity, id=-100123, title="Daily Signal", unread_count=6)
+    dialog = SimpleNamespace(entity=entity, id=-100123, title="Daily Signal", unread_count=2)
+    text_only = SimpleNamespace(
+        id=53, date=now, raw_text="Newest unread text", message="Newest unread text",
+        photo=None, video=None, gif=None, document=None, out=False,
+    )
+    FakeTelegramClient.dialogs = [dialog]
+    FakeTelegramClient.messages_by_entity = {id(entity): [text_only]}
+    FakeTelegramClient.download_calls = []
+    FakeTelegramClient.message_calls = []
+    FakeTelegramClient.instances = []
+    FakeTelegramClient.authorized = True
+    monkeypatch.setattr(plugin, "_telethon_client_class", lambda: FakeTelegramClient)
+
+    payload = plugin._payload(
+        {
+            "accessMode": "account",
+            "telegramApiId": "12345",
+            "telegramApiHash": "hash-value",
+            "telegramSessionPath": str(session_base),
+            "messagesPerDialog": "1",
+        },
+        DummyDeviceConfig(),
+        now,
+    )
+
+    assert [item["key"] for item in payload["messages"]] == ["-100123:53"]
+    assert payload["messages"][0]["media_kind"] == "text"
+    assert payload["messages"][0]["curation"]["source"] == "rules"
+    assert "filter" not in FakeTelegramClient.message_calls[0]
+    assert FakeTelegramClient.download_calls == []
+    assert payload["status"]["ai_error"]
+
+
+def test_account_mode_downloads_every_visible_picture_with_hard_cap(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 6, 27, 18, 42, tzinfo=timezone.utc)
+    session_base = tmp_path / "telegram_account"
+    session_base.with_suffix(".session").write_text("authorized", encoding="utf-8")
+    entity = SimpleNamespace(id=-100123, username="daily_signal", title="Daily Signal")
+    dialog = SimpleNamespace(entity=entity, id=-100123, title="Daily Signal", unread_count=9)
     messages = []
-    for offset in range(6):
+    for offset in range(9):
         messages.append(SimpleNamespace(
             id=60 - offset,
             date=now,
@@ -1183,8 +1163,8 @@ def test_account_mode_downloads_four_visible_media_with_hard_cap(tmp_path, monke
             "telegramApiHash": "hash-value",
             "telegramSessionPath": str(session_base),
             "dialogFilter": "@daily_signal",
-            "messagesPerDialog": "6",
-            "maxMessages": "8",
+            "messagesPerDialog": "9",
+            "maxMessages": "9",
             "mediaDownloadLimit": "30",
         },
         DummyDeviceConfig(),
@@ -1194,17 +1174,28 @@ def test_account_mode_downloads_four_visible_media_with_hard_cap(tmp_path, monke
     visible_keys = plugin._displayed_message_keys(payload["messages"])
     cached_keys = [item["key"] for item in payload["messages"] if item["media_path"]]
 
-    assert visible_keys == [
-        "-100123:60",
-        "-100123:59",
-        "-100123:58",
-        "-100123:57",
-    ]
+    assert visible_keys == [f"-100123:{60 - offset}" for offset in range(7)]
     assert cached_keys == visible_keys
-    assert len(FakeTelegramClient.download_calls) == 4
-    assert payload["stats"]["media_cached_count"] == 4
+    assert len(FakeTelegramClient.download_calls) == 7
+    assert payload["stats"]["media_cached_count"] == 7
     assert payload["stats"]["media_missing_count"] == 2
     assert payload["status"]["media_cache"] == "partial"
+
+
+def test_photo_download_picks_the_smallest_size_that_covers_the_slot(tmp_path):
+    plugin = _plugin(tmp_path)
+    sizes = [
+        SimpleNamespace(type="s", w=90, h=60),
+        SimpleNamespace(type="m", w=320, h=213),
+        SimpleNamespace(type="x", w=800, h=533),
+        SimpleNamespace(type="y", w=1280, h=853),
+    ]
+    message = SimpleNamespace(photo=SimpleNamespace(sizes=sizes))
+
+    assert plugin._photo_size_type(message, 800) == "x"
+    assert plugin._photo_size_type(message, 320) == "m"
+    assert plugin._photo_size_type(message, 4000) == "y"
+    assert plugin._photo_size_type(SimpleNamespace(photo=None), 800) == ""
 
 
 
@@ -1212,12 +1203,12 @@ def test_displayed_account_messages_are_recorded_as_plugin_read(tmp_path):
     plugin = _plugin(tmp_path)
     now = datetime(2026, 6, 27, 18, 42, tzinfo=timezone.utc)
     messages = [
-        {"key": "text-new", "title": "new text", "media_kind": "text", "date": 700},
-        {"key": "photo-mid", "title": "photo", "media_kind": "photo", "date": 600},
-        {"key": "row-1", "title": "row 1", "media_kind": "text", "date": 500},
-        {"key": "row-2", "title": "row 2", "media_kind": "text", "date": 400},
-        {"key": "row-3", "title": "row 3", "media_kind": "text", "date": 300},
-        {"key": "row-4", "title": "row 4", "media_kind": "text", "date": 200},
+        {"key": "text-new", "title": "new text", "media_kind": "text", "date": 800},
+        {"key": "photo-mid", "title": "photo", "media_kind": "photo", "date": 700},
+        *[
+            {"key": f"row-{index}", "title": f"row {index}", "media_kind": "text", "date": 600 - index}
+            for index in range(1, 6)
+        ],
         {"key": "hidden", "title": "hidden", "media_kind": "text", "date": 100},
     ]
     payload = {
@@ -1233,26 +1224,29 @@ def test_displayed_account_messages_are_recorded_as_plugin_read(tmp_path):
     )
 
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
-    assert state["display_read"]["keys"] == ["text-new", "photo-mid", "row-1", "row-2", "row-3", "row-4"]
-    assert state["display_read"]["last_marked_count"] == 6
+    assert state["display_read"]["keys"] == [
+        "photo-mid", "text-new", "row-1", "row-2", "row-3", "row-4", "row-5",
+    ]
+    assert state["display_read"]["last_marked_count"] == VISIBLE_COUNT
 
-def test_displayed_account_messages_are_limited_to_dense_chat_capacity(tmp_path):
+
+def test_displayed_account_messages_are_limited_to_the_page(tmp_path):
     plugin = _plugin(tmp_path)
     messages = [
         {
             "key": f"msg-{index}",
             "title": f"message {index}",
-            "summary": "dense unread line",
             "chat_title": f"Group {index % 4}",
             "media_kind": "text",
             "date": 1000 - index,
         }
-        for index in range(CHAT_FEED_MAX_ROWS + 5)
+        for index in range(VISIBLE_COUNT + 5)
     ]
 
     keys = plugin._displayed_message_keys(messages)
 
-    assert keys == [f"msg-{index}" for index in range(8)]
+    assert keys == [f"msg-{index}" for index in range(VISIBLE_COUNT)]
+
 
 def test_title_asset_is_strict_size_and_transparent():
     root = Path(__file__).resolve().parents[1] / "src" / "plugins" / "telegram_digest"
@@ -1267,27 +1261,6 @@ def test_title_asset_is_strict_size_and_transparent():
     assert alpha.getpixel((0, 0)) == 0
     assert alpha.getpixel((329, 35)) == 0
 
-def test_chat_feed_uses_raw_text_without_media_summary(tmp_path):
-    plugin = _plugin(tmp_path)
-    photo_with_caption = {
-        "key": "photo-caption",
-        "title": "图片无配字",
-        "summary": "这条图片消息没有配字，仅展示图片内容。",
-        "raw_text": "真实群消息正文，直接显示这一段",
-        "media_kind": "photo",
-    }
-    photo_without_caption = {
-        "key": "photo-only",
-        "title": "图片无配字",
-        "summary": "这条图片消息没有配字，仅展示图片内容。",
-        "raw_text": "",
-        "media_kind": "photo",
-    }
-
-    assert plugin._chat_line_text(photo_with_caption) == "真实群消息正文，直接显示这一段"
-    assert plugin._chat_line_text(photo_without_caption) == ""
-
-
 def test_media_only_fallback_text_explains_missing_caption(tmp_path):
     plugin = _plugin(tmp_path)
 
@@ -1296,87 +1269,6 @@ def test_media_only_fallback_text_explains_missing_caption(tmp_path):
     assert plugin._fallback_title({"kind": "video"}) == "视频无配字"
     assert plugin._fallback_summary({"kind": "video"}, {"text": ""}) == "这条视频消息没有配字，仅展示视频封面。"
 
-
-def test_featured_media_without_caption_expands_image_into_text_area(tmp_path):
-    plugin = _plugin(tmp_path)
-    cached = tmp_path / "captionless.jpg"
-    Image.new("RGB", (640, 480), (60, 120, 160)).save(cached)
-    image = Image.new("RGB", (800, 480), "white")
-    draw = ImageDraw.Draw(image)
-    scale = 1
-    fonts = {
-        "headline": plugin._font(24, "bold"),
-        "body": plugin._font(15, "normal"),
-        "small": plugin._font(12, "normal"),
-        "label": plugin._font(11, "bold"),
-    }
-    p = plugin._palette()
-    media_boxes = []
-    drawn_text = []
-
-    def record_media(image_obj, draw_obj, item, box, palette, featured=False):
-        media_boxes.append(tuple(box))
-
-    def record_text(draw_obj, xy, text, font, fill):
-        value = str(text or "")
-        drawn_text.append(value)
-        draw_obj.text(xy, value, font=font, fill=fill)
-
-    plugin._draw_media = record_media
-    plugin._draw_text = record_text
-    item = {
-        "key": "photo-only",
-        "title": "No caption fallback",
-        "summary": "Fallback summary should not occupy the image card.",
-        "raw_text": "",
-        "media_kind": "photo",
-        "media_path": str(cached),
-        "date": 100,
-        "chat_title": "Daily Signal",
-    }
-
-    plugin._draw_featured_post(image, draw, item, (14, 44, 486, 449), fonts, p, scale)
-
-    assert media_boxes == [(26, 56, 474, 437)]
-    assert "No caption fallback" not in drawn_text
-    assert "Fallback summary should not occupy the image card." not in drawn_text
-    assert all("Daily Signal" not in value for value in drawn_text)
-
-
-def test_featured_media_with_caption_keeps_text_layout(tmp_path):
-    plugin = _plugin(tmp_path)
-    cached = tmp_path / "captioned.jpg"
-    Image.new("RGB", (640, 480), (60, 120, 160)).save(cached)
-    image = Image.new("RGB", (800, 480), "white")
-    draw = ImageDraw.Draw(image)
-    scale = 1
-    fonts = {
-        "headline": plugin._font(24, "bold"),
-        "body": plugin._font(15, "normal"),
-        "small": plugin._font(12, "normal"),
-        "label": plugin._font(11, "bold"),
-    }
-    p = plugin._palette()
-    media_boxes = []
-
-    def record_media(image_obj, draw_obj, item, box, palette, featured=False):
-        media_boxes.append(tuple(box))
-
-    plugin._draw_media = record_media
-    item = {
-        "key": "photo-caption",
-        "title": "Caption title",
-        "summary": "Caption detail",
-        "raw_text": "Caption title\nCaption detail",
-        "media_kind": "photo",
-        "media_path": str(cached),
-        "date": 100,
-        "chat_title": "Daily Signal",
-    }
-
-    plugin._draw_featured_post(image, draw, item, (14, 44, 486, 449), fonts, p, scale)
-
-    assert media_boxes == [(26, 56, 474, 280)]
 
 def test_featured_media_smart_crop_prefers_detailed_region(tmp_path):
     plugin = _plugin(tmp_path)
@@ -1419,66 +1311,6 @@ def test_chat_wrap_long_url_only_ellipsizes_final_chunk(tmp_path):
     assert all(not line.endswith("...") for line in lines[:-1])
     assert lines[-1].endswith("...")
     assert all(plugin._text_width(draw, line, font) <= 96 for line in lines)
-
-def test_chat_feed_fills_remaining_space_with_later_short_items(tmp_path):
-    plugin = _plugin(tmp_path)
-    image = Image.new("RGB", (800, 480), "white")
-    draw = ImageDraw.Draw(image)
-    scale = 1
-    fonts = {
-        "row_title": plugin._font(16, "bold"),
-        "small": plugin._font(12, "normal"),
-        "label": plugin._font(11, "bold"),
-        "chat": plugin._font(12, "normal"),
-        "chat_channel": plugin._font(11, "bold"),
-        "chat_meta": plugin._font(10, "normal"),
-        "chat_badge": plugin._font(9, "bold"),
-    }
-    p = plugin._palette()
-    messages = [
-        {"key": "photo", "chat_title": "A", "media_kind": "photo", "raw_text": "caption", "date": 100},
-        {"key": "long", "chat_title": "B", "media_kind": "text", "raw_text": "这是一条很长的消息" * 20, "date": 99},
-        {"key": "short", "chat_title": "C", "media_kind": "text", "raw_text": "短消息", "date": 98},
-    ]
-
-    drawn = plugin._draw_chat_feed_panel(image, draw, messages, (498, 44, 786, 282), fonts, p, scale)
-
-    assert [item["key"] for item in drawn] == ["photo", "short"]
-
-
-def test_chat_text_item_never_draws_past_right_edge(tmp_path):
-    plugin = _plugin(tmp_path)
-    image = Image.new("RGB", (800, 480), "white")
-    draw = ImageDraw.Draw(image)
-    scale = 1
-    fonts = {
-        "chat": plugin._font(12, "normal"),
-        "chat_channel": plugin._font(11, "bold"),
-        "chat_meta": plugin._font(10, "normal"),
-    }
-    box = (500, 50, 786, 135)
-    calls = []
-
-    def record_text(draw_obj, xy, text, font, fill):
-        value = str(text or "")
-        calls.append((xy, value, font))
-        draw_obj.text(xy, value, font=font, fill=fill)
-
-    plugin._draw_text = record_text
-    item = {
-        "key": "wide",
-        "chat_title": "这是一个特别长的频道名称 WithVeryLongChannelName",
-        "media_kind": "text",
-        "raw_text": "https://example.com/" + "verylongsegment" * 20 + " " + "后面还有很多中文内容" * 20,
-        "date": 100,
-    }
-
-    plugin._draw_chat_text_item(draw, item, box, fonts, scale, (27, 32, 34), (88, 83, 71), (234, 238, 231), (151, 157, 151))
-
-    assert calls
-    for (x, _y), value, font in calls:
-        assert x + plugin._text_width(draw, value, font) <= box[2] + 0.5
-
 
 def test_fit_text_respects_tiny_widths(tmp_path):
     plugin = _plugin(tmp_path)
@@ -1596,47 +1428,44 @@ def test_account_mode_without_authorized_session_renders_setup_sample(tmp_path):
 
 
 
-def test_cached_photo_message_is_featured_before_newer_text_items(tmp_path):
+def test_photo_close_to_the_best_score_leads_the_page(tmp_path):
     plugin = _plugin(tmp_path)
-    cached = tmp_path / "featured.jpg"
-    Image.new("RGB", (120, 80), (80, 130, 150)).save(cached)
     messages = [
-        {"key": "text-new", "title": "new text", "media_kind": "text", "date": 300},
-        {"key": "photo-mid", "title": "photo", "media_kind": "photo", "media_path": str(cached), "date": 200},
-        {"key": "video-old", "title": "video", "media_kind": "video", "date": 100},
+        {"key": "text-new", "media_kind": "text", "date": 300, "curation": {"score": 80}},
+        {"key": "photo-mid", "media_kind": "photo", "date": 200, "curation": {"score": 75}},
+        {"key": "video-old", "media_kind": "video", "date": 100, "curation": {"score": 40}},
     ]
 
-    lead, secondary = plugin._prioritize_featured_messages(messages)
+    lead, rest = plugin._split_page_lead(messages)
 
     assert lead["key"] == "photo-mid"
-    assert [item["key"] for item in secondary] == ["text-new", "video-old"]
+    assert [item["key"] for item in rest] == ["text-new", "video-old"]
 
 
-def test_missing_photo_does_not_displace_newer_text_feature(tmp_path):
+def test_far_lower_photo_does_not_displace_the_best_story(tmp_path):
     plugin = _plugin(tmp_path)
     messages = [
-        {"key": "text-new", "title": "new text", "media_kind": "text", "date": 300},
-        {"key": "photo-mid", "title": "photo", "media_kind": "photo", "media_path": "", "date": 200},
-        {"key": "video-old", "title": "video", "media_kind": "video", "date": 100},
+        {"key": "text-new", "media_kind": "text", "date": 300, "curation": {"score": 90}},
+        {"key": "photo-mid", "media_kind": "photo", "date": 200, "curation": {"score": 60}},
     ]
 
-    lead, secondary = plugin._prioritize_featured_messages(messages)
+    lead, rest = plugin._split_page_lead(messages)
 
     assert lead["key"] == "text-new"
-    assert [item["key"] for item in secondary] == ["photo-mid", "video-old"]
+    assert [item["key"] for item in rest] == ["photo-mid"]
 
 
-def test_featured_message_defaults_to_newest_when_no_photo(tmp_path):
+def test_lead_is_the_best_story_when_no_picture_is_close(tmp_path):
     plugin = _plugin(tmp_path)
     messages = [
-        {"key": "text-new", "title": "new text", "media_kind": "text", "date": 300},
-        {"key": "video-old", "title": "video", "media_kind": "video", "date": 100},
+        {"key": "text-new", "media_kind": "text", "date": 300, "curation": {"score": 70}},
+        {"key": "text-old", "media_kind": "text", "date": 100, "curation": {"score": 65}},
     ]
 
-    lead, secondary = plugin._prioritize_featured_messages(messages)
+    lead, rest = plugin._split_page_lead(messages)
 
     assert lead["key"] == "text-new"
-    assert [item["key"] for item in secondary] == ["video-old"]
+    assert [item["key"] for item in rest] == ["text-old"]
 
 
 def test_text_only_bot_message_is_skipped_without_media_download(tmp_path, monkeypatch):

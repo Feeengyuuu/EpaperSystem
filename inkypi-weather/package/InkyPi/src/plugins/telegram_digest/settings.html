@@ -39,6 +39,45 @@
 </div>
 
 <div class="form-group">
+  <input type="hidden" name="includeText" value="false">
+  <label><input type="checkbox" name="includeText" id="includeText" value="true" checked> Show text-only messages too</label>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="curationMode">Curation</label>
+  <select class="form-control" name="curationMode" id="curationMode">
+    <option value="ai" selected>Ad rules + AI ranking (uses OPENAI_API_KEY)</option>
+    <option value="rules">Ad rules only</option>
+    <option value="off">No filtering, newest first</option>
+  </select>
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="aiDailyLimit">AI calls per day</label>
+  <input class="form-control" type="number" min="0" max="48" step="1" name="aiDailyLimit" id="aiDailyLimit" value="12">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="blockKeywords">Block keywords</label>
+  <input class="form-control" type="text" name="blockKeywords" id="blockKeywords" placeholder="抽奖, 直播带货 (comma separated)">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="boostKeywords">Boost keywords</label>
+  <input class="form-control" type="text" name="boostKeywords" id="boostKeywords" placeholder="地震, 停电, 航班">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="blockChats">Hide dialogs</label>
+  <input class="form-control" type="text" name="blockChats" id="blockChats" placeholder="@some_channel, group title or chat id">
+</div>
+
+<div class="form-group">
+  <label class="form-label" for="pinChats">Always rank first</label>
+  <input class="form-control" type="text" name="pinChats" id="pinChats" placeholder="family chat title, @important_channel">
+</div>
+
+<div class="form-group">
   <label class="form-label" for="botToken">Bot token</label>
   <input class="form-control" type="password" name="botToken" id="botToken" placeholder="Use TELEGRAM_BOT_TOKEN when empty">
 </div>
@@ -69,8 +108,8 @@
 </div>
 
 <div class="form-group">
-  <label class="form-label" for="mediaDownloadLimit">Media downloads per refresh (max 4)</label>
-  <input class="form-control" type="number" min="1" max="4" step="1" name="mediaDownloadLimit" id="mediaDownloadLimit" value="4">
+  <label class="form-label" for="mediaDownloadLimit">Media downloads per refresh (max 7)</label>
+  <input class="form-control" type="number" min="1" max="7" step="1" name="mediaDownloadLimit" id="mediaDownloadLimit" value="7">
 </div>
 
 <div class="form-group">
@@ -80,7 +119,7 @@
 
 <div class="form-group">
   <label class="form-label" for="footerRefreshLabel">Next refresh label</label>
-  <input class="form-control" type="text" name="footerRefreshLabel" id="footerRefreshLabel" value="refresh on display">
+  <input class="form-control" type="text" name="footerRefreshLabel" id="footerRefreshLabel" value="">
 </div>
 
 <div class="form-group">
@@ -91,6 +130,7 @@
 <div class="form-group">
   <span style="color: var(--text-primary);">
     Account mode reads an authorized local Telethon session file. Displayed account messages are remembered as read only inside this plugin; Telegram global read state is unchanged. Bot mode only reads bot updates.
+    Ad rules drop promotions, invite links and link spam in channels and groups (never private chats). With AI ranking, the text of every unread message the scan reads, private chats included, is sent to OpenAI to rank it and write a headline; each message is ranked once and the page falls back to the rules when the daily limit is reached.
   </span>
 </div>
 
@@ -105,7 +145,7 @@
         } else if ((key !== 'botToken' && key !== 'telegramApiHash') || value) {
           if (key === 'mediaDownloadLimit') {
             const parsed = Number.parseInt(value, 10);
-            el.value = Number.isFinite(parsed) ? Math.min(4, Math.max(1, parsed)) : 4;
+            el.value = Number.isFinite(parsed) ? Math.min(7, Math.max(1, parsed)) : 7;
           } else {
             el.value = value;
           }
