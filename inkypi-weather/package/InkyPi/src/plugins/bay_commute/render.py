@@ -28,6 +28,13 @@ FACILITIES = {"On Ramp": "入口匝道", "Off Ramp": "出口匝道", "Connector"
               "Ramp": "匝道", "Mainline": "主线", "Conventional Hwy": "道路"}
 ASSETS = Path(__file__).with_name("assets")
 STATES = {"active": "施工中", "scheduled_now": "计划时段中", "planned": "计划"}
+# Each state has its own generated tag (cone, clock or calendar) so the three read apart.
+STATUS_TAG_HEIGHT = 24
+# The page has no header row: the columns start at the top and its height goes to a
+# larger map (at the raster's own aspect), roomier road rows and the tide chart.
+TOP = 12
+ROW_TOP, ROW_PITCH, ROW_X = 66, 114, 244
+MAP_BOX = (18, 66, 214, 328)
 
 
 class Canvas:
@@ -93,6 +100,26 @@ def draw_shield(canvas, x, y, route):
         canvas.text((x, y + 12), route, 14, width=49, anchor="lt")
 
 
+def draw_status(canvas, x, y, state):
+    """The state's generated tag, or an outlined orange chip when the art is missing; returns its width."""
+    path = ASSETS / f"status_{state}.png"
+    if path.is_file():
+        limits = ImageLimits(max_bytes=256 * 1024, max_width=512, max_height=128, max_pixels=512 * 128)
+        with safe_open_image(path, limits=limits) as source:
+            with source.convert("RGBA") as rgba:
+                width = round(rgba.width * STATUS_TAG_HEIGHT / rgba.height)
+                tag = rgba.resize((width, STATUS_TAG_HEIGHT), Image.Resampling.LANCZOS)
+                canvas.image.paste(tag, (x, y), tag)
+                tag.close()
+        return width
+    status = STATES[state]
+    status_width = int(canvas.draw.textlength(status, font=canvas.font(14))) + 12
+    canvas.draw.rounded_rectangle((x, y, x + status_width, y + STATUS_TAG_HEIGHT), radius=3,
+                                  outline=canvas.palette["orange"], width=2)
+    canvas.text((x + 6, y + 4), status, 14, "orange", anchor="lt")
+    return status_width
+
+
 def draw_roads(canvas, payload, now):
     from .map_view import draw_marker, render_map
 
@@ -100,32 +127,29 @@ def draw_roads(canvas, payload, now):
     data = source.get("data", {})
     ranked = rank_roads(data.get("items", []), now)
     rows = select_roads(ranked, now, 3)
-    placed = paste_local_wordmark(canvas.image, ASSETS / "section_roads.png", (16, 74, 216, 116), align="left")
+    placed = paste_local_wordmark(canvas.image, ASSETS / "section_roads.png", (16, TOP, 216, TOP + 42), align="left")
     if not placed:
-        canvas.text((18, 77), "道路封闭", 29)
-    canvas.text((placed[2] + 12 if placed else 171, 90), "CALTRANS ‧ D4", 13, "muted")
-    map_image = render_map(rows, size=(184, 282), night=canvas.palette is NIGHT)
-    canvas.image.paste(map_image, (18, 124))
+        canvas.text((18, TOP + 3), "道路封闭", 29)
+    canvas.text((placed[2] + 12 if placed else 171, TOP + 16), "CALTRANS ‧ D4", 13, "muted")
+    map_x, map_y, map_w, map_h = MAP_BOX
+    map_image = render_map(rows, size=(map_w, map_h), night=canvas.palette is NIGHT)
+    canvas.image.paste(map_image, (map_x, map_y))
     canvas.image.info["bay_map_markers"] = map_image.info.get("markers", [])
     map_image.close()
-    canvas.text((18, 411), "编号对应道路条目", 12, "muted")
+    canvas.text((18, map_y + map_h + 8), "编号对应道路条目", 12, "muted")
     if not rows:
         text = ("道路数据暂不可用" if source["state"] == "unavailable" else
                 "过期缓存中暂无匹配项目" if source["state"] == "stale_cache" else "所选路线暂无封闭记录")
-        canvas.text((214, 169), text, 17, width=232)
-        canvas.text((214, 214), " / ".join(payload["routes"]), 14, "muted", width=232)
-        canvas.text((214, 251), f"关注未来 {payload.get('window_days', 7)} 天", 16, "muted", width=232)
+        canvas.text((ROW_X, 111), text, 17, width=450 - ROW_X)
+        canvas.text((ROW_X, 156), " / ".join(payload["routes"]), 14, "muted", width=450 - ROW_X)
+        canvas.text((ROW_X, 193), f"关注未来 {payload.get('window_days', 7)} 天", 16, "muted", width=450 - ROW_X)
     for index, row in enumerate(rows):
-        y = 124 + index * 96
-        draw_shield(canvas, 214, y + 1, row["route"])
+        y = ROW_TOP + index * ROW_PITCH
+        draw_shield(canvas, ROW_X, y + 1, row["route"])
         state = road_state(row, now)
         # The entry's number is the map's own marker, so the two read as one.
-        draw_marker(canvas.draw, 279, y + 12, index + 1, 11, get_base_ui_font(15, bold=True))
-        status = STATES[state]
-        status_width = int(canvas.draw.textlength(status, font=canvas.font(14))) + 12
-        canvas.draw.rounded_rectangle((296, y + 1, 296 + status_width, y + 23), radius=3,
-                                      outline=canvas.palette["orange"], width=2)
-        canvas.text((302, y + 4), status, 14, "orange", anchor="lt")
+        draw_marker(canvas.draw, ROW_X + 65, y + 12, index + 1, 11, get_base_ui_font(15, bold=True))
+        draw_status(canvas, ROW_X + 82, y + 1, state)
         direction = DIRECTIONS.get(row.get("direction"), row.get("direction") or "方向未报")
         canvas.text((450, y + 4), direction, 13, width=70, anchor="rt")
         kind = KINDS.get(row.get("kind"), row.get("kind") or "施工")
@@ -133,22 +157,23 @@ def draw_roads(canvas, payload, now):
         # A full ramp closure must never be described as closing the entire highway.
         if row.get("kind") == "Full" and "匝道" in facility:
             kind = facility + "全封闭"
-        canvas.text((268, y + 31), row.get("place") or row.get("begin"), 16, width=181, anchor="lt")
-        canvas.text((214, y + 55), kind, 14, width=233, anchor="lt")
+        canvas.text((ROW_X + 54, y + 31), row.get("place") or row.get("begin"), 16, width=396 - ROW_X, anchor="lt")
+        canvas.text((ROW_X, y + 55), kind, 14, width=448 - ROW_X, anchor="lt")
         start, end = parse_time(row["start"]), parse_time(row.get("end"))
         start = start.astimezone(PACIFIC)
         start_text = date_label(start, now) + " " + start.strftime("%H:%M")
         end_text = "未定" if row.get("indefinite") or not end else date_label(end, now) + " " + end.astimezone(PACIFIC).strftime("%H:%M")
-        canvas.text((214, y + 76), start_text + " → " + end_text, 13, "orange", width=235, anchor="lt")
+        canvas.text((ROW_X, y + 76), start_text + " → " + end_text, 13, "orange", width=450 - ROW_X, anchor="lt")
         if index < len(rows)-1:
-            canvas.rule((214,y+91,450,y+91))
+            canvas.rule((ROW_X, y + ROW_PITCH - 10, 450, y + ROW_PITCH - 10))
     if source["state"] == "stale_cache":
         detail = "来源过期 ‧ 缓存位置"
     elif source["state"] == "unavailable":
         detail = "等待道路数据"
     else:
         detail = f"每小时更新 ‧ 共 {len(ranked)} 项"
-    canvas.text((214, 418), detail, 12, "orange" if source["state"] in {"stale_cache", "unavailable"} else "muted", width=236)
+    canvas.text((ROW_X, 418), detail, 12, "orange" if source["state"] in {"stale_cache", "unavailable"} else "muted",
+                width=450 - ROW_X)
 
 
 def draw_chart(canvas, data, now):
@@ -156,9 +181,9 @@ def draw_chart(canvas, data, now):
     end = datetime.combine(now.date()+timedelta(days=1), time.min, PACIFIC)
     rows = [row for row in data.get("curve", []) if begin <= parse_time(row["time"]) < end]
     if len(rows) < 4:
-        canvas.text((493, 323), "今日预测曲线不可用", 17, "muted", width=285)
+        canvas.text((493, 300), "今日预测曲线不可用", 17, "muted", width=285)
         return
-    left, top, right, bottom = 511, 306, 775, 391
+    left, top, right, bottom = 511, 262, 775, 391
     low = math.floor(min(row["height"] for row in rows) / 2) * 2
     high = math.ceil(max(row["height"] for row in rows) / 2) * 2
     high = max(high, low+2)
@@ -182,8 +207,8 @@ def draw_chart(canvas, data, now):
         stamp = end if hour == 24 else datetime.combine(now.date(), time(hour), PACIFIC)
         x = left+(stamp.timestamp()-begin.timestamp())/span*(right-left)
         canvas.text((x,399), f"{hour:02d}", 12, "muted", anchor="mt")
-    canvas.text((492, 284), now.strftime("%m/%d") + " 预测曲线", 12, "muted")
-    canvas.text((776, 284), "ft", 12, "muted", anchor="rt")
+    canvas.text((492, 240), now.strftime("%m/%d") + " 预测曲线", 12, "muted")
+    canvas.text((776, 240), "ft", 12, "muted", anchor="rt")
 
 
 def draw_tides(canvas, payload, settings, now):
@@ -191,22 +216,22 @@ def draw_tides(canvas, payload, settings, now):
     data = source.get("data", {})
     station_name = (str(settings.get("stationName") or "").strip()
                     or ("Redwood City" if station == "9414523" else "NOAA " + station))
-    canvas.text((488, 79), station_name.upper(), 13, "muted", width=294)
-    if not paste_local_wordmark(canvas.image, ASSETS / "section_tides.png", (486, 96, 700, 142), align="left"):
-        canvas.text((488, 99), "潮汐预测", 31)
+    canvas.text((488, TOP + 3), station_name.upper(), 13, "muted", width=294)
+    if not paste_local_wordmark(canvas.image, ASSETS / "section_tides.png", (486, TOP + 20, 700, TOP + 66), align="left"):
+        canvas.text((488, TOP + 23), "潮汐预测", 31)
     upcoming = next_tides(data, now)
     for kind, x, title in (("H",488,"下一次高潮"),("L",642,"下一次低潮")):
-        canvas.text((x,154), title, 16)
+        canvas.text((x,94), title, 16)
         row = upcoming[kind]
         if row:
             stamp = parse_time(row["time"]).astimezone(PACIFIC)
-            canvas.text((x,177), date_label(stamp, now) + " " + stamp.strftime("%m/%d"), 13, "muted")
-            canvas.text((x,196), stamp.strftime("%H:%M"), 32, "blue", width=144)
-            canvas.text((x+2,238), f"{row['height']:.1f} ft", 22, "blue", width=143)
+            canvas.text((x,117), date_label(stamp, now) + " " + stamp.strftime("%m/%d"), 13, "muted")
+            canvas.text((x,136), stamp.strftime("%H:%M"), 32, "blue", width=144)
+            canvas.text((x+2,178), f"{row['height']:.1f} ft", 22, "blue", width=143)
         else:
-            canvas.text((x,194), "—", 34, "muted")
-            canvas.text((x,240), "等待预测", 14, "muted")
-    canvas.rule((631,155,631,265))
+            canvas.text((x,134), "—", 34, "muted")
+            canvas.text((x,180), "等待预测", 14, "muted")
+    canvas.rule((631,95,631,205))
     draw_chart(canvas, data, now)
     label = "NOAA ‧ MLLW ‧ 英尺"
     if source["state"] == "stale_cache":
@@ -220,22 +245,7 @@ def draw_tides(canvas, payload, settings, now):
 def render_page(dimensions, payload, settings, now):
     now = local_now(now)
     canvas = Canvas(settings)
-    if not paste_local_wordmark(canvas.image, Path(__file__).with_name("assets") / "title_wordmark.png",
-                                (17, 8, 201, 56)):
-        canvas.text((17, 8), "湾区出行", 38)
-    canvas.rule((211,17,211,52), "ink")
-    subtitle = "道路封闭 ‧ 潮汐预测"
-    canvas.text((228, 23), subtitle, 19)
-    weekday = "一二三四五六日"[now.weekday()]
-    date = now.strftime("%m.%d") + f" 周{weekday}"
-    canvas.text((784, 22), date, 23, anchor="rt")
-    # The bay scene fills the header between the subtitle and the date.
-    scene_left = 228 + int(canvas.draw.textlength(subtitle, font=canvas.font(19))) + 16
-    scene_right = 784 - int(canvas.draw.textlength(date, font=canvas.font(23))) - 16
-    if scene_right - scene_left >= 80:
-        paste_local_wordmark(canvas.image, ASSETS / "header_scene.png", (scene_left, 8, scene_right, 60))
-    canvas.rule((10,66,790,66), "ink", 2)
-    canvas.rule((464,78,464,434), "ink")
+    canvas.rule((464, TOP, 464, 434), "ink")
     draw_roads(canvas, payload, now)
     draw_tides(canvas, payload, settings, now)
     canvas.rule((10,444,790,444), "ink", 2)

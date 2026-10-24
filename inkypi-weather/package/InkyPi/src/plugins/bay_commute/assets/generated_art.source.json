@@ -1,0 +1,18 @@
+{
+  "model": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "8220fbdb-cb8c-444d-b7b0-f6f160e2dc98",
+  "generated_at": "2026-10-24",
+  "prompt_summary": "Three sticker status tags with a navy outline and italic lean: orange hazard-stripe tag with a cone (施工中), amber tag with a clock (计划时段中), blue tag with a calendar (计划); transparent PNG 1536x512.",
+  "processing": "Alpha below 40 cleared, each tag cut at the transparent gaps, trimmed and scaled to 48 px tall (outputs/bay-commute-badges-20261024/prep_art.py); drawn 24 px tall.",
+  "files": {
+    "status_active.png": {
+      "sha256": "be57b0a00a493c10b3900223f4bad281fda8fc42239addbca169753b00432858"
+    },
+    "status_scheduled_now.png": {
+      "sha256": "96ad6b08cb8f8f3f78101e4d2078cda294a98b0f5976e8a73a6f440450f8f267"
+    },
+    "status_planned.png": {
+      "sha256": "3981cf2929bb0ec8aa5a80bb0a7d0e2ab8a334047d297189621ba3ef148fee4e"
+    }
+  }
+}
