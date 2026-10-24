@@ -1,0 +1,37 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <label class="form-label" for="homeLat">家的纬度</label>
+  <input class="form-control" type="number" step="0.0001" name="homeLat" id="homeLat" value="37.5485" min="36" max="39">
+</div>
+<div class="form-group">
+  <label class="form-label" for="homeLon">家的经度</label>
+  <input class="form-control" type="number" step="0.0001" name="homeLon" id="homeLon" value="-121.9886" min="-124" max="-120">
+  <small>默认 Fremont。页面显示离这里最近、分属不同道路的 5 个 Caltrans 湾区摄像头。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="mainCamera">主镜头编号（可选）</label>
+  <input class="form-control" name="mainCamera" id="mainCamera" value="" maxlength="12" pattern="[A-Za-z0-9]*">
+  <small>例如 TVB11；留空则用最近的镜头。主镜头下方显示它过去 3 小时的缩时画面。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取摄像头列表</label>
+  <small>画面每次刷新都取最新一张；镜头故障时自动换下一个。轮播使用本地缓存，不请求网络。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  for (const key of ['homeLat', 'homeLon', 'mainCamera', 'fontFamily', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    const value = typeof pluginSettings !== 'undefined' ? pluginSettings[key] : undefined;
+    if (value !== undefined) {
+      if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(value);
+      else el.value = value;
+    } else if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+  }
+});
+</script>

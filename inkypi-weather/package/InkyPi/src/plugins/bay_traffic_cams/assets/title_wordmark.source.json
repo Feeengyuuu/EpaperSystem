@@ -1,0 +1,16 @@
+{
+  "asset": "title_wordmark.png",
+  "scene": "湾区路况 in chunky italic display lettering with a small traffic camera and cone",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "be47ab36-96e1-439d-888e-05730012577e",
+  "generated": "2026-10-24",
+  "background": "transparent PNG, 1536x512",
+  "processing": "alpha below 40 cleared, cropped to the alpha bounding box, scaled to 96 px high with LANCZOS",
+  "rendering": "full colour at the page's top left, inside (10, 2)-(250, 50)",
+  "source_sha256": "20d854ce45c9956fb1a99e612cdb84854bdebac934adfb2e3f1e89b32d639c34",
+  "sha256": "65cc91324ec134481d0e39ad76dee5a1660b9586320ff0f87610bdf5e91ba785",
+  "size": [
+    359,
+    96
+  ]
+}
