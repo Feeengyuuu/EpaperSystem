@@ -109,6 +109,7 @@ def main():
     sys.stdout = sys.stderr  # Library output must never corrupt the reply channel.
     # Progress goes to stderr: the parent quotes the last line when the child runs out of time.
     logging.basicConfig(level=logging.INFO, stream=sys.stderr, format="%(message)s")
+    logger.info("Telegram Digest worker started")
 
     from plugins.telegram_digest.telegram_digest import TelegramDigest
 

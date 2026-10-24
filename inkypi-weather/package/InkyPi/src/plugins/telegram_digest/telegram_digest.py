@@ -431,10 +431,12 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
         unread_total = 0
         scanned = 0
 
+        logger.info("Telegram Digest connecting to Telegram")
         async with client_class(config["session_path"], config["api_id"], config["api_hash"]) as client:
             authorized = await self._maybe_await(client.is_user_authorized())
             if not authorized:
                 raise RuntimeError("Telegram account session is not authorized yet")
+            logger.info("Telegram Digest signed in; reading chats")
 
             scan_started = time.monotonic()
             async for dialog in self._aiter(client.iter_dialogs(limit=dialog_limit)):
@@ -449,6 +451,9 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
                     continue
                 unread_total += unread_count
                 matched_dialogs += 1
+                if matched_dialogs % 10 == 0:
+                    logger.info("Telegram Digest reading chat %d (%.0fs)", matched_dialogs,
+                                time.monotonic() - scan_started)
                 entity = getattr(dialog, "entity", None)
                 if entity is None:
                     continue
