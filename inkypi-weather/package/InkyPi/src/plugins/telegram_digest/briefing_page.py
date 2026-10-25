@@ -20,8 +20,11 @@ PORTRAIT_RATIO = 1.05
 # A second story fills the room the lead's text leaves when there is this much of it (page px);
 # the lead's summary then keeps to this many lines.
 SECOND_MIN_H, SECOND_LEAD_SUMMARY_LINES = 120, 4
-# Without any picture to promote, the next story's own text fills a room at least this tall.
-SECOND_TEXT_MIN_H = 90
+# A portrait lead's photo is this wide beside its text; with no second picture to fill the room
+# its text leaves, the photo widens (the text column narrowing to as little as TEXT_MIN_W) until
+# the text runs down the column to within PORTRAIT_FILL_SLACK of its foot. Text too short for
+# even that column lies on a band at the foot of the photo, which then fills the whole lead.
+PORTRAIT_PHOTO_W, PORTRAIT_TEXT_MIN_W, PORTRAIT_FILL_SLACK = 176, 168, 28
 KIND_LABELS = {"private": "私聊", "group": "群聊", "channel": "频道"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 # Each story's source line starts with its chat's kind as a generated icon (megaphone for a
@@ -161,44 +164,108 @@ class BriefingPageMixin:
         picture = self._open_page_media(item)
         colour = self._tag_colour(item, p)
         if picture is not None and picture.height > picture.width * PORTRAIT_RATIO:
-            box = (x0, y0, x0 + self._x(176), y1)
+            sizes = (22, 3, 10)
+            split = x0 + self._x(PORTRAIT_PHOTO_W)
+            text_box = (split + self._x(14), y0, x1, y1)
+            second = self._fitting_second(item, p, text_box, rest, sizes)
+            if second is None:
+                # No picture to put under the text: the photo widens into the room instead.
+                split = self._portrait_split(item, p, (x0, y0, x1, y1), sizes)
+                if split is None:
+                    self._draw_full_bleed_lead(image, draw, item, picture, (x0, y0, x1, y1), p, colour)
+                    return []
+                text_box = (split + self._x(14), y0, x1, y1)
+            box = (x0, y0, split, y1)
             self._paste_media(image, picture, box, p, centering=(0.5, 0.15))
             self._draw_media_badges(draw, item, box, p, colour)
-            return self._lead_text_with_second(image, draw, item, p, (box[2] + self._x(14), y0, x1, y1), rest,
-                                               (22, 3, 10))
+            return self._draw_lead_and_second(image, draw, item, p, text_box, second, sizes)
         if picture is not None:
             box = (x0, y0, x1, y0 + self._y(214))
             self._paste_media(image, picture, box, p, featured=True)
             self._draw_media_badges(draw, item, box, p, colour)
             self._draw_lead_text(image, draw, item, p, (x0, box[3] + self._y(10), x1, y1), 24, 2, 3, show_tag=False)
             return []
-        return self._lead_text_with_second(image, draw, item, p, (x0, y0, x1, y1), rest, (30, 3, 9))
+        sizes = (30, 3, 9)
+        return self._draw_lead_and_second(image, draw, item, p, (x0, y0, x1, y1),
+                                          self._fitting_second(item, p, (x0, y0, x1, y1), rest, sizes), sizes)
 
-    def _lead_text_with_second(self, image, draw, item, p, box, rest, sizes):
-        """The lead's text, and the room it leaves always filled (the lead's source line then
-        closes its own text, above it): another photo of the lead's own album, so the text
-        describes both pictures; else the next picture story, carrying its own headline and
-        summary; else, with no picture at all, the next stories' own text, as many as fit.
-        Returns the stories promoted there."""
+    def _fitting_second(self, item, p, box, rest, sizes):
+        """(the second picture, whether it is the lead's own) when the lead's text in ``box``
+        leaves room enough for it, else None."""
         second, same_story = self._second_picture(item, rest)
-        text_only = second is None
-        if text_only:
-            second = rest[0] if rest else None
-        if second is not None:
-            headline_size, headline_lines, _summary_lines = sizes
-            scratch = Image.new("RGB", image.size)
-            end = self._draw_lead_text(scratch, ImageDraw.Draw(scratch), item, p, box, headline_size, headline_lines,
-                                       SECOND_LEAD_SUMMARY_LINES, meta_after=True)
-            if box[3] - end >= self._y(SECOND_TEXT_MIN_H if text_only else SECOND_MIN_H):
-                end = self._draw_lead_text(image, draw, item, p, box, headline_size, headline_lines,
-                                           SECOND_LEAD_SUMMARY_LINES, meta_after=True)
-                room = (box[0], end + self._y(10), box[2], box[3])
-                if text_only:
-                    return self._draw_more_stories(image, draw, rest, room, p)
-                self._draw_second_feature(image, draw, second, room, p, same_story=same_story)
-                return [second]
-        self._draw_lead_text(image, draw, item, p, box, *sizes)
-        return []
+        if second is None:
+            return None
+        end = self._lead_text_end(item, p, box, sizes[0], sizes[1], SECOND_LEAD_SUMMARY_LINES)
+        return (second, same_story) if box[3] - end >= self._y(SECOND_MIN_H) else None
+
+    def _lead_text_end(self, item, p, box, headline_size, headline_lines, summary_lines):
+        scratch = Image.new("RGB", (self._x(800), self._y(480)))
+        return self._draw_lead_text(scratch, ImageDraw.Draw(scratch), item, p, box, headline_size, headline_lines,
+                                    summary_lines, meta_after=True)
+
+    def _portrait_split(self, item, p, box, sizes):
+        """Where a portrait lead's photo ends when nothing fills the room under its text: the
+        widest text column whose text runs down to the column's foot, or None when even the
+        narrowest column leaves room."""
+        x0, y0, x1, y1 = box
+        widest = x0 + self._x(PORTRAIT_PHOTO_W)
+        narrowest = x1 - self._x(PORTRAIT_TEXT_MIN_W) - self._x(14)
+        step = max(1, self._x(8))
+        for split in range(widest, narrowest + 1, step):
+            end = self._lead_text_end(item, p, (split + self._x(14), y0, x1, y1), *sizes)
+            if y1 - end <= self._y(PORTRAIT_FILL_SLACK):
+                return split
+        return None
+
+    def _draw_full_bleed_lead(self, image, draw, item, picture, box, p, colour):
+        """A lead whose text is short: its photo fills the lead, and its tag, headline, summary
+        and source line lie on a dark band rising from the photo's foot."""
+        x0, y0, x1, y1 = [int(value) for value in box]
+        self._paste_media(image, picture, box, p, centering=(0.5, 0.3))
+        self._draw_media_badges(draw, item, box, p, colour)
+        width = x1 - x0 - self._x(28)
+        headline_font, summary_font = self._f(24, "bold"), self._f(15)
+        headline = self._wrap_text(draw, display_headline(item), headline_font, width, 2)
+        summary = self._wrap_text(draw, display_summary(item), summary_font, width, 3)
+        headline_h, summary_h = int(24 * 1.3 * self._page_scale), int(15 * 1.45 * self._page_scale)
+        text_h = len(headline) * headline_h + len(summary) * summary_h + self._y(30)
+        band = min(y1 - y0, text_h + self._y(56))
+        shade = Image.new("L", (1, band), 0)
+        for row in range(band):
+            shade.putpixel((0, row), round(225 * min(1.0, row / max(1, band - text_h))))
+        shade = shade.resize((x1 - x0, band))
+        corner = Image.new("L", (x1 - x0, y1 - y0), 0)
+        ImageDraw.Draw(corner).rounded_rectangle((0, 0, x1 - x0 - 1, y1 - y0 - 1), radius=self._x(8), fill=255)
+        image.paste((10, 14, 20), (x0, y1 - band, x1, y1),
+                    ImageChops.multiply(shade, corner.crop((0, y1 - y0 - band, x1 - x0, y1 - y0))))
+        x, y = x0 + self._x(14), y1 - text_h
+        for line in headline:
+            draw.text((x, y), line, font=headline_font, fill=(255, 255, 255))
+            y += headline_h
+        for line in summary:
+            draw.text((x, y + self._y(2)), line, font=summary_font, fill=(236, 240, 244))
+            y += summary_h
+        meta_y = y1 - self._y(24)
+        meta_x = self._paste_marks(image, item, x, meta_y, self._x(16))
+        meta_font = self._f(12, "bold")
+        draw.text((meta_x, meta_y), self._fit_text(draw, self._story_meta(item, with_tag=False), meta_font,
+                                                   x1 - self._x(50) - meta_x), font=meta_font, fill=(214, 220, 226))
+        self._score_dots(draw, x1 - self._x(46), meta_y + self._y(8), item, colour, p)
+
+    def _draw_lead_and_second(self, image, draw, item, p, box, second, sizes):
+        """The lead's text in ``box``; with a ``second`` picture, the lead's source line closes
+        its own text and the picture fills the room below: another photo of the lead's own
+        album, so the text describes both, or the next picture story, carrying its own headline
+        and summary. Returns the stories promoted there."""
+        if second is None:
+            self._draw_lead_text(image, draw, item, p, box, *sizes)
+            return []
+        story, same_story = second
+        end = self._draw_lead_text(image, draw, item, p, box, sizes[0], sizes[1], SECOND_LEAD_SUMMARY_LINES,
+                                   meta_after=True)
+        self._draw_second_feature(image, draw, story, (box[0], end + self._y(10), box[2], box[3]), p,
+                                  same_story=same_story)
+        return [story]
 
     def _second_picture(self, lead, rest):
         """(the picture for the lead's empty half, whether it is the lead's own) or (None, False):
@@ -217,26 +284,6 @@ class BriefingPageMixin:
             if self._open_page_media(story) is not None:
                 return story, False
         return None, False
-
-    def _draw_more_stories(self, image, draw, stories, box, p):
-        """The next stories' own text under the lead when no picture can fill the room: each a
-        rule, then its headline, summary and source line, one after another for as many as fit
-        down to the lead's foot. Returns those drawn."""
-        x0, y, x1, y1 = box
-        drawn = []
-        for story in stories:
-            text_box = (x0, y + self._y(10), x1, y1)
-            if y1 - y < self._y(SECOND_TEXT_MIN_H):
-                break
-            scratch = Image.new("RGB", image.size)
-            if self._draw_lead_text(scratch, ImageDraw.Draw(scratch), story, p, text_box, 18, 2, 3, show_tag=False,
-                                    meta_after=True) > y1 + self._y(2):
-                break
-            draw.line((x0, y, x1, y), fill=p["rule"], width=1)
-            y = self._draw_lead_text(image, draw, story, p, text_box, 18, 2, 3, show_tag=False,
-                                     meta_after=True) + self._y(8)
-            drawn.append(story)
-        return drawn
 
     def _draw_second_feature(self, image, draw, item, box, p, same_story=False):
         """The second picture. The lead's own album photo carries only a chip (the text above is

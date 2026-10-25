@@ -194,11 +194,9 @@ def test_telegram_prepared_receipt_keys_are_the_drawn_lead_and_rows(tmp_path):
     saved = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     exact_keys = saved["pending_presentation_display"]["keys"]
     assert exact_keys == list(prepared.image.info["inkypi_rendered_visible_message_keys"])
-    # The short lead's empty room takes the first rows' stories, so the list shows as many more:
-    # the pre-render estimate is the start of the drawn page.
-    assert exact_keys[:VISIBLE_COUNT] == plugin._displayed_message_keys(messages)
-    assert len(exact_keys) > VISIBLE_COUNT and len(set(exact_keys)) == len(exact_keys)
-    assert set(exact_keys[VISIBLE_COUNT:]) <= {f"row-{index}" for index in range(1, 10)}
+    assert exact_keys == plugin._displayed_message_keys(messages)
+    assert len(exact_keys) == VISIBLE_COUNT
+    assert "row-9" not in exact_keys
 
 
 def test_telegram_prepared_refresh_rejects_sample_fallback(tmp_path):
@@ -1632,7 +1630,7 @@ def test_a_short_portrait_lead_promotes_the_next_picture_story_under_its_text(tm
     assert (23, 139, 81) in lower_lead
 
 
-def test_without_any_picture_the_next_story_fills_the_room_under_a_short_lead(tmp_path):
+def test_without_a_second_picture_a_short_portrait_leads_photo_widens_into_the_room(tmp_path):
     plugin = _plugin(tmp_path)
     now = datetime(2026, 9, 4, 2, 40, tzinfo=timezone.utc)
     portrait = tmp_path / "portrait.png"
@@ -1653,11 +1651,10 @@ def test_without_any_picture_the_next_story_fills_the_room_under_a_short_lead(tm
         {"_theme_render_only": True, "_inkypi_theme": _theme_context("day", requested_mode="day")}, DummyDeviceConfig())
 
     keys = image.info[RENDERED_VISIBLE_KEYS_IMAGE_INFO_KEY]
-    # The first list stories move under the lead, in order, and the list still shows six more.
-    assert keys == ("lead",) + tuple(f"row-{i}" for i in range(1, len(keys)))
-    assert len(keys) >= 1 + 1 + 6
-    lower_lead = image.crop((204, 250, 470, 440))
-    assert lower_lead.getextrema() != image.crop((204, 250, 205, 251)).getextrema()
+    # No other story's text moves under the lead; the list keeps its six rows.
+    assert keys == ("lead",) + tuple(f"row-{i}" for i in range(1, 7))
+    # Text this short cannot fill even a narrowed column: the photo fills the whole lead under it.
+    assert image.getpixel((250, 120)) == (171, 32, 47) and image.getpixel((440, 120)) == (171, 32, 47)
 
 
 def test_the_lower_picture_is_the_leads_own_album_photo_before_another_story(tmp_path):
