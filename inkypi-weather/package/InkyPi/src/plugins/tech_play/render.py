@@ -100,6 +100,28 @@ def _paste(canvas, image, xy):
     return image.width
 
 
+def days_until(stamp, now):
+    """'今天', '明天' or 'N 天后' for a date ahead (by calendar day); "" once it has passed."""
+    days = (stamp.astimezone(now.tzinfo).date() - now.date()).days
+    return "" if days < 0 else "今天" if days == 0 else "明天" if days == 1 else f"{days} 天后"
+
+
+def time_left(stamp, now):
+    """'剩 N 天' (or hours on the last day) until a deadline; "" once it has passed."""
+    seconds = (stamp - now).total_seconds()
+    if seconds <= 0:
+        return ""
+    return f"剩 {int(seconds // 86400)} 天" if seconds >= 86400 else f"剩 {max(1, int(seconds // 3600))} 小时"
+
+
+def _corner_chip(canvas, right, top, text, fill, color="badge_ink"):
+    """A solid tag on a picture's top right corner, the counterpart of the 免费领 tag on its left."""
+    width = canvas.width(text, 12) + 12
+    canvas.draw.rectangle((right - width, top, right, top + 18), fill=canvas.color(fill))
+    canvas.text((right - width / 2, top + 9), text, 12, color, anchor="mm")
+    return width
+
+
 def ago(stamp, now):
     seconds = max(0, (now - stamp).total_seconds())
     if seconds < 3600:
@@ -340,7 +362,14 @@ def _epic(canvas, payload, images, now):
         end, start = parse_time(item.get("end")), parse_time(item.get("start"))
         meta = (f"{start.astimezone(now.tzinfo):%m/%d} 开始" if is_next and start else
                 epic_end_label(end, now) if end else "")
-        meta_width = canvas.text((x + width - 6, bottom - 11), meta, 11, (255, 255, 255), anchor="rm", bold=False)
+        # The deadline is what matters here: bold on the band, and the days left on the cover's corner
+        # (crimson on the last day).
+        meta_width = canvas.text((x + width - 6, bottom - 11), meta, 12, (255, 255, 255), anchor="rm")
+        left_text = time_left(end, now) if end and not is_next else ""
+        if left_text:
+            last_day = "小时" in left_text
+            _corner_chip(canvas, x + width, top, left_text, "major" if last_day else "gold",
+                         "badge_ink" if last_day else (20, 20, 20))
         title_x = x + 6 + _game_icon(canvas, payload, images, item["title"], (x + 6, bottom - 19), 16)
         canvas.text((title_x, bottom - 11), item["title"], 13, (255, 255, 255), anchor="lm",
                     width=x + width - meta_width - 10 - title_x)
@@ -379,10 +408,14 @@ def _upcoming(canvas, payload, images, now):
             canvas.draw.rectangle(box, fill=canvas.color("panel"))
             draw_icon(canvas.draw, "rocket", (x + width / 2 - 12, top + 11), 24, canvas.color("ink"),
                       canvas.color("panel"))
+        # How soon it comes out, on the cover's corner: crimson for today or tomorrow.
+        stamp = parse_time(item.get("date"))
+        soon = days_until(stamp, now) if stamp else ""
+        if soon:
+            _corner_chip(canvas, x + width, top, soon, "major" if soon in ("今天", "明天") else "upcoming_bar")
         _round_corners(canvas, box, 6)
         name_x = x + _game_icon(canvas, payload, images, item["name"], (x, top + 49), 14)
         canvas.text((name_x, top + 56), item["name"], 12, anchor="lm", width=x + width - name_x)
-        stamp = parse_time(item.get("date"))
         when = (f"{stamp.astimezone(now.tzinfo):%m/%d} 周{WEEKDAYS[stamp.astimezone(now.tzinfo).weekday()]}"
                 if stamp else (item.get("date_text") or "日期待定"))
         calendar_mark = _asset_icon("icon-calendar", 13)
@@ -390,9 +423,12 @@ def _upcoming(canvas, payload, images, now):
             _paste(canvas, calendar_mark, (x, top + 63))
         else:
             draw_icon(canvas.draw, "calendar", (x, top + 64), 11, canvas.color("ink"), canvas.color("paper"))
+        # The release date in bold ink; the platforms after it, muted.
+        date_width = canvas.text((x + 15, top + 70), when, 12, anchor="lm", width=width - 15)
         platforms = "/".join(item.get("platforms") or [])
-        canvas.text((x + 15, top + 70), f"{when}  {platforms}".strip(), 11, "muted", anchor="lm", bold=False,
-                    width=width - 15)
+        if platforms and width - 15 - date_width > 24:
+            canvas.text((x + 19 + date_width, top + 70), platforms, 10, "muted", anchor="lm", bold=False,
+                        width=width - 19 - date_width)
 
 
 def _initials(name):

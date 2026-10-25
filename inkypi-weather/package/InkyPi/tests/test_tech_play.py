@@ -119,6 +119,19 @@ def test_run_entries_keep_levels_and_real_sub_second_times():
     assert sources.flag_url("../x") is None
 
 
+def test_deadlines_and_release_dates_read_as_time_left_and_days_ahead():
+    from plugins.tech_play.render import days_until, time_left
+
+    assert time_left(NOW + timedelta(days=4, hours=1), NOW) == "剩 4 天"
+    assert time_left(NOW + timedelta(hours=5, minutes=30), NOW) == "剩 5 小时"
+    assert time_left(NOW - timedelta(minutes=1), NOW) == ""
+    # Release dates count calendar days, whatever the hour.
+    assert days_until(NOW.replace(hour=23), NOW) == "今天"
+    assert days_until(NOW + timedelta(days=1, hours=-12), NOW) == "明天"
+    assert days_until(NOW + timedelta(days=7), NOW) == "7 天后"
+    assert days_until(NOW - timedelta(days=1), NOW) == ""
+
+
 def test_coverage_label_is_honest_until_a_full_week():
     from plugins.tech_play.render import _initials, coverage_label
 
