@@ -121,6 +121,26 @@ def _paste(canvas, image, xy, mask=None):
     return image.width
 
 
+def _earth_disc(image, side):
+    """EPIC's Earth cropped to its lit disc and scaled to ``side``, transparent outside a smooth
+    circle just inside the limb; None without an image."""
+    if image is None:
+        return None
+    rgb = image.convert("RGB")
+    box = rgb.convert("L").point(lambda value: 255 if value > 24 else 0).getbbox()
+    if box:
+        x0, y0, x1, y1 = box
+        middle_x, middle_y, radius = (x0 + x1) / 2, (y0 + y1) / 2, max(x1 - x0, y1 - y0) / 2
+        rgb = rgb.crop((round(middle_x - radius), round(middle_y - radius), round(middle_x + radius),
+                        round(middle_y + radius)))
+    disc = rgb.resize((side, side), Image.Resampling.LANCZOS).convert("RGBA")
+    scale = 4
+    mask = Image.new("L", (side * scale, side * scale), 0)
+    ImageDraw.Draw(mask).ellipse((scale, scale, (side - 1) * scale, (side - 1) * scale), fill=255)
+    disc.putalpha(mask.resize((side, side), Image.Resampling.LANCZOS))
+    return disc
+
+
 def _rounded(image, radius):
     mask = Image.new("L", image.size, 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, image.width - 1, image.height - 1), radius=radius, fill=255)
@@ -205,16 +225,12 @@ def _earth(canvas, payload):
         text, fill = ((f"{RAIN_RADIUS_KM} km 内无雨", "dry") if coverage < 0.01 else
                       (f"{RAIN_RADIUS_KM} km 内降雨 {coverage:.0%}", "rain"))
         _chip(canvas, (box[2] - 6, box[1] + 6), text, fill=fill, color=(255, 255, 255), anchor="right")
-    # EPIC's whole Earth in a ringed disc at the lower right.
-    disc = decode_image(epic.get("image"))
+    # EPIC's whole Earth at the lower right, cut from the black of space and set straight on the map.
+    disc = _earth_disc(decode_image(epic.get("image")), 62)
     if disc is not None:
-        side = 62
-        disc = ImageOps.fit(disc, (side, side), Image.Resampling.LANCZOS)
-        mask = Image.new("L", (side, side), 0)
-        ImageDraw.Draw(mask).ellipse((1, 1, side - 2, side - 2), fill=255)
+        side = disc.width
         x, y = box[2] - side - 8, box[3] - side - 18
-        canvas.draw.ellipse((x - 2, y - 2, x + side + 1, y + side + 1), fill=(255, 255, 255))
-        _paste(canvas, disc, (x, y), mask)
+        _paste(canvas, disc, (x, y), disc.getchannel("A"))
         when = str(epic.get("date") or "")[5:].replace("-", "/")
         _chip(canvas, (x + side / 2 + 26, box[3] - 18), f"地球全貌 {when}", size=9, fill=(18, 26, 32),
               color=(255, 255, 255), anchor="right")

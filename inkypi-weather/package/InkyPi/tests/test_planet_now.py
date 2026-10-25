@@ -209,6 +209,20 @@ def test_the_page_draws_four_cards_in_their_own_colours(mode):
     assert palette["gold"] in ring
 
 
+def test_the_whole_earth_is_cut_from_the_black_of_space():
+    shot = Image.new("RGB", (200, 200), (0, 0, 0))
+    ImageDraw.Draw(shot).ellipse((40, 30, 160, 150), fill=(30, 90, 170))
+
+    disc = render._earth_disc(shot, 62)
+
+    assert disc.size == (62, 62)
+    # No black ring: the corners are clear and the disc reaches close to the edge.
+    assert disc.getpixel((0, 0))[3] == 0 and disc.getpixel((61, 61))[3] == 0
+    assert disc.getpixel((31, 31)) == (30, 90, 170, 255)
+    assert disc.getpixel((4, 31))[3] == 255 and disc.getpixel((4, 31))[:3] != (0, 0, 0)
+    assert render._earth_disc(None, 62) is None
+
+
 def test_the_page_says_what_is_missing_without_failing():
     image = render.render_page((800, 480), {}, {}, datetime(2026, 10, 25, 8, 5, tzinfo=sources.PACIFIC), {})
 
