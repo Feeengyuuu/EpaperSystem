@@ -18,6 +18,7 @@ from utils.atomic_file import atomic_write_json
 from utils.cache_manager import CacheBudget, cache_namespace_for_directory
 from utils.safe_image import ImageLimitError, ImageLimits, safe_open_image
 from plugins.base_plugin import presentation_bank_kit as kit
+from plugins.backtothedate.poster_meta import bounded as bounded_meta
 
 
 SCHEMA_VERSION = 1
@@ -274,11 +275,15 @@ class PosterPresentationBank(kit.SelectionBookkeeping):
         page_url = self._normalize_source_url(poster.get("page_url"), media=False)
         image_url = self._normalize_source_url(poster.get("image_url"), media=True)
         title = str(poster.get("title") or "").strip()[:500]
-        return {
+        normalized = {
             "page_url": page_url,
             "image_url": image_url,
             "title": title,
         }
+        meta = bounded_meta(poster.get("meta"))
+        if meta:
+            normalized["meta"] = meta
+        return normalized
 
     def choose_selection(
         self,

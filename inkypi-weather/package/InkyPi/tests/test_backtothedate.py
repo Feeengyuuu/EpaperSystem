@@ -1586,6 +1586,7 @@ def test_provider_detail_canonicalizes_http_page_and_image_urls():
             "https://chineseposters.net/sites/default/files/images/http-ok.jpg"
         ),
         "title": "HTTP provider poster",
+        "meta": {"title_en": "HTTP provider poster"},
     }
 
 
@@ -1980,6 +1981,7 @@ def test_extract_poster_data_finds_direct_image_url_and_title():
         "page_url": "https://chineseposters.net/posters/d12-729",
         "image_url": "https://chineseposters.net/sites/default/files/images/d12-729.jpg",
         "title": "An order given to the Shanghai Municipal Police: Shoot to kill",
+        "meta": {"title_en": "An order given to the Shanghai Municipal Police: Shoot to kill"},
     }
 
 
@@ -2163,12 +2165,12 @@ def test_generate_image_triptych_displays_landscape_poster_as_single_full_image(
         "title": "Landscape",
     }
 
-    def fake_fit_landscape(image, dimensions, settings):
+    def fake_fit_landscape(_poster, image, dimensions, _theme_mode):
         rendered_sizes.append(image.size)
         return Image.new("RGB", dimensions, (12, 34, 56))
 
     monkeypatch.setattr(plugin, "_select_random_poster", lambda settings: poster)
-    monkeypatch.setattr(plugin, "_fit_landscape", fake_fit_landscape)
+    monkeypatch.setattr(plugin, "_render_single_with_details", fake_fit_landscape)
 
     image = plugin.generate_image(
         _preview_settings({"fitMode": "triptych", "attempts": 3}),
@@ -2188,11 +2190,11 @@ def test_generate_image_forced_landscape_preview_uses_single_full_image(monkeypa
     _use_image_loader(plugin, loader)
     rendered_sizes = []
 
-    def fake_fit_landscape(image, dimensions, settings):
+    def fake_fit_landscape(_poster, image, dimensions, _theme_mode):
         rendered_sizes.append(image.size)
         return Image.new("RGB", dimensions, (12, 34, 56))
 
-    monkeypatch.setattr(plugin, "_fit_landscape", fake_fit_landscape)
+    monkeypatch.setattr(plugin, "_render_single_with_details", fake_fit_landscape)
 
     image = plugin.generate_image(
         _preview_settings({
@@ -2243,7 +2245,7 @@ def test_generate_image_triptych_does_not_use_landscape_as_fallback_column(monke
             return posters.pop(0)
         return landscape
 
-    def fake_fit_landscape(image, dimensions, settings):
+    def fake_fit_landscape(_poster, image, dimensions, _theme_mode):
         rendered_sizes.append(image.size)
         return Image.new("RGB", dimensions, (12, 34, 56))
 
@@ -2251,7 +2253,7 @@ def test_generate_image_triptych_does_not_use_landscape_as_fallback_column(monke
         raise AssertionError("Landscape posters must not be placed in triptych columns")
 
     monkeypatch.setattr(plugin, "_select_random_poster", fake_select)
-    monkeypatch.setattr(plugin, "_fit_landscape", fake_fit_landscape)
+    monkeypatch.setattr(plugin, "_render_single_with_details", fake_fit_landscape)
     monkeypatch.setattr(plugin, "_compose_triptych_display_image", fail_triptych)
 
     image = plugin.generate_image(

@@ -13,6 +13,7 @@ from plugins.base_plugin.presentation import (
 )
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
+from plugins.backtothedate import poster_layout, poster_meta
 from plugins.backtothedate.presentation_bank import (
     DATA_REFRESH_HORIZON_SECONDS,
     MAX_HISTORY_URLS,
@@ -33,6 +34,7 @@ from utils.safe_image import ImageLimits, safe_open_image
 from runtime.long_task_executor import current_task_context, task_context_or_default
 from runtime.plugin_deferral import PluginRefreshDeferred
 from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
+from hashlib import sha256
 import logging
 import random
 import re
@@ -72,11 +74,15 @@ SHOWN_FALLBACK_CANDIDATE_LIMIT = 2
 FALLBACK_SCAN_LIMIT = 2
 THEME_PAGE_SAMPLE_LIMIT = 4
 DEFAULT_FIT_MODE = "triptych"
+# The auto mode draws the posters with their details (poster_layout); the others, bare.
+DETAIL_FIT_MODES = {"triptych", "three_vertical", "three_posters", "gallery"}
 TRIPTYCH_POSTER_COUNT = 3
 STATELESS_PREVIEW_SETTING = "_inkypiStatelessPreview"
 PLUGIN_ID = "backtothedate"
 REFILL_BUDGET_SECONDS = 60.0
 POSTER_IMAGE_LIMITS = ImageLimits(max_bytes=12 * 1024 * 1024)
+# Banked posters saved before details were kept get theirs this many at a time, on screen first.
+DETAIL_BACKFILL_LIMIT = 4
 _REFILL_CONTEXT = ContextVar("backtothedate_refill_context", default=None)
 
 
@@ -249,6 +255,7 @@ class BacktotheDate(BasePlugin):
                     "Protected BacktotheDate current/pending media remains unavailable"
                 )
 
+        self._backfill_details(bank, document, profile)
         forced_poster = self._forced_poster_from_settings(settings)
         target = 1 if forced_poster else READY_TARGET
         refill_threshold = 1 if forced_poster else REFILL_THRESHOLD
@@ -275,6 +282,7 @@ class BacktotheDate(BasePlugin):
                     if forced_poster:
                         break
                     continue
+                poster = bank.normalize_poster(self._enrich_poster(poster))
                 image = self._load_poster_image(poster["image_url"], dimensions)
                 _checkpoint()
                 if image is not None:
@@ -395,6 +403,7 @@ class BacktotheDate(BasePlugin):
             settings,
             use_bound_image_stage=True,
             expected_instance_uuid=get_presentation_instance_uuid(settings),
+            theme_mode=(resolved_theme_context or {}).get("mode") or "day",
         )
         if resolved_theme_context is not None:
             image = apply_media_theme_chrome(
@@ -445,6 +454,7 @@ class BacktotheDate(BasePlugin):
         *,
         use_bound_image_stage=False,
         expected_instance_uuid=None,
+        theme_mode="day",
     ):
         poster_images = None
         staged = None
@@ -475,11 +485,17 @@ class BacktotheDate(BasePlugin):
         if poster_images is None:
             poster_images = bank.selection_media(profile, selection)
         try:
+            if len(poster_images) == 1 and self._fit_mode(settings) in DETAIL_FIT_MODES:
+                extra = self._companion_poster(bank, profile, poster_images[0][0])
+                return self._render_single_with_details(
+                    poster_images[0][0], self._normalize_image(poster_images[0][1]), dimensions, theme_mode, extra,
+                )
             if len(poster_images) == TRIPTYCH_POSTER_COUNT:
                 return self._compose_triptych_display_image(
                     poster_images,
                     dimensions,
                     settings,
+                    theme_mode,
                 )
             poster, image = poster_images[0]
             return self._compose_single_display_image(
@@ -487,6 +503,7 @@ class BacktotheDate(BasePlugin):
                 image,
                 dimensions,
                 settings,
+                theme_mode,
             )
         finally:
             for staged_image in staged or ():
@@ -573,6 +590,7 @@ class BacktotheDate(BasePlugin):
                 poster = self._select_random_poster(preview_settings)
                 image = self._load_poster_image(poster["image_url"], dimensions)
                 if image is not None:
+                    poster = self._enrich_poster(poster)
                     return self._compose_display_image(
                         poster,
                         self._normalize_image(image),
@@ -615,6 +633,7 @@ class BacktotheDate(BasePlugin):
             if not image:
                 continue
             image = self._normalize_image(image)
+            poster = self._enrich_poster(poster)
 
             if not self._is_portrait(image):
                 if remember:
@@ -940,16 +959,124 @@ class BacktotheDate(BasePlugin):
             "page_url": page_url,
             "image_url": image_url,
             "title": title,
+            "meta": poster_meta.parse_poster_page(html_text, title),
         }
+
+    def _enrich_poster(self, poster):
+        """The poster with its first designer's years and birthplace (their page) and its
+        theme's account from Chinese Wikipedia; each part is best effort."""
+        meta = dict(poster.get("meta") or {})
+        designers = meta.get("designers") or []
+        if designers and designers[0].get("url"):
+            try:
+                url = self._canonical_provider_url(designers[0]["url"], kind="page")
+                years, born = poster_meta.designer_facts(self._fetch_text(url))
+                meta.update({key: value for key, value in (("designer_years", years), ("designer_born", born)) if value})
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.info("BacktotheDate designer page skipped: %s", exc)
+        for theme in meta.get("themes") or []:
+            try:
+                article = poster_meta.theme_article(theme, self._fetch_json)
+                if not article:
+                    continue
+                title, summary, photo_url = poster_meta.theme_summary(article, self._fetch_json)
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.info("BacktotheDate theme background skipped: %s", exc)
+                continue
+            if summary:
+                meta.update({"theme_zh": title, "theme_summary": summary})
+                if photo_url:
+                    try:
+                        meta["theme_photo"] = poster_meta.encode_photo(self._fetch_photo(photo_url))
+                    except TaskCancelled:
+                        raise
+                    except Exception as exc:
+                        logger.info("BacktotheDate theme photo skipped: %s", exc)
+                break
+        return {**poster, "meta": meta}
+
+    def _fetch_photo(self, url):
+        _checkpoint()
+        result = get_http_client().request_bytes(
+            "GET", url, context=_provider_context(), timeout=12,
+            headers=poster_meta.WIKI_HEADERS, max_bytes=poster_meta.PHOTO_LIMITS.max_bytes,
+        )
+        _checkpoint()
+        return result.data
+
+    def _backfill_details(self, bank, document, profile):
+        """Fetch the details of banked posters that have none (kept from before details were
+        stored): the ones on screen or about to be first, a few per refresh; best effort."""
+        shown = set()
+        for name in ("current_selection", "pending_selection"):
+            shown.update((profile.get(name) or {}).get("media_keys") or [])
+        missing = [record for record in profile.get("records") or [] if not record.get("meta")]
+        missing.sort(key=lambda record: record.get("media_key") not in shown)
+        changed = False
+        for record in missing[:DETAIL_BACKFILL_LIMIT]:
+            _checkpoint()
+            try:
+                page_url = self._canonical_provider_url(record["page_url"], kind="page")
+                poster = self._extract_poster_data(self._fetch_text(page_url), page_url)
+                enriched = self._enrich_poster({**record, "meta": poster.get("meta") or {}})
+                meta = bank.normalize_poster(enriched).get("meta")
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.info("BacktotheDate details backfill skipped for %s: %s", record.get("page_url"), exc)
+                continue
+            if meta:
+                record["meta"] = meta
+                changed = True
+        if changed:
+            self._save_data_progress(bank, document)
+
+    def _fetch_json(self, url, params=None):
+        _checkpoint()
+        result = get_http_client().request_json(
+            "GET", url, context=_provider_context(), params=params, timeout=12,
+            headers=poster_meta.WIKI_HEADERS, max_bytes=512 * 1024,
+        )
+        _checkpoint()
+        return result.data
 
     def _compose_display_image(self, poster, image, dimensions, settings):
         return self._compose_single_display_image(poster, image, dimensions, settings), [poster]
 
-    def _compose_single_display_image(self, poster, image, dimensions, settings):
+    def _compose_single_display_image(self, poster, image, dimensions, settings, theme_mode="day"):
         fit_mode = self._fit_mode(settings)
-        if fit_mode in {"triptych", "three_vertical", "three_posters", "gallery"} and not self._is_portrait(image):
-            return self._fit_landscape(image, dimensions, settings)
+        if fit_mode in DETAIL_FIT_MODES:
+            return self._render_single_with_details(poster, self._normalize_image(image), dimensions, theme_mode)
         return self._fit_image(image, dimensions, settings)
+
+    def _render_single_with_details(self, poster, image, dimensions, theme_mode, extra=None):
+        return poster_layout.render_single(poster, image, dimensions, theme_mode, extra)
+
+    def _companion_poster(self, bank, profile, record):
+        """Another banked poster for the details column's spare room (one on the same theme
+        first), as (record, image); None when the poster has its theme's photo or none loads."""
+        if (record.get("meta") or {}).get("theme_photo"):
+            return None
+        themes = {theme.get("slug") for theme in (record.get("meta") or {}).get("themes") or []}
+        others = [item for item in profile.get("records") or [] if item.get("media_key") != record.get("media_key")]
+
+        def order(item):
+            shared = themes & {theme.get("slug") for theme in (item.get("meta") or {}).get("themes") or []}
+            spin = sha256(f"{record.get('media_key')}:{item.get('media_key')}".encode("utf-8")).hexdigest()
+            return (not shared, spin)
+
+        for item in sorted(others, key=order)[:2]:
+            try:
+                return item, self._normalize_image(bank.load_media(item))
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.info("BacktotheDate companion poster skipped: %s", exc)
+        return None
 
     def _load_poster_image(self, image_url, dimensions):
         _checkpoint()
@@ -1013,7 +1140,13 @@ class BacktotheDate(BasePlugin):
     def _fit_landscape(self, image, dimensions, settings):
         return self._fit_plain_contain(image, dimensions, settings)
 
-    def _compose_triptych_display_image(self, poster_images, dimensions, settings):
+    def _compose_triptych_display_image(self, poster_images, dimensions, settings, theme_mode="day"):
+        if self._fit_mode(settings) in DETAIL_FIT_MODES:
+            return poster_layout.render_shelf(
+                [(poster, self._normalize_image(image)) for poster, image in poster_images[:TRIPTYCH_POSTER_COUNT]],
+                dimensions,
+                theme_mode,
+            )
         width, height = dimensions
         canvas = self._triptych_backdrop([image for _poster, image in poster_images], dimensions, settings)
         column_width = width // TRIPTYCH_POSTER_COUNT
