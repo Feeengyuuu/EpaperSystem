@@ -33,6 +33,9 @@ STEAM_UPCOMING_URL = "https://store.steampowered.com/search/results/"
 STEAM_APPDETAILS_URL = "https://store.steampowered.com/api/appdetails"
 STEAM_SEARCH_URL = "https://store.steampowered.com/api/storesearch/"
 STEAM_ITEMS_URL = "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/"
+# IGDB's id for Steam among a game's external games (its external_game_source, formerly category).
+IGDB_STEAM_SOURCE = 1
+IGDB_STEAM_FIELDS = "external_games.uid,external_games.category,external_games.external_game_source"
 # A game's small Steam icon (the 32 px community icon of its store page).
 STEAM_ICON_URL = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{icon}.jpg"
 ARXIV_URL = "https://export.arxiv.org/api/query"
@@ -201,12 +204,18 @@ def fetch_igdb(client_id, client_secret, now, context):
     if not access:
         raise ValueError("Twitch returned no access token")
     start = int(now.timestamp())
-    query = ("fields name,first_release_date,hypes,cover.image_id,screenshots.image_id,platforms.abbreviation;"
-             f" where first_release_date >= {start} & first_release_date < {start + 60 * 86400} & hypes > 0;"
+    fields = "name,first_release_date,hypes,cover.image_id,screenshots.image_id,platforms.abbreviation"
+    where = (f" where first_release_date >= {start} & first_release_date < {start + 60 * 86400} & hypes > 0;"
              " sort hypes desc; limit 12;")
-    rows = _get_json("POST", IGDB_GAMES_URL, context, max_bytes=256 * 1024, data=query.encode("utf-8"),
-                     headers={"Client-ID": client_id, "Authorization": f"Bearer {access}",
-                              "Accept": "application/json"})
+    headers = {"Client-ID": client_id, "Authorization": f"Bearer {access}", "Accept": "application/json"}
+    try:
+        # The games' Steam links name their Steam app (for its icon); IGDB refuses a query with a field
+        # it does not know, so the plain query stands in.
+        rows = _get_json("POST", IGDB_GAMES_URL, context, max_bytes=256 * 1024, headers=headers,
+                         data=f"fields {fields},{IGDB_STEAM_FIELDS};{where}".encode("utf-8"))
+    except HttpClientError:
+        rows = _get_json("POST", IGDB_GAMES_URL, context, max_bytes=256 * 1024, headers=headers,
+                         data=f"fields {fields};{where}".encode("utf-8"))
     if not isinstance(rows, list):
         raise ValueError("IGDB returned no game list")
     items = []
@@ -220,12 +229,24 @@ def fetch_igdb(client_id, client_secret, now, context):
                  else f"https://images.igdb.com/igdb/image/upload/t_cover_big/{cover}.jpg" if cover else None)
         platforms = [str(item.get("abbreviation")) for item in row.get("platforms") or []
                      if isinstance(item, dict) and item.get("abbreviation")]
-        items.append({"name": _clean(row["name"], 60),
+        items.append({"name": _clean(row["name"], 60), "appid": igdb_steam_appid(row),
                       "date": datetime.fromtimestamp(stamp, timezone.utc).isoformat(),
                       "date_text": None, "hype": int(row.get("hypes") or 0),
                       "platforms": platforms[:4], "image": safe_image_url(image)})
     items = sorted(items[:MAX_UPCOMING], key=lambda item: item["date"])
     return {"source": "IGDB", "items": items}
+
+
+def igdb_steam_appid(row):
+    """The Steam app id IGDB links a game to (its Steam external game), or None."""
+    for external in (row or {}).get("external_games") or []:
+        if not isinstance(external, dict):
+            continue
+        source = external.get("external_game_source", external.get("category"))
+        uid = str(external.get("uid") or "")
+        if source == IGDB_STEAM_SOURCE and uid.isdigit():
+            return int(uid)
+    return None
 
 
 def fetch_steam_upcoming(context):

@@ -221,3 +221,37 @@ def test_a_steam_cover_url_names_its_app():
     assert sources.steam_appid_from_url(url) == 2345670
     assert sources.steam_appid_from_url("https://images.igdb.com/igdb/image/upload/apps/1/x.jpg") is None
     assert sources.steam_appid_from_url(None) is None
+
+
+def test_an_igdb_game_names_its_steam_app():
+    row = {"external_games": [{"category": 5, "uid": "gog-1"}, {"external_game_source": 1, "uid": "4115450"}]}
+    assert sources.igdb_steam_appid(row) == 4115450
+    assert sources.igdb_steam_appid({"external_games": [{"category": 1, "uid": "3161310"}]}) == 3161310
+    assert sources.igdb_steam_appid({"external_games": [{"category": 36, "uid": "zelda"}]}) is None
+    assert sources.igdb_steam_appid({}) is None
+
+
+@pytest.mark.parametrize("rejects_store_fields", [False, True])
+def test_igdb_upcoming_games_carry_their_steam_app(monkeypatch, rejects_store_fields):
+    from utils.http_client import HttpClientError
+
+    queries = []
+    now = datetime(2026, 10, 24, 12, 0, tzinfo=timezone.utc)
+    row = {"name": "Phantom Blade Zero", "first_release_date": int(now.timestamp()) + 86400, "hypes": 9,
+           "external_games": [{"external_game_source": 1, "uid": "4115450"}]}
+
+    def fake_get_json(method, url, context, **kwargs):
+        if url == sources.TWITCH_TOKEN_URL:
+            return {"access_token": "token"}
+        query = kwargs["data"].decode("utf-8")
+        queries.append(query)
+        if rejects_store_fields and "external_games" in query:
+            raise HttpClientError("400 unknown field")
+        return [row if "external_games" in query else {key: row[key] for key in row if key != "external_games"}]
+
+    monkeypatch.setattr(sources, "_get_json", fake_get_json)
+
+    item = sources.fetch_igdb("id", "secret", now, None)["items"][0]
+
+    assert item["appid"] == (None if rejects_store_fields else 4115450)
+    assert len(queries) == (2 if rejects_store_fields else 1)
