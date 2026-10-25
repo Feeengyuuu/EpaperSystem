@@ -194,9 +194,11 @@ def test_telegram_prepared_receipt_keys_are_the_drawn_lead_and_rows(tmp_path):
     saved = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     exact_keys = saved["pending_presentation_display"]["keys"]
     assert exact_keys == list(prepared.image.info["inkypi_rendered_visible_message_keys"])
-    assert exact_keys == plugin._displayed_message_keys(messages)
-    assert len(exact_keys) == VISIBLE_COUNT
-    assert "row-9" not in exact_keys
+    # The short lead's empty room takes the first rows' stories, so the list shows as many more:
+    # the pre-render estimate is the start of the drawn page.
+    assert exact_keys[:VISIBLE_COUNT] == plugin._displayed_message_keys(messages)
+    assert len(exact_keys) > VISIBLE_COUNT and len(set(exact_keys)) == len(exact_keys)
+    assert set(exact_keys[VISIBLE_COUNT:]) <= {f"row-{index}" for index in range(1, 10)}
 
 
 def test_telegram_prepared_refresh_rejects_sample_fallback(tmp_path):
@@ -1630,6 +1632,34 @@ def test_a_short_portrait_lead_promotes_the_next_picture_story_under_its_text(tm
     assert (23, 139, 81) in lower_lead
 
 
+def test_without_any_picture_the_next_story_fills_the_room_under_a_short_lead(tmp_path):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 9, 4, 2, 40, tzinfo=timezone.utc)
+    portrait = tmp_path / "portrait.png"
+    Image.new("RGB", (300, 420), (171, 32, 47)).save(portrait)
+
+    def story(key, score, media=None):
+        return {"key": key, "message_id": score, "date": int(now.timestamp()) - (100 - score), "chat_id": key,
+                "chat_title": key, "title": key, "raw_text": f"{key} text", "media_kind": "photo" if media else "text",
+                "media_path": str(media or ""),
+                "curation": {"score": score, "tag": "时事", "headline": f"{key} 标题", "summary": "短摘要"}}
+
+    messages = [story("lead", 95, portrait)] + [story(f"row-{i}", 80 - i) for i in range(1, 9)]
+    state = {"schema": STATE_VERSION, "messages": messages, "stats": {"message_count": len(messages)},
+             "status": {"source_state": "live", "generated_at": now.isoformat(), "account_api": True}}
+    (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    image = plugin.generate_image(
+        {"_theme_render_only": True, "_inkypi_theme": _theme_context("day", requested_mode="day")}, DummyDeviceConfig())
+
+    keys = image.info[RENDERED_VISIBLE_KEYS_IMAGE_INFO_KEY]
+    # The first list stories move under the lead, in order, and the list still shows six more.
+    assert keys == ("lead",) + tuple(f"row-{i}" for i in range(1, len(keys)))
+    assert len(keys) >= 1 + 1 + 6
+    lower_lead = image.crop((204, 250, 470, 440))
+    assert lower_lead.getextrema() != image.crop((204, 250, 205, 251)).getextrema()
+
+
 def test_the_lower_picture_is_the_leads_own_album_photo_before_another_story(tmp_path):
     plugin = _plugin(tmp_path)
     portrait, album, other = tmp_path / "portrait.png", tmp_path / "album.png", tmp_path / "other.png"
@@ -1644,7 +1674,9 @@ def test_the_lower_picture_is_the_leads_own_album_photo_before_another_story(tmp
     assert plugin._second_picture(lead, [story, sibling]) == (sibling, True)
     # Without an album photo, a picture story with no words gives way to one that has them.
     assert plugin._second_picture(dict(lead, grouped_id=""), [textless, story]) == (story, False)
-    assert plugin._second_picture(dict(lead, grouped_id=""), [textless]) == (None, False)
+    # A picture with no words still beats an empty half; no picture at all gives (None, False).
+    assert plugin._second_picture(dict(lead, grouped_id=""), [textless]) == (textless, False)
+    assert plugin._second_picture(dict(lead, grouped_id=""), [dict(story, media_path="")]) == (None, False)
     # The album photo is fetched with the lead, as sharp as the lead.
     assert plugin._album_siblings(dict(lead, media_kind="photo"), [lead, dict(sibling, media_kind="photo")]) == [
         dict(sibling, media_kind="photo")]

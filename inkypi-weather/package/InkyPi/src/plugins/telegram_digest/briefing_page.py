@@ -20,6 +20,8 @@ PORTRAIT_RATIO = 1.05
 # A second story fills the room the lead's text leaves when there is this much of it (page px);
 # the lead's summary then keeps to this many lines.
 SECOND_MIN_H, SECOND_LEAD_SUMMARY_LINES = 120, 4
+# Without any picture to promote, the next story's own text fills a room at least this tall.
+SECOND_TEXT_MIN_H = 90
 KIND_LABELS = {"private": "私聊", "group": "群聊", "channel": "频道"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 # Each story's source line starts with its chat's kind as a generated icon (megaphone for a
@@ -68,12 +70,12 @@ class BriefingPageMixin:
         lead, rest = self._split_page_lead(messages)
         drawn = []
         if lead:
-            second = self._draw_lead(image, draw, lead, p, rest)
+            promoted = self._draw_lead(image, draw, lead, p, rest)
             drawn.append(lead)
-            if second is not None:
-                # The story promoted under the lead leaves the list, which shows one more instead.
-                drawn.append(second)
-                rest = [item for item in rest if item is not second]
+            if promoted:
+                # The stories promoted under the lead leave the list, which shows as many more instead.
+                drawn.extend(promoted)
+                rest = [item for item in rest if all(item is not story for story in promoted)]
             drawn.extend(self._draw_story_list(image, draw, rest[:LIST_ROWS], p))
         else:
             self._draw_empty_page(draw, p)
@@ -154,7 +156,7 @@ class BriefingPageMixin:
     # --- lead -------------------------------------------------------------------
 
     def _draw_lead(self, image, draw, item, p, rest=()):
-        """Draw the lead; returns the story promoted into the room its text leaves, or None."""
+        """Draw the lead; returns the stories promoted into the room its text leaves."""
         x0, y0, x1, y1 = self._x(14), self._y(56), self._x(470), self._y(446)
         picture = self._open_page_media(item)
         colour = self._tag_colour(item, p)
@@ -169,31 +171,39 @@ class BriefingPageMixin:
             self._paste_media(image, picture, box, p, featured=True)
             self._draw_media_badges(draw, item, box, p, colour)
             self._draw_lead_text(image, draw, item, p, (x0, box[3] + self._y(10), x1, y1), 24, 2, 3, show_tag=False)
-            return None
+            return []
         return self._lead_text_with_second(image, draw, item, p, (x0, y0, x1, y1), rest, (30, 3, 9))
 
     def _lead_text_with_second(self, image, draw, item, p, box, rest, sizes):
-        """The lead's text; when it leaves room enough, a second picture fills it (the lead's
-        source line then closes its own text, above that picture): another photo of the lead's
-        own album, so the text describes both pictures, else the next picture story that says
-        something, carrying its own headline and summary."""
+        """The lead's text, and the room it leaves always filled (the lead's source line then
+        closes its own text, above it): another photo of the lead's own album, so the text
+        describes both pictures; else the next picture story, carrying its own headline and
+        summary; else, with no picture at all, the next stories' own text, as many as fit.
+        Returns the stories promoted there."""
         second, same_story = self._second_picture(item, rest)
+        text_only = second is None
+        if text_only:
+            second = rest[0] if rest else None
         if second is not None:
             headline_size, headline_lines, _summary_lines = sizes
             scratch = Image.new("RGB", image.size)
             end = self._draw_lead_text(scratch, ImageDraw.Draw(scratch), item, p, box, headline_size, headline_lines,
                                        SECOND_LEAD_SUMMARY_LINES, meta_after=True)
-            if box[3] - end >= self._y(SECOND_MIN_H):
+            if box[3] - end >= self._y(SECOND_TEXT_MIN_H if text_only else SECOND_MIN_H):
                 end = self._draw_lead_text(image, draw, item, p, box, headline_size, headline_lines,
                                            SECOND_LEAD_SUMMARY_LINES, meta_after=True)
-                self._draw_second_feature(image, draw, second, (box[0], end + self._y(10), box[2], box[3]), p,
-                                          same_story=same_story)
-                return second
+                room = (box[0], end + self._y(10), box[2], box[3])
+                if text_only:
+                    return self._draw_more_stories(image, draw, rest, room, p)
+                self._draw_second_feature(image, draw, second, room, p, same_story=same_story)
+                return [second]
         self._draw_lead_text(image, draw, item, p, box, *sizes)
-        return None
+        return []
 
     def _second_picture(self, lead, rest):
-        """(the picture for the lead's empty half, whether it is the lead's own) or (None, False)."""
+        """(the picture for the lead's empty half, whether it is the lead's own) or (None, False):
+        the lead's album first, then the next picture story that says something, then any
+        picture story at all."""
         group, chat = str(lead.get("grouped_id") or ""), str(lead.get("chat_id") or "")
         if group:
             for story in rest:
@@ -203,7 +213,30 @@ class BriefingPageMixin:
         for story in rest:
             if str(story.get("raw_text") or "").strip() and self._open_page_media(story) is not None:
                 return story, False
+        for story in rest:
+            if self._open_page_media(story) is not None:
+                return story, False
         return None, False
+
+    def _draw_more_stories(self, image, draw, stories, box, p):
+        """The next stories' own text under the lead when no picture can fill the room: each a
+        rule, then its headline, summary and source line, one after another for as many as fit
+        down to the lead's foot. Returns those drawn."""
+        x0, y, x1, y1 = box
+        drawn = []
+        for story in stories:
+            text_box = (x0, y + self._y(10), x1, y1)
+            if y1 - y < self._y(SECOND_TEXT_MIN_H):
+                break
+            scratch = Image.new("RGB", image.size)
+            if self._draw_lead_text(scratch, ImageDraw.Draw(scratch), story, p, text_box, 18, 2, 3, show_tag=False,
+                                    meta_after=True) > y1 + self._y(2):
+                break
+            draw.line((x0, y, x1, y), fill=p["rule"], width=1)
+            y = self._draw_lead_text(image, draw, story, p, text_box, 18, 2, 3, show_tag=False,
+                                     meta_after=True) + self._y(8)
+            drawn.append(story)
+        return drawn
 
     def _draw_second_feature(self, image, draw, item, box, p, same_story=False):
         """The second picture. The lead's own album photo carries only a chip (the text above is
