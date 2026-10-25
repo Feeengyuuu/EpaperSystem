@@ -7,11 +7,13 @@ countdown to the next session; a weekend timeline with one node per session
 (done, live, next, later; the race node is chequered); the drivers'
 championship with team logos, points bars and wins; and either the live
 session order or the last race's top finishers with their teams' logos and
-official side-view cars, places gained from the grid and the fastest lap.
+official side-view cars (set back by their gaps, so the leader is in front),
+places gained from the grid and the fastest lap.
 """
 
 from functools import lru_cache
 import json
+import math
 import os
 
 from PIL import Image, ImageDraw, ImageStat
@@ -29,6 +31,8 @@ F1_GRID_DIR = os.path.join(LOCAL_DECOR_DIR, "f1_grid")
 # The teams' official side views, for the live order and last race's rows.
 F1_SIDE_DIR = os.path.join(LOCAL_DECOR_DIR, "f1_side")
 F1_SIDE_SIZE = (64, 13)
+# The least a car sits behind the one ahead, so the order reads even when the gaps are tiny.
+F1_CAR_MIN_STEP = 6
 F1_CIRCUIT_SHAPES = os.path.join(LOCAL_DECOR_DIR, "f1_circuits.json")
 F1_LOGO_SIZE = (20, 12)
 F1_PLACE_SIZE = (13, 10)
@@ -362,14 +366,15 @@ class F1RenderMixin:
             self._draw_text_in_box(draw, (x1 + 4, y, x2, y + 14), "等待成绩", self._font(9, True), COLORS["muted"])
             return
         shown = rows[:max(0, (y2 + 1 - y) // F1_ROW_HEIGHT)]
-        # Each driver's car (the team's official side view) runs in one column ending before the
-        # widest gap, in the room the names leave.
+        # Each driver's car (the team's official side view) races in the room the names leave,
+        # the leader's nose before the widest gap.
         gap_widths = [
             self._text_width(draw, gap, self._font(9, (row.get("position") or index + 1) == 1))
             for index, row in enumerate(shown)
             if (gap := SportsDashboard._f1_gap_label(row, row.get("position") or index + 1, live))
         ]
         car_x2 = x2 - max([0, *gap_widths]) - 8 - (12 if any(row.get("fastest_lap") for row in shown) else 0)
+        cars = []
         for index, row in enumerate(rows):
             if y + F1_ROW_HEIGHT > y2 + 1:
                 break
@@ -402,10 +407,42 @@ class F1RenderMixin:
                 SportsDashboard._draw_f1_move_arrow(draw, mark_x, y + 7, gained > 0)
                 self._draw_text_in_box(draw, (mark_x + 7, y + 1, mark_x + moved_w, y + 13), moved, moved_font, COLORS["text"])
                 text_end = mark_x + moved_w
-            self._paste_f1_side_car(image, team, (text_end + 6, y, car_x2))
+            cars.append((team, y, text_end, SportsDashboard._f1_gap_seconds(row, position)))
             if gap:
                 self._draw_text_in_box(draw, (x2 - gap_w, y, x2, y + 13), gap, gap_font, COLORS["text"], align="right")
             y += F1_ROW_HEIGHT
+        self._draw_f1_racing_cars(image, cars, car_x2)
+
+    def _draw_f1_racing_cars(self, image, cars, nose_x2):
+        """The rows' cars (team, row top, where the row's words end, gap in seconds) laid out as
+        the race stands: the leader's nose at ``nose_x2`` and each car behind set back in
+        proportion to its gap, at least a few pixels behind the car ahead so the order always
+        reads (a lapped car furthest back), all clear of the longest name; none without room.
+        Returns the noses' x positions, or [] when none were drawn."""
+        if not cars:
+            return []
+        art = [self._f1_side_car(team) for team, _y, _end, _gap in cars]
+        widths = [car.width for car in art if car is not None]
+        lane_x1 = max(end for _team, _y, end, _gap in cars) + 6
+        room = nose_x2 - max(widths or [0]) - lane_x1
+        if not widths or room < 0:
+            return []
+        known = [gap for _team, _y, _end, gap in cars if gap is not None and gap != math.inf]
+        longest = max(known or [0])
+        step = min(F1_CAR_MIN_STEP, room / max(1, len(cars) - 1))
+        backs, back = [], 0.0
+        for index, (_team, _y, _end, gap) in enumerate(cars):
+            if index:
+                timed = gap is not None and gap != math.inf and longest > 0
+                back = max(room * gap / longest if timed else back + step, back + step)
+            backs.append(back)
+        # The steps (and a lapped car one step behind) can run past the room: squeeze them all.
+        scale = room / backs[-1] if backs[-1] > room else 1.0
+        noses = [round(nose_x2 - back * scale) for back in backs]
+        for (_team, y, _end, _gap), car, nose in zip(cars, art, noses):
+            if car is not None:
+                image.paste(car, (nose - car.width, y + (F1_ROW_HEIGHT - car.height) // 2), car)
+        return noses
 
     def _draw_f1_race_header(self, image, draw, box, spec, title, race):
         """A finished race's column header: the host's flag and 上站 · the Grand Prix, with its
@@ -574,16 +611,12 @@ class F1RenderMixin:
         width, height = F1_LOGO_SIZE
         image.paste(logo, (x + (width - logo.width) // 2, y + (height - logo.height) // 2), logo)
 
-    def _paste_f1_side_car(self, image, team, span):
-        """The team's car in side view, right-aligned at ``x2`` on the row at ``y``, when it fits
-        after ``x1``; False otherwise or without the art."""
-        x1, y, x2 = span
+    def _f1_side_car(self, team):
+        """The team's car in side view at the row size, nose to the right; None without the art."""
         key = SportsDashboard._f1_team_key(team)
-        car = self._load_local_logo(os.path.join(F1_SIDE_DIR, f"{key}.png"), F1_SIDE_SIZE, alpha_threshold=12) if key else None
-        if car is None or x2 - car.width < x1:
-            return False
-        image.paste(car, (int(x2 - car.width), y + (F1_ROW_HEIGHT - car.height) // 2), car)
-        return True
+        if not key:
+            return None
+        return self._load_local_logo(os.path.join(F1_SIDE_DIR, f"{key}.png"), F1_SIDE_SIZE, alpha_threshold=12)
 
     @staticmethod
     def _draw_f1_fastest_lap(draw, x, y):
@@ -709,6 +742,21 @@ class F1RenderMixin:
             label = str(next_session.get("title") or next_session.get("label") or "NEXT").upper()
             return f"NEXT · {label}", SportsDashboard._kit_countdown_label(next_session.get("start"), now), "text"
         return "SEASON", "完赛", "text"
+
+    @staticmethod
+    def _f1_gap_seconds(row, position):
+        """The gap to the leader in seconds: 0 for the leader, infinity a lap or more down,
+        None when not given ("+13.078", "1:02.5" and "+5.2s" read as seconds)."""
+        if str(position) == "1":
+            return 0.0
+        gap = str((row or {}).get("gap") or "").strip().lstrip("+").strip()
+        if "lap" in gap.lower():
+            return math.inf
+        match = re.fullmatch(r"(?:(\d+):)?(\d+(?:\.\d+)?)s?", gap)
+        if not match:
+            return None
+        minutes, seconds = match.groups()
+        return int(minutes or 0) * 60 + float(seconds)
 
     @staticmethod
     def _f1_gap_label(row, position, live):

@@ -738,45 +738,66 @@ def test_f1_live_panel_shows_the_session_order(boxes):
 
 def _f1_order_cars(width, rows):
     plugin = _plugin()
-    pasted = []
-    original = plugin._paste_f1_side_car
+    races = []
+    original = plugin._draw_f1_racing_cars
 
-    def record(image, team, span):
-        drawn = original(image, team, span)
-        pasted.append((team, span, drawn))
-        return drawn
+    def record(image, cars, nose_x2):
+        noses = original(image, cars, nose_x2)
+        races.append((cars, nose_x2, noses))
+        return noses
 
-    plugin._paste_f1_side_car = record
+    plugin._draw_f1_racing_cars = record
     image = Image.new("RGB", (width, 90), DAY_COLORS["panel"])
     spec = scorebug_kit_module.ScorebugSpec("F1", "f1_accent", "f1_live", "f1_tag", "panel_blue")
     plugin._draw_f1_order(image, ImageDraw.Draw(image), (0, 0, width, 90), "LIVE · RACE", rows, spec, live=True)
-    return image, pasted
+    return image, races[0]
 
 
-def test_f1_order_rows_show_their_teams_side_view_cars_in_one_column():
-    rows = [
-        {"position": 1, "driver_code": "ANT", "constructor": "Mercedes", "gap": ""},
-        {"position": 2, "driver_code": "LEC", "constructor": "Ferrari", "gap": "13.078"},
-        {"position": 3, "driver_code": "VER", "constructor": "Red Bull Racing", "gap": "17.485"},
-        {"position": 4, "driver_code": "XYZ", "constructor": "Nowhere Racing", "gap": "18.515"},
+def _f1_rows(*gaps, teams=("Mercedes", "Ferrari", "Red Bull Racing", "Nowhere Racing")):
+    codes = ("ANT", "LEC", "VER", "HAM")
+    return [
+        {"position": index + 1, "driver_code": code, "constructor": team, "gap": gap}
+        for index, (code, team, gap) in enumerate(zip(codes, teams, gaps))
     ]
-    image, pasted = _f1_order_cars(245, rows)
 
-    assert [drawn for _team, _span, drawn in pasted] == [True, True, True, False]
-    car_right = {span[2] for _team, span, drawn in pasted if drawn}
-    assert len(car_right) == 1
+
+def test_f1_order_sets_each_car_back_by_its_gap_so_the_leader_is_in_front():
+    image, (cars, nose_x2, noses) = _f1_order_cars(245, _f1_rows("", "13.078", "17.485", "18.515"))
+
+    assert noses[0] == nose_x2
+    assert noses[0] > noses[1] > noses[2] > noses[3]
+    assert abs((nose_x2 - noses[1]) / (nose_x2 - noses[3]) - 13.078 / 18.515) < 0.06
     plugin = _plugin()
-    gap_left = 245 - plugin._text_width(ImageDraw.Draw(image), "+18.515", plugin._font(9, False))
-    assert car_right.pop() < gap_left
+    assert nose_x2 < 245 - plugin._text_width(ImageDraw.Draw(image), "+18.515", plugin._font(9, False))
+    # Every car clears the longest name; the team without art keeps its place but shows no car.
+    assert noses[-1] - plugin._f1_side_car("Mercedes").width >= max(end for _team, _y, end, _gap in cars) + 6
+    assert plugin._f1_side_car("Nowhere Racing") is None
     # The Ferrari's red reaches the panel.
     assert any(r > 180 and g < 80 and b < 80 for r, g, b in image.crop((100, 34, 245, 50)).get_flattened_data())
 
 
-def test_f1_order_leaves_out_a_car_without_room():
-    rows = [{"position": 1, "driver_code": "ANT", "constructor": "Mercedes", "gap": ""}]
-    _image, pasted = _f1_order_cars(130, rows)
+def test_f1_order_keeps_tiny_gaps_and_a_lapped_car_in_order():
+    _image, (_cars, nose_x2, noses) = _f1_order_cars(245, _f1_rows("", "0.001", "0.002", "+1 Lap",
+                                                                   teams=("Mercedes", "Ferrari", "McLaren", "Haas")))
 
-    assert [drawn for _team, _span, drawn in pasted] == [False]
+    assert noses[0] == nose_x2
+    assert noses[0] > noses[1] > noses[2] > noses[3]
+
+
+def test_f1_gap_seconds_reads_the_gap_forms():
+    seconds = SportsDashboard._f1_gap_seconds
+    assert seconds({"gap": "1:32:10.1"}, 1) == 0
+    assert seconds({"gap": "+13.078"}, 2) == 13.078
+    assert seconds({"gap": "1:02.5"}, 2) == 62.5
+    assert seconds({"gap": "+5.2s"}, 3) == 5.2
+    assert seconds({"gap": "+1 Lap"}, 4) == float("inf")
+    assert seconds({"gap": ""}, 4) is None
+
+
+def test_f1_order_leaves_out_the_cars_without_room():
+    _image, (_cars, _nose_x2, noses) = _f1_order_cars(130, _f1_rows(""))
+
+    assert noses == []
 
 
 def test_f1_side_cars_cover_every_team_and_match_their_sources():
