@@ -5,9 +5,12 @@ import { APPLE_TOUCH_ICON_PNG, LOGO_SVG } from "./brand_icons";
 
 export { PortalLedger } from "./ledger";
 
+// The icons' own version: a browser keeps a tab icon long after its max-age, so a new mark
+// reaches it under a new URL.
+const ICON_VERSION = contentVersion(`${LOGO_SVG}\n${String.fromCharCode(...APPLE_TOUCH_ICON_PNG)}`);
 // Tab icon, the iPhone "Add to Home Screen" icon and its name.
-const BRAND_HEAD = `<link rel="icon" href="/logo.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+const BRAND_HEAD = `<link rel="icon" href="/logo.svg?v=${ICON_VERSION}" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=${ICON_VERSION}">
   <meta name="apple-mobile-web-app-title" content="Epaper Frame">`;
 const LIGHT_DARK_THEME = `<meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">`;

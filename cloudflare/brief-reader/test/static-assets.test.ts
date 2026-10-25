@@ -32,8 +32,11 @@ describe("vehicle reader assets", () => {
     expect(await icon.text()).toContain("<svg");
 
     const page = await (await SELF.fetch("https://example.com/")).text();
-    expect(page).toContain('<link rel="icon" href="/logo.svg" type="image/svg+xml">');
-    expect(page).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
+    // Versioned URLs, so a browser drops a cached old mark as soon as the icons change.
+    expect(page).toMatch(/<link rel="icon" href="\/logo\.svg\?v=[0-9a-f]{8}" type="image\/svg\+xml">/u);
+    expect(page).toMatch(/<link rel="apple-touch-icon" href="\/apple-touch-icon\.png\?v=[0-9a-f]{8}">/u);
+    const versioned = await SELF.fetch("https://example.com/logo.svg?v=0123abcd");
+    expect(await versioned.text()).toContain("<svg");
   });
 
   it("names the home-screen app Epaper Frame and serves the wordmark font under the CSP", async () => {
