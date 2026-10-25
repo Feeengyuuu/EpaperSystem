@@ -293,6 +293,7 @@ def test_csl_sections_prioritize_confirmed_live_and_order_upcoming_and_recent():
         "show_five_leagues_filler": False,
         "upcoming_max_rows": 2,
         "upcoming_row_gap": 0,
+        "show_gap_art": True,
         "main_team_logo_scale": 1.5,
         "main_team_logo_top": 42,
         "main_team_name_max_size": 14,

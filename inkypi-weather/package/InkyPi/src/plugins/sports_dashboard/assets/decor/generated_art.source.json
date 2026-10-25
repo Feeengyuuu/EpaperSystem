@@ -7,7 +7,8 @@
     "club_*_header_cutout.png": "alpha-only art, tinted with the league accent in the football region header",
     "mlb_ballpark_strip.png": "full colour, pasted in the MLB card's spare band",
     "*_spare_filler.png": "full colour mascot spot art for the space under a short ticker or scoreboard column",
-    "*_wall_slot_filler.png": "full colour mascot scene for an empty live-wall tile or a short, wide spare band"
+    "*_wall_slot_filler.png": "full colour mascot scene for an empty live-wall tile or a short, wide spare band",
+    "club_supporters_strip.png": "fills the room between a club or CSL page's fixtures and results, contained and standing on its floor"
   },
   "assets": {
     "club_pl_header_cutout.png": {
@@ -148,6 +149,17 @@
       "size": [
         411,
         160
+      ]
+    },
+    "club_supporters_strip.png": {
+      "scene": "supporters stand: fans with scarves overhead, flags, bass drum, banner, confetti, floodlights; cropped to the crowd band",
+      "model": "image/gpt-image-2.5-sunburst",
+      "job_id": "fb556230-46c9-487d-b450-aec1e649dc53",
+      "source_sha256": "9f506a4304ad43ccfdb50216c8cfc01561db18cbfdbfb9b07abb77f8f9610252",
+      "sha256": "24a2b42109d9f6b067265c8d85808564ba012eee6e37b2311b06d30e0b25109b",
+      "size": [
+        720,
+        98
       ]
     }
   },

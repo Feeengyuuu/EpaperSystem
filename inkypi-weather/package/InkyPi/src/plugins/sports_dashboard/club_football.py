@@ -2657,6 +2657,7 @@ class ClubFootballMixin:
                 "upcoming_max_rows": 2,
                 "upcoming_row_gap": 0,
                 # The club crests stand large, rising beside the kick-off time.
+                "show_gap_art": True,
                 "main_team_logo_scale": 1.5,
                 "main_team_logo_top": 42,
                 "main_team_name_max_size": 14,

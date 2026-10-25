@@ -12542,7 +12542,7 @@ def test_worldcup_compact_row_flag_slot_budget():
 
     plugin._draw_worldcup_row_lineup(image, draw, 4, 256, 14, event, "VS")
 
-    assert flag_sizes == [(28, 14), (28, 14)]
+    assert flag_sizes == [(40, 20), (40, 20)]
 
 
 def test_worldcup_compact_row_preserves_country_flag_ratios(monkeypatch):
@@ -12569,7 +12569,7 @@ def test_worldcup_compact_row_preserves_country_flag_ratios(monkeypatch):
 
     plugin._draw_worldcup_row_lineup(image, draw, 4, 256, 14, event, "VS")
 
-    assert requested_sizes == [(28, 14), (28, 11)]
+    assert requested_sizes == [(40, 20), (40, 16)]
 
 
 def test_worldcup_flag_returns_rendered_width(monkeypatch):
@@ -12633,9 +12633,9 @@ def test_worldcup_row_text_starts_after_actual_flag_width(monkeypatch):
 
     plugin._draw_worldcup_row_lineup(image, draw, 4, 256, 14, event, "VS")
 
-    # Korea (3:2) renders 21px wide in the 28px budget; the team name must start
-    # right after the actual flag (x1 + 1 + 21 + 4), not after the full budget.
-    assert boxes[0][0] == 4 + 1 + 21 + 4
+    # Korea (3:2) renders 30px wide in the 40px budget; the team name must start
+    # right after the actual flag (x1 + 1 + 30 + 4), not after the full budget.
+    assert boxes[0][0] == 4 + 1 + 30 + 4
 
 
 def test_forced_night_theme_uses_deep_night_palette_without_leaking():

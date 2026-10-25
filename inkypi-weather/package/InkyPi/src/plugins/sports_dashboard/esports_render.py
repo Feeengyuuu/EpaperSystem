@@ -2291,26 +2291,28 @@ class EsportsRenderMixin:
         time_text, time_font = self._fit_text(draw, self._format_time(event["start"]), 76, 12, bold=True, min_size=9)
         self._draw_centered(draw, (right_x + right_w / 2, y + 7), time_text, time_font, COLORS["text"])
 
-        logo_size = 19
+        # The logos stand 26 px tall beside the names and odds, under the date.
+        logo_size = 26
         center_x = right_x + right_w / 2
         team_top = y + 16
         team_bottom = y + 32
-        logo_y = int(team_top + (team_bottom - team_top - logo_size) / 2)
-        left_logo_x = row_x1 + 12
+        logo_y = y + 13
+        left_logo_x = row_x1 + 10
+        text_x1 = left_logo_x + logo_size + 6
         self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, logo_y, logo_size, event["team_a"])
         team_a_label = self._lpl_display_team_from_event(event, "a", league_key=league_key)
-        team_a, font_a = self._fit_text(draw, team_a_label, 45, 13, bold=True, min_size=8)
-        self._draw_text_in_box(draw, (row_x1 + 36, team_top, center_x - 16, team_bottom), team_a, font_a, COLORS["text"])
+        team_a, font_a = self._fit_text(draw, team_a_label, max(20, center_x - 16 - text_x1), 13, bold=True, min_size=8)
+        self._draw_text_in_box(draw, (text_x1, team_top, center_x - 16, team_bottom), team_a, font_a, COLORS["text"])
         self._draw_centered_in_box(draw, (center_x - 13, team_top, center_x + 13, team_bottom), "VS", self._font(10, True), COLORS["muted"])
-        logo_x = row_x2 - 12 - logo_size
+        logo_x = row_x2 - 10 - logo_size
         self._draw_team_logo(image, draw, event.get("team_b_logo"), logo_x, logo_y, logo_size, event["team_b"])
         team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
-        team_b, font_b = self._fit_text(draw, team_b_label, 45, 13, bold=True, min_size=8)
-        self._draw_text_in_box(draw, (center_x + 16, team_top, logo_x - 5, team_bottom), team_b, font_b, COLORS["text"], align="right")
+        team_b, font_b = self._fit_text(draw, team_b_label, max(20, logo_x - 6 - (center_x + 16)), 13, bold=True, min_size=8)
+        self._draw_text_in_box(draw, (center_x + 16, team_top, logo_x - 6, team_bottom), team_b, font_b, COLORS["text"], align="right")
         odds = event.get("odds") or {}
         if odds.get("team_a") and odds.get("team_b"):
-            self._draw_lpl_odds_text(draw, (row_x1 + 36, y + 31, center_x - 16, y + 43), odds.get("team_a"), max_size=9, align="left")
-            self._draw_lpl_odds_text(draw, (center_x + 16, y + 31, logo_x - 5, y + 43), odds.get("team_b"), max_size=9, align="right")
+            self._draw_lpl_odds_text(draw, (text_x1, y + 31, center_x - 16, y + 43), odds.get("team_a"), max_size=9, align="left")
+            self._draw_lpl_odds_text(draw, (center_x + 16, y + 31, logo_x - 6, y + 43), odds.get("team_b"), max_size=9, align="right")
 
     def _draw_lpl_recent_rows(self, image, draw, right_x, right_w, y, events, league_key="LPL"):
         self._draw_section_header(draw, right_x, right_w, y, "RECENT", self._lol_sidebar_color(league_key, "accent"))
@@ -2327,14 +2329,15 @@ class EsportsRenderMixin:
         draw.line((row_x1, y - 6, row_x2, y - 6), fill=COLORS["line"], width=1)
         row_h = 30
         draw.text((row_x1 + 2, y + 8), event["start"].strftime("%m/%d"), font=self._font(11, True), fill=COLORS["text"])
-        logo_size = 16
+        # The logos stand 24 px tall, filling the result row's height.
+        logo_size = 24
         score_w = 34
-        match_x1 = row_x1 + 50
+        match_x1 = row_x1 + 48
         score_x = int((match_x1 + row_x2) / 2 - score_w / 2)
         left_logo_x = match_x1
         left_text_x = left_logo_x + logo_size + 5
         left_text_w = max(22, score_x - left_text_x - 6)
-        self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y + 7, logo_size, event["team_a"])
+        self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, y + 3, logo_size, event["team_a"])
         # The winner reads in ink, the loser greyed out.
         colour_a, colour_b = self._lpl_result_colours(event)
         team_a_label = self._lpl_display_team_from_event(event, "a", league_key=league_key)
@@ -2347,7 +2350,7 @@ class EsportsRenderMixin:
         right_text_x2 = right_logo_x - 5
         right_text_x1 = score_x + score_w + 6
         right_text_w = max(22, right_text_x2 - right_text_x1)
-        self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y + 7, logo_size, event["team_b"])
+        self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, y + 3, logo_size, event["team_b"])
         team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
         team_b, font_b = self._fit_text(draw, team_b_label, right_text_w, 12, bold=True, min_size=8)
         self._draw_text_in_box(draw, (right_text_x1, y, right_text_x2, y + row_h), team_b, font_b, colour_b, align="right")

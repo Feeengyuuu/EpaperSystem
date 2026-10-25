@@ -386,6 +386,8 @@ LOCAL_WORLDCUP_FIVE_LEAGUES_UPCOMING_PATH = os.path.join(
     "worldcup_five_leagues_upcoming.png",
 )
 LOCAL_WORLDCUP_HEADER_BANNER_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_header_banner.png")
+# A supporters' stand that fills a league page's room between its fixtures and results.
+LOCAL_CLUB_SUPPORTERS_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "club_supporters_strip.png")
 LOCAL_WORLDCUP_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "worldcup_title_wordmark.png")
 LOCAL_CSL_2026_TITLE_WORDMARK_PATH = os.path.join(
     LOCAL_DECOR_DIR,

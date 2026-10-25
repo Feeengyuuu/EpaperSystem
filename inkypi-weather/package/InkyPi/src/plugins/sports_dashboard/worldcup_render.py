@@ -336,6 +336,8 @@ class WorldCupRenderMixin:
                     upcoming_used_bottom + 1,
                     recent_y - 1,
                 )
+            elif presentation.get("show_gap_art"):
+                self._draw_worldcup_gap_art(image, right_x1, right_x2, upcoming_used_bottom + 3, recent_y - 3)
             if presentation:
                 self._draw_worldcup_recent_rows(
                     image,
@@ -1062,7 +1064,7 @@ class WorldCupRenderMixin:
         right_score_edge = center_x + score_w / 2
         left_area = (x1 + 8, left_score_edge - left_detail_w - detail_gap - 4)
         right_area = (right_score_edge + right_detail_w + detail_gap + 4, x2 - 8)
-        self._draw_worldcup_recent_team_identity(
+        badge_a = self._draw_worldcup_recent_team_identity(
             image,
             draw,
             event,
@@ -1088,7 +1090,7 @@ class WorldCupRenderMixin:
                 (right_score_edge + detail_gap, team_y1 + 1, right_score_edge + detail_gap + right_detail_w, team_y2 - 1),
                 right_label,
             )
-        self._draw_worldcup_recent_team_identity(
+        badge_b = self._draw_worldcup_recent_team_identity(
             image,
             draw,
             event,
@@ -1103,8 +1105,12 @@ class WorldCupRenderMixin:
         self._draw_centered_in_box(draw, (center_x - score_w / 2, points_y, center_x + score_w / 2, y + row_h - 1), date_text, date_font, COLORS["muted"])
         left_meta = self._worldcup_team_points_meta(event, "a")
         right_meta = self._worldcup_team_points_meta(event, "b")
-        self._draw_worldcup_odds_text(draw, (left_area[0], points_y, left_area[1], y + row_h - 1), left_meta, max_size=7)
-        self._draw_worldcup_odds_text(draw, (right_area[0], points_y, right_area[1], y + row_h - 1), right_meta, max_size=7)
+        # The points line runs beside each badge, under its name.
+        badge = max(badge_a or 0, badge_b or 0) + 5 if (badge_a or badge_b) else 0
+        self._draw_worldcup_odds_text(draw, (left_area[0] + badge, points_y, left_area[1], y + row_h - 1), left_meta,
+                                      max_size=7)
+        self._draw_worldcup_odds_text(draw, (right_area[0], points_y, right_area[1] - badge, y + row_h - 1), right_meta,
+                                      max_size=7)
 
     def _draw_worldcup_score_detail_chip(self, draw, box, text, align="left"):
         text = str(text or "").strip()
@@ -1129,7 +1135,7 @@ class WorldCupRenderMixin:
     ):
         left, right = [int(value) for value in area]
         area_w = max(1, right - left)
-        flag_h, flag_cap = 13, 26
+        flag_h, flag_cap = 18, 36
         gap = 5
         side_key = "a" if side == "a" else "b"
         label = event.get(f"team_{side_key}")
@@ -1145,7 +1151,8 @@ class WorldCupRenderMixin:
         max_text_w = max(24, area_w - flag_w - gap)
         label, font = self._fit_text(draw, label, max_text_w, 11, bold=True, min_size=7)
         text_w = min(max_text_w, self._text_width(draw, label, font))
-        flag_y = int(y1 + max(0, ((y2 - y1) - flag_h) / 2))
+        # A badge taller than the name row centres on it, reaching into the row's margins.
+        flag_y = int(y1 + ((y2 - y1) - flag_h) / 2)
         if side_key == "b":
             flag_x = int(right - flag_w)
             text_right = int(flag_x - gap)
@@ -1186,6 +1193,7 @@ class WorldCupRenderMixin:
         )
         if self._worldcup_team_eliminated(event, side_key):
             self._draw_worldcup_elimination_strike(draw, strike_left, strike_right, y1, y2)
+        return flag_w
 
     def _draw_worldcup_elimination_strike(self, draw, x1, x2, y1, y2):
         overflow = 3
@@ -1242,11 +1250,12 @@ class WorldCupRenderMixin:
         presentation=None,
     ):
         center_x = (x1 + x2) / 2
-        flag_h, flag_cap = 14, 28
+        # The badges stand 20 px tall beside both lines of a row, under its date.
+        flag_h, flag_cap = 20, 40
         left_flag_x = x1 + 1
         has_odds = center_text == "VS" and self._worldcup_event_has_odds(event)
         team_bottom = y + 11
-        flag_y = y - 1
+        flag_y = y - 2
         left_asset = self._worldcup_team_asset_url(event, "a", presentation)
         right_asset = self._worldcup_team_asset_url(event, "b", presentation)
         left_w = self._draw_worldcup_presented_flag(
@@ -1283,7 +1292,8 @@ class WorldCupRenderMixin:
         self._draw_text_in_box(draw, (center_x + 28, y - 1, right_text_x, team_bottom), team_b, font_b, COLORS["text"], align="right")
         left_meta = self._worldcup_team_points_meta(event, "a", include_odds=has_odds)
         right_meta = self._worldcup_team_points_meta(event, "b", include_odds=has_odds)
-        meta_margin = flag_cap + 5
+        # The odds run under the names, mirrored on the wider badge so both sides read alike.
+        meta_margin = max(left_w, right_w) + 5
         self._draw_worldcup_odds_text(draw, (x1 + meta_margin, y + 11, center_x - 28, y + 20), left_meta, max_size=7)
         self._draw_worldcup_odds_text(draw, (center_x + 28, y + 11, x2 - meta_margin, y + 20), right_meta, max_size=7)
         if has_odds:
@@ -1345,6 +1355,18 @@ class WorldCupRenderMixin:
         if tla:
             return tla
         return team[:5] if team else "TBD"
+
+    def _draw_worldcup_gap_art(self, image, x1, x2, top, bottom):
+        """The supporters' stand standing on the floor of the room between a league page's
+        fixtures and results; False when the room is too small for it."""
+        width, height = int(x2) - int(x1), int(bottom) - int(top)
+        if width < 80 or height < 14:
+            return False
+        art = self._load_local_logo(LOCAL_CLUB_SUPPORTERS_STRIP_PATH, (width, height), alpha_threshold=8)
+        if art is None:
+            return False
+        image.paste(art, (int(x1) + (width - art.width) // 2, int(bottom) - art.height), art)
+        return True
 
     def _draw_worldcup_pitch_strip_in_gap(self, image, draw, x1, x2, gap_top, gap_bottom):
         x1 = int(x1)
