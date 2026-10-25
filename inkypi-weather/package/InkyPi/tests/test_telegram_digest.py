@@ -1605,6 +1605,35 @@ def test_telegram_digest_preserves_shared_bold_fallback_raster(monkeypatch, tmp_
     assert bytes(font.getmask("Readable UI")) == expected
 
 
+def test_a_landscape_leads_short_ai_summary_is_followed_by_the_message_itself(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 9, 4, 2, 40, tzinfo=timezone.utc)
+    landscape = tmp_path / "landscape.png"
+    Image.new("RGB", (640, 360), (40, 60, 90)).save(landscape)
+    original = "疑似醉酒男子驾车撞人后下车持刀捅刺伤者，现场多人受伤，警方已到场处置 https://t.me/x/1"
+    lead = {"key": "lead", "message_id": 9, "date": int(now.timestamp()) - 60, "chat_id": "lead", "chat_title": "吃瓜大佬",
+            "title": "lead", "raw_text": original, "media_kind": "photo", "media_path": str(landscape),
+            "curation": {"score": 95, "tag": "本地", "headline": "福建石狮八卦街持刀伤人", "summary": "疑似醉酒男子驾车撞人后下车持刀捅刺伤者"}}
+    written = []
+    real_text = ImageDraw.ImageDraw.text
+
+    def record(self, xy, text, *args, **kwargs):
+        written.append(str(text))
+        return real_text(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)
+    state = {"schema": STATE_VERSION, "messages": [lead], "stats": {"message_count": 1},
+             "status": {"source_state": "live", "generated_at": now.isoformat(), "account_api": True}}
+    (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    plugin.generate_image({"_theme_render_only": True, "_inkypi_theme": _theme_context("day", requested_mode="day")},
+                          DummyDeviceConfig())
+
+    excerpt = [text for text in written if text.startswith("原文 · ")]
+    assert excerpt and "现场多人受伤" in "".join(written)
+    assert not any("https://" in text for text in written)
+
+
 def test_a_short_portrait_lead_promotes_the_next_picture_story_under_its_text(tmp_path):
     plugin = _plugin(tmp_path)
     now = datetime(2026, 9, 4, 2, 40, tzinfo=timezone.utc)

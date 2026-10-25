@@ -489,6 +489,14 @@ def display_headline(item):
     return f"{item.get('chat_title') or '未知对话'}发来{'视频' if item.get('media_kind') == 'video' else '图片'}"
 
 
+def original_excerpt(item):
+    """The message's own words, links dropped, when an AI summary stands in for them; else ""."""
+    if not (item.get("curation") or {}).get("headline"):
+        return ""
+    text = " ".join(LINK.sub(" ", message_text(item)).split())
+    return "" if not text or text == display_summary(item) else text
+
+
 def display_summary(item):
     curation = item.get("curation") or {}
     if curation.get("headline"):

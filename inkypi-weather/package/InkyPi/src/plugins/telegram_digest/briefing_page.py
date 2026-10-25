@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps
 
-from plugins.telegram_digest.curation import VISIBLE_COUNT, display_headline, display_summary
+from plugins.telegram_digest.curation import VISIBLE_COUNT, display_headline, display_summary, original_excerpt
 
 LIST_ROWS = VISIBLE_COUNT - 1
 PORTRAIT_RATIO = 1.05
@@ -352,6 +352,15 @@ class BriefingPageMixin:
             y += line_h
         if meta_after:
             meta_y = y + self._y(10)
+        else:
+            # A short AI summary leaves room above the source line: the message's own words fill it.
+            note_font = self._f(body_size - 2, "normal")
+            note_h = int((body_size - 2) * 1.5 * self._page_scale)
+            left = max(0, (meta_y - self._y(6) - (y + self._y(8))) // max(1, note_h))
+            excerpt = self._clean_text(original_excerpt(item))
+            for line in self._wrap_text(draw, f"原文 · {excerpt}", note_font, x1 - x0, left) if excerpt and left else ():
+                draw.text((x0, y + self._y(8)), line, font=note_font, fill=p["muted"])
+                y += note_h
         meta = self._story_meta(item, with_tag=False)
         meta_font = self._f(12, "bold")
         meta_x = self._paste_marks(image, item, x0, meta_y, self._x(16))
