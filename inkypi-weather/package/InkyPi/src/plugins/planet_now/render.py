@@ -50,7 +50,8 @@ FUEL_COLORS = {
 FUEL_ORDER = ("nuclear", "other", "hydro", "wind", "solar", "batteries", "gas", "imports")
 FUEL_LABELS = {"solar": "太阳能", "wind": "风电", "hydro": "水电", "gas": "燃气", "imports": "进口", "batteries": "电池",
                "nuclear": "核电", "other": "其他"}
-LEGEND = ("solar", "wind", "hydro", "gas", "imports", "batteries", "nuclear")
+# The mix bar's order: the renewables first, then the rest.
+MIX_ORDER = ("solar", "wind", "hydro", "other", "nuclear", "batteries", "gas", "imports")
 HEADER = 28
 CARD_BAND = 5
 # The space card reaches left under the sky card, wider than the searches beside it.
@@ -230,6 +231,8 @@ def _minutes(text):
 
 
 def _grid(canvas, payload):
+    """The renewable share over the supply mix as a bar and a table (colour, source, a bar for its
+    share, GW, per cent), beside today's stacked supply with its numbers on it."""
     grid = payload.get("grid", {}).get("data") or {}
     now = grid.get("now") or {}
     _card(canvas, "grid", "加州电网", f"CAISO · {now.get('time', '--:--')} · 虚线为预测用电" if now else "CAISO")
@@ -237,44 +240,58 @@ def _grid(canvas, payload):
     if not grid.get("series"):
         canvas.text(((left + right) / 2, (top + bottom) / 2 + 10), "电网数据暂不可用", 14, "muted", anchor="mm")
         return
+    supply = sum(float(now.get(name) or 0) for name in FUEL_ORDER) or 1.0
     share = float(grid.get("renewable_share") or 0)
-    x = left + 12
-    canvas.text((x, top + HEADER + 10), f"{share:.0%}", 34, "grid", anchor="la")
-    canvas.text((x + 2, top + HEADER + 52), "可再生能源", 12, "ink", anchor="la")
-    supply = float(grid.get("supply_mw") or 0) / 1000
-    demand = (grid.get("demand") or [{}])[-1].get("mw")
-    peak = grid.get("peak") or {}
-    facts = [("此刻供电", f"{supply:.1f} GW")]
-    if demand:
-        facts.append(("此刻用电", f"{demand / 1000:.1f} GW"))
-    if peak:
-        facts.append(("晚峰预测", f"{peak['mw'] / 1000:.1f} GW"))
-        facts.append(("峰值时刻", str(peak.get("time") or "")))
-    for index, (label, value) in enumerate(facts):
-        y = top + HEADER + 74 + index * 22
-        canvas.text((x + 2, y), label, 10, "muted", anchor="la", bold=False)
-        canvas.text((x + 2, y + 10), value, 12, "ink", anchor="la")
-    _supply_chart(canvas, grid, (left + 122, top + HEADER + 10, right - 12, bottom - 30))
-    # Legend: the sources in the chart's colours.
-    lx, ly = left + 122, bottom - 20
-    for name in LEGEND:
-        label = FUEL_LABELS[name]
-        width = canvas.width(label, 10, False)
-        if lx + 12 + width > right - 8:
-            break
-        canvas.draw.rectangle((lx, ly + 2, lx + 8, ly + 10), fill=canvas.palette["fuels"][name])
-        canvas.text((lx + 11, ly + 6), label, 10, "muted", anchor="lm", bold=False)
-        lx += 18 + width
+    x, x1 = left + 10, left + 186
+    y = top + HEADER + 6
+    width = canvas.text((x, y - 2), f"{share:.0%}", 30, "grid", anchor="la")
+    canvas.text((x + width + 6, y + 6), "可再生能源", 11, anchor="la")
+    canvas.text((x + width + 6, y + 21), f"{share * supply / 1000:.1f} / {supply / 1000:.1f} GW", 9, "muted",
+                anchor="la", bold=False)
+    # The mix as one bar, then as a table that is also the chart's legend.
+    rows = sorted(((name, float(now.get(name) or 0)) for name in FUEL_ORDER), key=lambda row: -row[1])
+    bar_y, cursor = y + 38, float(x)
+    for name in MIX_ORDER:
+        part = (x1 - x) * float(now.get(name) or 0) / supply
+        if part > 0:
+            canvas.draw.rectangle((cursor, bar_y, cursor + part, bar_y + 7), fill=canvas.palette["fuels"][name])
+            cursor += part
+    canvas.draw.rectangle((x, bar_y, x1, bar_y + 7), outline=canvas.color("ink"), width=1)
+    top_share = max((mw for _name, mw in rows), default=1) / supply or 1
+    row_y = bar_y + 15
+    for name, mw in [row for row in rows if row[1] > 0][:6]:
+        portion = mw / supply
+        canvas.draw.rectangle((x, row_y + 1, x + 8, row_y + 9), fill=canvas.palette["fuels"][name])
+        canvas.text((x + 12, row_y + 5), FUEL_LABELS[name], 10, anchor="lm")
+        bar_x0, bar_x1 = x + 48, x + 100
+        canvas.draw.rectangle((bar_x0, row_y + 3, bar_x1, row_y + 7), fill=canvas.color("panel"))
+        canvas.draw.rectangle((bar_x0, row_y + 3, bar_x0 + (bar_x1 - bar_x0) * portion / top_share, row_y + 7),
+                              fill=canvas.palette["fuels"][name])
+        canvas.text((x + 140, row_y + 5), f"{mw / 1000:.1f}", 10, anchor="rm")
+        canvas.text((x1, row_y + 5), f"{portion:.0%}", 9, "muted", anchor="rm", bold=False)
+        row_y += 15
+    canvas.draw.line((x1 + 8, top + HEADER + 8, x1 + 8, bottom - 8), fill=canvas.color("rule"), width=1)
+    _supply_chart(canvas, grid, (x1 + 18, top + HEADER + 10, right - 10, bottom - 22))
+
+
+def _chart_tag(canvas, xy, text, fill, color, box, anchor="mm"):
+    """A small solid label on the chart, kept inside ``box``."""
+    width = canvas.width(text, 9) + 8
+    x, y = xy
+    left = min(max(box[0] + 1, x - width / 2 if anchor == "mm" else x), box[2] - width - 1)
+    canvas.draw.rounded_rectangle((left, y - 7, left + width, y + 7), radius=3, fill=canvas.color(fill))
+    canvas.text((left + width / 2, y), text, 9, color, anchor="mm")
 
 
 def _supply_chart(canvas, grid, box):
-    """Today's supply stacked by source (to now), the day-ahead demand as a dashed line over the
-    whole day, a marker at now and the hours under it."""
+    """Today's supply stacked by source (to now) under the day-ahead demand (dashed), with the
+    numbers set on it: supply now at the now line, the demand now as a dot, the evening peak
+    at its point on the forecast; the hours beneath."""
     x0, y0, x1, y1 = box
     series = grid.get("series") or []
     forecast = grid.get("forecast") or []
     totals = [sum(point.get(name, 0) for name in FUEL_ORDER) for point in series]
-    ceiling = max([*totals, *(item["mw"] for item in forecast), 1]) * 1.08
+    ceiling = max([*totals, *(item["mw"] for item in forecast), 1]) * 1.22
 
     def px(minutes):
         return x0 + (x1 - x0) * minutes / 1440
@@ -298,11 +315,26 @@ def _supply_chart(canvas, grid, box):
             if m is not None]
     for index in range(0, len(line) - 1, 2):
         canvas.draw.line((*line[index], *line[index + 1]), fill=canvas.color("ink"), width=2)
+    canvas.draw.rectangle(box, outline=canvas.color("rule"), width=1)
     if points:
         now_x = px(points[-1][0])
-        canvas.draw.line((now_x, y0, now_x, y1), fill=canvas.color("grid"), width=2)
-        canvas.draw.ellipse((now_x - 3, py(base[-1]) - 3, now_x + 3, py(base[-1]) + 3), fill=canvas.color("grid"))
-    canvas.draw.rectangle(box, outline=canvas.color("rule"), width=1)
+        supply_y = py(base[-1])
+        canvas.draw.line((now_x, y0 + 14, now_x, y1), fill=canvas.color("grid"), width=2)
+        canvas.draw.ellipse((now_x - 3, supply_y - 3, now_x + 3, supply_y + 3), fill=canvas.color("grid"),
+                            outline=canvas.color("paper"))
+        _chart_tag(canvas, (now_x, y0 + 8), f"此刻 {base[-1] / 1000:.1f} GW", "grid", (255, 255, 255), box)
+        demand = (grid.get("demand") or [{}])[-1].get("mw")
+        if demand:
+            demand_y = py(demand)
+            canvas.draw.ellipse((now_x - 3, demand_y - 3, now_x + 3, demand_y + 3), fill=canvas.color("paper"),
+                                outline=canvas.color("ink"), width=2)
+    peak = grid.get("peak") or {}
+    peak_minutes = _minutes(peak.get("time"))
+    if peak and peak_minutes is not None:
+        peak_x, peak_y = px(peak_minutes), py(peak["mw"])
+        canvas.draw.ellipse((peak_x - 3, peak_y - 3, peak_x + 3, peak_y + 3), fill=canvas.color("ink"))
+        _chart_tag(canvas, (peak_x, peak_y - 11), f"晚峰 {peak['mw'] / 1000:.1f} GW {peak.get('time')}", "ink", "paper",
+                   box)
     for hour, label in ((0, "0"), (6, "6"), (12, "12"), (18, "18"), (24, "24时")):
         canvas.text((min(px(hour * 60), x1 - 2), y1 + 2), label, 9, "muted", bold=False,
                     anchor="ra" if hour == 24 else "ma" if hour else "la")
