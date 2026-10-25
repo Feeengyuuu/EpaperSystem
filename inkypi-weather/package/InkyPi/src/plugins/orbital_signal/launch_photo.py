@@ -24,6 +24,8 @@ PHOTO_HEADERS = {
     "User-Agent": "InkyPi OrbitalSignal/1.0",
     "Accept": "image/jpeg,image/png,image/webp,image/*;q=0.8,*/*;q=0.5",
 }
+# A market mark is kept no larger than this (its longer side, px).
+MARK_SIDE = 128
 PHOTO_LIMITS = ImageLimits(
     max_bytes=8 * 1024 * 1024,
     max_width=8192,
@@ -114,7 +116,44 @@ def load_cached_photo(namespace, cache_key):
         return None
 
 
-def _download_candidate(candidate, session):
+def cache_mark(url, namespace, *, allow_network, session=None):
+    """The cache key of a market's mark (a team logo, league icon or event art) at ``url``,
+    downloaded once with its transparency kept and shrunk to MARK_SIDE; "" when unavailable."""
+    url = _text(url)
+    if not url:
+        return ""
+    key = photo_cache_key(url)
+    if namespace.get_bytes(key, suffix=PHOTO_SUFFIX):
+        record_resource_event("market_marks", disk_hits=1)
+        return key
+    if not allow_network:
+        return ""
+    try:
+        image = _download_candidate(PhotoCandidate(url, "", "", "polymarket"), session or get_http_session(),
+                                    mode="RGBA")
+        image.thumbnail((MARK_SIDE, MARK_SIDE), Image.Resampling.LANCZOS)
+        namespace.put_bytes(key, _encode_png(image), suffix=PHOTO_SUFFIX)
+        record_resource_event("market_marks", downloads=1)
+        return key
+    except Exception as exc:
+        logger.warning("Orbital Signal market mark rejected: %s", type(exc).__name__)
+        return ""
+
+
+def load_cached_mark(namespace, cache_key):
+    """A cached market mark as RGBA, or None."""
+    key = _text(cache_key)
+    if not key:
+        return None
+    try:
+        payload = namespace.get_bytes(key, suffix=PHOTO_SUFFIX)
+        return safe_open_image(payload, limits=PHOTO_LIMITS).convert("RGBA") if payload else None
+    except Exception as exc:
+        logger.warning("Orbital Signal market mark cache rejected: %s", type(exc).__name__)
+        return None
+
+
+def _download_candidate(candidate, session, mode="RGB"):
     policy = get_ssrf_policy()
     current_url = candidate.url
     for redirect_count in range(PHOTO_REDIRECTS + 1):
@@ -145,7 +184,7 @@ def _download_candidate(candidate, session):
                 response,
                 limits=PHOTO_LIMITS,
                 draft_size=(339, 741),
-            ).convert("RGB")
+            ).convert(mode)
         finally:
             response.close()
     raise RuntimeError("launch photo redirect limit exceeded")

@@ -684,7 +684,8 @@ def test_payload_keeps_one_live_panel_when_the_other_source_fails(tmp_path, monk
     payload = plugin._payload({}, FakeDeviceConfig(), NOW)
 
     assert payload["launches"]
-    assert payload["markets"] == markets[:3]
+    # The rows carry the keys of their cached marks besides what the source gave.
+    assert [{key: row[key] for key in market} for row, market in zip(payload["markets"], markets[:3])] == markets[:3]
     assert payload["status"]["sources"] == {"launches": "fixture", "markets": "live"}
     assert payload["_source_provenance"] == SourceProvenance.LOCAL_FALLBACK.value
     assert launches[0]["id"] == "vikram-demo"
@@ -1197,3 +1198,70 @@ def test_when_line_says_today_and_the_site_carries_its_flag():
     plugin._draw_when_and_where(draw.image, draw, launch, NOW + timedelta(days=1), NOW, 130, 440, 230,
                                 DAY_PALETTE, None)
     assert draw.text_calls[0]["text"].startswith("TOMORROW ")
+
+
+def _game_event(*, moneyline_closed=False):
+    """An NBA game as Polymarket lists it: the two teams, a match-winner market and a player prop."""
+    end = (NOW + timedelta(hours=3)).isoformat().replace("+00:00", "Z")
+    teams = [{"name": "Heat", "alias": "Heat", "league": "nba", "abbreviation": "mia",
+              "logo": "https://example.test/MIA.png", "color": "#C02060"},
+             {"name": "Wizards", "alias": "Wizards", "league": "nba", "abbreviation": "was",
+              "logo": "https://example.test/WAS.png", "color": "#002B5C"}]
+    moneyline = {"question": "Heat vs. Wizards", "outcomes": json.dumps(["Heat", "Wizards"]),
+                 "outcomePrices": json.dumps(["0", "1"] if moneyline_closed else ["0.62", "0.38"]),
+                 "sportsMarketType": "moneyline", "closed": moneyline_closed, "active": True,
+                 "oneDayPriceChange": 0.02, "endDate": end}
+    prop = {"question": "Bam Adebayo: Assists O/U 3.5", "groupItemTitle": "Bam Adebayo: Assists O/U 3.5",
+            "outcomes": json.dumps(["Yes", "No"]), "outcomePrices": json.dumps(["0.87", "0.13"]),
+            "closed": False, "active": True, "endDate": end}
+    return {"id": "game", "title": "Heat vs. Wizards", "endDate": end, "volume24hr": 4_800_000,
+            "liquidity": 100_000, "tags": [{"label": "Sports"}, {"label": "NBA"}], "teams": teams,
+            "sport": {"name": "NBA", "image": "https://example.test/nba.png"},
+            "icon": "https://example.test/basketball.png", "markets": [moneyline, prop]}
+
+
+def test_a_game_market_leads_with_its_match_winner_and_its_teams_marks():
+    row = normalize_market_events([_game_event()], now=NOW)[0]
+
+    assert (row["leader"], row["probability"], row["final"]) == ("Heat", 0.62, False)
+    assert (row["league"], row["league_icon"]) == ("NBA", "https://example.test/nba.png")
+    # NBA sides take the team's own ESPN logo (ESPN's code for Washington is wsh); Polymarket's stays as fallback.
+    heat, wizards = row["teams"]
+    assert heat["logo"].endswith("/nba/500/mia.png") and heat["fallback_logo"] == "https://example.test/MIA.png"
+    assert wizards["logo"].endswith("/nba/500/wsh.png")
+
+
+def test_a_finished_game_shows_its_winner_not_a_player_prop():
+    row = normalize_market_events([_game_event(moneyline_closed=True)], now=NOW)[0]
+
+    assert (row["leader"], row["probability"], row["final"]) == ("Wizards", 1.0, True)
+
+
+def test_the_market_columns_draw_cached_team_marks_and_polymarket_logo(tmp_path):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    plugin._cache_dir = lambda create=True: tmp_path / "cache"
+    namespace = plugin._mark_namespace()
+    keys = []
+    for colour in ((200, 30, 60), (0, 40, 90)):
+        logo = Image.new("RGBA", (60, 60), (0, 0, 0, 0))
+        ImageDraw.Draw(logo).ellipse((5, 5, 55, 55), fill=(*colour, 255))
+        buffer = BytesIO()
+        logo.save(buffer, format="PNG")
+        key = launch_photo_module.photo_cache_key(f"https://example.test/{colour}.png")
+        namespace.put_bytes(key, buffer.getvalue(), suffix=".png")
+        keys.append(key)
+    row = normalize_market_events([_game_event()], now=NOW)[0]
+    row["teams"] = [dict(team, mark=key) for team, key in zip(row["teams"], keys)]
+    image = Image.new("RGB", (800, 480), DAY_PALETTE["paper"])
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_markets(draw, (462, 58, 800, 448), [row], DAY_PALETTE, None, image=image)
+
+    # The Heat's red logo stands left of VS, the Wizards' navy one right of it.
+    def colours(box):
+        return {colour for _count, colour in image.crop(box).getcolors(1 << 20)}
+
+    assert (200, 30, 60) in colours((462, 100, 560, 140))
+    assert (0, 40, 90) in colours((560, 100, 640, 140))
+    # Polymarket's logo heads the columns in the page's ink.
+    assert tuple(DAY_PALETTE["ink"][:3]) in colours((477, 68, 640, 98))

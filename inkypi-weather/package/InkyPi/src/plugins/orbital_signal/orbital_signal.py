@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageOps
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import PresentationMode
 from plugins.base_plugin.render_provenance import (
@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 PLUGIN_ID = "orbital_signal"
 DEFAULT_FONT = "Microsoft YaHei"
 WORDMARK_ASSET_PATH = Path(__file__).with_name("assets") / "orbital-signal-wordmark.png"
+# Polymarket's logo (Wikimedia Commons, public domain) heading the market columns.
+POLYMARKET_LOGO_PATH = Path(__file__).with_name("assets") / "polymarket-logo.png"
+POLYMARKET_LOGO_HEIGHT = 26
 CACHE_SCHEMA = "orbital-signal-v1"
 SOURCE_STATES = {"live", "fresh_cache", "stale_cache", "fixture"}
 LAUNCH_PHOTO_CACHE_BUDGET = CacheBudget(
@@ -42,6 +45,10 @@ LAUNCH_PHOTO_CACHE_BUDGET = CacheBudget(
     24,
     48 * 1024 * 1024,
 )
+# Team logos, league icons and event art for the market columns (each at most 128 px).
+MARKET_MARK_CACHE_BUDGET = CacheBudget(30 * 24 * 60 * 60, 96, 8 * 1024 * 1024)
+# A matchup's two logos (px), the league icon in its chip and the leader's logo by its name.
+MATCHUP_LOGO, LEAGUE_ICON, LEADER_LOGO = 28, 14, 14
 
 # Mission-control layout: the launch side with a photo, flip-clock countdown,
 # fact grid and launch timeline; the market side with three gauge columns.
@@ -160,6 +167,23 @@ class OrbitalSignal(BasePlugin):
             raise ValueError("Orbital Signal wordmark has no visible pixels")
         return wordmark.crop(bounds)
 
+    @staticmethod
+    @lru_cache(maxsize=1)
+    def _cached_polymarket_logo():
+        with safe_open_image(POLYMARKET_LOGO_PATH) as source:
+            return source.convert("RGBA")
+
+    def _polymarket_logo(self, height, palette):
+        """Polymarket's logo ``height`` px tall in the page's ink (it is a one-colour mark), or None."""
+        try:
+            logo = self._cached_polymarket_logo()
+        except (OSError, ValueError):
+            return None
+        logo = logo.resize((max(1, round(logo.width * height / logo.height)), int(height)), Image.Resampling.LANCZOS)
+        inked = Image.new("RGBA", logo.size, (*palette["ink"][:3], 255))
+        inked.putalpha(logo.getchannel("A"))
+        return inked
+
     def _prepare_header_wordmark(self, max_size, palette):
         wordmark = self._cached_wordmark_source().copy()
         wordmark.thumbnail(
@@ -258,6 +282,46 @@ class OrbitalSignal(BasePlugin):
             self._cache_dir() / "launch_photos",
             LAUNCH_PHOTO_CACHE_BUDGET,
         )
+
+    def _mark_namespace(self):
+        return self.managed_cache_namespace(self._cache_dir() / "market_marks", MARKET_MARK_CACHE_BUDGET)
+
+    def _hydrate_market_marks(self, market):
+        """The market's official marks fetched into the cache: each side's team logo, the league's
+        icon and, without a matchup, the event's art. Their cache keys ride along in the row, so a
+        theme redraw needs no network."""
+        row = dict(market or {})
+        namespace = self._mark_namespace()
+
+        def mark(url):
+            try:
+                return launch_photo.cache_mark(url, namespace, allow_network=True)
+            except Exception as exc:
+                logger.warning("Orbital Signal market mark unavailable: %s", type(exc).__name__)
+                return ""
+
+        teams = [dict(team, mark=mark(team.get("logo")) or mark(team.get("fallback_logo")))
+                 for team in row.get("teams") or [] if isinstance(team, dict)]
+        row["teams"] = teams
+        row["league_mark"] = mark(row.get("league_icon"))
+        if not (len(teams) == 2 and all(team["mark"] for team in teams)):
+            row["event_mark"] = mark(row.get("event_icon"))
+        return row
+
+    def _market_mark(self, key, size, *, rounded=False):
+        """A cached mark contained in ``size`` px (event art cover-cropped to a rounded square)."""
+        mark = launch_photo.load_cached_mark(self._mark_namespace(), key) if key else None
+        if mark is None:
+            return None
+        if not rounded:
+            box = mark.getchannel("A").getbbox()
+            mark = mark.crop(box) if box else mark
+            return ImageOps.contain(mark, (size, size), method=Image.Resampling.LANCZOS)
+        art = ImageOps.fit(mark.convert("RGB"), (size, size), method=Image.Resampling.LANCZOS).convert("RGBA")
+        corner = Image.new("L", (size, size), 0)
+        ImageDraw.Draw(corner).rounded_rectangle((0, 0, size - 1, size - 1), radius=max(3, size // 5), fill=255)
+        art.putalpha(corner)
+        return art
 
     def _hydrate_primary_launch_photo(self, launch):
         row = dict(launch or {})
@@ -552,7 +616,7 @@ class OrbitalSignal(BasePlugin):
         payload = {
             "schema": CACHE_SCHEMA,
             "launches": launches,
-            "markets": markets[:3],
+            "markets": [self._hydrate_market_marks(row) for row in markets[:3]],
             "status": {
                 "aggregate": self._aggregate_status(states),
                 "sources": states,
@@ -1089,11 +1153,17 @@ class OrbitalSignal(BasePlugin):
         room left below them (when ``image`` is given)."""
         left, top, right, bottom = box
         draw.rectangle(box, fill=palette["paper"])
-        title_font = self._font(23, True, family)
-        draw.text((left + 15, top + 11), "MARKET HEAT", font=title_font, fill=palette["ink"])
-        title_right = draw.textbbox((left + 15, top + 11), "MARKET HEAT", font=title_font)[2]
-        # The bulb starts 3 px left of its origin; keep an 8 px optical gap after the title.
-        self._draw_thermometer(draw, (title_right + 11, top + 8), palette)
+        # Polymarket's own logo heads the markets; the lettered title is the fallback.
+        logo = self._polymarket_logo(POLYMARKET_LOGO_HEIGHT, palette) if image is not None else None
+        if logo is not None:
+            image.paste(logo, (left + 15, top + 12), logo)
+            title_right = left + 15 + logo.width
+        else:
+            title_font = self._font(23, True, family)
+            draw.text((left + 15, top + 11), "MARKET HEAT", font=title_font, fill=palette["ink"])
+            title_right = draw.textbbox((left + 15, top + 11), "MARKET HEAT", font=title_font)[2]
+            # The bulb starts 3 px left of its origin; keep an 8 px optical gap after the title.
+            self._draw_thermometer(draw, (title_right + 11, top + 8), palette)
         note_font, note = self._font(9, True, family), "TOP 3 / 24H VOL"
         note_w = draw.textbbox((0, 0), note, font=note_font)[2]
         if right - 12 - note_w > title_right + 32:
@@ -1115,25 +1185,50 @@ class OrbitalSignal(BasePlugin):
             if index:
                 draw.line((col_left, top + 48, col_left, columns_bottom), fill=palette["rule"], width=1)
 
-            y = top + 46
+            # The matchup's two official logos either side of VS (or the event's own art), then
+            # the shorter title under them; without marks the title has the room it had.
+            teams = [team for team in market.get("teams") or [] if isinstance(team, dict)]
+            logos = [self._market_mark(team.get("mark"), MATCHUP_LOGO) for team in teams[:2]] if image is not None else []
+            y, max_lines = top + 46, 3
             title = str(market.get("title") or "MARKET").upper()
-            for line in self._wrap_lines(draw, title, question_font, width, max_lines=3):
+            if len(logos) == 2 and all(logos):
+                for logo, slot in zip(logos, (cx - 28, cx + 28)):
+                    image.paste(logo, (round(slot - logo.width / 2), round(y + (MATCHUP_LOGO - logo.height) / 2)), logo)
+                vs_font = self._font(10, True, family)
+                vs_w = draw.textbbox((0, 0), "VS", font=vs_font)[2]
+                draw.text((cx - vs_w / 2, y + 8), "VS", font=vs_font, fill=palette["muted"])
+                title = " vs ".join(str(team.get("alias") or team.get("name")) for team in teams[:2]).upper()
+                y, max_lines = y + MATCHUP_LOGO + 6, 2
+            else:
+                art = self._market_mark(market.get("event_mark"), MATCHUP_LOGO, rounded=True) if image is not None else None
+                if art is not None:
+                    image.paste(art, (round(cx - art.width / 2), y), art)
+                    y, max_lines = y + MATCHUP_LOGO + 6, 2
+            for line in self._wrap_lines(draw, title, question_font, width, max_lines=max_lines):
                 line_w = draw.textbbox((0, 0), line, font=question_font)[2]
                 draw.text((cx - line_w / 2, y), line, font=question_font, fill=palette["ink"])
                 y += 12
 
+            # The league (its icon on a paper square, its name on the category colour), then the day's move.
             category = str(market.get("category") or "MARKET").upper()
             tag_color = palette[CATEGORY_COLORS.get(category, "blue")]
-            tag_w = draw.textbbox((0, 0), category, font=tag_font)[2] + 14
-            tag_top = top + 86
-            draw.rectangle((cx - tag_w / 2, tag_top, cx + tag_w / 2, tag_top + 18), fill=tag_color)
-            draw.text((cx - tag_w / 2 + 7, tag_top + 3), category, font=tag_font, fill=palette["white"])
-
+            label = str(market.get("league") or "").upper() or category
+            league_icon = self._market_mark(market.get("league_mark"), LEAGUE_ICON) if image is not None else None
             change = float(market.get("change_24h") or 0.0) * 100
             change_text = f"{change:+.1f}%"
-            change_font = self._font(14, True, family)
+            change_font = self._font(13, True, family)
             change_w = draw.textbbox((0, 0), change_text, font=change_font)[2]
-            draw.text((cx - change_w / 2, top + 108), change_text, font=change_font,
+            label_w = draw.textbbox((0, 0), label, font=tag_font)[2] + 14
+            icon_w = 18 if league_icon is not None else 0
+            tag_top = top + 108
+            x = round(cx - (icon_w + label_w + 6 + change_w) / 2)
+            if league_icon is not None:
+                draw.rectangle((x, tag_top, x + 18, tag_top + 18), fill=palette["white"], outline=tag_color)
+                image.paste(league_icon, (x + 9 - league_icon.width // 2, tag_top + 9 - league_icon.height // 2), league_icon)
+                x += icon_w
+            draw.rectangle((x, tag_top, x + label_w, tag_top + 18), fill=tag_color)
+            draw.text((x + 7, tag_top + 3), label, font=tag_font, fill=palette["white"])
+            draw.text((x + label_w + 6, tag_top + 1), change_text, font=change_font,
                       fill=palette["green"] if change >= 0 else palette["red"])
 
             probability = max(0.0, min(1.0, float(market.get("probability") or 0.0)))
@@ -1141,10 +1236,22 @@ class OrbitalSignal(BasePlugin):
             heat_color = self._heat_color(heat, palette)
             self._draw_gauge(draw, (round(cx), top + 180), 44, probability, heat_color, palette)
 
+            # The leader, with its team's logo when it is one of the two sides.
+            leader = str(market.get("leader") or "TBD")
+            leader_team = next((team for team in teams if leader.casefold() in
+                                {str(team.get(key) or "").casefold() for key in ("name", "alias")}), None)
+            leader_logo = (self._market_mark(leader_team.get("mark"), LEADER_LOGO)
+                           if leader_team is not None and image is not None else None)
             y = top + 189
-            for line in self._wrap_lines(draw, str(market.get("leader") or "TBD").upper(), leader_font, width):
+            lines = self._wrap_lines(draw, leader.upper(), leader_font, width - (LEADER_LOGO + 4 if leader_logo else 0))
+            for row, line in enumerate(lines):
                 line_w = draw.textbbox((0, 0), line, font=leader_font)[2]
-                draw.text((cx - line_w / 2, y), line, font=leader_font, fill=palette["ink"])
+                if row == 0 and leader_logo is not None:
+                    start_x = round(cx - (LEADER_LOGO + 4 + line_w) / 2)
+                    image.paste(leader_logo, (start_x, y + 7 - leader_logo.height // 2), leader_logo)
+                    draw.text((start_x + LEADER_LOGO + 4, y), line, font=leader_font, fill=palette["ink"])
+                else:
+                    draw.text((cx - line_w / 2, y), line, font=leader_font, fill=palette["ink"])
                 y += 13
 
             percent = f"{probability * 100:.0f}%"
@@ -1154,7 +1261,9 @@ class OrbitalSignal(BasePlugin):
 
             facts = [f"VOL {self._money(market.get('volume_24h'))}"]
             ends = _parse_time(market.get("end_date"))
-            if ends is not None:
+            if market.get("final"):
+                facts.append("FINAL")
+            elif ends is not None:
                 facts.append(f"ENDS {ends:%d %b}".upper())
             facts.append(f"HEAT {heat:02d}")
             for row, fact in enumerate(facts):

@@ -12,6 +12,14 @@ LAUNCHES_URL = "https://ll.thespacedevs.com/2.3.0/launches/upcoming/"
 MARKETS_URL = "https://gamma-api.polymarket.com/events"
 REQUEST_TIMEOUT = (4, 18)
 USER_AGENT = "InkyPi OrbitalSignal/1.0"
+# Team logos for the leagues whose Polymarket logos are lettered tiles, with ESPN's codes
+# where they differ from Polymarket's abbreviations.
+ESPN_TEAM_LOGO = "https://a.espncdn.com/i/teamlogos/{league}/500/{code}.png"
+ESPN_LOGO_LEAGUES = {"nba", "nfl"}
+ESPN_CODES = {
+    "nba": {"was": "wsh", "nop": "no", "sas": "sa", "gsw": "gs", "nyk": "ny", "uta": "utah"},
+    "nfl": {"was": "wsh"},
+}
 
 
 def _utc(value):
@@ -206,6 +214,48 @@ def _category_for_event(event):
     return "MARKET"
 
 
+def _event_teams(event):
+    """The two sides of a game market: name, short name, logo and colour.
+
+    NBA and NFL sides take the team's own logo from ESPN (Polymarket's are lettered tiles),
+    with Polymarket's kept as the fallback; other leagues keep Polymarket's logos.
+    """
+    teams = []
+    for team in event.get("teams") if isinstance(event.get("teams"), list) else []:
+        if not isinstance(team, dict) or not _text(team.get("name")):
+            continue
+        league = _text(team.get("league")).casefold()
+        code = _text(team.get("abbreviation")).casefold()
+        logo = _text(team.get("logo"))
+        if league in ESPN_LOGO_LEAGUES and code:
+            espn = ESPN_TEAM_LOGO.format(league=league, code=ESPN_CODES.get(league, {}).get(code, code))
+            logo, fallback = espn, logo
+        else:
+            fallback = ""
+        teams.append({
+            "name": _text(team.get("name")),
+            "alias": _text(team.get("alias")) or _text(team.get("name")),
+            "logo": logo,
+            "fallback_logo": fallback,
+            "color": _text(team.get("color")),
+        })
+    return teams[:2] if len(teams) >= 2 else []
+
+
+def _decided_side(markets):
+    """The side a settled match-winner market paid out on, or ""."""
+    for raw in markets:
+        if not isinstance(raw, dict) or raw.get("sportsMarketType") != "moneyline" or raw.get("closed") is not True:
+            continue
+        outcomes = [_text(value) for value in _json_list(raw.get("outcomes"))]
+        prices = [_number(value) for value in _json_list(raw.get("outcomePrices"))]
+        if len(outcomes) == len(prices) and prices:
+            best = max(range(len(prices)), key=lambda index: prices[index] or 0)
+            if (prices[best] or 0) >= 0.99 and outcomes[best]:
+                return outcomes[best]
+    return ""
+
+
 def _market_candidate(raw, now_utc):
     if not isinstance(raw, dict) or raw.get("closed") is True or raw.get("active") is False:
         return None
@@ -264,7 +314,17 @@ def normalize_market_events(payload, now=None, limit=3):
         ]
         if not candidates:
             continue
-        leader = max(candidates, key=lambda item: item["probability"])
+        # A game's leader is its match winner, not whichever player prop is surest.
+        teams = _event_teams(event)
+        sides = {name.casefold() for team in teams for name in (team["name"], team["alias"])}
+        winners = [candidate for candidate in candidates if candidate["leader"].casefold() in sides]
+        decided = "" if winners or not sides else _decided_side(event_markets)
+        if decided:
+            # The game is over (its match market has settled): its winner, marked final.
+            leader = {"leader": decided, "probability": 1.0, "change_24h": 0.0, "question": title}
+        else:
+            leader = max(winners or candidates, key=lambda item: item["probability"])
+        sport = event.get("sport") if isinstance(event.get("sport"), dict) else {}
         volume = max(0.0, _number(event.get("volume24hr"), 0.0))
         liquidity = max(0.0, _number(event.get("liquidity"), 0.0))
         score = heat_score(volume, leader["change_24h"])
@@ -282,6 +342,12 @@ def normalize_market_events(payload, now=None, limit=3):
                 "heat_label": "HOT" if score >= 70 else "WARM" if score >= 45 else "CALM",
                 "end_date": event_end.isoformat() if event_end is not None else "",
                 "question": leader["question"],
+                # Polymarket's own marks: each side's team logo, the league's icon and the event's art.
+                "teams": teams,
+                "final": bool(decided),
+                "league": _text(sport.get("name")).upper(),
+                "league_icon": _text(sport.get("image")),
+                "event_icon": _text(event.get("icon")) or _text(event.get("image")),
             }
         )
 
