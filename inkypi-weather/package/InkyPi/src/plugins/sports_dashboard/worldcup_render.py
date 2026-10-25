@@ -686,18 +686,22 @@ class WorldCupRenderMixin:
                 else ("KICKOFF" if is_pending else "NEXT MATCH")
             )
         )
-        tag_w = 112 if is_recent else (104 if is_live else 88)
-        tag_text, tag_font = self._fit_text(draw, tag, tag_w - 8, 11, bold=True, min_size=7)
-        tag_fill = COLORS["worldcup_live"] if is_live else (COLORS["green"] if is_recent else COLORS["worldcup_tag"])
-        draw.rectangle((x1 + 14, y1 + 9, x1 + 14 + tag_w, y1 + 27), fill=tag_fill, outline=COLORS["border"], width=1)
-        draw.text((x1 + 18, y1 + 10), tag_text, font=tag_font, fill=COLORS["text"])
-        date_text = event["start"].strftime("%m/%d")
-        date_text, date_font = self._fit_text(draw, date_text, 52, 11, bold=True, min_size=8)
-        self._draw_right_aligned(draw, (x2 - 12, y1 + 11), date_text, date_font, COLORS["muted"])
+        club = (presentation or {}).get("competition") == "club"
+        if club:
+            self._draw_club_card_header(draw, x1, y1, x2, event, tag, is_live, is_recent)
+        if not club:
+            tag_w = 112 if is_recent else (104 if is_live else 88)
+            tag_text, tag_font = self._fit_text(draw, tag, tag_w - 8, 11, bold=True, min_size=7)
+            tag_fill = COLORS["worldcup_live"] if is_live else (COLORS["green"] if is_recent else COLORS["worldcup_tag"])
+            draw.rectangle((x1 + 14, y1 + 9, x1 + 14 + tag_w, y1 + 27), fill=tag_fill, outline=COLORS["border"], width=1)
+            draw.text((x1 + 18, y1 + 10), tag_text, font=tag_font, fill=COLORS["text"])
+            date_text = event["start"].strftime("%m/%d")
+            date_text, date_font = self._fit_text(draw, date_text, 52, 11, bold=True, min_size=8)
+            self._draw_right_aligned(draw, (x2 - 12, y1 + 11), date_text, date_font, COLORS["muted"])
 
-        stage = self._clean_worldcup_stage(event.get("block"))
-        stage_text, stage_font = self._fit_text(draw, stage, x2 - x1 - 34, 8, bold=True, min_size=6)
-        draw.text((x1 + 18, y1 + 30), stage_text, font=stage_font, fill=COLORS["worldcup_accent"])
+            stage = self._clean_worldcup_stage(event.get("block"))
+            stage_text, stage_font = self._fit_text(draw, stage, x2 - x1 - 34, 8, bold=True, min_size=6)
+            draw.text((x1 + 18, y1 + 30), stage_text, font=stage_font, fill=COLORS["worldcup_accent"])
 
         status_text = (
             str(event.get("status") or "赛况待确认")
@@ -713,13 +717,9 @@ class WorldCupRenderMixin:
             source = self._worldcup_status_source_label(event)
             if source:
                 status_text = f"{source} {status_text}"
-        status_text, status_font = self._fit_text(draw, status_text, x2 - x1 - 42, 16, bold=True, min_size=10)
-        status_y = y1 + 41
-        club = (presentation or {}).get("competition") == "club"
-        # A club card's round, broadcasters and venue run long: its status sits clear of them.
-        if club:
-            status_y += 7
-        self._draw_centered(draw, ((x1 + x2) / 2, status_y), status_text, status_font, COLORS["text"])
+        if not club:
+            status_text, status_font = self._fit_text(draw, status_text, x2 - x1 - 42, 16, bold=True, min_size=10)
+            self._draw_centered(draw, ((x1 + x2) / 2, y1 + 41), status_text, status_font, COLORS["text"])
 
         center_x = (x1 + x2) / 2
         # National flags stand 36 px tall (at most twice as wide), starting beside the status line.
@@ -736,6 +736,12 @@ class WorldCupRenderMixin:
                 pass
         left_area = (x1 + 18, center_x - 21)
         right_area = (center_x + 21, x2 - 18)
+        if club:
+            # Club crests stand toward the card's edges, in line with the pill and the date, so the
+            # kick-off time or score has the middle to itself.
+            left_area = (x1 + 16, x1 + 96)
+            right_area = (x2 - 92, x2 - 12)
+            flag_cap = min(flag_cap, left_area[1] - left_area[0])
         flag_y = y1 + flag_top
         if presentation:
             # A page with larger crests starts them higher, beside the centred kick-off time.
@@ -771,6 +777,12 @@ class WorldCupRenderMixin:
             align="center",
             presentation=presentation,
         )
+        if club:
+            self._draw_club_card_details(
+                draw, x1, y2, center_x, (left_area, right_area), flag_y, flag_h, event, now,
+                status_text, is_live, is_recent, presentation,
+            )
+            return
         center_label = self._worldcup_score_or_vs(event)
         center_label, center_font = self._fit_text(draw, center_label, 64, 17, bold=True, min_size=11)
         self._draw_centered(draw, (center_x, flag_y + flag_h / 2 + 1), center_label, center_font, COLORS["text"])
@@ -889,6 +901,90 @@ class WorldCupRenderMixin:
             if odds.get("draw"):
                 self._draw_worldcup_odds_text(draw, (center_x - 26, odds_y, center_x + 26, odds_y + 12), f"X {odds.get('draw')}", max_size=9)
             self._draw_worldcup_odds_text(draw, (right_area[0], odds_y, right_area[1], odds_y + 12), (event.get("odds") or {}).get("team_b"), max_size=9)
+
+    def _draw_club_card_header(self, draw, x1, y1, x2, event, tag, is_live, is_recent):
+        """A club card's top: a rounded status pill, the date with its weekday at the right, and the
+        broadcasters and venue in one quiet line under them."""
+        pill_fill = COLORS["worldcup_live"] if is_live else (COLORS["green"] if is_recent else COLORS["worldcup_tag"])
+        pill_ink = COLORS["paper_text"] if is_live else COLORS["text"]
+        tag_text, tag_font = self._fit_text(draw, tag, 104, 11, bold=True, min_size=7)
+        pill_w = self._text_width(draw, tag_text, tag_font) + 18
+        pill = (x1 + 16, y1 + 8, x1 + 16 + pill_w, y1 + 25)
+        draw.rounded_rectangle(pill, radius=8, fill=pill_fill)
+        self._draw_centered_in_box(draw, pill, tag_text, tag_font, pill_ink)
+        start = event["start"]
+        date_text = f"{start:%m/%d} 周{'一二三四五六日'[start.weekday()]}"
+        date_text, date_font = self._fit_text(draw, date_text, 80, 11, bold=True, min_size=8)
+        self._draw_right_aligned(draw, (x2 - 12, y1 + 11), date_text, date_font, COLORS["muted"])
+        stage = " · ".join(part.strip() for part in self._clean_worldcup_stage(event.get("block")).split("|") if part.strip())
+        stage_text, stage_font = self._fit_text(draw, stage, x2 - x1 - 34, 9, bold=True, min_size=7)
+        draw.text((x1 + 16, y1 + 28), stage_text, font=stage_font, fill=COLORS["muted"])
+
+    def _draw_club_card_details(self, draw, x1, y2, center_x, areas, flag_y, flag_h, event, now, status_text,
+                                is_live, is_recent, presentation):
+        """Between the crests, the one thing that matters most in large type (the kick-off time, or
+        the score once the ball is rolling) with a small line under it; the names under the crests;
+        and the win chances as one labelled bar along the card's foot."""
+        left_area, right_area = areas
+        middle = flag_y + flag_h / 2
+        if is_live or is_recent:
+            headline = self._worldcup_score_or_vs(event)
+            caption, caption_fill = status_text, (COLORS["worldcup_live"] if is_live else COLORS["muted"])
+        else:
+            headline = status_text
+            caption = self._lpl_countdown_label(event.get("start"), now) or "VS"
+            caption_fill = COLORS["muted"]
+        headline, headline_font = self._fit_text(draw, headline, 92, 24, bold=True, min_size=13)
+        self._draw_centered(draw, (center_x, middle - 6), headline, headline_font, COLORS["text"])
+        caption, caption_font = self._fit_text(draw, caption, 92, 10, bold=True, min_size=7)
+        self._draw_centered(draw, (center_x, middle + 15), caption, caption_font, caption_fill)
+        details = [self._worldcup_side_period_score_label(event, side) for side in ("a", "b")] if is_recent else []
+        if any(details):
+            # Extra time and penalties, home first: "P4 · P3".
+            detail = " · ".join(part or "-" for part in details)
+            detail, detail_font = self._fit_text(draw, detail, 82, 8, bold=True, min_size=6)
+            self._draw_centered(draw, (center_x, middle + 26), detail, detail_font, COLORS["muted"])
+
+        name_max, name_min = 14, 9
+        try:
+            name_max = max(7, min(24, int((presentation or {}).get("main_team_name_max_size", name_max))))
+            name_min = max(5, min(name_max, int((presentation or {}).get("main_team_name_min_size", name_min))))
+        except (TypeError, ValueError):
+            pass
+        bar_bottom = y2 - 9
+        label_top = bar_bottom - 18
+        name_y = min(flag_y + flag_h + 11, label_top - 9)
+        for side, (left, right) in (("a", left_area), ("b", right_area)):
+            name, name_font = self._fit_text(draw, event.get(f"team_{side}"), right - left, name_max, bold=True,
+                                             min_size=name_min)
+            self._draw_centered(draw, ((left + right) / 2, name_y), name, name_font, COLORS["text"])
+
+        # A group stage's points and record take the foot row; otherwise the win chances do.
+        metas = [self._worldcup_team_points_meta(event, side) for side in ("a", "b")]
+        probabilities = None if any(metas) else self._club_win_probabilities(event)
+        width = right_area[1] - left_area[0]
+        if any(metas):
+            for meta, (left, right) in zip(metas, (left_area, right_area)):
+                self._draw_worldcup_odds_text(draw, (left, label_top + 4, right, label_top + 15), meta, max_size=8)
+        elif probabilities:
+            labels = (f"主胜 {probabilities[0]:.0%}", f"平 {probabilities[1]:.0%}", f"客胜 {probabilities[2]:.0%}")
+            label_font = self._font(9, bold=True)
+            draw.text((left_area[0], label_top), labels[0], font=label_font, fill=COLORS["blue"])
+            self._draw_centered_in_box(draw, (center_x - 40, label_top, center_x + 40, label_top + 11), labels[1],
+                                       label_font, COLORS["muted"])
+            self._draw_right_aligned(draw, (right_area[1], label_top), labels[2], label_font, COLORS["text"])
+            self._draw_club_probability_bar(draw, (left_area[0], bar_bottom - 4, right_area[1], bar_bottom),
+                                            probabilities)
+        elif self._worldcup_event_has_odds(event):
+            odds = event.get("odds") or {}
+            row = (label_top + 4, label_top + 16)
+            self._draw_worldcup_odds_text(draw, (left_area[0], row[0], left_area[0] + width / 3, row[1]),
+                                          odds.get("team_a"), max_size=9)
+            if odds.get("draw"):
+                self._draw_worldcup_odds_text(draw, (center_x - 26, row[0], center_x + 26, row[1]),
+                                              f"X {odds.get('draw')}", max_size=9)
+            self._draw_worldcup_odds_text(draw, (right_area[1] - width / 3, row[0], right_area[1], row[1]),
+                                          odds.get("team_b"), max_size=9)
 
     @staticmethod
     def _club_win_probabilities(event):

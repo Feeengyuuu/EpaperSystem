@@ -5586,7 +5586,7 @@ def test_lpl_focus_stage_label_uses_stage_without_series_score():
     assert "0-0" not in seen_texts
 
 
-def test_lpl_focus_stage_label_draws_above_vs():
+def test_lpl_focus_stage_label_draws_along_the_card_foot():
     plugin = _plugin()
     image = Image.new("RGB", (320, 220), COLORS["paper"])
     draw = ImageDraw.Draw(image)
@@ -5631,12 +5631,12 @@ def test_lpl_focus_stage_label_draws_above_vs():
     final_box = next(box for box, text in centered_labels if text == "Final")
     final_fit = next(call for call in fit_text_calls if call[0] == "Final")
     vs_center = next(center for center, text in centered_points if text == "VS")
-    assert final_fit[2] == 12
-    assert final_box[0] > 50
-    assert final_box[2] < 170
-    assert final_box[1] >= 76
-    assert final_box[3] <= 88
-    assert final_box[3] < vs_center[1]
+    assert final_fit[2] == 11
+    assert final_box[0] > 20
+    assert final_box[2] < 200
+    assert final_box[1] >= 138
+    assert final_box[3] <= 152
+    assert final_box[1] > vs_center[1]
 
 
 
@@ -5686,7 +5686,7 @@ def test_msi_focus_stage_label_draws_below_team_names():
     team_y = max(center[1] for center, text in centered_points if text in {"T1", "TLAW"})
     vs_center = next(center for center, text in centered_points if text == "VS")
     assert stage_fit[2] == 11
-    assert stage_box[1] >= team_y + 22
+    assert stage_box[1] >= team_y + 16
     assert stage_box[3] <= 152
     assert stage_box[3] > vs_center[1]
 
@@ -20337,7 +20337,7 @@ def test_club_football_slot_renders_mls_updates_through_production_timeline(
     assert source == "CLUB LIVE"
     assert wordmark_calls == [("MLS", (52, 6, 230, 33))]
     assert "美职联" not in fitted_text
-    assert "Apple TV | Stade Saputo" in fitted_text
+    assert "Apple TV · Stade Saputo" in fitted_text
     assert "DELAYED" in fitted_text
     assert "CLUB DATA 17:55" in fitted_text
 

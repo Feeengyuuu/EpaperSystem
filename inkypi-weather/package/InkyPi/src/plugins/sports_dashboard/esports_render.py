@@ -2079,85 +2079,77 @@ class EsportsRenderMixin:
         tag = "FINAL RESULT" if is_final else (
             "LAST MATCH" if is_recent else self._lpl_focus_tag(is_live)
         )
-        tag_w = 112 if is_live or is_recent else 86
-        tag_text, tag_font = self._fit_text(draw, tag, tag_w - 10, 12, bold=True, min_size=8)
-        tag_fill = COLORS[config["live"]] if is_live else COLORS[config["tag"]]
-        draw.rectangle((card_x1 + 16, y + 12, card_x1 + 16 + tag_w, y + 31), fill=tag_fill, outline=COLORS["border"], width=1)
-        draw.text((card_x1 + 21, y + 13), tag_text, font=tag_font, fill=COLORS["text"])
+        # A rounded status pill and the date open the card; the state or start time follows in one
+        # line above the logos, so nothing runs into them.
+        tag_text, tag_font = self._fit_text(draw, tag, 112, 11, bold=True, min_size=8)
+        pill_w = self._text_width(draw, tag_text, tag_font) + 18
+        pill = (card_x1 + 16, y + 11, card_x1 + 16 + pill_w, y + 28)
+        draw.rounded_rectangle(pill, radius=8, fill=COLORS[config["live"]] if is_live else COLORS[config["tag"]])
+        self._draw_centered_in_box(draw, pill, tag_text, tag_font, COLORS["paper_text"] if is_live else COLORS["text"])
         date_text = event["start"].strftime("%m/%d")
         date_text, date_font = self._fit_text(draw, date_text, 54, 12, bold=True, min_size=9)
         self._draw_right_aligned(draw, (card_x2 - 12, y + 13), date_text, date_font, COLORS["muted"])
 
+        # Under the pill, the logos stand at the card's edges; between them, the one thing that matters
+        # most in large type (the start time, or the series score once it starts) with a small line
+        # under it. The names sit under the logos, the odds under the names, the stage along the foot.
         center_x = right_x + right_w / 2
-        time_text = "IN PROGRESS" if is_live else (
-            "FINAL" if is_final else (
-                "RESULT PENDING" if is_recent else self._format_time(event["start"])
-            )
-        )
-        time_text, time_font = self._fit_text(draw, time_text, card_x2 - card_x1 - 58, 19, bold=True, min_size=13)
-        self._draw_centered(draw, (center_x, y + 44), time_text, time_font, COLORS["text"])
-
-        # The logos stand large, starting just under the time and ending above the names; the two
-        # sides stand apart toward the card's edges, leaving the middle to the time and countdown.
         logo_size = 50
         side_inset, side_half = 10, 30
         left_area = (card_x1 + side_inset, card_x1 + side_inset + 2 * side_half)
         right_area = (card_x2 - side_inset - 2 * side_half, card_x2 - side_inset)
         left_logo_x = int((left_area[0] + left_area[1] - logo_size) / 2)
         right_logo_x = int((right_area[0] + right_area[1] - logo_size) / 2)
-        logo_y = y + 54
+        logo_y = y + 38
         self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, logo_y, logo_size, event["team_a"])
         self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, logo_y, logo_size, event["team_b"])
+        middle = logo_y + logo_size / 2
+        middle_w = right_area[0] - left_area[1] - 2
+
         score_text = self._score_label(event).upper()
         center_score = score_text if (is_live or is_recent) and score_text != "VS" else "VS"
-        team_a_label = self._lpl_display_team_from_event(event, "a", league_key=league_key)
-        team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
-
-        stage = self._lpl_stage_label(event, league_key=league_key)
-        stage_is_lower_badge = config["key"] in {"MSI", "WORLDS"}
-        if not is_live and not stage_is_lower_badge:
-            stage_text, stage_font = self._fit_text(draw, stage, 88, 12, bold=True, min_size=7)
-            self._draw_centered_in_box(
-                draw,
-                (center_x - 44, y + 76, center_x + 44, y + 88),
-                stage_text,
-                stage_font,
-                COLORS[config["accent"]],
-            )
-        # Before the match, how long until it starts takes the place of "VS" between the logos.
+        if is_live or is_recent:
+            headline, headline_size = center_score, 24
+            caption = "IN PROGRESS" if is_live else ("FINAL" if is_final else "RESULT PENDING")
+            caption_fill = COLORS[config["live"]] if is_live else COLORS["muted"]
+        else:
+            headline, headline_size = self._format_time(event["start"]), 16
+            caption, caption_fill = "VS", COLORS["muted"]
+        headline, headline_font = self._fit_text(draw, headline, middle_w, headline_size, bold=True, min_size=11)
+        self._draw_centered(draw, (center_x, middle - 9), headline, headline_font, COLORS["text"])
+        # Before the match, how long until it starts takes the place of "VS" under the time.
         upcoming = not is_live and not is_recent and self._lpl_countdown_label(event["start"], now)
         if upcoming:
-            self._draw_lpl_countdown(draw, center_x, y + 90, event["start"], now, COLORS[config["accent"]])
+            self._draw_lpl_countdown(draw, center_x, middle + 4, event["start"], now, COLORS[config["accent"]])
         else:
-            self._draw_centered(draw, (center_x, y + (98 if not is_live else 86)), center_score, self._font(13, True),
-                                COLORS["text"])
+            caption, caption_font = self._fit_text(draw, caption, middle_w, 10, bold=True, min_size=7)
+            self._draw_centered(draw, (center_x, middle + 11), caption, caption_font, caption_fill)
         if is_live:
             self._draw_lpl_little_round(draw, center_x, y, event)
 
-        team_y = y + 116
-        team_a, font_a = self._fit_text(draw, team_a_label, left_area[1] - left_area[0], 22, bold=True, min_size=13)
-        team_b, font_b = self._fit_text(draw, team_b_label, right_area[1] - right_area[0], 22, bold=True, min_size=13)
+        team_a_label = self._lpl_display_team_from_event(event, "a", league_key=league_key)
+        team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
+        team_y = y + 104
+        team_a, font_a = self._fit_text(draw, team_a_label, left_area[1] - left_area[0], 19, bold=True, min_size=12)
+        team_b, font_b = self._fit_text(draw, team_b_label, right_area[1] - right_area[0], 19, bold=True, min_size=12)
         self._draw_centered(draw, ((left_area[0] + left_area[1]) / 2, team_y), team_a, font_a, COLORS["text"])
         self._draw_centered(draw, ((right_area[0] + right_area[1]) / 2, team_y), team_b, font_b, COLORS["text"])
 
-        if not is_live and stage_is_lower_badge:
-            stage_text, stage_font = self._fit_text(draw, stage, card_x2 - card_x1 - 42, 11, bold=True, min_size=7)
-            self._draw_centered_in_box(
-                draw,
-                (card_x1 + 21, y + 138, card_x2 - 21, y + 152),
-                stage_text,
-                stage_font,
-                COLORS[config["accent"]],
-            )
+        stage = self._lpl_stage_label(event, league_key=league_key)
+        stage_text, stage_font = self._fit_text(draw, stage, card_x2 - card_x1 - 42, 11, bold=True, min_size=7)
+        self._draw_centered_in_box(
+            draw,
+            (card_x1 + 21, y + 138, card_x2 - 21, y + 152),
+            stage_text,
+            stage_font,
+            COLORS[config["accent"]],
+        )
 
         odds = event.get("odds") or {}
         has_odds = not is_recent and bool(odds.get("team_a") and odds.get("team_b"))
         if has_odds:
-            self._draw_lpl_odds_text(draw, (left_area[0], y + 132, left_area[1], y + 144), odds.get("team_a"), max_size=11)
-            self._draw_lpl_odds_text(draw, (right_area[0], y + 132, right_area[1], y + 144), odds.get("team_b"), max_size=11)
-        elif is_live:
-            block_text, block_font = self._fit_text(draw, stage, card_x2 - card_x1 - 34, 12, bold=True, min_size=8)
-            draw.text((card_x1 + 17, y + 136), block_text, font=block_font, fill=COLORS[config["accent"]])
+            self._draw_lpl_odds_text(draw, (left_area[0], y + 117, left_area[1], y + 129), odds.get("team_a"), max_size=11)
+            self._draw_lpl_odds_text(draw, (right_area[0], y + 117, right_area[1], y + 129), odds.get("team_b"), max_size=11)
 
     def _draw_lpl_little_round(self, draw, center_x, y, event):
         little_round = (event or {}).get("little_round") or {}
@@ -2166,10 +2158,9 @@ class EsportsRenderMixin:
         score = str(little_round.get("score") or "").strip()
         if not score:
             return
-        label, label_font = self._fit_text(draw, "Little Round", 78, 9, bold=True, min_size=7)
-        self._draw_centered_in_box(draw, (center_x - 40, y + 96, center_x + 40, y + 106), label, label_font, COLORS["muted"])
-        score_text, score_font = self._fit_text(draw, score, 48, 12, bold=True, min_size=9)
-        self._draw_centered_in_box(draw, (center_x - 24, y + 106, center_x + 24, y + 119), score_text, score_font, COLORS["amber"])
+        # The game in progress, under the series score: "本局 0-0".
+        line, line_font = self._fit_text(draw, f"本局 {score}", 64, 10, bold=True, min_size=7)
+        self._draw_centered_in_box(draw, (center_x - 32, y + 83, center_x + 32, y + 94), line, line_font, COLORS["amber"])
 
     @staticmethod
     def _lpl_countdown_label(start, now):
