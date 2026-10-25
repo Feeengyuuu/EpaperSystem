@@ -132,10 +132,15 @@ TICKER_PALETTES = {
 		"value": WHITE,
 	},
 }
+# The holdings' marks: each scaled to the same visual area (LOGO_AREA_SHARE of the slot's
+# height, squared) in a slot LOGO_SLOT_RATIO times as wide as tall (the holdings rows' slot is
+# HOLDING_LOGO_SLOT_W); at night, parts darker than LOGO_NIGHT_INK_BELOW turn to the ink.
+LOGO_AREA_SHARE, LOGO_SLOT_RATIO, HOLDING_LOGO_SLOT_W, LOGO_NIGHT_INK_BELOW = 0.86, 1.2, 22, 56
 LOGO_ASSET_BY_SYMBOL = {
 	"AAPL": "aapl.png",
 	"AMZN": "amzn.png",
 	"CASH": "cash.png",
+	"FIG": "fig.png",
 	"GOOG": "goog.png",
 	"GOOGL": "googl.png",
 	"MSFT": "msft.png",
@@ -1970,11 +1975,21 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		self._section_wordmark_cache[cache_key] = wordmark
 		return wordmark
 
-	def _holding_logo_image(self, symbol, size):
+	def _holding_logo_image(self, symbol, size, width=None):
+		"""The holding's official mark centred in a ``size``-tall slot ``width`` wide.
+
+		Every mark is scaled to the same visual area (a wide one such as Nintendo's runs wider,
+		a tall one stands taller) within the slot; at night its near-black parts (Apple,
+		SpaceX, Take-Two) turn to the page's ink.
+		"""
 		asset_name = self._holding_logo_asset(symbol)
 		if not asset_name:
 			return None
-		cache_key = (asset_name, int(size))
+		size = int(size)
+		width = int(width or round(size * LOGO_SLOT_RATIO))
+		colors = _active_stock_colors()
+		night = colors["mode"] == "night"
+		cache_key = (asset_name, size, width, night)
 		if cache_key in self._holding_logo_cache:
 			return self._holding_logo_cache[cache_key]
 
@@ -1987,9 +2002,19 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				resample = Image.Resampling.LANCZOS
 			except AttributeError:
 				resample = Image.LANCZOS
-			logo.thumbnail((size, size), resample)
-			canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-			canvas.alpha_composite(logo, ((size - logo.width) // 2, (size - logo.height) // 2))
+			area = (size * LOGO_AREA_SHARE) ** 2
+			scale = min(math.sqrt(area / (logo.width * logo.height)), width / logo.width, size / logo.height)
+			logo = logo.resize((max(1, round(logo.width * scale)), max(1, round(logo.height * scale))), resample)
+			if night:
+				ink = colors["ink"]
+				pixels = logo.load()
+				for y in range(logo.height):
+					for x in range(logo.width):
+						r, g, b, a = pixels[x, y]
+						if a and max(r, g, b) < LOGO_NIGHT_INK_BELOW:
+							pixels[x, y] = (*ink[:3], a)
+			canvas = Image.new("RGBA", (width, size), (0, 0, 0, 0))
+			canvas.alpha_composite(logo, ((width - logo.width) // 2, (size - logo.height) // 2))
 		except Exception as e:
 			logging.warning(f"Could not load holding logo for {symbol}: {type(e).__name__}: {e}")
 			return None
@@ -2288,9 +2313,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		draw.rectangle((left, top + 1, left + 3, bottom - 2), fill=indicator)
 
 		logo_size = max(min(bottom - top - 2, 16), 10)
-		logo = self._holding_logo_image(data.get("symbol"), logo_size)
+		# The marks share one slot between the day's colour bar and the symbol.
+		logo = self._holding_logo_image(data.get("symbol"), logo_size, width=HOLDING_LOGO_SLOT_W)
 		if logo:
-			img.paste(logo, (left + 8, round(center_y - logo.height / 2)), logo)
+			img.paste(logo, (left + 7, round(center_y - logo.height / 2)), logo)
 
 		row_font = self._font(12)
 		bold_font = self._font(12, True)

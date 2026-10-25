@@ -319,14 +319,55 @@ def test_stock_tracker_uses_robinhood_header_brand_for_money_settings():
 def test_stock_tracker_loads_img2_holding_logo_assets():
     plugin = StockTracker({"id": "stocktracker"})
 
-    for symbol in ["AAPL", "NVDA", "TSLA", "GOOGL", "NTDOY", "VTI", "VXUS", "VGIT", "SPY", "TTWO", "SPCX", "CASH"]:
+    for symbol in ["AAPL", "NVDA", "TSLA", "GOOGL", "NTDOY", "VTI", "VXUS", "VGIT", "SPY", "TTWO", "SPCX", "FIG", "CASH"]:
         logo = plugin._holding_logo_image(symbol, 20)
         assert logo is not None, symbol
         assert logo.mode == "RGBA"
-        assert logo.size == (20, 20)
+        assert logo.size == (24, 20)
         bbox = logo.getchannel("A").getbbox()
         assert bbox is not None
         assert abs(((bbox[1] + bbox[3]) / 2) - 10) <= 2.5
+        assert abs(((bbox[0] + bbox[2]) / 2) - 12) <= 2.5
+
+
+def test_holding_logos_are_bare_marks_of_one_visual_size():
+    from plugins.stocktracker import stocktracker as module
+    from PIL import Image
+
+    logos_dir = Path(module.__file__).resolve().parent / "assets" / "logos"
+    credits = json.loads((logos_dir / "credits.json").read_text(encoding="utf-8"))["marks"]
+    plugin = StockTracker({"id": "stocktracker"})
+    areas = {}
+    for symbol, asset in module.LOGO_ASSET_BY_SYMBOL.items():
+        assert asset in credits, asset
+        with Image.open(logos_dir / asset) as source:
+            mark = source.convert("RGBA")
+        # No tile behind the mark: its corners are clear.
+        assert mark.getpixel((0, 0))[3] == 0 and mark.getpixel((mark.width - 1, mark.height - 1))[3] == 0, asset
+        bbox = plugin._holding_logo_image(symbol, 16, width=22).getchannel("A").getbbox()
+        areas[symbol] = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+    # A wide mark runs wider and a tall one taller, but none dwarfs another.
+    assert max(areas.values()) <= 2.2 * min(areas.values())
+
+
+def test_dark_holding_marks_turn_to_ink_at_night():
+    from plugins.stocktracker import stocktracker as module
+
+    plugin = StockTracker({"id": "stocktracker"})
+    night = {**module._active_stock_colors(), "mode": "night", "ink": (240, 240, 240)}
+    token = module._ACTIVE_STOCK_COLORS.set(night)
+    try:
+        apple = plugin._holding_logo_image("AAPL", 20)
+        tesla = plugin._holding_logo_image("TSLA", 20)
+    finally:
+        module._ACTIVE_STOCK_COLORS.reset(token)
+    def pixels(image):
+        return [image.getpixel((x, y)) for x in range(image.width) for y in range(image.height)]
+
+    opaque = [pixel for pixel in pixels(apple) if pixel[3] > 200]
+    assert opaque and all(pixel[:3] == (240, 240, 240) for pixel in opaque)
+    # A brand colour keeps its own.
+    assert any(pixel[3] > 200 and pixel[0] > 180 and pixel[1] < 80 for pixel in pixels(tesla))
 
 
 def test_stock_tracker_loads_img2_section_wordmark_assets():

@@ -1,0 +1,108 @@
+{
+  "built": "2026-10-24",
+  "style": "each brand's official mark alone on a transparent ground, trimmed with a 4 px margin",
+  "marks": {
+    "aapl.png": {
+      "source": "https://assets.parqet.com/logos/symbol/AAPL?format=png&size=200",
+      "owner": "Apple Inc. (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "475c11968359342e5599e6cb59ad72a519566ec62fe72d88bb9c2279c467162f",
+      "sha256": "fb7442fe888344d52bcc4fffd48b829d7c46ca890321cf61e75e0fb6381ffca4"
+    },
+    "amzn.png": {
+      "source": "https://assets.parqet.com/logos/symbol/AMZN?format=png&size=200",
+      "owner": "Amazon.com, Inc. (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "0c04c2165d5333c67ef13c9cff7c526b3225384dff28c503dce0b62779c78bbb",
+      "sha256": "f0301fa9d4ba8b24d93b29b4d93b5356cf2527b78a0733f53fef1b4ef3db7559"
+    },
+    "goog.png": {
+      "source": "https://assets.parqet.com/logos/symbol/GOOG?format=png&size=200",
+      "owner": "Google LLC (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "8ddaf076262680d869edd49e4f237f6e27176c133ba74327b9abc0ad1ac2f66c",
+      "sha256": "c1c9387d842dc09883243c69d8a314275a49ebff7eb323204e77cfb4650fc7dc"
+    },
+    "googl.png": {
+      "source": "https://assets.parqet.com/logos/symbol/GOOGL?format=png&size=200",
+      "owner": "Google LLC (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "242990035f6bd35bf736ad7338d40a6cc3ec2d36c20bb60d99555b81af739553",
+      "sha256": "2e537fcea59864aabed922f7bd02b7f3e735648ebc6aa2095c5c3a71be761b28"
+    },
+    "msft.png": {
+      "source": "https://assets.parqet.com/logos/symbol/MSFT?format=png&size=200",
+      "owner": "Microsoft Corporation (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "b0c2e5914cd62d4adc2c3dbea5321be1a3ddc0a8b6e0259df3c32d116985c78e",
+      "sha256": "71b9c0f1bf7991b7246f4f2515ef56fe9fca860050baa6e28f4ceda68ecf254d"
+    },
+    "ntdoy.png": {
+      "source": "https://assets.parqet.com/logos/symbol/NTDOY?format=png&size=200",
+      "owner": "Nintendo Co., Ltd. (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "18396af3c56d6624161e21f4997af5131c8945f2a197c28b0c25e7f4c370e0c8",
+      "sha256": "12da84c938bdd9231b8aa4b1794b801eb5cf20b88e78837927f26003fe7a97d1"
+    },
+    "spy.png": {
+      "source": "https://assets.parqet.com/logos/symbol/SPY?format=png&size=200",
+      "owner": "State Street (SPDR ETFs) (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "0647e693da95a106fa6b275d2487764bbdc9ecea40dc9b72c5fe887d0773b47e",
+      "sha256": "19fd440b80238203db3ceea943a6800c9cd7c784edfd7da86e0affae3b280993"
+    },
+    "tsla.png": {
+      "source": "https://assets.parqet.com/logos/symbol/TSLA?format=png&size=200",
+      "owner": "Tesla, Inc. (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "fd80d188bc6a7412ca60846ae688124fa13bc2d796134873f76d9ae9aace4a98",
+      "sha256": "a0cbb2fd97a93f663a51ce4141416b00300be3a4827099d022759c6d1806526e"
+    },
+    "ttwo.png": {
+      "source": "https://assets.parqet.com/logos/symbol/TTWO?format=png&size=200",
+      "owner": "Take-Two Interactive (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "14eaaa418f90949825d03fe76f0890de460e48393d523baca375b7083cd09348",
+      "sha256": "3840f865aebfaeafb690e5c5712e5d8721d1674b589ece16f7d0b26cc536f39d"
+    },
+    "vanguard.png": {
+      "source": "https://assets.parqet.com/logos/symbol/VTI?format=png&size=200",
+      "owner": "The Vanguard Group (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "199c56640bb39b68bb56ec93b39997194a163e901ff4bbd164562165adabf6e2",
+      "sha256": "e6b09ebc6f6f14f8aa7444f19a8990bec0183c7a8706724cec45a5d8cc24ecbc"
+    },
+    "vti.png": {
+      "source": "https://assets.parqet.com/logos/symbol/VTI?format=png&size=200",
+      "owner": "The Vanguard Group (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "199c56640bb39b68bb56ec93b39997194a163e901ff4bbd164562165adabf6e2",
+      "sha256": "e6b09ebc6f6f14f8aa7444f19a8990bec0183c7a8706724cec45a5d8cc24ecbc"
+    },
+    "vxus.png": {
+      "source": "https://assets.parqet.com/logos/symbol/VXUS?format=png&size=200",
+      "owner": "The Vanguard Group (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "199c56640bb39b68bb56ec93b39997194a163e901ff4bbd164562165adabf6e2",
+      "sha256": "e6b09ebc6f6f14f8aa7444f19a8990bec0183c7a8706724cec45a5d8cc24ecbc"
+    },
+    "vgit.png": {
+      "source": "https://assets.parqet.com/logos/symbol/VGIT?format=png&size=200",
+      "owner": "The Vanguard Group (trademark), mark lifted from Parqet's ticker tile",
+      "source_sha256": "199c56640bb39b68bb56ec93b39997194a163e901ff4bbd164562165adabf6e2",
+      "sha256": "e6b09ebc6f6f14f8aa7444f19a8990bec0183c7a8706724cec45a5d8cc24ecbc"
+    },
+    "spcx.png": {
+      "source": "https://www.spacex.com/assets/favicon-spacex.ico (largest frame, 48x48, upscaled 4x before lifting)",
+      "owner": "Space Exploration Technologies Corp. (trademark), the site's own icon",
+      "source_sha256": "1b17fd7c26fe326bf178cbf266a4dd2e2f5483d758873611abf5c4bb17e503e0",
+      "sha256": "606b8371fe83e62630689c0cddb57e8ea41ee3f9217e9c71c8377647f652ea16"
+    },
+    "nvda.png": {
+      "source": "earlier assets/logos/nvda.png (kept as is)",
+      "owner": "NVIDIA Corporation (trademark)",
+      "source_sha256": "f8d45f09d762df8a92a5d8dfe86eba43754f41a83b2d1d667becd8e2434e952e",
+      "sha256": "78c0ecca12f5de7ff5c361f595c93cc7fd5f7b4b042a4ce49a0d6433723de673"
+    },
+    "fig.png": {
+      "source": "https://commons.wikimedia.org/wiki/File:Figma-logo.svg (500 px render)",
+      "owner": "Figma, Inc. (trademark); the file is public domain on Wikimedia Commons",
+      "source_sha256": "2b477136ef82ac2ac069fce3f33d0690dfe76e584b5caa89e57b7e353da08a96",
+      "sha256": "25fe101b022db4c2af150901855e6b0066eeef51cafd64a3c5bd3964e23eaa4f"
+    },
+    "cash.png": {
+      "source": "earlier assets/logos/cash.png (kept as is)",
+      "owner": "generated wallet badge (project asset)",
+      "source_sha256": "8f05e8dbbdb780cada3b9cf483b664c91fab8102c42307eab20a9affd1d5ab0d",
+      "sha256": "e23e64fb4636b5ae1aa6cc902f9c1517f94dcabfdb9d8b02c3035330e22d7eb8"
+    }
+  }
+}
