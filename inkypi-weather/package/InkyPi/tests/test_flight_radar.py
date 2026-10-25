@@ -641,3 +641,33 @@ def test_pro_view_orders_strips_and_lays_out_the_board_scope_and_strips():
     # The classic layout is still there when asked for.
     classic = plugin._render(snapshot, (800, 480), {"_inkypi_theme": _canonical_theme("day"), "layout": "classic"}, now)
     assert classic.tobytes() != image.tobytes()
+
+
+def test_strips_and_scope_carry_airport_marks_phase_icons_and_the_chart():
+    from plugins.flight_radar import pro_view
+
+    # An airport's own logo where Wikidata has one, else its country's flag, else nothing.
+    assert pro_view.route_mark("ORD", 14, 34) is not None
+    assert pro_view.route_mark("MEM", 14, 34) is not None  # the United States flag
+    assert pro_view.route_mark("ZZZ", 14, 34) is None
+    manifest, layers, features = pro_view._chart()
+    assert layers.size == tuple(manifest["image_size"])
+    idents = {navaid["ident"] for navaid in features["navaids"]}
+    assert {"SFO", "OAK", "SJC", "OSI"} <= idents
+    assert {airport["iata"] for airport in features["airports"]} >= {"SFO", "OAK", "SJC"}
+
+    plugin = _plugin()
+    theme = plugin._theme(_canonical_theme("day"))
+    image = Image.new("RGB", (60, 40), theme["panel"])
+    draw = ImageDraw.Draw(image)
+    pro_view._phase_icon(plugin, draw, (4, 4, 30, 30), "departure", theme)
+    assert image.getpixel((6, 6)) == theme["red"] and (255, 255, 255) in [
+        image.getpixel((x, y)) for x in range(4, 30) for y in range(4, 30)]
+
+    snapshot = _sample_snapshot()
+    now = datetime(2026, 10, 25, 9, 12, tzinfo=flight_radar_module.ZoneInfo("America/Los_Angeles"))
+    charted = plugin._render(snapshot, (800, 480), {"_inkypi_theme": _canonical_theme("day")}, now)
+    plain = plugin._render(snapshot, (800, 480), {"_inkypi_theme": _canonical_theme("day"), "mapMode": "none"}, now)
+    # The chart paints water west of SFO; with no map the panel stays plain there.
+    x, y = 120, 300
+    assert charted.getpixel((x, y)) != plain.getpixel((x, y))

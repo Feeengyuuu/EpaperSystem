@@ -1,0 +1,886 @@
+{
+ "sources": {
+  "index": "Wikidata (P238 IATA, P154 logo, P17 country)",
+  "logos": "Wikimedia Commons",
+  "flags": "flagcdn.com"
+ },
+ "fetched_at": "2026-10-25T16:26:57+00:00",
+ "airports": {
+  "ABQ": {
+   "country": "us",
+   "logo": ""
+  },
+  "ACV": {
+   "country": "us",
+   "logo": ""
+  },
+  "AKL": {
+   "country": "nz",
+   "logo": ""
+  },
+  "ALB": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Albany_International_Airport_Logo.png"
+  },
+  "AMS": {
+   "country": "",
+   "logo": "https://commons.wikimedia.org/wiki/File:Amsterdam_Airport_Schiphol_logo_%282018%E2%80%93present%29.svg"
+  },
+  "ANC": {
+   "country": "us",
+   "logo": ""
+  },
+  "ARN": {
+   "country": "se",
+   "logo": "https://commons.wikimedia.org/wiki/File:Stockholm-Arlanda_logo.png"
+  },
+  "ASE": {
+   "country": "us",
+   "logo": ""
+  },
+  "ASU": {
+   "country": "py",
+   "logo": ""
+  },
+  "ATH": {
+   "country": "gr",
+   "logo": ""
+  },
+  "ATL": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Hartsfield%E2%80%93Jackson_Atlanta_International_Airport_Logo.svg"
+  },
+  "AUA": {
+   "country": "aw",
+   "logo": ""
+  },
+  "AUH": {
+   "country": "ae",
+   "logo": "https://commons.wikimedia.org/wiki/File:Zayed_International_Aiport_Logo.svg"
+  },
+  "AUS": {
+   "country": "us",
+   "logo": ""
+  },
+  "BCN": {
+   "country": "es",
+   "logo": "https://commons.wikimedia.org/wiki/File:Aena_Barcelona_logo.svg"
+  },
+  "BDL": {
+   "country": "us",
+   "logo": ""
+  },
+  "BHM": {
+   "country": "us",
+   "logo": ""
+  },
+  "BJX": {
+   "country": "mx",
+   "logo": ""
+  },
+  "BKK": {
+   "country": "th",
+   "logo": "https://commons.wikimedia.org/wiki/File:Suvarnabhumi_Airport%2C_AOT_Logo.svg"
+  },
+  "BLI": {
+   "country": "us",
+   "logo": ""
+  },
+  "BLR": {
+   "country": "in",
+   "logo": ""
+  },
+  "BNA": {
+   "country": "us",
+   "logo": ""
+  },
+  "BNE": {
+   "country": "au",
+   "logo": ""
+  },
+  "BOG": {
+   "country": "co",
+   "logo": "https://commons.wikimedia.org/wiki/File:ElDorado_International_Airport_logo.svg"
+  },
+  "BOI": {
+   "country": "us",
+   "logo": ""
+  },
+  "BOM": {
+   "country": "in",
+   "logo": "https://commons.wikimedia.org/wiki/File:Mumbai_Airport_Logo.svg"
+  },
+  "BOS": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Boston_Logan_logo.png"
+  },
+  "BUF": {
+   "country": "us",
+   "logo": ""
+  },
+  "BUR": {
+   "country": "us",
+   "logo": ""
+  },
+  "BWI": {
+   "country": "us",
+   "logo": ""
+  },
+  "BZN": {
+   "country": "us",
+   "logo": ""
+  },
+  "CAN": {
+   "country": "cn",
+   "logo": ""
+  },
+  "CDG": {
+   "country": "fr",
+   "logo": "https://commons.wikimedia.org/wiki/File:Paris_A%C3%A9roport_logo.svg"
+  },
+  "CGK": {
+   "country": "id",
+   "logo": "https://commons.wikimedia.org/wiki/File:Soekarno%E2%80%93Hatta_International_Airport_Logo.png"
+  },
+  "CHS": {
+   "country": "us",
+   "logo": ""
+  },
+  "CLE": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Cleveland_Hopkins_International_Airport.svg"
+  },
+  "CLO": {
+   "country": "co",
+   "logo": ""
+  },
+  "CLT": {
+   "country": "us",
+   "logo": ""
+  },
+  "CMH": {
+   "country": "us",
+   "logo": ""
+  },
+  "CPH": {
+   "country": "dk",
+   "logo": "https://commons.wikimedia.org/wiki/File:CPH-logo-no-text.svg"
+  },
+  "CTS": {
+   "country": "jp",
+   "logo": ""
+  },
+  "CTU": {
+   "country": "cn",
+   "logo": ""
+  },
+  "CUN": {
+   "country": "mx",
+   "logo": ""
+  },
+  "CVG": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:CVG_logo_blue-green.svg"
+  },
+  "DAL": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Dallas_Love_Field_Logo.svg"
+  },
+  "DCA": {
+   "country": "us",
+   "logo": ""
+  },
+  "DEL": {
+   "country": "in",
+   "logo": "https://commons.wikimedia.org/wiki/File:Indira_Gandhi_International_Airport_Logo.svg"
+  },
+  "DEN": {
+   "country": "us",
+   "logo": ""
+  },
+  "DFW": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:DFW_airport_logo.svg"
+  },
+  "DOH": {
+   "country": "qa",
+   "logo": ""
+  },
+  "DPS": {
+   "country": "id",
+   "logo": "https://commons.wikimedia.org/wiki/File:Ngurah_Rai_International_Airport_Logo.png"
+  },
+  "DSM": {
+   "country": "us",
+   "logo": ""
+  },
+  "DTW": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Detroit_Metropolitan_Wayne_County_Airport_Logo.svg"
+  },
+  "DUB": {
+   "country": "ie",
+   "logo": "https://commons.wikimedia.org/wiki/File:Dublin_airport_logo.svg"
+  },
+  "DXB": {
+   "country": "ae",
+   "logo": "https://commons.wikimedia.org/wiki/File:DXB_word_mark.svg"
+  },
+  "EGE": {
+   "country": "us",
+   "logo": ""
+  },
+  "ELP": {
+   "country": "us",
+   "logo": ""
+  },
+  "EUG": {
+   "country": "us",
+   "logo": ""
+  },
+  "EWR": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:EWR_airport_logo.svg"
+  },
+  "EZE": {
+   "country": "ar",
+   "logo": ""
+  },
+  "FAI": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Fairbanks_International_Airport_Logo.png"
+  },
+  "FAT": {
+   "country": "us",
+   "logo": ""
+  },
+  "FCO": {
+   "country": "it",
+   "logo": "https://commons.wikimedia.org/wiki/File:Adr-logo.svg"
+  },
+  "FLL": {
+   "country": "us",
+   "logo": ""
+  },
+  "FOR": {
+   "country": "br",
+   "logo": "https://commons.wikimedia.org/wiki/File:Fortaleza_airport_logo.svg"
+  },
+  "FRA": {
+   "country": "de",
+   "logo": "https://commons.wikimedia.org/wiki/File:Frankfurt_Airport_Logo_2019.svg"
+  },
+  "FUK": {
+   "country": "jp",
+   "logo": ""
+  },
+  "GCM": {
+   "country": "gb",
+   "logo": ""
+  },
+  "GDL": {
+   "country": "mx",
+   "logo": ""
+  },
+  "GEG": {
+   "country": "us",
+   "logo": ""
+  },
+  "GRU": {
+   "country": "br",
+   "logo": ""
+  },
+  "GUA": {
+   "country": "gt",
+   "logo": ""
+  },
+  "GYE": {
+   "country": "ec",
+   "logo": ""
+  },
+  "HAN": {
+   "country": "vn",
+   "logo": ""
+  },
+  "HAV": {
+   "country": "cu",
+   "logo": ""
+  },
+  "HDN": {
+   "country": "us",
+   "logo": ""
+  },
+  "HEL": {
+   "country": "fi",
+   "logo": "https://commons.wikimedia.org/wiki/File:HEL_airport_logo-01.svg"
+  },
+  "HKG": {
+   "country": "cn",
+   "logo": ""
+  },
+  "HND": {
+   "country": "jp",
+   "logo": "https://commons.wikimedia.org/wiki/File:Haneda_airport_logo%282023%29.svg"
+  },
+  "HNL": {
+   "country": "us",
+   "logo": ""
+  },
+  "HOU": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Houston_airports_logo_blue.png"
+  },
+  "HYD": {
+   "country": "in",
+   "logo": "https://commons.wikimedia.org/wiki/File:Rajiv_Gandhi_International_Airport_Logo.svg"
+  },
+  "IAD": {
+   "country": "us",
+   "logo": ""
+  },
+  "IAH": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Airport_logo_of_George_Bush_Intercontinental-International_Airport.svg"
+  },
+  "ICN": {
+   "country": "kr",
+   "logo": ""
+  },
+  "ICT": {
+   "country": "us",
+   "logo": ""
+  },
+  "IND": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Indianapolis_International_Airport_Logo.svg"
+  },
+  "IST": {
+   "country": "tr",
+   "logo": "https://commons.wikimedia.org/wiki/File:%C4%B0GA_Havaliman%C4%B1_%C4%B0%C5%9Fletmesi_A.%C5%9E._logo.svg"
+  },
+  "ITO": {
+   "country": "us",
+   "logo": ""
+  },
+  "JAC": {
+   "country": "us",
+   "logo": ""
+  },
+  "JAX": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Jax-international-logo.PNG"
+  },
+  "JFK": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:JFK_airport_logo.svg"
+  },
+  "JNU": {
+   "country": "us",
+   "logo": ""
+  },
+  "KEF": {
+   "country": "is",
+   "logo": "https://commons.wikimedia.org/wiki/File:Isavia_keflavik_logo.svg"
+  },
+  "KHH": {
+   "country": "tw",
+   "logo": ""
+  },
+  "KIX": {
+   "country": "jp",
+   "logo": "https://commons.wikimedia.org/wiki/File:Kansai_International_Airport_Logo.gif"
+  },
+  "KOA": {
+   "country": "us",
+   "logo": ""
+  },
+  "KTN": {
+   "country": "us",
+   "logo": ""
+  },
+  "KUL": {
+   "country": "my",
+   "logo": "https://commons.wikimedia.org/wiki/File:Kuala_Lumpur_International_Airport_Logo.svg"
+  },
+  "LAS": {
+   "country": "us",
+   "logo": ""
+  },
+  "LAX": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:LAX_blue_logo.svg"
+  },
+  "LGA": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:LGA_airport_logo.svg"
+  },
+  "LGB": {
+   "country": "us",
+   "logo": ""
+  },
+  "LGW": {
+   "country": "gb",
+   "logo": "https://commons.wikimedia.org/wiki/File:LGW_airport_logo.svg"
+  },
+  "LHR": {
+   "country": "gb",
+   "logo": ""
+  },
+  "LIH": {
+   "country": "us",
+   "logo": ""
+  },
+  "LIM": {
+   "country": "pe",
+   "logo": ""
+  },
+  "LIR": {
+   "country": "cr",
+   "logo": ""
+  },
+  "LIS": {
+   "country": "pt",
+   "logo": "https://commons.wikimedia.org/wiki/File:Logo_LIS_pt.svg"
+  },
+  "LIT": {
+   "country": "us",
+   "logo": ""
+  },
+  "MAD": {
+   "country": "es",
+   "logo": "https://commons.wikimedia.org/wiki/File:Aena_Madrid_logo.svg"
+  },
+  "MAN": {
+   "country": "gb",
+   "logo": ""
+  },
+  "MBJ": {
+   "country": "jm",
+   "logo": "https://commons.wikimedia.org/wiki/File:Montegobayairlogo.jpg"
+  },
+  "MCI": {
+   "country": "us",
+   "logo": ""
+  },
+  "MCO": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:MCO_airport_logo.svg"
+  },
+  "MDE": {
+   "country": "co",
+   "logo": ""
+  },
+  "MEL": {
+   "country": "au",
+   "logo": ""
+  },
+  "MEM": {
+   "country": "us",
+   "logo": ""
+  },
+  "MEX": {
+   "country": "mx",
+   "logo": ""
+  },
+  "MFR": {
+   "country": "us",
+   "logo": ""
+  },
+  "MHT": {
+   "country": "us",
+   "logo": ""
+  },
+  "MIA": {
+   "country": "us",
+   "logo": ""
+  },
+  "MID": {
+   "country": "mx",
+   "logo": ""
+  },
+  "MKE": {
+   "country": "us",
+   "logo": ""
+  },
+  "MNL": {
+   "country": "ph",
+   "logo": "https://commons.wikimedia.org/wiki/File:Ninoy_Aquino_International_Airport_logo.svg"
+  },
+  "MRY": {
+   "country": "us",
+   "logo": ""
+  },
+  "MSO": {
+   "country": "us",
+   "logo": ""
+  },
+  "MSP": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Minneapolis-Saint_Paul_International_Airport_Logo.svg"
+  },
+  "MSY": {
+   "country": "us",
+   "logo": ""
+  },
+  "MTY": {
+   "country": "mx",
+   "logo": "https://commons.wikimedia.org/wiki/File:MTYOMA.jpg"
+  },
+  "MUC": {
+   "country": "de",
+   "logo": "https://commons.wikimedia.org/wiki/File:Munich_Airport_text_logo_2024.svg"
+  },
+  "MVD": {
+   "country": "uy",
+   "logo": "https://commons.wikimedia.org/wiki/File:MVDLOGO.png"
+  },
+  "MXP": {
+   "country": "it",
+   "logo": "https://commons.wikimedia.org/wiki/File:MXP_airport_logo.svg"
+  },
+  "MZT": {
+   "country": "mx",
+   "logo": ""
+  },
+  "NAN": {
+   "country": "fj",
+   "logo": ""
+  },
+  "NAS": {
+   "country": "bs",
+   "logo": ""
+  },
+  "NGO": {
+   "country": "jp",
+   "logo": ""
+  },
+  "NRT": {
+   "country": "jp",
+   "logo": "https://commons.wikimedia.org/wiki/File:Narita_Airport_Logo.svg"
+  },
+  "OAK": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:I_Fly_OAK_logo.png"
+  },
+  "OGG": {
+   "country": "us",
+   "logo": ""
+  },
+  "OKC": {
+   "country": "us",
+   "logo": ""
+  },
+  "OMA": {
+   "country": "us",
+   "logo": ""
+  },
+  "ONT": {
+   "country": "us",
+   "logo": ""
+  },
+  "ORD": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:O%27Hare_International_Airport_Logo.svg"
+  },
+  "ORF": {
+   "country": "us",
+   "logo": ""
+  },
+  "OSL": {
+   "country": "no",
+   "logo": "https://commons.wikimedia.org/wiki/File:Avinor_logo_purple.svg"
+  },
+  "PDX": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:PDX_Airport_Logo.jpg"
+  },
+  "PEK": {
+   "country": "cn",
+   "logo": ""
+  },
+  "PHL": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Philadelphia_International_Airport_logo.svg"
+  },
+  "PHX": {
+   "country": "us",
+   "logo": ""
+  },
+  "PIT": {
+   "country": "us",
+   "logo": ""
+  },
+  "PKX": {
+   "country": "cn",
+   "logo": ""
+  },
+  "POA": {
+   "country": "br",
+   "logo": "https://commons.wikimedia.org/wiki/File:Porto_Alegre_airport_logo.svg"
+  },
+  "PPT": {
+   "country": "fr",
+   "logo": ""
+  },
+  "PRG": {
+   "country": "cz",
+   "logo": "https://commons.wikimedia.org/wiki/File:Prague_airport_logo_czech.svg"
+  },
+  "PSP": {
+   "country": "us",
+   "logo": ""
+  },
+  "PTY": {
+   "country": "pa",
+   "logo": ""
+  },
+  "PUJ": {
+   "country": "do",
+   "logo": ""
+  },
+  "PVD": {
+   "country": "us",
+   "logo": ""
+  },
+  "PVG": {
+   "country": "cn",
+   "logo": ""
+  },
+  "PVR": {
+   "country": "mx",
+   "logo": ""
+  },
+  "PWM": {
+   "country": "us",
+   "logo": ""
+  },
+  "RDD": {
+   "country": "us",
+   "logo": ""
+  },
+  "RDM": {
+   "country": "us",
+   "logo": ""
+  },
+  "RDU": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:Raleigh-Durham_International_Airport_logo.svg"
+  },
+  "REC": {
+   "country": "br",
+   "logo": "https://commons.wikimedia.org/wiki/File:Aena_Recife.svg"
+  },
+  "RIC": {
+   "country": "us",
+   "logo": ""
+  },
+  "RNO": {
+   "country": "us",
+   "logo": ""
+  },
+  "ROC": {
+   "country": "us",
+   "logo": ""
+  },
+  "RSW": {
+   "country": "us",
+   "logo": ""
+  },
+  "SAL": {
+   "country": "sv",
+   "logo": ""
+  },
+  "SAN": {
+   "country": "us",
+   "logo": ""
+  },
+  "SAT": {
+   "country": "us",
+   "logo": ""
+  },
+  "SAV": {
+   "country": "us",
+   "logo": ""
+  },
+  "SBA": {
+   "country": "us",
+   "logo": ""
+  },
+  "SBP": {
+   "country": "us",
+   "logo": ""
+  },
+  "SCL": {
+   "country": "cl",
+   "logo": ""
+  },
+  "SDF": {
+   "country": "us",
+   "logo": ""
+  },
+  "SEA": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:FlySEA_logo.svg"
+  },
+  "SFO": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:SFO_Airport_logo_mark.svg"
+  },
+  "SGN": {
+   "country": "vn",
+   "logo": "https://commons.wikimedia.org/wiki/File:TIA-logo.jpg"
+  },
+  "SIN": {
+   "country": "sg",
+   "logo": ""
+  },
+  "SJC": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:San_Jose_International_Airport_logo%2C_2022.png"
+  },
+  "SJD": {
+   "country": "mx",
+   "logo": "https://commons.wikimedia.org/wiki/File:LCAAI.jpg"
+  },
+  "SJO": {
+   "country": "cr",
+   "logo": "https://commons.wikimedia.org/wiki/File:SJO_aeris.jpg"
+  },
+  "SJU": {
+   "country": "us",
+   "logo": ""
+  },
+  "SLC": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:SLC_International_Logo_Main.png"
+  },
+  "SMF": {
+   "country": "us",
+   "logo": ""
+  },
+  "SNA": {
+   "country": "us",
+   "logo": ""
+  },
+  "STL": {
+   "country": "us",
+   "logo": "https://commons.wikimedia.org/wiki/File:St._Louis_Lambert_International_Airport_logo.png"
+  },
+  "STT": {
+   "country": "us",
+   "logo": ""
+  },
+  "SUN": {
+   "country": "us",
+   "logo": ""
+  },
+  "SXM": {
+   "country": "sx",
+   "logo": "https://commons.wikimedia.org/wiki/File:SXMLOGO.webp"
+  },
+  "SYD": {
+   "country": "au",
+   "logo": ""
+  },
+  "SYR": {
+   "country": "us",
+   "logo": ""
+  },
+  "SZX": {
+   "country": "cn",
+   "logo": ""
+  },
+  "TFU": {
+   "country": "cn",
+   "logo": ""
+  },
+  "TLV": {
+   "country": "il",
+   "logo": ""
+  },
+  "TPA": {
+   "country": "us",
+   "logo": ""
+  },
+  "TPE": {
+   "country": "tw",
+   "logo": "https://commons.wikimedia.org/wiki/File:Taoyuan_International_Airport_Logo.svg"
+  },
+  "TSN": {
+   "country": "cn",
+   "logo": ""
+  },
+  "TUL": {
+   "country": "us",
+   "logo": ""
+  },
+  "TUS": {
+   "country": "us",
+   "logo": ""
+  },
+  "UIO": {
+   "country": "ec",
+   "logo": ""
+  },
+  "VIE": {
+   "country": "at",
+   "logo": "https://commons.wikimedia.org/wiki/File:VIE_ViennaAirport_Logo_RGB.svg"
+  },
+  "WAW": {
+   "country": "pl",
+   "logo": ""
+  },
+  "XMN": {
+   "country": "cn",
+   "logo": ""
+  },
+  "YEG": {
+   "country": "ca",
+   "logo": ""
+  },
+  "YLW": {
+   "country": "ca",
+   "logo": ""
+  },
+  "YOW": {
+   "country": "ca",
+   "logo": ""
+  },
+  "YQR": {
+   "country": "ca",
+   "logo": ""
+  },
+  "YUL": {
+   "country": "ca",
+   "logo": "https://commons.wikimedia.org/wiki/File:YUL_logo.svg"
+  },
+  "YVR": {
+   "country": "ca",
+   "logo": ""
+  },
+  "YWG": {
+   "country": "ca",
+   "logo": ""
+  },
+  "YXE": {
+   "country": "ca",
+   "logo": "https://commons.wikimedia.org/wiki/File:YXE_logo_2017.png"
+  },
+  "YYC": {
+   "country": "ca",
+   "logo": "https://commons.wikimedia.org/wiki/File:YYC_logo.svg"
+  },
+  "YYZ": {
+   "country": "ca",
+   "logo": "https://commons.wikimedia.org/wiki/File:Toronto_Pearson_logo.svg"
+  },
+  "ZIH": {
+   "country": "mx",
+   "logo": ""
+  },
+  "ZRH": {
+   "country": "ch",
+   "logo": "https://commons.wikimedia.org/wiki/File:Flughafen_Zurich_Logo.svg"
+  }
+ }
+}

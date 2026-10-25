@@ -4,22 +4,24 @@
 - An airport board for SFO, SJC and OAK under their logos: the METAR's flight category in its standard colour
   (VFR green, MVFR blue, IFR red, LIFR magenta), wind, visibility or ceiling and temperature,
   with the FAA's status for the airport.
-- A radar scope: range rings, bearing ticks, SFO's extended final approach course, each target
+- A radar scope on a chart of the Bay (USGS water and relief, OurAirports runways, airports and
+  navaids): range rings, bearing ticks, SFO's extended final approach course, each target
   with its history trail and an ATC data block (callsign; altitude in hundreds of feet and
   ground speed in tens of knots) on a leader line.
 - Flight progress strips for the nearest flights: the airline's wordmark, callsign, a phase
-  bar and tag, the route from city to city with airport codes, type, registration, altitude,
-  speed and distance.
+  bar and icon, the route between the two airports' logos (or their countries' flags) with
+  codes and cities, type, registration, altitude, speed and distance.
 """
 
 from __future__ import annotations
 
+import json
 import math
 from datetime import timezone
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from utils.local_wordmark import paste_local_wordmark
 from utils.safe_image import ImageLimits, safe_open_image
@@ -35,6 +37,8 @@ AIRPORT_CITIES = {"SFO": "旧金山", "SJC": "圣何塞", "OAK": "奥克兰"}
 CATEGORY_ROLES = {"VFR": "green", "MVFR": "blue", "IFR": "red", "LIFR": "magenta"}
 PHASES = {"arrival": ("进港", "blue"), "departure": ("离港", "red"), "ground": ("地面", "plane_ground"),
           "overflight": ("飞越", "amber")}
+# The phase icon's aircraft: its bearing (0 = up) and whether a runway line sits under it.
+PHASE_ICONS = {"departure": (45, True), "arrival": (135, True), "ground": (90, True), "overflight": (90, False)}
 SFO = (37.6213, -122.3790)
 # SFO's runways 28L/28R: arrivals fly the extended centreline in from the east-south-east.
 SFO_FINAL_BEARING = 118
@@ -44,6 +48,15 @@ BOARD = (16, 52, 784, 92)
 SCOPE = (16, 98, 456, 468)
 STRIPS = (466, 98, 784, 468)
 MAX_DATA_BLOCKS = 10
+CHART = ASSETS / "chart"
+_CHART_LIMITS = ImageLimits(max_bytes=2 * 1024 * 1024, max_width=2048, max_height=2048, max_pixels=2048 * 2048)
+# Places named on the chart, in the page's language, and home.
+CHART_PLACES = (("旧金山", 37.7793, -122.4193), ("奥克兰", 37.8044, -122.2712), ("圣何塞", 37.3382, -121.8863),
+                ("帕洛阿尔托", 37.4419, -122.1430), ("海沃德", 37.6688, -122.0808), ("圣马特奥", 37.5630, -122.3255),
+                ("核桃溪", 37.9101, -122.0652))
+HOME = (37.5485, -121.9886)
+EXPLICIT_MAPS = {"google", "google_static", "image", "static_image", "local", "local_image", "local_calibrated",
+                 "none", "off", "false"}
 WHITE = (255, 255, 255)
 
 
@@ -194,8 +207,12 @@ def _scope(plugin, image, snapshot, theme, settings, device_config):
     center_lon = plugin._number(center.get("lon")) or DEFAULT_LONGITUDE
     radius_nm = plugin._number(snapshot.get("radius_nm")) or DEFAULT_RADIUS_NM
     display_nm = plugin._display_radius(settings, radius_nm)
-    plugin._draw_map_layer(draw, image, inner, center_lat, center_lon, display_nm, cx, cy, radius_px, theme, settings,
-                           device_config)
+    mode = str(settings.get("mapMode") or "").strip().lower()
+    charted = mode not in EXPLICIT_MAPS and _chart_layer(plugin, image, inner, (center_lat, center_lon), display_nm,
+                                                          (cx, cy), radius_px, theme)
+    if not charted:
+        plugin._draw_map_layer(draw, image, inner, center_lat, center_lon, display_nm, cx, cy, radius_px, theme,
+                               settings, device_config)
     _dim_outside(image, inner, (cx, cy), radius_px, theme)
     draw = ImageDraw.Draw(image)
     _rings(plugin, draw, (cx, cy), radius_px, display_nm, theme)
@@ -227,6 +244,121 @@ def _scope(plugin, image, snapshot, theme, settings, device_config):
     _legend(plugin, draw, inner, theme)
     if not plotted:
         draw.text((cx, cy), "NO TRAFFIC", font=plugin._font(16, "bold"), fill=theme["muted"], anchor="mm")
+
+
+@lru_cache(maxsize=1)
+def _chart():
+    """(manifest, RGB layers, features) of the bundled chart, or None."""
+    try:
+        manifest = json.loads((CHART / "chart.json").read_text(encoding="utf-8"))
+        features = json.loads((CHART / "features.json").read_text(encoding="utf-8"))
+        with safe_open_image(CHART / "chart.png", limits=_CHART_LIMITS) as source:
+            layers = source.convert("RGB")
+    except (OSError, ValueError):
+        return None
+    return manifest, layers, features
+
+
+def _chart_layer(plugin, image, box, center, display_nm, centre, radius, theme):
+    """Paint the chart under the scope and draw its runways, airports, navaids and places; False
+    when the scope reaches past the bundled chart."""
+    chart = _chart()
+    if chart is None:
+        return False
+    manifest, layers, features = chart
+    x0, y0, x1, y1 = (int(value) for value in box)
+    size = (x1 - x0, y1 - y0)
+    scale = radius / display_nm
+    lat0, lon0 = center
+    cos0 = math.cos(math.radians(lat0))
+
+    def geo(px, py):
+        return lat0 + (centre[1] - py) / scale / 60, lon0 + (px - centre[0]) / scale / (60 * cos0)
+
+    bounds = manifest["bounds_wgs84"]
+    north, west = geo(x0, y0)
+    south, east = geo(x1, y1)
+    if west < bounds["west"] or east > bounds["east"] or south < bounds["south"] or north > bounds["north"]:
+        return False
+    width, height = layers.size
+    crop = (round((west - bounds["west"]) / (bounds["east"] - bounds["west"]) * width),
+            round((bounds["north"] - north) / (bounds["north"] - bounds["south"]) * height),
+            round((east - bounds["west"]) / (bounds["east"] - bounds["west"]) * width),
+            round((bounds["north"] - south) / (bounds["north"] - bounds["south"]) * height))
+    water, shade, _unused = layers.crop(crop).resize(size, Image.Resampling.BILINEAR).split()
+    land = Image.new("RGB", size, theme["panel"])
+    hills = Image.new("RGB", size, plugin._blend_color(theme["ink"], theme["panel"], 0.30))
+    land = Image.composite(hills, land, shade.point(lambda value: min(255, value * 2)))
+    sea = Image.composite(Image.new("RGB", size, theme["map_water"]), land, water)
+    shore = ImageChops.subtract(water.point(lambda value: 255 if value > 127 else 0),
+                                water.point(lambda value: 255 if value > 127 else 0).filter(ImageFilter.MinFilter(3)))
+    sea.paste(theme["map_water_line"], mask=shore)
+    image.paste(sea, (x0, y0))
+    draw = ImageDraw.Draw(image)
+
+    def at(lat, lon):
+        return plugin._project_geo(lat, lon, lat0, lon0, display_nm, centre[0], centre[1], radius)
+
+    label_font, small = plugin._font(8, "bold"), plugin._font(7, "bold")
+    for name, lat, lon in CHART_PLACES:
+        point = at(lat, lon)
+        if point and x0 < point[0] < x1 and y0 < point[1] < y1:
+            draw.text(point, name, font=plugin._city_font(8, "normal"), fill=theme["muted"], anchor="mm")
+    ocean = at(lat0 - 0.12, lon0 - 0.48)
+    if ocean:
+        draw.text(ocean, "太平洋", font=plugin._city_font(10, "bold"), fill=theme["map_water_line"], anchor="mm")
+    sizes = {"large_airport": 3, "medium_airport": 2, "small_airport": 2}
+    kinds = {airport["ident"]: airport for airport in features.get("airports") or []}
+    for runway in features.get("runways") or []:
+        a, b = at(*runway["ends"][:2]), at(*runway["ends"][2:])
+        airport = kinds.get(runway["airport"]) or {}
+        if a and b:
+            draw.line((*a, *b), fill=theme["ink"], width=sizes.get(airport.get("type"), 2))
+    for airport in kinds.values():
+        point = at(airport["lat"], airport["lon"])
+        if point and x0 < point[0] < x1 and y0 < point[1] < y1:
+            label = airport.get("iata") or airport["ident"]
+            big = airport.get("type") == "large_airport"
+            draw.text((point[0] + 7, point[1] + 5), label, font=plugin._font(9 if big else 8, "bold"), fill=theme["ink"],
+                      anchor="la", stroke_width=2, stroke_fill=theme["panel"])
+    for navaid in features.get("navaids") or []:
+        point = at(navaid["lat"], navaid["lon"])
+        if not point or not (x0 < point[0] < x1 and y0 < point[1] < y1):
+            continue
+        _navaid_symbol(draw, point, navaid["type"], theme)
+        label = f"{navaid['ident']} {navaid.get('frequency') or ''}".strip()
+        draw.text((point[0] + 7, point[1] - 7), label, font=small, fill=theme["blue"], anchor="ld",
+                  stroke_width=2, stroke_fill=theme["panel"])
+    home = at(*HOME)
+    if home and x0 < home[0] < x1 and y0 < home[1] < y1:
+        hx, hy = home
+        draw.ellipse((hx - 3, hy - 3, hx + 3, hy + 3), fill=theme["amber"], outline=theme["ink"])
+        draw.text((hx + 5, hy), "家", font=plugin._city_font(9, "bold"), fill=theme["ink"], anchor="lm",
+                  stroke_width=2, stroke_fill=theme["panel"])
+    return True
+
+
+def _navaid_symbol(draw, point, kind, theme):
+    """Chart symbols: a VOR's hexagon (in a square with DME, with three tabs as a VORTAC or
+    TACAN), an NDB's dotted ring."""
+    x, y = point
+    colour = theme["blue"]
+    if kind.startswith("NDB"):
+        for angle in range(0, 360, 30):
+            rad = math.radians(angle)
+            draw.point((x + 5 * math.cos(rad), y + 5 * math.sin(rad)), fill=colour)
+        draw.ellipse((x - 1.5, y - 1.5, x + 1.5, y + 1.5), fill=colour)
+        return
+    hexagon = [(x + 5 * math.cos(math.radians(angle)), y + 5 * math.sin(math.radians(angle))) for angle in range(0, 360, 60)]
+    draw.polygon(hexagon, outline=colour)
+    draw.ellipse((x - 1, y - 1, x + 1, y + 1), fill=colour)
+    if kind == "VOR-DME":
+        draw.rectangle((x - 6, y - 5, x + 6, y + 5), outline=colour)
+    elif kind in ("VORTAC", "TACAN"):
+        for angle in (90, 210, 330):
+            rad = math.radians(angle)
+            draw.line((x + 4 * math.cos(rad), y - 4 * math.sin(rad), x + 8 * math.cos(rad), y - 8 * math.sin(rad)),
+                      fill=colour, width=3)
 
 
 def _dim_outside(image, box, centre, radius, theme):
@@ -358,6 +490,79 @@ def airport_logo(code, height, max_width):
     return _bundled_logo("airports", str(code or "").upper(), max_width, height)
 
 
+@lru_cache(maxsize=1)
+def _route_airports():
+    path = ASSETS / "route_airports" / "airports.json"
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("airports") or {}
+    except (OSError, ValueError):
+        return {}
+
+
+@lru_cache(maxsize=128)
+def route_mark(iata, height, max_width):
+    """An airport's bundled logo (Wikidata/Commons) fitted to height x max_width, else its
+    country's flag a little smaller, else None."""
+    code = str(iata or "").upper()
+    if not (len(code) == 3 and code.isalpha()):
+        return None
+    logo = _bundled_logo("route_airports", code, max_width, height)
+    if logo is not None:
+        return logo
+    country = str((_route_airports().get(code) or {}).get("country") or "")
+    return _bundled_logo("route_airports/flags", country, max_width, height - 4) if country.isalpha() else None
+
+
+def _phase_icon(plugin, draw, box, phase, theme):
+    """The phase as an icon: a white aircraft in the phase's colour, climbing, descending, parked
+    or level, over a runway line when it is on or near the ground."""
+    x0, y0, x1, y1 = box
+    _name, role = PHASES[phase]
+    bearing, runway = PHASE_ICONS[phase]
+    draw.rounded_rectangle(box, radius=5, fill=theme[role])
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2 - (2 if runway else 0)
+    points = plugin._rotate_plane_points(plugin._material_flight_points(0.62), math.radians(bearing), cx, cy)
+    draw.polygon(points, fill=WHITE)
+    if runway:
+        draw.line((x0 + 4, y1 - 4, x1 - 4, y1 - 4), fill=WHITE, width=2)
+
+
+def _route_line(plugin, image, draw, plane, xy, width, theme, font, small):
+    """origin mark + code + city -> destination mark + code + city, ending within ``width``;
+    False when the route is unknown."""
+    origin, destination = str(plane.get("origin") or "").upper(), str(plane.get("destination") or "").upper()
+    if not (origin and destination):
+        return False
+    x, y = xy
+    right = x + width
+    night = sum(theme["panel2"]) < 330
+    parts = []
+    for code, city in ((origin, plane.get("origin_city")), (destination, plane.get("destination_city"))):
+        name = plugin._localized_city_name(code) or plugin._localized_city_name(city)
+        parts.append((code, "" if name == code else name, route_mark(code, 14, 34)))
+    arrow_w = 14
+    fixed = sum((mark.width + 3 if mark is not None else 0) + draw.textlength(code, font=font) + 3
+                for code, _name, mark in parts) + arrow_w
+    city_w = max(0, (width - fixed) / 2)
+    for index, (code, name, mark) in enumerate(parts):
+        if index:
+            draw.text((x + 2, y + 8), "→", font=font, fill=theme["muted"], anchor="lm")
+            x += arrow_w
+        if mark is not None:
+            if night:
+                draw.rounded_rectangle((x - 1, y + 8 - mark.height / 2 - 1, x + mark.width + 1, y + 8 + mark.height / 2 + 1),
+                                       radius=2, fill=(244, 246, 248))
+            image.paste(mark, (round(x), round(y + 8 - mark.height / 2)), mark)
+            x += mark.width + 3
+        draw.text((x, y + 8), code, font=font, fill=theme["ink"], anchor="lm")
+        x += draw.textlength(code, font=font) + 3
+        if name and city_w > 12:
+            fitted = _fit(draw, name, small, min(city_w, right - x))
+            draw.text((x, y + 8), fitted, font=small, fill=theme["muted"], anchor="lm")
+            x += draw.textlength(fitted, font=small) + 2
+    return True
+
+
 def _place(plugin, code, city):
     code = str(code or "").strip().upper()
     name = plugin._localized_city_name(code) if code else plugin._localized_city_name(city)
@@ -395,7 +600,7 @@ def _strips(plugin, image, snapshot, theme):
     draw.text((x1 - 10, y0 + 9), "最近航班 · 航线与机型", font=plugin._font(9, "bold"), fill=theme["muted"], anchor="ra")
     strip_h, gap, top = 66, 2, y0 + 28
     call_font, route_font = plugin._font(15, "bold"), plugin._city_font(11, "bold")
-    meta_font, chip_font = plugin._font(9, "bold"), plugin._font(9, "bold")
+    meta_font = plugin._font(9, "bold")
     for index, plane in enumerate(planes[:5]):
         sx0, sy0 = x0 + 6, top + index * (strip_h + gap)
         sx1, sy1 = x1 - 6, sy0 + strip_h
@@ -418,22 +623,24 @@ def _strips(plugin, image, snapshot, theme):
         else:
             draw.text(((logo_box[0] + logo_box[2]) / 2, (logo_box[1] + logo_box[3]) / 2), callsign[:3],
                       font=plugin._font(14, "bold"), fill=theme["muted"], anchor="mm")
-        chip_w = draw.textlength(name, font=chip_font) + 12
-        draw.rounded_rectangle((sx1 - 8 - chip_w, sy0 + 6, sx1 - 8, sy0 + 21), radius=7, fill=theme[role])
-        draw.text((sx1 - 8 - chip_w / 2, sy0 + 13.5), name, font=chip_font, fill=WHITE, anchor="mm")
+        icon = (sx1 - 30, sy0 + 6, sx1 - 8, sy0 + 28)
+        _phase_icon(plugin, draw, icon, phase, theme)
         text_x = sx0 + 82
-        draw.text((text_x, sy0 + 4), _fit(draw, callsign, call_font, sx1 - 16 - chip_w - text_x), font=call_font,
+        draw.text((text_x, sy0 + 4), _fit(draw, callsign, call_font, icon[0] - 6 - text_x), font=call_font,
                   fill=theme["ink"])
         distance = plugin._format_distance(plane.get("distance_nm"))
-        draw.text((sx1 - 8, sy0 + 27), distance, font=meta_font, fill=theme["muted"], anchor="ra")
-        route = _route(plugin, plane) or f"航线未知 · 应答机 {str(plane.get('hex') or '').upper()}"
-        draw.text((text_x, sy0 + 25), _fit(draw, route, route_font, sx1 - 14 - text_x - draw.textlength(distance, font=meta_font)),
-                  font=route_font, fill=theme["ink"])
+        draw.text((sx1 - 8, sy0 + 46), distance, font=meta_font, fill=theme["muted"], anchor="ra")
+        if not _route_line(plugin, image, draw, plane, (text_x, sy0 + 24), icon[0] - 6 - text_x, theme,
+                           plugin._font(10, "bold"), plugin._city_font(9, "bold")):
+            route = f"航线未知 · 应答机 {str(plane.get('hex') or '').upper()}"
+            draw.text((text_x, sy0 + 25), _fit(draw, route, route_font, icon[0] - 6 - text_x), font=route_font,
+                      fill=theme["muted"])
         speed = plugin._number(plane.get("speed_kt"))
         pieces = [str(plane.get("type") or "").upper(), str(plane.get("registration") or "").upper(),
                   _altitude(plugin, plane), f"{int(speed)} kt" if speed is not None and not plane.get("on_ground") else ""]
         draw.text((text_x, sy0 + 45), _fit(draw, " · ".join(piece for piece in pieces if piece), meta_font,
-                                           sx1 - 8 - text_x), font=meta_font, fill=theme["muted"])
+                                           sx1 - 14 - text_x - draw.textlength(distance, font=meta_font)),
+                  font=meta_font, fill=theme["muted"])
     if not planes:
         draw.text(((x0 + x1) / 2, (y0 + y1) / 2), "等待航班数据", font=plugin._font(13, "bold"), fill=theme["muted"],
                   anchor="mm")

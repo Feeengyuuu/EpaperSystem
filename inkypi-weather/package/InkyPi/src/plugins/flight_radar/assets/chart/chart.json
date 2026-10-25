@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "projection": "equirectangular, longitude scaled by cos(center latitude)",
+  "center": [
+    37.6213,
+    -122.379
+  ],
+  "pixels_per_nm": 12,
+  "image_size": [
+    768,
+    648
+  ],
+  "bounds_wgs84": {
+    "west": -123.05234731231182,
+    "east": -121.70565268768819,
+    "south": 37.171299999999995,
+    "north": 38.0713
+  },
+  "channels": {
+    "R": "water",
+    "G": "shaded_relief_darkness"
+  },
+  "sources": [
+    "https://basemap.nationalmap.gov/arcgis/rest/services/USGSHydroCached/MapServer/export?bbox=-123.05235%2C37.17130%2C-121.70565%2C38.07130&bboxSR=4326&imageSR=4326&size=768%2C648&format=png32&transparent=true&f=image",
+    "https://basemap.nationalmap.gov/arcgis/rest/services/USGSShadedReliefOnly/MapServer/export?bbox=-123.05235%2C37.17130%2C-121.70565%2C38.07130&bboxSR=4326&imageSR=4326&size=768%2C648&format=png32&transparent=true&f=image",
+    "https://davidmegginson.github.io/ourairports-data/airports.csv",
+    "https://davidmegginson.github.io/ourairports-data/runways.csv",
+    "https://davidmegginson.github.io/ourairports-data/navaids.csv"
+  ],
+  "license": "Public domain (USGS The National Map; OurAirports data)",
+  "fetched_at": "2026-10-25T16:20:36+00:00",
+  "sha256": {
+    "chart.png": "eaea9e394f0ed5a30c852eb483f1b90c41f96c8724947b7d00538731df07dc2c",
+    "features.json": "0303bc7845d1d302e6a5e667a4bf83a9adf52176d3eff456dd661aba17b9444d"
+  }
+}
