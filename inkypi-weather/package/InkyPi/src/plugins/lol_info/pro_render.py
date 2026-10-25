@@ -23,7 +23,7 @@ from plugins.sports_dashboard import cs2_branding
 from plugins.sports_dashboard.common import LOCAL_CS2_TEAM_LOGO_DIR
 from utils.fonts import load_font
 
-from .bo3_stats import MAP_NAMES
+from .bo3_stats import MAP_NAMES, WIN_DAYS
 from .hltv_players import ROLE_NAMES as CS2_ROLES
 from .pro_roster import ROLE_LABELS
 
@@ -45,6 +45,18 @@ LOL_PAGE_DIM, LOL_SPLASH_TAIL = 0.42, 96
 CARD_MARK_ALPHA, CARD_ART_ALPHA = 0.15, 0.36
 CHAMPION_LOADING_URL = "https://ddragon.leagueoflegends.com/cdn/img/champion/loading/{key}_0.jpg"
 RADAR_TRAIL, RADAR_SWEEP_ALPHA = 70, 0.34
+# The CS2 role card is a tactical screen: a dotted grid every GRID_STEP px, gold brackets of
+# HUD_ARM px on its corners, and the role chart (radius RADAR_RADIUS, centred RADAR_TOP below
+# the card's top) on a scope of SCOPE_RADIUS, drawn RADAR_SCALE times larger and scaled down;
+# the role labels sit RADAR_LABEL radii out.
+GRID_STEP, HUD_ARM = 14, 11
+RADAR_SCALE, RADAR_RADIUS, SCOPE_RADIUS, RADAR_TOP, RADAR_LABEL = 3, 56, 94, 132, 1.3
+# The slot under the results: the team's latest win over a photo of the player, else the photo,
+# cut round where the picture's detail gathers and zoomed in by PHOTO_ZOOM.
+PHOTO_ZOOM = 1.18
+# The win under its photo: the tag row, the opponent line, one row per map (its art chip
+# WIN_MAP_CHIP), and the rows over which the photo fades into the page above the text.
+WIN_TAG_H, WIN_HEADER_H, WIN_ROW_H, WIN_MAP_CHIP, WIN_FADE = 26, 20, 16, (24, 13), 26
 # An upcoming match's event logo fits this box before the event's name.
 CS2_EVENT_LOGO = (30, 13)
 # HLTV's own mark leads the Top 20 board's title.
@@ -491,15 +503,7 @@ class ProRenderMixin:
         self._tracker_badge(draw, pick, colors, fonts)
 
         x0, y0, x1, y1 = LEFT
-        self._frost(image, LEFT, colors)
-        roles = player.get("roles") or {}
-        draw.rectangle(LEFT, outline=colors["rule"], width=1)
-        self._text(draw, (x0 + 12, y0 + 7), "角色能力", fonts["section"], colors["ink"])
-        average = self._cs2_role_average(data.get("board") or [])
-        self._draw_role_tag(draw, roles, (x0 + 88, y0 + 9), colors, fonts)
-        self._draw_radar(image, draw, (x0 + 100, y0 + 164), 70, roles, colors, fonts, average)
-        self._draw_signature_role(draw, player, data.get("board") or [], average, (x0 + 12, y1 - 40, x0 + 206),
-                                  colors, fonts)
+        self._draw_cs2_role_card(image, draw, player, data.get("board") or [], colors, fonts)
         self._draw_cs2_matches(image, draw, player, (x0 + 214, y0 + 8, x1 - 10, y1 - 8), colors, fonts)
         self._frost(image, RIGHT, colors)
         self._team_mark(image, self._cs2_team_logo(player.get("team_logo_night") or player.get("team_logo"),
@@ -527,17 +531,16 @@ class ProRenderMixin:
         return True
 
     @staticmethod
-    def _draw_radar_sweep(image, centre, radius, roles, shape, colors):
-        """A radar screen around the role chart: a scope ring, and a gold beam swept onto the
-        player's best role with its trail fading out behind it. The beam lights only the
-        player's own shape, so no gold reaches past the scores it stands for."""
+    def _draw_radar_sweep(layer, centre, reach, roles, shape, colors, scale=1):
+        """A gold beam swept onto the player's best role with its trail fading out behind it,
+        composited onto ``layer``. The beam lights only the player's own shape, so no gold
+        reaches past the scores it stands for."""
         best = max(CS2_ROLES, key=lambda name: roles.get(name) or 0)
         heading = -90 + 360 * CS2_ROLES.index(best) / len(CS2_ROLES)
         cx, cy = centre
-        reach = radius * 1.12
         scope = (cx - reach, cy - reach, cx + reach, cy + reach)
-        layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
-        pen = ImageDraw.Draw(layer)
+        beam = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+        pen = ImageDraw.Draw(beam)
         steps = 28
         for step in range(steps):
             alpha = round(255 * RADAR_SWEEP_ALPHA * (1 - step / steps) ** 1.8)
@@ -545,14 +548,11 @@ class ProRenderMixin:
                          fill=(*colors["gold"][:3], alpha))
         angle = math.radians(heading)
         pen.line((cx, cy, cx + math.cos(angle) * reach, cy + math.sin(angle) * reach),
-                 fill=(*colors["gold"][:3], 210), width=2)
-        inside = Image.new("L", image.size, 0)
+                 fill=(*colors["gold"][:3], 210), width=2 * scale)
+        inside = Image.new("L", layer.size, 0)
         ImageDraw.Draw(inside).polygon(shape, fill=255)
-        layer.putalpha(ImageChops.multiply(layer.getchannel("A"), inside))
-        ImageDraw.Draw(layer).ellipse(scope, outline=(*colors["rule"][:3], 255), width=1)
-        base = image.convert("RGBA")
-        base.alpha_composite(layer)
-        image.paste(base.convert("RGB"))
+        beam.putalpha(ImageChops.multiply(beam.getchannel("A"), inside))
+        layer.alpha_composite(beam)
 
     @staticmethod
     def _fade_foot(photo, rows=CS2_PHOTO_FADE):
@@ -686,47 +686,167 @@ class ProRenderMixin:
         draw.rounded_rectangle((x, y, x + width, y + 18), radius=9, fill=colors["gold"])
         self._text(draw, (x + 7, y + 2), label, fonts["small_bold"], colors["background"])
 
+    def _draw_cs2_role_card(self, image, draw, player, board, colors, fonts):
+        """The left card as a tactical screen: gold corner brackets and a dotted grid, the role
+        chart on a radar scope, the signature role, and the player's bo3 career in four chips."""
+        x0, y0, x1, y1 = LEFT
+        self._frost(image, LEFT, colors)
+        grid = self._blend(colors["rule"], colors["panel"], 0.22)
+        for y in range(y0 + 14, y1 - 6, GRID_STEP):
+            for x in range(x0 + 10, x0 + 206, GRID_STEP):
+                draw.point((x, y), fill=grid)
+        # A dotted rule parts the role chart from the matches column.
+        for y in range(y0 + 12, y1 - 10, 4):
+            draw.point((x0 + 208, y), fill=self._blend(colors["rule"], colors["panel"], 0.4))
+        self._draw_hud_frame(draw, LEFT, colors)
+        roles = player.get("roles") or {}
+        self._text(draw, (x0 + 12, y0 + 7), "角色能力", fonts["section"], colors["ink"])
+        self._draw_role_tag(draw, roles, (x0 + 88, y0 + 9), colors, fonts)
+        average = self._cs2_role_average(board)
+        self._draw_radar(image, draw, (x0 + 103, y0 + RADAR_TOP), RADAR_RADIUS, roles, colors, fonts, average)
+        self._draw_signature_role(draw, player, board, (x0 + 12, y0 + 234, x0 + 204), colors, fonts)
+        caption_y = y0 + 254
+        if average:
+            draw.line((x0 + 12, caption_y + 6, x0 + 24, caption_y + 6), fill=colors["gold"], width=2)
+            self._text(draw, (x0 + 27, caption_y), "本人", fonts["tiny"], colors["muted"])
+            draw.line((x0 + 56, caption_y + 6, x0 + 68, caption_y + 6), fill=colors["cyan"], width=2)
+            self._text(draw, (x0 + 71, caption_y), "前 20 平均", fonts["tiny"], colors["muted"])
+        career = player.get("career") or {}
+        if career.get("maps"):
+            note = f"生涯 {career['maps']} 图"
+            self._text(draw, (x0 + 204 - self._text_width(draw, note, fonts["tiny"]), caption_y), note, fonts["tiny"],
+                       colors["muted"])
+            self._draw_career_chips(draw, career, (x0 + 8, caption_y + 15, x0 + 204, y1 - 8), colors, fonts)
+
+    def _draw_hud_frame(self, draw, box, colors, arm=HUD_ARM):
+        """A hairline frame with gold brackets on its corners, like a scope's targeting box."""
+        x0, y0, x1, y1 = box
+        draw.rectangle(box, outline=self._blend(colors["rule"], colors["panel"], 0.45), width=1)
+        for x, y, dx, dy in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
+            draw.line((x, y, x + dx * arm, y), fill=colors["gold"], width=2)
+            draw.line((x, y, x, y + dy * arm), fill=colors["gold"], width=2)
+
     def _draw_radar(self, image, draw, centre, radius, roles, colors, fonts, average=None):
+        """The role chart on a radar scope: a ticked bezel round banded rings, the Top 20 average
+        dashed in cyan, the player's shape in gold with a soft glow and the sweep onto their best
+        role, whose point carries a ring. Drawn RADAR_SCALE times larger and scaled down, so its
+        lines and curves come out smooth; the labels go on afterwards at the page's own size."""
+        k = RADAR_SCALE
         cx, cy = centre
+        half = SCOPE_RADIUS + 3
+        middle, reach, scope = half * k, radius * k, SCOPE_RADIUS * k
         count = len(CS2_ROLES)
-        points = lambda scale: [(cx + math.sin(2 * math.pi * i / count) * radius * scale,
-                                 cy - math.cos(2 * math.pi * i / count) * radius * scale) for i in range(count)]
+
+        def point(index, scale, origin=middle, length=reach):
+            angle = 2 * math.pi * index / count
+            return origin + math.sin(angle) * length * scale, origin - math.cos(angle) * length * scale
+
+        def ring(scale):
+            return [point(index, scale) for index in range(count)]
 
         def shape_of(scores):
-            values = [max(4, min(100, scores.get(name, 0))) / 100 for name in CS2_ROLES]
-            return [(cx + (x - cx) * value, cy + (y - cy) * value) for (x, y), value in zip(points(1.0), values)]
+            return [point(index, max(4, min(100, scores.get(name, 0))) / 100) for index, name in enumerate(CS2_ROLES)]
 
-        shape = shape_of(roles) if roles else []
-        if shape:
-            draw.polygon(shape, fill=self._blend(colors["gold"], colors["panel"], 0.28))
-            self._draw_radar_sweep(image, centre, radius, roles, shape, colors)
-        # The grid goes over the fill so the rings stay readable inside the shape.
-        for scale in (0.33, 0.66, 1.0):
-            draw.polygon(points(scale), outline=colors["rule"])
-        for x, y in points(1.0):
-            draw.line((cx, cy, x, y), fill=colors["rule"], width=1)
+        disc = self._blend(colors["background"], colors["panel"], 0.55)
+        band = self._blend(colors["rule"], disc, 0.08)
+        layer = Image.new("RGBA", (2 * middle, 2 * middle), (0, 0, 0, 0))
+        pen = ImageDraw.Draw(layer)
+        pen.ellipse((middle - scope, middle - scope, middle + scope, middle + scope), fill=(*disc, 215),
+                    outline=(*colors["rule"], 110), width=k)
+        inner = scope - 8 * k
+        pen.ellipse((middle - inner, middle - inner, middle + inner, middle + inner), outline=(*colors["rule"], 45),
+                    width=k)
+        for degree in range(0, 360, 5):
+            length = (5 if degree % 30 == 0 else 2.5) * k
+            angle = math.radians(degree)
+            pen.line((middle + math.sin(angle) * scope, middle - math.cos(angle) * scope,
+                      middle + math.sin(angle) * (scope - length), middle - math.cos(angle) * (scope - length)),
+                     fill=(*colors["rule"], 150 if degree % 30 == 0 else 80), width=k)
+        # A gold notch on the bezel marks each role's axis.
+        for index in range(count):
+            tip, left, right = (point(index, 1, length=scope - 6 * k), point(index - 0.08, 1, length=scope),
+                                point(index + 0.08, 1, length=scope))
+            pen.polygon((tip, left, right), fill=(*colors["gold"], 200))
+        # Banded rings (each band repaints its inner part), then the rings' and spokes' hairlines.
+        for scale, fill in ((1.0, band), (0.75, disc), (0.5, band), (0.25, disc)):
+            pen.polygon(ring(scale), fill=(*fill, 215))
+        for scale in (0.25, 0.5, 0.75):
+            pen.line(ring(scale) + ring(scale)[:1], fill=(*colors["rule"], 55), width=k)
+        pen.line(ring(1.0) + ring(1.0)[:1], fill=(*colors["rule"], 150), width=k)
+        for x, y in ring(1.0):
+            pen.line((middle, middle, x, y), fill=(*colors["rule"], 55), width=k)
         if average:
-            # The Top 20 average as a cyan outline, so every role reads as above or below it.
-            outline = shape_of(average)
-            draw.line(outline + outline[:1], fill=colors["cyan"], width=2)
-        if shape:
-            draw.line(shape + shape[:1], fill=colors["gold"], width=2)
-            for x, y in shape:
-                draw.ellipse((x - 2.5, y - 2.5, x + 2.5, y + 2.5), fill=colors["gold"])
-        for (x, y), name in zip(points(1.24), CS2_ROLES):
+            self._dashed_loop(pen, shape_of(average), (*colors["cyan"], 235), 2 * k, 5 * k, 3 * k)
+        if roles:
+            shape = shape_of(roles)
+            glow = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+            ImageDraw.Draw(glow).line(shape + shape[:1], fill=(*colors["gold"], 170), width=6 * k, joint="curve")
+            layer.alpha_composite(glow.filter(ImageFilter.GaussianBlur(4 * k)))
+            fill = Image.new("RGBA", layer.size, (0, 0, 0, 0))
+            ImageDraw.Draw(fill).polygon(shape, fill=(*colors["gold"], 72))
+            layer.alpha_composite(fill)
+            self._draw_radar_sweep(layer, (middle, middle), reach * 1.12, roles, shape, colors, k)
+            pen.line(shape + shape[:1], fill=(*colors["gold"], 255), width=round(2.4 * k), joint="curve")
+            best = max(range(count), key=lambda index: roles.get(CS2_ROLES[index]) or 0)
+            for index, (x, y) in enumerate(shape):
+                dot = (4.2 if index == best else 3) * k
+                if index == best:
+                    pulse = 8 * k
+                    pen.ellipse((x - pulse, y - pulse, x + pulse, y + pulse), outline=(*colors["gold"], 170), width=k)
+                pen.ellipse((x - dot, y - dot, x + dot, y + dot), fill=(*colors["gold"], 255),
+                            outline=(*colors["background"], 255), width=k)
+        small = layer.resize((2 * half, 2 * half), Image.Resampling.LANCZOS)
+        box = (cx - half, cy - half, cx + half, cy + half)
+        base = image.crop(box).convert("RGBA")
+        base.alpha_composite(small)
+        image.paste(base.convert("RGB"), box[:2])
+        self._draw_radar_labels(draw, centre, radius, roles, colors, fonts, average)
+
+    @staticmethod
+    def _dashed_loop(pen, points, fill, width, dash, gap):
+        """A closed dashed line through ``points``, its dashes running on round the corners."""
+        path = list(points) + list(points[:1])
+        period, travelled = dash + gap, 0.0
+        for (ax, ay), (bx, by) in zip(path, path[1:]):
+            length = math.hypot(bx - ax, by - ay)
+            at = 0.0
+            while at < length:
+                phase = (travelled + at) % period
+                step = min(dash - phase if phase < dash else period - phase, length - at)
+                if phase < dash:
+                    pen.line((ax + (bx - ax) * at / length, ay + (by - ay) * at / length,
+                              ax + (bx - ax) * (at + step) / length, ay + (by - ay) * (at + step) / length),
+                             fill=fill, width=width)
+                at += max(step, 0.5)
+            travelled += length
+
+    def _draw_radar_labels(self, draw, centre, radius, roles, colors, fonts, average):
+        """Each role's name and score outside the chart: the score gold where it beats the Top 20
+        average, muted where it trails it; the player's best role sits on a gold tag."""
+        cx, cy = centre
+        best = max(CS2_ROLES, key=lambda name: roles.get(name) or 0) if roles else None
+        for index, name in enumerate(CS2_ROLES):
+            angle = 2 * math.pi * index / len(CS2_ROLES)
+            x, y = cx + math.sin(angle) * radius * RADAR_LABEL, cy - math.cos(angle) * radius * RADAR_LABEL
             score = roles.get(name)
-            label = f"{CS2_ROLE_LABELS[name]} {score if score is not None else '-'}"
-            width = self._text_width(draw, label, fonts["tiny"])
+            label, value = CS2_ROLE_LABELS[name], str(score if score is not None else "-")
+            label_w = self._text_width(draw, label, fonts["tiny"])
+            width = label_w + 3 + self._text_width(draw, value, fonts["small_bold"])
+            left = x - width / 2
+            if name == best and score:
+                draw.rounded_rectangle((left - 5, y - 8, left + width + 5, y + 8), radius=8, fill=colors["gold"])
+                self._text(draw, (left, y - 6), label, fonts["tiny"], colors["background"])
+                self._text(draw, (left + label_w + 3, y - 7), value, fonts["small_bold"], colors["background"])
+                continue
             colour = colors["ink"]
             if isinstance(score, (int, float)) and average:
                 colour = (colors["gold"] if score >= average[name] + ROLE_MARGIN else
                           colors["muted"] if score <= average[name] - ROLE_MARGIN else colors["ink"])
-            elif isinstance(score, (int, float)) and score >= 80:
-                colour = colors["gold"]
-            self._text(draw, (x - width / 2, y - 6), label, fonts["tiny"], colour)
+            self._text(draw, (left, y - 6), label, fonts["tiny"], colors["muted"])
+            self._text(draw, (left + label_w + 3, y - 7), value, fonts["small_bold"], colour)
 
-    def _draw_signature_role(self, draw, player, board, average, line, colors, fonts):
-        """The player's strongest role with its place among the Top 20, and the radar's legend."""
+    def _draw_signature_role(self, draw, player, board, line, colors, fonts):
+        """The player's strongest role with its place among the Top 20."""
         x0, y, x1 = line
         roles = player.get("roles") or {}
         if not roles:
@@ -734,27 +854,45 @@ class ProRenderMixin:
         best = max(CS2_ROLES, key=lambda name: roles.get(name, 0))
         scores = sorted((row["roles"].get(best, 0) for row in board if row.get("roles")), reverse=True)
         place = 1 + sum(1 for score in scores if score > roles.get(best, 0))
-        self._text(draw, (x0, y), "招牌", fonts["tiny"], colors["muted"])
+        self._text(draw, (x0, y + 2), "招牌", fonts["tiny"], colors["muted"])
         text = f"{CS2_ROLE_LABELS[best]} {roles.get(best)}"
-        self._text(draw, (x0 + 26, y - 2), text, fonts["body"], colors["gold"])
+        self._text(draw, (x0 + 26, y), text, fonts["body"], colors["gold"])
         if len(scores) >= 3:
-            self._text(draw, (x0 + 30 + self._text_width(draw, text, fonts["body"]), y), f"前 20 第 {place}", fonts["tiny"],
-                       colors["ink"])
-        if average:
-            legend_y = y + 18
-            draw.line((x0, legend_y + 6, x0 + 14, legend_y + 6), fill=colors["gold"], width=2)
-            self._text(draw, (x0 + 18, legend_y), "本人", fonts["tiny"], colors["muted"])
-            draw.line((x0 + 50, legend_y + 6, x0 + 64, legend_y + 6), fill=colors["cyan"], width=2)
-            self._text(draw, (x0 + 68, legend_y), "前 20 平均", fonts["tiny"], colors["muted"])
+            self._text(draw, (x0 + 30 + self._text_width(draw, text, fonts["body"]), y + 2), f"前 20 第 {place}",
+                       fonts["tiny"], colors["ink"])
+
+    def _draw_career_chips(self, draw, career, box, colors, fonts):
+        """The player's bo3 career in four chips under a gold top edge: K/D, damage per round, the
+        share of maps won and titles."""
+        x0, y0, x1, y1 = box
+        kd, adr, rate = career.get("kd"), career.get("adr"), career.get("win_rate")
+        chips = (("K/D", f"{kd:.2f}" if isinstance(kd, (int, float)) else "-"),
+                 ("ADR", f"{adr:.0f}" if isinstance(adr, (int, float)) else "-"),
+                 ("地图胜率", f"{rate * 100:.0f}%" if isinstance(rate, (int, float)) else "-"),
+                 ("冠军", str(career.get("titles") if career.get("titles") is not None else "-")))
+        gap = 4
+        width = (x1 - x0 - gap * (len(chips) - 1)) / len(chips)
+        fill = self._blend(colors["background"], colors["panel"], 0.45)
+        edge = self._blend(colors["rule"], colors["panel"], 0.3)
+        for index, (label, value) in enumerate(chips):
+            left = round(x0 + index * (width + gap))
+            right = round(left + width)
+            draw.rounded_rectangle((left, y0, right, y1), radius=4, fill=fill, outline=edge)
+            draw.line((left + 3, y0, right - 3, y0), fill=colors["gold"], width=2)
+            self._text(draw, (left + (right - left - self._text_width(draw, label, fonts["tiny"])) / 2, y0 + 3), label,
+                       fonts["tiny"], colors["muted"])
+            self._single(draw, (left + (right - left - self._text_width(draw, value, fonts["body"])) / 2, y0 + 16), value,
+                         fonts["body"], colors["ink"], right - left - 4, 9)
 
     def _draw_cs2_matches(self, image, draw, player, box, colors, fonts):
         x0, y0, x1, y1 = box
         pool = player.get("map_pool") or []
-        photos = player.get("photos") or []
+        win = self._cs2_recent_win(player)
+        slot = bool(win or player.get("photos"))
         self._text(draw, (x0, y0), "赛程与战绩", fonts["small_bold"], colors["muted"])
         y = y0 + 20
-        # With a photo or a map pool to show, the next match is enough; without either, the next two.
-        for match in (player.get("upcoming") or [])[:1 if pool or photos else 2]:
+        # With the slot below to fill, the next match is enough; without it, the next two.
+        for match in (player.get("upcoming") or [])[:1 if pool or slot else 2]:
             when = datetime.fromtimestamp(match["unix_ms"] / 1000)
             self._text(draw, (x0, y), f"{when:%m/%d %H:%M}", fonts["tiny"], colors["cyan"])
             # "vs", then the opponent's logo right before its name; the event's own logo leads its title.
@@ -774,7 +912,8 @@ class ProRenderMixin:
             self._single(draw, (event_x, y + 27), match.get("event"), fonts["tiny"], colors["muted"], x1 - event_x, 7)
             y += 44
         own_logo = self._cs2_team_logo(player.get("team_logo_night") or player.get("team_logo"), player.get("team"), 16)
-        for match in (player.get("recent") or [])[:4]:
+        # The latest win takes the slot's room, so one result fewer is listed above it.
+        for match in (player.get("recent") or [])[:3 if win else 4]:
             self._draw_cs2_result(image, draw, match, own_logo, (x0, y, x1), colors, fonts)
             y += 24
             if y > y1 - 20:
@@ -782,32 +921,161 @@ class ProRenderMixin:
         if not player.get("upcoming") and not player.get("recent"):
             self._text(draw, (x0, y), "暂无比赛信息", fonts["small"], colors["muted"])
             y += 22
-        # The room under the results holds the newest HLTV picture of the player (the best map still
-        # lies behind the page); without one, the map pool, else the art.
-        if photos and y1 - y >= 50 and self._draw_cs2_photo(image, draw, player, (x0, y + 8, x1, y1), colors, fonts):
+        # The room under the results is the page's dynamic corner: the team's latest win with its
+        # maps over a picture of the player; else one of HLTV's newest pictures of the player, a new
+        # one each render; else the map pool, else the art (the best map still lies behind the page).
+        room = (x0, y + 6, x1, y1)
+        if win and self._draw_cs2_win(image, draw, player, win, room, colors, fonts):
+            return
+        if player.get("photos") and y1 - y >= 50 and self._draw_cs2_photo(image, draw, player, room, colors, fonts):
             return
         if pool and y1 - y >= 70:
             self._draw_cs2_maps(image, draw, pool, (x0, y + 8, x1, y1), colors, fonts)
         elif y1 - y >= 50:
             self._paste_asset_logo(image, "art-cs2-filler.png", (x0, y + 6, x1, y1))
 
+    @staticmethod
+    def _cs2_recent_win(player):
+        """The team's latest win while it is at most WIN_DAYS old and lists its maps (else None)."""
+        win = player.get("last_win") or {}
+        start = win.get("start")
+        if not win.get("maps") or not isinstance(start, (int, float)):
+            return None
+        return win if datetime.now().timestamp() - start <= WIN_DAYS * 86400 else None
+
+    def _cs2_photo(self, player):
+        """(picture, its place in HLTV's newest) for this render's random pick, or the next newest
+        that loads when it does not; (None, 0) when none does."""
+        photos = player.get("photos") or []
+        pick = player.get("photo_pick")
+        order = ([pick] if pick in photos else []) + [url for url in photos if url != pick]
+        for url in order[:3]:
+            photo = self._image_from_url(url, player.get("nick"))
+            if photo is not None:
+                return photo, photos.index(url) + 1
+        return None, 0
+
+    @staticmethod
+    def _focus_crop(photo, size, zoom=PHOTO_ZOOM):
+        """``photo`` cut to ``size`` round where its detail gathers (the players rather than the dark
+        stage wall above them), zoomed in a little; halfway to the middle, so one bright sign cannot
+        pull the cut off the players."""
+        source = photo.convert("RGB")
+        width, height = size
+        edges = source.convert("L").resize((64, max(3, round(64 * source.height / source.width))),
+                                           Image.Resampling.BILINEAR).filter(ImageFilter.FIND_EDGES)
+        pixels = edges.load()
+        total = sum_x = sum_y = 0
+        for y in range(1, edges.height - 1):
+            for x in range(1, edges.width - 1):
+                value = pixels[x, y]
+                total, sum_x, sum_y = total + value, sum_x + value * x, sum_y + value * y
+        focus_x = (sum_x / total / edges.width + 0.5) / 2 if total else 0.5
+        focus_y = (sum_y / total / edges.height + 0.45) / 2 if total else 0.45
+        crop_w = min(source.width, source.height * width / height) / zoom
+        crop_h = crop_w * height / width
+        left = min(max(0.0, focus_x * source.width - crop_w / 2), source.width - crop_w)
+        top = min(max(0.0, focus_y * source.height - crop_h / 2), source.height - crop_h)
+        return source.resize(size, Image.Resampling.LANCZOS, box=(left, top, left + crop_w, top + crop_h))
+
     def _draw_cs2_photo(self, image, draw, player, box, colors, fonts):
-        """The newest picture HLTV has of the player, framed like the map art with its credit; False
-        when none loads, so the room keeps its art."""
+        """This render's pick of HLTV's newest pictures of the player, cut round them, with its credit
+        and its place among the pictures; False when none loads, so the room keeps its art."""
         x0, y0, x1, y1 = [int(value) for value in box]
-        photo = next((image_ for image_ in (self._image_from_url(url, player.get("nick"))
-                                             for url in (player.get("photos") or [])[:3]) if image_ is not None), None)
+        photo, place = self._cs2_photo(player)
         if photo is None:
             return False
-        fitted = ImageOps.fit(photo.convert("RGB"), (x1 - x0, y1 - y0), method=Image.Resampling.LANCZOS,
-                              centering=(0.5, 0.35))
-        image.paste(fitted, (x0, y0))
+        image.paste(self._focus_crop(photo, (x1 - x0, y1 - y0)), (x0, y0))
         draw.rectangle((x0, y0, x1, y1), outline=colors["gold"], width=1)
-        credit = "HLTV 最新照片"
+        credit = f"HLTV 最新照片 {place}/{len(player.get('photos') or [])}"
         credit_w = self._text_width(draw, credit, fonts["tiny"]) + 10
         draw.rectangle((x0 + 1, y1 - 15, x0 + 1 + credit_w, y1 - 1), fill=colors["background"])
         self._text(draw, (x0 + 6, y1 - 14), credit, fonts["tiny"], colors["ink"])
         return True
+
+    def _draw_cs2_win(self, image, draw, player, win, box, colors, fonts):
+        """The team's latest win under a picture of the player (the first map's art without one): a
+        最近胜利 tag and the date on the picture, which fades into the page above the opponent and the
+        series score, each map with its art, the player's K-D on it and its score, and the player's
+        line over the series. False when not even one map fits."""
+        x0, y0, x1, y1 = [int(value) for value in box]
+        width, height = x1 - x0, y1 - y0
+        maps = win.get("maps") or []
+        line_h = 14 if win.get("kills") is not None else 0
+        rows = maps[:max(0, (height - WIN_TAG_H - WIN_HEADER_H - line_h - 6) // WIN_ROW_H)]
+        if not rows:
+            return False
+        text_top = height - 6 - line_h - WIN_ROW_H * len(rows) - WIN_HEADER_H
+        # The picture is cut for the room above the text, so the player stays in view there.
+        photo, _place = self._cs2_photo(player)
+        art = photo if photo is not None else self._map_art(maps[0].get("map"))
+        canvas = Image.new("RGB", (width, height), colors["background"])
+        if art is not None:
+            shown = min(height, text_top + WIN_FADE // 2)
+            canvas.paste(self._focus_crop(art, (width, shown)), (0, 0))
+            ramp = Image.new("L", (1, height), 0)
+            for y in range(max(0, shown - WIN_FADE), height):
+                ramp.putpixel((0, y), round(255 * min(1.0, (y - shown + WIN_FADE) / WIN_FADE)))
+            canvas = Image.composite(Image.new("RGB", (width, height), colors["background"]), canvas,
+                                     ramp.resize((width, height)))
+        image.paste(canvas, (x0, y0))
+        draw.rectangle((x0, y0, x1, y1), outline=colors["gold"], width=1)
+        tag = "最近胜利"
+        tag_w = self._text_width(draw, tag, fonts["small_bold"]) + 12
+        draw.rounded_rectangle((x0 + 5, y0 + 5, x0 + 5 + tag_w, y0 + 21), radius=8, fill=colors["gold"])
+        self._text(draw, (x0 + 11, y0 + 7), tag, fonts["small_bold"], colors["background"])
+        if isinstance(win.get("start"), (int, float)):
+            day = f"{datetime.fromtimestamp(win['start']):%m/%d}"
+            day_w = self._text_width(draw, day, fonts["tiny"]) + 8
+            draw.rectangle((x1 - 5 - day_w, y0 + 6, x1 - 5, y0 + 20), fill=colors["background"])
+            self._text(draw, (x1 - 1 - day_w, y0 + 7), day, fonts["tiny"], colors["ink"])
+        y = y0 + text_top
+        self._text(draw, (x0 + 6, y), "vs", fonts["small_bold"], colors["ink"])
+        name_x = x0 + 11 + self._text_width(draw, "vs", fonts["small_bold"])
+        logo = self._cs2_team_logo(win.get("opponent_logo"), win.get("opponent"), 16)
+        if logo is not None:
+            image.paste(logo, (name_x + (16 - logo.width) // 2, y + 1 + (16 - logo.height) // 2), logo)
+            name_x += 20
+        score = str(win.get("score") or "")
+        score_w = self._text_width(draw, score, fonts["body"])
+        self._single(draw, (name_x, y), self._fitted_name(draw, win.get("opponent") or "-", fonts["small_bold"],
+                                                          x1 - 12 - score_w - name_x),
+                     fonts["small_bold"], colors["ink"], x1 - 12 - score_w - name_x, 8)
+        self._text(draw, (x1 - 6 - score_w, y - 2), score, fonts["body"], colors["gold"])
+        y += WIN_HEADER_H
+        for row in rows:
+            self._draw_win_map(image, draw, row, (x0 + 6, y, x1 - 6), colors, fonts)
+            y += WIN_ROW_H
+        if line_h:
+            line = (f"{player.get('nick') or ''} 本场 {win['kills']}-{win['deaths']}"
+                    + (f" · ADR {win['adr']:.0f}" if isinstance(win.get("adr"), (int, float)) else ""))
+            self._single(draw, (x0 + 6, y + 1), line.strip(), fonts["tiny"], colors["gold"], width - 12, 7)
+        return True
+
+    def _draw_win_map(self, image, draw, row, line, colors, fonts):
+        """One map of the win: a chip of its art edged green (won) or red (lost), its name, the
+        player's K-D on it, and the map's score."""
+        x0, y, x1 = line
+        won = bool(row.get("won"))
+        chip_w, chip_h = WIN_MAP_CHIP
+        art = self._map_art(row.get("map"))
+        if art is not None:
+            image.paste(ImageOps.fit(art, WIN_MAP_CHIP, method=Image.Resampling.LANCZOS, centering=(0.5, 0.45)),
+                        (x0, y + 1))
+        else:
+            draw.rectangle((x0, y + 1, x0 + chip_w, y + 1 + chip_h), fill=colors["panel"])
+        draw.rectangle((x0, y + 1, x0 + chip_w, y + 1 + chip_h), outline=colors["green"] if won else colors["red"])
+        score = f"{row.get('ours')}:{row.get('theirs')}"
+        self._text(draw, (x1 - self._text_width(draw, score, fonts["small_bold"]), y), score, fonts["small_bold"],
+                   colors["green"] if won else colors["red"])
+        kd_right = x1 - 33
+        if row.get("kills") is not None:
+            kd = f"{row['kills']}-{row.get('deaths', 0)}"
+            self._text(draw, (kd_right - self._text_width(draw, kd, fonts["tiny"]), y + 2), kd, fonts["tiny"],
+                       colors["muted"])
+        name_x = x0 + chip_w + 5
+        self._single(draw, (name_x, y), row.get("name") or row.get("english") or "", fonts["small_bold"],
+                     colors["ink"] if won else colors["muted"], kd_right - 30 - name_x, 8)
 
     @staticmethod
     @lru_cache(maxsize=16)
@@ -851,8 +1119,22 @@ class ProRenderMixin:
         if logo is not None:
             image.paste(logo, (int(x) + (16 - logo.width) // 2, y + 3 + (16 - logo.height) // 2), logo)
         x += 20
-        self._single(draw, (x, y + 3), match.get("opponent") or "-", fonts["small_bold"],
-                     colors["ink"] if won else colors["muted"], x1 - x, 8)
+        self._single(draw, (x, y + 3), self._fitted_name(draw, match.get("opponent") or "-", fonts["small_bold"], x1 - x),
+                     fonts["small_bold"], colors["ink"] if won else colors["muted"], x1 - x, 8)
+
+    def _fitted_name(self, draw, name, font, max_width, min_size=8):
+        """``name`` when it fits ``max_width`` at ``min_size`` or larger; else a long team name's
+        initials (Ninjas in Pyjamas -> NIP), or the name cut short with an ellipsis."""
+        name = str(name or "")
+        if self._text_width(draw, name, self._font(min_size, bold=self._is_bold_font(font))) <= max_width:
+            return name
+        words = re.findall(r"[A-Za-z0-9]+", name)
+        if len(words) >= 2:
+            return "".join(word[0] for word in words).upper()
+        small = self._font(min_size, bold=self._is_bold_font(font))
+        while len(name) > 1 and self._text_width(draw, name + "…", small) > max_width:
+            name = name[:-1]
+        return name + "…"
 
     def _draw_cs2_maps(self, image, draw, pool, box, colors, fonts):
         """The best map's art with its numbers, then the next maps of the pool by score."""

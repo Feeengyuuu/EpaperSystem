@@ -19,6 +19,8 @@ ROLE_NAMES = ("Firepower", "Entrying", "Trading", "Opening", "Closing", "Sniping
 ROLE_LABELS = {"Firepower": "火力", "Entrying": "突破", "Trading": "补枪", "Opening": "首杀",
                "Closing": "残局", "Sniping": "狙击", "Utility": "道具"}
 LOADOUT_PER_SIDE = 8
+# The player page's gallery grid holds their newest pictures; the CS2 page shows one of them at random.
+PHOTO_LIMIT = 9
 
 _TAG = re.compile(r"<[^>]+>")
 _DIV = re.compile(r"<(/?)div\b")
@@ -99,11 +101,15 @@ def parse_player_page(page):
         score = re.search(rf"<b>{role}</b>\s*<span class=\"statsVal\"><p><b>(\d+)</b>", page)
         if score:
             result["roles"][role] = int(score.group(1))
-    team = re.search(r'playerTeam".*?<img alt="([^"]+)" src="([^"]+)" class="day-only".*?'
-                     r'<img alt="[^"]+" src="([^"]+)" class="night-only"', page, flags=re.S)
-    if team:
-        result["team"], result["team_logo_day"], result["team_logo_night"] = (
-            unescape(team.group(1)), unescape(team.group(2)), unescape(team.group(3)))
+    # The team row lists a day and a night logo, or one logo for both.
+    row = page.find("playerTeam")
+    logos = re.findall(r'<img alt="([^"]+)" src="([^"]+)"(?: class="(day-only|night-only)")?',
+                       page[row:page.find("</div>", row)]) if row >= 0 else []
+    if logos:
+        by_mode = {mode: src for _alt, src, mode in logos}
+        result["team"] = unescape(logos[0][0])
+        result["team_logo_day"] = unescape(by_mode.get("day-only") or logos[0][1])
+        result["team_logo_night"] = unescape(by_mode.get("night-only") or logos[0][1])
     age = re.search(r'playerAge".*?<span itemprop="text">([^<]+)</span>', page, flags=re.S)
     if age:
         result["age"] = _text(age.group(1))
@@ -116,10 +122,12 @@ def parse_player_page(page):
         result["bodyshot"] = _image_url(bodyshot.group(0))
     for box in re.findall(r'<a href="[^"]*" class="playerpage-matchbox a-reset([^"]*)">(.*?)</a>', page, flags=re.S):
         classes, body = box
-        opponent = re.search(r'<img alt="([^"]+)" src="([^"]+)" class="team-logo"', body)
+        # A logo HLTV redraws for light pages comes as a day-only/night-only pair; the night copy is the original.
+        logos = re.findall(r'<img alt="([^"]+)" src="([^"]+)" class="team-logo( night-only| day-only)?"', body)
+        opponent = next((logo for logo in logos if logo[2] == " night-only"), logos[0] if logos else None)
         event = re.search(r'class="playerpage-matchbox-bottom[^"]*">(.*?)</div>', body, flags=re.S)
-        entry = {"opponent": unescape(opponent.group(1)) if opponent else "",
-                 "opponent_logo": unescape(opponent.group(2)) if opponent else "",
+        entry = {"opponent": unescape(opponent[0]) if opponent else "",
+                 "opponent_logo": unescape(opponent[1]) if opponent else "",
                  "event": _text(event.group(1)) if event else ""}
         score = re.search(r'class="playerpage-match-result">([^<]+)<', body)
         when = re.search(r'data-unix="(\d+)"', body)
@@ -133,7 +141,7 @@ def parse_player_page(page):
     return result
 
 
-def parse_photos(page, limit=3):
+def parse_photos(page, limit=PHOTO_LIMIT):
     """The newest pictures of the player from HLTV's gallery grid on the player page (sharper 2x
     copies when listed), newest first."""
     page = str(page or "")

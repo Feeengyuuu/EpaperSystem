@@ -6,7 +6,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -427,29 +427,105 @@ def test_bo3_lookup_takes_the_hltv_nickname_and_the_real_surname():
                                  "William Merriman")["slug"] == "mezil"
 
 
-def test_the_shown_cs2_players_map_pool_is_read_from_bo3_once_a_day(plugin, monkeypatch, tmp_path):
+CAREER = {"games_count": 1000, "games_won_count": 600, "kills_sum": 2300, "deaths_sum": 2000,
+          "damage_sum": 166000, "rounds_count": 2000, "events_won_count": 9}
+
+
+def _bo3_game(game_id, number, key, winner, high, low):
+    return {"id": game_id, "number": number, "map_name": key, "status": "finished", "winner_clan_score": high,
+            "loser_clan_score": low, "rounds_count": high + low, "winner_team_clan": {"team": {"id": winner}}}
+
+
+WON_MATCH = {"slug": "spirit-vs-mouz", "team1_id": 7, "team2_id": 654, "team1_score": 1, "team2_score": 2,
+             "start_date": "2026-10-20T12:00:00.000+00:00", "team1": {"name": "MOUZ", "image_url": "https://x/mouz.webp"},
+             "team2": {"name": "Spirit"}, "tournament": {"name": "PGL Masters"},
+             "games": [_bo3_game(13, 3, "de_nuke", 654, 13, 9), _bo3_game(11, 1, "de_mirage", 654, 13, 7),
+                       _bo3_game(12, 2, "de_ancient", 7, 13, 11), {"id": 14, "status": "defwin"}]}
+
+
+def _stat_rows(player_id, kills, deaths, adr):
+    return [{"steam_profile": {"player_id": 1}, "kills": 30, "death": 1, "adr": 200},
+            {"steam_profile": {"player_id": player_id}, "kills": kills, "death": deaths, "adr": adr}]
+
+
+def test_bo3_reads_the_career_and_the_teams_latest_win_with_the_players_line_per_map():
+    lines = {11: bo3_stats.player_line(_stat_rows(21, 20, 10, 100.0), 21),
+             12: bo3_stats.player_line(_stat_rows(21, 15, 18, 70.0), 21)}
+    win = bo3_stats.parse_win(WON_MATCH, 654, lines)
+
+    # Maps in the order played; our side's score first; the unplayed fourth game is left out.
+    assert [(row["map"], row["ours"], row["theirs"], row["won"]) for row in win["maps"]] == [
+        ("de_mirage", 13, 7, True), ("de_ancient", 11, 13, False), ("de_nuke", 13, 9, True)]
+    assert (win["opponent"], win["score"], win["event"]) == ("MOUZ", "2 : 1", "PGL Masters")
+    assert win["maps"][0]["name"] == "荒漠迷城" and "kills" not in win["maps"][2]
+    assert (win["kills"], win["deaths"]) == (35, 28) and win["adr"] == pytest.approx((100 * 20 + 70 * 24) / 44)
+    career = bo3_stats.parse_career(CAREER)
+    assert (career["maps"], career["win_rate"], career["kd"], career["adr"], career["titles"]) == (1000, 0.6, 1.15, 83.0, 9)
+    assert bo3_stats.parse_career({"games_count": 0}) is None and bo3_stats.parse_career([]) is None
+    now = bo3_stats._timestamp("2026-10-25T12:00:00+00:00")
+    listing = [{"slug": "lost", "status": "finished", "winner_team_id": 7, "start_date": "2026-10-24T12:00:00+00:00"},
+               {"slug": "won", "status": "finished", "winner_team_id": 654, "start_date": "2026-10-20T12:00:00+00:00"}]
+    assert bo3_stats.pick_win(listing, 654, now)["slug"] == "won"
+    # A win older than WIN_DAYS is no longer news.
+    assert bo3_stats.pick_win(listing, 654, now + bo3_stats.WIN_DAYS * 86400) is None
+
+
+def test_the_shown_cs2_players_bo3_numbers_refresh_on_their_own_schedules(plugin, monkeypatch, tmp_path):
     calls = []
 
     class Session:
         def get(self, url, timeout=None, headers=None, stream=None):
-            calls.append(url)
-            if "/players?" in url:
-                return JsonBody({"results": [{"slug": "donk", "nickname": "donk", "last_name": "Kryshkovets"}]})
-            return JsonBody(MAP_STATS)
+            path = urllib.parse.urlsplit(url).path.removeprefix("/api/v1")
+            calls.append(path)
+            answers = {"/players": {"results": [{"slug": "donk", "nickname": "donk", "last_name": "Kryshkovets"}]},
+                       "/players/donk/map_stats": MAP_STATS, "/players/donk/general_stats": CAREER,
+                       "/players/donk": {"id": 21, "team_id": 654},
+                       "/matches": {"results": [{**WON_MATCH, "status": "finished", "winner_team_id": 654,
+                                                 "start_date": time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())}]},
+                       "/matches/spirit-vs-mouz": WON_MATCH}
+            if path.startswith("/games/"):
+                return JsonBody(_stat_rows(21, 20, 10, 90.0))
+            return JsonBody(answers[path])
 
     monkeypatch.setattr(pro_tracker, "get_http_session", lambda: Session())
     # HLTV is resting, so only bo3.gg is asked.
     (tmp_path / pro_tracker.CS2_STATE).write_text(json.dumps({"hltv_backoff_until": time.time() + 3600}), encoding="utf-8")
     pick = next(item for item in plugin._tracked_pool({}) if item["kind"] == "cs2" and item["player"]["nick"] == "donk")
 
-    data = plugin._cs2_data(pick)
+    player = plugin._cs2_data(pick)["player"]
 
-    assert [urllib.parse.urlsplit(url).path for url in calls] == ["/api/v1/players", "/api/v1/players/donk/map_stats"]
-    assert data["player"]["map_pool"][0]["map"] == "de_ancient" and data["player"]["bo3_slug"] == "donk"
+    assert calls == ["/players", "/players/donk/map_stats", "/players/donk/general_stats", "/players/donk", "/matches",
+                     "/matches/spirit-vs-mouz", "/games/13/players_stats", "/games/11/players_stats",
+                     "/games/12/players_stats"]
+    assert player["map_pool"][0]["map"] == "de_ancient" and player["bo3_slug"] == "donk"
+    assert player["career"]["titles"] == 9 and player["last_win"]["opponent"] == "MOUZ"
+    assert [row["kills"] for row in player["last_win"]["maps"]] == [20, 20, 20]
     calls.clear()
     assert plugin._cs2_data(pick)["player"]["map_pool"][0]["map"] == "de_ancient" and calls == []
+    # Six hours on, only the win is looked up again, and the same won match is not re-read.
+    state = json.loads((tmp_path / pro_tracker.CS2_STATE).read_text(encoding="utf-8"))
+    state["players"]["donk"]["win_ts"] -= pro_tracker.CS2_WIN_HOURS * 3600
+    (tmp_path / pro_tracker.CS2_STATE).write_text(json.dumps(state), encoding="utf-8")
+    assert plugin._cs2_data(pick)["player"]["last_win"]["score"] == "2 : 1"
+    assert calls == ["/players/donk", "/matches"]
+    calls.clear()
     plugin._cs2_data(pick, refresh=False)
     assert calls == []
+
+
+def test_each_cs2_render_draws_another_of_the_newest_pictures_and_a_redraw_keeps_it(plugin, monkeypatch, tmp_path):
+    photos = [f"https://img-cdn.hltv.org/gallerypicture/{index}.jpg" for index in range(4)]
+    state = {"hltv_backoff_until": time.time() + 3600,
+             "players": {"donk": {"photos": photos, "map_pool_ts": time.time(), "win_ts": time.time()}}}
+    (tmp_path / pro_tracker.CS2_STATE).write_text(json.dumps(state), encoding="utf-8")
+    monkeypatch.setattr(pro_tracker, "get_http_session", lambda: None)
+    pick = next(item for item in plugin._tracked_pool({}) if item["kind"] == "cs2" and item["player"]["nick"] == "donk")
+
+    shown = [plugin._cs2_data(pick)["player"]["photo_pick"] for _ in range(12)]
+
+    assert set(shown) <= set(photos) and len(set(shown)) > 1
+    assert all(first != second for first, second in zip(shown, shown[1:]))
+    assert plugin._cs2_data(pick, refresh=False)["player"]["photo_pick"] == shown[-1]
 
 
 def test_the_loadout_leads_with_the_awp_only_for_a_sniper():
@@ -527,3 +603,87 @@ def test_the_cs2_results_column_shows_the_newest_photo_or_keeps_its_art(plugin):
                                   (10, 10, 290, 130), colors, fonts) is True
     assert image.getpixel((150, 60)) == (200, 30, 160)
     assert plugin._draw_cs2_photo(image, draw, {"photos": []}, (10, 10, 290, 130), colors, fonts) is False
+
+
+def test_hltv_results_name_an_opponent_whose_logo_comes_as_a_day_and_night_pair():
+    page = ('<div class="playerInfoRow playerTeam"><span class="listRight"><img alt="Falcons" src="https://x/f.png" '
+            'title="Falcons"><span><a href="/team/1/falcons">Falcons</a></span></span></div>'
+            '<a href="/stats/matches/3/x" class="playerpage-matchbox a-reset won-matchbox"><img alt="9z" src="d.png" '
+            'class="team-logo day-only" title="9z"><img alt="9z" src="n.png" class="team-logo night-only" title="9z">'
+            '<div class="playerpage-matchbox-bottom text-ellipsis">TWC</div>'
+            '<span class="playerpage-match-result">2 : 1</span></a>')
+
+    parsed = hltv_players.parse_player_page(page)
+
+    # The night copy is the original logo (the day one is redrawn for light pages).
+    assert parsed["recent"] == [{"opponent": "9z", "opponent_logo": "n.png", "event": "TWC", "score": "2 : 1",
+                                 "won": True}]
+    # A team row with one logo for both modes still names the team.
+    assert (parsed["team"], parsed["team_logo_day"], parsed["team_logo_night"]) == ("Falcons", "https://x/f.png",
+                                                                                    "https://x/f.png")
+
+
+def test_the_dynamic_slot_shows_a_recent_win_over_the_photo_else_the_photo(plugin):
+    photo = Image.new("RGB", (800, 534), (200, 30, 160))
+    plugin._image_from_url = lambda url, label="": photo.copy() if "gallerypicture" in str(url) else None
+    colors = plugin._render_colors({"mode": "night"})
+    win = {**bo3_stats.parse_win(WON_MATCH, 654), "start": time.time() - 86400}
+    player = {"nick": "donk", "photos": ["https://img-cdn.hltv.org/gallerypicture/a.jpg"], "last_win": win,
+              "recent": [{"opponent": "MOUZ", "score": "2 : 1", "won": True}] * 4}
+
+    def slot(shown):
+        image = Image.new("RGB", (800, 480), colors["background"])
+        plugin._draw_cs2_matches(image, ImageDraw.Draw(image), shown, (228, 168, 388, 462), colors, plugin._pro_fonts())
+        return image
+
+    with_win = slot(player)
+    photo_only = slot({**player, "last_win": {**win, "start": time.time() - (bo3_stats.WIN_DAYS + 1) * 86400}})
+
+    # The win takes the fourth result's room: its gold tag on the photo, the player in view above the maps.
+    assert with_win.getpixel((236, 279)) == colors["gold"] and with_win.getpixel((300, 300)) == (200, 30, 160)
+    assert with_win.getpixel((245, 271)) != colors["green"]
+    # A win older than WIN_DAYS leaves the slot to the photo, under all four results.
+    assert photo_only.getpixel((245, 271)) == colors["green"] and photo_only.getpixel((300, 330)) == (200, 30, 160)
+
+
+def test_photos_are_cut_round_their_detail_rather_than_the_empty_wall_above():
+    wall = (20, 40, 90)
+    photo = Image.new("RGB", (800, 533), wall)
+    pen = ImageDraw.Draw(photo)
+    for x in range(0, 800, 8):
+        pen.line((x, 300, x, 533), fill=(250, 250, 250) if x % 16 else (0, 0, 0), width=4)
+
+    def wall_pixels(image):
+        return sum(1 for value in image.get_flattened_data() if value == wall)
+
+    cut = LoLInfo._focus_crop(photo, (160, 120))
+
+    assert cut.size == (160, 120)
+    assert wall_pixels(cut) < wall_pixels(ImageOps.fit(photo, (160, 120), centering=(0.5, 0.5)))
+
+
+def test_a_long_team_name_that_cannot_fit_falls_back_to_its_initials(plugin):
+    draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    font = plugin._font(11, bold=True)
+
+    assert plugin._fitted_name(draw, "Ninjas in Pyjamas", font, 50) == "NIP"
+    assert plugin._fitted_name(draw, "MOUZ", font, 50) == "MOUZ"
+    assert plugin._fitted_name(draw, "Supercalifragilistic", font, 50).endswith("…")
+
+
+def test_the_role_card_is_a_tactical_screen_with_the_career_in_chips(plugin):
+    colors = plugin._render_colors({"mode": "night"})
+    image = Image.new("RGB", (800, 480), colors["background"])
+    roles = {name: 40 + 7 * index for index, name in enumerate(hltv_players.ROLE_NAMES)}
+    board = [{"nick": str(index), "roles": dict(roles)} for index in range(5)]
+
+    plugin._draw_cs2_role_card(image, ImageDraw.Draw(image), {"roles": roles, "career": bo3_stats.parse_career(CAREER)},
+                               board, colors, plugin._pro_fonts())
+
+    x0, y0, x1, y1 = pro_render.LEFT
+    # Gold brackets hold the card's corners, and a gold edge tops each career chip.
+    assert image.getpixel((x0 + 5, y0)) == colors["gold"] and image.getpixel((x1, y1 - 5)) == colors["gold"]
+    assert colors["gold"] in {image.getpixel((x0 + 14, y)) for y in range(y0 + 268, y0 + 271)}
+    # The chart is drawn larger and scaled down, so its lines come out with smooth, blended edges.
+    cx, cy = x0 + 103, y0 + pro_render.RADAR_TOP
+    assert len(image.crop((cx - 60, cy - 60, cx + 60, cy + 60)).getcolors(maxcolors=100_000)) > 300

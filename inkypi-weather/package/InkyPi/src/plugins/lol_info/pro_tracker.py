@@ -10,9 +10,11 @@ How fresh each piece is (the owner's update cadence):
 - the LoL ladder of all twenty: up to LOL_BOARD_BATCH stale accounts (older than
   LOL_BOARD_MINUTES) are re-read on every LoL render, one league call each, and each
   pro's row shows their best-ranked account;
-- HLTV's Top 20 list: weekly; the shown CS2 player's page (with their recent loadout):
-  CS2_PLAYER_HOURS; their bo3.gg map pool: CS2_MAP_HOURS; the CS2 board's ratings:
-  CS2_BOARD_BATCH stale players (older than CS2_BOARD_HOURS) per CS2 render.
+- HLTV's Top 20 list: weekly; the shown CS2 player's page (with their recent loadout and
+  newest pictures, one drawn at random per render): CS2_PLAYER_HOURS; their bo3.gg map pool
+  and career: CS2_MAP_HOURS; their team's latest win on bo3.gg: CS2_WIN_HOURS (a won match
+  is read once); the CS2 board's ratings: CS2_BOARD_BATCH stale players (older than
+  CS2_BOARD_HOURS) per CS2 render.
 This keeps a render under ~20 Riot calls, well inside a development key's 100 per 2 minutes.
 """
 
@@ -48,6 +50,7 @@ CS2_PLAYER_HOURS = 6
 CS2_BOARD_BATCH = 2
 CS2_BOARD_HOURS = 24
 CS2_MAP_HOURS = 24
+CS2_WIN_HOURS = 6
 # HLTV answers bursts with a 403/429 challenge; after one, leave it alone for this long.
 HLTV_BACKOFF_HOURS = 6
 RANK_ORDER = {"CHALLENGER": 9, "GRANDMASTER": 8, "MASTER": 7, "DIAMOND": 6, "EMERALD": 5, "PLATINUM": 4,
@@ -345,7 +348,8 @@ class ProTrackerMixin:
                         state["hltv_backoff_until"] = now + HLTV_BACKOFF_HOURS * 3600
                 players[name] = entry
         if refresh:
-            changed = self._refresh_cs2_maps(get_http_session(), players, pick["player"], now) or changed
+            changed = self._refresh_cs2_bo3(get_http_session(), players, pick["player"], now) or changed
+            changed = self._choose_cs2_photo(players, pick["player"]["nick"]) or changed
         if changed:
             self._write_json(path, state)
         roster = self._cs2_roster(state)
@@ -360,23 +364,45 @@ class ProTrackerMixin:
         return {"player": {**row, **(players.get(row["nick"]) or {})}, "board": board,
                 "top20_year": state.get("top20_year") or 2025}
 
-    def _refresh_cs2_maps(self, session, players, player, now):
-        """Re-read the shown player's bo3.gg map pool once it is CS2_MAP_HOURS old (False while fresh)."""
+    def _refresh_cs2_bo3(self, session, players, player, now):
+        """Re-read the shown player's bo3.gg numbers that went stale: the map pool and career after
+        CS2_MAP_HOURS, their team's latest win after CS2_WIN_HOURS (False while all are fresh)."""
         nick = player["nick"]
         entry = dict(players.get(nick) or {})
-        if now - float(entry.get("map_pool_ts") or 0) < CS2_MAP_HOURS * 3600:
+        due = [(stamp, hours) for stamp, hours in (("map_pool_ts", CS2_MAP_HOURS), ("win_ts", CS2_WIN_HOURS))
+               if now - float(entry.get(stamp) or 0) >= hours * 3600]
+        if not due:
             return False
-        try:
-            slug = entry.get("bo3_slug") or bo3_stats.resolve_slug(session, nick, player.get("name") or "")
-            if not slug:
-                raise ValueError("not found on bo3.gg")
-            entry.update(bo3_slug=slug, map_pool=bo3_stats.map_stats(session, slug), map_pool_ts=now)
-        except TaskCancelled:
-            raise
-        except Exception as exc:
-            logger.warning("bo3.gg map pool of %s unavailable: %s", nick, exc)
-            entry["map_pool_ts"] = now - CS2_MAP_HOURS * 1800  # retry in half the usual wait
+        for stamp, hours in due:
+            try:
+                slug = entry.get("bo3_slug") or bo3_stats.resolve_slug(session, nick, player.get("name") or "")
+                if not slug:
+                    raise ValueError("not found on bo3.gg")
+                entry["bo3_slug"] = slug
+                if stamp == "map_pool_ts":
+                    entry.update(map_pool=bo3_stats.map_stats(session, slug), career=bo3_stats.career(session, slug))
+                else:
+                    record = bo3_stats.player_record(session, slug)
+                    entry["last_win"] = bo3_stats.latest_win(session, record, now, entry.get("last_win"))
+                entry[stamp] = now
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("bo3.gg %s of %s unavailable: %s", stamp[:-3], nick, exc)
+                entry[stamp] = now - hours * 1800  # retry in half the usual wait
         players[nick] = entry
+        return True
+
+    @staticmethod
+    def _choose_cs2_photo(players, nick):
+        """Draw which of the player's newest pictures this render shows, never the one shown last time
+        (False when HLTV listed none). A theme redraw keeps the pick, whose image is already cached."""
+        entry = players.get(nick) or {}
+        photos = entry.get("photos") or []
+        if not photos:
+            return False
+        others = [url for url in photos if url != entry.get("photo_pick")] or photos
+        players[nick] = {**entry, "photo_pick": random.choice(others)}
         return True
 
     @staticmethod
