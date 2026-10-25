@@ -13,6 +13,8 @@ from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+from PIL import ImageStat
+
 from utils.http_client import get_http_client
 
 
@@ -33,6 +35,9 @@ LANDMARK = re.compile(r"bridge|toll|plaza|tunnel|golden gate|sfobb|caldecott|maz
 TIMELAPSE_HOURS = 3
 PLACEHOLDER_WHITE = 0.5
 PLACEHOLDER_FLAT = 8
+# A "No video" frame over a garbled feed: dark, yet strongly coloured, where a night road is grey.
+GARBLED_DARK = 60
+GARBLED_SATURATION = 100
 # Each still ends in a 20 px caption bar (of 260) with Caltrans' own date; the page shows its age instead.
 CAPTION_BAR = 20 / 260
 # The legend of the cardinal direction plaque posted with a route shield (MUTCD M3-1 to M3-4).
@@ -215,13 +220,32 @@ def patrol(cameras, now, exclude=(), count=6):
 
 
 def frame_time(headers):
-    """When the still was taken, from its Last-Modified header (None when absent)."""
+    """When the still was taken, from its Last-Modified header (None when absent, or when it is
+    the epoch some cameras send for stills they never renewed)."""
     value = (headers or {}).get("Last-Modified") or (headers or {}).get("last-modified")
     try:
         stamp = parsedate_to_datetime(value) if value else None
     except (TypeError, ValueError):
         return None
-    return stamp.astimezone(timezone.utc) if stamp else None
+    if stamp is None or stamp.year < 2000:
+        return None
+    return stamp.astimezone(timezone.utc)
+
+
+def history_is_fresh(camera, frames, now, slack_minutes=90):
+    """True when each of the camera's past stills is in hand and was taken near the hour it
+    stands for; a camera whose reference stills Caltrans stopped renewing has no time-lapse."""
+    history = camera.get("history") or []
+    if not history:
+        return False
+    for hours, url in enumerate(history, start=1):
+        try:
+            taken = datetime.fromisoformat(str((frames.get(url) or {}).get("taken")))
+        except (TypeError, ValueError):
+            return False
+        if abs((now - taken).total_seconds() / 60 - hours * 60) > slack_minutes:
+            return False
+    return True
 
 
 def direction_label(direction):
@@ -231,10 +255,15 @@ def direction_label(direction):
 
 def is_placeholder(image):
     """True for a card Caltrans shows in place of a camera that is down: the white
-    "Temporarily Unavailable" card (mostly plain white, which no road view is) or a flat
-    black "no video" frame (almost no variation, where even a night road has lights)."""
+    "Temporarily Unavailable" card (mostly plain white, which no road view is), a flat
+    black "no video" frame (almost no variation, where even a night road has lights) or a
+    "No video" frame over a garbled feed (dark but strongly coloured, where night is grey)."""
     width, height = image.size
-    small = image.convert("L").crop((0, 0, width, height - round(height * CAPTION_BAR))).resize((32, 24))
+    view = image.convert("RGB").crop((0, 0, width, height - round(height * CAPTION_BAR))).resize((32, 24))
+    _hue, saturation, brightness = ImageStat.Stat(view.convert("HSV")).mean
+    if brightness < GARBLED_DARK and saturation > GARBLED_SATURATION:
+        return True
+    small = view.convert("L")
     counts = small.histogram()
     total = sum(counts)
     white = sum(counts[236:]) / total

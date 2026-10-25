@@ -38,7 +38,9 @@ TASK_SECONDS = 45
 CAMERA_COUNT = 5
 SIDE_COUNT = CAMERA_COUNT - 1
 SPARE_CAMERAS = 4
-PATROL_CANDIDATES = 6
+PATROL_CANDIDATES = 10
+# Cameras the strip shows instead when the main view has no real time-lapse.
+EXTRA_PATROL = 3
 MIN_SECONDS_PER_FRAME = 3.0
 
 
@@ -167,9 +169,16 @@ class BayTrafficCams(BasePlugin):
                                         context=context, want=SIDE_COUNT + (0 if lead else 1)))
         chosen = ([lead] if lead else []) + [camera for camera in nearby if camera["image"] in frames]
         chosen = chosen[:CAMERA_COUNT]
+        extras = []
         if chosen:
             frames.update(self._load_frames(chosen[0].get("history") or [], now, allow_network=allow_network,
                                             context=context))
+            if chosen[0].get("patrol") and not sources.history_is_fresh(chosen[0], frames, now):
+                # Old reference stills would mislead: the strip patrols more of the Bay Area instead.
+                others = [camera for camera in leads if camera["image"] != chosen[0]["image"]]
+                frames.update(self._load_frames([camera["image"] for camera in others], now,
+                                                allow_network=allow_network, context=context, want=EXTRA_PATROL))
+                extras = [camera for camera in others if camera["image"] in frames][:EXTRA_PATROL]
         live = sum(1 for camera in chosen if (frames.get(camera["image"]) or {}).get("live"))
         if not frames:
             provenance = SourceProvenance.LOCAL_FALLBACK
@@ -179,7 +188,8 @@ class BayTrafficCams(BasePlugin):
             provenance = SourceProvenance.LIVE
         else:
             provenance = SourceProvenance.FRESH_CACHE
-        return {"cameras": chosen, "frames": frames, "list_state": cameras["state"], "provenance": provenance}
+        return {"cameras": chosen, "extras": extras, "frames": frames, "list_state": cameras["state"],
+                "provenance": provenance}
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
         return self.render_themed_image(settings, device_config, theme_render_only=True,

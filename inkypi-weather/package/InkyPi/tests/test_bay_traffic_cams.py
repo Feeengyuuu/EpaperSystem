@@ -78,6 +78,18 @@ def test_the_main_view_patrols_the_district_landmarks_first_and_holds_within_a_s
     assert slots.count("TVK1") >= 2
 
 
+def test_stills_caltrans_never_renewed_give_the_strip_to_more_of_the_patrol():
+    camera = {"history": ["a", "b"]}
+    fresh = {"a": {"taken": (NOW - timedelta(hours=1, minutes=4)).isoformat()},
+             "b": {"taken": (NOW - timedelta(hours=2, minutes=10)).isoformat()}}
+    assert sources.history_is_fresh(camera, fresh, NOW)
+    stale = dict(fresh, b={"taken": (NOW - timedelta(days=3)).isoformat()})
+    assert not sources.history_is_fresh(camera, stale, NOW)
+    assert not sources.history_is_fresh(camera, {"a": fresh["a"], "b": {}}, NOW)
+    # Some cameras send the epoch for a still they never renewed: no time at all.
+    assert sources.frame_time({"Last-Modified": "Thu, 01 Jan 1970 00:00:00 GMT"}) is None
+
+
 def test_a_time_lapse_still_caltrans_did_not_renew_shows_its_own_date():
     fresh = {"taken": (NOW - timedelta(hours=2, minutes=5)).isoformat()}
     old = {"taken": (NOW - timedelta(hours=20)).isoformat()}
@@ -104,6 +116,17 @@ def test_unavailable_cards_and_black_frames_are_told_from_road_views():
 
     assert sources.is_placeholder(card) and sources.is_placeholder(black)
     assert not sources.is_placeholder(road)
+
+
+def test_a_no_video_frame_over_a_garbled_feed_is_told_from_a_night_road():
+    garbled = Image.new("RGB", (320, 260), (10, 40, 12))
+    ImageDraw.Draw(garbled).rectangle((110, 20, 135, 230), fill=(20, 200, 40))
+    ImageDraw.Draw(garbled).rectangle((0, 40, 320, 80), fill=(14, 14, 70))
+    night = Image.new("RGB", (320, 260), (30, 30, 34))
+    for x in range(20, 300, 40):
+        ImageDraw.Draw(night).ellipse((x, 120, x + 8, 128), fill=(250, 200, 120))
+    assert sources.is_placeholder(garbled)
+    assert not sources.is_placeholder(night)
 
 
 def test_ages_mark_a_still_that_stopped_updating():

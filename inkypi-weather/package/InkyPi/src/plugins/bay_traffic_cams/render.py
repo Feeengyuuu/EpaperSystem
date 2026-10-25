@@ -299,8 +299,36 @@ def _lapse_label(frame, hours, now):
     return f"{hours}小时前 · {taken:%H:%M}"
 
 
+def _more_patrol(canvas, payload, now):
+    """Three more of the Bay Area's cameras, live, each named by its place and town."""
+    x0, y0, x1, y1 = STRIP
+    icon = _art("icons", "cctv", 34)
+    if icon is not None:
+        _paste(canvas, icon, (x0 + 30 - icon.width / 2, y0 + 6))
+    canvas.text((x0 + 30, y0 + 54), "湾区巡视", 11, anchor="mm")
+    canvas.text((x0 + 30, y0 + 70), f"另 {len(payload['extras'])} 个镜头", 9, "muted", anchor="mm", bold=False)
+    left, gap = x0 + 66, 8
+    count = len(payload["extras"])
+    width = (x1 - left - gap * (count - 1)) / count
+    for index, camera in enumerate(payload["extras"]):
+        cell_x = left + index * (width + gap)
+        frame = payload["frames"].get(camera["image"])
+        screen = _still(canvas, frame, (cell_x, y0, cell_x + width, y1 - 16), radius=5, bezel=(4, 7))
+        taken = _taken(frame)
+        if getattr(canvas, "crt", False) and taken is not None:
+            crt.osd_text(canvas.draw, (screen[2] - 4, screen[3] - 4), f"{taken:%H:%M}", 9, anchor="rd")
+        place = camera["place"]
+        if camera.get("town") and camera["town"].lower() not in place.lower():
+            place = f"{place} · {camera['town']}"
+        canvas.text((cell_x + width / 2, y1 - 7), place, 10, "muted", anchor="mm", bold=False, width=width)
+
+
 def _timelapse(canvas, payload, now):
-    """The main camera's hourly stills, oldest first, leading up to the live view above."""
+    """The main camera's hourly stills, oldest first, leading up to the live view above; when
+    those stills are not real ones, more of the patrol instead."""
+    if payload.get("extras"):
+        _more_patrol(canvas, payload, now)
+        return
     cameras = payload["cameras"]
     x0, y0, x1, y1 = STRIP
     history = list(reversed(cameras[0].get("history") or [])) if cameras else []
