@@ -171,16 +171,18 @@ def test_page_renders_without_any_images(mode):
     assert image.size == (800, 480)
 
 
-def test_every_service_has_its_symbol_for_each_state_and_the_release_mark():
-    import json
-
+def test_a_service_links_to_its_state_by_a_live_wire_or_a_cut_one():
     from plugins.tech_play import render
+    from utils.page_canvas import PageCanvas
 
-    record = json.loads((render.ASSETS / "status" / "status_icons.source.json").read_text(encoding="utf-8"))["assets"]
-    for service_id, _name, _base in sources.SERVICES:
-        for state in set(render.STATUS_SYMBOL_STATE.values()):
-            name = f"{service_id}-{state}.png"
-            assert name in record, name
-            icon = render._asset_icon(f"status/{service_id}-{state}", render.STATUS_SYMBOL_H)
-            assert icon is not None and icon.height == render.STATUS_SYMBOL_H
+    def wire(indicator):
+        canvas = PageCanvas({"paper": (255, 255, 255), "ok": (5, 150, 105), "major": (200, 30, 50)}, size=(200, 20))
+        render._status_link(canvas, 20, 180, 10, indicator, "ok" if indicator == "none" else "major")
+        return canvas.image
+
+    up, down = wire("none"), wire("major")
+    # Up, the wire runs unbroken across its middle; down, the middle is cut.
+    assert all(up.getpixel((x, 10)) == (5, 150, 105) for x in range(95, 106))
+    assert all(down.getpixel((x, 10)) == (255, 255, 255) for x in range(97, 104))
+    assert down.getpixel((40, 10)) == (200, 30, 50)
     assert render._asset_icon("icon-calendar", 13) is not None

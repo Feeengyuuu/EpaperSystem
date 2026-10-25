@@ -10,7 +10,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import paste_header_art, paste_local_wordmark
@@ -45,11 +45,8 @@ STATUS_ICON = {"none": "ok", "minor": "alert", "major": "outage", "critical": "o
                "maintenance": "maintenance", "unknown": "info"}
 WEEKDAYS = "一二三四五六日"
 LEFT_CARD = (12, 58, 268, 244)
-# Each service's generated symbol (assets/status/<service>-<state>.png) stands this tall, centred
-# on this x between its name and its state; the indicator picks the drawing.
-STATUS_SYMBOL_X, STATUS_SYMBOL_H = 168, 27
-STATUS_SYMBOL_STATE = {"none": "ok", "minor": "degraded", "maintenance": "degraded", "major": "outage",
-                       "critical": "outage"}
+# The wire from a service's name to its state keeps this gap at both ends and needs this room (px).
+LINK_GAP, LINK_MIN = 8, 34
 PAPER_CARD = (12, 250, 268, 468)
 EPIC_CARD = (280, 58, 788, 196)
 UPCOMING_CARD = (280, 202, 788, 314)
@@ -181,20 +178,66 @@ def _status(canvas, payload):
         label_width = canvas.text((right, top + 9), label, 12, anchor="rm")
         draw_icon(canvas.draw, STATUS_ICON.get(indicator, "info"), (right - label_width - 17, top + 2), 14,
                   canvas.color(tone), canvas.color("paper"))
-        # The service's own symbol, drawn for how it is doing, in the column between name and state.
-        symbol = _asset_icon(f"status/{service['id']}-{STATUS_SYMBOL_STATE.get(indicator)}", STATUS_SYMBOL_H) \
-            if indicator in STATUS_SYMBOL_STATE else None
-        text_right = right - label_width - 24
-        if symbol is not None:
-            _paste(canvas, symbol, (STATUS_SYMBOL_X - symbol.width / 2, top + 13 - symbol.height / 2))
-            text_right = STATUS_SYMBOL_X - symbol.width / 2 - 6
-        name_width = text_right - (left + 34)
+        status_left = right - label_width - 17
+        name_width = status_left - LINK_MIN - (left + 34)
         incident = service.get("incident")
-        canvas.text((left + 34, top + (8 if incident else 13)), service["name"], 13, anchor="lm", width=name_width)
+        name_y = top + (8 if incident else 13)
+        drawn = canvas.text((left + 34, name_y), service["name"], 13, anchor="lm", width=name_width)
         if incident:
-            canvas.text((left + 34, top + 21), incident, 11, "muted", anchor="lm", bold=False, width=name_width)
+            canvas.text((left + 34, top + 21), incident, 11, "muted", anchor="lm", bold=False,
+                        width=right - left - 34)
+        # A wire from the name to its state: live current when it is up, a break when it is down.
+        _status_link(canvas, left + 34 + drawn + LINK_GAP, status_left - LINK_GAP, name_y, indicator, tone)
         if index < len(services[:5]) - 1:
             canvas.rule((left + 34, top + 29, right, top + 29))
+
+
+def _status_link(canvas, x0, x1, y, indicator, tone):
+    """The service's link to its state, drawn as a wire in the state's colour.
+
+    Up: one continuous wire between two plugged nodes with current chevrons running along it.
+    Degraded or in maintenance: the wire runs through a resistor zigzag. Down: the wire is cut in
+    the middle, its two ends bent apart with sparks, its nodes left open. Unknown: a faint dotted
+    line."""
+    if x1 - x0 < LINK_MIN:
+        return
+    draw, colour = canvas.draw, canvas.color(tone)
+    mid = (x0 + x1) / 2
+    r = 3
+
+    def node(x, filled=True):
+        draw.ellipse((x - r, y - r, x + r, y + r), fill=colour if filled else canvas.color("paper"), outline=colour,
+                     width=2)
+
+    if indicator == "none":
+        draw.line((x0 + r, y, x1 - r, y), fill=colour, width=2)
+        for x in (x0 + (x1 - x0) * share for share in (0.36, 0.64)):
+            draw.line(((x - 3, y - 4), (x + 1, y), (x - 3, y + 4)), fill=colour, width=2)
+        node(x0)
+        node(x1)
+    elif indicator in {"minor", "maintenance"}:
+        zig = min(18, (x1 - x0) / 3)
+        draw.line((x0 + r, y, mid - zig / 2, y), fill=colour, width=2)
+        draw.line((mid + zig / 2, y, x1 - r, y), fill=colour, width=2)
+        steps = 6
+        points = [(mid - zig / 2 + zig * index / steps, y + (0 if index in (0, steps) else (-4 if index % 2 else 4)))
+                  for index in range(steps + 1)]
+        draw.line(points, fill=colour, width=2)
+        node(x0)
+        node(x1)
+    elif indicator in {"major", "critical"}:
+        gap = 7
+        draw.line((x0 + r, y, mid - gap - 4, y), fill=colour, width=2)
+        draw.line(((mid - gap - 4, y), (mid - gap, y + 4)), fill=colour, width=2)
+        draw.line((mid + gap + 4, y, x1 - r, y), fill=colour, width=2)
+        draw.line(((mid + gap + 4, y), (mid + gap, y - 4)), fill=colour, width=2)
+        for dx, dy in ((-3, -6), (0, -7), (3, -6)):
+            draw.line((mid + dx * 0.5, y - 2, mid + dx, y + dy), fill=colour, width=1)
+        node(x0, filled=False)
+        node(x1, filled=False)
+    else:
+        for x in range(round(x0), round(x1), 4):
+            draw.point((x, y), fill=colour)
 
 
 def _papers(canvas, payload, now):
@@ -229,6 +272,17 @@ def _papers(canvas, payload, now):
 
 
 # --- Right column ----------------------------------------------------------------------------------
+
+def _round_corners(canvas, box, radius):
+    """An image's corners rounded off into the card's paper, so it sits in the page rather than
+    boxed in by a hard line."""
+    x0, y0, x1, y1 = (round(value) for value in box)
+    region = canvas.image.crop((x0, y0, x1 + 1, y1 + 1))
+    mask = Image.new("L", region.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, region.width - 1, region.height - 1), radius=radius, fill=255)
+    paper = Image.new(region.mode, region.size, canvas.color("paper"))
+    canvas.image.paste(Image.composite(region, paper, mask), (x0, y0))
+
 
 def _cover(image, size):
     return ImageOps.fit(image, size, Image.Resampling.LANCZOS, centering=(0.5, 0.4))
@@ -269,7 +323,7 @@ def _epic(canvas, payload, images, now):
         canvas.draw.rectangle((x, top, x + tag_width, top + 18),
                               fill=canvas.color("maintenance" if is_next else "major"))
         canvas.text((x + tag_width / 2, top + 9), tag, 12, "badge_ink", anchor="mm")
-        canvas.draw.rectangle((x, top, x + width, bottom), outline=canvas.color("ink"), width=1)
+        _round_corners(canvas, (x, top, x + width, bottom), 8)
 
 
 def _upcoming(canvas, payload, images, now):
@@ -296,7 +350,7 @@ def _upcoming(canvas, payload, images, now):
             canvas.draw.rectangle(box, fill=canvas.color("panel"))
             draw_icon(canvas.draw, "rocket", (x + width / 2 - 12, top + 11), 24, canvas.color("ink"),
                       canvas.color("panel"))
-        canvas.draw.rectangle(box, outline=canvas.color("ink"), width=1)
+        _round_corners(canvas, box, 6)
         canvas.text((x, top + 56), item["name"], 12, anchor="lm", width=width)
         stamp = parse_time(item.get("date"))
         when = (f"{stamp.astimezone(now.tzinfo):%m/%d} 周{WEEKDAYS[stamp.astimezone(now.tzinfo).weekday()]}"
@@ -358,7 +412,7 @@ def _speedruns(canvas, payload, images, now):
             canvas.draw.rectangle(box, fill=canvas.color("band"))
             canvas.text((x + 18, top + 20), _initials(game.get("name")), 11, (255, 255, 255), anchor="mm")
             draw_icon(canvas.draw, "trophy", (x + 12, top + 30), 12, canvas.color("gold"), canvas.color("band"))
-        canvas.draw.rectangle(box, outline=canvas.color("ink"), width=1)
+        _round_corners(canvas, box, 6)
         badge_fill = canvas.color("gold" if index == 0 else "ink")
         canvas.draw.ellipse((x - 5, top - 5, x + 13, top + 13), fill=badge_fill, outline=canvas.color("paper"))
         canvas.text((x + 4, top + 4), str(index + 1), 11, (20, 20, 20) if index == 0 else "paper", anchor="mm")
