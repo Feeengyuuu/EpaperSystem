@@ -10,7 +10,7 @@ Each still carries a CCTV-style camera tag.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
 
@@ -144,12 +144,13 @@ def _taken(frame):
 
 
 def _crt_osd(canvas, screen, number, camera, frame, now, *, size):
-    """A recorder's on-screen text: the camera and its id at the top left, a red REC at the top
-    right (or the still's age in amber once it stops updating), the time it was taken at the
-    bottom right."""
+    """A recorder's on-screen text: the camera and its id at the top left (PATROL for the roving
+    main view), a red REC at the top right (or the still's age in amber once it stops updating),
+    the time it was taken at the bottom right."""
     sx0, sy0, sx1, sy1 = screen
     pad = 6 if size >= 13 else 4
-    label = f"CAM-{number:02d}" + (f"  {camera['id']}" if camera.get("id") and size >= 13 else "")
+    label = ("PATROL" if camera.get("patrol") else f"CAM-{number:02d}") + (
+        f"  {camera['id']}" if camera.get("id") and size >= 13 else "")
     crt.osd_text(canvas.draw, (sx0 + pad, sy0 + pad), label, size)
     if frame is None:
         return
@@ -274,16 +275,27 @@ def _main(canvas, payload, now):
     x = x0 + _shield(canvas, camera["route"], (x0, top), 25) + 5
     x += _direction_plate(canvas, camera["direction"], (x, top + 3), 19)
     where_left = _where(canvas, camera, x1, top + 12.5, 12)
-    _guide_sign(canvas, camera["place"], (x + 6, top + 2), 21, where_left - x - 14)
+    # The roving view names its town too: it can be anywhere in the Bay Area.
+    place = camera["place"]
+    if camera.get("patrol") and camera.get("town") and camera["town"].lower() not in place.lower():
+        place = f"{place} · {camera['town']}"
+    _guide_sign(canvas, place, (x + 6, top + 2), 21, where_left - x - 14)
 
 
-def _lapse_label(frame, hours):
-    """ "1小时前 · 09:45" from when the still was taken, or just the hour it stands for."""
+# A reference still taken this far from the hour it stands for is an old one Caltrans kept.
+LAPSE_SLACK = timedelta(minutes=90)
+
+
+def _lapse_label(frame, hours, now):
+    """ "1小时前 · 09:45" from when the still was taken, or just the hour it stands for; a still
+    Caltrans did not renew (taken far from that hour) shows its own date and time instead."""
     stamp = (frame or {}).get("taken")
     try:
         taken = sources.local_now(datetime.fromisoformat(str(stamp)))
     except (TypeError, ValueError):
         return f"{hours}小时前"
+    if abs(now - timedelta(hours=hours) - taken) > LAPSE_SLACK:
+        return f"{taken:%m-%d %H:%M}"
     return f"{hours}小时前 · {taken:%H:%M}"
 
 
@@ -306,7 +318,7 @@ def _timelapse(canvas, payload, now):
         cell_x = left + index * (width + gap)
         frame = payload["frames"].get(url)
         _still(canvas, frame, (cell_x, y0, cell_x + width, y1 - 16), radius=5, bezel=(4, 7))
-        label = _lapse_label(frame, len(history) - index)
+        label = _lapse_label(frame, len(history) - index, now)
         canvas.text((cell_x + width / 2, y1 - 7), label, 10, "muted", anchor="mm", bold=False, width=width)
 
 
@@ -355,8 +367,14 @@ def render_page(dimensions, payload, settings, now):
     if cctv is not None:
         _paste(canvas, cctv, (x, 26 - cctv.height / 2))
         x += cctv.width + 8
-    count = len(payload["cameras"])
-    note = f"Caltrans 实时监控 · 离家最近 {count} 个镜头" if count else "Caltrans 实时监控"
+    cameras = payload["cameras"]
+    roving = bool(cameras and cameras[0].get("patrol"))
+    near = len(cameras) - (1 if roving else 0)
+    note = "Caltrans 实时监控"
+    if roving:
+        note += " · 湾区随机巡视"
+    if near:
+        note += f" · 离家最近 {near} 个镜头"
     canvas.text((x, 26), note, 13, "muted", anchor="lm", bold=False, width=date_left - x - 12)
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _main(canvas, payload, now)

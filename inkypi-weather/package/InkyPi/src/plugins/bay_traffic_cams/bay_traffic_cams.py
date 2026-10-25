@@ -29,14 +29,16 @@ from . import sources
 
 logger = logging.getLogger(__name__)
 PLUGIN_ID = "bay_traffic_cams"
-CACHE_SCHEMA = 1
+CACHE_SCHEMA = 2
 CACHE_BUDGET = CacheBudget(30 * 86400, 8, 2 * 1024 * 1024)
 FRAME_BUDGET = CacheBudget(7 * 86400, 96, 6 * 1024 * 1024)
 FRAME_LIMITS = ImageLimits(max_bytes=512 * 1024, max_width=1280, max_height=1024, max_pixels=1280 * 1024)
 DEFAULT_FONT = "Microsoft YaHei"
 TASK_SECONDS = 45
 CAMERA_COUNT = 5
+SIDE_COUNT = CAMERA_COUNT - 1
 SPARE_CAMERAS = 4
+PATROL_CANDIDATES = 6
 MIN_SECONDS_PER_FRAME = 3.0
 
 
@@ -146,12 +148,25 @@ class BayTrafficCams(BasePlugin):
                                    usable_seconds=14 * 86400, validate=sources.valid_cameras, timeout_seconds=25,
                                    min_remaining_seconds=8),
                             now, allow_network=allow_network, context=context, force=force)
+        data = cameras["data"]
+        main_id = str(settings.get("mainCamera") or "").strip()
+        nearby = sources.choose(data.get("cameras"), SIDE_COUNT + SPARE_CAMERAS + (1 if main_id else 0), main_id)
+        if main_id:
+            # A named camera leads the page; the rest of the wall is still the nearest.
+            leads, nearby = nearby[:1], nearby[1:]
+        else:
+            # The main view patrols the whole Bay Area; the wall stays the nearest to home.
+            leads = [dict(camera, patrol=True) for camera in sources.patrol(
+                data.get("patrol"), now, {camera["id"] for camera in nearby[:SIDE_COUNT]}, PATROL_CANDIDATES)]
+        frames = self._load_frames([camera["image"] for camera in leads], now, allow_network=allow_network,
+                                   context=context, want=1)
+        lead = next((camera for camera in leads if camera["image"] in frames), None)
         # Spare cameras stand by in order for any of the nearest that are down.
-        candidates = sources.choose(cameras["data"].get("cameras"), CAMERA_COUNT + SPARE_CAMERAS,
-                                    str(settings.get("mainCamera") or ""))
-        frames = self._load_frames([camera["image"] for camera in candidates], now, allow_network=allow_network,
-                                   context=context, want=CAMERA_COUNT)
-        chosen = [camera for camera in candidates if camera["image"] in frames][:CAMERA_COUNT]
+        nearby = [camera for camera in nearby if lead is None or camera["id"] != lead["id"]]
+        frames.update(self._load_frames([camera["image"] for camera in nearby], now, allow_network=allow_network,
+                                        context=context, want=SIDE_COUNT + (0 if lead else 1)))
+        chosen = ([lead] if lead else []) + [camera for camera in nearby if camera["image"] in frames]
+        chosen = chosen[:CAMERA_COUNT]
         if chosen:
             frames.update(self._load_frames(chosen[0].get("history") or [], now, allow_network=allow_network,
                                             context=context))

@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.bay_traffic_cams import bay_traffic_cams as plugin_module  # noqa: E402
 from plugins.bay_traffic_cams import sources  # noqa: E402
-from plugins.bay_traffic_cams.render import age_label, render_page, route_colour  # noqa: E402
+from plugins.bay_traffic_cams.render import _lapse_label, age_label, render_page, route_colour  # noqa: E402
 from runtime.refresh_contracts import TaskContext  # noqa: E402
 
 NOW = datetime(2026, 10, 24, 10, 50, tzinfo=sources.PACIFIC)
@@ -57,6 +57,33 @@ def test_cameras_near_home_come_nearest_first_with_three_hourly_stills():
     assert sources.compass_label(cameras[1]["bearing"]) in {"东", "东南"}
     with pytest.raises(ValueError):
         sources.normalize_cameras({"data": [payload["data"][2]]}, sources.FREMONT)
+
+
+def test_the_main_view_patrols_the_district_landmarks_first_and_holds_within_a_slot():
+    rows = [_row(f"TVA{index} -- I-880 : Place {index}", "I-880", "South", 37.548 + index / 1000, -121.988)
+            for index in range(5)]
+    rows += [_row(f"TVF{index} -- I-80 : Far Place {index}", "I-80", "West", 38.0 + index / 100, -122.3)
+             for index in range(40)]
+    rows.append(_row("TVK1 -- I-80 : Bay Bridge Toll Plaza", "I-80", "West", 37.82, -122.31))
+    data = sources.normalize_cameras({"data": rows}, sources.FREMONT)
+    assert len(data["cameras"]) == 5 and len(data["patrol"]) == 46
+    assert data["patrol"][0]["id"] == "TVK1" and data["patrol"][0]["landmark"]
+
+    first = sources.patrol(data["patrol"], NOW, {"TVA0"})
+    assert first == sources.patrol(data["patrol"], NOW + timedelta(minutes=5), {"TVA0"})
+    assert "TVA0" not in {camera["id"] for camera in first}
+    slots = [sources.patrol(data["patrol"], NOW + timedelta(minutes=15 * slot))[0]["id"] for slot in range(60)]
+    assert len(set(slots)) > 10
+    # The toll plaza is one of 46 cameras but weighs four times as much as any other.
+    assert slots.count("TVK1") >= 2
+
+
+def test_a_time_lapse_still_caltrans_did_not_renew_shows_its_own_date():
+    fresh = {"taken": (NOW - timedelta(hours=2, minutes=5)).isoformat()}
+    old = {"taken": (NOW - timedelta(hours=20)).isoformat()}
+    assert _lapse_label(fresh, 2, NOW) == "2小时前 · 08:45"
+    assert _lapse_label(old, 2, NOW) == "10-23 14:50"
+    assert _lapse_label({}, 3, NOW) == "3小时前"
 
 
 def test_the_wall_covers_other_roads_before_a_second_view_of_one():
@@ -126,7 +153,7 @@ def test_a_camera_that_is_down_gives_way_to_the_next_nearest(monkeypatch, tmp_pa
     monkeypatch.setattr(plugin_module, "get_http_client", lambda: Http())
     plugin = plugin_module.BayTrafficCams({"id": "bay_traffic_cams"})
     context = TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 60)
-    payload = plugin._payload({}, NOW, allow_network=True, context=context)
+    payload = plugin._payload({"mainCamera": "TVA0"}, NOW, allow_network=True, context=context)
     try:
         assert [camera["id"] for camera in payload["cameras"]] == ["TVA0", "TVA2", "TVA3", "TVA4", "TVA5"]
         assert len(payload["cameras"][0]["history"]) == 3

@@ -1,10 +1,12 @@
-"""Caltrans District 4 freeway cameras near home: the camera list, the live stills and the
-hourly reference stills Caltrans keeps for each camera (the time-lapse).
+"""Caltrans District 4 freeway cameras: the ones near home, a district-wide patrol for the main
+view, the live stills and the hourly reference stills Caltrans keeps for each camera (the
+time-lapse).
 """
 
 from __future__ import annotations
 
 import math
+import random
 import re
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -22,6 +24,12 @@ FREMONT = (37.5485, -121.9886)
 # Cameras kept from the district-wide list: within this distance of home, nearest first.
 RADIUS_KM = 30
 MAX_KEPT = 60
+# The main view patrols the whole district instead: a new camera each slot, the same one for
+# every render within it (so a cached redraw matches), bridges, tolls and tunnels more often.
+PATROL_SLOT_SECONDS = 900
+PATROL_KEPT = 400
+LANDMARK_WEIGHT = 4
+LANDMARK = re.compile(r"bridge|toll|plaza|tunnel|golden gate|sfobb|caldecott|maze|treasure|span", re.IGNORECASE)
 TIMELAPSE_HOURS = 3
 PLACEHOLDER_WHITE = 0.5
 PLACEHOLDER_FLAT = 8
@@ -120,7 +128,7 @@ def history_steps(static):
 
 def normalize_cameras(payload, home):
     rows = (payload or {}).get("data") if isinstance(payload, dict) else None
-    cameras = []
+    cameras, patrol = [], []
     for row in rows or []:
         camera = (row or {}).get("cctv") or {}
         location = camera.get("location") or {}
@@ -133,22 +141,26 @@ def normalize_cameras(payload, home):
         except (TypeError, ValueError):
             continue
         distance = distance_km(home, point)
-        if distance > RADIUS_KM:
-            continue
         history = [safe_image_url(static.get(f"referenceImage{step}UpdatesAgoURL" if step > 1
                                              else "referenceImage1UpdateAgoURL"))
                    for step in history_steps(static)]
-        cameras.append({
-            "id": str(location.get("locationName") or "").split(" ", 1)[0][:12],
+        name = str(location.get("locationName") or "")
+        camera = {
+            "id": name.split(" ", 1)[0][:12],
             "route": str(location.get("route") or "")[:10], "direction": str(location.get("direction") or ""),
             "place": place_label(location), "town": str(location.get("nearbyPlace") or "")[:20],
             "distance_km": round(distance, 1), "bearing": round(bearing(home, point)), "image": image,
-            "history": [url for url in history if url],
-        })
+            "history": [url for url in history if url], "landmark": bool(LANDMARK.search(name)),
+        }
+        patrol.append(camera)
+        if distance <= RADIUS_KM:
+            cameras.append(camera)
     cameras.sort(key=lambda camera: camera["distance_km"])
     if not cameras:
         raise ValueError("Caltrans returned no cameras near home")
-    return {"cameras": cameras[:MAX_KEPT]}
+    # Landmarks first, so a district larger than the cap keeps all of them.
+    patrol.sort(key=lambda camera: (not camera["landmark"], camera["id"]))
+    return {"cameras": cameras[:MAX_KEPT], "patrol": patrol[:PATROL_KEPT]}
 
 
 def fetch_cameras(home, context):
@@ -187,6 +199,19 @@ def choose(cameras, count, main_id=""):
         if camera not in chosen:
             chosen.append(camera)
     return chosen
+
+
+def patrol(cameras, now, exclude=(), count=6):
+    """This slot's patrol: ``count`` district cameras in a weighted random order (landmarks
+    LANDMARK_WEIGHT times as likely), leaving out ``exclude`` ids; the first that has a still
+    leads the page and the rest stand by."""
+    rng = random.Random(int(now.timestamp() // PATROL_SLOT_SECONDS))
+    remaining = [camera for camera in cameras or [] if camera["id"] not in set(exclude)]
+    order = []
+    while remaining and len(order) < count:
+        weights = [LANDMARK_WEIGHT if camera.get("landmark") else 1 for camera in remaining]
+        order.append(remaining.pop(rng.choices(range(len(remaining)), weights=weights)[0]))
+    return order
 
 
 def frame_time(headers):
