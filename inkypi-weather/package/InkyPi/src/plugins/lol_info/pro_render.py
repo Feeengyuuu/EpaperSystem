@@ -16,7 +16,7 @@ import unicodedata
 from datetime import datetime
 from functools import lru_cache
 
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 from .hltv_players import ROLE_LABELS as CS2_ROLE_LABELS
 from plugins.sports_dashboard.common import LOCAL_CS2_TEAM_LOGO_DIR
@@ -26,7 +26,12 @@ from .hltv_players import ROLE_NAMES as CS2_ROLES
 from .pro_roster import ROLE_LABELS
 
 HERO_H = 152
-# The game logo heading the page takes the band's top-left corner; the photo starts below it.
+# The game's logo stands in the middle of the hero band, between the player and the rank.
+GAME_LOGO_BOX = (318, 44, 492, 108)
+# The player's photo takes the band's full height on the left.
+PHOTO_BOX = (170, HERO_H)
+# The CS2 page's middle carries the loadout, so its game logo keeps the band's top-left corner
+# and the bodyshot starts below it.
 TITLE_H = 42
 LEFT = (14, 160, 398, 470)
 RIGHT = (408, 160, 786, 470)
@@ -37,6 +42,10 @@ APEX_TIERS = {"CHALLENGER", "GRANDMASTER", "MASTER"}
 # brighter, the panels frosted over it so their text keeps its contrast.
 CS2_PAGE_DIM, CS2_HERO_DIM, CS2_PAGE_BLUR = 0.36, 0.62, 1.6
 CS2_PANEL_ALPHA = 0.86
+# The bright band dissolves into the dimmed page over these rows, and the bodyshot's foot
+# fades out over its last CS2_PHOTO_FADE rows, so neither ends on a hard line.
+CS2_HERO_FADE = (HERO_H - 40, HERO_H + 16)
+CS2_PHOTO_FADE = 22
 # From this Sniping score the AWP leads the loadout; otherwise the T rifle does.
 SNIPER_ROLE = 40
 CS2_RIFLES = {"t": ("AK-47", "Galil AR", "SG 553"), "ct": ("M4A1-S", "M4A4", "FAMAS", "AUG")}
@@ -83,13 +92,13 @@ class ProRenderMixin:
                 "body": self._font(14, bold=True), "text": self._font(13), "small": self._font(11),
                 "small_bold": self._font(11, bold=True), "tiny": self._font(10)}
 
-    def _hero_shade(self, image, colors):
-        """Darken the band from the left so the name reads over any art."""
+    def _hero_shade(self, image, colors, height=HERO_H):
+        """Darken the band (its top ``height`` rows) from the left so the name reads over any art."""
         width = image.width
-        shade = Image.new("RGB", (width, HERO_H), colors["background"])
-        mask = Image.linear_gradient("L").rotate(90, expand=True).resize((width, HERO_H))
+        shade = Image.new("RGB", (width, height), colors["background"])
+        mask = Image.linear_gradient("L").rotate(90, expand=True).resize((width, height))
         mask = mask.point(lambda value: int(70 + (255 - value) * 0.72))
-        band = image.crop((0, 0, width, HERO_H))
+        band = image.crop((0, 0, width, height))
         image.paste(Image.composite(shade, band, mask), (0, 0))
 
     def _team_logo(self, key, size):
@@ -112,8 +121,11 @@ class ProRenderMixin:
             yield index, (left, top + row * row_h, left + column_w - 6, top + (row + 1) * row_h)
 
     def _highlight(self, draw, cell, colors):
-        draw.rounded_rectangle((cell[0] - 4, cell[1] + 1, cell[2] + 2, cell[3] - 1), radius=5,
-                               fill=colors["surface"], outline=colors["gold"], width=1)
+        """The tracked player's row: a solid deep-gold bar with a bright gold edge on its left."""
+        box = (cell[0] - 6, cell[1] + 2, cell[2] + 3, cell[3] - 2)
+        fill = tuple(round(gold * 0.32 + panel * 0.68) for gold, panel in zip(colors["gold"], colors["panel"]))
+        draw.rounded_rectangle(box, radius=6, fill=fill)
+        draw.rounded_rectangle((box[0], box[1], box[0] + 4, box[3]), radius=2, fill=colors["gold"])
 
     def _tracker_badge(self, draw, pick, colors, fonts, right=786, y=134):
         text = f"随机追踪 {pick.get('position', 1)}/{pick.get('size', 1)} · {datetime.now():%H:%M}"
@@ -136,30 +148,32 @@ class ProRenderMixin:
             image.paste(band, (0, 0))
         self._hero_shade(image, colors)
         draw = ImageDraw.Draw(image)
-        # The game's logo titles the page at the top left; the pro's official lolesports photo stands below it.
-        self._paste_asset_logo(image, "league-of-legends-logo.png", (12, 8, 122, 40))
+        # The game's logo stands centred in the band; the pro's official lolesports photo fills its left.
+        self._paste_asset_logo(image, "league-of-legends-logo.png", GAME_LOGO_BOX)
         photo = self._image_from_url(pick.get("photo"), account.get("label")) if pick.get("photo") else None
         left = 18
         if photo is not None:
-            photo = ImageOps.contain(photo.convert("RGBA"), (130, HERO_H - TITLE_H), method=Image.Resampling.LANCZOS)
-            image.paste(photo, (12, HERO_H - photo.height), photo)
-            left = max(132, 12 + photo.width + 14)
-        width = 528 - left
-        self._single(draw, (left, 46), account.get("label") or "-", fonts["hero"], colors["ink"], width, 20)
+            photo = ImageOps.contain(photo.convert("RGBA"), PHOTO_BOX, method=Image.Resampling.LANCZOS)
+            image.paste(photo, (8, HERO_H - photo.height), photo)
+            left = max(150, 8 + photo.width + 12)
+        width = GAME_LOGO_BOX[0] - 8 - left
+        self._single(draw, (left, 26), account.get("label") or "-", self._font(46, bold=True), colors["ink"], width, 22)
         x = left + 2
-        logo = self._team_logo(account.get("team"), 24)
+        logo = self._team_logo(account.get("team"), 30)
+        team_y = 88
         if logo:
-            image.paste(logo, (x, 99 + (24 - logo.height) // 2), logo)
+            image.paste(logo, (x, team_y + (30 - logo.height) // 2), logo)
             x += logo.width + 8
         role = account.get("role") or ""
         line = " · ".join(part for part in (account.get("team"), ROLE_LABELS.get(role, "")) if part)
-        self._text(draw, (x, 100), line, fonts["body"], colors["ink"])
-        x += self._text_width(draw, line, fonts["body"]) + 8
-        role_icon = self._asset_logo(f"roles/{role.lower()}.png", (20, 20)) if role else None
+        team_font = self._font(18, bold=True)
+        self._single(draw, (x, team_y + 4), line, team_font, colors["ink"], left + width - x - 28, 12)
+        x += min(self._text_width(draw, line, team_font), left + width - x - 28) + 8
+        role_icon = self._asset_logo(f"roles/{role.lower()}.png", (24, 24)) if role else None
         if role_icon:
-            image.paste(role_icon, (x, 101), role_icon)
+            image.paste(role_icon, (int(x), team_y + 3), role_icon)
         riot_id = f"{account.get('gameName', '')} #{account.get('tagLine', '')} · {str(account.get('platformRoute', '')).upper()}"
-        self._single(draw, (left + 2, 128), riot_id, fonts["small"], colors["muted"], width, 8)
+        self._single(draw, (left + 2, 126), riot_id, fonts["text"], colors["muted"], width, 8)
 
         emblem = self._rank_emblem_image(ranked, 92) if ranked else None
         if emblem:
@@ -295,6 +309,7 @@ class ProRenderMixin:
         x = 20
         if photo is not None:
             photo = ImageOps.contain(photo.convert("RGBA"), (150, HERO_H - TITLE_H), method=Image.Resampling.LANCZOS)
+            photo = self._fade_foot(photo)
             image.paste(photo, (12, HERO_H - photo.height), photo)
             x = max(150, 12 + photo.width + 14)
         self._single(draw, (x, 44), player.get("nick") or "-", fonts["hero"], colors["ink"], 330, 20)
@@ -355,16 +370,36 @@ class ProRenderMixin:
         return art.convert("RGB") if art else None
 
     def _cs2_backdrop(self, image, best, colors):
-        """Lay the best map under the whole page (False when there is none to lay)."""
+        """Lay the best map under the whole page (False when there is none to lay).
+
+        One crop of the map runs down the page: bright and sharp in the hero band, then
+        easing into the dimmed, softened page across CS2_HERO_FADE."""
         art = self._map_art((best or {}).get("map"))
         if art is None:
             return False
-        page = ImageOps.fit(art, image.size, method=Image.Resampling.LANCZOS).filter(ImageFilter.GaussianBlur(CS2_PAGE_BLUR))
-        image.paste(Image.blend(Image.new("RGB", image.size, colors["background"]), page, CS2_PAGE_DIM))
-        band = ImageOps.fit(art, (image.width, HERO_H), method=Image.Resampling.LANCZOS, centering=(0.5, 0.4))
-        image.paste(Image.blend(Image.new("RGB", band.size, colors["background"]), band, CS2_HERO_DIM), (0, 0))
-        self._hero_shade(image, colors)
+        sharp = ImageOps.fit(art, image.size, method=Image.Resampling.LANCZOS)
+        base = Image.new("RGB", image.size, colors["background"])
+        page = Image.blend(base, sharp.filter(ImageFilter.GaussianBlur(CS2_PAGE_BLUR)), CS2_PAGE_DIM)
+        hero = Image.blend(base, sharp, CS2_HERO_DIM)
+        self._hero_shade(hero, colors, height=image.height)
+        start, end = CS2_HERO_FADE
+        rows = Image.new("L", (1, image.height), 0)
+        for y in range(image.height):
+            t = min(1.0, max(0.0, (y - start) / (end - start)))
+            rows.putpixel((0, y), round(255 * (1 - t * t * (3 - 2 * t))))
+        image.paste(Image.composite(hero, page, rows.resize(image.size)))
         return True
+
+    @staticmethod
+    def _fade_foot(photo, rows=CS2_PHOTO_FADE):
+        """The cut-out photo with its last ``rows`` fading to transparent."""
+        rows = min(rows, photo.height)
+        ramp = Image.new("L", (1, photo.height), 255)
+        for y in range(photo.height - rows, photo.height):
+            ramp.putpixel((0, y), round(255 * (photo.height - y) / (rows + 1)))
+        faded = photo.copy()
+        faded.putalpha(ImageChops.multiply(photo.getchannel("A"), ramp.resize(photo.size)))
+        return faded
 
     @staticmethod
     def _frost(image, box, colors, alpha=CS2_PANEL_ALPHA):
