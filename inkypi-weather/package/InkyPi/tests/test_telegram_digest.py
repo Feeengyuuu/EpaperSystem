@@ -1600,3 +1600,51 @@ def test_telegram_digest_preserves_shared_bold_fallback_raster(monkeypatch, tmp_
 
     assert font is shared
     assert bytes(font.getmask("Readable UI")) == expected
+
+
+def test_a_short_portrait_lead_promotes_the_next_picture_story_under_its_text(tmp_path):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 9, 4, 2, 40, tzinfo=timezone.utc)
+    portrait, second = tmp_path / "portrait.png", tmp_path / "second.png"
+    Image.new("RGB", (300, 420), (171, 32, 47)).save(portrait)
+    Image.new("RGB", (320, 180), (23, 139, 81)).save(second)
+
+    def story(key, score, media=None, **extra):
+        return {"key": key, "message_id": score, "date": int(now.timestamp()) - (100 - score), "chat_id": key,
+                "chat_title": key, "title": key, "raw_text": f"{key} text", "media_kind": "photo" if media else "text",
+                "media_path": str(media or ""),
+                "curation": {"score": score, "tag": "时事", "headline": f"{key} 标题", "summary": "短摘要"}, **extra}
+
+    messages = [story("lead", 95, portrait), story("second", 80, second)] + [story(f"row-{i}", 70 - i) for i in range(1, 8)]
+    state = {"schema": STATE_VERSION, "messages": messages, "stats": {"message_count": len(messages)},
+             "status": {"source_state": "live", "generated_at": now.isoformat(), "account_api": True}}
+    (tmp_path / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    image = plugin.generate_image(
+        {"_theme_render_only": True, "_inkypi_theme": _theme_context("day", requested_mode="day")}, DummyDeviceConfig())
+
+    keys = image.info[RENDERED_VISIBLE_KEYS_IMAGE_INFO_KEY]
+    # The second picture fills the lead's empty half and the list still shows six rows.
+    assert keys[:2] == ("lead", "second") and keys[2:] == tuple(f"row-{i}" for i in range(1, 7))
+    lower_lead = {image.getpixel((x, y)) for x in range(210, 460, 6) for y in range(300, 420, 6)}
+    assert (23, 139, 81) in lower_lead
+
+
+def test_the_lower_picture_is_the_leads_own_album_photo_before_another_story(tmp_path):
+    plugin = _plugin(tmp_path)
+    portrait, album, other = tmp_path / "portrait.png", tmp_path / "album.png", tmp_path / "other.png"
+    Image.new("RGB", (300, 420), (171, 32, 47)).save(portrait)
+    Image.new("RGB", (320, 180), (37, 79, 183)).save(album)
+    Image.new("RGB", (320, 180), (23, 139, 81)).save(other)
+    lead = {"key": "lead", "chat_id": "c1", "grouped_id": "g1", "raw_text": "lead", "media_path": str(portrait)}
+    sibling = {"key": "album-2", "chat_id": "c1", "grouped_id": "g1", "raw_text": "", "media_path": str(album)}
+    textless = {"key": "bare", "chat_id": "c2", "raw_text": "", "media_path": str(other)}
+    story = {"key": "story", "chat_id": "c3", "raw_text": "has words", "media_path": str(other)}
+
+    assert plugin._second_picture(lead, [story, sibling]) == (sibling, True)
+    # Without an album photo, a picture story with no words gives way to one that has them.
+    assert plugin._second_picture(dict(lead, grouped_id=""), [textless, story]) == (story, False)
+    assert plugin._second_picture(dict(lead, grouped_id=""), [textless]) == (None, False)
+    # The album photo is fetched with the lead, as sharp as the lead.
+    assert plugin._album_siblings(dict(lead, media_kind="photo"), [lead, dict(sibling, media_kind="photo")]) == [
+        dict(sibling, media_kind="photo")]

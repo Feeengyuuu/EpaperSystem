@@ -11,12 +11,15 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageOps
 
 from plugins.telegram_digest.curation import VISIBLE_COUNT, display_headline, display_summary
 
 LIST_ROWS = VISIBLE_COUNT - 1
 PORTRAIT_RATIO = 1.05
+# A second story fills the room the lead's text leaves when there is this much of it (page px);
+# the lead's summary then keeps to this many lines.
+SECOND_MIN_H, SECOND_LEAD_SUMMARY_LINES = 120, 4
 KIND_LABELS = {"private": "私聊", "group": "群聊", "channel": "频道"}
 ASSETS = Path(__file__).resolve().parent / "assets"
 # Each story's source line starts with its chat's kind as a generated icon (megaphone for a
@@ -65,8 +68,12 @@ class BriefingPageMixin:
         lead, rest = self._split_page_lead(messages)
         drawn = []
         if lead:
-            self._draw_lead(image, draw, lead, p)
+            second = self._draw_lead(image, draw, lead, p, rest)
             drawn.append(lead)
+            if second is not None:
+                # The story promoted under the lead leaves the list, which shows one more instead.
+                drawn.append(second)
+                rest = [item for item in rest if item is not second]
             drawn.extend(self._draw_story_list(image, draw, rest[:LIST_ROWS], p))
         else:
             self._draw_empty_page(draw, p)
@@ -146,7 +153,8 @@ class BriefingPageMixin:
 
     # --- lead -------------------------------------------------------------------
 
-    def _draw_lead(self, image, draw, item, p):
+    def _draw_lead(self, image, draw, item, p, rest=()):
+        """Draw the lead; returns the story promoted into the room its text leaves, or None."""
         x0, y0, x1, y1 = self._x(14), self._y(56), self._x(470), self._y(446)
         picture = self._open_page_media(item)
         colour = self._tag_colour(item, p)
@@ -154,16 +162,93 @@ class BriefingPageMixin:
             box = (x0, y0, x0 + self._x(176), y1)
             self._paste_media(image, picture, box, p, centering=(0.5, 0.15))
             self._draw_media_badges(draw, item, box, p, colour)
-            self._draw_lead_text(image, draw, item, p, (box[2] + self._x(14), y0, x1, y1), 22, 3, 10)
-        elif picture is not None:
+            return self._lead_text_with_second(image, draw, item, p, (box[2] + self._x(14), y0, x1, y1), rest,
+                                               (22, 3, 10))
+        if picture is not None:
             box = (x0, y0, x1, y0 + self._y(214))
             self._paste_media(image, picture, box, p, featured=True)
             self._draw_media_badges(draw, item, box, p, colour)
             self._draw_lead_text(image, draw, item, p, (x0, box[3] + self._y(10), x1, y1), 24, 2, 3, show_tag=False)
-        else:
-            self._draw_lead_text(image, draw, item, p, (x0, y0, x1, y1), 30, 3, 9)
+            return None
+        return self._lead_text_with_second(image, draw, item, p, (x0, y0, x1, y1), rest, (30, 3, 9))
 
-    def _draw_lead_text(self, image, draw, item, p, box, headline_size, headline_lines, summary_lines, show_tag=True):
+    def _lead_text_with_second(self, image, draw, item, p, box, rest, sizes):
+        """The lead's text; when it leaves room enough, a second picture fills it (the lead's
+        source line then closes its own text, above that picture): another photo of the lead's
+        own album, so the text describes both pictures, else the next picture story that says
+        something, carrying its own headline and summary."""
+        second, same_story = self._second_picture(item, rest)
+        if second is not None:
+            headline_size, headline_lines, _summary_lines = sizes
+            scratch = Image.new("RGB", image.size)
+            end = self._draw_lead_text(scratch, ImageDraw.Draw(scratch), item, p, box, headline_size, headline_lines,
+                                       SECOND_LEAD_SUMMARY_LINES, meta_after=True)
+            if box[3] - end >= self._y(SECOND_MIN_H):
+                end = self._draw_lead_text(image, draw, item, p, box, headline_size, headline_lines,
+                                           SECOND_LEAD_SUMMARY_LINES, meta_after=True)
+                self._draw_second_feature(image, draw, second, (box[0], end + self._y(10), box[2], box[3]), p,
+                                          same_story=same_story)
+                return second
+        self._draw_lead_text(image, draw, item, p, box, *sizes)
+        return None
+
+    def _second_picture(self, lead, rest):
+        """(the picture for the lead's empty half, whether it is the lead's own) or (None, False)."""
+        group, chat = str(lead.get("grouped_id") or ""), str(lead.get("chat_id") or "")
+        if group:
+            for story in rest:
+                if (str(story.get("grouped_id") or "") == group and str(story.get("chat_id") or "") == chat
+                        and self._open_page_media(story) is not None):
+                    return story, True
+        for story in rest:
+            if str(story.get("raw_text") or "").strip() and self._open_page_media(story) is not None:
+                return story, False
+        return None, False
+
+    def _draw_second_feature(self, image, draw, item, box, p, same_story=False):
+        """The second picture. The lead's own album photo carries only a chip (the text above is
+        its story); another story's picture carries its topic, headline, summary and source on a
+        dark band along its foot."""
+        x0, y0, x1, y1 = [int(value) for value in box]
+        picture = self._open_page_media(item)
+        if picture is None:
+            return
+        centering = (0.5, 0.2) if picture.height > picture.width * PORTRAIT_RATIO else (0.5, 0.45)
+        self._paste_media(image, picture, box, p, centering=centering)
+        if same_story:
+            self._chip(draw, x0 + self._x(10), y0 + self._y(10), "同组图片", (24, 28, 34), self._f(12, "bold"))
+            return
+        summary = display_summary(item)
+        band = self._y(66 if summary else 48)
+        shade = Image.new("L", (1, band), 0)
+        for row in range(band):
+            shade.putpixel((0, row), round(215 * min(1.0, row / max(1, band * 0.55))))
+        shade = shade.resize((x1 - x0, band))
+        corner = Image.new("L", (x1 - x0, y1 - y0), 0)
+        ImageDraw.Draw(corner).rounded_rectangle((0, 0, x1 - x0 - 1, y1 - y0 - 1), radius=self._x(8), fill=255)
+        mask = ImageChops.multiply(shade, corner.crop((0, y1 - y0 - band, x1 - x0, y1 - y0)))
+        image.paste((10, 14, 20), (x0, y1 - band, x1, y1), mask)
+        colour = self._tag_colour(item, p)
+        self._draw_media_badges(draw, item, box, p, colour)
+        headline_font = self._f(15, "bold")
+        draw.text((x0 + self._x(10), y1 - self._y(58 if summary else 40)),
+                  self._fit_text(draw, display_headline(item), headline_font, x1 - x0 - self._x(20)),
+                  font=headline_font, fill=(255, 255, 255))
+        if summary:
+            summary_font = self._f(12)
+            draw.text((x0 + self._x(10), y1 - self._y(37)),
+                      self._fit_text(draw, summary, summary_font, x1 - x0 - self._x(20)), font=summary_font,
+                      fill=(236, 240, 244))
+        meta_font = self._f(11, "bold")
+        draw.text((x0 + self._x(10), y1 - self._y(19)),
+                  self._fit_text(draw, self._story_meta(item, with_tag=False), meta_font, x1 - x0 - self._x(20)),
+                  font=meta_font, fill=(214, 220, 226))
+
+    def _draw_lead_text(self, image, draw, item, p, box, headline_size, headline_lines, summary_lines, show_tag=True,
+                        meta_after=False):
+        """The lead's tag, headline, summary and source line; returns where its text ends.
+
+        The source line closes the box, or follows the summary with ``meta_after``."""
         x0, y0, x1, y1 = box
         colour = self._tag_colour(item, p)
         y = y0
@@ -185,12 +270,15 @@ class BriefingPageMixin:
                                     min(room, summary_lines + extra)):
             draw.text((x0, y + self._y(4)), line, font=body_font, fill=p["ink"])
             y += line_h
+        if meta_after:
+            meta_y = y + self._y(10)
         meta = self._story_meta(item, with_tag=False)
         meta_font = self._f(12, "bold")
         meta_x = self._paste_marks(image, item, x0, meta_y, self._x(16))
         draw.text((meta_x, meta_y), self._fit_text(draw, meta, meta_font, x1 - meta_x - self._x(44)), font=meta_font,
                   fill=p["muted"])
         self._score_dots(draw, x1 - self._x(32), meta_y + self._y(8), item, colour, p)
+        return meta_y + self._y(18)
 
     def _draw_media_badges(self, draw, item, box, p, colour):
         self._chip(draw, box[0] + self._x(10), box[1] + self._y(10), self._tag(item), colour, self._f(12, "bold"))

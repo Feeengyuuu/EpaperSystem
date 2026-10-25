@@ -580,13 +580,28 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
             "media_path": str(cached_media_path or ""),
             "url": self._first_url(text),
             "unread": True,
+            # Photos sent as one album share this id: the page shows a lead's other photos with it.
+            "grouped_id": str(getattr(message, "grouped_id", None) or ""),
         }
+
+    @staticmethod
+    def _album_siblings(lead, messages):
+        """The other photos and videos of the lead's album (same chat, same grouped_id)."""
+        group = str((lead or {}).get("grouped_id") or "")
+        if not group:
+            return []
+        chat, key = str(lead.get("chat_id") or ""), lead.get("key")
+        return [item for item in messages or [] if isinstance(item, dict) and item.get("key") != key
+                and str(item.get("grouped_id") or "") == group and str(item.get("chat_id") or "") == chat
+                and str(item.get("media_kind") or "").lower() in {"photo", "video"}]
 
     async def _hydrate_account_media(self, client, messages, message_objects, existing_messages, media_download_limit,
                                      time_left=None):
         downloaded = 0
         lead, _rest = self._split_page_lead(messages)
         lead_key = str((lead or {}).get("key") or "")
+        # The lead's album photo may fill the half its text leaves, so it is fetched as sharp.
+        large_keys = {lead_key} | {str(item.get("key") or "") for item in self._album_siblings(lead, messages)[:1]}
         for item in self._account_media_download_queue(messages):
             if not isinstance(item, dict) or item.get("media_path"):
                 continue
@@ -619,7 +634,7 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
                         client,
                         message,
                         media,
-                        LEAD_PHOTO_MIN_SIDE if key == lead_key else THUMB_PHOTO_MIN_SIDE,
+                        LEAD_PHOTO_MIN_SIDE if key in large_keys else THUMB_PHOTO_MIN_SIDE,
                     ),
                     timeout=ACCOUNT_MEDIA_DOWNLOAD_TIMEOUT_SECONDS,
                 )
@@ -633,7 +648,8 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
         queue = []
         seen = set()
 
-        for item in self._visible_message_items(messages):
+        lead, _rest = self._split_page_lead(messages)
+        for item in self._visible_message_items(messages) + self._album_siblings(lead, messages)[:1]:
             if not isinstance(item, dict) or not item:
                 continue
             key = str(item.get("key") or "")
