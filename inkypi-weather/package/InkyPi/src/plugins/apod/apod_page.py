@@ -26,6 +26,11 @@ WORDMARK_PATH = (
     / "nasapics_space_weather_wordmark.png"
 )
 WORDMARK_FALLBACK_TEXT = "NASAPics × SPACE WEATHER"
+# NASA's insignia at the caption's lower right (px tall).
+NASA_INSIGNIA_PATH = Path(__file__).resolve().parent / "nasa_logo.png"
+NASA_INSIGNIA_HEIGHT = 46
+# Its gap to the caption lines beside it; smaller heights are tried when long lines run under it.
+NASA_INSIGNIA_GAP, NASA_INSIGNIA_MIN_HEIGHT = 10, 28
 LEFT_RECT = (0, 65, 368, 480)
 KP_RECT = (16, 74, 352, 190)
 GRS_RECT = (16, 198, 352, 236)
@@ -839,6 +844,37 @@ def _draw_source_panel(canvas, draw, snapshot, fonts) -> None:
     _draw_text(draw, (text_x, SOURCE_RECT[1] + 4), text, font=font, fill=MUTED_COLOR)
 
 
+def _fitting_insignia(draw, layout, right) -> Image.Image | None:
+    """The tallest insignia (NASA_INSIGNIA_HEIGHT down to NASA_INSIGNIA_MIN_HEIGHT) whose box clears
+    every caption line beside it, or None."""
+    x1 = RIGHT_TEXT_RECT[0]
+    advance = _line_height(draw, layout.meta_font)
+    rows = [(layout.date_y, layout.date_copy)]
+    rows += [(layout.credit_y + index * advance, line) for index, line in enumerate(layout.credit_lines)]
+    for height in range(NASA_INSIGNIA_HEIGHT, NASA_INSIGNIA_MIN_HEIGHT - 1, -6):
+        insignia = _nasa_insignia(height)
+        if insignia is None:
+            return None
+        left, top = right - insignia.width - NASA_INSIGNIA_GAP, layout.date_bottom - insignia.height
+        if all(y + advance <= top or x1 + _text_width(draw, line, layout.meta_font) <= left for y, line in rows):
+            return insignia
+    return None
+
+
+@lru_cache(maxsize=8)
+def _nasa_insignia(height: int) -> Image.Image | None:
+    """NASA's insignia (the plugin's nasa_logo.png) ``height`` px tall, or None."""
+    try:
+        with Image.open(NASA_INSIGNIA_PATH) as source:
+            insignia = source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+    bbox = insignia.getchannel("A").getbbox()
+    insignia = insignia.crop(bbox) if bbox else insignia
+    width = max(1, round(insignia.width * height / insignia.height))
+    return insignia.resize((width, int(height)), Image.Resampling.LANCZOS)
+
+
 def _load_wordmark() -> Image.Image | None:
     try:
         with Image.open(WORDMARK_PATH) as source:
@@ -978,14 +1014,20 @@ def _draw_caption(canvas, draw, layout) -> None:
         font=layout.meta_font,
         fill=MUTED_COLOR,
     )
-    _draw_right(
-        draw,
-        x2,
-        layout.date_y,
-        "FULL-BLEED DAILY",
-        font=layout.meta_font,
-        fill=LABEL_COLOR,
-    )
+    # NASA's insignia closes the caption at its lower right, its foot on the date line, as tall as
+    # the caption lines beside it leave room for.
+    insignia = _fitting_insignia(draw, layout, x2)
+    if insignia is not None:
+        canvas.paste(insignia, (x2 - insignia.width, layout.date_bottom - insignia.height), insignia)
+    else:
+        _draw_right(
+            draw,
+            x2,
+            layout.date_y,
+            "FULL-BLEED DAILY",
+            font=layout.meta_font,
+            fill=LABEL_COLOR,
+        )
 
 
 def _mix(colour, other, share):

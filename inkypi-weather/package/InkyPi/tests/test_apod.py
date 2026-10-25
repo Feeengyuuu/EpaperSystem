@@ -5164,3 +5164,21 @@ def test_a_png_apod_image_passes_media_validation(tmp_path):
     apod_module._probe_media_blob(jpeg, (420, 400))
     with pytest.raises(apod_module.ApodMediaUnavailable):
         apod_module._probe_media_blob(jpeg, (2000, 2000))
+
+
+def test_nasa_insignia_closes_the_caption_and_clears_long_credits():
+    page = _apod_page_module()
+
+    def render(record):
+        return page.render_apod_page(apod=record, title_zh=record.title_zh, translation_unavailable=False,
+                                     weather=_page_weather(), source_image=Image.new("RGB", (960, 640), (8, 8, 8)),
+                                     rendered_at_utc=NOW_UTC)
+
+    def blue_in(image, box):
+        return any(b > 150 and r < 90 for r, g, b in (image.getpixel((x, y))
+                                                      for x in range(box[0], box[2]) for y in range(box[1], box[3])))
+
+    assert blue_in(render(_page_record()), (735, 425, 795, 472))
+    long_credit = replace(_page_record(), copyright="DES/DOE/FNAL/DECam/CTIO/NOIRLab/NSF/AURA Image Processing: "
+                                                    "T.A. Rector (UAA/NOIRLab), R. Colombari & M. Zamani (NOIRLab)")
+    assert page._fitting_insignia is not None and blue_in(render(long_credit), (750, 440, 795, 472))
