@@ -2,11 +2,11 @@
   "generator": "image/gpt-image-2.5-sunburst (Creative Claw), transparent 1024x1024",
   "generated": "2026-10-25",
   "jobs": {
-    "crosses": "ae5e18bf-67fe-472f-b33f-f6fd1e5ba66e",
+    "crosses": "ced46816-cfd7-4724-a25d-05a67909ed1b",
     "blood_today": "ce828dd8-48cf-42a6-a28e-acc255c00e95"
   },
-  "processing": "alpha below 24 cleared; the crosses cut from a 2x2 sheet, trimmed, centred and scaled to 128 px; the blood drop cropped square round its splat (centre and radius as fractions of the image) and scaled to 256 px",
-  "rendering": "a finger-painted cross over each day gone by; the blood drop under today's number",
+  "processing": "alpha below 24 cleared; the red-marker crosses cut from a 2x2 sheet and trimmed to their strokes (at most 160 px wide, aspect kept); the blood drop cropped square round its splat (centre and radius as fractions of the image) and scaled to 256 px",
+  "rendering": "a red-marker cross scribbled over each day gone by, wider and taller than its cell at a per-date slant and offset; the blood drop under today's number",
   "crosses": [
     {
       "asset": "cross_1.png",
@@ -14,7 +14,11 @@
         0,
         0
       ],
-      "sha256": "c343637bb1b8d3eb7167678a8b56e9971ab74eeb64748a5c70fc7599cf52cc55"
+      "size": [
+        160,
+        120
+      ],
+      "sha256": "c0429bc9889c3294db5a05da28dcd7fad9ddcf9470f1bc8efafde1dbbb5f948e"
     },
     {
       "asset": "cross_2.png",
@@ -22,7 +26,11 @@
         1,
         0
       ],
-      "sha256": "3483dda3c5a4ba46f7aaf193a2a513fbcf1bdef75cc8a4b334809529b54880d6"
+      "size": [
+        160,
+        117
+      ],
+      "sha256": "bca0e9b3558e95375b5c30e77f9d93991a1c17c39fe10d23c1b5062f626a7af2"
     },
     {
       "asset": "cross_3.png",
@@ -30,7 +38,11 @@
         0,
         1
       ],
-      "sha256": "efd4da2883443486afa14fe83ef740b769d172c8fc869cc0e48dd33d3d9f9bfd"
+      "size": [
+        160,
+        144
+      ],
+      "sha256": "70af19b2222d9940989e4a8fb3008070a043c803e1a9cac26f1faee47057dfc9"
     },
     {
       "asset": "cross_4.png",
@@ -38,7 +50,11 @@
         1,
         1
       ],
-      "sha256": "3cfbbb3f7cdcc050c5ffce2952dfaa8500ed0c5c8f788ce6b85bc26bbd2a15fd"
+      "size": [
+        160,
+        159
+      ],
+      "sha256": "f31c6b4d28d4a5df32a60e84dbe52336e8fffdba228562000f8b329be3ba3740"
     }
   ],
   "blood": {

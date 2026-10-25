@@ -217,7 +217,7 @@ _LETTER_W, _LETTER_H = 5, 7
 
 
 # The month's wall-calendar page (calendar_page/): inset, room above for the binder rings,
-# hard shadow, ring size and spacing; four finger-painted crosses strike off the days gone by and
+# hard shadow, ring size and spacing; four red-marker crosses strike off the days gone by and
 # a drop of blood lands on today (calendar_page/marks.source.json).
 CALENDAR_PAGE_DIR = Path(__file__).with_name("calendar_page")
 CALENDAR_PAGE_INSET = 3
@@ -240,8 +240,12 @@ CALENDAR_BACKDROP_SHARE = 0.42
 CALENDAR_BACKDROP_EDGE = 46
 CALENDAR_BACKDROP_INNER = 0.32
 CALENDAR_AGENDA_BAND = 70
-# A cross spans a little more than the today circle and lets the struck-off number show through.
-CALENDAR_CROSS_SCALE = 1.45
+# A cross is scribbled over a past day like a hand with a red marker would: wider and taller
+# than the day's cell, at a slant and off-centre that change with the date, and the struck-off
+# number shows through it.
+CALENDAR_CROSS_SPAN = (1.15, 1.0)
+CALENDAR_CROSS_TILT = 10
+CALENDAR_CROSS_SHIFT = 0.08
 CALENDAR_CROSS_OPACITY = 0.88
 # Today's blood drop: its splat's radius as a share of the art (marks.source.json), drawn this
 # much larger than the old today circle; the falling drop and drips reach past the cell.
@@ -776,13 +780,12 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
                         stroke_width=2 if bled else 0, stroke_fill=CALENDAR_BLOOD_INK,
                     )
                 elif day < selected_date.day:
-                    # A day already lived: its number fades and a finger-painted red cross strikes it off.
+                    # A day already lived: its number fades and a red marker cross strikes it off.
                     draw.text(
                         (col_cx, row_cy), str(day),
                         fill=muted_text, font=day_font, anchor="mm",
                     )
-                    self._cross_off_day(img, selected_date.replace(day=day), (col_cx, row_cy),
-                                        today_circle_r * CALENDAR_CROSS_SCALE)
+                    self._cross_off_day(img, selected_date.replace(day=day), (col_cx, row_cy), (col_w, row_h))
                 else:
                     draw.text(
                         (col_cx, row_cy), str(day),
@@ -900,16 +903,23 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         return True
 
     @staticmethod
-    def _cross_off_day(img, day, centre, size):
-        """Paste one of the finger-painted crosses over a past day, the same one for that date every time."""
-        variant = 1 + (day.toordinal() * 7 + day.day) % CALENDAR_CROSS_VARIANTS
+    def _cross_off_day(img, day, centre, cell):
+        """Scribble one of the marker crosses over a past day, overshooting its ``cell`` (width,
+        height); the cross, slant and offset are the same for that date every time."""
+        seed = day.toordinal()
+        variant = 1 + (seed * 7 + day.day) % CALENDAR_CROSS_VARIANTS
         mark = _calendar_page_art(f"cross_{variant}.png")
         if mark is None:
             return
-        side = max(8, int(size))
-        mark = mark.resize((side, side), Image.LANCZOS)
+        width = max(8, round(cell[0] * CALENDAR_CROSS_SPAN[0]))
+        height = max(8, round(cell[1] * CALENDAR_CROSS_SPAN[1]))
+        tilt = (seed * 37) % (2 * CALENDAR_CROSS_TILT + 1) - CALENDAR_CROSS_TILT
+        mark = mark.resize((width, height), Image.LANCZOS).rotate(tilt, resample=Image.BICUBIC, expand=True)
+        shift_x = ((seed * 13) % 9 - 4) / 4 * cell[0] * CALENDAR_CROSS_SHIFT
+        shift_y = ((seed * 29) % 9 - 4) / 4 * cell[1] * CALENDAR_CROSS_SHIFT
         alpha = mark.getchannel("A").point(lambda value: round(value * CALENDAR_CROSS_OPACITY))
-        img.paste(mark, (round(centre[0] - side / 2), round(centre[1] - side / 2)), alpha)
+        img.paste(mark, (round(centre[0] + shift_x - mark.width / 2), round(centre[1] + shift_y - mark.height / 2)),
+                  alpha)
 
     def _draw_focus_panel_background(self, img, left, top, right, bottom, panel_bg, weather_panel_background_path):
         panel_w = right - left
