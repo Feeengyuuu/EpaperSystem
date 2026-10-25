@@ -536,13 +536,13 @@ class _Console:
             self.art((195, y, 790, y + 28), appid, strength=175)
             self.icon(appid, 206, y + 2, 24)
             playing = bool(current_appid and _appid(appid) == current_appid)
-            right = 521 if playing else 588
+            right = 509 if playing else 588
             self.text((243, y, right, y + 28), item.get("name"), 14,
                       bold=True, lines=2, min_size=11)
             if playing:
-                self.draw.rounded_rectangle((525, y + 4, 590, y + 24), radius=3,
+                self.draw.rounded_rectangle((513, y + 4, 592, y + 24), radius=3,
                                             fill=self.c["navy"], outline=GREEN)
-                self.text((529, y + 4, 588, y + 24), "正在玩...", 11, GREEN,
+                self.text((516, y + 4, 590, y + 24), "正在游玩...", 11, GREEN,
                           bold=True, align="center")
             for field, box in (("playtime_2weeks", (599, y, 678, y + 28)),
                                ("playtime_forever", (701, y, 780, y + 28))):
