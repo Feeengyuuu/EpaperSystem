@@ -1,0 +1,57 @@
+{
+ "fetched_from": "Wikimedia Commons (file rendered to PNG by Commons)",
+ "logos": {
+  "falcon9": {
+   "role": "rocket",
+   "file": "File:Falcon 9 logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Falcon_9_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a9/Falcon_9_logo.svg/960px-Falcon_9_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "329d3fdb0c4a0ba61829f314a7e7c62801bc50eb7b52439d393d8db8ed7aeb6c",
+   "sha256": "54c03d2e1635851ff9e774c302abb477c8b1471c4846f638b032f3a9ec5e9131",
+   "size": [
+    122,
+    96
+   ]
+  },
+  "falcon_heavy": {
+   "role": "rocket",
+   "file": "File:Falcon Heavy logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Falcon_Heavy_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/83/Falcon_Heavy_logo.svg/960px-Falcon_Heavy_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "9cabec65060b5f27583890147c0e6e514c9c4e4b70323bf2e29db5df779a5a8a",
+   "sha256": "3c756c3d4a5d0f838736b2b780630cff8f7640a5c689b5adc36fd7ea6135a530",
+   "size": [
+    122,
+    96
+   ]
+  },
+  "vulcan": {
+   "role": "rocket",
+   "file": "File:Vulcan logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Vulcan_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0d/Vulcan_logo.svg/960px-Vulcan_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "d2e1132e20cc4e3e8e027db21938ff2518ebb3fa759d179107770de3370707a0",
+   "sha256": "f3913905b497f5e053e5e1fdb8328de1570bc34487b86b720c83b97092a4b64d",
+   "size": [
+    92,
+    96
+   ]
+  },
+  "starlink": {
+   "role": "mission",
+   "file": "File:Starlink Logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Starlink_Logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a8/Starlink_Logo.svg/960px-Starlink_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "5b0bd6ad5d5a445e02e4b55bfd134fe9232b2ce24e318d9adcad2903dce471e8",
+   "sha256": "709734d262b48f6b650599d2476f9b7d8b24f1e1fc2e59ff729fdaab62d9f938",
+   "size": [
+    196,
+    96
+   ]
+  }
+ }
+}

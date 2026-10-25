@@ -1031,6 +1031,28 @@ def test_up_next_rows_keep_representative_names_complete():
     assert "FLIGHT 13" in rendered
 
 
+def test_a_rocket_launch_badge_carries_the_date_and_falcon_lines_carry_their_logos():
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    launches = _representative_launches()
+    launches[0].update(rocket="Falcon 9 Block 5", mission="Starlink Group 15-16")
+    draw = RecordingDraw()
+
+    plugin._draw_launch(draw.image, draw, (0, 58, 440, 448), launches, NOW, DAY_PALETTE, None)
+
+    texts = [call["text"] for call in draw.text_calls]
+    launch_day = datetime.fromisoformat(launches[0]["net"].replace("Z", "+00:00"))
+    assert "GO" not in texts
+    assert f"{launch_day.day:02d}" in texts and f"{launch_day:%b}".upper() in texts
+    plain = OrbitalSignal({"id": PLUGIN_ID})
+    plain_draw = RecordingDraw()
+    launches[0].update(rocket="Long March 2C", mission="Yaogan 45")
+    plain._draw_launch(plain_draw.image, plain_draw, (0, 58, 440, 448), launches, NOW, DAY_PALETTE, None)
+    with_logo = next(call for call in draw.text_calls if call["text"] == "FALCON 9 BLOCK 5")
+    without = next(call for call in plain_draw.text_calls if call["text"] == "LONG MARCH 2C")
+    # The official F9 mark sits before the name, so the name starts further right.
+    assert with_logo["xy"][0] >= without["xy"][0] + 30
+
+
 def test_primary_launch_keeps_full_rocket_name_inside_panel():
     plugin = OrbitalSignal({"id": PLUGIN_ID})
     launches = _representative_launches()

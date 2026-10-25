@@ -101,7 +101,16 @@ PROVIDER_LOGO_SILHOUETTE = {
 ICON_DIR = Path(__file__).with_name("assets") / "icons"
 PROVIDER_LOGO_DIR = Path(__file__).with_name("assets") / "providers"
 FLAG_DIR = Path(__file__).with_name("assets") / "flags"
+ROCKET_LOGO_DIR = Path(__file__).with_name("assets") / "rockets"
+# Official rocket and mission marks (Wikimedia Commons, tools/build_orbital_rocket_logos.py),
+# matched by name; launches without one keep plain text.
+ROCKET_LOGOS = (("falcon heavy", "falcon_heavy"), ("falcon 9", "falcon9"), ("vulcan", "vulcan"))
+MISSION_LOGOS = (("starlink", "starlink"),)
+# Below this brightness a logo's dark parts would vanish on the night paper; they take the ink.
+NIGHT_LOGO_INK_BELOW = 90
 FACT_ICON = 24
+# The rocket-launch badge that carries the launch date beside the countdown.
+LAUNCH_DAY_ICON = 50
 FACT_ICONS = {"WINDOW": "clock", "PAD": "tower", "ORBIT": "orbit", "WORLD": "world", "WEATHER": "weather"}
 MISSION_ICONS = {
     "communications": "comms", "earth science": "earth", "government/top secret": "classified",
@@ -171,6 +180,21 @@ def _provider_logo(provider_id):
             return source.convert("RGBA")
     except (OSError, ValueError):
         return None
+
+
+@lru_cache(maxsize=16)
+def _rocket_logo(key):
+    """An official rocket or mission logo by key, in its own colours."""
+    try:
+        with safe_open_image(ROCKET_LOGO_DIR / f"{key}.png") as source:
+            return source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+
+
+def _logo_key(name, table):
+    folded = str(name or "").casefold()
+    return next((key for term, key in table if term in folded), None)
 
 
 @lru_cache(maxsize=32)
@@ -997,6 +1021,38 @@ class OrbitalSignal(BasePlugin):
                           fill=palette["ink"])
         return True
 
+    def _draw_launch_day(self, image, draw, launch, launch_time, now, left, right, top, palette, family):
+        """A rocket lifting off beside the launch's local date; a dot in the launch status colour."""
+        local = launch_time.astimezone(now.tzinfo) if now.tzinfo else launch_time
+        size = LAUNCH_DAY_ICON
+        x = max(left + 8, right - size - 44)
+        self._paste_icon(image, "launch", x, top + 2, size, palette)
+        status = str(launch.get("status") or "TBD").upper()
+        dot = palette["green"] if status in {"GO", "SUCCESS"} else palette["orange"]
+        draw.ellipse((x + size - 9, top + 2, x + size - 1, top + 10), fill=dot, outline=palette["paper"])
+        text_x = x + size + 4
+        draw.text((text_x, top + 4), f"{local:%b}".upper(), font=self._font(11, True, family), fill=palette["orange"])
+        draw.text((text_x, top + 16), f"{local.day:02d}", font=self._font(24, True, family), fill=palette["ink"])
+        draw.text((text_x, top + 44), f"{local:%a}".upper(), font=self._font(10, True, family), fill=palette["muted"])
+
+    def _paste_logo(self, image, key, x, y, height, palette):
+        """Paste the logo ``key`` ``height`` px tall at (x, y); the width it took plus a gap, or 0."""
+        logo = _rocket_logo(key) if key else None
+        if logo is None:
+            return 0
+        width = max(1, round(logo.width * height / logo.height))
+        if width > height * 3:
+            width, height = height * 3, max(1, round(logo.height * height * 3 / logo.width))
+        fitted = logo.resize((width, height), Image.Resampling.LANCZOS)
+        if sum(palette["paper"]) < 300:
+            # Night paper: the logo's black parts take the ink so they do not vanish.
+            ink = Image.new("RGBA", fitted.size, (*palette["ink"], 255))
+            dark = fitted.convert("L").point(lambda value: 255 if value < NIGHT_LOGO_INK_BELOW else 0)
+            ink.putalpha(ImageChops.multiply(dark, fitted.getchannel("A")))
+            fitted.alpha_composite(ink)
+        image.paste(fitted, (int(x), int(y) + 2), fitted)
+        return width + 8
+
     def _draw_when_and_where(self, image, draw, launch, launch_time, now, left, right, top, palette, family):
         """Two plain lines: the local day and time (UTC after it), then the launch site with its flag."""
         local = launch_time.astimezone(now.tzinfo) if now.tzinfo else launch_time
@@ -1057,23 +1113,21 @@ class OrbitalSignal(BasePlugin):
             draw, text_left, clock_top, self._countdown_units(now, launch_time), palette, family
         )
 
-        status = str(primary.get("status") or "TBD").upper()
-        status_color = palette["green"] if status in {"GO", "SUCCESS"} else palette["orange"]
-        status_font = self._fit_font(draw, status, text_right - clock_right - 30, 26, 12, family)
-        status_box = (max(clock_right + 6, text_right - 86), clock_top + 4, text_right, clock_top + FLIP_CARD[1] - 4)
-        draw.rounded_rectangle(status_box, radius=6, fill=palette["white"], outline=status_color, width=3)
-        bounds = draw.textbbox((0, 0), status, font=status_font)
-        draw.text(((status_box[0] + status_box[2] - (bounds[2] - bounds[0])) / 2 - bounds[0],
-                   (status_box[1] + status_box[3] - (bounds[3] - bounds[1])) / 2 - bounds[1]),
-                  status, font=status_font, fill=status_color)
+        self._draw_launch_day(image, draw, primary, launch_time, now, clock_right, text_right, clock_top,
+                              palette, family)
 
         width = text_right - text_left
         rocket = str(primary.get("rocket") or "UPCOMING").strip().upper()
-        draw.text((text_left, clock_top + FLIP_CARD[1] + 14), rocket,
-                  font=self._fit_font(draw, rocket, width, 30, 14, family), fill=palette["ink"])
+        rocket_x = text_left + self._paste_logo(image, _logo_key(rocket, ROCKET_LOGOS), text_left,
+                                                clock_top + FLIP_CARD[1] + 14, 30, palette)
+        draw.text((rocket_x, clock_top + FLIP_CARD[1] + 14), rocket,
+                  font=self._fit_font(draw, rocket, text_right - rocket_x, 30, 14, family), fill=palette["ink"])
         mission = str(primary.get("mission") or "MISSION").strip().upper()
-        mission_font = self._fit_font(draw, mission, width, 16, 12, family)
-        draw.text((text_left, clock_top + FLIP_CARD[1] + 48), self._fit_text(draw, mission, mission_font, width),
+        mission_x = text_left + self._paste_logo(image, _logo_key(mission, MISSION_LOGOS), text_left,
+                                                 clock_top + FLIP_CARD[1] + 48, 18, palette)
+        mission_font = self._fit_font(draw, mission, text_right - mission_x, 16, 12, family)
+        draw.text((mission_x, clock_top + FLIP_CARD[1] + 48),
+                  self._fit_text(draw, mission, mission_font, text_right - mission_x),
                   font=mission_font, fill=palette["ink"])
         self._draw_when_and_where(image, draw, primary, launch_time, now, text_left, text_right,
                                   clock_top + FLIP_CARD[1] + 71, palette, family)
