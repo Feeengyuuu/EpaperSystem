@@ -286,7 +286,9 @@ git() {{
   case "$*" in
     *'remote get-url origin') echo {quote(origin)} ;;
     *'status --porcelain') {'echo " M personal.py"' if dirty else ":"} ;;
-    *'pull --ff-only') : ;;
+    *'rev-parse --is-shallow-repository') echo false ;;
+    *'pull --ff-only'*) : ;;
+    *'log -1'*) echo 'abc1234 · 2026-10-25' ;;
     *) return 99 ;;
   esac
 }}
@@ -300,6 +302,75 @@ main --non-interactive --lang zh-CN
         assert result.returncode == 0, result.stderr
         assert "pull --ff-only" in calls.read_text()
         assert "BOOTSTRAP:--non-interactive --lang zh-CN" in result.stdout
+
+
+def _git(*args, cwd):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
+                   env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.test",
+                        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.test"})
+
+
+def test_online_install_downloads_only_the_latest_version_and_updates_it(tmp_path):
+    if not shutil.which("git"):
+        pytest.skip("git is required")
+    source = tmp_path / "source"
+    source.mkdir()
+    _git("init", "-q", "-b", "main", cwd=source)
+    for version in ("one", "two"):
+        (source / "VERSION").write_text(version)
+        _git("add", "VERSION", cwd=source)
+        _git("commit", "-q", "-m", version, cwd=source)
+    checkout = tmp_path / "checkout"
+    url = "file://" + str(source).replace("\\", "/")
+    sync = f"""
+export EPAPERSYSTEM_REPO_URL={quote(url)}
+export EPAPERSYSTEM_CHECKOUT_DIR={quote(checkout)}
+source {quote(REPO / "install.sh")}
+sync_checkout
+"""
+    first = shell(sync)
+    assert first.returncode == 0, first.stderr
+    assert (checkout / "VERSION").read_text() == "two"
+    count = subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=checkout, capture_output=True, text=True)
+    assert count.stdout.strip() == "1"  # the newest commit only, no history
+
+    (source / "VERSION").write_text("three")
+    _git("commit", "-q", "-am", "three", cwd=source)
+    second = shell(sync)
+    assert second.returncode == 0, second.stderr
+    assert (checkout / "VERSION").read_text() == "three"
+    assert "Version / 版本" in second.stdout
+
+
+def test_no_starter_marks_the_starter_rotation_done_on_a_fresh_device(tmp_path):
+    config = tmp_path / "config"
+    config.mkdir()
+    result = shell(f"""
+source {quote(INSTALL / "install.sh")}
+CONFIG_DIR={quote(config)}
+SRC_PATH={quote(tmp_path / "empty-source")}
+WS_TYPE=epd7in3e
+NO_STARTER=true
+install() {{ command cp "${{@: -2:1}}" "${{@: -1}}"; }}
+chown() {{ :; }}
+chmod() {{ :; }}
+install_config
+""")
+    assert result.returncode == 0, result.stderr
+    document = json.loads((config / "device.json").read_text())
+    assert document["runtime_migrations"]["starter_rotation_v1"] is True
+    assert document["display_type"] == "epd7in3e"
+
+
+def test_bootstrap_passes_no_starter_to_the_base_installer(tmp_path):
+    (tmp_path / "install.sh").write_text('printf "BASE:%s\\n" "$*"\n', newline="\n")
+    result = shell(f"""
+source {quote(INSTALL / "bootstrap.sh")} --non-interactive --no-starter
+SCRIPT_DIR={quote(tmp_path)}
+run_install
+""")
+    assert result.returncode == 0, result.stderr
+    assert "--no-starter" in result.stdout
 
 
 @pytest.mark.parametrize(

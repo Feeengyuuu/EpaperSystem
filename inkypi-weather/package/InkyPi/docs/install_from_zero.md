@@ -26,11 +26,11 @@ curl -fsSL https://raw.githubusercontent.com/Feeengyuuu/EpaperSystem/main/instal
 
 If curl is missing, first run `sudo apt-get update && sudo apt-get install -y curl ca-certificates`.
 
-The wizard downloads to `/opt/EpaperSystem`, asks for the screen, checks prerequisites, installs dependencies and the startup service, offers optional API keys, and waits for readiness. Press Enter to skip keys. Wait for completion; download speed and Pi performance affect duration. After the first installation, run `sudo reboot` to activate SPI/I2C changes. The installer never reboots automatically.
+The wizard downloads only the latest version of `main` (no history) to `/opt/EpaperSystem`, asks for the screen, checks prerequisites, installs dependencies and the startup service, offers optional API keys, and waits for readiness. Press Enter to skip keys. Wait for completion; download speed and Pi performance affect duration. After the first installation, run `sudo reboot` to activate SPI/I2C changes. The installer never reboots automatically. Rerun the same command later to update to the latest version; personal settings, playlists and keys are kept.
 
 The default is Waveshare 7.3-inch colour HAT E, `epd7in3e`, 800 × 480. Append `-W epd7in5_V2` for that model, or `--pimoroni` for Inky automatic detection. Choose the exact model and revision; packaged drivers have not all been physically tested.
 
-Unattended tasks require `--non-interactive --skip-keys`; explicitly select your display or the default will be used. Interactive mode without a terminal stops with guidance; use `ssh -t` for a terminal.
+Add `--no-starter` to start a fresh device with an empty playlist instead of the starter rotation. Unattended tasks require `--non-interactive --skip-keys`; explicitly select your display or the default will be used. Interactive mode without a terminal stops with guidance; use `ssh -t` for a terminal.
 
 ### Inspect first or check prerequisites only
 
@@ -55,13 +55,15 @@ sudo cat /var/lib/inkypi/data/security/bootstrap_admin.token
 
 Enter the token in the browser and choose your administrator password. Existing users use `/auth/login`. For an expired token, run `sudo inkypi admin bootstrap` and read the replacement. Keep tokens and keys private.
 
-1. Set your device name, timezone and orientation in Settings.
-2. Add a page requiring no key, such as an image or Weather using Open-Meteo; configure your location and units.
-3. Preview and display it to check the actual screen.
-4. Add more plugins and configure their sources.
-5. Create a playlist with your pages and rotation intervals.
+A fresh device starts with a starter rotation in the Default playlist that needs no API key and no location: Sports, Tech Pulse, Orbital Signal, Daily Art, Daily Pop, Daily Wiki, Steam Charts, Magazine Covers and the calendar.
 
-A new installation can have no committed image yet. Display a page before assessing the screen. Application readiness does not prove every third-party source is available.
+1. Set your device name, timezone and orientation in Settings.
+2. Remove starter pages you do not want, or change their refresh intervals.
+3. Add pages that need your location, such as Weather using Open-Meteo; configure your location and units.
+4. Preview and display them to check the actual screen.
+5. Add pages that need API keys (NASA pictures, local events) after entering the keys at `/api-keys`.
+
+A new installation can have no committed image until the first starter page is fetched. Display a page before assessing the screen. Application readiness does not prove every third-party source is available.
 
 Add optional keys at `/api-keys` or run from any directory:
 

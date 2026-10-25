@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/Feeengyuuu/EpaperSystem/main/instal
 
 如系统缺少 curl，先运行 `sudo apt-get update && sudo apt-get install -y curl ca-certificates`。
 
-安装器将下载项目到 `/opt/EpaperSystem`，然后：
+安装器只下载 `main` 分支的最新版本（不含历史）到 `/opt/EpaperSystem`，然后：
 
 1. 引导选择屏幕。默认是 Waveshare 7.3 英寸彩色 HAT E，驱动 `epd7in3e`。
 2. 检查树莓派硬件、Python、systemd、磁盘空间和内置驱动。
@@ -44,6 +44,8 @@ curl -fsSL https://raw.githubusercontent.com/Feeengyuuu/EpaperSystem/main/instal
 
 首次安装完成后运行 `sudo reboot`，等待设备重新联网，使 SPI/I2C 设置生效。
 
+以后想更新到最新版本，重跑同一条安装命令即可：代码更新到最新，个人配置、播放列表和密钥保留。
+
 ### 其他屏幕与自动安装
 
 已知型号时可以直接指定，避免选择菜单：
@@ -52,7 +54,7 @@ curl -fsSL https://raw.githubusercontent.com/Feeengyuuu/EpaperSystem/main/instal
 curl -fsSL https://raw.githubusercontent.com/Feeengyuuu/EpaperSystem/main/install.sh | sudo bash -s -- --lang zh-CN -W epd7in5_V2
 ```
 
-Pimoroni 使用 `--pimoroni`，由 Inky 驱动自动识别。通过无交互远程任务执行时加 `--non-interactive --skip-keys`，并明确指定适合自己的屏幕；省略型号会使用 `epd7in3e`。无终端的交互安装会明确停止，不会猜测输入。
+不想要入门轮播时加 `--no-starter`，全新设备会从空的播放列表开始。Pimoroni 使用 `--pimoroni`，由 Inky 驱动自动识别。通过无交互远程任务执行时加 `--non-interactive --skip-keys`，并明确指定适合自己的屏幕；省略型号会使用 `epd7in3e`。无终端的交互安装会明确停止，不会猜测输入。
 
 内置驱动不代表所有硬件组合都已经实测；请选择与屏幕型号和版本一致的驱动。
 
@@ -83,13 +85,15 @@ sudo cat /var/lib/inkypi/data/security/bootstrap_admin.token
 
 ## 5. 搭建自己的信息屏
 
-1. 在设置页填写设备名称、时区、屏幕方向等。
-2. 先添加一个不需要密钥的页面，例如图片或使用 Open-Meteo 的天气；填写自己的城市/坐标、单位等参数。
-3. 预览并显示该页面，检查内容和实际屏幕方向。
-4. 再逐步添加日历、资讯、体育等内容，按插件提示配置来源。
-5. 创建自己的播放列表，添加页面并设置轮播间隔。
+全新设备首次启动时，“Default”播放列表里已有一套无需 API Key、不依赖位置的入门页面：体育看板、技术圈与 AI 脉搏、轨道信号、每日名画、今日热榜、维基每日、Steam 排行、杂志封面和日历，屏幕会自动开始轮播。
 
-应用安装成功与某个第三方数据源是否可用是两件事。第一次运行还没有显示过页面时，“没有已提交的当前图片”属于提示；实际显示一张页面后再验收屏幕。
+1. 在设置页填写设备名称、时区、屏幕方向等。
+2. 在播放列表里删掉不想要的入门页面，或调整各页的刷新间隔。
+3. 添加需要自己位置的页面，例如使用 Open-Meteo 的天气；填写自己的城市/坐标、单位等参数。
+4. 预览并显示新页面，检查内容和实际屏幕方向。
+5. 需要 API Key 的页面（NASA 天文图、本地活动等）在 `/api-keys` 填好密钥后再添加。
+
+应用安装成功与某个第三方数据源是否可用是两件事。入门页面第一次取数需要一点时间，“没有已提交的当前图片”在首次显示前属于提示；实际显示一张页面后再验收屏幕。
 
 API Key 按需在网页 `/api-keys` 配置，也可从任意目录运行：
 

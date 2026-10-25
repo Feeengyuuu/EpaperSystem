@@ -243,6 +243,8 @@ class Config:
         self.plugins_list = self.read_plugins_list()
         self.playlist_manager = self.load_playlist_manager()
         self.refresh_info = self.load_refresh_info()
+        # First, so the migrations below settle a fresh install's starter pages on its first start.
+        self._add_starter_rotation()
         self._apply_release_bound_nasapics_migration()
         self._migrate_liveradar_douyu_cake_room()
         self._migrate_liveradar_kick_quin_room()
@@ -298,6 +300,11 @@ class Config:
         from sky_radar_page_migration import apply_sky_radar_page_migration
 
         apply_sky_radar_page_migration(self)
+
+    def _add_starter_rotation(self):
+        from starter_rotation_migration import apply_starter_rotation_migration
+
+        apply_starter_rotation_migration(self)
 
     def _migrate_newspaper_chinese_editions(self):
         from newspaper_source_migration import apply_newspaper_chinese_editions_migration

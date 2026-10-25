@@ -24,6 +24,8 @@ DISPLAY_EXPLICIT=false
 CHECK_ONLY=false
 LIST_DISPLAYS=false
 KEYS_CHANGED=false
+NO_STARTER=false
+FRESH_INSTALL=false
 STAGE="arguments"
 
 on_error() {
@@ -80,6 +82,7 @@ Options:
   --non-interactive       Use defaults and do not prompt.
   --check                 Check prerequisites without installing anything.
   --list-displays         List Waveshare drivers included in this checkout.
+  --no-starter            Start a fresh install with an empty playlist instead of the starter rotation.
   --lang <en|zh-CN>       Set installer language. Also supports INKYPI_LANG.
   --zh-cn                 Shortcut for --lang zh-CN.
   -h, --help              Show this help.
@@ -126,6 +129,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --list-displays)
       LIST_DISPLAYS=true
+      shift
+      ;;
+    --no-starter)
+      NO_STARTER=true
       shift
       ;;
     --lang)
@@ -258,6 +265,9 @@ run_install() {
   fi
 
   install_args=("--no-reboot-prompt")
+  if [[ "$NO_STARTER" == true ]]; then
+    install_args+=("--no-starter")
+  fi
   if [[ "$DISPLAY_MODE" == "waveshare" ]]; then
     install_args+=("-W" "$WS_TYPE")
   fi
@@ -346,7 +356,12 @@ show_access_info() {
   say "Read the one-time setup token in this SSH terminal:" "在当前 SSH 终端读取一次性配对码："
   echo "  sudo cat /var/lib/inkypi/data/security/bootstrap_admin.token"
   say "Already configured? Use /auth/login. If the setup token expired: sudo inkypi admin bootstrap" "已设置密码请使用 /auth/login。配对码过期可运行：sudo inkypi admin bootstrap"
-  say "Then choose plugins, add your location/content and build a playlist. API keys are optional at /api-keys." "登录后选择插件、设置自己的位置与内容、创建轮播。需要的 API Key 可在 /api-keys 添加。"
+  if [[ "$FRESH_INSTALL" == true && "$NO_STARTER" != true ]]; then
+    say "The screen starts with a starter rotation that needs no API key: sports, Tech Pulse, rocket launches, daily art, hot lists, Wikipedia, Steam charts, magazines and the calendar." "屏幕已预装一套无需 API Key 的入门轮播：体育、技术圈、火箭发射、每日名画、今日热榜、维基每日、Steam 排行、杂志封面和日历。"
+    say "After signing in, remove pages in the playlist, or add ones that need your location (weather, local events)." "登录后可以在播放列表里删减，或添加需要位置的页面（天气、本地活动等）。"
+  else
+    say "Then choose plugins, add your location/content and build a playlist. API keys are optional at /api-keys." "登录后选择插件、设置自己的位置与内容、创建轮播。需要的 API Key 可在 /api-keys 添加。"
+  fi
   echo
   say "Useful commands:" "常用命令："
   echo "  sudo bash /opt/inkypi/current/install/healthcheck.sh --lang $LANG_MODE --wait 120"
@@ -373,6 +388,9 @@ main() {
   STAGE="input / 交互终端"
   prepare_input
   cd "$PROJECT_DIR"
+  if [[ ! -f /var/lib/inkypi/config/device.json ]]; then
+    FRESH_INSTALL=true
+  fi
   STAGE="display / 选择屏幕"
   if [[ "$SKIP_INSTALL" != true ]]; then
     choose_display

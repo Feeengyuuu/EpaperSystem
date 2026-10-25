@@ -29,6 +29,7 @@ PRIVILEGED_BROKER_TARGET="/usr/local/libexec/inkypi-privileged"
 
 WS_TYPE=""
 REBOOT_PROMPT=true
+NO_STARTER=false
 TEMP_ROOT=""
 
 if [[ -t 1 ]] && command -v tput >/dev/null 2>&1 && tput colors >/dev/null 2>&1; then
@@ -50,6 +51,7 @@ Usage: sudo bash install/install.sh [options]
 Options:
   -W, --waveshare <model>  Use a packaged Waveshare driver, for example epd7in3e.
   --no-reboot-prompt      Do not ask to reboot after installation.
+  --no-starter            Start a fresh install with an empty playlist instead of the starter rotation.
   -h, --help              Show this help.
 EOF
 }
@@ -80,6 +82,10 @@ parse_arguments() {
         ;;
       --no-reboot-prompt)
         REBOOT_PROMPT=false
+        shift
+        ;;
+      --no-starter)
+        NO_STARTER=true
         shift
         ;;
       -h|--help)
@@ -190,6 +196,19 @@ install_config() {
     source="$candidate"
   fi
   install -o inkypi -g inkypi -m 0600 "$source" "$target"
+  if [[ "$NO_STARTER" == true ]]; then
+    # The app adds a starter rotation on a fresh device's first start; mark it done instead.
+    python3 - "$target" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+document = json.loads(path.read_text(encoding="utf-8"))
+document.setdefault("runtime_migrations", {})["starter_rotation_v1"] = True
+path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+  fi
   if [[ "$source" == "$SCRIPT_DIR/config_base/device.json" ]]; then
     python3 - "$target" "${WS_TYPE:-inky}" <<'PY'
 import json

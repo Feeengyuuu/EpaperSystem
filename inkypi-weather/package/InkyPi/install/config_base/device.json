@@ -14,5 +14,8 @@
         "contrast": 1.0
     },
     "scheduler_sleep_time": 60,
-    "startup": true
+    "startup": true,
+    "runtime_migrations": {
+        "starter_rotation_v1": false
+    }
 }
