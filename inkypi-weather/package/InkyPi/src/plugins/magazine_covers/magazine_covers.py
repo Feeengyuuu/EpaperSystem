@@ -19,6 +19,7 @@ from urllib.parse import urljoin, urlparse
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps, ImageStat
 
+from plugins.base_plugin import cover_gallery
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import (
     PresentationMode,
@@ -61,6 +62,47 @@ REQUEST_HEADERS = {
         "+https://github.com/fatihak/InkyPi/)"
     )
 }
+
+# Shops whose collections publish a product feed naming each issue (magazine, headline, date, price).
+SHOP_FEED_HOSTS = {"magazineshop.us"}
+SHOP_FEED_PAGES = 4
+SHOP_FACT_KEYS = ("publication", "issue", "issue_date", "year", "price")
+_SHOP_ISSUE_CODE = re.compile(r"^(\d{2})(\d{2})(\d{2})$")
+
+
+def _shop_file_key(url):
+    """A shop image's file name, the same on its CDN and in its product feed."""
+    path = urlparse(str(url or "")).path
+    return path.rsplit("/", 1)[-1].lower() if path else ""
+
+
+def _shop_product_facts(product):
+    vendor = str(product.get("vendor") or "").strip()
+    title = " ".join(str(product.get("title") or "").split())
+    headline = title
+    if vendor and headline.lower().startswith(vendor.lower()):
+        headline = headline[len(vendor):].lstrip(" -:|").strip() or title
+    # A date code leading the headline ("26.10.10 Edition:", "02.02.26:") says what the issue date says.
+    headline = re.sub(r"^\d{1,2}[./]\d{1,2}[./]\d{2,4}(?:\s+Edition)?\s*[:\-]\s*", "", headline, flags=re.IGNORECASE)
+    issue_date = ""
+    code = _SHOP_ISSUE_CODE.match(str(product.get("product_type") or "").strip())
+    if code:
+        year, month, day = (int(part) for part in code.groups())
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            issue_date = f"{2000 + year:04d}-{month:02d}-{day:02d}"
+    if not issue_date:
+        issue_date = str(product.get("published_at") or "")[:10]
+    variants = product.get("variants") or [{}]
+    price = str((variants[0] or {}).get("price") or "").strip() if isinstance(variants, list) else ""
+    facts = {"issue": headline[:512], "issue_date": issue_date if re.match(r"^\d{4}-\d{2}-\d{2}$", issue_date) else ""}
+    if vendor:
+        facts["publication"] = vendor[:200]
+    if facts["issue_date"]:
+        facts["year"] = int(facts["issue_date"][:4])
+    if re.match(r"^\d{1,4}(?:\.\d{2})?$", price):
+        facts["price"] = f"${price}"
+    return facts
+
 
 def _magazineshop_pages(label, slug, first_page, last_page):
     lines = []
@@ -177,6 +219,8 @@ DOWNLOAD_CHUNK_SIZE = 8192
 RESAMPLING_FILTER = getattr(Image, "Resampling", Image).BICUBIC
 DEFAULT_FIT_MODE = "triptych"
 TRIPTYCH_COVER_COUNT = 3
+# The gallery page's accent: the issue-date chips (the red of the old "最新" tag).
+GALLERY_ACCENT = (205, 38, 46)
 DATA_PROVIDER_ATTEMPT_LIMIT = 6
 DATA_HYDRATION_TIME_LIMIT_SECONDS = 75
 HISTORICAL_CATALOG_REFRESH_HOURS = 24
@@ -260,6 +304,8 @@ _LATEST_CATEGORY_KEYWORDS = {
         "culture",
     ),
 }
+# The gallery page's own wordmark (GPT Image 2.5; assets/gallery_wordmark.source.json).
+GALLERY_WORDMARK_PATH = Path(__file__).with_name("assets") / "gallery_wordmark.png"
 
 
 class _ImageCandidateParser(HTMLParser):
@@ -271,10 +317,18 @@ class _ImageCandidateParser(HTMLParser):
         self.images = []
         self._in_title = False
         self._title_text = []
+        # The shop product link most recently opened: a collection's cover sits under its product's.
+        self._product = ""
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
         attrs = dict(attrs)
+        if tag == "a":
+            product = re.match(r"^(?:https?://[^/]+)?/(?:collections/[^/]+/)?products/([A-Za-z0-9_-]+)",
+                               str(attrs.get("href") or ""))
+            if product:
+                self._product = product.group(1)
+            return
         if tag == "title":
             self._in_title = True
             self._title_text = []
@@ -297,6 +351,7 @@ class _ImageCandidateParser(HTMLParser):
                 "height": attrs.get("height") or "",
                 "class": attrs.get("class") or "",
                 "id": attrs.get("id") or "",
+                "product": self._product,
             })
 
     def handle_data(self, data):
@@ -988,11 +1043,29 @@ class MagazineCovers(BasePlugin):
         )
 
     def _compose_staged_triptych(self, fitted_images, backdrop, dimensions, settings, records=None):
-        canvas = self._triptych_background([backdrop], dimensions, settings)
-        for index, fitted in enumerate(fitted_images):
-            self._paste_triptych_cover(canvas, fitted, index, dimensions)
-        self._draw_triptych_cards(canvas, records or [], dimensions, settings)
-        return canvas
+        return self._gallery_page(fitted_images, records or [], dimensions, settings)
+
+    def _gallery_page(self, images, records, dimensions, settings):
+        """The newsstand: each cover framed over its card (magazine, issue date and price,
+        headline, category and shop)."""
+        this_year = self._now_utc().year
+        count = min(len(images), TRIPTYCH_COVER_COUNT)
+        labels = [cover_info.gallery_label(record, this_year) for record in list(records)[:count]]
+        labels += [cover_info.gallery_label({}, this_year)] * (count - len(labels))
+        now = datetime.now()
+        shops = sorted({cover_info.provider_label(record) for record in list(records)[:count]} - {""})
+        return cover_gallery.compose(
+            [ImageOps.exif_transpose(image).convert("RGB") for image in images[:count]], labels, tuple(dimensions),
+            title="MAGAZINES", subtitle="本期封面 · " + " / ".join(shops) if shops else "本期封面",
+            date_text=f"{now.month}月{now.day}日 周{'一二三四五六日'[now.weekday()]}",
+            accent=GALLERY_ACCENT, dark=self._gallery_dark(settings),
+            wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="newsstand")
+
+    @staticmethod
+    def _gallery_dark(settings):
+        theme = (settings or {}).get("_inkypi_theme")
+        mode = str((theme or {}).get("mode") or "").lower() if isinstance(theme, dict) else ""
+        return mode == "night" or str((settings or {}).get("backgroundColor") or "").lower() == "black"
 
     @staticmethod
     def _paste_triptych_cover(canvas, fitted, index, dimensions):
@@ -1573,6 +1646,51 @@ class MagazineCovers(BasePlugin):
         decorated.setdefault("personal_use_only", True)
         return decorated
 
+    def _shop_product_facts(self, source, image_url, deadline=None, product=None):
+        """The magazine, this issue's headline, its date and price from the shop's own data for a
+        cover of one of its collections: the product the cover sits under (its .json), else the
+        collection's product feed searched for the cover's file; {} when neither names it."""
+        page = urlparse(str((source or {}).get("url") or ""))
+        collection = re.match(r"^/collections/([A-Za-z0-9_-]+)/?$", page.path or "")
+        if page.scheme != "https" or (page.hostname or "").lower() not in SHOP_FEED_HOSTS or not collection:
+            return {}
+        wanted = _shop_file_key(image_url)
+        if not wanted:
+            return {}
+        if product and re.match(r"^[A-Za-z0-9_-]{1,200}$", str(product)):
+            try:
+                found = json.loads(self._fetch_text(f"https://{page.hostname}/products/{product}.json", source,
+                                                    deadline=deadline) or "{}").get("product")
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.info("Magazine shop product %s unavailable: %s", product, exc)
+                found = None
+            if isinstance(found, dict) and any(_shop_file_key(item.get("src")) == wanted
+                                               for item in found.get("images") or [] if isinstance(item, dict)):
+                return _shop_product_facts(found)
+        # The feed pages 250 products at a time, not as the collection's own pages do, so walk
+        # its first pages (each fetched once per run) until the cover's file turns up.
+        feeds = self.__dict__.setdefault("_shop_feed_pages", {})
+        for number in range(1, SHOP_FEED_PAGES + 1):
+            feed = f"https://{page.hostname}/collections/{collection.group(1)}/products.json?limit=250&page={number}"
+            if feed not in feeds:
+                try:
+                    products = json.loads(self._fetch_text(feed, source, deadline=deadline) or "{}").get("products")
+                except TaskCancelled:
+                    raise
+                except Exception as exc:
+                    logger.info("Magazine shop feed unavailable for %s: %s", source.get("name"), exc)
+                    return {}
+                feeds[feed] = products if isinstance(products, list) else []
+            for product in feeds[feed]:
+                images = [item.get("src") for item in product.get("images") or [] if isinstance(item, dict)]
+                if any(_shop_file_key(src) == wanted for src in images):
+                    return _shop_product_facts(product)
+            if len(feeds[feed]) < 250:
+                break
+        return {}
+
     def _latest_source_category(self, source):
         haystack = " ".join(
             (
@@ -1623,6 +1741,8 @@ class MagazineCovers(BasePlugin):
                         "page_url": source["url"],
                         "title": parser.title or source["name"],
                     }
+                    cover.update(self._shop_product_facts(source, candidate["url"], deadline=deadline,
+                                                          product=candidate.get("product")))
                     self._write_cached_cover(source, dimensions, cover)
                     return cover
             except TaskCancelled:
@@ -2200,19 +2320,12 @@ class MagazineCovers(BasePlugin):
             ImageOps.exif_transpose(cover["image"]).convert("RGB")
             for _source, cover in source_covers[:TRIPTYCH_COVER_COUNT]
         ]
-        canvas = self._triptych_background(cover_images, dimensions, settings)
-
-        for index, image in enumerate(cover_images):
-            _left, _top, box_width, box_height = cover_info.cover_box(index, TRIPTYCH_COVER_COUNT, dimensions)
-            fitted = ImageOps.contain(image, (box_width, box_height), method=Image.LANCZOS)
-            self._paste_triptych_cover(canvas, fitted, index, dimensions)
         if records is None:
             records = [
                 {**self._decorate_cover_metadata(source, cover), "source_name": (source or {}).get("name")}
                 for source, cover in source_covers[:TRIPTYCH_COVER_COUNT]
             ]
-        self._draw_triptych_cards(canvas, records, dimensions, settings)
-        return canvas
+        return self._gallery_page(cover_images, records, dimensions, settings)
 
     def _triptych_background(self, cover_images, dimensions, settings):
         background = self._solid_background(dimensions, settings)
@@ -2458,13 +2571,15 @@ class MagazineCovers(BasePlugin):
             loaded = self.image_loader.from_file(str(image_path), dimensions, resize=False)
             if not loaded:
                 return None
-            return {
+            cover = {
                 "image": loaded,
                 "image_url": meta.get("image_url"),
                 "page_url": meta.get("page_url"),
                 "title": meta.get("title"),
                 "fetched_at": fetched_at.isoformat(),
             }
+            cover.update({key: meta[key] for key in SHOP_FACT_KEYS if meta.get(key) not in (None, "")})
+            return cover
         except Exception as exc:
             logger.warning("Could not read cached magazine cover for %s: %s", source["name"], exc)
             return None
@@ -2484,6 +2599,7 @@ class MagazineCovers(BasePlugin):
                 "title": cover.get("title"),
                 "image_path": str(image_path),
                 "fetched_at": datetime.now(timezone.utc).isoformat(),
+                **{key: cover[key] for key in SHOP_FACT_KEYS if cover.get(key) not in (None, "")},
             }
             meta_path.write_text(json.dumps(meta, ensure_ascii=True, indent=2), encoding="utf-8")
         except Exception as exc:

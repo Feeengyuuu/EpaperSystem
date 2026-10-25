@@ -1,0 +1,14 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "generated": "2026-10-24",
+  "job_id": "b2fe0cd6-b03c-4620-a902-850192121913",
+  "prompt": "condensed Didone masthead 'MAGAZINES', black, crimson bar under its start",
+  "use": "the gallery page's header title; its black lettering takes the page's ink",
+  "processing": "alpha below 24 cleared, cropped to alpha, 96 px tall (LANCZOS)",
+  "source_sha256": "28b9f6dcfb67d11f1bb7f1f3367d08955f2caaaadbae9ae97be435e5abfcea44",
+  "sha256": "a6a6333fc661c2fd4371b597f4083e416728476632c5731cb425f92ec28ccbf0",
+  "size": [
+    395,
+    96
+  ]
+}

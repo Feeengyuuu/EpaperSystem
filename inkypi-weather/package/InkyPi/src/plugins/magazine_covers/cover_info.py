@@ -14,6 +14,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
 
+from plugins.base_plugin.cover_gallery import Label
 from utils.app_utils import get_base_ui_font
 from utils.safe_image import ImageLimits, safe_open_image
 
@@ -88,6 +89,34 @@ def cover_info(record, this_year):
                                                PROVIDER_LABELS.get(provider, provider.replace("_", " ").title()))
                              if part),
     }
+
+
+def provider_label(record):
+    provider = str((record or {}).get("provider") or "")
+    if provider == "publisher_web":
+        host = re.sub(r"^www\.", "", re.sub(r"^https?://", "", str((record or {}).get("page_url") or "")).split("/")[0])
+        return host or PROVIDER_LABELS["publisher_web"]
+    return PROVIDER_LABELS.get(provider, provider.replace("_", " ").title())
+
+
+def gallery_label(record, this_year):
+    """The shared gallery's label for one cover: magazine, issue date or era with price or
+    age, the issue's headline, then its category and where the scan came from."""
+    info = cover_info(record, this_year)
+    record = record or {}
+    issue_date = str(record.get("issue_date") or "").strip()
+    day = re.match(r"^(\d{4})-(\d{2})-(\d{2})", issue_date)
+    chip = f"{day.group(1)}.{day.group(2)}.{day.group(3)}" if day else (info["when"] or info["era_text"])
+    beside = str(record.get("price") or "").strip()
+    if info["era"] == "historical" or not beside:
+        beside = info["era_text"] if chip != info["era_text"] else ""
+    headline = str(record.get("issue") or "").strip()
+    if not headline or headline.lower() == info["publication"].lower():
+        headline = str(record.get("title") or "").split("|")[0].strip()
+        headline = "" if headline.lower().startswith(("buy ", "best sellers")) else headline
+    category = CATEGORY_LABELS.get(info["category"], "")
+    return Label(title=info["publication"], chip=chip, lines=(beside,), body=headline,
+                 source=" · ".join(part for part in (category, provider_label(record)) if part))
 
 
 @lru_cache(maxsize=len(CATEGORY_LABELS))

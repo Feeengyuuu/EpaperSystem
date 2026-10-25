@@ -1,0 +1,354 @@
+"""One page for the cover plugins (Daily Art, Magazine Covers, GCD Comic Covers).
+
+A header names the page with what is on it and the date; up to four works stand side by
+side on one shelf line, each framed with a soft shadow over a wall label (a numbered
+title, then its facts); Daily Art adds a timeline that places each work in its century.
+Everything stays inside the 8 px inset the theme chrome frames.
+"""
+
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
+
+from utils.app_utils import get_base_ui_font
+from utils.safe_image import safe_open_image
+
+MARGIN = 18
+HEADER_TOP, HEADER_RULE = 14, 50
+COLUMN_GAP = 16
+LABEL_H = 98
+TIMELINE_H = 30
+SHADOW = 4
+# A page's own wordmark stands this tall in its header.
+WORDMARK_H = 30
+DAY = {"paper": (249, 246, 239), "ink": (24, 24, 28), "muted": (104, 100, 94), "rule": (206, 200, 189),
+       "card": (255, 255, 255), "frame": (40, 38, 36)}
+NIGHT = {"paper": (20, 21, 25), "ink": (238, 236, 230), "muted": (160, 156, 148), "rule": (70, 70, 76),
+         "card": (32, 33, 38), "frame": (214, 210, 200)}
+_YEAR = re.compile(r"(\d{3,4})")
+_CENTURY = re.compile(r"(\d{1,2})(?:st|nd|rd|th)\s+century", re.IGNORECASE)
+
+
+@dataclass
+class Label:
+    """A work's wall label: its title, up to three fact lines, a chip and where it is from."""
+
+    title: str
+    lines: tuple = ()
+    chip: str = ""
+    source: str = ""
+    year: int | None = None
+    # A paragraph (a cover's headline) wrapped into whatever room the label has left.
+    body: str = ""
+    extra: dict = field(default_factory=dict)
+
+
+def year_of(text):
+    """The year a date string names ("ca. 1750", "1780-85", "19th century", "500 B.C."), or None."""
+    text = str(text or "")
+    bce = bool(re.search(r"\bB\.?\s?C\.?(?:E\.?)?\b", text, re.IGNORECASE))
+    match = _YEAR.search(text)
+    if match:
+        year = int(match.group(1))
+        return -year if bce else year
+    century = _CENTURY.search(text)
+    if century:
+        year = (int(century.group(1)) - 1) * 100 + 50
+        return -year if bce else year
+    return None
+
+
+@lru_cache(maxsize=8)
+def load_wordmark(path):
+    """A page's wordmark asset (RGBA), or None when it cannot be read."""
+    try:
+        with safe_open_image(Path(path)) as source:
+            return source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+
+
+def palette(dark):
+    return NIGHT if dark else DAY
+
+
+def _font(size, bold=False):
+    return get_base_ui_font(int(size), bold=bold)
+
+
+def _clip(draw, text, font, width):
+    text = str(text or "")
+    if draw.textlength(text, font=font) <= width:
+        return text
+    while text and draw.textlength(text + "…", font=font) > width:
+        text = text[:-1]
+    return text.rstrip() + "…" if text else ""
+
+
+def _wrap(draw, text, font, width, max_lines):
+    words, lines, current = str(text or "").split(), [], ""
+    for word in words:
+        trial = f"{current} {word}".strip()
+        if draw.textlength(trial, font=font) <= width or not current:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+        if len(lines) == max_lines:
+            break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    if not lines:
+        return []
+    rest = " ".join(words)
+    if " ".join(lines) != rest:
+        lines[-1] = _clip(draw, lines[-1] + " …", font, width)
+    return [_clip(draw, line, font, width) for line in lines]
+
+
+def columns(count, dimensions, *, timeline=False):
+    """[(image box, label box)] for ``count`` works on the page."""
+    width, height = dimensions
+    count = max(1, int(count))
+    col_w = (width - 2 * MARGIN - (count - 1) * COLUMN_GAP) / count
+    label_top = height - MARGIN - LABEL_H - (TIMELINE_H if timeline else 0)
+    boxes = []
+    for index in range(count):
+        left = round(MARGIN + index * (col_w + COLUMN_GAP))
+        right = round(MARGIN + index * (col_w + COLUMN_GAP) + col_w)
+        boxes.append(((left, HEADER_RULE + 12, right, label_top - 10), (left, label_top, right, label_top + LABEL_H)))
+    return boxes
+
+
+def compose(images, labels, dimensions, *, title, subtitle="", date_text="", accent=(0, 70, 200), dark=False,
+            timeline=False, logo=None, wordmark=None, style="gallery"):
+    """The gallery page for ``images`` (already loaded) and their ``labels``.
+
+    ``style`` sets the page's backdrop over the works' own colour wash: "gallery" lights each
+    work with a spotlight, "newsstand" stands them on a shelf, "comic" lays a halftone.
+    ``wordmark`` (RGBA) replaces the lettered title; its black parts take the page's ink.
+    """
+    colors = palette(dark)
+    width, height = dimensions
+    page = Image.new("RGB", (width, height), colors["paper"])
+    boxes = columns(len(images), dimensions, timeline=timeline)
+    _backdrop(page, images, boxes, colors, style, accent, dark)
+    draw = ImageDraw.Draw(page)
+    years = [label.year for label in labels if isinstance(label.year, int)]
+    if len(years) >= 2 and max(years) > min(years):
+        span = f"跨越 {_year_text(min(years))}–{_year_text(max(years))} · {max(years) - min(years)} 年"
+        subtitle = f"{subtitle} · {span}" if subtitle else span
+    _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark)
+    for index, (image, label, (image_box, label_box)) in enumerate(zip(images, labels, boxes), start=1):
+        frame = _framed(page, image, image_box, colors)
+        _swatches(draw, image, frame, colors)
+        _label(draw, label, label_box, index, accent, colors, numbered=timeline)
+    if timeline:
+        _timeline(draw, labels, (MARGIN, height - MARGIN - TIMELINE_H + 6, width - MARGIN, height - MARGIN), accent,
+                  colors)
+    return page
+
+
+def _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark=None):
+    x = MARGIN
+    if logo is not None:
+        page.paste(logo, (x, HEADER_TOP + (28 - logo.height) // 2), logo)
+        x += logo.width + 10
+    mark = _inked_wordmark(wordmark, colors) if wordmark is not None else None
+    if mark is not None:
+        page.paste(mark, (x, HEADER_TOP + 30 - mark.height), mark)
+        x += mark.width + 14
+    else:
+        if logo is None:
+            draw.rectangle((x, HEADER_TOP + 8, x + 10, HEADER_TOP + 18), fill=accent)
+            x += 18
+        title_font = _font(22, True)
+        draw.text((x, HEADER_TOP - 1), title, font=title_font, fill=colors["ink"])
+        x += draw.textlength(title, font=title_font) + 14
+    date_font = _font(12, True)
+    date_w = draw.textlength(date_text, font=date_font) if date_text else 0
+    if date_text:
+        draw.text((width - MARGIN - date_w, HEADER_TOP + 8), date_text, font=date_font, fill=colors["ink"])
+    if subtitle:
+        sub_font = _font(12)
+        draw.text((x, HEADER_TOP + 8), _clip(draw, subtitle, sub_font, width - MARGIN - date_w - 16 - x), font=sub_font,
+                  fill=colors["muted"])
+    draw.line((MARGIN, HEADER_RULE, width - MARGIN, HEADER_RULE), fill=colors["ink"], width=2)
+
+
+def _framed(page, image, box, colors):
+    """The work contained in ``box``, standing on its foot, with a hairline frame and soft shadow."""
+    left, top, right, bottom = box
+    art = ImageOps.contain(image.convert("RGB"), (right - left - SHADOW, bottom - top - SHADOW),
+                           method=Image.Resampling.LANCZOS)
+    x = left + (right - left - SHADOW - art.width) // 2
+    y = bottom - SHADOW - art.height
+    shadow = Image.new("L", (art.width + 4 * SHADOW, art.height + 4 * SHADOW), 0)
+    ImageDraw.Draw(shadow).rectangle((SHADOW, SHADOW, shadow.width - SHADOW, shadow.height - SHADOW), fill=120)
+    shadow = shadow.filter(ImageFilter.GaussianBlur(SHADOW / 1.5))
+    tone = Image.new("RGB", shadow.size, tuple(max(0, value - 70) for value in colors["paper"]))
+    page.paste(tone, (x - SHADOW + 2, y - SHADOW + 3), shadow)
+    page.paste(art, (x, y))
+    ImageDraw.Draw(page).rectangle((x - 1, y - 1, x + art.width, y + art.height), outline=colors["frame"], width=1)
+    return x, y, x + art.width, y + art.height
+
+
+def _label(draw, label, box, index, accent, colors, numbered):
+    left, top, right, bottom = box
+    width = right - left
+    x = left
+    if numbered:
+        draw.ellipse((x, top + 2, x + 16, top + 18), fill=accent)
+        number_font = _font(10, True)
+        number = str(index)
+        draw.text((x + 8 - draw.textlength(number, font=number_font) / 2, top + 3), number, font=number_font,
+                  fill=(255, 255, 255))
+        x += 22
+    title_font = _font(14, True)
+    y = top
+    for line in _wrap(draw, label.title or "-", title_font, right - x, 2):
+        draw.text((x, y), line, font=title_font, fill=colors["ink"])
+        y += 19
+    y += 3
+    fact_font = _font(11)
+    if label.chip:
+        chip_font = _font(10, True)
+        chip_w = draw.textlength(label.chip, font=chip_font) + 10
+        draw.rounded_rectangle((left, y + 1, left + chip_w, y + 16), radius=4, fill=accent)
+        draw.text((left + 5, y + 2), label.chip, font=chip_font, fill=(255, 255, 255))
+        first = label.lines[0] if label.lines else ""
+        draw.text((left + chip_w + 6, y + 1), _clip(draw, first, fact_font, width - chip_w - 6), font=fact_font,
+                  fill=colors["ink"])
+        rest = label.lines[1:]
+        y += 18
+    else:
+        rest = label.lines
+    floor = bottom - (14 if label.source else 0)
+    for line in rest:
+        if y + 14 > floor:
+            break
+        draw.text((left, y), _clip(draw, line, fact_font, width), font=fact_font, fill=colors["muted"])
+        y += 15
+    if label.body and y + 14 <= floor:
+        for line in _wrap(draw, label.body, fact_font, width, max(1, (floor - y) // 15)):
+            draw.text((left, y), line, font=fact_font, fill=colors["muted"])
+            y += 15
+    if label.source:
+        source_font = _font(10, True)
+        draw.text((left, bottom - 13), _clip(draw, label.source, source_font, width), font=source_font,
+                  fill=colors["muted"])
+
+
+def _timeline(draw, labels, box, accent, colors):
+    """Each work's year on a century axis, numbered like its label."""
+    left, top, right, bottom = box
+    years = [label.year for label in labels if isinstance(label.year, int)]
+    axis_y = top + 8
+    draw.line((left, axis_y, right, axis_y), fill=colors["ink"], width=2)
+    if not years:
+        return
+    start = math.floor((min(years) - 50) / 100) * 100
+    end = max(start + 200, math.ceil((max(years) + 50) / 100) * 100)
+    end = min(end, 2100)
+
+    def x_of(year):
+        return left + (right - left) * (year - start) / max(1, end - start)
+
+    tick_font = _font(9)
+    step = 100 if end - start <= 900 else 200
+    for year in range(start, end + 1, step):
+        x = x_of(year)
+        draw.line((x, axis_y - 3, x, axis_y + 3), fill=colors["ink"], width=1)
+        text = f"{abs(year)}{' BC' if year < 0 else ''}"
+        text_w = draw.textlength(text, font=tick_font)
+        draw.text((min(max(left, x - text_w / 2), right - text_w), axis_y + 5), text, font=tick_font,
+                  fill=colors["muted"])
+    number_font = _font(10, True)
+    for index, label in enumerate(labels, start=1):
+        if not isinstance(label.year, int):
+            continue
+        x = x_of(label.year)
+        draw.ellipse((x - 8, axis_y - 8, x + 8, axis_y + 8), fill=accent, outline=colors["paper"], width=2)
+        number = str(index)
+        draw.text((x - draw.textlength(number, font=number_font) / 2, axis_y - 7), number, font=number_font,
+                  fill=(255, 255, 255))
+
+
+def _year_text(year):
+    return f"公元前 {-year}" if year < 0 else str(year)
+
+
+def _inked_wordmark(wordmark, colors, height=WORDMARK_H):
+    """The page's wordmark ``height`` px tall, its near-black lettering in the page's ink."""
+    mark = wordmark.convert("RGBA")
+    box = mark.getchannel("A").point(lambda value: 255 if value > 24 else 0).getbbox()
+    mark = mark.crop(box) if box else mark
+    mark = mark.resize((max(1, round(mark.width * height / mark.height)), height), Image.Resampling.LANCZOS)
+    pixels = mark.load()
+    ink = colors["ink"]
+    for py in range(mark.height):
+        for px in range(mark.width):
+            r, g, b, a = pixels[px, py]
+            if a and max(r, g, b) < 90 and max(r, g, b) - min(r, g, b) < 40:
+                pixels[px, py] = (*ink, a)
+    return mark
+
+
+def _backdrop(page, images, boxes, colors, style, accent, dark):
+    """Each work's own colours washed faintly behind its column, then the page's theme:
+    spotlights (gallery), a shelf (newsstand) or a halftone (comic)."""
+    width, height = page.size
+    wash = Image.new("RGB", page.size, colors["paper"])
+    for image, (image_box, _label_box) in zip(images, boxes):
+        left = max(0, image_box[0] - COLUMN_GAP // 2)
+        right = min(width, image_box[2] + COLUMN_GAP // 2)
+        tile = ImageOps.fit(image.convert("RGB"), (max(1, right - left), height), method=Image.Resampling.BILINEAR)
+        wash.paste(tile.filter(ImageFilter.GaussianBlur(18)), (left, 0))
+    wash = ImageEnhance.Color(wash.filter(ImageFilter.GaussianBlur(26))).enhance(0.7)
+    page.paste(Image.blend(page, wash, 0.24 if dark else 0.2))
+    layer = Image.new("RGBA", page.size, (0, 0, 0, 0))
+    pen = ImageDraw.Draw(layer)
+    if style == "gallery":
+        light = (255, 236, 196) if dark else (255, 255, 255)
+        for image_box, _label_box in boxes:
+            cx, top = (image_box[0] + image_box[2]) / 2, image_box[1]
+            half = (image_box[2] - image_box[0]) * 0.62
+            for step in range(12, 0, -1):
+                spread = half * step / 12
+                pen.ellipse((cx - spread, top - 30 - spread * 0.2, cx + spread, top + spread * 1.5),
+                            fill=(*light, round((26 if dark else 34) * (1 - step / 13))))
+    elif style == "newsstand":
+        for image_box, _label_box in boxes:
+            shelf = image_box[3] + 1
+            pen.rectangle((image_box[0] - COLUMN_GAP // 2, shelf, image_box[2] + COLUMN_GAP // 2, shelf + 5),
+                          fill=(*colors["frame"], 150))
+            pen.line((image_box[0] - COLUMN_GAP // 2, shelf, image_box[2] + COLUMN_GAP // 2, shelf),
+                     fill=(*colors["card"], 200), width=1)
+    elif style == "comic":
+        for y in range(HEADER_RULE + 4, height, 9):
+            for x in range((y // 9) % 2 * 4, width, 9):
+                pen.ellipse((x, y, x + 2, y + 2), fill=(*accent, 34 if dark else 26))
+    base = page.convert("RGBA")
+    base.alpha_composite(layer)
+    page.paste(base.convert("RGB"))
+
+
+def _swatches(draw, image, frame, colors, count=5):
+    """The work's main colours as a strip of squares under its frame's right corner."""
+    small = image.convert("RGB").resize((48, 48), Image.Resampling.BILINEAR)
+    quantized = small.quantize(colors=count, method=Image.Quantize.MEDIANCUT)
+    raw = quantized.getpalette()[: count * 3]
+    counts = sorted(quantized.getcolors(), reverse=True)
+    tones = [tuple(raw[index * 3:index * 3 + 3]) for _count, index in counts[:count]]
+    size, gap = 9, 2
+    x = frame[2] - len(tones) * (size + gap) + gap
+    y = frame[3] + 4
+    for tone in tones:
+        draw.rectangle((x, y, x + size - 1, y + size - 1), fill=tone, outline=colors["frame"], width=1)
+        x += size + gap

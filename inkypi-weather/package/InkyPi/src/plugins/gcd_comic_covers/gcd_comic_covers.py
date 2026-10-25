@@ -16,6 +16,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
+from plugins.base_plugin import cover_gallery
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.presentation import (
     PresentationMode,
@@ -68,6 +69,11 @@ DEFAULT_COMIC_VINE_LIMIT = 24
 DEFAULT_FIT_MODE = "triptych"
 DEFAULT_SOURCE_MODE = "mixed"
 TRIPTYCH_COVER_COUNT = 3
+# The gallery page's accent: issue-date chips and the placeholder cover's band.
+COMIC_ACCENT = (214, 52, 28)
+# GCD's own words for credit roles, in Chinese on the cards.
+CREDIT_ROLES = {"pencils": "铅笔", "inks": "墨线", "colors": "上色", "letters": "字体", "script": "编剧",
+                "art": "绘制", "painting": "绘画", "editing": "编辑"}
 TRIPTYCH_FIT_MODES = {"triptych", "three_vertical", "three_covers", "three_posters", "gallery"}
 TRIPTYCH_BACKGROUND_PATH = Path(__file__).with_name("assets") / "triptych_background_800x480.png"
 TRIPTYCH_TITLE = "COMIC COVERS"
@@ -109,6 +115,8 @@ _PROVIDER_CACHE_WRITES_ENABLED = ContextVar(
     "gcd_provider_cache_writes_enabled",
     default=True,
 )
+# The gallery page's own wordmark (GPT Image 2.5; assets/gallery_wordmark.source.json).
+GALLERY_WORDMARK_PATH = Path(__file__).with_name("assets") / "gallery_wordmark.png"
 
 
 class GcdCoverImageUnavailable(RuntimeError):
@@ -545,8 +553,7 @@ class GcdComicCovers(BasePlugin):
             for index, (record, image) in enumerate(selected):
                 cover = dict(record)
                 if record.get("render_kind") == "metadata":
-                    image = self._metadata_cover_image(dimensions, settings, cover)
-                    cover["image"] = image
+                    cover["image"] = self._placeholder_cover(cover)
                 elif staged is not None:
                     cover["image"] = staged[index]
                 else:
@@ -559,11 +566,12 @@ class GcdComicCovers(BasePlugin):
                         staged[-1],
                         dimensions,
                         settings,
+                        covers=covers,
                     )
                 return self._compose_triptych_display_image(covers, dimensions, settings)
             cover = covers[0]
             if cover.get("render_kind") == "metadata":
-                return cover["image"]
+                return self._gallery_page([cover], dimensions, settings)
             if self._fit_mode(settings) in TRIPTYCH_FIT_MODES:
                 return self._compose_triptych_display_image(covers, dimensions, settings)
             return self._fit_cover(cover["image"], dimensions, settings, cover)
@@ -612,20 +620,53 @@ class GcdComicCovers(BasePlugin):
             expected_instance_uuid=expected_instance_uuid,
         )
 
-    def _compose_staged_triptych(self, fitted_images, backdrop, dimensions, settings):
-        width, height = dimensions
-        canvas = self._triptych_backdrop([backdrop], dimensions, settings)
-        visible_count = min(len(fitted_images), TRIPTYCH_COVER_COUNT)
-        column_width = width // visible_count
-        for index, fitted in enumerate(fitted_images):
-            x0 = index * column_width
-            target_width = (
-                column_width if index < visible_count - 1 else width - x0
-            )
-            x = x0 + (target_width - fitted.width) // 2
-            y = (height - fitted.height) // 2
-            canvas.paste(fitted, (x, y))
-        return canvas
+    def _compose_staged_triptych(self, fitted_images, backdrop, dimensions, settings, covers=None):
+        covers = [dict(cover or {}, image=image) for cover, image in zip(covers or [{}] * len(fitted_images),
+                                                                         fitted_images)]
+        return self._gallery_page(covers, dimensions, settings)
+
+    def _gallery_page(self, covers, dimensions, settings):
+        """The comic rack: each cover framed over its card (series and issue, date, publisher,
+        cover artists by role, and the database it came from)."""
+        covers = [cover for cover in covers[:TRIPTYCH_COVER_COUNT] if isinstance(cover, dict)]
+        images = [ImageOps.exif_transpose(cover.get("image") or self._placeholder_cover(cover)).convert("RGB")
+                  for cover in covers]
+        if not images:
+            return self._fallback_image(dimensions, "GCD Comic Covers", "No usable cover image")
+        sources = sorted({_comic_source(cover) for cover in covers})
+        now = datetime.now()
+        return cover_gallery.compose(
+            images, [_comic_label(cover) for cover in covers], tuple(dimensions), title="COMIC COVERS",
+            subtitle="今日漫画 · " + " / ".join(sources),
+            date_text=f"{now.month}月{now.day}日 周{'一二三四五六日'[now.weekday()]}",
+            accent=COMIC_ACCENT, dark=_gallery_dark(settings),
+            wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="comic")
+
+    def _placeholder_cover(self, cover):
+        """A designed stand-in for a cover whose scan the source withholds: the series and issue
+        on a halftone panel in the comic's own proportions."""
+        width, height = 300, 456
+        tile = Image.new("RGB", (width, height), (36, 34, 40))
+        draw = ImageDraw.Draw(tile)
+        for y in range(0, height, 10):
+            for x in range((y // 10) % 2 * 5, width, 10):
+                draw.ellipse((x, y, x + 3, y + 3), fill=(56, 54, 62))
+        draw.rectangle((0, 0, width - 1, 70), fill=COMIC_ACCENT)
+        draw.text((18, 18), "COMIC", font=self._fallback_font(28, bold=True), fill=(255, 255, 255))
+        number = _issue_number(cover)
+        if number:
+            label = f"#{number}"
+            font = self._fallback_font(44, bold=True)
+            draw.text((width - 18 - draw.textlength(label, font=font), 10), label, font=font, fill=(255, 255, 255))
+        title_font = self._fallback_font(30, bold=True)
+        series = _clean_text(cover.get("series_name") or cover.get("issue_label") or "Comic")
+        y = 110
+        for line in self._wrap_text(draw, series, title_font, width - 36, max_lines=5):
+            draw.text((18, y), line, font=title_font, fill=(248, 246, 240))
+            y += 40
+        note_font = self._fallback_font(16, bold=True)
+        draw.text((18, height - 40), "封面图暂缺", font=note_font, fill=(190, 186, 178))
+        return tile
 
     def _presentation_bank(self, settings, dimensions, today=None):
         instance_uuid = get_presentation_instance_uuid(settings)
@@ -1337,12 +1378,27 @@ class GcdComicCovers(BasePlugin):
                     detail["series_name"] = _first_text(series_data, ["name", "title"]) or detail.get("series_name")
                     detail["country"] = _first_text(series_data, ["country", "country_code"]) or detail.get("country")
                     detail["language"] = _first_text(series_data, ["language", "language_code"]) or detail.get("language")
-                    detail["publisher"] = _first_text(series_data, ["publisher_name", "publisher"]) or detail.get("publisher")
+                    publisher = _first_text(series_data, ["publisher_name", "publisher"])
+                    if publisher.startswith(("http://", "https://")):
+                        publisher = self._publisher_name(publisher)
+                    detail["publisher"] = publisher or detail.get("publisher")
             except Exception as exc:
                 logger.warning("Could not fetch GCD series detail for issue %s: %s", issue_id, exc)
 
         self._write_issue_cache(issue_id, detail)
         return detail
+
+    def _publisher_name(self, url):
+        """The name GCD gives the publisher at an API link (remembered per run), or ""."""
+        names = self.__dict__.setdefault("_publisher_names", {})
+        if url not in names:
+            try:
+                data = self._fetch_json(url)
+                names[url] = _first_text(data, ["name"]) if isinstance(data, dict) else ""
+            except Exception as exc:
+                logger.warning("Could not fetch GCD publisher %s: %s", url, exc)
+                names[url] = ""
+        return names[url]
 
     def _normalize_issue_detail(self, issue_id, data, candidate):
         data = data if isinstance(data, dict) else {}
@@ -1784,29 +1840,8 @@ class GcdComicCovers(BasePlugin):
         return image.width > image.height * 1.15
 
     def _compose_triptych_display_image(self, covers, dimensions, settings):
-        width, height = dimensions
-        images = []
-        for cover in covers[:TRIPTYCH_COVER_COUNT]:
-            image = cover.get("image") if isinstance(cover, dict) else cover
-            if not image:
-                continue
-            images.append(ImageOps.exif_transpose(image).convert("RGB"))
-        if not images:
-            return self._fallback_image(dimensions, "GCD Comic Covers", "No usable cover image")
-
-        canvas = self._triptych_backdrop(images, dimensions, settings)
-        visible_count = min(len(images), TRIPTYCH_COVER_COUNT)
-        column_width = width // visible_count
-
-        for index, image in enumerate(images):
-            x0 = index * column_width
-            target_width = column_width if index < visible_count - 1 else width - x0
-            fitted = ImageOps.contain(image, (target_width, height), method=Image.LANCZOS)
-            x = x0 + (target_width - fitted.width) // 2
-            y = (height - fitted.height) // 2
-            canvas.paste(fitted, (x, y))
-
-        return canvas
+        covers = [cover if isinstance(cover, dict) else {"image": cover} for cover in covers[:TRIPTYCH_COVER_COUNT]]
+        return self._gallery_page([cover for cover in covers if cover.get("image")] or covers, dimensions, settings)
 
     def _triptych_backdrop(self, images, dimensions, settings):
         try:
@@ -1971,59 +2006,9 @@ class GcdComicCovers(BasePlugin):
         return label[:140]
 
     def _metadata_cover_image(self, dimensions, settings, cover):
-        width, height = dimensions
-        color = (settings.get("backgroundColor") or "white").lower()
-        dark = color == "black"
-        bg = (18, 18, 18) if dark else (255, 255, 255)
-        fg = (245, 245, 245) if dark else (15, 15, 15)
-        muted = (190, 190, 190) if dark else (70, 70, 70)
-        line = (230, 230, 230) if dark else (0, 0, 0)
-        image = Image.new("RGB", dimensions, bg)
-        draw = ImageDraw.Draw(image)
-
-        margin = max(18, min(width, height) // 18)
-        draw.rectangle((margin, margin, width - margin, height - margin), outline=line, width=4)
-        draw.rectangle((margin + 10, margin + 10, width - margin - 10, height - margin - 10), outline=muted, width=1)
-
-        eyebrow_font = self._fallback_font(max(13, width // 52), bold=True)
-        title_font = self._fallback_font(max(28, width // 15), bold=True)
-        meta_font = self._fallback_font(max(16, width // 36), bold=True)
-        small_font = self._fallback_font(max(12, width // 54))
-
-        y = margin + max(24, height // 18)
-        self._draw_centered(draw, "GCD COMIC COVER", width // 2, y, eyebrow_font, muted)
-        y += max(42, height // 11)
-
-        title = _clean_text(cover.get("series_name") or cover.get("issue_label") or "Unknown Series")
-        title_lines = self._wrap_text(draw, title, title_font, width - margin * 3, max_lines=3)
-        for line_text in title_lines:
-            self._draw_centered(draw, line_text, width // 2, y, title_font, fg)
-            y += max(36, title_font.size + 8 if hasattr(title_font, "size") else 36)
-
-        number = _clean_text(cover.get("issue_number") or "")
-        date_label = _clean_text(cover.get("date_label") or "")
-        publisher = _clean_text(cover.get("publisher") or "")
-        meta_parts = []
-        if number:
-            meta_parts.append(f"#{number}")
-        if date_label:
-            meta_parts.append(date_label)
-        if publisher:
-            meta_parts.append(publisher)
-        if meta_parts:
-            y += max(8, height // 70)
-            self._draw_centered(draw, " | ".join(meta_parts), width // 2, y, meta_font, fg)
-
-        credits = _clean_text(cover.get("cover_credits") or "")
-        if credits:
-            y += max(40, height // 11)
-            for line_text in self._wrap_text(draw, f"Cover: {credits}", small_font, width - margin * 4, max_lines=2):
-                self._draw_centered(draw, line_text, width // 2, y, small_font, muted)
-                y += max(18, small_font.size + 5 if hasattr(small_font, "size") else 18)
-
-        note = "Image unavailable from source; rendered from GCD metadata"
-        self._draw_centered(draw, note, width // 2, height - margin - max(18, height // 28), small_font, muted)
-        return image
+        """A cover whose scan the source withholds: its placeholder tile and full card."""
+        return self._gallery_page([dict(cover or {}, image=self._placeholder_cover(cover or {}))], dimensions,
+                                  settings)
 
     def _fallback_image(self, dimensions, title, subtitle):
         image = Image.new("RGB", dimensions, "white")
@@ -2424,3 +2409,51 @@ def _canonical_provider_url(value, provider):
     ):
         raise RuntimeError("GCD provider URL is outside approved HTTPS authorities")
     return urlunparse(("https", host, parsed.path or "/", "", parsed.query, ""))
+
+
+def _issue_number(cover):
+    """The issue's number, or "" for GCD's no-number marks ("[nn]", "nn")."""
+    number = _clean_text((cover or {}).get("issue_number") or "")
+    return "" if re.fullmatch(r"\[?\s*n\.?\s*n\.?\s*\]?", number, re.IGNORECASE) else number
+
+
+def _comic_source(cover):
+    provider = str((cover or {}).get("provider") or (cover or {}).get("source") or "").lower()
+    return "Comic Vine" if "vine" in provider else "GCD"
+
+
+def _credit_people(credits):
+    """"Pencils: A; Inks: A; Colors: B" as "A（铅笔·墨线）· B（上色）", unknowns dropped."""
+    people = {}
+    for part in str(credits or "").split(";"):
+        role, _, names = part.partition(":")
+        role = CREDIT_ROLES.get(role.strip().lower(), role.strip())
+        for name in re.split(r",|&| and ", names):
+            name = _clean_text(re.sub(r"\[.*?\]|\(.*?\)", "", name))
+            if name and name.lower() not in {"none", "?", "??", "unknown"}:
+                people.setdefault(name, []).append(role)
+    return " · ".join(f"{name}（{'·'.join(roles)}）" for name, roles in people.items())
+
+
+def _comic_label(cover):
+    cover = cover or {}
+    series = _clean_text(cover.get("series_name") or cover.get("issue_label") or "Comic")
+    number = _issue_number(cover)
+    when = _clean_text(cover.get("on_sale_date") or cover.get("key_date") or "")
+    day = re.match(r"^(\d{4})-(\d{2})(?:-(\d{2}))?", when)
+    chip = ".".join(part for part in day.groups() if part and part != "00") if day else _clean_text(
+        cover.get("date_label") or cover.get("publication_date") or "")[:18]
+    publisher = _clean_text(cover.get("publisher") or "")
+    if publisher.startswith(("http://", "https://")):
+        publisher = ""
+    title = _clean_text(cover.get("title") or "")
+    lines = tuple(part for part in (publisher or "出版社不详", title if title and title != series else "") if part)
+    return cover_gallery.Label(title=f"{series} #{number}" if number else series, chip=chip, lines=lines,
+                               body=_credit_people(cover.get("cover_credits")),
+                               source="Grand Comics Database" if _comic_source(cover) == "GCD" else "Comic Vine")
+
+
+def _gallery_dark(settings):
+    theme = (settings or {}).get("_inkypi_theme")
+    mode = str((theme or {}).get("mode") or "").lower() if isinstance(theme, dict) else ""
+    return mode == "night" or str((settings or {}).get("backgroundColor") or "").lower() == "black"

@@ -842,6 +842,7 @@ class MagazinePresentationBank(kit.SelectionBookkeeping):
                 max_chars=128,
             ),
             "year": _normalize_optional_year(cover.get("year", source.get("year"))),
+            "price": _normalize_optional_text(cover.get("price"), field_name="price", max_chars=16),
             "adult": adult,
             "rights": _normalize_optional_text(
                 cover.get("rights") or source.get("rights"),

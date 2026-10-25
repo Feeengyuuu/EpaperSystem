@@ -16,6 +16,7 @@ from urllib.parse import urljoin
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 from utils.fonts import load_font
 
+from plugins.base_plugin import cover_gallery
 from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.parallel_image_stage import prepare_local_bank_images
 from plugins.base_plugin.presentation import (
@@ -55,7 +56,9 @@ DEFAULT_GALLERY_COUNT = 3
 DEFAULT_BACKGROUND_STYLE = "gallery_decor"
 GALLERY_LAYOUT_MODES = {"auto_gallery", "gallery"}
 DAILY_ART_DECOR_PATH = Path(__file__).with_name("assets") / "daily_art_decor_800x480.png"
-DAILY_ART_RENDER_STYLE_VERSION = "daily-art-decor-v1"
+DAILY_ART_RENDER_STYLE_VERSION = "daily-art-gallery-v2"
+# The gallery's accent: the label numbers, date chips and timeline markers.
+DAILY_ART_ACCENT = (0, 70, 200)
 DAILY_ART_TITLE = "DAILY ART"
 DEFAULT_SOURCES = ("met", "artic", "europeana", "harvard")
 DEFAULT_QUERY_TERMS = (
@@ -135,6 +138,8 @@ HARVARD_ENV_KEYS = (
 
 RESAMPLE = getattr(Image, "Resampling", Image).LANCZOS
 NEAREST = getattr(Image, "Resampling", Image).NEAREST
+# The gallery page's own wordmark (GPT Image 2.5; assets/gallery_wordmark.source.json).
+GALLERY_WORDMARK_PATH = Path(__file__).with_name("assets") / "gallery_wordmark.png"
 
 
 @dataclass
@@ -1187,70 +1192,43 @@ class DailyArt(BasePlugin):
         return image
 
     def _render_artwork(self, image, artwork, dimensions, settings):
-        width, height = dimensions
-        image = ImageOps.exif_transpose(image).convert("RGB")
-        fit_mode = str(settings.get("fitMode") or "contain").strip().lower()
-
-        if fit_mode == "cover":
-            fitted = ImageOps.fit(image, dimensions, method=RESAMPLE)
-            x = 0
-            y = 0
-        else:
-            fitted = ImageOps.contain(image, dimensions, method=RESAMPLE)
-            x = (width - fitted.width) // 2
-            y = (height - fitted.height) // 2
-
-        canvas = self._daily_art_backdrop(image, dimensions, settings)
-        title_layout = self._daily_art_title_layout(dimensions, settings)
-        artwork_box = (x, y, x + fitted.width, y + fitted.height)
-        if title_layout and not _rectangles_overlap(title_layout["plate"], artwork_box):
-            canvas = self._with_daily_art_title(canvas, settings, title_layout)
-        canvas.paste(fitted, (x, y))
-
-        if _enabled(settings.get("showCaption"), default=False):
-            canvas = self._with_caption(canvas, artwork, settings)
-        return canvas
+        return self._render_artwork_gallery([image], [artwork], dimensions, settings)
 
     def _render_artwork_gallery(self, images, artworks, dimensions, settings):
-        width, height = dimensions
+        """The museum wall: each work framed over its label (title, date, artist, medium,
+        culture, museum) and a timeline placing the works in their centuries."""
         images = [ImageOps.exif_transpose(image).convert("RGB") for image in images if image]
         if not images:
             return self._fallback_image(dimensions, "Daily Art", "No usable artwork image")
+        visible = min(len(images), self._gallery_count(settings))
+        labels = [self._gallery_label(artwork) for artwork in list(artworks)[:visible]]
+        sources = []
+        for artwork in list(artworks)[:visible]:
+            name = _clean_text(getattr(artwork, "source_label", "") or "")
+            if name and name not in sources:
+                sources.append(name)
+        now = datetime.now()
+        return cover_gallery.compose(
+            images[:visible], labels, tuple(dimensions), title=DAILY_ART_TITLE,
+            subtitle="今日馆藏 · " + " / ".join(sources) if sources else "今日馆藏",
+            date_text=f"{now.month}月{now.day}日 周{'一二三四五六日'[now.weekday()]}",
+            accent=DAILY_ART_ACCENT, dark=self._gallery_dark(settings), timeline=True,
+            wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="gallery")
 
-        visible_count = min(len(images), self._gallery_count(settings))
-        column_width = width // visible_count
-        fit_mode = str(settings.get("fitMode") or "contain").strip().lower()
-        placements = []
+    @staticmethod
+    def _gallery_label(artwork):
+        get = lambda key: _clean_text(getattr(artwork, key, "") or "")  # noqa: E731
+        date = get("date")
+        lines = (get("artist") or "佚名", get("medium"), get("culture"))
+        return cover_gallery.Label(
+            title=get("title") or "Untitled", chip=date[:18], lines=tuple(line for line in lines if line),
+            source=get("museum") or get("source_label"), year=cover_gallery.year_of(date))
 
-        for index, image in enumerate(images[:visible_count]):
-            x0 = index * column_width
-            target_width = column_width if index < visible_count - 1 else width - x0
-            if fit_mode == "cover":
-                fitted = ImageOps.fit(image, (target_width, height), method=RESAMPLE)
-            else:
-                fitted = ImageOps.contain(image, (target_width, height), method=RESAMPLE)
-            x = x0 + (target_width - fitted.width) // 2
-            y = (height - fitted.height) // 2
-            placements.append((fitted, x, y))
-
-        canvas = self._daily_art_backdrop(images[0], dimensions, settings)
-        title_layout = self._daily_art_title_layout(dimensions, settings)
-        occupied_boxes = [
-            (x, y, x + fitted.width, y + fitted.height)
-            for fitted, x, y in placements
-        ]
-        if title_layout and not any(
-            _rectangles_overlap(title_layout["plate"], box)
-            for box in occupied_boxes
-        ):
-            canvas = self._with_daily_art_title(canvas, settings, title_layout)
-
-        for fitted, x, y in placements:
-            canvas.paste(fitted, (x, y))
-
-        if _enabled(settings.get("showCaption"), default=False) and artworks:
-            canvas = self._with_caption(canvas, artworks[0], settings)
-        return canvas
+    @staticmethod
+    def _gallery_dark(settings):
+        theme = (settings or {}).get("_inkypi_theme")
+        mode = str((theme or {}).get("mode") or "").lower() if isinstance(theme, dict) else ""
+        return mode == "night" or str((settings or {}).get("backgroundColor") or "").lower() == "black"
 
     def _daily_art_backdrop(self, image, dimensions, settings):
         background_style = str(

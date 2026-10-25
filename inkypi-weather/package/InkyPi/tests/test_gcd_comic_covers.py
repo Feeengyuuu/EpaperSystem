@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -22,6 +22,7 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
     SourceProvenance,
     read_source_provenance,
 )
+from plugins.base_plugin import cover_gallery  # noqa: E402
 from plugins.gcd_comic_covers.gcd_comic_covers import (  # noqa: E402
     GcdComicCovers,
     GcdCoverImageUnavailable,
@@ -2333,38 +2334,8 @@ def test_triptych_generation_prefers_portrait_covers_over_wide_strips(tmp_path, 
     assert state["date_buckets"]["05-30"]["seen_issue_ids"] == ["red", "green", "blue"]
 
 
-def test_triptych_mode_renders_available_cover_without_info_label(tmp_path, monkeypatch):
-    plugin = make_plugin(tmp_path, monkeypatch)
-    cover = {
-        "series_name": "Label Should Not Render",
-        "issue_number": "9",
-        "date_label": "1975-05-30",
-        "image": Image.new("RGB", (200, 400), (220, 0, 0)),
-    }
-
-    settings = {"backgroundColor": "white"}
-    image = plugin._compose_triptych_display_image([cover], (800, 480), settings)
-    expected_background = plugin._triptych_backdrop([cover["image"]], (800, 480), settings)
-
-    assert image.size == (800, 480)
-    assert image.getpixel((399, 240)) == (220, 0, 0)
-    assert image.crop((0, 400, 250, 480)).tobytes() == expected_background.crop(
-        (0, 400, 250, 480)
-    ).tobytes()
 
 
-def test_triptych_mode_expands_two_covers_to_fill_screen_width(tmp_path, monkeypatch):
-    plugin = make_plugin(tmp_path, monkeypatch)
-    covers = [
-        {"image": Image.new("RGB", (200, 400), (220, 0, 0))},
-        {"image": Image.new("RGB", (200, 400), (0, 0, 220))},
-    ]
-
-    image = plugin._compose_triptych_display_image(covers, (800, 480), {"backgroundColor": "white"})
-
-    assert image.size == (800, 480)
-    assert image.getpixel((100, 240)) == (220, 0, 0)
-    assert image.getpixel((700, 240)) == (0, 0, 220)
 
 
 def test_date_cache_path_is_day_scoped(tmp_path, monkeypatch):
@@ -2501,3 +2472,39 @@ def test_runtime_cache_dir_uses_safe_namespace_component(monkeypatch, tmp_path):
     relative = plugin._cache_dir().relative_to(runtime_root)
 
     assert not any(part.startswith(".") for part in relative.parts)
+
+
+def test_triptych_frames_each_cover_over_its_card(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text",
+                        lambda self, xy, text, *a, **k: (drawn.append(str(text)), original(self, xy, text, *a, **k))[1])
+    covers = [
+        {"image": Image.new("RGB", (200, 400), (220, 0, 0)), "series_name": "Batman", "issue_number": "[nn]",
+         "publisher": "https://www.comics.org/api/publisher/54/", "on_sale_date": "1975-03-12",
+         "cover_credits": "Pencils: Ernie Chan; Inks: Ernie Chan; Colors: None"},
+        {"image": Image.new("RGB", (200, 400), (0, 0, 220)), "series_name": "Spider-Man", "issue_number": "42",
+         "publisher": "Marvel", "key_date": "1966-08-00"},
+    ]
+
+    image = plugin._compose_triptych_display_image(covers, (800, 480), {"backgroundColor": "white"})
+
+    assert image.size == (800, 480)
+    (first, _), (second, _) = cover_gallery.columns(2, (800, 480))
+    assert image.getpixel(((first[0] + first[2]) // 2, first[3] - 40)) == (220, 0, 0)
+    assert image.getpixel(((second[0] + second[2]) // 2, second[3] - 40)) == (0, 0, 220)
+    # GCD's "[nn]" is no number, an API link is no publisher name, and credits group by artist.
+    assert {"Batman", "Spider-Man #42", "1975.03.12", "1966.08", "出版社不详", "Marvel"} <= set(drawn)
+    assert any("Ernie Chan（铅笔·墨线）" in text for text in drawn)
+    assert not any("comics.org/api" in text for text in drawn)
+
+
+def test_a_cover_without_its_scan_gets_a_placeholder_card(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+
+    page = plugin._metadata_cover_image((800, 480), {}, {"series_name": "Cthulhu Jr.", "issue_number": "3"})
+
+    assert page.size == (800, 480)
+    tile = plugin._placeholder_cover({"series_name": "Cthulhu Jr.", "issue_number": "3"})
+    assert tile.size[1] > tile.size[0]

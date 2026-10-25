@@ -1,0 +1,14 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "generated": "2026-10-24",
+  "job_id": "41b8dd6f-2c72-4394-ba41-757fc84721e6",
+  "prompt": "bold italic comic lettering 'COMIC COVERS', black, red-orange starburst behind the C",
+  "use": "the gallery page's header title; its black lettering takes the page's ink",
+  "processing": "alpha below 24 cleared, cropped to alpha, 96 px tall (LANCZOS)",
+  "source_sha256": "40db3e1cefd8ee227af82bf42e5b1d9621e123d29852074839d8acc018d4323f",
+  "sha256": "64413297c56aea94eb1a299146569449f060d6680138800fa12c014b70d52af1",
+  "size": [
+    366,
+    96
+  ]
+}

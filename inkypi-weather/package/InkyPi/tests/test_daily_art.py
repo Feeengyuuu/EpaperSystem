@@ -9,10 +9,11 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from plugins.base_plugin import cover_gallery  # noqa: E402
 from plugins.daily_art import daily_art as daily_art_module  # noqa: E402
 from plugins.daily_art.daily_art import ArtworkCandidate, DailyArt  # noqa: E402
 from plugins.base_plugin.presentation import (  # noqa: E402
@@ -507,21 +508,6 @@ def test_daily_art_decor_asset_is_project_ready():
         assert decor.getchannel("A").crop((0, 66, 800, 404)).getbbox() is None
 
 
-def test_gallery_default_uses_clean_wall_decor_and_minimal_title(tmp_path):
-    plugin = make_plugin(tmp_path)
-    colors = [(190, 30, 30), (30, 150, 60), (30, 70, 190)]
-    images = [Image.new("RGB", (266, 356), color) for color in colors]
-    artworks = [art_candidate(index) for index in range(3)]
-
-    rendered = plugin._render_artwork_gallery(images, artworks, (800, 480), {})
-
-    assert rendered.size == (800, 480)
-    assert rendered.getpixel((210, 20)) == (255, 255, 255)
-    assert rendered.getpixel((400, 16)) == (0, 0, 0)
-    assert rendered.getpixel((25, 28)) == (0, 0, 255)
-    assert rendered.getpixel((133, 240)) == colors[0]
-    assert rendered.getpixel((399, 240)) == colors[1]
-    assert rendered.getpixel((666, 240)) == colors[2]
 
 
 @pytest.mark.parametrize("count", [1, 2, 3, 4])
@@ -550,29 +536,6 @@ def test_gallery_decor_preserves_each_artwork_center(tmp_path, count):
         assert rendered.getpixel((x0 + target_width // 2, 240)) == color
 
 
-@pytest.mark.parametrize("asset_state", ["missing", "corrupt"])
-def test_gallery_decor_failure_keeps_clean_fallback_and_title(
-    tmp_path,
-    monkeypatch,
-    asset_state,
-):
-    plugin = make_plugin(tmp_path)
-    asset_path = tmp_path / "daily-art-decor.png"
-    if asset_state == "corrupt":
-        asset_path.write_bytes(b"not an image")
-    monkeypatch.setattr(daily_art_module, "DAILY_ART_DECOR_PATH", asset_path)
-    images = [Image.new("RGB", (266, 356), (80, 100, 120)) for _index in range(3)]
-
-    rendered = plugin._render_artwork_gallery(
-        images,
-        [art_candidate(index) for index in range(3)],
-        (800, 480),
-        {},
-    )
-
-    assert rendered.getpixel((400, 16)) == (255, 255, 255)
-    assert rendered.getpixel((25, 28)) == (0, 0, 255)
-    assert rendered.getpixel((399, 240)) == (80, 100, 120)
 
 
 def test_daily_art_backdrop_preserves_explicit_background_styles(tmp_path):
@@ -596,48 +559,10 @@ def test_daily_art_backdrop_preserves_explicit_background_styles(tmp_path):
     assert blurred.getpixel((400, 240)) != (255, 255, 255)
 
 
-def test_single_contain_uses_daily_art_decor_and_title(tmp_path):
-    plugin = make_plugin(tmp_path)
-    artwork = Image.new("RGB", (640, 300), (80, 120, 160))
-
-    rendered = plugin._render_artwork(artwork, art_candidate(0), (800, 480), {})
-
-    assert rendered.getpixel((400, 16)) == (0, 0, 0)
-    assert rendered.getpixel((25, 28)) == (0, 0, 255)
-    assert rendered.getpixel((400, 240)) == (80, 120, 160)
 
 
-def test_single_cover_keeps_artwork_unobscured(tmp_path):
-    plugin = make_plugin(tmp_path)
-    color = (80, 120, 160)
-
-    rendered = plugin._render_artwork(
-        Image.new("RGB", (640, 300), color),
-        art_candidate(0),
-        (800, 480),
-        {"fitMode": "cover"},
-    )
-
-    assert rendered.getcolors(maxcolors=2) == [(800 * 480, color)]
 
 
-def test_gallery_omits_title_when_tall_artwork_would_split_it(tmp_path):
-    plugin = make_plugin(tmp_path)
-    images = [
-        Image.new("RGB", (120, 480), (120, 80, 40)),
-        Image.new("RGB", (266, 356), (40, 120, 80)),
-        Image.new("RGB", (268, 356), (40, 80, 120)),
-    ]
-
-    rendered = plugin._render_artwork_gallery(
-        images,
-        [art_candidate(index) for index in range(3)],
-        (800, 480),
-        {},
-    )
-
-    assert rendered.getpixel((25, 28)) == (255, 255, 255)
-    assert rendered.getpixel((133, 240)) == (120, 80, 40)
 
 
 @pytest.mark.parametrize("font_family", [daily_art_module.DEFAULT_FONT, "Dogica", "Jost"])
@@ -2299,3 +2224,53 @@ def test_met_candidates_handle_empty_search(tmp_path, monkeypatch):
     monkeypatch.setattr(plugin, "_get_json", lambda url, params, headers=None: {"total": 0, "objectIDs": None})
 
     assert plugin._fetch_met_candidates("none", 5, __import__("random").Random(1)) == []
+
+
+def _drawn_text(monkeypatch):
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+
+    def capture(self, xy, text, *args, **kwargs):
+        drawn.append(str(text))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture)
+    return drawn
+
+
+def test_gallery_frames_each_work_over_its_wall_label_and_timeline(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    drawn = _drawn_text(monkeypatch)
+    colors = [(190, 30, 30), (30, 150, 60), (30, 70, 190)]
+    images = [Image.new("RGB", (266, 356), color) for color in colors]
+    artworks = [art_candidate(index) for index in range(3)]
+    artworks[0].date, artworks[1].date, artworks[2].date = "1638", "1700", "ca. 1785"
+
+    rendered = plugin._render_artwork_gallery(images, artworks, (800, 480), {})
+
+    assert rendered.size == (800, 480)
+    # Each work stands in its own column, and its label names it, its date, artist and museum.
+    for (image_box, _label_box), color in zip(cover_gallery.columns(3, (800, 480), timeline=True), colors):
+        assert rendered.getpixel(((image_box[0] + image_box[2]) // 2, image_box[3] - 40)) == color
+    assert {"Artwork 0", "1638", "Artist 0", "Example Museum"} <= set(drawn)
+    # The header says which museums lent the day's works and how many years they span.
+    assert any("The Met" in text and "跨越 1638–1785 · 147 年" in text for text in drawn)
+    # The page's own wordmark heads it in the ink (no lettered title).
+    assert "DAILY ART" not in drawn
+    assert any(sum(rendered.getpixel((x, y))) < 120 for x in range(20, 240) for y in range(16, 44))
+
+
+def test_a_single_work_gets_the_same_framed_label(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path)
+    drawn = _drawn_text(monkeypatch)
+
+    rendered = plugin._render_artwork(Image.new("RGB", (640, 300), (80, 120, 160)), art_candidate(0), (800, 480), {})
+
+    assert rendered.getpixel((400, 240)) == (80, 120, 160)
+    assert "Artwork 0" in drawn
+
+
+def test_years_read_from_museum_dates():
+    assert cover_gallery.year_of("ca. 1750") == 1750 and cover_gallery.year_of("1780–85 (?)") == 1780
+    assert cover_gallery.year_of("19th century") == 1850 and cover_gallery.year_of("500 B.C.") == -500
+    assert cover_gallery.year_of("undated") is None

@@ -1,0 +1,14 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "generated": "2026-10-24",
+  "job_id": "f36e1064-46ca-40c8-84c2-c0130a34a11a",
+  "prompt": "museum-signage serif 'DAILY ART', black, deep-blue picture-frame corner before the D",
+  "use": "the gallery page's header title; its black lettering takes the page's ink",
+  "processing": "alpha below 24 cleared, cropped to alpha, 96 px tall (LANCZOS)",
+  "source_sha256": "ba7d105f517942e8136d531c63226f296677be765837f7df2cd266921648c740",
+  "sha256": "76ff2816e01966ff35639b654642f8037598079df841f3fd7836bc8682b7c9ab",
+  "size": [
+    685,
+    96
+  ]
+}
