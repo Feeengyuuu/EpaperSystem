@@ -25,7 +25,7 @@ from PIL import Image
 
 from runtime.refresh_contracts import TaskCancelled
 from utils.http_client import get_http_client
-from utils.safe_image import ImageLimits, safe_open_image
+from utils.safe_image import ImageLimits, safe_open_base64_image, safe_open_image
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
 USER_AGENT = "InkyPi PlanetNow/1.0 (https://github.com/Feeengyuuu/EpaperSystem)"
@@ -153,7 +153,8 @@ def encode_jpeg(image, quality=86):
 def decode_image(value):
     """A picture kept in a feed's data, or None."""
     try:
-        return safe_open_image(io.BytesIO(base64.b64decode(value or "", validate=True)), limits=_LIMITS).convert("RGB")
+        with safe_open_base64_image(value or "", limits=_LIMITS) as source:
+            return source.convert("RGB")
     except TaskCancelled:
         raise
     except Exception:

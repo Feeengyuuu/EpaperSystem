@@ -834,7 +834,8 @@ def test_layouts_draw_their_competition_marks(monkeypatch):
     plugin._draw_f1_compact_panel(image, draw, (0, 0, 555, 267), {"status": "NEXT", "main_race": race, "weekend_sessions": []}, "JOLPICA LIVE", NOW)
 
     assert "2026_bermuda.png" in drawn
-    assert "americas.png" in drawn
+    # A circuit with a traced line draws it rather than a picture mark; the host flag stays.
+    assert "americas.png" not in drawn
     assert "us.png" in drawn  # the host flag replaces the round badge
 
 

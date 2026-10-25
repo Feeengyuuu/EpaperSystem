@@ -14,7 +14,6 @@ Everything is bounded before it is stored with the poster in the presentation ba
 from __future__ import annotations
 
 import base64
-import binascii
 from html import unescape
 from io import BytesIO
 import re
@@ -22,7 +21,7 @@ from urllib.parse import quote, urljoin, urlparse
 
 from PIL import Image
 
-from utils.safe_image import ImageLimits, safe_open_image
+from utils.safe_image import ImageLimits, safe_open_base64_image, safe_open_image
 
 BASE_URL = "https://chineseposters.net"
 WIKI_HEADERS = {
@@ -205,9 +204,9 @@ def decode_photo(value):
     if not isinstance(value, str) or not value or len(value) > PHOTO_MAX_CHARS or not _BASE64_RE.match(value):
         return None
     try:
-        with safe_open_image(base64.b64decode(value), limits=PHOTO_LIMITS) as source:
+        with safe_open_base64_image(value, limits=PHOTO_LIMITS) as source:
             return source.convert("RGB")
-    except (binascii.Error, OSError, ValueError):
+    except (OSError, ValueError):
         return None
 
 

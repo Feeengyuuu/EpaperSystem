@@ -43,6 +43,7 @@ PARALLEL_IMAGE_PLUGINS = frozenset(
         "natgeo_photo_of_the_day",
         "orbital_signal",
         "pixiv_r18_ranking",
+        "planet_now",
         "reddit_rule34_hot",
         "steam_daily_art",
         "steam_profile_dashboard",
