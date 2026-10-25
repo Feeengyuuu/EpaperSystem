@@ -89,6 +89,18 @@ _LIVERADAR_DOUYIN_ROOM = {
     "id": "80596524973",
     "isFav": False,
 }
+# Then the requested Bilibili room 22230707 (峰哥亡命天涯), which the Douyin
+# migration leaves at settings revision 7.
+_LIVERADAR_BILIBILI_FENGGE_MIGRATION = "liveradar_bilibili_22230707_v1"
+_LIVERADAR_BILIBILI_FENGGE_UUID_SHA256_PREFIX = "14c36f0ef259f0b5"
+_LIVERADAR_BILIBILI_FENGGE_STRUCTURAL_GENERATION = 1
+_LIVERADAR_BILIBILI_FENGGE_SETTINGS_REVISION = 7
+_LIVERADAR_BILIBILI_FENGGE_REFRESH_INTERVAL_SECONDS = 5 * 60
+_LIVERADAR_BILIBILI_FENGGE_ROOM = {
+    "platform": "bilibili",
+    "id": "22230707",
+    "isFav": False,
+}
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_LEGACY_REFRESH_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_REFRESH_INTERVAL_SECONDS = 3 * 60 * 60
@@ -237,6 +249,7 @@ class Config:
         self._migrate_liveradar_twitch_zack_room()
         self._migrate_liveradar_bilibili_gcores_room()
         self._migrate_liveradar_douyin_room()
+        self._migrate_liveradar_bilibili_fengge_room()
         self._migrate_runtime_balance_cadences()
         self._migrate_runtime_balance_soft_threshold(
             cadence_marker_preexisting=cadence_marker_preexisting,
@@ -360,6 +373,18 @@ class Config:
             settings_revision=_LIVERADAR_DOUYIN_ROOM_SETTINGS_REVISION,
             refresh_interval=_LIVERADAR_DOUYIN_ROOM_REFRESH_INTERVAL_SECONDS,
             room=_LIVERADAR_DOUYIN_ROOM,
+        )
+
+    def _migrate_liveradar_bilibili_fengge_room(self):
+        """Append the Bilibili room 22230707 to the same instance."""
+
+        self._append_liveradar_room(
+            migration=_LIVERADAR_BILIBILI_FENGGE_MIGRATION,
+            uuid_prefix=_LIVERADAR_BILIBILI_FENGGE_UUID_SHA256_PREFIX,
+            structural_generation=_LIVERADAR_BILIBILI_FENGGE_STRUCTURAL_GENERATION,
+            settings_revision=_LIVERADAR_BILIBILI_FENGGE_SETTINGS_REVISION,
+            refresh_interval=_LIVERADAR_BILIBILI_FENGGE_REFRESH_INTERVAL_SECONDS,
+            room=_LIVERADAR_BILIBILI_FENGGE_ROOM,
         )
 
     def _append_liveradar_room(

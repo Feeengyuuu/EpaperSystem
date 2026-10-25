@@ -1722,6 +1722,39 @@ def test_startup_appends_bilibili_gcores_then_the_douyin_room_once(monkeypatch, 
     assert json.loads(config_path.read_text(encoding="utf-8"))["config_revision"] == first_revision
 
 
+def test_the_fengge_room_follows_the_douyin_room_once(monkeypatch, tmp_path):
+    original, _rooms = _zack_ready_live_radar_config(
+        rooms_text="twitch|asmongold\nbilibili|545039\ndouyin|80596524973",
+        rooms_document={
+            "version": "3.1.1",
+            "rooms": [
+                {"platform": "twitch", "id": "asmongold", "isFav": False},
+                {"platform": "bilibili", "id": "545039", "isFav": False},
+                {"platform": "douyin", "id": "80596524973", "isFav": False},
+            ],
+        },
+    )
+    original["runtime_migrations"].update({"liveradar_twitch_zackrawrr_v1": True,
+                                           "liveradar_bilibili_545039_v1": True,
+                                           "liveradar_douyin_80596524973_v1": True})
+    original["playlist_config"]["playlists"][0]["plugins"][0]["settings_revision"] = 7
+    _patch_live_radar_identity(monkeypatch, "_LIVERADAR_BILIBILI_FENGGE_UUID_SHA256_PREFIX")
+
+    _config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    instance = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    assert instance["plugin_settings"]["roomsText"].splitlines()[-2:] == ["douyin|80596524973", "bilibili|22230707"]
+    assert json.loads(instance["plugin_settings"]["roomsJson"])["rooms"][-1] == {
+        "platform": "bilibili", "id": "22230707", "isFav": False}
+    assert instance["settings_revision"] == 8
+    assert saved["runtime_migrations"]["liveradar_bilibili_22230707_v1"] is True
+
+    first_revision = saved["config_revision"]
+    Config()
+    assert json.loads(config_path.read_text(encoding="utf-8"))["config_revision"] == first_revision
+
+
 def test_douyin_room_migration_skips_an_instance_the_owner_edited_since(monkeypatch, tmp_path):
     original, _rooms = _zack_ready_live_radar_config()
     original["playlist_config"]["playlists"][0]["plugins"][0]["settings_revision"] = 9
