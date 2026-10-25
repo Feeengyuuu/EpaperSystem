@@ -137,6 +137,33 @@ def test_the_crews_in_orbit_group_by_station_with_commanders_first():
     assert [person["commander"] for person in iss["crew"]] == [True, False]
     assert iss["crew"][1]["image"] == "https://example.com/watkins.jpg"
     assert sources.parse_people({}) == {"total": 0, "stations": []} and not sources.valid_people({"stations": []})
+    zhu = tiangong["crew"][0]
+    assert (zhu["role"], zhu["craft"], zhu["country"]) == ("指令长", "神舟二十三号", "cn")
+    assert iss["crew"][0]["craft"] == "联盟 MS-29" and iss["crew"][1]["craft"] == "龙飞船 Crew-13"
+
+
+def test_crew_names_come_from_chinese_wikipedia_and_fall_back_to_surnames(monkeypatch):
+    assert sources.chinese_number(23) == "二十三" and sources.chinese_number(10) == "十"
+    assert sources.chinese_number(7) == "七" and sources.chinese_number(31) == "三十一"
+    assert sources.wiki_title("https://en.wikipedia.org/wiki/Luke_Delaney_(astronaut)") == "Luke Delaney (astronaut)"
+    assert sources.wiki_title("https://example.com/wiki/X") == ""
+    assert sources.short_chinese_name("张志远 (航天员)") == "张志远"
+    assert sources.short_chinese_name("安娜·基金娜") == "基金娜"
+
+    people = {"stations": [{"station": "tiangong", "crew": [
+        {"name": "Zhang Zhiyuan", "wiki": "Zhang Zhiyuan (astronaut)"},
+        {"name": "Pyotr Dubrov", "wiki": "Pyotr Dubrov"}]}]}
+    answers = {
+        "en": {"query": {"pages": [{"title": "Zhang Zhiyuan (astronaut)", "langlinks": [{"title": "張志遠 (太空人)"}]},
+                                   {"title": "Pyotr Dubrov"}]}},
+        "zh": {"query": {"pages": [{"title": "張志遠 (太空人)", "varianttitles": {"zh-cn": "张志远 (航天员)"}}]}},
+    }
+    monkeypatch.setattr(sources, "_json", lambda url, _ctx, **_kw: answers["zh" if "zh." in url else "en"])
+
+    crew = sources.add_chinese_names(people, None)["stations"][0]["crew"]
+
+    assert crew[0]["zh_name"] == "张志远" and "zh_name" not in crew[1]
+    assert render._crew_name(crew[0]) == "张志远" and render._crew_name(crew[1]) == "Dubrov"
 
 
 def _payload():
@@ -177,8 +204,8 @@ def test_the_page_draws_four_cards_in_their_own_colours(mode):
     left, top, right, _bottom = render.CARDS["space"]
     assert image.getpixel((left + 90, top + 110)) == (190, 120, 80)
     # The commander's portrait is ringed in gold in the crew column.
-    crew_left = right - 124
-    ring = [image.getpixel((x, top + HEADER_TOP + 47)) for x in range(crew_left, crew_left + 30)]
+    crew_left = right - 176
+    ring = [image.getpixel((x, top + HEADER_TOP + 40)) for x in range(crew_left, crew_left + 42)]
     assert palette["gold"] in ring
 
 

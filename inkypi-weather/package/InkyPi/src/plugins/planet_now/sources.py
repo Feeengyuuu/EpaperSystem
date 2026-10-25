@@ -17,7 +17,7 @@ import math
 import re
 from datetime import datetime, timedelta, timezone
 from html import unescape
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
 
@@ -74,6 +74,10 @@ ISS_COORDINATES_URL = "https://api.wheretheiss.at/v1/coordinates"
 # The ISS's track drawn on the map: these minutes either side of now.
 ISS_TRACK_MINUTES = (-30, -20, -10, 10, 20, 30, 40)
 PEOPLE_URL = "https://corquaid.github.io/international-space-station-APIs/JSON/people-in-space.json"
+WIKI_API = {"en": "https://en.wikipedia.org/w/api.php", "zh": "https://zh.wikipedia.org/w/api.php"}
+CREW_ROLES = {"commander": "指令长", "pilot": "驾驶员", "payload specialist": "载荷专家",
+              "flight engineer": "飞行工程师", "mission specialist": "任务专家", "spaceflight participant": "太空游客"}
+CHINESE_DIGITS = "零一二三四五六七八九"
 IMAGE_HOSTS = {"encrypted-tbn0.gstatic.com", "encrypted-tbn1.gstatic.com", "encrypted-tbn2.gstatic.com",
                "encrypted-tbn3.gstatic.com", "upload.wikimedia.org", "thumb.wikimedia.org", "mars.nasa.gov",
                "is1-ssl.mzstatic.com", "is2-ssl.mzstatic.com", "is3-ssl.mzstatic.com", "is4-ssl.mzstatic.com",
@@ -470,6 +474,72 @@ def wiki_thumbnail(url, width=120):
     return f"https://upload.wikimedia.org/wikipedia/commons/thumb/{first}/{second}/{name}/{width}px-{name}"
 
 
+def chinese_number(number):
+    """23 -> '二十三' (1 to 99)."""
+    tens, ones = divmod(int(number), 10)
+    if not tens:
+        return CHINESE_DIGITS[ones]
+    return (CHINESE_DIGITS[tens] if tens > 1 else "") + "十" + (CHINESE_DIGITS[ones] if ones else "")
+
+
+def craft_name(craft):
+    """'Shenzhou 23' -> '神舟二十三号'; 'Soyuz MS-29' -> '联盟 MS-29'; 'Crew-13 Dragon' -> '龙飞船 Crew-13'."""
+    text = " ".join(str(craft or "").split())
+    match = re.fullmatch(r"Shenzhou[- ]?(\d{1,2})", text, re.IGNORECASE)
+    if match:
+        return f"神舟{chinese_number(match.group(1))}号"
+    match = re.fullmatch(r"Soyuz\s+(.+)", text, re.IGNORECASE)
+    if match:
+        return f"联盟 {match.group(1)}"
+    match = re.fullmatch(r"(.+?)\s+Dragon", text, re.IGNORECASE)
+    if match:
+        return f"龙飞船 {match.group(1)}"
+    return text.replace("Starliner", "星际客机")[:24]
+
+
+def wiki_title(url):
+    """'https://en.wikipedia.org/wiki/Luke_Delaney_(astronaut)' -> 'Luke Delaney (astronaut)'."""
+    parts = urlsplit(str(url or ""))
+    if parts.hostname != "en.wikipedia.org" or not parts.path.startswith("/wiki/"):
+        return ""
+    return unquote(parts.path[len("/wiki/"):]).replace("_", " ")[:100]
+
+
+def short_chinese_name(title):
+    """'张志远 (航天员)' -> '张志远'; '安娜·基金娜' -> '基金娜' (a transliterated name keeps its surname)."""
+    name = re.sub(r"\s*[(（].*?[)）]\s*", "", str(title or "")).strip()
+    return name.split("·")[-1].strip()[:6] if name else ""
+
+
+def add_chinese_names(people, context):
+    """Each crew member's Chinese name from Wikipedia: the zh article their English one links to,
+    in its simplified title. Best effort: a missing name keeps the English one."""
+    crew = [person for station in people.get("stations") or [] for person in station.get("crew") or []
+            if person.get("wiki")]
+    if not crew:
+        return people
+    pages = _json(WIKI_API["en"], context, max_bytes=256 * 1024, params={
+        "action": "query", "prop": "langlinks", "lllang": "zh", "redirects": 1, "format": "json", "formatversion": 2,
+        "titles": "|".join(person["wiki"] for person in crew)})
+    query = (pages or {}).get("query") or {}
+    renamed = {row.get("from"): row.get("to") for row in (query.get("normalized") or []) + (query.get("redirects") or [])}
+    linked = {page.get("title"): ((page.get("langlinks") or [{}])[0]).get("title") for page in query.get("pages") or []}
+    zh_titles = {title: linked.get(renamed.get(title, title)) for title in (person["wiki"] for person in crew)}
+    wanted = sorted({title for title in zh_titles.values() if title})
+    simplified = {}
+    if wanted:
+        variants = _json(WIKI_API["zh"], context, max_bytes=256 * 1024, params={
+            "action": "query", "prop": "info", "inprop": "varianttitles", "format": "json", "formatversion": 2,
+            "titles": "|".join(wanted)})
+        for page in ((variants or {}).get("query") or {}).get("pages") or []:
+            simplified[page.get("title")] = (page.get("varianttitles") or {}).get("zh-cn") or page.get("title")
+    for person in crew:
+        title = zh_titles.get(person["wiki"])
+        if title:
+            person["zh_name"] = short_chinese_name(simplified.get(title, title))
+    return people
+
+
 def _station(person):
     if person.get("iss"):
         return "iss"
@@ -490,8 +560,12 @@ def parse_people(payload):
         launched = int(person.get("launched") or 0)
         if launched and (not station["launched"] or launched < station["launched"]):
             station["launched"] = launched
-        station["crew"].append({"name": str(person["name"]), "country": str(person.get("flag_code") or ""),
-                                "commander": "commander" in str(person.get("position") or "").lower(),
+        position = str(person.get("position") or "").strip()
+        station["crew"].append({"name": str(person["name"]), "country": str(person.get("flag_code") or "")[:2].lower(),
+                                "commander": "commander" in position.lower(),
+                                "role": CREW_ROLES.get(position.lower(), position[:16]),
+                                "craft": craft_name(person.get("spacecraft")),
+                                "wiki": wiki_title(person.get("url")),
                                 "image": wiki_thumbnail(person.get("image"))})
     order = {"tiangong": 0, "iss": 1}
     rows = sorted(stations.values(), key=lambda row: (order.get(row["station"], 2), row["station"]))
@@ -503,7 +577,13 @@ def parse_people(payload):
 
 
 def fetch_people(context):
-    return parse_people(_json(PEOPLE_URL, context, max_bytes=128 * 1024))
+    people = parse_people(_json(PEOPLE_URL, context, max_bytes=128 * 1024))
+    try:
+        return add_chinese_names(people, context)
+    except TaskCancelled:
+        raise
+    except Exception:
+        return people
 
 
 def valid_people(data):

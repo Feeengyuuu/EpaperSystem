@@ -12,6 +12,7 @@ Each card has its own colour, generated icon and band; small text stays in plain
 from __future__ import annotations
 
 import math
+from collections import Counter
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -398,8 +399,8 @@ def _space(canvas, payload, images, now):
     iss = payload.get("iss", {}).get("data") or {}
     _card(canvas, "space", "太空近况", "NASA · wheretheiss.at")
     left, top, right, bottom = CARDS["space"]
-    crew_left = right - 124
-    photo_box = (left + 8, top + HEADER + 6, left + 140, bottom - 6)
+    crew_left = right - 176
+    photo_box = (left + 8, top + HEADER + 6, left + 120, bottom - 6)
     size = (photo_box[2] - photo_box[0], photo_box[3] - photo_box[1])
     photo = images.get(mars.get("image"))
     if photo is not None:
@@ -457,36 +458,63 @@ def _avatar(canvas, picture, xy, side, ring):
     _paste(canvas, face, (x, y), mask)
 
 
+def _crew_name(person):
+    """The name under a portrait: the Chinese one when Wikipedia has it, else the surname."""
+    return person.get("zh_name") or (str(person.get("name") or "").split() or [""])[-1]
+
+
 def _crew(canvas, people, images, now, box):
-    """Everyone in orbit: the count, then each station's crew as portraits (the commander's ringed
-    in gold) under the station's name and its ISS expedition or the days since the crew launched."""
+    """Everyone in orbit: the count with each country's number by its flag, then each station's
+    crew as portraits (the commander's ringed in gold) with a flag badge and a name under each,
+    beneath the station's name and its ISS expedition, or its spacecraft and day in orbit."""
     stations = people.get("stations") or []
     if not stations:
         return
     x0, y0, x1, y1 = box
     canvas.draw.line((x0 - 6, y0, x0 - 6, y1), fill=canvas.color("rule"), width=1)
-    canvas.text((x0, y0 + 13), "此刻在轨", 11, "muted", anchor="lm", bold=False)
-    canvas.text((x1, y0 + 13), f"{people.get('total', 0)} 人", 18, "space", anchor="rm")
-    side, step, y = 24, 29, y0 + 30
+    label_w = canvas.text((x0, y0 + 10), "在轨", 11, "muted", anchor="lm", bold=False)
+    canvas.text((x0 + label_w + 3, y0 + 10), str(people.get("total", 0)), 17, "space", anchor="lm")
+    tally = Counter(person.get("country") for station in stations for person in station.get("crew") or []
+                    if person.get("country"))
+    x = x1
+    for code, number in reversed(tally.most_common(4)):
+        x -= canvas.text((x, y0 + 10), str(number), 10, anchor="rm") + 2
+        flag = _asset(f"flags/{code}", 9)
+        if flag is not None:
+            x -= flag.width
+            _paste(canvas, flag, (x, y0 + 6))
+        x -= 6
+    cell_w, cell_h, side, y = 42, 36, 22, y0 + 22
+    per_row = max(1, (x1 - x0) // cell_w)
     for station in stations:
         crew = station.get("crew") or []
+        rows = -(-len(crew) // per_row)
+        if y + 14 + rows * cell_h > y1 + 2:
+            break
         name = STATIONS.get(station.get("station"), str(station.get("station") or ""))
         launched = int(station.get("launched") or 0)
-        days = (now.timestamp() - launched) // 86400 + 1 if launched else 0
-        per_row = max(1, (x1 - x0 + step - side) // step)
-        rows = -(-len(crew) // per_row)
-        if y + 14 + rows * step > y1 + 4:
-            break
-        canvas.text((x0, y + 6), name, 11, anchor="lm", width=x1 - x0 - 46)
+        days = int((now.timestamp() - launched) // 86400 + 1) if launched else 0
+        crafts = list(dict.fromkeys(person.get("craft") for person in crew if person.get("craft")))
         expedition = station.get("expedition")
-        note = f"远征 {expedition}" if expedition else f"第 {days:.0f} 天" if days > 0 else f"{len(crew)} 人"
-        canvas.text((x1, y + 6), note, 10, "muted", anchor="rm", bold=False)
-        y += 15
+        note = (f"远征 {expedition}" if expedition else
+                " · ".join(part for part in (crafts[0] if len(crafts) == 1 else "", f"第{days}天" if days > 0 else "")
+                           if part) or f"{len(crew)} 人")
+        name_w = canvas.text((x0, y + 6), name, 11, anchor="lm")
+        canvas.text((x1, y + 6), note, 10, "muted", anchor="rm", bold=False, width=x1 - x0 - name_w - 6)
+        y += 14
         for index, person in enumerate(crew):
             row, column = divmod(index, per_row)
-            _avatar(canvas, images.get(person.get("image")), (x0 + 2 + column * step, y + row * step), side,
+            cell_x, cell_y = x0 + column * cell_w, y + row * cell_h
+            ax = cell_x + (cell_w - side) / 2
+            _avatar(canvas, images.get(person.get("image")), (ax, cell_y + 2), side,
                     "gold" if person.get("commander") else "paper")
-        y += rows * step + 4
+            flag = _asset(f"flags/{person.get('country')}", 8) if person.get("country") else None
+            if flag is not None:
+                fx, fy = ax + side - flag.width + 4, cell_y + side - 4
+                canvas.draw.rectangle((fx - 1, fy - 1, fx + flag.width, fy + flag.height), fill=canvas.color("paper"))
+                _paste(canvas, flag, (fx, fy))
+            canvas.text((cell_x + cell_w / 2, cell_y + 30), _crew_name(person), 9, anchor="mm", width=cell_w - 2)
+        y += rows * cell_h + 2
 
 
 def render_page(dimensions, payload, settings, now, images):
