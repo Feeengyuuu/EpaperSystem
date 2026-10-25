@@ -37,9 +37,9 @@ def test_crosses_are_marker_scribbles_and_let_the_number_show_through():
     pixels = [image.getpixel((x, y)) for x in range(160) for y in range(120)]
     reddest = max(pixels, key=lambda pixel: pixel[0])
     assert 0 < reddest[0] < 255 * module.CALENDAR_CROSS_OPACITY + 2
-    # The scribble runs out past the day's 60 x 40 cell on both sides.
+    # The scribble spans about the whole width of the day's 60 x 40 cell.
     inked = [x for x in range(160) for y in range(120) if image.getpixel((x, y))[0] > 40]
-    assert min(inked) < 80 - 30 and max(inked) > 80 + 30
+    assert max(inked) - min(inked) >= 50
 
 
 def test_each_day_gets_its_own_slant_and_offset():

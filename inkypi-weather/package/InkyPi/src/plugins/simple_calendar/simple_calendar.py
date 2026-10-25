@@ -240,10 +240,10 @@ CALENDAR_BACKDROP_SHARE = 0.42
 CALENDAR_BACKDROP_EDGE = 46
 CALENDAR_BACKDROP_INNER = 0.32
 CALENDAR_AGENDA_BAND = 70
-# A cross is scribbled over a past day like a hand with a red marker would: wider and taller
-# than the day's cell, at a slant and off-centre that change with the date, and the struck-off
-# number shows through it.
-CALENDAR_CROSS_SPAN = (1.15, 1.0)
+# A cross is scribbled over a past day like a hand with a red marker would: about as wide as
+# the day's cell, at a slant and off-centre that change with the date (so its strokes run out
+# of the cell), and the struck-off number shows through it.
+CALENDAR_CROSS_SPAN = (1.035, 0.9)
 CALENDAR_CROSS_TILT = 10
 CALENDAR_CROSS_SHIFT = 0.08
 CALENDAR_CROSS_OPACITY = 0.88
