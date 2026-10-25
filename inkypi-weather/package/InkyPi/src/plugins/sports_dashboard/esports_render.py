@@ -2116,14 +2116,14 @@ class EsportsRenderMixin:
             headline, headline_size = self._format_time(event["start"]), 16
             caption, caption_fill = "VS", COLORS["muted"]
         headline, headline_font = self._fit_text(draw, headline, middle_w, headline_size, bold=True, min_size=11)
-        self._draw_centered(draw, (center_x, middle - 9), headline, headline_font, COLORS["text"])
+        self._draw_centered(draw, (center_x, middle - 11), headline, headline_font, COLORS["text"])
         # Before the match, how long until it starts takes the place of "VS" under the time.
         upcoming = not is_live and not is_recent and self._lpl_countdown_label(event["start"], now)
         if upcoming:
-            self._draw_lpl_countdown(draw, center_x, middle + 4, event["start"], now, COLORS[config["accent"]])
+            self._draw_lpl_countdown(draw, center_x, middle + 6, event["start"], now, COLORS[config["accent"]])
         else:
             caption, caption_font = self._fit_text(draw, caption, middle_w, 10, bold=True, min_size=7)
-            self._draw_centered(draw, (center_x, middle + 11), caption, caption_font, caption_fill)
+            self._draw_centered(draw, (center_x, middle + 14), caption, caption_font, caption_fill)
         if is_live:
             self._draw_lpl_little_round(draw, center_x, y, event)
 
@@ -2160,7 +2160,7 @@ class EsportsRenderMixin:
             return
         # The game in progress, under the series score: "本局 0-0".
         line, line_font = self._fit_text(draw, f"本局 {score}", 64, 10, bold=True, min_size=7)
-        self._draw_centered_in_box(draw, (center_x - 32, y + 83, center_x + 32, y + 94), line, line_font, COLORS["amber"])
+        self._draw_centered_in_box(draw, (center_x - 32, y + 86, center_x + 32, y + 97), line, line_font, COLORS["amber"])
 
     @staticmethod
     def _lpl_countdown_label(start, now):

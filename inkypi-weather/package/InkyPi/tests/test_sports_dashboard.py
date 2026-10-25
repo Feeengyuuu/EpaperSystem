@@ -20337,7 +20337,7 @@ def test_club_football_slot_renders_mls_updates_through_production_timeline(
     assert source == "CLUB LIVE"
     assert wordmark_calls == [("MLS", (52, 6, 230, 33))]
     assert "美职联" not in fitted_text
-    assert "Apple TV · Stade Saputo" in fitted_text
+    assert "Apple TV | Stade Saputo" in fitted_text
     assert "DELAYED" in fitted_text
     assert "CLUB DATA 17:55" in fitted_text
 

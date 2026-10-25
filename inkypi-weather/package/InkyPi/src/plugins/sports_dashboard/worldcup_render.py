@@ -916,7 +916,8 @@ class WorldCupRenderMixin:
         date_text = f"{start:%m/%d} 周{'一二三四五六日'[start.weekday()]}"
         date_text, date_font = self._fit_text(draw, date_text, 80, 11, bold=True, min_size=8)
         self._draw_right_aligned(draw, (x2 - 12, y1 + 11), date_text, date_font, COLORS["muted"])
-        stage = " · ".join(part.strip() for part in self._clean_worldcup_stage(event.get("block")).split("|") if part.strip())
+        # Separators are "|" and "/": the device's bold YaHei draws "·" as a dash.
+        stage = self._clean_worldcup_stage(event.get("block"))
         stage_text, stage_font = self._fit_text(draw, stage, x2 - x1 - 34, 9, bold=True, min_size=7)
         draw.text((x1 + 16, y1 + 28), stage_text, font=stage_font, fill=COLORS["muted"])
 
@@ -935,15 +936,15 @@ class WorldCupRenderMixin:
             caption = self._lpl_countdown_label(event.get("start"), now) or "VS"
             caption_fill = COLORS["muted"]
         headline, headline_font = self._fit_text(draw, headline, 92, 24, bold=True, min_size=13)
-        self._draw_centered(draw, (center_x, middle - 6), headline, headline_font, COLORS["text"])
+        self._draw_centered(draw, (center_x, middle - 8), headline, headline_font, COLORS["text"])
         caption, caption_font = self._fit_text(draw, caption, 92, 10, bold=True, min_size=7)
-        self._draw_centered(draw, (center_x, middle + 15), caption, caption_font, caption_fill)
+        self._draw_centered(draw, (center_x, middle + 18), caption, caption_font, caption_fill)
         details = [self._worldcup_side_period_score_label(event, side) for side in ("a", "b")] if is_recent else []
         if any(details):
-            # Extra time and penalties, home first: "P4 · P3".
-            detail = " · ".join(part or "-" for part in details)
+            # Extra time and penalties, home first: "P4 / P3".
+            detail = " / ".join(part or "-" for part in details)
             detail, detail_font = self._fit_text(draw, detail, 82, 8, bold=True, min_size=6)
-            self._draw_centered(draw, (center_x, middle + 26), detail, detail_font, COLORS["muted"])
+            self._draw_centered(draw, (center_x, middle + 29), detail, detail_font, COLORS["muted"])
 
         name_max, name_min = 14, 9
         try:
