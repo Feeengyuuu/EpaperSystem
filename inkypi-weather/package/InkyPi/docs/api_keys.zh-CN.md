@@ -53,6 +53,8 @@ sudo systemctl restart inkypi
 | `OPEN_WEATHER_MAP_SECRET` | OpenWeather | Weather、Mini Weather | <https://home.openweathermap.org/api_keys> |
 | `NASA_SECRET` | NASA Open APIs | Astronomy Picture of the Day | <https://api.nasa.gov/> |
 | `GOOGLE_MAPS_API_KEY` | Google Maps Platform | Flight Radar 地图背景、Vehicle Status 地图与地址 | <https://console.cloud.google.com/google/maps-apis/credentials> |
+| `EBIRD_API_KEY` | eBird API 2.0 | 湾区德鲁伊（附近罕见鸟讯，可选） | <https://ebird.org/api/keygen> |
+| `FIRMS_MAP_KEY` | NASA FIRMS | 湾区要紧事（卫星火点，可选） | <https://firms.modaps.eosdis.nasa.gov/api/map_key/> |
 
 ### 图片与艺术
 

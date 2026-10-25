@@ -90,6 +90,34 @@
       "value_type": "secret"
     },
     {
+      "key": "EBIRD_API_KEY",
+      "service": "eBird API 2.0",
+      "features": [
+        "Nature Nearby"
+      ],
+      "required": false,
+      "aliases": [
+        "EBIRD_TOKEN"
+      ],
+      "signup_url": "https://ebird.org/api/keygen",
+      "notes": "Optional: adds notable bird sightings near home; the page shows iNaturalist alone without it.",
+      "value_type": "secret"
+    },
+    {
+      "key": "FIRMS_MAP_KEY",
+      "service": "NASA FIRMS MAP_KEY",
+      "features": [
+        "Bay Alerts"
+      ],
+      "required": false,
+      "aliases": [
+        "NASA_FIRMS_MAP_KEY"
+      ],
+      "signup_url": "https://firms.modaps.eosdis.nasa.gov/api/map_key/",
+      "notes": "Optional: adds satellite fire hotspots near home to the map; CAL FIRE incidents need no key.",
+      "value_type": "secret"
+    },
+    {
       "key": "UNSPLASH_ACCESS_KEY",
       "service": "Unsplash",
       "features": [

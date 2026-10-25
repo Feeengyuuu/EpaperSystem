@@ -67,6 +67,8 @@ These are all the keys the installer and the web UI know about, matching
 | `OPEN_WEATHER_MAP_SECRET` | OpenWeather | Weather, Mini Weather | <https://home.openweathermap.org/api_keys> |
 | `NASA_SECRET` | NASA Open APIs | Astronomy Picture of the Day | <https://api.nasa.gov/> |
 | `GOOGLE_MAPS_API_KEY` | Google Maps Platform | Flight Radar map background, Vehicle Status map and address | <https://console.cloud.google.com/google/maps-apis/credentials> |
+| `EBIRD_API_KEY` | eBird API 2.0 | Nature Nearby (notable birds; optional) | <https://ebird.org/api/keygen> |
+| `FIRMS_MAP_KEY` | NASA FIRMS | Bay Alerts (satellite fire hotspots; optional) | <https://firms.modaps.eosdis.nasa.gov/api/map_key/> |
 
 ### Images and art
 

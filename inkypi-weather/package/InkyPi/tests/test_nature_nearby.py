@@ -66,6 +66,29 @@ def test_species_and_group_counts_normalize():
     assert [group["group"] for group in groups["groups"]] == ["Plantae", "Aves"]
 
 
+def test_notable_birds_keep_each_species_latest_report():
+    rows = [
+        {"speciesCode": "baleag", "comName": "白头海雕", "sciName": "Haliaeetus leucocephalus",
+         "locName": "Coyote Hills RP--Main Marsh", "obsDt": "2026-10-20 08:10", "howMany": 1,
+         "lat": 37.55, "lng": -122.09, "obsValid": True},
+        {"speciesCode": "baleag", "comName": "白头海雕", "sciName": "Haliaeetus leucocephalus",
+         "locName": "Lake Elizabeth", "obsDt": "2026-10-21 07:45", "howMany": 2, "lat": 37.55, "lng": -121.96},
+        {"speciesCode": "tufduc", "comName": "凤头潜鸭", "sciName": "Aythya fuligula", "locName": "37.5, -122.0",
+         "obsDt": "2026-10-19", "lat": 37.5, "lng": -122.0},
+        {"speciesCode": "bad"},
+    ]
+    data = sources.normalize_notable(rows, sources.DEFAULT_HOME)
+
+    assert data["species"] == 2
+    eagle, duck = data["items"]
+    assert (eagle["name"], eagle["place"], eagle["count"], eagle["confirmed"]) == ("白头海雕", "Lake Elizabeth", 2, False)
+    assert eagle["distance_km"] < 5
+    assert (duck["name"], duck["place"]) == ("凤头潜鸭", "")
+    assert sources.ebird_place("Coyote Hills RP--Main Marsh") == "Coyote Hills RP"
+    with pytest.raises(ValueError):
+        sources.normalize_notable({"errors": []}, sources.DEFAULT_HOME)
+
+
 def _payload():
     recent = [{"id": index, "name": name, "scientific": "Sci name", "group": group, "time": NOW.isoformat(),
                "place": "Fremont", "distance_km": 3.0, "observer": "someone",
@@ -88,6 +111,41 @@ def test_page_renders_without_photos(mode):
     image = render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": mode}}, NOW, {})
 
     assert image.size == (800, 480)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_page_shows_notable_birds_under_the_groups(mode):
+    payload = _payload()
+    payload["birds"] = {"state": "live", "data": {"species": 9, "items": [
+        {"name": "白头海雕", "scientific": "Haliaeetus leucocephalus", "place": "Coyote Hills RP",
+         "time": NOW.isoformat(), "count": 1, "distance_km": 9.0, "confirmed": True}]}}
+
+    with_birds = render_page((800, 480), payload, {"_inkypi_theme": {"mode": mode}}, NOW, {})
+    without = render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": mode}}, NOW, {})
+
+    assert with_birds.size == (800, 480)
+    assert with_birds.crop((12, 400, 300, 468)).tobytes() != without.crop((12, 400, 300, 468)).tobytes()
+    assert with_birds.crop((310, 58, 788, 300)).tobytes() == without.crop((310, 58, 788, 300)).tobytes()
+
+
+def test_birds_load_only_with_an_ebird_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    payload = _payload()
+    for name in ("recent", "species", "groups", "stats"):
+        monkeypatch.setattr(sources, f"fetch_{name}", lambda *_args, data=payload[name]["data"]: data)
+    keys = []
+    monkeypatch.setattr(sources, "fetch_notable",
+                        lambda _home, _radius, key, _ctx: keys.append(key) or {"species": 0, "items": []})
+
+    class KeyedDevice(Device):
+        def load_env_key(self, key):
+            return " ebird-test-key " if key == "EBIRD_API_KEY" else None
+
+    plugin = NatureNearby({"id": "nature_nearby"})
+    plugin.generate_image({"_inkypi_theme": {"mode": "day"}}, Device())
+    assert keys == []
+    plugin.generate_image({"_inkypi_theme": {"mode": "day"}, "forceRefresh": True}, KeyedDevice())
+    assert keys == ["ebird-test-key"]
 
 
 def test_cache_only_redraw_reuses_sources(monkeypatch, tmp_path):

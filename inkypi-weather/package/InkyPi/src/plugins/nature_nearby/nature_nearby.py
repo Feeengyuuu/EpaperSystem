@@ -1,4 +1,5 @@
-"""Nature Nearby: what people are observing around home on iNaturalist, refreshed through the day."""
+"""Nature Nearby: what people are observing around home on iNaturalist, refreshed through the day,
+and the notable birds eBird reports nearby when an EBIRD_API_KEY is configured."""
 
 from __future__ import annotations
 
@@ -45,7 +46,7 @@ class NatureNearby(BasePlugin):
     def _cache(self, leaf):
         return self.cache_dir(env_var="NATURE_NEARBY_CACHE_DIR", leaf=leaf, create=True, strip=True)
 
-    def _refresh(self, settings, now, *, allow_network, context):
+    def _refresh(self, settings, now, *, allow_network, context, ebird_key=""):
         home = sources.home_setting(settings.get("latitude"), settings.get("longitude"))
         radius = bounded_int(settings.get("radiusKm"), 40, 5, 150)
         force = allow_network and coerce_bool(settings.get("forceRefresh"), default=False)
@@ -69,6 +70,11 @@ class NatureNearby(BasePlugin):
                                  fresh_seconds=3 * 3600, usable_seconds=3 * 86400, validate=sources.valid_stats,
                                  timeout_seconds=10)),
             "home": list(home), "radius_km": radius,
+            # Notable birds are an optional extra: without a key the page leaves them out.
+            "birds": load(Source("birds", identity,
+                                 lambda ctx: sources.fetch_notable(home, radius, ebird_key, ctx),
+                                 fresh_seconds=3600, usable_seconds=2 * 86400, validate=sources.valid_notable,
+                                 timeout_seconds=10)) if ebird_key else None,
         }
         recent = payload["recent"]["data"].get("items", [])
         species = payload["species"]["data"].get("items", [])
@@ -97,7 +103,8 @@ class NatureNearby(BasePlugin):
                               parent.clock)
         now = sources.local_now()
         _checkpoint(context)
-        payload, images = self._refresh(settings, now, allow_network=not cache_only, context=context)
+        payload, images = self._refresh(settings, now, allow_network=not cache_only, context=context,
+                                        ebird_key=(device_config.load_env_key("EBIRD_API_KEY") or "").strip())
         try:
             image = render_page(self.get_dimensions(device_config), payload, settings, now, images)
         finally:

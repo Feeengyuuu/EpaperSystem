@@ -1,5 +1,6 @@
-"""800 x 480 Nature Nearby page: the newest find, this week's top species, life groups and a
-filmstrip of what was just observed around home."""
+"""800 x 480 Nature Nearby page: the newest find, this week's top species, life groups (with
+eBird's notable birds under them when a key is set) and a filmstrip of what was just observed
+around home."""
 
 from __future__ import annotations
 
@@ -156,13 +157,17 @@ def _species(canvas, payload, images):
         canvas.text((text_left, y + 72), item["scientific"], 9, "muted", anchor="lm", bold=False, width=text_width)
 
 
-def _groups(canvas, payload):
+def _groups(canvas, payload, now):
     groups = payload["groups"]["data"].get("groups", [])
+    birds = ((payload.get("birds") or {}).get("data") or {}).get("items") or []
     total = sum(group["count"] for group in groups)
     _card(canvas, GROUP_CARD, "blue", "pulse", "生物类群", f"本周物种数 · {total:,}" if total else "")
     left, right = GROUP_CARD[0] + 10, GROUP_CARD[2] - 10
     if not groups:
         canvas.text((left, 410), "类群统计暂不可用", 14, "muted", anchor="lm")
+        return
+    if birds:
+        _groups_with_birds(canvas, groups, total, payload["birds"]["data"], now)
         return
     bar_top, x = GROUP_CARD[1] + HEADER + 10, float(left)
     for group in groups:
@@ -181,6 +186,41 @@ def _groups(canvas, payload):
                   canvas.color("paper"))
         canvas.text((cx + 22, cy), label, 13, anchor="lm")
         canvas.text((cx + column_width - 10, cy), f"{group['count']} 种", 13, anchor="rm")
+
+
+def _groups_with_birds(canvas, groups, total, birds, now):
+    """The life groups as a thin bar and their top three, then eBird's notable birds this week:
+    each the latest report of its species, with where and when."""
+    left, right = GROUP_CARD[0] + 10, GROUP_CARD[2] - 10
+    bar_top, x = GROUP_CARD[1] + HEADER + 7, float(left)
+    for group in groups:
+        _label, _icon, tone = group_info(group["group"])
+        width = (right - left) * group["count"] / total
+        canvas.draw.rectangle((x, bar_top, x + width, bar_top + 9),
+                              fill=canvas.color(tone) if tone != "ink" else canvas.color("panel"))
+        x += width
+    canvas.draw.rectangle((left, bar_top, right, bar_top + 9), outline=canvas.color("ink"), width=1)
+    column = (right - left) / 3
+    for index, group in enumerate(groups[:3]):
+        label, icon, tone = group_info(group["group"])
+        cx, cy = left + index * column, bar_top + 22
+        draw_icon(canvas.draw, icon, (cx, cy - 7), 14, canvas.color(tone), canvas.color("paper"))
+        canvas.text((cx + 17, cy), f"{label} {group['count']}", 11, anchor="lm", width=column - 19)
+    y = bar_top + 34
+    canvas.rule((left, y, right, y))
+    draw_icon(canvas.draw, "bird", (left, y + 4), 14, canvas.color("blue"), canvas.color("paper"))
+    canvas.text((left + 18, y + 11), "eBird 罕见鸟讯", 11, anchor="lm")
+    canvas.text((right, y + 11), f"7 天 · {birds.get('species', 0)} 种", 10, "muted", anchor="rm", bold=False)
+    for index, bird in enumerate(birds["items"][:2]):
+        row = y + 28 + index * 17
+        stamp = parse_time(bird.get("time"))
+        meta = " · ".join(part for part in (bird.get("place"), ago(stamp, now).replace(" ", "") if stamp else "")
+                          if part)
+        meta_w = min(150, canvas.width(meta, 10, False)) if meta else 0
+        if meta:
+            canvas.text((right, row), meta, 10, "muted", anchor="rm", bold=False, width=150)
+        canvas.text((left, row), bird.get("name") or bird.get("scientific") or "", 12, anchor="lm",
+                    width=right - left - meta_w - 6)
 
 
 def _recent(canvas, payload, images, now):
@@ -224,7 +264,7 @@ def render_page(dimensions, payload, settings, now, images):
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _hero(canvas, payload, images, now)
     _species(canvas, payload, images)
-    _groups(canvas, payload)
+    _groups(canvas, payload, now)
     _recent(canvas, payload, images, now)
     result = canvas.image
     if tuple(dimensions) != (800, 480):

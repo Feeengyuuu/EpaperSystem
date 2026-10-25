@@ -1,5 +1,6 @@
-"""Bounded iNaturalist feeds for the Nature Nearby page: newest finds, this week's species,
-life-group counts and observer totals around home. Keyless."""
+"""Bounded feeds for the Nature Nearby page: iNaturalist's newest finds, this week's species,
+life-group counts and observer totals around home (keyless), and, with an eBird key, the
+notable birds reported nearby this week."""
 
 from __future__ import annotations
 
@@ -32,6 +33,10 @@ GROUPS = {
     "Actinopterygii": ("鱼类", "fish", "ink"), "Mollusca": ("软体", "snail", "ink"),
 }
 OTHER_GROUP = ("其他", "info", "ink")
+EBIRD_NOTABLE_URL = "https://api.ebird.org/v2/data/obs/geo/recent/notable"
+EBIRD_DAYS = 7
+EBIRD_MAX_KM = 50  # eBird's largest search radius
+MAX_BIRDS = 6
 
 
 def parse_time(value):
@@ -103,11 +108,12 @@ def _common(params, home, radius):
             "preferred_place_id": PREFERRED_PLACE}
 
 
-def _get_json(url, params, context, max_bytes=512 * 1024):
+def _get_json(url, params, context, max_bytes=512 * 1024, headers=None):
     context.raise_if_cancelled()
     response = get_http_client().request_json("GET", url, context=context, timeout=REQUEST_TIMEOUT,
                                               max_bytes=max_bytes, params=params,
-                                              headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+                                              headers={"User-Agent": USER_AGENT, "Accept": "application/json",
+                                                       **(headers or {})})
     context.raise_if_cancelled()
     return response.data
 
@@ -202,6 +208,50 @@ def fetch_stats(home, radius, now, context):
         "top_observations": int(top.get("observation_count") or 0),
         "top_species": int(top.get("species_count") or 0),
     }
+
+
+def ebird_place(name):
+    """'Coyote Hills RP--Main Marsh' -> 'Coyote Hills RP'; a private spot's coordinates are dropped."""
+    place = str(name or "").split("--")[0].split("(")[0].strip()
+    return "" if re.fullmatch(r"[-\d.,\s]+", place) else place[:28]
+
+
+def normalize_notable(rows, home):
+    """eBird's notable sightings, one per species (its latest report), newest first:
+    {species, items: [{name, scientific, place, time, count, distance_km, confirmed}]}."""
+    if not isinstance(rows, list):
+        raise ValueError("eBird returned no sightings")
+    latest = {}
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("speciesCode") or not row.get("comName"):
+            continue
+        stamp = parse_time(str(row.get("obsDt") or "").replace(" ", "T"))
+        if stamp is None:
+            continue
+        lat, lon = _finite(row.get("lat")), _finite(row.get("lng"))
+        item = {"name": str(row["comName"])[:24], "scientific": str(row.get("sciName") or "")[:48],
+                "place": ebird_place(row.get("locName")), "time": stamp.isoformat(),
+                "count": int(row.get("howMany") or 0) if str(row.get("howMany") or "").isdigit() else 0,
+                "distance_km": (round(distance_km(home[0], home[1], lat, lon), 1)
+                                if lat is not None and lon is not None else None),
+                "confirmed": bool(row.get("obsValid"))}
+        current = latest.get(row["speciesCode"])
+        if current is None or item["time"] > current["time"]:
+            latest[row["speciesCode"]] = item
+    items = sorted(latest.values(), key=lambda item: item["time"], reverse=True)
+    return {"species": len(latest), "items": items[:MAX_BIRDS]}
+
+
+def fetch_notable(home, radius, key, context):
+    params = {"lat": home[0], "lng": home[1], "dist": min(radius, EBIRD_MAX_KM), "back": EBIRD_DAYS,
+              "detail": "simple", "sppLocale": "zh_SIM", "maxResults": 200}
+    return normalize_notable(_get_json(EBIRD_NOTABLE_URL, params, context, headers={"X-eBirdApiToken": key}),
+                             home)
+
+
+def valid_notable(data):
+    items = (data or {}).get("items")
+    return isinstance(items, list) and all(isinstance(item, dict) and item.get("name") for item in items)
 
 
 def valid_recent(data):
