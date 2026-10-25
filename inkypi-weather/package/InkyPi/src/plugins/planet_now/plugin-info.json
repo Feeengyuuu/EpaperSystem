@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "id": "planet_now",
+  "class": "PlanetNow",
+  "display_name": "环球此刻",
+  "refresh_on_display": false,
+  "recommended_refresh": {"interval": 1800},
+  "capabilities": {
+    "supports_live_refresh": false,
+    "supports_presentation_refresh": false,
+    "supports_day_night_theme": true,
+    "supports_cached_display_redraw": true
+  },
+  "theme": {
+    "presentation": "ui",
+    "day": {"background": "#ffffff", "accent": "#2554c7"},
+    "night": {"background": "#000000", "accent": "#7aa2ff"}
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "wordmark.png": {
+    "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x512, transparent)",
+    "job_id": "34b5cbcf-73df-49a7-9a9d-8378d25fe8b0",
+    "note": "环球此刻 cobalt lettering with a gold orbit ring and a small Earth",
+    "sha256": "d7aee93450257dcb43f17c1d886a95ffceaf6fdecfde7adea6d4d9415fbfe438"
+  },
+  "header_art.png": {
+    "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x512, transparent)",
+    "job_id": "eaecae86-4543-4227-9d80-8e02bbf065aa",
+    "note": "sun, wind turbine, dish, globe, rocket, comet",
+    "sha256": "f09d4ccd36fe2279882fb87d2d49cb965e35ae327bcba8c66d56fd81caab700b"
+  },
+  "section-grid.png": {
+    "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x512, transparent)",
+    "job_id": "f482305e-4c92-44be-a310-8a478d2d293f",
+    "note": "power pylon with sun and wind turbine",
+    "sha256": "9492d4b790dbf0450e23f421b4b5e297544cc3d90f5d89bf94567745f9714d0f"
+  },
+  "section-earth.png": {
+    "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x512, transparent)",
+    "job_id": "f482305e-4c92-44be-a310-8a478d2d293f",
+    "note": "satellite over Earth",
+    "sha256": "0419a84e997958fe95096671e0e9cdc8c4527d009b933a9930df18dbd7be702e"
+  },
+  "section-trends.png": {
+    "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x512, transparent)",
+    "job_id": "f482305e-4c92-44be-a310-8a478d2d293f",
+    "note": "flame around a rising chart",
+    "sha256": "4443966c24b9a7d9039dbc099ae9db8139729ed317a5f5da588a20c1a02ac756"
+  },
+  "section-space.png": {
+    "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x512, transparent)",
+    "job_id": "f482305e-4c92-44be-a310-8a478d2d293f",
+    "note": "rocket past Mars with a space station",
+    "sha256": "4c64ee6435ee35b2b0fa48d75fd5cf342c8faf6df156511d1e2a6e8a9a92ec28"
+  },
+  "world_land.png": {
+    "generator": "Natural Earth 1:110m land (public domain)",
+    "job_id": "",
+    "note": "land mask 720x360, equirectangular, from ne_110m_land.geojson (nvkelso/natural-earth-vector)",
+    "sha256": "b2ec8c5043a23d97b766124e15d4e74845502c46ef9b857fce4a278570bca19b"
+  }
+}

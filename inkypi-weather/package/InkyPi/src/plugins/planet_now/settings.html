@@ -1,0 +1,28 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <small>四张卡：湾区上空（NOAA GOES-West 卫星云图、RainViewer 雨雷达、NASA EPIC 地球全貌）、加州电网（CAISO 今日发电结构与预测用电）、美国热度（Google Trends 热搜、维基百科热读、Apple 热歌）、太空近况（毅力号最新照片、国际空间站位置）。全部是公开数据，无需密钥。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取全部数据</label>
+  <small>电网与雨雷达 10 分钟、卫星图 20 分钟、热搜 1 小时、维基与火星 6 小时、Apple 12 小时更新；空间站每次刷新取位置；轮播只读本地缓存。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const saved = typeof pluginSettings !== 'undefined' ? pluginSettings : {};
+  for (const key of ['fontFamily', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    if (saved[key] === undefined) {
+      if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+      continue;
+    }
+    if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(saved[key]);
+    else el.value = saved[key];
+  }
+});
+</script>
