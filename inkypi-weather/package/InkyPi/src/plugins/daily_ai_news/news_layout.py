@@ -50,8 +50,9 @@ TOPIC_ACCENTS = {
     "tech": "blue",
     "aviation": "blue",
 }
-# The lead's headline shrinks through these sizes to fit; its two-sentence fact wraps.
-LEAD_TITLE_SIZES = (26, 24, 22, 20)
+# The lead's headline shrinks through these sizes to fit the block's width; its dek (kicker and
+# two-sentence fact) wraps under it.
+LEAD_TITLE_SIZES = (34, 32, 30, 28, 26, 24)
 LEAD_FACT_SIZE = 15
 LEAD_FACT_LINE = 19
 GLOBE_MIN_HEIGHT = 60
@@ -95,6 +96,21 @@ class NewsPage:
             if self.width(text, size, bold) <= max_width:
                 return size
         return sizes[-1]
+
+    def wrap_after(self, text, size, max_width, indent, max_lines, bold=False):
+        """Wrap ``text`` whose first line starts ``indent`` px in (after a kicker)."""
+        text = " ".join(str(text or "").split())
+        if not indent:
+            return self.wrap(text, size, max_width, max_lines, bold)
+        first = ""
+        for char in text:
+            if self.width(first + char, size, bold) > max_width - indent:
+                break
+            first += char
+        rest = text[len(first):].lstrip()
+        if not rest or max_lines <= 1:
+            return [first if not rest else self.clip(text, size, max_width - indent, bold)]
+        return [first] + self.wrap(rest, size, max_width, max_lines - 1, bold)
 
     def wrap(self, text, size, max_width, max_lines, bold=True):
         text = " ".join(str(text or "").split())
@@ -190,33 +206,35 @@ class NewsPage:
                 self.text((MARGIN + seal_w / 2, top + 9 + seal_h * (1 + 2 * index) / 4), char, 17, True, seal_ink,
                           "mm")
         text_x = MARGIN + seal_w + 14
-        # A newspaper kicker before the headline: the section in its accent, then the topic.
-        title_x = text_x
-        kicker_y = top + 20
-        section = lead.get("section_label")
-        if section:
-            self.text((title_x, kicker_y), section, 13, True, self.accent(SECTION_ACCENTS.get(section)), "lm")
-            title_x += self.width(section, 13)
-        if section and lead.get("tag"):
-            self.d.line((title_x + 6, kicker_y - 6, title_x + 6, kicker_y + 6), fill=c["ink"], width=1)
-            title_x += 12
-        if lead.get("tag"):
-            self.text((title_x, kicker_y), lead["tag"], 13, True, c["ink"], "lm")
-            title_x += self.width(lead["tag"], 13)
-        if title_x > text_x:
-            title_x += 12
-        title_w = art_left - 12 - title_x
-        largest = LEAD_TITLE_SIZES[0]
-        size = self.fit_size(lead["title"], LEAD_TITLE_SIZES, title_w)
-        self.text((title_x, top + 4 + (largest - size) // 2), self.clip(lead["title"], size, title_w), size, True)
         brief_w = art_left - 12 - text_x
-        fact = self.wrap(lead.get("why"), LEAD_FACT_SIZE, brief_w, 2, False)
+        # The headline runs the block's full width at the largest size that fits.
+        size = self.fit_size(lead["title"], LEAD_TITLE_SIZES, brief_w)
+        self.text((text_x, top - 1 + (LEAD_TITLE_SIZES[0] - size) // 2), self.clip(lead["title"], size, brief_w),
+                  size, True)
+        y = top + LEAD_TITLE_SIZES[0] + 6
+        # The dek under it opens like a newspaper's: the section in its accent and the topic, then the
+        # story's two-sentence fact running on across two lines.
+        indent = 0
+        section, tag = lead.get("section_label"), lead.get("tag")
+        middle = y + LEAD_FACT_LINE / 2 - 1
+        if section:
+            self.text((text_x, middle), section, 13, True, self.accent(SECTION_ACCENTS.get(section)), "lm")
+            indent = self.width(section, 13)
+        if section and tag:
+            self.d.line((text_x + indent + 6, middle - 6, text_x + indent + 6, middle + 6), fill=c["ink"], width=1)
+            indent += 12
+        if tag:
+            self.text((text_x + indent, middle), tag, 13, True, c["ink"], "lm")
+            indent += self.width(tag, 13)
+        if indent:
+            indent += 10
+        fact = self.wrap_after(lead.get("why"), LEAD_FACT_SIZE, brief_w, indent, 2)
         for index, line in enumerate(fact):
-            self.text((text_x, top + 40 + index * LEAD_FACT_LINE), line, LEAD_FACT_SIZE, False)
+            self.text((text_x + (indent if index == 0 else 0), y + index * LEAD_FACT_LINE), line, LEAD_FACT_SIZE, False)
         note = lead.get("source_note")
         if note and len(fact) < 2:
             # A one-sentence fact leaves its second line to the story's source and time.
-            note_y = top + 40 + len(fact) * LEAD_FACT_LINE + 2
+            note_y = y + len(fact) * LEAD_FACT_LINE + 2
             self.d.line((text_x, note_y + 8, text_x + 14, note_y + 8), fill=c["ink"], width=1)
             self.text((text_x + 20, note_y + 8), self.clip(note, 12, brief_w - 20, False), 12, False, c["ink"], "lm")
         kind = news_art.topic_kind(lead.get("tag"), lead["title"])

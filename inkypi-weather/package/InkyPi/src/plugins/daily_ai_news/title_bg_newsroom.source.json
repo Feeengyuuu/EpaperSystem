@@ -1,0 +1,14 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "generated": "2026-10-24",
+  "job_id": "d1e44632-0b89-474d-b02f-0ac472a948c7",
+  "prompt": "wide one-row TV news studio in editorial line art (camera, boom mic, anchor desk, ON AIR light, monitor wall, teleprompter, reporter, studio lights, satellite news van), slate grey with crimson accents, transparent",
+  "use": "the header strip between the page's wordmark and its date",
+  "processing": "alpha below 24 cleared, cropped to alpha, 96 px tall (LANCZOS)",
+  "source_sha256": "544f98d68b22d9f0631dca06de8ceba562ae10dbcce6b437e978b59e16b7bc72",
+  "sha256": "285c502452e90e6b788e4b5784c354e3a1e731d4dea718ff0cf5aba7d9857eae",
+  "size": [
+    509,
+    96
+  ]
+}

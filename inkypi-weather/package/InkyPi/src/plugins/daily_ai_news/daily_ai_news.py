@@ -51,8 +51,10 @@ logger = logging.getLogger(__name__)
 DEFAULT_TITLE = "整点新闻"
 DEFAULT_FONT = "Microsoft YaHei"
 PLUGIN_DIR = Path(__file__).resolve().parent
-TITLE_BACKGROUND_IMAGE = "title_bg_global_radar.png"
-TITLE_BACKGROUND_SIZE = (325, 65)
+# The header strip between the wordmark and the date: a generated TV newsroom (its source record
+# beside it).
+TITLE_BACKGROUND_IMAGE = "title_bg_newsroom.png"
+TITLE_BACKGROUND_SIZE = (509, 96)
 TITLE_WORDMARK_IMAGE = "title_wordmark.png"
 TITLE_WORDMARK_SIZE = (220, 58)
 MARKET_LOGO_DIR = PLUGIN_DIR / "market_logos"
