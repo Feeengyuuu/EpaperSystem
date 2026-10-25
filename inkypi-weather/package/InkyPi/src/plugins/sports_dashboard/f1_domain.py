@@ -126,6 +126,8 @@ def _parse_f1_last_result(payload, timezone_info):
     if not races:
         return None
     race = races[0]
+    circuit = race.get("Circuit") or {}
+    location = circuit.get("Location") or {}
     top = []
     for item in (race.get("Results") or [])[:5]:
         driver = item.get("Driver") or {}
@@ -138,11 +140,17 @@ def _parse_f1_last_result(payload, timezone_info):
                 "constructor": str(constructor.get("name") or "").strip(),
                 "gap": _f1_result_gap(item),
                 "status": str(item.get("status") or "").strip(),
+                # The starting place (0 = the pit lane) and whether this was the race's fastest lap.
+                "grid": _int_value(item.get("grid")),
+                "fastest_lap": str((item.get("FastestLap") or {}).get("rank") or "") == "1",
             }
         )
     return {
         "round": str(race.get("round") or ""),
         "race_name": str(race.get("raceName") or "").strip(),
+        "circuit_id": str(circuit.get("circuitId") or "").strip(),
+        "locality": str(location.get("locality") or "").strip(),
+        "country": str(location.get("country") or "").strip(),
         "start": _parse_f1_date_time(race.get("date"), race.get("time"), timezone_info),
         "top": top,
     }
@@ -170,7 +178,8 @@ def _parse_f1_driver_standings(payload):
 def _parse_f1_constructor_standings(payload):
     standings = _f1_standings_list(payload, "ConstructorStandings")
     result = []
-    for item in standings[:5]:
+    # Every team: the header's grid lines them all up in this order.
+    for item in standings:
         constructors = item.get("Constructor") or item.get("Constructors") or {}
         result.append(
             {

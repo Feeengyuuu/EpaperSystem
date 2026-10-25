@@ -1,13 +1,22 @@
 """Formula 1 panel ("race weekend").
 
+The header's art is the eleven teams' cars on a staggered grid in
+constructors' championship order, the leader on pole at the chequered line.
 A band with the round, the Grand Prix (in Chinese), the circuit and a
 countdown to the next session; a weekend timeline with one node per session
 (done, live, next, later; the race node is chequered); the drivers'
-championship as points bars in team colours; and either the live session
-order or the last race's top finishers.
+championship with team logos, points bars and wins; and either the live
+session order or the last race's top finishers with their teams, places
+gained from the grid and the fastest lap.
 """
 
-from .common import COLORS, LOCAL_F1_TITLE_WORDMARK_PATH, datetime, re
+from functools import lru_cache
+import json
+import os
+
+from PIL import Image, ImageDraw, ImageStat
+
+from .common import COLORS, LOCAL_DECOR_DIR, LOCAL_F1_TITLE_WORDMARK_PATH, LOCAL_TEAM_LOGO_DIR, datetime, re
 from .scorebug_kit import ScorebugSpec
 
 SportsDashboard = None
@@ -15,6 +24,33 @@ SportsDashboard = None
 F1_BAND_HEIGHT = 52
 F1_TIMELINE_HEIGHT = 50
 F1_ROW_HEIGHT = 15
+F1_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "f1_teams")
+F1_GRID_DIR = os.path.join(LOCAL_DECOR_DIR, "f1_grid")
+F1_CIRCUIT_SHAPES = os.path.join(LOCAL_DECOR_DIR, "f1_circuits.json")
+F1_LOGO_SIZE = (20, 12)
+F1_PLACE_SIZE = (13, 10)
+# F1's own colour for the fastest lap.
+F1_FASTEST_LAP = (155, 60, 225)
+# Constructor names (Jolpica, OpenF1) to the bundled team art; Racing Bulls before Red Bull.
+F1_TEAM_KEYS = (
+    ("mclaren", "mclaren"),
+    ("ferrari", "ferrari"),
+    ("racing bulls", "racing_bulls"),
+    ("rb f1", "racing_bulls"),
+    ("visa cash app", "racing_bulls"),
+    ("red bull", "red_bull"),
+    ("mercedes", "mercedes"),
+    ("aston martin", "aston_martin"),
+    ("alpine", "alpine"),
+    ("williams", "williams"),
+    ("haas", "haas"),
+    ("audi", "audi"),
+    ("sauber", "audi"),
+    ("cadillac", "cadillac"),
+)
+# The grid's order before the constructors' standings arrive: 2025's championship, then Cadillac.
+F1_DEFAULT_GRID = ("mclaren", "mercedes", "red_bull", "ferrari", "williams", "racing_bulls", "aston_martin", "haas",
+                   "audi", "alpine", "cadillac")
 # Livery colours by constructor name; mapped to the nearest panel ink.
 F1_TEAM_COLORS = (
     ("mclaren", "ff8000"),
@@ -48,6 +84,7 @@ F1_GRAND_PRIX_ZH = (
     ("italian", "意大利"),
     ("japanese", "日本"),
     ("las vegas", "拉斯维加斯"),
+    ("malaysian", "马来西亚"),
     ("mexico", "墨西哥城"),
     ("miami", "迈阿密"),
     ("monaco", "摩纳哥"),
@@ -59,6 +96,36 @@ F1_GRAND_PRIX_ZH = (
     ("sao paulo", "圣保罗"),
     ("united states", "美国"),
 )
+# Each circuit (Jolpica's circuitId): its Chinese name, the city it is reached from, the lap's
+# length in km and the Grand Prix distance in laps (None while not yet fixed).
+F1_CIRCUITS = {
+    "albert_park": ("阿尔伯特公园赛道", "墨尔本", 5.278, 58),
+    "americas": ("美洲赛道", "奥斯汀", 5.513, 56),
+    "bahrain": ("巴林国际赛道", "萨基尔", 5.412, 57),
+    "baku": ("巴库城市赛道", "巴库", 6.003, 51),
+    "catalunya": ("加泰罗尼亚赛道", "巴塞罗那", 4.657, 66),
+    "hungaroring": ("亨格罗宁赛道", "布达佩斯", 4.381, 70),
+    "imola": ("伊莫拉赛道", "伊莫拉", 4.909, 63),
+    "interlagos": ("英特拉格斯赛道", "圣保罗", 4.309, 71),
+    "jeddah": ("吉达滨海赛道", "吉达", 6.174, 50),
+    "losail": ("卢赛尔国际赛道", "卢赛尔", 5.419, 57),
+    "madring": ("马德林赛道", "马德里", 5.474, None),
+    "marina_bay": ("滨海湾街道赛道", "新加坡", 4.940, 62),
+    "miami": ("迈阿密国际赛道", "迈阿密", 5.412, 57),
+    "monaco": ("摩纳哥赛道", "蒙特卡洛", 3.337, 78),
+    "monza": ("蒙扎赛道", "蒙扎", 5.793, 53),
+    "red_bull_ring": ("红牛环赛道", "斯皮尔伯格", 4.318, 71),
+    "rodriguez": ("罗德里格斯兄弟赛道", "墨西哥城", 4.304, 71),
+    "sepang": ("雪邦国际赛道", "吉隆坡", 5.543, 56),
+    "shanghai": ("上海国际赛车场", "上海", 5.451, 56),
+    "silverstone": ("银石赛道", "银石", 5.891, 52),
+    "spa": ("斯帕赛道", "斯塔沃洛", 7.004, 44),
+    "suzuka": ("铃鹿赛道", "铃鹿", 5.807, 53),
+    "vegas": ("拉斯维加斯大道赛道", "拉斯维加斯", 6.201, 50),
+    "villeneuve": ("维伦纽夫赛道", "蒙特利尔", 4.361, 70),
+    "yas_marina": ("亚斯码头赛道", "阿布扎比", 5.281, 58),
+    "zandvoort": ("赞德沃特赛道", "赞德沃特", 4.259, 72),
+}
 # The drivers' usual simplified Chinese names (mainland broadcasts), by their three-letter code.
 F1_DRIVER_ZH = {
     "ALB": "阿尔本", "ALO": "阿隆索", "ANT": "安东内利", "BEA": "贝尔曼", "BOR": "博尔托莱托",
@@ -89,15 +156,17 @@ class F1RenderMixin:
         lower = timeline_y + F1_TIMELINE_HEIGHT + 4
         middle = (left + right) // 2
         self._draw_vertical_split(draw, middle + 4, lower + 2, bottom)
-        self._draw_f1_standings(draw, (left, lower, middle - 6, bottom), selected.get("driver_standings") or [], spec)
+        self._draw_f1_standings(image, draw, (left, lower, middle - 6, bottom), selected.get("driver_standings") or [], spec)
         leaderboard = selected.get("leaderboard") or []
         if live and leaderboard:
             session = (selected.get("live_session") or {}).get("label") or "LIVE"
-            self._draw_f1_order(draw, (middle + 14, lower, right, bottom), f"LIVE · {session}", leaderboard, spec, live=True)
+            self._draw_f1_order(image, draw, (middle + 14, lower, right, bottom), f"LIVE · {session}", leaderboard, spec,
+                                live=True)
         else:
             result = selected.get("last_result") or {}
             title = SportsDashboard._f1_short_race_name(result.get("race_name")) or "LAST RACE"
-            self._draw_f1_order(draw, (middle + 14, lower, right, bottom), title, result.get("top") or [], spec)
+            self._draw_f1_order(image, draw, (middle + 14, lower, right, bottom), title, result.get("top") or [], spec,
+                                race=result)
 
     def _draw_f1_header(self, image, draw, bounds, selected, source_state):
         x1, y1, x2, _y2 = [int(value) for value in bounds]
@@ -108,7 +177,8 @@ class F1RenderMixin:
             draw.text((x1 + 96, header_y + 1), title, font=title_font, fill=COLORS["text"])
         source_label, source_font = self._fit_text(draw, self._f1_source_label(selected, source_state), 124, 10, bold=True, min_size=7)
         draw.text((x1 + 97, header_y + 22), source_label, font=source_font, fill=COLORS["muted"])
-        self._draw_f1_header_track_strip(draw, x1 + 250, header_y + 2, x2 - 92, y1 + 47)
+        if not self._draw_f1_team_grid(image, draw, (x1 + 250, y1 + 4, x2 - 92, y1 + 46), selected.get("constructor_standings")):
+            self._draw_f1_header_track_strip(draw, x1 + 250, header_y + 2, x2 - 92, y1 + 47)
         status = str(selected.get("status") or "BREAK").upper()
         pill = {"LIVE": "LIVE", "NEXT": "NEXT", "RECENT": "RESULT"}.get(status, "BREAK")
         self._draw_status_pill(draw, x2 - 84, header_y + 4, pill, status == "LIVE")
@@ -131,22 +201,68 @@ class F1RenderMixin:
             self._draw_centered_in_box(draw, (badge[0], badge[1] + 1, badge[2], badge[1] + 21), round_text, self._font(13, True), COLORS["paper_text"])
             self._draw_centered_in_box(draw, (badge[0], badge[1] + 20, badge[2], badge[3] - 2), str(race.get("season") or ""), self._font(8, False), COLORS["paper_text"])
         count_x1 = x2 - 150
-        circuit = self._draw_event_mark(
-            image, SportsDashboard._f1_circuit_mark_path(race), (count_x1 - 96, y1 + 4, count_x1 - 8, y2 - 4), align="right", line_art=True
-        )
-        text_x2 = circuit[0] - 8 if circuit else count_x1 - 6
+        shape = _circuit_shape(race.get("circuit_id"))
+        if shape:
+            # The words may run up to the track's minimum room; the track then takes the span
+            # left between them and the countdown.
+            text_x2 = count_x1 - 70
+        else:
+            circuit = self._draw_event_mark(
+                image, SportsDashboard._f1_circuit_mark_path(race), (count_x1 - 96, y1 + 4, count_x1 - 8, y2 - 4), align="right", line_art=True
+            )
+            text_x2 = circuit[0] - 8 if circuit else count_x1 - 6
         name = SportsDashboard._f1_grand_prix_zh(race.get("race_name"))
+        facts = F1_CIRCUITS.get(str(race.get("circuit_id") or ""))
+        name_y = y1 + 3 if facts else y1 + 6
         name, name_font = self._fit_text(draw, name, text_x2 - badge[2] - 10, 17, bold=True, min_size=11)
-        self._draw_text_in_box(draw, (badge[2] + 10, y1 + 6, text_x2, y1 + 27), name, name_font, COLORS["text"])
-        city = ", ".join(part for part in (race.get("locality"), race.get("country")) if part)
-        round_label = f"ROUND {race.get('round')}" if flag and race.get("round") else ""
-        place = "  ·  ".join(part for part in (round_label, race.get("circuit_name"), city) if part)
-        place, place_font = self._fit_text_ellipsis(draw, place, text_x2 - badge[2] - 10, 9, bold=False, min_size=7)
-        self._draw_text_in_box(draw, (badge[2] + 10, y1 + 29, text_x2, y1 + 41), place, place_font, COLORS["text"])
+        self._draw_text_in_box(draw, (badge[2] + 10, name_y, text_x2, name_y + 21), name, name_font, COLORS["text"])
+        text_end = badge[2] + 10 + self._text_width(draw, name, name_font)
+        if facts:
+            text_end = max(text_end, self._draw_f1_circuit_facts(draw, (badge[2] + 10, y1 + 24, text_x2, y2 - 4), race, facts, flag))
+        else:
+            city = ", ".join(part for part in (race.get("locality"), race.get("country")) if part)
+            round_label = f"ROUND {race.get('round')}" if flag and race.get("round") else ""
+            place = "  ·  ".join(part for part in (round_label, race.get("circuit_name"), city) if part)
+            place, place_font = self._fit_text_ellipsis(draw, place, text_x2 - badge[2] - 10, 9, bold=False, min_size=7)
+            self._draw_text_in_box(draw, (badge[2] + 10, y1 + 29, text_x2, y1 + 41), place, place_font, COLORS["text"])
+            text_end = max(text_end, badge[2] + 10 + self._text_width(draw, place, place_font))
+        count_start = self._draw_f1_countdown(draw, (count_x1, y1, x2, y2), selected, now, spec, live_session)
+        if shape:
+            self._draw_f1_circuit_shape(image, shape, (int(text_end) + 12, y1 + 6, int(count_start) - 14, y2 - 6))
+
+    def _draw_f1_countdown(self, draw, box, selected, now, spec, live_session):
+        """The countdown at the band's right; returns where its words begin."""
+        count_x1, y1, x2, _y2 = box
         label, value, value_key = SportsDashboard._f1_countdown_block(selected, now)
-        self._draw_text_in_box(draw, (count_x1, y1 + 6, x2 - 10, y1 + 18), label, self._font(9, True), COLORS[spec.live] if live_session else COLORS["text"], align="right")
+        label_font = self._font(9, True)
+        self._draw_text_in_box(draw, (count_x1, y1 + 6, x2 - 10, y1 + 18), label, label_font, COLORS[spec.live] if live_session else COLORS["text"], align="right")
         value, value_font = self._fit_text(draw, value, x2 - 10 - count_x1, 17, bold=True, min_size=10)
         self._draw_text_in_box(draw, (count_x1, y1 + 19, x2 - 10, y1 + 42), value, value_font, COLORS[value_key], align="right")
+        return x2 - 10 - max(self._text_width(draw, label, label_font), self._text_width(draw, value, value_font))
+
+    def _draw_f1_circuit_shape(self, image, points, box):
+        """The circuit's line as large as fits ``box`` and centred in it: a rounded ink line over
+        a tinted offset shadow, drawn at four times the size and scaled down for smooth curves."""
+        x1, y1, x2, y2 = box
+        if x2 - x1 < 40 or y2 - y1 < 20:
+            return False
+        width, height = max(x for x, _y in points), max(y for _x, y in points)
+        scale = min((x2 - x1) / width, (y2 - y1) / height)
+        left, top = x1 + (x2 - x1 - width * scale) / 2, y1 + (y2 - y1 - height * scale) / 2
+        factor, pad = 4, 3
+        size = (round(width * scale) + 2 * pad, round(height * scale) + 2 * pad)
+        mask = Image.new("L", (size[0] * factor, size[1] * factor), 0)
+        line = [((pad + x * scale) * factor, (pad + y * scale) * factor) for x, y in points]
+        stroke = 3 * factor
+        canvas = ImageDraw.Draw(mask)
+        canvas.line(line, fill=255, width=stroke, joint="curve")
+        start_x, start_y = line[0]
+        canvas.ellipse((start_x - stroke / 2, start_y - stroke / 2, start_x + stroke / 2, start_y + stroke / 2), fill=255)
+        mask = mask.resize(size, Image.Resampling.LANCZOS)
+        origin = (round(left) - pad, round(top) - pad)
+        image.paste(COLORS["f1_track"], (origin[0] + 2, origin[1] + 2), mask)
+        image.paste(COLORS["text"], origin, mask)
+        return True
 
     def _draw_f1_weekend_timeline(self, draw, box, selected, now, spec):
         x1, y1, x2, y2 = [int(value) for value in box]
@@ -196,39 +312,49 @@ class F1RenderMixin:
         else:
             draw.ellipse(box, fill=COLORS["panel"], outline=COLORS["border"], width=1)
 
-    def _draw_f1_standings(self, draw, box, standings, spec):
+    def _draw_f1_standings(self, image, draw, box, standings, spec):
         x1, y1, x2, y2 = [int(value) for value in box]
         y = self._draw_kit_column_header(draw, x1, y1, x2, spec, "DRIVERS")
         if not standings:
             self._draw_text_in_box(draw, (x1 + 4, y, x2, y + 14), "积分榜更新中", self._font(9, True), COLORS["muted"])
             return
         leader_points = max(1.0, SportsDashboard._f1_points(standings[0].get("points")))
-        name_font = self._font(11, True)
+        name_font, wins_font = self._font(11, True), self._font(9, False)
         names = [SportsDashboard._f1_driver_zh(row) for row in standings]
         # The bars start after the widest shown name, so a five-character name still fits.
         name_w = min(66, max([32] + [self._text_width(draw, name, name_font) for name in names]))
-        for row, name in zip(standings, names):
+        wins = [SportsDashboard._f1_wins(row) for row in standings]
+        # A wins column (n 胜) right of the points once anyone has won.
+        wins_w = max([0] + [self._text_width(draw, f"{count}胜", wins_font) + 5 for count in wins if count])
+        name_x = x1 + 18 + F1_LOGO_SIZE[0] + 3
+        for row, name, count in zip(standings, names, wins):
             if y + F1_ROW_HEIGHT > y2 + 1:
                 break
             ink_key = SportsDashboard._f1_team_ink_key(row.get("constructor"))
             self._draw_text_in_box(draw, (x1, y, x1 + 14, y + 13), str(row.get("position") or ""), self._font(10, True), COLORS["text"])
-            draw.rectangle((x1 + 17, y + 2, x1 + 19, y + 11), fill=COLORS[ink_key])
-            self._draw_text_in_box(draw, (x1 + 23, y, x1 + 23 + name_w, y + 13), name, name_font, COLORS["text"])
+            self._paste_f1_team_logo(image, draw, row.get("constructor"), (x1 + 16, y + 1), ink_key)
+            self._draw_text_in_box(draw, (name_x, y, name_x + name_w, y + 13), name, name_font, COLORS["text"])
             points = SportsDashboard._f1_points(row.get("points"))
             points_text = str(row.get("points") or "0").removesuffix(".0")
             points_font = self._font(10, True)
             points_w = self._text_width(draw, points_text, points_font)
-            bar_x1, bar_x2 = x1 + 26 + name_w, x2 - points_w - 6
+            points_x2 = x2 - wins_w
+            bar_x1, bar_x2 = name_x + 3 + name_w, points_x2 - points_w - 6
             if bar_x2 - bar_x1 > 10:
                 filled = bar_x1 + int((bar_x2 - bar_x1) * points / leader_points)
                 draw.rectangle((bar_x1, y + 4, bar_x2, y + 9), fill=COLORS["panel"], outline=COLORS["line"], width=1)
                 draw.rectangle((bar_x1, y + 4, max(bar_x1 + 1, filled), y + 9), fill=COLORS[ink_key], outline=COLORS["border"], width=1)
-            self._draw_text_in_box(draw, (x2 - points_w, y, x2, y + 13), points_text, points_font, COLORS["text"], align="right")
+            self._draw_text_in_box(draw, (points_x2 - points_w, y, points_x2, y + 13), points_text, points_font, COLORS["text"], align="right")
+            if count:
+                self._draw_text_in_box(draw, (points_x2, y + 1, x2, y + 13), f"{count}胜", wins_font, COLORS["text"], align="right")
             y += F1_ROW_HEIGHT
 
-    def _draw_f1_order(self, draw, box, title, rows, spec, live=False):
+    def _draw_f1_order(self, image, draw, box, title, rows, spec, live=False, race=None):
         x1, y1, x2, y2 = [int(value) for value in box]
-        y = self._draw_kit_column_header(draw, x1, y1, x2, spec, title)
+        if race:
+            y = self._draw_f1_race_header(image, draw, (x1, y1, x2), spec, title, race)
+        else:
+            y = self._draw_kit_column_header(draw, x1, y1, x2, spec, title)
         if not rows:
             self._draw_text_in_box(draw, (x1 + 4, y, x2, y + 14), "等待成绩", self._font(9, True), COLORS["muted"])
             return
@@ -236,20 +362,218 @@ class F1RenderMixin:
             if y + F1_ROW_HEIGHT > y2 + 1:
                 break
             position = row.get("position") or index + 1
-            ink_key = SportsDashboard._f1_team_ink_key(row.get("constructor") or row.get("team"))
-            badge_fill = COLORS["amber"] if position == 1 else COLORS[spec.tag]
-            draw.rounded_rectangle((x1, y + 1, x1 + 20, y + 13), radius=3, fill=badge_fill, outline=COLORS["border"], width=1)
-            self._draw_centered_in_box(draw, (x1, y + 1, x1 + 20, y + 13), f"P{position}", self._font(8, True), COLORS["text"])
-            draw.rectangle((x1 + 24, y + 2, x1 + 26, y + 11), fill=COLORS[ink_key])
+            team = row.get("constructor") or row.get("team")
+            ink_key = SportsDashboard._f1_team_ink_key(team)
+            if not self._draw_f1_place_numeral(image, (x1, y), position):
+                badge_fill = COLORS["amber"] if position == 1 else COLORS[spec.tag]
+                draw.rounded_rectangle((x1, y + 1, x1 + 20, y + 13), radius=3, fill=badge_fill, outline=COLORS["border"], width=1)
+                self._draw_centered_in_box(draw, (x1, y + 1, x1 + 20, y + 13), f"P{position}", self._font(8, True), COLORS["text"])
+            self._paste_f1_team_logo(image, draw, team, (x1 + 23, y + 1), ink_key)
             gap = SportsDashboard._f1_gap_label(row, position, live)
             gap_font = self._font(9, position == 1)
             gap_w = self._text_width(draw, gap, gap_font) if gap else 0
+            right = x2 - gap_w - 6
+            if row.get("fastest_lap"):
+                right -= 12
+                self._draw_f1_fastest_lap(draw, right + 6, y + 7)
+            gained = None if live else SportsDashboard._f1_places_gained(row, position)
+            moved_font = self._font(8, True)
+            moved = f"{abs(gained)}" if gained else ""
+            moved_w = self._text_width(draw, moved, moved_font) + 10 if moved else 0
+            name_x = x1 + 23 + F1_LOGO_SIZE[0] + 3
             label = SportsDashboard._f1_driver_zh(row)
-            label, label_font = self._fit_text_ellipsis(draw, label, x2 - gap_w - 8 - (x1 + 30), 10, bold=True, min_size=8)
-            self._draw_text_in_box(draw, (x1 + 30, y, x2 - gap_w - 6, y + 13), label, label_font, COLORS["text"])
+            label, label_font = self._fit_text_ellipsis(draw, label, right - moved_w - 2 - name_x, 10, bold=True, min_size=8)
+            self._draw_text_in_box(draw, (name_x, y, right - moved_w, y + 13), label, label_font, COLORS["text"])
+            if moved:
+                mark_x = name_x + self._text_width(draw, label, label_font) + 4
+                SportsDashboard._draw_f1_move_arrow(draw, mark_x, y + 7, gained > 0)
+                self._draw_text_in_box(draw, (mark_x + 7, y + 1, mark_x + moved_w, y + 13), moved, moved_font, COLORS["text"])
             if gap:
                 self._draw_text_in_box(draw, (x2 - gap_w, y, x2, y + 13), gap, gap_font, COLORS["text"], align="right")
             y += F1_ROW_HEIGHT
+
+    def _draw_f1_race_header(self, image, draw, box, spec, title, race):
+        """A finished race's column header: the host's flag and 上站 · the Grand Prix, with its
+        circuit and date at the right."""
+        x1, y1, x2 = box
+        draw.rectangle((x1, y1 + 2, x1 + 8, y1 + 17), fill=COLORS[spec.accent], outline=COLORS["border"], width=1)
+        x = x1 + 13
+        flag = self._draw_event_mark(image, SportsDashboard._f1_country_flag_path(race), (x, y1 + 4, x + 21, y1 + 16), align="left")
+        if flag:
+            draw.rectangle((flag[0] - 1, flag[1] - 1, flag[2], flag[3]), outline=COLORS["border"], width=1)
+            x = flag[2] + 5
+        start = race.get("start")
+        when = start.strftime("%m/%d") if isinstance(start, datetime) else ""
+        circuit = (F1_CIRCUITS.get(str(race.get("circuit_id") or "")) or ("",))[0]
+        meta_font = self._font(9, False)
+        title_font = self._font(13, True)
+        for meta in (" · ".join(part for part in (SportsDashboard._f1_circuit_short(circuit), when) if part), when):
+            meta_w = self._text_width(draw, meta, meta_font) if meta else 0
+            if self._text_width(draw, title, title_font) + meta_w + 8 <= x2 - x:
+                break
+        title, fitted = self._fit_text(draw, title, x2 - x - meta_w - 6, 13, bold=True, min_size=9)
+        self._draw_text_in_box(draw, (x, y1, x2 - meta_w - 4, y1 + 18), title, fitted, COLORS["text"])
+        if meta:
+            self._draw_text_in_box(draw, (x2 - meta_w, y1 + 2, x2, y1 + 17), meta, meta_font, COLORS["text"], align="right")
+        draw.line((x1, y1 + 19, x2, y1 + 19), fill=COLORS["border"], width=1)
+        return y1 + 23
+
+    def _draw_f1_circuit_facts(self, draw, box, race, facts, flag):
+        """Under the Grand Prix: a chequered flag with the circuit's Chinese and official names,
+        then a pin and the city, the lap's length, the race's laps and the round; returns where
+        the words end."""
+        x1, y1, x2, _y2 = [int(value) for value in box]
+        circuit, city, length, laps = facts
+        small = self._font(9, False)
+        SportsDashboard._draw_f1_icon(draw, "flag", x1, y1 + 6)
+        x = x1 + 14
+        circuit, circuit_font = self._fit_text(draw, circuit, x2 - x, 10, bold=True, min_size=8)
+        self._draw_text_in_box(draw, (x, y1, x2, y1 + 12), circuit, circuit_font, COLORS["text"])
+        x += self._text_width(draw, circuit, circuit_font) + 6
+        official = str(race.get("circuit_name") or "")
+        if official and x2 - x > 40:
+            official, official_font = self._fit_text_ellipsis(draw, official, x2 - x, 8, bold=False, min_size=7)
+            self._draw_text_in_box(draw, (x, y1 + 1, x2, y1 + 12), official, official_font, COLORS["muted"])
+        row_y = y1 + 13
+        items = [("pin", city), ("length", f"{length:.3f} km")]
+        if laps:
+            items.append(("laps", f"{laps} 圈"))
+        if race.get("round") and flag:
+            items.append((None, f"第 {race['round']} 站"))
+        end = x - 6 if not (official and x2 - x > 40) else x + self._text_width(draw, official, official_font)
+        x = x1
+        for icon, label in items:
+            label_x = x + (14 if icon else 0)
+            width = label_x - x + self._text_width(draw, label, small)
+            if x + width > x2:
+                break
+            if icon:
+                SportsDashboard._draw_f1_icon(draw, icon, x, row_y + 6)
+            self._draw_text_in_box(draw, (label_x, row_y, x + width + 2, row_y + 12), label, small, COLORS["text"])
+            end = max(end, x + width)
+            x += width + 9
+        return end
+
+    @staticmethod
+    def _draw_f1_icon(draw, kind, x, y):
+        """An 11px pictogram from x, centred on the line at y: a chequered flag, a map pin, a
+        measured span or a lap loop."""
+        red, ink = COLORS["f1_accent"], COLORS["text"]
+        if kind == "flag":
+            draw.line((x + 1, y - 5, x + 1, y + 5), fill=ink, width=1)
+            for row in range(2):
+                for column in range(3):
+                    fill = ink if (row + column) % 2 == 0 else COLORS["panel"]
+                    left, top = x + 2 + column * 3, y - 5 + row * 3
+                    draw.rectangle((left, top, left + 2, top + 2), fill=fill)
+            draw.rectangle((x + 2, y - 5, x + 10, y + 1), outline=ink, width=1)
+        elif kind == "pin":
+            draw.ellipse((x + 1, y - 6, x + 9, y + 2), fill=red)
+            draw.polygon(((x + 2, y), (x + 8, y), (x + 5, y + 6)), fill=red)
+            draw.ellipse((x + 3, y - 4, x + 7, y), fill=COLORS["panel"])
+        elif kind == "length":
+            draw.line((x + 1, y - 4, x + 1, y + 4), fill=red, width=2)
+            draw.line((x + 10, y - 4, x + 10, y + 4), fill=red, width=2)
+            draw.line((x + 3, y, x + 8, y), fill=red, width=1)
+            draw.polygon(((x + 2, y), (x + 5, y - 3), (x + 5, y + 3)), fill=red)
+            draw.polygon(((x + 9, y), (x + 6, y - 3), (x + 6, y + 3)), fill=red)
+        elif kind == "laps":
+            draw.arc((x + 1, y - 5, x + 10, y + 4), start=60, end=340, fill=red, width=2)
+            draw.polygon(((x + 7, y - 7), (x + 11, y - 4), (x + 7, y - 1)), fill=red)
+
+    # Team art ----------------------------------------------------------------
+
+    def _draw_f1_team_grid(self, image, draw, box, standings):
+        """The teams' cars on a three-wide staggered grid in constructors' championship order,
+        the leader on pole against the chequered line at the right, each in its slot; False when
+        the cars are missing."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        lane_h = (y2 - y1) / 3
+        car_h = int(lane_h) - 1
+        cars = []
+        for key in SportsDashboard._f1_grid_order(standings):
+            car = self._load_local_logo(os.path.join(F1_GRID_DIR, f"{key}.png"), (car_h * 4, car_h), alpha_threshold=12)
+            if car is not None:
+                cars.append(car)
+        if len(cars) < 3:
+            return False
+        car_w = max(car.width for car in cars)
+        square = 3
+        line_x = x2 - 2 * square
+        # Cars three places apart share a lane, a car's length and a little more apart.
+        step = min((car_w + 6) / 3, (line_x - 5 - car_w - x1) / max(1, len(cars) - 1))
+        for row in range(int((y2 - y1) // square)):
+            for column in range(2):
+                fill = COLORS["text"] if (row + column) % 2 == 0 else COLORS["panel"]
+                left, top = line_x + column * square, y1 + row * square
+                draw.rectangle((left, top, left + square - 1, top + square - 1), fill=fill)
+        for index, car in enumerate(cars):
+            nose = line_x - 5 - index * step
+            top = y1 + (index % 3) * lane_h + (lane_h - car.height) / 2
+            slot_x, slot_y1, slot_y2 = round(nose + 2), round(top - 1), round(top + car.height)
+            draw.line((slot_x - 4, slot_y1, slot_x, slot_y1, slot_x, slot_y2, slot_x - 4, slot_y2), fill=COLORS["muted"], width=1)
+            image.paste(car, (round(nose - car.width), round(top)), car)
+        return True
+
+    def _draw_f1_place_numeral(self, image, xy, position):
+        """The finishing place as its italic numeral, straight on the row: gold, silver and
+        bronze on the podium, the theme's ink below it; centred in the 20px badge slot at
+        ``xy``; False beyond fifth or without the art."""
+        x, y = xy
+        try:
+            place = int(position)
+        except (TypeError, ValueError):
+            return False
+        if not 1 <= place <= 5:
+            return False
+        numeral = self._load_local_logo(os.path.join(F1_GRID_DIR, f"place_{place}.png"), F1_PLACE_SIZE, alpha_threshold=12)
+        if numeral is None:
+            return False
+        if place > 3:
+            ink = Image.new("RGBA", numeral.size, (*COLORS["text"], 255))
+            ink.putalpha(numeral.getchannel("A"))
+            numeral = ink
+        image.paste(numeral, (x + (20 - numeral.width) // 2, y + (14 - numeral.height) // 2), numeral)
+        return True
+
+    def _f1_team_logo(self, team):
+        """The team's official mark at the row size; its white mark where the colour one is too
+        dark for the panel (night)."""
+        key = SportsDashboard._f1_team_key(team)
+        if not key:
+            return None
+        logo = self._load_local_logo(os.path.join(F1_TEAM_LOGO_DIR, f"{key}.png"), F1_LOGO_SIZE)
+        if logo is not None and _logo_contrast(logo, COLORS["panel"]) < 2.0:
+            light = self._load_local_logo(os.path.join(F1_TEAM_LOGO_DIR, f"{key}_light.png"), F1_LOGO_SIZE)
+            if light is not None and _logo_contrast(light, COLORS["panel"]) > _logo_contrast(logo, COLORS["panel"]):
+                return light
+        return logo
+
+    def _paste_f1_team_logo(self, image, draw, team, xy, ink_key):
+        """The team's logo centred in an F1_LOGO_SIZE slot at ``xy``, else a bar in its colour."""
+        x, y = xy
+        logo = self._f1_team_logo(team)
+        if logo is None:
+            draw.rectangle((x + 7, y + 1, x + 9, y + 10), fill=COLORS[ink_key])
+            return
+        width, height = F1_LOGO_SIZE
+        image.paste(logo, (x + (width - logo.width) // 2, y + (height - logo.height) // 2), logo)
+
+    @staticmethod
+    def _draw_f1_fastest_lap(draw, x, y):
+        """A purple stopwatch, F1's mark for the fastest lap, centred at (x, y)."""
+        draw.ellipse((x - 5, y - 4, x + 5, y + 6), fill=F1_FASTEST_LAP)
+        draw.rectangle((x - 1, y - 7, x + 1, y - 5), fill=F1_FASTEST_LAP)
+        draw.line((x, y + 1, x, y - 2), fill=(255, 255, 255), width=1)
+        draw.line((x, y + 1, x + 2, y + 1), fill=(255, 255, 255), width=1)
+
+    @staticmethod
+    def _draw_f1_move_arrow(draw, x, y, gained):
+        """A small solid triangle, green up for places gained from the grid, red down for lost."""
+        if gained:
+            draw.polygon(((x, y + 3), (x + 6, y + 3), (x + 3, y - 3)), fill=COLORS["green"])
+        else:
+            draw.polygon(((x, y - 3), (x + 6, y - 3), (x + 3, y + 3)), fill=COLORS["red"])
 
     # Labels ------------------------------------------------------------------
 
@@ -275,6 +599,49 @@ class F1RenderMixin:
     def _f1_short_race_name(name):
         text = SportsDashboard._f1_grand_prix_zh(name) if name else ""
         return f"上站 · {text}" if text else ""
+
+    @staticmethod
+    def _f1_circuit_short(name):
+        """滨海湾街道赛道 -> 滨海湾: the circuit's name without its kind."""
+        return re.sub(r"(街道|国际|城市|大道)?(赛道|赛车场)$", "", str(name or "")) or str(name or "")
+
+    @staticmethod
+    def _f1_team_key(team):
+        """The bundled team art's key for a constructor's name, else None."""
+        lowered = str(team or "").lower()
+        for name, key in F1_TEAM_KEYS:
+            if name in lowered:
+                return key
+        return None
+
+    @staticmethod
+    def _f1_grid_order(standings):
+        """Every team once, in constructors' championship order, then any not yet ranked."""
+        order = []
+        for row in standings or []:
+            key = SportsDashboard._f1_team_key((row or {}).get("constructor"))
+            if key and key not in order:
+                order.append(key)
+        return order + [key for key in F1_DEFAULT_GRID if key not in order]
+
+    @staticmethod
+    def _f1_wins(row):
+        try:
+            return max(0, int(float((row or {}).get("wins") or 0)))
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _f1_places_gained(row, position):
+        """Places made up from the grid (negative when lost); None from the pit lane or unknown."""
+        grid = (row or {}).get("grid")
+        try:
+            finish = int(position)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(grid, int) or grid <= 0:
+            return None
+        return grid - finish
 
     @staticmethod
     def _f1_team_ink_key(constructor):
@@ -327,3 +694,37 @@ class F1RenderMixin:
         if re.fullmatch(r"\d+(\.\d+)?", gap):
             return f"+{gap}"
         return gap
+
+
+@lru_cache(maxsize=1)
+def _circuit_shapes():
+    """Jolpica circuitId -> the circuit's line (longer side 1, y down), from the bundled file."""
+    try:
+        with open(F1_CIRCUIT_SHAPES, encoding="utf-8") as handle:
+            circuits = json.load(handle).get("circuits") or {}
+    except (OSError, ValueError):
+        return {}
+    return {key: [tuple(point) for point in value.get("points") or []] for key, value in circuits.items()}
+
+
+def _circuit_shape(circuit_id):
+    points = _circuit_shapes().get(str(circuit_id or ""))
+    return points if points and len(points) > 3 else None
+
+
+def _luminance(rgb):
+    """WCAG relative luminance of an RGB colour."""
+    channels = [value / 255 for value in rgb[:3]]
+    linear = [value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
+    return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+
+def _logo_contrast(logo, background):
+    """Contrast between a logo's mean colour (where it is mostly opaque) and ``background``;
+    thin-lined marks count too, which an opaque-only average would miss."""
+    mask = logo.getchannel("A").point(lambda value: 255 if value > 96 else 0)
+    if not mask.getbbox():
+        return 1.0
+    mean = ImageStat.Stat(logo.convert("RGB"), mask=mask).mean
+    high, low = sorted((_luminance(mean), _luminance(background)), reverse=True)
+    return (high + 0.05) / (low + 0.05)

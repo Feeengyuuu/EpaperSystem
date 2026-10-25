@@ -41,6 +41,7 @@ except ModuleNotFoundError:
 
 import plugins.sports_dashboard.sports_dashboard as sports_dashboard_module
 import plugins.sports_dashboard.common as sports_dashboard_common_module
+import plugins.sports_dashboard.f1_render as f1_render_module
 from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     attach_source_provenance,
@@ -8119,13 +8120,123 @@ def test_f1_drivers_read_in_simplified_chinese():
     plugin._draw_text_in_box = record
     standings = [{"position": 1, "driver_code": "ANT", "constructor": "Mercedes", "points": "340"},
                  {"position": 2, "driver_code": "PIA", "constructor": "McLaren", "points": "238"}]
-    plugin._draw_f1_standings(ImageDraw.Draw(image), (0, 0, 399, 89), standings,
+    plugin._draw_f1_standings(image, ImageDraw.Draw(image), (0, 0, 399, 89), standings,
                               ScorebugSpec("F1", "f1_accent", "f1_live", "f1_tag", "panel_blue"))
 
     names = {text: box for text, box in drawn}
     assert "安东内利" in names and "皮亚斯特里" in names
     # The name column widens to the longest name instead of clipping it.
     assert names["皮亚斯特里"][2] - names["皮亚斯特里"][0] > 50
+
+
+def test_f1_results_read_the_grid_the_fastest_lap_and_every_constructor():
+    la = ZoneInfo("America/Los_Angeles")
+    bundle = _sample_f1_jolpica_bundle()
+    race = bundle["results"]["MRData"]["RaceTable"]["Races"][0]
+    race["Results"][0].update({"grid": "3", "FastestLap": {"rank": "4"}})
+    race["Results"][1].update({"grid": "0", "FastestLap": {"rank": "1"}})
+    standings = bundle["constructor_standings"]["MRData"]["StandingsTable"]["StandingsLists"][0]
+    standings["ConstructorStandings"] = [
+        {"position": str(index + 1), "points": "0", "wins": "0", "Constructor": {"name": name}}
+        for index, name in enumerate(("Mercedes", "Ferrari", "McLaren", "Red Bull", "RB F1 Team", "Alpine F1 Team",
+                                      "Haas F1 Team"))
+    ]
+
+    data = SportsDashboard._parse_f1_jolpica_bundle(bundle, la)
+
+    winner, second = data["last_result"]["top"][:2]
+    assert (winner["grid"], winner["fastest_lap"], second["grid"], second["fastest_lap"]) == (3, False, 0, True)
+    assert SportsDashboard._f1_places_gained(winner, 1) == 2
+    # From the pit lane there is no grid place to count from.
+    assert SportsDashboard._f1_places_gained(second, 2) is None
+    assert len(data["constructor_standings"]) == 7
+    order = SportsDashboard._f1_grid_order(data["constructor_standings"])
+    # The standings first (Racing Bulls is not Red Bull), then the teams not yet ranked, each once.
+    assert order[:7] == ["mercedes", "ferrari", "mclaren", "red_bull", "racing_bulls", "alpine", "haas"]
+    assert sorted(order[7:]) == ["aston_martin", "audi", "cadillac", "williams"]
+
+
+def test_f1_header_lines_the_teams_cars_up_on_a_grid_to_the_chequered_line():
+    plugin = _plugin()
+    image = Image.new("RGB", (220, 50), COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    pasted = []
+    original = image.paste
+
+    def record(sprite, xy=None, mask=None):
+        if getattr(sprite, "mode", "") == "RGBA" and sprite.height <= 14:
+            pasted.append(xy)
+        return original(sprite, xy, mask)
+
+    image.paste = record
+    assert plugin._draw_f1_team_grid(image, draw, (0, 4, 210, 46), [{"constructor": "Mercedes"}])
+
+    # Eleven cars, three lanes, the leader furthest forward and none past the line.
+    assert len(pasted) == 11
+    assert len({y for _x, y in pasted}) == 3
+    assert max(x for x, _y in pasted) == pasted[0][0]
+    assert min(x for x, _y in pasted) >= 0
+    assert image.getpixel((205, 5)) == COLORS["text"]
+
+
+def test_f1_rows_carry_team_logos_places_and_the_circuit():
+    plugin = _plugin()
+    la = ZoneInfo("America/Los_Angeles")
+    bundle = _sample_f1_jolpica_bundle()
+    bundle["schedule"]["MRData"]["RaceTable"]["Races"][0]["Circuit"]["circuitId"] = "catalunya"
+    data = SportsDashboard._parse_f1_jolpica_bundle(bundle, la)
+    selected = SportsDashboard._select_f1_events(data, datetime(2026, 6, 14, 6, 45, tzinfo=la))
+    texts = []
+    original = plugin._draw_text_in_box
+
+    def record(draw_arg, box, text, *args, **kwargs):
+        texts.append(str(text))
+        return original(draw_arg, box, text, *args, **kwargs)
+
+    plugin._draw_text_in_box = record
+    image = Image.new("RGB", (560, 270), COLORS["panel"])
+    plugin._draw_f1_compact_panel(image, ImageDraw.Draw(image), (0, 0, 559, 269), selected, "JOLPICA LIVE",
+                                  datetime(2026, 6, 14, 6, 45, tzinfo=la))
+
+    assert "加泰罗尼亚赛道" in texts and "4.657 km" in texts and "66 圈" in texts
+    assert "3胜" in texts
+    assert plugin._f1_team_logo("Mercedes") is not None and plugin._f1_team_logo("Unknown Racing") is None
+    # The circuit's line sits in the band between the words and the countdown.
+    assert f1_render_module._circuit_shape("catalunya")
+    band = [image.getpixel((x, y)) for x in range(300, 400) for y in range(70, 100)]
+    assert sum(1 for pixel in band if pixel == COLORS["text"]) > 40
+
+
+def test_f1_places_are_numerals_podium_in_metal_the_rest_in_ink():
+    plugin = _plugin()
+    for place in (1, 4):
+        image = Image.new("RGB", (20, 15), COLORS["panel"])
+        assert plugin._draw_f1_place_numeral(image, (0, 0), place)
+        colours = {image.getpixel((x, y)) for x in range(20) for y in range(15)} - {COLORS["panel"]}
+        if place == 4:
+            assert COLORS["text"] in colours
+        else:
+            # Gold: warm, not the ink.
+            assert any(r > 150 and b < 120 for r, _g, b in colours)
+    assert not plugin._draw_f1_place_numeral(Image.new("RGB", (20, 15)), (0, 0), 6)
+
+
+def test_f1_dark_team_logos_switch_to_their_white_marks_at_night():
+    plugin = _plugin()
+    night = SportsDashboard._sports_dashboard_colors({"mode": "night"})
+    token = sports_dashboard_common_module._ACTIVE_COLORS.set(night)
+    try:
+        logo = plugin._f1_team_logo("Mercedes")
+    finally:
+        sports_dashboard_common_module._ACTIVE_COLORS.reset(token)
+    day_logo = plugin._f1_team_logo("Mercedes")
+
+    def brightness(image):
+        pixels = [image.getpixel((x, y)) for x in range(image.width) for y in range(image.height)]
+        solid = [pixel for pixel in pixels if pixel[3] > 96]
+        return sum(sum(pixel[:3]) for pixel in solid) / len(solid)
+
+    assert brightness(logo) > brightness(day_logo) + 150
 
 
 def test_f1_logo_draws_uploaded_asset_without_border():

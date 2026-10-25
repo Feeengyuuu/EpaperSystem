@@ -1,0 +1,84 @@
+{
+  "built_at": "2026-10-25T17:11:40+00:00",
+  "logos": "Official team marks from formula1.com (colour and white variants).",
+  "cars": "Top-down 2026 cars generated with image/gpt-image-2.5-sunburst (Creative Claw, 1536x512, transparent) from formula1.com's official side view of each car, nose to the right.",
+  "teams": {
+    "mclaren": {
+      "logo": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/mclaren/2026mclarenlogo.webp",
+      "logo_light": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/mclaren/2026mclarenlogolight.webp",
+      "car": "https://cdn.creativeclaw.co/u/e25dbd7a/images/df145afb-6a3a-4a3c-8f25-2f5234d8065a.png",
+      "car_reference": "https://media.formula1.com/image/upload/f_png/c_fit,w_1400/q_auto/v1740000001/common/f1/2026/mclaren/2026mclarencarright.webp"
+    },
+    "ferrari": {
+      "logo": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/ferrari/2026ferrarilogo.webp",
+      "logo_light": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/ferrari/2026ferrarilogolight.webp",
+      "car": "https://cdn.creativeclaw.co/u/e25dbd7a/images/a4da941f-b42c-4991-b48f-b92d82f11f6e.png",
+      "car_reference": "https://media.formula1.com/image/upload/f_png/c_fit,w_1400/q_auto/v1740000001/common/f1/2026/ferrari/2026ferraricarright.webp"
+    },
+    "red_bull": {
+      "logo": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/redbullracing/2026redbullracinglogo.webp",
+      "logo_light": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/redbullracing/2026redbullracinglogolight.webp",
+      "car": "https://cdn.creativeclaw.co/u/e25dbd7a/images/9bedab4b-5fdb-4a43-ae5e-69b4a3b340d1.png",
+      "car_reference": "https://media.formula1.com/image/upload/f_png/c_fit,w_1400/q_auto/v1740000001/common/f1/2026/redbullracing/2026redbullracingcarright.webp"
+    },
+    "mercedes": {
+      "logo": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/mercedes/2026mercedeslogo.webp",
+      "logo_light": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/mercedes/2026mercedeslogolight.webp",
+      "car": "https://cdn.creativeclaw.co/u/e25dbd7a/images/308d4a6e-a3b8-405e-93d2-1fb256dc4495.png",
+      "car_reference": "https://media.formula1.com/image/upload/f_png/c_fit,w_1400/q_auto/v1740000001/common/f1/2026/mercedes/2026mercedescarright.webp"
+    },
+    "aston_martin": {
+      "logo": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/astonmartin/2026astonmartinlogo.webp",
+      "logo_light": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/astonmartin/2026astonmartinlogolight.webp",
+      "car": "https://cdn.creativeclaw.co/u/e25dbd7a/images/1fd7c92a-766b-4cb4-89bc-ae79cfbf89ae.png",
+      "car_reference": "https://media.formula1.com/image/upload/f_png/c_fit,w_1400/q_auto/v1740000001/common/f1/2026/astonmartin/2026astonmartincarright.webp"
+    },
+    "alpine": {
+      "logo": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/alpine/2026alpinelogo.webp",
+      "logo_light": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/alpine/2026alpinelogolight.webp",
+      "car": "https://cdn.creativeclaw.co/u/e25dbd7a/images/cfff8a5b-30d0-4af3-aa15-01f41bad8a7b.png",
+      "car_reference": "https://media.formula1.com/image/upload/f_png/c_fit,w_1400/q_auto/v1740000001/common/f1/2026/alpine/2026alpinecarright.webp"
+    },
+    "williams": {
+      "logo": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/williams/2026williamslogo.webp",
+      "logo_light": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/williams/2026williamslogolight.webp",
+      "car": "https://cdn.creativeclaw.co/u/e25dbd7a/images/d22ef0c5-7780-4fd2-b427-d6f1b8619d6b.png",
+      "car_reference": "https://media.formula1.com/image/upload/f_png/c_fit,w_1400/q_auto/v1740000001/common/f1/2026/williams/2026williamscarright.webp"
+    },
+    "racing_bulls": {
+      "logo": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/racingbulls/2026racingbullslogo.webp",
+      "logo_light": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/racingbulls/2026racingbullslogolight.webp",
+      "car": "https://cdn.creativeclaw.co/u/e25dbd7a/images/3ba9b824-7f68-4400-8a6e-481a7cbd73c1.png",
+      "car_reference": "https://media.formula1.com/image/upload/f_png/c_fit,w_1400/q_auto/v1740000001/common/f1/2026/racingbulls/2026racingbullscarright.webp"
+    },
+    "haas": {
+      "logo": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/haasf1team/2026haasf1teamlogo.webp",
+      "logo_light": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/haasf1team/2026haasf1teamlogolight.webp",
+      "car": "https://cdn.creativeclaw.co/u/e25dbd7a/images/0defdd9b-9186-4a68-9376-37b87e889751.png",
+      "car_reference": "https://media.formula1.com/image/upload/f_png/c_fit,w_1400/q_auto/v1740000001/common/f1/2026/haasf1team/2026haasf1teamcarright.webp"
+    },
+    "audi": {
+      "logo": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/audi/2026audilogo.webp",
+      "logo_light": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/audi/2026audilogolight.webp",
+      "car": "https://cdn.creativeclaw.co/u/e25dbd7a/images/7d2dcc27-6baa-40b3-82b2-dc6ddc126915.png",
+      "car_reference": "https://media.formula1.com/image/upload/f_png/c_fit,w_1400/q_auto/v1740000001/common/f1/2026/audi/2026audicarright.webp"
+    },
+    "cadillac": {
+      "logo": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/cadillac/2026cadillaclogo.webp",
+      "logo_light": "https://media.formula1.com/image/upload/f_png/c_fit,h_256/q_auto/v1740000001/common/f1/2026/cadillac/2026cadillaclogolight.webp",
+      "car": "https://cdn.creativeclaw.co/u/e25dbd7a/images/fa81f0bd-f481-4b95-a058-0151612d049d.png",
+      "car_reference": "https://media.formula1.com/image/upload/f_png/c_fit,w_1400/q_auto/v1740000001/common/f1/2026/cadillac/2026cadillaccarright.webp"
+    }
+  },
+  "places": {
+    "source": "https://cdn.creativeclaw.co/u/e25dbd7a/images/bdd0c0f8-27ba-461e-9a36-937aba9d0b65.png",
+    "files": [
+      "place_1",
+      "place_2",
+      "place_3",
+      "place_4",
+      "place_5"
+    ],
+    "note": "Italic motorsport numerals: 1 gold, 2 silver, 3 bronze, 4 and 5 white (tinted to the ink by day)"
+  }
+}
