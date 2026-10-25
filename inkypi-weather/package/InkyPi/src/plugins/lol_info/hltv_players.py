@@ -81,11 +81,12 @@ def parse_search(payload, nick):
 
 
 def parse_player_page(page):
-    """Rating 3.0 with its window, the seven role scores, team, age, bodyshot, matches and loadout."""
+    """Rating 3.0 with its window, the seven role scores, team, age, bodyshot, matches, loadout and
+    the latest pictures HLTV has of the player."""
     page = str(page or "")
     result = {"rating": None, "window": "", "maps": None, "roles": {}, "team": "", "team_logo_day": "",
               "team_logo_night": "", "age": "", "country": "", "bodyshot": "", "upcoming": [], "recent": [],
-              "loadout": parse_loadout(page)}
+              "loadout": parse_loadout(page), "photos": parse_photos(page)}
     window = re.search(r'class="stats-window">\(([^)]*)\)', page)
     if window:
         result["window"] = _text(window.group(1))
@@ -130,6 +131,24 @@ def parse_player_page(page):
             entry["unix_ms"] = int(when.group(1))
             result["upcoming"].append(entry)
     return result
+
+
+def parse_photos(page, limit=3):
+    """The newest pictures of the player from HLTV's gallery grid on the player page (sharper 2x
+    copies when listed), newest first."""
+    page = str(page or "")
+    start = page.find('class="gallery-grid"')
+    if start < 0:
+        return []
+    photos = []
+    for src, double in re.findall(r'<img alt="[^"]*" src="(https://img-cdn\.hltv\.org/gallerypicture/[^"]+)" '
+                                  r'class="thumbnail"(?: srcset="([^" ]+) 2x")?', page[start:start + 40000]):
+        url = unescape(double or src)
+        if url not in photos:
+            photos.append(url)
+        if len(photos) >= limit:
+            break
+    return photos
 
 
 def _block(html, begin):

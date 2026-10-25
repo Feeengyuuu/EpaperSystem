@@ -44,6 +44,8 @@ LOL_PAGE_DIM, LOL_SPLASH_TAIL = 0.42, 96
 CARD_MARK_ALPHA, CARD_ART_ALPHA = 0.15, 0.36
 CHAMPION_LOADING_URL = "https://ddragon.leagueoflegends.com/cdn/img/champion/loading/{key}_0.jpg"
 RADAR_TRAIL, RADAR_SWEEP_ALPHA = 70, 0.34
+# HLTV's own mark leads the Top 20 board's title.
+HLTV_LOGO, BOARD_LOGO_SIZE = "hltv-logo.png", 22
 # The CS2 page's middle carries the loadout, so its game logo keeps the band's top-left corner
 # and the bodyshot starts below it.
 TITLE_H = 42
@@ -199,12 +201,18 @@ class ProRenderMixin:
         draw.text(position, text, font=font, fill=fill)
         return font
 
-    def _board_frame(self, draw, box, title, detail, colors, fonts, fill=True):
+    def _board_frame(self, draw, box, title, detail, colors, fonts, fill=True, image=None, logo=None):
+        """The board's frame and title line; with ``logo`` (an asset) the source's mark leads the title."""
         x0, y0, x1, y1 = box
         draw.rectangle(box, fill=colors["panel"] if fill else None, outline=colors["rule"], width=1)
-        self._text(draw, (x0 + 12, y0 + 7), title, fonts["section"], colors["ink"])
-        self._single(draw, (x0 + 12 + self._text_width(draw, title, fonts["section"]) + 8, y0 + 12), detail,
-                     fonts["tiny"], colors["muted"], x1 - x0 - 140, 8)
+        title_x = x0 + 12
+        mark = self._asset_logo(logo, (BOARD_LOGO_SIZE, BOARD_LOGO_SIZE)) if image is not None and logo else None
+        if mark is not None:
+            image.paste(mark, (title_x, y0 + 7 + (BOARD_LOGO_SIZE - mark.height) // 2), mark)
+            title_x += mark.width + 6
+        self._text(draw, (title_x, y0 + 7), title, fonts["section"], colors["ink"])
+        self._single(draw, (title_x + self._text_width(draw, title, fonts["section"]) + 8, y0 + 12), detail,
+                     fonts["tiny"], colors["muted"], x1 - title_x - 128, 8)
 
     def _board_cells(self, box, count=20, rows=10):
         x0, y0, x1, y1 = box
@@ -739,10 +747,11 @@ class ProRenderMixin:
     def _draw_cs2_matches(self, image, draw, player, box, colors, fonts):
         x0, y0, x1, y1 = box
         pool = player.get("map_pool") or []
+        photos = player.get("photos") or []
         self._text(draw, (x0, y0), "赛程与战绩", fonts["small_bold"], colors["muted"])
         y = y0 + 20
-        # With a map pool to show, the next match is enough; without one, the next two.
-        for match in (player.get("upcoming") or [])[:1 if pool else 2]:
+        # With a photo or a map pool to show, the next match is enough; without either, the next two.
+        for match in (player.get("upcoming") or [])[:1 if pool or photos else 2]:
             when = datetime.fromtimestamp(match["unix_ms"] / 1000)
             self._text(draw, (x0, y), f"{when:%m/%d %H:%M}", fonts["tiny"], colors["cyan"])
             self._single(draw, (x0, y + 12), f"vs {match.get('opponent')}", fonts["small_bold"], colors["ink"], x1 - x0, 8)
@@ -757,10 +766,32 @@ class ProRenderMixin:
         if not player.get("upcoming") and not player.get("recent"):
             self._text(draw, (x0, y), "暂无比赛信息", fonts["small"], colors["muted"])
             y += 22
+        # The room under the results holds the newest HLTV picture of the player (the best map still
+        # lies behind the page); without one, the map pool, else the art.
+        if photos and y1 - y >= 50 and self._draw_cs2_photo(image, draw, player, (x0, y + 8, x1, y1), colors, fonts):
+            return
         if pool and y1 - y >= 70:
             self._draw_cs2_maps(image, draw, pool, (x0, y + 8, x1, y1), colors, fonts)
         elif y1 - y >= 50:
             self._paste_asset_logo(image, "art-cs2-filler.png", (x0, y + 6, x1, y1))
+
+    def _draw_cs2_photo(self, image, draw, player, box, colors, fonts):
+        """The newest picture HLTV has of the player, framed like the map art with its credit; False
+        when none loads, so the room keeps its art."""
+        x0, y0, x1, y1 = [int(value) for value in box]
+        photo = next((image_ for image_ in (self._image_from_url(url, player.get("nick"))
+                                             for url in (player.get("photos") or [])[:3]) if image_ is not None), None)
+        if photo is None:
+            return False
+        fitted = ImageOps.fit(photo.convert("RGB"), (x1 - x0, y1 - y0), method=Image.Resampling.LANCZOS,
+                              centering=(0.5, 0.35))
+        image.paste(fitted, (x0, y0))
+        draw.rectangle((x0, y0, x1, y1), outline=colors["gold"], width=1)
+        credit = "HLTV 最新照片"
+        credit_w = self._text_width(draw, credit, fonts["tiny"]) + 10
+        draw.rectangle((x0 + 1, y1 - 15, x0 + 1 + credit_w, y1 - 1), fill=colors["background"])
+        self._text(draw, (x0 + 6, y1 - 14), credit, fonts["tiny"], colors["ink"])
+        return True
 
     def _draw_cs2_result(self, image, draw, match, own_logo, line, colors, fonts):
         """One result as HLTV lists them: a 胜/负 tag, then both logos around the score; a loss is greyed out."""
@@ -831,7 +862,8 @@ class ProRenderMixin:
         """The Top 20: medals for the first three, team logos, a Rating bar and how it moved."""
         rated = [row for row in board if isinstance(row.get("rating"), (int, float))]
         self._board_frame(draw, box, f"HLTV {data.get('top20_year')} 前 20",
-                          f"近 3 个月 Rating · {len(rated)} 已更新", colors, fonts, fill=False)
+                          f"近 3 个月 Rating · {len(rated)} 已更新", colors, fonts, fill=False, image=image,
+                          logo=HLTV_LOGO)
         best = max((row["rating"] for row in rated), default=None)
         low, high = RATING_SPAN
         for index, cell in self._board_cells(box, len(board)):

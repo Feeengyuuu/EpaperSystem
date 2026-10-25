@@ -161,5 +161,10 @@
     "owner": "The Rubik Project Authors (SIL Open Font License 1.1, fonts/Rubik-OFL.txt); Leaguepedia's face for player IDs",
     "processing": "static instance at wght 700 cut from the variable font with fontTools varLib.instancer",
     "sha256": "f1bc75601d30f71d8fb81dd720029c88e83c22f1814b0a7c17eb4c57a0b0b4c5"
+  },
+  "hltv-logo.png": {
+    "source": "https://www.hltv.org/img/static/TopSmallLogo2x.png",
+    "owner": "HLTV.org (the site's own logo)",
+    "sha256": "c039d4a7bca50d1e4853f2e638578e54bf897aafad7d8e55fe699850ccfa2b89"
   }
 }

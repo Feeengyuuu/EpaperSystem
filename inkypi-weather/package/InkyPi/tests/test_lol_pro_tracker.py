@@ -6,7 +6,7 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -500,3 +500,30 @@ def test_board_logos_prefer_the_bundled_cs2_logos_over_hltv_svgs():
 
     assert pro_render._team_key("Team Vitality") == "vitality" and pro_render._team_key("NAVI") == "natusvincere"
     assert logos["vitality"].endswith("vitality.png") and logos["mouz"].endswith("mouz.png")
+
+
+def test_the_player_page_lists_its_newest_gallery_pictures_sharpest_copy_first():
+    page = ('<h2 class="standard-headline">Pictures of x</h2><div class="gallery-grid">'
+            '<a href="/gallery/view/2"><picture><img alt="" src="https://img-cdn.hltv.org/gallerypicture/b.jpg?w=400&amp;s=1"'
+            ' class="thumbnail" srcset="https://img-cdn.hltv.org/gallerypicture/b.jpg?w=800&amp;s=2 2x" title=""></picture></a>'
+            '<a href="/gallery/view/1"><picture><img alt="" src="https://img-cdn.hltv.org/gallerypicture/a.jpg?w=400&amp;s=3"'
+            ' class="thumbnail" title=""></picture></a></div>')
+
+    assert hltv_players.parse_photos(page) == ["https://img-cdn.hltv.org/gallerypicture/b.jpg?w=800&s=2",
+                                               "https://img-cdn.hltv.org/gallerypicture/a.jpg?w=400&s=3"]
+    assert hltv_players.parse_player_page(page)["photos"][0].endswith("s=2")
+    assert hltv_players.parse_photos("<div>no gallery</div>") == []
+
+
+def test_the_cs2_results_column_shows_the_newest_photo_or_keeps_its_art(plugin):
+    photo = Image.new("RGB", (800, 534), (200, 30, 160))
+    plugin._image_from_url = lambda url, label="": photo.copy() if "gallerypicture" in str(url) else None
+    colors = plugin._render_colors({"mode": "night"})
+    image = Image.new("RGB", (300, 140), colors["background"])
+    draw = ImageDraw.Draw(image)
+    fonts = {"tiny": plugin._font(9)}
+
+    assert plugin._draw_cs2_photo(image, draw, {"photos": ["https://img-cdn.hltv.org/gallerypicture/a.jpg"]},
+                                  (10, 10, 290, 130), colors, fonts) is True
+    assert image.getpixel((150, 60)) == (200, 30, 160)
+    assert plugin._draw_cs2_photo(image, draw, {"photos": []}, (10, 10, 290, 130), colors, fonts) is False
