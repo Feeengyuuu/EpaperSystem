@@ -604,6 +604,8 @@ class LiveRadar(BasePlugin):
             source_error = None
             try:
                 douyin_results = self._fetch_douyin_statuses_direct(session, douyin_rooms, timeout, fetch_avatars)
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 logger.warning("LiveRadar direct Douyin source unavailable: %s", exc.__class__.__name__)
                 source_error = exc
@@ -1159,6 +1161,8 @@ class LiveRadar(BasePlugin):
                 if payload is None:
                     raise RuntimeError("Douyin room API returned an empty reply.")
                 status = self._douyin_status_from_payload(room, payload, fetch_avatars)
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 logger.warning("LiveRadar direct Douyin room failed for %s: %s", room_id, exc.__class__.__name__)
                 results.append(
@@ -1209,6 +1213,8 @@ class LiveRadar(BasePlugin):
                     and 0 <= now - float(saved.get("fetched_at") or 0) < DOUYIN_COOKIE_TTL_SECONDS
                 ):
                     return str(saved["ttwid"])
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 logger.warning("Could not read LiveRadar Douyin cookie: %s", exc.__class__.__name__)
         with session.get(
@@ -1226,6 +1232,8 @@ class LiveRadar(BasePlugin):
             temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
             temporary.write_text(json.dumps({"ttwid": ttwid, "fetched_at": now}), encoding="utf-8")
             temporary.replace(path)
+        except TaskCancelled:
+            raise
         except Exception as exc:
             logger.warning("Could not write LiveRadar Douyin cookie: %s", exc.__class__.__name__)
         return ttwid

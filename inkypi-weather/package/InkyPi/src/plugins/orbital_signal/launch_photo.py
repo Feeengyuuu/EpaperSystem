@@ -10,6 +10,7 @@ from urllib.parse import urljoin
 
 from PIL import Image, ImageOps
 
+from runtime.refresh_contracts import TaskCancelled
 from security.ssrf import get_ssrf_policy
 from utils.http_client import get_http_session
 from utils.safe_image import ImageLimits, safe_open_image
@@ -135,6 +136,8 @@ def cache_mark(url, namespace, *, allow_network, session=None):
         namespace.put_bytes(key, _encode_png(image), suffix=PHOTO_SUFFIX)
         record_resource_event("market_marks", downloads=1)
         return key
+    except TaskCancelled:
+        raise
     except Exception as exc:
         logger.warning("Orbital Signal market mark rejected: %s", type(exc).__name__)
         return ""
@@ -148,6 +151,8 @@ def load_cached_mark(namespace, cache_key):
     try:
         payload = namespace.get_bytes(key, suffix=PHOTO_SUFFIX)
         return safe_open_image(payload, limits=PHOTO_LIMITS).convert("RGBA") if payload else None
+    except TaskCancelled:
+        raise
     except Exception as exc:
         logger.warning("Orbital Signal market mark cache rejected: %s", type(exc).__name__)
         return None

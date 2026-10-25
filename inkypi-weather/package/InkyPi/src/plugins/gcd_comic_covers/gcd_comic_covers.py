@@ -27,6 +27,7 @@ from plugins.base_plugin.render_provenance import SourceProvenance, attach_sourc
 from plugins.base_plugin.theme_presentation import apply_media_theme_chrome
 from plugins.base_plugin.parallel_image_stage import prepare_local_bank_images
 from plugins.context_cache import write_context
+from runtime.refresh_contracts import TaskCancelled
 from plugins.gcd_comic_covers.presentation_bank import (
     READY_TARGET,
     REFILL_THRESHOLD,
@@ -1395,6 +1396,8 @@ class GcdComicCovers(BasePlugin):
             try:
                 data = self._fetch_json(url)
                 names[url] = _first_text(data, ["name"]) if isinstance(data, dict) else ""
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 logger.warning("Could not fetch GCD publisher %s: %s", url, exc)
                 names[url] = ""

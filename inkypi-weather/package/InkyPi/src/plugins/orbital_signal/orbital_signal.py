@@ -16,6 +16,7 @@ from plugins.base_plugin.render_provenance import (
     SourceProvenance,
     attach_source_provenance,
 )
+from runtime.refresh_contracts import TaskCancelled
 from utils.cache_manager import CacheBudget
 from utils.safe_image import safe_open_image
 from utils.app_utils import (
@@ -296,6 +297,8 @@ class OrbitalSignal(BasePlugin):
         def mark(url):
             try:
                 return launch_photo.cache_mark(url, namespace, allow_network=True)
+            except TaskCancelled:
+                raise
             except Exception as exc:
                 logger.warning("Orbital Signal market mark unavailable: %s", type(exc).__name__)
                 return ""

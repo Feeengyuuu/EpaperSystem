@@ -1807,7 +1807,7 @@ def _refetch_provisional_record(
             context=context,
             allow_missing_media=True,
         )
-    except _ABORT_EXCEPTIONS:
+    except (TaskDeadlineExceeded, TaskCancelled):
         raise
     except RuntimeError as error:
         logger.warning("APOD %s still unavailable: %s", state.requested_date, error)
