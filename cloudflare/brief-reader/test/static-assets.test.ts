@@ -36,6 +36,24 @@ describe("vehicle reader assets", () => {
     expect(page).toContain('<link rel="apple-touch-icon" href="/apple-touch-icon.png">');
   });
 
+  it("names the home-screen app Epaper Frame and serves the wordmark font under the CSP", async () => {
+    const response = await SELF.fetch("https://example.com/");
+    expect(response.headers.get("content-security-policy")).toContain("font-src 'self'");
+    const page = await response.text();
+    expect(page).toContain('<meta name="apple-mobile-web-app-title" content="Epaper Frame">');
+    expect(page).toContain('class="brand-frame"');
+    expect(page).not.toContain("EpaperSystem");
+
+    const font = await SELF.fetch("https://example.com/fonts/space-grotesk.ttf");
+    expect(font.status).toBe(200);
+    expect(font.headers.get("content-type")).toBe("font/ttf");
+    expect((await font.arrayBuffer()).byteLength).toBeGreaterThan(10_000);
+
+    const css = await (await SELF.fetch("https://example.com/portal.css")).text();
+    expect(css).toContain("--brand: #ff5e00;");
+    expect(css).toContain('url("/fonts/space-grotesk.ttf")');
+  });
+
   it("serves the proven no-crop fullscreen stylesheet without authentication", async () => {
     const response = await SELF.fetch("https://example.com/portal.css");
 

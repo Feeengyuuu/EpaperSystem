@@ -16,6 +16,11 @@
       "type": "Text",
       "globs": ["**/portal.js"],
       "fallthrough": true
+    },
+    {
+      "type": "Data",
+      "globs": ["**/*.ttf"],
+      "fallthrough": true
     }
   ],
   "durable_objects": {

@@ -1,12 +1,29 @@
 import portalCss from "../static/portal.css";
 import portalScript from "../static/portal.js";
+import brandFont from "../static/fonts/SpaceGrotesk-VF.ttf";
 import { APPLE_TOUCH_ICON_PNG, LOGO_SVG } from "./brand_icons";
 
 export { PortalLedger } from "./ledger";
 
-// Tab icon and the iPhone "Add to Home Screen" icon.
+// Tab icon, the iPhone "Add to Home Screen" icon and its name.
 const BRAND_HEAD = `<link rel="icon" href="/logo.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="/apple-touch-icon.png">`;
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-title" content="Epaper Frame">`;
+const LIGHT_DARK_THEME = `<meta name="theme-color" content="#f7f5f2" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0f1116" media="(prefers-color-scheme: dark)">`;
+const BRAND_FONT_PATH = "/fonts/space-grotesk.ttf";
+
+// The Refresh Frame mark inline, so its frame and screen follow the page theme
+// (ink frame on paper, paper frame on ink) through the stylesheet.
+function brandMark(size: number): string {
+  return `<svg class="brand-logo" width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+<defs><linearGradient id="brand-refresh" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#EE9517"/><stop offset="1" stop-color="#FF5E00"/></linearGradient></defs>
+<rect class="brand-frame" x="4" y="4" width="92" height="92" rx="24"/><rect class="brand-screen" x="20" y="20" width="60" height="60" rx="10"/>
+<path d="M20 30a10 10 0 0 1 10-10h40a10 10 0 0 1 10 10v13H20z" fill="url(#brand-refresh)"/>
+<rect x="20" y="48" width="60" height="5" fill="#FF5E00" opacity="0.55"/><rect x="20" y="57" width="60" height="3" fill="#FF5E00" opacity="0.28"/></svg>`;
+}
+
+const WORDMARK = `<span class="brand-word"><span class="brand-word-name">ColoredEpaper</span><span class="brand-word-sub">FRAME</span></span>`;
 
 // 32-bit FNV-1a of the shipped stylesheet and script. Pages reference both
 // with it, so a deployment reaches readers that never reload on their own
@@ -65,6 +82,7 @@ const HTML_HEADERS = {
     "default-src 'none'",
     "base-uri 'none'",
     "connect-src 'self'",
+    "font-src 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
     "img-src 'self'",
@@ -278,7 +296,8 @@ function loginPage(error: string | null = null, status = 200): Response {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <title>登录 | EpaperSystem 简报</title>
+  ${LIGHT_DARK_THEME}
+  <title>登录 | Epaper Frame 简报</title>
   ${STYLESHEET}
   ${BRAND_HEAD}
 </head>
@@ -286,8 +305,9 @@ function loginPage(error: string | null = null, status = 200): Response {
   <main id="main-content" class="login-shell">
     <section class="login-panel" aria-labelledby="login-title">
       <div class="login-identity">
-        <img class="brand-logo" src="/logo.svg" alt="" width="40" height="40">
-        <p>EpaperSystem 私人简报</p>
+        ${brandMark(44)}
+        ${WORDMARK}
+        <p class="login-badge">私人简报</p>
       </div>
       <h1 id="login-title">查看你的播放列表</h1>
       <p class="login-intro">页面只展示已经发布的内容，不会控制实体屏幕。</p>
@@ -394,8 +414,8 @@ function populatedReaderPage(release: ReaderRelease): Response {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <meta name="theme-color" content="#050606">
-  <title>${escapeHtml(release.playlist.title)} | EpaperSystem 简报</title>
+  <meta name="theme-color" content="#08090c">
+  <title>${escapeHtml(release.playlist.title)} | Epaper Frame 简报</title>
   ${STYLESHEET}
   ${BRAND_HEAD}
   ${SCRIPT}
@@ -434,14 +454,16 @@ function readerPage(release: ReaderRelease | null): Response {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex,nofollow,noarchive">
-  <title>EpaperSystem 简报</title>
+  ${LIGHT_DARK_THEME}
+  <title>Epaper Frame 简报</title>
   ${STYLESHEET}
   ${BRAND_HEAD}
   ${SCRIPT}
 </head>
 <body class="empty-page">
   <main class="empty-reader" data-poll-ms="30000" data-generation="0">
-    <img class="brand-logo" src="/logo.svg" alt="" width="56" height="56">
+    ${brandMark(64)}
+    ${WORDMARK}
     <h1>还没有发布内容</h1>
     <p>首个完整版本上传后会自动出现在这里。</p>
     <span class="waiting-indicator" aria-hidden="true"><span></span><span></span><span></span></span>
@@ -493,6 +515,11 @@ export default {
       (url.pathname === "/apple-touch-icon.png" || url.pathname === "/apple-touch-icon-precomposed.png")
     ) {
       return new Response(APPLE_TOUCH_ICON_PNG, { headers: { ...ICON_HEADERS, "Content-Type": "image/png" } });
+    }
+    if (request.method === "GET" && url.pathname === BRAND_FONT_PATH) {
+      return new Response(brandFont, {
+        headers: { "Cache-Control": "public, max-age=604800", "Content-Type": "font/ttf", "X-Content-Type-Options": "nosniff" },
+      });
     }
     if (request.method === "GET" && url.pathname === "/logo.svg") {
       return new Response(LOGO_SVG, { headers: { ...ICON_HEADERS, "Content-Type": "image/svg+xml" } });

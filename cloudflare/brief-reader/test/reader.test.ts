@@ -6,6 +6,7 @@ const EXPECTED_CSP = [
   "default-src 'none'",
   "base-uri 'none'",
   "connect-src 'self'",
+  "font-src 'self'",
   "form-action 'self'",
   "frame-ancestors 'none'",
   "img-src 'self'",
@@ -42,7 +43,8 @@ describe("Model Y browser reader", () => {
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
 
     const body = await response.text();
-    expect(body).toContain("EpaperSystem 私人简报");
+    expect(body).toContain("ColoredEpaper");
+    expect(body).toContain("私人简报");
     expect(body).toContain('name="password"');
     expect(body).not.toContain("AwesomeWeather");
   });

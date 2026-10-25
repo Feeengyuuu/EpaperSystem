@@ -1,47 +1,48 @@
-/* EpaperSystem brief reader.
+/* ColoredEpaper Frame brief reader (Refresh Frame brand: ink, paper, Steam orange).
  * Login and empty pages follow the system light/dark preference. The play
  * page is always a dark picture frame around the original 800x480 PNGs. */
 
 :root {
   color-scheme: light;
-  --paper: #f2f5f5;
-  --paper-glow: rgb(24 184 172 / 16%);
+  --paper: #f7f5f2;
+  --paper-glow: rgb(255 94 0 / 12%);
   --surface: #ffffff;
-  --surface-sunken: #eef2f2;
-  --ink: #131819;
-  --muted-ink: #586365;
-  --rule: #d8dfe0;
-  --brand: #18b8ac;
-  --brand-light: #7edcdf;
-  --primary: #0b7a71;
-  --primary-hover: #086159;
+  --surface-sunken: #efece7;
+  --ink: #14171d;
+  --muted-ink: #5e6470;
+  --rule: #dedbd6;
+  --brand: #ff5e00;
+  --brand-light: #ee9517;
+  --primary: #c24400;
+  --primary-hover: #a33900;
   --on-primary: #ffffff;
-  --focus: #0b7a71;
+  --focus: #c24400;
   --danger: #b0233a;
   --danger-pale: #fbe8eb;
-  --panel-shadow: 0 1px 2px rgb(16 24 24 / 6%), 0 24px 56px -18px rgb(16 40 40 / 24%);
+  --panel-shadow: 0 1px 2px rgb(20 23 29 / 6%), 0 24px 56px -18px rgb(20 23 29 / 24%);
   --radius-field: 14px;
   --radius-panel: 26px;
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "PingFang SC", "HarmonyOS Sans SC",
     "MiSans", "Microsoft YaHei UI", "Noto Sans CJK SC", "Segoe UI", sans-serif;
+  --font-brand: "Space Grotesk", var(--font-sans);
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --paper: #0a0d0e;
-    --paper-glow: rgb(24 184 172 / 18%);
-    --surface: #141a1b;
-    --surface-sunken: #0e1314;
-    --ink: #eef3f3;
-    --muted-ink: #9ba7a9;
-    --rule: #263133;
-    --primary: #2cc9bd;
-    --primary-hover: #4fd7cc;
-    --on-primary: #03211f;
-    --focus: #7edcdf;
+    --paper: #0f1116;
+    --paper-glow: rgb(255 94 0 / 16%);
+    --surface: #14171d;
+    --surface-sunken: #0b0d11;
+    --ink: #f7f5f2;
+    --muted-ink: #9aa0aa;
+    --rule: #262a33;
+    --primary: #ff5e00;
+    --primary-hover: #ff7a33;
+    --on-primary: #14171d;
+    --focus: #ee9517;
     --danger: #ff8f9c;
     --danger-pale: #3b1a20;
     --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 4%), 0 28px 64px -24px rgb(0 0 0 / 80%);
@@ -50,17 +51,17 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --paper: #0a0d0e;
-  --paper-glow: rgb(24 184 172 / 18%);
-  --surface: #141a1b;
-  --surface-sunken: #0e1314;
-  --ink: #eef3f3;
-  --muted-ink: #9ba7a9;
-  --rule: #263133;
-  --primary: #2cc9bd;
-  --primary-hover: #4fd7cc;
-  --on-primary: #03211f;
-  --focus: #7edcdf;
+  --paper: #0f1116;
+  --paper-glow: rgb(255 94 0 / 16%);
+  --surface: #14171d;
+  --surface-sunken: #0b0d11;
+  --ink: #f7f5f2;
+  --muted-ink: #9aa0aa;
+  --rule: #262a33;
+  --primary: #ff5e00;
+  --primary-hover: #ff7a33;
+  --on-primary: #14171d;
+  --focus: #ee9517;
   --danger: #ff8f9c;
   --danger-pale: #3b1a20;
   --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 4%), 0 28px 64px -24px rgb(0 0 0 / 80%);
@@ -121,9 +122,42 @@ p {
   outline-offset: 3px;
 }
 
+@font-face {
+  font-family: "Space Grotesk";
+  src: url("/fonts/space-grotesk.ttf") format("truetype");
+  font-weight: 300 700;
+  font-display: swap;
+}
+
 .brand-logo {
   display: block;
   flex: 0 0 auto;
+}
+
+/* The mark's frame and screen swap with the theme: ink frame on paper, paper frame on ink. */
+.brand-logo .brand-frame { fill: var(--ink); }
+.brand-logo .brand-screen { fill: var(--paper); }
+
+.brand-word {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  font-family: var(--font-brand);
+  line-height: 1;
+}
+
+.brand-word-name {
+  color: var(--ink);
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.brand-word-sub {
+  color: var(--primary);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.5em;
 }
 
 /* ---------- Buttons (login) ---------- */
@@ -197,6 +231,17 @@ p {
   margin: 0;
 }
 
+.login-identity .login-badge {
+  margin-left: auto;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--paper-glow);
+  color: var(--primary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
 .login-panel h1 {
   margin-bottom: 10px;
   font-size: 1.75rem;
@@ -245,7 +290,7 @@ p {
   border-color: var(--brand);
   outline: none;
   background: var(--surface);
-  box-shadow: 0 0 0 4px rgb(24 184 172 / 22%);
+  box-shadow: 0 0 0 4px rgb(255 94 0 / 20%);
 }
 
 .login-form .button {
@@ -281,7 +326,12 @@ p {
 }
 
 .empty-reader .brand-logo {
-  margin-bottom: 22px;
+  margin-bottom: 16px;
+}
+
+.empty-reader .brand-word {
+  align-items: center;
+  margin-bottom: 26px;
 }
 
 .empty-reader h1 {
@@ -324,14 +374,14 @@ p {
   height: 100dvh;
   overflow: hidden;
   overscroll-behavior: none;
-  background: #050606;
+  background: #08090c;
   color: #ffffff;
 }
 
 .play-shell {
   --chrome-speed: 260ms;
-  --accent: #7edcdf;
-  --glass: rgb(18 23 24 / 66%);
+  --accent: #ff5e00;
+  --glass: rgb(20 23 29 / 66%);
   --glass-edge: rgb(255 255 255 / 11%);
   /* Safe areas in the picture's own frame; the rotated frame remaps them. */
   --safe-top: env(safe-area-inset-top, 0px);
@@ -347,7 +397,7 @@ p {
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
-  background: #050606;
+  background: #08090c;
   touch-action: manipulation;
   user-select: none;
   -webkit-user-select: none;
@@ -449,7 +499,7 @@ p {
   justify-content: space-between;
   gap: 12px 28px;
   padding: max(18px, var(--safe-top)) max(22px, var(--safe-right)) 56px max(22px, var(--safe-left));
-  background: linear-gradient(to bottom, rgb(5 6 6 / 88%) 0%, rgb(5 6 6 / 58%) 52%, rgb(5 6 6 / 0%) 100%);
+  background: linear-gradient(to bottom, rgb(8 9 12 / 88%) 0%, rgb(8 9 12 / 58%) 52%, rgb(8 9 12 / 0%) 100%);
   transition:
     opacity var(--chrome-speed) var(--ease-out),
     transform var(--chrome-speed) var(--ease-out),
@@ -474,9 +524,9 @@ p {
   display: inline-flex;
   margin: 0 0 8px;
   padding: 3px 10px;
-  border: 1px solid rgb(126 220 223 / 24%);
+  border: 1px solid rgb(255 94 0 / 24%);
   border-radius: 999px;
-  background: rgb(126 220 223 / 12%);
+  background: rgb(255 94 0 / 12%);
   color: var(--accent);
   font-family: var(--font-mono);
   font-size: 0.7rem;
@@ -660,7 +710,7 @@ p {
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: #f2f6f6;
+  color: #f7f5f2;
   cursor: pointer;
   transition:
     background-color 160ms ease-out,
@@ -706,17 +756,17 @@ p {
 }
 
 .dock-tool {
-  color: rgb(242 246 246 / 84%);
+  color: rgb(247 245 242 / 84%);
 }
 
 .dock-tool[aria-pressed="true"] {
-  background: rgb(126 220 223 / 16%);
-  box-shadow: inset 0 0 0 1px rgb(126 220 223 / 28%);
+  background: rgb(255 94 0 / 16%);
+  box-shadow: inset 0 0 0 1px rgb(255 94 0 / 28%);
   color: var(--accent);
 }
 
 .dock-tool[aria-pressed="true"]:hover {
-  background: rgb(126 220 223 / 24%);
+  background: rgb(255 94 0 / 24%);
 }
 
 /* Keep-awake status dot: filled while the screen is held on, a ring while
@@ -736,14 +786,14 @@ p {
 
 [data-keep-awake][data-wake-state="active"]::after {
   background: var(--accent);
-  box-shadow: 0 0 0 2px rgb(18 23 24 / 90%), 0 0 8px rgb(126 220 223 / 75%);
+  box-shadow: 0 0 0 2px rgb(20 23 29 / 90%), 0 0 8px rgb(255 94 0 / 75%);
   opacity: 1;
   transform: none;
 }
 
 [data-keep-awake][data-wake-state="pending"]::after {
   border: 1.5px solid var(--accent);
-  background: rgb(18 23 24 / 90%);
+  background: rgb(20 23 29 / 90%);
   opacity: 1;
   transform: none;
 }
@@ -768,17 +818,17 @@ p {
   width: 66px;
   height: 66px;
   margin: 0 6px;
-  background: linear-gradient(180deg, #3ad5c8 0%, #14a99d 100%);
-  box-shadow: 0 10px 26px -8px rgb(24 184 172 / 70%), inset 0 1px 0 rgb(255 255 255 / 38%);
-  color: #03211f;
+  background: linear-gradient(135deg, #ee9517 0%, #ff5e00 100%);
+  box-shadow: 0 10px 26px -8px rgb(255 94 0 / 62%), inset 0 1px 0 rgb(255 255 255 / 34%);
+  color: #14171d;
 }
 
 .dock-button-primary:hover {
-  background: linear-gradient(180deg, #55ded3 0%, #18b8ac 100%);
+  background: linear-gradient(135deg, #f5a53a 0%, #ff7a33 100%);
 }
 
 .dock-button-primary:active {
-  background: linear-gradient(180deg, #2fc4b8 0%, #10978c 100%);
+  background: linear-gradient(135deg, #d98710 0%, #d94f00 100%);
 }
 
 .dock-button-primary .icon {
@@ -855,7 +905,7 @@ p {
   width: 54px;
   height: 54px;
   border: 1px solid rgb(255 255 255 / 15%);
-  background: rgb(18 23 24 / 58%);
+  background: rgb(20 23 29 / 58%);
   box-shadow: 0 10px 28px -8px rgb(0 0 0 / 70%);
   -webkit-backdrop-filter: blur(16px) saturate(1.5);
   backdrop-filter: blur(16px) saturate(1.5);
@@ -876,8 +926,8 @@ p {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: #f5c542;
-  box-shadow: 0 0 0 2px rgb(18 23 24 / 90%);
+  background: #ee9517;
+  box-shadow: 0 0 0 2px rgb(20 23 29 / 90%);
   content: "";
 }
 
@@ -1111,7 +1161,7 @@ p {
 
   .progress-segment.is-running::after {
     animation: none;
-    background: rgb(126 220 223 / 55%);
+    background: rgb(255 94 0 / 55%);
     transform: scaleX(1);
   }
 }
