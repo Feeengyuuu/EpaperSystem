@@ -100,7 +100,8 @@ def _paste(canvas, art, xy):
 
 
 def crt_style(settings):
-    return str((settings or {}).get("frameStyle") or "").strip().lower() == "crt"
+    """The control-room look is the default; "modern" keeps the plain cards."""
+    return str((settings or {}).get("frameStyle") or "crt").strip().lower() != "modern"
 
 
 def _view(frame, size):
@@ -147,8 +148,8 @@ def _crt_osd(canvas, screen, number, camera, frame, now, *, size):
     right (or the still's age in amber once it stops updating), the time it was taken at the
     bottom right."""
     sx0, sy0, sx1, sy1 = screen
-    pad = 6 if size >= 14 else 4
-    label = f"CAM-{number:02d}" + (f"  {camera['id']}" if camera.get("id") and size >= 14 else "")
+    pad = 6 if size >= 13 else 4
+    label = f"CAM-{number:02d}" + (f"  {camera['id']}" if camera.get("id") and size >= 13 else "")
     crt.osd_text(canvas.draw, (sx0 + pad, sy0 + pad), label, size)
     if frame is None:
         return
@@ -158,12 +159,12 @@ def _crt_osd(canvas, screen, number, camera, frame, now, *, size):
                     anchor="rm", stroke=(0, 0, 0))
     else:
         rec_w = crt.osd_text(canvas.draw, (sx1 - pad, sy0 + pad), "REC", size, crt.REC, anchor="ra")
-        dot = size * 0.32
+        dot = size * 0.26
         cx, cy = sx1 - pad - rec_w - dot - 4, sy0 + pad + size * 0.5
         canvas.draw.ellipse((cx - dot, cy - dot, cx + dot, cy + dot), fill=crt.REC, outline=(0, 0, 0))
     taken = _taken(frame)
     if taken is not None:
-        stamp = f"{taken:%m-%d-%y  %H:%M}" if size >= 14 else f"{taken:%H:%M}"
+        stamp = f"{taken:%m-%d-%y  %H:%M}" if size >= 13 else f"{taken:%H:%M}"
         crt.osd_text(canvas.draw, (sx1 - pad, sy1 - pad), stamp, size, anchor="rd")
 
 
@@ -258,7 +259,7 @@ def _main(canvas, payload, now):
     screen = _still(canvas, frame, (x0, y0, x1, still_bottom), radius=8, bezel=(9, 15))
     age, stale = age_label(frame, now)
     if getattr(canvas, "crt", False):
-        _crt_osd(canvas, screen, 1, camera, frame, now, size=16)
+        _crt_osd(canvas, screen, 1, camera, frame, now, size=13)
     elif frame is not None and not stale:
         _badge(canvas, (x0 + 10, y0 + 10), "● LIVE", canvas.color("live"), 11)
     if getattr(canvas, "crt", False):
@@ -319,9 +320,9 @@ def _side(canvas, payload, now):
         cx = x0 + column * (cell_w + 10)
         cy = y0 + row * (cell_h + 10)
         frame = payload["frames"].get(camera["image"])
-        screen = _still(canvas, frame, (cx, cy, cx + cell_w, cy + cell_h - 48), radius=6, bezel=(6, 11))
+        screen = _still(canvas, frame, (cx, cy, cx + cell_w, cy + cell_h - 48), radius=6, bezel=(5, 10))
         if getattr(canvas, "crt", False):
-            _crt_osd(canvas, screen, index + 2, camera, frame, now, size=12)
+            _crt_osd(canvas, screen, index + 2, camera, frame, now, size=10)
         elif frame is not None:
             _cam_tag(canvas, (cx + 5, cy + 5), index + 2, camera)
         # The still's age sits on it, as on the main view, so the guide sign gets the whole width.

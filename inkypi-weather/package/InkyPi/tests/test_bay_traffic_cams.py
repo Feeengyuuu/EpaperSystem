@@ -157,8 +157,9 @@ def test_control_room_style_puts_each_still_on_a_crt_monitor_with_recorder_text(
     frames = {item["image"]: {"image": _road(), "taken": (NOW - timedelta(minutes=2)).isoformat()} for item in cameras}
     payload = {"cameras": cameras, "frames": frames}
 
-    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}, "frameStyle": "crt"}, NOW)
-    plain = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW)
+    # The control room is the default look; "modern" keeps the plain cards.
+    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW)
+    plain = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}, "frameStyle": "modern"}, NOW)
 
     console = render._rgb(crt.PALETTE["paper"])
     assert image.getpixel((790, 475)) == console and plain.getpixel((790, 475)) == (255, 255, 255)

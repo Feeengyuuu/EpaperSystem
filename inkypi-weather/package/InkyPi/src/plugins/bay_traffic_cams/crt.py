@@ -29,8 +29,8 @@ LAMP = (60, 220, 90)
 OSD = (245, 245, 240)
 REC = (255, 46, 46)
 SCANLINE_STEP = 3
-SCANLINE_DIM = 0.86
-VIGNETTE = 0.42
+SCANLINE_DIM = 0.93
+VIGNETTE = 0.24
 
 
 @lru_cache(maxsize=8)
@@ -40,7 +40,8 @@ def osd_font(size):
 
 def osd_text(draw, xy, text, size, fill=OSD, anchor="la"):
     """Recorder-style on-screen text, outlined in black so it holds on bright or dark pictures."""
-    draw.text(xy, text, font=osd_font(size), fill=fill, anchor=anchor, stroke_width=2, stroke_fill=(0, 0, 0))
+    draw.text(xy, text, font=osd_font(size), fill=fill, anchor=anchor, stroke_width=2 if size >= 13 else 1,
+              stroke_fill=(0, 0, 0))
     return draw.textlength(text, font=osd_font(size))
 
 
