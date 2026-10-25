@@ -1,0 +1,13 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "generated": "2026-10-24",
+  "job_id": "0fae499f-0f54-43fa-9177-e805071ec662",
+  "use": "the release-date mark in the upcoming games card",
+  "processing": "alpha below 40 cleared, trimmed, 64 px tall (LANCZOS)",
+  "source_sha256": "9e8bb1f867a3571d2b2cb0aec66dfb65df34c43cfaf2f0d0faf44d6cc5904986",
+  "sha256": "985b85dd5c70e1b9d66b1deb26d883b3a6db6a5825730dd7135b0b22c1f3b60f",
+  "size": [
+    59,
+    64
+  ]
+}

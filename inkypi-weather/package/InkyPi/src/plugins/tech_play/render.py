@@ -45,6 +45,11 @@ STATUS_ICON = {"none": "ok", "minor": "alert", "major": "outage", "critical": "o
                "maintenance": "maintenance", "unknown": "info"}
 WEEKDAYS = "一二三四五六日"
 LEFT_CARD = (12, 58, 268, 244)
+# Each service's generated symbol (assets/status/<service>-<state>.png) stands this tall, centred
+# on this x between its name and its state; the indicator picks the drawing.
+STATUS_SYMBOL_X, STATUS_SYMBOL_H = 168, 27
+STATUS_SYMBOL_STATE = {"none": "ok", "minor": "degraded", "maintenance": "degraded", "major": "outage",
+                       "critical": "outage"}
 PAPER_CARD = (12, 250, 268, 468)
 EPIC_CARD = (280, 58, 788, 196)
 UPCOMING_CARD = (280, 202, 788, 314)
@@ -75,6 +80,17 @@ def _logo(name, height, max_width=None):
     with safe_open_image(path, limits=_LIMITS) as source:
         image = source.convert("RGBA")
     return ImageOps.contain(image, (max_width or height * 3, height), Image.Resampling.LANCZOS)
+
+
+@lru_cache(maxsize=32)
+def _asset_icon(name, height):
+    """A generated icon from assets/ (``name`` without .png) ``height`` px tall, or None."""
+    path = ASSETS / f"{name}.png"
+    if not path.is_file():
+        return None
+    with safe_open_image(path, limits=_LIMITS) as source:
+        image = source.convert("RGBA")
+    return image.resize((max(1, round(image.width * height / image.height)), int(height)), Image.Resampling.LANCZOS)
 
 
 def _paste(canvas, image, xy):
@@ -165,11 +181,18 @@ def _status(canvas, payload):
         label_width = canvas.text((right, top + 9), label, 12, anchor="rm")
         draw_icon(canvas.draw, STATUS_ICON.get(indicator, "info"), (right - label_width - 17, top + 2), 14,
                   canvas.color(tone), canvas.color("paper"))
-        name_width = right - label_width - 24 - (left + 34)
+        # The service's own symbol, drawn for how it is doing, in the column between name and state.
+        symbol = _asset_icon(f"status/{service['id']}-{STATUS_SYMBOL_STATE.get(indicator)}", STATUS_SYMBOL_H) \
+            if indicator in STATUS_SYMBOL_STATE else None
+        text_right = right - label_width - 24
+        if symbol is not None:
+            _paste(canvas, symbol, (STATUS_SYMBOL_X - symbol.width / 2, top + 13 - symbol.height / 2))
+            text_right = STATUS_SYMBOL_X - symbol.width / 2 - 6
+        name_width = text_right - (left + 34)
         incident = service.get("incident")
         canvas.text((left + 34, top + (8 if incident else 13)), service["name"], 13, anchor="lm", width=name_width)
         if incident:
-            canvas.text((left + 34, top + 21), incident, 11, "muted", anchor="lm", bold=False, width=right - left - 34)
+            canvas.text((left + 34, top + 21), incident, 11, "muted", anchor="lm", bold=False, width=name_width)
         if index < len(services[:5]) - 1:
             canvas.rule((left + 34, top + 29, right, top + 29))
 
@@ -278,7 +301,11 @@ def _upcoming(canvas, payload, images, now):
         stamp = parse_time(item.get("date"))
         when = (f"{stamp.astimezone(now.tzinfo):%m/%d} 周{WEEKDAYS[stamp.astimezone(now.tzinfo).weekday()]}"
                 if stamp else (item.get("date_text") or "日期待定"))
-        draw_icon(canvas.draw, "calendar", (x, top + 64), 11, canvas.color("ink"), canvas.color("paper"))
+        calendar_mark = _asset_icon("icon-calendar", 13)
+        if calendar_mark is not None:
+            _paste(canvas, calendar_mark, (x, top + 63))
+        else:
+            draw_icon(canvas.draw, "calendar", (x, top + 64), 11, canvas.color("ink"), canvas.color("paper"))
         platforms = "/".join(item.get("platforms") or [])
         canvas.text((x + 15, top + 70), f"{when}  {platforms}".strip(), 11, "muted", anchor="lm", bold=False,
                     width=width - 15)

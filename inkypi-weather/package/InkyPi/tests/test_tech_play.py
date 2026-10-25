@@ -169,3 +169,18 @@ def test_page_renders_without_any_images(mode):
     image = render_page((800, 480), _payload(), {"_inkypi_theme": {"mode": mode}}, NOW, {})
 
     assert image.size == (800, 480)
+
+
+def test_every_service_has_its_symbol_for_each_state_and_the_release_mark():
+    import json
+
+    from plugins.tech_play import render
+
+    record = json.loads((render.ASSETS / "status" / "status_icons.source.json").read_text(encoding="utf-8"))["assets"]
+    for service_id, _name, _base in sources.SERVICES:
+        for state in set(render.STATUS_SYMBOL_STATE.values()):
+            name = f"{service_id}-{state}.png"
+            assert name in record, name
+            icon = render._asset_icon(f"status/{service_id}-{state}", render.STATUS_SYMBOL_H)
+            assert icon is not None and icon.height == render.STATUS_SYMBOL_H
+    assert render._asset_icon("icon-calendar", 13) is not None
