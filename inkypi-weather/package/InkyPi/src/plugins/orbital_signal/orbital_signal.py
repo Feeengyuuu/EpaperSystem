@@ -77,7 +77,7 @@ MARKET_COLUMNS_HEIGHT = 300
 # The market facts' icons (volume, heat, end) in px.
 MARKET_FACT_ICON = 13
 # The heat dials (radius in px), drawn this many times larger and then scaled down.
-GAUGE_RADIUS, GAUGE_SCALE = 32, 4
+GAUGE_RADIUS, GAUGE_SCALE = 29, 4
 MARKET_ART_PATH = Path(__file__).with_name("assets") / "market-console.png"
 # A league name too long for its market's tag gives way to its usual short form.
 LEAGUE_SHORT_NAMES = {
