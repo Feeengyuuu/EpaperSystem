@@ -27,7 +27,8 @@ PLACEHOLDER_WHITE = 0.5
 PLACEHOLDER_FLAT = 8
 # Each still ends in a 20 px caption bar (of 260) with Caltrans' own date; the page shows its age instead.
 CAPTION_BAR = 20 / 260
-DIRECTIONS = {"North": "北向", "South": "南向", "East": "东向", "West": "西向"}
+# The legend of the cardinal direction plaque posted with a route shield (MUTCD M3-1 to M3-4).
+DIRECTIONS = {"North": "NORTH", "South": "SOUTH", "East": "EAST", "West": "WEST"}
 # Caltrans writes the same kind of place many ways ("Just North Of X", "JNO X", "NOF X"):
 # each prefix becomes the Chinese side of X, read after the name.
 SIDE_PREFIXES = (
@@ -199,7 +200,8 @@ def frame_time(headers):
 
 
 def direction_label(direction):
-    return DIRECTIONS.get(direction, direction)
+    """The cardinal plaque's legend for Caltrans' direction ("North" -> "NORTH"), "" when unknown."""
+    return DIRECTIONS.get(str(direction or "").strip().title(), "")
 
 
 def is_placeholder(image):

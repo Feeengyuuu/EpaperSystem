@@ -2,8 +2,8 @@
 large on the left with its last three hourly stills beneath (a time-lapse up to now), four
 cameras on other roads on the right.
 
-Every camera is labelled the way the road signs it: its official route shield, a direction
-plate and a green guide sign with the place, then a navigation arrow the way it lies from
+Every camera is labelled the way the road signs it: its official route shield, the cardinal
+direction plaque posted with it (NORTH, SOUTH, EAST, WEST) and a green guide sign with the place, then a navigation arrow the way it lies from
 home and how long ago the still was taken; one that stopped updating is marked 画面停更.
 Each still carries a CCTV-style camera tag.
 """
@@ -146,15 +146,18 @@ def _shield(canvas, route, xy, height):
 
 
 def _direction_plate(canvas, direction, xy, height):
-    """The white cardinal plate posted with a shield ("南向"); returns its width (0 without one)."""
-    label = sources.direction_label(direction) if direction else ""
+    """The cardinal direction plaque posted with a shield, as the MUTCD draws it: a black legend
+    ("NORTH") inside a black border on white, about twice as wide as it is tall. Returns its
+    width (0 without a direction)."""
+    label = sources.direction_label(direction)
     if not label:
         return 0
     x, y = xy
-    size = height - 6
-    width = canvas.width(label, size) + 8
-    canvas.draw.rounded_rectangle((x, y, x + width, y + height), radius=2, fill=WHITE, outline=BLACK, width=1)
-    canvas.text((x + width / 2, y + height / 2), label, size, BLACK, anchor="mm")
+    size = height - 7
+    width = max(round(height * 2.1), canvas.width(label, size) + 10)
+    canvas.draw.rounded_rectangle((x, y, x + width, y + height), radius=2, fill=WHITE)
+    canvas.draw.rounded_rectangle((x + 1, y + 1, x + width - 1, y + height - 1), radius=2, outline=BLACK, width=2)
+    canvas.text((x + width / 2, y + height / 2 + 0.5), label, size, BLACK, anchor="mm")
     return width
 
 
