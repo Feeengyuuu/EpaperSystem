@@ -53,6 +53,12 @@ BOARD = (16, 52, 784, 92)
 SCOPE = (16, 98, 456, 468)
 STRIPS = (466, 98, 784, 468)
 MAX_DATA_BLOCKS = 10
+# The airline wordmark on a strip matches the callsign line's height.
+STRIP_LOGO_HEIGHT = 18
+# At night, dark logo parts (luminance below NIGHT_INK_BELOW) that are not reds (red channel below
+# NIGHT_RED_FROM) - navy, black, deep blue - turn to the theme's ink instead of sitting on a plate.
+NIGHT_INK_BELOW = 90
+NIGHT_RED_FROM = 120
 CHART = ASSETS / "chart"
 _CHART_LIMITS = ImageLimits(max_bytes=2 * 1024 * 1024, max_width=2048, max_height=2048, max_pixels=2048 * 2048)
 # Places named on the chart, in the page's language, and home.
@@ -166,8 +172,7 @@ def _board(plugin, image, draw, snapshot, theme):
         draw.rounded_rectangle((bx, y0, bx1, y1), radius=6, fill=theme["panel"], outline=theme["line"], width=1)
         logo = airport_logo(code, 16, 64)
         if logo is not None:
-            if sum(theme["panel"]) < 330:  # a light plate keeps a dark logo readable on a night panel
-                draw.rounded_rectangle((bx + 5, y0 + 3, bx + 11 + logo.width, y0 + 23), radius=4, fill=(244, 246, 248))
+            logo = on_panel(logo, theme["panel"], theme)
             image.paste(logo, (round(bx + 8), y0 + 5), logo)
         else:
             draw.text((bx + 8, y0 + 3), code, font=code_font, fill=theme["ink"])
@@ -481,6 +486,21 @@ def _bundled_logo(folder, code, width, height):
     return logo
 
 
+def on_panel(mark, panel, theme):
+    """A logo as drawn straight on ``panel``: on a dark (night) panel its near-black parts take
+    the theme's ink so dark lettering stays readable without a plate; its colours stay. Fully
+    opaque marks (flags) are left as they are."""
+    if mark is None or sum(panel) >= 330 or mark.getchannel("A").getextrema()[0] == 255:
+        return mark
+    low = mark.convert("L").point(lambda value: 255 if value < NIGHT_INK_BELOW else 0)
+    not_red = mark.getchannel("R").point(lambda value: 255 if value < NIGHT_RED_FROM else 0)
+    dark = ImageChops.multiply(low, not_red)
+    inked = Image.new("RGBA", mark.size, (*theme["ink"][:3], 255))
+    result = Image.composite(inked, mark, dark)
+    result.putalpha(mark.getchannel("A"))
+    return result
+
+
 @lru_cache(maxsize=64)
 def airline_logo(code, width, height):
     """The airline's official wordmark (transparent, bundled) for an ICAO callsign prefix, fitted
@@ -540,7 +560,6 @@ def _route_line(plugin, image, draw, plane, xy, width, theme, font, small):
         return False
     x, y = xy
     right = x + width
-    night = sum(theme["panel2"]) < 330
     parts = []
     for code, city in ((origin, plane.get("origin_city")), (destination, plane.get("destination_city"))):
         name = plugin._localized_city_name(code) or plugin._localized_city_name(city)
@@ -554,9 +573,7 @@ def _route_line(plugin, image, draw, plane, xy, width, theme, font, small):
             draw.text((x + 2, y + 8), "→", font=font, fill=theme["muted"], anchor="lm")
             x += arrow_w
         if mark is not None:
-            if night:
-                draw.rounded_rectangle((x - 1, y + 8 - mark.height / 2 - 1, x + mark.width + 1, y + 8 + mark.height / 2 + 1),
-                                       radius=2, fill=(244, 246, 248))
+            mark = on_panel(mark, theme["panel2"], theme)
             image.paste(mark, (round(x), round(y + 8 - mark.height / 2)), mark)
             x += mark.width + 3
         draw.text((x, y + 8), code, font=font, fill=theme["ink"], anchor="lm")
@@ -638,23 +655,22 @@ def _strips(plugin, image, snapshot, theme, now):
         draw.rounded_rectangle((sx0, sy0, sx1, sy1), radius=5, fill=theme["panel2"], outline=theme["card_line"], width=1)
         draw.rectangle((sx0 + 1, sy0 + 1, sx0 + 5, sy1 - 1), fill=theme[role])
         callsign = str(plane.get("callsign") or plane.get("hex") or "未知").strip()
-        # The airline's wordmark, clean on the strip, centred in a column at the left; on a dark
-        # (night) strip a light plate keeps its own dark lettering readable.
-        logo_box = (sx0 + 10, sy0 + 6, sx0 + 74, sy1 - 6)
-        logo = airline_logo(callsign[:3], logo_box[2] - logo_box[0], 28)
+        # The airline's wordmark sits on the callsign's line, left of it; the route and the
+        # aircraft lines below run from the strip's left edge.
+        line_y = sy0 + 13
+        logo_left, logo_right = sx0 + 10, sx0 + 74
+        logo = airline_logo(callsign[:3], logo_right - logo_left, STRIP_LOGO_HEIGHT)
         if logo is not None:
-            if sum(theme["panel2"]) < 330:
-                draw.rounded_rectangle((logo_box[0] - 2, (logo_box[1] + logo_box[3] - logo.height) / 2 - 3,
-                                        logo_box[2] + 2, (logo_box[1] + logo_box[3] + logo.height) / 2 + 3),
-                                       radius=4, fill=(244, 246, 248))
-            image.paste(logo, (round((logo_box[0] + logo_box[2] - logo.width) / 2),
-                               round((logo_box[1] + logo_box[3] - logo.height) / 2)), logo)
+            logo_x = round((logo_left + logo_right - logo.width) / 2)
+            logo = on_panel(logo, theme["panel2"], theme)
+            image.paste(logo, (logo_x, round(line_y - logo.height / 2)), logo)
         else:
-            draw.text(((logo_box[0] + logo_box[2]) / 2, (logo_box[1] + logo_box[3]) / 2), callsign[:3],
-                      font=plugin._font(14, "bold"), fill=theme["muted"], anchor="mm")
-        icon = (sx1 - 30, sy0 + 6, sx1 - 8, sy0 + 28)
+            draw.text(((logo_left + logo_right) / 2, line_y), callsign[:3], font=plugin._font(14, "bold"),
+                      fill=theme["muted"], anchor="mm")
+        icon = (sx1 - 28, sy0 + 3, sx1 - 8, sy0 + 23)
         _phase_icon(plugin, draw, icon, phase, theme)
         text_x = sx0 + 82
+        lines_x = sx0 + 10
         timing = flight_time(plugin, plane, now)
         timing_font = plugin._city_font(10, "bold")
         timing_w = draw.textlength(timing, font=timing_font) + 8 if timing else 0
@@ -664,17 +680,17 @@ def _strips(plugin, image, snapshot, theme, now):
             draw.text((text_x + draw.textlength(fitted, font=call_font) + 8, sy0 + 13), timing, font=timing_font,
                       fill=theme[role], anchor="lm")
         distance = plugin._format_distance(plane.get("distance_nm"))
-        draw.text((sx1 - 8, sy0 + 46), distance, font=meta_font, fill=theme["muted"], anchor="ra")
-        if not _route_line(plugin, image, draw, plane, (text_x, sy0 + 24), icon[0] - 6 - text_x, theme,
+        draw.text((sx1 - 8, sy0 + 47), distance, font=meta_font, fill=theme["muted"], anchor="ra")
+        if not _route_line(plugin, image, draw, plane, (lines_x, sy0 + 26), sx1 - 8 - lines_x, theme,
                            plugin._font(10, "bold"), plugin._city_font(9, "bold")):
             route = f"航线未知 · 应答机 {str(plane.get('hex') or '').upper()}"
-            draw.text((text_x, sy0 + 25), _fit(draw, route, route_font, icon[0] - 6 - text_x), font=route_font,
+            draw.text((lines_x, sy0 + 27), _fit(draw, route, route_font, sx1 - 8 - lines_x), font=route_font,
                       fill=theme["muted"])
         speed = plugin._number(plane.get("speed_kt"))
         pieces = [str(plane.get("type") or "").upper(), str(plane.get("registration") or "").upper(),
                   _altitude(plugin, plane), f"{int(speed)} kt" if speed is not None and not plane.get("on_ground") else ""]
-        draw.text((text_x, sy0 + 45), _fit(draw, " · ".join(piece for piece in pieces if piece), meta_font,
-                                           sx1 - 14 - text_x - draw.textlength(distance, font=meta_font)),
+        draw.text((lines_x, sy0 + 46), _fit(draw, " · ".join(piece for piece in pieces if piece), meta_font,
+                                            sx1 - 14 - lines_x - draw.textlength(distance, font=meta_font)),
                   font=meta_font, fill=theme["muted"])
     if not planes:
         draw.text(((x0 + x1) / 2, (y0 + y1) / 2), "等待航班数据", font=plugin._font(13, "bold"), fill=theme["muted"],
