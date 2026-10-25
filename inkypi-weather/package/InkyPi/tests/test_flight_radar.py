@@ -581,3 +581,63 @@ def test_faa_status_is_cached_reused_offline_and_dropped_when_old(monkeypatch, t
     assert plugin._airport_status(1000.0 + 3600, allow_network=True) == first
     assert plugin._airport_status(1000.0 + 3600, allow_network=False) == first
     assert plugin._airport_status(1000.0 + 3 * 3600, allow_network=True) is None
+
+
+METAR_ROWS = [
+    {"icaoId": "KSFO", "fltCat": "IFR", "wdir": 280, "wspd": 18, "wgst": 27, "visib": "3", "temp": 14.4,
+     "clouds": [{"cover": "FEW", "base": 600}, {"cover": "BKN", "base": 900}, {"cover": "OVC", "base": 2000}],
+     "rawOb": "METAR KSFO 251656Z 28018G27KT 3SM BKN009 OVC020 14/12 A3005"},
+    {"icaoId": "KSJC", "fltCat": "VFR", "wdir": "VRB", "wspd": 3, "visib": "10+", "temp": 11, "clouds": []},
+    {"icaoId": "KLAX", "fltCat": "VFR", "wdir": 250, "wspd": 8},
+]
+
+
+def test_metar_gives_each_bay_airport_its_category_wind_and_ceiling():
+    airports = flight_radar_module.parse_metar(METAR_ROWS)
+
+    assert set(airports) == {"SFO", "SJC"}
+    sfo = airports["SFO"]
+    assert (sfo["category"], sfo["wind_dir"], sfo["wind_kt"], sfo["gust_kt"], sfo["ceiling_ft"]) == ("IFR", 280, 18, 27, 900)
+    assert airports["SJC"]["wind_dir"] == "VRB" and airports["SJC"]["ceiling_ft"] is None
+    assert flight_radar_module.parse_metar({"error": 1}) == {}
+
+
+def test_pro_view_orders_strips_and_lays_out_the_board_scope_and_strips():
+    from plugins.flight_radar import pro_view
+
+    plugin = _plugin()
+    snapshot = _sample_snapshot()
+    snapshot["aircraft"] = [
+        {"callsign": "JBU115", "hex": "A1", "lat": 37.6196, "lon": -122.3802, "altitude_ft": 0, "on_ground": True,
+         "distance_nm": 0.1, "route": "JFK-SFO", "origin": "JFK", "destination": "SFO", "type": "A21N"},
+        {"callsign": "SKW5519", "hex": "A2", "lat": 37.55, "lon": -122.30, "altitude_ft": 3500, "speed_kt": 180,
+         "track": 300, "distance_nm": 4.2, "type": "E75L"},
+        {"callsign": "UAL1597", "hex": "A3", "lat": 37.68, "lon": -122.25, "altitude_ft": 9000, "speed_kt": 250,
+         "track": 280, "distance_nm": 6.1, "route": "CMH-SFO", "origin": "CMH", "destination": "SFO", "type": "B738",
+         "registration": "N76533"},
+    ]
+    snapshot["metar"] = flight_radar_module.parse_metar(METAR_ROWS)
+    snapshot["airports"] = {"SFO": {"kind": "gdp", "minutes": 63, "reason": "low ceilings"}}
+
+    ordered, _center = pro_view.strip_order(plugin, snapshot)
+    # Airborne with a route, then airborne without, then on the ground.
+    assert [plane["callsign"] for plane in ordered] == ["UAL1597", "SKW5519", "JBU115"]
+    assert pro_view._route(plugin, ordered[0]).endswith("SFO")
+    # Official marks are bundled with transparent backgrounds: airlines' wordmarks and the airports' logos.
+    united = pro_view.airline_logo("UAL", 64, 28)
+    assert united is not None and united.mode == "RGBA" and united.getpixel((0, 0))[3] == 0
+    assert pro_view.airline_logo("ZZZ", 64, 28) is None
+    assert all(pro_view.airport_logo(code, 16, 64) is not None for code in flight_radar_module.FAA_AIRPORTS)
+
+    now = datetime(2026, 10, 25, 9, 12, tzinfo=flight_radar_module.ZoneInfo("America/Los_Angeles"))
+    image = plugin._render(snapshot, (800, 480), {"_inkypi_theme": _canonical_theme("day")}, now)
+    theme = plugin._theme(_canonical_theme("day"))
+
+    assert image.size == (800, 480)
+    # SFO's IFR chip is red on the airport board.
+    x0, y0, _x1, _y1 = pro_view.BOARD
+    chip = [image.getpixel((x, y0 + 12)) for x in range(int(x0) + 62, int(x0) + 100)]
+    assert theme["red"] in chip
+    # The classic layout is still there when asked for.
+    classic = plugin._render(snapshot, (800, 480), {"_inkypi_theme": _canonical_theme("day"), "layout": "classic"}, now)
+    assert classic.tobytes() != image.tobytes()

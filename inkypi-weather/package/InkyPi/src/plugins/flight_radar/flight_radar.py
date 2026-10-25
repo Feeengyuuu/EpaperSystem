@@ -49,7 +49,7 @@ DEFAULT_MAX_AIRCRAFT = 90
 DEFAULT_LOCAL_MAP_IMAGE = "sfo_bay_map_crop.png"
 MAP_IMAGE_LIMITS = ImageLimits(max_bytes=4 * 1024 * 1024)
 DEFAULT_ROUTE_CACHE_SECONDS = 1800
-DEFAULT_ROUTE_LOOKUP_LIMIT = 12
+DEFAULT_ROUTE_LOOKUP_LIMIT = 16
 ROUTE_CACHE_SCHEMA_VERSION = "flight-radar-routes-v2"
 TRACK_HISTORY_SCHEMA_VERSION = "flight-radar-track-history-v1"
 DEFAULT_TRACK_HISTORY_SECONDS = 45 * 60
@@ -105,6 +105,11 @@ FAA_USABLE_SECONDS = 2 * 3600
 # Closures limited to general aviation (transient GA, prior permission) do not touch airline flights.
 FAA_GA_ONLY = re.compile(r"\b(?:GA|TRANSIENT|PPR)\b")
 FAA_SEVERITY = {"closed": 4, "stop": 3, "gdp": 2, "delay": 1}
+# The airports' latest METARs (aviationweather.gov, keyless): flight category, wind, visibility,
+# ceiling and temperature for the header's airport board.
+METAR_URL = "https://aviationweather.gov/api/data/metar"
+METAR_FRESH_SECONDS = 600
+METAR_USABLE_SECONDS = 3 * 3600
 
 SOURCE_LABELS = {
     "adsb_lol": "ADSB.lol",
@@ -336,6 +341,7 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
         if self._bool_setting(settings.get("_theme_render_only"), False):
             snapshot = self._get_cached_snapshot_for_theme(settings)
             snapshot["airports"] = self._airport_status(time.time(), allow_network=False)
+            snapshot["metar"] = self._metar_status(time.time(), allow_network=False)
             snapshot_time = self._snapshot_time(snapshot, device_config)
             return attach_source_provenance(
                 self._render(snapshot, dimensions, settings, snapshot_time, device_config),
@@ -345,6 +351,7 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
         now = self._now(device_config)
         snapshot = self._get_snapshot(settings, device_config, now)
         snapshot["airports"] = self._airport_status(time.time(), allow_network=True)
+        snapshot["metar"] = self._metar_status(time.time(), allow_network=True)
         self._write_radar_context(snapshot, now)
         warning = str(snapshot.get("warning") or "").upper()
         if warning == "STALE CACHE":
@@ -382,6 +389,32 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
             raise
         except Exception as exc:
             logger.warning("FlightRadar FAA status failed: %s", type(exc).__name__)
+            return cached["airports"] if usable else None
+
+    def _metar_status(self, now_ts, *, allow_network):
+        """{airport: weather} from the airports' latest METARs, kept METAR_FRESH_SECONDS and used
+        up to METAR_USABLE_SECONDS when the feed fails; None when there is nothing usable."""
+        path = _runtime_cache_dir() / "metar_status.json"
+        cached = self._read_json(path)
+        age = now_ts - float(cached.get("fetched_at") or 0)
+        usable = isinstance(cached.get("airports"), dict) and -300 <= age <= METAR_USABLE_SECONDS
+        if usable and (age < METAR_FRESH_SECONDS or not allow_network):
+            return cached["airports"]
+        if not allow_network:
+            return None
+        try:
+            response = self._client().request_json(
+                "GET", METAR_URL, headers=HTTP_HEADERS, timeout=(4, 8), max_bytes=256 * 1024,
+                params={"ids": ",".join("K" + code for code in FAA_AIRPORTS), "format": "json"})
+            airports = parse_metar(response.data)
+            if not airports:
+                raise ValueError("no METAR for the Bay airports")
+            self._write_json(path, {"fetched_at": now_ts, "airports": airports})
+            return airports
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("FlightRadar METAR failed: %s", type(exc).__name__)
             return cached["airports"] if usable else None
 
     def _get_cached_snapshot_for_theme(self, settings):
@@ -800,7 +833,9 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
 
         candidates = []
         seen = set()
-        for plane in aircraft:
+        # Flights in the air first (nearest first, as the list comes): the strips and data blocks
+        # show them, while the aircraft parked at the gates rarely need a route.
+        for plane in sorted(aircraft, key=lambda item: bool((item or {}).get("on_ground"))):
             callsign = self._route_candidate_callsign(plane)
             if not callsign or callsign in seen:
                 continue
@@ -1047,6 +1082,11 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
         return image
 
     def _render_horizontal(self, draw, image, snapshot, width, height, theme, now, settings, device_config=None):
+        if (width, height) == (800, 480) and str((settings or {}).get("layout") or "pro").lower() != "classic":
+            from .pro_view import render_pro
+
+            render_pro(self, image, snapshot, theme, now, settings or {}, device_config)
+            return
         margin = 16
         top_h = 66
         bottom_h = 38
@@ -2536,3 +2576,40 @@ def faa_label(problem):
     if kind == "delay":
         return f"延误{minutes}分" if minutes else "延误"
     return "正常"
+
+
+def _metar_number(value):
+    try:
+        number = float(str(value).rstrip("+"))
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def parse_metar(rows):
+    """aviationweather.gov's METAR JSON as {airport: {category, wind_dir, wind_kt, gust_kt,
+    visibility, ceiling_ft, temp_c, raw}} for FAA_AIRPORTS (keyed by their IATA codes); the
+    ceiling is the lowest broken or overcast layer."""
+    found = {}
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        code = str(row.get("icaoId") or "").upper()[-3:]
+        if code not in FAA_AIRPORTS or str(row.get("icaoId") or "").upper() != "K" + code:
+            continue
+        layers = [layer for layer in row.get("clouds") or [] if isinstance(layer, dict)
+                  and str(layer.get("cover") or "").upper() in ("BKN", "OVC", "OVX")]
+        bases = [_metar_number(layer.get("base")) for layer in layers]
+        bases = [base for base in bases if base is not None]
+        direction = row.get("wdir")
+        found[code] = {
+            "category": str(row.get("fltCat") or "").upper()[:4],
+            "wind_dir": "VRB" if str(direction).upper() == "VRB" else _metar_number(direction),
+            "wind_kt": _metar_number(row.get("wspd")),
+            "gust_kt": _metar_number(row.get("wgst")),
+            "visibility": str(row.get("visib") or "")[:6],
+            "ceiling_ft": min(bases) if bases else None,
+            "temp_c": _metar_number(row.get("temp")),
+            "raw": str(row.get("rawOb") or "")[:160],
+        }
+    return found
