@@ -21651,3 +21651,17 @@ def test_lol_sidebar_countdown_and_result_colours():
     assert SportsDashboard._lpl_result_colours({"wins_a": 0, "wins_b": 1}) == (COLORS["muted"], COLORS["text"])
     assert SportsDashboard._lpl_result_colours({"wins_a": 2, "wins_b": 1}) == (COLORS["text"], COLORS["muted"])
     assert SportsDashboard._lpl_result_colours({}) == (COLORS["text"], COLORS["text"])
+
+
+def test_a_wide_spare_band_under_the_live_wall_fills_with_several_scenes():
+    plugin = _plugin()
+    image = Image.new("RGB", (520, 80), COLORS["paper"])
+
+    plugin._draw_wall_band(image, ImageDraw.Draw(image), (0, 0, 519, 79), "NFL")
+
+    columns = [x for x in range(520) if any(image.getpixel((x, y)) not in (COLORS["panel"], COLORS["paper"], COLORS["line"])
+                                             for y in range(8, 72, 4))]
+    assert columns and columns[0] < 90 and columns[-1] > 430
+    # The art spreads across the band: no stretch of a third of it is left empty.
+    gaps = [b - a for a, b in zip(columns, columns[1:])]
+    assert max(gaps) < 170

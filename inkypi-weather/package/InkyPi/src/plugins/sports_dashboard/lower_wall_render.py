@@ -16,6 +16,8 @@ WALL_ROW_HEIGHT = 26
 WALL_TAG_WIDTH = 26
 WALL_FEATURE_HEIGHT = 56
 WALL_COLUMN_GAP = 8
+# A spare band's scenes may shrink to this share of its height to fit one more across it.
+WALL_BAND_MIN_SCALE = 0.72
 # Below this width the control-room strip in the header is left out rather than shrunk.
 WALL_CONTROL_ROOM_MIN_WIDTH = 170
 # Up to six remaining games get a small card each (three per row); more use rows.
@@ -194,7 +196,7 @@ class LowerWallRenderMixin:
             self._draw_vertical_split(draw, x1 + column_w + WALL_COLUMN_GAP // 2 + 2, top, top + rows * WALL_ROW_HEIGHT - 2)
         band_top = top + rows * WALL_ROW_HEIGHT + 4
         if y2 - band_top >= 28:
-            self._draw_wall_placeholder(image, draw, (x1, band_top, x2, y2), sports[0])
+            self._draw_wall_band(image, draw, (x1, band_top, x2, y2), sports[0])
         for column in range(2):
             left = x1 + column * (column_w + WALL_COLUMN_GAP)
             for row in range(rows):
@@ -226,6 +228,37 @@ class LowerWallRenderMixin:
             else:
                 self._draw_wall_placeholder(image, draw, tile, decor[(index - len(games)) % len(decor)])
         return len(games)
+
+    def _draw_wall_band(self, image, draw, box, sport):
+        """A wide spare band under the board, filled with the league's mascot scenes side by side:
+        as many as fit while they stay at least WALL_BAND_MIN_SCALE of the band's height, spread
+        evenly; one centred scene otherwise."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        height, room = max(1, y2 - y1 - 10), x2 - x1 - 12
+        loaded = []
+        for path in LOCAL_WALL_BAND_ART_PATHS.get(str(sport or "").upper(), ()):
+            art = self._load_local_logo(path, (x2 - x1, height), alpha_threshold=8) if os.path.exists(path) else None
+            if art is not None:
+                loaded.append(art)
+        scenes, scale = [], 1.0
+        for count in range(len(loaded), 1, -1):
+            fit = min(1.0, (room - 8 * (count - 1)) / sum(art.width for art in loaded[:count]))
+            if fit >= WALL_BAND_MIN_SCALE:
+                scenes, scale = loaded[:count], fit
+                break
+        if len(scenes) < 2:
+            self._draw_wall_placeholder(image, draw, box, sport)
+            return
+        if scale < 1.0:
+            scenes = [scene.resize((max(1, round(scene.width * scale)), max(1, round(scene.height * scale))),
+                                   Image.Resampling.LANCZOS) for scene in scenes]
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=5, fill=COLORS["panel"], outline=COLORS["line"], width=1)
+        spare = (x2 - x1 - 12) - sum(scene.width for scene in scenes)
+        gap = spare / (len(scenes) + 1)
+        x = x1 + 6 + gap
+        for scene in scenes:
+            image.paste(scene, (round(x), y1 + (y2 - y1 - scene.height) // 2), scene)
+            x += scene.width + gap
 
     def _draw_wall_placeholder(self, image, draw, box, sport):
         """A quiet slot with the league's player art, so an empty space still reads as sport."""

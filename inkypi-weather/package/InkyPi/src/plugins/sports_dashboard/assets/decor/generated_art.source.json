@@ -8,7 +8,8 @@
     "mlb_ballpark_strip.png": "full colour, pasted in the MLB card's spare band",
     "*_spare_filler.png": "full colour mascot spot art for the space under a short ticker or scoreboard column",
     "*_wall_slot_filler.png": "full colour mascot scene for an empty live-wall tile or a short, wide spare band",
-    "club_supporters_strip.png": "fills the room between a club or CSL page's fixtures and results, contained and standing on its floor"
+    "club_supporters_strip.png": "fills the room between a club or CSL page's fixtures and results, contained and standing on its floor",
+    "*_band_*_filler.png": "full colour mascot scenes laid side by side with the wall slot filler to fill a wide spare band"
   },
   "assets": {
     "club_pl_header_cutout.png": {
@@ -160,6 +161,26 @@
       "size": [
         720,
         98
+      ]
+    },
+    "nfl_band_pass_filler.png": {
+      "scene": "football mascot in a helmet throwing a pass, referee-whistle mascot, first-down marker",
+      "job_id": "c0dfc1e7-ca67-40ea-a63c-c71379915634",
+      "source_sha256": "c3f69eb063e9110ef2f17a5a891b28363a202baf21e1d74a856afb6046955067",
+      "sha256": "caf2d85c50aa66ddad69360afffa052885134a46c17ca7cd6caf7f7db695c371",
+      "size": [
+        580,
+        160
+      ]
+    },
+    "nfl_band_cheer_filler.png": {
+      "scene": "football mascot with a foam finger, sports-drink cooler, scoreboard post, nachos",
+      "job_id": "d5d928ab-3d0d-429e-809b-d4bbac758f46",
+      "source_sha256": "f1e36c643c7640df42a72641b8421adcd36b888f0f7f33fb6645061b37b03bd8",
+      "sha256": "76308caf94e0c46d2e3f3b74776efec2448e3806bb070bf8ab557cef4ba24293",
+      "size": [
+        514,
+        160
       ]
     }
   },

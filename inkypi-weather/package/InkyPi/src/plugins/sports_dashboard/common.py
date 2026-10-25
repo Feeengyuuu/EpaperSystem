@@ -439,6 +439,18 @@ LOCAL_WALL_SLOT_FILLER_PATHS = {
     sport: os.path.join(LOCAL_DECOR_DIR, f"{art}_wall_slot_filler.png")
     for sport, art in (("NBA", "nba"), ("WNBA", "wnba"), ("MLB", "mlb"), ("NFL", "nfl"), ("NCAA", "nfl"))
 }
+# A wide spare band under the live wall: these scenes side by side, as many as fit (the slot
+# filler first, then the league's other mascot scenes).
+LOCAL_WALL_BAND_ART_PATHS = {
+    sport: [os.path.join(LOCAL_DECOR_DIR, name) for name in names]
+    for sport, names in (
+        ("NFL", ("nfl_wall_slot_filler.png", "nfl_band_pass_filler.png", "nfl_band_cheer_filler.png", "football_spare_filler.png")),
+        ("NCAA", ("nfl_wall_slot_filler.png", "nfl_band_pass_filler.png", "nfl_band_cheer_filler.png", "football_spare_filler.png")),
+        ("MLB", ("mlb_wall_slot_filler.png", "mlb_spare_filler.png")),
+        ("NBA", ("nba_wall_slot_filler.png", "basketball_spare_filler.png")),
+        ("WNBA", ("wnba_wall_slot_filler.png", "basketball_spare_filler.png")),
+    )
+}
 # The live wall's generated header: its LIVE NOW wordmark and the control-room strip beside it.
 LOCAL_LIVE_NOW_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "live_now_wordmark.png")
 LOCAL_LIVE_WALL_CONTROL_ROOM_PATH = os.path.join(LOCAL_DECOR_DIR, "live_wall_control_room.png")
