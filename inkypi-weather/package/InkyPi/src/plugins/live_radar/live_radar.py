@@ -285,6 +285,8 @@ STATUS_RANK = {
     "error": 3,
 }
 
+# The favourite star at the right of a live card's text panel.
+CARD_BODY_FAV_SIZE = 26
 FAVORITE_PRIORITY = {
     ("bilibili", "545318"): 0,  # Mr.Quin stays first inside the favorites group.
     ("kick", "quin3614"): 1,  # ... with his Kick channel right behind.
@@ -1855,7 +1857,10 @@ class LiveRadar(BasePlugin):
                 ink=ink,
                 outline=ink,
             ) - 6
-        if card.get("is_fav"):
+        # With a snapshot the favourite star sits at the right of the text panel below it, balancing
+        # the avatar on its left; without one it stays beside the live badge.
+        fav_in_body = bool(card.get("is_fav")) and bool(snapshot_h)
+        if card.get("is_fav") and not fav_in_body:
             self._draw_icon_badge(
                 image,
                 draw,
@@ -1889,6 +1894,20 @@ class LiveRadar(BasePlugin):
             )
             text_x = avatar_x + avatar_size + 9
             text_w = max(20, x + w - pad - text_x)
+        if fav_in_body:
+            star = CARD_BODY_FAV_SIZE
+            star_right = x + w - pad
+            star_top = int((text_top + text_bottom - star) / 2)
+            self._draw_icon_badge(
+                image,
+                draw,
+                (star_right - star, star_top, star_right, star_top + star),
+                "fav",
+                fill=fill,
+                ink=ink,
+                outline=muted,
+            )
+            text_w = max(20, star_right - star - 8 - text_x)
         owner_text = self._card_display_name(card)
         body_font = self._fit_font(draw, owner_text, text_w, 16 if snapshot_h else 22, 10, "bold")
         owner = self._fit_text(draw, owner_text, body_font, text_w)
