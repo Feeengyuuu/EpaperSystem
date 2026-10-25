@@ -211,3 +211,18 @@ def test_the_lol_card_shows_the_newest_pro_game_or_falls_back_to_ranked(plugin, 
 
     assert gold in tag_area(pro) and gold not in tag_area(ranked)
     assert LoLInfo({"id": "lol_info"})._lane_label("Invalid") == ""
+
+
+def test_the_identity_rows_show_the_teams_league_logo_and_the_servers_flag(plugin):
+    flag = Image.new("RGB", (40, 27), (200, 30, 160))
+    plugin._image_from_url = lambda url, label="": flag.copy() if str(url).endswith("flagcdn.com/w40/kr.png") else None
+    colors = plugin._render_colors({"mode": "night"})
+    image = Image.new("RGB", (800, 480), colors["background"])
+    account = {"label": "Faker", "team": "T1", "role": "MID", "gameName": "Hide on bush", "tagLine": "KR1",
+               "platformRoute": "kr"}
+
+    plugin._draw_lol_identity(image, ImageDraw.Draw(image), account, (150, 10, 240), colors, plugin._pro_fonts())
+
+    assert (200, 30, 160) in set(image.crop((150, 120, 400, 150)).get_flattened_data())
+    for league in set(pro_render.TEAM_LEAGUES.values()):
+        assert plugin._asset_logo(f"leagues/{league}.png", pro_render.LEAGUE_MARK) is not None

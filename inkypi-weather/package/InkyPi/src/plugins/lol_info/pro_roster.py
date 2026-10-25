@@ -49,6 +49,12 @@ LOL_ALT_ACCOUNTS = {
 
 ROLE_LABELS = {"TOP": "上单", "JUNGLE": "打野", "MID": "中单", "BOTTOM": "下路", "SUPPORT": "辅助"}
 
+# The league each tracked team plays in (its logo in assets/leagues), and each account server's
+# flag (flagcdn code) and Chinese name.
+TEAM_LEAGUES = {"T1": "lck", "GEN": "lck", "HLE": "lck", "DK": "lck", "BLG": "lpl", "TES": "lpl", "G2": "lec"}
+SERVER_FLAGS = {"kr": ("kr", "韩服"), "euw1": ("eu", "欧服"), "eun1": ("eu", "欧服"), "na1": ("us", "美服"),
+                "jp1": ("jp", "日服")}
+
 # lolesports.com team ids whose official rosters carry each pro's photo.
 LOLESPORTS_TEAM_SLUGS = {"T1": "t1", "GEN": "geng", "HLE": "hanwha-life-esports", "DK": "dwg-kia",
                          "BLG": "bilibili-gaming", "TES": "top-esports", "G2": "g2-esports"}

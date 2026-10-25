@@ -166,5 +166,23 @@
     "source": "https://www.hltv.org/img/static/TopSmallLogo2x.png",
     "owner": "HLTV.org (the site's own logo)",
     "sha256": "c039d4a7bca50d1e4853f2e638578e54bf897aafad7d8e55fe699850ccfa2b89"
+  },
+  "leagues/lck.png": {
+    "source": "http://static.lolesports.com/leagues/lck-color-on-black.png",
+    "owner": "Riot Games (LCK league logo for dark pages, lolesports.com getLeagues)",
+    "sha256": "455677ede94ad1a7608d6e0c8ed5f0949374c28cea02f2a12d96169a0714b0a2",
+    "processing": "transparent margins trimmed, scaled to fit 96 px"
+  },
+  "leagues/lpl.png": {
+    "source": "http://static.lolesports.com/leagues/1592516115322_LPL-01-FullonDark.png",
+    "owner": "Riot Games (LPL league logo for dark pages, lolesports.com getLeagues)",
+    "sha256": "8a6974edbc713105e672348247ea9f9e73dde3317720df528cd7794fe68fff45",
+    "processing": "transparent margins trimmed, scaled to fit 96 px"
+  },
+  "leagues/lec.png": {
+    "source": "http://static.lolesports.com/leagues/1592516184297_LEC-01-FullonDark.png",
+    "owner": "Riot Games (LEC league logo for dark pages, lolesports.com getLeagues)",
+    "sha256": "9f31aa4ca0227b2878f1f38b5c55efc8c2eb6ca4bcea68e5546e584070d093f1",
+    "processing": "transparent margins trimmed, scaled to fit 96 px"
   }
 }

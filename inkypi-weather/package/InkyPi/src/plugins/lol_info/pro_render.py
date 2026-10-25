@@ -26,7 +26,7 @@ from utils.fonts import load_font
 from . import lolesports_pro
 from .bo3_stats import MAP_NAMES, WIN_DAYS
 from .hltv_players import ROLE_NAMES as CS2_ROLES
-from .pro_roster import ROLE_LABELS
+from .pro_roster import ROLE_LABELS, SERVER_FLAGS, TEAM_LEAGUES
 from .pro_tracker import LOL_FORM_AXES
 
 HERO_H = 152
@@ -36,6 +36,8 @@ HERO_H = 152
 PHOTO_BOX = (190, HERO_H - 6)
 GAME_LOGO_COLUMN = (406, 548)
 INFO_LABEL_W = 34
+# The team's league logo and the account server's flag fit these boxes in the identity rows.
+LEAGUE_MARK, SERVER_FLAG = (40, 18), (22, 15)
 # Leaguepedia's face for a player's ID (Rubik, SIL OFL).
 ID_FONT = "fonts/Rubik-Bold.ttf"
 # The splash keeps the band's framing and runs on down the page under the boards, dimmed,
@@ -337,6 +339,11 @@ class ProRenderMixin:
                 image.paste(logo, (x, y + 8 - logo.height // 2), logo)
                 x += logo.width + 6
             self._single(draw, (x, y), team, fonts["body"], colors["ink"], right - x, 9)
+            # The team's league logo follows its name.
+            league = TEAM_LEAGUES.get(team.upper())
+            mark = self._asset_logo(f"leagues/{league}.png", LEAGUE_MARK) if league else None
+            if mark:
+                image.paste(mark, (x + self._text_width(draw, team, fonts["body"]) + 8, y + 9 - mark.height // 2), mark)
             y += 24
         role = str(account.get("role") or "")
         if ROLE_LABELS.get(role):
@@ -349,15 +356,25 @@ class ProRenderMixin:
             self._text(draw, (x, y), ROLE_LABELS[role], fonts["body"], colors["ink"])
             y += 24
         label("账号")
-        server = str(account.get("platformRoute") or "").upper()
-        chip_w = self._text_width(draw, server, fonts["tiny"]) + 10 if server else 0
+        # The server the account plays on: its flag and Chinese name after the Riot ID.
+        server = str(account.get("platformRoute") or "").lower()
+        flag_code, server_name = SERVER_FLAGS.get(server, ("", server.upper()))
+        flag = self._image_from_url(f"https://flagcdn.com/w40/{flag_code}.png", flag_code) if flag_code else None
+        if flag is not None:
+            flag = ImageOps.contain(flag.convert("RGBA"), SERVER_FLAG, method=Image.Resampling.LANCZOS)
+        tail_w = (flag.width + 4 if flag is not None else 0) + (self._text_width(draw, server_name, fonts["small"])
+                                                                if server_name else 0)
         riot_id = f"{account.get('gameName', '')} #{account.get('tagLine', '')}"
-        fitted = self._fit_font(draw, riot_id, fonts["text"], right - value_x - chip_w - 6, 8)
+        fitted = self._fit_font(draw, riot_id, fonts["text"], right - value_x - tail_w - 8, 8)
         draw.text((value_x, y + 1), riot_id, font=fitted, fill=colors["ink"])
-        if server:
-            x = value_x + self._text_width(draw, riot_id, fitted) + 6
-            draw.rounded_rectangle((x, y + 1, x + chip_w, y + 16), radius=4, outline=colors["rule"])
-            self._text(draw, (x + 5, y + 3), server, fonts["tiny"], colors["muted"])
+        x = value_x + self._text_width(draw, riot_id, fitted) + 8
+        if flag is not None:
+            image.paste(flag, (x, y + 9 - flag.height // 2), flag)
+            draw.rectangle((x, y + 9 - flag.height // 2, x + flag.width - 1, y + 8 + flag.height - flag.height // 2),
+                           outline=self._blend(colors["rule"], colors["panel"], 0.5))
+            x += flag.width + 4
+        if server_name:
+            self._text(draw, (x, y + 2), server_name, fonts["small"], colors["muted"])
 
     def _draw_tactical_frame(self, image, draw, colors):
         """The left card's tactical screen: the frosted panel, a dotted grid behind the chart column,
