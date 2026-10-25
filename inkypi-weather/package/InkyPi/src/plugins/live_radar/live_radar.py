@@ -23,7 +23,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
-from plugins.live_radar import comic_art, placeholder_art, strip_art
+from plugins.live_radar import comic_art, placeholder_art
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
@@ -1481,8 +1481,6 @@ class LiveRadar(BasePlugin):
 
     def _render_dashboard(self, cards, dimensions, theme, generated_at, from_cache, warning, layout=None):
         width, height = dimensions
-        theme = {**theme, "strip_seed": generated_at.astimezone(timezone.utc).strftime("%Y%m%d%H")
-                 + str(generated_at.minute // 10)}
         image = Image.new("RGB", dimensions, theme["bg"])
         draw = ImageDraw.Draw(image)
         layout = layout or {}
@@ -1601,8 +1599,7 @@ class LiveRadar(BasePlugin):
         live_queue_count = self._live_queue_visible_count(live_queue_box, len(queued_live_cards), live_queue_max)
 
         if live_cards:
-            self._draw_section_title(image, draw, margin, top_label_y, "LIVE NOW", len(live_cards), theme, sub_font,
-                                     strip_right=width - margin)
+            self._draw_section_title(image, draw, margin, top_label_y, "LIVE NOW", len(live_cards), theme, sub_font)
             live_visible = live_cards[:live_limit]
             gap = max(8, int(width * 0.012))
             card_w = int((width - 2 * margin - gap * (len(live_visible) - 1)) / len(live_visible))
@@ -2015,8 +2012,7 @@ class LiveRadar(BasePlugin):
     ):
         x, y, w, h = box
         sub_font = self._font(13, "bold")
-        self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font,
-                                 strip_right=self._section_strip_right(draw, x + w, cards, sub_font))
+        self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font)
         content_y = y + 24
         if not cards:
             self._rounded_rectangle(
@@ -2072,8 +2068,7 @@ class LiveRadar(BasePlugin):
         """Slim OFFLINE beside a wide cover wall: one frame, a row per streamer."""
         x, y, w, h = box
         sub_font = self._font(13, "bold")
-        self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font,
-                                 strip_right=self._section_strip_right(draw, x + w, cards, sub_font))
+        self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font)
         left, top, right, bottom = int(x), int(y + 24), int(x + w), int(y + h)
         if not cards:
             self._rounded_rectangle(draw, (left, top, right, bottom), radius=LIVE_QUEUE_RADIUS,
@@ -2167,8 +2162,7 @@ class LiveRadar(BasePlugin):
         leaves spare cells empty instead of the who-is-live tile."""
         x, y, w, h = box
         sub_font = self._font(13, "bold")
-        self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font,
-                                 strip_right=self._section_strip_right(draw, x + w, cards, sub_font))
+        self._draw_section_title(image, draw, x, y, title, len(cards), theme, sub_font)
         content_y = y + 24
         content_h = max(1, h - 24)
         if not cards:
@@ -2772,16 +2766,9 @@ class LiveRadar(BasePlugin):
         draw.line((x + 24, y + h - 34, x + w - 24, y + h - 34), fill=theme["line"], width=2)
         draw.text((x + 24, y + h - 27), "Waiting for the next broadcast window", fill=theme["muted"], font=self._font(13))
 
-    @staticmethod
-    def _section_strip_right(draw, right, cards, font):
-        """Where a section's title strip ends: short of the widest "+N" the section could show."""
-        if not cards:
-            return right
-        return right - draw.textlength(f"+{len(cards)}", font=font) - 10
-
-    def _draw_section_title(self, image, draw, x, y, title, count, theme, font, strip_right=None):
+    def _draw_section_title(self, image, draw, x, y, title, count, theme, font):
         if theme.get("comic"):
-            return self._draw_comic_section_title(image, draw, x, y, title, count, theme, font, strip_right)
+            return self._draw_comic_section_title(image, draw, x, y, title, count, theme, font)
         title_w = self._paste_section_title_wordmark(image, x, y, title, theme)
         if title_w is None:
             draw.text((x, y), title, fill=theme["ink"], font=font)
@@ -2799,9 +2786,8 @@ class LiveRadar(BasePlugin):
             outline=theme["ink"],
         )
 
-    def _draw_comic_section_title(self, image, draw, x, y, title, count, theme, font, strip_right=None):
-        """The title on a tab in the page's ink, its count in a coloured circle, and the
-        section's sticker parade in the strip up to ``strip_right``."""
+    def _draw_comic_section_title(self, image, draw, x, y, title, count, theme, font):
+        """The title on a tab in the page's ink and its count in a coloured circle."""
         normalized = str(title or "").upper()
         comic = comic_art.roles(theme)
         target_w, _target_h = SECTION_TITLE_WORDMARK_SIZES.get(normalized, SECTION_TITLE_WORDMARK_SIZE)
@@ -2814,10 +2800,6 @@ class LiveRadar(BasePlugin):
         count_text = str(count)
         radius = max(10, int(draw.textlength(count_text, font=font) / 2) + 5)
         comic_art.count_badge(draw, (x + title_w + 5 + radius, y + 8), count_text, font, fill, comic["ink"])
-        if strip_right is not None:
-            strip_left = x + title_w + 5 + 2 * radius + 12
-            strip_art.parade(image, (strip_left, y - 3, strip_right, y + 19), normalized,
-                             theme.get("strip_seed", ""), comic["ink"], theme["bg"], count)
 
     def _paste_section_title_wordmark(self, image, x, y, title, theme):
         normalized = str(title or "").upper()
