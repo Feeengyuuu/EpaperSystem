@@ -77,7 +77,7 @@ os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from utils.fonts import load_font
-from utils.app_utils import get_font
+from utils.app_utils import get_base_ui_font, get_font
 from utils.image_utils import text_width
 from utils.massive_market_data import (
 	MassiveMarketData,
@@ -205,6 +205,27 @@ HOLDING_COLUMNS = {
 	"trend": (0.835, 0.915),
 	"window": 1.0,
 }
+# What kind of investment each holding is; the table groups its rows by kind. Unlisted symbols
+# are "other", cash is "cash".
+HOLDING_CATEGORY_BY_SYMBOL = {
+	"AAPL": "tech", "AMZN": "tech", "FIG": "tech", "GOOG": "tech", "GOOGL": "tech", "MSFT": "tech", "NVDA": "tech",
+	"NTDOY": "games", "TTWO": "games",
+	"SPCX": "mobility", "TSLA": "mobility",
+	"SPY": "index", "VTI": "index", "VXUS": "index",
+	"VGIT": "bonds",
+}
+# Each kind: its name on the table's left rail and its colour (a key of the active palette).
+HOLDING_CATEGORIES = {
+	"tech": ("科技", "accent_blue"),
+	"games": ("游戏", "cinnabar"),
+	"mobility": ("出行", "accent_orange"),
+	"index": ("指数", "malachite"),
+	"bonds": ("债券", "accent_gold"),
+	"other": ("其他", "grid"),
+	"cash": ("现金", "muted"),
+}
+# The rail left of the rows: a bar in the kind's colour, its name, share of the portfolio and day.
+HOLDING_RAIL_W = 46
 
 _LEGACY_STOCK_COLORS = {
 	"mode": "day",
@@ -2203,9 +2224,12 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		self._draw_holdings_status(draw, (right - 14, top + 22), metrics, tracking_window_label)
 
 		table_left, table_right = left + 12, right - 12
-		columns = self._holding_column_positions(table_left + 16, table_right)
+		rows_left = table_left + HOLDING_RAIL_W
+		columns = self._holding_column_positions(rows_left + 16, table_right)
 		header_font = self._font(10, True)
 		header_center = top + 41
+		draw.text((table_left, self._centered_text_y(draw, "TYPE", header_font, header_center)), "TYPE", fill=colors["ink"],
+				  font=header_font)
 		for label, key, align in (
 			("SYMBOL", "symbol", "left"),
 			("PRICE", "price", "right"),
@@ -2224,8 +2248,8 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				# The rows follow today's impact: a small sort mark before the column's name.
 				draw.polygon(((x - 10, header_center - 2), (x - 4, header_center - 2), (x - 7, header_center + 2)),
 							 fill=colors["ink"])
-		rows_top = top + 50
-		draw.line((table_left, rows_top - 1, table_right, rows_top - 1), fill=colors["ink"], width=1)
+		rows_top = top + 51
+		self._draw_allocation_rule(draw, (table_left, rows_top - 4, table_right, rows_top - 1), metrics)
 
 		rows_bottom = bottom - 6
 		max_rows = int((rows_bottom - rows_top) // HOLDING_ROW_MIN_HEIGHT)
@@ -2247,16 +2271,26 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		if visible:
 			row_height = min((rows_bottom - rows_top) / len(visible), HOLDING_ROW_MAX_HEIGHT)
 			max_weight = max((item["weight"] for item in visible), default=0.0)
-			for index, item in enumerate(visible):
-				row_top = rows_top + index * row_height
-				self._draw_holding_row(
-					img,
-					draw,
-					(table_left, round(row_top), table_right, round(row_top + row_height)),
-					item,
-					columns,
-					max_weight,
-				)
+			groups = self._holding_groups(visible, metrics)
+			index = 0
+			for group_index, (category, items, weight, day_percent) in enumerate(groups):
+				group_top = round(rows_top + index * row_height)
+				for item in items:
+					row_top = rows_top + index * row_height
+					self._draw_holding_row(
+						img,
+						draw,
+						(rows_left, round(row_top), table_right, round(row_top + row_height)),
+						item,
+						columns,
+						max_weight,
+					)
+					index += 1
+				group_bottom = round(rows_top + index * row_height)
+				self._draw_holding_rail(draw, (table_left, group_top, rows_left - 4, group_bottom), category, weight,
+										day_percent)
+				if group_index < len(groups) - 1:
+					draw.line((table_left, group_bottom - 1, table_right, group_bottom - 1), fill=colors["ink"], width=1)
 
 		if hidden:
 			self._draw_hidden_holdings_ticker(
@@ -2267,6 +2301,79 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				ticker_theme=ticker_theme,
 				theme_context=theme_context,
 			)
+
+	@staticmethod
+	def _holding_category(item):
+		if item["is_cash"]:
+			return "cash"
+		return HOLDING_CATEGORY_BY_SYMBOL.get(str(item["data"].get("symbol") or "").upper(), "other")
+
+	@classmethod
+	def _holding_groups(cls, visible, metrics):
+		"""The shown rows grouped by kind of investment: (kind, rows in their given order, the
+		kind's share of the portfolio %, its day change % or None), the largest kind first and
+		other then cash last. Shares and day count every holding of the kind, shown or not."""
+		rows, totals = {}, {}
+		for item in visible:
+			rows.setdefault(cls._holding_category(item), []).append(item)
+		for item in metrics:
+			total = totals.setdefault(cls._holding_category(item), {"weight": 0.0, "pl": 0.0, "base": 0.0, "known": False})
+			total["weight"] += item["weight"]
+			if item["day_pl"] is not None and not item["is_cash"]:
+				total["pl"] += item["day_pl"]
+				total["base"] += item["value"] - item["day_pl"]
+				total["known"] = True
+		order = sorted(rows, key=lambda kind: (kind == "cash", kind == "other", -totals[kind]["weight"]))
+		groups = []
+		for kind in order:
+			total = totals[kind]
+			day = total["pl"] / total["base"] * 100 if total["known"] and total["base"] else None
+			groups.append((kind, rows[kind], total["weight"], day))
+		return groups
+
+	def _draw_allocation_rule(self, draw, box, metrics):
+		"""The rule under the column names, as the portfolio's mix: one segment per kind of
+		investment in its colour, as wide as its share, in the table's group order."""
+		colors = _active_stock_colors()
+		left, top, right, bottom = box
+		groups = self._holding_groups(metrics, metrics)
+		total = sum(weight for _kind, _rows, weight, _day in groups)
+		if total <= 0:
+			draw.line((left, bottom, right, bottom), fill=colors["ink"], width=1)
+			return
+		x = float(left)
+		for kind, _rows, weight, _day in groups:
+			end = x + (right - left) * weight / total
+			colour_key = HOLDING_CATEGORIES.get(kind, HOLDING_CATEGORIES["other"])[1]
+			draw.rectangle((round(x), top, max(round(x), round(end) - 1), bottom), fill=colors[colour_key])
+			x = end
+		draw.line((left, bottom, right, bottom), fill=colors["ink"], width=1)
+
+	def _draw_holding_rail(self, draw, box, category, weight, day_percent):
+		"""A group's rail: a bar in its kind's colour beside the kind's name, then (room allowing)
+		its share of the portfolio and its day change."""
+		colors = _active_stock_colors()
+		left, top, right, bottom = box
+		label, colour_key = HOLDING_CATEGORIES.get(category, HOLDING_CATEGORIES["other"])
+		draw.rectangle((left, top + 2, left + 4, bottom - 3), fill=colors[colour_key])
+		text_left = left + 9
+		name_font, figure_font = get_base_ui_font(11, bold=True), self._font(10)
+		lines = [(label, name_font, None)]
+		height = bottom - top
+		if height >= 28:
+			lines.append((f"{weight:.0f}%" if weight >= 9.5 else f"{weight:.1f}%", figure_font, None))
+		if height >= 44 and day_percent is not None:
+			lines.append((f"{abs(day_percent):.1f}%", figure_font, day_percent))
+		line_h = 13
+		y = (top + bottom) / 2 - line_h * (len(lines) - 1) / 2
+		for text, font, change in lines:
+			x = text_left
+			if change is not None:
+				self._draw_change_arrow(draw, x, y, change, size=6)
+				x += 8
+			text = text if self._text_width(draw, text, font) <= right - x else text[:2]
+			draw.text((x, self._centered_text_y(draw, text, font, y)), text, fill=colors["ink"], font=font)
+			y += line_h
 
 	@staticmethod
 	def _holding_column_positions(left, right):

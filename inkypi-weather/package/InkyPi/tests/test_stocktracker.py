@@ -249,7 +249,8 @@ def test_smart_order_keeps_pinned_symbols_on_an_overflowing_table():
     plugin._create_dashboard(stock_data, (800, 480), holdings_pin_symbols="SPCX", ticker_theme="day")
 
     assert image.size == (800, 480)
-    assert tables[0] == "S00" and "SPCX" in tables and len(tables) < len(stock_data)
+    # SPCX's kind (mobility) leads; the unlisted symbols follow as "other", still in smart order.
+    assert tables[:2] == ["SPCX", "S00"] and len(tables) < len(stock_data)
 
 
 def test_value_order_is_still_available():
@@ -468,6 +469,40 @@ def _hidden_ticker_stock_data():
     return stock_data
 
 
+def test_holdings_group_by_kind_largest_first_with_their_share_and_day():
+    def item(symbol, weight, value, day_pl, is_cash=False):
+        return {"data": {"symbol": symbol}, "weight": weight, "value": value, "day_pl": day_pl, "is_cash": is_cash}
+
+    metrics = [
+        item("VTI", 20.0, 2000.0, 20.0),
+        item("NVDA", 30.0, 3000.0, -30.0),
+        item("AAPL", 25.0, 2500.0, -20.0),
+        item("XYZ", 3.0, 300.0, None),
+        item("CASH", 2.0, 200.0, None, is_cash=True),
+        item("VGIT", 20.0, 2000.0, 0.0),
+    ]
+    shown = metrics[:5]
+
+    groups = StockTracker._holding_groups(shown, metrics)
+
+    assert [kind for kind, *_rest in groups] == ["tech", "index", "other", "cash"]
+    kind, rows, weight, day = groups[0]
+    assert [row["data"]["symbol"] for row in rows] == ["NVDA", "AAPL"]
+    assert weight == 55.0 and round(day, 3) == round(-50 / 5550 * 100, 3)
+    # A kind without a day figure has none; VGIT counts in no shown group.
+    assert groups[2][3] is None and all(kind != "bonds" for kind, *_rest in groups)
+
+
+def test_holdings_rule_shows_the_portfolio_mix_in_kind_colours():
+    plugin = StockTracker({"id": "stocktracker"})
+    image = plugin._create_dashboard(_hidden_ticker_stock_data()[:11] + [_hidden_ticker_stock_data()[-1]], (800, 480),
+                                     ticker_theme="day")
+    rule = {image.getpixel((x, 246)) for x in range(30, 770)}
+
+    for colour in (stocktracker_module.ACCENT_BLUE, stocktracker_module.MALACHITE, stocktracker_module.CINNABAR):
+        assert colour in rule
+
+
 def test_stock_tracker_selects_day_and_night_ticker_palettes():
     assert StockTracker._ticker_theme_key("day") == "day"
     assert StockTracker._ticker_theme_key("night") == "night"
@@ -538,8 +573,10 @@ def test_stock_dashboard_lists_every_holding_that_fits_without_a_ticker():
     image = plugin._create_dashboard(stock_data, (800, 480), ticker_theme="day")
 
     assert len(rows_drawn) == 12
-    assert rows_drawn[0] == "SPCX"
     assert rows_drawn[-1] == "CASH"
+    # Rows of one kind of investment sit together.
+    kinds = [stocktracker_module.HOLDING_CATEGORY_BY_SYMBOL.get(symbol, "cash") for symbol in rows_drawn]
+    assert [kind for index, kind in enumerate(kinds) if index == 0 or kind != kinds[index - 1]] == list(dict.fromkeys(kinds))
     assert _region_near_color_count(image, PANEL_GOLD, TICKER_REGION, tolerance=8) < 500
 
 
@@ -1214,8 +1251,8 @@ def test_stock_auto_ticker_uses_pinned_mode_with_original_day_colors(monkeypatch
     assert plugin._ticker_theme_key("auto", night_theme) == "night"
     assert day.getpixel((0, 100)) == stocktracker_module.PAPER
     assert night.getpixel((0, 100)) == night_theme["palette"]["background"]
-    assert day.getpixel((40, 238)) == stocktracker_module.PANEL
-    assert night.getpixel((40, 238)) == night_theme["palette"]["panel"]
+    assert day.getpixel((22, 300)) == stocktracker_module.PANEL
+    assert night.getpixel((22, 300)) == night_theme["palette"]["panel"]
     ticker_region = TICKER_REGION
     assert _region_near_color_count(
         night,
