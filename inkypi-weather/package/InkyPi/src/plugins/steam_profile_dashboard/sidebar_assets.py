@@ -9,6 +9,8 @@ from utils.safe_image import ImageLimits, safe_open_image
 
 
 ASSET_ROOT = Path(__file__).resolve().parent / "assets" / "sidebar"
+STROKE_ROOT = Path(__file__).resolve().parent / "assets" / "name_strokes"
+STROKE_COUNT = 4
 ASSET_NAMES = frozenset({"games", "friends", "recent", "total", "badges", "xp"})
 _LIMITS = ImageLimits(max_bytes=8 * 1024 * 1024, max_width=2048,
                       max_height=2048, max_pixels=4_194_304,
@@ -31,6 +33,18 @@ def _source(name):
         # Retain only a small in-memory master for the 16–20 px display assets.
         cropped.thumbnail((128, 128), Image.Resampling.LANCZOS)
         return cropped
+    except (OSError, ValueError):
+        return None
+
+
+@lru_cache(maxsize=STROKE_COUNT)
+def name_stroke(index):
+    """One of the hand-painted name strokes (white paint on transparency), or None."""
+    if type(index) is not int or not 0 <= index < STROKE_COUNT:
+        return None
+    try:
+        with safe_open_image(STROKE_ROOT / f"stroke_{index + 1}.png", limits=_LIMITS) as opened:
+            return opened.convert("RGBA")
     except (OSError, ValueError):
         return None
 

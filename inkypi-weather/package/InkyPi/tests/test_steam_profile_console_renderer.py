@@ -1,5 +1,6 @@
 """Acceptance checks for the data-driven console, without network access."""
 
+import colorsys
 from collections import Counter
 from copy import deepcopy
 
@@ -163,16 +164,28 @@ def test_playing_row_badge_trails_off_between_the_name_and_hours(plugin, data, d
     assert all(box[0] > 509 and box[2] < 599 for box in badge)
 
 
-def test_persona_name_sits_on_an_accent_bordered_plate(plugin, data, displayed, monkeypatch):
-    # The navy console, so the plate's border is the default cyan accent.
+def test_persona_name_sits_on_a_painted_stroke_in_the_game_hue(plugin, data, displayed, monkeypatch):
+    # The navy console: the default cyan accent sets the paint's hue.
     monkeypatch.setattr(console_renderer, "game_palette", lambda _art: None)
     image = render_console(plugin, data, (800, 480))
-    x, y, right, bottom = console_renderer.NAMEPLATE_BOX
+    x, y, right, bottom = console_renderer.NAME_STROKE_BOX
     name = [box for box, text in displayed if text == "AshenOne"]
-    assert name and all(x < box[0] and box[2] < right and y < box[1] and box[3] < bottom for box in name)
-    # The plate's left edge is drawn in the accent colour, clear of the avatar frame.
-    edge = image.getpixel((x, (y + bottom) // 2))
-    assert max(abs(a - b) for a, b in zip(edge, CYAN)) < 40
+    assert name and all(x < box[0] and box[2] < right and y < box[1] and box[3] <= bottom for box in name)
+    # The paint is the strip's dominant vivid colour; the dark name sits on it.
+    vivid = [colorsys.rgb_to_hsv(*(channel / 255 for channel in image.getpixel((px, py))))
+             for px in range(x, right, 2) for py in range(y, bottom, 2)]
+    vivid = [hsv for hsv in vivid if hsv[1] >= 0.5 and hsv[2] >= 0.6]
+    assert len(vivid) > 200
+    hue = Counter(round(h, 2) for h, _s, _v in vivid).most_common(1)[0][0]
+    assert abs(hue - _hue(CYAN)) < 0.05
+
+
+def test_the_game_picks_the_stroke_shape(plugin, data, monkeypatch):
+    monkeypatch.setattr(console_renderer, "game_palette", lambda _art: None)
+    box = console_renderer.NAME_STROKE_BOX
+    first = render_console(plugin, dict(data, profile=dict(data["profile"], gameid="108600")), (800, 480))
+    other = render_console(plugin, dict(data, profile=dict(data["profile"], gameid="108601")), (800, 480))
+    assert ImageChops.difference(first.crop(box), other.crop(box)).getbbox() is not None
 
 
 def test_unknown_current_game_hours_are_not_filled_with_account_totals(plugin, data, displayed):
@@ -488,8 +501,6 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
 
 
 def _hue(colour):
-    import colorsys
-
     return colorsys.rgb_to_hsv(*(channel / 255 for channel in colour))[0]
 
 

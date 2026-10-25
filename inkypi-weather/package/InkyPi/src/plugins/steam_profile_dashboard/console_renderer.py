@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from plugins.steam_profile_dashboard.avatar_frame import AVATAR_BOX, AVATAR_SIZE, FRAME_ORIGIN
 from plugins.steam_profile_dashboard.rank_ladder import TIERS, rank_border, rank_for
-from plugins.steam_profile_dashboard.sidebar_assets import sidebar_asset
+from plugins.steam_profile_dashboard.sidebar_assets import STROKE_COUNT, name_stroke, sidebar_asset
 
 
 SIZE = (800, 480)
@@ -32,6 +32,8 @@ RAIL_SIZE = (181, 480)
 # The bordered plate behind the persona name and its STEAM PLAYER caption; it keeps the
 # left margin and the space above the name clear for the avatar frame.
 NAMEPLATE_BOX = (12, 175, 172, 228)
+# The hand-painted swipe under the persona name, in the same clear area.
+NAME_STROKE_BOX = (12, 175, 176, 211)
 # The ranked level card: the tier's promotion border round the level, and its ladder.
 RANK_BORDER_ORIGIN = (6, 234)
 RANK_BORDER_SIZE = 98
@@ -337,6 +339,27 @@ class _Console:
             else:
                 self.draw.polygon(diamond, fill=self.c["navy"], outline=self.c["border"])
 
+    def name_stroke(self, data):
+        """Paint a brush swipe under the name in the game's hue; the paint colour, or None.
+
+        The game being played (else the latest one) picks which of the strokes is used, so the
+        swipe changes with the game as its colour does.
+        """
+        profile = data.get("profile") or {}
+        recent = data.get("recent_games") or []
+        appid = _appid(profile.get("gameid")) or (_appid(recent[0].get("appid")) if recent else 0)
+        stroke = name_stroke(_number(appid) % STROKE_COUNT)
+        if stroke is None:
+            return None
+        x, y, right, bottom = NAME_STROKE_BOX
+        hue, saturation, _value = colorsys.rgb_to_hsv(*(channel / 255 for channel in self.c["accent"]))
+        paint = tuple(round(channel * 255) for channel in
+                      colorsys.hsv_to_rgb(hue, max(0.6, min(0.85, saturation * 2.2)), 0.9))
+        swipe = Image.new("RGBA", (right - x, bottom - y), (*paint, 255))
+        swipe.putalpha(stroke.resize(swipe.size, Image.Resampling.LANCZOS).getchannel("A"))
+        self.image.paste(swipe, (x, y), swipe)
+        return paint
+
     def nameplate(self, box):
         """A bordered plate under the persona name, so it stands out over any backdrop."""
         x, y, right, bottom = box
@@ -450,10 +473,12 @@ class _Console:
         self.draw.line((181, 0, 181, 480), fill=self.c["border"], width=2)
         url = profile.get("avatarfull") or profile.get("avatarmedium") or profile.get("avatar")
         self.framed_avatar(url)
-        self.nameplate(NAMEPLATE_BOX)
+        paint = self.name_stroke(data)
+        if paint is None:
+            self.nameplate(NAMEPLATE_BOX)
         self.text((19, 178, 166, 207), profile.get("personaname") or "Steam User",
-                  29, bold=True, min_size=18)
-        self.text((20, 210, 164, 223), "STEAM PLAYER", 10, self.c["muted"])
+                  29, self.c["canvas"] if paint is not None else WHITE, bold=True, min_size=18)
+        self.text((20, 212, 164, 225), "STEAM PLAYER", 10, self.c["muted"])
         self.draw.line((14, 230, 167, 230), fill=self.c["border"])
         self.rank_card(data)
         owned = data.get("owned_games") or []
