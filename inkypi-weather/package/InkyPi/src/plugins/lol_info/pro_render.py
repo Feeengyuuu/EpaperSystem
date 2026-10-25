@@ -19,6 +19,7 @@ from functools import lru_cache
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 from .hltv_players import ROLE_LABELS as CS2_ROLE_LABELS
+from plugins.sports_dashboard import cs2_branding
 from plugins.sports_dashboard.common import LOCAL_CS2_TEAM_LOGO_DIR
 from utils.fonts import load_font
 
@@ -44,6 +45,8 @@ LOL_PAGE_DIM, LOL_SPLASH_TAIL = 0.42, 96
 CARD_MARK_ALPHA, CARD_ART_ALPHA = 0.15, 0.36
 CHAMPION_LOADING_URL = "https://ddragon.leagueoflegends.com/cdn/img/champion/loading/{key}_0.jpg"
 RADAR_TRAIL, RADAR_SWEEP_ALPHA = 70, 0.34
+# An upcoming match's event logo fits this box before the event's name.
+CS2_EVENT_LOGO = (30, 13)
 # HLTV's own mark leads the Top 20 board's title.
 HLTV_LOGO, BOARD_LOGO_SIZE = "hltv-logo.png", 22
 # The CS2 page's middle carries the loadout, so its game logo keeps the band's top-left corner
@@ -754,8 +757,20 @@ class ProRenderMixin:
         for match in (player.get("upcoming") or [])[:1 if pool or photos else 2]:
             when = datetime.fromtimestamp(match["unix_ms"] / 1000)
             self._text(draw, (x0, y), f"{when:%m/%d %H:%M}", fonts["tiny"], colors["cyan"])
-            self._single(draw, (x0, y + 12), f"vs {match.get('opponent')}", fonts["small_bold"], colors["ink"], x1 - x0, 8)
-            self._single(draw, (x0, y + 27), match.get("event"), fonts["tiny"], colors["muted"], x1 - x0, 7)
+            # The opponent's logo leads its name and the event's own logo its title.
+            name_x = x0
+            team = self._cs2_team_logo(match.get("opponent_logo"), match.get("opponent"), 16)
+            if team is not None:
+                image.paste(team, (x0 + (16 - team.width) // 2, y + 13 + (16 - team.height) // 2), team)
+                name_x += 20
+            self._single(draw, (name_x, y + 12), f"vs {match.get('opponent')}", fonts["small_bold"], colors["ink"],
+                         x1 - name_x, 8)
+            event_x = x0
+            mark = self._cs2_event_logo(match.get("event"), when)
+            if mark is not None:
+                image.paste(mark, (x0, y + 28 + (CS2_EVENT_LOGO[1] - mark.height) // 2), mark)
+                event_x += mark.width + 4
+            self._single(draw, (event_x, y + 27), match.get("event"), fonts["tiny"], colors["muted"], x1 - event_x, 7)
             y += 44
         own_logo = self._cs2_team_logo(player.get("team_logo_night") or player.get("team_logo"), player.get("team"), 16)
         for match in (player.get("recent") or [])[:4]:
@@ -792,6 +807,26 @@ class ProRenderMixin:
         draw.rectangle((x0 + 1, y1 - 15, x0 + 1 + credit_w, y1 - 1), fill=colors["background"])
         self._text(draw, (x0 + 6, y1 - 14), credit, fonts["tiny"], colors["ink"])
         return True
+
+    @staticmethod
+    @lru_cache(maxsize=16)
+    def _cs2_event_logo_file(name, day):
+        """The bundled logo of the event (its dark-page copy first) the sports dashboard keeps, or ""."""
+        card = {"event_name": name, "main": {"event_name": name, "start": f"{day}T12:00:00+00:00"}}
+        paths = cs2_branding.local_event_branding(card) or cs2_branding.local_family_branding(card)
+        return str(paths.get("event_logo_path_dark") or paths.get("event_logo_path") or "")
+
+    def _cs2_event_logo(self, name, when):
+        """The event's logo contained in CS2_EVENT_LOGO, or None when none is bundled."""
+        path = self._cs2_event_logo_file(str(name or ""), f"{when:%Y-%m-%d}") if name else ""
+        if not path or not os.path.isfile(path):
+            return None
+        try:
+            with Image.open(path) as source:
+                logo = self._trim_alpha(source.convert("RGBA"))
+        except OSError:
+            return None
+        return ImageOps.contain(logo, CS2_EVENT_LOGO, method=Image.Resampling.LANCZOS) if logo.width > 1 else None
 
     def _draw_cs2_result(self, image, draw, match, own_logo, line, colors, fonts):
         """One result as HLTV lists them: a 胜/负 tag, then both logos around the score; a loss is greyed out."""

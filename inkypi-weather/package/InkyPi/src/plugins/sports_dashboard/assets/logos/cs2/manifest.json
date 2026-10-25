@@ -108,6 +108,13 @@
       "source_repo": "https://github.com/lootmarket/esport-team-logos",
       "source_path": "csgo/9z/9z-logo.png",
       "source_url": "https://raw.githubusercontent.com/lootmarket/esport-team-logos/master/csgo/9z/9z-logo.png"
+    },
+    "4863": {
+      "name": "TYLOO",
+      "file": "4863.png",
+      "slug_file": "tyloo.png",
+      "source_url": "https://img-cdn.hltv.org/teamlogo/hMPKtNMDxp07n3lrBEHCuq.svg",
+      "source_note": "HLTV team logo (SVG) rasterised with its own fills to a transparent PNG"
     }
   },
   "updated_at": "2026-06-21T20:10:44Z",
