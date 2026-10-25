@@ -51,7 +51,8 @@ def _csl_presentation(**overrides):
         "show_five_leagues_filler": False,
         "upcoming_max_rows": 3,
         "upcoming_row_gap": 0,
-        "main_team_logo_scale": 1.4,
+        "main_team_logo_scale": 1.5,
+        "main_team_logo_top": 42,
         "main_team_name_max_size": 14,
         "main_team_name_min_size": 7,
         "main_team_points_offset": 11,
@@ -624,7 +625,7 @@ def test_csl_profile_enlarges_main_badges_and_keeps_odds_above_bottom_border(
         _csl_presentation(),
     )
 
-    assert badge_slots == [(76, 38), (76, 38)]
+    assert badge_slots == [(108, 54), (108, 54)]
     assert team_name_sizes == {
         "Main Team A": (14, 7),
         "Main Team B": (14, 7),

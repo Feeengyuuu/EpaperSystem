@@ -118,8 +118,8 @@ class LowerWallRenderMixin:
         context = self._wall_context_label(sport, event)
         if spec is not None:
             self._draw_wall_team_colours(draw, (x1, y1, x2, y2), event, accent, y1 + 30, rows_top + row_height)
-        # The league's logo stands bare on the card's colours, with no tile under it.
-        self._draw_sport_logo(image, draw, sport, inner_x1, y1 + 6, 34, 20)
+        # The league's logo is the card's title: bare on the card's colours, at its left edge.
+        self._draw_sport_logo(image, draw, sport, inner_x1, y1 + 4, 40, 24, align="left")
         if context:
             context, font = self._fit_text_ellipsis(draw, context, inner_x2 - inner_x1 - 46, 11, bold=True, min_size=8)
             if spec is not None:
@@ -261,7 +261,7 @@ class LowerWallRenderMixin:
         line_h = max(16, (y2 - y1 - 24) // 2)
         if spec is not None:
             self._draw_wall_team_colours(draw, (x1, y1, x2, y2), event, accent, y1 + 20, y1 + 20 + line_h)
-        self._draw_sport_logo(image, draw, sport, inner_x1, y1 + 4, 26, 14)
+        self._draw_sport_logo(image, draw, sport, inner_x1, y1 + 4, 26, 14, align="left")
         if spec is None:
             leader = (list(event.get("leaderboard") or []) or [{}])[0]
             line = SportsDashboard._wall_golf_line(leader) or str(event.get("name") or "PGA TOUR")

@@ -720,7 +720,8 @@ class WorldCupRenderMixin:
         self._draw_centered(draw, ((x1 + x2) / 2, status_y), status_text, status_font, COLORS["text"])
 
         center_x = (x1 + x2) / 2
-        flag_h, flag_cap = 27, 54
+        # National flags stand 36 px tall (at most twice as wide), starting beside the status line.
+        flag_h, flag_cap, flag_top = 36, 72, 49
         if presentation:
             try:
                 logo_scale = max(
@@ -733,7 +734,13 @@ class WorldCupRenderMixin:
                 pass
         left_area = (x1 + 18, center_x - 21)
         right_area = (center_x + 21, x2 - 18)
-        flag_y = y1 + 58
+        flag_y = y1 + flag_top
+        if presentation:
+            # A page with larger crests starts them higher, beside the centred kick-off time.
+            try:
+                flag_y = y1 + max(40, min(70, int(presentation.get("main_team_logo_top", flag_top))))
+            except (TypeError, ValueError):
+                pass
         left_flag_x = int((left_area[0] + left_area[1] - flag_cap) / 2)
         right_flag_x = int((right_area[0] + right_area[1] - flag_cap) / 2)
         team_a_asset = self._worldcup_team_asset_url(event, "a", presentation)

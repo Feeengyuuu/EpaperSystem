@@ -10263,7 +10263,7 @@ def test_worldcup_main_card_uses_uniform_height_flag_slots():
 
     plugin._draw_worldcup_main_card(image, draw, 0, 0, 359, 169, event, datetime(2026, 6, 18, 14, 45, tzinfo=la), "live")
 
-    assert flag_slots == [(54, 27), (54, 27)]
+    assert flag_slots == [(72, 36), (72, 36)]
 
 
 def test_worldcup_main_card_meta_uses_mirrored_points_and_record():

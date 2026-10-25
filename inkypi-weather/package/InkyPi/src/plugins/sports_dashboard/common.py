@@ -3708,13 +3708,18 @@ class SportsDashboardCommonMixin:
         image.paste(tinted, (paste_x, paste_y), tinted)
         return True
 
-    def _draw_sport_logo(self, image, draw, sport, x, y, width, height):
+    def _draw_sport_logo(self, image, draw, sport, x, y, width, height, align="center"):
+        """The league's logo contained in the box, centred or, with ``align="left"``, at its left edge."""
         path = self._sport_logo_path(sport)
         logo = self._load_local_logo(path, (int(width), int(height)), alpha_threshold=8) if path else None
         if logo:
-            image.paste(logo, (int(x) + (int(width) - logo.width) // 2, int(y) + (int(height) - logo.height) // 2), logo)
+            left = int(x) if align == "left" else int(x) + (int(width) - logo.width) // 2
+            image.paste(logo, (left, int(y) + (int(height) - logo.height) // 2), logo)
             return
         text, font = self._fit_text(draw, str(sport or "SPORT"), int(width), 11, bold=True, min_size=7)
+        if align == "left":
+            self._draw_text_in_box(draw, (x, y, x + width, y + height), text, font, COLORS["muted"])
+            return
         self._draw_centered_in_box(draw, (x, y, x + width, y + height), text, font, COLORS["muted"])
 
     def _draw_vertical_split(self, draw, x, y1, y2):
