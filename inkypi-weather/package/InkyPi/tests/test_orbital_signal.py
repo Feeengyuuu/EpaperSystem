@@ -1061,6 +1061,16 @@ def test_a_rocket_launch_badge_carries_the_date_and_official_marks_stand_in_for_
     assert "LONG MARCH 2C" in plain and "YAOGAN 45" in plain
 
 
+def test_a_small_mark_that_spells_the_whole_name_still_names_it():
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    launches = _representative_launches()
+    launches[0].update(rocket="Falcon Heavy", mission="USSF-52")
+    draw = RecordingDraw()
+    plugin._draw_launch(draw.image, draw, (0, 58, 440, 448), launches, NOW, DAY_PALETTE, None)
+    headline = [call for call in draw.text_calls if call["text"] == "FALCON HEAVY"]
+    assert headline and headline[0]["xy"][0] > 160
+
+
 @pytest.mark.parametrize(("name", "marks", "expected"), [
     ("FALCON 9 BLOCK 5", "rocket", ("falcon9", "BLOCK 5")),
     ("FALCON HEAVY", "rocket", ("falcon_heavy", "")),

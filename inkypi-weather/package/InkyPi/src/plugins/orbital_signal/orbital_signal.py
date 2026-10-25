@@ -1056,7 +1056,8 @@ class OrbitalSignal(BasePlugin):
                           palette, family):
         """A name on a ``line`` px row: its official mark if it has one, then whatever text is left.
 
-        The mark and the text share the row's centre line; without a mark the name is plain text.
+        The mark and the text share the row's centre line; without a mark the name is plain text,
+        and beside a small mark that spells it all the full name still fills the row.
         """
         key, rest = _name_mark(name, marks)
         logo = self._fitted_logo(key, line, min(WORDMARK_MAX_WIDTH, right - left), palette)
@@ -1067,6 +1068,9 @@ class OrbitalSignal(BasePlugin):
             return
         middle = top + line / 2
         image.paste(logo, (int(left), round(middle - logo.height / 2)), logo)
+        if not rest and logo.width < (right - left) / 2:
+            # A small mark that spells the whole name (FH) would leave the row empty: name it.
+            rest = name
         text_x = left + logo.width + 10
         if not rest or text_x >= right - 20:
             return
