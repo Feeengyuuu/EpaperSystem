@@ -267,6 +267,7 @@ class Config:
         self._merge_box_office_pages()
         self._add_pop_and_traffic_pages()
         self._add_planet_now_page()
+        self._add_sky_radar_page()
 
     def _migrate_aggregate_pages_playlist(self):
         from aggregate_pages_migration import apply_aggregate_pages_playlist_migration
@@ -292,6 +293,11 @@ class Config:
         from planet_now_page_migration import apply_planet_now_page_migration
 
         apply_planet_now_page_migration(self)
+
+    def _add_sky_radar_page(self):
+        from sky_radar_page_migration import apply_sky_radar_page_migration
+
+        apply_sky_radar_page_migration(self)
 
     def _migrate_newspaper_chinese_editions(self):
         from newspaper_source_migration import apply_newspaper_chinese_editions_migration
