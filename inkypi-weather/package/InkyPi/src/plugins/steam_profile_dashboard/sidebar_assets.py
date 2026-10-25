@@ -9,13 +9,13 @@ from utils.safe_image import ImageLimits, safe_open_image
 
 
 ASSET_ROOT = Path(__file__).resolve().parent / "assets" / "sidebar"
-ASSET_NAMES = frozenset({"games", "friends", "recent", "total", "badges", "xp", "level_frame"})
+ASSET_NAMES = frozenset({"games", "friends", "recent", "total", "badges", "xp"})
 _LIMITS = ImageLimits(max_bytes=8 * 1024 * 1024, max_width=2048,
                       max_height=2048, max_pixels=4_194_304,
                       allowed_formats=frozenset({"PNG"}))
 
 
-@lru_cache(maxsize=7)
+@lru_cache(maxsize=6)
 def _source(name):
     if name not in ASSET_NAMES:
         return None
@@ -28,7 +28,7 @@ def _source(name):
             return None
         cropped = image.crop(bounds)
         image.close()
-        # Retain only a small in-memory master for the 18–54 px display assets.
+        # Retain only a small in-memory master for the 16–20 px display assets.
         cropped.thumbnail((128, 128), Image.Resampling.LANCZOS)
         return cropped
     except (OSError, ValueError):

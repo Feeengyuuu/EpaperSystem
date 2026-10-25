@@ -126,11 +126,11 @@ def test_game_art_and_icons_are_preserved_over_a_solid_page_canvas(plugin, data,
     assert max(game_positions) < avatar_positions[1]
     # The requested flat colour belongs to the page underneath the game cards.
     # The game artwork itself remains present, with the existing navy shading.
-    # The generated 54 px level frame reaches x=9; the canvas around it stays black.
+    # The rank border starts at x=6; the canvas around it stays black.
     # Frame 12, kept from before the whole-frame canvas, crosses the rail divider
     # above the persona name and stops four pixels short of the hero panel.
-    for box in ((183, 174, 193, 480), (190, 0, 193, 480), (791, 0, 800, 480), (0, 178, 9, 480),
-                (0, 178, 12, 237), (0, 292, 12, 480)):
+    for box in ((183, 174, 193, 480), (190, 0, 193, 480), (791, 0, 800, 480), (0, 178, 6, 480),
+                (0, 178, 12, 234), (0, 334, 12, 480)):
         crop = image.crop(box)
         assert ImageChops.difference(crop, Image.new("RGB", crop.size, CANVAS)).getbbox() is None
     # Above it, the left margin and the divider gap hold the avatar frame and nothing else.

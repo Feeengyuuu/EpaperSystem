@@ -11,6 +11,7 @@ import math
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from plugins.steam_profile_dashboard.avatar_frame import AVATAR_BOX, AVATAR_SIZE, FRAME_ORIGIN
+from plugins.steam_profile_dashboard.rank_ladder import TIERS, rank_border, rank_for
 from plugins.steam_profile_dashboard.sidebar_assets import sidebar_asset
 
 
@@ -31,6 +32,10 @@ RAIL_SIZE = (181, 480)
 # The bordered plate behind the persona name and its STEAM PLAYER caption; it keeps the
 # left margin and the space above the name clear for the avatar frame.
 NAMEPLATE_BOX = (12, 175, 172, 228)
+# The ranked level card: the tier's promotion border round the level, and its ladder.
+RANK_BORDER_ORIGIN = (6, 234)
+RANK_BORDER_SIZE = 98
+RANK_LADDER_Y = 340
 # The profile background behind the rail: blur radius, and dimming at its top and bottom.
 BACKDROP_BLUR = 7
 BACKDROP_DIM = (0.78, 0.9)
@@ -281,6 +286,57 @@ class _Console:
             result.append(line.rstrip())
         return result or [""]
 
+    def rank_card(self, data):
+        """The level as a ranked tier: its promotion border round the number, then the ladder."""
+        rank = rank_for(data.get("level"), data.get("badges"))
+        x0, y0 = RANK_BORDER_ORIGIN
+        border, hole = rank_border(rank.key, RANK_BORDER_SIZE)
+        if border is None:
+            hole = (RANK_BORDER_SIZE / 2, RANK_BORDER_SIZE / 2, 24)
+        cx, cy, radius = x0 + hole[0], y0 + hole[1], hole[2]
+        # A dark disc fills the empty centre so the number reads over any backdrop.
+        self.draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=self.c["navy"])
+        if border is not None:
+            self.image.paste(border, (x0, y0), border)
+        else:
+            self.draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius),
+                              outline=rank.color, width=3)
+        self.text((cx - radius, cy - 14, cx + radius, cy + 14), _value(data.get("level")),
+                  24, bold=True, min_size=14, align="center")
+        x = x0 + RANK_BORDER_SIZE + 4
+        self.text((x, 238, 178, 249), rank.english, 9, rank.color, bold=True, min_size=7)
+        self.text((x, 250, 178, 276), rank.name, 22, rank.color, bold=True)
+        if rank.division:
+            self.text((x, 277, 178, 296), rank.division, 18, bold=True)
+        if rank.lp is not None:
+            self.draw.rounded_rectangle((x, 301, 176, 306), radius=2, fill=self.c["border"])
+            if rank.lp:
+                self.draw.rounded_rectangle((x, 301, x + round((176 - x) * rank.lp / 100), 306),
+                                            radius=2, fill=rank.color)
+            self.text((x, 309, 178, 320), f"{rank.lp} LP", 10, self.c["muted"])
+        if rank.next_name:
+            self.text((x, 321, 178, 332), f"距{rank.next_name} 差{rank.levels_to_next}级", 10,
+                      self.c["muted"], min_size=7)
+        self.rank_ladder(rank)
+
+    def rank_ladder(self, rank):
+        """Ten tier pips: climbed tiers filled in their colours, the current one large."""
+        left, right, y = 18, 164, RANK_LADDER_Y
+        step = (right - left) / (len(TIERS) - 1)
+        current_x = left + rank.index * step
+        self.draw.line((left, y, right, y), fill=self.c["border"], width=1)
+        self.draw.line((left, y, current_x, y), fill=rank.color, width=2)
+        for index, tier in enumerate(TIERS):
+            px = left + index * step
+            size = 6 if index == rank.index else 3
+            diamond = ((px, y - size), (px + size, y), (px, y + size), (px - size, y))
+            if index < rank.index:
+                self.draw.polygon(diamond, fill=tier[4])
+            elif index == rank.index:
+                self.draw.polygon(diamond, fill=tier[4], outline=WHITE)
+            else:
+                self.draw.polygon(diamond, fill=self.c["navy"], outline=self.c["border"])
+
     def nameplate(self, box):
         """A bordered plate under the persona name, so it stands out over any backdrop."""
         x, y, right, bottom = box
@@ -399,16 +455,7 @@ class _Console:
                   29, bold=True, min_size=18)
         self.text((20, 210, 164, 223), "STEAM PLAYER", 10, self.c["muted"])
         self.draw.line((14, 230, 167, 230), fill=self.c["border"])
-        level_frame = sidebar_asset("level_frame", 54)
-        if level_frame is not None:
-            self.image.paste(level_frame, (9, 237), level_frame)
-        else:
-            self.draw.polygon(((36, 240), (57, 252), (57, 276), (36, 288), (15, 276), (15, 252)),
-                              outline=self.c["accent"], width=2)
-        self.text((17, 254, 56, 277), _value(data.get("level")), 23,
-                  bold=True, min_size=17, align="center")
-        self.text((67, 248, 167, 265), "等级", 14, self.c["muted"])
-        self.text((67, 268, 167, 289), _value(data.get("level")), 21, bold=True)
+        self.rank_card(data)
         owned = data.get("owned_games") or []
         recent = data.get("recent_games") or []
         game_count = data.get("game_count")
@@ -420,15 +467,16 @@ class _Console:
             ("recent", "clock", "近2周", _hours(sum(_number(g.get("playtime_2weeks")) for g in recent)), 18),
             ("total", "clock", "总计", _hours(sum(_number(g.get("playtime_forever")) for g in owned)), 18),
         )
-        for index, (asset, symbol, label, number, size) in enumerate(metrics):
-            y = 299 + index * 25
-            icon = sidebar_asset(asset, size)
+        # Two columns of two under the ladder: a small label over each number.
+        for index, (asset, symbol, label, number, _size) in enumerate(metrics):
+            x, y = 14 + (index % 2) * 80, 352 + (index // 2) * 26
+            icon = sidebar_asset(asset, 16)
             if icon is not None:
-                self.image.paste(icon, (16 + (20 - size) // 2, y + 1 + (20 - size) // 2), icon)
+                self.image.paste(icon, (x, y + 5), icon)
             else:
-                self.small_symbol(symbol, 17, y)
-            self.text((43, y + 1, 90, y + 19), label, 13, self.c["muted"])
-            self.text((91, y, 168, y + 22), number, 18, bold=True, min_size=13, align="right")
+                self.small_symbol(symbol, x, y + 4)
+            self.text((x + 20, y, x + 78, y + 10), label, 9, self.c["muted"])
+            self.text((x + 20, y + 10, x + 78, y + 25), number, 15, bold=True, min_size=11)
         self.draw.line((14, 405, 167, 405), fill=self.c["border"])
         badges = data.get("badges") or {}
         badge_count = len(badges.get("badges", [])) if badges else None
