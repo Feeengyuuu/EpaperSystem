@@ -405,6 +405,15 @@ def _game_info(game_id, context):
     return info
 
 
+def steam_appid_from_url(url):
+    """The app id in a Steam store image URL (".../apps/<id>/header.jpg"), or None."""
+    parts = urlsplit(str(url or ""))
+    if not (parts.hostname or "").endswith("steamstatic.com"):
+        return None
+    match = re.search(r"/apps/(\d{1,9})/", parts.path)
+    return int(match.group(1)) if match else None
+
+
 def _name_key(name):
     return re.sub(r"[\W_]+", "", str(name or "").lower())
 

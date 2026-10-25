@@ -214,3 +214,10 @@ def test_games_get_their_small_steam_icon_by_name_or_appid(monkeypatch):
     assert icons["Home - A Unique Horror Adventure"].endswith("/apps/559680/" + "b" * 40 + ".jpg")
     assert icons["影之刃零"].endswith("/apps/3047/" + "c" * 40 + ".jpg") and "GTA VI" not in icons
     assert "影之刃零" not in searches and len(batches) == 1
+
+
+def test_a_steam_cover_url_names_its_app():
+    url = "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2345670/header.jpg?t=1"
+    assert sources.steam_appid_from_url(url) == 2345670
+    assert sources.steam_appid_from_url("https://images.igdb.com/igdb/image/upload/apps/1/x.jpg") is None
+    assert sources.steam_appid_from_url(None) is None

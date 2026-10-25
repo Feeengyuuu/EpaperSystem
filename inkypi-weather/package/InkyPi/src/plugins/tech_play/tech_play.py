@@ -104,7 +104,8 @@ class TechPlay(BasePlugin):
         epic = payload["epic"]["data"]
         # Each shown game's small Steam icon, looked up once a week for the names on the page.
         games = [(item.get("title"), None) for item in (epic.get("current", []) + epic.get("upcoming", []))[:2]]
-        games += [(item.get("name"), item.get("appid")) for item in payload["upcoming"]["data"].get("items", [])[:4]]
+        games += [(item.get("name"), item.get("appid") or sources.steam_appid_from_url(item.get("image")))
+                  for item in payload["upcoming"]["data"].get("items", [])[:4]]
         games = [(name, appid) for name, appid in games if name]
         payload["icons"] = load(Source("steam-icons", {"games": sorted(name for name, _appid in games)},
                                        lambda ctx: sources.fetch_steam_icons(games, ctx),
