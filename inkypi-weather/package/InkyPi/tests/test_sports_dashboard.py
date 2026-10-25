@@ -7277,7 +7277,7 @@ def test_standalone_sport_panels_draw_their_own_information():
     assert "\u5bc6\u6b47\u6839\u72fc\u737e" in seen_texts
     assert "2ND & 8" in seen_texts
     assert ("https://a.espncdn.com/i/teamlogos/mlb/500/sf.png", 16, "SF") in logo_calls
-    assert any(call[0] == "https://example.com/wnba-sea.png" and call[1] == 40 for call in logo_calls)
+    assert any(call[0] == "https://example.com/wnba-sea.png" and call[1] == 62 for call in logo_calls)
     assert ("https://example.com/nfl-sea.png", 24, "SEA") in logo_calls
     assert ("https://example.com/ncaa-tex.png", 24, "TEX") in logo_calls
 

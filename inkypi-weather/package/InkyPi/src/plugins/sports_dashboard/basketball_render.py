@@ -26,6 +26,9 @@ BASKETBALL_SPEC_KEYS = {
 BASKETBALL_CLUTCH_MARGIN = 5
 FACEOFF_HERO_HEIGHT = 88
 FACEOFF_CENTER_HALF_WIDTH = 72
+# Each side's logo fills most of the face-off's height; its name, as large as fits, leans
+# toward the centre so the logo, name and clock read as one line.
+FACEOFF_LOGO_SIZE, FACEOFF_NAME_SIZE = 62, 20
 # Below this height the leader area stays plain when no player stats exist yet.
 LEADERS_PENDING_MIN_HEIGHT = 40
 
@@ -150,31 +153,31 @@ class BasketballRenderMixin:
         winner = SportsDashboard._nba_winner_side(event) if state == "final" else ""
         dimmed = bool(winner) and winner != side
         ink = COLORS[self._kit_team_ink_key(event.get(f"{prefix}_color"), spec.accent)]
-        logo_size = 40
+        logo_size = min(FACEOFF_LOGO_SIZE, y2 - y1 - 14)
         logo_y = y1 + (y2 - y1 - logo_size) // 2
         name = spec.hook("team_name", event, side, True, default=event.get(prefix) or "TBD")
         record = str(event.get(f"record_{side}") or "").strip()
-        name_top = y1 + 18
+        name_top = y1 + (y2 - y1 - 40) // 2
         if side == "a":
             draw.rectangle((x1, y1 + 10, x1 + 3, y2 - 10), fill=ink)
-            logo_x = x1 + 10
-            text_x1, text_x2 = logo_x + logo_size + 8, x2
-            align = "left"
+            logo_x = x1 + 8
+            text_x1, text_x2 = logo_x + logo_size + 6, x2
+            align = "right"
         else:
             draw.rectangle((x2 - 3, y1 + 10, x2, y2 - 10), fill=ink)
-            logo_x = x2 - 10 - logo_size
-            text_x1, text_x2 = x1, logo_x - 8
-            align = "right"
+            logo_x = x2 - 8 - logo_size
+            text_x1, text_x2 = x1, logo_x - 6
+            align = "left"
         self._draw_team_logo(image, draw, event.get(f"{prefix}_logo"), logo_x, logo_y, logo_size, spec.hook("logo_fallback", event, side))
-        name, name_font = self._fit_text(draw, name, text_x2 - text_x1, 16, bold=not dimmed, min_size=10)
-        self._draw_text_in_box(draw, (text_x1, name_top, text_x2, name_top + 20), name, name_font, COLORS["text"], align=align)
+        name, name_font = self._fit_text(draw, name, text_x2 - text_x1, FACEOFF_NAME_SIZE, bold=not dimmed, min_size=10)
+        self._draw_text_in_box(draw, (text_x1, name_top, text_x2, name_top + 25), name, name_font, COLORS["text"], align=align)
         note = record
         if state == "scheduled":
             spread = spec.hook("pregame_value", event, side, default="")
             note = "  ".join(part for part in (record, spread) if part)
         if note:
-            note, note_font = self._fit_text(draw, note, text_x2 - text_x1, 10, bold=False, min_size=8)
-            self._draw_text_in_box(draw, (text_x1, name_top + 23, text_x2, name_top + 35), note, note_font, COLORS["text"], align=align)
+            note, note_font = self._fit_text(draw, note, text_x2 - text_x1, 11, bold=False, min_size=8)
+            self._draw_text_in_box(draw, (text_x1, name_top + 27, text_x2, name_top + 40), note, note_font, COLORS["text"], align=align)
 
     def _draw_faceoff_center(self, image, draw, box, event, state, now, spec):
         x1, y1, x2, y2 = [int(value) for value in box]

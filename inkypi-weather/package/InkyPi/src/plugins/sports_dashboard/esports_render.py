@@ -2097,12 +2097,13 @@ class EsportsRenderMixin:
         time_text, time_font = self._fit_text(draw, time_text, card_x2 - card_x1 - 58, 19, bold=True, min_size=13)
         self._draw_centered(draw, (center_x, y + 44), time_text, time_font, COLORS["text"])
 
-        logo_size = 42
+        # The logos stand large, starting just under the time and ending above the names.
+        logo_size = 50
         left_area = (card_x1 + 22, center_x - 18)
         right_area = (center_x + 18, card_x2 - 22)
         left_logo_x = int((left_area[0] + left_area[1] - logo_size) / 2)
         right_logo_x = int((right_area[0] + right_area[1] - logo_size) / 2)
-        logo_y = y + 61
+        logo_y = y + 54
         self._draw_team_logo(image, draw, event.get("team_a_logo"), left_logo_x, logo_y, logo_size, event["team_a"])
         self._draw_team_logo(image, draw, event.get("team_b_logo"), right_logo_x, logo_y, logo_size, event["team_b"])
         score_text = self._score_label(event).upper()
