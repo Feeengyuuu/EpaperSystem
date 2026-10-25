@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageOps
 from utils.local_wordmark import paste_local_wordmark
 from utils.page_canvas import PageCanvas
 
-from . import sources
+from . import crt, sources
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -48,6 +48,8 @@ def _rgb(value):
 
 
 def _palette(settings):
+    if crt_style(settings):
+        return {key: _rgb(value) for key, value in crt.PALETTE.items()}
     theme = (settings or {}).get("_inkypi_theme") or {}
     palette = NIGHT if theme.get("mode", (settings or {}).get("themeMode")) == "night" else DAY
     return {key: _rgb(value) for key, value in palette.items()}
@@ -97,21 +99,72 @@ def _paste(canvas, art, xy):
     canvas.image.paste(art, (round(xy[0]), round(xy[1])), art)
 
 
-def _still(canvas, frame, box, radius=6):
-    x0, y0, x1, y1 = [int(value) for value in box]
-    size = (max(1, x1 - x0), max(1, y1 - y0))
-    if frame is None:
-        canvas.draw.rounded_rectangle(box, radius=radius, fill=canvas.color("rule"))
-        canvas.text(((x0 + x1) / 2, (y0 + y1) / 2), "暂无画面", 12, "paper", anchor="mm")
-        return
+def crt_style(settings):
+    return str((settings or {}).get("frameStyle") or "").strip().lower() == "crt"
+
+
+def _view(frame, size):
     source = frame["image"]
     width, height = source.size
     # Caltrans' own date bar is cut off: each still carries its age on the page instead.
     view = source.crop((0, 0, width, height - round(height * sources.CAPTION_BAR)))
-    tile = ImageOps.fit(view, size, method=Image.Resampling.LANCZOS)
+    return ImageOps.fit(view, size, method=Image.Resampling.LANCZOS)
+
+
+def _still(canvas, frame, box, radius=6, bezel=(6, 10)):
+    """Paste a still into ``box`` and return the box the picture fills: the whole box, or in the
+    control-room style the screen of the CRT monitor drawn around it."""
+    x0, y0, x1, y1 = [int(value) for value in box]
+    if getattr(canvas, "crt", False):
+        sx0, sy0, sx1, sy1 = crt.screen_box((x0, y0, x1, y1), *bezel)
+        size = (max(1, sx1 - sx0), max(1, sy1 - sy0))
+        tile = _view(frame, size) if frame is not None else None
+        screen = crt.monitor(canvas.image, (x0, y0, x1, y1), tile, bezel=bezel[0], chin=bezel[1], radius=radius + 4)
+        if frame is None:
+            crt.osd_text(canvas.draw, ((sx0 + sx1) / 2, (sy0 + sy1) / 2), "NO SIGNAL", 16, crt.OSD, anchor="mm")
+        return screen
+    size = (max(1, x1 - x0), max(1, y1 - y0))
+    if frame is None:
+        canvas.draw.rounded_rectangle(box, radius=radius, fill=canvas.color("rule"))
+        canvas.text(((x0 + x1) / 2, (y0 + y1) / 2), "暂无画面", 12, "paper", anchor="mm")
+        return x0, y0, x1, y1
+    tile = _view(frame, size)
     mask = Image.new("L", size, 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=radius, fill=255)
     canvas.image.paste(tile, (x0, y0), mask)
+    return x0, y0, x1, y1
+
+
+def _taken(frame):
+    try:
+        return sources.local_now(datetime.fromisoformat(str((frame or {}).get("taken"))))
+    except (TypeError, ValueError):
+        return None
+
+
+def _crt_osd(canvas, screen, number, camera, frame, now, *, size):
+    """A recorder's on-screen text: the camera and its id at the top left, a red REC at the top
+    right (or the still's age in amber once it stops updating), the time it was taken at the
+    bottom right."""
+    sx0, sy0, sx1, sy1 = screen
+    pad = 6 if size >= 14 else 4
+    label = f"CAM-{number:02d}" + (f"  {camera['id']}" if camera.get("id") and size >= 14 else "")
+    crt.osd_text(canvas.draw, (sx0 + pad, sy0 + pad), label, size)
+    if frame is None:
+        return
+    age, stale = age_label(frame, now)
+    if stale:
+        canvas.text((sx1 - pad, sy0 + pad + size / 2), f"画面停更 {age}", max(9, size - 4), crt.PALETTE["stale"],
+                    anchor="rm", stroke=(0, 0, 0))
+    else:
+        rec_w = crt.osd_text(canvas.draw, (sx1 - pad, sy0 + pad), "REC", size, crt.REC, anchor="ra")
+        dot = size * 0.32
+        cx, cy = sx1 - pad - rec_w - dot - 4, sy0 + pad + size * 0.5
+        canvas.draw.ellipse((cx - dot, cy - dot, cx + dot, cy + dot), fill=crt.REC, outline=(0, 0, 0))
+    taken = _taken(frame)
+    if taken is not None:
+        stamp = f"{taken:%m-%d-%y  %H:%M}" if size >= 14 else f"{taken:%H:%M}"
+        crt.osd_text(canvas.draw, (sx1 - pad, sy1 - pad), stamp, size, anchor="rd")
 
 
 def _badge(canvas, xy, text, fill, size=11, *, right=False):
@@ -202,15 +255,19 @@ def _main(canvas, payload, now):
     camera = cameras[0]
     frame = frames.get(camera["image"])
     still_bottom = y1 - 30
-    _still(canvas, frame, (x0, y0, x1, still_bottom), radius=8)
+    screen = _still(canvas, frame, (x0, y0, x1, still_bottom), radius=8, bezel=(9, 15))
     age, stale = age_label(frame, now)
-    if frame is not None and not stale:
+    if getattr(canvas, "crt", False):
+        _crt_osd(canvas, screen, 1, camera, frame, now, size=16)
+    elif frame is not None and not stale:
         _badge(canvas, (x0 + 10, y0 + 10), "● LIVE", canvas.color("live"), 11)
-    if stale:
+    if getattr(canvas, "crt", False):
+        pass
+    elif stale:
         _badge(canvas, (x1 - 10, y0 + 10), f"画面停更 · {age}", canvas.color("stale"), 11, right=True)
     elif age:
         _badge(canvas, (x1 - 10, y0 + 10), age, canvas.color("shade"), 11, right=True)
-    if frame is not None:
+    if frame is not None and not getattr(canvas, "crt", False):
         _cam_tag(canvas, (x0 + 8, still_bottom - 23), 1, camera)
     top = y1 - 25
     x = x0 + _shield(canvas, camera["route"], (x0, top), 25) + 5
@@ -247,7 +304,7 @@ def _timelapse(canvas, payload, now):
     for index, url in enumerate(history):
         cell_x = left + index * (width + gap)
         frame = payload["frames"].get(url)
-        _still(canvas, frame, (cell_x, y0, cell_x + width, y1 - 16), radius=5)
+        _still(canvas, frame, (cell_x, y0, cell_x + width, y1 - 16), radius=5, bezel=(4, 7))
         label = _lapse_label(frame, len(history) - index)
         canvas.text((cell_x + width / 2, y1 - 7), label, 10, "muted", anchor="mm", bold=False, width=width)
 
@@ -262,12 +319,16 @@ def _side(canvas, payload, now):
         cx = x0 + column * (cell_w + 10)
         cy = y0 + row * (cell_h + 10)
         frame = payload["frames"].get(camera["image"])
-        _still(canvas, frame, (cx, cy, cx + cell_w, cy + cell_h - 48), radius=6)
-        if frame is not None:
+        screen = _still(canvas, frame, (cx, cy, cx + cell_w, cy + cell_h - 48), radius=6, bezel=(6, 11))
+        if getattr(canvas, "crt", False):
+            _crt_osd(canvas, screen, index + 2, camera, frame, now, size=12)
+        elif frame is not None:
             _cam_tag(canvas, (cx + 5, cy + 5), index + 2, camera)
         # The still's age sits on it, as on the main view, so the guide sign gets the whole width.
         age, stale = age_label(frame, now)
-        if stale:
+        if getattr(canvas, "crt", False):
+            pass
+        elif stale:
             _badge(canvas, (cx + cell_w - 5, cy + cell_h - 70), "画面停更", canvas.color("stale"), 9, right=True)
         elif age and frame is not None:
             _badge(canvas, (cx + cell_w - 5, cy + cell_h - 70), age, canvas.color("shade"), 9, right=True)
@@ -280,6 +341,7 @@ def _side(canvas, payload, now):
 
 def render_page(dimensions, payload, settings, now):
     canvas = PageCanvas(_palette(settings), family=(settings or {}).get("fontFamily") or "Microsoft YaHei")
+    canvas.crt = crt_style(settings)
     placed = paste_local_wordmark(canvas.image, ASSETS / "title_wordmark.png", (10, 2, 250, 50), align="left")
     title_right = placed[2] if placed else 14 + canvas.text((14, 26), "湾区路况", 28, anchor="lm")
     date_left = 788 - canvas.text((788, 26), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")

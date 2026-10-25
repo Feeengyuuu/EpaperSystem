@@ -143,3 +143,27 @@ def test_page_renders_with_no_cameras(mode):
     image = render_page((800, 480), {"cameras": [], "frames": {}}, {"_inkypi_theme": {"mode": mode}}, NOW)
 
     assert image.size == (800, 480)
+
+
+def test_control_room_style_puts_each_still_on_a_crt_monitor_with_recorder_text():
+    from plugins.bay_traffic_cams import crt, render
+
+    def camera(index):
+        return {"id": f"TVA{index}", "route": "I-880", "direction": "South", "place": f"Place {index}",
+                "image": f"https://cwwp2.dot.ca.gov/{index}.jpg", "history": [], "distance_km": 2.0 + index,
+                "bearing": 200}
+
+    cameras = [camera(index) for index in range(5)]
+    frames = {item["image"]: {"image": _road(), "taken": (NOW - timedelta(minutes=2)).isoformat()} for item in cameras}
+    payload = {"cameras": cameras, "frames": frames}
+
+    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}, "frameStyle": "crt"}, NOW)
+    plain = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW)
+
+    console = render._rgb(crt.PALETTE["paper"])
+    assert image.getpixel((790, 475)) == console and plain.getpixel((790, 475)) == (255, 255, 255)
+    x0, y0, x1, _y1 = render.MAIN
+    assert image.getpixel((x0 + 4, y0 + 60)) == crt.BEZEL
+    # A red REC sits at the top right of the main screen.
+    corner = image.crop((x1 - 80, y0 + 9, x1 - 9, y0 + 34))
+    assert any(pixel[0] > 200 and pixel[1] < 90 and pixel[2] < 90 for pixel in corner.getdata())
