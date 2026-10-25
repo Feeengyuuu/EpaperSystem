@@ -5110,3 +5110,43 @@ def test_space_weather_core_failure_preserves_prior_aggregate_bytes_and_mtime(tm
     assert snapshot.kp.state == "fresh_cache"
     assert aggregate_path.read_bytes() == before_bytes
     assert aggregate_path.stat().st_mtime_ns == before_mtime
+
+
+def _provisional_state(fetched_at):
+    requested = replace(_task5_record(url=None, hdurl=None), fetched_at_utc=fetched_at)
+    fallback_url = "https://media.example.test/yesterday.jpg"
+    displayed = replace(
+        _task5_record(apod_date="2026-07-21", url=fallback_url, hdurl=None),
+        warning="LATEST AVAILABLE · APOD 2026-07-21",
+        image_url=fallback_url,
+        image_cache_key=hashlib.sha256(fallback_url.encode("utf-8")).hexdigest(),
+    )
+    return apod_module.ApodDisplayState(
+        selection_fingerprint="selection-2026-07-22", device_day="2026-07-22", requested_date="2026-07-22",
+        requested_record=requested, display_record=displayed, fallback_reason="current_media_unavailable",
+        provisional_media=True,
+    )
+
+
+def test_a_day_cached_without_its_image_is_asked_for_again(monkeypatch):
+    calls = []
+
+    def fetch(**kwargs):
+        calls.append(kwargs["requested_date"])
+        return _task5_record(hdurl="https://media.example.test/posted-later.jpg")
+
+    monkeypatch.setattr(apod_module, "_fetch_apod_record", fetch)
+    monkeypatch.setattr(apod_module, "_utc_now", lambda: NOW_UTC)
+    selection = SimpleNamespace(fingerprint="selection-2026-07-22", device_day="2026-07-22")
+    stale = _provisional_state(NOW_UTC - timedelta(seconds=apod_module.PROVISIONAL_REFETCH_SECONDS + 1))
+
+    refreshed = apod_module._refetch_provisional_record(stale, http=None, api_key="", selection=selection,
+                                                        context=None)
+
+    assert calls == ["2026-07-22"]
+    assert refreshed.requested_record.hdurl == "https://media.example.test/posted-later.jpg"
+    # A recent attempt is not repeated.
+    recent = _provisional_state(NOW_UTC - timedelta(seconds=60))
+    assert apod_module._refetch_provisional_record(recent, http=None, api_key="", selection=selection,
+                                                   context=None) is recent
+    assert calls == ["2026-07-22"]

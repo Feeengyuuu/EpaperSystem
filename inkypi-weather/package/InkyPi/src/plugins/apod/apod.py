@@ -51,6 +51,8 @@ import time
 logger = logging.getLogger(__name__)
 
 RANDOM_APOD_MAX_ATTEMPTS = 5
+# A current day cached without its image is asked for again at most this often (s).
+PROVISIONAL_REFETCH_SECONDS = 20 * 60
 APOD_ENDPOINT = "https://science.nasa.gov/wp-json/wp/v2/apod-basic"
 OPENAI_TRANSLATION_ENDPOINT = "https://api.openai.com/v1/chat/completions"
 GROQ_TRANSLATION_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
@@ -1774,6 +1776,46 @@ def _bind_record_to_selection(
     )
 
 
+def _refetch_provisional_record(
+    state: ApodDisplayState,
+    *,
+    http: HttpClient,
+    api_key: str,
+    selection: ApodSelection,
+    context,
+) -> ApodDisplayState:
+    """Ask NASA again for a current day whose record came without an image.
+
+    A record fetched before the day's image was posted (or while NASA moved APOD) keeps no
+    media link, so retrying it alone can never succeed; at most every
+    PROVISIONAL_REFETCH_SECONDS the record itself is fetched afresh. Without an image yet, the
+    fallback stays and the attempt's time is remembered.
+    """
+    requested = state.requested_record
+    if not state.provisional_media or _media_url_candidates(requested):
+        return state
+    if (_utc_now() - requested.fetched_at_utc).total_seconds() < PROVISIONAL_REFETCH_SECONDS:
+        return state
+    try:
+        fresh = _fetch_apod_record(
+            http=http,
+            api_key=api_key,
+            requested_date=state.requested_date,
+            context=context,
+            allow_missing_media=True,
+        )
+    except _ABORT_EXCEPTIONS:
+        raise
+    except RuntimeError as error:
+        logger.warning("APOD %s still unavailable: %s", state.requested_date, error)
+        return replace(state, requested_record=replace(requested, fetched_at_utc=_utc_now()))
+    fresh = _bind_record_to_selection(fresh, selection=selection)
+    if fresh.media_type != "image" or not _media_url_candidates(fresh):
+        return replace(state, requested_record=replace(requested, fetched_at_utc=fresh.fetched_at_utc))
+    logger.info("APOD %s now has its image; replacing the fallback", state.requested_date)
+    return replace(state, requested_record=fresh)
+
+
 def _load_or_fetch_apod_state(
     *,
     http: HttpClient,
@@ -1785,7 +1827,8 @@ def _load_or_fetch_apod_state(
     cached = _read_apod_state(paths.cache / "apod-state.json", selection=selection)
     if cached is not None:
         _task_checkpoint(context)
-        return cached, selection
+        return _refetch_provisional_record(cached, http=http, api_key=api_key, selection=selection,
+                                           context=context), selection
 
     if selection.mode == "random" and selection.provisional:
         requested = None
