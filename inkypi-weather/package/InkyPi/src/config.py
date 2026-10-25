@@ -65,6 +65,30 @@ _LIVERADAR_TWITCH_ZACK_ROOM = {
     "id": "zackrawrr",
     "isFav": False,
 }
+# The requested Bilibili room 545039 (机核GCORES) follows on that instance, which
+# the Twitch migration leaves at settings revision 5.
+_LIVERADAR_BILIBILI_GCORES_MIGRATION = "liveradar_bilibili_545039_v1"
+_LIVERADAR_BILIBILI_GCORES_UUID_SHA256_PREFIX = "14c36f0ef259f0b5"
+_LIVERADAR_BILIBILI_GCORES_STRUCTURAL_GENERATION = 1
+_LIVERADAR_BILIBILI_GCORES_SETTINGS_REVISION = 5
+_LIVERADAR_BILIBILI_GCORES_REFRESH_INTERVAL_SECONDS = 5 * 60
+_LIVERADAR_BILIBILI_GCORES_ROOM = {
+    "platform": "bilibili",
+    "id": "545039",
+    "isFav": False,
+}
+# Then the requested Douyin room 80596524973, which that migration leaves at
+# settings revision 6.
+_LIVERADAR_DOUYIN_ROOM_MIGRATION = "liveradar_douyin_80596524973_v1"
+_LIVERADAR_DOUYIN_ROOM_UUID_SHA256_PREFIX = "14c36f0ef259f0b5"
+_LIVERADAR_DOUYIN_ROOM_STRUCTURAL_GENERATION = 1
+_LIVERADAR_DOUYIN_ROOM_SETTINGS_REVISION = 6
+_LIVERADAR_DOUYIN_ROOM_REFRESH_INTERVAL_SECONDS = 5 * 60
+_LIVERADAR_DOUYIN_ROOM = {
+    "platform": "douyin",
+    "id": "80596524973",
+    "isFav": False,
+}
 _NEWSPAPER_REFILL_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_LEGACY_REFRESH_INTERVAL_SECONDS = 60 * 60
 _VEHICLE_STATUS_REFRESH_INTERVAL_SECONDS = 3 * 60 * 60
@@ -211,6 +235,8 @@ class Config:
         self._migrate_liveradar_douyu_cake_room()
         self._migrate_liveradar_kick_quin_room()
         self._migrate_liveradar_twitch_zack_room()
+        self._migrate_liveradar_bilibili_gcores_room()
+        self._migrate_liveradar_douyin_room()
         self._migrate_runtime_balance_cadences()
         self._migrate_runtime_balance_soft_threshold(
             cadence_marker_preexisting=cadence_marker_preexisting,
@@ -310,6 +336,30 @@ class Config:
             settings_revision=_LIVERADAR_TWITCH_ZACK_SETTINGS_REVISION,
             refresh_interval=_LIVERADAR_TWITCH_ZACK_REFRESH_INTERVAL_SECONDS,
             room=_LIVERADAR_TWITCH_ZACK_ROOM,
+        )
+
+    def _migrate_liveradar_bilibili_gcores_room(self):
+        """Append the Bilibili room 545039 to the same instance."""
+
+        self._append_liveradar_room(
+            migration=_LIVERADAR_BILIBILI_GCORES_MIGRATION,
+            uuid_prefix=_LIVERADAR_BILIBILI_GCORES_UUID_SHA256_PREFIX,
+            structural_generation=_LIVERADAR_BILIBILI_GCORES_STRUCTURAL_GENERATION,
+            settings_revision=_LIVERADAR_BILIBILI_GCORES_SETTINGS_REVISION,
+            refresh_interval=_LIVERADAR_BILIBILI_GCORES_REFRESH_INTERVAL_SECONDS,
+            room=_LIVERADAR_BILIBILI_GCORES_ROOM,
+        )
+
+    def _migrate_liveradar_douyin_room(self):
+        """Append the Douyin room 80596524973 to the same instance."""
+
+        self._append_liveradar_room(
+            migration=_LIVERADAR_DOUYIN_ROOM_MIGRATION,
+            uuid_prefix=_LIVERADAR_DOUYIN_ROOM_UUID_SHA256_PREFIX,
+            structural_generation=_LIVERADAR_DOUYIN_ROOM_STRUCTURAL_GENERATION,
+            settings_revision=_LIVERADAR_DOUYIN_ROOM_SETTINGS_REVISION,
+            refresh_interval=_LIVERADAR_DOUYIN_ROOM_REFRESH_INTERVAL_SECONDS,
+            room=_LIVERADAR_DOUYIN_ROOM,
         )
 
     def _append_liveradar_room(

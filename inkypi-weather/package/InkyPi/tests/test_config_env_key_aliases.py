@@ -1675,6 +1675,71 @@ def test_twitch_zack_migration_skips_a_different_settings_revision(monkeypatch, 
     assert "liveradar_twitch_zackrawrr_v1" not in saved["runtime_migrations"]
 
 
+def test_startup_appends_bilibili_gcores_then_the_douyin_room_once(monkeypatch, tmp_path):
+    original, rooms_document = _zack_ready_live_radar_config(
+        rooms_text="twitch|asmongold\ndouyu|4067868\nkick|quin3614|fav\ntwitch|zackrawrr",
+        rooms_document={
+            "version": "3.1.1",
+            "rooms": [
+                {"platform": "twitch", "id": "asmongold", "isFav": False},
+                {"platform": "douyu", "id": "4067868", "isFav": False},
+                {"platform": "kick", "id": "quin3614", "isFav": True},
+                {"platform": "twitch", "id": "zackrawrr", "isFav": False},
+            ],
+        },
+    )
+    original["runtime_migrations"]["liveradar_twitch_zackrawrr_v1"] = True
+    original["playlist_config"]["playlists"][0]["plugins"][0]["settings_revision"] = 5
+    _patch_live_radar_identity(
+        monkeypatch,
+        "_LIVERADAR_BILIBILI_GCORES_UUID_SHA256_PREFIX",
+        "_LIVERADAR_DOUYIN_ROOM_UUID_SHA256_PREFIX",
+    )
+
+    config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    instance = saved["playlist_config"]["playlists"][0]["plugins"][0]
+    settings = instance["plugin_settings"]
+    assert settings["roomsText"].splitlines()[-3:] == [
+        "twitch|zackrawrr",
+        "bilibili|545039",
+        "douyin|80596524973",
+    ]
+    assert json.loads(settings["roomsJson"])["rooms"][-2:] == [
+        {"platform": "bilibili", "id": "545039", "isFav": False},
+        {"platform": "douyin", "id": "80596524973", "isFav": False},
+    ]
+    assert instance["settings_revision"] == 7
+    assert instance["structural_generation"] == 1
+    assert instance["refresh"] == {"interval": 300}
+    assert saved["runtime_migrations"]["liveradar_bilibili_545039_v1"] is True
+    assert saved["runtime_migrations"]["liveradar_douyin_80596524973_v1"] is True
+    assert config.get_playlist_manager().find_plugin("live_radar", "LiveRadar").settings == settings
+
+    first_revision = saved["config_revision"]
+    Config()
+    assert json.loads(config_path.read_text(encoding="utf-8"))["config_revision"] == first_revision
+
+
+def test_douyin_room_migration_skips_an_instance_the_owner_edited_since(monkeypatch, tmp_path):
+    original, _rooms = _zack_ready_live_radar_config()
+    original["playlist_config"]["playlists"][0]["plugins"][0]["settings_revision"] = 9
+    _patch_live_radar_identity(
+        monkeypatch,
+        "_LIVERADAR_BILIBILI_GCORES_UUID_SHA256_PREFIX",
+        "_LIVERADAR_DOUYIN_ROOM_UUID_SHA256_PREFIX",
+    )
+
+    _config, config_path = _device_config(monkeypatch, tmp_path, original)
+
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    rooms_text = saved["playlist_config"]["playlists"][0]["plugins"][0]["plugin_settings"]["roomsText"]
+    assert "545039" not in rooms_text and "douyin" not in rooms_text
+    assert "liveradar_bilibili_545039_v1" not in saved["runtime_migrations"]
+    assert "liveradar_douyin_80596524973_v1" not in saved["runtime_migrations"]
+
+
 def test_kick_room_migration_marks_an_existing_room_without_editing(monkeypatch, tmp_path):
     present = {
         "version": "3.1.1",
