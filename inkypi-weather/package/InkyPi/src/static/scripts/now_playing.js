@@ -152,6 +152,7 @@
         newspaper: "今日报纸",
         orbital_signal: "轨道信号",
         pixiv_r18_ranking: "Pixiv 排行",
+        planet_now: "环球此刻",
         reddit_rule34_hot: "Reddit 热帖",
         rss: "RSS 订阅",
         screenshot: "网页截图",
@@ -218,7 +219,7 @@
         context.beginPath();
         context.arc(50, 50, 12, 0, Math.PI * 2);
         context.fill();
-        context.fillStyle = styles.getPropertyValue("--c-accent").trim() || "#1abc9c";
+        context.fillStyle = styles.getPropertyValue("--c-accent").trim() || "#ff5e00";
         context.beginPath();
         context.arc(50, 50, 8, 0, Math.PI * 2);
         context.fill();

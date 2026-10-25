@@ -1,4 +1,4 @@
-{%- from 'components/icons.html' import icon, logo -%}
+{%- from 'components/icons.html' import icon, logo, wordmark -%}
 {%- set nav_active = nav_active | default('') -%}
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
@@ -27,9 +27,9 @@
 <body>
 <div class="app-shell">
     <nav class="app-nav" aria-label="Main">
-        <a class="nav-brand" href="/">
+        <a class="nav-brand" href="/" aria-label="ColoredEpaper Frame">
             <span class="nav-brand-mark" aria-hidden="true">{{ logo() }}</span>
-            <span class="truncate" data-i18n-skip="true">{{ inkypi_device_name | default('InkyPi') }}</span>
+            {{ wordmark() }}
         </a>
         <ul class="nav-links">
             <li><a class="nav-link{% if nav_active == 'now' %} is-active{% endif %}" href="/"{% if nav_active == 'now' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('now') }}</span><span>Now Playing</span></a></li>
@@ -37,7 +37,7 @@
             <li><a class="nav-link{% if nav_active == 'keys' %} is-active{% endif %}" href="/api-keys"{% if nav_active == 'keys' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('keys') }}</span><span>Keys</span></a></li>
             <li><a class="nav-link{% if nav_active == 'device' %} is-active{% endif %}" href="/settings"{% if nav_active == 'device' %} aria-current="page"{% endif %}><span class="nav-icon">{{ icon('device') }}</span><span>Device</span></a></li>
         </ul>
-        <div class="nav-foot">InkyPi</div>
+        <div class="nav-foot truncate" data-i18n-skip="true">{{ inkypi_device_name | default('InkyPi') }}</div>
     </nav>
 
     <main class="app-main" id="main">

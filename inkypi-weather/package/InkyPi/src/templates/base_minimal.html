@@ -1,4 +1,4 @@
-{%- from 'components/icons.html' import icon, logo -%}
+{%- from 'components/icons.html' import icon, logo, wordmark -%}
 <!DOCTYPE html>
 <html lang="en" data-theme="dark">
 <head>
@@ -31,7 +31,7 @@
     </button>
 </div>
 <main class="minimal-card card">
-    <div class="minimal-brand"><span class="nav-brand-mark" aria-hidden="true">{{ logo() }}</span><span>InkyPi</span></div>
+    <div class="minimal-brand"><span class="nav-brand-mark" aria-hidden="true">{{ logo() }}</span>{{ wordmark() }}</div>
     {% block content %}{% endblock %}
 </main>
 <div class="toast-stack" id="toastStack" aria-live="polite"></div>

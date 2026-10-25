@@ -54,12 +54,26 @@ code { font-family: var(--font-mono); font-size: 0.92em; background: var(--c-rai
 
 .nav-brand-mark {
     display: inline-flex;
-    width: 36px;
-    height: 25px;
+    width: 34px;
+    height: 34px;
     flex: none;
 }
 
 .nav-brand-mark .brand-logo { width: 100%; height: 100%; display: block; }
+.brand-logo .brand-frame { fill: var(--brand-frame); }
+.brand-logo .brand-screen { fill: var(--brand-screen); }
+
+/* The wordmark: ColoredEpaper over a spaced FRAME in the brand orange (Space Grotesk, bundled). */
+@font-face {
+    font-family: "Space Grotesk";
+    src: url("../fonts/SpaceGrotesk-VF.ttf") format("truetype");
+    font-weight: 300 700;
+    font-display: swap;
+}
+
+.brand-word { display: flex; flex-direction: column; min-width: 0; line-height: 1.05; }
+.brand-word-name { font-family: "Space Grotesk", var(--font); font-size: 17px; font-weight: 700; letter-spacing: -0.01em; color: var(--c-text); }
+.brand-word-tag { margin-top: 3px; font-family: "Space Grotesk", var(--font); font-size: 9.5px; font-weight: 600; letter-spacing: 0.5em; color: var(--c-accent); }
 
 .nav-links { display: flex; list-style: none; margin: 0; padding: 0; }
 

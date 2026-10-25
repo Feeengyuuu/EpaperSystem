@@ -11,10 +11,14 @@ html[data-theme="dark"] {
     --c-text: #e8eaed;
     --c-muted: #8a9099;
     --c-faint: #5f6670;
-    --c-accent: #1abc9c;
-    --c-accent-strong: #2fd6b3;
-    --c-accent-soft: rgba(26, 188, 156, 0.16);
-    --c-on-accent: #04110d;
+    /* Brand: Steam orange, its warm amber, and ink for text on it. */
+    --c-accent: #ff5e00;
+    --c-accent-strong: #ff7a33;
+    --c-accent-soft: rgba(255, 94, 0, 0.16);
+    --c-accent-glow: #ee9517;
+    --c-on-accent: #14171d;
+    --brand-frame: #f7f5f2;
+    --brand-screen: #14171d;
     --c-ok: #5fd4a0;
     --c-ok-soft: rgba(95, 212, 160, 0.16);
     --c-warn: #f2b84b;
@@ -37,10 +41,14 @@ html[data-theme="light"] {
     --c-text: #14161a;
     --c-muted: #5f6670;
     --c-faint: #8d939c;
-    --c-accent: #14a385;
-    --c-accent-strong: #0f8a70;
-    --c-accent-soft: rgba(20, 163, 133, 0.12);
+    /* On light ground the brand orange deepens so text and buttons keep 4.5:1. */
+    --c-accent: #c24400;
+    --c-accent-strong: #a33900;
+    --c-accent-soft: rgba(255, 94, 0, 0.12);
+    --c-accent-glow: #ee9517;
     --c-on-accent: #ffffff;
+    --brand-frame: #14171d;
+    --brand-screen: #f7f5f2;
     --c-ok: #1f9d63;
     --c-ok-soft: rgba(31, 157, 99, 0.12);
     --c-warn: #b7791f;

@@ -34,7 +34,7 @@ def web_manifest():
     name = inkypi_shell_context()["inkypi_device_name"]
     payload = {
         "name": name,
-        "short_name": "InkyPi",
+        "short_name": "Epaper Frame",
         "start_url": "/",
         "scope": "/",
         "display": "standalone",
