@@ -1,9 +1,11 @@
 """One page for the cover plugins (Daily Art, Magazine Covers, GCD Comic Covers).
 
 A header names the page with what is on it and the date; up to four works stand side by
-side on one shelf line, each framed with a soft shadow over a wall label (a numbered
-title, then its facts); Daily Art adds a timeline that places each work in its century.
-Everything stays inside the 8 px inset the theme chrome frames.
+side on one shelf line, each framed with a soft shadow and as large as the page allows,
+over a compact wall label of three lines (a numbered title; its date chip, first fact and
+colour swatches; then its other facts run together); Daily Art adds a timeline that
+places each work in its century. Everything stays inside the 8 px inset the theme chrome
+frames.
 """
 
 from __future__ import annotations
@@ -19,10 +21,16 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 from utils.app_utils import get_base_ui_font
 from utils.safe_image import safe_open_image
 
-MARGIN = 18
-HEADER_TOP, HEADER_RULE = 14, 50
-COLUMN_GAP = 16
-LABEL_H = 98
+MARGIN = 14
+# The works get every row the header and label leave: the page ends BOTTOM px above its edge.
+BOTTOM = 10
+HEADER_TOP, HEADER_RULE = 11, 47
+COLUMN_GAP = 12
+# A label's three lines: the title, the chip line, then the rest of its facts.
+TITLE_ROW, CHIP_ROW, FACT_ROW = 19, 19, 15
+LABEL_H = TITLE_ROW + CHIP_ROW + FACT_ROW
+# A label is as wide as its work, but never narrower than this.
+LABEL_MIN_W = 220
 TIMELINE_H = 30
 SHADOW = 4
 # A page's own wordmark stands this tall in its header.
@@ -117,13 +125,20 @@ def columns(count, dimensions, *, timeline=False):
     width, height = dimensions
     count = max(1, int(count))
     col_w = (width - 2 * MARGIN - (count - 1) * COLUMN_GAP) / count
-    label_top = height - MARGIN - LABEL_H - (TIMELINE_H if timeline else 0)
+    label_top = height - BOTTOM - LABEL_H - (TIMELINE_H if timeline else 0)
     boxes = []
     for index in range(count):
         left = round(MARGIN + index * (col_w + COLUMN_GAP))
         right = round(MARGIN + index * (col_w + COLUMN_GAP) + col_w)
-        boxes.append(((left, HEADER_RULE + 12, right, label_top - 10), (left, label_top, right, label_top + LABEL_H)))
+        boxes.append(((left, HEADER_RULE + 7, right, label_top - 5), (left, label_top, right, label_top + LABEL_H)))
     return boxes
+
+
+def art_sizes(count, dimensions, *, timeline=False):
+    """The most each of ``count`` works can fill on the page: the size a cover is contained in,
+    so a plugin can resize its bank images to it once, ahead of the page."""
+    return [(right - left - SHADOW, bottom - top - SHADOW)
+            for (left, top, right, bottom), _label in columns(count, dimensions, timeline=timeline)]
 
 
 def compose(images, labels, dimensions, *, title, subtitle="", date_text="", accent=(0, 70, 200), dark=False,
@@ -147,10 +162,11 @@ def compose(images, labels, dimensions, *, title, subtitle="", date_text="", acc
     _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark)
     for index, (image, label, (image_box, label_box)) in enumerate(zip(images, labels, boxes), start=1):
         frame = _framed(page, image, image_box, colors)
-        _swatches(draw, image, frame, colors)
-        _label(draw, label, label_box, index, accent, colors, numbered=timeline)
+        label_box = _under(frame, label_box)
+        swatch_w = _swatches(draw, image, (label_box[2], label_box[1] + TITLE_ROW + 4), colors)
+        _label(draw, label, label_box, index, accent, colors, numbered=timeline, reserve=swatch_w + 6)
     if timeline:
-        _timeline(draw, labels, (MARGIN, height - MARGIN - TIMELINE_H + 6, width - MARGIN, height - MARGIN), accent,
+        _timeline(draw, labels, (MARGIN, height - BOTTOM - TIMELINE_H + 6, width - MARGIN, height - BOTTOM), accent,
                   colors)
     return page
 
@@ -185,6 +201,7 @@ def _header(page, draw, title, subtitle, date_text, accent, colors, width, logo,
 def _framed(page, image, box, colors):
     """The work contained in ``box``, standing on its foot, with a hairline frame and soft shadow."""
     left, top, right, bottom = box
+    # A bank image already resized to art_sizes() comes back unchanged.
     art = ImageOps.contain(image.convert("RGB"), (right - left - SHADOW, bottom - top - SHADOW),
                            method=Image.Resampling.LANCZOS)
     x = left + (right - left - SHADOW - art.width) // 2
@@ -199,50 +216,47 @@ def _framed(page, image, box, colors):
     return x, y, x + art.width, y + art.height
 
 
-def _label(draw, label, box, index, accent, colors, numbered):
+def _under(frame, box, min_width=LABEL_MIN_W):
+    """The label box squared under the framed work, widened about it to ``min_width`` px
+    inside its own column, so a lone narrow work keeps its label beneath it."""
     left, top, right, bottom = box
-    width = right - left
+    x0, x1 = frame[0], frame[2]
+    grow = max(0, min_width - (x1 - x0)) / 2
+    x0, x1 = max(left, round(x0 - grow)), min(right, round(x1 + grow))
+    return x0, top, x1, bottom
+
+
+def _label(draw, label, box, index, accent, colors, numbered, reserve=0):
+    """Three tight lines under a work: its (numbered) title; its chip and first fact, leaving
+    ``reserve`` px at the right for the swatches; then its other facts run together."""
+    left, top, right, _bottom = box
     x = left
     if numbered:
-        draw.ellipse((x, top + 2, x + 16, top + 18), fill=accent)
+        draw.ellipse((x, top + 1, x + 16, top + 17), fill=accent)
         number_font = _font(10, True)
         number = str(index)
-        draw.text((x + 8 - draw.textlength(number, font=number_font) / 2, top + 3), number, font=number_font,
+        draw.text((x + 8 - draw.textlength(number, font=number_font) / 2, top + 2), number, font=number_font,
                   fill=(255, 255, 255))
         x += 22
     title_font = _font(14, True)
-    y = top
-    for line in _wrap(draw, label.title or "-", title_font, right - x, 2):
-        draw.text((x, y), line, font=title_font, fill=colors["ink"])
-        y += 19
-    y += 3
+    draw.text((x, top - 1), _clip(draw, label.title or "-", title_font, right - x), font=title_font, fill=colors["ink"])
+    y = top + TITLE_ROW
     fact_font = _font(11)
+    x = left
     if label.chip:
         chip_font = _font(10, True)
         chip_w = draw.textlength(label.chip, font=chip_font) + 10
         draw.rounded_rectangle((left, y + 1, left + chip_w, y + 16), radius=4, fill=accent)
         draw.text((left + 5, y + 2), label.chip, font=chip_font, fill=(255, 255, 255))
-        first = label.lines[0] if label.lines else ""
-        draw.text((left + chip_w + 6, y + 1), _clip(draw, first, fact_font, width - chip_w - 6), font=fact_font,
-                  fill=colors["ink"])
-        rest = label.lines[1:]
-        y += 18
-    else:
-        rest = label.lines
-    floor = bottom - (14 if label.source else 0)
-    for line in rest:
-        if y + 14 > floor:
-            break
-        draw.text((left, y), _clip(draw, line, fact_font, width), font=fact_font, fill=colors["muted"])
-        y += 15
-    if label.body and y + 14 <= floor:
-        for line in _wrap(draw, label.body, fact_font, width, max(1, (floor - y) // 15)):
-            draw.text((left, y), line, font=fact_font, fill=colors["muted"])
-            y += 15
-    if label.source:
-        source_font = _font(10, True)
-        draw.text((left, bottom - 13), _clip(draw, label.source, source_font, width), font=source_font,
-                  fill=colors["muted"])
+        x += chip_w + 6
+    first = label.lines[0] if label.lines else ""
+    if first:
+        draw.text((x, y + 1), _clip(draw, first, fact_font, right - reserve - x), font=fact_font, fill=colors["ink"])
+    y += CHIP_ROW
+    # Small text stays in solid ink: a grey this size dithers into noise on the panel.
+    rest = " · ".join(str(part) for part in (*label.lines[1:], label.body, label.source) if part)
+    if rest:
+        draw.text((left, y), _clip(draw, rest, fact_font, right - left), font=fact_font, fill=colors["ink"])
 
 
 def _timeline(draw, labels, box, accent, colors):
@@ -325,7 +339,8 @@ def _backdrop(page, images, boxes, colors, style, accent, dark):
                             fill=(*light, round((26 if dark else 34) * (1 - step / 13))))
     elif style == "newsstand":
         for image_box, _label_box in boxes:
-            shelf = image_box[3] + 1
+            # The shelf runs under the works' feet, clear of the labels below.
+            shelf = image_box[3] - SHADOW + 1
             pen.rectangle((image_box[0] - COLUMN_GAP // 2, shelf, image_box[2] + COLUMN_GAP // 2, shelf + 5),
                           fill=(*colors["frame"], 150))
             pen.line((image_box[0] - COLUMN_GAP // 2, shelf, image_box[2] + COLUMN_GAP // 2, shelf),
@@ -339,16 +354,17 @@ def _backdrop(page, images, boxes, colors, style, accent, dark):
     page.paste(base.convert("RGB"))
 
 
-def _swatches(draw, image, frame, colors, count=5):
-    """The work's main colours as a strip of squares under its frame's right corner."""
+def _swatches(draw, image, corner, colors, count=5):
+    """The work's main colours as a strip of squares ending at ``corner`` (right, top); its width."""
     small = image.convert("RGB").resize((48, 48), Image.Resampling.BILINEAR)
     quantized = small.quantize(colors=count, method=Image.Quantize.MEDIANCUT)
     raw = quantized.getpalette()[: count * 3]
     counts = sorted(quantized.getcolors(), reverse=True)
     tones = [tuple(raw[index * 3:index * 3 + 3]) for _count, index in counts[:count]]
     size, gap = 9, 2
-    x = frame[2] - len(tones) * (size + gap) + gap
-    y = frame[3] + 4
+    strip = len(tones) * (size + gap) - gap
+    x, y = corner[0] - strip, corner[1]
     for tone in tones:
         draw.rectangle((x, y, x + size - 1, y + size - 1), fill=tone, outline=colors["frame"], width=1)
         x += size + gap
+    return strip

@@ -1023,12 +1023,9 @@ class MagazineCovers(BasePlugin):
             for record in records
         ]
         if selection.get("layout") == "triptych" and len(records) >= 2:
-            targets = []
-            for index in range(len(records)):
-                _left, _top, box_width, box_height = cover_info.cover_box(
-                    index, TRIPTYCH_COVER_COUNT, dimensions
-                )
-                targets.append((box_width, box_height))
+            # Each cover is resized once, to exactly the frame the gallery page gives it.
+            sizes = cover_gallery.art_sizes(min(len(records), TRIPTYCH_COVER_COUNT), dimensions)
+            targets = [sizes[min(index, len(sizes) - 1)] for index in range(len(records))]
             paths.append(paths[0])
             targets.append(None)
         else:

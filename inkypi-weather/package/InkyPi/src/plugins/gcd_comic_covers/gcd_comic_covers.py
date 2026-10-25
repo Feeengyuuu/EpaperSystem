@@ -599,16 +599,9 @@ class GcdComicCovers(BasePlugin):
             for record in records
         ]
         if len(records) > 1:
-            width, height = dimensions
-            visible_count = min(len(records), TRIPTYCH_COVER_COUNT)
-            column_width = width // visible_count
-            targets = []
-            for index in range(len(records)):
-                x0 = index * column_width
-                target_width = (
-                    column_width if index < visible_count - 1 else width - x0
-                )
-                targets.append((target_width, height))
+            # Each cover is resized once, to exactly the frame the gallery page gives it.
+            sizes = cover_gallery.art_sizes(min(len(records), TRIPTYCH_COVER_COUNT), dimensions)
+            targets = [sizes[min(index, len(sizes) - 1)] for index in range(len(records))]
             paths.append(paths[0])
             targets.append(None)
         else:
@@ -653,12 +646,18 @@ class GcdComicCovers(BasePlugin):
             for x in range((y // 10) % 2 * 5, width, 10):
                 draw.ellipse((x, y, x + 3, y + 3), fill=(56, 54, 62))
         draw.rectangle((0, 0, width - 1, 70), fill=COMIC_ACCENT)
-        draw.text((18, 18), "COMIC", font=self._fallback_font(28, bold=True), fill=(255, 255, 255))
+        comic_font = self._fallback_font(28, bold=True)
+        draw.text((18, 18), "COMIC", font=comic_font, fill=(255, 255, 255))
         number = _issue_number(cover)
         if number:
+            # A long issue number ("#43/1957") steps down until it clears the COMIC lettering.
             label = f"#{number}"
-            font = self._fallback_font(44, bold=True)
-            draw.text((width - 18 - draw.textlength(label, font=font), 10), label, font=font, fill=(255, 255, 255))
+            room = width - 18 - (18 + draw.textlength("COMIC", font=comic_font) + 14)
+            size = next((size for size in range(44, 19, -4)
+                         if draw.textlength(label, font=self._fallback_font(size, bold=True)) <= room), 20)
+            font = self._fallback_font(size, bold=True)
+            draw.text((width - 18 - draw.textlength(label, font=font), 35 - size * 0.58), label, font=font,
+                      fill=(255, 255, 255))
         title_font = self._fallback_font(30, bold=True)
         series = _clean_text(cover.get("series_name") or cover.get("issue_label") or "Comic")
         y = 110
