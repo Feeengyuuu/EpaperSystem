@@ -4,6 +4,7 @@ new arXiv papers and speedrun world records."""
 from __future__ import annotations
 
 import calendar
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
@@ -11,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import feedparser
 
+from runtime.refresh_contracts import TaskCancelled
 from utils.http_client import HttpClientError, get_http_client
 
 
@@ -30,6 +32,9 @@ IGDB_GAMES_URL = "https://api.igdb.com/v4/games"
 STEAM_UPCOMING_URL = "https://store.steampowered.com/search/results/"
 STEAM_APPDETAILS_URL = "https://store.steampowered.com/api/appdetails"
 STEAM_SEARCH_URL = "https://store.steampowered.com/api/storesearch/"
+STEAM_ITEMS_URL = "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/"
+# A game's small Steam icon (the 32 px community icon of its store page).
+STEAM_ICON_URL = "https://cdn.cloudflare.steamstatic.com/steamcommunity/public/images/apps/{appid}/{icon}.jpg"
 ARXIV_URL = "https://export.arxiv.org/api/query"
 SPEEDRUN_GAMES_URL = "https://www.speedrun.com/api/v1/games"
 SPEEDRUN_RUNS_URL = "https://www.speedrun.com/api/v1/runs"
@@ -238,7 +243,7 @@ def fetch_steam_upcoming(context):
         release = data.get("release_date") or {}
         if data.get("type") not in (None, "game") or not release.get("coming_soon", True):
             continue
-        items.append({"name": _clean(data.get("name") or row.get("name"), 60),
+        items.append({"name": _clean(data.get("name") or row.get("name"), 60), "appid": int(appid),
                       "date": steam_release_date(release.get("date")),
                       "date_text": _clean(release.get("date"), 24), "hype": None, "platforms": ["PC"],
                       "image": safe_image_url(data.get("header_image") or data.get("capsule_image"))})
@@ -398,6 +403,63 @@ def _game_info(game_id, context):
             if info["cover"]:
                 return info
     return info
+
+
+def _name_key(name):
+    return re.sub(r"[\W_]+", "", str(name or "").lower())
+
+
+def steam_appid(name, context):
+    """The Steam app a game's name is (its exact name, or a name it starts), or None; a name with
+    a subtitle ("Home - A Unique Horror Adventure") also tries its head, matched exactly."""
+    attempts = [(name, False)]
+    head = re.split(r"\s+[-–:]\s+|:\s+", str(name or ""), maxsplit=1)[0].strip()
+    if head and head != name:
+        attempts.append((head, True))
+    for term, exact in attempts:
+        wanted = _name_key(term)
+        if not wanted:
+            continue
+        payload = _get_json("GET", STEAM_SEARCH_URL, context, max_bytes=256 * 1024,
+                            params={"term": term, "cc": "us", "l": "english"})
+        for item in (payload or {}).get("items") or []:
+            found = _name_key((item or {}).get("name"))
+            if found and str(item.get("type") or "app") == "app" and (
+                    found == wanted or (not exact and found.startswith(wanted))):
+                return int(item["id"])
+    return None
+
+
+def fetch_steam_icons(games, context):
+    """{"icons": {game name: its small Steam icon URL}} for the (name, appid or None) games; a
+    game Steam does not sell is left out."""
+    appids = {}
+    for name, appid in games:
+        try:
+            appid = int(appid) if appid else steam_appid(name, context)
+        except TaskCancelled:
+            raise
+        except Exception:  # noqa: BLE001 - a game that cannot be found just has no icon
+            appid = None
+        if appid:
+            appids[name] = appid
+    if not appids:
+        return {"icons": {}}
+    request = {"ids": [{"appid": appid} for appid in sorted(set(appids.values()))],
+               "context": {"language": "english", "country_code": "US"}, "data_request": {"include_assets": True}}
+    payload = _get_json("GET", STEAM_ITEMS_URL, context, max_bytes=512 * 1024,
+                        params={"input_json": json.dumps(request)})
+    hashes = {}
+    for item in ((payload or {}).get("response") or {}).get("store_items") or []:
+        icon = str(((item or {}).get("assets") or {}).get("community_icon") or "")
+        if re.fullmatch(r"[0-9a-f]{40}", icon) and item.get("appid"):
+            hashes[int(item["appid"])] = icon
+    return {"icons": {name: STEAM_ICON_URL.format(appid=appid, icon=hashes[appid])
+                      for name, appid in appids.items() if appid in hashes}}
+
+
+def valid_steam_icons(data):
+    return isinstance(data, dict) and isinstance(data.get("icons"), dict)
 
 
 def steam_cover(name, context):

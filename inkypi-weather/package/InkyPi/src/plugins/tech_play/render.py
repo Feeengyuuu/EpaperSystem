@@ -273,6 +273,31 @@ def _papers(canvas, payload, now):
 
 # --- Right column ----------------------------------------------------------------------------------
 
+def _inked(logo, ink):
+    """A one-colour dark mark recoloured to ``ink``, its coloured parts kept."""
+    logo = logo.copy()
+    pixels = logo.load()
+    for y in range(logo.height):
+        for x in range(logo.width):
+            r, g, b, a = pixels[x, y]
+            if a and max(r, g, b) < 110 and max(r, g, b) - min(r, g, b) < 40:
+                pixels[x, y] = (*ink[:3], a)
+    return logo
+
+
+def _game_icon(canvas, payload, images, name, xy, size):
+    """The game's small Steam icon at ``xy`` with rounded corners; returns the room it takes."""
+    url = ((payload.get("icons") or {}).get("data") or {}).get("icons", {}).get(name)
+    icon = images.get(url) if url else None
+    if icon is None:
+        return 0
+    icon = ImageOps.fit(icon.convert("RGB"), (size, size), Image.Resampling.LANCZOS)
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size - 1, size - 1), radius=max(2, size // 5), fill=255)
+    canvas.image.paste(icon, (round(xy[0]), round(xy[1])), mask)
+    return size + 4
+
+
 def _round_corners(canvas, box, radius):
     """An image's corners rounded off into the card's paper, so it sits in the page rather than
     boxed in by a hard line."""
@@ -316,8 +341,9 @@ def _epic(canvas, payload, images, now):
         meta = (f"{start.astimezone(now.tzinfo):%m/%d} 开始" if is_next and start else
                 epic_end_label(end, now) if end else "")
         meta_width = canvas.text((x + width - 6, bottom - 11), meta, 11, (255, 255, 255), anchor="rm", bold=False)
-        canvas.text((x + 6, bottom - 11), item["title"], 13, (255, 255, 255), anchor="lm",
-                    width=width - meta_width - 16)
+        title_x = x + 6 + _game_icon(canvas, payload, images, item["title"], (x + 6, bottom - 19), 16)
+        canvas.text((title_x, bottom - 11), item["title"], 13, (255, 255, 255), anchor="lm",
+                    width=x + width - meta_width - 10 - title_x)
         tag = "下周" if is_next else "免费领"
         tag_width = canvas.width(tag, 12) + 12
         canvas.draw.rectangle((x, top, x + tag_width, top + 18),
@@ -331,6 +357,9 @@ def _upcoming(canvas, payload, images, now):
     items = data.get("items", [])
     source_name = data.get("source") or ""
     logo = _logo("igdb" if source_name == "IGDB" else "steam", 18)
+    if source_name == "IGDB" and logo is not None:
+        # IGDB's logo is black lettering: it takes the page's ink, so it stays bright at night.
+        logo = _inked(logo, canvas.color("ink"))
     detail = "IGDB 期待度排行" if source_name == "IGDB" else "Steam 热门即将推出" if source_name else ""
     _card(canvas, UPCOMING_CARD, "upcoming_bar", "即将发售", logo=logo, detail=detail)
     left, right = UPCOMING_CARD[0] + 8, UPCOMING_CARD[2] - 8
@@ -351,7 +380,8 @@ def _upcoming(canvas, payload, images, now):
             draw_icon(canvas.draw, "rocket", (x + width / 2 - 12, top + 11), 24, canvas.color("ink"),
                       canvas.color("panel"))
         _round_corners(canvas, box, 6)
-        canvas.text((x, top + 56), item["name"], 12, anchor="lm", width=width)
+        name_x = x + _game_icon(canvas, payload, images, item["name"], (x, top + 49), 14)
+        canvas.text((name_x, top + 56), item["name"], 12, anchor="lm", width=x + width - name_x)
         stamp = parse_time(item.get("date"))
         when = (f"{stamp.astimezone(now.tzinfo):%m/%d} 周{WEEKDAYS[stamp.astimezone(now.tzinfo).weekday()]}"
                 if stamp else (item.get("date_text") or "日期待定"))

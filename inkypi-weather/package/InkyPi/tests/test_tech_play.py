@@ -186,3 +186,31 @@ def test_a_service_links_to_its_state_by_a_live_wire_or_a_cut_one():
     assert all(down.getpixel((x, 10)) == (255, 255, 255) for x in range(97, 104))
     assert down.getpixel((40, 10)) == (200, 30, 50)
     assert render._asset_icon("icon-calendar", 13) is not None
+
+
+def test_games_get_their_small_steam_icon_by_name_or_appid(monkeypatch):
+    searches, batches = [], []
+
+    def fake_get_json(method, url, context, **kwargs):
+        params = kwargs.get("params") or {}
+        if url == sources.STEAM_SEARCH_URL:
+            searches.append(params["term"])
+            catalogue = {"Phantom Blade Zero": [{"id": 4115450, "name": "Phantom Blade Zero", "type": "app"}],
+                         "Home": [{"id": 559680, "name": "Home", "type": "app"}]}
+            return {"items": catalogue.get(params["term"], [])}
+        batches.append(params["input_json"])
+        return {"response": {"store_items": [
+            {"appid": 4115450, "assets": {"community_icon": "a" * 40}},
+            {"appid": 559680, "assets": {"community_icon": "b" * 40}},
+            {"appid": 3047, "assets": {"community_icon": "c" * 40}}]}}
+
+    monkeypatch.setattr(sources, "_get_json", fake_get_json)
+
+    icons = sources.fetch_steam_icons([("Phantom Blade Zero", None), ("Home - A Unique Horror Adventure", None),
+                                       ("影之刃零", 3047), ("GTA VI", None)], None)["icons"]
+
+    assert icons["Phantom Blade Zero"].endswith("/apps/4115450/" + "a" * 40 + ".jpg")
+    # A subtitled name falls back to its head; a known appid skips the search; an unknown game has none.
+    assert icons["Home - A Unique Horror Adventure"].endswith("/apps/559680/" + "b" * 40 + ".jpg")
+    assert icons["影之刃零"].endswith("/apps/3047/" + "c" * 40 + ".jpg") and "GTA VI" not in icons
+    assert "影之刃零" not in searches and len(batches) == 1

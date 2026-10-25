@@ -102,8 +102,18 @@ class TechPlay(BasePlugin):
             fresh_seconds=1500, usable_seconds=7 * 86400, validate=sources.valid_speedrun_week,
             timeout_seconds=20, min_remaining_seconds=10))
         epic = payload["epic"]["data"]
+        # Each shown game's small Steam icon, looked up once a week for the names on the page.
+        games = [(item.get("title"), None) for item in (epic.get("current", []) + epic.get("upcoming", []))[:2]]
+        games += [(item.get("name"), item.get("appid")) for item in payload["upcoming"]["data"].get("items", [])[:4]]
+        games = [(name, appid) for name, appid in games if name]
+        payload["icons"] = load(Source("steam-icons", {"games": sorted(name for name, _appid in games)},
+                                       lambda ctx: sources.fetch_steam_icons(games, ctx),
+                                       fresh_seconds=7 * 86400, usable_seconds=30 * 86400,
+                                       validate=sources.valid_steam_icons, timeout_seconds=15))
+        icon_urls = payload["icons"]["data"].get("icons", {})
         urls = [item.get("image") for item in (epic.get("current", []) + epic.get("upcoming", []))[:2]]
         urls += [item.get("image") for item in payload["upcoming"]["data"].get("items", [])[:4]]
+        urls += [icon_urls.get(name) for name, _appid in games]
         for game in payload["speedrun"]["data"].get("top", []):
             urls.append(game.get("cover"))
             urls += [sources.flag_url(run.get("country")) for run in game.get("runs", [])[:2]]
