@@ -757,13 +757,14 @@ class ProRenderMixin:
         for match in (player.get("upcoming") or [])[:1 if pool or photos else 2]:
             when = datetime.fromtimestamp(match["unix_ms"] / 1000)
             self._text(draw, (x0, y), f"{when:%m/%d %H:%M}", fonts["tiny"], colors["cyan"])
-            # The opponent's logo leads its name and the event's own logo its title.
-            name_x = x0
+            # "vs", then the opponent's logo right before its name; the event's own logo leads its title.
+            self._text(draw, (x0, y + 12), "vs", fonts["small_bold"], colors["ink"])
+            name_x = x0 + self._text_width(draw, "vs", fonts["small_bold"]) + 5
             team = self._cs2_team_logo(match.get("opponent_logo"), match.get("opponent"), 16)
             if team is not None:
-                image.paste(team, (x0 + (16 - team.width) // 2, y + 13 + (16 - team.height) // 2), team)
+                image.paste(team, (name_x + (16 - team.width) // 2, y + 13 + (16 - team.height) // 2), team)
                 name_x += 20
-            self._single(draw, (name_x, y + 12), f"vs {match.get('opponent')}", fonts["small_bold"], colors["ink"],
+            self._single(draw, (name_x, y + 12), match.get("opponent"), fonts["small_bold"], colors["ink"],
                          x1 - name_x, 8)
             event_x = x0
             mark = self._cs2_event_logo(match.get("event"), when)
