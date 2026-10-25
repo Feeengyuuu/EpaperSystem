@@ -229,8 +229,9 @@ CALENDAR_RING_HEIGHT = 24
 CALENDAR_RING_PITCH = 42
 CALENDAR_RING_MARGIN = 22
 CALENDAR_CROSS_VARIANTS = 4
-# The month table's rules: between its cells, and its frame (px).
-CALENDAR_GRID_LINE, CALENDAR_GRID_FRAME = 1, 2
+# The month table: a dot every CALENDAR_GRID_DOT_STEP px between its cells, stopping this far short
+# of the table's edges (px).
+CALENDAR_GRID_DOT_STEP, CALENDAR_GRID_INSET = 3, 6
 # How strongly the month's border illustration is printed on the page (0-1).
 CALENDAR_BACKDROP_SHARE = 0.42
 # It keeps that strength within this many pixels of the page's edges and falls to this share
@@ -743,10 +744,6 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
                 col_cx = grid_left + col_w * dow + col_w / 2
 
                 if day == selected_date.day:
-                    # Today's cell is outlined in the highlight as well as its disc.
-                    cell_left, cell_top = grid_left + col_w * dow, grid_top_y + row_h * week_idx
-                    draw.rectangle([round(cell_left) + 1, round(cell_top) + 1, round(cell_left + col_w) - 1,
-                                    round(cell_top + row_h) - 1], outline=highlight_color, width=2)
                     draw.ellipse(
                         [col_cx - today_circle_r, row_cy - today_circle_r,
                          col_cx + today_circle_r, row_cy + today_circle_r],
@@ -854,16 +851,19 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
 
     @staticmethod
     def _draw_month_grid(draw, frame, rows_top, col_w, row_h, weeks, ink):
-        """The month as a planner table: a framed grid, one column a weekday and one row a week,
-        in solid ink (a light grey line would dither into dots on the panel)."""
+        """The month as a planner table, drawn soft: no frame, only fine dotted rules between its
+        cells (dots of solid ink, which stay crisp where a light grey line would dither into noise
+        on the panel), one column a weekday and one row a week."""
         left, top, right, bottom = frame
+        inset = CALENDAR_GRID_INSET
         for column in range(1, 7):
             x = round(left + col_w * column)
-            draw.line([(x, top), (x, bottom)], fill=ink, width=CALENDAR_GRID_LINE)
+            for y in range(round(top) + inset, round(bottom) - inset, CALENDAR_GRID_DOT_STEP):
+                draw.point((x, y), fill=ink)
         for week in range(1, weeks):
             y = round(rows_top + row_h * week)
-            draw.line([(left, y), (right, y)], fill=ink, width=CALENDAR_GRID_LINE)
-        draw.rectangle([round(left), round(top), round(right), round(bottom)], outline=ink, width=CALENDAR_GRID_FRAME)
+            for x in range(round(left) + inset, round(right) - inset, CALENDAR_GRID_DOT_STEP):
+                draw.point((x, y), fill=ink)
 
     @staticmethod
     def _cross_off_day(img, day, centre, size):
