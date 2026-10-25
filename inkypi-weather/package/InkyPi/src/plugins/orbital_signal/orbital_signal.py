@@ -102,10 +102,23 @@ ICON_DIR = Path(__file__).with_name("assets") / "icons"
 PROVIDER_LOGO_DIR = Path(__file__).with_name("assets") / "providers"
 FLAG_DIR = Path(__file__).with_name("assets") / "flags"
 ROCKET_LOGO_DIR = Path(__file__).with_name("assets") / "rockets"
-# Official rocket and mission marks (Wikimedia Commons, tools/build_orbital_rocket_logos.py),
-# matched by name; launches without one keep plain text.
-ROCKET_LOGOS = (("falcon heavy", "falcon_heavy"), ("falcon 9", "falcon9"), ("vulcan", "vulcan"))
-MISSION_LOGOS = (("starlink", "starlink"),)
+# Official rocket and mission marks (Wikimedia Commons, tools/build_orbital_rocket_logos.py):
+# (the words in the name, logo key, whether the logo spells those words). A mark that spells
+# them stands in for them and only the rest is printed (F9 + "BLOCK 5"); an emblem goes before
+# the whole name (V + "VULCAN VC4S"). A launch without a mark keeps its name as text.
+ROCKET_MARKS = (
+    (re.compile(r"\bfalcon heavy\b", re.IGNORECASE), "falcon_heavy", True),
+    (re.compile(r"\bfalcon 9\b", re.IGNORECASE), "falcon9", True),
+    (re.compile(r"\belectron\b", re.IGNORECASE), "electron", True),
+    (re.compile(r"\bvulcan\b", re.IGNORECASE), "vulcan", False),
+)
+MISSION_MARKS = (
+    (re.compile(r"\bstarlink\b", re.IGNORECASE), "starlink", False),
+    (re.compile(r"\b(?:project )?kuiper\b", re.IGNORECASE), "kuiper", True),
+)
+# Line boxes for the rocket and mission rows, and the widest a wordmark may grow on them.
+ROCKET_LINE, MISSION_LINE = 34, 20
+WORDMARK_MAX_WIDTH = 220
 # Below this brightness a logo's dark parts would vanish on the night paper; they take the ink.
 NIGHT_LOGO_INK_BELOW = 90
 FACT_ICON = 24
@@ -192,9 +205,13 @@ def _rocket_logo(key):
         return None
 
 
-def _logo_key(name, table):
-    folded = str(name or "").casefold()
-    return next((key for term, key in table if term in folded), None)
+def _name_mark(name, marks):
+    """(logo key, text still to print) for a name, or (None, name) when no official mark fits."""
+    for pattern, key, spells in marks:
+        if pattern.search(name):
+            rest = " ".join(pattern.sub(" ", name).replace("|", " ").split()).strip(" -/") if spells else name
+            return key, rest
+    return None, name
 
 
 @lru_cache(maxsize=32)
@@ -1035,14 +1052,37 @@ class OrbitalSignal(BasePlugin):
         draw.text((text_x, top + 16), f"{local.day:02d}", font=self._font(24, True, family), fill=palette["ink"])
         draw.text((text_x, top + 44), f"{local:%a}".upper(), font=self._font(10, True, family), fill=palette["muted"])
 
-    def _paste_logo(self, image, key, x, y, height, palette):
-        """Paste the logo ``key`` ``height`` px tall at (x, y); the width it took plus a gap, or 0."""
+    def _draw_marked_name(self, image, draw, name, marks, left, right, top, line, max_size, min_size,
+                          palette, family):
+        """A name on a ``line`` px row: its official mark if it has one, then whatever text is left.
+
+        The mark and the text share the row's centre line; without a mark the name is plain text.
+        """
+        key, rest = _name_mark(name, marks)
+        logo = self._fitted_logo(key, line, min(WORDMARK_MAX_WIDTH, right - left), palette)
+        if logo is None:
+            font = self._fit_font(draw, name, right - left, max_size, min_size, family)
+            draw.text((left, top + 2), self._fit_text(draw, name, font, right - left), font=font,
+                      fill=palette["ink"])
+            return
+        middle = top + line / 2
+        image.paste(logo, (int(left), round(middle - logo.height / 2)), logo)
+        text_x = left + logo.width + 10
+        if not rest or text_x >= right - 20:
+            return
+        font = self._fit_font(draw, rest, right - text_x, max_size, min_size, family)
+        shown = self._fit_text(draw, rest, font, right - text_x)
+        glyph_top, glyph_bottom = draw.textbbox((0, 0), shown, font=font)[1::2]
+        draw.text((text_x, round(middle - (glyph_top + glyph_bottom) / 2)), shown, font=font, fill=palette["ink"])
+
+    def _fitted_logo(self, key, height, max_width, palette):
+        """The logo ``key`` at ``height`` px (narrower wordmarks shrink to ``max_width``), or None."""
         logo = _rocket_logo(key) if key else None
         if logo is None:
-            return 0
+            return None
         width = max(1, round(logo.width * height / logo.height))
-        if width > height * 3:
-            width, height = height * 3, max(1, round(logo.height * height * 3 / logo.width))
+        if width > max_width:
+            width, height = int(max_width), max(1, round(logo.height * max_width / logo.width))
         fitted = logo.resize((width, height), Image.Resampling.LANCZOS)
         if sum(palette["paper"]) < 300:
             # Night paper: the logo's black parts take the ink so they do not vanish.
@@ -1050,8 +1090,7 @@ class OrbitalSignal(BasePlugin):
             dark = fitted.convert("L").point(lambda value: 255 if value < NIGHT_LOGO_INK_BELOW else 0)
             ink.putalpha(ImageChops.multiply(dark, fitted.getchannel("A")))
             fitted.alpha_composite(ink)
-        image.paste(fitted, (int(x), int(y) + 2), fitted)
-        return width + 8
+        return fitted
 
     def _draw_when_and_where(self, image, draw, launch, launch_time, now, left, right, top, palette, family):
         """Two plain lines: the local day and time (UTC after it), then the launch site with its flag."""
@@ -1118,17 +1157,11 @@ class OrbitalSignal(BasePlugin):
 
         width = text_right - text_left
         rocket = str(primary.get("rocket") or "UPCOMING").strip().upper()
-        rocket_x = text_left + self._paste_logo(image, _logo_key(rocket, ROCKET_LOGOS), text_left,
-                                                clock_top + FLIP_CARD[1] + 14, 30, palette)
-        draw.text((rocket_x, clock_top + FLIP_CARD[1] + 14), rocket,
-                  font=self._fit_font(draw, rocket, text_right - rocket_x, 30, 14, family), fill=palette["ink"])
+        self._draw_marked_name(image, draw, rocket, ROCKET_MARKS, text_left, text_right,
+                               clock_top + FLIP_CARD[1] + 12, ROCKET_LINE, 30, 14, palette, family)
         mission = str(primary.get("mission") or "MISSION").strip().upper()
-        mission_x = text_left + self._paste_logo(image, _logo_key(mission, MISSION_LOGOS), text_left,
-                                                 clock_top + FLIP_CARD[1] + 48, 18, palette)
-        mission_font = self._fit_font(draw, mission, text_right - mission_x, 16, 12, family)
-        draw.text((mission_x, clock_top + FLIP_CARD[1] + 48),
-                  self._fit_text(draw, mission, mission_font, text_right - mission_x),
-                  font=mission_font, fill=palette["ink"])
+        self._draw_marked_name(image, draw, mission, MISSION_MARKS, text_left, text_right,
+                               clock_top + FLIP_CARD[1] + 46, MISSION_LINE, 16, 12, palette, family)
         self._draw_when_and_where(image, draw, primary, launch_time, now, text_left, text_right,
                                   clock_top + FLIP_CARD[1] + 71, palette, family)
 

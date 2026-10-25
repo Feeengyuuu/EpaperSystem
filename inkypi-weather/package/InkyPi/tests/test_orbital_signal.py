@@ -32,9 +32,12 @@ from plugins.orbital_signal.orbital_signal import (  # noqa: E402
     DAY_PALETTE,
     DEFAULT_FONT,
     LAUNCH_SPLIT_X,
+    MISSION_MARKS,
     NIGHT_PALETTE,
     PLUGIN_ID,
+    ROCKET_MARKS,
     OrbitalSignal,
+    _name_mark,
 )
 from plugins.orbital_signal.launch_photo import (  # noqa: E402
     load_or_acquire_photo,
@@ -1031,7 +1034,7 @@ def test_up_next_rows_keep_representative_names_complete():
     assert "FLIGHT 13" in rendered
 
 
-def test_a_rocket_launch_badge_carries_the_date_and_falcon_lines_carry_their_logos():
+def test_a_rocket_launch_badge_carries_the_date_and_official_marks_stand_in_for_names():
     plugin = OrbitalSignal({"id": PLUGIN_ID})
     launches = _representative_launches()
     launches[0].update(rocket="Falcon 9 Block 5", mission="Starlink Group 15-16")
@@ -1043,14 +1046,32 @@ def test_a_rocket_launch_badge_carries_the_date_and_falcon_lines_carry_their_log
     launch_day = datetime.fromisoformat(launches[0]["net"].replace("Z", "+00:00"))
     assert "GO" not in texts
     assert f"{launch_day.day:02d}" in texts and f"{launch_day:%b}".upper() in texts
-    plain = OrbitalSignal({"id": PLUGIN_ID})
+    # The F9 mark spells "Falcon 9", so the headline prints only the variant after it (the
+    # small timeline below keeps names as text); the Starlink emblem does not spell its name,
+    # so the whole mission name stays beside it.
+    headline = [call["text"] for call in draw.text_calls if call["bbox"][3] - call["bbox"][1] >= 16]
+    assert "BLOCK 5" in headline and not any("FALCON 9" in text for text in headline)
+    assert "STARLINK GROUP 15-16" in texts
+
     plain_draw = RecordingDraw()
     launches[0].update(rocket="Long March 2C", mission="Yaogan 45")
-    plain._draw_launch(plain_draw.image, plain_draw, (0, 58, 440, 448), launches, NOW, DAY_PALETTE, None)
-    with_logo = next(call for call in draw.text_calls if call["text"] == "FALCON 9 BLOCK 5")
-    without = next(call for call in plain_draw.text_calls if call["text"] == "LONG MARCH 2C")
-    # The official F9 mark sits before the name, so the name starts further right.
-    assert with_logo["xy"][0] >= without["xy"][0] + 30
+    plugin._draw_launch(plain_draw.image, plain_draw, (0, 58, 440, 448), launches, NOW, DAY_PALETTE, None)
+    plain = [call["text"] for call in plain_draw.text_calls]
+    # Without an official mark the name is plain text.
+    assert "LONG MARCH 2C" in plain and "YAOGAN 45" in plain
+
+
+@pytest.mark.parametrize(("name", "marks", "expected"), [
+    ("FALCON 9 BLOCK 5", "rocket", ("falcon9", "BLOCK 5")),
+    ("FALCON HEAVY", "rocket", ("falcon_heavy", "")),
+    ("ELECTRON", "rocket", ("electron", "")),
+    ("VULCAN VC4S", "rocket", ("vulcan", "VULCAN VC4S")),
+    ("KUIPER KA-03", "mission", ("kuiper", "KA-03")),
+    ("LONG MARCH 6A", "rocket", (None, "LONG MARCH 6A")),
+])
+def test_marks_replace_only_the_words_they_spell(name, marks, expected):
+    table = ROCKET_MARKS if marks == "rocket" else MISSION_MARKS
+    assert _name_mark(name, table) == expected
 
 
 def test_primary_launch_keeps_full_rocket_name_inside_panel():

@@ -3,6 +3,7 @@
  "logos": {
   "falcon9": {
    "role": "rocket",
+   "keep": "whole",
    "file": "File:Falcon 9 logo.svg",
    "page": "https://commons.wikimedia.org/wiki/File:Falcon_9_logo.svg",
    "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a9/Falcon_9_logo.svg/960px-Falcon_9_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
@@ -16,6 +17,7 @@
   },
   "falcon_heavy": {
    "role": "rocket",
+   "keep": "whole",
    "file": "File:Falcon Heavy logo.svg",
    "page": "https://commons.wikimedia.org/wiki/File:Falcon_Heavy_logo.svg",
    "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/83/Falcon_Heavy_logo.svg/960px-Falcon_Heavy_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
@@ -27,8 +29,23 @@
     96
    ]
   },
+  "electron": {
+   "role": "rocket",
+   "keep": "whole",
+   "file": "File:Electron rocket logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Electron_rocket_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0c/Electron_rocket_logo.svg/960px-Electron_rocket_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "a0b90303a0342f54a33685334bc2094043d77a09aa68abf496cd018d760ca202",
+   "sha256": "60de1373e24ac47be2c26daea783aac2ffb8023364221de11e49fc2a729ca0bb",
+   "size": [
+    960,
+    69
+   ]
+  },
   "vulcan": {
    "role": "rocket",
+   "keep": "whole",
    "file": "File:Vulcan logo.svg",
    "page": "https://commons.wikimedia.org/wiki/File:Vulcan_logo.svg",
    "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0d/Vulcan_logo.svg/960px-Vulcan_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
@@ -42,14 +59,29 @@
   },
   "starlink": {
    "role": "mission",
-   "file": "File:Starlink Logo.svg",
-   "page": "https://commons.wikimedia.org/wiki/File:Starlink_Logo.svg",
-   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a8/Starlink_Logo.svg/960px-Starlink_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "keep": "emblem",
+   "file": "File:Starlink Logo 2024.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Starlink_Logo_2024.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/71/Starlink_Logo_2024.svg/960px-Starlink_Logo_2024.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
    "licence": "Public domain",
-   "source_sha256": "5b0bd6ad5d5a445e02e4b55bfd134fe9232b2ce24e318d9adcad2903dce471e8",
-   "sha256": "709734d262b48f6b650599d2476f9b7d8b24f1e1fc2e59ff729fdaab62d9f938",
+   "source_sha256": "e67c8fed51fba363590de5f9952cbd62d36a12cac0fe7f6b23fbe61f3bd4ead5",
+   "sha256": "7cce49a5f0599718fbbc1434dda21a7bd197598e490d7374638dca417c6c5d23",
    "size": [
-    196,
+    94,
+    96
+   ]
+  },
+  "kuiper": {
+   "role": "mission",
+   "keep": "whole",
+   "file": "File:Kuiper Systems logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Kuiper_Systems_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5a/Kuiper_Systems_logo.svg/960px-Kuiper_Systems_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "9b8ace138a525c817cce0e9d198a6e2d87451cb751a70b6dcac80c02b60ddff1",
+   "sha256": "ce043a21c76e78a49d507f1010d9fae5c18198145d0bd887251ee28c1461c3b0",
+   "size": [
+    733,
     96
    ]
   }
