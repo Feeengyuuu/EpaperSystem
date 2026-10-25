@@ -217,7 +217,8 @@ _LETTER_W, _LETTER_H = 5, 7
 
 
 # The month's wall-calendar page (calendar_page/): inset, room above for the binder rings,
-# hard shadow, ring size and spacing; four hand-drawn crosses strike off the days gone by.
+# hard shadow, ring size and spacing; four finger-painted crosses strike off the days gone by and
+# a drop of blood lands on today (calendar_page/marks.source.json).
 CALENDAR_PAGE_DIR = Path(__file__).with_name("calendar_page")
 CALENDAR_PAGE_INSET = 3
 CALENDAR_PAGE_TOP = 8
@@ -239,8 +240,15 @@ CALENDAR_BACKDROP_SHARE = 0.42
 CALENDAR_BACKDROP_EDGE = 46
 CALENDAR_BACKDROP_INNER = 0.32
 CALENDAR_AGENDA_BAND = 70
-# A cross spans about the today circle, so the struck-off number still reads under it.
-CALENDAR_CROSS_SCALE = 1.7
+# A cross spans a little more than the today circle and lets the struck-off number show through.
+CALENDAR_CROSS_SCALE = 1.45
+CALENDAR_CROSS_OPACITY = 0.88
+# Today's blood drop: its splat's radius as a share of the art (marks.source.json), drawn this
+# much larger than the old today circle; the falling drop and drips reach past the cell.
+CALENDAR_BLOOD_SPLAT = 0.2585
+CALENDAR_BLOOD_SCALE = 1.16
+# A dark outline keeps today's number crisp on any part of the drop.
+CALENDAR_BLOOD_INK = (60, 0, 6)
 
 
 @lru_cache(maxsize=4)
@@ -736,6 +744,17 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
         self._draw_month_grid(draw, (grid_left, grid_top_y - int(header_font_size * 0.40), grid_right_edge,
                                      grid_top_y + row_h * num_weeks), grid_top_y, col_w, row_h, num_weeks, text_color)
 
+        # Today's blood drop goes down first: its splashes and drips sit under every other day's
+        # number and cross, and today's number is printed on top of it.
+        bled = False
+        for week_idx, week in enumerate(cal_grid):
+            if selected_date.day in week:
+                bled = self._bleed_on_day(
+                    img,
+                    (grid_left + col_w * week.index(selected_date.day) + col_w / 2,
+                     grid_top_y + row_h * week_idx + row_h / 2),
+                    today_circle_r,
+                )
         for week_idx, week in enumerate(cal_grid):
             row_cy = grid_top_y + row_h * week_idx + row_h / 2
             for dow, day in enumerate(week):
@@ -744,17 +763,20 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
                 col_cx = grid_left + col_w * dow + col_w / 2
 
                 if day == selected_date.day:
-                    draw.ellipse(
-                        [col_cx - today_circle_r, row_cy - today_circle_r,
-                         col_cx + today_circle_r, row_cy + today_circle_r],
-                        fill=highlight_color,
-                    )
+                    # Today: a drop of blood has just landed on it (the old circle if the art is missing).
+                    if not bled:
+                        draw.ellipse(
+                            [col_cx - today_circle_r, row_cy - today_circle_r,
+                             col_cx + today_circle_r, row_cy + today_circle_r],
+                            fill=highlight_color,
+                        )
                     draw.text(
                         (col_cx, row_cy), str(day),
                         fill=selected_text, font=day_font, anchor="mm",
+                        stroke_width=2 if bled else 0, stroke_fill=CALENDAR_BLOOD_INK,
                     )
                 elif day < selected_date.day:
-                    # A day already lived: its number fades and a hand-drawn red cross strikes it off.
+                    # A day already lived: its number fades and a finger-painted red cross strikes it off.
                     draw.text(
                         (col_cx, row_cy), str(day),
                         fill=muted_text, font=day_font, anchor="mm",
@@ -866,15 +888,28 @@ class SimpleCalendar(PanelStageMixin, BasePlugin):
                 draw.point((x, y), fill=ink)
 
     @staticmethod
+    def _bleed_on_day(img, centre, radius):
+        """Paste the blood drop with its splat centred on today, sized off the today circle's
+        radius; False when the art is missing."""
+        drop = _calendar_page_art("blood_today.png")
+        if drop is None:
+            return False
+        side = max(16, round(radius * CALENDAR_BLOOD_SCALE / CALENDAR_BLOOD_SPLAT))
+        drop = drop.resize((side, side), Image.LANCZOS)
+        img.paste(drop, (round(centre[0] - side / 2), round(centre[1] - side / 2)), drop)
+        return True
+
+    @staticmethod
     def _cross_off_day(img, day, centre, size):
-        """Paste one of the hand-drawn crosses over a past day, the same one for that date every time."""
+        """Paste one of the finger-painted crosses over a past day, the same one for that date every time."""
         variant = 1 + (day.toordinal() * 7 + day.day) % CALENDAR_CROSS_VARIANTS
         mark = _calendar_page_art(f"cross_{variant}.png")
         if mark is None:
             return
         side = max(8, int(size))
         mark = mark.resize((side, side), Image.LANCZOS)
-        img.paste(mark, (round(centre[0] - side / 2), round(centre[1] - side / 2)), mark)
+        alpha = mark.getchannel("A").point(lambda value: round(value * CALENDAR_CROSS_OPACITY))
+        img.paste(mark, (round(centre[0] - side / 2), round(centre[1] - side / 2)), alpha)
 
     def _draw_focus_panel_background(self, img, left, top, right, bottom, panel_bg, weather_panel_background_path):
         panel_w = right - left
