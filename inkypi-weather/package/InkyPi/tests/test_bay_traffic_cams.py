@@ -166,4 +166,5 @@ def test_control_room_style_puts_each_still_on_a_crt_monitor_with_recorder_text(
     assert image.getpixel((x0 + 4, y0 + 60)) == crt.BEZEL
     # A red REC sits at the top right of the main screen.
     corner = image.crop((x1 - 80, y0 + 9, x1 - 9, y0 + 34))
-    assert any(pixel[0] > 200 and pixel[1] < 90 and pixel[2] < 90 for pixel in corner.getdata())
+    pixels = [corner.getpixel((x, y)) for x in range(corner.width) for y in range(corner.height)]
+    assert any(pixel[0] > 200 and pixel[1] < 90 and pixel[2] < 90 for pixel in pixels)
