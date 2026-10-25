@@ -135,10 +135,38 @@ BILIBILI_API_HEADERS = {
     "Accept": "application/json",
     "Referer": "https://live.bilibili.com/",
 }
+# The aggregator has no Douyin source. Douyin's own web room API answers once the
+# request carries the anonymous ttwid cookie that the live site sets on its first
+# response; only that response's headers are read, and the cookie is kept a day.
+DOUYIN_HOME_URL = "https://live.douyin.com/"
+DOUYIN_ENTER_URL = "https://live.douyin.com/webcast/room/web/enter/"
+DOUYIN_ENTER_PARAMS = {
+    "aid": "6383",
+    "app_name": "douyin_web",
+    "live_id": "1",
+    "device_platform": "web",
+    "language": "zh-CN",
+    "enter_from": "web_live",
+    "cookie_enabled": "true",
+    "screen_width": "1920",
+    "screen_height": "1080",
+    "browser_language": "zh-CN",
+    "browser_platform": "Win32",
+    "browser_name": "Chrome",
+    "browser_version": "124.0",
+}
+DOUYIN_API_HEADERS = {
+    "User-Agent": COVER_HEADERS["User-Agent"],
+    "Accept": "application/json",
+    "Referer": DOUYIN_HOME_URL,
+}
+DOUYIN_COOKIE_TTL_SECONDS = 24 * 3600
+DOUYIN_LIVE_STATUS = 2
 
 PLATFORMS = {
     "douyu": {"label": "DOUYU", "short": "DY"},
     "bilibili": {"label": "BILIBILI", "short": "B"},
+    "douyin": {"label": "DOUYIN", "short": "DYN"},
     "twitch": {"label": "TWITCH", "short": "TW"},
     "kick": {"label": "KICK", "short": "K"},
     "picarto": {"label": "PICARTO", "short": "PA"},
@@ -148,6 +176,7 @@ PLATFORMS = {
 # platforms keep the theme colours.
 PLATFORM_BRAND_COLORS = {
     "bilibili": (0, 174, 236),
+    "douyin": (254, 44, 85),
     "twitch": (145, 70, 255),
     "douyu": (255, 119, 0),
     "kick": (83, 252, 24),
@@ -164,7 +193,7 @@ STATUS_TOTAL_DARK_OFFLINE_FILL = (88, 88, 88)
 PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 PLATFORM_ICON_FILES = {
     platform: os.path.join(PLUGIN_DIR, "platform_icons", f"{platform}.png")
-    for platform in ("douyu", "bilibili", "twitch", "kick")
+    for platform in ("douyu", "bilibili", "douyin", "twitch", "kick")
 }
 STATUS_ICON_FILES = {
     kind: os.path.join(PLUGIN_DIR, "status_icons", f"{kind}.png")
@@ -566,6 +595,25 @@ class LiveRadar(BasePlugin):
                 started,
                 bilibili_rooms,
                 bilibili_results,
+                source_error,
+            )
+
+        douyin_rooms = rooms_by_platform.pop("douyin", [])
+        if douyin_rooms:
+            started = self._source_health_elapsed_now()
+            source_error = None
+            try:
+                douyin_results = self._fetch_douyin_statuses_direct(session, douyin_rooms, timeout, fetch_avatars)
+            except Exception as exc:
+                logger.warning("LiveRadar direct Douyin source unavailable: %s", exc.__class__.__name__)
+                source_error = exc
+                douyin_results = [self._missing_source_result(room) for room in douyin_rooms]
+            fetched_results.extend(douyin_results)
+            source_health["douyin"] = self._source_health_entry(
+                "douyin_direct",
+                started,
+                douyin_rooms,
+                douyin_results,
                 source_error,
             )
 
@@ -1095,6 +1143,146 @@ class LiveRadar(BasePlugin):
         if mapping_changed:
             self._write_bilibili_room_map(mapping)
         return results
+
+    def _fetch_douyin_statuses_direct(self, session, rooms, timeout, fetch_avatars):
+        cookie = self._douyin_cookie(session, timeout)
+        renewed = False
+        results = []
+        for room in rooms:
+            room_id = str(room.get("id") or "")
+            try:
+                payload = self._douyin_enter(session, room_id, cookie, timeout)
+                if payload is None and not renewed:
+                    # An empty reply means the cookie was refused; take a fresh one once.
+                    cookie, renewed = self._douyin_cookie(session, timeout, renew=True), True
+                    payload = self._douyin_enter(session, room_id, cookie, timeout)
+                if payload is None:
+                    raise RuntimeError("Douyin room API returned an empty reply.")
+                status = self._douyin_status_from_payload(room, payload, fetch_avatars)
+            except Exception as exc:
+                logger.warning("LiveRadar direct Douyin room failed for %s: %s", room_id, exc.__class__.__name__)
+                results.append(
+                    {
+                        "ok": False,
+                        "platform": "douyin",
+                        "id": room_id,
+                        "error": "douyin_direct_room_failed",
+                        "status": self._default_status(room, is_error=True),
+                    }
+                )
+                continue
+            if status is None:
+                results.append(
+                    {
+                        "ok": False,
+                        "platform": "douyin",
+                        "id": room_id,
+                        "error": "douyin_room_not_found",
+                        "status": self._default_status(room, is_error=True),
+                    }
+                )
+                continue
+            results.append(
+                {
+                    "ok": True,
+                    "platform": "douyin",
+                    "id": room_id,
+                    "status": status,
+                    "cache": "DOUYIN_DIRECT",
+                    "error": None,
+                }
+            )
+        return results
+
+    def _douyin_cookie_path(self):
+        return self._cache_dir() / "douyin_cookie.json"
+
+    def _douyin_cookie(self, session, timeout, renew=False):
+        now = self._bilibili_room_map_now()
+        path = self._douyin_cookie_path()
+        if not renew:
+            try:
+                saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+                if (
+                    isinstance(saved, dict)
+                    and saved.get("ttwid")
+                    and 0 <= now - float(saved.get("fetched_at") or 0) < DOUYIN_COOKIE_TTL_SECONDS
+                ):
+                    return str(saved["ttwid"])
+            except Exception as exc:
+                logger.warning("Could not read LiveRadar Douyin cookie: %s", exc.__class__.__name__)
+        with session.get(
+            DOUYIN_HOME_URL,
+            timeout=self._bounded_status_timeout(timeout),
+            headers={"User-Agent": COVER_HEADERS["User-Agent"]},
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+            ttwid = response.cookies.get("ttwid")
+        if not ttwid:
+            raise RuntimeError("Douyin set no ttwid cookie.")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+            temporary.write_text(json.dumps({"ttwid": ttwid, "fetched_at": now}), encoding="utf-8")
+            temporary.replace(path)
+        except Exception as exc:
+            logger.warning("Could not write LiveRadar Douyin cookie: %s", exc.__class__.__name__)
+        return ttwid
+
+    def _douyin_enter(self, session, room_id, cookie, timeout):
+        """The room API's JSON for ``room_id``, or None when it replies with nothing."""
+        response = session.get(
+            DOUYIN_ENTER_URL,
+            params={**DOUYIN_ENTER_PARAMS, "web_rid": room_id},
+            timeout=self._bounded_status_timeout(timeout),
+            headers=DOUYIN_API_HEADERS,
+            cookies={"ttwid": cookie},
+        )
+        response.raise_for_status()
+        if not response.content:
+            return None
+        payload = json.loads(response.content.decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise RuntimeError("Douyin room API returned invalid JSON.")
+        if payload.get("status_code") not in (0, "0", None):
+            raise RuntimeError(f"Douyin room API returned status {payload.get('status_code')}")
+        return payload
+
+    def _douyin_status_from_payload(self, room, payload, fetch_avatars):
+        """The card status from a room API reply, or None when it names no room."""
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        rooms = data.get("data") if isinstance(data.get("data"), list) else []
+        info = rooms[0] if rooms and isinstance(rooms[0], dict) else {}
+        user = data.get("user") if isinstance(data.get("user"), dict) else {}
+        user = user or (info.get("owner") if isinstance(info.get("owner"), dict) else {})
+        if not info and not user:
+            return None
+
+        def first_url(value):
+            urls = value.get("url_list") if isinstance(value, dict) else None
+            return str(urls[0]) if isinstance(urls, list) and urls and urls[0] else ""
+
+        live = self._safe_int(info.get("status"), 0) == DOUYIN_LIVE_STATUS
+        viewers = info.get("room_view_stats") if isinstance(info.get("room_view_stats"), dict) else {}
+        return {
+            "isLive": live,
+            "isReplay": False,
+            "title": info.get("title") or "",
+            "owner": user.get("nickname") or room.get("label") or room.get("id") or "",
+            "cover": first_url(info.get("cover")),
+            "avatar": first_url(user.get("avatar_thumb")) if fetch_avatars else "",
+            "heatValue": (
+                self._safe_int(viewers.get("display_value"), self._safe_int(info.get("user_count_str"), 0))
+                if live
+                else 0
+            ),
+            "isError": False,
+            # The room API carries no start time.
+            "startTime": None,
+            "platform": "douyin",
+            "id": str(room.get("id") or ""),
+        }
 
     def _bilibili_room_map_now(self):
         clock = getattr(self, "_bilibili_room_map_clock", time.time)

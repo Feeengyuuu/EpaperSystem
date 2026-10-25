@@ -1521,6 +1521,90 @@ def test_fetch_statuses_uses_direct_bilibili_before_douyu_aggregator(monkeypatch
     assert len(calls) == 2
 
 
+class _DouyinResponse:
+    def __init__(self, payload=None, cookies=None):
+        self.content = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else b""
+        self.cookies = cookies or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+
+def _douyin_room(status, **extra):
+    return {
+        "status_code": 0,
+        "data": {
+            "data": [{"status": status, "title": "直播连麦", **extra}],
+            "user": {"nickname": "勇哥餐饮创业说", "avatar_thumb": {"url_list": ["https://example.test/dy-face.jpg"]}},
+        },
+    }
+
+
+def _douyin_session(replies, calls):
+    class FakeSession:
+        def post(self, url, json, timeout, headers):
+            raise AssertionError("Douyin rooms never go to the aggregator")
+
+        def get(self, url, timeout, headers, params=None, stream=False, cookies=None):
+            if url == live_radar_module.DOUYIN_HOME_URL:
+                calls.append(("home", stream))
+                return _DouyinResponse(cookies={"ttwid": f"cookie-{len(calls)}"})
+            calls.append((params["web_rid"], cookies["ttwid"]))
+            return _DouyinResponse(replies.pop(0))
+
+    return FakeSession()
+
+
+def test_fetch_statuses_reads_douyin_rooms_directly_with_a_cached_cookie(monkeypatch, tmp_path):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    plugin._bilibili_room_map_clock = lambda: 1000.0
+    calls = []
+    live = _douyin_room(2, cover={"url_list": ["https://example.test/dy-cover.png"]},
+                        room_view_stats={"display_value": 29}, user_count_str="31")
+    replies = [live, _douyin_room(4), _douyin_room(4)]
+    monkeypatch.setattr(live_radar_module, "get_http_session", lambda: _douyin_session(replies, calls))
+    rooms = [{"platform": "douyin", "id": "676753621629", "label": "", "isFav": False},
+             {"platform": "douyin", "id": "80596524973", "label": "", "isFav": False}]
+
+    results = plugin._fetch_statuses(rooms, "https://example.test/batch", 9, True)
+    plugin._fetch_statuses(rooms[1:], "https://example.test/batch", 9, True)
+
+    assert [result["cache"] for result in results] == ["DOUYIN_DIRECT", "DOUYIN_DIRECT"]
+    first, second = (result["status"] for result in results)
+    assert (first["isLive"], first["owner"], first["title"], first["heatValue"]) == (True, "勇哥餐饮创业说", "直播连麦", 29)
+    assert (first["cover"], first["avatar"], first["startTime"]) == ("https://example.test/dy-cover.png",
+                                                                    "https://example.test/dy-face.jpg", None)
+    assert (second["isLive"], second["heatValue"], second["cover"]) == (False, 0, "")
+    # Only the first refresh reads the live site's headers for a cookie; the next one reuses it.
+    assert calls == [("home", True), ("676753621629", "cookie-1"), ("80596524973", "cookie-1"),
+                     ("80596524973", "cookie-1")]
+
+
+def test_a_refused_douyin_cookie_is_renewed_once_and_a_missing_room_is_named(monkeypatch, tmp_path):
+    plugin = _plugin()
+    plugin._cache_dir = lambda: tmp_path
+    calls = []
+    replies = [None, _douyin_room(4), {"status_code": 0, "data": {"data": []}}]
+    monkeypatch.setattr(live_radar_module, "get_http_session", lambda: _douyin_session(replies, calls))
+    rooms = [{"platform": "douyin", "id": "80596524973", "label": "", "isFav": False},
+             {"platform": "douyin", "id": "1", "label": "", "isFav": False}]
+
+    results = plugin._fetch_statuses(rooms, "https://example.test/batch", 9, True)
+
+    assert calls == [("home", True), ("80596524973", "cookie-1"), ("home", True), ("80596524973", "cookie-3"),
+                     ("1", "cookie-3")]
+    assert results[0]["ok"] is True and results[0]["status"]["owner"] == "勇哥餐饮创业说"
+    assert (results[1]["ok"], results[1]["error"], results[1]["status"]["isError"]) == (
+        False, "douyin_room_not_found", True)
+
+
 def test_load_cover_source_uses_shared_session_headers_and_cache(monkeypatch, tmp_path):
     plugin = _plugin()
     plugin._cache_dir = lambda: tmp_path
