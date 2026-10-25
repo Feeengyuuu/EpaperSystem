@@ -15,6 +15,12 @@ from utils.http_client import get_http_client
 PACIFIC = ZoneInfo("America/Los_Angeles")
 CALTRANS_URL = "https://cwwp2.dot.ca.gov/data/d4/lcs/lcsStatusD04.csv"
 NOAA_URL = "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter"
+NDBC_URL = "https://www.ndbc.noaa.gov/data/latest_obs/{station}.txt"
+# NDBC 46026, San Francisco: the buoy 18 nautical miles west of the Golden Gate.
+BUOY_STATION = "46026"
+COMPASS = {"N": "北", "NNE": "北东北", "NE": "东北", "ENE": "东东北", "E": "东", "ESE": "东东南", "SE": "东南",
+           "SSE": "南东南", "S": "南", "SSW": "南西南", "SW": "西南", "WSW": "西西南", "W": "西", "WNW": "西西北",
+           "NW": "西北", "NNW": "北西北"}
 DEFAULT_ROUTES = ("I-880", "I-680", "SR-84")
 DEFAULT_STATION = "9414523"
 USER_AGENT = "InkyPi BayCommute/1.0"
@@ -279,6 +285,57 @@ def fetch_tides(station, now, context):
         context.raise_if_cancelled()
         result[name] = normalize_tides(response.data, interval=interval, begin=begin, end=end)
     return result
+
+
+def _reading(pattern, text):
+    match = re.search(pattern, text, re.IGNORECASE)
+    if not match:
+        return None
+    value = float(match.group(1))
+    return value if math.isfinite(value) else None
+
+
+def parse_buoy(text):
+    """NDBC's latest-observation page (imperial units) as {time, wave_ft, period_s, swell_dir,
+    water_f, wind_kt, wind_dir}: the significant wave height when the buoy reports one, else
+    the swell's, with the matching period."""
+    text = str(text or "")
+    stamp = re.search(r"(\d{4})\s+GMT\s+(\d{2})/(\d{2})/(\d{2})", text)
+    if not stamp:
+        raise ValueError("NDBC returned no observation time")
+    clock, month, day, year = stamp.groups()
+    observed = datetime(2000 + int(year), int(month), int(day), int(clock[:2]), int(clock[2:]), tzinfo=timezone.utc)
+    swell = re.search(r"Swell:\s*([\d.]+)\s*ft\s*Period:\s*([\d.]+)\s*sec\s*Direction:\s*([A-Z]{1,3})", text)
+    wave = _reading(r"Wave Height:\s*([\d.]+)\s*ft", text)
+    period = _reading(r"Dominant Wave Period:\s*([\d.]+)\s*sec", text)
+    data = {"time": observed.isoformat(), "wave_ft": wave if wave is not None else (float(swell.group(1)) if swell else None),
+            "period_s": period if period is not None else (float(swell.group(2)) if swell else None),
+            "swell_dir": swell.group(3) if swell else "",
+            "water_f": _reading(r"Water Temp:\s*([\d.]+)", text),
+            "wind_kt": _reading(r"Wind:\s*[A-Z]{1,3}\s*\([^)]*\),\s*([\d.]+)\s*kt", text)}
+    wind = re.search(r"Wind:\s*([A-Z]{1,3})\b", text)
+    data["wind_dir"] = wind.group(1) if wind else ""
+    if data["wave_ft"] is None and data["water_f"] is None:
+        raise ValueError("NDBC reported neither waves nor water temperature")
+    return data
+
+
+def fetch_buoy(context):
+    context.raise_if_cancelled()
+    # The page is Latin-1 (its degree signs are not UTF-8), so it is read as bytes.
+    response = get_http_client().request_bytes(
+        "GET", NDBC_URL.format(station=BUOY_STATION), context=context, timeout=REQUEST_TIMEOUT,
+        max_bytes=32 * 1024, headers={"User-Agent": USER_AGENT})
+    context.raise_if_cancelled()
+    return parse_buoy(bytes(response.data).decode("latin-1"))
+
+
+def valid_buoy(data):
+    if not isinstance(data, dict) or not parse_time(data.get("time")):
+        return False
+    numbers = [data.get(key) for key in ("wave_ft", "period_s", "water_f", "wind_kt")]
+    return (all(value is None or (type(value) in (int, float) and math.isfinite(value)) for value in numbers)
+            and (data.get("wave_ft") is not None or data.get("water_f") is not None))
 
 
 def next_tides(data, now):

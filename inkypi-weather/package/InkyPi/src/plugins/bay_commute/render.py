@@ -11,7 +11,7 @@ from utils.app_utils import get_base_ui_font, get_font
 from utils.local_wordmark import paste_local_wordmark
 from utils.safe_image import ImageLimits, safe_open_image
 
-from .sources import PACIFIC, local_now, next_tides, parse_time, rank_roads, road_state, select_roads
+from .sources import COMPASS, PACIFIC, local_now, next_tides, parse_time, rank_roads, road_state, select_roads
 
 
 DAY = {"paper": "#faf9f3", "ink": "#162630", "muted": "#4c5c67", "rule": "#95a1a8",
@@ -364,12 +364,34 @@ def draw_tides(canvas, payload, settings, now):
                 "orange" if source["state"] in {"stale_cache", "unavailable"} else "muted", anchor="rt")
 
 
+def draw_buoy(canvas, payload):
+    """The offshore sea state beside the tide title: wave height, period and swell direction, and
+    the water temperature in Celsius, from the San Francisco buoy."""
+    source = payload.get("buoy") or {}
+    data = source.get("data") or {}
+    if source.get("state") in (None, "unavailable") or not data:
+        return
+    right = 786
+    canvas.text((right, TOP + 3), "外海浮标 46026", 11, "muted", bold=False, anchor="ra")
+    if data.get("wave_ft") is not None:
+        canvas.text((right, TOP + 37), f"浪 {data['wave_ft']:.1f} ft", 17, "blue", anchor="rm")
+    swell = " · ".join(part for part in (f"{data['period_s']:.0f} 秒" if data.get("period_s") else "",
+                                         f"{COMPASS.get(data.get('swell_dir'), '')}涌" if data.get("swell_dir") in COMPASS
+                                         else "") if part)
+    if swell:
+        canvas.text((right, TOP + 56), swell, 11, "muted", bold=False, anchor="rm")
+    if data.get("water_f") is not None:
+        celsius = (data["water_f"] - 32) * 5 / 9
+        canvas.text((right, TOP + 71), f"水温 {celsius:.1f}°C", 11, "muted", bold=False, anchor="rm")
+
+
 def render_page(dimensions, payload, settings, now):
     now = local_now(now)
     canvas = Canvas(settings)
     canvas.rule((464, TOP, 464, 434), "ink")
     draw_roads(canvas, payload, now)
     draw_tides(canvas, payload, settings, now)
+    draw_buoy(canvas, payload)
     canvas.rule((10,444,790,444), "ink", 2)
     roads = payload["roads"]
     recorded = parse_time(roads.get("data", {}).get("source_updated_at"))

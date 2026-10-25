@@ -1,4 +1,5 @@
-"""Bay Area closure and tide page; independent providers, local-only rotation."""
+"""Bay Area closure and tide page; independent providers, local-only rotation. The offshore buoy
+(NDBC 46026) adds the sea state beside the tide title when it reports."""
 
 from __future__ import annotations
 
@@ -68,6 +69,8 @@ class BayCommute(BasePlugin):
     def _valid_data(name, data):
         if not isinstance(data, dict):
             return False
+        if name == "buoy":
+            return sources.valid_buoy(data)
         if name == "roads":
             rows = data.get("items")
             return (isinstance(rows, list) and len(rows) <= sources.MAX_CACHED_ROADS
@@ -105,6 +108,8 @@ class BayCommute(BasePlugin):
         fetched = sources.parse_time(cache.get("fetched_at"))
         if fetched is None or (now - fetched).total_seconds() < -300:
             return False
+        if name == "buoy":
+            return -300 <= (now - fetched).total_seconds() < 1800
         if name == "roads":
             source = sources.parse_time(cache["data"].get("source_updated_at"))
             return (0 <= (now - fetched).total_seconds() < 3600
@@ -119,6 +124,8 @@ class BayCommute(BasePlugin):
             return False
         if name == "tides":
             return cache["data"].get("end_date", "") >= now.date().isoformat()
+        if name == "buoy":
+            return (now - fetched).total_seconds() <= 6 * 3600
         return True
 
     def _source(self, name, identity, now, *, allow_network, force, context, fetcher):
@@ -165,11 +172,15 @@ class BayCommute(BasePlugin):
         tides = self._source("tides", {"station": station}, now,
                              allow_network=allow_network, force=False, context=context,
                              fetcher=lambda: sources.fetch_tides(station, now, context))
+        # The buoy only adds to the tides: it never decides whether the page counts as live.
+        buoy = self._source("buoy", {"station": sources.BUOY_STATION}, now,
+                            allow_network=allow_network, force=force, context=context,
+                            fetcher=lambda: sources.fetch_buoy(context))
         states = {roads["state"], tides["state"]}
         provenance = (SourceProvenance.LOCAL_FALLBACK if "unavailable" in states
                       else SourceProvenance.STALE_CACHE if "stale_cache" in states
                       else SourceProvenance.LIVE if "live" in states else SourceProvenance.FRESH_CACHE)
-        return {"roads": roads, "tides": tides, "routes": list(routes), "station": station,
+        return {"roads": roads, "tides": tides, "buoy": buoy, "routes": list(routes), "station": station,
                 "window_days": window_days, "provenance": provenance}
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):

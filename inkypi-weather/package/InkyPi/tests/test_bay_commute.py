@@ -67,6 +67,50 @@ def tide_data(now=NOW):
             "end_date": (now.date()+timedelta(days=1)).isoformat(), "extremes": extremes, "curve": curve}
 
 
+BUOY_PAGE = """Station 46026
+37\xb0 45.0' N  122\xb0 50.3' W
+
+8:00 am PDT
+1500 GMT 10/25/26
+Wind: NE (40\xb0), 3.9 kt
+Gust: 5.8 kt
+Pres: 30.05 rising
+Water Temp: 64.0 \xb0F
+
+Wave Summary
+7:40 am PDT
+1400 GMT 10/25/26
+Swell: 3.0 ft
+Period: 8.3 sec
+Direction: NW
+Wind Wave: 1.0 ft
+Period: 3.6 sec
+Direction: WNW
+"""
+
+
+@pytest.fixture(autouse=True)
+def quiet_buoy(monkeypatch):
+    """No test reaches NDBC: the buoy reads the page above unless a test says otherwise."""
+    def buoy(task):
+        task.raise_if_cancelled()
+        return sources.parse_buoy(BUOY_PAGE)
+    monkeypatch.setattr(sources, "fetch_buoy", buoy)
+
+
+def test_buoy_page_gives_waves_period_swell_and_water_temperature():
+    data = sources.parse_buoy(BUOY_PAGE)
+
+    assert data == {"time": "2026-10-25T15:00:00+00:00", "wave_ft": 3.0, "period_s": 8.3, "swell_dir": "NW",
+                    "water_f": 64.0, "wind_kt": 3.9, "wind_dir": "NE"}
+    # A significant wave height and dominant period win over the swell's when reported.
+    measured = sources.parse_buoy(BUOY_PAGE.replace("Wave Summary", "Wave Height: 4.6 ft\nDominant Wave Period: 11 sec"))
+    assert (measured["wave_ft"], measured["period_s"]) == (4.6, 11.0)
+    assert sources.valid_buoy(data) and not sources.valid_buoy({"time": data["time"]})
+    with pytest.raises(ValueError):
+        sources.parse_buoy("Station 46026\nno observation")
+
+
 @pytest.fixture
 def plugin(tmp_path, monkeypatch):
     monkeypatch.setenv("BAY_COMMUTE_CACHE_DIR", str(tmp_path / "bay-cache"))
@@ -338,3 +382,20 @@ def test_pillow_day_night_render_and_cache_display_provenance(plugin,monkeypatch
     assert day.mode == night.mode == "RGB"
     result=plugin.generate_image({**SETTINGS,"_theme_render_only":True,"_inkypi_theme":{"mode":"day"}},device)
     assert read_source_provenance(result) == SourceProvenance.FRESH_CACHE
+
+
+def test_buoy_is_drawn_beside_the_tides_and_never_decides_provenance(plugin, monkeypatch):
+    mock_sources(monkeypatch, [])
+    payload = plugin._payload(SETTINGS, NOW, allow_network=True, context=context())
+    assert payload["buoy"]["state"] == "live" and payload["provenance"] == SourceProvenance.LIVE
+    with_buoy = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW)
+    without = render_page((800, 480), {**payload, "buoy": {"state": "unavailable", "data": {}}},
+                          {"_inkypi_theme": {"mode": "day"}}, NOW)
+    assert with_buoy.crop((700, 12, 790, 90)).tobytes() != without.crop((700, 12, 790, 90)).tobytes()
+    assert with_buoy.crop((0, 100, 460, 480)).tobytes() == without.crop((0, 100, 460, 480)).tobytes()
+
+    monkeypatch.setattr(sources, "fetch_buoy", lambda task: (_ for _ in ()).throw(OSError("offline")))
+    later = plugin._payload({**SETTINGS, "forceRefresh": True}, NOW + timedelta(hours=7), allow_network=True,
+                            context=context())
+    assert later["buoy"]["state"] == "unavailable"
+    assert later["provenance"] != SourceProvenance.LOCAL_FALLBACK
