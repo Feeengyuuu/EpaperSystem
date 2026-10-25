@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from PIL import Image, ImageChops, ImageFilter
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -220,19 +221,161 @@ def test_bridges_airports_and_fault_names_land_on_the_map():
         assert map_view._fault_frame(faults, anchor, size) is not None, name
 
 
-def test_recent_quakes_beyond_the_map_get_an_edge_arrow_and_old_ones_do_not():
+def _bay_map(quakes=(), alerts=(), **options):
+    from plugins.bay_alerts import map_view
+    from utils.page_canvas import PageCanvas
+
+    palette = render._palette({"_inkypi_theme": {"mode": "day"}})
+    canvas = PageCanvas(palette)
+    return map_view.render_bay_map((440, 408), palette, canvas.font, quakes=list(quakes), alerts=list(alerts),
+                                   home=list(HOME), home_label="家", now=NOW, **options)
+
+
+def test_recent_quakes_beyond_the_map_get_an_edge_arrow_and_old_unlisted_ones_do_not():
     quakes = sources.normalize_quakes({"features": [
         _quake("gilroy", 3.1, 3, lat=36.95, lon=-121.55),
-        _quake("old", 3.4, 120, lat=36.80, lon=-121.40),
+        _quake("old", 3.4, 120, lat=36.80, lon=-120.90),
         _quake("near", 2.2, 2),
     ]}, HOME, NOW)["items"]
 
-    image = render_page((800, 480), _payload(quakes=quakes), {"_inkypi_theme": {"mode": "day"}}, NOW)
+    image = _bay_map(quakes)
 
     markers = {marker["id"]: marker for marker in image.info["map_markers"]}
     assert markers["near"]["visible"] and not markers["near"]["edge"]
     assert not markers["gilroy"]["visible"] and markers["gilroy"]["edge"]
     assert not markers["old"]["visible"] and not markers["old"]["edge"]
+    # A quake the card lists, or the week's strongest, keeps its arrow however old it is.
+    listed = _bay_map(quakes, listed=["old"])
+    assert {marker["id"]: marker for marker in listed.info["map_markers"]}["old"]["edge"]
+
+
+def test_quakes_beyond_the_map_in_one_direction_share_an_arrow():
+    quakes = sources.normalize_quakes({"features": [
+        _quake("a", 2.4, 3, lat=36.95, lon=-121.55), _quake("b", 2.0, 4, lat=36.94, lon=-121.56),
+        _quake("north", 2.1, 5, lat=38.45, lon=-122.60),
+    ]}, HOME, NOW)["items"]
+
+    from plugins.bay_alerts import map_view
+    manifest = map_view.read_manifest(map_view.BAY_MAP)
+    groups = map_view._edge_groups(quakes, manifest, (440, 408), lambda quake: (0, -quake["mag"]))
+
+    assert [[quake["id"] for quake in group["quakes"]] for group in groups] == [["a", "b"], ["north"]]
+    assert groups[0]["side"] == "bottom" and groups[1]["side"] == "top"
+
+
+def test_alert_zone_codes_are_kept_for_the_map():
+    data = sources.normalize_alerts({"features": [
+        {**_alert("Coastal Flood Advisory", ["006075"]),
+         "properties": {**_alert("Coastal Flood Advisory", ["006075"])["properties"],
+                        "geocode": {"SAME": ["006075"], "UGC": ["CAZ006", "CAZ508", "bad"]}}},
+        {**_alert("Wind Advisory", ["006001"]),
+         "properties": {**_alert("Wind Advisory", ["006001"])["properties"],
+                        "affectedZones": ["https://api.weather.gov/zones/forecast/CAZ510"]}},
+    ]}, sources.counties_setting(), NOW)
+
+    assert {item["event"]: item["zones"] for item in data["items"]} == {
+        "Coastal Flood Advisory": ["CAZ006", "CAZ508"], "Wind Advisory": ["CAZ510"]}
+
+
+def _zoned_alert(event, zones, severity="Minor", counties=("San Francisco",)):
+    return {"event": event, "name": sources.event_name(event), "kind": sources.hazard_kind(event),
+            "severity": severity, "counties": list(counties), "zones": list(zones), "polygon": None}
+
+
+def test_shore_hazards_mark_only_the_shore_and_others_their_whole_zone():
+    from plugins.bay_alerts import map_view
+
+    manifest = map_view.read_manifest(map_view.BAY_MAP)
+    water, _faults, _shade = map_view._layers(map_view.BAY_MAP, manifest)
+    image = Image.new("RGB", (440, 408))
+    palette = render._palette({})
+    alerts = [{**_zoned_alert("Coastal Flood Advisory", ["CAZ508"]), "tone": "minor"},
+              {**_zoned_alert("Wind Advisory", ["CAZ508"]), "tone": "moderate"}]
+
+    (coastal, coastal_mask), (wind, wind_mask) = map_view._draw_alert_areas(
+        image, palette, alerts, water, manifest, (440, 408))
+
+    assert map_view.is_coastal(coastal) and not map_view.is_coastal(wind)
+    def area(mask):
+        return mask.width * mask.height - mask.histogram()[0]
+
+    assert 0 < area(coastal_mask) < area(wind_mask) / 2
+    # Every marked shore pixel is on land within the band's reach of the water.
+    near_water = water.filter(ImageFilter.MaxFilter(map_view.SHORE_BAND * 2 + 1))
+    outside = ImageChops.lighter(ImageChops.invert(near_water), water)
+    assert ImageChops.multiply(coastal_mask, outside).getbbox() is None
+
+
+def test_alert_tags_number_the_card_rows_and_sit_on_the_map():
+    alerts = sources.normalize_alerts({"features": [
+        {**_alert("Coastal Flood Advisory", ["006075"], severity="Minor"),
+         "properties": {**_alert("Coastal Flood Advisory", ["006075"], severity="Minor")["properties"],
+                        "geocode": {"SAME": ["006075"], "UGC": ["CAZ508"]}}},
+        # No zone named: the alert's whole county is its area.
+        _alert("Heat Advisory", ["006085"]),
+    ]}, sources.counties_setting(), NOW)["items"]
+
+    image = render_page((800, 480), _payload(alerts=alerts), {"_inkypi_theme": {"mode": "day"}}, NOW)
+
+    tags = image.info["alert_tags"]
+    assert sorted(tag["number"] for tag in tags) == [1, 2]
+    for tag in tags:
+        left, top, right, bottom = tag["box"]
+        assert 0 <= left and right <= 440 and 0 <= top and bottom <= 388
+    boxes = [tag["box"] for tag in tags] + [image.info["map_summary"], image.info["map_callout"]]
+    from plugins.bay_alerts.map_view import _overlaps
+    assert not any(_overlaps(first, second) for index, first in enumerate(boxes) for second in boxes[index + 1:])
+
+
+def test_nearest_fault_names_the_known_fault_and_gives_up_far_from_any():
+    from plugins.bay_alerts.map_view import nearest_fault
+
+    name, km = nearest_fault(37.665, -122.08)
+    assert name == "海沃德断层" and km < 1.5
+    assert nearest_fault(37.775, -121.983)[0] == "卡拉韦拉斯断层"
+    assert nearest_fault(37.0, -123.4) is None
+    assert nearest_fault(None, -122.0) is None
+
+
+def test_the_callout_explains_the_weeks_strongest_quake():
+    quakes = sources.normalize_quakes({"features": [
+        _quake("small", 2.1, 1), _quake("big", 4.1, 5, lat=37.665, lon=-122.08, place="2 km N of Hayward, CA"),
+    ]}, HOME, NOW)["items"]
+
+    focus = render.focus_quake(quakes, NOW)
+
+    assert focus["id"] == "big" and focus["tone"] == "alert" and focus["title"] == "7 天最大"
+    assert focus["lines"] == ["5 小时前 · 距家 15 km", "海沃德断层旁"]
+    assert render.focus_quake([], NOW) is None
+    image = render_page((800, 480), _payload(quakes=quakes), {"_inkypi_theme": {"mode": "day"}}, NOW)
+    markers = {marker["id"]: marker for marker in image.info["map_markers"]}
+    assert markers["big"]["visible"] and markers["big"]["chip"]
+    left, top, right, bottom = image.info["map_callout"]
+    assert 0 <= left and right <= 440 and 0 <= top and bottom <= 388
+
+
+def test_near_home_box_counts_quakes_inside_the_outer_ring():
+    quakes = sources.normalize_quakes({"features": [
+        _quake("a", 2.4, 2), _quake("b", 1.6, 30), _quake("far", 3.0, 3, lat=36.95, lon=-121.55),
+    ]}, HOME, NOW)["items"]
+
+    assert render.near_home_summary(quakes, NOW) == ["50 km 内", "24 小时 1 次", "7 天 2 次", "最大 M2.4"]
+    assert render.near_home_summary([], NOW) == ["50 km 内", "24 小时 0 次", "7 天 0 次"]
+    image = _bay_map(quakes, summary=render.near_home_summary(quakes, NOW))
+    assert image.info["home_rings"] == [10, 25, 50]
+    assert image.info["map_summary"] is not None
+
+
+def test_overlay_assets_are_bounded_and_cover_the_bay():
+    from plugins.bay_alerts import map_view
+
+    zones = map_view.read_overlay(map_view.ZONES)["zones"]
+    faults = map_view.read_overlay(map_view.FAULTS)["faults"]
+    for name in (map_view.ZONES, map_view.FAULTS):
+        assert (map_view.ASSETS / f"{name}.json").stat().st_size <= map_view._OVERLAY_BYTES
+    assert {"CAZ006", "CAZ508", "CAZ509", "CAZ510", "CAZ515"} <= set(zones)
+    assert set(map_view.COUNTY_ZONES.values()) <= set(zones)
+    assert {"圣安德烈亚斯断层", "海沃德断层", "卡拉韦拉斯断层"} <= {fault["name"] for fault in faults}
 
 
 def _events(count):

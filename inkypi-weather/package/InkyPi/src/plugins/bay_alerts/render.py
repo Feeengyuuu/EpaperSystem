@@ -11,7 +11,10 @@ from utils.flat_icons import draw_icon
 from utils.local_wordmark import paste_local_wordmark
 from utils.page_canvas import PageCanvas
 
-from .map_view import california_map_size, quake_age_class, render_bay_map, render_california_map
+from .map_view import (
+    alert_tag_size, california_map_size, draw_alert_tag, nearest_fault, quake_age_class, quake_chip_colors,
+    render_bay_map, render_california_map, tone_ink,
+)
 from .sources import PACIFIC, distance_km, local_now, parse_time
 
 
@@ -38,6 +41,7 @@ COLUMN = 466
 RIGHT = 788
 NOTABLE_QUAKE = 3.5
 NEARBY_EVENT_KM = 120
+NEAR_HOME_KM = 50
 
 
 def _palette(settings):
@@ -221,22 +225,52 @@ def _alerts_card(canvas, payload, now, box, rows):
         canvas.text((left + 44, top + 66), f"覆盖 {len(counties)} 个县 · 天气局实时数据", 11, "muted",
                     anchor="lm", bold=False)
         return
+    tag_width = alert_tag_size(canvas.font(12))[0]
     for index, alert in enumerate(items[:rows]):
         y = top + 34 + index * ALERT_ROW
         label, tone = SEVERITY.get(alert.get("severity"), ("提示", "minor"))
-        icon_color = canvas.color("alert") if tone == "alert" else canvas.color("ink")
-        draw_icon(canvas.draw, alert.get("kind"), (left, y + 2), 26, icon_color, canvas.color("paper"))
-        badge_ink = (20, 20, 20) if tone == "moderate" else "badge_ink"
+        # The same tag marks the alert's area on the map.
+        draw_alert_tag(canvas.draw, canvas.palette, canvas.font(12), (left, y + 1), index + 1, alert.get("kind"), tone)
         pill_width = canvas.width(label, 12) + 14
         canvas.draw.rounded_rectangle((right - pill_width, y + 1, right, y + 19), radius=9, fill=canvas.color(tone))
-        canvas.text((right - pill_width / 2, y + 10), label, 12, badge_ink, anchor="mm")
-        canvas.text((left + 34, y + 10), alert.get("name") or alert.get("event"), 16, anchor="lm",
-                    width=right - left - 44 - pill_width)
+        canvas.text((right - pill_width / 2, y + 10), label, 12, tone_ink(tone, canvas.palette), anchor="mm")
+        text_left = left + tag_width + 8
+        canvas.text((text_left, y + 10), alert.get("name") or alert.get("event"), 16, anchor="lm",
+                    width=right - text_left - 10 - pill_width)
         ends = parse_time(alert.get("ends"))
         detail = (until(ends, now) + " · " if ends else "") + "、".join(alert.get("counties", []))
-        canvas.text((left + 34, y + 29), detail, 12, "muted", anchor="lm", bold=False, width=right - left - 34)
+        canvas.text((text_left, y + 29), detail, 12, "muted", anchor="lm", bold=False, width=right - text_left)
     if len(items) > rows:
         canvas.text((right, box[3] - 4), f"另有 {len(items) - rows} 条", 11, "muted", anchor="rb", bold=False)
+
+
+def quake_tone(magnitude):
+    """The colour a quake's size earns: red from M3.5, yellow from M2.5, none below."""
+    return "alert" if magnitude >= NOTABLE_QUAKE else "moderate" if magnitude >= 2.5 else None
+
+
+def focus_quake(items, now):
+    """The map callout for the week's strongest quake: when, how far from home, which fault."""
+    strongest = max(items, key=lambda item: item.get("mag", 0), default=None)
+    if strongest is None:
+        return None
+    lines = [f"{ago(parse_time(strongest['time']), now)} · 距家 {strongest.get('distance_km', 0):.0f} km"]
+    fault = nearest_fault(strongest.get("lat"), strongest.get("lon"))
+    if fault:
+        name, km = fault
+        lines.append(f"{name}旁" if km < 1.5 else f"距{name} {km:.0f} km")
+    return {"id": strongest.get("id"), "title": "7 天最大", "lines": lines,
+            "tone": quake_tone(strongest.get("mag", 0))}
+
+
+def near_home_summary(items, now):
+    """The map's near-home box: quakes inside the outer distance ring."""
+    near = [item for item in items if item.get("distance_km", NEAR_HOME_KM + 1) <= NEAR_HOME_KM]
+    day = sum(1 for item in near if quake_age_class(item, now) == "day")
+    lines = [f"{NEAR_HOME_KM} km 内", f"24 小时 {day} 次", f"7 天 {len(near)} 次"]
+    if near:
+        lines.append(f"最大 M{max(item.get('mag', 0) for item in near):.1f}")
+    return lines
 
 
 def listed_quakes(items, rows):
@@ -263,15 +297,15 @@ def _quakes_card(canvas, payload, now, box, rows):
              ("7 天最大", f"M{strongest['mag']:.1f}" if strongest else "—"))
     gap = 8
     width = (right - left - gap * 2) / 3
-    # The week's strongest quake is the card's headline: its box takes the colour its size earns.
-    strongest_mag = strongest["mag"] if strongest else 0
-    hero_tone = ("alert" if strongest_mag >= NOTABLE_QUAKE else "moderate" if strongest_mag >= 2.5 else None)
+    # The week's strongest quake is the card's headline: its box takes the colour its size earns,
+    # and so does the map's callout for it.
+    hero_tone = quake_tone(strongest["mag"] if strongest else 0)
     for index, (label, value) in enumerate(stats):
         x = left + index * (width + gap)
         box_xy = (x, top + 34, x + width, top + 66)
         if index == 2 and hero_tone:
             canvas.draw.rounded_rectangle(box_xy, radius=5, fill=canvas.color(hero_tone))
-            ink = (20, 20, 20) if hero_tone == "moderate" else "badge_ink"
+            ink = tone_ink(hero_tone, canvas.palette)
             canvas.text((x + 8, top + 42), label, 10, ink, anchor="lm", bold=False)
             canvas.text((x + 8, top + 57), value, 20, ink, anchor="lm")
             continue
@@ -283,11 +317,9 @@ def _quakes_card(canvas, payload, now, box, rows):
         return
     for index, quake in enumerate(listed_quakes(items, rows)):
         y = top + 81 + index * QUAKE_ROW
-        age = quake_age_class(quake, now)
-        fill = canvas.color("quake_day" if age == "day" else "quake_recent" if age == "recent" else "panel")
+        # The same chip marks the quake on the map.
+        fill, label_color = quake_chip_colors(quake_age_class(quake, now), canvas.palette)
         canvas.draw.rounded_rectangle((left, y - 8, left + 40, y + 8), radius=3, fill=fill)
-        # Yellow stays a light ground in both themes, so its label is always dark.
-        label_color = "badge_ink" if age == "day" else (20, 20, 20) if age == "recent" else "ink"
         canvas.text((left + 20, y), f"M{quake['mag']:.1f}", 12, label_color, anchor="mm")
         meta = f"{ago(parse_time(quake['time']), now)} · {quake.get('distance_km', 0):.0f} km"
         meta_width = canvas.text((right, y), meta, 11, "muted", anchor="rm", bold=False)
@@ -331,16 +363,22 @@ def render_page(dimensions, payload, settings, now):
     now = local_now(now)
     canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei")
     _header(canvas, payload, now)
+    boxes, rows = _column_boxes(payload)
+    quakes = payload["quakes"]["data"].get("items", []) if payload["quakes"]["state"] != "unavailable" else []
+    alerts = []
+    for index, alert in enumerate(payload["alerts"]["data"].get("items", [])):
+        tone = SEVERITY.get(alert.get("severity"), ("提示", "minor"))[1]
+        alerts.append({**alert, "tone": tone, "number": index + 1 if index < rows["alerts"] else None})
     map_image = render_bay_map(
-        (440, 408), canvas.palette, canvas.font,
-        quakes=payload["quakes"]["data"].get("items", []),
-        alerts=payload["alerts"]["data"].get("items", []),
+        (440, 408), canvas.palette, canvas.font, quakes=quakes, alerts=alerts,
         home=payload["home"], home_label=payload["home_label"], now=now,
+        listed=[quake.get("id") for quake in listed_quakes(quakes, rows["quakes"])],
+        focus=focus_quake(quakes, now), summary=near_home_summary(quakes, now),
     )
     canvas.image.paste(map_image, (12, 60))
-    canvas.image.info["map_markers"] = map_image.info.get("map_markers", [])
+    for key in ("map_markers", "alert_tags", "map_callout", "map_summary", "home_rings"):
+        canvas.image.info[key] = map_image.info.get(key)
     canvas.draw.rectangle((12, 60, 451, 467), outline=canvas.color("ink"), width=1)
-    boxes, rows = _column_boxes(payload)
     _alerts_card(canvas, payload, now, boxes["alerts"], rows["alerts"])
     _quakes_card(canvas, payload, now, boxes["quakes"], rows["quakes"])
     _events_card(canvas, payload, now, boxes["events"], rows["events"])

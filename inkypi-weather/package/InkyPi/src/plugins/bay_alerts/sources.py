@@ -22,6 +22,8 @@ MAX_QUAKES = 300
 MAX_ALERTS = 30
 MAX_EVENTS = 40
 MAX_POLYGON_POINTS = 240
+MAX_ALERT_ZONES = 30
+ZONE_CODE = re.compile(r"[A-Z]{2}[CZ]\d{3}")  # NWS UGC: CAZ508 (forecast zone), CAC001 (county)
 # NWS geocode SAME values for the Bay Area counties (state 06 + county FIPS).
 BAY_COUNTIES = {
     "006001": "Alameda", "006013": "Contra Costa", "006041": "Marin", "006055": "Napa",
@@ -213,6 +215,14 @@ def _simplified_polygon(geometry):
     return [[round(float(point[0]), 3), round(float(point[1]), 3)] for point in ring[::step]]
 
 
+def alert_zones(props):
+    """The NWS zones an alert covers (its UGC codes, else its affectedZones links), for the map."""
+    codes = (props.get("geocode") or {}).get("UGC") or [
+        str(link).rstrip("/").rsplit("/", 1)[-1] for link in props.get("affectedZones") or []]
+    zones = [code for code in codes if isinstance(code, str) and ZONE_CODE.fullmatch(code)]
+    return list(dict.fromkeys(zones))[:MAX_ALERT_ZONES]
+
+
 def normalize_alerts(payload, counties, now):
     features = payload.get("features") if isinstance(payload, dict) else None
     if not isinstance(features, list):
@@ -242,7 +252,8 @@ def normalize_alerts(payload, counties, now):
             "urgency": str(props.get("urgency") or "")[:12],
             "headline": " ".join(str(props.get("headline") or "").split())[:180],
             "onset": onset.isoformat() if onset else None, "ends": ends.isoformat() if ends else None,
-            "counties": matched[:10], "polygon": _simplified_polygon(feature.get("geometry")),
+            "counties": matched[:10], "zones": alert_zones(props),
+            "polygon": _simplified_polygon(feature.get("geometry")),
         })
         if len(items) >= MAX_ALERTS:
             break
