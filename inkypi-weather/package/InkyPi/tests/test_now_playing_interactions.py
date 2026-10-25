@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 import subprocess
 
 import pytest
@@ -96,6 +97,7 @@ const context = vm.createContext({
         localStorage: {getItem: () => null},
         setTimeout: callback => { callback(); return 1; }, setInterval: () => 1,
         location: {reload: () => { reloads += 1; }},
+        ...(input.language ? {InkyPiI18n: {getLanguage: () => input.language, translateValue: text => text}} : {}),
     },
     fetch: async (url, options = {}) => {
         requests.push({url, method: options.method || 'GET'});
@@ -249,7 +251,7 @@ def _previews(rendered_at):
 def test_tab_title_names_the_instance_on_the_display():
     result = run_page()
 
-    assert result["initialTitle"] == "▶ Calendar · Frame"
+    assert result["initialTitle"] == "▶ Calendar"
     # The tab keeps following the display while it sits in the background.
     assert result["livePoll"] == {"hiddenIntervalMs": 60000}
 
@@ -260,8 +262,14 @@ def test_live_sync_swaps_a_newer_card_render_and_retitles_the_tab():
     assert result["imageSrc"] == "/preview/calendar?v=2026-10-06T11%3A00%3A00Z"
     assert result["refreshedAt"] == "2026-10-06T11:00:00Z"
     assert result["heroTitle"] == "Home Weather"
-    assert result["title"] == "▶ Home Weather · Weather"
+    assert result["title"] == "▶ Weather"
     assert result["liveState"] == "live"
+
+
+def test_the_chinese_interface_titles_the_tab_with_the_plugins_chinese_name():
+    result = run_page(action="live_sync", previews=_previews("2026-10-06T11:00:00Z"), language="zh")
+
+    assert result["title"] == "▶ 天气"
 
 
 def test_live_sync_keeps_a_card_whose_render_is_not_newer():
@@ -276,3 +284,12 @@ def test_schedule_save_without_a_persisted_plan_reloads_instead_of_guessing():
 
     assert result["reloads"] == 1
     assert result["refresh"] == {"interval": 3600}
+
+
+def test_every_plugin_has_a_chinese_tab_title():
+    source = (SCRIPTS / "now_playing.js").read_text(encoding="utf-8")
+    table = source.split("const PLUGIN_TITLES_ZH = {", 1)[1].split("};", 1)[0]
+    titled = set(re.findall(r"^\s*([a-z0-9_]+):", table, re.MULTILINE))
+    plugins = {info.parent.name for info in (SCRIPTS.parents[1] / "plugins").glob("*/plugin-info.json")}
+
+    assert plugins and plugins <= titled

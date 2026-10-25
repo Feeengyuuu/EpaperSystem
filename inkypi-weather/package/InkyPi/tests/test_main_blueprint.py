@@ -197,7 +197,8 @@ def test_home_renders_large_preview_cards_without_plugin_settings(tmp_path, monk
     assert "never-render-me" not in html
     assert "12.3456" not in html
     assert 'data-playlist-tab="Night"' in html
-    assert "<title>\u25b6 Kitchen Clock \u00b7 Now Playing \u00b7 Test InkyPi</title>" in html
+    # The server names the plugin; in the Chinese interface the page script retitles it in Chinese.
+    assert "<title>\u25b6 Clock</title>" in html
     assert 'data-rendered-at="2026-10-06T12:00:00+00:00"' in html
     assert 'id="heroLive"' in html
 

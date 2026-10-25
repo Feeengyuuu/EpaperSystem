@@ -104,16 +104,88 @@
     /* ---------- Browser tab: title and favicon follow the display ---------- */
     let unseenChange = false;
 
+    /* Each plugin's Chinese name: the tab reads "▶ name" in the Chinese interface. */
+    const PLUGIN_TITLES_ZH = {
+        ai_ecosystem_pulse: "AI 生态脉搏",
+        ai_image: "AI 绘图",
+        ai_image_multiverse: "AI 多元宇宙",
+        ai_text: "AI 文字",
+        apod: "NASA 天文图",
+        backtothedate: "回到那天",
+        bambu_monitor: "拓竹打印监控",
+        bay_alerts: "湾区要紧事",
+        bay_commute: "湾区出行与潮汐",
+        bay_traffic_cams: "湾区路况",
+        box_office_top_movies: "全球票房",
+        calendar: "日历",
+        china_box_office_top_movies: "北美周票房",
+        chinese_literature_clock: "中文文学报时",
+        clock: "时钟",
+        comic: "每日漫画",
+        countdown: "倒计时",
+        daily_ai_news: "AI每日新闻",
+        daily_art: "每日名画",
+        daily_knowledge: "每日知识",
+        daily_pop: "今日热榜",
+        daily_wiki_page: "维基每日",
+        daily_word_poem: "每日一词",
+        dota_profile_dashboard: "Dota 战绩",
+        epaper_pet: "墨水屏宠物",
+        flight_radar: "天空雷达",
+        flow_progress: "心流进度",
+        game_deals: "游戏优惠",
+        gcd_comic_covers: "漫画封面",
+        github: "GitHub 动态",
+        image_album: "相册",
+        image_folder: "图片文件夹",
+        image_upload: "上传图片",
+        image_url: "网络图片",
+        literature_clock: "文学报时",
+        live_radar: "直播雷达",
+        lol_info: "职业选手追踪",
+        magazine_covers: "杂志封面",
+        mini_weather: "迷你天气",
+        money_radar: "资金雷达",
+        moon_phase: "月相",
+        natgeo_photo_of_the_day: "国家地理每日一图",
+        nature_nearby: "湾区德鲁伊",
+        newspaper: "今日报纸",
+        orbital_signal: "轨道信号",
+        pixiv_r18_ranking: "Pixiv 排行",
+        reddit_rule34_hot: "Reddit 热帖",
+        rss: "RSS 订阅",
+        screenshot: "网页截图",
+        simple_calendar: "简约日历",
+        species_radar: "物种雷达",
+        sports_dashboard: "体育看板",
+        steam_charts: "Steam 排行",
+        steam_daily_art: "Steam 每日美图",
+        steam_profile_dashboard: "Steam 个人资料",
+        stocktracker: "股票追踪",
+        tech_play: "科技与游戏",
+        tech_pulse: "技术圈与 AI 脉搏",
+        telegram_digest: "Telegram 精选",
+        ticketmaster_events: "本地活动",
+        todo_list: "待办清单",
+        unsplash: "Unsplash 美图",
+        us_tv_hot_shows: "美剧热榜",
+        vehicle_status: "车辆状态",
+        weather: "天气",
+        wow_profile_dashboard: "魔兽世界战绩",
+        wpotd: "维基每日图片",
+        year_progress: "年度进度"
+    };
+
+    function pluginTitle(state) {
+        const i18n = window.InkyPiI18n;
+        const chinese = i18n && i18n.getLanguage() === "zh" ? PLUGIN_TITLES_ZH[state.plugin_id] : "";
+        return chinese || state.display_name || state.plugin_instance || "";
+    }
+
     function updateTabTitle() {
         const device = hero.dataset.deviceName || "InkyPi";
-        const instance = nowPlaying.plugin_instance;
-        let title = `${translate("Now Playing")} · ${device}`;
-        if (instance) {
-            const plugin = nowPlaying.display_name && nowPlaying.display_name !== instance
-                ? translate(nowPlaying.display_name)
-                : device;
-            title = `▶ ${instance} · ${plugin}`;
-        }
+        const name = nowPlaying.plugin_instance ? pluginTitle(nowPlaying) : "";
+        const title = name ? `▶ ${name}` : `${translate("Now Playing")} · ${device}`;
         document.title = unseenChange ? `● ${title}` : title;
     }
 
