@@ -187,8 +187,9 @@
         const device = hero.dataset.deviceName || "InkyPi";
         const name = nowPlaying.plugin_instance ? pluginTitle(nowPlaying) : "";
         const title = name ? `▶ ${name}` : `${translate("Now Playing")} · ${device}`;
-        // A new screen shown while the tab was in the background: a red dot after the name.
-        document.title = unseenChange ? `${title} 🔴` : title;
+        // A new screen shown while the tab was in the background: an indicator lamp after the
+        // name, a plain text glyph (not an emoji) so it sits in the tab's own type.
+        document.title = unseenChange ? `${title} ◉` : title;
     }
 
     /* Draw what the e-paper shows as the tab icon; the change dot lives in the title. */
