@@ -435,10 +435,6 @@ def steam_appid_from_url(url):
     return int(match.group(1)) if match else None
 
 
-def _name_key(name):
-    return re.sub(r"[\W_]+", "", str(name or "").lower())
-
-
 def steam_appid(name, context):
     """The Steam app a game's name is (its exact name, or a name it starts), or None; a name with
     a subtitle ("Home - A Unique Horror Adventure") also tries its head, matched exactly."""
@@ -447,17 +443,22 @@ def steam_appid(name, context):
     if head and head != name:
         attempts.append((head, True))
     for term, exact in attempts:
-        wanted = _name_key(term)
+        wanted = _name_words(term)
         if not wanted:
             continue
         payload = _get_json("GET", STEAM_SEARCH_URL, context, max_bytes=256 * 1024,
                             params={"term": term, "cc": "us", "l": "english"})
         for item in (payload or {}).get("items") or []:
-            found = _name_key((item or {}).get("name"))
+            found = _name_words((item or {}).get("name"))
+            # Whole words only: "Grand Theft Auto VI" is not "Grand Theft Auto: Vice City".
             if found and str(item.get("type") or "app") == "app" and (
-                    found == wanted or (not exact and found.startswith(wanted))):
+                    found == wanted or (not exact and found[:len(wanted)] == wanted)):
                 return int(item["id"])
     return None
+
+
+def _name_words(name):
+    return re.findall(r"[^\W_]+", str(name or "").lower())
 
 
 def fetch_steam_icons(games, context):

@@ -107,7 +107,9 @@ class TechPlay(BasePlugin):
         games += [(item.get("name"), item.get("appid") or sources.steam_appid_from_url(item.get("image")))
                   for item in payload["upcoming"]["data"].get("items", [])[:4]]
         games = [(name, appid) for name, appid in games if name]
-        payload["icons"] = load(Source("steam-icons", {"games": sorted(name for name, _appid in games)},
+        # "match" versions the lookup rule, so a rule change looks the names up again.
+        payload["icons"] = load(Source("steam-icons", {"games": sorted(name for name, _appid in games),
+                                                       "match": "whole-words"},
                                        lambda ctx: sources.fetch_steam_icons(games, ctx),
                                        fresh_seconds=7 * 86400, usable_seconds=30 * 86400,
                                        validate=sources.valid_steam_icons, timeout_seconds=15))

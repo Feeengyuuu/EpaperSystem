@@ -255,3 +255,15 @@ def test_igdb_upcoming_games_carry_their_steam_app(monkeypatch, rejects_store_fi
 
     assert item["appid"] == (None if rejects_store_fields else 4115450)
     assert len(queries) == (2 if rejects_store_fields else 1)
+
+
+def test_a_name_matches_a_steam_game_by_whole_words(monkeypatch):
+    catalogue = {"Grand Theft Auto VI": [{"id": 12100, "name": "Grand Theft Auto: Vice City", "type": "app"}],
+                 "Hela": [{"id": 3161310, "name": "Hela: of Mice & Magic", "type": "app"}],
+                 "Hela: Of Mice & Magic": [{"id": 3161310, "name": "Hela: of Mice & Magic", "type": "app"}]}
+    monkeypatch.setattr(sources, "_get_json", lambda method, url, context, **kwargs: {
+        "items": catalogue.get(kwargs["params"]["term"], [])})
+
+    assert sources.steam_appid("Grand Theft Auto VI", None) is None
+    assert sources.steam_appid("Hela", None) == 3161310
+    assert sources.steam_appid("Hela: Of Mice & Magic", None) == 3161310
