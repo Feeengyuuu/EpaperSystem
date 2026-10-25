@@ -58,6 +58,15 @@ PHOTO_BOX = (16, 72, 124, 272)
 FLIP_CARD = (34, 58)
 MARKET_COLUMNS_HEIGHT = 300
 MARKET_ART_PATH = Path(__file__).with_name("assets") / "market-console.png"
+# A league name too long for its market's tag gives way to its usual short form.
+LEAGUE_SHORT_NAMES = {
+    "COLLEGE FOOTBALL": "NCAAF", "NCAA FOOTBALL": "NCAAF", "COLLEGE BASKETBALL": "NCAAB",
+    "NCAA BASKETBALL": "NCAAB", "PREMIER LEAGUE": "EPL", "ENGLISH PREMIER LEAGUE": "EPL",
+    "CHAMPIONS LEAGUE": "UCL", "UEFA CHAMPIONS LEAGUE": "UCL", "EUROPA LEAGUE": "UEL",
+    "UEFA EUROPA LEAGUE": "UEL", "MAJOR LEAGUE BASEBALL": "MLB", "MAJOR LEAGUE SOCCER": "MLS",
+    "FORMULA 1": "F1", "FORMULA ONE": "F1", "NATIONAL HOCKEY LEAGUE": "NHL",
+    "NATIONAL FOOTBALL LEAGUE": "NFL", "NATIONAL BASKETBALL ASSOCIATION": "NBA",
+}
 CATEGORY_COLORS = {"ECONOMY": "blue", "SPORT": "orange", "MATCH": "orange", "POLITICS": "red",
                    "CRYPTO": "orange", "TECH": "green"}
 # Fact-grid art: two-tone icons (black shapes take the ink, orange accents the page orange),
@@ -1178,7 +1187,7 @@ class OrbitalSignal(BasePlugin):
 
         columns = markets[:3]
         column_w = (right - left - 24) / 3
-        question_font, tag_font = self._font(10, True, family), self._font(10, True, family)
+        question_font = self._font(10, True, family)
         leader_font, fact_font = self._font(11, True, family), self._font(9, True, family)
         columns_bottom = top + MARKET_COLUMNS_HEIGHT
         for index, market in enumerate(columns):
@@ -1219,19 +1228,36 @@ class OrbitalSignal(BasePlugin):
             league_icon = self._market_mark(market.get("league_mark"), LEAGUE_ICON) if image is not None else None
             change = float(market.get("change_24h") or 0.0) * 100
             change_text = f"{change:+.1f}%"
-            change_font = self._font(13, True, family)
-            change_w = draw.textbbox((0, 0), change_text, font=change_font)[2]
-            label_w = draw.textbbox((0, 0), label, font=tag_font)[2] + 14
             icon_w = 18 if league_icon is not None else 0
+            # The tag keeps to its column: a long league name steps down a size or gives way to its
+            # short form; failing that the row tightens (a smaller move, slimmer padding), and at
+            # last the name ends in "...".
+            candidates = tuple(dict.fromkeys((label, LEAGUE_SHORT_NAMES.get(label, label))))
+            fitted = None
+            for change_size, pad, gap in ((13, 7, 6), (11, 5, 4)):
+                change_font = self._font(change_size, True, family)
+                change_w = draw.textbbox((0, 0), change_text, font=change_font)[2]
+                label_room = max(20, width - icon_w - gap - change_w - 2 * pad)
+                for candidate in candidates:
+                    label_font = self._fit_font(draw, candidate, label_room, 10, 8, family)
+                    if draw.textbbox((0, 0), candidate, font=label_font)[2] <= label_room:
+                        fitted = candidate
+                        break
+                if fitted:
+                    break
+            label = fitted or self._fit_text(draw, candidates[0], label_font, label_room)
+            label_w = draw.textbbox((0, 0), label, font=label_font)[2] + 2 * pad
             tag_top = top + 108
-            x = round(cx - (icon_w + label_w + 6 + change_w) / 2)
+            x = round(cx - (icon_w + label_w + gap + change_w) / 2)
             if league_icon is not None:
                 draw.rectangle((x, tag_top, x + 18, tag_top + 18), fill=palette["white"], outline=tag_color)
                 image.paste(league_icon, (x + 9 - league_icon.width // 2, tag_top + 9 - league_icon.height // 2), league_icon)
                 x += icon_w
             draw.rectangle((x, tag_top, x + label_w, tag_top + 18), fill=tag_color)
-            draw.text((x + 7, tag_top + 3), label, font=tag_font, fill=palette["white"])
-            draw.text((x + label_w + 6, tag_top + 1), change_text, font=change_font,
+            label_h = draw.textbbox((0, 0), label, font=label_font)
+            draw.text((x + pad, tag_top + 9 - (label_h[1] + label_h[3]) / 2), label, font=label_font, fill=palette["white"])
+            change_h = draw.textbbox((0, 0), change_text, font=change_font)
+            draw.text((x + label_w + gap, tag_top + 9 - (change_h[1] + change_h[3]) / 2), change_text, font=change_font,
                       fill=palette["green"] if change >= 0 else palette["red"])
 
             probability = max(0.0, min(1.0, float(market.get("probability") or 0.0)))
