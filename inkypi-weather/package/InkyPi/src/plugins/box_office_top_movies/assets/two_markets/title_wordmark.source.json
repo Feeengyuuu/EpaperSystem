@@ -1,0 +1,10 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw, 1536x512, transparent), job 89dd052f-6135-461c-9955-8b54e769cbbb, image 1",
+  "source": "https://cdn.creativeclaw.co/u/e25dbd7a/images/24611fe2-cc29-4d8a-8db5-9fd6527d3b62.png",
+  "note": "全球票房 in white and 双城榜 in cinema red, italic custom lettering, a red star between, a film-strip underline",
+  "processing": "alpha<=24 cleared, cropped, scaled to 120px high; day copy re-inks the white lettering (20, 22, 24)",
+  "files": {
+    "title_wordmark_night.png": "abae9e4e3dfea70d2ac2ac4bddba44749ece598a412836114ebb9ece2a4bfbc6",
+    "title_wordmark_day.png": "c005bb49f992e23585d14bdc9957846d95c729d960d680c3cb2211e2e36cb336"
+  }
+}

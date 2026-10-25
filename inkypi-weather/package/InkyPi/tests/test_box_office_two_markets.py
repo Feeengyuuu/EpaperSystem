@@ -213,6 +213,27 @@ def test_both_themes_render_the_unavailable_column_inside_its_panel(mode):
     assert colors["text"] in {color for _count, color in panel.getcolors(maxcolors=panel.width * panel.height)}
 
 
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_page_title_is_its_wordmark_in_the_themes_ink(mode, monkeypatch):
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    typed = []
+    original = two_markets._Page.text
+
+    def record(self, xy, text, *args, **kwargs):
+        typed.append(text)
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(two_markets._Page, "text", record)
+    image = two_markets.render_two_markets(plugin, (800, 480), snapshot(china_movies(), "中国电影票房"), None,
+                                           {"_inkypi_theme": {"mode": mode}})
+
+    assert "全球票房" not in typed
+    # The white lettering stays white at night and turns to ink by day; 双城榜 stays red.
+    lettering = [image.getpixel((x, y)) for x in range(14, 120) for y in range(6, 34)]
+    ink = two_markets.PALETTES[mode]["text"]
+    assert sum(1 for pixel in lettering if max(abs(a - b) for a, b in zip(pixel, ink)) < 40) > 150
+
+
 def test_banner_icons_sit_on_the_tile_centre_and_the_right_margin():
     canvas = Image.new("RGB", (120, 40), (0, 0, 0))
 

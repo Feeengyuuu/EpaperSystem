@@ -15,6 +15,7 @@ import re
 from PIL import Image, ImageDraw
 
 from plugins.base_plugin.render_provenance import SourceProvenance
+from utils.local_wordmark import paste_local_wordmark
 
 logger = logging.getLogger(__name__)
 
@@ -216,14 +217,22 @@ def render_two_markets(plugin, dimensions, china, america, settings):
 
 def _draw_header(page, china, america):
     colors = page.colors
-    red = colors["china"]["banner"]
-    page.draw.rounded_rectangle((page.x(12), page.y(7), page.x(46), page.y(37)), radius=page.x(5), fill=red)
-    paste_icon(page.canvas, "ticket", page.x(16), page.y(13), page.y(18), BANNER_TEXT, max_width=page.x(26))
-    used = page.text((54, 2), "全球票房", 28, colors["text"])
-    used += page.text((54 + used + 8, 2), "双城榜", 28, colors["china"]["accent"]) + 8
+    # The page's title is its wordmark (white or ink lettering for the theme), else set in type.
+    theme = "night" if colors is PALETTES["night"] else "day"
+    title = paste_local_wordmark(page.canvas, ICON_DIR / f"title_wordmark_{theme}.png",
+                                 (page.x(12), page.y(3), page.x(320), page.y(37)), align="left")
+    if title:
+        title_end = title[2] / page.sx
+    else:
+        red = colors["china"]["banner"]
+        page.draw.rounded_rectangle((page.x(12), page.y(7), page.x(46), page.y(37)), radius=page.x(5), fill=red)
+        paste_icon(page.canvas, "ticket", page.x(16), page.y(13), page.y(18), BANNER_TEXT, max_width=page.x(26))
+        used = page.text((54, 2), "全球票房", 28, colors["text"])
+        used += page.text((54 + used + 8, 2), "双城榜", 28, colors["china"]["accent"]) + 8
+        title_end = 54 + used
     paste_icon(page.canvas, "camera", page.x(770), page.y(6), page.y(30), colors["camera"], max_width=page.x(26))
     page.text_right(762, 13, _header_meta(page.plugin, china, america), 11, colors["text"])
-    page.draw.line((page.x(54 + used + 16), page.y(34), page.x(762), page.y(34)), fill=colors["rule"], width=1)
+    page.draw.line((page.x(title_end + 16), page.y(34), page.x(762), page.y(34)), fill=colors["rule"], width=1)
 
 
 def _header_meta(plugin, china, america):
@@ -300,9 +309,9 @@ def _draw_hero(page, left, right, market, movie):
     x = left + 120
     width = right - 10 - x
     primary, secondary = page.plugin._display_titles(movie)
-    page.text((x, 86), primary, 22, colors["text"], max_width=width, sizes=(20, 18))
+    page.text((x, 82), primary, 26, colors["text"], max_width=width, sizes=(24, 22, 20))
     if secondary:
-        page.text((x, 114), secondary, 13, _subtitle_color(colors, accent), max_width=width)
+        page.text((x, 116), secondary, 13, _subtitle_color(colors, accent), max_width=width)
     label = "今日占比" if market == "china" else "本周票房"
     page.text((x, 136), label, 11, colors["text"])
     page.text((x, 148), movie.weekend_gross or "—", 30, accent, max_width=width, sizes=(26, 22))
