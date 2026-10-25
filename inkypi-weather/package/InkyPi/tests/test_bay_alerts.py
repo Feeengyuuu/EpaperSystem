@@ -411,12 +411,101 @@ def test_generate_image_cache_only_redraw_uses_seeded_cache(monkeypatch, tmp_pat
     monkeypatch.setattr(sources, "fetch_quakes", lambda *_args: _payload()["quakes"]["data"])
     monkeypatch.setattr(sources, "fetch_alerts", lambda *_args: {"items": [], "counties": ["006001"]})
     monkeypatch.setattr(sources, "fetch_events", lambda *_args: {"items": []})
+    monkeypatch.setattr(sources, "fetch_fires", lambda *_args: {"items": []})
     settings = {"_inkypi_theme": {"mode": "day"}}
 
     live = plugin.generate_image(settings, Device())
-    for name in ("fetch_quakes", "fetch_alerts", "fetch_events"):
+    for name in ("fetch_quakes", "fetch_alerts", "fetch_events", "fetch_fires"):
         monkeypatch.setattr(sources, name, lambda *_args: pytest.fail("cache-only redraw fetched"))
     cached = plugin.generate_image({**settings, "_theme_render_only": True}, Device())
 
     assert read_source_provenance(live) is SourceProvenance.LIVE
     assert read_source_provenance(cached) is SourceProvenance.FRESH_CACHE
+
+
+CALFIRE_ROWS = [
+    {"Name": "Cooley Fire", "Final": False, "Started": "2026-10-17T00:05:39Z", "County": "Mendocino",
+     "AcresBurned": 1365.0, "PercentContained": 90.0, "Longitude": -123.205859, "Latitude": 38.833351,
+     "UniqueId": "0c342fc2", "IsActive": True},
+    {"Name": "Mission Fire", "Final": False, "Started": "2026-10-21T10:00:00Z", "County": "Alameda",
+     "AcresBurned": 40.0, "PercentContained": 10.0, "Longitude": -121.93, "Latitude": 37.53,
+     "UniqueId": "m1", "IsActive": True},
+    {"Name": "Old Fire", "Final": True, "Started": "2026-09-01T00:00:00Z", "Longitude": -121.9, "Latitude": 37.5,
+     "IsActive": False},
+    {"Name": "Reno Fire", "Started": "2026-10-20T00:00:00Z", "Longitude": -110.0, "Latitude": 39.5, "IsActive": True},
+]
+
+
+def test_calfire_incidents_become_events_with_acres_and_containment():
+    fires = sources.normalize_fires(CALFIRE_ROWS, HOME)["items"]
+
+    assert [fire["title"] for fire in fires] == ["Mission 山火", "Cooley 山火"]
+    mission = fires[0]
+    assert (mission["kind"], mission["magnitude"], mission["unit"], mission["contained"]) == ("fire", 40.0, "acres", 10)
+    assert mission["distance_km"] < 10 and sources.valid_fires({"items": fires})
+    with pytest.raises(ValueError):
+        sources.normalize_fires({"error": "x"}, HOME)
+
+
+def test_firms_hotspots_drop_low_confidence_and_hide_the_key_on_failure(monkeypatch):
+    table = ("latitude,longitude,bright_ti4,acq_date,acq_time,confidence,frp\n"
+             "37.61,-121.85,330.1,2026-10-21,0942,n,4.2\n"
+             "37.70,-122.10,301.0,2026-10-21,0942,l,0.8\n")
+    spots = sources.normalize_hotspots(table, NOW)["items"]
+    assert spots == [{"lat": 37.61, "lon": -121.85, "time": "2026-10-21T09:42:00+00:00", "frp": 4.2}]
+
+    class Failing:
+        def request_text(self, method, url, **_kwargs):
+            raise OSError(f"could not reach {url}")
+
+    monkeypatch.setattr(sources, "get_http_client", lambda: Failing())
+
+    class Context:
+        def raise_if_cancelled(self):
+            pass
+
+    with pytest.raises(RuntimeError) as failure:
+        sources.fetch_hotspots("secret-map-key", NOW, Context())
+    assert "secret-map-key" not in str(failure.value) and failure.value.__cause__ is None
+
+
+def test_calfire_replaces_eonets_copy_of_the_same_fire_and_marks_the_map():
+    eonet = [{"id": "EONET_1", "title": "Mission", "kind": "fire", "date": "2026-10-21T11:00:00+00:00",
+              "lat": 37.54, "lon": -121.94, "magnitude": None, "unit": ""},
+             {"id": "EONET_2", "title": "Storm", "kind": "storm", "date": "2026-10-20T11:00:00+00:00",
+              "lat": 36.5, "lon": -121.5, "magnitude": None, "unit": ""}]
+    payload = _payload(events=eonet, quakes=[])
+    payload["fires"] = {"state": "live", "data": sources.normalize_fires(CALFIRE_ROWS, HOME)}
+    payload["hotspots"] = {"state": "live", "data": {"items": [
+        {"lat": 37.61, "lon": -121.85, "time": "2026-10-21T09:42:00+00:00", "frp": 4.2},
+        {"lat": 40.0, "lon": -120.0, "time": "2026-10-21T09:42:00+00:00", "frp": 1.0}]}}
+
+    merged = render.with_fires(payload)["events"]["data"]["items"]
+    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW)
+
+    assert [event["id"] for event in merged] == ["calfire-m1", "EONET_2", "calfire-0c342fc2"]
+    # Only the incident and the hotspot inside the Bay map are drawn on it.
+    assert image.info["fire_marks"] == {"hotspots": 1, "incidents": 1}
+    # The nearby fire counts towards the header's attention pill.
+    assert attention_items(render.with_fires(payload), NOW) == 1
+    assert render.with_fires(_payload(events=eonet)) == _payload(events=eonet)
+
+
+def test_hotspots_load_only_with_a_firms_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(sources, "fetch_quakes", lambda *_args: _payload()["quakes"]["data"])
+    monkeypatch.setattr(sources, "fetch_alerts", lambda *_args: {"items": [], "counties": ["006001"]})
+    monkeypatch.setattr(sources, "fetch_events", lambda *_args: {"items": []})
+    monkeypatch.setattr(sources, "fetch_fires", lambda *_args: {"items": []})
+    keys = []
+    monkeypatch.setattr(sources, "fetch_hotspots", lambda key, _now, _ctx: keys.append(key) or {"items": []})
+
+    class KeyedDevice(Device):
+        def load_env_key(self, key):
+            return "firms-test-key" if key == "FIRMS_MAP_KEY" else None
+
+    plugin = BayAlerts({"id": "bay_alerts"})
+    plugin.generate_image({"_inkypi_theme": {"mode": "day"}}, Device())
+    assert keys == []
+    plugin.generate_image({"_inkypi_theme": {"mode": "day"}, "forceRefresh": True}, KeyedDevice())
+    assert keys == ["firms-test-key"]

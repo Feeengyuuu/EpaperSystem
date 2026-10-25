@@ -1,4 +1,8 @@
-"""800 x 480 Bay Alerts page: hazard map on the left, alerts / quakes / state events on the right."""
+"""800 x 480 Bay Alerts page: hazard map on the left, alerts / quakes / state events on the right.
+
+The state events are NASA EONET's with CAL FIRE's active incidents in place of EONET's copies of
+the same fires, so a fire carries its acres and containment; FIRMS hotspots, when configured,
+mark the Bay map."""
 
 from __future__ import annotations
 
@@ -42,6 +46,7 @@ RIGHT = 788
 NOTABLE_QUAKE = 3.5
 NEARBY_EVENT_KM = 120
 NEAR_HOME_KM = 50
+SAME_FIRE_KM = 15
 
 
 def _palette(settings):
@@ -70,6 +75,23 @@ def until(stamp, now):
     day = "今天" if local.date() == now.date() else "明天" if local.date() == (now + timedelta(days=1)).date() \
         else f"{local:%m/%d} 周{WEEKDAYS[local.weekday()]}"
     return f"至 {day} {local:%H:%M}"
+
+
+def with_fires(payload):
+    """The payload with CAL FIRE's incidents merged into the state events: an EONET fire within
+    SAME_FIRE_KM of an incident is that incident, and the card lists the incident."""
+    fires_source = payload.get("fires") or {"state": "unavailable", "data": {}}
+    fires = fires_source["data"].get("items", []) if fires_source.get("state") != "unavailable" else []
+    events_source = payload["events"]
+    if not fires:
+        return payload
+    events = events_source["data"].get("items", []) if events_source["state"] != "unavailable" else []
+    kept = [event for event in events if event.get("kind") != "fire" or all(
+        distance_km(event["lat"], event["lon"], fire["lat"], fire["lon"]) > SAME_FIRE_KM for fire in fires)]
+    merged = sorted(fires + kept, key=lambda item: item.get("date") or "", reverse=True)
+    state = events_source["state"] if events_source["state"] != "unavailable" else fires_source["state"]
+    return {**payload, "events": {**events_source, "state": state, "calfire": True,
+                                  "data": {**events_source["data"], "items": merged}}}
 
 
 def attention_items(payload, now):
@@ -330,7 +352,7 @@ def _quakes_card(canvas, payload, now, box, rows):
 def _events_card(canvas, payload, now, box, rows):
     source = payload["events"]
     items = source["data"].get("items", [])
-    detail = "NASA EONET" + (f" · 共 {len(items)} 起" if items else "")
+    detail = ("CAL FIRE · EONET" if source.get("calfire") else "NASA EONET") + (f" · 共 {len(items)} 起" if items else "")
     _card(canvas, box, "moderate", "fire", "加州自然事件", detail, source)
     top = box[1] + 32
     # The minimap fills the card's height as far as its width allows, centred in it.
@@ -351,7 +373,17 @@ def _events_card(canvas, payload, now, box, rows):
     for index, event in enumerate(items[:rows]):
         y = top + 10 + index * EVENT_ROW
         draw_icon(canvas.draw, event.get("kind"), (left, y - 7), 15, canvas.color("alert"), canvas.color("paper"))
-        canvas.text((left + 21, y), event.get("title"), 13, anchor="lm", width=right - left - 21)
+        chip = 0
+        if event.get("contained") is not None:
+            # CAL FIRE's containment as a pill: green once mostly held, gold midway, red early.
+            percent = event["contained"]
+            tone = "ok" if percent >= 75 else "moderate" if percent >= 25 else "alert"
+            label = f"控制 {percent}%"
+            chip = canvas.width(label, 10) + 10
+            canvas.draw.rounded_rectangle((right - chip, y - 8, right, y + 8), radius=8, fill=canvas.color(tone))
+            canvas.text((right - chip / 2, y), label, 10, tone_ink(tone, canvas.palette), anchor="mm")
+            chip += 4
+        canvas.text((left + 21, y), event.get("title"), 13, anchor="lm", width=right - left - 21 - chip)
         meta = f"{ago(parse_time(event['date']), now)} · 距家 " \
                f"{distance_km(home[0], home[1], event['lat'], event['lon']):.0f} km"
         if event.get("magnitude") and event.get("unit") == "acres":
@@ -361,6 +393,7 @@ def _events_card(canvas, payload, now, box, rows):
 
 def render_page(dimensions, payload, settings, now):
     now = local_now(now)
+    payload = with_fires(payload)
     canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei")
     _header(canvas, payload, now)
     boxes, rows = _column_boxes(payload)
@@ -374,9 +407,11 @@ def render_page(dimensions, payload, settings, now):
         home=payload["home"], home_label=payload["home_label"], now=now,
         listed=[quake.get("id") for quake in listed_quakes(quakes, rows["quakes"])],
         focus=focus_quake(quakes, now), summary=near_home_summary(quakes, now),
+        fires=[event for event in payload["events"]["data"].get("items", []) if event.get("kind") == "fire"],
+        hotspots=((payload.get("hotspots") or {}).get("data") or {}).get("items", []),
     )
     canvas.image.paste(map_image, (12, 60))
-    for key in ("map_markers", "alert_tags", "map_callout", "map_summary", "home_rings"):
+    for key in ("map_markers", "alert_tags", "map_callout", "map_summary", "home_rings", "fire_marks"):
         canvas.image.info[key] = map_image.info.get(key)
     canvas.draw.rectangle((12, 60, 451, 467), outline=canvas.color("ink"), width=1)
     _alerts_card(canvas, payload, now, boxes["alerts"], rows["alerts"])

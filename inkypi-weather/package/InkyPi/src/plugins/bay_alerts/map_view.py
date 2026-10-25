@@ -616,14 +616,38 @@ def _dashed(draw, start, end, colour, dash=5, gap=3, width=2):
         position += dash + gap
 
 
+def _draw_fires(draw, palette, manifest, size, fires, hotspots, occupied):
+    """FIRMS hotspots as small flame-coloured squares and CAL FIRE incidents inside the map as
+    ringed fire icons; returns how many of each landed on the map."""
+    shown = {"hotspots": 0, "incidents": 0}
+    for spot in hotspots:
+        point = project(spot.get("lat"), spot.get("lon"), manifest, size)
+        if point is None:
+            continue
+        x, y = point
+        draw.rectangle((x - 2.5, y - 2.5, x + 2.5, y + 2.5), fill=palette["quake_recent"], outline=palette["alert"])
+        shown["hotspots"] += 1
+    for fire in fires:
+        point = project(fire.get("lat"), fire.get("lon"), manifest, size)
+        if point is None:
+            continue
+        x, y = point
+        draw.ellipse((x - 10, y - 10, x + 10, y + 10), fill=palette["paper"], outline=palette["alert"], width=2)
+        draw_icon(draw, "fire", (x - 7, y - 7), 14, palette["alert"], palette["paper"])
+        occupied.append((x - 11, y - 11, x + 11, y + 11))
+        shown["incidents"] += 1
+    return shown
+
+
 def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, now, listed=(), focus=None,
-                   summary=None):
+                   summary=None, fires=(), hotspots=()):
     """The Bay map with the page's live data drawn on it.
 
     `alerts` carry the card's "number" and "tone"; numbered ones get the card's tag on their area.
     `listed` are the ids the quake card lists: their magnitude chips show on the map too.
     `focus` ({"id", "title", "detail", "tone"}) is the quake the callout explains.
     `summary` is the near-home box's lines (title first).
+    `fires` (CAL FIRE incidents) and `hotspots` (FIRMS detections) mark the map where they fall.
     """
     manifest = read_manifest(BAY_MAP)
     if tuple(size) != tuple(manifest["image_size"]):
@@ -668,6 +692,7 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
             return None
         return (order, -float(quake.get("mag", 0)))
 
+    fire_marks = _draw_fires(draw, palette, manifest, size, fires, hotspots, occupied)
     groups = _edge_groups(quakes, manifest, size, rank)
     home_point = project(home[0], home[1], manifest, size)
     focus_point = project(focus_quake.get("lat"), focus_quake.get("lon"), manifest, size) if focus_quake else None
@@ -846,6 +871,7 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
     image.info["map_callout"] = callout
     image.info["map_summary"] = summary_box
     image.info["home_rings"] = [km for km, _centre, _radius in rings]
+    image.info["fire_marks"] = fire_marks
     return image
 
 

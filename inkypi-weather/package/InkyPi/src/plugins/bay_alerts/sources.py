@@ -1,12 +1,16 @@
-"""Bounded public feeds for the Bay Alerts page: USGS quakes, NWS alerts, NASA EONET events."""
+"""Bounded public feeds for the Bay Alerts page: USGS quakes, NWS alerts, NASA EONET events,
+CAL FIRE's active incidents and, with a FIRMS map key, NASA's satellite fire hotspots."""
 
 from __future__ import annotations
 
+import csv
+import io
 import math
 import re
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+from runtime.refresh_contracts import TaskCancelled
 from utils.http_client import get_http_client
 
 
@@ -15,6 +19,12 @@ USER_AGENT = "InkyPi BayAlerts/1.0 (personal e-paper display)"
 USGS_URL = "https://earthquake.usgs.gov/fdsnws/event/1/query"
 NWS_URL = "https://api.weather.gov/alerts/active"
 EONET_URL = "https://eonet.gsfc.nasa.gov/api/v3/events"
+CALFIRE_URL = "https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List"
+FIRMS_URL = "https://firms.modaps.eosdis.nasa.gov/api/area/csv/{key}/{sensor}/{bbox}/{days}"
+FIRMS_SENSORS = ("VIIRS_NOAA20_NRT", "VIIRS_SNPP_NRT")
+FIRMS_BBOX = "-122.8,37.2,-121.5,38.2"  # the Bay map's extent, west,south,east,north
+MAX_FIRES = 20
+MAX_HOTSPOTS = 200
 REQUEST_TIMEOUT = (3, 9)
 DEFAULT_HOME = (37.5485, -121.9886)  # Fremont, the middle of the Bay
 QUAKE_WINDOW_DAYS = 7
@@ -319,6 +329,96 @@ def normalize_events(payload, now):
 def fetch_events(now, context):
     params = {"status": "open", "bbox": CALIFORNIA_BBOX, "days": 30}
     return normalize_events(_get_json(EONET_URL, params, context, 1024 * 1024), now)
+
+
+def fire_name(name):
+    """'Cooley Fire' -> 'Cooley 山火'."""
+    text = " ".join(str(name or "").split())[:60]
+    return re.sub(r"\s+Fire$", " 山火", text, flags=re.I)
+
+
+def normalize_fires(rows, home):
+    """CAL FIRE's active incidents in California as page events: newest first, each with its acres
+    and containment."""
+    if not isinstance(rows, list):
+        raise ValueError("CAL FIRE returned no incident list")
+    items = []
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("Name") or row.get("IsActive") is False or row.get("Final"):
+            continue
+        lat, lon = _finite(row.get("Latitude")), _finite(row.get("Longitude"))
+        stamp = parse_time(row.get("Started"))
+        if stamp is None or not valid_coordinates(lat, lon) or not (32.3 <= lat <= 42.2 and -124.8 <= lon <= -113.9):
+            continue
+        acres, contained = _finite(row.get("AcresBurned")), _finite(row.get("PercentContained"))
+        items.append({
+            "id": "calfire-" + str(row.get("UniqueId") or row["Name"])[:40], "title": fire_name(row["Name"]),
+            "kind": "fire", "categories": ["calfire"], "date": stamp.isoformat(),
+            "lat": round(lat, 3), "lon": round(lon, 3),
+            "magnitude": round(acres, 1) if acres is not None else None, "unit": "acres" if acres is not None else "",
+            "contained": round(contained) if contained is not None else None,
+            "county": str(row.get("County") or "")[:30],
+            "distance_km": round(distance_km(home[0], home[1], lat, lon), 1),
+        })
+    items.sort(key=lambda item: item["date"], reverse=True)
+    return {"items": items[:MAX_FIRES]}
+
+
+def fetch_fires(home, context):
+    return normalize_fires(_get_json(CALFIRE_URL, {"inactive": "false"}, context, 512 * 1024), home)
+
+
+def normalize_hotspots(text, now):
+    """FIRMS' VIIRS detections as [{lat, lon, time, frp}], low-confidence ones left out."""
+    rows = list(csv.DictReader(io.StringIO(str(text or ""))))
+    if rows and "latitude" not in rows[0]:
+        raise ValueError("FIRMS returned no detections table")
+    items = []
+    for row in rows:
+        lat, lon = _finite(row.get("latitude")), _finite(row.get("longitude"))
+        if not valid_coordinates(lat, lon) or str(row.get("confidence") or "").lower() in ("l", "low"):
+            continue
+        clock = str(row.get("acq_time") or "").zfill(4)
+        stamp = parse_time(f"{row.get('acq_date')}T{clock[:2]}:{clock[2:]}:00+00:00")
+        if stamp is None or stamp > now + timedelta(minutes=5):
+            continue
+        frp = _finite(row.get("frp"))
+        items.append({"lat": round(lat, 4), "lon": round(lon, 4), "time": stamp.isoformat(),
+                      "frp": round(frp, 1) if frp is not None else None})
+    items.sort(key=lambda item: item["time"], reverse=True)
+    return {"items": items[:MAX_HOTSPOTS]}
+
+
+def fetch_hotspots(key, now, context):
+    """The last day's hotspots over the Bay map from both VIIRS satellites. The map key sits in
+    the URL path, so a failure is reported without the URL."""
+    items = []
+    for sensor in FIRMS_SENSORS:
+        url = FIRMS_URL.format(key=key, sensor=sensor, bbox=FIRMS_BBOX, days=1)
+        context.raise_if_cancelled()
+        try:
+            response = get_http_client().request_text("GET", url, context=context, timeout=REQUEST_TIMEOUT,
+                                                      max_bytes=512 * 1024, headers={"User-Agent": USER_AGENT})
+        except TaskCancelled:
+            raise
+        except Exception as error:
+            raise RuntimeError(f"FIRMS request failed ({type(error).__name__})") from None
+        items += normalize_hotspots(response.data, now)["items"]
+    items.sort(key=lambda item: item["time"], reverse=True)
+    return {"items": items[:MAX_HOTSPOTS]}
+
+
+def valid_fires(data):
+    items = data.get("items") if isinstance(data, dict) else None
+    return isinstance(items, list) and len(items) <= MAX_FIRES and all(
+        isinstance(item, dict) and parse_time(item.get("date")) and valid_coordinates(item.get("lat"), item.get("lon"))
+        for item in items)
+
+
+def valid_hotspots(data):
+    items = data.get("items") if isinstance(data, dict) else None
+    return isinstance(items, list) and len(items) <= MAX_HOTSPOTS and all(
+        isinstance(item, dict) and valid_coordinates(item.get("lat"), item.get("lon")) for item in items)
 
 
 def valid_quakes(data):
