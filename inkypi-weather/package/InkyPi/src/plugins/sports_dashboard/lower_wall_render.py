@@ -118,7 +118,7 @@ class LowerWallRenderMixin:
         context = self._wall_context_label(sport, event)
         if spec is not None:
             self._draw_wall_team_colours(draw, (x1, y1, x2, y2), event, accent, y1 + 30, rows_top + row_height)
-            draw.rounded_rectangle((inner_x1 - 3, y1 + 4, inner_x1 + 37, y1 + 28), radius=4, fill=COLORS["panel"])
+        # The league's logo stands bare on the card's colours, with no tile under it.
         self._draw_sport_logo(image, draw, sport, inner_x1, y1 + 6, 34, 20)
         if context:
             context, font = self._fit_text_ellipsis(draw, context, inner_x2 - inner_x1 - 46, 11, bold=True, min_size=8)
@@ -261,7 +261,6 @@ class LowerWallRenderMixin:
         line_h = max(16, (y2 - y1 - 24) // 2)
         if spec is not None:
             self._draw_wall_team_colours(draw, (x1, y1, x2, y2), event, accent, y1 + 20, y1 + 20 + line_h)
-            draw.rounded_rectangle((inner_x1 - 3, y1 + 3, inner_x1 + 29, y1 + 18), radius=4, fill=COLORS["panel"])
         self._draw_sport_logo(image, draw, sport, inner_x1, y1 + 4, 26, 14)
         if spec is None:
             leader = (list(event.get("leaderboard") or []) or [{}])[0]
