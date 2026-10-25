@@ -3957,14 +3957,6 @@ def test_offline_list_section_is_one_frame_with_platform_edged_rows():
     assert image.getpixel((100, round(top + slot))) == theme["line"]
 
 
-def test_top_overflow_excludes_live_queue_rows():
-    cards = [{"id": str(index)} for index in range(12)]
-
-    overflow = LiveRadar._top_live_overflow_cards(cards, top_count=3, queue_count=8)
-
-    assert [card["id"] for card in overflow] == ["11"]
-
-
 def test_light_title_logo_treats_black_source_background_as_transparent(monkeypatch):
     plugin = _plugin()
     source = Image.new("RGBA", (28, 28), (0, 0, 0, 255))

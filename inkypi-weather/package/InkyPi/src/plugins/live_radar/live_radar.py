@@ -1598,7 +1598,6 @@ class LiveRadar(BasePlugin):
             replay_box = (offline_box[0] + offline_list_w + col_gap, bottom_y, replay_w, bottom_h)
             offline_box = (offline_box[0], bottom_y, offline_list_w, bottom_h)
         live_queue_max = LIVE_QUEUE_MAX_ITEMS
-        live_queue_count = self._live_queue_visible_count(live_queue_box, len(queued_live_cards), live_queue_max)
 
         if live_cards:
             self._draw_section_title(image, draw, margin, top_label_y, "LIVE NOW", len(live_cards), theme, sub_font)
@@ -1625,17 +1624,6 @@ class LiveRadar(BasePlugin):
                 if theme.get("comic"):
                     shadow = comic_art.card_shadow(theme, self._brand_line(card, theme["line"]))
                     comic_art.ink_shadow(image, (x, top_y, x + card_w, top_y + top_h), 8, shadow)
-            overflow_cards = self._top_live_overflow_cards(live_cards, len(live_visible), live_queue_count)
-            if overflow_cards:
-                section_right = (
-                    margin
-                    + self._section_title_visual_width("LIVE NOW", draw, sub_font)
-                    + draw.textlength(str(len(live_cards)), font=sub_font)
-                    + 36
-                )
-                more_width = max(80, width - margin - section_right)
-                more = self._live_overflow_text(overflow_cards, draw, sub_font, more_width)
-                self._draw_text_right(draw, more, width - margin, top_label_y, sub_font, theme["muted"])
         else:
             self._draw_quiet_panel(draw, (margin, top_y, width - 2 * margin, top_h), len(cards), theme)
 
@@ -2254,7 +2242,11 @@ class LiveRadar(BasePlugin):
             comic_art.ink_shadow(image, wall, LIVE_QUEUE_RADIUS, comic_art.roles(theme)["shadow"])
 
         if len(cards) > len(visible):
-            self._draw_text_right(draw, f"+{len(cards) - len(visible)}", x + w, y, sub_font, theme["muted"])
+            # Who else is live, by name, beside the wall's own title: the streams that did not fit it.
+            title_right = (x + self._section_title_visual_width(title, draw, sub_font)
+                           + draw.textlength(str(len(cards)), font=sub_font) + 36)
+            more = self._live_overflow_text(cards[len(visible):], draw, sub_font, max(60, x + w - title_right))
+            self._draw_text_right(draw, more, x + w, y, sub_font, theme["muted"])
         return len(visible)
 
     def _snapshot_mini_candidates(self, cards, excluded_cards=None, max_items=4):
@@ -2499,10 +2491,6 @@ class LiveRadar(BasePlugin):
         else:
             wall_w = int(math.ceil(wall_count / wall_rows)) * LIVE_QUEUE_TILE_W
         return min(wall_w, widest_wall)
-
-    @staticmethod
-    def _top_live_overflow_cards(live_cards, top_count, queue_count):
-        return live_cards[int(top_count) + int(queue_count) :]
 
     @staticmethod
     def _live_queue_layout(box, card_count, max_items):
