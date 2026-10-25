@@ -24,7 +24,8 @@ from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_image
 
 from .sources import (
-    HOME, PACIFIC, RAIN_RADIUS_KM, decode_image, local_now, ocean_name, sky_pixels, sky_position,
+    HOME, ISS_PERIOD_MIN, LIGHT_KM_S, PACIFIC, RAIN_RADIUS_KM, decode_image, iss_ascending, iss_ground_track,
+    iss_next_switch, local_now, mars_distance_km, ocean_name, sky_pixels, sky_position, subsolar_point, sun_elevation,
 )
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -68,6 +69,21 @@ COUNTRY_NAMES = {
     "EG": "埃及", "ZA": "南非", "NG": "尼日利亚", "SA": "沙特阿拉伯", "IR": "伊朗", "KZ": "哈萨克斯坦", "MN": "蒙古",
     "PH": "菲律宾", "VN": "越南", "TH": "泰国", "MY": "马来西亚", "PK": "巴基斯坦", "DZ": "阿尔及利亚", "LY": "利比亚",
     "SD": "苏丹", "ET": "埃塞俄比亚", "KE": "肯尼亚", "CD": "刚果（金）", "AO": "安哥拉", "MA": "摩洛哥", "GL": "格陵兰",
+    "EC": "厄瓜多尔", "BO": "玻利维亚", "VE": "委内瑞拉", "PY": "巴拉圭", "UY": "乌拉圭", "GY": "圭亚那", "SR": "苏里南",
+    "CU": "古巴", "GT": "危地马拉", "HN": "洪都拉斯", "NI": "尼加拉瓜", "CR": "哥斯达黎加", "PA": "巴拿马", "SV": "萨尔瓦多",
+    "BZ": "伯利兹", "DO": "多米尼加", "HT": "海地", "JM": "牙买加", "BS": "巴哈马", "PT": "葡萄牙", "IE": "爱尔兰",
+    "NL": "荷兰", "BE": "比利时", "CH": "瑞士", "AT": "奥地利", "PL": "波兰", "CZ": "捷克", "SK": "斯洛伐克", "HU": "匈牙利",
+    "RO": "罗马尼亚", "BG": "保加利亚", "GR": "希腊", "RS": "塞尔维亚", "HR": "克罗地亚", "BA": "波黑", "AL": "阿尔巴尼亚",
+    "BY": "白俄罗斯", "LT": "立陶宛", "LV": "拉脱维亚", "EE": "爱沙尼亚", "FI": "芬兰", "SE": "瑞典", "NO": "挪威",
+    "DK": "丹麦", "IS": "冰岛", "MD": "摩尔多瓦", "GE": "格鲁吉亚", "AM": "亚美尼亚", "AZ": "阿塞拜疆", "UZ": "乌兹别克斯坦",
+    "TM": "土库曼斯坦", "KG": "吉尔吉斯斯坦", "TJ": "塔吉克斯坦", "AF": "阿富汗", "IQ": "伊拉克", "SY": "叙利亚",
+    "JO": "约旦", "IL": "以色列", "LB": "黎巴嫩", "YE": "也门", "OM": "阿曼", "AE": "阿联酋", "QA": "卡塔尔", "KW": "科威特",
+    "BD": "孟加拉国", "NP": "尼泊尔", "LK": "斯里兰卡", "MM": "缅甸", "LA": "老挝", "KH": "柬埔寨", "KP": "朝鲜",
+    "TW": "中国台湾", "PG": "巴布亚新几内亚", "FJ": "斐济", "TN": "突尼斯", "ML": "马里", "NE": "尼日尔", "TD": "乍得",
+    "MR": "毛里塔尼亚", "SN": "塞内加尔", "GN": "几内亚", "CI": "科特迪瓦", "GH": "加纳", "BF": "布基纳法索", "CM": "喀麦隆",
+    "CF": "中非", "CG": "刚果（布）", "GA": "加蓬", "SS": "南苏丹", "SO": "索马里", "UG": "乌干达", "TZ": "坦桑尼亚",
+    "RW": "卢旺达", "ZM": "赞比亚", "ZW": "津巴布韦", "MZ": "莫桑比克", "MW": "马拉维", "MG": "马达加斯加", "NA": "纳米比亚",
+    "BW": "博茨瓦纳", "ER": "厄立特里亚", "DJ": "吉布提", "EH": "西撒哈拉", "AQ": "南极洲",
 }
 
 
@@ -394,6 +410,50 @@ def _world(width, height, land, sea):
     return Image.composite(Image.new("RGB", (width, height), land), Image.new("RGB", (width, height), sea), mask)
 
 
+def _night_map(world, now, night_ink, sun):
+    """The world map with the night side shaded towards ``night_ink`` and twilight in between."""
+    width, height = world.size
+    shade = Image.new("L", (width, height), 0)
+    pixels = shade.load()
+    for row in range(height):
+        lat = 90 - (row + 0.5) * 180 / height
+        for column in range(width):
+            elevation = sun_elevation(lat, (column + 0.5) * 360 / width - 180, sun)
+            pixels[column, row] = 0 if elevation > 0 else 110 if elevation < -6 else round(110 * -elevation / 6)
+    return Image.composite(Image.new("RGB", world.size, night_ink), world, shade)
+
+
+def _photo_shade(canvas, box, top):
+    """Darken the photo's top or bottom edge with a gradient for the text laid over it."""
+    x0, y0, x1, y1 = (round(value) for value in box)
+    height = y1 - y0
+    ramp = Image.linear_gradient("L").resize((x1 - x0, height))
+    if not top:
+        ramp = ramp.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+    ramp = ramp.point(lambda value: round(value * 0.82))
+    region = canvas.image.crop((x0, y0, x1, y1))
+    canvas.image.paste(Image.composite(region, Image.new("RGB", region.size, (8, 10, 14)), ramp), (x0, y0))
+
+
+def _mars_facts(canvas, mars, now, box):
+    """Text laid into the photo over soft dark gradients: Earth's distance from Mars and the light
+    time across it at the top, the sol, rover and crater, camera and Earth date at the bottom."""
+    x0, y0, x1, y1 = box
+    distance = mars_distance_km(now)
+    white, soft = (255, 255, 255), (214, 220, 230)
+    _photo_shade(canvas, (x0, y0, x1, y0 + 40), top=True)
+    _photo_shade(canvas, (x0, y1 - 62, x1, y1), top=False)
+    canvas.text((x0 + 7, y0 + 6), f"距地球 {distance / 1e8:.2f} 亿km", 10, white, anchor="la")
+    canvas.text((x0 + 7, y0 + 21), f"光行 {distance / LIGHT_KM_S / 60:.0f} 分钟", 9, soft, anchor="la", bold=False)
+    canvas.draw.rounded_rectangle((x0 + 7, y1 - 47, x0 + 10, y1 - 8), radius=1, fill=canvas.color("space"))
+    canvas.text((x0 + 15, y1 - 48), f"火星日 {mars.get('sol')}", 13, white, anchor="la", width=x1 - x0 - 20)
+    canvas.text((x0 + 15, y1 - 30), "毅力号 · 杰泽罗", 9, soft, anchor="la", bold=False, width=x1 - x0 - 20)
+    taken = _local_time(str(mars.get("taken_utc") or "").replace("Z", "") + ("+00:00" if mars.get("taken_utc") else ""))
+    camera = str(mars.get("camera") or "").split(" ")[0]
+    canvas.text((x0 + 15, y1 - 17), " · ".join(part for part in (camera, f"{taken:%m/%d}" if taken else "") if part), 9,
+                soft, anchor="la", bold=False, width=x1 - x0 - 20)
+
+
 def _space(canvas, payload, images, now):
     mars = payload.get("mars", {}).get("data") or {}
     iss = payload.get("iss", {}).get("data") or {}
@@ -406,43 +466,65 @@ def _space(canvas, payload, images, now):
     if photo is not None:
         photo = ImageOps.fit(photo, size, Image.Resampling.LANCZOS)
         _paste(canvas, photo, photo_box[:2], _rounded(photo, 6))
-        _chip(canvas, (photo_box[0] + 5, photo_box[3] - 38), f"毅力号 · 火星日 {mars.get('sol')}", size=10,
-              fill="space", color=(255, 255, 255))
-        _chip(canvas, (photo_box[0] + 5, photo_box[3] - 19), str(mars.get("camera") or ""), size=9,
-              fill=(18, 26, 32), color=(255, 255, 255))
+        _mars_facts(canvas, mars, now, photo_box)
     else:
         canvas.draw.rounded_rectangle(photo_box, radius=6, fill=canvas.color("panel"))
         canvas.text(((photo_box[0] + photo_box[2]) / 2, (photo_box[1] + photo_box[3]) / 2), "火星照片暂缺", 12, "muted",
                     anchor="mm")
-    # The ISS over a world map, its track either side of now.
+    # The ISS over a world map with the night side shaded: its orbit's ground track, the Sun
+    # overhead, home, and when it next crosses into sunlight or the Earth's shadow.
     mx0, my0 = photo_box[2] + 10, photo_box[1]
     mw = crew_left - 10 - mx0
     mh = mw // 2
     land = (190, 196, 204) if canvas.palette["night"] else (196, 204, 214)
     sea = (30, 38, 48) if canvas.palette["night"] else (238, 242, 247)
-    world = _world(mw, mh, land, sea)
+    night = (6, 10, 16) if canvas.palette["night"] else (92, 102, 120)
+    sun = subsolar_point(now)
+    world = _night_map(_world(mw, mh, land, sea), now, night, sun)
     _paste(canvas, world, (mx0, my0), _rounded(world, 5))
 
     def at(lat, lon):
         return mx0 + (lon + 180) / 360 * mw, my0 + (90 - lat) / 180 * mh
 
-    track = iss.get("track") or []
-    for lat, lon in track:
-        x, y = at(lat, lon)
-        canvas.draw.ellipse((x - 1.5, y - 1.5, x + 1.5, y + 1.5), fill=canvas.color("space"))
+    sx, sy = at(*sun)
+    canvas.draw.ellipse((sx - 4, sy - 4, sx + 4, sy + 4), fill=canvas.color("gold"), outline=canvas.color("ink"))
+    hx, hy = at(*HOME)
+    canvas.draw.ellipse((hx - 2.5, hy - 2.5, hx + 2.5, hy + 2.5), fill=canvas.color("paper"), outline=canvas.color("ink"))
     if iss:
+        fetched = _local_time(iss.get("time")) or now
+        elapsed = max(0.0, (now - fetched).total_seconds() / 60)
+        track = iss_ground_track(iss["lat"], iss["lon"], iss_ascending(iss), [minute / 2 for minute in range(-90, 111)])
+        # The past 45 minutes thin, the next 55 bold, broken where the track wraps round the map.
+        for future in (False, True):
+            run = []
+            for minute, lat, lon in track:
+                if (minute >= 0) != future:
+                    continue
+                point = at(lat, lon)
+                if run and abs(point[0] - run[-1][0]) > mw / 2:
+                    if len(run) > 1:
+                        canvas.draw.line(run, fill=canvas.color("space"), width=2 if future else 1)
+                    run = []
+                run.append(point)
+            if len(run) > 1:
+                canvas.draw.line(run, fill=canvas.color("space"), width=2 if future else 1)
         x, y = at(iss["lat"], iss["lon"])
-        canvas.draw.ellipse((x - 6, y - 6, x + 6, y + 6), outline=canvas.color("space"), width=2)
+        canvas.draw.ellipse((x - 6, y - 6, x + 6, y + 6), fill=canvas.color("paper"), outline=canvas.color("space"), width=2)
         canvas.draw.line((x - 9, y, x + 9, y), fill=canvas.color("gold"), width=3)
         canvas.draw.rectangle((x - 2, y - 2, x + 2, y + 2), fill=canvas.color("ink"))
         country = str(iss.get("country") or "")
         place = (COUNTRY_NAMES.get(country, country) if country and country != "??" else
                  ocean_name(iss["lat"], iss["lon"]))
-        ty = my0 + mh + 7
+        ty = my0 + mh + 6
         canvas.text((mx0, ty), f"国际空间站 · {'日照中' if iss.get('daylight') else '地影中'}", 12, "space", anchor="la")
-        canvas.text((mx0, ty + 18), f"{place}上空", 14, anchor="la", width=mw)
-        canvas.text((mx0, ty + 39), f"高度 {iss.get('altitude', 0):.0f} km · {iss.get('velocity', 0):,.0f} km/h", 10,
+        canvas.text((mx0, ty + 17), f"{place}上空", 14, anchor="la", width=mw)
+        canvas.text((mx0, ty + 37), f"高度 {iss.get('altitude', 0):.0f} km · {iss.get('velocity', 0):,.0f} km/h", 10,
                     "muted", anchor="la", bold=False, width=mw)
+        switch = iss_next_switch(iss, fetched)
+        if switch and switch[0] - elapsed >= 1:
+            minutes, sunrise = switch[0] - elapsed, switch[1]
+            canvas.text((mx0, ty + 52), f"{minutes:.0f} 分钟后{'迎来日出' if sunrise else '进入地影'} · {ISS_PERIOD_MIN:.0f} 分钟一圈",
+                        10, anchor="la", bold=False, width=mw)
     _crew(canvas, payload.get("people", {}).get("data") or {}, images, now, (crew_left, my0, right - 8, bottom - 6))
 
 

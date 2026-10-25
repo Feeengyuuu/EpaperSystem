@@ -213,3 +213,45 @@ def test_the_page_says_what_is_missing_without_failing():
     image = render.render_page((800, 480), {}, {}, datetime(2026, 10, 25, 8, 5, tzinfo=sources.PACIFIC), {})
 
     assert image.size == (800, 480)
+
+
+def test_mars_prefers_a_colour_mosaic_frame_at_the_skyline():
+    def frame(sol, instrument, sequence, azimuth, elevation, product="EBY", width=1648):
+        return {"sol": sol, "sample_type": "Full", "camera": {"instrument": instrument},
+                "imageid": f"ZL0_{sol}_0846179643_598{product}_N0920000{sequence}_1100LMJ",
+                "extended": {"mastAz": str(azimuth), "mastEl": str(elevation), "dimension": f"({width},1200)"},
+                "date_taken_utc": "2026-10-25T06:19:25", "image_files": {
+                    "medium": f"https://mars.nasa.gov/{sequence}-{azimuth}-{product}-m.jpg",
+                    "large": f"https://mars.nasa.gov/{sequence}-{azimuth}-{product}-l.jpg"}}
+
+    images = [frame(2019, "MCZ_LEFT", "ZCAM05133", -20, -1.3) for _ in range(6)]  # a close-up held on one target
+    images += [frame(2019, "MCZ_LEFT", "ZCAM10050", azimuth, elevation, product)
+               for azimuth, elevation in ((-25, -2.9), (0, -1.2), (15, -1.9), (-20, -6.8)) for product in ("EBY", "ECM")]
+    images += [frame(2019, "MCZ_LEFT", "ZCAM05072", 5, -1.0, width=288), frame(2019, "SHERLOC_WATSON", "SRLC0001", 0, 0)]
+
+    picked = sources.pick_mars({"images": images})
+
+    # The panorama's colour frame nearest the skyline, at its large size.
+    assert picked["image"] == "https://mars.nasa.gov/ZCAM10050-15-EBY-l.jpg"
+    assert sources.scenic_rank(images[-1]) is None and sources.scenic_rank(images[-2]) is None
+
+
+def test_mars_distance_the_sun_and_the_iss_orbit():
+    from datetime import timezone
+
+    # Mars at its 2027 opposition and its 2026 conjunction.
+    assert 0.98e8 < sources.mars_distance_km(datetime(2027, 2, 19, tzinfo=timezone.utc)) < 1.05e8
+    assert 3.5e8 < sources.mars_distance_km(datetime(2026, 1, 9, tzinfo=timezone.utc)) < 3.7e8
+    # The Sun stands over the Tropic of Cancer at the June solstice, near Greenwich at noon UTC.
+    lat, lon = sources.subsolar_point(datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc))
+    assert abs(lat - 23.4) < 0.3 and abs(lon) < 2.5
+    assert sources.sun_elevation(lat, lon, (lat, lon)) > 89.9
+
+    track = sources.iss_ground_track(10.0, -80.0, True, [0, 23.2, 46.4])
+    assert abs(track[0][1] - 10.0) < 1e-6 and abs(track[0][2] + 80.0) < 1e-6
+    assert max(point[1] for point in track) <= sources.ISS_INCLINATION + 1e-6
+    assert track[1][1] > 45  # a quarter orbit after an ascending pass it nears the top of its track
+
+    iss = {"lat": 0.0, "lon": -150.0, "altitude": 420, "ascending": True}
+    switch = sources.iss_next_switch(iss, datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc))
+    assert switch is not None and 1 <= switch[0] <= 60

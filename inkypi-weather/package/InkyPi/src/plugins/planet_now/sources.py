@@ -69,6 +69,28 @@ MARS_CAMERAS = ("MCZ_LEFT", "MCZ_RIGHT", "NAVCAM_LEFT", "NAVCAM_RIGHT", "FRONT_H
                 "FRONT_HAZCAM_RIGHT_A", "REAR_HAZCAM_LEFT", "REAR_HAZCAM_RIGHT", "SKYCAM")
 MARS_CAMERA_NAMES = {"MCZ": "桅杆相机 Mastcam-Z", "NAVCAM": "导航相机", "HAZCAM": "避障相机", "SKYCAM": "天空相机",
                      "SHERLOC": "SHERLOC 显微相机", "SUPERCAM": "SuperCam", "PIXL": "PIXL", "CACHECAM": "采样相机"}
+# The cameras whose full frames make a landscape, best first; the mast cameras count only when
+# looking within MARS_HORIZON degrees of the horizon.
+MARS_SCENIC = ("MCZ", "NAVCAM", "FRONT_HAZCAM", "REAR_HAZCAM")
+MARS_MIN_WIDTH = 1000
+MARS_HORIZON = (-35.0, 20.0)
+MARS_SKYLINE = -2.0  # a mast camera's elevation that puts the skyline in the frame
+MARS_RECENT_SOLS = 4
+AU_KM = 149_597_870.7
+LIGHT_KM_S = 299_792.458
+# Mean orbital elements at J2000 and their rates per Julian century (JPL's approximate positions
+# of the planets, 1800-2050): a (AU), e, I, L, long. perihelion, long. node (degrees).
+ORBITS = {
+    "earth": ((1.00000261, 0.01671123, -0.00001531, 100.46457166, 102.93768193, 0.0),
+              (0.00000562, -0.00004392, -0.01294668, 35999.37244981, 0.32327364, 0.0)),
+    "mars": ((1.52371034, 0.09339410, 1.84969142, -4.55343205, -23.94362959, 49.55953891),
+             (0.00001847, 0.00007882, -0.00813131, 19140.30268499, 0.44441088, -0.29257343)),
+}
+# The ISS's orbit for its drawn ground track: inclination, period, and the Earth's turn per minute.
+ISS_INCLINATION = 51.64
+ISS_PERIOD_MIN = 92.9
+EARTH_DEG_PER_MIN = 360 / 1436.07
+EARTH_RADIUS_KM = 6371.0
 ISS_URL = "https://api.wheretheiss.at/v1/satellites/25544"
 ISS_COORDINATES_URL = "https://api.wheretheiss.at/v1/coordinates"
 # The ISS's track drawn on the map: these minutes either side of now.
@@ -397,30 +419,89 @@ def camera_label(instrument):
     return instrument.replace("_", " ").title()
 
 
+def _dimension(image):
+    match = re.fullmatch(r"\(?\s*(\d+)\s*,\s*(\d+)\s*\)?", str((image.get("extended") or {}).get("dimension") or ""))
+    return (int(match.group(1)), int(match.group(2))) if match else (0, 0)
+
+
+def _mast_elevation(image):
+    try:
+        value = float((image.get("extended") or {}).get("mastEl"))
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _sequence(image):
+    match = re.search(r"([A-Z]{4}\d{5})_", str(image.get("imageid") or ""))
+    return match.group(1) if match else ""
+
+
+def scenic_rank(image, mosaics=frozenset()):
+    """How good a landscape a raw picture is, smaller first, or None for one never shown: the
+    colour mast camera, then the navigation and hazard cameras, full frames only. A mast camera
+    frame counts when it belongs to a mosaic (a sequence panning across several azimuths, not a
+    close-up held on one target), is the colour frame (EBY) rather than its grey companion (ECM),
+    and looks near the horizon, the skyline nearest best."""
+    instrument = str((image.get("camera") or {}).get("instrument") or "")
+    family = next((index for index, prefix in enumerate(MARS_SCENIC) if instrument.startswith(prefix)), None)
+    width, _height = _dimension(image)
+    if family is None or width < MARS_MIN_WIDTH:
+        return None
+    mast = MARS_SCENIC[family] in ("MCZ", "NAVCAM")
+    elevation = _mast_elevation(image) if mast else None
+    off_horizon = elevation is not None and not MARS_HORIZON[0] <= elevation <= MARS_HORIZON[1]
+    held = mast and (instrument[:3], _sequence(image)) not in mosaics
+    grey = bool(re.search(r"_\d{3}ECM_", str(image.get("imageid") or "")))
+    skyline = round(abs(elevation - MARS_SKYLINE), 1) if elevation is not None else 0.0
+    return int(off_horizon), int(held), int(grey), family, skyline
+
+
+def mosaic_sequences(images):
+    """{(camera prefix, sequence)} of the mast camera sequences that pan across 3+ azimuths."""
+    azimuths = {}
+    for image in images:
+        try:
+            azimuth = round(float((image.get("extended") or {}).get("mastAz")))
+        except (TypeError, ValueError):
+            continue
+        key = (str((image.get("camera") or {}).get("instrument") or "")[:3], _sequence(image))
+        azimuths.setdefault(key, set()).add(azimuth)
+    return frozenset(key for key, values in azimuths.items() if len(values) >= 3)
+
+
 def pick_mars(payload):
-    """The newest full-size picture from the most scenic camera that took one on the latest sol."""
+    """The best landscape of the last few sols (scenic_rank, the newest on a tie), else the newest
+    full-size picture from the most scenic camera."""
     images = [image for image in (payload or {}).get("images") or [] if isinstance(image, dict)
               and (image.get("image_files") or {}).get("medium") and image.get("sample_type") == "Full"]
     if not images:
         return None
     latest_sol = max(int(image.get("sol") or 0) for image in images)
-    recent = [image for image in images if int(image.get("sol") or 0) >= latest_sol - 2]
+    recent = [image for image in images if int(image.get("sol") or 0) >= latest_sol - MARS_RECENT_SOLS]
+    mosaics = mosaic_sequences(recent)
+    scenic = [(scenic_rank(image, mosaics), image) for image in recent]
+    scenic = [(rank, image) for rank, image in scenic if rank is not None]
+    if scenic:
+        best = min(scenic, key=lambda pair: (pair[0], -int(pair[1].get("sol") or 0)))[1]
+    else:
+        def rank(image):
+            instrument = str((image.get("camera") or {}).get("instrument") or "")
+            order = MARS_CAMERAS.index(instrument) if instrument in MARS_CAMERAS else len(MARS_CAMERAS)
+            return order, -int(image.get("sol") or 0)
 
-    def rank(image):
-        instrument = str((image.get("camera") or {}).get("instrument") or "")
-        order = MARS_CAMERAS.index(instrument) if instrument in MARS_CAMERAS else len(MARS_CAMERAS)
-        return order, -int(image.get("sol") or 0)
-
-    best = min(recent or images, key=rank)
+        best = min(recent or images, key=rank)
     instrument = (best.get("camera") or {}).get("instrument")
+    files = best["image_files"]
     return {"sol": int(best.get("sol") or 0), "camera": camera_label(instrument),
-            "taken_utc": str(best.get("date_taken_utc") or ""), "image": best["image_files"]["medium"]}
+            "taken_utc": str(best.get("date_taken_utc") or ""),
+            "image": files.get("large") if _dimension(best)[0] >= MARS_MIN_WIDTH and files.get("large") else files["medium"]}
 
 
 def fetch_mars(context):
-    payload = _json(MARS_URL, context, max_bytes=1024 * 1024,
-                    params={"feed": "raw_images", "category": "mars2020", "feedtype": "json", "num": 60,
-                            "page": 0, "order": "sol desc"})
+    payload = _json(MARS_URL, context, max_bytes=2 * 1024 * 1024,
+                    params={"feed": "raw_images", "category": "mars2020", "feedtype": "json", "num": 200,
+                            "page": 0, "order": "sol desc", "extended": "sample_type::full,"})
     picked = pick_mars(payload)
     if picked is None:
         raise ValueError("Perseverance listed no picture")
@@ -454,10 +535,111 @@ def fetch_iss(now, context):
         raise
     except Exception:
         country = ""
+    points = [[float(row["latitude"]), float(row["longitude"])] for row in track or []]
+    later = [row for row, minutes in zip(points, ISS_TRACK_MINUTES) if minutes > 0]
     return {"lat": float(current["latitude"]), "lon": float(current["longitude"]), "country": country,
             "altitude": float(current.get("altitude") or 0), "velocity": float(current.get("velocity") or 0),
             "daylight": current.get("visibility") == "daylight",
-            "track": [[float(row["latitude"]), float(row["longitude"])] for row in track or []]}
+            "ascending": (later[0][0] >= float(current["latitude"])) if later else True,
+            "time": now.isoformat(), "track": points}
+
+
+def _julian_centuries(now):
+    return (now.timestamp() - 946728000) / 86400 / 36525  # since J2000.0 (2000-01-01 12:00 TT ~ UTC)
+
+
+def heliocentric(planet, now):
+    """A planet's ecliptic position (x, y, z) in AU from its mean orbital elements."""
+    base, rate = ORBITS[planet]
+    t = _julian_centuries(now)
+    a, e, inclination, mean_longitude, perihelion, node = (b + r * t for b, r in zip(base, rate))
+    anomaly = math.radians((mean_longitude - perihelion + 180) % 360 - 180)
+    eccentric = anomaly
+    for _ in range(8):
+        eccentric -= (eccentric - e * math.sin(eccentric) - anomaly) / (1 - e * math.cos(eccentric))
+    x_orbit, y_orbit = a * (math.cos(eccentric) - e), a * math.sqrt(1 - e * e) * math.sin(eccentric)
+    w, o, i = (math.radians(value) for value in (perihelion - node, node, inclination))
+    x = ((math.cos(w) * math.cos(o) - math.sin(w) * math.sin(o) * math.cos(i)) * x_orbit
+         + (-math.sin(w) * math.cos(o) - math.cos(w) * math.sin(o) * math.cos(i)) * y_orbit)
+    y = ((math.cos(w) * math.sin(o) + math.sin(w) * math.cos(o) * math.cos(i)) * x_orbit
+         + (-math.sin(w) * math.sin(o) + math.cos(w) * math.cos(o) * math.cos(i)) * y_orbit)
+    z = math.sin(w) * math.sin(i) * x_orbit + math.cos(w) * math.sin(i) * y_orbit
+    return x, y, z
+
+
+def mars_distance_km(now):
+    """How far Mars is from the Earth now, to within about one per cent."""
+    earth, mars = heliocentric("earth", now), heliocentric("mars", now)
+    return math.dist(earth, mars) * AU_KM
+
+
+def subsolar_point(now):
+    """(lat, lon) where the Sun is overhead now (declination and equation of time, to ~0.1 deg)."""
+    utc = now.astimezone(timezone.utc)
+    day = utc.timetuple().tm_yday + (utc.hour + utc.minute / 60) / 24
+    angle = 2 * math.pi / 365 * (day - 1)
+    declination = (0.006918 - 0.399912 * math.cos(angle) + 0.070257 * math.sin(angle)
+                   - 0.006758 * math.cos(2 * angle) + 0.000907 * math.sin(2 * angle)
+                   - 0.002697 * math.cos(3 * angle) + 0.00148 * math.sin(3 * angle))
+    equation = 229.18 * (0.000075 + 0.001868 * math.cos(angle) - 0.032077 * math.sin(angle)
+                         - 0.014615 * math.cos(2 * angle) - 0.040849 * math.sin(2 * angle))
+    minutes = utc.hour * 60 + utc.minute + utc.second / 60
+    longitude = -(minutes + equation - 720) / 4
+    return math.degrees(declination), (longitude + 180) % 360 - 180
+
+
+def sun_elevation(lat, lon, sun):
+    """The Sun's elevation in degrees seen from (lat, lon), given the subsolar point."""
+    lat, lon, slat, slon = (math.radians(value) for value in (lat, lon, *sun))
+    cosine = math.sin(lat) * math.sin(slat) + math.cos(lat) * math.cos(slat) * math.cos(lon - slon)
+    return math.degrees(math.asin(max(-1.0, min(1.0, cosine))))
+
+
+def iss_sunlit(lat, lon, altitude_km, sun):
+    """Whether the ISS is in sunlight: the Sun clears its horizon, lowered by its height."""
+    dip = math.degrees(math.acos(EARTH_RADIUS_KM / (EARTH_RADIUS_KM + max(0.0, altitude_km))))
+    return sun_elevation(lat, lon, sun) > -dip
+
+
+def iss_ground_track(lat, lon, ascending, minutes):
+    """[(minute, lat, lon)] of the ISS's ground track for a circular orbit through its position now."""
+    inclination = math.radians(ISS_INCLINATION)
+    ratio = max(-1.0, min(1.0, math.sin(math.radians(lat)) / math.sin(inclination)))
+    argument = math.asin(ratio) if ascending else math.pi - math.asin(ratio)
+
+    def from_node(u):
+        return math.degrees(math.atan2(math.cos(inclination) * math.sin(u), math.cos(u)))
+
+    node = lon - from_node(argument)
+    points = []
+    for minute in minutes:
+        u = argument + 2 * math.pi * minute / ISS_PERIOD_MIN
+        point_lat = math.degrees(math.asin(math.sin(inclination) * math.sin(u)))
+        point_lon = (node + from_node(u) - EARTH_DEG_PER_MIN * minute + 180) % 360 - 180
+        points.append((minute, point_lat, point_lon))
+    return points
+
+
+def iss_next_switch(iss, now, horizon=100):
+    """(minutes, entering_daylight) to the ISS's next sunrise or sunset along its track, or None."""
+    sun = subsolar_point(now)
+    ascending = iss_ascending(iss)
+    altitude = float(iss.get("altitude") or 420)
+    lit = iss_sunlit(iss["lat"], iss["lon"], altitude, sun)
+    for minute, lat, lon in iss_ground_track(iss["lat"], iss["lon"], ascending, range(1, horizon + 1)):
+        moment_sun = subsolar_point(now + timedelta(minutes=minute))
+        if iss_sunlit(lat, lon, altitude, moment_sun) != lit:
+            return minute, not lit
+    return None
+
+
+def iss_ascending(iss):
+    """Whether the ISS is heading north: from its stored flag, else its next track point."""
+    if "ascending" in iss:
+        return bool(iss["ascending"])
+    track = iss.get("track") or []
+    later = track[len(track) // 2] if track else None
+    return later is None or later[0] >= iss["lat"]
 
 
 def valid_iss(data):

@@ -67,7 +67,7 @@ class PlanetNow(BasePlugin):
             "trends": load("trends", sources.fetch_trends, HOUR, DAY, sources.valid_trends),
             "wiki": load("wiki", lambda ctx: sources.fetch_wiki(now, ctx), 6 * HOUR, 4 * DAY, sources.valid_wiki),
             "apple": load("apple", sources.fetch_apple, 12 * HOUR, 4 * DAY, sources.valid_apple),
-            "mars": load("mars", sources.fetch_mars, 6 * HOUR, 4 * DAY, sources.valid_mars),
+            "mars": load("mars", sources.fetch_mars, 6 * HOUR, 4 * DAY, sources.valid_mars, timeout=18),
             "iss": load("iss", lambda ctx: sources.fetch_iss(now, ctx), 4 * MINUTE, 3 * HOUR, sources.valid_iss),
             "people": load("people", sources.fetch_people, 6 * HOUR, 7 * DAY, sources.valid_people),
         }
