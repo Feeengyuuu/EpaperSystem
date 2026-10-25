@@ -133,7 +133,7 @@ def test_spare_room_in_the_column_takes_another_poster():
     other = Image.new("RGB", (400, 300), (20, 160, 60))
     bare = {"title": "Plain", "meta": {"title_en": "Plain"}}
 
-    page = poster_layout.render_single(bare, portrait, (800, 480), "day", ({"meta": {"title_zh": "另一张"}}, other))
+    page = poster_layout.render_single(bare, portrait, (800, 480), "day", [({"meta": {"title_zh": "另一张"}}, other)])
 
     colours = {page.getpixel((x, y)) for x in range(360, 790, 6) for y in range(60, 470, 6)}
     assert (20, 160, 60) in colours
@@ -189,3 +189,19 @@ def test_banked_posters_without_details_get_them_on_screen_first_a_few_at_a_time
     assert fetched[0].endswith("/p6")
     assert records[6]["meta"]["title_zh"] == "人民武装，和平保卫者！"
     assert records[2]["meta"] == {"title_zh": "已有"} and saves == [{"doc": 1}]
+
+
+def test_spare_room_pictures_pack_into_the_rows_that_cover_the_most():
+    # A wide, low room takes one row as tall as the room; a narrow tall one stacks them.
+    wide = poster_layout.pack_rows([1.4, 0.7, 0.7], (420, 220))
+    tall = poster_layout.pack_rows([0.7, 0.7], (190, 300))
+
+    assert len(wide) == 1 and wide[0][0][0] == 0
+    assert sum(size[0] for _index, size in wide[0]) <= 420
+    # The row runs out of either width or height: it is as large as the room lets it be.
+    row_width = sum(size[0] for _index, size in wide[0]) + poster_layout.PACK_GAP * (len(wide[0]) - 1)
+    assert row_width >= 420 - 3 or wide[0][0][1][1] >= 220 - poster_layout.PACK_CAPTION - 2
+    assert len(tall) in (1, 2) and all(size[1] >= poster_layout.PACK_MIN_HEIGHT for row in tall for _i, size in row)
+    used = sum(max(size[1] for _i, size in row) + poster_layout.PACK_CAPTION for row in tall)
+    assert used <= 300
+    assert poster_layout.pack_rows([1.0], (100, 40)) == []

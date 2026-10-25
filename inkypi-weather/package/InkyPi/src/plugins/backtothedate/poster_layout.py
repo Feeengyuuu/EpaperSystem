@@ -2,7 +2,7 @@
 
 The poster comes first: its blank paper margins are trimmed and it is drawn as large as the
 page allows, the details squeezed round it. One poster takes the left with a narrow column at
-the right (the date and theme, the Chinese title in LXGW WenKai, the pinyin and English
+the right (the date and theme, the Chinese title, the pinyin and English
 titles, the designer with their years, publisher, size and holding, a short account of the
 theme from Chinese Wikipedia, a few tags, the sources), or, when that makes it larger (a wide
 poster), the top with a strip of the same details below. Three portraits stand side by side
@@ -17,8 +17,9 @@ import re
 from PIL import Image, ImageDraw, ImageOps
 
 from plugins.backtothedate.poster_meta import decode_photo, split_chinese
-from utils.app_utils import get_base_ui_font, get_font
+from utils.app_utils import get_base_ui_font
 
+# All text is Microsoft YaHei (the base UI font), the titles in its bold.
 PALETTES = {
     "day": {"paper": (243, 234, 216), "ink": (40, 28, 20), "muted": (112, 92, 72), "accent": (160, 82, 45),
             "rule": (206, 188, 160), "shadow": (214, 198, 172)},
@@ -41,8 +42,8 @@ def _ui(size, bold=False):
     return get_base_ui_font(size, bold=bold)
 
 
-def _kai(size):
-    return get_font("LXGW WenKai", size) or _ui(size, bold=True)
+def _title(size):
+    return _ui(size, bold=True)
 
 
 def trim_margins(image, share=0.015):
@@ -138,7 +139,7 @@ def _contained(size, room):
     return max(1, round(size[0] * scale)), max(1, round(size[1] * scale))
 
 
-def render_single(poster, image, dimensions, mode="day", extra=None):
+def render_single(poster, image, dimensions, mode="day", extras=()):
     colors = palette(mode)
     width, height = dimensions
     canvas = Image.new("RGB", dimensions, colors["paper"])
@@ -152,7 +153,7 @@ def render_single(poster, image, dimensions, mode="day", extra=None):
         return canvas
     top = (height - beside[1]) // 2
     box = _poster(canvas, image, (MARGIN, top, MARGIN + beside[0], top + beside[1]), colors)
-    _info_column(canvas, poster, (box[2] + GAP, MARGIN, width - MARGIN, height - MARGIN), colors, extra)
+    _info_column(canvas, poster, (box[2] + GAP, MARGIN, width - MARGIN, height - MARGIN), colors, extras)
     return canvas
 
 
@@ -173,7 +174,7 @@ def _info_strip(canvas, poster, box, colors):
         y += 14
     if meta.get("title_zh"):
         for size in (20, 18, 16):
-            font = _kai(size)
+            font = _title(size)
             lines = wrap(draw, meta["title_zh"], font, left_w, 1)
             if not lines[0].endswith("…"):
                 break
@@ -217,7 +218,7 @@ def _info_strip(canvas, poster, box, colors):
     draw.text((x1 - draw.textlength(footer, font=font), y1 - 10), footer, font=font, fill=colors["muted"])
 
 
-def _info_column(canvas, poster, box, colors, extra=None):
+def _info_column(canvas, poster, box, colors, extras=()):
     draw = ImageDraw.Draw(canvas)
     x0, y0, x1, y1 = box
     width = x1 - x0
@@ -242,7 +243,7 @@ def _info_column(canvas, poster, box, colors, extra=None):
     title_zh = meta.get("title_zh")
     if title_zh:
         for size in (22, 20, 18, 16):
-            font = _kai(size)
+            font = _title(size)
             lines = wrap(draw, title_zh, font, width, 3)
             if not lines[-1].endswith("…") or size == 16:
                 break
@@ -311,31 +312,71 @@ def _info_column(canvas, poster, box, colors, extra=None):
             draw.text((x + 5, y + 1), tag, font=font, fill=colors["ink"])
             x += tag_width + 4
         y += 15
-    _fill_room(canvas, (x0, y + 10, x1, limit), meta, extra, colors)
+    _fill_room(canvas, (x0, y + 10, x1, limit), meta, extras, colors)
 
 
-def _fill_room(canvas, box, meta, extra, colors):
-    """A small picture in the column's spare room: the theme's photo from Wikipedia, else
-    another banked poster ("另见"), with a one-line caption under it."""
+def _fill_room(canvas, box, meta, extras, colors):
+    """Fill the column's spare room down to the footer with pictures, each captioned: the
+    theme's photo from Wikipedia, then other banked posters ("另见"). They are packed in rows
+    (in this order) the way that covers the most of the room, none under 60px tall."""
     x0, y0, x1, y1 = box
-    if y1 - y0 < 84 or x1 - x0 < 120:
+    if y1 - y0 < 74 or x1 - x0 < 100:
         return
-    photo, caption = decode_photo(meta.get("theme_photo")), ""
+    items = []
+    photo = decode_photo(meta.get("theme_photo"))
     if photo is not None:
-        caption = f"{meta.get('theme_zh') or '时代背景'} · 维基百科配图"
-    elif extra:
-        other, image = extra
+        items.append((photo, f"{meta.get('theme_zh') or '时代背景'} · 维基百科配图"))
+    for other, image in extras or ():
         other_meta = dict((other or {}).get("meta") or {})
-        photo = trim_margins(image)
         title = other_meta.get("title_zh") or other_meta.get("title_en") or str((other or {}).get("title") or "")
-        caption = "另见 · " + " · ".join(part for part in (title, other_meta.get("date")) if part)
-    if photo is None:
-        return
+        items.append((trim_margins(image), "另见 · " + " · ".join(part for part in (title, other_meta.get("date")) if part)))
+    rows = pack_rows([image.width / image.height for image, _caption in items], (x1 - x0, y1 - y0))
     draw = ImageDraw.Draw(canvas)
-    size = _contained(photo.size, (x1 - x0 - 4, y1 - y0 - 18))
-    box = _poster(canvas, photo, (x0, y0, x0 + size[0], y0 + size[1]), colors)
     font = _ui(9)
-    draw.text((x0, box[3] + 4), wrap(draw, caption, font, x1 - x0, 1)[0], font=font, fill=colors["muted"])
+    y = y0
+    for row in rows:
+        x = x0
+        for index, size in row:
+            image, caption = items[index]
+            placed = _poster(canvas, image, (x, y, x + size[0], y + size[1]), colors)
+            draw.text((x, placed[3] + 3), wrap(draw, caption, font, size[0], 1)[0], font=font, fill=colors["muted"])
+            x += size[0] + PACK_GAP
+        y += max(size[1] for _index, size in row) + PACK_CAPTION + PACK_GAP
+
+
+PACK_GAP = 8
+PACK_CAPTION = 14
+PACK_MIN_HEIGHT = 60
+
+
+def pack_rows(aspects, room):
+    """[[(index, (w, h)), ...] per row] for pictures of these aspects (width/height) in a room
+    (w, h): the first k of them, k as large as helps, split in consecutive rows, each row as
+    tall as the room's width allows, all shrunk together to fit its height (a caption under
+    each row); the arrangement covering the most area, [] when nothing is 60px tall."""
+    width, height = room
+    best, best_area = [], 0.0
+    for count in range(1, len(aspects) + 1):
+        for cuts in range(1 << (count - 1)):
+            rows, row = [], [0]
+            for index in range(1, count):
+                if cuts >> (index - 1) & 1:
+                    rows.append(row)
+                    row = []
+                row.append(index)
+            rows.append(row)
+            heights = [(width - PACK_GAP * (len(row) - 1)) / sum(aspects[i] for i in row) for row in rows]
+            fixed = len(rows) * PACK_CAPTION + (len(rows) - 1) * PACK_GAP
+            scale = min(1.0, (height - fixed) / sum(heights)) if height > fixed else 0.0
+            heights = [value * scale for value in heights]
+            if not heights or min(heights) < PACK_MIN_HEIGHT:
+                continue
+            area = sum(aspects[i] * heights[r] ** 2 for r, row in enumerate(rows) for i in row)
+            if area > best_area * 1.02:
+                best_area = area
+                best = [[(i, (max(1, int(aspects[i] * heights[r])), max(1, int(heights[r])))) for i in row]
+                        for r, row in enumerate(rows)]
+    return best
 
 
 def render_shelf(items, dimensions, mode="day"):
@@ -359,7 +400,7 @@ def render_shelf(items, dimensions, mode="day"):
         y = shelf + 7
         title_zh = meta.get("title_zh")
         if title_zh:
-            font = _kai(15)
+            font = _title(15)
             draw.text((left, y), wrap(draw, title_zh, font, column, 1)[0], font=font, fill=colors["ink"])
             y += 19
         else:
@@ -370,8 +411,20 @@ def render_shelf(items, dimensions, mode="day"):
         designer = (meta.get("designers") or [{}])[0]
         detail = " · ".join(part for part in (meta.get("date"), designer.get("zh") or designer.get("name"),
                                               _theme_name(meta)) if part)
-        if detail and y + 13 <= height - MARGIN + 4:
+        bottom = height - MARGIN + 4
+        if detail and y + 13 <= bottom:
             font = _ui(10)
             for line in wrap(draw, detail, font, column, 1):
                 draw.text((left, y + 1), line, font=font, fill=colors["accent"])
+            y += 15
+        # Whatever room is left under the shelf takes the rest of the details.
+        font = _ui(9)
+        for text, lines in ((_publisher_line(meta), 1), (" · ".join(part for part in (meta.get("size"), meta.get("call_nr")) if part), 1),
+                            (meta.get("theme_summary"), 6)):
+            if not text:
+                continue
+            room = int((bottom - y) // 12)
+            for line in wrap(draw, text, font, column, min(lines, room)) if room > 0 else ():
+                draw.text((left, y), line, font=font, fill=colors["ink"])
+                y += 12
     return canvas

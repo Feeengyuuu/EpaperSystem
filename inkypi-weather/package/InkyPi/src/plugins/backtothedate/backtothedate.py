@@ -83,6 +83,8 @@ REFILL_BUDGET_SECONDS = 60.0
 POSTER_IMAGE_LIMITS = ImageLimits(max_bytes=12 * 1024 * 1024)
 # Banked posters saved before details were kept get theirs this many at a time, on screen first.
 DETAIL_BACKFILL_LIMIT = 4
+# Banked posters offered to fill the details column's spare room.
+COMPANION_POSTERS = 2
 _REFILL_CONTEXT = ContextVar("backtothedate_refill_context", default=None)
 
 
@@ -486,9 +488,9 @@ class BacktotheDate(BasePlugin):
             poster_images = bank.selection_media(profile, selection)
         try:
             if len(poster_images) == 1 and self._fit_mode(settings) in DETAIL_FIT_MODES:
-                extra = self._companion_poster(bank, profile, poster_images[0][0])
+                extras = self._companion_posters(bank, profile, poster_images[0][0])
                 return self._render_single_with_details(
-                    poster_images[0][0], self._normalize_image(poster_images[0][1]), dimensions, theme_mode, extra,
+                    poster_images[0][0], self._normalize_image(poster_images[0][1]), dimensions, theme_mode, extras,
                 )
             if len(poster_images) == TRIPTYCH_POSTER_COUNT:
                 return self._compose_triptych_display_image(
@@ -1053,14 +1055,12 @@ class BacktotheDate(BasePlugin):
             return self._render_single_with_details(poster, self._normalize_image(image), dimensions, theme_mode)
         return self._fit_image(image, dimensions, settings)
 
-    def _render_single_with_details(self, poster, image, dimensions, theme_mode, extra=None):
-        return poster_layout.render_single(poster, image, dimensions, theme_mode, extra)
+    def _render_single_with_details(self, poster, image, dimensions, theme_mode, extras=()):
+        return poster_layout.render_single(poster, image, dimensions, theme_mode, extras)
 
-    def _companion_poster(self, bank, profile, record):
-        """Another banked poster for the details column's spare room (one on the same theme
-        first), as (record, image); None when the poster has its theme's photo or none loads."""
-        if (record.get("meta") or {}).get("theme_photo"):
-            return None
+    def _companion_posters(self, bank, profile, record, count=COMPANION_POSTERS):
+        """Other banked posters to fill the details column's spare room (those on the same
+        theme first), as [(record, image)]; the ones that will not load are skipped."""
         themes = {theme.get("slug") for theme in (record.get("meta") or {}).get("themes") or []}
         others = [item for item in profile.get("records") or [] if item.get("media_key") != record.get("media_key")]
 
@@ -1069,14 +1069,17 @@ class BacktotheDate(BasePlugin):
             spin = sha256(f"{record.get('media_key')}:{item.get('media_key')}".encode("utf-8")).hexdigest()
             return (not shared, spin)
 
-        for item in sorted(others, key=order)[:2]:
+        companions = []
+        for item in sorted(others, key=order)[:count + 1]:
+            if len(companions) == count:
+                break
             try:
-                return item, self._normalize_image(bank.load_media(item))
+                companions.append((item, self._normalize_image(bank.load_media(item))))
             except TaskCancelled:
                 raise
             except Exception as exc:
                 logger.info("BacktotheDate companion poster skipped: %s", exc)
-        return None
+        return companions
 
     def _load_poster_image(self, image_url, dimensions):
         _checkpoint()
