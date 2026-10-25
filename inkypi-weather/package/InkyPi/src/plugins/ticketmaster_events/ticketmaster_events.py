@@ -22,17 +22,29 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
+
+from .week_page import HEADER_H, WeekPageMixin
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_client, get_http_session
 
 logger = logging.getLogger(__name__)
 
 DISCOVERY_EVENTS_URL = "https://app.ticketmaster.com/discovery/v2/events.json"
-# v2 drops Ticketmaster's generic category art, so v1 caches are refetched.
-STATE_VERSION = "ticketmaster-events-v2"
-MAX_ITEMS = 5
+# v3 adds the week's counts, the on-sale-soon list and each event's sale and tour facts.
+STATE_VERSION = "ticketmaster-events-v3"
+# The page lists a featured event and LIST_EVENTS - 1 more, the soonest first.
+MAX_ITEMS = LIST_EVENTS = 8
 # Repeat showtimes collapse into one listing, so ask for enough rows to fill.
 DISCOVERY_ROW_FLOOR = 20
+# The week strip: each of WEEK_DAYS days is asked for its own count (the page total), with up
+# to DAY_ROWS of its events for the mix of kinds and to fill the list.
+WEEK_DAYS, DAY_ROWS = 7, 30
+# The featured event is the biggest tour (most dates on Ticketmaster) among the listed events
+# starting within FEATURE_HOURS, with real artwork.
+FEATURE_HOURS = 48
+# Events whose public sale opens within ON_SALE_DAYS, soonest first.
+ON_SALE_DAYS, ON_SALE_ROWS, ON_SALE_SHOWN = 7, 20, 3
+SEGMENT_KEYS = ("music", "sports", "arts & theatre", "film", "miscellaneous")
 DEFAULT_CACHE_HOURS = 3
 DISCOVERY_JSON_MAX_BYTES = 2 * 1024 * 1024
 STATE_CACHE_BUDGET = CacheBudget(
@@ -137,7 +149,7 @@ class TicketmasterEvent:
         return cls(**{key: payload.get(key) for key in cls.__dataclass_fields__})
 
 
-class TicketmasterEvents(BoxOfficeTopMovies):
+class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
     def generate_settings_template(self):
         params = super().generate_settings_template()
         params["style_settings"] = False
@@ -146,12 +158,12 @@ class TicketmasterEvents(BoxOfficeTopMovies):
     def generate_image(self, settings, device_config):
         settings = settings or {}
         dimensions = self._display_dimensions(device_config)
-        items_count = self._bounded_int(settings.get("itemsCount"), 5, 1, MAX_ITEMS)
+        items_count = LIST_EVENTS
         cache_hours = self._bounded_int(settings.get("cacheHours"), DEFAULT_CACHE_HOURS, 1, 48)
         cache = self._read_cache()
         cache_key = self._cache_key(settings, dimensions, items_count)
 
-        events = []
+        events, overview = [], {}
         source_label = "Ticketmaster Discovery"
         generated_at = self._now_for_device(device_config)
         stale = False
@@ -205,7 +217,8 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                 api_key = self._ticketmaster_api_key(settings, device_config)
                 if not api_key:
                     raise MissingTicketmasterCredentials("Ticketmaster API key is not configured.")
-                events = self._load_events(settings, items_count, api_key)
+                events, week, on_sale = self._load_overview(settings, api_key, generated_at)
+                overview = {"week": week, "on_sale": on_sale}
                 self._download_event_images(events, dimensions)
                 generated_at = self._now_for_device(device_config)
                 self._write_cache({
@@ -213,6 +226,8 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                     "cache_key": cache_key,
                     "generated_at": generated_at.astimezone(timezone.utc).isoformat(),
                     "events": [event.to_dict() for event in events],
+                    "week": week,
+                    "on_sale": on_sale,
                 })
                 provenance = SourceProvenance.LIVE
             except MissingTicketmasterCredentials as exc:
@@ -251,6 +266,8 @@ class TicketmasterEvents(BoxOfficeTopMovies):
 
         events = events[:items_count]
         self._write_ticketmaster_context(events, generated_at, stale, settings)
+        if not overview and cache.get("version") == STATE_VERSION and cache.get("cache_key") == cache_key:
+            overview = cache
         image = self._render_events(
             dimensions,
             events,
@@ -258,6 +275,8 @@ class TicketmasterEvents(BoxOfficeTopMovies):
             source_label,
             generated_at,
             stale,
+            week=(overview.get("week") if overview else None) or {},
+            on_sale=(overview.get("on_sale") if overview else None) or [],
         )
         if provenance is SourceProvenance.STALE_CACHE:
             image.info["inkypi_skip_cache"] = True
@@ -267,14 +286,6 @@ class TicketmasterEvents(BoxOfficeTopMovies):
     def _local_fallback_image(image):
         image.info["inkypi_skip_cache"] = True
         return attach_source_provenance(image, SourceProvenance.LOCAL_FALLBACK)
-
-    def _load_events(self, settings, items_count, api_key):
-        for params in self._request_param_candidates(settings, api_key, items_count):
-            data = self._fetch_ticketmaster_json(params)
-            events = self._events_from_discovery(data, items_count)
-            if events:
-                return events
-        raise RuntimeError("Ticketmaster Discovery API returned no displayable events.")
 
     def _request_param_candidates(self, settings, api_key, items_count):
         params = self._base_params(settings, api_key, items_count)
@@ -409,11 +420,121 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                 url=_clean_text(row.get("url") or ""),
                 image_url=image_url,
                 poster_url=image_url,
-                extra={"timezone": start.get("timezone") or "", "source": "ticketmaster"},
+                extra={"timezone": start.get("timezone") or "", "source": "ticketmaster",
+                       "subgenre": _classification_name(classification.get("subGenre")),
+                       "sale_start": _clean_text((((row.get("sales") or {}).get("public") or {}).get("startDateTime") or "")),
+                       "tour_dates": self._tour_dates(row),
+                       "has_art": bool(image_url)},
             )
             listings[listing] = event
             events.append(event)
         return events
+
+    @staticmethod
+    def _tour_dates(row):
+        """How many dates the event's headliner has on Ticketmaster: the size of the tour."""
+        attractions = ((row.get("_embedded") or {}).get("attractions") or [])
+        try:
+            return int((((attractions[0] or {}).get("upcomingEvents") or {}).get("_total")) or 0) if attractions else 0
+        except (TypeError, ValueError):
+            return 0
+
+    @staticmethod
+    def _segment_key(row):
+        name = _classification_name((((row.get("classifications") or [{}])[0] or {}).get("segment")))
+        return name.casefold() if name.casefold() in SEGMENT_KEYS else "miscellaneous"
+
+    def _load_overview(self, settings, api_key, now):
+        """(events, week, on_sale): the soonest events, each of the next WEEK_DAYS days' count and
+        mix of kinds, and the events whose public sale opens soon. The first day finds which
+        location parameters Ticketmaster answers; the other days and the on-sale list reuse them,
+        and a day or list that fails is left out rather than failing the page."""
+        today = now.date()
+        base, rows, days = None, [], []
+        for offset in range(WEEK_DAYS):
+            day = today + timedelta(days=offset)
+            start = f"{now:%H:%M}:00" if not offset else "00:00:00"
+            window = {"localStartDateTime": f"{day:%Y-%m-%d}T{start},{day:%Y-%m-%d}T23:59:59", "size": str(DAY_ROWS)}
+            data = None
+            try:
+                if base is None:
+                    for params in self._request_param_candidates(settings, api_key, DAY_ROWS):
+                        params = self._day_params(params, window)
+                        data = self._fetch_ticketmaster_json(params)
+                        base = params
+                        if (data or {}).get("_embedded"):
+                            break
+                else:
+                    data = self._fetch_ticketmaster_json(self._day_params(base, window))
+            except Exception as exc:
+                if not offset:
+                    raise
+                logger.warning("Ticketmaster day %s unavailable. | error_type: %s", day, type(exc).__name__)
+                days.append({"date": day.isoformat(), "count": None, "segments": {}})
+                continue
+            day_rows = (((data or {}).get("_embedded") or {}).get("events") or [])
+            rows.extend(day_rows)
+            segments = {}
+            for row in day_rows:
+                key = self._segment_key(row)
+                segments[key] = segments.get(key, 0) + 1
+            total = self._safe_int(((data or {}).get("page") or {}).get("totalElements"), len(day_rows))
+            days.append({"date": day.isoformat(), "count": total, "segments": segments})
+        events = self._featured_first(self._events_from_discovery({"_embedded": {"events": rows}}, LIST_EVENTS), now)
+        if not events:
+            raise RuntimeError("Ticketmaster Discovery API returned no displayable events.")
+        try:
+            on_sale = self._load_on_sale(base, now)
+        except Exception as exc:
+            logger.warning("Ticketmaster on-sale list unavailable. | error_type: %s", type(exc).__name__)
+            on_sale = []
+        return events, {"days": days}, on_sale
+
+    @staticmethod
+    def _day_params(params, window):
+        day = {key: value for key, value in params.items() if key not in ("startDateTime", "endDateTime")}
+        return {**day, **window}
+
+    def _featured_first(self, events, now):
+        """The listed events with the featured one first: the biggest tour starting within
+        FEATURE_HOURS with real artwork (the soonest event when none has art), then the rest by time."""
+        if not events:
+            return events
+        horizon = (now + timedelta(hours=FEATURE_HOURS)).date().isoformat()
+        candidates = [event for event in events if event.local_date <= horizon and (event.extra or {}).get("has_art")]
+        featured = max(candidates, key=lambda event: (event.extra or {}).get("tour_dates") or 0) if candidates else events[0]
+        ordered = [featured] + [event for event in events if event is not featured]
+        for rank, event in enumerate(ordered, 1):
+            event.rank = rank
+        return ordered
+
+    def _load_on_sale(self, base, now):
+        """Events near by whose public sale opens within ON_SALE_DAYS, soonest sale first:
+        [{title, venue, city, date, sale_start, segment}]."""
+        if not base:
+            return []
+        params = {key: value for key, value in base.items()
+                  if key not in ("startDateTime", "endDateTime", "localStartDateTime", "sort", "size")}
+        params.update({"sort": "onSaleStartDate,asc", "size": str(ON_SALE_ROWS),
+                       "onsaleStartDateTime": self._ticketmaster_datetime(now),
+                       "onsaleEndDateTime": self._ticketmaster_datetime(now + timedelta(days=ON_SALE_DAYS))})
+        rows = ((((self._fetch_ticketmaster_json(params) or {}).get("_embedded") or {}).get("events")) or [])
+        listed, seen = [], set()
+        for row in rows:
+            title = _clean_text(row.get("name") or "")
+            sale = _clean_text((((row.get("sales") or {}).get("public") or {}).get("startDateTime") or ""))
+            sale_at = self._parse_datetime(sale)
+            if not title or not sale_at or sale_at <= now or title.casefold() in seen:
+                continue
+            seen.add(title.casefold())
+            venue = (((row.get("_embedded") or {}).get("venues") or [{}])[0]) or {}
+            listed.append({"title": title, "venue": _clean_text(venue.get("name") or ""),
+                           "city": _clean_text(((venue.get("city") or {}).get("name") or "")),
+                           "date": _clean_text((((row.get("dates") or {}).get("start") or {}).get("localDate") or "")),
+                           "sale_start": sale, "segment": self._segment_key(row)})
+            if len(listed) >= ON_SALE_SHOWN:
+                break
+        return listed
 
     def _event_artwork_url(self, row, venue):
         """Prefer the event's own art, then its attraction's, then the venue's."""
@@ -521,97 +642,6 @@ class TicketmasterEvents(BoxOfficeTopMovies):
             except Exception as exc:
                 logger.warning("Ticketmaster image download failed for %s: %s", event.title, exc)
 
-    def _render_events(self, dimensions, events, settings, source_label, generated_at, stale=False):
-        width, height = dimensions
-        colors = self._palette(settings)
-        image = Image.new("RGB", dimensions, colors["paper"])
-        draw = ImageDraw.Draw(image)
-        self._draw_background(draw, dimensions, colors)
-
-        margin = max(16, width // 48)
-        header_h = max(62, height // 8)
-        footer_h = max(24, height // 20)
-        title_font = self._font(max(26, height // 15), bold=True)
-        subtitle_font = self._font(max(12, height // 38), bold=True)
-        small_font = self._font(max(11, height // 44))
-        chip_font = self._font(max(12, height // 42), bold=True)
-        day_font = self._font(max(21, height // 20), bold=True)
-        right_scale = 1.2
-        list_body_font = self._font(int(round(max(14, height // 32) * right_scale)), bold=True)
-        list_meta_font = self._font(int(round(max(12, height // 40) * right_scale)), bold=True)
-        list_small_font = self._font(int(round(max(11, height // 44) * right_scale)), bold=True)
-        list_chip_font = self._font(int(round(max(12, height // 42) * right_scale)), bold=True)
-        list_day_font = self._font(int(round(max(14, height // 32) * right_scale)), bold=True)
-
-        wordmark_bottom = self._draw_header_wordmark(image, draw, margin, max(4, margin - 11), int(width * 0.38), 44, colors)
-        if wordmark_bottom is None:
-            draw.text((margin, margin - 2), "LOCAL EVENTS", fill=colors.get("title", colors["ink"]), font=title_font)
-            subtitle_y = margin + 35
-        else:
-            subtitle_y = max(margin + 35, wordmark_bottom + 1)
-        refresh = self._refresh_label(settings)
-        draw.text((margin, subtitle_y), f"{source_label} | {refresh}", fill=colors.get("header_muted", colors["muted"]), font=subtitle_font)
-        location = self._fit_text(draw, self._location_label(settings), subtitle_font, width // 3)
-        location_w = draw.textlength(location, font=subtitle_font)
-        draw.text((width - margin - location_w, margin + 35), location, fill=colors.get("accent", colors["muted"]), font=subtitle_font)
-
-        top = margin + header_h
-        bottom = height - margin - footer_h
-        hero = events[0]
-        left_w = int(width * 0.36)
-        hero_x = margin
-        hero_img_w = left_w - margin
-        hero_img_h = max(176, int(height * 0.43))
-        self._paste_event_image(image, hero, (hero_x, top, hero_img_w, hero_img_h), colors)
-        if colors.get("chromatic_media", colors["mode"] == "color"):
-            draw.rectangle((hero_x, top + hero_img_h - 9, hero_x + hero_img_w, top + hero_img_h), fill=self._event_color(hero, colors))
-        self._draw_date_chip(draw, hero, hero_x + 10, top + 10, 72, 54, colors, chip_font, day_font)
-        self._draw_status_chip(draw, hero.status or "onsale", hero_x + 10, top + hero_img_h - 32, colors, chip_font)
-
-        hero_text_y = top + hero_img_h + 14
-        hero_text_bottom = height - margin - footer_h - 10
-        self._draw_left_event_text(draw, hero, hero_x, hero_text_y, hero_img_w, hero_text_bottom, colors)
-
-        list_x = margin + left_w + 14
-        list_title = f"NEXT {len(events)}"
-        list_top = top - int(round(28 * right_scale))
-        draw.text((list_x, list_top), list_title, fill=colors.get("title", colors["ink"]), font=list_body_font)
-        row_top = list_top + int(round(42 * right_scale))
-        row_count = max(1, len(events[1:]))
-        row_h = max(int(round(72 * right_scale)), (bottom - row_top) // row_count)
-        thumb_w = max(int(round(88 * right_scale)), int(round((width // 10) * right_scale)))
-        thumb_h = max(int(round(52 * right_scale)), min(row_h - int(round(14 * right_scale)), int(thumb_w * 0.66)))
-        date_w = int(round(42 * right_scale))
-        date_h = int(round(48 * right_scale))
-        thumb_gap = int(round(7 * right_scale))
-        text_gap = int(round(10 * right_scale))
-
-        for idx, event in enumerate(events[1:]):
-            y = row_top + idx * row_h
-            if idx:
-                separator_y = y - int(round(9 * right_scale))
-                draw.line((list_x, separator_y, width - margin, separator_y), fill=colors["line"], width=1)
-            if colors.get("chromatic_media", colors["mode"] == "color"):
-                draw.rectangle((list_x - 6, y, list_x - 3, y + date_h), fill=self._event_color(event, colors))
-            self._draw_date_chip(draw, event, list_x, y, date_w, date_h, colors, list_chip_font, list_day_font)
-            thumb_x = list_x + date_w + thumb_gap
-            self._paste_event_image(image, event, (thumb_x, y, thumb_w, thumb_h), colors)
-            text_x = thumb_x + thumb_w + text_gap
-            title = self._fit_text(draw, event.title, list_body_font, width - margin - text_x)
-            draw.text((text_x, y - 1), title, fill=colors["ink"], font=list_body_font)
-            venue_y = y + int(round(22 * right_scale))
-            draw.text((text_x, venue_y), self._fit_text(draw, self._venue_line(event), list_meta_font, width - margin - text_x), fill=colors["muted"], font=list_meta_font)
-            tag = self._tag_line(event)
-            if tag:
-                tag_y = y + int(round(43 * right_scale))
-                draw.text((text_x, tag_y), self._fit_text(draw, tag, list_small_font, width - margin - text_x), fill=colors["soft"], font=list_small_font)
-
-        footer = self._updated_text(generated_at, stale)
-        draw.text((margin, height - margin - footer_h + 8), footer, fill=colors.get("footer", colors["muted"]), font=small_font)
-        source_w = draw.textlength("Ticketmaster Discovery API", font=small_font)
-        draw.text((width - margin - source_w, height - margin - footer_h + 8), "Ticketmaster Discovery API", fill=colors.get("footer", colors["muted"]), font=small_font)
-        return image
-
     def _draw_header_wordmark(self, target, draw, x, y, max_width, max_height, colors):
         path = Path(__file__).with_name("header_wordmark.png")
         if not path.is_file():
@@ -695,77 +725,12 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         draw.text(((w - (bbox[2] - bbox[0])) // 2, (h - (bbox[3] - bbox[1])) // 2), label, fill=label_color, font=font)
         return image
 
-    def _draw_date_chip(self, draw, event, x, y, w, h, colors, month_font, day_font):
-        month, day = self._date_parts(event.local_date)
-        fill = colors.get("date_chip", colors["chip"])
-        ink = colors.get("date_ink", colors["chip_ink"])
-        draw.rectangle((x, y, x + w, y + h), fill=fill, outline=colors["outline"])
-        month_w = draw.textlength(month, font=month_font)
-        day_w = draw.textlength(day, font=day_font)
-        draw.text((x + (w - month_w) / 2, y + 6), month, fill=ink, font=month_font)
-        draw.text((x + (w - day_w) / 2, y + h - 30), day, fill=ink, font=day_font)
-
-    def _draw_status_chip(self, draw, status, x, y, colors, font):
-        label = (status or "onsale").upper()
-        label = "ON SALE" if label == "ONSALE" else label[:12]
-        padding_x = 9
-        width = int(draw.textlength(label, font=font)) + padding_x * 2
-        fill = colors.get("status_chip", colors["chip"])
-        ink = colors.get("status_ink", colors["chip_ink"])
-        draw.rectangle((x, y, x + width, y + 23), fill=fill, outline=colors["outline"])
-        draw.text((x + padding_x, y + 4), label, fill=ink, font=font)
-
-    def _date_parts(self, local_date):
-        try:
-            parsed = datetime.strptime(local_date, "%Y-%m-%d")
-        except Exception:
-            return "TBA", "--"
-        return parsed.strftime("%b").upper(), parsed.strftime("%d").lstrip("0") or "0"
-
     def _venue_line(self, event):
         place = event.venue_name or "Venue TBA"
         city = ", ".join(value for value in [event.city, event.state_code] if value)
         if city:
             return f"{place} - {city}"
         return place
-
-    def _detail_line(self, event):
-        pieces = [self._time_text(event.local_time), event.price, self._tag_line(event)]
-        return " | ".join(piece for piece in pieces if piece)
-
-    def _draw_left_event_text(self, draw, event, x, y, max_width, bottom, colors):
-        title_text = event.title or "Untitled event"
-        venue_text = self._venue_line(event)
-        detail_text = self._detail_line(event)
-
-        for title_size in range(26, 15, -1):
-            title_font = self._font(title_size, bold=True)
-            venue_font = self._font(max(13, title_size - 7), bold=True)
-            detail_font = self._font(max(11, title_size - 10), bold=True)
-            title_lines = self._wrap_full_text(draw, title_text, title_font, max_width)
-            venue_lines = self._wrap_full_text(draw, venue_text, venue_font, max_width)
-            detail_lines = self._wrap_full_text(draw, detail_text, detail_font, max_width) if detail_text else []
-            title_lh = title_size + 5
-            venue_lh = max(16, title_size - 3)
-            detail_lh = max(14, title_size - 6)
-            needed = len(title_lines) * title_lh + 6 + len(venue_lines) * venue_lh
-            if detail_lines:
-                needed += 4 + len(detail_lines) * detail_lh
-            if y + needed <= bottom or title_size == 16:
-                cursor = y
-                for line in title_lines:
-                    draw.text((x, cursor), line, fill=colors["ink"], font=title_font)
-                    cursor += title_lh
-                cursor += 6
-                for line in venue_lines:
-                    draw.text((x, cursor), line, fill=colors["muted"], font=venue_font)
-                    cursor += venue_lh
-                if detail_lines:
-                    cursor += 4
-                    for line in detail_lines:
-                        draw.text((x, cursor), line, fill=colors["soft"], font=detail_font)
-                        cursor += detail_lh
-                return
 
     def _event_color(self, event, colors):
         segment = (event.segment or "").strip().lower()
@@ -774,28 +739,6 @@ class TicketmasterEvents(BoxOfficeTopMovies):
     @staticmethod
     def _blend(first, second, ratio):
         return tuple(int(round(first[index] * (1 - ratio) + second[index] * ratio)) for index in range(3))
-
-    def _tag_line(self, event):
-        pieces = []
-        if event.segment:
-            pieces.append(event.segment)
-        if event.genre and event.genre.lower() != event.segment.lower():
-            pieces.append(event.genre)
-        more = (event.extra or {}).get("more_showtimes")
-        if more:
-            pieces.append(f"+{more} more time{'s' if more > 1 else ''}")
-        if event.distance:
-            pieces.append(event.distance)
-        return " / ".join(pieces)
-
-    def _time_text(self, value):
-        if not value:
-            return ""
-        try:
-            parsed = datetime.strptime(value[:8], "%H:%M:%S")
-        except Exception:
-            return value[:5]
-        return parsed.strftime("%-I:%M %p") if os.name != "nt" else parsed.strftime("%#I:%M %p")
 
     def _wrap_text(self, draw, text, font, max_width, max_lines):
         lines = self._wrap_full_text(draw, text, font, max_width)
@@ -828,10 +771,9 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         if colors["mode"] == "dark":
             return
         if colors["mode"] == "color":
-            draw.rectangle((0, 0, width, 74), fill=colors["header_band"])
-            draw.rectangle((0, 74, width, 80), fill=colors["accent"])
-            draw.rectangle((0, height - 42, width, height), fill=colors["footer_band"])
-            draw.rectangle((0, 0, 10, height), fill=colors["accent"])
+            draw.rectangle((0, 0, width, HEADER_H), fill=colors["header_band"])
+            draw.rectangle((0, HEADER_H, width, HEADER_H + 3), fill=colors["accent"])
+            draw.rectangle((0, 0, 6, height), fill=colors["accent"])
 
     def _palette(self, settings):
         injected = settings.get("_inkypi_theme")
@@ -868,7 +810,7 @@ class TicketmasterEvents(BoxOfficeTopMovies):
                     "placeholder_ink": ink,
                     "shadow": panel,
                     "segment_colors": {
-                        "music": accent,
+                        "music": (238, 106, 92),
                         "sports": (83, 159, 174),
                         "arts & theatre": (173, 126, 194),
                         "film": (126, 150, 203),
@@ -982,20 +924,6 @@ class TicketmasterEvents(BoxOfficeTopMovies):
         if city and state_code:
             return f"{city}, {state_code}"
         return city or "Local"
-
-    def _updated_text(self, generated_at, stale):
-        when = generated_at.strftime("%m/%d %H:%M") if isinstance(generated_at, datetime) else ""
-        prefix = "STALE " if stale else "Updated "
-        return f"{prefix}{when}".strip()
-
-    def _refresh_label(self, settings):
-        cache_hours = self._bounded_int(
-            settings.get("cacheHours"),
-            DEFAULT_CACHE_HOURS,
-            1,
-            48,
-        )
-        return f"{cache_hours}H REFRESH"
 
     def _config_image(self, dimensions, title, subtitle):
         width, height = dimensions

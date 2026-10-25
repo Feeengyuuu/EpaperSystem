@@ -68,15 +68,6 @@
 </div>
 
 <div class="form-group">
-    <label for="itemsCount" class="form-label">Number of events:</label>
-    <select id="itemsCount" name="itemsCount" class="form-input">
-        <option value="3">3</option>
-        <option value="4">4</option>
-        <option value="5" selected>5</option>
-    </select>
-</div>
-
-<div class="form-group">
     <label for="cacheHours" class="form-label">Refresh cache every:</label>
     <select id="cacheHours" name="cacheHours" class="form-input">
         <option value="1">1 hour</option>
@@ -99,7 +90,6 @@
             document.getElementById('daysAhead').value = pluginSettings.daysAhead || '7';
             document.getElementById('keyword').value = pluginSettings.keyword || '';
             document.getElementById('classificationName').value = pluginSettings.classificationName || '';
-            document.getElementById('itemsCount').value = pluginSettings.itemsCount || '5';
             document.getElementById('cacheHours').value = pluginSettings.cacheHours || '3';
         }
     });

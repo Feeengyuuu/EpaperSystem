@@ -88,7 +88,7 @@ def test_repeat_showtimes_collapse_into_one_listing_with_the_count():
     ]
     assert events[0].extra["more_showtimes"] == 2
     assert [event.rank for event in events] == [1, 2, 3]
-    assert "+2 more times" in TicketmasterEvents({"id": "ticketmaster_events"})._tag_line(events[0])
+    assert TicketmasterEvents({"id": "ticketmaster_events"})._more_text(events[0]) == "+2 场"
 
 
 def test_undefined_classifications_are_not_shown():
@@ -96,7 +96,7 @@ def test_undefined_classifications_are_not_shown():
     plugin = TicketmasterEvents({"id": "ticketmaster_events"})
 
     assert (event.segment, event.genre) == ("", "")
-    assert plugin._tag_line(event) == "3.0 mi"
+    assert plugin._kind_text(event) == "" and event.distance == "3.0 mi"
 
 
 def test_events_without_a_specific_time_do_not_claim_midnight():
@@ -104,7 +104,9 @@ def test_events_without_a_specific_time_do_not_claim_midnight():
     plugin = TicketmasterEvents({"id": "ticketmaster_events"})
 
     assert event.local_time == ""
-    assert "12:00" not in plugin._detail_line(event)
+    from plugins.ticketmaster_events.week_page import clock
+
+    assert plugin is not None and clock(event.local_time) == ""
 
 
 def test_discovery_request_asks_for_enough_rows_to_fill_after_collapsing():

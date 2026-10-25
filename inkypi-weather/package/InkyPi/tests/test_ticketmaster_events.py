@@ -175,12 +175,15 @@ def test_load_events_falls_back_to_94539_latlong():
 
     plugin._fetch_ticketmaster_json = fake_fetch
 
-    events = plugin._load_events({"postalCode": "94539"}, 1, "test-key")
+    events, _week, _on_sale = plugin._load_overview({"postalCode": "94539"}, "test-key",
+                                                     datetime(2026, 7, 4, 9, 0, tzinfo=timezone.utc))
 
     assert events[0].title == "Sample Artist Live"
     assert calls[0]["postalCode"] == "94539"
     assert "postalCode" not in calls[1]
     assert calls[1]["latlong"] == "37.5202,-121.9264"
+    # The other days and the on-sale list keep the parameters that answered.
+    assert all(call.get("latlong") == "37.5202,-121.9264" for call in calls[2:])
 
 
 def test_blank_postal_code_uses_explicit_city_and_state():
@@ -303,11 +306,11 @@ def test_ticketmaster_night_theme_keeps_each_event_poster_color(tmp_path):
         datetime.now(timezone.utc),
     )
     poster_samples = (
-        (200, 180),
-        (429, 128),
-        (429, 214),
-        (429, 300),
-        (429, 386),
+        (170, 140),
+        (442, 116),
+        (442, 163),
+        (442, 210),
+        (442, 257),
     )
 
     for sample, poster_color in zip(poster_samples, poster_colors):
@@ -384,11 +387,11 @@ def test_theme_only_render_reuses_even_expired_source_cache(monkeypatch, tmp_pat
     plugin = TicketmasterEvents({"id": "ticketmaster_events"})
     calls = {"load": 0}
 
-    def fake_load(_settings, _items_count, _api_key):
+    def fake_load(_settings, _api_key, _now):
         calls["load"] += 1
-        return [TicketmasterEvent(rank=1, title="Theme-safe event")]
+        return [TicketmasterEvent(rank=1, title="Theme-safe event")], {}, []
 
-    monkeypatch.setattr(plugin, "_load_events", fake_load)
+    monkeypatch.setattr(plugin, "_load_overview", fake_load)
     monkeypatch.setattr(
         plugin,
         "_download_event_images",
@@ -429,11 +432,11 @@ def test_force_refresh_bypasses_fresh_source_cache(monkeypatch, tmp_path, force_
     plugin = TicketmasterEvents({"id": "ticketmaster_events"})
     calls = {"load": 0}
 
-    def fake_load(_settings, _items_count, _api_key):
+    def fake_load(_settings, _api_key, _now):
         calls["load"] += 1
-        return [TicketmasterEvent(rank=1, title=f"Refresh {calls['load']}")]
+        return [TicketmasterEvent(rank=1, title=f"Refresh {calls['load']}")], {}, []
 
-    monkeypatch.setattr(plugin, "_load_events", fake_load)
+    monkeypatch.setattr(plugin, "_load_overview", fake_load)
     monkeypatch.setattr(
         plugin,
         "_download_event_images",
@@ -454,12 +457,6 @@ def test_force_refresh_bypasses_fresh_source_cache(monkeypatch, tmp_path, force_
     )
 
     assert calls == {"load": 2}
-
-
-def test_refresh_label_uses_configured_cache_hours():
-    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
-
-    assert plugin._refresh_label({"cacheHours": "12"}) == "12H REFRESH"
 
 
 def test_context_ttl_and_fact_use_configured_cache_hours(monkeypatch):
@@ -724,8 +721,8 @@ def test_runtime_cache_manager_accepts_ticketmaster_state_and_image_namespaces(
 
     monkeypatch.setattr(
         plugin,
-        "_load_events",
-        lambda *_args: [TicketmasterEvent(rank=1, title="Runtime event")],
+        "_load_overview",
+        lambda *_args: ([TicketmasterEvent(rank=1, title="Runtime event")], {}, []),
     )
     monkeypatch.setattr(plugin, "_write_ticketmaster_context", lambda *_args: None)
 
@@ -767,7 +764,7 @@ def test_refresh_failure_uses_matching_stale_cache(monkeypatch, tmp_path):
     monkeypatch.setenv("INKYPI_TICKETMASTER_EVENTS_CACHE", str(tmp_path))
     plugin = TicketmasterEvents({"id": "ticketmaster_events"})
     settings = {"apiKey": "test-key", "cacheHours": "3"}
-    cache_key = plugin._cache_key(settings, (800, 480), 5)
+    cache_key = plugin._cache_key(settings, (800, 480), ticketmaster_module.LIST_EVENTS)
     plugin._write_cache(
         {
             "version": ticketmaster_module.STATE_VERSION,
@@ -782,12 +779,12 @@ def test_refresh_failure_uses_matching_stale_cache(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         plugin,
-        "_load_events",
+        "_load_overview",
         lambda *_args: (_ for _ in ()).throw(RuntimeError("provider down")),
     )
     monkeypatch.setattr(plugin, "_write_ticketmaster_context", lambda *_args: None)
 
-    def fake_render(_dimensions, events, _settings, _source, _generated, stale):
+    def fake_render(_dimensions, events, _settings, _source, _generated, stale, **_overview):
         rendered["titles"] = [event.title for event in events]
         rendered["stale"] = stale
         return Image.new("RGB", (800, 480), "white")
@@ -811,7 +808,7 @@ def test_refresh_failure_never_logs_api_key(monkeypatch, tmp_path, caplog):
 
     monkeypatch.setattr(
         plugin,
-        "_load_events",
+        "_load_overview",
         lambda *_args: (_ for _ in ()).throw(
             RuntimeError(f"provider URL contained apikey={secret}")
         ),
@@ -833,7 +830,7 @@ def test_missing_key_without_cache_never_calls_provider(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         plugin,
-        "_load_events",
+        "_load_overview",
         lambda *_args: (_ for _ in ()).throw(AssertionError("provider called")),
     )
 
@@ -914,3 +911,94 @@ def test_event_without_a_poster_shows_its_segments_generated_artwork():
     music = {artwork("Music", f"event-{index}").tobytes() for index in range(12)}
     assert len(music) == 2
     assert artwork("Undefined", "x").tobytes() == artwork("Miscellaneous", "y").tobytes()
+
+
+def _day_payload(total, segments, start="10:00:00", day="2026-10-25"):
+    rows = []
+    for index, segment in enumerate(segments):
+        rows.append({"id": f"{day}-{index}", "name": f"{segment} show {index}", "distance": 5 + index,
+                     "images": [{"url": f"https://s1.ticketm.net/dam/a/{day}-{index}.jpg", "ratio": "16_9",
+                                 "width": 1024, "height": 576}],
+                     "dates": {"start": {"localDate": day, "localTime": start}, "status": {"code": "onsale"}},
+                     "classifications": [{"segment": {"name": segment}}],
+                     "_embedded": {"venues": [{"name": "Venue", "city": {"name": "San Jose"}}],
+                                   "attractions": [{"name": "Act", "upcomingEvents": {"_total": 3 + 10 * index}}]}})
+    return {"_embedded": {"events": rows}, "page": {"totalElements": total}}
+
+
+def test_the_week_loader_counts_each_day_and_lists_sales_opening_soon():
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    now = datetime(2026, 10, 25, 9, 30, tzinfo=timezone.utc)
+    calls = []
+
+    def fake_fetch(params):
+        calls.append(dict(params))
+        if "onsaleStartDateTime" in params:
+            return {"_embedded": {"events": [
+                {"name": "Big Tour", "sales": {"public": {"startDateTime": "2026-10-28T17:00:00Z"}},
+                 "dates": {"start": {"localDate": "2027-03-01"}}, "classifications": [{"segment": {"name": "Music"}}],
+                 "_embedded": {"venues": [{"name": "Chase Center", "city": {"name": "San Francisco"}}]}},
+                {"name": "Already Open", "sales": {"public": {"startDateTime": "2026-10-20T17:00:00Z"}}}]}}
+        day = params["localStartDateTime"][:10]
+        return _day_payload(40 if day == "2026-10-25" else 12, ["Music", "Sports", "Music"], day=day)
+
+    plugin._fetch_ticketmaster_json = fake_fetch
+
+    events, week, on_sale = plugin._load_overview({}, "key", now)
+
+    days = [call["localStartDateTime"] for call in calls if "localStartDateTime" in call]
+    # Today counts from now on; the next six days whole.
+    assert days[0] == "2026-10-25T09:30:00,2026-10-25T23:59:59" and days[1] == "2026-10-26T00:00:00,2026-10-26T23:59:59"
+    assert len(days) == 7 and all("startDateTime" not in call for call in calls)
+    assert [day["count"] for day in week["days"]] == [40, 12, 12, 12, 12, 12, 12]
+    assert week["days"][0]["segments"] == {"music": 2, "sports": 1}
+    # The featured event is the biggest tour starting within two days; the rest follow by time.
+    assert events[0].extra["tour_dates"] == 23 and len(events) == ticketmaster_module.LIST_EVENTS
+    assert [event.rank for event in events] == list(range(1, len(events) + 1))
+    assert on_sale == [{"title": "Big Tour", "venue": "Chase Center", "city": "San Francisco", "date": "2027-03-01",
+                        "sale_start": "2026-10-28T17:00:00Z", "segment": "music"}]
+    assert calls[-1]["sort"] == "onSaleStartDate,asc" and "localStartDateTime" not in calls[-1]
+
+
+def test_a_later_day_that_fails_is_left_out_but_today_failing_fails_the_refresh():
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    now = datetime(2026, 10, 25, 9, 30, tzinfo=timezone.utc)
+
+    def flaky(params):
+        if params.get("localStartDateTime", "").startswith("2026-10-27"):
+            raise RuntimeError("timeout")
+        return _day_payload(5, ["Music"], day=params.get("localStartDateTime", "2026-10-25")[:10])
+
+    plugin._fetch_ticketmaster_json = flaky
+    _events, week, _on_sale = plugin._load_overview({}, "key", now)
+    assert [day["count"] for day in week["days"]][:3] == [5, 5, None]
+
+    plugin._fetch_ticketmaster_json = lambda params: (_ for _ in ()).throw(RuntimeError("down"))
+    with pytest.raises(RuntimeError):
+        plugin._load_overview({}, "key", now)
+
+
+def test_the_page_renders_the_week_band_and_the_sales_opening_soon(monkeypatch, tmp_path):
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    poster = tmp_path / "poster.jpg"
+    Image.new("RGB", (640, 360), (200, 40, 40)).save(poster)
+    now = datetime(2026, 10, 25, 9, 30, tzinfo=timezone.utc)
+    events = [TicketmasterEvent(rank=index + 1, title=f"Show {index}", local_date="2026-10-25",
+                                local_time="19:30:00", venue_name="Venue", city="San Jose", segment="Music",
+                                status="onsale", poster_path=str(poster)) for index in range(8)]
+    week = {"days": [{"date": f"2026-10-{25 + index}", "count": 10 + index, "segments": {"music": 3, "sports": 1}}
+                     for index in range(7)]}
+    sales = [{"title": "Big Tour", "sale_start": "2026-10-28T17:00:00Z", "segment": "music"}]
+    colors = plugin._palette({})
+
+    image = plugin._render_events((800, 480), events, {}, "Ticketmaster Discovery", now, week=week, on_sale=sales)
+    plain = plugin._render_events((800, 480), events, {}, "Ticketmaster Discovery", now)
+
+    assert image.size == (800, 480)
+    # The page lies on the featured poster's colour; the plain background has none to lie on.
+    assert image.getpixel((330, 300)) != plain.getpixel((330, 300)) or image.getpixel((5, 300)) != colors["paper"]
+    # Today's cell in the week band is outlined in the accent colour.
+    from plugins.ticketmaster_events.week_page import WEEK_BAND
+
+    x0, y0, _x1, _y1 = WEEK_BAND
+    assert colors["accent"] in {image.getpixel((x, y0 + 3)) for x in range(x0 + 4, x0 + 100)}
