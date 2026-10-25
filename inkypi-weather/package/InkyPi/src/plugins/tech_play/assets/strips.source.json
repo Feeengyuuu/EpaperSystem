@@ -1,0 +1,23 @@
+{
+  "strip-free.png": {
+    "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x512, transparent)",
+    "job_id": "276f2132-b081-4951-a957-b084bda28be5",
+    "prompt": "Very wide thin minimalist flat vector strip: gift box with a controller hopping out, ribbon trail with confetti, a $0 price tag, a second gift; only crimson #c81e32, gold #e8a90c and cobalt #2554c7, no outlines/black/white/text.",
+    "processing": "trimmed to alpha > 40, scaled to 48 px tall (the asset loader caps width at 512)",
+    "sha256": "83a27ee4897ce4a96a54f27812294f2a3cd62423a28407df4486a5fbec23ab34"
+  },
+  "strip-upcoming.png": {
+    "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x512, transparent)",
+    "job_id": "4a18738a-534e-4876-a2df-80fefafb1959",
+    "prompt": "Very wide thin minimalist flat vector strip: calendar with a circled day, countdown dots, a game-cartridge rocket taking off, sparkles; only crimson #c81e32, gold #e8a90c and cobalt #2554c7, no outlines/black/white/text.",
+    "processing": "trimmed to alpha > 40, scaled to 48 px tall (the asset loader caps width at 512)",
+    "sha256": "6424102214420ddd48a59c9b33378433063f686ab2d1d0fb5de896f733ee0176"
+  },
+  "strip-speed.png": {
+    "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x512, transparent)",
+    "job_id": "9bc2986a-57fb-4dc9-8f96-1bd05f0f09da",
+    "prompt": "Very wide thin minimalist flat vector strip: stopwatch, speed lines, a pixel runner, dashed finish line, checkered flag; only crimson #c81e32, gold #e8a90c and cobalt #2554c7, no outlines/black/white/text.",
+    "processing": "trimmed to alpha > 40, scaled to 48 px tall (the asset loader caps width at 512)",
+    "sha256": "e526bd214bdc3f7468ee7efe85143ea897782e42178c3027f2e01585e437b17f"
+  }
+}

@@ -56,6 +56,9 @@ CARD_BAND = 5
 # Each card's generated icon, by its colour key.
 SECTION_ART = {"status_bar": "section-status", "papers_bar": "section-papers", "epic_bar": "section-free",
                "upcoming_bar": "section-upcoming", "speed_bar": "section-speed"}
+# A minimal generated strip in the header room between a card's title and its detail, on its theme.
+SECTION_STRIPS = {"epic_bar": "strip-free", "upcoming_bar": "strip-upcoming", "speed_bar": "strip-speed"}
+STRIP_H = 20
 
 
 def _rgb(value):
@@ -142,6 +145,15 @@ def _section_art(name, height):
     return ImageOps.contain(image, (height * 2, height), Image.Resampling.LANCZOS)
 
 
+def _strip_art(name, max_width, height):
+    """A card's header strip (assets/<name>.png) fitted to ``max_width`` x ``height``; None when there
+    is no strip or too little room for it to read."""
+    art = _asset_icon(name, height) if name and max_width >= 60 else None
+    if art is None:
+        return None
+    return art if art.width <= max_width else ImageOps.contain(art, (int(max_width), height), Image.Resampling.LANCZOS)
+
+
 def _card(canvas, box, bar, title, *, logo=None, icon=None, detail="", chip=None):
     """A card in its own colour: a solid band across the top, a frame and header rule in that
     colour, the source's official logo (or a generated icon on the band where there is none),
@@ -168,8 +180,14 @@ def _card(canvas, box, bar, title, *, logo=None, icon=None, detail="", chip=None
                                       outline=canvas.color("ink"), width=1)
         canvas.text((cursor + width / 2, top + 16), chip, 11, anchor="mm")
         cursor += width + 8
+    detail_w = 0
     if detail:
-        canvas.text((right - 8, top + 16), detail, 11, "muted", anchor="rm", bold=False, width=right - 8 - cursor)
+        detail_w = canvas.text((right - 8, top + 16), detail, 11, "muted", anchor="rm", bold=False,
+                               width=right - 8 - cursor)
+    strip = _strip_art(SECTION_STRIPS.get(bar, ""), right - 8 - detail_w - 14 - cursor, STRIP_H)
+    if strip is not None:
+        room_left, room_right = cursor, right - 8 - detail_w - 14
+        _paste(canvas, strip, (room_left + (room_right - room_left - strip.width) / 2, top + 17 - strip.height / 2))
     canvas.rule((left + 8, top + HEADER, right - 8, top + HEADER), colour)
 
 
