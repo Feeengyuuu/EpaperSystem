@@ -9,6 +9,7 @@ from utils.app_utils import (
     get_base_ui_font,
     resolve_base_ui_font_path,
 )
+from utils.atomic_file import atomic_write_json
 from utils.http_client import get_http_client
 from utils.draw_utils import fit_text as fit_text_to_width
 from utils.safe_image import ImageLimits, safe_open_base64_image, safe_open_image
@@ -25,6 +26,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import logging
 import html
+import json
 import os
 import re
 import subprocess
@@ -34,6 +36,8 @@ import time
 logger = logging.getLogger(__name__)
 
 MAX_PROVIDER_IO_WORKERS = 4
+# The boards' last two orders, for each row's move since the order last changed.
+RANK_STATE_FILE = "board_ranks.json"
 
 
 SPARKLINE_INK = (6, 78, 59)
@@ -299,6 +303,11 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
         for group_config in COMBINED_CHART_GROUPS:
             games = self._fetch_games(group_config["source"], items_count)
             self._apply_store_metadata(games, include_images=show_images)
+            if group_config["table_variant"] == "top_games":
+                # Ranked by the count the row shows, so the board reads in order.
+                games.sort(key=lambda game: -(game.get("current_players") or 0))
+                for rank, game in enumerate(games, start=1):
+                    game["rank"] = rank
             groups.append({
                 "key": group_config["key"],
                 "title": group_config["title"],
@@ -308,7 +317,45 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
                 "games": self._prepare_compact_games(group_config["table_variant"], games),
             })
         SteamCharts._align_compact_metric_font_scales(groups)
+        self._mark_rank_moves(groups)
         return groups
+
+    def _mark_rank_moves(self, groups):
+        """Each row's move since its board's previous, different order: places up or down, or new.
+
+        The last two orders are kept in the cache, so repeated refreshes of the same order keep
+        showing how it last changed.
+        """
+        path = self.cache_dir(leaf="media") / RANK_STATE_FILE
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            state = {}
+        state = state if isinstance(state, dict) else {}
+        changed = False
+        for group in groups:
+            games = group.get("games") or []
+            ranks = {str(game["app_id"]): int(game.get("rank") or index)
+                     for index, game in enumerate(games, start=1) if game.get("app_id") is not None}
+            entry = state.get(str(group.get("key"))) or {}
+            if ranks and ranks != entry.get("current"):
+                entry = {"previous": entry.get("current"), "current": ranks, "updated": int(time.time())}
+                state[str(group.get("key"))] = entry
+                changed = True
+            previous = entry.get("previous")
+            if not isinstance(previous, dict) or not previous:
+                continue
+            for game in games:
+                app_id = str(game.get("app_id"))
+                if app_id not in previous:
+                    game["rank_move"] = "new"
+                elif app_id in ranks:
+                    game["rank_move"] = int(previous[app_id]) - ranks[app_id]
+        if changed:
+            try:
+                atomic_write_json(path, state)
+            except OSError as error:
+                logger.warning("Steam Charts rank history not saved: %s", error)
 
     @staticmethod
     def _align_compact_metric_font_scales(groups):
@@ -1507,6 +1554,8 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
                 "change_24h_fmt": change_fmt,
                 "current_players_fmt": players_fmt,
             })
+            if players_fmt != "--":
+                games[-1]["current_players"] = players_int
             if len(games) >= count:
                 break
 
@@ -1556,6 +1605,9 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
                 "current_players_fmt": players_fmt,
                 "peak_players_fmt": peak_players_fmt,
             })
+            # The homepage's own count, the one it ranks by (a chart's last point can lag it).
+            if players_fmt != "--":
+                games[-1]["current_players"] = players_int
             if len(games) >= count:
                 break
 
@@ -1688,9 +1740,11 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
         current_players = recent_window[-1][1] if recent_window else data[-1][1]
 
         change_24h = None
+        day_ago = None
         if include_change and len(data) >= 2:
             cutoff_24h_ms = latest_ts - 24 * 3600 * 1000
             target_24h = min(data, key=lambda p: abs(p[0] - cutoff_24h_ms))
+            day_ago = target_24h[1]
             if target_24h[1] > 0:
                 change_24h = ((current_players - target_24h[1]) / target_24h[1]) * 100
 
@@ -1710,18 +1764,28 @@ class SteamCharts(LiveOverviewMixin, BasePlugin):
             "peak_all_ts": peak_all[0],
             "avg_30d": round(sum(month) / len(month)) if month else None,
             "spark": self._spark_values(recent_window, daily=sparkline_style == "bars"),
+            # The count 24 hours before the newest point: the trend line's dashed baseline.
+            "spark_base": day_ago,
         }
 
     @staticmethod
     def _spark_values(points, daily=False):
-        """The trend line's values: a 48-hour line as is, a 30-day window as each day's peak."""
+        """The trend line's values: a 48-hour line as is, a 30-day window as each day's peak.
+
+        The days are whole 24 hours counted back from the newest point, so the last one is the
+        past day rather than the few hours the UTC day has run (which read as a collapse).
+        """
         if not daily:
             return [p[1] for p in SteamCharts._downsample_chart_points(points, target_points=40)]
+        if not points:
+            return []
+        latest = points[-1][0]
         days = {}
         for timestamp, count in points:
-            day = int(timestamp // 86_400_000)
-            days[day] = max(days.get(day, 0), count)
-        return [days[day] for day in sorted(days)]
+            back = int((latest - timestamp) // 86_400_000)
+            if back < 30:
+                days[back] = max(days.get(back, 0), count)
+        return [days[back] for back in sorted(days, reverse=True)]
 
     @staticmethod
     def _generate_sparkline_svg(data_points, width=120, height=30, chart_style="line"):

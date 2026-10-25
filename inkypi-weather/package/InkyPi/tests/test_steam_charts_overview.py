@@ -141,9 +141,69 @@ def test_overview_draws_both_boards_with_totals_and_store_facts(monkeypatch):
     image = plugin._render_live_overview((800, 480), [trending, top], totals, {"mode": "night"}, "刷新时间 10/23 10:51")
 
     assert image.size == (800, 480) and image.getpixel((5, 5)) == (0, 0, 0)
-    assert {"3563万", "5,979", "+320%", "1,146,659", "峰值 1,274,983", "Valve"} <= set(drawn)
-    assert "$15.99 -20%" in drawn and "动作 / 免费开玩 · 月均 80.8万" in drawn
+    assert {"3563万", "5,979 在线", "+320%", "1,146,659", "峰值 1,274,983", "Valve · 动作 / 免费开玩"} <= set(drawn)
+    # Steam's own discount block, then the price; the record and the month's average.
+    assert {"-20%", "$15.99", "月均 80.8万"} <= set(drawn)
     assert any(text.startswith("181.8万") for text in drawn)
+
+
+def test_a_top_games_daily_line_ends_on_the_past_day_not_the_new_utc_day():
+    day = 24 * HOUR
+    # The newest point is half an hour into a UTC day: by calendar days that day's peak is tiny.
+    latest = 1_700_006_400_000 + 30 * 60 * 1000
+    points = [[latest - step * HOUR, 5000 if (latest - step * HOUR) % day < 30 * 60 * 1000 else 9000]
+              for step in range(30 * 24)][::-1]
+
+    values = SteamCharts._spark_values(points, daily=True)
+
+    assert len(values) == 30 and values[-1] == 9000 and min(values) == 9000
+
+
+def test_rows_show_their_move_since_the_board_last_changed(tmp_path, monkeypatch):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path))
+    plugin = _plugin()
+
+    def board(*ids):
+        return [{"key": "trending", "games": [{"app_id": app_id, "rank": rank} for rank, app_id in enumerate(ids, 1)]}]
+
+    first = board(10, 20, 30)
+    plugin._mark_rank_moves(first)
+    assert all("rank_move" not in game for game in first[0]["games"])
+
+    second = board(30, 10, 40)
+    plugin._mark_rank_moves(second)
+    assert [game.get("rank_move") for game in second[0]["games"]] == [2, -1, "new"]
+
+    # The same order again keeps showing how it last changed.
+    again = board(30, 10, 40)
+    plugin._mark_rank_moves(again)
+    assert [game.get("rank_move") for game in again[0]["games"]] == [2, -1, "new"]
+
+
+def test_new_releases_wear_a_first_week_or_new_tag():
+    from datetime import date
+
+    def tag(release):
+        return overview_page.LiveOverviewMixin._overview_release_tag({"store": {"release": release}},
+                                                                     today=date(2026, 10, 24))
+
+    assert tag("2026 年 10 月 20 日") == "首周"
+    assert tag("Oct 5, 2026") == "新品"
+    assert tag("2026 年 8 月 1 日") == "" and tag("2026 年 11 月 1 日") == "" and tag("即将推出") == ""
+
+
+def test_the_top_board_ranks_by_the_count_it_shows(monkeypatch):
+    plugin = _plugin()
+    games = {"steamcharts_trending": [], "steamcharts_top_games": [
+        {"rank": 1, "app_id": 730, "name": "CS2", "current_players": 576_038},
+        {"rank": 2, "app_id": 570, "name": "Dota 2", "current_players": 629_214}]}
+    monkeypatch.setattr(plugin, "_fetch_games", lambda source, count: [dict(game) for game in games[source]])
+    monkeypatch.setattr(plugin, "_apply_store_metadata", lambda games, include_images=True: None)
+    monkeypatch.setattr(plugin, "_mark_rank_moves", lambda groups: None)
+
+    top = plugin._fetch_combined_chart_groups(5, show_images=False)[1]["games"]
+
+    assert [(game["name"], game["rank"]) for game in top] == [("Dota 2", 1), ("CS2", 2)]
 
 
 def test_a_long_game_name_runs_on_to_the_player_count(monkeypatch):

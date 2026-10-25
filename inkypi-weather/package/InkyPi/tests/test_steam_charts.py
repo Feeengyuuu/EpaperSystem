@@ -65,6 +65,7 @@ def test_scrape_trending_extracts_games_and_formats_players():
             "image": "https://cdn.akamai.steamstatic.com/steam/apps/730/capsule_sm_120.jpg",
             "change_24h_fmt": "+12.5%",
             "current_players_fmt": "1,234,567",
+            "current_players": 1_234_567,
         }
     ]
 
