@@ -230,7 +230,9 @@ SECTION_TITLE_WORDMARK_SIZES = {
     "OFFLINE": (87, 22),
     "REPLAY": (84, 22),
 }
-TITLE_WORDMARK_OFFSET_X = -35
+# The wordmark image carries a transparent margin on its left; pasting it this far left of
+# the page margin starts its letters on the margin.
+TITLE_WORDMARK_OFFSET_X = -24
 TITLE_LOGO_SCALE = 1.4
 CARD_DETAIL_FONT_SIZE_NUDGE = 2
 CARD_DETAIL_Y_NUDGE = 2
@@ -1501,14 +1503,18 @@ class LiveRadar(BasePlugin):
                 theme = {**theme, "backdrop": backdrop}
 
         logo_size, logo_y = self._title_logo_layout(height)
+        # The name leads the masthead and the radar mark follows it.
         title_x = margin
-        if self._paste_title_logo(image, margin, logo_y, logo_size, theme):
-            title_x = margin + logo_size + 10
-        wordmark_x = title_x + TITLE_WORDMARK_OFFSET_X
-        wordmark_box = self._paste_title_wordmark(image, wordmark_x, 8, TITLE_WORDMARK_SIZE, theme)
+        wordmark_box = self._paste_title_wordmark(image, title_x + TITLE_WORDMARK_OFFSET_X, 8, TITLE_WORDMARK_SIZE, theme)
         if wordmark_box is None:
             draw.text((title_x, 13), "LiveRadar", fill=theme["ink"], font=title_font)
             draw.text((title_x + 3, 51), "STREAM CARD WALL", fill=theme["muted"], font=sub_font)
+            name_right = max(title_x + draw.textlength("LiveRadar", font=title_font),
+                             title_x + 3 + draw.textlength("STREAM CARD WALL", font=sub_font))
+        else:
+            name_right = wordmark_box[2]
+        logo_x = int(name_right) + 8
+        logo_shown = self._paste_title_logo(image, logo_x, logo_y, logo_size, theme)
         status_left = self._draw_status_totals(
             draw,
             width - margin,
@@ -1527,13 +1533,7 @@ class LiveRadar(BasePlugin):
             comic = comic_art.roles(theme)
             comic_art.speech_bubble(draw, width - margin, 49, comic_art.BUBBLE_TEXT, self._font(10, "bold"),
                                     status_left + 26, ink=comic["ink"], fill=comic["bubble"], shadow=comic["shadow"])
-        if wordmark_box is not None:
-            title_right = wordmark_box[2]
-        else:
-            title_right = max(
-                title_x + draw.textlength("LiveRadar", font=title_font),
-                title_x + 3 + draw.textlength("STREAM CARD WALL", font=sub_font),
-            )
+        title_right = logo_x + logo_size if logo_shown else name_right
         art_left_bound = int(title_right) + 10
         art_right_bound = int(status_left) - 4
         art_bottom_bound = header_rule_y + 1

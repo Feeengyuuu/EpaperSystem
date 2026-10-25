@@ -2171,8 +2171,8 @@ def test_dashboard_uses_generated_wordmark_instead_of_plain_header_text(monkeypa
 
     plugin._render_dashboard([], (800, 480), theme, datetime.now(timezone.utc), False, None)
 
-    logo_size, _logo_y = LiveRadar._title_logo_layout(480)
-    expected_x = max(14, int(800 * 0.02)) + logo_size + 10 + TITLE_WORDMARK_OFFSET_X
+    # The wordmark leads at the margin; the radar mark follows it.
+    expected_x = max(14, int(800 * 0.02)) + TITLE_WORDMARK_OFFSET_X
     assert seen["wordmark"][0] == expected_x
     assert seen["wordmark"][2] == TITLE_WORDMARK_SIZE
     assert "LiveRadar" not in text_calls
@@ -2218,7 +2218,7 @@ def test_dashboard_positions_header_art_between_title_and_status():
 
     left, top, right, bottom = seen["box"]
     assert seen["wordmark_size"] == TITLE_WORDMARK_SIZE
-    assert TITLE_WORDMARK_OFFSET_X == -35
+    assert TITLE_WORDMARK_OFFSET_X == -24
     assert bottom - top == HEADER_ART_SIZE[1]
     assert 8 <= top <= 13
     assert 74 <= bottom <= 76
