@@ -187,10 +187,11 @@
         const device = hero.dataset.deviceName || "InkyPi";
         const name = nowPlaying.plugin_instance ? pluginTitle(nowPlaying) : "";
         const title = name ? `▶ ${name}` : `${translate("Now Playing")} · ${device}`;
-        document.title = unseenChange ? `● ${title}` : title;
+        // A new screen shown while the tab was in the background: a red dot after the name.
+        document.title = unseenChange ? `${title} 🔴` : title;
     }
 
-    /* Draw what the e-paper shows as the tab icon, with a live dot. */
+    /* Draw what the e-paper shows as the tab icon; the change dot lives in the title. */
     function paintFavicon() {
         if (!heroImage.naturalWidth || typeof document.createElement !== "function") {
             return;
@@ -214,15 +215,6 @@
         const width = heroImage.naturalWidth * scale;
         const height = heroImage.naturalHeight * scale;
         context.drawImage(heroImage, (size - width) / 2, (size - height) / 2, width, height);
-        const styles = window.getComputedStyle(document.documentElement);
-        context.fillStyle = styles.getPropertyValue("--c-bg").trim() || "#111316";
-        context.beginPath();
-        context.arc(50, 50, 12, 0, Math.PI * 2);
-        context.fill();
-        context.fillStyle = styles.getPropertyValue("--c-accent").trim() || "#ff5e00";
-        context.beginPath();
-        context.arc(50, 50, 8, 0, Math.PI * 2);
-        context.fill();
         let link = document.getElementById("liveFavicon");
         if (!link) {
             document.querySelectorAll('link[rel~="icon"]').forEach((node) => node.remove());

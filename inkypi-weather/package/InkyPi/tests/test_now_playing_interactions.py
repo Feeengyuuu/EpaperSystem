@@ -50,6 +50,7 @@ const get = id => {
 };
 const document = new Element();
 document.readyState = 'complete';
+document.hidden = Boolean(input.hidden);
 document.documentElement = new Element();
 document.getElementById = get;
 document.body = new Element();
@@ -264,6 +265,12 @@ def test_live_sync_swaps_a_newer_card_render_and_retitles_the_tab():
     assert result["heroTitle"] == "Home Weather"
     assert result["title"] == "▶ Weather"
     assert result["liveState"] == "live"
+
+
+def test_a_change_while_the_tab_is_hidden_puts_a_red_dot_after_the_name():
+    result = run_page(action="live_sync", previews=_previews("2026-10-06T11:00:00Z"), hidden=True)
+
+    assert result["title"] == "▶ Weather 🔴"
 
 
 def test_the_chinese_interface_titles_the_tab_with_the_plugins_chinese_name():
