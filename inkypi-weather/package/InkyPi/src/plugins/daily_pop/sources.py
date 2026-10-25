@@ -38,6 +38,7 @@ IMAGE_HOSTS = ("i0.hdslb.com", "i1.hdslb.com", "i2.hdslb.com", "lain.bgm.tv", "i
 MAX_VIDEOS = 6
 MAX_SHOWS = 8
 MAX_SONGS = 5
+BILIBILI_COVER_SIZE = "@640w_360h_1c.jpg"
 MAX_ARTICLES = 6
 # Wikipedia's most-read list always has its main page and search pages on top.
 WIKI_SKIP = re.compile(r"^(?:Wikipedia|Special|Help|File|Portal|Template|Category|Talk|User):|^首页$", re.I)
@@ -60,9 +61,16 @@ def https(url):
 
 
 def safe_image_url(value):
+    """The link a picture is fetched (and looked up) by, or None off the allowed hosts. Bilibili's
+    image service scales on request, so a video cover comes at the size the page shows rather than
+    as its original, which can be 2560 px wide, past what the thumbnail loader opens."""
     url = https(value)
     parts = urlsplit(url)
-    return url if parts.scheme == "https" and parts.hostname in IMAGE_HOSTS else None
+    if parts.scheme != "https" or parts.hostname not in IMAGE_HOSTS:
+        return None
+    if parts.hostname.endswith(".hdslb.com") and parts.path.startswith("/bfs/archive/") and "@" not in parts.path:
+        return url + BILIBILI_COVER_SIZE
+    return url
 
 
 def _get(url, context, *, max_bytes, params=None, timeout=REQUEST_TIMEOUT):

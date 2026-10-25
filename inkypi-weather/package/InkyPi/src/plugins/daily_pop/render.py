@@ -166,9 +166,10 @@ def _bilibili(canvas, payload, images):
     canvas.text((cover_box[0] + 6 + pill_w / 2, cover_box[3] - 15), pill, 10, (255, 255, 255), anchor="mm")
     _move_badge(canvas, (cover_box[2] - 6, cover_box[1] + 15), moves.get(lead.get("title")), anchor_right=True)
     y = cover_box[3] + 6
-    for line in canvas.wrap(lead.get("title"), 13, right - left - 20, 2):
-        canvas.text((left + 10, y), line, 13)
-        y += 18
+    size, lines = _fitted_title(canvas, lead.get("title"), right - left - 20, 34, largest=18, smallest=13)
+    for line in lines:
+        canvas.text((left + 10, y), line, size)
+        y += size + 5
     meta = " · ".join(part for part in (lead.get("owner"), lead.get("section"), lead.get("reason")) if part)
     canvas.text((left + 10, y + 2), meta, 10, "muted", bold=False, width=right - left - 20)
     row_top = y + 22
@@ -179,9 +180,11 @@ def _bilibili(canvas, payload, images):
         thumb = (left + 8, int(y0 + 2), left + 96, int(y0 + 2 + 50))
         _paste_fit(canvas, images.get(sources.safe_image_url(video.get("cover"))), thumb, radius=4)
         _rank_chip(canvas, (thumb[0] + 2, thumb[1] + 2), index, BRANDS["bilibili"])
-        lines = canvas.wrap(video.get("title"), 11, right - thumb[2] - 16, 2)
+        # A short title is set larger and centred over its meta line; a long one wraps smaller.
+        size, lines = _fitted_title(canvas, video.get("title"), right - thumb[2] - 16, 32, largest=17, smallest=11)
+        block = len(lines) * (size + 4) - 4
         for number, line in enumerate(lines):
-            canvas.text((thumb[2] + 8, y0 + 2 + number * 15), line, 11)
+            canvas.text((thumb[2] + 8, y0 + 2 + (34 - block) / 2 + number * (size + 4)), line, size)
         meta_y = y0 + 40
         x = thumb[2] + 8
         x += canvas.text((x, meta_y), f"{count_text(video.get('views'))}播放", 10, "muted", bold=False) + 6
@@ -189,6 +192,17 @@ def _bilibili(canvas, payload, images):
         if gain:
             x += canvas.text((x, meta_y), f"+{gain}", 10, "up") + 6
         _move_badge(canvas, (right - 10, meta_y + 6), moves.get(video.get("title")), anchor_right=True)
+
+
+def _fitted_title(canvas, text, width, height, *, largest, smallest):
+    """The largest size from ``largest`` down at which the whole title fits ``width`` in the lines
+    ``height`` holds (a line is size + 4), and its lines; the smallest size's wrap when none does."""
+    for size in range(largest, smallest - 1, -1):
+        rows = max(1, (height + 4) // (size + 4))
+        lines = canvas.wrap(text, size, width, rows + 1)
+        if len(lines) <= rows:
+            return size, lines
+    return smallest, canvas.wrap(text, smallest, width, max(1, (height + 4) // (smallest + 4)))
 
 
 def _view_gain(video, previous_views):

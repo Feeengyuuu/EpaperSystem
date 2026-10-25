@@ -26,6 +26,10 @@ def test_bilibili_keeps_titles_counts_and_https_covers():
     assert video["cover"] == "https://i0.hdslb.com/a.jpg"
     assert sources.safe_image_url(video["cover"]) == video["cover"]
     assert sources.safe_image_url("https://example.com/a.jpg") is None
+    # A video cover is fetched scaled to the page's size, never as a 2560 px original.
+    cover = "http://i1.hdslb.com/bfs/archive/58b1.jpg"
+    assert sources.safe_image_url(cover) == "https://i1.hdslb.com/bfs/archive/58b1.jpg@640w_360h_1c.jpg"
+    assert sources.safe_image_url(cover + "@320w_180h.jpg") == "https://i1.hdslb.com/bfs/archive/58b1.jpg@320w_180h.jpg"
     with pytest.raises(ValueError):
         sources.normalize_bilibili({"data": {"list": []}})
 
