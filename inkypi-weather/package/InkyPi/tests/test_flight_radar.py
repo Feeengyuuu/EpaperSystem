@@ -531,3 +531,53 @@ def test_flight_theme_only_cold_or_incompatible_snapshot_fails_closed_without_pr
         )
 
     assert provider_calls == []
+
+
+FAA_XML = """<AIRPORT_STATUS_INFORMATION><Update_Time>Sun Oct 25 15:36:28 2026 GMT</Update_Time>
+<Delay_type><Name>Ground Delay Programs</Name><Ground_Delay_List><Ground_Delay><ARPT>SFO</ARPT>
+<Reason>low ceilings</Reason><Avg>1 hour and 3 minutes</Avg><Max>2 hours</Max></Ground_Delay></Ground_Delay_List></Delay_type>
+<Delay_type><Name>General Arrival/Departure Delay Info</Name><Arrival_Departure_Delay_List><Delay><ARPT>SFO</ARPT>
+<Reason>wind</Reason><Arrival_Departure Type="Arrival"><Min>16 minutes</Min><Max>30 minutes</Max></Arrival_Departure>
+</Delay><Delay><ARPT>SJC</ARPT><Reason>runway</Reason><Arrival_Departure Type="Departure"><Min>15 minutes</Min>
+<Max>45 minutes</Max></Arrival_Departure></Delay></Arrival_Departure_Delay_List></Delay_type>
+<Delay_type><Name>Airport Closures</Name><Airport_Closure_List><Airport><ARPT>OAK</ARPT>
+<Reason>!OAK 10/001 OAK AD AP CLSD TO NON SKED TRANSIENT GA ACFT EXC PPR</Reason></Airport>
+<Airport><ARPT>LAX</ARPT><Reason>runway work</Reason></Airport></Airport_Closure_List></Delay_type>
+</AIRPORT_STATUS_INFORMATION>"""
+
+
+def test_faa_status_keeps_each_bay_airports_worst_problem_and_ignores_ga_only_closures():
+    airports = flight_radar_module.parse_faa_status(FAA_XML)
+
+    assert airports == {"SFO": {"kind": "gdp", "minutes": 63, "reason": "low ceilings"},
+                        "SJC": {"kind": "delay", "minutes": 45, "reason": "runway"}}
+    assert flight_radar_module.faa_label(airports["SFO"]) == "地面延误63分"
+    assert flight_radar_module.faa_label(airports["SJC"]) == "延误45分"
+    assert flight_radar_module.faa_label({}) == "正常"
+    with pytest.raises(ValueError):
+        flight_radar_module.parse_faa_status("<html/>")
+
+
+def test_faa_status_is_cached_reused_offline_and_dropped_when_old(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    plugin = _plugin()
+    calls = []
+
+    class Client:
+        def request_text(self, *_args, **_kwargs):
+            calls.append("faa")
+            return type("Result", (), {"data": FAA_XML})()
+
+    monkeypatch.setattr(plugin, "_client", lambda: Client())
+    first = plugin._airport_status(1000.0, allow_network=True)
+    assert first["SFO"]["kind"] == "gdp" and calls == ["faa"]
+    assert plugin._airport_status(1100.0, allow_network=True) == first and calls == ["faa"]
+
+    class Down:
+        def request_text(self, *_args, **_kwargs):
+            raise OSError("offline")
+
+    monkeypatch.setattr(plugin, "_client", lambda: Down())
+    assert plugin._airport_status(1000.0 + 3600, allow_network=True) == first
+    assert plugin._airport_status(1000.0 + 3600, allow_network=False) == first
+    assert plugin._airport_status(1000.0 + 3 * 3600, allow_network=True) is None

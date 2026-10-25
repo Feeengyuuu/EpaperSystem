@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
+from xml.etree import ElementTree
 from zoneinfo import ZoneInfo
 import hashlib
 import json
@@ -21,6 +22,7 @@ from plugins.base_plugin.base_plugin import BasePlugin
 from plugins.base_plugin.refresh_on_display_presentation import RefreshOnDisplayPresentationMixin
 from plugins.base_plugin.render_provenance import SourceProvenance, attach_source_provenance
 from plugins.context_cache import write_context
+from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_client
 from utils.safe_image import ImageLimits, safe_open_image
@@ -94,6 +96,15 @@ FLIGHTAWARE_POSITIONS_URL = "https://aeroapi.flightaware.com/aeroapi/flights/sea
 GOOGLE_STATIC_MAPS_URL = "https://maps.googleapis.com/maps/api/staticmap"
 AIRPING_ROUTESET_URL = "https://api.airping.app/routeset"
 ADSB_LOL_ROUTESET_URL = "https://api.adsb.lol/api/0/routeset"
+# The FAA's national airspace status: ground stops, ground delay programs, arrival/departure
+# delays and closures, for the Bay's three airports shown in the header.
+FAA_STATUS_URL = "https://nasstatus.faa.gov/api/airport-status-information"
+FAA_AIRPORTS = ("SFO", "SJC", "OAK")
+FAA_FRESH_SECONDS = 300
+FAA_USABLE_SECONDS = 2 * 3600
+# Closures limited to general aviation (transient GA, prior permission) do not touch airline flights.
+FAA_GA_ONLY = re.compile(r"\b(?:GA|TRANSIENT|PPR)\b")
+FAA_SEVERITY = {"closed": 4, "stop": 3, "gdp": 2, "delay": 1}
 
 SOURCE_LABELS = {
     "adsb_lol": "ADSB.lol",
@@ -324,6 +335,7 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
 
         if self._bool_setting(settings.get("_theme_render_only"), False):
             snapshot = self._get_cached_snapshot_for_theme(settings)
+            snapshot["airports"] = self._airport_status(time.time(), allow_network=False)
             snapshot_time = self._snapshot_time(snapshot, device_config)
             return attach_source_provenance(
                 self._render(snapshot, dimensions, settings, snapshot_time, device_config),
@@ -332,6 +344,7 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
 
         now = self._now(device_config)
         snapshot = self._get_snapshot(settings, device_config, now)
+        snapshot["airports"] = self._airport_status(time.time(), allow_network=True)
         self._write_radar_context(snapshot, now)
         warning = str(snapshot.get("warning") or "").upper()
         if warning == "STALE CACHE":
@@ -346,6 +359,30 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
             self._render(snapshot, dimensions, settings, now, device_config),
             provenance,
         )
+
+    def _airport_status(self, now_ts, *, allow_network):
+        """{airport: problem} for FAA_AIRPORTS from the FAA's status feed, kept FAA_FRESH_SECONDS
+        and used up to FAA_USABLE_SECONDS when the feed fails; None when there is nothing usable.
+        An airport with no entry is running normally."""
+        path = _runtime_cache_dir() / "faa_status.json"
+        cached = self._read_json(path)
+        age = now_ts - float(cached.get("fetched_at") or 0)
+        usable = isinstance(cached.get("airports"), dict) and -300 <= age <= FAA_USABLE_SECONDS
+        if usable and (age < FAA_FRESH_SECONDS or not allow_network):
+            return cached["airports"]
+        if not allow_network:
+            return None
+        try:
+            response = self._client().request_text("GET", FAA_STATUS_URL, headers=HTTP_HEADERS, timeout=(4, 8),
+                                                   max_bytes=512 * 1024)
+            airports = parse_faa_status(response.data)
+            self._write_json(path, {"fetched_at": now_ts, "airports": airports})
+            return airports
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("FlightRadar FAA status failed: %s", type(exc).__name__)
+            return cached["airports"] if usable else None
 
     def _get_cached_snapshot_for_theme(self, settings):
         lat = self._float_setting(settings, "latitude", DEFAULT_LATITUDE, -90.0, 90.0)
@@ -1055,14 +1092,43 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
         chip_x = min(width - margin - 408, margin + 218)
         chip_x = max(margin + 180, chip_x)
         chip_y = 16
+        # The Bay's airports, right-aligned before the clock; source chips stop short of them.
+        airports_left = self._draw_airport_chips(draw, snapshot.get("airports"), width - margin - 140, chip_y,
+                                                 theme, compact) if not compact else width - margin
         for status in statuses[:5]:
             chip_w = 75 if not compact else 58
-            if chip_x + chip_w > width - margin:
+            if chip_x + chip_w > min(width - margin, airports_left - 8):
                 break
             self._draw_source_chip(draw, chip_x, chip_y, chip_w, 24, status, theme)
             chip_x += chip_w + 6
 
         draw.line((margin, 65, width - margin, 65), fill=theme["line"], width=1)
+
+    def _draw_airport_chips(self, draw, airports, right, y, theme, compact=False):
+        """One chip per Bay airport, ending at ``right``: its code and the FAA's word on it (a green
+        dot when normal, amber for delays, red for a ground stop or closure). Returns the left
+        edge, or ``right`` when there is no FAA status to show."""
+        if not isinstance(airports, dict):
+            return right
+        code_font, label_font = self._font(11, "bold"), self._font(10, "bold")
+        chips = []
+        for code in FAA_AIRPORTS:
+            problem = airports.get(code) or {}
+            label = faa_label(problem)
+            colour = {"closed": theme["red"], "stop": theme["red"], "gdp": theme["amber"],
+                      "delay": theme["amber"]}.get(problem.get("kind"), theme["green"])
+            chip_w = 22 + draw.textlength(code, font=code_font) + draw.textlength(label, font=label_font) + 10
+            chips.append((code, label, colour, chip_w))
+        x = right - sum(chip[3] for chip in chips) - 6 * (len(chips) - 1)
+        left = x
+        for code, label, colour, chip_w in chips:
+            draw.rounded_rectangle((x, y, x + chip_w, y + 24), radius=5, fill=theme["chip_bg"], outline=colour, width=2)
+            draw.ellipse((x + 7, y + 9, x + 13, y + 15), fill=colour)
+            draw.text((x + 17, y + 12), code, fill=theme["ink"], font=code_font, anchor="lm")
+            draw.text((x + 21 + draw.textlength(code, font=code_font), y + 12), label, fill=theme["ink"],
+                      font=label_font, anchor="lm")
+            x += chip_w + 6
+        return left
 
     def _draw_source_chip(self, draw, x, y, w, h, status, theme):
         state = status.get("state", "unknown")
@@ -2414,3 +2480,59 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
 
 class _SkippedSource(RuntimeError):
     pass
+
+
+def faa_minutes(text):
+    """'1 hour and 18 minutes' -> 78; '34 minutes' -> 34 (None when unreadable)."""
+    value = str(text or "").lower()
+    hours = re.search(r"(\d+)\s*hour", value)
+    minutes = re.search(r"(\d+)\s*min", value)
+    if not hours and not minutes:
+        return None
+    return (int(hours.group(1)) * 60 if hours else 0) + (int(minutes.group(1)) if minutes else 0)
+
+
+def parse_faa_status(xml_text):
+    """The FAA's airport status XML as {airport: {kind, minutes, reason}} for FAA_AIRPORTS, keeping
+    each airport's most serious problem: a closure (airline traffic only), a ground stop, a ground
+    delay program, or an arrival/departure delay."""
+    root = ElementTree.fromstring(xml_text)
+    if root.tag != "AIRPORT_STATUS_INFORMATION":
+        raise ValueError("FAA returned no airport status")
+    found = {}
+
+    def note(code, kind, minutes=None, reason=""):
+        code = str(code or "").strip().upper()
+        if code not in FAA_AIRPORTS:
+            return
+        current = found.get(code)
+        if current is None or FAA_SEVERITY[kind] > FAA_SEVERITY[current["kind"]]:
+            found[code] = {"kind": kind, "minutes": minutes, "reason": " ".join(str(reason or "").split())[:80]}
+
+    for item in root.iter("Ground_Delay"):
+        note(item.findtext("ARPT"), "gdp", faa_minutes(item.findtext("Avg")), item.findtext("Reason"))
+    for item in root.iter("Program"):
+        note(item.findtext("ARPT"), "stop", None, item.findtext("Reason"))
+    for item in root.iter("Delay"):
+        spans = [faa_minutes(span.findtext("Max")) for span in item.iter("Arrival_Departure")]
+        note(item.findtext("ARPT"), "delay", max([span for span in spans if span is not None], default=None),
+             item.findtext("Reason"))
+    for item in root.iter("Airport"):
+        reason = item.findtext("Reason") or ""
+        if not FAA_GA_ONLY.search(reason.upper()):
+            note(item.findtext("ARPT"), "closed", None, reason)
+    return found
+
+
+def faa_label(problem):
+    """The header's word for an airport: 正常, 延误N分, 地面延误N分, 地面停飞 or 关闭."""
+    kind, minutes = (problem or {}).get("kind"), (problem or {}).get("minutes")
+    if kind == "closed":
+        return "关闭"
+    if kind == "stop":
+        return "地面停飞"
+    if kind == "gdp":
+        return f"地面延误{minutes}分" if minutes else "地面延误"
+    if kind == "delay":
+        return f"延误{minutes}分" if minutes else "延误"
+    return "正常"
