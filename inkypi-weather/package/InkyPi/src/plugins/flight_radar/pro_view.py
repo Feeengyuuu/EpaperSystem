@@ -9,15 +9,16 @@
   with its history trail and an ATC data block (callsign; altitude in hundreds of feet and
   ground speed in tens of knots) on a leader line.
 - Flight progress strips for the nearest flights: the airline's wordmark, callsign, a phase
-  bar and icon, the route between the two airports' logos (or their countries' flags) with
-  codes and cities, type, registration, altitude, speed and distance.
+  bar and icon, an estimated landing or take-off time for flights to or from the Bay's three
+  airports, the route between the two airports' logos (or their countries' flags) with codes
+  and cities, type, registration, altitude, speed and distance.
 """
 
 from __future__ import annotations
 
 import json
 import math
-from datetime import timezone
+from datetime import timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 
@@ -40,6 +41,10 @@ PHASES = {"arrival": ("进港", "blue"), "departure": ("离港", "red"), "ground
 # The phase icon's aircraft: its bearing (0 = up) and whether a runway line sits under it.
 PHASE_ICONS = {"departure": (45, True), "arrival": (135, True), "ground": (90, True), "overflight": (90, False)}
 SFO = (37.6213, -122.3790)
+# The Bay airports the strips time flights to and from.
+BAY_AIRPORTS = {"SFO": SFO, "OAK": (37.7126, -122.2197), "SJC": (37.3639, -121.9289)}
+# An arrival flies about this much farther than the straight line (the approach) plus a final minute.
+APPROACH_FACTOR, APPROACH_MINUTES = 1.15, 2
 # SFO's runways 28L/28R: arrivals fly the extended centreline in from the east-south-east.
 SFO_FINAL_BEARING = 118
 SFO_FINAL_NM = 14
@@ -66,7 +71,7 @@ def render_pro(plugin, image, snapshot, theme, now, settings, device_config):
     _header(plugin, image, draw, snapshot, theme, now)
     _board(plugin, image, draw, snapshot, theme)
     _scope(plugin, image, snapshot, theme, settings, device_config)
-    _strips(plugin, image, snapshot, theme)
+    _strips(plugin, image, snapshot, theme, now)
 
 
 def _fit(draw, text, font, width):
@@ -591,13 +596,37 @@ def strip_order(plugin, snapshot):
     return sorted(snapshot.get("aircraft") or [], key=key), center
 
 
-def _strips(plugin, image, snapshot, theme):
+def flight_time(plugin, plane, now):
+    """An estimate from position and speed, for flights to or from SFO, OAK or SJC: when an arrival
+    should land ("预计 09:31 到"), when a departure took off ("约 09:12 起飞"); "" otherwise.
+    ADS-B carries no schedule, so these are estimates and say so."""
+    lat, lon = plugin._number(plane.get("lat")), plugin._number(plane.get("lon"))
+    speed = plugin._number(plane.get("speed_kt")) or 0
+    if lat is None or lon is None or plane.get("on_ground"):
+        return ""
+    destination = str(plane.get("destination") or "").upper()
+    origin = str(plane.get("origin") or "").upper()
+    if destination in BAY_AIRPORTS and speed >= 60:
+        distance = plugin._distance_nm(lat, lon, *BAY_AIRPORTS[destination])
+        minutes = distance * APPROACH_FACTOR / speed * 60 + APPROACH_MINUTES
+        if minutes <= 180:
+            return f"预计 {(now + timedelta(minutes=minutes)):%H:%M} 到"
+    if origin in BAY_AIRPORTS and speed >= 60:
+        distance = plugin._distance_nm(lat, lon, *BAY_AIRPORTS[origin])
+        # The climb is slower than the speed now: count it at four fifths.
+        minutes = distance / (speed * 0.8) * 60 + 1
+        if minutes <= 120:
+            return f"约 {(now - timedelta(minutes=minutes)):%H:%M} 起飞"
+    return ""
+
+
+def _strips(plugin, image, snapshot, theme, now):
     draw = ImageDraw.Draw(image)
     x0, y0, x1, y1 = STRIPS
     draw.rounded_rectangle(STRIPS, radius=7, fill=theme["panel"], outline=theme["line"], width=1)
     draw.text((x0 + 10, y0 + 6), "FLIGHT STRIPS", font=plugin._font(13, "bold"), fill=theme["ink"])
     planes, center = strip_order(plugin, snapshot)
-    draw.text((x1 - 10, y0 + 9), "最近航班 · 航线与机型", font=plugin._font(9, "bold"), fill=theme["muted"], anchor="ra")
+    draw.text((x1 - 10, y0 + 9), "最近航班 · 航线与时刻", font=plugin._font(9, "bold"), fill=theme["muted"], anchor="ra")
     strip_h, gap, top = 66, 2, y0 + 28
     call_font, route_font = plugin._font(15, "bold"), plugin._city_font(11, "bold")
     meta_font = plugin._font(9, "bold")
@@ -626,8 +655,14 @@ def _strips(plugin, image, snapshot, theme):
         icon = (sx1 - 30, sy0 + 6, sx1 - 8, sy0 + 28)
         _phase_icon(plugin, draw, icon, phase, theme)
         text_x = sx0 + 82
-        draw.text((text_x, sy0 + 4), _fit(draw, callsign, call_font, icon[0] - 6 - text_x), font=call_font,
-                  fill=theme["ink"])
+        timing = flight_time(plugin, plane, now)
+        timing_font = plugin._city_font(10, "bold")
+        timing_w = draw.textlength(timing, font=timing_font) + 8 if timing else 0
+        fitted = _fit(draw, callsign, call_font, icon[0] - 6 - text_x - timing_w)
+        draw.text((text_x, sy0 + 4), fitted, font=call_font, fill=theme["ink"])
+        if timing:
+            draw.text((text_x + draw.textlength(fitted, font=call_font) + 8, sy0 + 13), timing, font=timing_font,
+                      fill=theme[role], anchor="lm")
         distance = plugin._format_distance(plane.get("distance_nm"))
         draw.text((sx1 - 8, sy0 + 46), distance, font=meta_font, fill=theme["muted"], anchor="ra")
         if not _route_line(plugin, image, draw, plane, (text_x, sy0 + 24), icon[0] - 6 - text_x, theme,

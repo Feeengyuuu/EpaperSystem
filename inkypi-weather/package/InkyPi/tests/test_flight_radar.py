@@ -672,3 +672,19 @@ def test_strips_and_scope_carry_airport_marks_phase_icons_and_the_chart():
     # The chart paints water west of SFO; with no map the panel stays plain there.
     x, y = 120, 300
     assert charted.getpixel((x, y)) != plain.getpixel((x, y))
+
+
+def test_strips_estimate_landing_and_take_off_times_for_bay_flights():
+    from plugins.flight_radar import pro_view
+
+    plugin = _plugin()
+    now = datetime(2026, 10, 25, 9, 30, tzinfo=flight_radar_module.ZoneInfo("America/Los_Angeles"))
+    # 12 NM east of SFO at 180 kt, inbound: about 6.6 minutes with the approach.
+    arrival = {"lat": 37.6213, "lon": -122.1270, "speed_kt": 180, "origin": "LAX", "destination": "SFO"}
+    departure = {"lat": 37.6213, "lon": -122.1270, "speed_kt": 240, "origin": "SFO", "destination": "OGG"}
+    overflight = {"lat": 37.6, "lon": -122.1, "speed_kt": 400, "origin": "SEA", "destination": "LAX"}
+
+    assert pro_view.flight_time(plugin, arrival, now) == "预计 09:36 到"
+    assert pro_view.flight_time(plugin, departure, now) == "约 09:25 起飞"
+    assert pro_view.flight_time(plugin, overflight, now) == ""
+    assert pro_view.flight_time(plugin, {**arrival, "on_ground": True}, now) == ""
