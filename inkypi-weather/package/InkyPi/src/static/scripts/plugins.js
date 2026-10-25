@@ -7,6 +7,7 @@
     const container = document.getElementById("pluginsContainer");
     const empty = document.getElementById("pluginsEmpty");
     const search = document.getElementById("pluginSearch");
+    const count = document.getElementById("pluginCount");
     const sortToggle = document.getElementById("sortToggle");
     const sortLabel = sortToggle.querySelector("[data-sort-label]");
     const sortHint = document.getElementById("sortHint");
@@ -49,6 +50,12 @@
             visible += match ? 1 : 0;
         });
         empty.hidden = visible !== 0;
+        if (count) {
+            const total = Number(count.dataset.total) || tiles().length;
+            count.textContent = query ? `${visible} of ${total} plugins` : `${total} plugins`;
+            /* The new English text node is translated like the rest of the page. */
+            window.InkyPiI18n?.applyTranslations();
+        }
     });
 
     /* ---------- Reordering ---------- */

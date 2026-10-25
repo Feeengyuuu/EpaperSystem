@@ -9,6 +9,18 @@
     margin-bottom: var(--s-4);
 }
 
+.library-search { gap: var(--s-3); }
+.plugin-count {
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--c-line);
+    color: var(--c-muted);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
 .segmented svg { width: 18px; height: 18px; }
 .sort-hint { margin-bottom: var(--s-4); }
 

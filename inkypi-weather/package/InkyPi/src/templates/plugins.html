@@ -10,10 +10,13 @@
 
 {% block content %}
 <div class="library-toolbar">
-    <label class="search-box">
-        <span class="search-icon">{{ icon('search') }}</span>
-        <input class="input" type="search" id="pluginSearch" placeholder="Search plugins" aria-label="Search plugins" autocomplete="off">
-    </label>
+    <div class="row library-search">
+        <label class="search-box">
+            <span class="search-icon">{{ icon('search') }}</span>
+            <input class="input" type="search" id="pluginSearch" placeholder="Search plugins" aria-label="Search plugins" autocomplete="off">
+        </label>
+        <span class="plugin-count" id="pluginCount" data-total="{{ plugins | length }}" aria-live="polite">{{ plugins | length }} plugins</span>
+    </div>
     <div class="row">
         <button type="button" class="btn btn-secondary" id="sortToggle" title="Reorder plugins">{{ icon('sort') }}<span data-sort-label>Reorder</span></button>
         <div class="segmented" role="radiogroup" aria-label="Switch view">

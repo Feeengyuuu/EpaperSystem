@@ -316,6 +316,14 @@
 
     const dynamicRules = [
         {
+            match: /^(\d+) plugins$/u,
+            zh: (match) => `共 ${match[1]} 个插件`
+        },
+        {
+            match: /^(\d+) of (\d+) plugins$/u,
+            zh: (match) => `显示 ${match[1]} / 共 ${match[2]} 个`
+        },
+        {
             match: /^(\d+) min ago$/u,
             zh: (match) => `${match[1]} 分钟前`
         },
