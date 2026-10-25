@@ -736,6 +736,64 @@ def test_f1_live_panel_shows_the_session_order(boxes):
     assert any(text.startswith("LIVE · ") for text in texts)
 
 
+def _f1_order_cars(width, rows):
+    plugin = _plugin()
+    pasted = []
+    original = plugin._paste_f1_side_car
+
+    def record(image, team, span):
+        drawn = original(image, team, span)
+        pasted.append((team, span, drawn))
+        return drawn
+
+    plugin._paste_f1_side_car = record
+    image = Image.new("RGB", (width, 90), DAY_COLORS["panel"])
+    spec = scorebug_kit_module.ScorebugSpec("F1", "f1_accent", "f1_live", "f1_tag", "panel_blue")
+    plugin._draw_f1_order(image, ImageDraw.Draw(image), (0, 0, width, 90), "LIVE · RACE", rows, spec, live=True)
+    return image, pasted
+
+
+def test_f1_order_rows_show_their_teams_side_view_cars_in_one_column():
+    rows = [
+        {"position": 1, "driver_code": "ANT", "constructor": "Mercedes", "gap": ""},
+        {"position": 2, "driver_code": "LEC", "constructor": "Ferrari", "gap": "13.078"},
+        {"position": 3, "driver_code": "VER", "constructor": "Red Bull Racing", "gap": "17.485"},
+        {"position": 4, "driver_code": "XYZ", "constructor": "Nowhere Racing", "gap": "18.515"},
+    ]
+    image, pasted = _f1_order_cars(245, rows)
+
+    assert [drawn for _team, _span, drawn in pasted] == [True, True, True, False]
+    car_right = {span[2] for _team, span, drawn in pasted if drawn}
+    assert len(car_right) == 1
+    plugin = _plugin()
+    gap_left = 245 - plugin._text_width(ImageDraw.Draw(image), "+18.515", plugin._font(9, False))
+    assert car_right.pop() < gap_left
+    # The Ferrari's red reaches the panel.
+    assert any(r > 180 and g < 80 and b < 80 for r, g, b in image.crop((100, 34, 245, 50)).get_flattened_data())
+
+
+def test_f1_order_leaves_out_a_car_without_room():
+    rows = [{"position": 1, "driver_code": "ANT", "constructor": "Mercedes", "gap": ""}]
+    _image, pasted = _f1_order_cars(130, rows)
+
+    assert [drawn for _team, _span, drawn in pasted] == [False]
+
+
+def test_f1_side_cars_cover_every_team_and_match_their_sources():
+    from plugins.sports_dashboard.f1_render import F1_SIDE_DIR, F1_TEAM_KEYS
+
+    side = Path(F1_SIDE_DIR)
+    manifest = json.loads((side / "f1_side.source.json").read_text(encoding="utf-8"))
+    teams = {key for _name, key in F1_TEAM_KEYS}
+    assert set(manifest["teams"]) == teams
+    assert {path.stem for path in side.glob("*.png")} == teams
+    for key, url in manifest["teams"].items():
+        assert url.startswith("https://media.formula1.com/") and url.endswith("carright.webp"), key
+        with Image.open(side / f"{key}.png") as car:
+            assert car.mode == "RGBA" and car.height == 26 and 100 <= car.width <= 130, key
+            assert car.getchannel("A").getextrema()[0] == 0, key
+
+
 # Competition marks ------------------------------------------------------------
 
 

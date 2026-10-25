@@ -6,8 +6,8 @@ A band with the round, the Grand Prix (in Chinese), the circuit and a
 countdown to the next session; a weekend timeline with one node per session
 (done, live, next, later; the race node is chequered); the drivers'
 championship with team logos, points bars and wins; and either the live
-session order or the last race's top finishers with their teams, places
-gained from the grid and the fastest lap.
+session order or the last race's top finishers with their teams' logos and
+official side-view cars, places gained from the grid and the fastest lap.
 """
 
 from functools import lru_cache
@@ -26,6 +26,9 @@ F1_TIMELINE_HEIGHT = 50
 F1_ROW_HEIGHT = 15
 F1_TEAM_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "f1_teams")
 F1_GRID_DIR = os.path.join(LOCAL_DECOR_DIR, "f1_grid")
+# The teams' official side views, for the live order and last race's rows.
+F1_SIDE_DIR = os.path.join(LOCAL_DECOR_DIR, "f1_side")
+F1_SIDE_SIZE = (64, 13)
 F1_CIRCUIT_SHAPES = os.path.join(LOCAL_DECOR_DIR, "f1_circuits.json")
 F1_LOGO_SIZE = (20, 12)
 F1_PLACE_SIZE = (13, 10)
@@ -358,6 +361,15 @@ class F1RenderMixin:
         if not rows:
             self._draw_text_in_box(draw, (x1 + 4, y, x2, y + 14), "等待成绩", self._font(9, True), COLORS["muted"])
             return
+        shown = rows[:max(0, (y2 + 1 - y) // F1_ROW_HEIGHT)]
+        # Each driver's car (the team's official side view) runs in one column ending before the
+        # widest gap, in the room the names leave.
+        gap_widths = [
+            self._text_width(draw, gap, self._font(9, (row.get("position") or index + 1) == 1))
+            for index, row in enumerate(shown)
+            if (gap := SportsDashboard._f1_gap_label(row, row.get("position") or index + 1, live))
+        ]
+        car_x2 = x2 - max([0, *gap_widths]) - 8 - (12 if any(row.get("fastest_lap") for row in shown) else 0)
         for index, row in enumerate(rows):
             if y + F1_ROW_HEIGHT > y2 + 1:
                 break
@@ -384,10 +396,13 @@ class F1RenderMixin:
             label = SportsDashboard._f1_driver_zh(row)
             label, label_font = self._fit_text_ellipsis(draw, label, right - moved_w - 2 - name_x, 10, bold=True, min_size=8)
             self._draw_text_in_box(draw, (name_x, y, right - moved_w, y + 13), label, label_font, COLORS["text"])
+            text_end = name_x + self._text_width(draw, label, label_font)
             if moved:
-                mark_x = name_x + self._text_width(draw, label, label_font) + 4
+                mark_x = text_end + 4
                 SportsDashboard._draw_f1_move_arrow(draw, mark_x, y + 7, gained > 0)
                 self._draw_text_in_box(draw, (mark_x + 7, y + 1, mark_x + moved_w, y + 13), moved, moved_font, COLORS["text"])
+                text_end = mark_x + moved_w
+            self._paste_f1_side_car(image, team, (text_end + 6, y, car_x2))
             if gap:
                 self._draw_text_in_box(draw, (x2 - gap_w, y, x2, y + 13), gap, gap_font, COLORS["text"], align="right")
             y += F1_ROW_HEIGHT
@@ -558,6 +573,17 @@ class F1RenderMixin:
             return
         width, height = F1_LOGO_SIZE
         image.paste(logo, (x + (width - logo.width) // 2, y + (height - logo.height) // 2), logo)
+
+    def _paste_f1_side_car(self, image, team, span):
+        """The team's car in side view, right-aligned at ``x2`` on the row at ``y``, when it fits
+        after ``x1``; False otherwise or without the art."""
+        x1, y, x2 = span
+        key = SportsDashboard._f1_team_key(team)
+        car = self._load_local_logo(os.path.join(F1_SIDE_DIR, f"{key}.png"), F1_SIDE_SIZE, alpha_threshold=12) if key else None
+        if car is None or x2 - car.width < x1:
+            return False
+        image.paste(car, (int(x2 - car.width), y + (F1_ROW_HEIGHT - car.height) // 2), car)
+        return True
 
     @staticmethod
     def _draw_f1_fastest_lap(draw, x, y):

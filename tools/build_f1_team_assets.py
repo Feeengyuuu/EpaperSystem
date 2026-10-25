@@ -1,6 +1,6 @@
 """Bundle the F1 teams' logos and the header's grid of cars for the sports dashboard's F1 panel.
 
-    python tools/build_f1_team_assets.py
+    python tools/build_f1_team_assets.py [--side-only]
 
 Logos are the teams' official marks from formula1.com (the colour mark and the white one, which
 the panel uses on dark ground when the colour mark is too dark there). The cars are top-down
@@ -9,12 +9,17 @@ GPT Image 2.5 (Creative Claw), as are the finishing places' numerals; the genera
 fetched from their permanent URLs. Writes plugins/sports_dashboard/assets/logos/f1_teams/<team>.png
 (+ <team>_light.png) and assets/decor/f1_grid/<team>.png and place_<n>.png, with the sources in
 assets/decor/f1_grid/f1_grid.source.json.
+
+The live order's cars are formula1.com's official side view of each team's 2026 car, as published
+(transparent, nose to the right), in assets/decor/f1_side/<team>.png with f1_side.source.json;
+--side-only rebuilds just those.
 """
 
 from __future__ import annotations
 
 import io
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -25,6 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ASSETS = REPO_ROOT / "inkypi-weather" / "package" / "InkyPi" / "src" / "plugins" / "sports_dashboard" / "assets"
 LOGOS = ASSETS / "logos" / "f1_teams"
 CARS = ASSETS / "decor" / "f1_grid"
+SIDE_CARS = ASSETS / "decor" / "f1_side"
 USER_AGENT = "InkyPi asset build (https://github.com/Feeengyuuu/EpaperSystem)"
 MEDIA = "https://media.formula1.com/image/upload/f_png/{transform}/q_auto/v1740000001/common/f1/2026/{slug}/2026{slug}{name}.webp"
 CDN = "https://cdn.creativeclaw.co/u/e25dbd7a/images/{}.png"
@@ -48,6 +54,8 @@ PLACE_NAMES = ("place_1", "place_2", "place_3", "place_4", "place_5")
 LOGO_HEIGHT = 64
 CAR_HEIGHT = 48
 PLACE_HEIGHT = 48
+# Twice the live order's 13px car, so the panel scales it down.
+SIDE_HEIGHT = 26
 
 
 def fetch(url, timeout=60):
@@ -87,7 +95,27 @@ def save(image, path, height, max_width=None):
     image.resize((width, height), Image.Resampling.LANCZOS).save(path, optimize=True)
 
 
+def build_side_cars():
+    sources = {}
+    for key, (slug, _car) in TEAMS.items():
+        url = MEDIA.format(transform="c_fit,w_700", slug=slug, name="carright")
+        save(trimmed(fetch(url)), SIDE_CARS / f"{key}.png", SIDE_HEIGHT)
+        sources[key] = url
+        print(f"side {key}")
+    manifest = {
+        "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "cars": "Official side view of each team's 2026 car from formula1.com, transparent, nose to the right.",
+        "teams": sources,
+    }
+    (SIDE_CARS / "f1_side.source.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                                                   encoding="utf-8", newline="\n")
+
+
 def main():
+    if "--side-only" in sys.argv[1:]:
+        build_side_cars()
+        return
+    build_side_cars()
     sources = {}
     for key, (slug, car) in TEAMS.items():
         logo_url = MEDIA.format(transform="c_fit,h_256", slug=slug, name="logo")
