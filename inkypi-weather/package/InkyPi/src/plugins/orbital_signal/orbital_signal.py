@@ -4,9 +4,12 @@ import json
 import logging
 import math
 import os
+import re
+import time
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps
@@ -18,6 +21,7 @@ from plugins.base_plugin.render_provenance import (
 )
 from runtime.refresh_contracts import TaskCancelled
 from utils.cache_manager import CacheBudget
+from utils.http_client import get_http_session
 from utils.safe_image import safe_open_image
 from utils.app_utils import (
     bounded_int,
@@ -28,7 +32,7 @@ from utils.app_utils import (
 )
 
 from . import launch_photo
-from .sources import _parse_time, _utc, fetch_launches, fetch_market_events
+from .sources import _parse_time, _upload_url, _utc, fetch_launches, fetch_market_events
 
 
 logger = logging.getLogger(__name__)
@@ -50,6 +54,19 @@ LAUNCH_PHOTO_CACHE_BUDGET = CacheBudget(
 MARKET_MARK_CACHE_BUDGET = CacheBudget(30 * 24 * 60 * 60, 96, 8 * 1024 * 1024)
 # A matchup's two logos (px), the league icon in its chip and the leader's logo by its name.
 MATCHUP_LOGO, LEAGUE_ICON, LEADER_LOGO = 28, 14, 14
+# Each market column is themed by its event's art: kept at EVENT_ART_SIDE px, laid ART_H px tall
+# across the column's top and fading into the paper from ART_FADE of its height down, the title
+# written over its foot. The leading option shows its picture (Polymarket's own, its team's logo,
+# or for a person their Wikipedia portrait) in a LEADER_AVATAR px disc by its name.
+EVENT_ART_SIDE, ART_H, ART_FADE = 220, 96, 0.34
+LEADER_AVATAR = 24
+WIKI_SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
+WIKI_USER_AGENT = "InkyPi OrbitalSignal/1.0 (https://github.com/Feeengyuuu/EpaperSystem)"
+PORTRAIT_STATE = "leader_portraits.json"
+PORTRAIT_DAYS, PORTRAIT_MISS_DAYS = 30, 7
+# A Wikipedia summary counts as a person's portrait only with one of these in its description.
+PERSON_HINT = re.compile(r"\(born \d{4}\)|footballer|player|politician|president|minister|singer|rapper|actor|actress|"
+                         r"businessman|businesswoman|coach|driver|boxer|athlete|candidate|leader", re.IGNORECASE)
 
 # Mission-control layout: the launch side with a photo, flip-clock countdown,
 # fact grid and launch timeline; the market side with three gauge columns.
@@ -57,6 +74,10 @@ LAUNCH_SPLIT_X = 462
 PHOTO_BOX = (16, 72, 124, 272)
 FLIP_CARD = (34, 58)
 MARKET_COLUMNS_HEIGHT = 300
+# The market facts' icons (volume, heat, end) in px.
+MARKET_FACT_ICON = 13
+# The heat dials (radius in px), drawn this many times larger and then scaled down.
+GAUGE_RADIUS, GAUGE_SCALE = 32, 4
 MARKET_ART_PATH = Path(__file__).with_name("assets") / "market-console.png"
 # A league name too long for its market's tag gives way to its usual short form.
 LEAGUE_SHORT_NAMES = {
@@ -305,7 +326,7 @@ class OrbitalSignal(BasePlugin):
 
         def mark(url):
             try:
-                return launch_photo.cache_mark(url, namespace, allow_network=True)
+                return launch_photo.cache_mark(_upload_url(url), namespace, allow_network=True)
             except TaskCancelled:
                 raise
             except Exception as exc:
@@ -318,7 +339,49 @@ class OrbitalSignal(BasePlugin):
         row["league_mark"] = mark(row.get("league_icon"))
         if not (len(teams) == 2 and all(team["mark"] for team in teams)):
             row["event_mark"] = mark(row.get("event_icon"))
+        try:
+            row["event_art"] = launch_photo.cache_mark(_upload_url(row.get("event_image") or row.get("event_icon")), namespace,
+                                                       allow_network=True, side=EVENT_ART_SIDE)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Orbital Signal event art unavailable: %s", type(exc).__name__)
+        leader = str(row.get("leader") or "")
+        is_team = any(leader.casefold() in {str(team.get(key) or "").casefold() for key in ("name", "alias")}
+                      for team in teams)
+        portrait = row.get("leader_image") or ("" if is_team else self._leader_portrait_url(leader))
+        row["leader_mark"] = mark(portrait) if portrait else ""
         return row
+
+    def _leader_portrait_url(self, name):
+        """A person's portrait from their English Wikipedia summary ("" for anything that is not a
+        person's page), remembered for PORTRAIT_DAYS (a miss for PORTRAIT_MISS_DAYS)."""
+        name = " ".join(str(name or "").split())
+        if len(name.split()) < 2 or len(name) > 60:
+            return ""
+        path = self._cache_dir() / PORTRAIT_STATE
+        state = self._read_json(path, {})
+        now = time.time()
+        known = state.get(name) or {}
+        if now - float(known.get("ts") or 0) < (PORTRAIT_DAYS if known.get("url") else PORTRAIT_MISS_DAYS) * 86400:
+            return known.get("url") or ""
+        url = ""
+        try:
+            response = get_http_session().get(WIKI_SUMMARY_URL.format(title=quote(name.replace(" ", "_"), safe="")),
+                                              headers={"User-Agent": WIKI_USER_AGENT, "Accept": "application/json"},
+                                              timeout=(4, 12))
+            summary = response.json() if response.status_code == 200 else {}
+            if (summary.get("type") == "standard" and PERSON_HINT.search(str(summary.get("description") or ""))):
+                url = str((summary.get("thumbnail") or {}).get("source") or "")
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Orbital Signal portrait lookup failed: %s", type(exc).__name__)
+            return ""
+        state[name] = {"url": url, "ts": now}
+        self._write_json(path, {key: value for key, value in state.items()
+                                if now - float((value or {}).get("ts") or 0) < PORTRAIT_DAYS * 86400})
+        return url
 
     def _market_mark(self, key, size, *, rounded=False):
         """A cached mark contained in ``size`` px (event art cover-cropped to a rounded square)."""
@@ -1148,17 +1211,64 @@ class OrbitalSignal(BasePlugin):
             lines[-1] = self._fit_text(draw, lines[-1] + " ...", font, width)
         return [self._fit_text(draw, line, font, width) for line in lines]
 
-    def _draw_gauge(self, draw, center, radius, probability, color, palette):
-        """A semicircle dial filled to ``probability`` with a needle."""
+    def _draw_gauge(self, draw, center, radius, probability, color, palette, image=None):
+        """A dial filled to ``probability`` in the market's heat colour: a ticked bezel, a track
+        tinted in that colour, the value arc with rounded ends and a tapered needle on a hub. The
+        three heat colours make a matching set. Drawn GAUGE_SCALE times larger and scaled down
+        onto ``image``; without one, the plain dial straight onto ``draw``."""
         cx, cy = center
-        bounds = (cx - radius, cy - radius, cx + radius, cy + radius)
-        draw.arc(bounds, 180, 360, fill=palette["muted"], width=3)
         end = 180 + 180 * probability
-        draw.arc(bounds, 180, end, fill=color, width=9)
-        needle = radius - 9
-        tip = (cx + needle * math.cos(math.radians(end)), cy + needle * math.sin(math.radians(end)))
-        draw.line((cx, cy, *tip), fill=palette["ink"], width=3)
-        draw.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), fill=palette["ink"])
+        if image is None:
+            bounds = (cx - radius, cy - radius, cx + radius, cy + radius)
+            draw.arc(bounds, 180, 360, fill=palette["muted"], width=3)
+            draw.arc(bounds, 180, end, fill=color, width=9)
+            tip = (cx + (radius - 9) * math.cos(math.radians(end)), cy + (radius - 9) * math.sin(math.radians(end)))
+            draw.line((cx, cy, *tip), fill=palette["ink"], width=3)
+            draw.ellipse((cx - 5, cy - 5, cx + 5, cy + 5), fill=palette["ink"])
+            return
+        k = GAUGE_SCALE
+        half_w, height = radius + 8, radius + 10
+        layer = Image.new("RGBA", (2 * half_w * k, height * k), (0, 0, 0, 0))
+        pen = ImageDraw.Draw(layer)
+        ox, oy = half_w * k, (radius + 6) * k
+
+        def at(angle, length):
+            return ox + length * math.cos(math.radians(angle)), oy + length * math.sin(math.radians(angle))
+
+        bezel = (radius + 4) * k
+        pen.arc((ox - bezel, oy - bezel, ox + bezel, oy + bezel), 180, 360, fill=(*palette["muted"], 150), width=k)
+        for step in range(21):
+            angle = 180 + 9 * step
+            major = step % 5 == 0
+            pen.line((*at(angle, bezel - (5 if major else 3) * k), *at(angle, bezel)),
+                     fill=(*palette["ink" if major else "muted"], 255 if major else 170), width=(2 if major else 1) * k)
+        track_w = max(5, round(radius * 0.22)) * k
+        track_r = radius * k - track_w / 2
+        track = (ox - track_r - track_w / 2, oy - track_r - track_w / 2, ox + track_r + track_w / 2, oy + track_r + track_w / 2)
+        tint = self._mix(color, palette["paper"], 0.22)
+        pen.arc(track, 180, 360, fill=(*tint, 255), width=track_w)
+        for angle, fill in ((360, tint), (180, color)):
+            x, y = at(angle, track_r)
+            pen.ellipse((x - track_w / 2, y - track_w / 2, x + track_w / 2, y + track_w / 2), fill=(*fill, 255))
+        if probability > 0:
+            pen.arc(track, 180, end, fill=(*color, 255), width=track_w)
+            x, y = at(end, track_r)
+            pen.ellipse((x - track_w / 2, y - track_w / 2, x + track_w / 2, y + track_w / 2), fill=(*color, 255))
+        tip = at(end, radius * k - track_w - 2 * k)
+        left, right = at(end - 90, 2.8 * k), at(end + 90, 2.8 * k)
+        tail = at(end + 180, 4 * k)
+        pen.polygon((tip, left, tail, right), fill=(*palette["ink"], 255))
+        hub = 5 * k
+        pen.ellipse((ox - hub, oy - hub, ox + hub, oy + hub), fill=(*palette["ink"], 255))
+        dot = 2 * k
+        pen.ellipse((ox - dot, oy - dot, ox + dot, oy + dot), fill=(*color, 255))
+        small = layer.resize((2 * half_w, height), Image.Resampling.LANCZOS)
+        image.paste(small, (round(cx - half_w), round(cy - radius - 6)), small)
+
+    @staticmethod
+    def _mix(color, paper, amount):
+        """``amount`` of ``color`` over ``paper``."""
+        return tuple(round(paper[index] + (color[index] - paper[index]) * amount) for index in range(3))
 
     def _draw_markets(self, draw, box, markets, palette, family, image=None):
         """MARKET HEAT: three gauge columns, then the console art across the
@@ -1187,120 +1297,182 @@ class OrbitalSignal(BasePlugin):
 
         columns = markets[:3]
         column_w = (right - left - 24) / 3
-        question_font = self._font(10, True, family)
-        leader_font, fact_font = self._font(11, True, family), self._font(9, True, family)
         columns_bottom = top + MARKET_COLUMNS_HEIGHT
         for index, market in enumerate(columns):
             col_left = left + 12 + index * column_w
-            cx = col_left + column_w / 2
-            width = column_w - 8
             if index:
                 draw.line((col_left, top + 48, col_left, columns_bottom), fill=palette["rule"], width=1)
-
-            # The matchup's two official logos either side of VS (or the event's own art), then
-            # the shorter title under them; without marks the title has the room it had.
-            teams = [team for team in market.get("teams") or [] if isinstance(team, dict)]
-            logos = [self._market_mark(team.get("mark"), MATCHUP_LOGO) for team in teams[:2]] if image is not None else []
-            y, max_lines = top + 46, 3
-            title = str(market.get("title") or "MARKET").upper()
-            if len(logos) == 2 and all(logos):
-                for logo, slot in zip(logos, (cx - 28, cx + 28)):
-                    image.paste(logo, (round(slot - logo.width / 2), round(y + (MATCHUP_LOGO - logo.height) / 2)), logo)
-                vs_font = self._font(10, True, family)
-                vs_w = draw.textbbox((0, 0), "VS", font=vs_font)[2]
-                draw.text((cx - vs_w / 2, y + 8), "VS", font=vs_font, fill=palette["muted"])
-                title = " vs ".join(str(team.get("alias") or team.get("name")) for team in teams[:2]).upper()
-                y, max_lines = y + MATCHUP_LOGO + 6, 2
-            else:
-                art = self._market_mark(market.get("event_mark"), MATCHUP_LOGO, rounded=True) if image is not None else None
-                if art is not None:
-                    image.paste(art, (round(cx - art.width / 2), y), art)
-                    y, max_lines = y + MATCHUP_LOGO + 6, 2
-            for line in self._wrap_lines(draw, title, question_font, width, max_lines=max_lines):
-                line_w = draw.textbbox((0, 0), line, font=question_font)[2]
-                draw.text((cx - line_w / 2, y), line, font=question_font, fill=palette["ink"])
-                y += 12
-
-            # The league (its icon on a paper square, its name on the category colour), then the day's move.
-            category = str(market.get("category") or "MARKET").upper()
-            tag_color = palette[CATEGORY_COLORS.get(category, "blue")]
-            label = str(market.get("league") or "").upper() or category
-            league_icon = self._market_mark(market.get("league_mark"), LEAGUE_ICON) if image is not None else None
-            change = float(market.get("change_24h") or 0.0) * 100
-            change_text = f"{change:+.1f}%"
-            icon_w = 18 if league_icon is not None else 0
-            # The tag keeps to its column: a long league name steps down a size or gives way to its
-            # short form; failing that the row tightens (a smaller move, slimmer padding), and at
-            # last the name ends in "...".
-            candidates = tuple(dict.fromkeys((label, LEAGUE_SHORT_NAMES.get(label, label))))
-            fitted = None
-            for change_size, pad, gap in ((13, 7, 6), (11, 5, 4)):
-                change_font = self._font(change_size, True, family)
-                change_w = draw.textbbox((0, 0), change_text, font=change_font)[2]
-                label_room = max(20, width - icon_w - gap - change_w - 2 * pad)
-                for candidate in candidates:
-                    label_font = self._fit_font(draw, candidate, label_room, 10, 8, family)
-                    if draw.textbbox((0, 0), candidate, font=label_font)[2] <= label_room:
-                        fitted = candidate
-                        break
-                if fitted:
-                    break
-            label = fitted or self._fit_text(draw, candidates[0], label_font, label_room)
-            label_w = draw.textbbox((0, 0), label, font=label_font)[2] + 2 * pad
-            tag_top = top + 108
-            x = round(cx - (icon_w + label_w + gap + change_w) / 2)
-            if league_icon is not None:
-                draw.rectangle((x, tag_top, x + 18, tag_top + 18), fill=palette["white"], outline=tag_color)
-                image.paste(league_icon, (x + 9 - league_icon.width // 2, tag_top + 9 - league_icon.height // 2), league_icon)
-                x += icon_w
-            draw.rectangle((x, tag_top, x + label_w, tag_top + 18), fill=tag_color)
-            label_h = draw.textbbox((0, 0), label, font=label_font)
-            draw.text((x + pad, tag_top + 9 - (label_h[1] + label_h[3]) / 2), label, font=label_font, fill=palette["white"])
-            change_h = draw.textbbox((0, 0), change_text, font=change_font)
-            draw.text((x + label_w + gap, tag_top + 9 - (change_h[1] + change_h[3]) / 2), change_text, font=change_font,
-                      fill=palette["green"] if change >= 0 else palette["red"])
-
-            probability = max(0.0, min(1.0, float(market.get("probability") or 0.0)))
-            heat = int(market.get("heat") or 0)
-            heat_color = self._heat_color(heat, palette)
-            self._draw_gauge(draw, (round(cx), top + 180), 44, probability, heat_color, palette)
-
-            # The leader, with its team's logo when it is one of the two sides.
-            leader = str(market.get("leader") or "TBD")
-            leader_team = next((team for team in teams if leader.casefold() in
-                                {str(team.get(key) or "").casefold() for key in ("name", "alias")}), None)
-            leader_logo = (self._market_mark(leader_team.get("mark"), LEADER_LOGO)
-                           if leader_team is not None and image is not None else None)
-            y = top + 189
-            lines = self._wrap_lines(draw, leader.upper(), leader_font, width - (LEADER_LOGO + 4 if leader_logo else 0))
-            for row, line in enumerate(lines):
-                line_w = draw.textbbox((0, 0), line, font=leader_font)[2]
-                if row == 0 and leader_logo is not None:
-                    start_x = round(cx - (LEADER_LOGO + 4 + line_w) / 2)
-                    image.paste(leader_logo, (start_x, y + 7 - leader_logo.height // 2), leader_logo)
-                    draw.text((start_x + LEADER_LOGO + 4, y), line, font=leader_font, fill=palette["ink"])
-                else:
-                    draw.text((cx - line_w / 2, y), line, font=leader_font, fill=palette["ink"])
-                y += 13
-
-            percent = f"{probability * 100:.0f}%"
-            percent_font = self._font(30, True, family)
-            percent_w = draw.textbbox((0, 0), percent, font=percent_font)[2]
-            draw.text((cx - percent_w / 2, top + 218), percent, font=percent_font, fill=palette["ink"])
-
-            facts = [f"VOL {self._money(market.get('volume_24h'))}"]
-            ends = _parse_time(market.get("end_date"))
-            if market.get("final"):
-                facts.append("FINAL")
-            elif ends is not None:
-                facts.append(f"ENDS {ends:%d %b}".upper())
-            facts.append(f"HEAT {heat:02d}")
-            for row, fact in enumerate(facts):
-                fact_w = draw.textbbox((0, 0), fact, font=fact_font)[2]
-                draw.text((cx - fact_w / 2, top + 258 + row * 14), fact, font=fact_font,
-                          fill=heat_color if fact.startswith("HEAT") else palette["muted"])
+            self._draw_market_column(draw, market, col_left, column_w, top, palette, family, image)
         if image is not None:
             self._paste_market_art(image, (left + 10, columns_bottom + 6, right - 10, bottom - 6))
+
+    def _draw_market_column(self, draw, market, col_left, column_w, top, palette, family, image=None):
+        """One market: its event's art across the top fading into the paper with the title over its
+        foot (the matchup's two logos on it), the league tag and the day's move, the gauge, the
+        leading option with its picture, its probability, then volume, heat and end as icons."""
+        cx = col_left + column_w / 2
+        width = column_w - 8
+        art_box = (round(col_left) + 1, top + 44, round(col_left + column_w) - 1, top + 44 + ART_H)
+        if image is not None:
+            self._paste_event_art(image, market.get("event_art") or market.get("event_mark"), art_box, palette)
+        teams = [team for team in market.get("teams") or [] if isinstance(team, dict)]
+        logos = [self._market_mark(team.get("mark"), MATCHUP_LOGO) for team in teams[:2]] if image is not None else []
+        title = str(market.get("title") or "MARKET").upper()
+        if len(logos) == 2 and all(logos):
+            for logo, slot in zip(logos, (cx - 26, cx + 26)):
+                image.paste(logo, (round(slot - logo.width / 2), art_box[1] + 8 + (MATCHUP_LOGO - logo.height) // 2), logo)
+            vs_font = self._font(10, True, family)
+            vs_w = draw.textbbox((0, 0), "VS", font=vs_font)[2]
+            draw.text((cx - vs_w / 2, art_box[1] + 16), "VS", font=vs_font, fill=palette["ink"], stroke_width=2,
+                      stroke_fill=palette["paper"])
+            title = " vs ".join(str(team.get("alias") or team.get("name")) for team in teams[:2]).upper()
+        question_font = self._font(10, True, family)
+        # Under a matchup's logos the title has two lines; otherwise three, every word kept.
+        lines = self._wrap_lines(draw, title, question_font, width, max_lines=2 if title.count(" VS ") else 3)
+        y = art_box[3] - 4 - 12 * len(lines)
+        for line in lines:
+            line_w = draw.textbbox((0, 0), line, font=question_font)[2]
+            draw.text((cx - line_w / 2, y), line, font=question_font, fill=palette["ink"], stroke_width=2,
+                      stroke_fill=palette["paper"])
+            y += 12
+        self._draw_league_tag(draw, market, cx, width, top + 144, palette, family, image)
+
+        probability = max(0.0, min(1.0, float(market.get("probability") or 0.0)))
+        heat = int(market.get("heat") or 0)
+        heat_color = self._heat_color(heat, palette)
+        self._draw_gauge(draw, (round(cx), top + 200), GAUGE_RADIUS, probability, heat_color, palette, image)
+        self._draw_leader(draw, market, teams, cx, width, top + 210, heat_color, palette, family, image)
+        percent = f"{probability * 100:.0f}%"
+        percent_font = self._font(28, True, family)
+        percent_w = draw.textbbox((0, 0), percent, font=percent_font)[2]
+        draw.text((cx - percent_w / 2, top + 234), percent, font=percent_font, fill=palette["ink"])
+
+        # Volume and heat on one line, the end (or the final whistle) under it, each led by its icon.
+        fact_font = self._font(10, True, family)
+        ends = _parse_time(market.get("end_date"))
+        end_fact = (("final", "FINAL") if market.get("final") else
+                    ("ends", f"{ends:%d %b}".upper()) if ends is not None else None)
+        rows = [[("volume", self._money(market.get("volume_24h")), palette["muted"]),
+                 ("heat", f"{heat:02d}", heat_color)]]
+        if end_fact:
+            rows.append([(end_fact[0], end_fact[1], palette["muted"])])
+        for row_index, row in enumerate(rows):
+            widths = [MARKET_FACT_ICON + 3 + draw.textbbox((0, 0), text, font=fact_font)[2]
+                      for _icon, text, _color in row]
+            x = cx - (sum(widths) + 8 * (len(row) - 1)) / 2
+            y = top + 270 + row_index * 16
+            for (icon, text, color), item_w in zip(row, widths):
+                if image is not None:
+                    self._paste_icon(image, icon, x, y, MARKET_FACT_ICON, palette)
+                draw.text((x + MARKET_FACT_ICON + 3, y + 1), text, font=fact_font, fill=color)
+                x += item_w + 8
+
+    def _paste_event_art(self, image, key, box, palette):
+        """The event's art cover-cropped to ``box``, cut straight at the column's sides and fading into
+        the paper down its lower part, so the column's top takes its theme without a frame."""
+        mark = launch_photo.load_cached_mark(self._mark_namespace(), key) if key else None
+        if mark is None:
+            return
+        x0, y0, x1, y1 = box
+        size = (x1 - x0, y1 - y0)
+        flat = Image.new("RGBA", mark.size, (*palette["paper"], 255))
+        flat.alpha_composite(mark)
+        art = ImageOps.fit(flat.convert("RGB"), size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.4))
+        ramp = Image.new("L", (1, size[1]), 0)
+        start = size[1] * ART_FADE
+        for y in range(size[1]):
+            ramp.putpixel((0, y), round(255 * min(1.0, max(0.0, (y - start) / max(1.0, size[1] - start)) ** 1.2)))
+        fade = ramp.resize(size)
+        image.paste(Image.composite(Image.new("RGB", size, palette["paper"]), art, fade), (x0, y0))
+
+    def _draw_league_tag(self, draw, market, cx, width, tag_top, palette, family, image):
+        """The league (its icon on a paper square, its name on the category colour) and the day's move."""
+        category = str(market.get("category") or "MARKET").upper()
+        tag_color = palette[CATEGORY_COLORS.get(category, "blue")]
+        label = str(market.get("league") or "").upper() or category
+        league_icon = self._market_mark(market.get("league_mark"), LEAGUE_ICON) if image is not None else None
+        change = float(market.get("change_24h") or 0.0) * 100
+        change_text = f"{change:+.1f}%"
+        icon_w = 18 if league_icon is not None else 0
+        # The tag keeps to its column: a long league name steps down a size or gives way to its
+        # short form; failing that the row tightens (a smaller move, slimmer padding), and at
+        # last the name ends in "...".
+        candidates = tuple(dict.fromkeys((label, LEAGUE_SHORT_NAMES.get(label, label))))
+        fitted = None
+        for change_size, pad, gap in ((13, 7, 6), (11, 5, 4)):
+            change_font = self._font(change_size, True, family)
+            change_w = draw.textbbox((0, 0), change_text, font=change_font)[2]
+            label_room = max(20, width - icon_w - gap - change_w - 2 * pad)
+            for candidate in candidates:
+                label_font = self._fit_font(draw, candidate, label_room, 10, 8, family)
+                if draw.textbbox((0, 0), candidate, font=label_font)[2] <= label_room:
+                    fitted = candidate
+                    break
+            if fitted:
+                break
+        label = fitted or self._fit_text(draw, candidates[0], label_font, label_room)
+        label_w = draw.textbbox((0, 0), label, font=label_font)[2] + 2 * pad
+        x = round(cx - (icon_w + label_w + gap + change_w) / 2)
+        if league_icon is not None:
+            draw.rectangle((x, tag_top, x + 18, tag_top + 18), fill=palette["white"], outline=tag_color)
+            image.paste(league_icon, (x + 9 - league_icon.width // 2, tag_top + 9 - league_icon.height // 2), league_icon)
+            x += icon_w
+        draw.rectangle((x, tag_top, x + label_w, tag_top + 18), fill=tag_color)
+        label_h = draw.textbbox((0, 0), label, font=label_font)
+        draw.text((x + pad, tag_top + 9 - (label_h[1] + label_h[3]) / 2), label, font=label_font, fill=palette["white"])
+        change_h = draw.textbbox((0, 0), change_text, font=change_font)
+        draw.text((x + label_w + gap, tag_top + 9 - (change_h[1] + change_h[3]) / 2), change_text, font=change_font,
+                  fill=palette["green"] if change >= 0 else palette["red"])
+
+    def _draw_leader(self, draw, market, teams, cx, width, y, ring, palette, family, image):
+        """The leading option's name, led by its picture: a portrait or mark in a disc ringed in the
+        heat colour, or its team's logo as it is."""
+        leader = str(market.get("leader") or "TBD")
+        avatar = None
+        if image is not None:
+            portrait = launch_photo.load_cached_mark(self._mark_namespace(), market.get("leader_mark"))
+            if portrait is not None:
+                avatar = self._avatar_disc(portrait, LEADER_AVATAR, ring)
+            else:
+                team = next((team for team in teams if leader.casefold() in
+                             {str(team.get(key) or "").casefold() for key in ("name", "alias")}), None)
+                avatar = self._market_mark(team.get("mark"), LEADER_AVATAR - 4) if team is not None else None
+                # A team goes by its short name beside its crest.
+                leader = str(team.get("alias") or leader) if team is not None else leader
+        room = width - (LEADER_AVATAR + 4 if avatar is not None else 0)
+        # A name steps down a size or two before it is cut short.
+        for size in (11, 10, 9):
+            leader_font = self._font(size, True, family)
+            lines = self._wrap_lines(draw, leader.upper(), leader_font, room)
+            if not any(line.endswith("...") for line in lines):
+                break
+        text_w = max((draw.textbbox((0, 0), line, font=leader_font)[2] for line in lines), default=0)
+        start_x = round(cx - ((LEADER_AVATAR + 4 if avatar is not None else 0) + text_w) / 2)
+        text_y = y + (LEADER_AVATAR - 13 * len(lines)) / 2 if avatar is not None else y
+        if avatar is not None:
+            image.paste(avatar, (start_x + (LEADER_AVATAR - avatar.width) // 2, y + (LEADER_AVATAR - avatar.height) // 2),
+                        avatar)
+            start_x += LEADER_AVATAR + 4
+        for line in lines:
+            draw.text((start_x if avatar is not None else cx - draw.textbbox((0, 0), line, font=leader_font)[2] / 2,
+                       text_y), line, font=leader_font, fill=palette["ink"])
+            text_y += 13
+
+    @staticmethod
+    def _avatar_disc(picture, size, ring):
+        """``picture`` cover-cropped into a ``size`` px disc (faces sit high) with a 2 px ring."""
+        flat = Image.new("RGBA", picture.size, (255, 255, 255, 255))
+        flat.alpha_composite(picture.convert("RGBA"))
+        scale = 3
+        big = size * scale
+        art = ImageOps.fit(flat.convert("RGB"), (big, big), method=Image.Resampling.LANCZOS, centering=(0.5, 0.3))
+        disc = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+        mask = Image.new("L", (big, big), 0)
+        ImageDraw.Draw(mask).ellipse((2 * scale, 2 * scale, big - 2 * scale - 1, big - 2 * scale - 1), fill=255)
+        ring_layer = ImageDraw.Draw(disc)
+        ring_layer.ellipse((0, 0, big - 1, big - 1), fill=(*ring[:3], 255))
+        disc.paste(art, (0, 0), mask)
+        return disc.resize((size, size), Image.Resampling.LANCZOS)
 
     def _paste_market_art(self, image, box):
         """The console strip centred in the room under the market columns."""

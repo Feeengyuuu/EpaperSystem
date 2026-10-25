@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import math
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from utils.http_client import get_http_session
 
@@ -42,6 +42,11 @@ def _text(value, default=""):
 
 def _mapping(value):
     return value if isinstance(value, dict) else {}
+
+
+def _upload_url(value):
+    """A Polymarket upload's URL with bare characters (team names carry spaces) percent-encoded."""
+    return quote(_text(value), safe=":/?#[]@!$&'()*+,;=%~")
 
 
 def _http_image_url(value):
@@ -226,7 +231,7 @@ def _event_teams(event):
             continue
         league = _text(team.get("league")).casefold()
         code = _text(team.get("abbreviation")).casefold()
-        logo = _text(team.get("logo"))
+        logo = _upload_url(team.get("logo"))
         if league in ESPN_LOGO_LEAGUES and code:
             espn = ESPN_TEAM_LOGO.format(league=league, code=ESPN_CODES.get(league, {}).get(code, code))
             logo, fallback = espn, logo
@@ -285,6 +290,8 @@ def _market_candidate(raw, now_utc):
         "probability": prices[selected_index],
         "change_24h": change,
         "question": _text(raw.get("question")),
+        # A candidate's own picture (a portrait, a party's mark) when Polymarket gives it one.
+        "image": _upload_url(raw.get("image") or raw.get("icon")),
     }
 
 
@@ -346,8 +353,13 @@ def normalize_market_events(payload, now=None, limit=3):
                 "teams": teams,
                 "final": bool(decided),
                 "league": _text(sport.get("name")).upper(),
-                "league_icon": _text(sport.get("image")),
-                "event_icon": _text(event.get("icon")) or _text(event.get("image")),
+                "league_icon": _upload_url(sport.get("image")),
+                "event_icon": _upload_url(event.get("icon") or event.get("image")),
+                # The event's larger art, laid behind the top of its column.
+                "event_image": _upload_url(event.get("image") or event.get("icon")),
+                # The leading option's own picture; one shared with the whole event says nothing of it.
+                "leader_image": "" if (leader.get("image") or "") in {"", _upload_url(event.get("image")),
+                                                                       _upload_url(event.get("icon"))} else leader["image"],
             }
         )
 

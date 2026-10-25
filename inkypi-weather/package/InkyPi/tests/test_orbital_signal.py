@@ -166,7 +166,9 @@ class RecordingDraw:
         self.ellipse_calls = []
 
     def text(self, xy, text, font=None, fill=None, **kwargs):
-        bbox = self.delegate.textbbox(xy, text, font=font, **kwargs)
+        # A text's halo (stroke_fill) colours its outline; only its width changes the box.
+        bbox = self.delegate.textbbox(xy, text, font=font,
+                                      **{key: value for key, value in kwargs.items() if key != "stroke_fill"})
         self.text_calls.append({"xy": xy, "text": text, "bbox": bbox})
         return self.delegate.text(xy, text, font=font, fill=fill, **kwargs)
 
@@ -977,8 +979,8 @@ def test_market_card_keeps_representative_title_and_leader_complete():
 
     # Question and leader wrap onto lines of their own, every word kept.
     lines = [call["text"] for call in draw.text_calls]
-    title_lines = [call["text"] for call in draw.text_calls if 58 + 40 < call["xy"][1] < 58 + 86]
-    leader_lines = [call["text"] for call in draw.text_calls if 58 + 186 < call["xy"][1] < 58 + 216]
+    title_lines = [call["text"] for call in draw.text_calls if 58 + 96 < call["xy"][1] < 58 + 140]
+    leader_lines = [call["text"] for call in draw.text_calls if 58 + 206 < call["xy"][1] < 58 + 232]
     assert " ".join(title_lines) == title
     assert " ".join(leader_lines) == leader
     assert not any(line.endswith("...") for line in lines)
@@ -1265,3 +1267,71 @@ def test_the_market_columns_draw_cached_team_marks_and_polymarket_logo(tmp_path)
     assert (0, 40, 90) in colours((560, 100, 640, 140))
     # Polymarket's logo heads the columns in the page's ink.
     assert tuple(DAY_PALETTE["ink"][:3]) in colours((477, 68, 640, 98))
+
+
+def test_a_market_keeps_its_leaders_own_picture_and_encodes_upload_urls():
+    event = {
+        "id": "e1", "title": "Serbia Parliamentary Election Winner", "volume24hr": 900000,
+        "endDate": (NOW + timedelta(days=3)).isoformat(),
+        "image": "https://polymarket-upload.s3.amazonaws.com/serbia flag.png",
+        "icon": "https://polymarket-upload.s3.amazonaws.com/serbia flag.png",
+        "markets": [
+            {"groupItemTitle": "Student List", "outcomes": '["Yes", "No"]', "outcomePrices": '["0.6", "0.4"]',
+             "image": "https://polymarket-upload.s3.amazonaws.com/students list.png"},
+            {"groupItemTitle": "SNS", "outcomes": '["Yes", "No"]', "outcomePrices": '["0.3", "0.7"]',
+             "image": "https://polymarket-upload.s3.amazonaws.com/serbia flag.png"},
+        ],
+    }
+
+    [row] = normalize_market_events([event], now=NOW)
+
+    assert row["leader"] == "Student List"
+    assert row["leader_image"] == "https://polymarket-upload.s3.amazonaws.com/students%20list.png"
+    assert row["event_image"] == "https://polymarket-upload.s3.amazonaws.com/serbia%20flag.png"
+    # An option showing only the event's own art has no picture of its own.
+    event["markets"][0]["image"] = event["image"]
+    assert normalize_market_events([event], now=NOW)[0]["leader_image"] == ""
+
+
+def test_a_leader_portrait_comes_from_a_persons_wikipedia_page_only(tmp_path, monkeypatch):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    monkeypatch.setattr(plugin, "_cache_dir", lambda create=True: tmp_path)
+    summaries = {
+        "Harry_Kane": {"type": "standard", "description": "English footballer (born 1993)",
+                       "thumbnail": {"source": "https://upload.wikimedia.org/kane.jpg"}},
+        "Texas_Longhorns": {"type": "standard", "description": "Athletic teams of the University of Texas",
+                            "thumbnail": {"source": "https://upload.wikimedia.org/longhorn.png"}},
+    }
+    calls = []
+
+    class Session:
+        def get(self, url, headers=None, timeout=None):
+            calls.append(url)
+            key = url.rsplit("/", 1)[-1]
+            body = summaries.get(key)
+            return SimpleNamespace(status_code=200 if body else 404, json=lambda: body or {})
+
+    monkeypatch.setattr("plugins.orbital_signal.orbital_signal.get_http_session", lambda: Session())
+
+    assert plugin._leader_portrait_url("Harry Kane") == "https://upload.wikimedia.org/kane.jpg"
+    assert plugin._leader_portrait_url("Texas Longhorns") == ""
+    assert plugin._leader_portrait_url("Nobody Here") == ""
+    assert plugin._leader_portrait_url("Yes") == ""  # one word: never looked up
+    calls.clear()
+    # Answers, misses included, are remembered.
+    assert plugin._leader_portrait_url("Harry Kane") == "https://upload.wikimedia.org/kane.jpg"
+    assert plugin._leader_portrait_url("Nobody Here") == "" and calls == []
+
+
+def test_the_heat_dial_fills_to_the_probability_in_its_heat_colour():
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    image = Image.new("RGB", (200, 120), DAY_PALETTE["paper"])
+    color = DAY_PALETTE["red"]
+
+    plugin._draw_gauge(ImageDraw.Draw(image), (100, 80), 40, 0.25, color, DAY_PALETTE, image)
+
+    # The value arc starts at the left end (lit) and the far right of the track stays a pale tint.
+    left = image.getpixel((100 - 36, 80))
+    right = image.getpixel((100 + 36, 78))
+    assert sum(abs(a - b) for a, b in zip(left, color)) < 60
+    assert right != color and sum(right) > sum(color)

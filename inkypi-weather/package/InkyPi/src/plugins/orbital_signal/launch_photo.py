@@ -117,13 +117,13 @@ def load_cached_photo(namespace, cache_key):
         return None
 
 
-def cache_mark(url, namespace, *, allow_network, session=None):
+def cache_mark(url, namespace, *, allow_network, session=None, side=MARK_SIDE):
     """The cache key of a market's mark (a team logo, league icon or event art) at ``url``,
-    downloaded once with its transparency kept and shrunk to MARK_SIDE; "" when unavailable."""
+    downloaded once with its transparency kept and shrunk to ``side``; "" when unavailable."""
     url = _text(url)
     if not url:
         return ""
-    key = photo_cache_key(url)
+    key = photo_cache_key(url if side == MARK_SIDE else f"{url}#{side}")
     if namespace.get_bytes(key, suffix=PHOTO_SUFFIX):
         record_resource_event("market_marks", disk_hits=1)
         return key
@@ -132,7 +132,7 @@ def cache_mark(url, namespace, *, allow_network, session=None):
     try:
         image = _download_candidate(PhotoCandidate(url, "", "", "polymarket"), session or get_http_session(),
                                     mode="RGBA")
-        image.thumbnail((MARK_SIDE, MARK_SIDE), Image.Resampling.LANCZOS)
+        image.thumbnail((side, side), Image.Resampling.LANCZOS)
         namespace.put_bytes(key, _encode_png(image), suffix=PHOTO_SUFFIX)
         record_resource_event("market_marks", downloads=1)
         return key

@@ -4,7 +4,8 @@
   "rendering": "black parts take the page ink and orange parts the page orange, by day and night",
   "atlases": {
     "atlas-a.png": "8e8c9683d86d9d2b9fb5ed7784fe5f134e468ab325fc82a0016ad093ce6b7402",
-    "atlas-b.png": "afdba8b27c7310b19ed5b38a8ab68f15ac3415211e66dabc21d9a03fb0b691dc"
+    "atlas-b.png": "afdba8b27c7310b19ed5b38a8ab68f15ac3415211e66dabc21d9a03fb0b691dc",
+    "market-facts (Creative Claw job fd4ea198-2cee-4f3a-a3d3-b319a5c4aaeb, 1536x512, 1x4)": "60609c6cae16700e60ac8757049a62f8df70789758ac9c0910364eb8c16841c7"
   },
   "icons": {
     "clock": "a7d4ce8cfdc7d4df06865be82b8c50cb2762dac07ce1366ac1bf65ecf71cc41a",
@@ -22,6 +23,10 @@
     "navigation": "b92291083a3c3891087209eb9c9e23dbdb8516a390ad0eec483c9d38732bcf0f",
     "science": "5530f97f1e5046538e7553b67fd419b48125831f0aebb35fe9045d5794787c6a",
     "planetary": "ccdbe2f7ff3d0bc718479d76da02acdac9b43e867fcdc7d40df164b053fa75e8",
-    "rideshare": "f1556ad396c81d8333b5983c698186f87d3fa39976396078ff3a2941810741ae"
+    "rideshare": "f1556ad396c81d8333b5983c698186f87d3fa39976396078ff3a2941810741ae",
+    "volume": "4f60a277315b88a406cb2686285fa204fedd11c2461db125c0ece7fe9ee14adb",
+    "ends": "66bc537124fc4c098ef39ef2c199e501b4134330259c0799105cc3630b29f922",
+    "heat": "80c6dcb4c98475ea9c6129aecb0a81517924545bc5a015bb50a3d2604aa12ba2",
+    "final": "91e8a3780201eee18deea1072a276e83eb285c58b82d9be4e36ea5dc0c0b84a0"
   }
 }
