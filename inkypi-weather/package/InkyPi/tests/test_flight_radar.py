@@ -661,8 +661,9 @@ def test_strips_and_scope_carry_airport_marks_phase_icons_and_the_chart():
     image = Image.new("RGB", (60, 40), theme["panel"])
     draw = ImageDraw.Draw(image)
     pro_view._phase_icon(plugin, draw, (4, 4, 30, 30), "departure", theme)
-    assert image.getpixel((6, 6)) == theme["red"] and (255, 255, 255) in [
-        image.getpixel((x, y)) for x in range(4, 30) for y in range(4, 30)]
+    # A plain icon: the aircraft and runway in the phase colour, no plate behind them.
+    assert image.getpixel((5, 5)) == theme["panel"]
+    assert theme["red"] in [image.getpixel((x, y)) for x in range(4, 30) for y in range(4, 30)]
 
     snapshot = _sample_snapshot()
     now = datetime(2026, 10, 25, 9, 12, tzinfo=flight_radar_module.ZoneInfo("America/Los_Angeles"))

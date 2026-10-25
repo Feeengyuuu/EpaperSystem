@@ -156,7 +156,7 @@ def main():
                     "flags": "flagcdn.com"},
         "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "airports": index,
-    }, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    }, indent=1, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
     with_logo = sum(1 for record in index.values() if record["logo"])
     print(json.dumps({"airports": len(index), "with_logo": with_logo, "countries": len(countries)}))
 

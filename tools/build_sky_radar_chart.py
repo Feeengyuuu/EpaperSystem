@@ -121,7 +121,7 @@ def main():
     with_runways = {runway["airport"] for runway in runways}
     features = {"airports": [airport for ident, airport in sorted(airports.items()) if ident in with_runways],
                 "runways": runways, "navaids": sorted(navaids, key=lambda item: item["ident"])}
-    (OUT / "features.json").write_text(json.dumps(features, indent=1) + "\n", encoding="utf-8")
+    (OUT / "features.json").write_text(json.dumps(features, indent=1) + "\n", encoding="utf-8", newline="\n")
 
     manifest = {
         "schema": 1, "projection": "equirectangular, longitude scaled by cos(center latitude)",
@@ -132,7 +132,7 @@ def main():
         "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "sha256": {name: hashlib.sha256((OUT / name).read_bytes()).hexdigest() for name in ("chart.png", "features.json")},
     }
-    (OUT / "chart.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (OUT / "chart.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps({"size": size, "airports": len(features["airports"]), "runways": len(runways),
                       "navaids": len(navaids)}))
 

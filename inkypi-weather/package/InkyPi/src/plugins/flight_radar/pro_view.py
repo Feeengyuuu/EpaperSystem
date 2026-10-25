@@ -514,17 +514,17 @@ def route_mark(iata, height, max_width):
 
 
 def _phase_icon(plugin, draw, box, phase, theme):
-    """The phase as an icon: a white aircraft in the phase's colour, climbing, descending, parked
-    or level, over a runway line when it is on or near the ground."""
+    """The phase as a plain icon in its colour: an aircraft climbing, descending, parked or level,
+    over a runway line when it is on or near the ground."""
     x0, y0, x1, y1 = box
     _name, role = PHASES[phase]
     bearing, runway = PHASE_ICONS[phase]
-    draw.rounded_rectangle(box, radius=5, fill=theme[role])
+    colour = theme[role]
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2 - (2 if runway else 0)
-    points = plugin._rotate_plane_points(plugin._material_flight_points(0.62), math.radians(bearing), cx, cy)
-    draw.polygon(points, fill=WHITE)
+    points = plugin._rotate_plane_points(plugin._material_flight_points(0.95), math.radians(bearing), cx, cy)
+    draw.polygon(points, fill=colour)
     if runway:
-        draw.line((x0 + 4, y1 - 4, x1 - 4, y1 - 4), fill=WHITE, width=2)
+        draw.line((x0 + 1, y1 - 1, x1 - 1, y1 - 1), fill=colour, width=2)
 
 
 def _route_line(plugin, image, draw, plane, xy, width, theme, font, small):
