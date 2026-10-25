@@ -2097,10 +2097,12 @@ class EsportsRenderMixin:
         time_text, time_font = self._fit_text(draw, time_text, card_x2 - card_x1 - 58, 19, bold=True, min_size=13)
         self._draw_centered(draw, (center_x, y + 44), time_text, time_font, COLORS["text"])
 
-        # The logos stand large, starting just under the time and ending above the names.
+        # The logos stand large, starting just under the time and ending above the names; the two
+        # sides stand apart toward the card's edges, leaving the middle to the time and countdown.
         logo_size = 50
-        left_area = (card_x1 + 22, center_x - 18)
-        right_area = (center_x + 18, card_x2 - 22)
+        side_inset, side_half = 10, 30
+        left_area = (card_x1 + side_inset, card_x1 + side_inset + 2 * side_half)
+        right_area = (card_x2 - side_inset - 2 * side_half, card_x2 - side_inset)
         left_logo_x = int((left_area[0] + left_area[1] - logo_size) / 2)
         right_logo_x = int((right_area[0] + right_area[1] - logo_size) / 2)
         logo_y = y + 54
