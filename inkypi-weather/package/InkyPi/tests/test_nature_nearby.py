@@ -190,3 +190,24 @@ def test_thumbnails_respect_allowlist_cache_only_and_time_budget(tmp_path):
     assert list(first) == [PHOTO] and calls == [PHOTO]
     assert cached[PHOTO].size == (64, 48)
     assert nothing == {}
+
+
+def test_birds_get_their_chinese_names_from_inaturalist(monkeypatch):
+    calls = []
+
+    def fake_get_json(url, params, _context, max_bytes=0, headers=None):
+        calls.append(params["q"])
+        if params["q"] == "Aegolius acadicus":
+            return {"results": [{"name": "Aegolius acadicus", "preferred_common_name": "棕榈鬼鸮"}]}
+        return {"results": [{"name": "Something else", "preferred_common_name": "别的"}]}
+
+    monkeypatch.setattr(sources, "_get_json", fake_get_json)
+    items = [{"name": "Northern Saw-whet Owl", "scientific": "Aegolius acadicus"},
+             {"name": "Western Tanager", "scientific": "Piranga ludoviciana"},
+             {"name": "白头海雕", "scientific": "Haliaeetus leucocephalus"}]
+
+    sources.chinese_bird_names(items, None)
+
+    assert items[0] == {"name": "棕榈鬼鸮", "name_en": "Northern Saw-whet Owl", "scientific": "Aegolius acadicus"}
+    assert items[1]["name"] == "Western Tanager"  # the match was for another species
+    assert calls == ["Aegolius acadicus", "Piranga ludoviciana"]  # an already-Chinese name is not looked up

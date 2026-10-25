@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
+from runtime.refresh_contracts import TaskCancelled
 from utils.http_client import get_http_client
 
 
@@ -242,11 +243,32 @@ def normalize_notable(rows, home):
     return {"species": len(latest), "items": items[:MAX_BIRDS]}
 
 
+def chinese_bird_names(items, context):
+    """Give each bird its Chinese common name from iNaturalist (by scientific name), since eBird's
+    notable feed answers in English; a name not found stays as it is."""
+    for item in items:
+        if not item.get("scientific") or re.search(r"[一-鿿]", item.get("name") or ""):
+            continue
+        try:
+            data = _get_json(f"{V1_URL}/taxa", {"q": item["scientific"], "rank": "species", "per_page": 1,
+                                                "locale": "zh-CN"}, context, max_bytes=128 * 1024)
+        except TaskCancelled:
+            raise
+        except Exception:
+            continue
+        taxon = ((data or {}).get("results") or [{}])[0]
+        name = str(taxon.get("preferred_common_name") or "")
+        if taxon.get("name") == item["scientific"] and re.search(r"[一-鿿]", name):
+            item["name_en"], item["name"] = item["name"], name[:24]
+    return items
+
+
 def fetch_notable(home, radius, key, context):
     params = {"lat": home[0], "lng": home[1], "dist": min(radius, EBIRD_MAX_KM), "back": EBIRD_DAYS,
               "detail": "simple", "sppLocale": "zh_SIM", "maxResults": 200}
-    return normalize_notable(_get_json(EBIRD_NOTABLE_URL, params, context, headers={"X-eBirdApiToken": key}),
-                             home)
+    data = normalize_notable(_get_json(EBIRD_NOTABLE_URL, params, context, headers={"X-eBirdApiToken": key}), home)
+    chinese_bird_names(data["items"], context)
+    return data
 
 
 def valid_notable(data):
