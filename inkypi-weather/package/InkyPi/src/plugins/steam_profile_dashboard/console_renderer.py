@@ -28,6 +28,9 @@ FRIEND_GAME_ICON = 14
 # Black ink around the hero title keeps it legible over busy game artwork.
 TITLE_OUTLINE = 2
 RAIL_SIZE = (181, 480)
+# The bordered plate behind the persona name and its STEAM PLAYER caption; it keeps the
+# left margin and the space above the name clear for the avatar frame.
+NAMEPLATE_BOX = (12, 175, 172, 228)
 # The profile background behind the rail: blur radius, and dimming at its top and bottom.
 BACKDROP_BLUR = 7
 BACKDROP_DIM = (0.78, 0.9)
@@ -278,6 +281,15 @@ class _Console:
             result.append(line.rstrip())
         return result or [""]
 
+    def nameplate(self, box):
+        """A bordered plate under the persona name, so it stands out over any backdrop."""
+        x, y, right, bottom = box
+        plate = Image.new("RGBA", (right - x + 1, bottom - y + 1))
+        ImageDraw.Draw(plate).rounded_rectangle((0, 0, right - x, bottom - y), radius=8,
+                                                fill=(*self.c["navy"], 200),
+                                                outline=self.c["accent"], width=2)
+        self.image.paste(plate, (x, y), plate)
+
     def panel(self, box, header=0):
         self.draw.rounded_rectangle(box, radius=4, fill=self.c["panel"],
                                     outline=self.c["border"], width=1)
@@ -382,9 +394,10 @@ class _Console:
         self.draw.line((181, 0, 181, 480), fill=self.c["border"], width=2)
         url = profile.get("avatarfull") or profile.get("avatarmedium") or profile.get("avatar")
         self.framed_avatar(url)
-        self.text((14, 175, 169, 207), profile.get("personaname") or "Steam User",
+        self.nameplate(NAMEPLATE_BOX)
+        self.text((19, 178, 166, 207), profile.get("personaname") or "Steam User",
                   29, bold=True, min_size=18)
-        self.text((15, 209, 166, 222), "STEAM PLAYER", 10, self.c["muted"])
+        self.text((20, 210, 164, 223), "STEAM PLAYER", 10, self.c["muted"])
         self.draw.line((14, 230, 167, 230), fill=self.c["border"])
         level_frame = sidebar_asset("level_frame", 54)
         if level_frame is not None:
