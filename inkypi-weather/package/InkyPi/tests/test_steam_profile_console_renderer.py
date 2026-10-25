@@ -155,6 +155,14 @@ def test_game_rows_use_per_game_hours_and_global_stats_remain_account_totals(plu
     assert any(text == "6/57" for _, text in displayed)
 
 
+def test_playing_row_badge_trails_off_between_the_name_and_hours(plugin, data, displayed):
+    data["profile"].update(gameid="108600", gameextrainfo="Project Zomboid")
+    render_console(plugin, data, (800, 480))
+    badge = [box for box, text in displayed if text == "正在玩..." and 244 <= box[1] < 273]
+    assert badge
+    assert all(box[0] > 521 and box[2] < 599 for box in badge)
+
+
 def test_unknown_current_game_hours_are_not_filled_with_account_totals(plugin, data, displayed):
     data["profile"].update(gameid="777777", gameextrainfo="New Release")
     render_console(plugin, data, (800, 480))
