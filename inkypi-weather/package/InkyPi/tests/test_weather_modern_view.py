@@ -167,3 +167,33 @@ def test_every_card_has_its_icon_and_colour_class():
         plugin_settings={"displayRefreshTime": "true"}, style_sheets=[], font_faces=[])
     for name in ("sun", "wind", "air", "uv", "humidity", "life", "hourly", "week"):
         assert f"mw-t-{name}" in html and f"icon-{name}.png" in html, name
+
+
+def test_the_hero_illustration_follows_the_weather_the_hour_wind_and_heat():
+    def art(code, night=False, force=0, celsius=18):
+        return Path(modern_view._hero_art(str(ART_DIR), code, night, force, celsius)).stem
+
+    assert art("01") == "clear-day" and art("01", celsius=34) == "hot-day" and art("01", night=True) == "clear-night"
+    assert art("04", force=7) == "windy-day" and art("02", night=True, force=7) == "windy-night"
+    assert art("11") == "thunder" and art("11", night=True) == "thunder-night"
+    assert art("53", night=True) == "rain-night" and art("73", night=True) == "snow-night"
+    assert art("10") == "sun-shower" and art("50") == "fog-day" and art("56") == "freezing-rain"
+    assert modern_view._hero_art(str(ART_DIR), "99", False, 0, 18) == ""
+
+
+def test_every_hero_illustration_is_installed_with_its_record():
+    import json
+
+    names = set(modern_view.HERO_ART.values()) | set(modern_view.HERO_NIGHT.values()) | {"windy", "hot"}
+    record = json.loads((ART_DIR / "hero" / "hero.source.json").read_text(encoding="utf-8"))["assets"]
+    for name in names:
+        candidates = [f"{name}.png", f"{name}-day.png"]
+        assert any((ART_DIR / "hero" / file).is_file() and file in record for file in candidates), name
+
+
+def test_the_template_shows_the_hero_illustration_over_the_plain_icon():
+    now = LA.localize(datetime(2026, 10, 24, 12, 0))
+    view = build_view(_params(now, icon="11d"), now, art_dir=str(ART_DIR))
+    assert Path(view["hero_art"]).name == "thunder.png"
+    html = (ART_DIR.parent / "render" / "weather_modern.html").read_text(encoding="utf-8")
+    assert "v.hero_art or current_day_icon" in html

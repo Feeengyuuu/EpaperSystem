@@ -1,0 +1,273 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "generated": "2026-10-24",
+  "use": "the modern Weather hero's illustration beside the temperature, chosen by condition, day/night, wind and heat",
+  "prompt": "four 1536x1024 transparent sheets of six icons (3x2), one style: glossy 3D clay illustration, rich gradients, thin dark navy outline, saturated colours, wide gaps, no text",
+  "processing": "each grid cell trimmed to alpha above 24 and contained in 256x256 (LANCZOS)",
+  "assets": {
+    "clear-day.png": {
+      "sheet": "day",
+      "cell": 0,
+      "job_id": "5b6a9efd-d697-4eee-a1c4-792d536b553e",
+      "source_sha256": "84ee781668418ee046259b22b956cb59b0c720b7307fcf123b3eee2637faab56",
+      "sha256": "c2b377869b8b1e75e85fc69249362e09058de624e8e7b19141d0ea2efde8fe27",
+      "size": [
+        256,
+        255
+      ]
+    },
+    "hot-day.png": {
+      "sheet": "day",
+      "cell": 1,
+      "job_id": "5b6a9efd-d697-4eee-a1c4-792d536b553e",
+      "source_sha256": "84ee781668418ee046259b22b956cb59b0c720b7307fcf123b3eee2637faab56",
+      "sha256": "240b88a2d18039a226d03ede83abc166a57bf2a0abcec8f0ec2a866babda99c3",
+      "size": [
+        226,
+        256
+      ]
+    },
+    "mostly-clear-day.png": {
+      "sheet": "day",
+      "cell": 2,
+      "job_id": "5b6a9efd-d697-4eee-a1c4-792d536b553e",
+      "source_sha256": "84ee781668418ee046259b22b956cb59b0c720b7307fcf123b3eee2637faab56",
+      "sha256": "db17da11cc86dbf0bcf425252e8998dc09d3764acf4f0a30c8b8be46dc19b24e",
+      "size": [
+        256,
+        232
+      ]
+    },
+    "partly-cloudy-day.png": {
+      "sheet": "day",
+      "cell": 3,
+      "job_id": "5b6a9efd-d697-4eee-a1c4-792d536b553e",
+      "source_sha256": "84ee781668418ee046259b22b956cb59b0c720b7307fcf123b3eee2637faab56",
+      "sha256": "39fa6dd8e2f8899e42418e7ce7eff85b0ed208c9c4756c39498329b24718abc3",
+      "size": [
+        256,
+        222
+      ]
+    },
+    "sun-shower.png": {
+      "sheet": "day",
+      "cell": 4,
+      "job_id": "5b6a9efd-d697-4eee-a1c4-792d536b553e",
+      "source_sha256": "84ee781668418ee046259b22b956cb59b0c720b7307fcf123b3eee2637faab56",
+      "sha256": "bbe65d87685518fe3cc0bafb614b5057dc7e831f4ec7d12c2d95f13cb19f1488",
+      "size": [
+        256,
+        245
+      ]
+    },
+    "windy-day.png": {
+      "sheet": "day",
+      "cell": 5,
+      "job_id": "5b6a9efd-d697-4eee-a1c4-792d536b553e",
+      "source_sha256": "84ee781668418ee046259b22b956cb59b0c720b7307fcf123b3eee2637faab56",
+      "sha256": "f3d6f81d75d3cd04452d4802c854a918c9fa1b50cf721f4c708a7093aae0ef9a",
+      "size": [
+        256,
+        204
+      ]
+    },
+    "clear-night.png": {
+      "sheet": "night",
+      "cell": 0,
+      "job_id": "b07e5f37-695e-4c9b-afa4-cedcfb543172",
+      "source_sha256": "bdc621e67be865c8d5c20f33cd7f8a9692127ff46f9c8577ec609c55f455939f",
+      "sha256": "9e8fc72060d342d7feaf7e594a0b31bc2420513f6a7922903910f2fd20e14f6e",
+      "size": [
+        255,
+        256
+      ]
+    },
+    "mostly-clear-night.png": {
+      "sheet": "night",
+      "cell": 1,
+      "job_id": "b07e5f37-695e-4c9b-afa4-cedcfb543172",
+      "source_sha256": "bdc621e67be865c8d5c20f33cd7f8a9692127ff46f9c8577ec609c55f455939f",
+      "sha256": "cb14a9c06872c6f9a89b84b18e71c74ef40d89303731b4424fd5f41e44cf7db7",
+      "size": [
+        256,
+        241
+      ]
+    },
+    "partly-cloudy-night.png": {
+      "sheet": "night",
+      "cell": 2,
+      "job_id": "b07e5f37-695e-4c9b-afa4-cedcfb543172",
+      "source_sha256": "bdc621e67be865c8d5c20f33cd7f8a9692127ff46f9c8577ec609c55f455939f",
+      "sha256": "e8341e42da51d27e6f09d183d6fba6669551e7282753637c83ad91f9481e22ee",
+      "size": [
+        256,
+        217
+      ]
+    },
+    "windy-night.png": {
+      "sheet": "night",
+      "cell": 3,
+      "job_id": "b07e5f37-695e-4c9b-afa4-cedcfb543172",
+      "source_sha256": "bdc621e67be865c8d5c20f33cd7f8a9692127ff46f9c8577ec609c55f455939f",
+      "sha256": "8ff8809a6a8fdc31c4b10b588876edb1e71a8e8ba46d922ec063871de875e6ba",
+      "size": [
+        256,
+        216
+      ]
+    },
+    "fog-night.png": {
+      "sheet": "night",
+      "cell": 4,
+      "job_id": "b07e5f37-695e-4c9b-afa4-cedcfb543172",
+      "source_sha256": "bdc621e67be865c8d5c20f33cd7f8a9692127ff46f9c8577ec609c55f455939f",
+      "sha256": "9fa8e6f93c03447862172c065061a04101f0301134fc5d3487136a1b076c493b",
+      "size": [
+        256,
+        198
+      ]
+    },
+    "overcast-night.png": {
+      "sheet": "night",
+      "cell": 5,
+      "job_id": "b07e5f37-695e-4c9b-afa4-cedcfb543172",
+      "source_sha256": "bdc621e67be865c8d5c20f33cd7f8a9692127ff46f9c8577ec609c55f455939f",
+      "sha256": "4cb9a95374719034691fbc8e70979ce2b54b0cfef4109efc9d9d08f874e98c76",
+      "size": [
+        256,
+        197
+      ]
+    },
+    "drizzle.png": {
+      "sheet": "precip",
+      "cell": 0,
+      "job_id": "61e7fbe4-f5b5-4b8e-9a34-be86bbc0d304",
+      "source_sha256": "6743e6d63b5a63f8e2c58e44f6e8805d5b335ab54f5aaa5ac92ce18613d816ca",
+      "sha256": "a5db35a1b8e211f4df7c921fc1e076787f8246da24317a397e89ca914e498a86",
+      "size": [
+        256,
+        246
+      ]
+    },
+    "rain.png": {
+      "sheet": "precip",
+      "cell": 1,
+      "job_id": "61e7fbe4-f5b5-4b8e-9a34-be86bbc0d304",
+      "source_sha256": "6743e6d63b5a63f8e2c58e44f6e8805d5b335ab54f5aaa5ac92ce18613d816ca",
+      "sha256": "1a30decc9c5d8164ce22f282b1af3289e95dbd2ddb718f3e2bd998f57ed392f9",
+      "size": [
+        256,
+        247
+      ]
+    },
+    "heavy-rain.png": {
+      "sheet": "precip",
+      "cell": 2,
+      "job_id": "61e7fbe4-f5b5-4b8e-9a34-be86bbc0d304",
+      "source_sha256": "6743e6d63b5a63f8e2c58e44f6e8805d5b335ab54f5aaa5ac92ce18613d816ca",
+      "sha256": "4880140d04000b5e984649e27cad431f2e640929ad8fe1e8514cced620930550",
+      "size": [
+        256,
+        251
+      ]
+    },
+    "thunder.png": {
+      "sheet": "precip",
+      "cell": 3,
+      "job_id": "61e7fbe4-f5b5-4b8e-9a34-be86bbc0d304",
+      "source_sha256": "6743e6d63b5a63f8e2c58e44f6e8805d5b335ab54f5aaa5ac92ce18613d816ca",
+      "sha256": "4ccfd721bc082744cc728b4c97bc38ed29f93280ea5755bc314ab6e45ea1bb2e",
+      "size": [
+        256,
+        240
+      ]
+    },
+    "freezing-rain.png": {
+      "sheet": "precip",
+      "cell": 4,
+      "job_id": "61e7fbe4-f5b5-4b8e-9a34-be86bbc0d304",
+      "source_sha256": "6743e6d63b5a63f8e2c58e44f6e8805d5b335ab54f5aaa5ac92ce18613d816ca",
+      "sha256": "00b1b3ae9a852318345b5e7bb538f036cd415a91a6991979a86acb02d1dc78c1",
+      "size": [
+        256,
+        254
+      ]
+    },
+    "light-snow.png": {
+      "sheet": "precip",
+      "cell": 5,
+      "job_id": "61e7fbe4-f5b5-4b8e-9a34-be86bbc0d304",
+      "source_sha256": "6743e6d63b5a63f8e2c58e44f6e8805d5b335ab54f5aaa5ac92ce18613d816ca",
+      "sha256": "cadc4b97c357dccc49b6bde052eaf8d7049c53f278d0ebab3f4aa6887f32c665",
+      "size": [
+        256,
+        253
+      ]
+    },
+    "heavy-snow.png": {
+      "sheet": "more",
+      "cell": 0,
+      "job_id": "98cc91a5-2ac6-4ccb-9762-0852675ef7f0",
+      "source_sha256": "e0fdcf385e37e4bd246a0b72de7236008163b4187fff062f6c4ae5863a5d6571",
+      "sha256": "bf2aa27bc8328675c7424d5f3ff1c7413d5e2cdec594f20c2663839d377e745e",
+      "size": [
+        233,
+        256
+      ]
+    },
+    "fog-day.png": {
+      "sheet": "more",
+      "cell": 1,
+      "job_id": "98cc91a5-2ac6-4ccb-9762-0852675ef7f0",
+      "source_sha256": "e0fdcf385e37e4bd246a0b72de7236008163b4187fff062f6c4ae5863a5d6571",
+      "sha256": "6e28f4d5bd0096ee784d4385a1e2028db2858946db024c9133c396557c56a620",
+      "size": [
+        256,
+        233
+      ]
+    },
+    "overcast-day.png": {
+      "sheet": "more",
+      "cell": 2,
+      "job_id": "98cc91a5-2ac6-4ccb-9762-0852675ef7f0",
+      "source_sha256": "e0fdcf385e37e4bd246a0b72de7236008163b4187fff062f6c4ae5863a5d6571",
+      "sha256": "06b1399a9dbbb9de1c527e72ad9f5816afa19c58379709dbfe4fa2947d36c2ec",
+      "size": [
+        256,
+        199
+      ]
+    },
+    "rain-night.png": {
+      "sheet": "more",
+      "cell": 3,
+      "job_id": "98cc91a5-2ac6-4ccb-9762-0852675ef7f0",
+      "source_sha256": "e0fdcf385e37e4bd246a0b72de7236008163b4187fff062f6c4ae5863a5d6571",
+      "sha256": "458cb3e0c47b6692ed335b1ad1af3d1ae8d0e45220f12624b37328d92f373c71",
+      "size": [
+        221,
+        256
+      ]
+    },
+    "snow-night.png": {
+      "sheet": "more",
+      "cell": 4,
+      "job_id": "98cc91a5-2ac6-4ccb-9762-0852675ef7f0",
+      "source_sha256": "e0fdcf385e37e4bd246a0b72de7236008163b4187fff062f6c4ae5863a5d6571",
+      "sha256": "0295b04c27d5bfbc1d0b11a5e1f9b7dbba606adb9edce2a33c4c0c5eaefe02a5",
+      "size": [
+        223,
+        256
+      ]
+    },
+    "thunder-night.png": {
+      "sheet": "more",
+      "cell": 5,
+      "job_id": "98cc91a5-2ac6-4ccb-9762-0852675ef7f0",
+      "source_sha256": "e0fdcf385e37e4bd246a0b72de7236008163b4187fff062f6c4ae5863a5d6571",
+      "sha256": "d19ef38036556176ca9ac6b8f4373386b9af1417e8f301dc8a3dd7db2b4020c2",
+      "size": [
+        224,
+        256
+      ]
+    }
+  }
+}

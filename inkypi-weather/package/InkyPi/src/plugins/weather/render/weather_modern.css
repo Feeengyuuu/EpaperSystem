@@ -221,3 +221,9 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 .mw-tile-title { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--ink); }
 .mw-section-title { align-items: center; }
 .mw-tile-icon { width: 20px; height: 20px; flex: none; }
+
+/* The generated hero illustration carries its own shading and outline: a touch larger, a softer shadow. */
+.mw-hero-icon.mw-hero-art {
+  flex-basis: 116px; height: 116px; margin: -16px -6px -12px 0;
+  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.16));
+}

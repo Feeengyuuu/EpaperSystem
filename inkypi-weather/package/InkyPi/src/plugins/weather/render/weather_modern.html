@@ -36,7 +36,7 @@
         {# The weather itself stands large beside the temperature, filling the hero's right. #}
         <div class="mw-temp-row">
           <div class="mw-temp">{{ current_temperature }}<span class="mw-temp-unit">{{ temperature_unit }}</span></div>
-          <img class="mw-hero-icon" src="{{ current_day_icon }}" alt="">
+          <img class="mw-hero-icon{% if v.hero_art %} mw-hero-art{% endif %}" src="{{ v.hero_art or current_day_icon }}" alt="">
         </div>
         <div class="mw-condition">
           <span>{{ v.condition }}</span>

@@ -25,6 +25,23 @@ CONDITIONS = {
 }
 # Scenes that differ by day and night; the others read the same at any hour.
 SCENES_WITH_NIGHT = {"clear", "cloudy"}
+# The hero's illustration for each condition (art/hero/, generated as one set): "<name>-day"
+# or "<name>" by day, HERO_NIGHT's drawing at night; strong wind over a calm sky and a hot
+# clear day have their own.
+HERO_ART = {
+    "01": "clear", "02": "mostly-clear", "022": "mostly-clear", "03": "partly-cloudy", "04": "overcast",
+    "09": "heavy-rain", "10": "sun-shower", "11": "thunder", "13": "heavy-snow", "48": "fog", "50": "fog",
+    "51": "drizzle", "53": "rain", "56": "freezing-rain", "57": "freezing-rain", "71": "light-snow",
+    "73": "heavy-snow", "77": "light-snow",
+}
+HERO_NIGHT = {
+    "clear": "clear-night", "mostly-clear": "mostly-clear-night", "partly-cloudy": "partly-cloudy-night",
+    "overcast": "overcast-night", "windy": "windy-night", "fog": "fog-night", "thunder": "thunder-night",
+    "sun-shower": "rain-night", "drizzle": "rain-night", "rain": "rain-night", "heavy-rain": "rain-night",
+    "freezing-rain": "rain-night", "light-snow": "snow-night", "heavy-snow": "snow-night",
+}
+CALM_SKIES = {"clear", "mostly-clear", "partly-cloudy", "overcast"}
+WINDY_FORCE, HOT_CELSIUS = 6, 32
 WEEKDAYS = {"Mon": "周一", "Tue": "周二", "Wed": "周三", "Thu": "周四", "Fri": "周五", "Sat": "周六", "Sun": "周日"}
 WEEKDAY_NAMES = "一二三四五六日"
 WIND_DIRECTIONS = ("北", "东北", "东", "东南", "南", "西南", "西", "西北")
@@ -87,6 +104,8 @@ def build_view(params, now, *, art_dir=None):
     view["best"] = _best_window(hourly, units)
     view["indices"] = _life_indices(view, scene, celsius, forecast[1:3])
     view["mascot"] = _mascot(view, scene, art_dir, celsius)
+    view["hero_art"] = _hero_art(art_dir, code, bool(sun.get("night")), (view.get("wind") or {}).get("force") or 0,
+                                 _celsius(_number(params.get("current_temperature")), units))
     view["effect"] = _page_effect(scene, now)
     view["icons"] = _tile_icons(art_dir)
     return view
@@ -105,6 +124,31 @@ def _tile_icons(art_dir):
         return {}
     paths = {name: os.path.join(art_dir, f"icon-{name}.png") for name in TILE_ICONS}
     return {name: path for name, path in paths.items() if os.path.isfile(path)}
+
+
+def _hero_art(art_dir, code, night, force, celsius):
+    """The hero's own illustration (art/hero/<name>.png) for the weather now, or "" for the icon.
+
+    The condition picks the drawing; a calm sky turns to wind from WINDY_FORCE, a clear day to
+    heat from HOT_CELSIUS, and the night has its own moonlit drawings (a day one stands in
+    where it has none).
+    """
+    base = HERO_ART.get(code)
+    if not art_dir or base is None:
+        return ""
+    if base in CALM_SKIES and force >= WINDY_FORCE:
+        base = "windy"
+    names = []
+    if night:
+        names.append(HERO_NIGHT.get(base, base))
+    elif base == "clear" and celsius is not None and celsius >= HOT_CELSIUS:
+        names.append("hot-day")
+    names += [f"{base}-day", base]
+    for name in names:
+        path = os.path.join(art_dir, "hero", f"{name}.png")
+        if os.path.isfile(path):
+            return path
+    return ""
 
 
 def _scene_path(art_dir, scene):
