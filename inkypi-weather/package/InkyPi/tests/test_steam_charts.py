@@ -190,7 +190,9 @@ def test_generate_image_maps_legacy_mode_and_clamps_item_count():
     assert calls["images"] is False
 
 
-def test_generate_image_combined_mode_renders_two_top_five_live_groups():
+def test_generate_image_combined_mode_renders_two_top_five_live_groups(tmp_path, monkeypatch):
+    # The boards' rank history lands in the cache, not the source tree.
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path))
     plugin = _plugin()
     calls = {"sources": [], "metadata_batches": []}
 
