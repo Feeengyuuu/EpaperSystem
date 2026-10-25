@@ -33,6 +33,14 @@ SUMMARY_MAX_CHARS = 60
 # The page shows one lead and this many list rows; at most two come from one chat.
 VISIBLE_COUNT = 7
 PER_CHAT_VISIBLE = 2
+# Focus dialogs (the owner's must-read chats) score higher by weight and get one more row,
+# while the others keep at least two rows of the page.
+DEFAULT_FOCUS_CHATS = "吃瓜大佬*2, 吃瓜群众*2"
+FOCUS_DEFAULT_WEIGHT = 2
+FOCUS_MAX_WEIGHT = 3
+FOCUS_SCORE_STEP = 10
+FOCUS_EXTRA_ROWS = 1
+FOCUS_VISIBLE_LIMIT = VISIBLE_COUNT - 2
 # A picture leads when it scores within this much of the best story.
 MEDIA_LEAD_MARGIN = 10
 
@@ -67,6 +75,7 @@ INVITE_LINK = re.compile(r"(?:t\.me|telegram\.me)/(?:\+|joinchat/)", re.IGNORECA
 LINK = re.compile(r"https?://\S+|(?<![\w.])t\.me/\S+", re.IGNORECASE)
 MENTION = re.compile(r"(?<![\w@])@[A-Za-z][A-Za-z0-9_]{3,}")
 TERM_SPLIT = re.compile(r"[,，、;；\n]+")
+FOCUS_TERM = re.compile(r"^(.*?)\s*[*×xX:：]\s*(\d)$")
 
 SYSTEM_PROMPT = (
     "你是用户的 Telegram 未读消息编辑。用户会把每条消息的对话名、对话类型（频道/群聊/私聊）、"
@@ -109,6 +118,18 @@ def split_terms(value):
     return [term.strip().casefold() for term in TERM_SPLIT.split(str(value or "")) if term.strip()]
 
 
+def focus_terms(value):
+    """(name, weight) pairs from a focus setting such as "吃瓜大佬*3, 吃瓜群众"; weight 1-3."""
+    terms = []
+    for raw in TERM_SPLIT.split(str(value or "")):
+        match = FOCUS_TERM.match(raw.strip())
+        name, weight = (match.group(1), int(match.group(2))) if match else (raw, FOCUS_DEFAULT_WEIGHT)
+        name = name.strip().casefold()
+        if name:
+            terms.append((name, max(1, min(FOCUS_MAX_WEIGHT, weight))))
+    return terms
+
+
 class Rules:
     """The owner's terms and chats, plus the built-in ad rules."""
 
@@ -118,6 +139,8 @@ class Rules:
         self.boost_terms = split_terms(settings.get("boostKeywords"))
         self.block_chats = set(split_terms(settings.get("blockChats")))
         self.pin_chats = set(split_terms(settings.get("pinChats")))
+        focus = settings.get("focusChats")
+        self.focus_chats = focus_terms(DEFAULT_FOCUS_CHATS if focus is None else focus)
 
     @staticmethod
     def chat_names(item):
@@ -136,6 +159,12 @@ class Rules:
 
     def pinned(self, item):
         return bool(self.pin_chats & self.chat_names(item))
+
+    def focus_weight(self, item):
+        """The weight of the focus term found in the chat's title or username, 0 when none."""
+        names = self.chat_names(item)
+        return max((weight for term, weight in self.focus_chats if any(term in name for name in names)),
+                   default=0)
 
     def ad_reason(self, item):
         """Why ``item`` is dropped before ranking, or "" when it stays."""
@@ -171,6 +200,7 @@ class Rules:
             value += 15
         if self.pinned(item):
             value += 20
+        value += FOCUS_SCORE_STEP * self.focus_weight(item)
         value += min(10, len(text) // 30)
         if str(item.get("media_kind") or "") in {"photo", "video"}:
             value += 5
@@ -300,8 +330,11 @@ class Curator:
             tag = "私聊"
         if self.rules.pinned(item):
             score = min(100, score + 20)
+        focus = self.rules.focus_weight(item)
+        if focus and source == "ai":
+            score = min(100, score + FOCUS_SCORE_STEP * focus)
         return {"score": score, "tag": tag, "headline": headline, "summary": summary,
-                "source": source, "pinned": self.rules.pinned(item)}
+                "source": source, "pinned": self.rules.pinned(item), "focus": focus}
 
     def _apply_ai(self, items):
         pending = [item for item in items if str(item.get("key")) not in self.ai_cache][:AI_MAX_ITEMS]
@@ -405,7 +438,10 @@ def clean_line(value, limit):
 
 
 def order_for_page(items):
-    """Best first; the first VISIBLE_COUNT take at most PER_CHAT_VISIBLE from one chat."""
+    """Best first; the first VISIBLE_COUNT take at most PER_CHAT_VISIBLE from one chat.
+
+    A focus chat may take one row more, and focus chats together leave two rows to the rest.
+    """
     ranked = sorted(
         items,
         key=lambda item: (
@@ -415,12 +451,16 @@ def order_for_page(items):
         ),
         reverse=True,
     )
-    visible, overflow, per_chat = [], [], {}
+    visible, overflow, per_chat, focus_rows = [], [], {}, 0
     for item in ranked:
         chat = str(item.get("chat_id") or item.get("chat_title") or "")
-        if len(visible) < VISIBLE_COUNT and per_chat.get(chat, 0) < PER_CHAT_VISIBLE:
+        focus = bool(item["curation"].get("focus"))
+        rows = PER_CHAT_VISIBLE + (FOCUS_EXTRA_ROWS if focus else 0)
+        if (len(visible) < VISIBLE_COUNT and per_chat.get(chat, 0) < rows
+                and (not focus or focus_rows < FOCUS_VISIBLE_LIMIT)):
             visible.append(item)
             per_chat[chat] = per_chat.get(chat, 0) + 1
+            focus_rows += focus
         else:
             overflow.append(item)
     return visible + overflow

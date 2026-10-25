@@ -255,3 +255,30 @@ def test_rows_name_the_chat_kind_by_icon_and_mark_important_stories(tmp_path):
         plugin._draw_story_row(image, draw, item, (486, 72, 786, 128), palette)
 
     assert pasted == ["important", "kind_private", "kind_group", "important", "kind_channel"]
+
+
+def test_focus_chats_weigh_in_take_one_more_row_and_leave_two_rows_to_others():
+    rules = Rules({"focusChats": "吃瓜大佬*3, 吃瓜群众"})
+    assert rules.focus_weight(message("a", "x", chat="吃瓜大佬@Gdan21")) == 3
+    assert rules.focus_weight(message("b", "x", chat="吃瓜群众")) == 2
+    assert rules.focus_weight(message("c", "x", chat="科技频道")) == 0
+    # Unset means the owner's default focus chats; an emptied field means none.
+    assert Rules({}).focus_weight(message("d", "x", chat="吃瓜群众")) == 2
+    assert Rules({"focusChats": ""}).focus_weight(message("e", "x", chat="吃瓜群众")) == 0
+
+    items = (
+        [message(f"dalao-{index}", "频道爆料 " * 12, chat="吃瓜大佬@Gdan21") for index in range(5)]
+        + [message(f"crowd-{index}", "群里讨论 " * 12, chat="吃瓜群众", kind="group") for index in range(5)]
+        + [message(f"other-{index}", "普通资讯 " * 12, chat=f"频道 {index}") for index in range(5)]
+    )
+    ranked = curator({"curationMode": "rules"}).curate(items)
+    visible = ranked[:VISIBLE_COUNT]
+    per_chat = {}
+    for item in visible:
+        per_chat[item["chat_title"]] = per_chat.get(item["chat_title"], 0) + 1
+    focus_rows = per_chat.get("吃瓜大佬@Gdan21", 0) + per_chat.get("吃瓜群众", 0)
+
+    assert max(per_chat.get("吃瓜大佬@Gdan21", 0), per_chat.get("吃瓜群众", 0)) == PER_CHAT_VISIBLE + 1
+    assert focus_rows == VISIBLE_COUNT - 2
+    assert all(item["curation"]["focus"] for item in visible[:focus_rows])
+    assert len(ranked) == 15

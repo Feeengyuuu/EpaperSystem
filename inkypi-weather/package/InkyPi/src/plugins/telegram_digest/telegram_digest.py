@@ -412,6 +412,7 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
         include_outgoing = self._enabled(settings.get("includeOutgoing"), default=False)
         include_text = self._enabled(settings.get("includeText"), default=True)
         display_read_keys = self._display_read_key_set(cache)
+        display_cursors = self._display_cursors(display_read_keys)
         curator = Curator(settings, cache.get("curation"), now, api_key=config.get("openai_key"))
         budget = config.get("budget_seconds")
         deadline = time.monotonic() + float(budget) if budget else None
@@ -457,11 +458,19 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
                 entity = getattr(dialog, "entity", None)
                 if entity is None:
                     continue
-                fetch_limit = self._account_scan_limit(dialog, messages_per_dialog, unread_count, unread_only, display_read_keys)
+                chat = self._dialog_chat(dialog)
+                # Focus chats offer twice the candidates, so they can fill their extra row.
+                focus = curator.rules.focus_weight(
+                    {"chat_title": chat.get("title"), "chat_username": chat.get("username"), "chat_id": chat.get("id")})
+                per_dialog = messages_per_dialog * (2 if focus else 1)
+                cursor = display_cursors.get(str(chat.get("id") or ""))
+                # With a cursor the queries start past what was shown, so no overfetch for it.
+                fetch_limit = self._account_scan_limit(dialog, per_dialog, unread_count, unread_only,
+                                                       set() if cursor else display_read_keys)
                 if fetch_limit <= 0:
                     continue
                 kept_for_dialog = 0
-                message_query = {
+                base_query = {
                     # Outgoing messages and known ads are skipped locally, so a
                     # bounded overfetch keeps them from hiding later unread ones.
                     "limit": (
@@ -469,38 +478,39 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
                         if include_outgoing
                         else min(
                             ACCOUNT_SCAN_LIMIT_CAP,
-                            max(fetch_limit, messages_per_dialog * 4),
+                            max(fetch_limit, per_dialog * 4),
                         )
                     ),
                     "reverse": False,
                 }
                 if not include_text:
-                    message_query["filter"] = self._telethon_media_filter()
-                if unread_only:
-                    read_inbox_max_id = self._account_read_inbox_max_id(dialog)
-                    if read_inbox_max_id is not None:
-                        message_query["min_id"] = read_inbox_max_id
-                async for message in self._aiter(
-                    client.iter_messages(entity, **message_query)
-                ):
-                    if message is None:
-                        continue
-                    if not include_outgoing and bool(getattr(message, "out", False)):
-                        continue
-                    key = self._account_message_key(dialog, message)
-                    if key in display_read_keys:
-                        continue
-                    scanned += 1
-                    if curator.is_known_filtered(key):
-                        curator.note_known_filtered({"key": key, "chat_title": self._dialog_chat(dialog).get("title")})
-                        continue
-                    item = await self._account_message_item(client, dialog, message, existing, include_text=include_text)
-                    if item:
-                        messages[item["key"]] = item
-                        message_objects[item["key"]] = message
-                        kept_for_dialog += 1
-                        if kept_for_dialog >= messages_per_dialog:
-                            break
+                    base_query["filter"] = self._telethon_media_filter()
+                floor = self._account_read_inbox_max_id(dialog) if unread_only else None
+                for message_query in self._account_message_queries(base_query, floor, cursor):
+                    if kept_for_dialog >= per_dialog:
+                        break
+                    async for message in self._aiter(
+                        client.iter_messages(entity, **message_query)
+                    ):
+                        if message is None:
+                            continue
+                        if not include_outgoing and bool(getattr(message, "out", False)):
+                            continue
+                        key = self._account_message_key(dialog, message)
+                        if key in display_read_keys:
+                            continue
+                        scanned += 1
+                        if curator.is_known_filtered(key):
+                            curator.note_known_filtered({"key": key, "chat_title": chat.get("title")})
+                            continue
+                        item = await self._account_message_item(client, dialog, message, existing,
+                                                                include_text=include_text)
+                        if item:
+                            messages[item["key"]] = item
+                            message_objects[item["key"]] = message
+                            kept_for_dialog += 1
+                            if kept_for_dialog >= per_dialog:
+                                break
 
             candidates = sorted(
                 messages.values(),
@@ -531,6 +541,38 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
         payload["status"]["ai_error"] = curator.ai_error
         self._attach_display_read_state(payload, cache)
         return payload
+
+    @staticmethod
+    def _account_message_queries(base_query, floor, cursor):
+        """Newest unread first; once a chat has shown some, new arrivals and then the backlog.
+
+        ``cursor`` is the (oldest, newest) shown message id, so every refresh reaches further
+        back into a long unread list instead of re-reading its newest end.
+        """
+        if cursor is None:
+            query = dict(base_query)
+            if floor is not None:
+                query["min_id"] = floor
+            return [query]
+        oldest, newest = cursor
+        fresh = dict(base_query, min_id=max(floor or 0, newest))
+        backlog = dict(base_query, max_id=oldest)
+        if floor is not None:
+            backlog["min_id"] = floor
+        return [fresh, backlog]
+
+    @staticmethod
+    def _display_cursors(keys):
+        """Each chat's oldest and newest shown message id, from the remembered display keys."""
+        cursors = {}
+        for key in keys or ():
+            chat, _, raw_id = str(key).rpartition(":")
+            if not chat or not raw_id.isdigit():
+                continue
+            message_id = int(raw_id)
+            oldest, newest = cursors.get(chat, (message_id, message_id))
+            cursors[chat] = (min(oldest, message_id), max(newest, message_id))
+        return cursors
 
     def _account_message_key(self, dialog, message):
         chat = self._dialog_chat(dialog)

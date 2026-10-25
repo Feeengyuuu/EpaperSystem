@@ -451,6 +451,9 @@ class FakeTelegramClient:
         min_id = kwargs.get("min_id")
         if min_id is not None:
             messages = [message for message in messages if int(message.id) > int(min_id)]
+        max_id = kwargs.get("max_id")
+        if max_id is not None:
+            messages = [message for message in messages if int(message.id) < int(max_id)]
         if kwargs.get("reverse") is True:
             messages = list(reversed(messages))
         return async_items(messages[:limit])
@@ -1677,3 +1680,84 @@ def test_the_lower_picture_is_the_leads_own_album_photo_before_another_story(tmp
     # The album photo is fetched with the lead, as sharp as the lead.
     assert plugin._album_siblings(dict(lead, media_kind="photo"), [lead, dict(sibling, media_kind="photo")]) == [
         dict(sibling, media_kind="photo")]
+
+
+def test_account_mode_pages_back_through_a_long_unread_chat(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 6, 27, 18, 42, tzinfo=timezone.utc)
+    session_base = tmp_path / "telegram_account"
+    session_base.with_suffix(".session").write_text("authorized", encoding="utf-8")
+    entity = SimpleNamespace(id=-100123, username="gossip", title="吃瓜群众")
+    dialog = SimpleNamespace(entity=entity, id=-100123, title="吃瓜群众", unread_count=12,
+                             dialog=SimpleNamespace(read_inbox_max_id=40))
+    messages = [
+        SimpleNamespace(id=message_id, date=now, raw_text=f"Unread {message_id}", message=f"Unread {message_id}",
+                        photo=None, video=None, gif=None, document=None, out=False)
+        for message_id in range(52, 40, -1)
+    ]
+    FakeTelegramClient.dialogs = [dialog]
+    FakeTelegramClient.messages_by_entity = {id(entity): messages}
+    FakeTelegramClient.download_calls = []
+    FakeTelegramClient.message_calls = []
+    FakeTelegramClient.instances = []
+    FakeTelegramClient.authorized = True
+    monkeypatch.setattr(plugin, "_telethon_client_class", lambda: FakeTelegramClient)
+    # The last two refreshes showed 52-49; the next one continues below them.
+    plugin._write_state({"schema": STATE_VERSION, "display_read": {
+        "keys": ["-100123:52", "-100123:51", "-100123:50", "-100123:49"]}})
+
+    payload = plugin._payload(
+        {
+            "accessMode": "account",
+            "telegramApiId": "12345",
+            "telegramApiHash": "hash-value",
+            "telegramSessionPath": str(session_base),
+            "messagesPerDialog": "2",
+            "curationMode": "off",
+            "focusChats": "",
+        },
+        DummyDeviceConfig(),
+        now,
+    )
+
+    assert sorted(item["key"] for item in payload["messages"]) == ["-100123:47", "-100123:48"]
+    fresh, backlog = FakeTelegramClient.message_calls
+    assert fresh["min_id"] == 52
+    assert backlog["max_id"] == 49
+    assert backlog["min_id"] == 40
+
+
+def test_focus_chats_offer_twice_the_candidates(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path)
+    now = datetime(2026, 6, 27, 18, 42, tzinfo=timezone.utc)
+    session_base = tmp_path / "telegram_account"
+    session_base.with_suffix(".session").write_text("authorized", encoding="utf-8")
+    entity = SimpleNamespace(id=-100777, username="dalao", title="吃瓜大佬@Gdan21")
+    dialog = SimpleNamespace(entity=entity, id=-100777, title="吃瓜大佬@Gdan21", unread_count=9,
+                             dialog=SimpleNamespace(read_inbox_max_id=0))
+    FakeTelegramClient.dialogs = [dialog]
+    FakeTelegramClient.messages_by_entity = {id(entity): [
+        SimpleNamespace(id=message_id, date=now, raw_text=f"爆料 {message_id}", message=f"爆料 {message_id}",
+                        photo=None, video=None, gif=None, document=None, out=False)
+        for message_id in range(9, 0, -1)
+    ]}
+    FakeTelegramClient.download_calls = []
+    FakeTelegramClient.message_calls = []
+    FakeTelegramClient.instances = []
+    FakeTelegramClient.authorized = True
+    monkeypatch.setattr(plugin, "_telethon_client_class", lambda: FakeTelegramClient)
+
+    payload = plugin._payload(
+        {
+            "accessMode": "account",
+            "telegramApiId": "12345",
+            "telegramApiHash": "hash-value",
+            "telegramSessionPath": str(session_base),
+            "messagesPerDialog": "3",
+            "curationMode": "rules",
+        },
+        DummyDeviceConfig(),
+        now,
+    )
+
+    assert len(payload["messages"]) == 6
