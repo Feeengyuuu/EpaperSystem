@@ -23,9 +23,11 @@ from plugins.sports_dashboard import cs2_branding
 from plugins.sports_dashboard.common import LOCAL_CS2_TEAM_LOGO_DIR
 from utils.fonts import load_font
 
+from . import lolesports_pro
 from .bo3_stats import MAP_NAMES, WIN_DAYS
 from .hltv_players import ROLE_NAMES as CS2_ROLES
 from .pro_roster import ROLE_LABELS
+from .pro_tracker import LOL_FORM_AXES
 
 HERO_H = 152
 # The LoL band: the pro's photo (its transparent margins trimmed) at the left at nearly the
@@ -57,6 +59,17 @@ PHOTO_ZOOM = 1.18
 # The win under its photo: the tag row, the opponent line, one row per map (its art chip
 # WIN_MAP_CHIP), and the rows over which the photo fades into the page above the text.
 WIN_TAG_H, WIN_HEADER_H, WIN_ROW_H, WIN_MAP_CHIP, WIN_FADE = 26, 20, 16, (24, 13), 26
+# The LoL card: the ranked form chart's axes and the tag each one's strength earns; the pro
+# corner's champion splash and dragon colours; pro results older than LOL_STAGE_DAYS (and a
+# next series further off) count as out of season.
+LOL_FORM_LABELS = {"damage": "输出", "farm": "发育", "teamfight": "参团", "vision": "视野", "survival": "生存",
+                   "kills": "击杀"}
+LOL_ARCHETYPES = {"damage": "输出核心", "farm": "发育机器", "teamfight": "团战核心", "vision": "视野大师",
+                  "survival": "稳健运营", "kills": "收割者"}
+CHAMPION_CENTERED_URL = "https://ddragon.leagueoflegends.com/cdn/img/champion/centered/{key}_0.jpg"
+DRAGON_COLOURS = {"infernal": (226, 88, 52), "mountain": (176, 132, 86), "ocean": (62, 152, 214),
+                  "cloud": (196, 214, 228), "hextech": (88, 196, 214), "chemtech": (118, 196, 78), "elder": (236, 198, 112)}
+LOL_STAGE_DAYS = 45
 # An upcoming match's event logo fits this box before the event's name.
 CS2_EVENT_LOGO = (30, 13)
 # HLTV's own mark leads the Top 20 board's title.
@@ -300,7 +313,7 @@ class ProRenderMixin:
             self._text(draw, (704, 13), "对局中", fonts["small_bold"], colors["background"])
         self._tracker_badge(draw, pick, colors, fonts)
 
-        self._draw_lol_recent(image, draw, data, LEFT, colors, fonts)
+        self._draw_lol_card(image, draw, data, account, colors, fonts)
         self._draw_lol_board(image, draw, board, RIGHT, account, colors, fonts)
         return image if tuple(dimensions) == (800, 480) else image.resize(tuple(dimensions), Image.Resampling.LANCZOS)
 
@@ -346,72 +359,303 @@ class ProRenderMixin:
             draw.rounded_rectangle((x, y + 1, x + chip_w, y + 16), radius=4, outline=colors["rule"])
             self._text(draw, (x + 5, y + 3), server, fonts["tiny"], colors["muted"])
 
-    def _draw_lol_recent(self, image, draw, data, box, colors, fonts):
-        x0, y0, x1, y1 = box
-        self._frost(image, box, colors)
-        self._champion_wash(image, ((data.get("matches") or [{}])[0] or {}).get("champion_key"), box)
-        draw.rectangle(box, outline=colors["rule"], width=1)
-        self._text(draw, (x0 + 12, y0 + 7), "最近比赛", fonts["section"], colors["ink"])
-        latest = (data.get("matches") or [{}])[0].get("timestamp")
-        if latest:
-            # Pros go quiet in solo queue around tournaments: say when the newest game was.
-            note = f"最后一局 {self._relative(latest)}"
-            self._text(draw, (x1 - 12 - self._text_width(draw, note, fonts["tiny"]), y0 + 12), note, fonts["tiny"],
+    def _draw_tactical_frame(self, image, draw, colors):
+        """The left card's tactical screen: the frosted panel, a dotted grid behind the chart column,
+        a dotted rule before the matches column and gold brackets on the corners."""
+        x0, y0, x1, y1 = LEFT
+        self._frost(image, LEFT, colors)
+        grid = self._blend(colors["rule"], colors["panel"], 0.22)
+        for y in range(y0 + 14, y1 - 6, GRID_STEP):
+            for x in range(x0 + 10, x0 + 206, GRID_STEP):
+                draw.point((x, y), fill=grid)
+        for y in range(y0 + 12, y1 - 10, 4):
+            draw.point((x0 + 208, y), fill=self._blend(colors["rule"], colors["panel"], 0.4))
+        self._draw_hud_frame(draw, LEFT, colors)
+
+    def _draw_lol_card(self, image, draw, data, account, colors, fonts):
+        """The left card as the CS2 page's tactical screen: the pro's ranked form on a radar against
+        the other pros (their role's mark until enough are known), their top champions and four ranked
+        numbers; beside it their team's pro schedule and results, and the page's dynamic corner."""
+        x0, y0, x1, y1 = LEFT
+        self._draw_tactical_frame(image, draw, colors)
+        form = data.get("form") or {}
+        scores = form.get("scores") or {}
+        self._text(draw, (x0 + 12, y0 + 7), "近期状态", fonts["section"], colors["ink"])
+        if scores:
+            self._draw_tag(draw, LOL_ARCHETYPES[max(LOL_FORM_AXES, key=lambda axis: scores.get(axis, 0))],
+                           (x0 + 88, y0 + 9), colors, fonts)
+        average = form.get("average") or ({axis: 50 for axis in LOL_FORM_AXES} if scores else {})
+        self._draw_radar(image, draw, (x0 + 103, y0 + RADAR_TOP), RADAR_RADIUS, scores, colors, fonts, average,
+                         axes=LOL_FORM_AXES, labels=LOL_FORM_LABELS)
+        self._draw_lol_mastery(image, draw, data.get("mastery"), (x0 + 12, y0 + 233, x0 + 204), colors, fonts)
+        caption_y = y0 + 254
+        if scores:
+            draw.line((x0 + 12, caption_y + 6, x0 + 24, caption_y + 6), fill=colors["gold"], width=2)
+            self._text(draw, (x0 + 27, caption_y), "本人", fonts["tiny"], colors["muted"])
+            draw.line((x0 + 56, caption_y + 6, x0 + 68, caption_y + 6), fill=colors["cyan"], width=2)
+            self._text(draw, (x0 + 71, caption_y), "前 20 平均" if form.get("average") else "位置基准", fonts["tiny"],
                        colors["muted"])
-        champions = data.get("champions") or {}
-        y = y0 + 36
-        for match in (data.get("matches") or [])[:5]:
-            icon = self._icon_from_url(match.get("champion_icon"), 26, match.get("champion_name"))
-            image.paste(icon, (x0 + 12, y), icon)
-            self._single(draw, (x0 + 46, y + 4), self._champion_full_name_from_match(match, champions), fonts["text"],
-                         colors["ink"], 132, 9)
-            self._text(draw, (x0 + 186, y + 4), f"{match['kills']}/{match['deaths']}/{match['assists']}", fonts["body"],
-                       colors["ink"])
-            won = bool(match.get("win"))
-            badge = self._asset_logo(f"icons/{'victory' if won else 'defeat'}.png", (26, 26))
-            if badge:
-                image.paste(badge, (x0 + 261, y), badge)
-            else:
-                chip = (x0 + 262, y + 3, x0 + 286, y + 23)
-                draw.rounded_rectangle(chip, radius=4, fill=colors["green"] if won else colors["red"])
-                self._text(draw, (chip[0] + 5, y + 5), "胜" if won else "负", fonts["small_bold"], colors["background"])
-            self._text(draw, (x0 + 296, y + 1), self._lane_label(match.get("lane")), fonts["tiny"], colors["muted"])
-            self._text(draw, (x0 + 296, y + 14), self._relative(match.get("timestamp")), fonts["tiny"], colors["muted"])
-            y += 32
-        if not data.get("matches"):
-            self._text(draw, (x0 + 14, y0 + 60), "暂无近期比赛", fonts["text"], colors["muted"])
-        # The strip between the games and the numbers: a generated arena vignette, then the top champions.
-        mastery = (data.get("mastery") or [])[:3]
-        art_right = x0 + 112 if mastery else x1 - 12
-        self._paste_asset_logo(image, "art-lol-filler.png", (x0 + 8, y1 - 112, art_right, y1 - 62))
-        if mastery:
-            self._text(draw, (x0 + 120, y1 - 112), "常用英雄", fonts["small_bold"], colors["cyan"])
-            slot = (x1 - x0 - 132) / 3
-            for index, item in enumerate(mastery):
-                left = int(x0 + 120 + index * slot)
-                icon = self._icon_from_url(item.get("champion_icon"), 22, item.get("champion_name"))
-                image.paste(icon, (left, y1 - 92), icon)
-                self._single(draw, (left + 26, y1 - 94), item.get("champion_name"), fonts["tiny"], colors["ink"],
-                             slot - 30, 7)
-                self._text(draw, (left + 26, y1 - 81), self._compact(item.get("points")), fonts["tiny"],
-                           colors["muted"])
         summary = data.get("summary") or {}
-        tiles = (("kda", "KDA", f"{summary.get('kda', 0):.2f}", colors["gold"]),
-                 ("winrate", "胜率", f"{summary.get('winrate', 0):.0f}%",
-                  colors["green"] if summary.get("winrate", 0) >= 50 else colors["red"]),
-                 ("kill_participation", "参团", f"{summary.get('kp', 0):.0f}%", colors["cyan"]),
-                 ("cs_per_minute", "补刀/分", f"{summary.get('cs_per_min', 0):.1f}", colors["gold"]))
-        tile_w = (x1 - x0 - 24) / 4
-        for index, (icon_name, label, value, colour) in enumerate(tiles):
-            left = x0 + 12 + index * tile_w
-            draw.line((left, y1 - 56, left + tile_w - 8, y1 - 56), fill=colors["rule"], width=1)
-            icon = self._asset_logo(f"icons/{icon_name}.png", (17, 17))
-            label_x = left
-            if icon:
-                image.paste(icon, (int(left), y1 - 53), icon)
-                label_x = left + 20
-            self._text(draw, (label_x, y1 - 50), label, fonts["tiny"], colors["muted"])
-            self._single(draw, (left, y1 - 36), value, fonts["big"], colour, tile_w - 10, 12)
+        note = f"排位近 {summary.get('games') or 0} 场"
+        self._text(draw, (x0 + 204 - self._text_width(draw, note, fonts["tiny"]), caption_y), note, fonts["tiny"],
+                   colors["muted"])
+        rate = float(summary.get("winrate") or 0)
+        self._draw_stat_chips(draw, (("KDA", f"{float(summary.get('kda') or 0):.2f}", colors["ink"], "kda"),
+                                     ("胜率", f"{rate:.0f}%", colors["green"] if rate >= 50 else colors["red"], "winrate"),
+                                     ("参团", f"{float(summary.get('kp') or 0):.0f}%", colors["ink"], "kill_participation"),
+                                     ("补刀/分", f"{float(summary.get('cs_per_min') or 0):.1f}", colors["ink"],
+                                      "cs_per_minute")),
+                              (x0 + 8, caption_y + 15, x0 + 204, y1 - 8), colors, fonts, image)
+        self._draw_lol_stage(image, draw, data, account, (x0 + 214, y0 + 8, x1 - 10, y1 - 8), colors, fonts)
+
+    def _draw_lol_mastery(self, image, draw, mastery, line, colors, fonts):
+        """The pro's three champions of most mastery, each icon with its name."""
+        x0, y, x1 = line
+        mastery = (mastery or [])[:3]
+        if not mastery:
+            return
+        self._text(draw, (x0, y + 3), "常用", fonts["tiny"], colors["muted"])
+        slot = (x1 - x0 - 26) / 3
+        for index, item in enumerate(mastery):
+            left = int(x0 + 26 + index * slot)
+            icon = self._icon_from_url(item.get("champion_icon"), 18, item.get("champion_name"))
+            image.paste(icon, (left, y), icon)
+            self._single(draw, (left + 21, y + 2), item.get("champion_name"), fonts["tiny"], colors["ink"], slot - 24, 7)
+
+    def _lol_team_logo(self, url, label, size):
+        """A team's bundled logo when the page ships one, else lolesports' (None when neither loads)."""
+        logo = self._team_logo(label, size)
+        if logo is None:
+            raw = self._image_from_url(url, label)
+            logo = (ImageOps.contain(self._trim_alpha(raw.convert("RGBA")), (size, size), method=Image.Resampling.LANCZOS)
+                    if raw is not None and raw.width > 1 else None)
+        return logo
+
+    def _draw_lol_stage(self, image, draw, data, account, box, colors, fonts):
+        """The team's pro schedule: the next (or live) series, the last results and, below them, the
+        dynamic corner: the newest pro game the pro played (live while it runs) over their champion's
+        splash. Out of season the corner and the rows fall back to the pro's ranked games."""
+        x0, y0, x1, y1 = box
+        esports = data.get("esports") or {}
+        now = datetime.now().timestamp()
+        results = [row for row in esports.get("results") or []
+                   if now - float(row.get("start") or 0) <= LOL_STAGE_DAYS * 86400]
+        series = esports.get("series") if (esports.get("series") or {}).get("games") else None
+        upcoming = esports.get("next")
+        if upcoming and upcoming.get("state") != "inProgress" and float(upcoming.get("start") or 0) - now > LOL_STAGE_DAYS * 86400:
+            upcoming = None
+        matches = data.get("matches") or []
+        pro = bool(results or upcoming)
+        self._text(draw, (x0, y0), "赛程与战绩" if pro else "最近排位", fonts["small_bold"], colors["muted"])
+        record = ((series or (results[0] if results else {}) or {}).get("ours") or {}).get("record")
+        stage = lolesports_pro.STAGE_NAMES.get((series or (results[0] if results else {}) or {}).get("stage") or "", "")
+        if pro and record and stage:
+            note = f"{stage} {record[0]}胜{record[1]}负"
+            self._text(draw, (x1 - self._text_width(draw, note, fonts["tiny"]), y0 + 2), note, fonts["tiny"],
+                       colors["muted"])
+        y = y0 + 20
+        if upcoming:
+            self._draw_lol_next(image, draw, upcoming, (x0, y, x1), colors, fonts)
+            y += 44
+        if pro:
+            own = self._team_logo(account.get("team"), 16)
+            for row in results[:2 if series else 3]:
+                match = {"opponent": row["theirs"]["code"], "opponent_logo": row["theirs"].get("image"),
+                         "score": f"{row['ours'].get('wins') or 0} : {row['theirs'].get('wins') or 0}", "won": row.get("won")}
+                self._draw_cs2_result(image, draw, match, own, (x0, y, x1), colors, fonts, team_logo=self._lol_team_logo)
+                y += 24
+        else:
+            for match in matches[:3]:
+                self._draw_lol_ranked_row(image, draw, match, (x0, y, x1), colors, fonts)
+                y += 24
+        room = (x0, y + 6, x1, y1)
+        champions = data.get("champions") or {}
+        if series and self._draw_lol_series_card(image, draw, series, champions, room, colors, fonts):
+            return
+        if matches and self._draw_lol_ranked_card(image, draw, matches[0], champions, room, colors, fonts):
+            return
+        if y1 - y >= 50:
+            self._paste_asset_logo(image, "art-lol-filler.png", (x0, y + 6, x1, y1))
+
+    def _draw_lol_next(self, image, draw, upcoming, line, colors, fonts):
+        """The next series (a red 直播中 tag while it runs): when, "vs [logo] team", league and stage."""
+        x0, y, x1 = line
+        if upcoming.get("state") == "inProgress":
+            draw.rounded_rectangle((x0, y, x0 + 40, y + 13), radius=6, fill=colors["red"])
+            self._text(draw, (x0 + 5, y), "直播中", fonts["tiny"], colors["background"])
+        else:
+            when = datetime.fromtimestamp(float(upcoming.get("start") or 0))
+            self._text(draw, (x0, y), f"{when:%m/%d} 周{'一二三四五六日'[when.weekday()]} {when:%H:%M}", fonts["tiny"],
+                       colors["cyan"])
+        theirs = upcoming.get("theirs") or {}
+        self._text(draw, (x0, y + 12), "vs", fonts["small_bold"], colors["ink"])
+        name_x = x0 + self._text_width(draw, "vs", fonts["small_bold"]) + 5
+        logo = self._lol_team_logo(theirs.get("image"), theirs.get("code"), 16)
+        if logo is not None:
+            image.paste(logo, (name_x + (16 - logo.width) // 2, y + 13 + (16 - logo.height) // 2), logo)
+            name_x += 20
+        self._single(draw, (name_x, y + 12), self._fitted_name(draw, theirs.get("name") or theirs.get("code") or "-",
+                                                               fonts["small_bold"], x1 - name_x),
+                     fonts["small_bold"], colors["ink"], x1 - name_x, 8)
+        league = lolesports_pro.LEAGUE_NAMES.get(upcoming.get("league"), str(upcoming.get("league") or "").upper())
+        parts = [league, lolesports_pro.STAGE_NAMES.get(upcoming.get("stage") or "", upcoming.get("stage") or ""),
+                 f"BO{upcoming.get('best_of') or 1}"]
+        self._single(draw, (x0, y + 28), " · ".join(part for part in parts if part), fonts["tiny"], colors["muted"],
+                     x1 - x0, 7)
+
+    def _draw_lol_ranked_row(self, image, draw, match, line, colors, fonts):
+        """One ranked game: a 胜/负 tag, the champion, the KDA and how long ago."""
+        x0, y, x1 = line
+        won = bool(match.get("win"))
+        draw.rounded_rectangle((x0, y + 2, x0 + 18, y + 20), radius=4, fill=colors["green"] if won else colors["red"])
+        label = "胜" if won else "负"
+        self._text(draw, (x0 + (18 - self._text_width(draw, label, fonts["small_bold"])) / 2, y + 4), label,
+                   fonts["small_bold"], colors["background"])
+        icon = self._icon_from_url(match.get("champion_icon"), 18, match.get("champion_name"))
+        image.paste(icon, (x0 + 24, y + 2), icon)
+        kda = f"{match.get('kills', 0)}/{match.get('deaths', 0)}/{match.get('assists', 0)}"
+        self._text(draw, (x0 + 48, y + 2), kda, fonts["body"], colors["ink"] if won else colors["muted"])
+        when = self._relative(match.get("timestamp"))
+        self._text(draw, (x1 - self._text_width(draw, when, fonts["tiny"]), y + 6), when, fonts["tiny"], colors["muted"])
+
+    def _champion_splash(self, key):
+        return self._image_from_url(CHAMPION_CENTERED_URL.format(key=key), key) if key else None
+
+    def _draw_card_tag(self, draw, box, tag, fill, corner, colors, fonts):
+        """A card's tag on its picture's top left, and a dark chip with ``corner`` on the top right."""
+        x0, y0, x1, _y1 = box
+        tag_w = self._text_width(draw, tag, fonts["small_bold"]) + 12
+        draw.rounded_rectangle((x0 + 5, y0 + 5, x0 + 5 + tag_w, y0 + 21), radius=8, fill=fill)
+        self._text(draw, (x0 + 11, y0 + 7), tag, fonts["small_bold"], colors["background"])
+        if corner:
+            corner_w = self._text_width(draw, corner, fonts["tiny"]) + 8
+            draw.rectangle((x1 - 5 - corner_w, y0 + 6, x1 - 5, y0 + 20), fill=colors["background"])
+            self._text(draw, (x1 - 1 - corner_w, y0 + 7), corner, fonts["tiny"], colors["ink"])
+
+    def _draw_lol_series_card(self, image, draw, series, champions, box, colors, fonts):
+        """The pro's newest pro game over their champion's splash: a tag (直播中 / 最近胜利 / 最近一局)
+        and the date, then the opponent and the series score, the champion with the pro's KDA, their
+        farm and share of the fights, both teams' towers, barons and dragons, and the series' games.
+        False when there is no room."""
+        x0, y0, x1, y1 = [int(value) for value in box]
+        width, height = x1 - x0, y1 - y0
+        games = series.get("games") or []
+        game = games[-1]
+        rows = [20, 20, 14, 15] + ([16] if len(games) > 1 else [])
+        while rows and height - 6 - sum(rows) < WIN_TAG_H + 10:
+            rows.pop()
+        if len(rows) < 3:
+            return False
+        text_top = height - 6 - sum(rows)
+        image.paste(self._top_picture(self._champion_splash(game.get("champion")), (width, height), text_top, colors),
+                    (x0, y0))
+        draw.rectangle((x0, y0, x1, y1), outline=colors["gold"], width=1)
+        live = game.get("state") != "finished"
+        tag, fill = (("直播中", colors["red"]) if live else ("最近胜利", colors["gold"]) if game.get("won")
+                     else ("最近一局", colors["cyan"]))
+        start = series.get("start")
+        self._draw_card_tag(draw, (x0, y0, x1, y1), tag, fill,
+                            f"{datetime.fromtimestamp(float(start)):%m/%d}" if start else "", colors, fonts)
+        y = y0 + text_top
+        theirs = series.get("theirs") or {}
+        self._text(draw, (x0 + 6, y), "vs", fonts["small_bold"], colors["ink"])
+        name_x = x0 + 11 + self._text_width(draw, "vs", fonts["small_bold"])
+        logo = self._lol_team_logo(theirs.get("image"), theirs.get("code"), 16)
+        if logo is not None:
+            image.paste(logo, (name_x + (16 - logo.width) // 2, y + 1 + (16 - logo.height) // 2), logo)
+            name_x += 20
+        ours_team, theirs_team = game.get("ours") or {}, game.get("theirs") or {}
+        score = (f"{ours_team.get('kills', 0)} : {theirs_team.get('kills', 0)}" if live
+                 else f"{(series.get('ours') or {}).get('wins') or 0} : {theirs.get('wins') or 0}")
+        score_w = self._text_width(draw, score, fonts["body"])
+        self._single(draw, (name_x, y), theirs.get("code") or "-", fonts["small_bold"], colors["ink"],
+                     x1 - 12 - score_w - name_x, 8)
+        self._text(draw, (x1 - 6 - score_w, y - 2), score, fonts["body"], colors["gold"])
+        y += rows[0]
+        champion = (champions.get("by_id") or {}).get(str(game.get("champion") or "").lower()) or {}
+        icon = self._icon_from_url(champion.get("icon_url"), 18, champion.get("name") or game.get("champion"))
+        image.paste(icon, (x0 + 6, y), icon)
+        kda = f"{game.get('kills', 0)}/{game.get('deaths', 0)}/{game.get('assists', 0)}"
+        kda_w = self._text_width(draw, kda, fonts["body"])
+        self._single(draw, (x0 + 28, y + 1), champion.get("name") or game.get("champion") or "-", fonts["small_bold"],
+                     colors["ink"], x1 - 12 - kda_w - (x0 + 28), 8)
+        self._text(draw, (x1 - 6 - kda_w, y), kda, fonts["body"], colors["ink"])
+        y += rows[1]
+        facts = [f"补刀 {game.get('cs', 0)}"]
+        if game.get("kp") is not None and "damage_share" in game:
+            facts += [f"参团 {float(game['kp']) * 100:.0f}%", f"伤害 {float(game['damage_share']) * 100:.0f}%"]
+        else:
+            facts += [f"经济 {float(game.get('gold') or 0) / 1000:.1f}k", f"{game.get('level', 0)} 级"]
+        self._single(draw, (x0 + 6, y), " · ".join(facts), fonts["tiny"], colors["ink"], width - 12, 7)
+        y += rows[2]
+        if len(rows) > 3:
+            self._draw_lol_objectives(draw, ours_team, theirs_team, (x0 + 6, y, x1 - 6), colors, fonts)
+            y += rows[3]
+        if len(rows) > 4:
+            self._draw_lol_series_strip(image, draw, games, champions, (x0 + 6, y, x1 - 6), colors, fonts)
+        return True
+
+    def _draw_lol_objectives(self, draw, ours, theirs, line, colors, fonts):
+        """Both teams' towers and barons (ours first), then a dot per dragon the pro's team took."""
+        x0, y, x1 = line
+        text = f"塔 {ours.get('towers', 0)}:{theirs.get('towers', 0)} · 大龙 {ours.get('barons', 0)}:{theirs.get('barons', 0)} · 龙"
+        self._text(draw, (x0, y), text, fonts["tiny"], colors["muted"])
+        x = x0 + self._text_width(draw, text, fonts["tiny"]) + 4
+        for name in (ours.get("dragons") or [])[:6]:
+            if x + 8 > x1:
+                break
+            draw.ellipse((x, y + 3, x + 7, y + 10), fill=DRAGON_COLOURS.get(name, colors["gold"]))
+            x += 9
+
+    def _draw_lol_series_strip(self, image, draw, games, champions, line, colors, fonts):
+        """Each game of the series: its number, the pro's champion and a green (won) or red (lost) edge."""
+        x0, y, x1 = line
+        slot = min(30, (x1 - x0) / max(1, len(games)))
+        for index, game in enumerate(games):
+            left = int(x0 + index * slot)
+            champion = (champions.get("by_id") or {}).get(str(game.get("champion") or "").lower()) or {}
+            self._text(draw, (left, y + 1), f"G{game.get('number') or index + 1}", fonts["tiny"], colors["muted"])
+            icon = self._icon_from_url(champion.get("icon_url"), 13, champion.get("name") or game.get("champion"))
+            image.paste(icon, (left + 14, y), icon)
+            if game.get("won") is not None:
+                draw.rectangle((left + 13, y - 1, left + 28, y + 14),
+                               outline=colors["green"] if game["won"] else colors["red"])
+
+    def _draw_lol_ranked_card(self, image, draw, match, champions, box, colors, fonts):
+        """The pro's latest ranked game over their champion's splash: a tag and how long ago, the
+        champion with the KDA, the damage, farm and vision, and the kill share and length. False when
+        there is no room."""
+        x0, y0, x1, y1 = [int(value) for value in box]
+        width, height = x1 - x0, y1 - y0
+        rows = [20, 15, 15]
+        text_top = height - 6 - sum(rows)
+        if text_top < WIN_TAG_H + 10:
+            return False
+        image.paste(self._top_picture(self._champion_splash(match.get("champion_key")), (width, height), text_top,
+                                      colors), (x0, y0))
+        draw.rectangle((x0, y0, x1, y1), outline=colors["gold"], width=1)
+        won = bool(match.get("win"))
+        self._draw_card_tag(draw, (x0, y0, x1, y1), "排位" + ("胜利" if won else "失利"),
+                            colors["gold"] if won else colors["cyan"], self._relative(match.get("timestamp")), colors, fonts)
+        y = y0 + text_top
+        icon = self._icon_from_url(match.get("champion_icon"), 18, match.get("champion_name"))
+        image.paste(icon, (x0 + 6, y), icon)
+        kda = f"{match.get('kills', 0)}/{match.get('deaths', 0)}/{match.get('assists', 0)}"
+        kda_w = self._text_width(draw, kda, fonts["body"])
+        self._single(draw, (x0 + 28, y + 1), match.get("champion_name") or "-", fonts["small_bold"], colors["ink"],
+                     x1 - 12 - kda_w - (x0 + 28), 8)
+        self._text(draw, (x1 - 6 - kda_w, y), kda, fonts["body"], colors["ink"])
+        y += rows[0]
+        facts = [f"伤害 {float(match.get('damage') or 0) / 1000:.1f}k", f"补刀 {match.get('cs', 0)}"]
+        if match.get("vision") is not None:
+            facts.append(f"视野 {match['vision']}")
+        self._single(draw, (x0 + 6, y), " · ".join(facts), fonts["tiny"], colors["ink"], width - 12, 7)
+        y += rows[1]
+        lane = self._lane_label(match.get("lane"))
+        facts = [f"参团 {float(match.get('kp') or 0):.0f}%", f"{int(match.get('duration') or 0) // 60} 分钟"]
+        self._single(draw, (x0 + 6, y), " · ".join(([lane] if lane else []) + facts), fonts["tiny"], colors["muted"],
+                     width - 12, 7)
+        return True
 
     def _draw_lol_board(self, image, draw, board, box, account, colors, fonts):
         known = [row for row in board if row.get("tier")]
@@ -531,12 +775,12 @@ class ProRenderMixin:
         return True
 
     @staticmethod
-    def _draw_radar_sweep(layer, centre, reach, roles, shape, colors, scale=1):
+    def _draw_radar_sweep(layer, centre, reach, roles, shape, colors, scale=1, axes=CS2_ROLES):
         """A gold beam swept onto the player's best role with its trail fading out behind it,
         composited onto ``layer``. The beam lights only the player's own shape, so no gold
         reaches past the scores it stands for."""
-        best = max(CS2_ROLES, key=lambda name: roles.get(name) or 0)
-        heading = -90 + 360 * CS2_ROLES.index(best) / len(CS2_ROLES)
+        best = max(axes, key=lambda name: roles.get(name) or 0)
+        heading = -90 + 360 * axes.index(best) / len(axes)
         cx, cy = centre
         scope = (cx - reach, cy - reach, cx + reach, cy + reach)
         beam = Image.new("RGBA", layer.size, (0, 0, 0, 0))
@@ -679,8 +923,11 @@ class ProRenderMixin:
     def _draw_role_tag(self, draw, roles, origin, colors, fonts):
         """A gold tag after the section title naming the player's role, e.g. 火力核心."""
         label = self._cs2_archetype(roles)
-        if not label:
-            return
+        if label:
+            self._draw_tag(draw, label, origin, colors, fonts)
+
+    def _draw_tag(self, draw, label, origin, colors, fonts):
+        """A gold tag after a section title."""
         x, y = origin
         width = self._text_width(draw, label, fonts["small_bold"]) + 14
         draw.rounded_rectangle((x, y, x + width, y + 18), radius=9, fill=colors["gold"])
@@ -690,15 +937,7 @@ class ProRenderMixin:
         """The left card as a tactical screen: gold corner brackets and a dotted grid, the role
         chart on a radar scope, the signature role, and the player's bo3 career in four chips."""
         x0, y0, x1, y1 = LEFT
-        self._frost(image, LEFT, colors)
-        grid = self._blend(colors["rule"], colors["panel"], 0.22)
-        for y in range(y0 + 14, y1 - 6, GRID_STEP):
-            for x in range(x0 + 10, x0 + 206, GRID_STEP):
-                draw.point((x, y), fill=grid)
-        # A dotted rule parts the role chart from the matches column.
-        for y in range(y0 + 12, y1 - 10, 4):
-            draw.point((x0 + 208, y), fill=self._blend(colors["rule"], colors["panel"], 0.4))
-        self._draw_hud_frame(draw, LEFT, colors)
+        self._draw_tactical_frame(image, draw, colors)
         roles = player.get("roles") or {}
         self._text(draw, (x0 + 12, y0 + 7), "角色能力", fonts["section"], colors["ink"])
         self._draw_role_tag(draw, roles, (x0 + 88, y0 + 9), colors, fonts)
@@ -726,7 +965,8 @@ class ProRenderMixin:
             draw.line((x, y, x + dx * arm, y), fill=colors["gold"], width=2)
             draw.line((x, y, x, y + dy * arm), fill=colors["gold"], width=2)
 
-    def _draw_radar(self, image, draw, centre, radius, roles, colors, fonts, average=None):
+    def _draw_radar(self, image, draw, centre, radius, roles, colors, fonts, average=None, axes=CS2_ROLES,
+                    labels=CS2_ROLE_LABELS):
         """The role chart on a radar scope: a ticked bezel round banded rings, the Top 20 average
         dashed in cyan, the player's shape in gold with a soft glow and the sweep onto their best
         role, whose point carries a ring. Drawn RADAR_SCALE times larger and scaled down, so its
@@ -735,7 +975,7 @@ class ProRenderMixin:
         cx, cy = centre
         half = SCOPE_RADIUS + 3
         middle, reach, scope = half * k, radius * k, SCOPE_RADIUS * k
-        count = len(CS2_ROLES)
+        count = len(axes)
 
         def point(index, scale, origin=middle, length=reach):
             angle = 2 * math.pi * index / count
@@ -745,7 +985,7 @@ class ProRenderMixin:
             return [point(index, scale) for index in range(count)]
 
         def shape_of(scores):
-            return [point(index, max(4, min(100, scores.get(name, 0))) / 100) for index, name in enumerate(CS2_ROLES)]
+            return [point(index, max(4, min(100, scores.get(name, 0))) / 100) for index, name in enumerate(axes)]
 
         disc = self._blend(colors["background"], colors["panel"], 0.55)
         band = self._blend(colors["rule"], disc, 0.08)
@@ -785,9 +1025,9 @@ class ProRenderMixin:
             fill = Image.new("RGBA", layer.size, (0, 0, 0, 0))
             ImageDraw.Draw(fill).polygon(shape, fill=(*colors["gold"], 72))
             layer.alpha_composite(fill)
-            self._draw_radar_sweep(layer, (middle, middle), reach * 1.12, roles, shape, colors, k)
+            self._draw_radar_sweep(layer, (middle, middle), reach * 1.12, roles, shape, colors, k, axes)
             pen.line(shape + shape[:1], fill=(*colors["gold"], 255), width=round(2.4 * k), joint="curve")
-            best = max(range(count), key=lambda index: roles.get(CS2_ROLES[index]) or 0)
+            best = max(range(count), key=lambda index: roles.get(axes[index]) or 0)
             for index, (x, y) in enumerate(shape):
                 dot = (4.2 if index == best else 3) * k
                 if index == best:
@@ -800,7 +1040,7 @@ class ProRenderMixin:
         base = image.crop(box).convert("RGBA")
         base.alpha_composite(small)
         image.paste(base.convert("RGB"), box[:2])
-        self._draw_radar_labels(draw, centre, radius, roles, colors, fonts, average)
+        self._draw_radar_labels(draw, centre, radius, roles, colors, fonts, average, axes, labels)
 
     @staticmethod
     def _dashed_loop(pen, points, fill, width, dash, gap):
@@ -820,16 +1060,17 @@ class ProRenderMixin:
                 at += max(step, 0.5)
             travelled += length
 
-    def _draw_radar_labels(self, draw, centre, radius, roles, colors, fonts, average):
+    def _draw_radar_labels(self, draw, centre, radius, roles, colors, fonts, average, axes=CS2_ROLES,
+                           labels=CS2_ROLE_LABELS):
         """Each role's name and score outside the chart: the score gold where it beats the Top 20
         average, muted where it trails it; the player's best role sits on a gold tag."""
         cx, cy = centre
-        best = max(CS2_ROLES, key=lambda name: roles.get(name) or 0) if roles else None
-        for index, name in enumerate(CS2_ROLES):
-            angle = 2 * math.pi * index / len(CS2_ROLES)
+        best = max(axes, key=lambda name: roles.get(name) or 0) if roles else None
+        for index, name in enumerate(axes):
+            angle = 2 * math.pi * index / len(axes)
             x, y = cx + math.sin(angle) * radius * RADAR_LABEL, cy - math.cos(angle) * radius * RADAR_LABEL
             score = roles.get(name)
-            label, value = CS2_ROLE_LABELS[name], str(score if score is not None else "-")
+            label, value = labels[name], str(score if score is not None else "-")
             label_w = self._text_width(draw, label, fonts["tiny"])
             width = label_w + 3 + self._text_width(draw, value, fonts["small_bold"])
             left = x - width / 2
@@ -862,27 +1103,38 @@ class ProRenderMixin:
                        fonts["tiny"], colors["ink"])
 
     def _draw_career_chips(self, draw, career, box, colors, fonts):
-        """The player's bo3 career in four chips under a gold top edge: K/D, damage per round, the
-        share of maps won and titles."""
-        x0, y0, x1, y1 = box
+        """The player's bo3 career in four chips: K/D, damage per round, the share of maps won and titles."""
         kd, adr, rate = career.get("kd"), career.get("adr"), career.get("win_rate")
-        chips = (("K/D", f"{kd:.2f}" if isinstance(kd, (int, float)) else "-"),
-                 ("ADR", f"{adr:.0f}" if isinstance(adr, (int, float)) else "-"),
-                 ("地图胜率", f"{rate * 100:.0f}%" if isinstance(rate, (int, float)) else "-"),
-                 ("冠军", str(career.get("titles") if career.get("titles") is not None else "-")))
+        self._draw_stat_chips(draw, (("K/D", f"{kd:.2f}" if isinstance(kd, (int, float)) else "-"),
+                                     ("ADR", f"{adr:.0f}" if isinstance(adr, (int, float)) else "-"),
+                                     ("地图胜率", f"{rate * 100:.0f}%" if isinstance(rate, (int, float)) else "-"),
+                                     ("冠军", str(career.get("titles") if career.get("titles") is not None else "-"))),
+                              box, colors, fonts)
+
+    def _draw_stat_chips(self, draw, chips, box, colors, fonts, image=None):
+        """(label, value[, colour[, icon]]) chips side by side under a gold top edge, the value large;
+        an icon (assets/icons/<name>.png) leads its label."""
+        x0, y0, x1, y1 = box
         gap = 4
         width = (x1 - x0 - gap * (len(chips) - 1)) / len(chips)
         fill = self._blend(colors["background"], colors["panel"], 0.45)
         edge = self._blend(colors["rule"], colors["panel"], 0.3)
-        for index, (label, value) in enumerate(chips):
+        for index, chip in enumerate(chips):
+            label, value = chip[0], chip[1]
+            colour = chip[2] if len(chip) > 2 else colors["ink"]
+            icon = self._asset_logo(f"icons/{chip[3]}.png", (12, 12)) if image is not None and len(chip) > 3 else None
             left = round(x0 + index * (width + gap))
             right = round(left + width)
             draw.rounded_rectangle((left, y0, right, y1), radius=4, fill=fill, outline=edge)
             draw.line((left + 3, y0, right - 3, y0), fill=colors["gold"], width=2)
-            self._text(draw, (left + (right - left - self._text_width(draw, label, fonts["tiny"])) / 2, y0 + 3), label,
-                       fonts["tiny"], colors["muted"])
+            label_w = self._text_width(draw, label, fonts["tiny"]) + (icon.width + 2 if icon else 0)
+            label_x = left + (right - left - label_w) / 2
+            if icon:
+                image.paste(icon, (int(label_x), y0 + 4), icon)
+                label_x += icon.width + 2
+            self._text(draw, (label_x, y0 + 3), label, fonts["tiny"], colors["muted"])
             self._single(draw, (left + (right - left - self._text_width(draw, value, fonts["body"])) / 2, y0 + 16), value,
-                         fonts["body"], colors["ink"], right - left - 4, 9)
+                         fonts["body"], colour, right - left - 4, 9)
 
     def _draw_cs2_matches(self, image, draw, player, box, colors, fonts):
         x0, y0, x1, y1 = box
@@ -1009,16 +1261,7 @@ class ProRenderMixin:
         # The picture is cut for the room above the text, so the player stays in view there.
         photo, _place = self._cs2_photo(player)
         art = photo if photo is not None else self._map_art(maps[0].get("map"))
-        canvas = Image.new("RGB", (width, height), colors["background"])
-        if art is not None:
-            shown = min(height, text_top + WIN_FADE // 2)
-            canvas.paste(self._focus_crop(art, (width, shown)), (0, 0))
-            ramp = Image.new("L", (1, height), 0)
-            for y in range(max(0, shown - WIN_FADE), height):
-                ramp.putpixel((0, y), round(255 * min(1.0, (y - shown + WIN_FADE) / WIN_FADE)))
-            canvas = Image.composite(Image.new("RGB", (width, height), colors["background"]), canvas,
-                                     ramp.resize((width, height)))
-        image.paste(canvas, (x0, y0))
+        image.paste(self._top_picture(art, (width, height), text_top, colors), (x0, y0))
         draw.rectangle((x0, y0, x1, y1), outline=colors["gold"], width=1)
         tag = "最近胜利"
         tag_w = self._text_width(draw, tag, fonts["small_bold"]) + 12
@@ -1051,6 +1294,20 @@ class ProRenderMixin:
                     + (f" · ADR {win['adr']:.0f}" if isinstance(win.get("adr"), (int, float)) else ""))
             self._single(draw, (x0 + 6, y + 1), line.strip(), fonts["tiny"], colors["gold"], width - 12, 7)
         return True
+
+    def _top_picture(self, art, size, text_top, colors):
+        """``art`` cut for the room above ``text_top`` and fading into the page colour over WIN_FADE
+        rows, the page colour below it (all page colour without art)."""
+        width, height = size
+        canvas = Image.new("RGB", size, colors["background"])
+        if art is None:
+            return canvas
+        shown = max(1, min(height, text_top + WIN_FADE // 2))
+        canvas.paste(self._focus_crop(art, (width, shown)), (0, 0))
+        ramp = Image.new("L", (1, height), 0)
+        for y in range(max(0, shown - WIN_FADE), height):
+            ramp.putpixel((0, y), round(255 * min(1.0, (y - shown + WIN_FADE) / WIN_FADE)))
+        return Image.composite(Image.new("RGB", size, colors["background"]), canvas, ramp.resize(size))
 
     def _draw_win_map(self, image, draw, row, line, colors, fonts):
         """One map of the win: a chip of its art edged green (won) or red (lost), its name, the
@@ -1097,7 +1354,7 @@ class ProRenderMixin:
             return None
         return ImageOps.contain(logo, CS2_EVENT_LOGO, method=Image.Resampling.LANCZOS) if logo.width > 1 else None
 
-    def _draw_cs2_result(self, image, draw, match, own_logo, line, colors, fonts):
+    def _draw_cs2_result(self, image, draw, match, own_logo, line, colors, fonts, team_logo=None):
         """One result as HLTV lists them: a 胜/负 tag, then both logos around the score; a loss is greyed out."""
         x0, y, x1 = line
         won = bool(match.get("won"))
@@ -1115,7 +1372,7 @@ class ProRenderMixin:
             x += self._text_width(draw, text, fonts["body"]) + 3
         x += 2
         # The opponent's logo keeps its slot when it does not load, so the names stay in a column.
-        logo = self._cs2_team_logo(match.get("opponent_logo"), match.get("opponent"), 16)
+        logo = (team_logo or self._cs2_team_logo)(match.get("opponent_logo"), match.get("opponent"), 16)
         if logo is not None:
             image.paste(logo, (int(x) + (16 - logo.width) // 2, y + 3 + (16 - logo.height) // 2), logo)
         x += 20

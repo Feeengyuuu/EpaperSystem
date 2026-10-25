@@ -181,6 +181,8 @@ class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin
             board = self._lol_board(settings, device_config, featured=featured, refresh=live)
             if pick:
                 pick = {**pick, "photo": self._lol_photo(pick["account"], refresh=live)}
+                data = {**data, "esports": self._lol_esports(pick["account"], refresh=live),
+                        "form": self._lol_form(pick["account"], data.get("matches"), refresh=live)}
             media_token = _ALLOW_PROVIDER_MEDIA.set(not theme_render_only)
             try:
                 image = self._render_lol_pro(data, dimensions, theme_context, pick or {}, board)
@@ -350,6 +352,8 @@ class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin
             "gold": int(player.get("goldEarned") or 0),
             "damage": int(player.get("totalDamageDealtToChampions") or 0),
             "kp": (int(player.get("kills") or 0) + int(player.get("assists") or 0)) / team_kills * 100 if team_kills else 0,
+            "vision": int(player.get("visionScore") or 0),
+            "damage_share": (player.get("challenges") or {}).get("teamDamagePercentage"),
         }
 
     def _merge_match_summaries(self, preferred, fallback, recent_limit):
@@ -1414,8 +1418,9 @@ class LoLInfo(ProTrackerMixin, ProRenderMixin, RefreshOnDisplayPresentationMixin
             return "-"
 
     def _lane_label(self, lane):
+        """The lane in Chinese; "" for none (Riot reports "Invalid" for modes without lanes)."""
         labels = {"TOP": "上路", "JUNGLE": "打野", "MIDDLE": "中路", "BOTTOM": "下路", "UTILITY": "辅助"}
-        return labels.get(str(lane or "").upper(), str(lane or "-"))
+        return labels.get(str(lane or "").upper(), "")
 
     def _relative(self, timestamp_ms):
         try:

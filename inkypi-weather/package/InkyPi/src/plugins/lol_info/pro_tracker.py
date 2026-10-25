@@ -10,6 +10,9 @@ How fresh each piece is (the owner's update cadence):
 - the LoL ladder of all twenty: up to LOL_BOARD_BATCH stale accounts (older than
   LOL_BOARD_MINUTES) are re-read on every LoL render, one league call each, and each
   pro's row shows their best-ranked account;
+- the shown LoL pro's team on lolesports: the big leagues' schedule hourly (every render
+  while the team plays), each finished game of its newest series once (kept for every pro
+  who played it);
 - HLTV's Top 20 list: weekly; the shown CS2 player's page (with their recent loadout and
   newest pictures, one drawn at random per render): CS2_PLAYER_HOURS; their bo3.gg map pool
   and career: CS2_MAP_HOURS; their team's latest win on bo3.gg: CS2_WIN_HOURS (a won match
@@ -31,7 +34,7 @@ from utils.http_client import get_http_session
 
 from plugins.sports_dashboard.common import LOLESPORTS_API_KEY
 
-from . import bo3_stats, hltv_players
+from . import bo3_stats, hltv_players, lolesports_pro
 from .pro_roster import CS2_TOP20_2025, LOLESPORTS_TEAM_SLUGS, tracked_lol_accounts
 
 logger = logging.getLogger(__name__)
@@ -53,6 +56,25 @@ CS2_MAP_HOURS = 24
 CS2_WIN_HOURS = 6
 # HLTV answers bursts with a 403/429 challenge; after one, leave it alone for this long.
 HLTV_BACKOFF_HOURS = 6
+LOL_ESPORTS_STATE = "pro_lol_esports.json"
+LOL_SCHEDULE_MINUTES = 60
+# A series older than this no longer heads the LoL page's pro corner.
+LOL_SERIES_DAYS = 21
+# The ranked form chart: each pro's latest scores, and the others' mean once LOL_FORM_PEERS of
+# them have scores no older than LOL_FORM_DAYS.
+LOL_FORM_STATE = "pro_lol_form.json"
+LOL_FORM_DAYS, LOL_FORM_PEERS = 14, 3
+LOL_FORM_AXES = ("damage", "farm", "teamfight", "vision", "survival", "kills")
+# Per role, what scores 50 on each axis: share of the team's damage, CS a minute, kill
+# participation, vision score a minute, deaths and kills a game (twice the mark scores 100;
+# for deaths, none scores 100 and twice the mark scores 0).
+LOL_FORM_REFERENCE = {
+    "TOP": (0.24, 7.5, 0.45, 0.7, 4.5, 4.5), "JUNGLE": (0.17, 6.0, 0.62, 1.1, 4.5, 5.0),
+    "MID": (0.27, 8.0, 0.55, 0.8, 4.0, 5.5), "BOTTOM": (0.28, 8.5, 0.55, 0.75, 4.5, 6.5),
+    "SUPPORT": (0.09, 1.2, 0.62, 2.4, 5.0, 1.5),
+}
+LANE_ROLES = {"TOP": "TOP", "JUNGLE": "JUNGLE", "MIDDLE": "MID", "MID": "MID", "BOTTOM": "BOTTOM",
+              "UTILITY": "SUPPORT", "SUPPORT": "SUPPORT"}
 RANK_ORDER = {"CHALLENGER": 9, "GRANDMASTER": 8, "MASTER": 7, "DIAMOND": 6, "EMERALD": 5, "PLATINUM": 4,
               "GOLD": 3, "SILVER": 2, "BRONZE": 1, "IRON": 0}
 DIVISIONS = {"I": 3, "II": 2, "III": 1, "IV": 0}
@@ -294,6 +316,137 @@ class ProTrackerMixin:
         leagues = self._riot_json(api_key, account["platformRoute"],
                                   f"/lol/league/v4/entries/by-puuid/{entry['puuid']}") or []
         return {**entry, **self._ladder_entry(self._best_rank(leagues)), "checked_ts": now, "missing": False}
+
+    # -- LoL pros on the pro stage and their ranked form ----------------------------------
+    def _lol_esports(self, account, refresh=True):
+        """The pro's team on lolesports: its next (or running) series, its last results, and its
+        newest series of the last LOL_SERIES_DAYS with the pro's line in each game ({} for a pro
+        whose team is unknown). Read from the cache alone when not refreshing."""
+        code = str(account.get("team") or "").upper()
+        if not code:
+            return {}
+        path = self._cache_dir() / LOL_ESPORTS_STATE
+        state = self._read_json(path, {})
+        now = time.time()
+        upcoming, results = lolesports_pro.team_series(state.get("events") or [], code, now)
+        live = bool(upcoming and upcoming.get("state") == "inProgress")
+        session, changed = None, False
+        if refresh:
+            session = get_http_session()
+            if live or now - float(state.get("schedule_ts") or 0) >= LOL_SCHEDULE_MINUTES * 60:
+                changed = True
+                try:
+                    state["events"] = lolesports_pro.schedule(session, LOLESPORTS_API_KEY)
+                    state["schedule_ts"] = now
+                except TaskCancelled:
+                    raise
+                except Exception as exc:
+                    logger.warning("lolesports schedule unavailable: %s", exc)
+                    state["schedule_ts"] = now - LOL_SCHEDULE_MINUTES * 30  # retry in half the usual wait
+                    session = None
+                upcoming, results = lolesports_pro.team_series(state.get("events") or [], code, now)
+                live = bool(upcoming and upcoming.get("state") == "inProgress")
+        newest = results[0] if results and now - float(results[0].get("start") or 0) <= LOL_SERIES_DAYS * 86400 else None
+        series = None
+        if live or newest:
+            series, touched = self._lol_series(state, session, upcoming if live else newest, account.get("label"), now)
+            changed = changed or touched
+        if changed:
+            self._write_json(path, self._pruned_esports(state))
+        return {"team": code, "next": upcoming, "results": results, "series": series, "live": live}
+
+    def _lol_series(self, state, session, target, player, now):
+        """(the series with the pro's line in each game played, whether the cache changed). A finished
+        game is read once, the series' last one with everyone's fight shares; a live one every time."""
+        entries, games_seen = state.setdefault("series", {}), state.setdefault("games", {})
+        entry = dict(entries.get(target["id"]) or {})
+        changed = False
+        running = target.get("state") != "completed"
+        if session and (running or not entry.get("games")):
+            try:
+                entry.update(lolesports_pro.event(session, LOLESPORTS_API_KEY, target["id"]))
+                changed = True
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("lolesports series %s unavailable: %s", target["id"], exc)
+        games = [game for game in entry.get("games") or [] if game.get("state") in ("completed", "inProgress")]
+        for index, game in enumerate(games):
+            known = games_seen.get(game["id"]) or {}
+            last = index == len(games) - 1
+            if not session or (known.get("state") == "finished" and (known.get("shares") or not last)):
+                continue
+            try:
+                parsed = lolesports_pro.game(session, game["id"], now, details=last)
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("lolesports game %s unavailable: %s", game["id"], exc)
+                continue
+            if parsed:
+                games_seen[game["id"]] = parsed
+                changed = True
+        entries[target["id"]] = entry
+        lines = [lolesports_pro.player_line(games_seen.get(game["id"]), player) for game in games]
+        winners = lolesports_pro.series_winners(lines, target.get("won"), (target.get("ours") or {}).get("wins"),
+                                                finished=not running)
+        rows = [{**line, "number": game.get("number"), "won": winners.get(index)}
+                for index, (game, line) in enumerate(zip(games, lines)) if line]
+        series = {key: target.get(key) for key in ("id", "start", "state", "league", "stage", "best_of", "ours",
+                                                    "theirs", "won")}
+        return {**series, "games": rows}, changed
+
+    @staticmethod
+    def _pruned_esports(state):
+        """The esports cache without series the schedule no longer lists, or games no kept series holds."""
+        listed = {event["id"] for event in state.get("events") or []}
+        series = {key: value for key, value in (state.get("series") or {}).items() if key in listed}
+        kept = {game.get("id") for entry in series.values() for game in entry.get("games") or []}
+        games = {key: value for key, value in (state.get("games") or {}).items() if key in kept}
+        return {**state, "series": series, "games": games}
+
+    @staticmethod
+    def _lol_form_scores(matches, role):
+        """The pro's ranked form on LOL_FORM_AXES (0..100, 50 = their role's mark) over their recent
+        Summoner's Rift games of ten minutes or more; {} with fewer than two."""
+        games = [match for match in matches or [] if LANE_ROLES.get(str(match.get("lane") or "").upper())
+                 and int(match.get("duration") or 0) >= 600]
+        if len(games) < 2:
+            return {}
+        totals = {axis: [] for axis in LOL_FORM_AXES}
+        for match in games:
+            reference = LOL_FORM_REFERENCE[LANE_ROLES[str(match["lane"]).upper()]]
+            minutes = int(match["duration"]) / 60
+            values = {"damage": match.get("damage_share"), "farm": int(match.get("cs") or 0) / minutes,
+                      "teamfight": float(match.get("kp") or 0) / 100,
+                      "vision": int(match["vision"]) / minutes if match.get("vision") is not None else None,
+                      "survival": int(match.get("deaths") or 0), "kills": int(match.get("kills") or 0)}
+            for axis, mark in zip(LOL_FORM_AXES, reference):
+                value = values[axis]
+                if axis == "survival":
+                    totals[axis].append(100 * (1 - value / (2 * mark)))
+                elif value is not None:
+                    totals[axis].append(100 * float(value) / (2 * mark))
+        return {axis: round(max(0.0, min(100.0, sum(scores) / len(scores)))) for axis, scores in totals.items() if scores}
+
+    def _lol_form(self, account, matches, refresh=True):
+        """{scores, average, games}: the pro's ranked form, and the other pros' mean once enough of
+        them have recent scores (each live render records the shown pro's for the others)."""
+        scores = self._lol_form_scores(matches, account.get("role"))
+        path = self._cache_dir() / LOL_FORM_STATE
+        state = self._read_json(path, {})
+        now = time.time()
+        player_id = account.get("player_id") or account.get("id")
+        if refresh and scores:
+            state[player_id] = {"scores": scores, "ts": now}
+            self._write_json(path, {key: value for key, value in state.items()
+                                    if now - float((value or {}).get("ts") or 0) <= LOL_FORM_DAYS * 86400})
+        peers = [entry["scores"] for key, entry in state.items() if key != player_id and isinstance(entry, dict)
+                 and entry.get("scores") and now - float(entry.get("ts") or 0) <= LOL_FORM_DAYS * 86400]
+        average = ({axis: sum(peer.get(axis, 50) for peer in peers) / len(peers) for axis in LOL_FORM_AXES}
+                   if len(peers) >= LOL_FORM_PEERS else {})
+        games = sum(1 for match in matches or [] if LANE_ROLES.get(str(match.get("lane") or "").upper()))
+        return {"scores": scores, "average": average, "games": games}
 
     # -- CS2: HLTV Top 20 and player pages ---------------------------------------------
     def _cs2_data(self, pick, refresh=True):
