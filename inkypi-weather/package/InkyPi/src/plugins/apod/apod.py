@@ -1180,11 +1180,14 @@ def _probe_media_blob(path: Path, minimum_size: tuple[int, int]) -> None:
         byte_count = path.stat().st_size
         if byte_count <= 0 or byte_count > MAX_MEDIA_BYTES:
             raise ApodMediaUnavailable("APOD media byte size is invalid")
+        # verify() must come straight after open (a PNG refuses it once its EXIF was read), so it
+        # gets an open of its own before the size checks.
+        with Image.open(path) as image:
+            image.verify()
         with Image.open(path) as image:
             width, height = _safe_media_dimensions(image)
             if width < int(minimum_size[0]) or height < int(minimum_size[1]):
                 raise ApodMediaUnavailable("APOD media is smaller than the photo cell")
-            image.verify()
     except ApodMediaUnavailable:
         raise
     except _ABORT_EXCEPTIONS:

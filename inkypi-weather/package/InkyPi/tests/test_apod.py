@@ -5150,3 +5150,17 @@ def test_a_day_cached_without_its_image_is_asked_for_again(monkeypatch):
     assert apod_module._refetch_provisional_record(recent, http=None, api_key="", selection=selection,
                                                    context=None) is recent
     assert calls == ["2026-07-22"]
+
+
+def test_a_png_apod_image_passes_media_validation(tmp_path):
+    # Pillow refuses verify() on a PNG once its EXIF was read; the probe must still accept it.
+    path = tmp_path / "apod.png"
+    Image.new("RGB", (1024, 1024), (40, 60, 90)).save(path, format="PNG")
+
+    apod_module._probe_media_blob(path, (420, 400))
+
+    jpeg = tmp_path / "apod.jpg"
+    Image.new("RGB", (1024, 1024), (40, 60, 90)).save(jpeg, format="JPEG")
+    apod_module._probe_media_blob(jpeg, (420, 400))
+    with pytest.raises(apod_module.ApodMediaUnavailable):
+        apod_module._probe_media_blob(jpeg, (2000, 2000))
