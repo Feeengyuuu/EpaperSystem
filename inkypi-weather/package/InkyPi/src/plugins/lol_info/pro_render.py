@@ -40,7 +40,7 @@ ID_FONT = "fonts/Rubik-Bold.ttf"
 LOL_PAGE_DIM, LOL_SPLASH_TAIL = 0.42, 96
 # The cards' backdrops follow what they show: the tracked team's logo behind the board, the
 # latest game's champion behind the recent games, and on the CS2 page a radar sweep turned
-# onto the player's best role.
+# onto the player's best role, lit only inside the player's own role shape.
 CARD_MARK_ALPHA, CARD_ART_ALPHA = 0.15, 0.36
 CHAMPION_LOADING_URL = "https://ddragon.leagueoflegends.com/cdn/img/champion/loading/{key}_0.jpg"
 RADAR_TRAIL, RADAR_SWEEP_ALPHA = 70, 0.34
@@ -482,12 +482,11 @@ class ProRenderMixin:
         x0, y0, x1, y1 = LEFT
         self._frost(image, LEFT, colors)
         roles = player.get("roles") or {}
-        self._draw_radar_sweep(image, (x0 + 100, y0 + 164), 70, roles, colors)
         draw.rectangle(LEFT, outline=colors["rule"], width=1)
         self._text(draw, (x0 + 12, y0 + 7), "角色能力", fonts["section"], colors["ink"])
         average = self._cs2_role_average(data.get("board") or [])
         self._draw_role_tag(draw, roles, (x0 + 88, y0 + 9), colors, fonts)
-        self._draw_radar(draw, (x0 + 100, y0 + 164), 70, roles, colors, fonts, average)
+        self._draw_radar(image, draw, (x0 + 100, y0 + 164), 70, roles, colors, fonts, average)
         self._draw_signature_role(draw, player, data.get("board") or [], average, (x0 + 12, y1 - 40, x0 + 206),
                                   colors, fonts)
         self._draw_cs2_matches(image, draw, player, (x0 + 214, y0 + 8, x1 - 10, y1 - 8), colors, fonts)
@@ -517,27 +516,29 @@ class ProRenderMixin:
         return True
 
     @staticmethod
-    def _draw_radar_sweep(image, centre, radius, roles, colors):
-        """A radar screen behind the role chart: a scope ring, and a gold beam swept onto the
-        player's best role with its trail fading out behind it."""
-        if not roles:
-            return
+    def _draw_radar_sweep(image, centre, radius, roles, shape, colors):
+        """A radar screen around the role chart: a scope ring, and a gold beam swept onto the
+        player's best role with its trail fading out behind it. The beam lights only the
+        player's own shape, so no gold reaches past the scores it stands for."""
         best = max(CS2_ROLES, key=lambda name: roles.get(name) or 0)
         heading = -90 + 360 * CS2_ROLES.index(best) / len(CS2_ROLES)
         cx, cy = centre
         reach = radius * 1.12
+        scope = (cx - reach, cy - reach, cx + reach, cy + reach)
         layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
         pen = ImageDraw.Draw(layer)
-        scope = (cx - reach, cy - reach, cx + reach, cy + reach)
         steps = 28
         for step in range(steps):
             alpha = round(255 * RADAR_SWEEP_ALPHA * (1 - step / steps) ** 1.8)
             pen.pieslice(scope, heading - RADAR_TRAIL * (step + 1) / steps, heading - RADAR_TRAIL * step / steps,
                          fill=(*colors["gold"][:3], alpha))
-        pen.ellipse(scope, outline=(*colors["rule"][:3], 255), width=1)
         angle = math.radians(heading)
         pen.line((cx, cy, cx + math.cos(angle) * reach, cy + math.sin(angle) * reach),
                  fill=(*colors["gold"][:3], 210), width=2)
+        inside = Image.new("L", image.size, 0)
+        ImageDraw.Draw(inside).polygon(shape, fill=255)
+        layer.putalpha(ImageChops.multiply(layer.getchannel("A"), inside))
+        ImageDraw.Draw(layer).ellipse(scope, outline=(*colors["rule"][:3], 255), width=1)
         base = image.convert("RGBA")
         base.alpha_composite(layer)
         image.paste(base.convert("RGB"))
@@ -674,7 +675,7 @@ class ProRenderMixin:
         draw.rounded_rectangle((x, y, x + width, y + 18), radius=9, fill=colors["gold"])
         self._text(draw, (x + 7, y + 2), label, fonts["small_bold"], colors["background"])
 
-    def _draw_radar(self, draw, centre, radius, roles, colors, fonts, average=None):
+    def _draw_radar(self, image, draw, centre, radius, roles, colors, fonts, average=None):
         cx, cy = centre
         count = len(CS2_ROLES)
         points = lambda scale: [(cx + math.sin(2 * math.pi * i / count) * radius * scale,
@@ -687,6 +688,7 @@ class ProRenderMixin:
         shape = shape_of(roles) if roles else []
         if shape:
             draw.polygon(shape, fill=self._blend(colors["gold"], colors["panel"], 0.28))
+            self._draw_radar_sweep(image, centre, radius, roles, shape, colors)
         # The grid goes over the fill so the rings stay readable inside the shape.
         for scale in (0.33, 0.66, 1.0):
             draw.polygon(points(scale), outline=colors["rule"])
