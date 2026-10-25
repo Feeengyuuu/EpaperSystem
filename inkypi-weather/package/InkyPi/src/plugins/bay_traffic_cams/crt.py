@@ -2,9 +2,9 @@
 behind them and VCR-style on-screen text.
 
 A monitor is a charcoal bezel with a light top edge and a dark lower one, a deeper chin with its
-power lamp, and a screen with rounded, bulging corners, faint scanlines and darker edges. The
-on-screen text is the digital face of an old recorder with a black outline, so it reads on any
-picture.
+power lamp, and a screen with rounded, bulging corners and faint scanlines, the picture running
+right to its edge. The on-screen text is the digital face of an old recorder with a black
+outline, so it reads on any picture.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageDraw
 
 from utils.fonts import load_font
 
@@ -24,13 +24,11 @@ PALETTE = {"paper": "#1b1d1f", "ink": "#ece4cc", "muted": "#b3ab92", "rule": "#5
 BEZEL = (54, 58, 62)
 BEZEL_LIGHT = (98, 103, 108)
 BEZEL_DARK = (24, 26, 28)
-SCREEN_EDGE = (8, 9, 10)
 LAMP = (60, 220, 90)
 OSD = (245, 245, 240)
 REC = (255, 46, 46)
 SCANLINE_STEP = 3
 SCANLINE_DIM = 0.93
-VIGNETTE = 0.24
 
 
 @lru_cache(maxsize=8)
@@ -54,18 +52,6 @@ def _scanlines(size):
     return pattern.convert("RGB")
 
 
-@lru_cache(maxsize=16)
-def _vignette(size):
-    """A multiplier that leaves the middle and darkens toward the tube's edges and corners."""
-    width, height = size
-    small = Image.new("L", (64, 64), 0)
-    draw = ImageDraw.Draw(small)
-    for step in range(32):
-        level = round(255 * (1 - VIGNETTE * (1 - step / 31) ** 2))
-        draw.rounded_rectangle((step, step, 63 - step, 63 - step), radius=max(1, 18 - step // 2), fill=level)
-    return small.resize(size, Image.Resampling.BICUBIC).filter(ImageFilter.GaussianBlur(2)).convert("RGB")
-
-
 def screen_box(box, bezel, chin):
     x0, y0, x1, y1 = box
     return x0 + bezel, y0 + bezel, x1 - bezel, y1 - chin
@@ -84,10 +70,8 @@ def monitor(image, box, tile=None, *, bezel=6, chin=10, radius=12):
     draw.line((x1 - 1, y0 + radius, x1 - 1, y1 - radius), fill=BEZEL_DARK, width=2)
     sx0, sy0, sx1, sy1 = screen = screen_box((x0, y0, x1, y1), bezel, chin)
     size = (max(1, sx1 - sx0), max(1, sy1 - sy0))
-    draw.rounded_rectangle((sx0 - 2, sy0 - 2, sx1 + 1, sy1 + 1), radius=radius, fill=SCREEN_EDGE)
     picture = tile.convert("RGB").resize(size) if tile is not None else Image.new("RGB", size, (14, 20, 18))
     picture = ImageChops.multiply(picture, _scanlines(size))
-    picture = ImageChops.multiply(picture, _vignette(size))
     mask = Image.new("L", size, 0)
     ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=radius, fill=255)
     image.paste(picture, (sx0, sy0), mask)
