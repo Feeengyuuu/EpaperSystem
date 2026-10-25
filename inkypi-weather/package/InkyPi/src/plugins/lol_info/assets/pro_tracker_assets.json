@@ -155,5 +155,11 @@
     "source": "https://raw.githubusercontent.com/ghostcap-gaming/cs2-map-images/main/cs2/de_vertigo.png",
     "owner": "Valve (Counter-Strike 2 map loading screenshot from the game files), scaled to 800x450 JPEG",
     "sha256": "846647bd15c38d6be9952d396c9fdab53f05e1372d8c842090d576bc1735bd9b"
+  },
+  "fonts/Rubik-Bold.ttf": {
+    "source": "https://github.com/google/fonts/blob/main/ofl/rubik/Rubik%5Bwght%5D.ttf",
+    "owner": "The Rubik Project Authors (SIL Open Font License 1.1, fonts/Rubik-OFL.txt); Leaguepedia's face for player IDs",
+    "processing": "static instance at wght 700 cut from the variable font with fontTools varLib.instancer",
+    "sha256": "f1bc75601d30f71d8fb81dd720029c88e83c22f1814b0a7c17eb4c57a0b0b4c5"
   }
 }
