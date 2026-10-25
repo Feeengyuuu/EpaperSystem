@@ -473,11 +473,12 @@ class _Console:
         self.draw.line((181, 0, 181, 480), fill=self.c["border"], width=2)
         url = profile.get("avatarfull") or profile.get("avatarmedium") or profile.get("avatar")
         self.framed_avatar(url)
-        paint = self.name_stroke(data)
-        if paint is None:
+        if self.name_stroke(data) is None:
             self.nameplate(NAMEPLATE_BOX)
-        self.text((19, 178, 166, 207), profile.get("personaname") or "Steam User",
-                  29, self.c["canvas"] if paint is not None else WHITE, bold=True, min_size=18)
+        # White with a dark outline, like the game title, so it reads on the paint.
+        persona = profile.get("personaname") or "Steam User"
+        name = self._text_bitmap(persona, 147, 29, 29, WHITE, True, 1, 18, outline=TITLE_OUTLINE)
+        self.text((19, 178, 166, 207), persona, prepared=name)
         self.text((20, 212, 164, 225), "STEAM PLAYER", 10, self.c["muted"])
         self.draw.line((14, 230, 167, 230), fill=self.c["border"])
         self.rank_card(data)
