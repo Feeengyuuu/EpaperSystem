@@ -222,8 +222,9 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 .mw-section-title { align-items: center; }
 .mw-tile-icon { width: 20px; height: 20px; flex: none; }
 
-/* The generated hero illustration carries its own shading and outline: a touch larger, a softer shadow. */
-.mw-hero-icon.mw-hero-art {
-  flex-basis: 116px; height: 116px; margin: -16px -6px -12px 0;
-  filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.16));
+/* The generated hero illustration stands wholly inside the card: centred on the temperature's
+   line, clear of the card's top and right edges, with its own soft shadow. */
+.mw-hero-icon.mw-hero-drawing {
+  flex: 0 0 96px; width: 96px; height: 88px; margin: 0 8px 0 0; align-self: center;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.16));
 }
