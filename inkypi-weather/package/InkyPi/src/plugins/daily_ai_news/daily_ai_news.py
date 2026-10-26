@@ -577,7 +577,7 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             logger.warning("Daily AI News title wordmark unavailable: %s", exc)
             return None
 
-    def _draw_title_background(self, image: Image.Image, box) -> bool:
+    def _draw_title_background(self, image: Image.Image, box, align="middle") -> bool:
         left, top, right, bottom = [int(round(value)) for value in box]
         target_w = max(0, right - left)
         target_h = max(0, bottom - top)
@@ -593,7 +593,7 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             art = ImageOps.contain(source.copy(), (target_w, target_h), method=resample)
             layer = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
             paste_x = int((target_w - art.width) / 2)
-            paste_y = int((target_h - art.height) / 2)
+            paste_y = target_h - art.height if align == "bottom" else int((target_h - art.height) / 2)
             layer.alpha_composite(art, (paste_x, paste_y))
             image.paste(layer.convert("RGB"), (left, top), layer.getchannel("A"))
             return True

@@ -1156,7 +1156,7 @@ def test_render_uses_title_wordmark_instead_of_plain_title(monkeypatch):
         return original_text(self, xy, text, *args, **kwargs)
 
     monkeypatch.setattr(plugin, "_draw_title_wordmark", fake_draw_title_wordmark)
-    monkeypatch.setattr(plugin, "_draw_title_background", lambda image, box: True)
+    monkeypatch.setattr(plugin, "_draw_title_background", lambda image, box, **_kwargs: True)
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
 
     payload = {
@@ -1171,7 +1171,7 @@ def test_render_uses_title_wordmark_instead_of_plain_title(monkeypatch):
     image = plugin._render((800, 480), {"brief_title": "整点新闻"}, payload, datetime(2026, 6, 8), {"mode": "day"})
 
     assert image.size == (800, 480)
-    assert seen["wordmark"] == (18, 6, (152, 42))
+    assert seen["wordmark"] == (18, 5, (172, 48))
     assert "整点新闻" not in text_calls
 
 
@@ -1185,7 +1185,7 @@ def test_render_falls_back_to_plain_title_when_wordmark_missing(monkeypatch):
         return original_text(self, xy, text, *args, **kwargs)
 
     monkeypatch.setattr(plugin, "_draw_title_wordmark", lambda *args, **kwargs: None)
-    monkeypatch.setattr(plugin, "_draw_title_background", lambda image, box: True)
+    monkeypatch.setattr(plugin, "_draw_title_background", lambda image, box, **_kwargs: True)
     monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
 
     payload = {
@@ -1962,8 +1962,9 @@ def test_render_positions_the_radar_band_between_title_and_meta(monkeypatch):
     plugin = _plugin()
     seen = {}
 
-    def fake_draw_title_background(image, box):
+    def fake_draw_title_background(image, box, align="middle"):
         seen["box"] = tuple(int(value) for value in box)
+        seen["align"] = align
         return True
 
     monkeypatch.setattr(plugin, "_draw_title_background", fake_draw_title_background)
@@ -1973,7 +1974,9 @@ def test_render_positions_the_radar_band_between_title_and_meta(monkeypatch):
 
     left, top, right, bottom = seen["box"]
     assert left == 168 + 12
-    assert (top, bottom) == (4, 52)
+    # The newsroom stands on the eyebrow rule: its box reaches the rule, its art sits at the bottom.
+    assert (top, bottom) == (1, news_layout.RULE_Y + 1)
+    assert seen["align"] == "bottom"
     # The band ends 14 px before the date and update line at the right edge.
     assert 620 <= right <= 680
 

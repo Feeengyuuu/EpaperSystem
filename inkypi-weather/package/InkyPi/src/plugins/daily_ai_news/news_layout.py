@@ -19,8 +19,10 @@ from PIL import ImageDraw
 from . import news_art
 
 MARGIN = 20
-RULE_Y = 56
-LEAD_BOX = (64, 146)
+RULE_Y = 58
+LEAD_BOX = (66, 146)
+# The header's wordmark box; the newsroom art stands on the rule beside it.
+WORDMARK_BOX = (18, 5, (172, 48))
 LEAD_ART_WIDTH = 170
 # A vertical red seal reading 头条 marks the lead story.
 SEAL_SIZE = (28, 54)
@@ -174,7 +176,8 @@ class NewsPage:
 
     def header(self, title, meta, width):
         c = self.c
-        box = self.p._draw_title_wordmark(self.img, 18, 6, (152, 42), c["ink"])
+        x, y, size = WORDMARK_BOX
+        box = self.p._draw_title_wordmark(self.img, x, y, size, c["ink"])
         if box is None:
             self.text((MARGIN, 9), title, 30, True, c["ink"])
             title_right = MARGIN + self.width(title, 30)
@@ -185,10 +188,11 @@ class NewsPage:
         detail_colour = c["lead"] if meta.get("warning") else c["ink"]
         right = width - MARGIN
         detail = self.clip(detail, 11, right - title_right - 120)
-        self.text((right, 9), date_text, 17, True, c["ink"], "ra")
-        self.text((right, 33), detail, 11, True, detail_colour, "ra")
+        self.text((right, 11), date_text, 17, True, c["ink"], "ra")
+        self.text((right, 36), detail, 11, True, detail_colour, "ra")
         meta_left = right - max(self.width(date_text, 17), self.width(detail, 11))
-        self.p._draw_title_background(self.img, (title_right + 12, 4, meta_left - 14, RULE_Y - 4))
+        # The newsroom stands on the rule: its objects' feet meet the line drawn over them.
+        self.p._draw_title_background(self.img, (title_right + 12, 1, meta_left - 14, RULE_Y + 1), align="bottom")
         self.d.line((MARGIN, RULE_Y, right, RULE_Y), fill=c["ink"], width=2)
 
     def lead(self, lead, width, art_left):
