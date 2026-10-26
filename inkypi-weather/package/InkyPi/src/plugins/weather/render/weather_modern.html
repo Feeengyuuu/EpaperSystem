@@ -24,7 +24,7 @@
     </svg>
 
     <header class="mw-top">
-      <div class="mw-place">{{ title }}</div>
+      {% if v.place_mark %}<div class="mw-place mw-place-mark"><img class="mw-place-day" src="{{ v.place_mark.day }}" alt="{{ title }}"><img class="mw-place-night" src="{{ v.place_mark.night }}" alt=""></div>{% else %}<div class="mw-place">{{ title }}</div>{% endif %}
       <div class="mw-date">{{ v.date }}</div>
       {% if plugin_settings.displayRefreshTime == "true" and v.updated %}<div class="mw-updated">更新 {{ v.updated }}</div>{% endif %}
     </header>

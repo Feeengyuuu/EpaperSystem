@@ -197,3 +197,19 @@ def test_the_template_shows_the_hero_illustration_over_the_plain_icon():
     assert Path(view["hero_art"]).name == "thunder.png"
     html = (ART_DIR.parent / "render" / "weather_modern.html").read_text(encoding="utf-8")
     assert "v.hero_art or current_day_icon" in html
+
+
+def test_a_place_with_its_own_wordmark_shows_it_by_day_and_night():
+    now = LA.localize(datetime(2026, 10, 24, 12, 50))
+    params = {**_params(now), "title": "Fremont, California"}
+    view = build_view(params, now, art_dir=str(ART_DIR))
+    assert Path(view["place_mark"]["day"]).name == "fremont-california.png"
+    assert Path(view["place_mark"]["night"]).name == "fremont-california-night.png"
+    assert build_view({**params, "title": "Oakland, California"}, now, art_dir=str(ART_DIR))["place_mark"] is None
+
+    plugin = Weather({"id": "weather"})
+    html = plugin.env.get_template("weather_modern.html").render(
+        **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
+        plugin_settings={}, style_sheets=[], font_faces=[])
+    assert "mw-place-day" in html and "fremont-california-night.png" in html
+    assert '<div class="mw-place">Fremont, California</div>' not in html

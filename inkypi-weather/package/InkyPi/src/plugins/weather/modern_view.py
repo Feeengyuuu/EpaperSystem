@@ -108,6 +108,7 @@ def build_view(params, now, *, art_dir=None):
                                  _celsius(_number(params.get("current_temperature")), units))
     view["effect"] = _page_effect(scene, now)
     view["icons"] = _tile_icons(art_dir)
+    view["place_mark"] = _place_mark(art_dir, params.get("title"))
     return view
 
 
@@ -116,6 +117,20 @@ def build_view(params, now, *, art_dir=None):
 def _icon_code(path):
     name = os.path.basename(str(path or "")).split(".")[0]
     return re.sub(r"[dn]$", "", name)
+
+
+def _place_mark(art_dir, title):
+    """The place's own wordmark (art/place/<place>.png, "Fremont, California" ->
+    fremont-california) by day and its light-lettered version by night; None to set the
+    title in type."""
+    slug = re.sub(r"[^a-z0-9]+", "-", str(title or "").lower()).strip("-")
+    if not art_dir or not slug:
+        return None
+    day = os.path.join(art_dir, "place", f"{slug}.png")
+    if not os.path.isfile(day):
+        return None
+    night = os.path.join(art_dir, "place", f"{slug}-night.png")
+    return {"day": day, "night": night if os.path.isfile(night) else day}
 
 
 def _tile_icons(art_dir):

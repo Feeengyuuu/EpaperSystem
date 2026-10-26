@@ -33,6 +33,12 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 /* Header ------------------------------------------------------------------------- */
 .mw-top { position: absolute; left: 16px; right: 16px; top: 6px; height: 34px; display: flex; align-items: baseline; gap: 14px; }
 .mw-place { font-size: 23px; font-weight: 700; letter-spacing: 0.2px; }
+/* The place's own wordmark stands in for its name: the dark-lettered one by day, the light by night. */
+.mw-place-mark { align-self: center; line-height: 0; }
+.mw-place-mark img { height: 29px; width: auto; }
+.mw-place-night { display: none; }
+.theme-night .mw-place-day { display: none; }
+.theme-night .mw-place-night { display: inline; }
 .mw-date { font-size: 16px; font-weight: 700; color: var(--muted); }
 .mw-updated { margin-left: auto; font-size: 12px; font-weight: 700; color: var(--muted); }
 
