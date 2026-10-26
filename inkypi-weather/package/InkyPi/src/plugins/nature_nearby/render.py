@@ -223,12 +223,17 @@ def _species(canvas, payload, images):
         canvas.text((x + 5, y + 11), str(index + 1), 11, (20, 20, 20) if index == 0 else "paper", anchor="mm")
         text_left = x + side + 7
         text_width = x + width - text_left
-        for line_index, line in enumerate(canvas.wrap(_display_name(item), 13, text_width, 2)):
+        # The Chinese name, the scientific name under it (on two lines when the name takes one),
+        # and the week's count at the foot, level with the photo's bottom.
+        names = canvas.wrap(_display_name(item), 13, text_width, 2)
+        for line_index, line in enumerate(names):
             canvas.text((text_left, y + 6 + line_index * 16), line, 13, anchor="la")
+        science_top = y + 8 + len(names) * 16
+        for line_index, line in enumerate(canvas.wrap(item["scientific"], 10, text_width, 3 - len(names), bold=False)):
+            canvas.text((text_left, science_top + line_index * 12), line, 10, "muted", anchor="la", bold=False)
         _label, icon, tone = group_info(item["group"])
-        draw_icon(canvas.draw, icon, (text_left, y + 46), 15, canvas.color(tone), canvas.color("paper"))
-        canvas.text((text_left + 19, y + 54), f"{item['count']} 次", 18, anchor="lm")
-        canvas.text((text_left, y + 72), item["scientific"], 9, "muted", anchor="lm", bold=False, width=text_width)
+        draw_icon(canvas.draw, icon, (text_left, y + 59), 15, canvas.color(tone), canvas.color("paper"))
+        canvas.text((text_left + 19, y + 67), f"{item['count']} 次", 18, anchor="lm")
 
 
 def _groups(canvas, payload, now):
