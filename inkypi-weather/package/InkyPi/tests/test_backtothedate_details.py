@@ -122,10 +122,32 @@ def test_a_wide_poster_goes_on_top_with_the_details_in_a_strip_below():
 
     page = poster_layout.render_single(_meta(), image, (800, 480), "night")
 
-    assert page.getpixel((400, poster_layout.MARGIN + 5)) == (30, 90, 160)
+    assert page.getpixel((400, poster_layout.MARGIN + poster_layout.TITLE_BAND + 5)) == (30, 90, 160)
     assert page.getpixel((780, 200)) == (30, 90, 160)
     strip = [page.getpixel((x, y)) for x in range(20, 780) for y in range(420, 470)]
     assert sum(1 for pixel in strip if pixel != poster_layout.palette("night")["paper"]) > 300
+
+
+def _title_band(page, box):
+    x0, y0, x1, y1 = box
+    return [page.getpixel((x, y)) for x in range(x0, x1) for y in range(y0, y1)]
+
+
+def test_the_page_title_heads_a_landscape_poster_and_moves_to_the_column_for_a_tall_one():
+    assert poster_layout.TITLE_ART.is_file()
+    red = poster_layout.TITLE_RED
+    margin, band = poster_layout.MARGIN, poster_layout.TITLE_H
+    landscape = poster_layout.render_single(_meta(), Image.new("RGB", (900, 600), (40, 40, 200)), (800, 480), "day")
+    # The lettering and its double rule sit over the poster, the poster below the band.
+    title = _title_band(landscape, (margin, margin, 560, margin + band))
+    assert red in title and (40, 40, 200) not in title
+    assert landscape.getpixel((300, margin + poster_layout.TITLE_BAND + 20)) == (40, 40, 200)
+
+    portrait = Image.new("RGB", (400, 600), (40, 40, 200))
+    tall = poster_layout.render_single(_meta(), portrait, (800, 480), "night")
+    # A tall poster keeps the full height; the title heads the details column instead.
+    assert tall.getpixel((100, margin + 2)) == (40, 40, 200)
+    assert red in _title_band(tall, (340, margin, 788, margin + band))
 
 
 def test_spare_room_in_the_column_takes_another_poster():
@@ -148,6 +170,8 @@ def test_three_portraits_share_one_shelf_with_captions():
     row = [page.getpixel((x, 200)) for x in range(0, 800)]
     for _poster, image in posters:
         assert image.getpixel((0, 0)) in row
+    # The page's title runs across the top, above the shelf.
+    assert poster_layout.TITLE_RED in _title_band(page, (12, 12, 788, 12 + poster_layout.TITLE_H))
     # The shelf leaves room for the captions under the posters.
     assert page.getpixel((130, 480 - poster_layout.MARGIN - 10)) != (200, 40, 40)
 

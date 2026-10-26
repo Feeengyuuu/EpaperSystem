@@ -8,16 +8,22 @@ theme from Chinese Wikipedia, a few tags, the sources), or, when that makes it l
 poster), the top with a strip of the same details below. Three portraits stand side by side
 on one shelf, each captioned with its Chinese title, year and designer. Sections that do not
 fit are left out, last first; a poster without stored details shows its title alone.
+
+Every page is headed 宣传画廊, lettered like a 1958-1966 poster headline (generated art) and
+followed by a red double rule: over the poster when the poster leaves room above it, else at
+the top of the details column, so a tall poster is not made smaller for it.
 """
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
 
 from plugins.backtothedate.poster_meta import decode_photo, split_chinese
 from utils.app_utils import get_base_ui_font
+from utils.local_wordmark import paste_local_wordmark
 
 # All text is Microsoft YaHei (the base UI font), the titles in its bold.
 PALETTES = {
@@ -31,6 +37,13 @@ GAP = 12
 MIN_COLUMN = 190
 MIN_STRIP = 66
 SHELF_CAPTION = 44
+TITLE_ART = Path(__file__).resolve().parent / "assets" / "title_wordmark.png"
+TITLE_TEXT = "宣传画廊"
+# The title's height, and the band it takes with the space under it.
+TITLE_H = 34
+TITLE_BAND = TITLE_H + 8
+# The lettering's vermilion, for the double rule after it.
+TITLE_RED = (200, 30, 30)
 _CJK = re.compile(r"[⺀-鿿＀-￯]")
 
 
@@ -139,21 +152,52 @@ def _contained(size, room):
     return max(1, round(size[0] * scale)), max(1, round(size[1] * scale))
 
 
+def _page_title(canvas, box, colors):
+    """The page's title at the left of ``box`` (the lettering, or bold text without it) and a
+    red double rule from its end to the box's right."""
+    x0, y0, x1, y1 = box
+    draw = ImageDraw.Draw(canvas)
+    pasted = paste_local_wordmark(canvas, TITLE_ART, (x0, y0, min(x1, x0 + 512), y1), align="left")
+    if pasted:
+        right = pasted[2]
+    else:
+        font = _title(TITLE_H - 10)
+        draw.text((x0, (y0 + y1) / 2), TITLE_TEXT, font=font, fill=colors["accent"], anchor="lm")
+        right = x0 + round(draw.textlength(TITLE_TEXT, font=font))
+    if x1 - right >= 40:
+        middle = (y0 + y1) // 2
+        draw.rectangle((right + 10, middle - 3, x1 - 1, middle - 1), fill=TITLE_RED)
+        draw.line((right + 10, middle + 2, x1 - 1, middle + 2), fill=TITLE_RED, width=1)
+
+
 def render_single(poster, image, dimensions, mode="day", extras=()):
     colors = palette(mode)
     width, height = dimensions
     canvas = Image.new("RGB", dimensions, colors["paper"])
     image = trim_margins(image)
     beside = _contained(image.size, (width - 2 * MARGIN - MIN_COLUMN - GAP, height - 2 * MARGIN))
-    above = _contained(image.size, (width - 2 * MARGIN, height - 2 * MARGIN - MIN_STRIP - GAP))
+    above = _contained(image.size, (width - 2 * MARGIN, height - 2 * MARGIN - TITLE_BAND - MIN_STRIP - GAP))
     if above[0] * above[1] > beside[0] * beside[1] * 1.05:
         left = (width - above[0]) // 2
-        box = _poster(canvas, image, (left, MARGIN, left + above[0], MARGIN + above[1]), colors)
+        _page_title(canvas, (left, MARGIN, left + above[0], MARGIN + TITLE_H), colors)
+        top = MARGIN + TITLE_BAND
+        box = _poster(canvas, image, (left, top, left + above[0], top + above[1]), colors)
         _info_strip(canvas, poster, (MARGIN, box[3] + GAP, width - MARGIN, height - MARGIN), colors)
         return canvas
-    top = (height - beside[1]) // 2
+    room = height - 2 * MARGIN - TITLE_BAND
+    column_top = MARGIN
+    if beside[1] <= room:
+        # A poster held by its width leaves room above it: the title heads it, the poster
+        # sits centred in the rest.
+        _page_title(canvas, (MARGIN, MARGIN, MARGIN + beside[0], MARGIN + TITLE_H), colors)
+        top = MARGIN + TITLE_BAND + (room - beside[1]) // 2
+    else:
+        top = (height - beside[1]) // 2
+        column_top += TITLE_BAND
     box = _poster(canvas, image, (MARGIN, top, MARGIN + beside[0], top + beside[1]), colors)
-    _info_column(canvas, poster, (box[2] + GAP, MARGIN, width - MARGIN, height - MARGIN), colors, extras)
+    if column_top > MARGIN:
+        _page_title(canvas, (box[2] + GAP, MARGIN, width - MARGIN, MARGIN + TITLE_H), colors)
+    _info_column(canvas, poster, (box[2] + GAP, column_top, width - MARGIN, height - MARGIN), colors, extras)
     return canvas
 
 
@@ -380,18 +424,20 @@ def pack_rows(aspects, room):
 
 
 def render_shelf(items, dimensions, mode="day"):
-    """Three posters on one shelf, each captioned below: Chinese title, year and designer."""
+    """Three posters on one shelf under the page's title, each captioned below: Chinese title,
+    year and designer."""
     colors = palette(mode)
     width, height = dimensions
     canvas = Image.new("RGB", dimensions, colors["paper"])
     draw = ImageDraw.Draw(canvas)
+    _page_title(canvas, (MARGIN, MARGIN, width - MARGIN, MARGIN + TITLE_H), colors)
     count = len(items)
     gap = 10
     column = (width - 2 * MARGIN - gap * (count - 1)) / count
     trimmed = [trim_margins(image) for _poster, image in items]
-    room_h = height - 2 * MARGIN - SHELF_CAPTION
+    room_h = height - 2 * MARGIN - TITLE_BAND - SHELF_CAPTION
     sizes = [_contained(image.size, (int(column), room_h)) for image in trimmed]
-    shelf = MARGIN + max(size[1] for size in sizes)
+    shelf = MARGIN + TITLE_BAND + max(size[1] for size in sizes)
     for index, ((poster, _image), image, size) in enumerate(zip(items, trimmed, sizes)):
         left = MARGIN + index * (column + gap)
         x = round(left + (column - size[0]) / 2)

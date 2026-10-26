@@ -1,0 +1,16 @@
+{
+  "asset": "title_wordmark.png",
+  "scene": "宣传画廊 in heavy 1958-1966 propaganda-poster 美术字: vermilion letters, cream outline, dark offset shadow; a red star on golden sun rays over wheat ears and a cog wheel at the left; lithographic print grain",
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw)",
+  "job_id": "e4ab1fae-989e-4cf9-a9ff-8cdbbf74282a",
+  "generated": "2026-10-26",
+  "background": "transparent PNG, 1536x512",
+  "processing": "alpha below 40 cleared, cropped to the alpha bounding box, scaled to 96 px high with LANCZOS",
+  "rendering": "full colour at the page's top left, 34 px high, followed by a red double rule",
+  "source_sha256": "5b4e2b926af02c22f78a7876d76149fe847c05e89e4a6c835f9689377a902595",
+  "sha256": "9d7d60db4529db867129155ba33ed63397eaabd030fc2c455fc55f4507fa3e16",
+  "size": [
+    412,
+    96
+  ]
+}
