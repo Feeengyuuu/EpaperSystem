@@ -55,6 +55,7 @@ real data. The page now has:
   dial, leader, probability, 24h volume, end date, heat).
 - 2026-10-26: the owner had the generated console strip under the columns
   removed and the columns opened up to fill the panel, "modern and direct":
-  the question sits under the event art instead of over it, the type is a
+  the event art is cut straight at its foot (no fade) and the question sits
+  under it instead of over it, the type is a
   size larger, and volume, heat and end form a labelled table under a
   hairline, all in the ink.

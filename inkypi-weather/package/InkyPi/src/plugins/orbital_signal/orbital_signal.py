@@ -55,10 +55,10 @@ MARKET_MARK_CACHE_BUDGET = CacheBudget(30 * 24 * 60 * 60, 96, 8 * 1024 * 1024)
 # A matchup's two logos (px), the league icon in its chip and the leader's logo by its name.
 MATCHUP_LOGO, LEAGUE_ICON, LEADER_LOGO = 28, 14, 14
 # Each market column is themed by its event's art: kept at EVENT_ART_SIDE px, laid ART_H px tall
-# across the column's top and fading into the paper from ART_FADE of its height down, the question
-# printed under it. The leading option shows its picture (Polymarket's own, its team's logo, or
-# for a person their Wikipedia portrait) in a LEADER_AVATAR px disc by its name.
-EVENT_ART_SIDE, ART_H, ART_FADE = 220, 92, 0.34
+# across the column's top and cut straight at its foot, the question printed under it. The leading
+# option shows its picture (Polymarket's own, its team's logo, or for a person their Wikipedia
+# portrait) in a LEADER_AVATAR px disc by its name.
+EVENT_ART_SIDE, ART_H = 220, 92
 LEADER_AVATAR = 26
 WIKI_SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
 WIKI_USER_AGENT = "InkyPi OrbitalSignal/1.0 (https://github.com/Feeengyuuu/EpaperSystem)"
@@ -76,7 +76,7 @@ FLIP_CARD = (34, 58)
 # A market column from top to bottom, in px below the market panel's top: the event art, the
 # question (QUESTION_LINES lines at most), the league tag, the dial's centre, the leader, the
 # probability and the facts table, whose rows end at MARKET_COLUMNS_HEIGHT.
-ART_TOP, QUESTION_TOP, TAG_TOP, GAUGE_Y, LEADER_Y, PERCENT_Y, FACTS_TOP = 44, 138, 188, 250, 262, 288, 330
+ART_TOP, QUESTION_TOP, TAG_TOP, GAUGE_Y, LEADER_Y, PERCENT_Y, FACTS_TOP = 44, 141, 188, 250, 262, 288, 330
 QUESTION_LINES, QUESTION_LINE = 3, 15
 MARKET_COLUMNS_HEIGHT = 380
 # The market facts' icons (volume, heat, end) and table rows in px.
@@ -1473,22 +1473,17 @@ class OrbitalSignal(BasePlugin):
             y += MARKET_FACT_ROW
 
     def _paste_event_art(self, image, key, box, palette):
-        """The event's art cover-cropped to ``box``, cut straight at the column's sides and fading into
-        the paper down its lower part, so the column's top takes its theme without a frame."""
+        """The event's art cover-cropped to ``box`` and cut straight on every side, so the column's
+        top takes its theme without a frame and the question below starts on clean paper."""
         mark = launch_photo.load_cached_mark(self._mark_namespace(), key) if key else None
         if mark is None:
             return
         x0, y0, x1, y1 = box
-        size = (x1 - x0, y1 - y0)
         flat = Image.new("RGBA", mark.size, (*palette["paper"], 255))
         flat.alpha_composite(mark)
-        art = ImageOps.fit(flat.convert("RGB"), size, method=Image.Resampling.LANCZOS, centering=(0.5, 0.4))
-        ramp = Image.new("L", (1, size[1]), 0)
-        start = size[1] * ART_FADE
-        for y in range(size[1]):
-            ramp.putpixel((0, y), round(255 * min(1.0, max(0.0, (y - start) / max(1.0, size[1] - start)) ** 1.2)))
-        fade = ramp.resize(size)
-        image.paste(Image.composite(Image.new("RGB", size, palette["paper"]), art, fade), (x0, y0))
+        art = ImageOps.fit(flat.convert("RGB"), (x1 - x0, y1 - y0), method=Image.Resampling.LANCZOS,
+                           centering=(0.5, 0.4))
+        image.paste(art, (x0, y0))
 
     def _draw_league_tag(self, draw, market, cx, width, tag_top, palette, family, image):
         """The league (its icon on a paper square, its name on the category colour) and the day's move."""

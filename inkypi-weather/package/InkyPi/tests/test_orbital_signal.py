@@ -1348,6 +1348,23 @@ def test_the_market_columns_draw_cached_team_marks_and_polymarket_logo(tmp_path)
     assert tuple(DAY_PALETTE["ink"][:3]) in colours((477, 68, 640, 98))
 
 
+def test_event_art_is_cut_straight_at_its_foot(tmp_path):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    plugin._cache_dir = lambda create=True: tmp_path / "cache"
+    art = Image.new("RGBA", (220, 220), (30, 120, 200, 255))
+    buffer = BytesIO()
+    art.save(buffer, format="PNG")
+    key = launch_photo_module.photo_cache_key("https://example.test/event.png")
+    plugin._mark_namespace().put_bytes(key, buffer.getvalue(), suffix=".png")
+    image = Image.new("RGB", (200, 200), DAY_PALETTE["paper"])
+
+    plugin._paste_event_art(image, key, (10, 20, 110, 20 + ART_H), DAY_PALETTE)
+
+    # The art keeps its own colour down to its last row, then the paper starts: no fade.
+    assert image.getpixel((60, 20 + ART_H - 1)) == (30, 120, 200)
+    assert image.getpixel((60, 20 + ART_H)) == DAY_PALETTE["paper"]
+
+
 def test_a_market_keeps_its_leaders_own_picture_and_encodes_upload_urls():
     event = {
         "id": "e1", "title": "Serbia Parliamentary Election Winner", "volume24hr": 900000,
