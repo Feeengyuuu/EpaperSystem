@@ -31,6 +31,10 @@ FACEOFF_CENTER_HALF_WIDTH = 72
 FACEOFF_LOGO_SIZE, FACEOFF_NAME_SIZE = 62, 20
 # Below this height the leader area stays plain when no player stats exist yet.
 LEADERS_PENDING_MIN_HEIGHT = 40
+# The series list's roomy rows (date in large type) and their pitch, used when every game fits.
+WNBA_SERIES_ROW_HEIGHT, WNBA_SERIES_ROW_PITCH = 20, 22
+# The game card's networks, as logos under its tiles.
+WNBA_CARD_TV_LOGO_HEIGHT = 18
 
 
 class BasketballRenderMixin:
@@ -405,11 +409,14 @@ class BasketballRenderMixin:
         self._draw_basketball_series_slots(draw, (inner_x1, tracker_y, inner_x2, tracker_y + 18), main, series, length, spec)
 
         list_y = tracker_y + 26
+        # Roomy rows with the date large when the whole list fits, else compact ones.
+        tall = len(series) * WNBA_SERIES_ROW_PITCH <= y2 - 6 - list_y
+        row_h, pitch = (WNBA_SERIES_ROW_HEIGHT, WNBA_SERIES_ROW_PITCH) if tall else (14, 16)
         for event in series:
-            if list_y + 14 > y2 - 6:
+            if list_y + row_h > y2 - 6:
                 break
-            self._draw_wnba_series_game_row(image, draw, (inner_x1, list_y, inner_x2, list_y + 14), event, now, spec)
-            list_y += 16
+            self._draw_wnba_series_game_row(image, draw, (inner_x1, list_y, inner_x2, list_y + row_h), event, now, spec)
+            list_y += pitch
         # Room left under a short series list takes the league's mascot scene.
         self._draw_kit_spare_filler(image, (inner_x1, list_y + 2, inner_x2, y2 - 6), spec)
 
@@ -439,24 +446,46 @@ class BasketballRenderMixin:
             self._draw_centered_in_box(draw, (left, y1, right, y2), label, self._font(9, current), COLORS["text"])
 
     def _draw_wnba_series_game_row(self, image, draw, box, event, now, spec):
+        """A series game as a schedule row led by its date: the game tag (filled for today's
+        game), the date in bold, the weekday and tip-off time (or the live clock, or FINAL)
+        after it, then the networks' logos or the result at the right."""
         x1, y1, x2, y2 = [int(value) for value in box]
+        tall = y2 - y1 >= WNBA_SERIES_ROW_HEIGHT
         state = SportsDashboard._hub_event_state(event)
         number = SportsDashboard._basketball_game_number(event)
-        self._draw_text_in_box(draw, (x1, y1, x1 + 24, y2), f"G{number}" if number else "G", self._font(9, True), COLORS["text"])
+        start = event.get("start")
+        today = isinstance(start, datetime) and start.date() == now.date()
+        tag = (x1, y1 + 2, x1 + 22, y2 - 2) if tall else (x1, y1, x1 + 22, y2)
+        draw.rounded_rectangle(tag, radius=3, fill=COLORS[spec.tag] if today or state == "live" else COLORS["panel"],
+                               outline=COLORS["border"], width=1)
+        self._draw_centered_in_box(draw, tag, f"G{number}" if number else "G", self._font(9, True), COLORS["text"])
+        x = x1 + 27
+        if isinstance(start, datetime):
+            date_font = self._font(13 if tall else 10, True)
+            date = f"{start:%m/%d}"
+            self._draw_text_in_box(draw, (x, y1, x + 44, y2), date, date_font, COLORS["text"])
+            x += self._text_width(draw, date, date_font) + 5
         top, bottom, key = spec.hook("state_labels", event, now)
-        if state == "scheduled" and str(bottom or "").strip() == str(event.get("broadcast") or "").strip():
-            bottom = ""  # The networks follow as logos.
-        when = top if state == "live" else (f"{top} {bottom}".strip() if state == "scheduled" else f"{bottom}")
-        when, when_font = self._fit_text(draw, when, 84, 9, bold=state == "live", min_size=7)
-        self._draw_text_in_box(draw, (x1 + 26, y1, x1 + 112, y2), when, when_font, COLORS[key])
+        if state == "live":
+            when = f"{top} {bottom}".strip()
+        elif state == "final":
+            when = "FINAL" + (f" {bottom}" if bottom in ("OT",) else "")
+        elif isinstance(start, datetime):
+            when = f"{'今天' if today else '周' + '一二三四五六日'[start.weekday()]} {SportsDashboard._format_time(start)}"
+        else:
+            when = top
+        when, when_font = self._fit_text(draw, when, x1 + 132 - x, 10 if tall else 9, bold=state == "live", min_size=7)
+        self._draw_text_in_box(draw, (x, y1, x1 + 132, y2), when, when_font, COLORS[key])
         if state == "scheduled":
-            self._draw_series_row_broadcast(image, draw, (x1 + 114, y1, x2, y2), event)
+            # The networks stay small beside the date: logos of a compact row's height.
+            inset = (y2 - y1 - 14) // 2
+            self._draw_series_row_broadcast(image, draw, (x1 + 134, y1 + inset, x2, y2 - inset), event)
             return
         winner = SportsDashboard._nba_winner_side(event) if state == "final" else ""
         logo_room = 16 if winner else 0
         text, font = self._kit_team_pair_text(draw, spec, event, f"{event.get('wins_a')}-{event.get('wins_b')}",
-                                              x2 - x1 - 116 - logo_room, 10, True)
-        self._draw_text_in_box(draw, (x1 + 114, y1, x2, y2), text, font, COLORS["text"], align="right")
+                                              x2 - x1 - 136 - logo_room, 10, True)
+        self._draw_text_in_box(draw, (x1 + 134, y1, x2, y2), text, font, COLORS["text"], align="right")
         if winner:
             self._draw_series_row_winner_logo(image, draw, event, winner, x2 - self._text_width(draw, text, font) - logo_room, y1, y2, spec)
 
@@ -492,12 +521,14 @@ class BasketballRenderMixin:
                 ("TIP-OFF", SportsDashboard._kit_countdown_label(event.get("start"), now)),
                 ("O/U", str(event.get("over_under") or "").replace("O/U", "").strip() or "--"),
             ]
-            self._draw_kit_tiles(draw, (left, y + 4, right, y2), tiles, spec)
-            self._draw_kit_footer(draw, (left, y2 - 26, right, y2 - 14), str(event.get("broadcast") or "").strip())
+            tiles_bottom = self._draw_kit_tiles(draw, (left, y + 4, right, y2), tiles, spec)
+            # The networks as their official logos in the room under the tiles.
+            self._draw_kit_broadcast_logos(image, draw, (left, tiles_bottom + 4, right, y2 - 15),
+                                           str(event.get("broadcast") or "").strip(), WNBA_CARD_TV_LOGO_HEIGHT)
         else:
             leaders = list(event.get("leaders") or [])[:2]
             self._draw_kit_leader_rows(image, draw, left, y + 4, right, y2 - 14, event, leaders, spec, max_rows=2)
-        self._draw_kit_footer(draw, (left, y2 - 13, right, y2 - 2), str(event.get("venue") or "").strip())
+        self._draw_kit_venue(image, draw, (left, y2 - 14, right, y2 - 2), str(event.get("venue") or "").strip())
 
     # Labels ------------------------------------------------------------------
 

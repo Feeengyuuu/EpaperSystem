@@ -1,0 +1,32 @@
+{
+  "source": "Wikimedia Commons, each file rendered to PNG by Commons",
+  "processing": "cropped to the alpha bounding box, scaled to 48 px high (max 480 wide) with LANCZOS",
+  "logos": {
+    "chase_center": {
+      "file": "Chase Center (Print).svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Chase_Center_(Print).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/64/Chase_Center_%28Print%29.svg/960px-Chase_Center_%28Print%29.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "licence": "Public domain",
+      "original_sha1": "8eb7865ffb5066a35a6e8f139c38e9934af81a6e",
+      "source_png_sha256": "477672f4005994ece2c8ac4e95d0bf0a4715f643af61a67a4a1365c60c4f1c4d",
+      "sha256": "b9511f0e7924b09227cac076919f372c333fda3d71de47ea0b43d27516dbe798",
+      "size": [
+        465,
+        48
+      ]
+    },
+    "state_farm_arena": {
+      "file": "State farm arena logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:State_farm_arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7b/State_farm_arena_logo.svg/960px-State_farm_arena_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "licence": "Public domain",
+      "original_sha1": "92a4de94a81c4e5ccb154198fc4b2f6d6bc74f77",
+      "source_png_sha256": "f3bcb72dcc88de590c043610530195508474f1253501b472059303b0f6eda5be",
+      "sha256": "ddd81fba75627ce84e55d254789b7dffb40e2a5268c889f6ff7a7319c7736e4a",
+      "size": [
+        165,
+        48
+      ]
+    }
+  }
+}

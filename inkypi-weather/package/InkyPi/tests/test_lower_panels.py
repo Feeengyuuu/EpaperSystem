@@ -22,7 +22,9 @@ from plugins.sports_dashboard.common import (
     LOCAL_MLB_BALLPARK_STRIP_PATH,
     LOCAL_SPARE_FILLER_PATHS,
     LOCAL_TV_LOGO_DIR,
+    LOCAL_VENUE_LOGO_DIR,
     LOCAL_WALL_SLOT_FILLER_PATHS,
+    VENUE_LOGO_KEYS,
 )
 from plugins.sports_dashboard.event_marks import EVENT_MARK_DIR
 from plugins.sports_dashboard.tv_networks import TV_NETWORK_ALIASES, tv_network_parts
@@ -370,6 +372,32 @@ def test_tv_tile_keeps_the_text_when_no_network_has_a_logo(monkeypatch, tmp_path
     _render(lambda plugin, image, draw: plugin._draw_kit_tiles(draw, (20, 20, 320, 60), [("TV", "KJZZ-TV")], spec, image=image))
 
     assert "KJZZ-TV" in [text for _box, text, _font in boxes]
+
+
+def test_venue_line_shows_the_arenas_own_logo_else_its_name():
+    assert {path.stem for path in Path(LOCAL_VENUE_LOGO_DIR).glob("*.png")} == set(VENUE_LOGO_KEYS.values())
+    chase, _draw = _render(lambda plugin, image, draw: plugin._draw_kit_venue(image, draw, (20, 20, 260, 34), "Chase Center"))
+    # Chase's blue octagon sits between the two words.
+    assert any(blue > 150 and red < 60 for red, _green, blue in chase.crop((20, 20, 260, 34)).get_flattened_data())
+    other, _draw = _render(lambda plugin, image, draw: plugin._draw_kit_venue(image, draw, (20, 20, 260, 34), "Barclays Center"))
+    assert not any(blue > 150 and red < 60 for red, _green, blue in other.crop((20, 20, 260, 34)).get_flattened_data())
+    assert len(set(other.crop((20, 20, 260, 34)).get_flattened_data())) > 2
+
+
+def test_wnba_series_rows_lead_with_the_game_date_and_keep_the_networks_small(boxes):
+    spec = _plugin()._basketball_spec("WNBA")
+    game = _game("WNBA", start=NOW.replace(hour=17) + timedelta(days=3), headline="WNBA Finals - Game 6",
+                 broadcast="USA Net / CNBC")
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_wnba_series_game_row(
+        image, draw, (20, 20, 300, 40), game, NOW, spec))
+
+    texts = [text for _box, text, _font in boxes]
+    assert "10/21" in texts and "周三 5:00 PM" in texts
+    date_font = next(font for _box, text, font in boxes if text == "10/21")
+    assert date_font.size == 13
+    # The networks' logos stay within a compact row's height, centred on the row.
+    logos = image.crop((154, 20, 300, 40)).convert("L").point(lambda value: 255 if value < 200 else 0).getbbox()
+    assert logos and logos[3] - logos[1] <= 12
 
 
 def test_scoreboard_groups_later_games_under_one_day_tab_and_each_kickoff_once(boxes):

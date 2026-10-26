@@ -456,6 +456,10 @@ LOCAL_WALL_BAND_ART_PATHS = {
 LOCAL_LIVE_NOW_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "live_now_wordmark.png")
 LOCAL_LIVE_WALL_CONTROL_ROOM_PATH = os.path.join(LOCAL_DECOR_DIR, "live_wall_control_room.png")
 LOCAL_TV_LOGO_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "logos", "tv"))
+# Arenas whose own logo stands in for the venue's name on a game card, by the name with only
+# its letters and digits, lower case.
+LOCAL_VENUE_LOGO_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "logos", "venues"))
+VENUE_LOGO_KEYS = {"chasecenter": "chase_center", "statefarmarena": "state_farm_arena"}
 LOCAL_NBA_COURT_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_court_strip.png")
 LOCAL_TI_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "the_international_title_wordmark.png")
 LOCAL_MLB_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_header_cutout.png")

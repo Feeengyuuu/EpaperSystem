@@ -345,6 +345,47 @@ class ScorebugKitMixin:
         text, font = self._fit_text_ellipsis(draw, label, x2 - x1, 10, bold=False, min_size=8)
         self._draw_text_in_box(draw, (x1, y1, x2, y2), text, font, COLORS["text"], align="right")
 
+    def _draw_kit_broadcast_logos(self, image, draw, box, label, height):
+        """A broadcast's networks as logos ``height`` tall, centred in ``box``; the label as a
+        footer line when none of them has a logo."""
+        if not label:
+            return
+        x1, y1, x2, y2 = [int(value) for value in box]
+        height = min(height, y2 - y1)
+        if height >= 9 and x2 > x1:
+            strip = Image.new("RGBA", (x2 - x1, height), (0, 0, 0, 0))
+            if self._draw_kit_tv_logos(strip, ImageDraw.Draw(strip), (0, 0, strip.width, height), label, COLORS["panel"]):
+                bounds = strip.getchannel("A").getbbox()
+                if bounds:
+                    used = strip.crop((bounds[0], 0, bounds[2], height))
+                    image.paste(used, (x1 + (x2 - x1 - used.width) // 2, y1 + (y2 - y1 - height) // 2), used)
+                    return
+        self._draw_kit_footer(draw, (x1, y2 - 12, x2, y2), label)
+
+    def _draw_kit_venue(self, image, draw, box, venue):
+        """The venue as its arena's official logo centred in ``box``, else its name as a footer line."""
+        if not venue:
+            return
+        x1, y1, x2, y2 = [int(value) for value in box]
+        key = VENUE_LOGO_KEYS.get(re.sub(r"[^a-z0-9]", "", venue.lower()))
+        logo = (self._load_local_logo(os.path.join(LOCAL_VENUE_LOGO_DIR, f"{key}.png"), (x2 - x1, y2 - y1), alpha_threshold=8)
+                if key else None)
+        if logo:
+            logo = _kit_inked_where_faint(logo, COLORS["panel"])
+            if _kit_luminance(COLORS["panel"]) < 0.2:
+                # On a dark card the lettering is ink throughout, as on the arenas' own
+                # dark-ground lockups; the brand colours stay.
+                logo = logo.copy()
+                pixels = logo.load()
+                for y in range(logo.height):
+                    for x in range(logo.width):
+                        red, green, blue, alpha = pixels[x, y]
+                        if alpha >= 8 and max(red, green, blue) - min(red, green, blue) < 28:
+                            pixels[x, y] = (*COLORS["text"], alpha)
+            image.paste(logo, (x1 + (x2 - x1 - logo.width) // 2, y1 + (y2 - y1 - logo.height) // 2), logo)
+            return
+        self._draw_kit_footer(draw, box, venue)
+
     def _draw_series_row_winner_logo(self, image, draw, event, side, x, y1, y2, spec):
         size = min(13, y2 - y1)
         fallback = spec.hook("logo_fallback", event, side, default=event.get(f"team_{side}_code"))
