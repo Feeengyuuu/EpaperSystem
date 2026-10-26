@@ -13,7 +13,7 @@ import math
 from datetime import timedelta
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageFilter
+from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFilter
 
 from utils.flat_icons import draw_icon
 from utils.safe_image import ImageLimits, safe_open_image
@@ -35,6 +35,8 @@ SHORE_BAND = 5
 HOME_RINGS_KM = (10, 25, 50)
 NEAR_FAULT_KM = 8
 SHOCK_MAGNITUDE = 3.0
+# The map legend's source logos (USGS, NWS), this tall.
+LEGEND_LOGO_HEIGHT = 13
 EDGE_GROUP_PX = 40
 # Where the near-home box may go, in order: open ocean off the Peninsula, then the top-left corner.
 SUMMARY_CORNERS = tuple((4, top) for top in range(176, 300, 6)) + ((4, 4),)
@@ -923,7 +925,49 @@ def _draw_legend(image, draw, palette, fonts, size, alert_tones=()):
         x += 16 + draw.textlength("预警区", font=font) + 10
     draw.line((x, y, x + 16, y), fill=palette["fault"], width=2)
     draw.text((x + 20, y), "活动断层", font=font, fill=palette["ink"], anchor="lm")
-    draw.text((size[0] - 8, y), "USGS · NWS", font=font, fill=palette["ink"], anchor="rm")
+    # The map's sources by their logos (the faults and quakes USGS', the warning zones NWS').
+    paper, ink = rgb(palette["paper"]), rgb(palette["ink"])
+    if paste_logos(image, ("usgs", "nws"), size[0] - 8, y, LEGEND_LOGO_HEIGHT, ink if sum(paper) < sum(ink) else None) is None:
+        draw.text((size[0] - 8, y), "USGS · NWS", font=font, fill=palette["ink"], anchor="rm")
+
+
+def rgb(colour):
+    """(r, g, b) of a palette colour given as "#rrggbb" or as a tuple."""
+    return tuple(ImageColor.getrgb(colour) if isinstance(colour, str) else colour)[:3]
+
+
+def source_logo(name, height, ink=None):
+    """A data source's official logo (assets/logos/<name>.png, tools/build_source_logos.py)
+    ``height`` tall; with ``ink`` (a dark page), its black parts take that colour while its
+    coloured parts stay as printed. None without the file."""
+    try:
+        with Image.open(ASSETS / "logos" / f"{name}.png") as source:
+            logo = source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+    logo = logo.resize((max(1, round(logo.width * height / logo.height)), height), Image.Resampling.LANCZOS)
+    if ink is not None:
+        pixels = logo.load()
+        for y in range(logo.height):
+            for x in range(logo.width):
+                red, green, blue, alpha = pixels[x, y]
+                if alpha and max(red, green, blue) < 110 and max(red, green, blue) - min(red, green, blue) < 40:
+                    pixels[x, y] = (*ink, alpha)
+    return logo
+
+
+def paste_logos(image, names, right, middle, height, ink=None, gap=4):
+    """The named logos side by side ending at ``right``, centred on ``middle``; the left edge of
+    the row, or None (nothing drawn) when any of them is missing."""
+    logos = [source_logo(name, height, ink) for name in names]
+    if not logos or any(logo is None for logo in logos):
+        return None
+    x = right - sum(logo.width for logo in logos) - gap * (len(logos) - 1)
+    left = x
+    for logo in logos:
+        image.paste(logo, (round(x), round(middle - logo.height / 2)), logo)
+        x += logo.width + gap
+    return left
 
 
 def california_map_size(max_width, max_height):

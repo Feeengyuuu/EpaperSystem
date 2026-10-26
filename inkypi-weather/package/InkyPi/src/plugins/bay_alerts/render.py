@@ -16,8 +16,8 @@ from utils.local_wordmark import paste_local_wordmark
 from utils.page_canvas import PageCanvas
 
 from .map_view import (
-    alert_tag_size, california_map_size, draw_alert_tag, nearest_fault, quake_age_class, quake_chip_colors,
-    render_bay_map, render_california_map, tone_ink,
+    alert_tag_size, california_map_size, draw_alert_tag, nearest_fault, paste_logos, quake_age_class,
+    quake_chip_colors, render_bay_map, render_california_map, rgb, tone_ink,
 )
 from .sources import PACIFIC, distance_km, local_now, parse_time
 
@@ -46,6 +46,8 @@ RIGHT = 788
 NOTABLE_QUAKE = 3.5
 NEARBY_EVENT_KM = 120
 NEAR_HOME_KM = 50
+# The cards' source logos, this tall before each header's detail.
+CARD_LOGO_HEIGHT = 18
 SAME_FIRE_KM = 15
 
 
@@ -213,9 +215,10 @@ def _column_boxes(payload):
     return boxes, rows
 
 
-def _card(canvas, box, bar, icon, title, detail, source):
+def _card(canvas, box, bar, icon, title, detail, source, logos=()):
     """A card in its own colour: a frame, a solid band along the top and the header rule in it,
-    then the section icon, title and a right-aligned detail."""
+    then the section icon, title and a right-aligned detail, the sources' ``logos`` before it
+    (their names in the detail when a logo is missing)."""
     left, top, right, _bottom = box
     colour = canvas.color(bar)
     canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
@@ -226,7 +229,16 @@ def _card(canvas, box, bar, icon, title, detail, source):
         detail = "缓存 · " + detail
     elif source.get("state") == "unavailable":
         detail = "暂不可用"
-    canvas.text((right - 8, top + 16), detail, 11, "muted", anchor="rm", bold=False, width=right - left - width - 60)
+    detail_right = right - 8
+    if logos:
+        names, logos = logos
+        text_width = canvas.width(detail, 11, bold=False) if detail else 0
+        paper, ink = rgb(canvas.palette["paper"]), rgb(canvas.palette["ink"])
+        placed = paste_logos(canvas.image, logos, right - 8 - text_width - (6 if detail else 0), top + 16,
+                             CARD_LOGO_HEIGHT, ink if sum(paper) < sum(ink) else None)
+        if placed is None:
+            detail = " · ".join(part for part in (names, detail) if part)
+    canvas.text((detail_right, top + 16), detail, 11, "muted", anchor="rm", bold=False, width=right - left - width - 60)
     canvas.rule((left + 8, top + 28, right - 8, top + 28), colour)
 
 
@@ -234,7 +246,7 @@ def _alerts_card(canvas, payload, now, box, rows):
     source = payload["alerts"]
     items = source["data"].get("items", [])
     counties = source["data"].get("counties") or payload["counties"]
-    _card(canvas, box, "alert", "alert", "气象预警", f"NWS · {len(items)} 条", source)
+    _card(canvas, box, "alert", "alert", "气象预警", f"{len(items)} 条", source, ("NWS", ("nws",)))
     top = box[1]
     left, right = box[0] + 10, box[2] - 10
     if source["state"] == "unavailable":
@@ -307,7 +319,7 @@ def _quakes_card(canvas, payload, now, box, rows):
     data = source["data"]
     items = data.get("items", [])
     radius = data.get("radius_km") or payload["radius_km"]
-    _card(canvas, box, "home", "quake", "地震", f"USGS · 半径 {radius} km", source)
+    _card(canvas, box, "home", "quake", "地震", f"半径 {radius} km", source, ("USGS", ("usgs",)))
     top = box[1]
     left, right = box[0] + 10, box[2] - 10
     if source["state"] == "unavailable":
@@ -352,8 +364,9 @@ def _quakes_card(canvas, payload, now, box, rows):
 def _events_card(canvas, payload, now, box, rows):
     source = payload["events"]
     items = source["data"].get("items", [])
-    detail = ("CAL FIRE · EONET" if source.get("calfire") else "NASA EONET") + (f" · 共 {len(items)} 起" if items else "")
-    _card(canvas, box, "moderate", "fire", "加州自然事件", detail, source)
+    # CAL FIRE's incidents and NASA's EONET events, by their logos.
+    names, logos = ("CAL FIRE · EONET", ("calfire", "nasa")) if source.get("calfire") else ("NASA EONET", ("nasa",))
+    _card(canvas, box, "moderate", "fire", "加州自然事件", f"共 {len(items)} 起" if items else "", source, (names, logos))
     top = box[1] + 32
     # The minimap fills the card's height as far as its width allows, centred in it.
     space = box[3] - 4 - top

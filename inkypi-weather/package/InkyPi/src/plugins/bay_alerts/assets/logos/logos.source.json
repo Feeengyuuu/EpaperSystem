@@ -1,0 +1,49 @@
+{
+  "logos": {
+    "usgs": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1c/USGS_logo_green.svg/500px-USGS_logo_green.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:USGS_logo_green.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "2f07a405abb8ff5b499c77e4312cafc69cccca7d1a1100ce8ff03541e252edf2",
+      "size": [
+        260,
+        64
+      ],
+      "sha256": "b56dc0b4f5c0d319cc243c38b254bfdd3a1da968dc4139f064c235365ae29493",
+      "processing": "the top 66% kept (the mark and letters, not the tagline)"
+    },
+    "nws": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/ff/US-NationalWeatherService-Logo.svg/500px-US-NationalWeatherService-Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:US-NationalWeatherService-Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "1ec4e0a4e9194b7503199fd075ddffc82ff2da5946dfdf854df9f13d90664efa",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "f658ba6a0aa38170707c0dad6dcc73eac4ff87952a0c8e8604230df513fa64e6"
+    },
+    "calfire": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4b/Logo_of_CAL_FIRE.svg/500px-Logo_of_CAL_FIRE.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_of_CAL_FIRE.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "67a2dd7bc4d61ebb94a7a7ff1663500b80882a9b0eb0b2a38745f5867a568498",
+      "size": [
+        49,
+        64
+      ],
+      "sha256": "f83418c2c246a230ee2be289e3a6d6605fc8ca39002170413148646bb42a2474"
+    },
+    "nasa": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/NASA_logo.svg/500px-NASA_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:NASA_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c26ca481b8bb2241aa3276bd8c1335259ded59fd4f11dc8c7f8b4dd3301fe4b1",
+      "size": [
+        78,
+        64
+      ],
+      "sha256": "b574b8a8c14158f9f0be042de95fce7f50c3ef40aaafedb3a81ecf8decd3a9dd"
+    }
+  }
+}

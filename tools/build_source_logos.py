@@ -8,6 +8,8 @@
 - USGS: its green logo from Commons (public domain), cut to the mark and the letters (the
   tagline under them is too small to read on the panel), for The National Map's credit.
 - NOAA: its round logo from Commons (public domain), for the tide predictions.
+- NWS, CAL FIRE and NASA (for EONET): their logos from Commons (public domain), for 湾区要紧事.
+  USGS goes there too, for its earthquakes.
 
 Each is cropped to its visible pixels and scaled to at most 64 px tall into the plugin's
 assets; logos.source.json beside each records where it came from.
@@ -38,10 +40,19 @@ LOGOS = {
                      [PLUGINS / "ticketmaster_events" / "assets"], 1.0),
     "usgs": ((COMMONS.format(path="1/1c/USGS_logo_green.svg", name="USGS_logo_green.svg"),
               "https://commons.wikimedia.org/wiki/File:USGS_logo_green.svg", PUBLIC_DOMAIN),
-             [PLUGINS / "bay_commute" / "assets" / "logos"], 0.66),
+             [PLUGINS / "bay_commute" / "assets" / "logos", PLUGINS / "bay_alerts" / "assets" / "logos"], 0.66),
     "noaa": ((COMMONS.format(path="7/79/NOAA_logo.svg", name="NOAA_logo.svg"),
               "https://commons.wikimedia.org/wiki/File:NOAA_logo.svg", PUBLIC_DOMAIN),
              [PLUGINS / "bay_commute" / "assets" / "logos"], 1.0),
+    "nws": ((COMMONS.format(path="f/ff/US-NationalWeatherService-Logo.svg", name="US-NationalWeatherService-Logo.svg"),
+             "https://commons.wikimedia.org/wiki/File:US-NationalWeatherService-Logo.svg", PUBLIC_DOMAIN),
+            [PLUGINS / "bay_alerts" / "assets" / "logos"], 1.0),
+    "calfire": ((COMMONS.format(path="4/4b/Logo_of_CAL_FIRE.svg", name="Logo_of_CAL_FIRE.svg"),
+                 "https://commons.wikimedia.org/wiki/File:Logo_of_CAL_FIRE.svg", PUBLIC_DOMAIN),
+                [PLUGINS / "bay_alerts" / "assets" / "logos"], 1.0),
+    "nasa": ((COMMONS.format(path="e/e5/NASA_logo.svg", name="NASA_logo.svg"),
+              "https://commons.wikimedia.org/wiki/File:NASA_logo.svg", PUBLIC_DOMAIN),
+             [PLUGINS / "bay_alerts" / "assets" / "logos"], 1.0),
 }
 
 

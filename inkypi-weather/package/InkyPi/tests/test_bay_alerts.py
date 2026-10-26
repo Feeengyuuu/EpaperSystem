@@ -509,3 +509,29 @@ def test_hotspots_load_only_with_a_firms_key(monkeypatch, tmp_path):
     assert keys == []
     plugin.generate_image({"_inkypi_theme": {"mode": "day"}, "forceRefresh": True}, KeyedDevice())
     assert keys == ["firms-test-key"]
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_each_card_names_its_sources_by_their_logos(mode):
+    from utils.page_canvas import PageCanvas
+
+    canvas = PageCanvas(render._palette({"_inkypi_theme": {"mode": mode}}))
+    drawn = []
+    original = canvas.text
+
+    def record(xy, text, *args, **kwargs):
+        drawn.append(text)
+        return original(xy, text, *args, **kwargs)
+
+    canvas.text = record
+    render._card(canvas, (470, 60, 788, 160), "alert", "alert", "气象预警", "2 条", {"state": "live"}, ("NWS", ("nws",)))
+    render._card(canvas, (470, 170, 788, 270), "moderate", "fire", "加州自然事件", "共 9 起", {"state": "live"},
+                 ("CAL FIRE · EONET", ("calfire", "nasa")))
+    render._card(canvas, (470, 280, 788, 380), "home", "quake", "地震", "半径 150 km", {"state": "live"},
+                 ("USGS", ("missing",)))
+
+    # A logo stands for the name; a source without its logo file keeps its name in the detail.
+    assert {"2 条", "共 9 起", "USGS · 半径 150 km"} <= set(drawn)
+    assert not any("NWS" in text or "CAL FIRE" in text for text in drawn)
+    header = [canvas.image.getpixel((x, y)) for x in range(640, 760) for y in range(68, 86)]
+    assert any(abs(red - blue) > 60 for red, _green, blue in header)  # NWS' blue and red
