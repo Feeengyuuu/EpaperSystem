@@ -298,6 +298,10 @@ class GlyphSafeFont(ImageFont.FreeTypeFont):
             out.append(char)
         return "".join(out)
 
+    def covers(self, text: str) -> bool:
+        """Whether the font draws every visible character of ``text`` itself."""
+        return all(self._facts.present(char) for char in str(text) if not char.isspace())
+
     def _all_present(self, text: str) -> bool:
         return bool(text) and all(self._facts.present(char) for char in text)
 

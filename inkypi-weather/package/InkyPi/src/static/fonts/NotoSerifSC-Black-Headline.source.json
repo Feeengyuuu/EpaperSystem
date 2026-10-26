@@ -1,0 +1,10 @@
+{
+  "font": "NotoSerifSC-Black-Headline.ttf",
+  "source": "https://github.com/google/fonts/raw/main/ofl/notoserifsc/NotoSerifSC%5Bwght%5D.ttf",
+  "source_sha256": "050080d9255a86808f2945bffac582b31ef32bc36411ce29563b4961670c66f9",
+  "licence": "SIL Open Font License 1.1 (NotoSerifSC-OFL.txt)",
+  "weight": 900,
+  "characters": "GB 2312 hanzi (6763), ASCII, Latin-1, general/CJK/full-width punctuation",
+  "sha256": "8d51aa62e5c83fe7e0d2ce474e76c007b1f942ff3e955b5fdd86bcd567512737",
+  "bytes": 3134904
+}

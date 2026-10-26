@@ -63,6 +63,61 @@ def badge(name, width, height):
         return None
 
 
+LOGO_DIR = Path(__file__).resolve().parent / "source_logos"
+# How an outlet's logo shows on each page: in its own colours unless listed. "ink" puts the
+# dark parts that would vanish on the night page in the page's ink; "invert" also turns its
+# white lettering to the page colour; "silhouette" draws a white-on-colour logo all in ink.
+SOURCE_LOGO_DAY = {"chinanews": "silhouette"}
+SOURCE_LOGO_NIGHT = {"nyt": "ink", "guardian": "ink", "pbs_newshour": "ink", "abc_news": "ink", "bbc_news": "ink",
+                     "dw": "invert"}
+LOGO_MIN_CONTRAST = 2.0
+
+
+@lru_cache(maxsize=32)
+def _source_logo_file(key):
+    try:
+        with Image.open(LOGO_DIR / f"{key}.png") as source:
+            return source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+
+
+def source_logo_aspect(key):
+    """An outlet logo's width over its height, or None when there is no file."""
+    art = _source_logo_file(key) if key else None
+    return art.width / art.height if art is not None else None
+
+
+def _luminance(rgb):
+    channels = [value / 255 for value in rgb[:3]]
+    channels = [value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def source_logo(key, height, night, ink, panel):
+    """The outlet's logo ``height`` px tall, as it shows on the day or night page."""
+    art = _source_logo_file(key)
+    if art is None:
+        return None
+    art = art.resize((max(1, round(art.width * height / art.height)), int(height)), Image.LANCZOS)
+    mode = (SOURCE_LOGO_NIGHT if night else SOURCE_LOGO_DAY).get(key, "keep")
+    if mode == "keep":
+        return art
+    ground = _luminance(panel)
+    pixels = art.load()
+    for y in range(art.height):
+        for x in range(art.width):
+            red, green, blue, alpha = pixels[x, y]
+            if alpha < 8:
+                continue
+            lighter, darker = sorted((_luminance((red, green, blue)), ground), reverse=True)
+            if mode == "silhouette" or (lighter + 0.05) / (darker + 0.05) < LOGO_MIN_CONTRAST:
+                pixels[x, y] = (*tuple(ink)[:3], alpha)
+            elif mode == "invert" and min(red, green, blue) > 220:
+                pixels[x, y] = (*tuple(panel)[:3], alpha)
+    return art
+
+
 def paste_badge(image, name, cx, cy, width, height=None):
     """Paste a generated badge centred on (cx, cy); False when there is no image or file."""
     art = badge(name, int(width), int(height or width)) if image is not None else None

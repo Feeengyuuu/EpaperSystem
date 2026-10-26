@@ -24,6 +24,14 @@ LEAD_BOX = (66, 146)
 # The header's wordmark box; the newsroom art stands on the rule beside it.
 WORDMARK_BOX = (18, 5, (172, 48))
 LEAD_ART_WIDTH = 170
+# The brief's outlets as their logos take more of the lead band than the medallion: rows of
+# logos sized by their shapes, at most this tall, the lead's outlet first.
+LEAD_LOGOS_WIDTH = 250
+SOURCE_LOGO_MAX_HEIGHT = 30
+SOURCE_LOGO_GAP = (10, 6)
+SOURCE_LOGOS_MAX = 12
+# A logo that is solid lettering from edge to edge looks larger than its row; it is drawn smaller.
+SOURCE_LOGO_SCALES = {"pbs_newshour": 0.68}
 # A vertical red seal reading 头条 marks the lead story.
 SEAL_SIZE = (28, 54)
 COLUMN_TOP = 150
@@ -165,8 +173,9 @@ class NewsPage:
     def render(self, *, title, lead, mainland, world, quotes, meta):
         width, height = self.img.size
         self.header(title, meta, width)
-        art_left = width - MARGIN - LEAD_ART_WIDTH
-        self.lead(lead, width, art_left)
+        logos = source_logo_keys(meta.get("source_logos") or [], (lead or {}).get("source_logo"))
+        art_left = width - MARGIN - (LEAD_LOGOS_WIDTH if logos else LEAD_ART_WIDTH)
+        self.lead(lead, width, art_left, logos)
         column_width = (width - 2 * MARGIN - COLUMN_GAP) // 2
         left_x, right_x = MARGIN, MARGIN + column_width + COLUMN_GAP
         self.column(left_x, column_width, "国内", mainland, sources=meta.get("mainland_sources") or [])
@@ -195,7 +204,7 @@ class NewsPage:
         self.p._draw_title_background(self.img, (title_right + 12, 1, meta_left - 14, RULE_Y + 1), align="bottom")
         self.d.line((MARGIN, RULE_Y, right, RULE_Y), fill=c["ink"], width=2)
 
-    def lead(self, lead, width, art_left):
+    def lead(self, lead, width, art_left, logos=()):
         c = self.c
         top, bottom = LEAD_BOX
         if not lead:
@@ -211,10 +220,13 @@ class NewsPage:
                           "mm")
         text_x = MARGIN + seal_w + 14
         brief_w = art_left - 12 - text_x
-        # The headline runs the block's full width at the largest size that fits.
-        size = self.fit_size(lead["title"], LEAD_TITLE_SIZES, brief_w)
-        self.text((text_x, top - 1 + (LEAD_TITLE_SIZES[0] - size) // 2), self.clip(lead["title"], size, brief_w),
-                  size, True)
+        # The headline runs the block's full width at the largest size that fits, its ink top on
+        # the same line whichever face sets it.
+        font, size = self.headline_font(lead["title"], brief_w)
+        headline = self.clip_with(lead["title"], font, brief_w)
+        ink_top = font.getbbox(headline, anchor="la")[1] if headline else 0
+        self.d.text((text_x, top + 4 + (LEAD_TITLE_SIZES[0] - size) // 2 - ink_top), headline, font=font,
+                    fill=c["ink"], anchor="la")
         y = top + LEAD_TITLE_SIZES[0] + 6
         # The dek under it opens like a newspaper's: the section in its accent and the topic, then the
         # story's two-sentence fact running on across two lines.
@@ -241,9 +253,56 @@ class NewsPage:
             note_y = y + len(fact) * LEAD_FACT_LINE + 2
             self.d.line((text_x, note_y + 8, text_x + 14, note_y + 8), fill=c["ink"], width=1)
             self.text((text_x + 20, note_y + 8), self.clip(note, 12, brief_w - 20, False), 12, False, c["ink"], "lm")
+        if logos:
+            self.source_wall((art_left, top + 2, width - MARGIN, bottom - 2), logos, lead.get("source_logo"))
+            return
         kind = news_art.topic_kind(lead.get("tag"), lead["title"])
         news_art.draw_topic_art(self.d, (art_left, top + 4, width - MARGIN - 6, bottom - 4), kind,
                                 c["ink"], c["panel"], c["rule"], c["lead"], image=self.img)
+
+    def headline_font(self, title, max_width):
+        """(font, size) for the lead's headline: the serif banner face at the largest size that
+        fits when it sets every character, else the page's bold."""
+        serif = self.p._headline_font(LEAD_TITLE_SIZES[0])
+        if serif is not None and serif.covers(title):
+            for size in LEAD_TITLE_SIZES:
+                font = self.p._headline_font(size)
+                if self.p._tw(self.d, title, font) <= max_width:
+                    return font, size
+            return font, size
+        size = self.fit_size(title, LEAD_TITLE_SIZES, max_width)
+        return self.font(size), size
+
+    def clip_with(self, text, font, max_width):
+        text = str(text or "")
+        if self.p._tw(self.d, text, font) <= max_width:
+            return text
+        while text and self.p._tw(self.d, text + "…", font) > max_width:
+            text = text[:-1]
+        return text.rstrip() + "…" if text else ""
+
+    def source_wall(self, box, keys, lead_key):
+        """The brief's outlets as their official logos in rows packed by shape inside ``box``,
+        each logo in its own colours on the bare page; a short red rule marks the lead's."""
+        left, top, right, bottom = box
+        night = sum(tuple(self.c["panel"])[:3]) < 330
+        scales = [SOURCE_LOGO_SCALES.get(key, 1.0) for key in keys]
+        rows, height = pack_logo_rows([news_art.source_logo_aspect(key) * scale for key, scale in zip(keys, scales)],
+                                      right - left, bottom - top)
+        gap_x, gap_y = SOURCE_LOGO_GAP
+        y = top + (bottom - top - len(rows) * height - gap_y * (len(rows) - 1)) / 2
+        for row in rows:
+            logos = [news_art.source_logo(keys[index], max(8, round(height * scales[index])), night, self.c["ink"],
+                                          self.c["panel"]) for index in row]
+            row_width = sum(logo.width for logo in logos) + gap_x * (len(logos) - 1)
+            x = left + (right - left - row_width) / 2
+            for index, logo in zip(row, logos):
+                self.img.paste(logo, (round(x), round(y + (height - logo.height) / 2)), logo)
+                if keys[index] == lead_key:
+                    self.d.line((x, y + height + 3, x + min(logo.width, 18), y + height + 3), fill=self.c["lead"],
+                                width=2)
+                x += logo.width + gap_x
+            y += height + gap_y
 
     def column(self, x, width, label, items, *, sources):
         c = self.c
@@ -442,3 +501,32 @@ class NewsPage:
 
 def date_text(moment):
     return f"{moment.month}月{moment.day}日 周{WEEKDAYS[moment.weekday()]}"
+
+
+def source_logo_keys(keys, lead_key=""):
+    """The outlets to show as logos: those with a logo file, the lead's first, at most SOURCE_LOGOS_MAX."""
+    ordered = ([lead_key] if lead_key else []) + [key for key in keys if key != lead_key]
+    return [key for key in dict.fromkeys(ordered) if news_art.source_logo_aspect(key)][:SOURCE_LOGOS_MAX]
+
+
+def pack_logo_rows(aspects, width, height, max_height=SOURCE_LOGO_MAX_HEIGHT, gap=SOURCE_LOGO_GAP):
+    """([[index, ...] per row], logo height) for logos of these aspects (width / height) in a
+    width x height box: the row count that lets them stand tallest. The widest logos are dealt
+    first, each to the row with the least width so far, so rows come out even; the first logo
+    (the lead's outlet) heads the top row and every row keeps the logos' order."""
+    gap_x, gap_y = gap
+    best = None
+    for count in range(1, min(4, len(aspects)) + 1):
+        rows, widths = [[] for _ in range(count)], [0.0] * count
+        for index in sorted(range(len(aspects)), key=lambda item: -aspects[item]):
+            row = min(range(count), key=lambda item: widths[item])
+            rows[row].append(index)
+            widths[row] += aspects[index]
+        if any(not row for row in rows):
+            continue
+        logo_height = min(max_height, (height - gap_y * (count - 1)) / count,
+                          *((width - gap_x * (len(row) - 1)) / total for row, total in zip(rows, widths)))
+        if best is None or logo_height > best[1] + 0.5:
+            rows = sorted((sorted(row) for row in rows), key=lambda row: row[0])
+            best = (rows, logo_height)
+    return best if best else ([], 0)

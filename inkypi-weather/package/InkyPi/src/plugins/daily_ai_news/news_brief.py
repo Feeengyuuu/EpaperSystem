@@ -520,11 +520,18 @@ class NewsBriefMixin:
         section = str(lead.get("section") or "").strip().lower()
         if section == "mainland" and not matches_mainland:
             return None
-        if not matches_mainland:
+        if matches_mainland:
+            source = next((item for item in mainland_sources
+                           if self._matches_source_title(lead["title"], [str(item.get("title") or "")])), None)
+        else:
             source = self._referenced_item(ref, items)
             if (ref and (source is None or self._item_section(source) != "world")) or self._is_vague_story(lead):
                 return None
         lead["section"] = "mainland" if matches_mainland else "world"
+        # Where the story came from, so the page can show the outlet's logo beside it.
+        if isinstance(source, dict):
+            lead["source"] = str(source.get("source") or "")[:24]
+            lead["link"] = str(source.get("link") or "")[:220]
         return lead
 
     def _grounded_world_stories(self, world: list[Any], items: list[dict[str, str]]) -> list[Any]:

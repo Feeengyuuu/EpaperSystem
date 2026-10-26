@@ -2446,6 +2446,53 @@ def test_the_lead_keeps_a_two_sentence_fact():
     assert checked["why"] == fact
 
 
+def test_the_lead_records_its_rss_outlet_for_the_logo_wall():
+    plugin = _plugin()
+    mainland = [{"source": "中国新闻网要闻", "section": "mainland", "title": "台风蔷琵临近台湾多地停课",
+                 "link": "https://www.chinanews.com.cn/gn/2026/10-26/1.shtml"}]
+    world = {"source": "BBC世界", "section": "world", "title": "Lula wins fourth term",
+             "link": "https://www.bbc.co.uk/news/articles/x"}
+
+    checked = plugin._checked_lead({"tag": "两岸", "title": "台风蔷琵临近台湾多地停课", "why": "事实。", "section": "mainland"},
+                                   mainland, mainland)
+    abroad = plugin._checked_lead({"tag": "外交", "title": "卢拉赢得巴西总统第四任", "why": "事实。", "section": "world",
+                                   "ref": "2"}, mainland, [*mainland, world])
+
+    assert (checked["source"], checked["link"]) == ("中国新闻网要闻", mainland[0]["link"])
+    assert (abroad["source"], abroad["link"]) == ("BBC世界", world["link"])
+    assert DailyAINews._source_logo_key(abroad["source"], abroad["link"]) == "bbc_news"
+    assert DailyAINews._source_logo_key("纽约时报国际", "") == "nyt"
+    assert DailyAINews._source_logo_key("Some Blog", "https://edition.cnn.com/x") == ""
+    # Every outlet the plugin can name has its logo bundled.
+    keys = set(daily_ai_news_module.SOURCE_LOGO_HOSTS.values()) | {key for _word, key in daily_ai_news_module.SOURCE_LOGO_NAMES}
+    assert all(news_art.source_logo_aspect(key) for key in keys)
+
+
+def test_logo_rows_pack_by_shape_with_the_lead_outlet_first():
+    rows, height = news_layout.pack_logo_rows([1.5, 7.6, 3.0, 3.0, 1.0, 3.7], 250, 76)
+
+    assert rows[0][0] == 0 and sorted(index for row in rows for index in row) == list(range(6))
+    gap_x, _gap_y = news_layout.SOURCE_LOGO_GAP
+    aspects = [1.5, 7.6, 3.0, 3.0, 1.0, 3.7]
+    assert all(sum(aspects[index] for index in row) * height + gap_x * (len(row) - 1) <= 250 + 0.5 for row in rows)
+    assert 10 < height <= news_layout.SOURCE_LOGO_MAX_HEIGHT
+    # One logo stands alone at the tallest the band allows.
+    assert news_layout.pack_logo_rows([2.0], 250, 76) == ([[0]], news_layout.SOURCE_LOGO_MAX_HEIGHT)
+    assert news_layout.source_logo_keys(["npr", "nyt", "missing"], "bbc_news") == ["bbc_news", "npr", "nyt"]
+
+
+def test_the_headline_takes_the_serif_banner_face_unless_it_lacks_a_character():
+    plugin = _plugin()
+    page = news_layout.NewsPage(plugin, Image.new("RGB", (800, 480), "white"), plugin._page_palette({"mode": "day"}),
+                                "Microsoft YaHei")
+
+    serif, size = page.headline_font("卢拉赢得巴西总统第四任", 480)
+    fallback, _size = page.headline_font("卢拉赢得巴西总统第四任𠀾", 480)
+
+    assert Path(serif.path).name == daily_ai_news_module.HEADLINE_FONT.name and size == news_layout.LEAD_TITLE_SIZES[0]
+    assert Path(fallback.path).name != daily_ai_news_module.HEADLINE_FONT.name
+
+
 def test_a_column_keeps_the_normal_gap_when_no_title_is_clipped():
     plugin = _plugin()
     page = news_layout.NewsPage(plugin, Image.new("RGB", (800, 480), "white"), plugin._page_palette({"mode": "day"}), "Microsoft YaHei")

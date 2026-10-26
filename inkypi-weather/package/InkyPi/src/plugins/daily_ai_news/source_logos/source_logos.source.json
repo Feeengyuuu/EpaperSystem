@@ -1,0 +1,135 @@
+{
+ "logos": {
+  "abc_news": {
+   "file": "File:ABC News logo 2021.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:ABC_News_logo_2021.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2a/ABC_News_logo_2021.svg/960px-ABC_News_logo_2021.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "99955e9ec3d1aab17929d5b25006ad533aa4152454b829116bbbd9f866acf56f",
+   "sha256": "b69699b311b8e5f989961bd7dcd34a88219c0e0611307236d8a6e149f5d3dbe2",
+   "size": [
+    276,
+    96
+   ]
+  },
+  "al_jazeera": {
+   "file": "File:Aljazeera eng.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Aljazeera_eng.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f2/Aljazeera_eng.svg/960px-Aljazeera_eng.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "54a2999a51014072e649728349822baad8d7f1082fb943f91dd58eb801e7042b",
+   "sha256": "9f065bdd0d3830b5663d20db15eaef90aec61911be01e75d75d17a1b43e3c535",
+   "size": [
+    284,
+    96
+   ]
+  },
+  "bbc_news": {
+   "file": "File:BBC News 2022 (Alt).svg",
+   "page": "https://commons.wikimedia.org/wiki/File:BBC_News_2022_(Alt).svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a2/BBC_News_2022_%28Alt%29.svg/960px-BBC_News_2022_%28Alt%29.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "6a8a7766ae0bf4cc1bd9ce672f5b8317b05683b677021a5b8493b885e1606ea4",
+   "sha256": "019c86c8c50a808667dc9d652ebd67fd2517f283b5be4389aaa094659a0d8432",
+   "size": [
+    150,
+    96
+   ]
+  },
+  "dw": {
+   "file": "File:Deutsche Welle Logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Deutsche_Welle_Logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/69/Deutsche_Welle_Logo.svg/960px-Deutsche_Welle_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "a1723e10b418e6b1758e7d76a274e0d3908bca1616644657f647b6eca6383c5c",
+   "sha256": "7436aa6bba9daeafa136270b316149d0c9be3932d6cc565e000fb9e28a740a45",
+   "size": [
+    357,
+    96
+   ]
+  },
+  "france24": {
+   "file": "File:France 24 logo (2013).svg",
+   "page": "https://commons.wikimedia.org/wiki/File:France_24_logo_(2013).svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/France_24_logo_%282013%29.svg/960px-France_24_logo_%282013%29.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "e8295e87e66473681ee8873d8665f2acd972f75d3ee7d88e4a5d18c1b33c8f55",
+   "sha256": "b19ddebc21c7d4ad7962b6c2684d0feab3923df042e69fc36aff2258945724bb",
+   "size": [
+    96,
+    96
+   ]
+  },
+  "guardian": {
+   "file": "File:The Guardian 2018.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:The_Guardian_2018.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/75/The_Guardian_2018.svg/960px-The_Guardian_2018.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "4831ce8313639e96436f80ef161811f8fb2c9d7083d068a06d49f145f1eb8b8c",
+   "sha256": "d05e21930d9f77ef8eafa2cb85f56ae65aa07c9699123bc9d79296a4b8646ae6",
+   "size": [
+    292,
+    96
+   ]
+  },
+  "npr": {
+   "file": "File:NPR new logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:NPR_new_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/18/NPR_new_logo.svg/960px-NPR_new_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "e09361bf851e1cc7806bc0dd2a5f656c001ba7901c332aa225f0fbb76da2a6b6",
+   "sha256": "014683f54a41e9ede4b577e7aa202f4ce779b5e6b79488c5929f4fb392fab30e",
+   "size": [
+    288,
+    96
+   ]
+  },
+  "nyt": {
+   "file": "File:NewYorkTimes.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:NewYorkTimes.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/58/NewYorkTimes.svg/960px-NewYorkTimes.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "fc47be4811755db1cc1b3e7605a81fe96a8ce054b43c5e1ebfab49ca3d0b0656",
+   "sha256": "2e85d122eb970b3b32ac9eaa3e3c1fb088ff2dc191c548b7eb93cf56023b35a3",
+   "size": [
+    728,
+    96
+   ]
+  },
+  "pbs_newshour": {
+   "file": "File:PBS News Hour wordmark (2024 horizontal).svg",
+   "page": "https://commons.wikimedia.org/wiki/File:PBS_News_Hour_wordmark_(2024_horizontal).svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/PBS_News_Hour_wordmark_%282024_horizontal%29.svg/960px-PBS_News_Hour_wordmark_%282024_horizontal%29.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "aaeb812ae96ec6b6185ec2027f111e652367fea9f058f0dad7aa2f613aabfbe6",
+   "sha256": "cda8d8c5e3c2996212a0b7467a751dc3f32bbc35defa726851bc53ab8fd6d70c",
+   "size": [
+    886,
+    96
+   ]
+  },
+  "rthk": {
+   "file": "File:Radio Television Hong Kong Logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Radio_Television_Hong_Kong_Logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/44/Radio_Television_Hong_Kong_Logo.svg/960px-Radio_Television_Hong_Kong_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "fbd57157af8116b213aa1e9dd548da3ff7b4f31e4c3ecf2c9e6b76eddf7eee96",
+   "sha256": "b19082985295d90da413d7cafac47245621d3d1ebfb5f5c925ce88325e2dcc06",
+   "size": [
+    133,
+    96
+   ]
+  },
+  "chinanews": {
+   "file": "http://i2.chinanews.com/2014/wap/images/logo.png",
+   "page": "https://www.chinanews.com.cn/m/",
+   "licence": "the outlet's own logo (its trademark), shown to name the source",
+   "source_sha256": "a2502a59665a5303944f1a7d56024cbce1eeb774e4b95d2c6d9a378e5d997bc3",
+   "sha256": "c3c8f56e8f35d9a854caffa1d30b81b31990398797b2d4f253d6e2d06135c2e7",
+   "size": [
+    201,
+    59
+   ]
+  }
+ }
+}

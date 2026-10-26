@@ -20,6 +20,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from PIL import Image, ImageFont, ImageOps
 import pytz
@@ -36,6 +37,7 @@ from utils.app_utils import (
     get_base_ui_font,
     get_font,
 )
+from utils.fonts import load_font
 from utils.image_utils import text_width
 from utils.theme_utils import get_theme_palette
 
@@ -68,6 +70,24 @@ PAGE_NIGHT_COLOURS = {"lead": (220, 48, 66), "red": (255, 99, 112), "blue": (122
                       "green": (52, 211, 153), "panel": (0, 0, 0)}
 # The page is laid out for the 800x480 panel; other displays get it scaled to fit.
 PAGE_SIZE = (800, 480)
+# The lead's headline is set in a newspaper's serif banner face (Noto Serif SC at its heaviest,
+# kept to GB 2312, tools/build_news_headline_font.py); a headline it cannot set whole keeps the
+# page's face.
+HEADLINE_FONT = Path(__file__).resolve().parents[2] / "static" / "fonts" / "NotoSerifSC-Black-Headline.ttf"
+# Each outlet's logo (source_logos/<key>.png) by its story links' host, else by words in the
+# feed's name.
+SOURCE_LOGO_HOSTS = {
+    "chinanews.com.cn": "chinanews", "chinanews.com": "chinanews", "bbc.co.uk": "bbc_news", "bbc.com": "bbc_news",
+    "npr.org": "npr", "nytimes.com": "nyt", "theguardian.com": "guardian", "aljazeera.com": "al_jazeera",
+    "france24.com": "france24", "dw.com": "dw", "pbs.org": "pbs_newshour", "abcnews.go.com": "abc_news",
+    "abcnews.com": "abc_news", "rthk.hk": "rthk",
+}
+SOURCE_LOGO_NAMES = (
+    ("中国新闻网", "chinanews"), ("中新网", "chinanews"), ("BBC", "bbc_news"), ("NPR", "npr"), ("纽约时报", "nyt"),
+    ("NYTimes", "nyt"), ("卫报", "guardian"), ("Guardian", "guardian"), ("半岛", "al_jazeera"), ("法国24", "france24"),
+    ("France 24", "france24"), ("德国之声", "dw"), ("PBS", "pbs_newshour"), ("ABC", "abc_news"), ("香港电台", "rthk"),
+    ("RTHK", "rthk"),
+)
 
 
 class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin):
@@ -411,15 +431,31 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
         if lead:
             lead["section_label"] = "国际" if section == "world" else "国内"
             lead["source_note"] = self._lead_source_note(lead["title"], payload)
+            # The lead's outlet: as the brief recorded it, else the RSS item its title matches.
+            origin = raw_lead if raw_lead and (raw_lead.get("source") or raw_lead.get("link")) else \
+                self._lead_item(lead["title"], payload) or {}
+            lead["source_logo"] = self._source_logo_key(origin.get("source"), origin.get("link"))
         return lead, mainland, world
 
-    def _lead_source_note(self, title: str, payload: dict[str, Any]) -> str:
-        """Where and when the lead's RSS item was published, e.g. "中新网要闻 · 10:52 发布"."""
-        item = next(
+    @staticmethod
+    def _source_logo_key(source: Any, link: Any) -> str:
+        """The outlet's logo key from a story link's host, else from its feed's name; "" for none."""
+        host = re.sub(r"^www\.", "", urlparse(str(link or "")).netloc.lower().split(":")[0])
+        key = next((key for domain, key in SOURCE_LOGO_HOSTS.items() if host == domain or host.endswith("." + domain)),
+                   "")
+        name = str(source or "")
+        return key or next((key for word, key in SOURCE_LOGO_NAMES if word.lower() in name.lower()), "")
+
+    def _lead_item(self, title: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+        return next(
             (item for item in payload.get("items") or []
              if isinstance(item, dict) and self._similar_news_title(title, str(item.get("title") or ""))),
             None,
         )
+
+    def _lead_source_note(self, title: str, payload: dict[str, Any]) -> str:
+        """Where and when the lead's RSS item was published, e.g. "中新网要闻 · 10:52 发布"."""
+        item = self._lead_item(title, payload)
         if item is None:
             return ""
         source = str(item.get("source") or "").strip().replace("中国新闻网", "中新网")
@@ -473,6 +509,7 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
         except ValueError:
             generated = now
         sources = {"mainland": [], "world": []}
+        logos = []
         for item in payload.get("items") or []:
             if not isinstance(item, dict):
                 continue
@@ -480,6 +517,9 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             names = sources[self._item_section(item)]
             if source and source not in names:
                 names.append(source)
+            logo = self._source_logo_key(item.get("source"), item.get("link"))
+            if logo and logo not in logos:
+                logos.append(logo)
         count = len(sources["mainland"]) + len(sources["world"])
         detail = f"{generated:%H:%M} 更新" + (f" · {count} 个信源" if count else "")
         if payload.get("from_cache"):
@@ -491,6 +531,7 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             "warning": bool(warning),
             "mainland_sources": sources["mainland"],
             "world_sources": sources["world"],
+            "source_logos": logos,
         }
 
     @staticmethod
@@ -677,6 +718,18 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             except Exception:
                 continue
         return ImageFont.load_default()
+
+    @staticmethod
+    @lru_cache(maxsize=8)
+    def _headline_font(size: int):
+        """The serif banner face at ``size``; None when its file is missing."""
+        if not HEADLINE_FONT.is_file():
+            return None
+        try:
+            return load_font(HEADLINE_FONT, int(size))
+        except OSError as exc:
+            logger.warning("Daily AI News headline font unavailable: %s", exc)
+            return None
 
     def _microsoft_yahei_font(self, size: int, weight: str = "normal"):
         return get_base_ui_font(
