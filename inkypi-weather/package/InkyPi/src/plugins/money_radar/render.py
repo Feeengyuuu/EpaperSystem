@@ -32,6 +32,8 @@ NIGHT = {
     "badge_ink": "#0e171f",
 }
 COIN_NAMES = {"bitcoin": "比特币", "ethereum": "以太坊", "solana": "Solana"}
+# What a dollar buys elsewhere, along the foot of the dollar/yuan card: (currency, flag).
+FX_OTHERS = (("EUR", "flag-eu"), ("JPY", "flag-jp"), ("HKD", "flag-hk"))
 MACRO_ICON_SIZE = 18
 EARNINGS_ROWS = 2
 # Ticker chips in each brand's own published colour, as is (no snapping to the panel's
@@ -215,12 +217,31 @@ def _fx_tile(canvas, payload, box):
     change = (latest / first - 1) * 100
     _change_line(canvas, (left + 10, 138), change, f"{change:+.2f}%", f"{len(series)} 个交易日")
     sparkline(canvas, (left + 12, 150, right - 12, 176), [value for _day, value in series], CARD_ACCENTS["fx"])
+    # A dollar in the other currencies: each one's flag and the rate, spread across the foot (a
+    # currency without its flag keeps its code).
     others = []
-    for code, label in (("EUR", "欧元"), ("JPY", "日元"), ("HKD", "港币")):
+    for code, flag in FX_OTHERS:
         rows = (data.get("series") or {}).get(code) or []
         if rows:
-            others.append(f"{label} {rows[-1][1]:.2f}" if code != "JPY" else f"{label} {rows[-1][1]:.1f}")
-    canvas.text((left + 10, 187), " · ".join(others), 11, "muted", anchor="lm", bold=False, width=right - left - 20)
+            mark = _asset(flag, 11)
+            rate = f"{rows[-1][1]:.1f}" if code == "JPY" else f"{rows[-1][1]:.2f}"
+            others.append((mark, rate if mark is not None else f"{code} {rate}"))
+    room = right - left - 20
+    for size in (12, 11, 10):
+        widths = [(mark.width + 4 if mark is not None else 0) + canvas.width(text, size) for mark, text in others]
+        if sum(widths) + 8 * (len(others) - 1) <= room:
+            break
+    gap = (room - sum(widths)) / (len(others) - 1) if len(others) > 1 else 0
+    x = left + 10
+    for (mark, text), width in zip(others, widths):
+        if mark is not None:
+            # A hairline round each flag, so Japan's white field still reads as a flag on the card.
+            top = round(187 - mark.height / 2)
+            _paste(canvas, mark, (x, top))
+            canvas.draw.rectangle((round(x) - 1, top - 1, round(x) + mark.width, top + mark.height), outline=canvas.color("muted"))
+            x += mark.width + 4
+        canvas.text((x, 187), text, size, anchor="lm", width=right - 10 - x)
+        x += width - (mark.width + 4 if mark is not None else 0) + gap
 
 
 def _coin_tile(canvas, coin, box):

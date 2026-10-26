@@ -340,3 +340,24 @@ def test_holdings_keep_two_earnings_rows_and_give_the_rest_to_the_news(monkeypat
     assert earnings_rows == [money_render.EARNINGS_ROWS]
     # The halves stay split: three stories under the earnings, the next five down the right half.
     assert news_calls == [(6, 22, 390, 3), (3, 410, 778, 5)]
+
+
+def test_the_dollar_card_foot_shows_each_currency_by_its_flag():
+    canvas = PageCanvas(money_render._palette({}), family="Microsoft YaHei")
+    days = [("2026-10-%02d" % day, 0) for day in range(20, 27)]
+    series = {"CNY": [(day, 6.70) for day, _ in days], "EUR": [(day, 0.891) for day, _ in days],
+              "JPY": [(day, 156.82) for day, _ in days], "HKD": [(day, 7.842) for day, _ in days]}
+    drawn = []
+    original = canvas.text
+
+    def record(xy, text, *args, **kwargs):
+        drawn.append(text)
+        return original(xy, text, *args, **kwargs)
+
+    canvas.text = record
+    money_render._fx_tile(canvas, {"fx": {"data": {"series": series}}}, (10, 200))
+
+    # The rates are written bare (0.89, 156.8, 7.84): the flags in front of them name the currencies.
+    assert {"0.89", "156.8", "7.84"} <= set(drawn) and not any("欧元" in str(text) for text in drawn)
+    foot = {canvas.image.getpixel((x, 187)) for x in range(20, 200)}
+    assert any(blue > 120 and red < 60 for red, _green, blue in foot)  # the EU flag's blue
