@@ -154,29 +154,32 @@ def _wrap(draw, text, font, width, max_lines):
     return [_clip(draw, line, font, width) for line in lines]
 
 
-def columns(count, dimensions, *, timeline=False):
-    """[(image box, label box)] for ``count`` works on the page."""
+def columns(count, dimensions, *, timeline=False, fact_rows=1):
+    """[(image box, label box)] for ``count`` works on the page, their labels ``fact_rows`` fact
+    lines deep."""
     width, height = dimensions
     count = max(1, int(count))
     col_w = (width - 2 * MARGIN - (count - 1) * COLUMN_GAP) / count
-    label_top = height - BOTTOM - LABEL_H - (TIMELINE_H if timeline else 0)
+    label_h = LABEL_H + (fact_rows - 1) * FACT_ROW
+    label_top = height - BOTTOM - label_h - (TIMELINE_H if timeline else 0)
     boxes = []
     for index in range(count):
         left = round(MARGIN + index * (col_w + COLUMN_GAP))
         right = round(MARGIN + index * (col_w + COLUMN_GAP) + col_w)
-        boxes.append(((left, HEADER_RULE + 7, right, label_top - 5), (left, label_top, right, label_top + LABEL_H)))
+        boxes.append(((left, HEADER_RULE + 7, right, label_top - 5), (left, label_top, right, label_top + label_h)))
     return boxes
 
 
-def art_sizes(count, dimensions, *, timeline=False):
+def art_sizes(count, dimensions, *, timeline=False, fact_rows=1):
     """The most each of ``count`` works can fill on the page: the size a cover is contained in,
     so a plugin can resize its bank images to it once, ahead of the page."""
     return [(right - left - SHADOW, bottom - top - SHADOW)
-            for (left, top, right, bottom), _label in columns(count, dimensions, timeline=timeline)]
+            for (left, top, right, bottom), _label in columns(count, dimensions, timeline=timeline,
+                                                              fact_rows=fact_rows)]
 
 
 def compose(images, labels, dimensions, *, title, subtitle="", date_text="", accent=(0, 70, 200), dark=False,
-            timeline=False, logo=None, wordmark=None, style="gallery", header_art=None, sources=()):
+            timeline=False, logo=None, wordmark=None, style="gallery", header_art=None, sources=(), fact_rows=1):
     """The gallery page for ``images`` (already loaded) and their ``labels``.
 
     ``style`` sets the page's backdrop over the works' own colour wash: "gallery" lights each
@@ -184,11 +187,12 @@ def compose(images, labels, dimensions, *, title, subtitle="", date_text="", acc
     ``wordmark`` (RGBA) replaces the lettered title; its black parts take the page's ink.
     ``header_art`` (RGBA, transparent) fills the header between the subtitle and the date.
     ``sources`` are named after the subtitle by their logos (in text when one has none).
+    ``fact_rows`` 2 gives each label a second fact line (the body, then its source facts).
     """
     colors = palette(dark)
     width, height = dimensions
     page = Image.new("RGB", (width, height), colors["paper"])
-    boxes = columns(len(images), dimensions, timeline=timeline)
+    boxes = columns(len(images), dimensions, timeline=timeline, fact_rows=fact_rows)
     _backdrop(page, images, boxes, colors, style, accent, dark)
     draw = ImageDraw.Draw(page)
     years = [label.year for label in labels if isinstance(label.year, int)]
@@ -201,7 +205,8 @@ def compose(images, labels, dimensions, *, title, subtitle="", date_text="", acc
         frame = _framed(page, image, image_box, colors)
         label_box = _under(frame, label_box)
         swatch_w = _swatches(draw, image, (label_box[2], label_box[1] + TITLE_ROW + 4), colors)
-        _label(draw, label, label_box, index, accent, colors, numbered=timeline, reserve=swatch_w + 6, page=page)
+        _label(draw, label, label_box, index, accent, colors, numbered=timeline, reserve=swatch_w + 6, page=page,
+               fact_rows=fact_rows)
     if timeline:
         _timeline(draw, labels, (MARGIN, height - BOTTOM - TIMELINE_H + 6, width - MARGIN, height - BOTTOM), accent,
                   colors)
@@ -298,7 +303,7 @@ def _under(frame, box, min_width=LABEL_MIN_W):
     return x0, top, x1, bottom
 
 
-def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=None):
+def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=None, fact_rows=1):
     """Three tight lines under a work: its (numbered) title; its chip and first fact, leaving
     ``reserve`` px at the right for the swatches; then its source's logo and its other facts
     run together."""
@@ -334,9 +339,24 @@ def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=No
         x += mark.width + 6
     named = label.source_logo if label.source_logo and mark is None else ""
     # Small text stays in solid ink: a grey this size dithers into noise on the panel.
-    rest = " · ".join(str(part) for part in (*label.lines[1:], label.body, label.source, named) if part)
-    if rest:
-        draw.text((x, y), _clip(draw, rest, fact_font, right - x), font=fact_font, fill=colors["ink"])
+    if fact_rows > 1 and label.body and label.source:
+        # Two fact lines: the body beside the logo, the source facts under it.
+        rows = (" · ".join(str(part) for part in (*label.lines[1:], label.body, named) if part), label.source)
+    elif fact_rows > 1:
+        # No body: the facts run on from beside the logo onto the second line, whole facts at a time.
+        facts = [str(part) for part in (*label.lines[1:], label.source, named) if part]
+        facts = [fact for text in facts for fact in text.split(" · ")]
+        first = []
+        while facts and draw.textlength(" · ".join([*first, facts[0]]), font=fact_font) <= right - x:
+            first.append(facts.pop(0))
+        rows = (" · ".join(first), " · ".join(facts)) if first else (" · ".join(facts),)
+    else:
+        rows = (" · ".join(str(part) for part in (*label.lines[1:], label.body, label.source, named) if part),)
+    for row, text in enumerate(rows):
+        if text:
+            row_x = x if row == 0 else left
+            draw.text((row_x, y + row * FACT_ROW), _clip(draw, text, fact_font, right - row_x), font=fact_font,
+                      fill=colors["ink"])
 
 
 def _timeline(draw, labels, box, accent, colors):

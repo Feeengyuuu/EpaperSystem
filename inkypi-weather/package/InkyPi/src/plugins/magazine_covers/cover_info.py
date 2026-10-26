@@ -100,8 +100,10 @@ def provider_label(record):
 
 
 def gallery_label(record, this_year):
-    """The shared gallery's label for one cover: magazine, issue date or era with price or
-    age, the issue's headline, then its category and where the scan came from."""
+    """The shared gallery's label for one cover: the magazine (its title without the date the
+    chip already gives), the issue date with its age or price and its volume and number, then
+    the issue's headline, who published or drew it, its category and, when free of copyright,
+    that it is in the public domain, after the logo of the collection the scan came from."""
     info = cover_info(record, this_year)
     record = record or {}
     issue_date = str(record.get("issue_date") or "").strip()
@@ -110,14 +112,88 @@ def gallery_label(record, this_year):
     beside = str(record.get("price") or "").strip()
     if info["era"] == "historical" or not beside:
         beside = info["era_text"] if chip != info["era_text"] else ""
-    headline = str(record.get("issue") or "").strip()
-    if not headline or headline.lower() == info["publication"].lower():
-        headline = str(record.get("title") or "").split("|")[0].strip()
-        headline = "" if headline.lower().startswith(("buy ", "best sellers")) else headline
+    publication = clean_publication(info["publication"])
+    title = str(record.get("title") or "").split("|")[0].strip()
+    number = issue_number(record.get("issue"), title)
+    publisher = publishers(record.get("attribution"), publication)
+    if not re.search(r"[^\W\d_]{3,}", _TRAILING_DATE.sub("", publication)) and publisher:
+        # A scan filed under its date ("2026-10-01-ew") is named by its publisher.
+        publication, publisher = publisher.split(" · ")[0], " · ".join(publisher.split(" · ")[1:])
+    # The headline is the issue's own (a cover line), else its title less what the card already
+    # shows: the number, the date, the name.
+    issue = str(record.get("issue") or "").strip()
+    headline = issue if issue and not number.startswith(issue[:3]) and issue.lower() != publication.lower() \
+        else clean_publication(_NUMBER.sub("", title).strip(" ,"))
+    if (headline.lower().startswith(("buy ", "best sellers")) or headline.lower() in (publication.lower(), "")
+            or not re.search(r"[^\W\d_]{3,}", _TRAILING_DATE.sub("", headline))):
+        headline = ""
     category = CATEGORY_LABELS.get(info["category"], "")
-    # Where the scan came from leads the last line by its logo; the category follows the headline.
-    return Label(title=info["publication"], chip=chip, lines=(beside,), body=headline, source=category,
-                 source_logo=provider_label(record))
+    rights = "公有领域" if "public domain" in str(record.get("rights") or "").lower() else ""
+    facts = " · ".join(part for part in (publisher, category, rights) if part)
+    # Where the scan came from leads the last line by its logo; the headline and facts follow it.
+    return Label(title=publication, chip=chip, lines=(" · ".join(part for part in (beside, number) if part),),
+                 body=headline, source=facts, source_logo=provider_label(record))
+
+
+# A date or year the chip already gives, at the end of a scan's file title: "1966-03-24",
+# "(1973 04)", "193002", "Feb 17 1933", "-1924".
+_TRAILING_DATE = re.compile(
+    r"[\s,._-]*(?:\(?\b(?:1[7-9]|20)\d{2}(?:[\s._-]?\d{2}){0,2}\)?|"
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s+(?:1[7-9]|20)\d{2})\s*$",
+    re.IGNORECASE)
+_NUMBER = re.compile(r"\b(?:vol(?:ume)?\.?\s*(\d+))?[\s,]*(?:issue|no\.?|#)\s*(\d+)\b|\bv(\d+)\s*n(\d+)\b",
+                     re.IGNORECASE)
+
+
+def clean_publication(text):
+    """A scan's title without the date or year at its end (the chip shows it), a scanner's
+    credit after that date, or the issue number the card shows on its own; as it is when that
+    would leave nothing but a date."""
+    text = str(text or "").strip()
+    cleaned = _SCAN_CREDIT.sub("", text)
+    for _ in range(2):
+        cleaned = _TRAILING_DATE.sub("", cleaned).strip(" ,-_")
+    cleaned = re.sub(r"\s*#\d+$", "", cleaned)
+    return cleaned if re.search(r"[^\W\d_]{3,}", cleaned) else text
+
+
+# A scanner's credit in parentheses after the issue's date: "(1973 04) (LennyS aMouse)".
+_SCAN_CREDIT = re.compile(r"(\(\s*(?:1[7-9]|20)\d{2}[^)]*\))(?:\s*\([^)\d]*\))+\s*$")
+
+
+def issue_number(issue, title=""):
+    """"Vol. 1, No. 1" from the record's issue field, else from its title ("vol1 issue1",
+    "v01n01", "#30"); "" when neither names one."""
+    issue = str(issue or "").strip()
+    if re.search(r"\b(?:vol|no)\b", issue, re.IGNORECASE):
+        return issue
+    match = _NUMBER.search(str(title or ""))
+    if not match:
+        return ""
+    volume, number, short_volume, short_number = match.groups()
+    volume, number = volume or short_volume, number or short_number
+    return f"Vol. {int(volume)}, No. {int(number)}" if volume else f"No. {int(number)}"
+
+
+def publishers(attribution, publication=""):
+    """Who published or drew the issue, from the record's attribution ("GORDON STEVENSON; Time
+    Magazine; Wikimedia Commons"): its names without links, collections or generic placeholders,
+    at most two."""
+    names = []
+    for part in str(attribution or "").split(";"):
+        name = part.strip().strip(",")
+        lowered = name.lower()
+        if (not name or "://" in name or lowered in _NOT_PUBLISHERS or lowered == str(publication or "").lower()
+                or len(name) > 48):
+            continue
+        name = name.title() if name.isupper() else name
+        if name not in names:
+            names.append(name)
+    return " · ".join(names[:2])
+
+
+_NOT_PUBLISHERS = {"internet archive", "internet archive contributor", "wikimedia commons", "library of congress",
+                   "gallica", "bibliothèque nationale de france", "unknown", "anonymous"}
 
 
 @lru_cache(maxsize=len(CATEGORY_LABELS))

@@ -3348,3 +3348,47 @@ def test_magazine_stateless_preview_leaves_entire_plugin_cache_tree_unchanged(
 
     assert image.size == (800, 480)
     assert magazine_cache_tree(tmp_path) == baseline
+
+
+def test_cover_labels_show_the_number_publisher_and_rights_without_repeating_the_date():
+    from plugins.magazine_covers import cover_info
+
+    newsweek = cover_info.gallery_label({
+        "publication": "News-Week Feb 17 1933", "title": "News-Week Feb 17 1933, vol1 issue1", "issue_date": "1933-02-17",
+        "attribution": "News-Week magazine, Newsweek, Inc.; http://example.com/x", "rights": "Public domain",
+        "provider": "wikimedia_commons", "category": "news_politics", "temporal_class": "historical", "year": 1933}, 2026)
+    assert newsweek.title == "News-Week" and newsweek.chip == "1933.02.17"
+    assert newsweek.lines == ("93 年前 · Vol. 1, No. 1",) and newsweek.body == ""
+    assert newsweek.source == "News-Week magazine, Newsweek, Inc. · 新闻时政 · 公有领域"
+
+    review = cover_info.gallery_label({
+        "publication": "The China Weekly Review", "title": "The China Weekly Review 1930.02.01",
+        "issue": "Judge Feetham and the Future Status of Shanghai", "issue_date": "1930-02-01",
+        "attribution": "Millard Publishing Co.; Internet Archive", "provider": "internet_archive",
+        "category": "news_politics", "temporal_class": "historical", "year": 1930}, 2026)
+    # A cover line in the issue field stays the headline; the publisher joins the facts.
+    assert review.body == "Judge Feetham and the Future Status of Shanghai"
+    assert review.source == "Millard Publishing Co. · 新闻时政"
+
+    # A scan filed under its date is named by its publisher; a scanner's credit and a pulp's
+    # number come off its title.
+    weekly = cover_info.gallery_label({"publication": "2026-10-01-ew", "title": "2026-10-01-ew", "issue_date": "2026-10-01",
+                                       "attribution": "Eugene Weekly; Internet Archive", "provider": "internet_archive"}, 2026)
+    assert weekly.title == "Eugene Weekly" and weekly.body == ""
+    assert cover_info.clean_publication("Thrilling Science Fiction #30 (1973 04) (LennyS aMouse)") == "Thrilling Science Fiction"
+    assert cover_info.issue_number("", "Amazing Stories v01n01 1926-04") == "Vol. 1, No. 1"
+    assert cover_info.publishers("GORDON STEVENSON; Time Magazine; Wikimedia Commons") == "Gordon Stevenson · Time Magazine"
+    assert cover_info.publishers("Internet Archive contributor; Internet Archive") == ""
+
+
+def test_a_two_fact_row_gallery_gives_each_label_a_second_line():
+    from plugins.base_plugin import cover_gallery
+
+    one = cover_gallery.columns(3, (800, 480))
+    two = cover_gallery.columns(3, (800, 480), fact_rows=2)
+    (_image_one, label_one), (_image_two, label_two) = one[0], two[0]
+    # The covers give up one fact line's height to the deeper labels.
+    assert label_two[3] == label_one[3]
+    assert label_one[1] - label_two[1] == cover_gallery.FACT_ROW
+    assert cover_gallery.art_sizes(3, (800, 480), fact_rows=2)[0][1] == cover_gallery.art_sizes(3, (800, 480))[0][1] \
+        - cover_gallery.FACT_ROW

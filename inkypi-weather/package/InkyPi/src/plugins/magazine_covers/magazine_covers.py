@@ -221,6 +221,9 @@ DEFAULT_FIT_MODE = "triptych"
 TRIPTYCH_COVER_COUNT = 3
 # The gallery page's accent: the issue-date chips (the red of the old "最新" tag).
 GALLERY_ACCENT = (205, 38, 46)
+# A cover's label has two fact lines: its headline beside the collection's logo, then who
+# published it, its category and whether it is in the public domain.
+LABEL_FACT_ROWS = 2
 DATA_PROVIDER_ATTEMPT_LIMIT = 6
 DATA_HYDRATION_TIME_LIMIT_SECONDS = 75
 HISTORICAL_CATALOG_REFRESH_HOURS = 24
@@ -1024,7 +1027,8 @@ class MagazineCovers(BasePlugin):
         ]
         if selection.get("layout") == "triptych" and len(records) >= 2:
             # Each cover is resized once, to exactly the frame the gallery page gives it.
-            sizes = cover_gallery.art_sizes(min(len(records), TRIPTYCH_COVER_COUNT), dimensions)
+            sizes = cover_gallery.art_sizes(min(len(records), TRIPTYCH_COVER_COUNT), dimensions,
+                                            fact_rows=LABEL_FACT_ROWS)
             targets = [sizes[min(index, len(sizes) - 1)] for index in range(len(records))]
             paths.append(paths[0])
             targets.append(None)
@@ -1056,7 +1060,8 @@ class MagazineCovers(BasePlugin):
             title="MAGAZINES", subtitle="本期封面", sources=shops,
             date_text=f"{now.month}月{now.day}日 周{'一二三四五六日'[now.weekday()]}",
             accent=GALLERY_ACCENT, dark=self._gallery_dark(settings),
-            wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="newsstand")
+            wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="newsstand",
+            fact_rows=LABEL_FACT_ROWS)
 
     @staticmethod
     def _gallery_dark(settings):
