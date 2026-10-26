@@ -616,11 +616,37 @@ def test_wall_cards_carry_each_teams_colour(boxes):
     assert max(plugin._wall_team_colour({"team_a_color": "f4f4f4"}, "a", (0, 0, 0))) < 205
 
     image = Image.new("RGB", (200, 90), (255, 255, 255))
-    plugin._draw_wall_team_colours(ImageDraw.Draw(image), (0, 0, 199, 89), event, (0, 0, 0), 20, 55)
+    colours = plugin._draw_wall_team_colours(ImageDraw.Draw(image), (0, 0, 199, 89), event, (0, 0, 0), 20,
+                                             [(22, 53), (57, 87)])
+    assert colours == ((200, 16, 46), (29, 66, 138))
     assert image.getpixel((20, 8)) == (200, 16, 46)   # band, away side
     assert image.getpixel((180, 8)) == (29, 66, 138)  # band, home side
     assert image.getpixel((4, 30)) == (200, 16, 46)   # edge beside the away row
     assert image.getpixel((4, 70)) == (29, 66, 138)   # edge beside the home row
+    # One unbroken edge: the away colour runs on from the band to its row's end, the home one after.
+    assert image.getpixel((4, 21)) == (200, 16, 46)
+    assert image.getpixel((4, 55)) == (29, 66, 138)
+    # Each colour bends into its row's foot through a fillet.
+    assert image.getpixel((10, 52)) == (200, 16, 46)
+    assert image.getpixel((10, 86)) == (29, 66, 138)
+
+
+def test_wall_marks_the_leaders_score_with_an_ink_box(boxes):
+    plugin = _plugin()
+    assert SportsDashboard._wall_leader({"wins_a": "61", "wins_b": 53}) == "a"
+    assert SportsDashboard._wall_leader({"wins_a": 2, "wins_b": 3}) == "b"
+    assert SportsDashboard._wall_leader({"wins_a": 67, "wins_b": 67}) is None
+    assert SportsDashboard._wall_leader({"wins_a": None, "wins_b": 0}) is None
+
+    image = Image.new("RGB", (120, 30), DAY_COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    font = plugin._font(17, True)
+    left = plugin._draw_wall_score(draw, (60, 2, 110, 28), "61", font, True)
+    assert left < 110 - plugin._text_width(draw, "61", font)
+    assert image.getpixel((left + 1, 15)) == tuple(DAY_COLORS["text"])
+    trailing = Image.new("RGB", (120, 30), DAY_COLORS["panel"])
+    plugin._draw_wall_score(ImageDraw.Draw(trailing), (60, 2, 110, 28), "53", font, False)
+    assert tuple(DAY_COLORS["panel"]) == trailing.getpixel((70, 4))
 
 
 def _ticker_game(code_a, code_b, hours, **overrides):

@@ -4,7 +4,9 @@ Two or three games get a card each, side by side. Four or more become a
 two-column board of scoreboard rows; when the best game is a final or a
 playoff game it keeps a full-width strip on top. Rows reuse each sport's
 ScorebugSpec, so clocks, team names and logos match the league panels.
-Text stays in pure black on the six-ink panel.
+On a card each team's row carries its own colour (a slanted slab at the
+edge, a stripe along its foot) and the leader's score is set in an ink box.
+Text stays in pure ink on the six-ink panel.
 """
 
 from .common import *
@@ -23,6 +25,10 @@ WALL_CONTROL_ROOM_MIN_WIDTH = 170
 # Up to six remaining games get a small card each (three per row); more use rows.
 WALL_TILE_LIMIT = 6
 WALL_TILE_COLUMNS = 3
+# The card's left edge carries the two teams' colours in a bar this wide, each bending into
+# its row's foot stripe through a fillet of this radius.
+WALL_SLAB_WIDTH = 9
+WALL_JOINT_RADIUS = 5
 
 
 class LowerWallRenderMixin:
@@ -118,8 +124,10 @@ class LowerWallRenderMixin:
         row_height = max(30, min(46, (bottom - y1 - 56) // 2))
         rows_top = y1 + 56 + max(0, (bottom - y1 - 56 - 2 * row_height) // 2)
         context = self._wall_context_label(sport, event)
+        rows = [(rows_top + index * row_height, rows_top + (index + 1) * row_height - 4) for index in range(2)]
+        colours = (None, None)
         if spec is not None:
-            self._draw_wall_team_colours(draw, (x1, y1, x2, y2), event, accent, y1 + 30, rows_top + row_height)
+            colours = self._draw_wall_team_colours(draw, (x1, y1, x2, y2), event, accent, y1 + 30, rows)
         # The league's logo is the card's title: bare on the card's colours, at its left edge.
         self._draw_sport_logo(image, draw, sport, inner_x1, y1 + 4, 40, 24, align="left")
         if context:
@@ -135,11 +143,9 @@ class LowerWallRenderMixin:
         draw.rectangle((inner_x1, y1 + 35, inner_x1 + 5, y1 + 47), fill=COLORS[spec.live], outline=COLORS["border"], width=1)
         clock, clock_font = self._fit_text_ellipsis(draw, clock, inner_x2 - inner_x1 - 12, 13, bold=True, min_size=9)
         self._draw_text_in_box(draw, (inner_x1 + 11, y1 + 32, inner_x2, y1 + 50), clock, clock_font, COLORS["text"])
-        for index, side in enumerate(("a", "b")):
-            top = rows_top + index * row_height
-            if index:
-                draw.line((inner_x1, top - 2, inner_x2, top - 2), fill=COLORS["line"], width=1)
-            self._draw_wall_team_line(image, draw, (inner_x1, top, inner_x2, top + row_height - 4), event, side, spec)
+        leader = self._wall_leader(event)
+        for (top, bottom), side, colour in zip(rows, ("a", "b"), colours):
+            self._draw_wall_team_line(image, draw, (inner_x1, top, inner_x2, bottom), event, side, spec, colour, leader == side)
         if detail:
             detail_top = rows_top + 2 * row_height
             detail, detail_font = self._fit_text_ellipsis(draw, detail, inner_x2 - inner_x1, 11, bold=True, min_size=8)
@@ -147,18 +153,22 @@ class LowerWallRenderMixin:
         if footer:
             self._draw_kit_footer(draw, (inner_x1, y2 - 20, inner_x2, y2 - 6), f"TV {footer}")
 
-    def _draw_wall_team_line(self, image, draw, box, event, side, spec):
+    def _draw_wall_team_line(self, image, draw, box, event, side, spec, colour=None, leads=False):
         x1, y1, x2, y2 = box
         logo = min(28, y2 - y1)
         fallback = spec.hook("logo_fallback", event, side, default=event.get(f"team_{side}_code"))
         self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), x1, y1 + (y2 - y1 - logo) // 2, logo, fallback)
         score = event.get(f"wins_{side}")
         score_text = "-" if score is None else str(score)
-        score_text, score_font = self._fit_text(draw, score_text, 44, 24, bold=True, min_size=14)
-        score_w = self._text_width(draw, score_text, score_font)
-        self._draw_text_in_box(draw, (x2 - score_w, y1, x2, y2), score_text, score_font, COLORS["text"], align="right")
-        name, name_font = self._kit_team_name(draw, spec, event, side, x2 - score_w - 8 - (x1 + logo + 6), 14, True, min_size=9)
-        self._draw_text_in_box(draw, (x1 + logo + 6, y1, x2 - score_w - 8, y2), name, name_font, COLORS["text"])
+        size = max(14, min(24, y2 - y1 - 8))
+        score_text, score_font = self._fit_text(draw, score_text, 44, size, bold=True, min_size=12)
+        score_left = self._draw_wall_score(draw, (x2 - 56, y1 + 2, x2, y2 - 2), score_text, score_font, leads)
+        name_x = x1 + logo + 6
+        name, name_font = self._kit_team_name(draw, spec, event, side, score_left - 8 - name_x, 14, True, min_size=9)
+        self._draw_text_in_box(draw, (name_x, y1, score_left - 8, y2), name, name_font, COLORS["text"])
+        if colour is not None:
+            # The team's colour runs along the row's foot from its slab to its score.
+            draw.rectangle((x1 - 7, y2 - 1, score_left - 8, y2), fill=colour)
 
     def _draw_wall_golf_card(self, draw, box, event):
         x1, y1, x2, y2 = box
@@ -290,11 +300,13 @@ class LowerWallRenderMixin:
         spec = self._wall_spec(sport)
         accent = COLORS[spec.accent] if spec else self._hub_sport_accent(sport)
         self._draw_hub_card_shell(draw, x1, y1, x2, y2, accent)
-        inner_x1, inner_x2 = x1 + 14, x2 - 7
+        inner_x1, inner_x2 = x1 + 16, x2 - 7
         line_h = max(16, (y2 - y1 - 24) // 2)
+        rows = [(y1 + 21 + index * line_h, y1 + 19 + (index + 1) * line_h) for index in range(2)]
+        colours = (None, None)
         if spec is not None:
-            self._draw_wall_team_colours(draw, (x1, y1, x2, y2), event, accent, y1 + 20, y1 + 20 + line_h)
-        self._draw_sport_logo(image, draw, sport, inner_x1, y1 + 4, 26, 14, align="left")
+            colours = self._draw_wall_team_colours(draw, (x1, y1, x2, y2), event, accent, y1 + 20, rows)
+        self._draw_sport_logo(image, draw, sport, x1 + 14, y1 + 4, 26, 14, align="left")
         if spec is None:
             leader = (list(event.get("leaderboard") or []) or [{}])[0]
             line = SportsDashboard._wall_golf_line(leader) or str(event.get("name") or "PGA TOUR")
@@ -306,21 +318,26 @@ class LowerWallRenderMixin:
         clock_w = self._text_width(draw, clock, clock_font)
         draw.rounded_rectangle((inner_x2 - clock_w - 5, y1 + 3, inner_x2 + 3, y1 + 18), radius=4, fill=COLORS["panel"])
         self._draw_text_in_box(draw, (inner_x1 + 30, y1 + 3, inner_x2, y1 + 18), clock, clock_font, COLORS["text"], align="right")
-        for index, side in enumerate(("a", "b")):
-            top = y1 + 21 + index * line_h
-            self._draw_wall_tile_team(image, draw, (inner_x1, top, inner_x2, top + line_h - 2), event, side, spec)
+        leader = self._wall_leader(event)
+        for (top, bottom), side, colour in zip(rows, ("a", "b"), colours):
+            self._draw_wall_tile_team(image, draw, (inner_x1, top, inner_x2, bottom), event, side, spec, colour, leader == side)
 
-    def _draw_wall_tile_team(self, image, draw, box, event, side, spec):
+    def _draw_wall_tile_team(self, image, draw, box, event, side, spec, colour=None, leads=False):
         x1, y1, x2, y2 = box
         logo = min(18, y2 - y1)
         fallback = spec.hook("logo_fallback", event, side, default=event.get(f"team_{side}_code"))
         self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), x1, y1 + (y2 - y1 - logo) // 2, logo, fallback)
         score = event.get(f"wins_{side}")
-        score_text, score_font = self._fit_text(draw, "-" if score is None else str(score), 34, 17, bold=True, min_size=11)
-        score_w = self._text_width(draw, score_text, score_font)
-        self._draw_text_in_box(draw, (x2 - score_w, y1, x2, y2), score_text, score_font, COLORS["text"], align="right")
-        name, name_font = self._kit_team_name(draw, spec, event, side, x2 - score_w - 6 - (x1 + logo + 5), 12, True, min_size=8)
-        self._draw_text_in_box(draw, (x1 + logo + 5, y1, x2 - score_w - 6, y2), name, name_font, COLORS["text"])
+        # The score's size follows the row, so the leader's ink box still holds it.
+        size = max(11, min(17, y2 - y1 - 6))
+        score_text, score_font = self._fit_text(draw, "-" if score is None else str(score), 34, size, bold=True, min_size=9)
+        score_left = self._draw_wall_score(draw, (x2 - 44, y1 + 1, x2, y2 - 1), score_text, score_font, leads)
+        name_x = x1 + logo + 5
+        name, name_font = self._kit_team_name(draw, spec, event, side, score_left - 6 - name_x, 12, True, min_size=8)
+        self._draw_text_in_box(draw, (name_x, y1, score_left - 6, y2), name, name_font, COLORS["text"])
+        if colour is not None:
+            # The team's colour runs along the row's foot from its slab to its score.
+            draw.rectangle((x1 - 7, y2 - 1, score_left - 6, y2), fill=colour)
 
     def _draw_wall_row(self, image, draw, box, game, now, last):
         x1, y1, x2, y2 = box
@@ -380,23 +397,61 @@ class LowerWallRenderMixin:
 
     # Team colours ---------------------------------------------------------------
 
-    def _draw_wall_team_colours(self, draw, box, event, accent, split_y, band_bottom_or_split):
+    def _draw_wall_team_colours(self, draw, box, event, accent, split_y, rows):
         """A game's own colours on its card: a band across the top cut diagonally between
-        the away and home colours, and the left edge split the same way beside each
-        team's row (``band_bottom_or_split`` is where the second row starts)."""
+        the away and home colours, and the card's left edge in one unbroken bar of the same two
+        colours, the away one flowing on from the band down to the end of its row (``rows``:
+        (top, bottom) for a, then b), the home one from there to the card's foot; each turns
+        into its row's foot stripe through a rounded joint. Returns the two colours."""
         x1, y1, x2, y2 = [int(value) for value in box]
-        colour_a = self._wall_team_colour(event, "a", accent)
-        colour_b = self._wall_team_colour(event, "b", self._blend(accent, COLORS["border"], 0.6))
+        colours = self._wall_team_colours(event, accent)
         band_bottom = split_y - 2
         middle = (x1 + 9 + x2) // 2
         lean = max(4, (band_bottom - y1) // 2)
-        draw.polygon([(x1 + 9, y1 + 2), (middle + lean, y1 + 2), (middle - lean, band_bottom), (x1 + 9, band_bottom)], fill=colour_a)
-        draw.polygon([(middle + lean, y1 + 2), (x2 - 2, y1 + 2), (x2 - 2, band_bottom), (middle - lean, band_bottom)], fill=colour_b)
-        second_row = int(band_bottom_or_split)
-        draw.rectangle((x1 + 1, y1 + 1, x1 + 8, second_row - 2), fill=colour_a)
-        draw.rectangle((x1 + 1, second_row - 1, x1 + 8, y2 - 1), fill=colour_b)
+        draw.polygon([(x1 + 9, y1 + 2), (middle + lean, y1 + 2), (middle - lean, band_bottom), (x1 + 9, band_bottom)], fill=colours[0])
+        draw.polygon([(middle + lean, y1 + 2), (x2 - 2, y1 + 2), (x2 - 2, band_bottom), (middle - lean, band_bottom)], fill=colours[1])
+        first_end = min(int(rows[0][1]), y2 - 2)
+        spans = ((y1 + 1, first_end), (first_end + 1, y2 - 1))
+        edge = x1 + WALL_SLAB_WIDTH - 1
+        for (top, bottom), (_row_top, row_bottom), colour in zip(spans, rows, colours):
+            draw.rectangle((x1 + 1, top, edge, bottom), fill=colour)
+            # The bar bends into the row's foot stripe (drawn with the row) through a curved fillet.
+            foot = min(int(row_bottom), y2 - 2)
+            joint = WALL_JOINT_RADIUS
+            draw.pieslice((edge - joint, foot - 2 * joint, edge + joint, foot), 0, 90, fill=colour)
+            draw.rectangle((edge, foot - joint, edge + joint, foot), fill=colour)
+            draw.pieslice((edge + 1, foot - 2 * joint - 1, edge + 2 * joint + 1, foot - 1), 90, 180, fill=COLORS["panel"])
         draw.rounded_rectangle((x1, y1, x2, y2), radius=5, outline=COLORS["border"], width=2)
         draw.line((x1 + 9, band_bottom + 1, x2 - 2, band_bottom + 1), fill=COLORS["border"], width=1)
+        return colours
+
+    def _wall_team_colours(self, event, accent):
+        return (self._wall_team_colour(event, "a", accent),
+                self._wall_team_colour(event, "b", self._blend(accent, COLORS["border"], 0.6)))
+
+    def _draw_wall_score(self, draw, box, text, font, leads):
+        """A team's score, right-aligned in ``box``: the leader's in a solid ink box with
+        paper-coloured digits, as a broadcast scorebug marks who is ahead. Returns its left edge."""
+        x1, y1, x2, y2 = box
+        width = self._text_width(draw, text, font)
+        if not leads:
+            self._draw_text_in_box(draw, (x2 - width, y1, x2, y2), text, font, COLORS["text"], align="right")
+            return x2 - width
+        pad = 4
+        draw.rounded_rectangle((x2 - width - 2 * pad, y1 + 1, x2, y2 - 1), radius=4, fill=COLORS["text"])
+        self._draw_text_in_box(draw, (x2 - width - pad, y1, x2 - pad, y2), text, font, COLORS["paper_text"], align="right")
+        return x2 - width - 2 * pad
+
+    @staticmethod
+    def _wall_leader(event):
+        """'a' or 'b' for the side ahead on the scoreboard; None when level or not yet known."""
+        try:
+            score_a, score_b = float((event or {}).get("wins_a")), float((event or {}).get("wins_b"))
+        except (TypeError, ValueError):
+            return None
+        if score_a == score_b:
+            return None
+        return "a" if score_a > score_b else "b"
 
     def _wall_team_colour(self, event, side, fallback):
         """The team's ESPN colour; a near-white one is darkened so it still reads on paper."""
@@ -446,7 +501,8 @@ class LowerWallRenderMixin:
         # A postseason feed reports 0-0 records; they say nothing.
         if not all(records) or all(re.fullmatch(r"0-0(-0)?", record) for record in records):
             return ""
-        return "  ·  ".join(records)
+        # "/", not a middle dot: the bold YaHei on the device draws that as a dash.
+        return "  /  ".join(records)
 
     @staticmethod
     def _wall_golf_line(row):
