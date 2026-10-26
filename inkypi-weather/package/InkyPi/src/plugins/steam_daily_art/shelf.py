@@ -18,15 +18,9 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageStat
 
-from utils.fonts import load_font
+from utils.app_utils import get_base_ui_font
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets" / "shelf"
-SRC_DIR = Path(__file__).resolve().parents[2]
-FONT_DIRS = (
-    SRC_DIR / "plugins" / "sports_dashboard" / "fonts",
-    SRC_DIR / "static" / "fonts",
-    Path(r"C:\Windows\Fonts"),
-)
 REASON_ICONS = ("wishlist", "deal", "new", "top_seller", "spotlight", "coming_soon", "owned", "daily_deal")
 # A flat block: rows whose pixels are nearly all within FLAT_TOLERANCE of the colour at the
 # art's foot, at least FLAT_MIN_SHARE of the height.
@@ -40,6 +34,12 @@ SCRIM_FADE = 42
 MARGIN = 24
 ROW_GAP = 8
 CHIP_HEIGHT = 26
+# The head row: the price paid at PRICE_SIZE (about a third larger than the rest of the row),
+# Steam's discount box at CUT_SIZE and the struck price at ORIGINAL_SIZE.
+HEAD_HEIGHT = 32
+PRICE_SIZE = 28
+CUT_SIZE = 22
+ORIGINAL_SIZE = 15
 ICON_SIZE = 18
 WORDMARK_HEIGHT = 15
 # Pixel art: the largest block (2..PIXEL_MAX_BLOCK) at which one grid offset rebuilds the art
@@ -158,14 +158,11 @@ def to_native(image, grid):
     return region.resize((columns, rows), Image.Resampling.BOX)
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=16)
 def _font(size, bold):
-    for directory in FONT_DIRS:
-        for name in (("msyhbd.ttc", "msyhbd.ttf") if bold else ("msyh.ttc", "msyh.ttf")):
-            path = directory / name
-            if path.is_file():
-                return load_font(str(path), size)
-    return load_font("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf", size)
+    """The pages' UI face: YaHei from the device's font folder ($INKYPI_DATA_DIR/fonts) first,
+    then the bundled Chinese fallbacks, so the shelf's Chinese never falls to a Latin face."""
+    return get_base_ui_font(size, bold=bold)
 
 
 @lru_cache(maxsize=16)
@@ -261,7 +258,7 @@ def draw_shelf(image, info, band=None):
 def _rows(info):
     rows = []
     if info.get("reasons") or info.get("price"):
-        rows.append(("head", CHIP_HEIGHT))
+        rows.append(("head", HEAD_HEIGHT))
     if info.get("line"):
         rows.append(("line", 28))
     if info.get("tags") or info.get("credit"):
@@ -269,34 +266,44 @@ def _rows(info):
     return rows
 
 
+def _text_y(draw, text, font, top, height):
+    """The y that centres ``text`` in the row ``height`` tall from ``top``."""
+    box = draw.textbbox((0, 0), text, font=font)
+    return top + (height - (box[3] - box[1])) / 2 - box[1]
+
+
 def _draw_head(canvas, draw, info, y, width, colours):
-    """The reasons as chips at the left (icon and words), the price at the right."""
+    """The reasons as chips at the left (icon and words); at the right the price, the price
+    paid largest, after Steam's discount box and the struck price."""
     right = width - MARGIN
     price = info.get("price") or {}
-    price_font = _font(21, True)
+    final_font = _font(PRICE_SIZE, True)
     if price.get("discount"):
         final = str(price.get("final") or "")
-        final_w = draw.textlength(final, font=price_font)
-        draw.text((right - final_w, y), final, font=price_font, fill=WHITE)
+        final_w = draw.textlength(final, font=final_font)
+        draw.text((right - final_w, _text_y(draw, final, final_font, y, HEAD_HEIGHT)), final, font=final_font, fill=WHITE)
         cut = f"-{int(price['discount'])}%"
-        cut_w = draw.textlength(cut, font=price_font) + 14
-        box = (right - final_w - 10 - cut_w, y - 1, right - final_w - 10, y + CHIP_HEIGHT)
+        cut_font = _font(CUT_SIZE, True)
+        cut_w = draw.textlength(cut, font=cut_font) + 14
+        box = (right - final_w - 12 - cut_w, y + 2, right - final_w - 12, y + HEAD_HEIGHT - 2)
         draw.rectangle(box, fill=DEAL_GREEN)
-        draw.text((box[0] + 7, y), cut, font=price_font, fill=DEAL_LIME)
+        draw.text((box[0] + 7, _text_y(draw, cut, cut_font, y, HEAD_HEIGHT)), cut, font=cut_font, fill=DEAL_LIME)
         right = box[0] - 10
         original = str(price.get("original") or "")
         if original:
-            small = _font(13, False)
+            small = _font(ORIGINAL_SIZE, False)
             original_w = draw.textlength(original, font=small)
-            draw.text((right - original_w, y + 6), original, font=small, fill=WHITE)
-            draw.line((right - original_w, y + 15, right, y + 15), fill=WHITE, width=1)
+            draw.text((right - original_w, _text_y(draw, original, small, y, HEAD_HEIGHT)), original, font=small, fill=WHITE)
+            middle = y + HEAD_HEIGHT // 2
+            draw.line((right - original_w, middle, right, middle), fill=WHITE, width=1)
             right -= original_w + 10
     elif price.get("label") or price.get("final"):
         label = str(price.get("label") or price.get("final"))
-        label_w = draw.textlength(label, font=price_font)
-        draw.text((right - label_w, y), label, font=price_font, fill=WHITE)
+        label_w = draw.textlength(label, font=final_font)
+        draw.text((right - label_w, _text_y(draw, label, final_font, y, HEAD_HEIGHT)), label, font=final_font, fill=WHITE)
         right -= label_w + 14
     x = MARGIN
+    chip_top = y + (HEAD_HEIGHT - CHIP_HEIGHT) // 2
     chip_font = _font(14, True)
     for icon_name, label in info.get("reasons") or []:
         icon = _asset(icon_name, ICON_SIZE) if icon_name in REASON_ICONS else None
@@ -304,12 +311,13 @@ def _draw_head(canvas, draw, info, y, width, colours):
         chip_w = 12 + (ICON_SIZE + 5 if icon else 0) + text_w + 12
         if x + chip_w > right:
             break
-        draw.rounded_rectangle((x, y, x + chip_w, y + CHIP_HEIGHT), radius=CHIP_HEIGHT // 2, fill=colours["chip"])
+        draw.rounded_rectangle((x, chip_top, x + chip_w, chip_top + CHIP_HEIGHT), radius=CHIP_HEIGHT // 2,
+                               fill=colours["chip"])
         text_x = x + 12
         if icon:
-            canvas.paste(icon, (int(text_x), y + (CHIP_HEIGHT - icon.height) // 2), icon)
+            canvas.paste(icon, (int(text_x), chip_top + (CHIP_HEIGHT - icon.height) // 2), icon)
             text_x += ICON_SIZE + 5
-        draw.text((text_x, y + 3), label, font=chip_font, fill=WHITE)
+        draw.text((text_x, _text_y(draw, label, chip_font, chip_top, CHIP_HEIGHT)), label, font=chip_font, fill=WHITE)
         x += chip_w + 8
 
 

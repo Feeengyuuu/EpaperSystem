@@ -1990,3 +1990,33 @@ def test_render_item_puts_the_shelf_on_the_arts_flat_block(tmp_path, monkeypatch
     start = info_shelf.shelf_top(480, info_shelf.find_flat_band(art))
     assert ImageChops.difference(art.crop((0, 0, 800, start)), image.crop((0, 0, 800, start))).getbbox() is None
     assert FIELD not in set(image.crop((0, start + 3, 800, 480)).get_flattened_data())
+
+
+def test_shelf_text_uses_the_devices_yahei_from_its_data_folder(tmp_path, monkeypatch):
+    # On the device YaHei lives only in $INKYPI_DATA_DIR/fonts; a Latin fallback drew boxes.
+    fonts = tmp_path / "fonts"
+    fonts.mkdir()
+    bundled = Path(steam_daily_art_module.__file__).resolve().parents[2] / "static" / "fonts" / "NotoSansSC-VF.ttf"
+    (fonts / "msyhbd.ttf").write_bytes(bundled.read_bytes())
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path))
+    info_shelf._font.cache_clear()
+    try:
+        assert Path(info_shelf._font(14, True).path).resolve() == (fonts / "msyhbd.ttf").resolve()
+    finally:
+        info_shelf._font.cache_clear()
+
+
+def test_the_price_paid_is_the_largest_text_on_the_shelf(monkeypatch):
+    sizes = []
+    real = info_shelf._font
+
+    def record(size, bold):
+        sizes.append(size)
+        return real(size, bold)
+
+    monkeypatch.setattr(info_shelf, "_font", record)
+    info_shelf.draw_shelf(_field_art(), SHELF_INFO, info_shelf.find_flat_band(_field_art()))
+
+    assert max(sizes) == info_shelf.PRICE_SIZE
+    assert info_shelf.PRICE_SIZE >= round(21 * 1.3)
+    assert info_shelf.CUT_SIZE in sizes and info_shelf.ORIGINAL_SIZE in sizes
