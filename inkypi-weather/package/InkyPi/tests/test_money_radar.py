@@ -358,7 +358,8 @@ def test_the_dollar_card_shows_each_currency_by_its_flag_and_sign():
     money_render._fx_tile(canvas, {"fx": {"data": {"series": series}}}, (10, 200))
 
     # The yuan rate and each rate along the foot carry their currency's sign after its flag; the
-    # yen gives up its decimal so the three fit the card.
-    assert {"¥6.7000", "€0.89", "¥157", "HK$7.84"} <= set(drawn) and not any("欧元" in str(text) for text in drawn)
+    # yen keeps its decimal only while the three fit the card (that depends on the font's widths).
+    assert {"¥6.7000", "€0.89", "HK$7.84"} <= set(drawn) and not any("欧元" in str(text) for text in drawn)
+    assert {"¥157", "¥156.8"} & set(drawn)
     foot = {canvas.image.getpixel((x, 187)) for x in range(20, 200)}
     assert any(blue > 120 and red < 60 for red, _green, blue in foot)  # the EU flag's blue
