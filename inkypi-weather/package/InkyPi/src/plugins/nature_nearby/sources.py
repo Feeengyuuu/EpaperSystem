@@ -21,7 +21,14 @@ V2_OBSERVATIONS_URL = "https://api.inaturalist.org/v2/observations"
 V1_URL = "https://api.inaturalist.org/v1"
 PHOTO_HOSTS = ("inaturalist-open-data.s3.amazonaws.com", "static.inaturalist.org")
 OBSERVATION_FIELDS = ("id,observed_on,time_observed_at,place_guess,location,user.login,photos.url,"
-                      "photos.attribution,taxon.name,taxon.preferred_common_name,taxon.iconic_taxon_name")
+                      "photos.attribution,taxon.id,taxon.name,taxon.preferred_common_name,taxon.iconic_taxon_name")
+# The newest find's species: its global IUCN Red List category (with the Red List's own
+# colours) and whether it is native to California.
+IUCN_CATEGORIES = {
+    "LC": ("无危", "#60C659"), "NT": ("近危", "#CCE226"), "VU": ("易危", "#F9E814"), "EN": ("濒危", "#FC7F3F"),
+    "CR": ("极危", "#D81E05"), "EW": ("野外灭绝", "#542344"), "EX": ("灭绝", "#000000"), "DD": ("数据缺乏", "#D1D1C6"),
+}
+ESTABLISHMENT = {"native": "加州本土", "endemic": "加州特有", "introduced": "外来物种"}
 DEFAULT_HOME = (37.5485, -121.9886)  # Fremont
 PREFERRED_PLACE = 14  # California, for regional common names
 MAX_RECENT = 12
@@ -139,8 +146,10 @@ def normalize_recent(payload, home):
         match = re.fullmatch(r"\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*", str(row.get("location") or ""))
         if match:
             lat, lon = float(match.group(1)), float(match.group(2))
+        taxon_id = taxon.get("id")
         items.append({
-            "id": row.get("id"), "name": str(taxon.get("preferred_common_name") or "")[:24],
+            "id": row.get("id"), "taxon_id": taxon_id if isinstance(taxon_id, int) and taxon_id > 0 else None,
+            "name": str(taxon.get("preferred_common_name") or "")[:24],
             "scientific": str(taxon["name"])[:48], "group": str(taxon.get("iconic_taxon_name") or ""),
             "time": stamp.isoformat(), "place": short_place(row.get("place_guess")),
             "distance_km": round(distance_km(home[0], home[1], lat, lon), 1) if lat is not None else None,
@@ -269,6 +278,38 @@ def fetch_notable(home, radius, key, context):
     data = normalize_notable(_get_json(EBIRD_NOTABLE_URL, params, context, headers={"X-eBirdApiToken": key}), home)
     chinese_bird_names(data["items"], context)
     return data
+
+
+def normalize_taxon(payload):
+    """A species' order and family (Chinese names where iNaturalist has them), its global IUCN
+    category, how it stands in California and how often it has been observed worldwide."""
+    results = (payload or {}).get("results")
+    if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+        raise ValueError("iNaturalist returned no taxon")
+    taxon = results[0]
+    ranks = {ancestor.get("rank"): ancestor for ancestor in taxon.get("ancestors") or [] if isinstance(ancestor, dict)}
+
+    def named(rank):
+        ancestor = ranks.get(rank) or {}
+        return str(ancestor.get("preferred_common_name") or ancestor.get("name") or "")[:16]
+
+    iucn = next((str(status.get("status") or "").upper() for status in taxon.get("conservation_statuses") or []
+                 if isinstance(status, dict) and "IUCN" in str(status.get("authority") or "") and not status.get("place")),
+                "")
+    means = str(taxon.get("preferred_establishment_means") or "")
+    count = taxon.get("observations_count")
+    return {"id": taxon.get("id"), "order": named("order"), "family": named("family"),
+            "iucn": iucn if iucn in IUCN_CATEGORIES else "", "establishment": means if means in ESTABLISHMENT else "",
+            "observations": count if isinstance(count, int) and count >= 0 else 0}
+
+
+def fetch_taxon(taxon_id, context):
+    params = {"locale": "zh-CN", "preferred_place_id": PREFERRED_PLACE}
+    return normalize_taxon(_get_json(f"{V1_URL}/taxa/{int(taxon_id)}", params, context, max_bytes=1024 * 1024))
+
+
+def valid_taxon(data):
+    return isinstance(data, dict) and isinstance(data.get("observations"), int)
 
 
 def valid_notable(data):

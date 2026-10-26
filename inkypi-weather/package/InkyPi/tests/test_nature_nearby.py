@@ -89,6 +89,39 @@ def test_notable_birds_keep_each_species_latest_report():
         sources.normalize_notable({"errors": []}, sources.DEFAULT_HOME)
 
 
+def test_the_newest_finds_species_gives_its_family_red_list_category_and_reach():
+    data = sources.normalize_taxon({"results": [{
+        "id": 19975, "observations_count": 47923, "preferred_establishment_means": "native",
+        "ancestors": [{"rank": "class", "name": "Aves", "preferred_common_name": "鸟纲"},
+                      {"rank": "order", "name": "Strigiformes", "preferred_common_name": "鸮形目"},
+                      {"rank": "family", "name": "Strigidae"}],
+        "conservation_statuses": [
+            {"authority": "NatureServe", "status": "S2", "place": {"id": 14}},
+            {"authority": "IUCN Red List", "status": "lc", "place": None}],
+    }]})
+
+    assert data == {"id": 19975, "order": "鸮形目", "family": "Strigidae", "iucn": "LC", "establishment": "native",
+                    "observations": 47923}
+    assert sources.normalize_taxon({"results": [{"id": 1, "conservation_statuses": [
+        {"authority": "IUCN Red List", "status": "S1", "place": None}]}]})["iucn"] == ""
+    with pytest.raises(ValueError):
+        sources.normalize_taxon({"results": []})
+
+
+def test_the_hero_shows_the_species_line_and_the_sources_logos():
+    payload = _payload()
+    plain = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+    payload["taxon"] = {"state": "live", "data": {"order": "鹈形目", "family": "鹭科", "iucn": "LC",
+                                                  "establishment": "native", "observations": 120345}}
+    shown = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, {})
+
+    green = tuple(int(sources.IUCN_CATEGORIES["LC"][1][index:index + 2], 16) for index in (1, 3, 5))
+    assert green in set(shown.crop((150, 260, 300, 330)).get_flattened_data())
+    assert green not in set(plain.crop((150, 260, 300, 330)).get_flattened_data())
+    # iNaturalist's logo (its green "i") heads the page and the hero card.
+    assert any(r < 140 and g > 150 and b < 90 for r, g, b in plain.crop((200, 10, 330, 50)).get_flattened_data())
+
+
 def _payload():
     recent = [{"id": index, "name": name, "scientific": "Sci name", "group": group, "time": NOW.isoformat(),
                "place": "Fremont", "distance_km": 3.0, "observer": "someone",
@@ -146,6 +179,23 @@ def test_birds_load_only_with_an_ebird_key(monkeypatch, tmp_path):
     assert keys == []
     plugin.generate_image({"_inkypi_theme": {"mode": "day"}, "forceRefresh": True}, KeyedDevice())
     assert keys == ["ebird-test-key"]
+
+
+def test_the_newest_finds_species_loads_once_per_species(monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_CACHE_DIR", str(tmp_path / "cache"))
+    payload = _payload()
+    payload["recent"]["data"]["items"][0]["taxon_id"] = 7458
+    for name in ("recent", "species", "groups", "stats"):
+        monkeypatch.setattr(sources, f"fetch_{name}", lambda *_args, data=payload[name]["data"]: data)
+    asked = []
+    monkeypatch.setattr(sources, "fetch_taxon", lambda taxon_id, _ctx: asked.append(taxon_id) or {
+        "order": "鹈形目", "family": "鹭科", "iucn": "LC", "establishment": "native", "observations": 9})
+    plugin = NatureNearby({"id": "nature_nearby"})
+
+    plugin.generate_image({"_inkypi_theme": {"mode": "day"}}, Device())
+    plugin.generate_image({"_inkypi_theme": {"mode": "day"}}, Device())
+
+    assert asked == [7458]
 
 
 def test_cache_only_redraw_reuses_sources(monkeypatch, tmp_path):

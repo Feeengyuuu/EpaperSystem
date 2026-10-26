@@ -4,6 +4,7 @@ around home."""
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageOps
@@ -12,10 +13,16 @@ from utils.flat_icons import draw_icon
 from utils.local_wordmark import paste_header_art, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 
-from .sources import group_info, local_now, parse_time
+from .sources import ESTABLISHMENT, IUCN_CATEGORIES, group_info, local_now, parse_time
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
+# The sources' official logos (assets/logos, tools/build_nature_source_logos.py) where the page
+# names them; on the night page their dark lettering takes the page's ink.
+LOGO_MIN_CONTRAST = 2.0
+# The newest find's name: large enough to lead the card (owner: 20% over the old 23 px).
+HERO_NAME_SIZE = 28
+HERO_PHOTO_HEIGHT = 132
 # Pure white or black paper and neutral grey rules: an off-white or tinted ground, or a tinted
 # grey, dithers into scattered yellow, blue or green dots on the panel. Accents are refined
 # crimson, cobalt, emerald and gold rather than the panel's pure inks (owner's choice).
@@ -62,9 +69,47 @@ def _display_name(item):
     return item.get("name") or item.get("scientific") or ""
 
 
-def _card(canvas, box, bar, icon, title, detail=""):
+def _luminance(rgb):
+    channels = [value / 255 for value in rgb[:3]]
+    channels = [value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4 for value in channels]
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+@lru_cache(maxsize=8)
+def _logo(name, height, paper, ink):
+    """A source's logo ``height`` px tall in its own colours, its parts that would vanish on
+    ``paper`` in ``ink``; None without the file."""
+    path = ASSETS / "logos" / f"{name}.png"
+    if not path.is_file():
+        return None
+    with Image.open(path) as source:
+        art = source.convert("RGBA")
+    art = art.resize((max(1, round(art.width * height / art.height)), height), Image.Resampling.LANCZOS)
+    ground = _luminance(paper)
+    pixels = art.load()
+    for y in range(art.height):
+        for x in range(art.width):
+            red, green, blue, alpha = pixels[x, y]
+            lighter, darker = sorted((_luminance((red, green, blue)), ground), reverse=True)
+            if alpha >= 8 and (lighter + 0.05) / (darker + 0.05) < LOGO_MIN_CONTRAST:
+                pixels[x, y] = (*ink, alpha)
+    return art
+
+
+def _paste_logo(canvas, name, xy, height, anchor="lm"):
+    """Paste a source logo at ``xy`` (its left middle, or right middle for ``rm``); returns its width."""
+    logo = _logo(name, height, tuple(canvas.color("paper")), tuple(canvas.color("ink")))
+    if logo is None:
+        return 0
+    x, y = xy
+    left = x - logo.width if anchor == "rm" else x
+    canvas.image.paste(logo, (round(left), round(y - logo.height / 2)), logo)
+    return logo.width
+
+
+def _card(canvas, box, bar, icon, title, detail="", logo=None):
     """A card in its own colour: a frame, a solid band along the top and the header rule in it,
-    then the section icon, title and a right-aligned detail."""
+    then the section icon, title and a right-aligned detail led by its source's logo."""
     left, top, right, _bottom = box
     colour = canvas.color(bar)
     canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
@@ -72,8 +117,10 @@ def _card(canvas, box, bar, icon, title, detail=""):
     draw_icon(canvas.draw, icon, (left + 10, top + 7), 18, colour, canvas.color("paper"))
     width = canvas.text((left + 34, top + 16), title, 16, anchor="lm")
     if detail:
-        canvas.text((right - 8, top + 16), detail, 11, "muted", anchor="rm", bold=False,
-                    width=right - left - width - 60)
+        detail_w = canvas.text((right - 8, top + 16), detail, 11, "muted", anchor="rm", bold=False,
+                               width=right - left - width - 60)
+        if logo:
+            _paste_logo(canvas, logo, (right - 14 - detail_w, top + 16), 14, anchor="rm")
     canvas.rule((left + 8, top + HEADER, right - 8, top + HEADER), colour)
 
 
@@ -104,26 +151,53 @@ def _group_chip(canvas, x, y, group, *, right_align=False):
     return width
 
 
+def _reach_text(value):
+    """How often the species has been observed worldwide: "全球 4.8 万次观察"."""
+    return f"全球 {value / 10000:.1f} 万次观察" if value >= 10000 else f"全球 {value:,} 次观察"
+
+
+def _iucn_chip(canvas, right, y, code):
+    """The species' IUCN Red List category as a chip in the Red List's own colour, ending at
+    ``right``; returns its width."""
+    name, colour = IUCN_CATEGORIES[code]
+    fill = _rgb(colour)
+    text = f"{code} {name}"
+    width = canvas.width(text, 10) + 12
+    ink = (0, 0, 0) if _luminance(fill) > 0.35 else (255, 255, 255)
+    canvas.draw.rounded_rectangle((right - width, y - 8, right, y + 8), radius=8, fill=fill)
+    canvas.text((right - width / 2, y), text, 10, ink, anchor="mm")
+    return width
+
+
 def _hero(canvas, payload, images, now):
     items = payload["recent"]["data"].get("items", [])
-    _card(canvas, HERO_CARD, "green", "leaf", "最新发现", "iNaturalist · 研究级")
+    taxon = ((payload.get("taxon") or {}).get("data")) or {}
+    _card(canvas, HERO_CARD, "green", "leaf", "最新发现", "研究级", logo="inaturalist")
     left, top, right = HERO_CARD[0] + 8, HERO_CARD[1] + HEADER + 6, HERO_CARD[2] - 8
     if not items:
         canvas.text((left, 150), "观察数据暂不可用", 15, "muted", anchor="lm")
         return
     item = items[0]
-    _photo(canvas, images, item["photo"], (left, top, right, top + 158), item["group"])
-    y = top + 176
+    _photo(canvas, images, item["photo"], (left, top, right, top + HERO_PHOTO_HEIGHT), item["group"])
+    y = top + HERO_PHOTO_HEIGHT + 18
     chip = _group_chip(canvas, right, y, item["group"], right_align=True)
-    canvas.text((left, y), _display_name(item), 23, anchor="lm", width=right - left - chip - 8)
-    canvas.text((left, y + 21), item["scientific"], 12, "muted", anchor="lm", bold=False, width=right - left)
+    canvas.text((left, y), _display_name(item), HERO_NAME_SIZE, anchor="lm", width=right - left - chip - 8)
+    canvas.text((left, y + 23), item["scientific"], 12, "muted", anchor="lm", bold=False, width=right - left)
+    # The species in more depth: its order and family, its Red List category and standing here.
+    lineage = " · ".join(part for part in (taxon.get("order"), taxon.get("family"),
+                                           ESTABLISHMENT.get(taxon.get("establishment"), "")) if part)
+    chip_w = _iucn_chip(canvas, right, y + 40, taxon["iucn"]) + 6 if taxon.get("iucn") else 0
+    if lineage:
+        canvas.text((left, y + 40), lineage, 11, anchor="lm", width=right - left - chip_w)
     stamp = parse_time(item["time"])
     where = " · ".join(part for part in (item.get("place"), ago(stamp, now) if stamp else "",
                                          f"距家 {item['distance_km']:.0f} km" if item.get("distance_km") is not None
                                          else "") if part)
-    canvas.text((left, y + 39), where, 11, anchor="lm", bold=False, width=right - left)
-    canvas.text((left, y + 54), f"© {item['observer']}" if item.get("observer") else item.get("attribution", ""),
-                10, "muted", anchor="lm", bold=False, width=right - left)
+    canvas.text((left, y + 57), where, 11, anchor="lm", bold=False, width=right - left)
+    reach = _reach_text(taxon["observations"]) if taxon.get("observations") else ""
+    reach_w = canvas.text((right, y + 72), reach, 10, "muted", anchor="rm", bold=False) + 8 if reach else 0
+    canvas.text((left, y + 72), f"© {item['observer']}" if item.get("observer") else item.get("attribution", ""),
+                10, "muted", anchor="lm", bold=False, width=right - left - reach_w)
 
 
 def _species(canvas, payload, images):
@@ -208,8 +282,11 @@ def _groups_with_birds(canvas, groups, total, birds, now):
         canvas.text((cx + 17, cy), f"{label} {group['count']}", 11, anchor="lm", width=column - 19)
     y = bar_top + 34
     canvas.rule((left, y, right, y))
-    draw_icon(canvas.draw, "bird", (left, y + 4), 14, canvas.color("blue"), canvas.color("paper"))
-    canvas.text((left + 18, y + 11), "eBird 罕见鸟讯", 11, anchor="lm")
+    logo_w = _paste_logo(canvas, "ebird", (left, y + 11), 13)
+    if not logo_w:
+        draw_icon(canvas.draw, "bird", (left, y + 4), 14, canvas.color("blue"), canvas.color("paper"))
+    canvas.text((left + (logo_w + 6 if logo_w else 18), y + 11), "罕见鸟讯" if logo_w else "eBird 罕见鸟讯", 11,
+                anchor="lm")
     canvas.text((right, y + 11), f"7 天 · {birds.get('species', 0)} 种", 10, "muted", anchor="rm", bold=False)
     for index, bird in enumerate(birds["items"][:2]):
         row = y + 28 + index * 17
@@ -257,8 +334,12 @@ def render_page(dimensions, payload, settings, now, images):
     canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei")
     pasted = paste_local_wordmark(canvas.image, ASSETS / "title_wordmark.png", (12, 4, 232, 50), align="left")
     title_right = pasted[2] if pasted else 16 + canvas.text((16, 27), "湾区德鲁伊", 30, anchor="lm")
-    subtitle_right = title_right + 14 + canvas.text((title_right + 14, 30), f"iNaturalist · 半径 {payload['radius_km']} km · 研究级观察",
-                                                    14, "muted", anchor="lm", bold=False)
+    # The page's source by its own logo, then the area it covers.
+    logo_w = _paste_logo(canvas, "inaturalist", (title_right + 14, 30), 20)
+    subtitle_left = title_right + 14 + (logo_w + 10 if logo_w else 0)
+    subtitle = f"半径 {payload['radius_km']} km · 研究级观察" if logo_w else \
+        f"iNaturalist · 半径 {payload['radius_km']} km · 研究级观察"
+    subtitle_right = subtitle_left + canvas.text((subtitle_left, 30), subtitle, 14, "muted", anchor="lm", bold=False)
     date_left = 788 - canvas.text((788, 27), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
     paste_header_art(canvas.image, ASSETS / "header_art.png", subtitle_right, date_left)
     canvas.rule((12, 52, 788, 52), "ink", 2)

@@ -77,6 +77,11 @@ class NatureNearby(BasePlugin):
                                  timeout_seconds=10)) if ebird_key else None,
         }
         recent = payload["recent"]["data"].get("items", [])
+        # The newest find's species in more depth: its family, Red List category and reach.
+        taxon_id = recent[0].get("taxon_id") if recent else None
+        payload["taxon"] = load(Source("taxon", {"taxon": taxon_id}, lambda ctx: sources.fetch_taxon(taxon_id, ctx),
+                                       fresh_seconds=7 * 86400, usable_seconds=30 * 86400,
+                                       validate=sources.valid_taxon, timeout_seconds=8)) if taxon_id else None
         species = payload["species"]["data"].get("items", [])
         urls = [recent[0]["photo"]] if recent else []
         urls += [item.get("photo") for item in species[:6]] + [item.get("photo") for item in recent[1:6]]

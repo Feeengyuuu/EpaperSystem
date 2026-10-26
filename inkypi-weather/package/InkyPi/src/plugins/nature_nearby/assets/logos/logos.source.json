@@ -1,0 +1,28 @@
+{
+ "logos": {
+  "inaturalist": {
+   "file": "https://static.inaturalist.org/sites/1-logo.svg",
+   "page": "https://www.inaturalist.org/",
+   "rendered": "headless browser, transparent background",
+   "licence": "the site's own logo (its trademark), shown to name the source",
+   "source_sha256": "6a0c31b1095854ff60bba816467342a1c32f08ca6f0d2e66c9b53733142759bb",
+   "sha256": "22ca1c4385714ddb21dae66685eedc9996929764e8f65ab6f70d313061f40f3d",
+   "size": [
+    353,
+    64
+   ]
+  },
+  "ebird": {
+   "file": "File:EBird-2024-logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:EBird-2024-logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/54/EBird-2024-logo.svg/960px-EBird-2024-logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "128332b4acd6d95fd80131998df80ef35a5fc57f8ca4d9be318ac0be53e4d6ca",
+   "sha256": "5d6da568223c3434a729fac1504fd585cc593bd33c9690d8412ceac7198fa00b",
+   "size": [
+    184,
+    64
+   ]
+  }
+ }
+}
