@@ -23,7 +23,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from plugins.context_cache import write_context
-from plugins.live_radar import comic_art, placeholder_art
+from plugins.live_radar import comic_art, placeholder_art, stage_lights
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
@@ -1503,6 +1503,8 @@ class LiveRadar(BasePlugin):
             backdrop = self._paint_live_backdrop(image, len(live_cards), theme)
             if backdrop is not None:
                 theme = {**theme, "backdrop": backdrop}
+        # The bare page, before the masthead: stage light falls only where it still shows.
+        bare_page = image.copy() if live_cards else None
 
         logo_size, logo_y = self._title_logo_layout(height)
         # The name leads the masthead and the radar mark follows it.
@@ -1546,11 +1548,6 @@ class LiveRadar(BasePlugin):
         art_h = min(HEADER_ART_SIZE[1], art_available_h)
         art_x = art_left_bound + max(0, int((art_available_w - art_w) / 2))
         art_y = art_top_bound + max(0, int((art_available_h - art_h) / 2))
-        self._draw_header_art(
-            image,
-            (art_x, art_y, art_x + art_w, art_y + art_h),
-        )
-        draw.line((margin, header_rule_y, width - margin, header_rule_y), fill=theme["line"], width=2)
 
         max_live = max(1, min(3, int(layout.get("max_live_cards") or 3)))
         max_offline = max(1, min(5, int(layout.get("max_offline_cards") or 3)))
@@ -1562,6 +1559,30 @@ class LiveRadar(BasePlugin):
         top_label_y = header_rule_y + 11
         top_y = header_rule_y + 35
         top_h = 196 if show_snapshots else 158
+        live_visible = live_cards[:live_limit]
+        live_gap = max(8, int(width * 0.012))
+        card_w = int((width - 2 * margin - live_gap * (len(live_visible) - 1)) / len(live_visible)) if live_visible else 0
+        live_boxes = [(margin + i * (card_w + live_gap), top_y, margin + i * (card_w + live_gap) + card_w, top_y + top_h)
+                      for i in range(len(live_visible))]
+        # With streams live, the masthead's free span holds a spotlight per LIVE NOW card.
+        lamps = stage_lights.plan(
+            (art_left_bound, art_right_bound),
+            [(box, self._brand_line(card, theme["line"]), card.get("heat")) for box, card in zip(live_boxes, live_visible)],
+            theme,
+            stage_lights.slot_index(generated_at),
+        )
+        if lamps:
+            try:
+                stage_lights.hang(image, lamps, theme, stage_lights.untouched(image, bare_page))
+            except Exception as exc:
+                logger.warning("LiveRadar stage lights unavailable: %s", exc)
+                lamps = []
+        else:
+            self._draw_header_art(
+                image,
+                (art_x, art_y, art_x + art_w, art_y + art_h),
+            )
+        draw.line((margin, header_rule_y, width - margin, header_rule_y), fill=theme["line"], width=2)
         bottom_y = top_y + (208 if show_snapshots else 184)
         footer_y = height - 27
         col_gap = max(12, int(width * 0.018))
@@ -1601,15 +1622,12 @@ class LiveRadar(BasePlugin):
 
         if live_cards:
             self._draw_section_title(image, draw, margin, top_label_y, "LIVE NOW", len(live_cards), theme, sub_font)
-            live_visible = live_cards[:live_limit]
-            gap = max(8, int(width * 0.012))
-            card_w = int((width - 2 * margin - gap * (len(live_visible) - 1)) / len(live_visible))
             if theme.get("comic"):
-                stops = [(margin + i * (card_w + gap) + card_w / 2, self._brand_line(card, (150, 150, 150)))
+                stops = [(margin + i * (card_w + live_gap) + card_w / 2, self._brand_line(card, (150, 150, 150)))
                          for i, card in enumerate(live_visible)]
                 comic_art.halftone_band(image, (0, top_y - 6, width, top_y + top_h + 12), stops, theme["bg"])
             for i, card in enumerate(live_visible):
-                x = margin + i * (card_w + gap)
+                x = margin + i * (card_w + live_gap)
                 self._draw_card(
                     image,
                     draw,
@@ -1624,6 +1642,8 @@ class LiveRadar(BasePlugin):
                 if theme.get("comic"):
                     shadow = comic_art.card_shadow(theme, self._brand_line(card, theme["line"]))
                     comic_art.ink_shadow(image, (x, top_y, x + card_w, top_y + top_h), 8, shadow)
+                if i < len(lamps):
+                    stage_lights.pool(image, lamps[i], theme)
         else:
             self._draw_quiet_panel(draw, (margin, top_y, width - 2 * margin, top_h), len(cards), theme)
 

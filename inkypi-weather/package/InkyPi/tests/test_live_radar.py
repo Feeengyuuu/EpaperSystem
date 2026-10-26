@@ -2227,6 +2227,67 @@ def test_dashboard_positions_header_art_between_title_and_status():
     assert right - left >= 240
 
 
+def test_stage_lights_project_each_beam_onto_its_card_like_a_film():
+    from plugins.live_radar import stage_lights
+
+    boxes = [(16, 108, 266, 304), (275, 108, 525, 304), (534, 108, 784, 304)]
+    targets = [(box, (145, 70, 255), heat) for box, heat in zip(boxes, (200, 900, 50))]
+
+    lamps = stage_lights.plan((270, 520), targets, {"mode": "light"}, 7)
+
+    # Each beam lands on its card's top edge, corner to corner, whatever the slot.
+    assert [lamp["landing"] for lamp in lamps] == [(x0, x1, y0) for x0, y0, x1, _y1 in boxes]
+    later = stage_lights.plan((270, 520), targets, {"mode": "light"}, 8)
+    assert [lamp["landing"] for lamp in later] == [lamp["landing"] for lamp in lamps]
+    assert [lamp["seed"] for lamp in later] != [lamp["seed"] for lamp in lamps]
+    # The most-watched card gets the brightest lamp.
+    assert [lamp["strength"] for lamp in lamps] == [0.8, 1.0, 0.66]
+    for lamp in lamps:
+        px, py = lamp["pivot"]
+        x0, x1, y = lamp["landing"]
+        # Every lamp points down the middle of its beam.
+        middle = (math.atan2(x0 - px, y - py) + math.atan2(x1 - px, y - py)) / 2
+        assert math.atan2(*lamp["aim"]) == pytest.approx(middle)
+    assert stage_lights.plan((300, 340), targets, {"mode": "light"}, 7) == []
+
+
+def test_live_dashboard_hangs_stage_lights_in_place_of_the_header_art(monkeypatch):
+    from plugins.live_radar import stage_lights
+
+    plugin = _plugin()
+    theme = plugin._theme({"themeMode": "light"}, FakeDeviceConfig(mode="day"))
+    cards = _live_cards(3)
+    for card, platform in zip(cards, ("douyu", "twitch", "bilibili")):
+        card["platform"] = platform
+    now = datetime(2026, 10, 26, 15, 0, tzinfo=timezone.utc)
+    header_art = []
+    plugin._draw_header_art = lambda image, box: header_art.append(box) or True
+
+    lit = plugin._render_dashboard(cards, (800, 480), theme, now, False, None)
+    assert header_art == []
+    monkeypatch.setattr(stage_lights, "plan", lambda *args, **kwargs: [])
+    plugin._draw_header_art = lambda image, box: True
+    dark = plugin._render_dashboard(cards, (800, 480), theme, now, False, None)
+
+    # Light falls between the masthead and the middle card.
+    assert lit.getpixel((400, 95)) != dark.getpixel((400, 95))
+
+
+def test_stage_light_falls_only_on_the_bare_page():
+    from plugins.live_radar import stage_lights
+
+    bare = Image.new("RGB", (800, 200), (240, 240, 240))
+    page = bare.copy()
+    ImageDraw.Draw(page).rectangle((300, 60, 500, 90), fill=(0, 160, 60))
+    lamps = stage_lights.plan((300, 500), [((275, 108, 525, 200), (145, 70, 255), 10)], {"mode": "light"}, 3)
+
+    stage_lights.hang(page, lamps, {"mode": "light"}, stage_lights.untouched(page, bare))
+
+    # The beam lights the page round the counter-like block but leaves the block itself alone.
+    assert page.crop((300, 60, 501, 91)).getcolors() == [(201 * 31, (0, 160, 60))]
+    assert page.getpixel((400, 100)) != (240, 240, 240)
+
+
 def test_status_total_badges_use_semantic_backgrounds_in_both_themes():
     plugin = _plugin()
 
