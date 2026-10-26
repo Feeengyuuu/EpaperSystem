@@ -58,6 +58,10 @@ CARD_BAND = 5
 CARDS = {"earth": (12, 58, 394, 264), "grid": (406, 58, 788, 264), "trends": (12, 270, 300, 474),
          "space": (312, 270, 788, 474)}
 SECTION_ART = {"earth": "section-earth", "grid": "section-grid", "trends": "section-trends", "space": "section-space"}
+# Each source's official logo in assets/logos (tools/build_planet_now_logos.py): the height it
+# is set at in a card's header and its name in words should the file be missing.
+SOURCE_LOGOS = {"noaa": (18, "NOAA"), "caiso": (16, "CAISO"), "apple_music": (12, "Apple Music"),
+                "google_trends": (14, "Google Trends"), "nasa": (18, "NASA")}
 # Places marked on the satellite crop: (name, lat, lon, label side); a None side is a sea's
 # name with no dot.
 SKY_PLACES = (("旧金山", 37.7793, -122.4193, "left"), ("奥克兰", 37.8044, -122.2712, "right"),
@@ -113,6 +117,21 @@ def _asset(name, height):
     return ImageOps.contain(image, (height * 2, height), Image.Resampling.LANCZOS)
 
 
+@lru_cache(maxsize=16)
+def _logo(name, night):
+    """A source's official logo at its header height in its published colours, the brand's own
+    dark-page version by night when there is one; None without the file."""
+    height = SOURCE_LOGOS[name][0]
+    for stem in ((f"{name}_night", name) if night else (name,)):
+        path = ASSETS / "logos" / f"{stem}.png"
+        if path.is_file():
+            with safe_open_image(path, limits=_LIMITS) as source:
+                image = source.convert("RGBA")
+            return image.resize((max(1, round(image.width * height / image.height)), height),
+                                Image.Resampling.LANCZOS)
+    return None
+
+
 def _paste(canvas, image, xy, mask=None):
     if image is None:
         return 0
@@ -158,9 +177,9 @@ def _chip(canvas, xy, text, *, size=11, fill="chip", color="chip_ink", anchor="l
     return width
 
 
-def _card(canvas, key, title, detail=""):
+def _card(canvas, key, title, detail="", source=None):
     """A card in its own colour: a band across the top, a frame and header rule, its generated
-    icon and title, and a detail at the right."""
+    icon and title, and at the right its source's official logo (SOURCE_LOGOS) before a detail."""
     left, top, right, _bottom = box = CARDS[key]
     colour = canvas.color(key)
     canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
@@ -168,8 +187,15 @@ def _card(canvas, key, title, detail=""):
                                   corners=(True, True, False, False))
     cursor = left + 8 + _paste(canvas, _asset(SECTION_ART[key], 24), (left + 8, top + 4)) + 6
     cursor += canvas.text((cursor, top + 17), title, 15, anchor="lm") + 8
+    logo = _logo(source, canvas.palette["night"]) if source else None
+    if source and logo is None:
+        detail = " · ".join(part for part in (SOURCE_LOGOS[source][1], detail.lstrip("· ")) if part)
+    x = right - 8
     if detail:
-        canvas.text((right - 8, top + 17), detail, 11, "muted", anchor="rm", bold=False, width=right - 8 - cursor)
+        room = x - cursor - (logo.width + 5 if logo is not None else 0)
+        x -= canvas.text((x, top + 17), detail, 11, "muted", anchor="rm", bold=False, width=room) + 5
+    if logo is not None:
+        _paste(canvas, logo, (x - logo.width, top + 17 - logo.height / 2))
     canvas.rule((left + 8, top + HEADER + 2, right - 8, top + HEADER + 2), colour)
 
 
@@ -185,7 +211,7 @@ def _local_time(iso):
 def _earth(canvas, payload):
     goes, rain, epic = (payload.get(name, {}).get("data") or {} for name in ("goes", "rain", "epic"))
     taken = _local_time(goes.get("taken_at"))
-    _card(canvas, "earth", "湾区上空", "GOES-West 卫星云图")
+    _card(canvas, "earth", "湾区上空", "GOES-West 卫星云图", source="noaa")
     left, top, right, bottom = CARDS["earth"]
     box = (left + 8, top + HEADER + 6, right - 8, bottom - 6)
     size = (box[2] - box[0], box[3] - box[1])
@@ -251,7 +277,7 @@ def _grid(canvas, payload):
     share, GW, per cent), beside today's stacked supply with its numbers on it."""
     grid = payload.get("grid", {}).get("data") or {}
     now = grid.get("now") or {}
-    _card(canvas, "grid", "加州电网", f"CAISO · {now.get('time', '--:--')} · 虚线为预测用电" if now else "CAISO")
+    _card(canvas, "grid", "加州电网", f"{now.get('time', '--:--')} · 虚线为预测用电" if now else "", source="caiso")
     left, top, right, bottom = CARDS["grid"]
     if not grid.get("series"):
         canvas.text(((left + right) / 2, (top + bottom) / 2 + 10), "电网数据暂不可用", 14, "muted", anchor="mm")
@@ -389,8 +415,10 @@ def _trends(canvas, payload, images):
     trends = (payload.get("trends", {}).get("data") or {}).get("items") or []
     wiki = (payload.get("wiki", {}).get("data") or {}).get("articles") or []
     songs = (payload.get("apple", {}).get("data") or {}).get("songs") or []
-    detail = f"Apple 热歌 · {songs[0]['name']}" if songs else "Google Trends"
-    _card(canvas, "trends", "美国热度", detail)
+    if songs:
+        _card(canvas, "trends", "美国热度", f"热歌 · {songs[0]['name']}", source="apple_music")
+    else:
+        _card(canvas, "trends", "美国热度", source="google_trends")
     left, top, right, bottom = CARDS["trends"]
     if not trends:
         canvas.text(((left + right) / 2, (top + bottom) / 2), "热搜暂不可用", 14, "muted", anchor="mm")
@@ -505,7 +533,7 @@ def _mars_facts(canvas, mars, now, box):
 def _space(canvas, payload, images, now):
     mars = payload.get("mars", {}).get("data") or {}
     iss = payload.get("iss", {}).get("data") or {}
-    _card(canvas, "space", "太空近况", "NASA · wheretheiss.at")
+    _card(canvas, "space", "太空近况", "· wheretheiss.at", source="nasa")
     left, top, right, bottom = CARDS["space"]
     crew_left = right - 176
     photo_box = (left + 8, top + HEADER + 6, left + 120, bottom - 6)

@@ -223,6 +223,27 @@ def test_the_whole_earth_is_cut_from_the_black_of_space():
     assert render._earth_disc(None, 62) is None
 
 
+@pytest.mark.parametrize("night", [False, True])
+def test_each_source_is_named_by_its_official_logo_at_its_header_height(night):
+    for name, (height, _words) in render.SOURCE_LOGOS.items():
+        logo = render._logo(name, night)
+        assert logo is not None and logo.height == height and logo.mode == "RGBA"
+    # California ISO's own white-lettered version by night; NASA has one version.
+    assert render._logo("caiso", True).tobytes() != render._logo("caiso", False).tobytes()
+    assert render._logo("nasa", True).tobytes() == render._logo("nasa", False).tobytes()
+
+
+def test_a_missing_logo_falls_back_to_the_source_in_words(monkeypatch):
+    drawn = []
+    canvas = render.PageCanvas(render._palette({}))
+    monkeypatch.setattr(render, "_logo", lambda name, night: None)
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *args, **kwargs: drawn.append(text) or 10)
+
+    render._card(canvas, "space", "太空近况", "· wheretheiss.at", source="nasa")
+
+    assert drawn == ["太空近况", "NASA · wheretheiss.at"]
+
+
 def test_the_page_says_what_is_missing_without_failing():
     image = render.render_page((800, 480), {}, {}, datetime(2026, 10, 25, 8, 5, tzinfo=sources.PACIFIC), {})
 

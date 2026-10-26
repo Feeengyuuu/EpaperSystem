@@ -1,0 +1,95 @@
+{
+ "logos": {
+  "noaa": {
+   "file": "File:NOAA logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:NOAA_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/79/NOAA_logo.svg/960px-NOAA_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "265503ec5a57cbe09a698213458501bbea16873cbb85ac85094602915840c785",
+   "modified": "cropped and scaled only",
+   "sha256": "8c9efc592dcc45e93f3370fe01a82a6dbf4ade96b5c1ff3dcc9c851d239f7e1b",
+   "size": [
+    64,
+    64
+   ]
+  },
+  "nasa": {
+   "file": "File:NASA logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:NASA_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e5/NASA_logo.svg/960px-NASA_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "3e601f0cab26c104408a0f2ed7b1207a05fd06dc059037268cfe27e426e4d50c",
+   "modified": "cropped and scaled only",
+   "sha256": "2e0af7aa4b2a2790a9b2823432da0fbe27382b09e245dfc14bf2d09671efa1fa",
+   "size": [
+    78,
+    64
+   ]
+  },
+  "apple_music": {
+   "file": "File:Apple Music logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Apple_Music_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2a/Apple_Music_logo.svg/960px-Apple_Music_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "a0124f818794593628db0d8c42aa8e9a4ea133b6b54feda39eade447a1ade08f",
+   "modified": "cropped and scaled only",
+   "sha256": "eab40a3a3b0a04fe0bbe1e1a2b1bc344c5eb56d6280c2e436c73963f88bfd8a4",
+   "size": [
+    265,
+    64
+   ]
+  },
+  "apple_music_night": {
+   "file": "File:Apple Music logo.svg",
+   "page": "https://commons.wikimedia.org/wiki/File:Apple_Music_logo.svg",
+   "rendered": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2a/Apple_Music_logo.svg/960px-Apple_Music_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+   "licence": "Public domain",
+   "source_sha256": "a0124f818794593628db0d8c42aa8e9a4ea133b6b54feda39eade447a1ade08f",
+   "modified": "white on dark pages, as the brand publishes it",
+   "sha256": "f695c39e4e1751c4287348e5c02c84d9683ed800f0d55cc1df1a07cf6ad8581c",
+   "size": [
+    265,
+    64
+   ]
+  },
+  "google_trends": {
+   "file": "File:Google Trends.png",
+   "page": "https://commons.wikimedia.org/wiki/File:Google_Trends.png",
+   "rendered": "https://upload.wikimedia.org/wikipedia/commons/3/3b/Google_Trends.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+   "licence": "Public domain",
+   "source_sha256": "3a8830b508990df47144e2516b3d9e9dd61ceab77b7b27babe4475e97ed8cf6d",
+   "modified": "cropped and scaled only",
+   "sha256": "241a9df48add138eedafa061caec10b04d66721a7c386cc7e20d83288faf77d2",
+   "size": [
+    321,
+    55
+   ]
+  },
+  "caiso": {
+   "file": "https://www.caiso.com/theme/dist/assets/www-logo-caiso.svg",
+   "page": "https://www.caiso.com/",
+   "rendered": "headless browser, transparent background",
+   "licence": "the brand's own logo (its trademark), shown to name the source",
+   "source_sha256": "e511583081ffed706b9ca2d784ad318d1cdef2c2401002c8fc65931979b4febe",
+   "modified": "cropped and scaled only",
+   "sha256": "6a80269c499c378fb29bcbf4f480a6181f96c5beadfe4d6fd73e0f7cf082afdc",
+   "size": [
+    367,
+    64
+   ]
+  },
+  "caiso_night": {
+   "file": "https://www.caiso.com/theme/dist/assets/www-logo-caiso-dark.svg",
+   "page": "https://www.caiso.com/",
+   "rendered": "headless browser, transparent background",
+   "licence": "the brand's own logo (its trademark), shown to name the source",
+   "source_sha256": "6786f38b78dc484f45dd4f4a87c675fdb01f5e756b363f072f513514fe778147",
+   "modified": "cropped and scaled only",
+   "sha256": "217c736f289ba9abca097e2e8aecb64c2555bc05a1ecc156d69e449169d137eb",
+   "size": [
+    367,
+    64
+   ]
+  }
+ }
+}
