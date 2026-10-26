@@ -1,8 +1,13 @@
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
+from .scorebug_kit import _kit_inked_where_faint
+from .tv_networks import tv_network_parts, tv_watch_rank
 
 SportsDashboard = None
 LOCAL_CLUB_TEAM_LOGO_SCHEME = "local-club://"
+# The networks' logos on a card's top row (beside its status pill) and on a schedule row (after
+# its date), this tall; the first choice shrinks to fit down to TV_LOGO_MIN_SHARE of that.
+CLUB_CARD_TV_LOGO_HEIGHT, ROW_TV_LOGO_HEIGHT, TV_LOGO_MIN_SHARE = 15, 10, 0.7
 
 
 class WorldCupRenderMixin:
@@ -688,7 +693,7 @@ class WorldCupRenderMixin:
         )
         club = (presentation or {}).get("competition") == "club"
         if club:
-            self._draw_club_card_header(draw, x1, y1, x2, event, tag, is_live, is_recent)
+            self._draw_club_card_header(image, draw, x1, y1, x2, event, tag, is_live, is_recent)
         if not club:
             tag_w = 112 if is_recent else (104 if is_live else 88)
             tag_text, tag_font = self._fit_text(draw, tag, tag_w - 8, 11, bold=True, min_size=7)
@@ -902,9 +907,9 @@ class WorldCupRenderMixin:
                 self._draw_worldcup_odds_text(draw, (center_x - 26, odds_y, center_x + 26, odds_y + 12), f"X {odds.get('draw')}", max_size=9)
             self._draw_worldcup_odds_text(draw, (right_area[0], odds_y, right_area[1], odds_y + 12), (event.get("odds") or {}).get("team_b"), max_size=9)
 
-    def _draw_club_card_header(self, draw, x1, y1, x2, event, tag, is_live, is_recent):
-        """A club card's top: a rounded status pill, the date with its weekday at the right, and the
-        broadcasters and venue in one quiet line under them."""
+    def _draw_club_card_header(self, image, draw, x1, y1, x2, event, tag, is_live, is_recent):
+        """A club card's top: a rounded status pill, the networks' logos after it, the date with its
+        weekday at the right, and the round and venue in one quiet line under them."""
         pill_fill = COLORS["worldcup_live"] if is_live else (COLORS["green"] if is_recent else COLORS["worldcup_tag"])
         pill_ink = COLORS["paper_text"] if is_live else COLORS["text"]
         tag_text, tag_font = self._fit_text(draw, tag, 104, 11, bold=True, min_size=7)
@@ -916,10 +921,54 @@ class WorldCupRenderMixin:
         date_text = f"{start:%m/%d} 周{'一二三四五六日'[start.weekday()]}"
         date_text, date_font = self._fit_text(draw, date_text, 80, 11, bold=True, min_size=8)
         self._draw_right_aligned(draw, (x2 - 12, y1 + 11), date_text, date_font, COLORS["muted"])
+        # Where to watch: the networks' official logos between the pill and the date, so the
+        # line under them keeps the round and the ground.
+        date_left = x2 - 12 - self._text_width(draw, date_text, date_font)
+        logos, unshown = self._broadcast_logo_strip(event, CLUB_CARD_TV_LOGO_HEIGHT, date_left - 7 - (pill[2] + 7))
+        if logos is not None:
+            middle = pill[2] + 7 + (date_left - 7 - (pill[2] + 7) - logos.width) // 2
+            image.paste(logos, (middle, round((pill[1] + pill[3] - logos.height) / 2)), logos)
         # Separators are "|" and "/": the device's bold YaHei draws "·" as a dash.
-        stage = self._clean_worldcup_stage(event.get("block"))
-        stage_text, stage_font = self._fit_text(draw, stage, x2 - x1 - 34, 9, bold=True, min_size=7)
+        stage = self._stage_without_broadcast(event, unshown) if logos is not None else self._clean_worldcup_stage(
+            event.get("block"))
+        stage_text, stage_font = self._fit_text_ellipsis(draw, stage, x2 - x1 - 34, 9, bold=True, min_size=7)
         draw.text((x1 + 16, y1 + 28), stage_text, font=stage_font, fill=COLORS["muted"])
+
+    def _broadcast_logo_strip(self, event, height, max_width):
+        """(strip, names left out): the event's networks as their logos ``height`` tall, the ones a
+        US viewer would stream first, as many whole logos as fit ``max_width`` on a transparent
+        strip; (None, []) when none of them has a logo that fits."""
+        label = str((event or {}).get("broadcast") or "").strip()
+        if not label or height < 8 or max_width < 14:
+            return None, []
+        parts = tv_network_parts(label)
+        strip = Image.new("RGBA", (int(max_width), int(height)), (0, 0, 0, 0))
+        x, shown = 0, []
+        for name, key in sorted(parts, key=lambda part: tv_watch_rank(part[1])):
+            path = os.path.join(LOCAL_TV_LOGO_DIR, f"{key}.png") if key else ""
+            logo = self._load_local_logo(path, (height * 4, height), alpha_threshold=8) if path and os.path.exists(path) else None
+            if logo is not None and not shown and logo.width > strip.width:
+                # The first choice is never dropped for a smaller one: it is made smaller instead.
+                logo = self._load_local_logo(path, (strip.width, height), alpha_threshold=8)
+                logo = logo if logo is not None and logo.height >= height * TV_LOGO_MIN_SHARE else None
+            if logo is None or x + logo.width > strip.width:
+                continue
+            logo = _kit_inked_where_faint(logo, COLORS["panel"])
+            strip.paste(logo, (x, (height - logo.height) // 2), logo)
+            x, shown = x + logo.width + 6, shown + [name]
+        if not shown:
+            return None, []
+        return strip.crop((0, 0, x - 6, strip.height)), [name for name, _key in parts if name not in shown]
+
+    @staticmethod
+    def _stage_without_broadcast(event, unshown=()):
+        """The context line ("第10轮 | ESPN+ | Stadium") with its networks left to their logos: only
+        those that have none on show stay named."""
+        label = str(event.get("broadcast") or "").strip()
+        parts = SportsDashboard._clean_worldcup_stage(event.get("block")).split(" | ")
+        rest = " / ".join(unshown)
+        return " | ".join((rest if part.strip() == label else part) for part in parts
+                          if part.strip() and (part.strip() != label or rest))
 
     def _draw_club_card_details(self, draw, x1, y2, center_x, areas, flag_y, flag_h, event, now, status_text,
                                 is_live, is_recent, presentation):
@@ -1318,12 +1367,23 @@ class WorldCupRenderMixin:
         draw.rectangle((x1 + 1, y + 1, x1 + 5, y + row_h - 1), fill=self._worldcup_status_color(event))
         date_text, date_font = self._fit_text(draw, event["start"].strftime("%m/%d"), 36, 9, bold=True, min_size=7)
         draw.text((x1 + 9, y + 1), date_text, font=date_font, fill=COLORS["muted"])
-        stage = self._clean_worldcup_stage(event.get("block"))
-        stage_text, stage_font = self._fit_text(draw, stage, 78, 9, bold=True, min_size=7)
-        draw.text((x1 + 47, y + 1), stage_text, font=stage_font, fill=COLORS["muted"])
+        right = x2 - 8
         if show_time:
             time_text, time_font = self._fit_text(draw, self._worldcup_event_time_label(event), 48, 9, bold=True, min_size=7)
-            self._draw_right_aligned(draw, (x2 - 8, y + 1), time_text, time_font, COLORS["text"])
+            self._draw_right_aligned(draw, (right, y + 1), time_text, time_font, COLORS["text"])
+            right -= self._text_width(draw, time_text, time_font) + 6
+        # The networks' logos where the card puts them, after the date; the context line takes
+        # what is left before the time.
+        stage_x = x1 + 47
+        logos, unshown = self._broadcast_logo_strip(event, ROW_TV_LOGO_HEIGHT, min(110, right - stage_x - 40))
+        if logos is not None:
+            image.paste(logos, (stage_x, y + 2), logos)
+            stage, stage_x = self._stage_without_broadcast(event, unshown), stage_x + logos.width + 6
+        else:
+            stage = self._clean_worldcup_stage(event.get("block"))
+        stage_text, stage_font = self._fit_text_ellipsis(draw, stage, right - stage_x, 9, bold=True, min_size=7)
+        if stage_text.strip(". ") and right - stage_x >= 16:
+            draw.text((stage_x, y + 1), stage_text, font=stage_font, fill=COLORS["muted"])
         self._draw_worldcup_row_lineup(
             image,
             draw,
@@ -1389,14 +1449,17 @@ class WorldCupRenderMixin:
         self._draw_text_in_box(draw, (center_x + 28, y - 1, right_text_x, team_bottom), team_b, font_b, COLORS["text"], align="right")
         left_meta = self._worldcup_team_points_meta(event, "a", include_odds=has_odds)
         right_meta = self._worldcup_team_points_meta(event, "b", include_odds=has_odds)
-        # The odds run under the names, mirrored on the wider badge so both sides read alike.
+        # The odds run under the names, mirrored on the wider badge so both sides read alike, in a
+        # band that ends a couple of pixels above the row's foot rather than on its border.
         meta_margin = max(left_w, right_w) + 5
-        self._draw_worldcup_odds_text(draw, (x1 + meta_margin, y + 11, center_x - 28, y + 20), left_meta, max_size=7)
-        self._draw_worldcup_odds_text(draw, (center_x + 28, y + 11, x2 - meta_margin, y + 20), right_meta, max_size=7)
+        odds_top, odds_bottom = y + 9, y + 18
+        self._draw_worldcup_odds_text(draw, (x1 + meta_margin, odds_top, center_x - 28, odds_bottom), left_meta, max_size=7)
+        self._draw_worldcup_odds_text(draw, (center_x + 28, odds_top, x2 - meta_margin, odds_bottom), right_meta, max_size=7)
         if has_odds:
             odds = event.get("odds") or {}
             if odds.get("draw"):
-                self._draw_worldcup_odds_text(draw, (center_x - 21, y + 11, center_x + 21, y + 20), f"X / {odds.get('draw')}", max_size=7)
+                self._draw_worldcup_odds_text(draw, (center_x - 21, odds_top, center_x + 21, odds_bottom),
+                                              f"X / {odds.get('draw')}", max_size=7)
 
     def _draw_worldcup_tactics_strip(self, image, draw, x1, x2, y1, y2, event):
         x1 = int(x1)

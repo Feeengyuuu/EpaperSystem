@@ -20312,6 +20312,22 @@ def test_club_football_slot_renders_mls_updates_through_production_timeline(
         return original_fit_text(draw, text, *args, **kwargs)
 
     monkeypatch.setattr(plugin, "_fit_text", record_fit_text)
+    original_fit_ellipsis = plugin._fit_text_ellipsis
+
+    def record_fit_ellipsis(draw, text, *args, **kwargs):
+        fitted_text.append(str(text))
+        return original_fit_ellipsis(draw, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_fit_text_ellipsis", record_fit_ellipsis)
+    logo_strips = []
+    original_logo_strip = plugin._broadcast_logo_strip
+
+    def record_logo_strip(event, *args):
+        strip, unshown = original_logo_strip(event, *args)
+        logo_strips.append((event.get("broadcast"), strip is not None, unshown))
+        return strip, unshown
+
+    monkeypatch.setattr(plugin, "_broadcast_logo_strip", record_logo_strip)
     wordmark_calls = []
     original_draw_wordmark = plugin._draw_club_league_wordmark
 
@@ -20337,7 +20353,9 @@ def test_club_football_slot_renders_mls_updates_through_production_timeline(
     assert source == "CLUB LIVE"
     assert wordmark_calls == [("MLS", (52, 6, 230, 33))]
     assert "美职联" not in fitted_text
-    assert "Apple TV | Stade Saputo" in fitted_text
+    # The broadcaster is its logo beside the status pill; the line under it keeps the ground.
+    assert ("Apple TV", True, []) in logo_strips
+    assert "Stade Saputo" in fitted_text
     assert "DELAYED" in fitted_text
     assert "CLUB DATA 17:55" in fitted_text
 

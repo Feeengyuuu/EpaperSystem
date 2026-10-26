@@ -48,6 +48,19 @@ TV_NETWORK_ALIASES = {
     "fandango": ("fandango", "fandangoathome"),
 }
 TV_NETWORK_KEYS = {alias: key for key, aliases in TV_NETWORK_ALIASES.items() for alias in aliases}
+# Where a viewer in the US most likely watches, first: the streaming services, then the other
+# networks as the feed lists them, the Spanish-language feeds last. A row with room for one logo
+# shows the first.
+TV_STREAMING_KEYS = ("espn_plus", "peacock", "paramount_plus", "prime_video", "apple_tv", "netflix", "hbo_max",
+                     "disney_plus", "dazn", "fandango")
+TV_SPANISH_KEYS = ("espn_deportes", "universo")
+
+
+def tv_watch_rank(key):
+    """Sort rank of a network's logo key by where a US viewer would watch it."""
+    if key in TV_STREAMING_KEYS:
+        return TV_STREAMING_KEYS.index(key)
+    return 99 if key in TV_SPANISH_KEYS else 50
 
 
 def tv_network_key(name):
