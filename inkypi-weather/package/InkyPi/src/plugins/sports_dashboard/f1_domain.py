@@ -170,9 +170,47 @@ def _parse_f1_driver_standings(payload):
                 "constructor": str((constructor or {}).get("name") or "").strip(),
                 "points": str(item.get("points") or "0"),
                 "wins": str(item.get("wins") or "0"),
+                "driver_id": str(driver.get("driverId") or "").strip(),
             }
         )
     return result
+
+
+def standings_through(payload):
+    """The drivers' standings' "season/round" (what they count up to), or ""."""
+    lists = (((payload or {}).get("MRData") or {}).get("StandingsTable") or {}).get("StandingsLists") or []
+    first = lists[0] if lists and isinstance(lists[0], Mapping) else {}
+    season, round_number = str(first.get("season") or ""), _int_value(first.get("round"))
+    return f"{season}/{round_number}" if season and round_number else ""
+
+
+def season_form(race_pages, sprint_pages):
+    """Each driver's season race by race from Jolpica's results and sprint pages (a race's rows
+    may run across pages): ({driverId: [[round, points, place], ...]} in round order, the
+    weekend's points counting its sprint and place the Grand Prix finish, None without one;
+    the last round with Grand Prix results)."""
+    rounds = {}
+    last = 0
+    for races, key, is_race in ((race_pages, "Results", True), (sprint_pages, "SprintResults", False)):
+        for race in races or []:
+            round_number = _int_value((race or {}).get("round"))
+            if not round_number:
+                continue
+            if is_race:
+                last = max(last, round_number)
+            for item in race.get(key) or []:
+                driver = str(((item or {}).get("Driver") or {}).get("driverId") or "").strip()
+                if not driver:
+                    continue
+                entry = rounds.setdefault(driver, {}).setdefault(round_number, [round_number, 0.0, None])
+                try:
+                    entry[1] += float(item.get("points") or 0)
+                except (TypeError, ValueError):
+                    pass
+                if is_race:
+                    entry[2] = _int_value(item.get("position"))
+    form = {driver: [entries[key] for key in sorted(entries)] for driver, entries in rounds.items()}
+    return form, last
 
 
 def _parse_f1_constructor_standings(payload):

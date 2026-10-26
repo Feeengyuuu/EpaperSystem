@@ -5,7 +5,9 @@ constructors' championship order, the leader on pole at the chequered line.
 A band with the round, the Grand Prix (in Chinese), the circuit and a
 countdown to the next session; a weekend timeline with one node per session
 (done, live, next, later; the race node is chequered); the drivers'
-championship with team logos, points bars and wins; and either the live
+championship with team logos, points bars told race by race (a segment per
+scoring round: gold a win, team colour a podium, a tint of it other points)
+and wins; and either the live
 session order or the last race's top finishers with their teams' logos and
 official side-view cars (set back by their gaps, so the leader is in front),
 places gained from the grid and the fastest lap.
@@ -33,6 +35,8 @@ F1_SIDE_DIR = os.path.join(LOCAL_DECOR_DIR, "f1_side")
 F1_SIDE_SIZE = (64, 13)
 # The least a car sits behind the one ahead, so the order reads even when the gaps are tiny.
 F1_CAR_MIN_STEP = 6
+# How much of the team colour a points bar's minor-points rounds keep (the rest is the panel).
+F1_FORM_TINT = 0.45
 F1_CIRCUIT_SHAPES = os.path.join(LOCAL_DECOR_DIR, "f1_circuits.json")
 F1_LOGO_SIZE = (20, 12)
 F1_PLACE_SIZE = (13, 10)
@@ -348,13 +352,39 @@ class F1RenderMixin:
             points_x2 = x2 - wins_w
             bar_x1, bar_x2 = name_x + 3 + name_w, points_x2 - points_w - 6
             if bar_x2 - bar_x1 > 10:
+                # The bar alone, on the panel: no empty track behind the shorter ones.
                 filled = bar_x1 + int((bar_x2 - bar_x1) * points / leader_points)
-                draw.rectangle((bar_x1, y + 4, bar_x2, y + 9), fill=COLORS["panel"], outline=COLORS["line"], width=1)
-                draw.rectangle((bar_x1, y + 4, max(bar_x1 + 1, filled), y + 9), fill=COLORS[ink_key], outline=COLORS["border"], width=1)
+                self._draw_f1_points_bar(draw, (bar_x1, y + 4, max(bar_x1 + 1, filled), y + 9), row.get("form"), ink_key)
             self._draw_text_in_box(draw, (points_x2 - points_w, y, points_x2, y + 13), points_text, points_font, COLORS["text"], align="right")
             if count:
                 self._draw_text_in_box(draw, (points_x2, y + 1, x2, y + 13), f"{count}胜", wins_font, COLORS["text"], align="right")
             y += F1_ROW_HEIGHT
+
+    def _draw_f1_points_bar(self, draw, box, form, ink_key):
+        """A driver's points as one bar in the team colour; with the season race by race, one
+        segment per scoring round in calendar order, as long as its points: gold for a win, the
+        team colour for the rest of the podium, a light tint of it for the other points, a
+        hairline of the panel between rounds wide enough to show one."""
+        x1, y1, x2, y2 = box
+        team = COLORS[ink_key]
+        scored = [(points, place) for _round, points, place in (form or []) if points > 0]
+        total = sum(points for points, _place in scored)
+        if not scored or x2 - x1 < len(scored):
+            draw.rectangle(box, fill=team, outline=COLORS["border"], width=1)
+            return
+        tint = tuple(round(channel * F1_FORM_TINT + panel * (1 - F1_FORM_TINT)) for channel, panel in zip(team, COLORS["panel"]))
+        done = 0.0
+        for index, (points, place) in enumerate(scored):
+            left = x1 + round((x2 - x1) * done / total)
+            done += points
+            right = x1 + round((x2 - x1) * done / total)
+            if index == len(scored) - 1:
+                end = x2
+            else:
+                end = max(left, right - (2 if right - left >= 3 else 1))
+            fill = COLORS["amber"] if place == 1 else (team if place in (2, 3) else tint)
+            draw.rectangle((left, y1, end, y2), fill=fill)
+        draw.rectangle(box, outline=COLORS["border"], width=1)
 
     def _draw_f1_order(self, image, draw, box, title, rows, spec, live=False, race=None):
         x1, y1, x2, y2 = [int(value) for value in box]

@@ -800,6 +800,96 @@ def test_f1_order_leaves_out_the_cars_without_room():
     assert noses == []
 
 
+def _jolpica_race(round_number, rows, key="Results"):
+    return {"round": str(round_number), key: [
+        {"position": str(place), "points": str(points), "Driver": {"driverId": driver}} for driver, place, points in rows
+    ]}
+
+
+def test_f1_season_form_reads_each_drivers_rounds_across_pages_and_sprints():
+    from plugins.sports_dashboard import f1_domain
+
+    race_pages = [
+        _jolpica_race(1, [("antonelli", 1, 25), ("russell", 2, 18)]),
+        _jolpica_race(2, [("russell", 1, 25)]),
+        _jolpica_race(2, [("antonelli", 11, 0)]),  # the same round continued on the next page
+    ]
+    sprint_pages = [_jolpica_race(2, [("antonelli", 1, 8)], key="SprintResults")]
+
+    form, last = f1_domain.season_form(race_pages, sprint_pages)
+
+    assert last == 2
+    assert form["antonelli"] == [[1, 25.0, 1], [2, 8.0, 11]]
+    assert form["russell"] == [[1, 18.0, 2], [2, 25.0, 1]]
+    standings = {"MRData": {"StandingsTable": {"StandingsLists": [{"season": "2026", "round": "18"}]}}}
+    assert f1_domain.standings_through(standings) == "2026/18"
+    assert f1_domain.standings_through({}) == ""
+
+
+def test_f1_points_bar_tells_the_season_race_by_race():
+    plugin = _plugin()
+    image = Image.new("RGB", (120, 10), DAY_COLORS["panel"])
+    form = [[1, 25.0, 1], [2, 0.0, 12], [3, 18.0, 2], [4, 6.0, 7]]
+
+    plugin._draw_f1_points_bar(ImageDraw.Draw(image), (0, 2, 98, 8), form, "green")
+
+    row = [image.getpixel((x, 5)) for x in range(1, 98)]
+    team = tuple(DAY_COLORS["green"])
+    gold = tuple(DAY_COLORS["amber"])
+    tint = next(pixel for pixel in reversed(row) if pixel not in {team, gold, tuple(DAY_COLORS["panel"])})
+    # In calendar order: the win in gold, then the podium in the team colour, then a tint of it.
+    assert row.index(gold) < row.index(team) < row.index(tint)
+    assert row.count(gold) > row.count(tint)
+    # A panel hairline separates the rounds.
+    assert tuple(DAY_COLORS["panel"]) in row
+
+    plain = Image.new("RGB", (120, 10), DAY_COLORS["panel"])
+    plugin._draw_f1_points_bar(ImageDraw.Draw(plain), (0, 2, 98, 8), None, "green")
+    assert {plain.getpixel((x, 5)) for x in range(1, 98)} == {team}
+
+
+def test_f1_season_form_is_fetched_once_per_round_and_kept_on_failure(monkeypatch, tmp_path):
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_f1_season_form_cache_path", lambda: tmp_path / "form.json")
+    monkeypatch.setattr(plugin, "_f1_jolpica_state_path", lambda: tmp_path / "state.json")
+    fetches = []
+
+    def fetch(_settings):
+        fetches.append(1)
+        return [_jolpica_race(18, [("antonelli", 1, 25)])], []
+
+    monkeypatch.setattr(plugin, "_fetch_f1_season_pages", fetch)
+    parsed = {"driver_standings": [{"driver_id": "antonelli"}, {"driver_id": "nobody"}]}
+
+    plugin._attach_f1_season_form(parsed, {}, "2026/18")
+    plugin._attach_f1_season_form({"driver_standings": [{"driver_id": "antonelli"}]}, {}, "2026/18")
+
+    assert parsed["driver_standings"][0]["form"] == [[18, 25.0, 1]]
+    assert "form" not in parsed["driver_standings"][1]
+    assert len(fetches) == 1
+
+    # A newer round the provider fails on keeps the old season and waits an hour to ask again.
+    def fail(_settings):
+        fetches.append(1)
+        raise RuntimeError("down")
+
+    cache = json.loads((tmp_path / "form.json").read_text(encoding="utf-8"))
+    cache["fetched_at"] = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    (tmp_path / "form.json").write_text(json.dumps(cache), encoding="utf-8")
+    monkeypatch.setattr(plugin, "_fetch_f1_season_pages", fail)
+    later = {"driver_standings": [{"driver_id": "antonelli"}]}
+    plugin._attach_f1_season_form(later, {}, "2026/19")
+    plugin._attach_f1_season_form(later, {}, "2026/19")
+
+    assert later["driver_standings"][0]["form"] == [[18, 25.0, 1]]
+    assert len(fetches) == 2
+
+    # A theme-only redraw never asks.
+    (tmp_path / "form.json").unlink()
+    plugin._attach_f1_season_form({"driver_standings": [{"driver_id": "antonelli"}]}, {"_theme_render_only": True}, "2026/19")
+    assert len(fetches) == 2
+
+
 def test_f1_side_cars_cover_every_team_and_match_their_sources():
     from plugins.sports_dashboard.f1_render import F1_SIDE_DIR, F1_TEAM_KEYS
 

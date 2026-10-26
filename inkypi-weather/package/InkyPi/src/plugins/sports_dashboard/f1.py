@@ -7,6 +7,7 @@ from .common import (
     DEFAULT_F1_OPENF1_BASE_URL,
     DEFAULT_F1_OPENF1_DAILY_LIMIT,
     DEFAULT_TIMEZONE,
+    F1_FORM_STATE_VERSION,
     F1_JOLPICA_STATE_VERSION,
     F1_LIVE_STATE_VERSION,
     F1_OPENF1_STATE_VERSION,
@@ -19,6 +20,7 @@ from .common import (
     timezone,
 )
 from . import f1_domain
+from runtime.refresh_contracts import TaskCancelled
 
 SportsDashboard = None
 
@@ -28,6 +30,7 @@ class F1Mixin:
         try:
             payload, source_state, _fetched_at = self._load_f1_jolpica_bundle(settings, timezone_info)
             parsed = self._parse_f1_jolpica_bundle(payload, timezone_info)
+            self._attach_f1_season_form(parsed, settings, f1_domain.standings_through((payload or {}).get("driver_standings")))
             return parsed, source_state
         except Exception as exc:
             logger.warning("F1 Jolpica fetch failed: %s", exc)
@@ -102,6 +105,84 @@ class F1Mixin:
             **payloads,
         }
 
+    def _attach_f1_season_form(self, parsed, settings, through):
+        """Each standings row's season race by race ("form": [[round, points, place], ...]) for
+        the points bars; the rows stay as they are when it cannot be had."""
+        rows = (parsed or {}).get("driver_standings") or []
+        if not rows or not through:
+            return
+        try:
+            form = self._load_f1_season_form(settings, through)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("F1 season results unavailable: %s", exc)
+            return
+        for row in rows:
+            history = form.get(row.get("driver_id") or "")
+            if history:
+                row["form"] = history
+
+    def _load_f1_season_form(self, settings, through):
+        """The season's results by driver, fetched once the standings count a round the cached
+        results lack (at most hourly while Jolpica catches up or fails)."""
+        path = self._f1_season_form_cache_path()
+        cache = self._read_json_file(path)
+        cached = cache.get("form") if cache.get("version") == F1_FORM_STATE_VERSION else None
+        now_utc = datetime.now(timezone.utc)
+        if isinstance(cached, dict) and (
+            cache.get("through") == through
+            or self._cache_is_fresh_seconds(cache, 3600, now_utc)
+            or self._provider_cache_only(settings)
+        ):
+            return cached
+        if self._provider_cache_only(settings) or self._f1_jolpica_calls_left(settings, now_utc) <= 0:
+            return cached or {}
+        season = through.split("/")[0]
+        form, last = cached or {}, None
+        try:
+            form, last = f1_domain.season_form(*self._fetch_f1_season_pages(settings))
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("F1 season results fetch failed: %s", exc)
+        finally:
+            self._record_f1_jolpica_call(settings, now_utc)
+        payload = {
+            "version": F1_FORM_STATE_VERSION,
+            "through": f"{season}/{last}" if last else cache.get("through"),
+            "fetched_at": now_utc.isoformat(),
+            "form": form,
+        }
+        try:
+            self._write_json_file(path, payload)
+        except OSError as exc:
+            logger.warning("Failed to write F1 season results cache: %s", exc)
+        return form
+
+    def _fetch_f1_season_pages(self, settings):
+        """The current season's Grand Prix and sprint results, every page of each."""
+        base_url = self._f1_jolpica_base_url(settings)
+        session = get_http_session()
+        pages = []
+        for suffix in ("current/results.json", "current/sprint.json"):
+            races, offset, total = [], 0, 1
+            # Thirty rounds of twenty-two cars fit well inside ten pages.
+            while offset < total and offset < 1000:
+                response = session.get(
+                    f"{base_url}/{suffix}",
+                    params={"limit": 100, "offset": offset},
+                    headers={"Accept": "application/json", "User-Agent": "InkyPi/1.0"},
+                    timeout=20,
+                )
+                response.raise_for_status()
+                data = (response.json() or {}).get("MRData") or {}
+                total = int(data.get("total") or 0)
+                races.extend((data.get("RaceTable") or {}).get("Races") or [])
+                offset += 100
+            pages.append(races)
+        return pages
+
     def _f1_jolpica_cache_is_fresh(self, cache, settings, timezone_info, now_utc):
         cache_hours = self._int_setting(settings, "f1CacheHours", DEFAULT_F1_CACHE_HOURS, 1, 24)
         if not self._worldcup_cache_is_fresh(cache, cache_hours, now_utc):
@@ -136,6 +217,9 @@ class F1Mixin:
 
     def _f1_jolpica_cache_path(self):
         return self._sports_dashboard_cache_dir() / "f1_jolpica.json"
+
+    def _f1_season_form_cache_path(self):
+        return self._sports_dashboard_cache_dir() / "f1_season_form.json"
 
     def _f1_jolpica_state_path(self):
         return self._sports_dashboard_cache_dir() / "f1_jolpica_state.json"
