@@ -61,10 +61,11 @@ TOPIC_ACCENTS = {
     "aviation": "blue",
 }
 # The lead's headline shrinks through these sizes to fit the block's width; its dek (kicker and
-# two-sentence fact) wraps under it.
+# fact) wraps under it at the first of LEAD_FACT_STEPS (size, line height) that shows all of it.
 LEAD_TITLE_SIZES = (34, 32, 30, 28, 26, 24)
-LEAD_FACT_SIZE = 15
-LEAD_FACT_LINE = 19
+LEAD_FACT_STEPS = ((15, 19), (14, 17), (13, 16))
+# The width the outlets' logos give up to a fact that still does not fit.
+LEAD_LOGOS_YIELD = 60
 GLOBE_MIN_HEIGHT = 60
 # The most a short column widens each gap between its stories.
 JUSTIFY_GAP_MAX = 16
@@ -220,19 +221,30 @@ class NewsPage:
                           "mm")
         text_x = MARGIN + seal_w + 14
         brief_w = art_left - 12 - text_x
-        # The headline runs the block's full width at the largest size that fits, its ink top on
-        # the same line whichever face sets it.
+        section, tag = lead.get("section_label"), lead.get("tag")
+        kicker = (self.width(section, 13) if section else 0) + (12 if section and tag else 0) \
+            + (self.width(tag, 13) if tag else 0)
+        indent = kicker + 10 if kicker else 0
+        # The headline runs the block's full width at the largest size that fits; a fact too long
+        # for two lines under it takes room from the headline and its own size (see lead_sizes).
         font, size = self.headline_font(lead["title"], brief_w)
+        size, fact_size, fact_line, fact_lines, whole = self.lead_sizes(lead.get("why"), size, brief_w, indent)
+        if not whole and logos:
+            # Still too long: the outlets' logos close up to give the fact a wider column.
+            art_left += LEAD_LOGOS_YIELD
+            brief_w += LEAD_LOGOS_YIELD
+            font, size = self.headline_font(lead["title"], brief_w)
+            size, fact_size, fact_line, fact_lines, whole = self.lead_sizes(lead.get("why"), size, brief_w, indent)
+        if size != font.size:
+            font, size = self.headline_font(lead["title"], brief_w, LEAD_TITLE_SIZES[LEAD_TITLE_SIZES.index(size):])
         headline = self.clip_with(lead["title"], font, brief_w)
         ink_top = font.getbbox(headline, anchor="la")[1] if headline else 0
-        self.d.text((text_x, top + 4 + (LEAD_TITLE_SIZES[0] - size) // 2 - ink_top), headline, font=font,
-                    fill=c["ink"], anchor="la")
-        y = top + LEAD_TITLE_SIZES[0] + 6
+        self.d.text((text_x, top + 4 - ink_top), headline, font=font, fill=c["ink"], anchor="la")
+        y = top + size + 6
         # The dek under it opens like a newspaper's: the section in its accent and the topic, then the
-        # story's two-sentence fact running on across two lines.
+        # story's fact running on, every word of it where the band allows.
         indent = 0
-        section, tag = lead.get("section_label"), lead.get("tag")
-        middle = y + LEAD_FACT_LINE / 2 - 1
+        middle = y + fact_line / 2 - 1
         if section:
             self.text((text_x, middle), section, 13, True, self.accent(SECTION_ACCENTS.get(section)), "lm")
             indent = self.width(section, 13)
@@ -244,13 +256,13 @@ class NewsPage:
             indent += self.width(tag, 13)
         if indent:
             indent += 10
-        fact = self.wrap_after(lead.get("why"), LEAD_FACT_SIZE, brief_w, indent, 2)
+        fact = self.wrap_after(lead.get("why"), fact_size, brief_w, indent, fact_lines)
         for index, line in enumerate(fact):
-            self.text((text_x + (indent if index == 0 else 0), y + index * LEAD_FACT_LINE), line, LEAD_FACT_SIZE, False)
+            self.text((text_x + (indent if index == 0 else 0), y + index * fact_line), line, fact_size, False)
         note = lead.get("source_note")
-        if note and len(fact) < 2:
-            # A one-sentence fact leaves its second line to the story's source and time.
-            note_y = y + len(fact) * LEAD_FACT_LINE + 2
+        if note and len(fact) < fact_lines:
+            # A one-sentence fact leaves its next line to the story's source and time.
+            note_y = y + len(fact) * fact_line + 2
             self.d.line((text_x, note_y + 8, text_x + 14, note_y + 8), fill=c["ink"], width=1)
             self.text((text_x + 20, note_y + 8), self.clip(note, 12, brief_w - 20, False), 12, False, c["ink"], "lm")
         if logos:
@@ -260,18 +272,34 @@ class NewsPage:
         news_art.draw_topic_art(self.d, (art_left, top + 4, width - MARGIN - 6, bottom - 4), kind,
                                 c["ink"], c["panel"], c["rule"], c["lead"], image=self.img)
 
-    def headline_font(self, title, max_width):
-        """(font, size) for the lead's headline: the serif banner face at the largest size that
-        fits when it sets every character, else the page's bold."""
-        serif = self.p._headline_font(LEAD_TITLE_SIZES[0])
+    def headline_font(self, title, max_width, sizes=LEAD_TITLE_SIZES):
+        """(font, size) for the lead's headline: the serif banner face at the largest of ``sizes``
+        that fits when it sets every character, else the page's bold."""
+        serif = self.p._headline_font(sizes[0])
         if serif is not None and serif.covers(title):
-            for size in LEAD_TITLE_SIZES:
+            for size in sizes:
                 font = self.p._headline_font(size)
                 if self.p._tw(self.d, title, font) <= max_width:
                     return font, size
             return font, size
-        size = self.fit_size(title, LEAD_TITLE_SIZES, max_width)
+        size = self.fit_size(title, sizes, max_width)
         return self.font(size), size
+
+    def lead_sizes(self, fact, headline_size, width, indent):
+        """(headline size, fact size, fact line height, fact lines, whole) for the lead band: the
+        whole fact at the largest size it fits in under the headline, the headline stepping down a
+        size at a time to make room for a further line; the smallest pair, ``whole`` False, when
+        even that cuts it short."""
+        top, bottom = LEAD_BOX
+        headlines = [size for size in LEAD_TITLE_SIZES if size <= headline_size] or [headline_size]
+        for size in headlines:
+            for fact_size, fact_line in LEAD_FACT_STEPS:
+                lines = max(1, (bottom - (top + size + 6)) // fact_line)
+                wrapped = self.wrap_after(fact, fact_size, width, indent, lines + 1)
+                if len(wrapped) <= lines:
+                    return size, fact_size, fact_line, lines, True
+        fact_size, fact_line = LEAD_FACT_STEPS[-1]
+        return headlines[-1], fact_size, fact_line, max(1, (bottom - (top + headlines[-1] + 6)) // fact_line), False
 
     def clip_with(self, text, font, max_width):
         text = str(text or "")

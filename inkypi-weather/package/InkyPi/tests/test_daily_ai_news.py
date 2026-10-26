@@ -2925,3 +2925,19 @@ def test_trend_arrows_carry_on_from_the_line_end_up_right_or_down_right():
     assert image.getpixel((20, 22)) == (200, 0, 0) and image.getpixel((28, 14)) == (200, 0, 0)
     assert image.getpixel((5, 9)) == (0, 150, 0) and image.getpixel((12, 16)) == (0, 150, 0)
     assert image.getpixel((12, 8)) == (255, 255, 255)
+
+
+def test_the_lead_fact_is_shown_whole_by_stepping_the_sizes_down():
+    plugin = _plugin()
+    page = news_layout.NewsPage(plugin, Image.new("RGB", (800, 480), "white"), plugin._page_palette({"mode": "day"}),
+                                "Microsoft YaHei")
+    short, long_fact = "现任总统在大选决赛中获胜。", "现任总统在大选决赛中获胜，击败挑战者。" * 8
+
+    # A short fact keeps the largest headline and dek sizes.
+    assert page.lead_sizes(short, 34, 450, 60)[:2] == (34, news_layout.LEAD_FACT_STEPS[0][0])
+    size, fact_size, _line, lines, whole = page.lead_sizes(long_fact, 34, 450, 60)
+    # A long one takes the headline down and runs onto more lines before anything is cut.
+    assert size < 34 and lines >= 3 and fact_size <= news_layout.LEAD_FACT_STEPS[0][0]
+    # Whatever is chosen fits the lead band above the columns.
+    assert news_layout.LEAD_BOX[0] + size + 6 + lines * _line <= news_layout.LEAD_BOX[1]
+    assert whole is (len(page.wrap_after(long_fact, fact_size, 450, 60, lines + 1)) <= lines)
