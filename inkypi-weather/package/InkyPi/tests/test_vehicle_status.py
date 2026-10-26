@@ -336,16 +336,35 @@ def _summary_v2(*, freshness="live", connectivity="online"):
     }
 
 
-# The redesigned page's regions: three columns under the header, the vehicle strip, the footer.
-ENERGY_REGION = (36, 66, 320, 396)
-SECURITY_REGION = (338, 66, 518, 208)
-CLIMATE_REGION = (538, 66, 765, 208)
-TIRES_REGION = (338, 214, 518, 392)
-RIGHT_COLUMN_REGION = (538, 66, 765, 396)
+# The page's regions: the verdict in the header, the status lamps under it, three columns, the
+# vehicle strip and the footer.
+VERDICT_REGION = (520, 20, 765, 58)
+LAMP_REGION = (36, 66, 765, 124)
+ENERGY_REGION = (36, 126, 320, 396)
+BODY_COLUMN_REGION = (338, 126, 518, 392)
+CLIMATE_REGION = (538, 126, 765, 204)
+RIGHT_COLUMN_REGION = (538, 126, 765, 396)
 STRIP_REGION = (36, 399, 765, 436)
-HEADER_STATUS_REGION = (560, 24, 765, 56)
 FOOTER_REGION = (36, 436, 330, 460)
 BODY_REGION = (36, 66, 765, 396)
+LAMP_KEYS = ("link", "battery", "charging", "lock", "openings", "tyres", "modes", "climate", "update")
+
+
+def _lamp_box(key):
+    """One lamp's slot in the row: its tile and the short state under it."""
+    width = (vehicle_module.PAGE_RIGHT - vehicle_module.PAGE_LEFT) / len(LAMP_KEYS)
+    index = LAMP_KEYS.index(key)
+    return (int(vehicle_module.PAGE_LEFT + width * index), 66, int(vehicle_module.PAGE_LEFT + width * (index + 1)) + 1,
+            124)
+
+
+def _assert_changes_only_within(before, after, *boxes):
+    """Something changed, and every changed pixel lies in one of ``boxes``."""
+    changed = ImageChops.difference(before, after).convert("L").point(lambda value: 255 if value else 0)
+    assert changed.getbbox() is not None
+    for box in boxes:
+        changed.paste(0, box)
+    assert changed.getbbox() is None
 
 def _summary_v3(*, freshness="live", connectivity="online", location=True):
     payload = _summary_v2(freshness=freshness, connectivity=connectivity)
@@ -851,7 +870,7 @@ def test_location_presentation_is_language_specific(tmp_path, monkeypatch):
     assert _visible_color_bbox(chinese, (0, 0, 800, 480), (0, 255, 0)) is not None
 
 
-def test_header_reads_wordmark_model_then_status_on_one_ruled_line(tmp_path, monkeypatch):
+def test_header_reads_wordmark_model_then_verdict_on_one_ruled_line(tmp_path, monkeypatch):
     wordmark = Image.new("RGBA", (736, 172), (0, 0, 0, 255))
     real_safe_open_image = vehicle_module.safe_open_image
 
@@ -865,15 +884,17 @@ def test_header_reads_wordmark_model_then_status_on_one_ruled_line(tmp_path, mon
     image = _render_payload(tmp_path, monkeypatch, _summary_v2(),
                             {"language": "en", "_inkypi_theme": {"mode": "day", "palette": {}}})
 
-    ink, muted, good = (24, 28, 33), (91, 96, 102), (35, 116, 79)
+    # The fixture's open rear trunk is a red lamp, so the verdict pill is red.
+    ink, muted, red = (24, 28, 33), (91, 96, 102), (200, 30, 50)
     wordmark_bbox = _visible_color_bbox(image, (30, 16, 260, 60), ink)
     model_bbox = _visible_color_bbox(image, (200, 16, 520, 60), muted)
-    status_bbox = _visible_color_bbox(image, (540, 16, 770, 60), good)
-    assert wordmark_bbox is not None and model_bbox is not None and status_bbox is not None
+    verdict_bbox = _visible_color_bbox(image, (520, 16, 770, 60), red)
+    assert wordmark_bbox is not None and model_bbox is not None and verdict_bbox is not None
     wordmark_right = 30 + wordmark_bbox[2]
     assert wordmark_right - (30 + wordmark_bbox[0]) >= 130
     assert 200 + model_bbox[0] - wordmark_right >= 8
-    assert 540 + status_bbox[0] > 200 + model_bbox[2]
+    assert 520 + verdict_bbox[0] > 200 + model_bbox[2]
+    assert 520 + verdict_bbox[2] == vehicle_module.PAGE_RIGHT + 1
     # The header rule spans the page under all three.
     rule = image.crop((36, 62, 764, 63))
     assert set(getattr(rule, "get_flattened_data", rule.getdata)()) == {ink}
@@ -909,11 +930,12 @@ def test_full_v2_dashboard_public_render_populates_every_region(
     assert read_source_provenance(full) is SourceProvenance.LIVE
     difference = ImageChops.difference(full, empty)
     for region in (
+        VERDICT_REGION,
+        LAMP_REGION,
         ENERGY_REGION,
-        SECURITY_REGION,
+        BODY_COLUMN_REGION,
         CLIMATE_REGION,
         STRIP_REGION,
-        TIRES_REGION,
     ):
         assert difference.crop(region).getbbox() is not None
 
@@ -1042,12 +1064,12 @@ def test_long_chinese_v2_payload_keeps_panel_gutters_clean(tmp_path, monkeypatch
 
     assert read_source_provenance(image) is SourceProvenance.LIVE
     surface = (251, 249, 244)
-    # Either side of the two column rules stays clear of the long copy.
+    # Under the lamps, either side of the two column rules stays clear of the long copy.
     for gutter in (
-        (319, 66, 327, 396),
-        (329, 66, 337, 396),
-        (517, 66, 526, 396),
-        (528, 66, 537, 396),
+        (319, 126, 327, 396),
+        (329, 126, 337, 396),
+        (517, 126, 526, 396),
+        (528, 126, 537, 396),
     ):
         crop = image.crop(gutter)
         assert crop.getcolors(maxcolors=crop.width * crop.height) == [(crop.width * crop.height, surface)]
@@ -1073,12 +1095,12 @@ def test_v2_unknown_openings_never_render_as_all_closed(tmp_path, monkeypatch):
     closed_image = _render_payload(tmp_path / "closed", monkeypatch, closed)
 
     difference = ImageChops.difference(unknown_image, closed_image)
-    assert difference.crop(SECURITY_REGION).getbbox() is not None
-    assert difference.crop(ENERGY_REGION).getbbox() is None
-    assert difference.crop(RIGHT_COLUMN_REGION).getbbox() is None
+    assert difference.crop(BODY_COLUMN_REGION).getbbox() is not None
+    assert difference.crop(_lamp_box("openings")).getbbox() is not None
+    _assert_changes_only_within(unknown_image, closed_image, BODY_COLUMN_REGION, _lamp_box("openings"))
 
 
-def test_v2_rr_hard_warning_changes_only_tire_region(tmp_path, monkeypatch):
+def test_v2_rr_hard_warning_changes_only_the_tyre_map_lamp_and_verdict(tmp_path, monkeypatch):
     safe = _summary_v2()
     safe["tires"]["soft_warnings"] = {position: False for position in safe["tires"]["soft_warnings"]}
     safe["tires"]["hard_warnings"] = {position: False for position in safe["tires"]["hard_warnings"]}
@@ -1088,7 +1110,11 @@ def test_v2_rr_hard_warning_changes_only_tire_region(tmp_path, monkeypatch):
     safe_image = _render_payload(tmp_path / "safe", monkeypatch, safe)
     warning_image = _render_payload(tmp_path / "warning", monkeypatch, warning)
 
-    _assert_change_is_inside(safe_image, warning_image, TIRES_REGION)
+    # The rear-right pressure sits on a red plate, its lamp lights and the verdict counts one more.
+    _assert_changes_only_within(safe_image, warning_image, (338, 126, 518, 330), _lamp_box("tyres"), VERDICT_REGION)
+    red, rear_right_plate = (200, 30, 50), (466, 250, 518, 300)
+    assert _visible_color_bbox(warning_image, rear_right_plate, red) is not None
+    assert _visible_color_bbox(safe_image, rear_right_plate, red) is None
 
 
 def test_v2_charging_values_change_only_energy_region(tmp_path, monkeypatch):
@@ -1113,7 +1139,7 @@ def test_v2_charging_values_change_only_energy_region(tmp_path, monkeypatch):
     )
     charging_image = _render_payload(tmp_path / "charging", monkeypatch, charging)
 
-    _assert_change_is_inside(disconnected_image, charging_image, ENERGY_REGION)
+    _assert_changes_only_within(disconnected_image, charging_image, ENERGY_REGION, _lamp_box("charging"))
 
 
 def test_v2_charge_rate_matches_worker_5000_upper_bound(tmp_path, monkeypatch):
@@ -1295,10 +1321,8 @@ def test_local_cache_hit_displays_effective_freshness(tmp_path, monkeypatch):
     assert len(client.calls) == 1
     assert read_source_provenance(live_image) is SourceProvenance.LIVE
     assert read_source_provenance(cached_image) is SourceProvenance.FRESH_CACHE
-    difference = ImageChops.difference(live_image, cached_image)
-    assert difference.crop(HEADER_STATUS_REGION).getbbox() is not None
-    assert difference.crop(FOOTER_REGION).getbbox() is not None
-    assert difference.crop(BODY_REGION).getbbox() is None
+    # Seconds-old values read the same either way; the footer names where they came from.
+    _assert_changes_only_within(live_image, cached_image, FOOTER_REGION)
 
 
 def test_failed_refresh_displays_stale_effective_freshness(tmp_path, monkeypatch):
@@ -1325,10 +1349,7 @@ def test_failed_refresh_displays_stale_effective_freshness(tmp_path, monkeypatch
     assert read_source_provenance(cached_image) is SourceProvenance.FRESH_CACHE
     assert read_source_provenance(stale_image) is SourceProvenance.STALE_CACHE
     assert stale_image.info["inkypi_skip_cache"] is True
-    difference = ImageChops.difference(cached_image, stale_image)
-    assert difference.crop(HEADER_STATUS_REGION).getbbox() is not None
-    assert difference.crop(FOOTER_REGION).getbbox() is not None
-    assert difference.crop(BODY_REGION).getbbox() is None
+    _assert_changes_only_within(cached_image, stale_image, FOOTER_REGION)
 
 
 def test_live_footer_renders_with_portable_ascii_status_font(tmp_path, monkeypatch):
@@ -1363,12 +1384,13 @@ def test_vehicle_dashboard_renders_every_public_v1_information_group(
         "charge_port_open": False,
     }
     security_image = _render_payload(tmp_path, monkeypatch, security)
-    _assert_change_is_inside(baseline_image, security_image, SECURITY_REGION)
+    _assert_changes_only_within(baseline_image, security_image, BODY_COLUMN_REGION, _lamp_box("openings"),
+                                VERDICT_REGION)
 
     climate = deepcopy(baseline)
     climate["climate"]["is_climate_on"] = True
     climate_image = _render_payload(tmp_path, monkeypatch, climate)
-    _assert_change_is_inside(baseline_image, climate_image, CLIMATE_REGION)
+    _assert_changes_only_within(baseline_image, climate_image, CLIMATE_REGION, _lamp_box("climate"))
 
     vehicle = deepcopy(baseline)
     vehicle["vehicle"].update(
@@ -2044,13 +2066,13 @@ def test_battery_percent_keeps_a_visible_gap_after_level(
         },
     )
 
-    hero_box = (36, 92, 180, 150)  # below the section heading, left of the range figure
+    hero_box = (36, 148, 180, 190)  # below the section heading, left of the range figure
     number_bbox = _visible_color_bbox(image, hero_box, ink)
     percent_bbox = _visible_color_bbox(image, hero_box, muted)
     # Under the range figure, the charge-limit legend in ink explains the gauge's marker.
-    legend_box = (180, 132, 320, 147)  # above the gauge marker, which starts at 148
+    legend_box = (180, 175, 320, 190)  # above the gauge marker, which starts at 191
     legend_bbox = _visible_color_bbox(image, legend_box, ink)
-    bar_box = (36, 150, 320, 172)
+    bar_box = (36, 190, 320, 212)
     bar_bbox = _visible_non_background_bbox(image, bar_box, surface)
 
     assert number_bbox is not None
@@ -2083,10 +2105,11 @@ def test_car_art_sits_between_the_gauge_and_charging_and_amid_the_tyres(tmp_path
                             {"language": "zh-CN", "_inkypi_theme": {"mode": "day", "palette": {}}})
 
     left, top_y, right, bottom = _visible_color_bbox(image, (0, 0, 800, 480), side_color)
-    assert 185 <= top_y and bottom <= 270  # below the gauge's ruler, above the charging rule at y 273
+    # Below the gauge's ruler, above the charging rule at y 306.
+    assert 227 <= top_y and bottom <= vehicle_module.CHARGING_RULE_Y - 3
     assert right - left >= 160 and abs((left + right) / 2 - 177) <= 1
     left, top_y, right, bottom = _visible_color_bbox(image, (0, 0, 800, 480), top_color)
-    assert (left, top_y, right, bottom) == (397, 238, 457, 358)
+    assert (left, top_y, right, bottom) == (397, 172, 457, 292)
 
 
 @pytest.mark.parametrize(
@@ -2344,10 +2367,11 @@ def test_dashboard_icons_are_static_scan_anchors_with_clean_title_gaps(
     }
     full = _render_payload(tmp_path, monkeypatch, _summary_v2(), settings)
     empty = _render_payload(tmp_path, monkeypatch, _null_v2_summary(), settings)
-    # Battery, security, climate, tyres, location, charging and the vehicle strip.
+    # Battery, body, climate, location, charging and the vehicle strip: their places hold whatever
+    # the data says, so each section is found in the same spot every time.
     icon_boxes = tuple(
         ((left, top, left + 20, top + 20), (left + 20, top, left + 26, top + 20))
-        for left, top in ((36, 69), (338, 69), (538, 69), (338, 217), (538, 217), (36, 278), (36, 406))
+        for left, top in ((36, 127), (338, 127), (538, 127), (538, 209), (36, 311), (36, 406))
     )
 
     for icon_box, gap_box in icon_boxes:
@@ -2431,7 +2455,7 @@ def test_one_broken_dashboard_icon_falls_back_without_losing_live_page(
     assert degraded.mode == "RGB"
     assert degraded.size == (800, 480)
     assert read_source_provenance(degraded) is SourceProvenance.LIVE
-    for box in ((338, 66, 460, 90), (36, 436, 220, 458)):
+    for box in ((338, 126, 460, 150), (36, 436, 220, 458)):
         assert (
             ImageChops.difference(
                 degraded.crop(box),
@@ -2484,11 +2508,237 @@ def test_battery_gauge_uses_battery_colours_and_marks_the_limit(level, role):
     assert _visible_color_bbox(image, (0, 25, 300, 40), colors["muted"]) is not None
 
 
-def test_padlock_reads_locked_unlocked_and_unknown_apart():
-    shapes = []
-    for state in (True, False, None):
-        image = Image.new("L", (40, 40), 0)
-        vehicle_module._draw_padlock(ImageDraw.Draw(image), (8, 6, 30, 32), state, 255, 0)
-        shapes.append(image.tobytes())
+def _all_clear_v3():
+    """The owner's car parked, locked and shut, every tyre even, nothing to install."""
+    payload = _summary_v3()
+    payload["vehicle"].update(sentry_mode="off", right_hand_drive=False)
+    payload["charging"].update(state="Disconnected", power_kw=0, preconditioning=False,
+                               scheduled={"pending": False, "mode": None})
+    payload["climate"].update(keeper_mode="off", is_climate_on=False, inside_temp_c=21)
+    payload["closures"].update(all_closed=True, open=[], charge_port_open=False)
+    payload["closures"]["doors"]["rear_trunk"] = False
+    payload["tires"]["pressures"] = {position: {"value": 2.9, "unit": "bar"} for position in payload["tires"]["pressures"]}
+    payload["tires"]["soft_warnings"] = dict.fromkeys(payload["tires"]["soft_warnings"], False)
+    payload["tires"]["hard_warnings"] = dict.fromkeys(payload["tires"]["hard_warnings"], False)
+    payload["software_update"] = dict.fromkeys(payload["software_update"])
+    return payload
 
-    assert len(set(shapes)) == 3
+
+def _lamps(payload, language="zh-CN"):
+    summary = vehicle_module.sanitize_summary(payload)
+    return {
+        lamp.key: lamp
+        for lamp in vehicle_module._status_lamps(summary, summary["charging"], summary["tires"],
+                                                 summary["software_update"], True, {}, summary["preferences"],
+                                                 language)
+    }
+
+
+def test_status_lamps_stay_quiet_when_the_car_is_fine():
+    lamps = _lamps(_all_clear_v3())
+
+    assert tuple(lamps) == LAMP_KEYS
+    assert {key: lamp.level for key, lamp in lamps.items()} == dict.fromkeys(LAMP_KEYS, "idle")
+    assert [lamps[key].text for key in ("link", "lock", "openings", "tyres", "update")] == [
+        "在线", "已锁车", "门窗关闭", "胎压正常", "无更新"]
+    assert vehicle_module._attention_lamps(tuple(lamps.values())) == []
+
+
+def test_status_lamps_light_each_problem_worst_first():
+    payload = _all_clear_v3()
+    payload["snapshot"].update(freshness="stale_cache", vehicle_connectivity="offline", age_seconds=14 * 3_600)
+    payload["vehicle"]["locked"] = False
+    payload["closures"].update(all_closed=False, charge_port_open=True)
+    payload["tires"]["pressures"]["rear_left"] = {"value": 2.2, "unit": "bar"}
+    payload["tires"]["soft_warnings"]["rear_left"] = True
+
+    lamps = _lamps(payload)
+
+    assert (lamps["link"].level, lamps["link"].text) == ("warn", "离线 14小时")
+    assert (lamps["lock"].level, lamps["lock"].icon, lamps["lock"].text) == ("crit", "unlocked", "未锁车")
+    assert (lamps["openings"].level, lamps["openings"].icon, lamps["openings"].text) == (
+        "warn", "charge_port", "充电口未关")
+    assert (lamps["tyres"].level, lamps["tyres"].text) == ("warn", "左后偏低")
+    attention = vehicle_module._attention_lamps(tuple(lamps.values()))
+    assert [lamp.key for lamp in attention] == ["lock", "link", "openings", "tyres"]
+    english = _lamps(payload, "en")
+    assert [english[key].text for key in ("link", "lock", "openings", "tyres")] == [
+        "OFFLINE 14H", "UNLOCKED", "PORT OPEN", "RL LOW"]
+    assert all(lamp.text.isascii() for lamp in english.values())
+
+
+def test_open_charge_port_is_a_problem_only_without_a_cable():
+    unplugged = _all_clear_v3()
+    unplugged["closures"].update(all_closed=False, charge_port_open=True)
+    plugged = deepcopy(unplugged)
+    plugged["charging"]["state"] = "Charging"
+
+    assert _lamps(unplugged)["openings"].level == "warn"
+    assert _lamps(plugged)["openings"].level == "idle"
+    assert _lamps(plugged)["charging"].level == "active"
+
+
+@pytest.mark.parametrize(("doors", "windows", "open_items", "icon", "text"), [
+    ({"driver_front": True}, {}, ["driver_front_door"], "door_open", "左前门未关"),
+    ({"rear_trunk": True}, {}, ["rear_trunk"], "trunk_open", "后备箱未关"),
+    ({"front_trunk": True}, {}, ["front_trunk"], "frunk_open", "前备箱未关"),
+    ({}, {"passenger_rear": True}, ["passenger_rear_window"], "window_open", "右后窗未关"),
+    ({"driver_front": True, "rear_trunk": True}, {}, ["driver_front_door", "rear_trunk"], "door_open", "2 处未关"),
+])
+def test_any_open_door_window_or_trunk_lights_the_openings_lamp_red(doors, windows, open_items, icon, text):
+    payload = _all_clear_v3()
+    payload["closures"]["doors"].update(doors)
+    payload["closures"]["windows"].update(windows)
+    payload["closures"].update(all_closed=False, open=open_items)
+
+    lamp = _lamps(payload)["openings"]
+
+    assert (lamp.level, lamp.icon, lamp.text) == ("crit", icon, text)
+
+
+def test_a_right_hand_drive_cars_driver_door_is_on_the_right():
+    payload = _all_clear_v3()
+    payload["vehicle"]["right_hand_drive"] = True
+    payload["closures"]["doors"]["driver_front"] = True
+    payload["closures"].update(all_closed=False, open=["driver_front_door"])
+
+    assert _lamps(payload)["openings"].text == "右前门未关"
+
+
+@pytest.mark.parametrize(("pressures", "hard", "soft", "level", "text"), [
+    ((2.9, 2.9, 2.9, 2.9), (), (), "idle", "胎压正常"),
+    ((2.9, 2.9, 2.6, 2.9), (), (), "warn", "胎压不均"),
+    ((2.9, 2.9, 2.9, 2.9), ("rear_right",), (), "crit", "右后告警"),
+    ((2.9, 2.9, 2.2, 2.1), (), ("rear_left", "rear_right"), "warn", "2 轮偏低"),
+])
+def test_tyre_lamp_reads_teslas_warnings_and_uneven_axles(pressures, hard, soft, level, text):
+    payload = _all_clear_v3()
+    positions = ("front_left", "front_right", "rear_left", "rear_right")
+    payload["tires"]["pressures"] = {
+        position: {"value": value, "unit": "bar"} for position, value in zip(positions, pressures)
+    }
+    for position in hard:
+        payload["tires"]["hard_warnings"][position] = True
+    for position in soft:
+        payload["tires"]["soft_warnings"][position] = True
+
+    lamp = _lamps(payload)["tyres"]
+
+    assert (lamp.level, lamp.text) == (level, text)
+
+
+def test_low_battery_failed_charge_and_pending_update_lamps():
+    payload = _all_clear_v3()
+    payload["battery"]["level_percent"] = 8
+    payload["charging"].update(state="NoPower")
+    payload["software_update"].update(version="2026.44.1", download_percent=54, install_percent=0)
+
+    lamps = _lamps(payload)
+
+    assert (lamps["battery"].level, lamps["battery"].text) == ("crit", "电量 8%")
+    assert (lamps["charging"].level, lamps["charging"].text) == ("crit", "无电源")
+    assert (lamps["update"].level, lamps["update"].text) == ("info", "下载 54%")
+    assert vehicle_module._enum_text("en", "charging", "NoPower") == "NO POWER"
+
+
+@pytest.mark.parametrize("theme_mode", ["day", "night"])
+def test_verdict_pill_is_green_when_clear_and_takes_the_worst_lamps_colour(tmp_path, monkeypatch, theme_mode):
+    settings = {"language": "zh-CN", "_inkypi_theme": {"mode": theme_mode, "palette": {}}}
+    colors = vehicle_module._render_colors({"mode": theme_mode})
+    clear = _render_payload(tmp_path / "clear", monkeypatch, _all_clear_v3(), settings)
+    unlocked_payload = _all_clear_v3()
+    unlocked_payload["vehicle"]["locked"] = False
+    unlocked = _render_payload(tmp_path / "unlocked", monkeypatch, unlocked_payload, settings)
+
+    assert _visible_color_bbox(clear, VERDICT_REGION, colors["alert_active"]) is not None
+    assert _visible_color_bbox(unlocked, VERDICT_REGION, colors["alert_crit"]) is not None
+    # The lock lamp lights in the same red; quiet lamps keep their grey tiles.
+    assert _visible_color_bbox(unlocked, _lamp_box("lock"), colors["alert_crit"]) is not None
+    assert _visible_color_bbox(clear, _lamp_box("lock"), colors["alert_crit"]) is None
+    assert _visible_color_bbox(clear, _lamp_box("lock"), colors["lamp_idle"]) is not None
+
+
+def test_body_map_swings_an_open_door_out_on_its_own_side(tmp_path, monkeypatch):
+    settings = {"language": "zh-CN", "_inkypi_theme": {"mode": "day", "palette": {}}}
+    red = vehicle_module._render_colors({"mode": "day"})["alert_crit"]
+    shut = _render_payload(tmp_path / "shut", monkeypatch, _all_clear_v3(), settings)
+    driver = _all_clear_v3()
+    driver["closures"]["doors"]["driver_front"] = True
+    driver["closures"].update(all_closed=False, open=["driver_front_door"])
+    driver_open = _render_payload(tmp_path / "driver", monkeypatch, driver, settings)
+    passenger = _all_clear_v3()
+    passenger["closures"]["doors"]["passenger_front"] = True
+    passenger["closures"].update(all_closed=False, open=["passenger_front_door"])
+    passenger_open = _render_payload(tmp_path / "passenger", monkeypatch, passenger, settings)
+
+    car_middle = (vehicle_module.COLUMNS[1][0] + vehicle_module.COLUMNS[1][1]) // 2
+    left_half = (vehicle_module.COLUMNS[1][0], 200, car_middle, 260)
+    right_half = (car_middle, 200, vehicle_module.COLUMNS[1][1], 260)
+    assert _visible_color_bbox(shut, BODY_COLUMN_REGION, red) is None
+    assert _visible_color_bbox(driver_open, left_half, red) is not None
+    assert _visible_color_bbox(driver_open, right_half, red) is None
+    assert _visible_color_bbox(passenger_open, right_half, red) is not None
+    assert _visible_color_bbox(passenger_open, left_half, red) is None
+
+
+def test_lamp_row_fits_long_english_states_with_the_portable_font(tmp_path, monkeypatch):
+    _require_portable_ascii_status_font(monkeypatch)
+    payload = _all_clear_v3()
+    payload["snapshot"].update(vehicle_connectivity="unavailable", age_seconds=23 * 3_600)
+    payload["charging"]["state"] = "Disconnected"
+
+    image = _render_payload(tmp_path, monkeypatch, payload, {"language": "en"})
+
+    assert image.size == (800, 480)
+    lamps = _lamps(payload, "en")
+    draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    width = (vehicle_module.PAGE_RIGHT - vehicle_module.PAGE_LEFT) / len(LAMP_KEYS) - 6
+    assert all(draw.textbbox((0, 0), lamps[key].text, font=vehicle_module._font(10, True))[2] <= width
+               for key in ("link", "charging", "modes"))
+
+
+_ALERT_ICON_ASSETS = tuple(sorted(vehicle_module.ALERT_ICON_NAMES))
+
+
+@pytest.mark.parametrize("name", _ALERT_ICON_ASSETS)
+def test_alert_icons_are_small_generated_alpha_glyphs(name):
+    path = Path(vehicle_module.__file__).with_name("alert_icons") / f"{name}.png"
+
+    with Image.open(path) as source:
+        assert source.format == "PNG"
+        image = source.convert("RGBA")
+
+    assert path.stat().st_size <= 8 * 1024
+    assert image.size == (64, 64)
+    alpha = image.getchannel("A")
+    assert all(alpha.getpixel(point) == 0 for point in ((0, 0), (63, 0), (0, 63), (63, 63)))
+    left, top, right, bottom = alpha.getbbox()
+    assert max(right - left, bottom - top) >= 46
+    assert 6 <= left and right <= 58 and 6 <= top and bottom <= 58
+
+
+def test_alert_icons_are_visually_distinct_and_each_lamp_has_one():
+    root = Path(vehicle_module.__file__).with_name("alert_icons")
+    digests = set()
+    for name in _ALERT_ICON_ASSETS:
+        with Image.open(root / f"{name}.png") as source:
+            digests.add(hashlib.sha256(source.convert("RGBA").getchannel("A").tobytes()).hexdigest())
+
+    assert len(digests) == len(_ALERT_ICON_ASSETS)
+    assert {lamp.icon for lamp in _lamps(_all_clear_v3()).values()} <= vehicle_module.ALERT_ICON_NAMES
+    assert (root / "SOURCES.md").is_file()
+
+
+def test_a_broken_alert_icon_leaves_its_lamp_tile_without_failing_the_page(tmp_path, monkeypatch):
+    real_safe_open_image = vehicle_module.safe_open_image
+
+    def fail_alert_icons(path, *args, **kwargs):
+        if Path(path).parent.name == "alert_icons":
+            raise OSError("synthetic icon decode failure")
+        return real_safe_open_image(path, *args, **kwargs)
+
+    monkeypatch.setattr(vehicle_module, "safe_open_image", fail_alert_icons)
+    image = _render_payload(tmp_path, monkeypatch, _summary_v2(), {"language": "zh-CN"})
+
+    assert read_source_provenance(image) is SourceProvenance.LIVE
+    assert image.size == (800, 480)

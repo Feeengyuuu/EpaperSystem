@@ -15,6 +15,7 @@ import math
 from pathlib import Path
 import threading
 import time
+from typing import NamedTuple
 from urllib.parse import urlencode, urlsplit
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
@@ -56,7 +57,8 @@ LOCATION_ADDRESS_MAX_CHARS = 256
 LOCATION_MAX_AGE_SECONDS = 86_400
 LOCATION_FUTURE_TOLERANCE_SECONDS = 300
 # The map takes the location section down to a rule; the address sits under it on the column's foot.
-LOCATION_MAP_BOX = (538, 240, 764, 344)
+# Its size is what Google is asked for, so a stored map stays valid only while the size holds.
+LOCATION_MAP_BOX = (538, 234, 764, 338)
 LOCATION_MAP_SIZE = (
     LOCATION_MAP_BOX[2] - LOCATION_MAP_BOX[0],
     LOCATION_MAP_BOX[3] - LOCATION_MAP_BOX[1],
@@ -90,6 +92,13 @@ DASHBOARD_ICON_FILES = {
     "charging": "charging.png",
     "location": "location.png",
 }
+# The status lamps' glyphs (one generated set, see alert_icons/SOURCES.md), recoloured per state.
+ALERT_ICON_DIR_NAME = "alert_icons"
+ALERT_ICON_NAMES = frozenset({
+    "signal", "asleep", "stale", "battery_low", "plug", "charge_port", "locked", "unlocked", "door_open",
+    "window_open", "trunk_open", "frunk_open", "tpms", "cabin_hot", "update", "sentry", "service", "pet", "ok",
+    "warning",
+})
 DASHBOARD_ICON_LIMITS = ImageLimits(
     max_bytes=64 * 1024,
     max_width=64,
@@ -288,7 +297,7 @@ _UI_TEXT = {
         "closed_state": "CLOSED",
         "off_state": "OFF",
         "driver_target": "DRIVER",
-        "passenger_target": "PASSENGER",
+        "passenger_target": "PASS",
         "auto_hvac": "AUTO",
         "fan": "FAN",
         "defrost": "DEFROST",
@@ -320,7 +329,7 @@ _UI_TEXT = {
         "all_closed": "ALL CLOSED",
         "open_count": "{count} OPEN",
         "status_unknown": "STATUS UNKNOWN",
-        "all_access_secure": "ALL ACCESS POINTS SECURE",
+        "all_access_secure": "ALL CLOSED",
         "opening_incomplete": "OPENING DATA INCOMPLETE",
         "more_open": "+{count} MORE",
         "port_open": "PORT OPEN",
@@ -381,6 +390,47 @@ _UI_TEXT = {
         "location_current": "CURRENT / GOOGLE MAPS",
         "location_last_known": "LAST KNOWN {age} / GOOGLE MAPS",
         "location_unavailable": "LOCATION UNAVAILABLE",
+        "verdict_issues": "{count} TO CHECK",
+        "verdict_clear": "ALL CLEAR",
+        "lamp_old_data": "OLD {age}",
+        "lamp_battery_low": "LOW {value}%",
+        "lamp_charge_stopped": "STOPPED {value}%",
+        "lamp_lock_unknown": "LOCK --",
+        "lamp_opening_open": "{item} OPEN",
+        "lamp_openings_open": "{count} OPEN",
+        "lamp_openings_closed": "ALL SHUT",
+        "lamp_openings_unknown": "DOORS --",
+        "lamp_tyre_hard": "{position} ALERT",
+        "lamp_tyres_hard": "{count} ALERTS",
+        "lamp_tyre_low": "{position} LOW",
+        "lamp_tyres_low": "{count} LOW",
+        "lamp_tyres_uneven": "UNEVEN",
+        "lamp_tyres_ok": "TYRES OK",
+        "lamp_tyres_unknown": "TYRES --",
+        "lamp_service": "SERVICE",
+        "lamp_valet": "VALET",
+        "lamp_sentry_on": "SENTRY ON",
+        "lamp_sentry_off": "SENTRY OFF",
+        "lamp_sentry_unknown": "SENTRY --",
+        "lamp_cabin_hot": "CABIN {value}",
+        "lamp_update_install": "INSTALL {value}",
+        "lamp_update_download": "DL {value}",
+        "lamp_update_ready": "UPDATE",
+        "lamp_no_update": "NO UPDATE",
+        "opening_door": "{position} DOOR",
+        "opening_window": "{position} WIN",
+        "frunk_short": "FRUNK",
+        "trunk_short": "TRUNK",
+        "port_short": "PORT",
+        "body_status": "BODY",
+        "openings": "DOORS",
+        "openings_detail": "{items} OPEN",
+        "charge_limit": "LIMIT",
+        "energy_added": "ADDED",
+        "last_added": "LAST ADDED",
+        "current_actual_max": "AMPS / MAX",
+        "current_request_max": "REQ / MAX",
+        "cable_label": "CABLE",
         "unknown": "UNKNOWN",
         "none": "NONE",
         "not_reported": "NOT REPORTED",
@@ -529,6 +579,47 @@ _UI_TEXT = {
         "location_current": "当前位置 / GOOGLE MAPS",
         "location_last_known": "上次位置 {age} 前 / GOOGLE MAPS",
         "location_unavailable": "位置不可用",
+        "verdict_issues": "{count} 项需要注意",
+        "verdict_clear": "车况良好",
+        "lamp_old_data": "旧数据 {age}",
+        "lamp_battery_low": "电量 {value}%",
+        "lamp_charge_stopped": "停在 {value}%",
+        "lamp_lock_unknown": "锁状态未知",
+        "lamp_opening_open": "{item}未关",
+        "lamp_openings_open": "{count} 处未关",
+        "lamp_openings_closed": "门窗关闭",
+        "lamp_openings_unknown": "门窗未知",
+        "lamp_tyre_hard": "{position}告警",
+        "lamp_tyres_hard": "{count} 轮告警",
+        "lamp_tyre_low": "{position}偏低",
+        "lamp_tyres_low": "{count} 轮偏低",
+        "lamp_tyres_uneven": "胎压不均",
+        "lamp_tyres_ok": "胎压正常",
+        "lamp_tyres_unknown": "胎压未知",
+        "lamp_service": "维修模式",
+        "lamp_valet": "代客模式",
+        "lamp_sentry_on": "哨兵开启",
+        "lamp_sentry_off": "哨兵关闭",
+        "lamp_sentry_unknown": "哨兵未知",
+        "lamp_cabin_hot": "车内 {value}",
+        "lamp_update_install": "安装 {value}",
+        "lamp_update_download": "下载 {value}",
+        "lamp_update_ready": "待安装",
+        "lamp_no_update": "无更新",
+        "opening_door": "{position}门",
+        "opening_window": "{position}窗",
+        "frunk_short": "前备箱",
+        "trunk_short": "后备箱",
+        "port_short": "充电口",
+        "body_status": "车身",
+        "openings": "门窗",
+        "openings_detail": "{items} 未关",
+        "charge_limit": "充电上限",
+        "energy_added": "已补能",
+        "last_added": "上次补能",
+        "current_actual_max": "电流 实际/最大",
+        "current_request_max": "电流 请求/最大",
+        "cable_label": "接口",
         "unknown": "未知",
         "none": "无更新",
         "not_reported": "未上报",
@@ -581,13 +672,29 @@ _ENUM_TEXT = {
             "asleep": "ASLEEP",
             "offline": "OFFLINE",
             "unknown": "UNKNOWN",
-            "unavailable": "UNAVAILABLE",
+            "unavailable": "NO LINK",
             "in_service": "IN SERVICE",
         },
         "freshness": {
             "live": "LIVE",
             "fresh_cache": "FRESH CACHE",
             "stale_cache": "STALE CACHE",
+        },
+        "charging": {
+            "charging": "CHARGING",
+            "complete": "COMPLETE",
+            "disconnected": "UNPLUGGED",
+            "stopped": "STOPPED",
+            "starting": "STARTING",
+            "no_power": "NO POWER",
+            "unknown": "UNKNOWN",
+        },
+        "keeper": {
+            "dog": "DOG MODE",
+            "camp": "CAMP MODE",
+            "keep": "KEEP ON",
+            "off": "OFF",
+            "unknown": "UNKNOWN",
         },
         "provider_compact": {
             "midnightsilver": "SILV",
@@ -2350,7 +2457,10 @@ def _enum_text(language, category, value):
     raw = str(value).strip()
     normalized = raw.lower().replace("-", "_").replace(" ", "_")
     mappings = _ENUM_TEXT.get(language, {}).get(category, {})
-    translated = mappings.get(normalized) or mappings.get(normalized.replace("_", ""))
+    compact = normalized.replace("_", "")
+    # Tesla writes some states in CamelCase ("NoPower"): match them to the snake_case keys too.
+    translated = mappings.get(normalized) or mappings.get(compact) or next(
+        (text for key, text in mappings.items() if key.replace("_", "") == compact), None)
     if translated is not None:
         return translated
     if language == "en":
@@ -2452,6 +2562,14 @@ def _render_colors(theme):
         "battery_high": (46, 160, 82) if not night else (88, 214, 128),
         "battery_mid": (230, 168, 0) if not night else (247, 199, 64),
         "battery_low": (214, 48, 38) if not night else (255, 104, 90),
+        # The status lamps: red to act on now, amber to check, blue worth knowing, green a
+        # feature at work, and a quiet tile when all is well. Glyphs on a lit tile knock out.
+        "alert_crit": (200, 30, 50) if not night else (255, 96, 96),
+        "alert_warn": (217, 119, 6) if not night else (245, 166, 35),
+        "alert_info": (37, 84, 199) if not night else (110, 160, 255),
+        "alert_active": (5, 150, 105) if not night else (52, 211, 153),
+        "lamp_idle": (226, 222, 213) if not night else (44, 53, 64),
+        "lamp_glyph": (255, 255, 255) if not night else (11, 16, 23),
     }
 
 
@@ -2467,10 +2585,6 @@ SECTION_COLOURS = {
     "vehicle_info": (70, 76, 84),
     "freshness": (70, 76, 84),
 }
-
-
-def _card(draw, box, colors):
-    draw.rounded_rectangle(box, radius=17, fill=colors["background"], outline=colors["rule"], width=1)
 
 
 def _section_label(canvas, draw, left, top, text, colors, icon_kind):
@@ -2518,42 +2632,46 @@ def _dashboard_row(
     _right_text(draw, right, top - 1, value_text, value_font, value_color or colors["ink"])
 
 
-def _v2_energy_rows(
-    battery,
-    charging,
-    settings,
-    preferences,
-    limit_text,
-    power_text,
-    language,
-):
-    estimated_range = _measurement_text(
-        battery["estimated_range"],
-        settings,
-        preferences,
-        language,
-    )
-    left_text = _minutes_text(charging["time_to_full_minutes"], language)
-    energy_added = _number_with_unit(
-        charging["energy_added_kwh"],
-        "unit_kwh",
-        1,
-        language,
-    )
-    input_text = _charging_input_text(charging, language)
-    request_text = _charging_request_text(charging, language)
+def _charging_cells(battery, charging, extended, settings, preferences, language):
+    """The charging figures, three to a row: what the charge is doing while plugged in,
+    the limit, the last session and the charger's set-up while unplugged."""
+    limit = charging["charge_limit_percent"]
+    limit_text = "--" if limit is None else f"{int(round(limit))}%"
+    power = _number_with_unit(charging["power_kw"], "unit_kw", None, language)
+    time_left = _minutes_text(charging["time_to_full_minutes"], language)
+    if not extended:
+        return ((_t(language, "charge_limit"), limit_text), (_t(language, "time_left"), time_left),
+                (_t(language, "power"), power))
+    added = _number_with_unit(charging["energy_added_kwh"], "unit_kwh", 1, language)
+    if _charging_plugged(charging):
+        return (
+            (_t(language, "charge_limit"), limit_text),
+            (_t(language, "time_left"), time_left),
+            (_t(language, "power"), power),
+            (_t(language, "energy_added"), added),
+            (_t(language, "current_actual_max"),
+             _amps_pair(charging["actual_current_a"], charging["max_current_a"], language)),
+            (_t(language, "rate"), _speed_text(charging["rate"], settings, preferences, language)),
+        )
+    cable = charging["cable_type"]
+    cable_text = (_t(language, "unknown") if cable is None or str(cable).strip().lower() == "unknown"
+                  else str(cable).upper())
     return (
-        (_t(language, "estimated_range"), estimated_range),
-        (_t(language, "limit_left"), f"{limit_text} / {left_text}"),
-        (_t(language, "power_added"), f"{power_text} / {energy_added}"),
-        (_t(language, "input"), input_text),
-        (_t(language, "request_max"), request_text),
-        (
-            _t(language, "rate"),
-            _speed_text(charging["rate"], settings, preferences, language),
-        ),
+        (_t(language, "charge_limit"), limit_text),
+        (_t(language, "last_added"), added),
+        (_t(language, "estimated_range"),
+         _measurement_text(battery["estimated_range"], settings, preferences, language)),
+        (_t(language, "current_request_max"),
+         _amps_pair(charging["requested_current_a"], charging["max_current_a"], language)),
+        (_t(language, "cable_label"), cable_text),
         (_t(language, "status"), _charging_flags_text(charging, language)),
     )
+
+
+def _amps_pair(first, second, language):
+    """ "32 / 48 安": two currents under one unit."""
+    values = ["--" if value is None else f"{value:.0f}" for value in (first, second)]
+    return f"{values[0]} / {values[1]} {_t(language, 'unit_amp')}"
 
 
 def _number_with_unit(value, unit_key, decimals=0, language="en"):
@@ -2561,30 +2679,6 @@ def _number_with_unit(value, unit_key, decimals=0, language="en"):
         return "--"
     number = f"{value:g}" if decimals is None else f"{value:.{decimals}f}"
     return f"{number} {_t(language, unit_key)}"
-
-
-def _charging_input_text(charging, language):
-    current = _number_with_unit(charging["actual_current_a"], "unit_amp", 0, language)
-    voltage = _number_with_unit(charging["voltage_v"], "unit_volt", 0, language)
-    phases = charging["phases"]
-    phase_text = "--" if phases is None else f"{phases:g} {_t(language, 'unit_phase')}"
-    return f"{current} / {voltage} / {phase_text}"
-
-
-def _charging_request_text(charging, language):
-    requested = _number_with_unit(
-        charging["requested_current_a"],
-        "unit_amp",
-        0,
-        language,
-    )
-    maximum = _number_with_unit(
-        charging["max_current_a"],
-        "unit_amp",
-        0,
-        language,
-    )
-    return f"{requested} / {maximum}"
 
 
 def _charging_flags_text(charging, language):
@@ -2705,35 +2799,6 @@ def _tire_warning_level(tires, position):
     return "none"
 
 
-def _tire_status(tires, colors, language):
-    hard = [
-        _tire_abbreviation(position, language)
-        for position, warning in tires["hard_warnings"].items()
-        if warning is True
-    ]
-    soft = [
-        _tire_abbreviation(position, language)
-        for position, warning in tires["soft_warnings"].items()
-        if warning is True and _tire_abbreviation(position, language) not in hard
-    ]
-    if hard:
-        return (
-            _t(language, "hard_warning", positions=" ".join(hard)),
-            colors["accent"],
-        )
-    if soft:
-        return (
-            _t(language, "low_pressure", positions=" ".join(soft)),
-            colors["warning"],
-        )
-    warnings = tuple(tires["hard_warnings"].values()) + tuple(tires["soft_warnings"].values())
-    if any(warning is None for warning in warnings):
-        return _t(language, "pressure_unknown"), colors["warning"]
-    if any(value is None for value in tires["pressures"].values()):
-        return _t(language, "pressure_partial"), colors["warning"]
-    return _t(language, "pressure_ok"), colors["ink"]
-
-
 def _tire_abbreviation(position, language):
     return _t(
         language,
@@ -2746,35 +2811,308 @@ def _tire_abbreviation(position, language):
     )
 
 
-def _pill(draw, box, text, fill, surface):
-    draw.rounded_rectangle(box, radius=16, fill=fill)
-    left, top, right, bottom = box
-    font = _font(12, True)
-    bounds = draw.textbbox((0, 0), text, font=font)
-    width = bounds[2] - bounds[0]
-    height = bounds[3] - bounds[1]
-    draw.text(((left + right - width) / 2, (top + bottom - height) / 2 - 2), text, font=font, fill=surface)
+# -- Status lamps --------------------------------------------------------------------------
+# Nine lamps under the header read like a car's tell-tales: each covers one part of the car,
+# quiet while it is fine and lit when it is not, so a problem shows before a figure is read.
 
 
-def _connectivity_color(connectivity, colors):
-    if connectivity == "online":
-        return colors["good"]
-    if connectivity in {"asleep", "unknown"}:
-        return colors["muted"]
-    if connectivity in {"offline", "unavailable", "in_service"}:
-        return colors["warning"]
-    return colors["muted"]
+class _Lamp(NamedTuple):
+    key: str
+    level: str  # "crit", "warn", "info", "active" or "idle"
+    icon: str
+    text: str
 
 
-def _charging_state_color(state, colors):
-    normalized = str(state or "").strip().lower().replace(" ", "_")
-    if normalized in {"charging", "complete"}:
-        return colors["good"]
-    if normalized in {"disconnected", "stopped", "unknown", ""}:
-        return colors["muted"]
-    if normalized in {"fault", "error", "no_power"}:
-        return colors["accent"]
-    return colors["warning"]
+LAMP_LEVEL_COLOURS = {
+    "crit": "alert_crit",
+    "warn": "alert_warn",
+    "info": "alert_info",
+    "active": "alert_active",
+    "idle": "lamp_idle",
+}
+# The levels that need the owner, worst first: the header counts these lamps.
+ATTENTION_LEVELS = ("crit", "warn")
+STALE_LAMP_SECONDS = 3 * 3_600
+LAMP_AGE_SECONDS = 600
+LOW_BATTERY_PERCENT, CRITICAL_BATTERY_PERCENT = 20, 10
+HOT_CABIN_C = 45
+# Two tyres on one axle this far apart (about 3 psi) mark the softer one.
+TYRE_UNEVEN_BAR = 0.21
+_PLUGGED_STATES = frozenset({"charging", "starting", "stopped", "complete", "nopower"})
+_ACTIVE_CHARGING_STATES = frozenset({"charging", "starting", "complete"})
+# Doors, then the trunks, then the windows: the order open items are named in.
+_OPENING_ORDER = (
+    "driver_front_door",
+    "driver_rear_door",
+    "passenger_front_door",
+    "passenger_rear_door",
+    "front_trunk",
+    "rear_trunk",
+    "driver_front_window",
+    "driver_rear_window",
+    "passenger_front_window",
+    "passenger_rear_window",
+)
+_TYRE_ORDER = ("front_left", "front_right", "rear_left", "rear_right")
+_TYRE_AXLES = (("front_left", "front_right"), ("rear_left", "rear_right"))
+
+
+def _charging_key(state):
+    """ "NoPower", "No Power" and "no_power" alike become "nopower"."""
+    return "".join(character for character in str(state or "").lower() if character.isalnum())
+
+
+def _charging_plugged(charging):
+    return _charging_key(charging.get("state")) in _PLUGGED_STATES
+
+
+def _status_lamps(summary, charging, tires, software_update, extended, settings, preferences, language):
+    vehicle, level = summary["vehicle"], summary["battery"]["level_percent"]
+    return (
+        _link_lamp(summary["snapshot"], language),
+        _battery_lamp(level, language),
+        _charging_lamp(charging, level, language),
+        _lock_lamp(vehicle["locked"], language),
+        _openings_lamp(summary["closures"], vehicle, _charging_plugged(charging), language),
+        _tyres_lamp(tires, language),
+        _modes_lamp(vehicle, extended, language),
+        _climate_lamp(summary["climate"], extended, settings, preferences, language),
+        _update_lamp(software_update, language),
+    )
+
+
+def _attention_lamps(lamps):
+    """The lamps that need the owner, the most urgent first."""
+    return sorted((lamp for lamp in lamps if lamp.level in ATTENTION_LEVELS),
+                  key=lambda lamp: ATTENTION_LEVELS.index(lamp.level))
+
+
+def _link_lamp(snapshot, language):
+    connectivity, age = snapshot["vehicle_connectivity"], snapshot["age_seconds"]
+    text = _enum_text(language, "connectivity", connectivity)
+    if age is not None and age >= LAMP_AGE_SECONDS:
+        text = f"{text} {_age_text(age, language)}"
+    if connectivity in {"offline", "unavailable"}:
+        return _Lamp("link", "warn", "signal", text)
+    if connectivity == "in_service":
+        return _Lamp("link", "warn", "service", text)
+    if snapshot["freshness"] == "stale_cache" and (age or 0) >= STALE_LAMP_SECONDS:
+        return _Lamp("link", "warn", "stale", _t(language, "lamp_old_data", age=_age_text(age, language)))
+    return _Lamp("link", "idle", "asleep" if connectivity == "asleep" else "signal", text)
+
+
+def _battery_lamp(level, language):
+    if level is None:
+        return _Lamp("battery", "idle", "battery_low", "--")
+    value = int(round(level))
+    if level < LOW_BATTERY_PERCENT:
+        return _Lamp("battery", "crit" if level < CRITICAL_BATTERY_PERCENT else "warn", "battery_low",
+                     _t(language, "lamp_battery_low", value=value))
+    return _Lamp("battery", "idle", "battery_low", f"{value}%")
+
+
+def _charging_lamp(charging, level, language):
+    state = _charging_key(charging.get("state"))
+    text = _enum_text(language, "charging", charging.get("state") or "unknown")
+    if state == "nopower":
+        return _Lamp("charging", "crit", "plug", text)
+    if charging.get("not_enough_power_to_heat") is True:
+        return _Lamp("charging", "warn", "plug", _t(language, "heat_power_low"))
+    limit = charging.get("charge_limit_percent")
+    if state == "stopped" and level is not None and limit is not None and level < limit - 2:
+        return _Lamp("charging", "warn", "plug", _t(language, "lamp_charge_stopped", value=int(round(level))))
+    return _Lamp("charging", "active" if state in _ACTIVE_CHARGING_STATES else "idle", "plug", text)
+
+
+def _lock_lamp(locked, language):
+    if locked is False:
+        return _Lamp("lock", "crit", "unlocked", _t(language, "unlocked"))
+    if locked is None:
+        return _Lamp("lock", "idle", "locked", _t(language, "lamp_lock_unknown"))
+    return _Lamp("lock", "idle", "locked", _t(language, "locked"))
+
+
+def _opening_states(closures):
+    """Each door, trunk and window: True open, False shut, None unknown (v1 sends only the open list)."""
+    nested = {}
+    for group, suffix in (("doors", "door"), ("windows", "window")):
+        for key, value in (closures.get(group) or {}).items():
+            nested[key if key.endswith("trunk") else f"{key}_{suffix}"] = value
+    shut = False if closures["all_closed"] is True else None
+    return {item: True if item in closures["open"] else nested.get(item, shut) for item in _OPENING_ORDER}
+
+
+def _port_left_open(closures, plugged):
+    """The charge port counts as left open only with no cable in it."""
+    return closures["charge_port_open"] is True and not plugged
+
+
+def _openings_lamp(closures, vehicle, plugged, language):
+    states = _opening_states(closures)
+    opened = [item for item in _OPENING_ORDER if states[item] is True]
+    port_open = _port_left_open(closures, plugged)
+    if opened:
+        named = opened + (["charge_port"] if port_open else [])
+        icon = ("frunk_open" if opened == ["front_trunk"] else "trunk_open" if opened == ["rear_trunk"]
+                else "window_open" if all(item.endswith("window") for item in opened) else "door_open")
+        text = (_t(language, "lamp_opening_open", item=_opening_short_text(named[0], vehicle, language))
+                if len(named) == 1 else _t(language, "lamp_openings_open", count=len(named)))
+        return _Lamp("openings", "crit", icon, text)
+    if port_open:
+        return _Lamp("openings", "warn", "charge_port", _t(language, "lamp_opening_open",
+                                                          item=_t(language, "port_short")))
+    if closures["charge_port_open"] is None or any(state is None for state in states.values()):
+        return _Lamp("openings", "idle", "door_open", _t(language, "lamp_openings_unknown"))
+    return _Lamp("openings", "idle", "door_open", _t(language, "lamp_openings_closed"))
+
+
+def _driver_on_left(vehicle):
+    return vehicle.get("right_hand_drive") is not True
+
+
+def _opening_short_text(item, vehicle, language):
+    """ "左前门" / "FL DOOR": an opening named by where it sits on the car seen from above."""
+    if item in {"front_trunk", "rear_trunk", "charge_port"}:
+        return _t(language, {"front_trunk": "frunk_short", "rear_trunk": "trunk_short",
+                             "charge_port": "port_short"}[item])
+    side, end, kind = item.split("_")
+    on_left = (side == "driver") == _driver_on_left(vehicle)
+    position = _tire_abbreviation(f"{end}_{'left' if on_left else 'right'}", language)
+    return _t(language, "opening_door" if kind == "door" else "opening_window", position=position)
+
+
+def _tyre_pressure_value(tires, position):
+    return (tires["pressures"][position] or {}).get("value")
+
+
+def _tyre_levels(tires):
+    """Each tyre's level: red for Tesla's hard warning, amber for its soft one, and amber for the
+    softer of two tyres on an axle TYRE_UNEVEN_BAR apart; returns the levels and those uneven ones."""
+    levels = {
+        position: "crit" if tires["hard_warnings"][position] is True
+        else "warn" if tires["soft_warnings"][position] is True else "idle"
+        for position in _TYRE_ORDER
+    }
+    uneven = []
+    for left, right in _TYRE_AXLES:
+        values = (_tyre_pressure_value(tires, left), _tyre_pressure_value(tires, right))
+        if None not in values and abs(values[0] - values[1]) >= TYRE_UNEVEN_BAR:
+            softer = left if values[0] < values[1] else right
+            if levels[softer] == "idle":
+                levels[softer] = "warn"
+                uneven.append(softer)
+    return levels, uneven
+
+
+def _tyres_lamp(tires, language):
+    if tires is None:
+        return _Lamp("tyres", "idle", "tpms", _t(language, "not_reported"))
+    levels, uneven = _tyre_levels(tires)
+    for level, single, several in (("crit", "lamp_tyre_hard", "lamp_tyres_hard"),
+                                   ("warn", "lamp_tyre_low", "lamp_tyres_low")):
+        flagged = [position for position in _TYRE_ORDER if levels[position] == level and position not in uneven]
+        if flagged:
+            text = (_t(language, single, position=_tire_abbreviation(flagged[0], language)) if len(flagged) == 1
+                    else _t(language, several, count=len(flagged)))
+            return _Lamp("tyres", level, "tpms", text)
+    if uneven:
+        return _Lamp("tyres", "warn", "tpms", _t(language, "lamp_tyres_uneven"))
+    warnings = tuple(tires["hard_warnings"].values()) + tuple(tires["soft_warnings"].values())
+    if None in warnings or any(_tyre_pressure_value(tires, position) is None for position in _TYRE_ORDER):
+        return _Lamp("tyres", "idle", "tpms", _t(language, "lamp_tyres_unknown"))
+    return _Lamp("tyres", "idle", "tpms", _t(language, "lamp_tyres_ok"))
+
+
+def _modes_lamp(vehicle, extended, language):
+    if not extended:
+        return _Lamp("modes", "idle", "sentry", _t(language, "lamp_sentry_unknown"))
+    if vehicle["service_mode"] is True:
+        return _Lamp("modes", "warn", "service", _t(language, "lamp_service"))
+    if vehicle["valet_mode"] is True:
+        return _Lamp("modes", "info", "service", _t(language, "lamp_valet"))
+    sentry = str(vehicle["sentry_mode"] or "").strip().lower()
+    if sentry in {"on", "true"}:
+        return _Lamp("modes", "active", "sentry", _t(language, "lamp_sentry_on"))
+    if sentry in {"off", "false"}:
+        return _Lamp("modes", "idle", "sentry", _t(language, "lamp_sentry_off"))
+    return _Lamp("modes", "idle", "sentry", _t(language, "lamp_sentry_unknown"))
+
+
+def _climate_lamp(climate, extended, settings, preferences, language):
+    inside = climate["inside_temp_c"]
+    if inside is not None and inside >= HOT_CABIN_C:
+        return _Lamp("climate", "warn", "cabin_hot", _t(language, "lamp_cabin_hot",
+                                                        value=_temperature_text(inside, settings, preferences,
+                                                                                language)))
+    keeper = str(climate["keeper_mode"] or "off").strip().lower() if extended else "off"
+    if keeper not in {"off", "unknown"}:
+        return _Lamp("climate", "active", "pet" if keeper == "dog" else "cabin_hot",
+                     _enum_text(language, "keeper", keeper))
+    if climate["is_climate_on"] is True:
+        return _Lamp("climate", "active", "cabin_hot", _t(language, "hvac_on"))
+    return _Lamp("climate", "idle", "cabin_hot",
+                 _t(language, "hvac_off") if climate["is_climate_on"] is False else "--")
+
+
+def _update_lamp(software_update, language):
+    if software_update is None:
+        return _Lamp("update", "idle", "update", _t(language, "not_reported"))
+    if not software_update["version"]:
+        return _Lamp("update", "idle", "update", _t(language, "lamp_no_update"))
+    install, download = software_update["install_percent"], software_update["download_percent"]
+    if install:
+        text = _t(language, "lamp_update_install", value=_percent_text(install))
+    elif download is not None and download < 100:
+        text = _t(language, "lamp_update_download", value=_percent_text(download))
+    else:
+        text = _t(language, "lamp_update_ready")
+    return _Lamp("update", "info", "update", text)
+
+
+def _load_alert_icon_mask(name):
+    if name not in ALERT_ICON_NAMES:
+        return None
+    path = Path(__file__).with_name(ALERT_ICON_DIR_NAME) / f"{name}.png"
+    try:
+        with safe_open_image(path, limits=DASHBOARD_ICON_LIMITS) as source:
+            if source.size != (64, 64):
+                raise ValueError("alert icon dimensions are invalid")
+            return source.convert("RGBA").getchannel("A").copy()
+    except (OSError, TypeError, ValueError) as exc:
+        logger.warning("Vehicle alert icon unavailable kind=%s type=%s", name, type(exc).__name__)
+        return None
+
+
+def _draw_alert_glyph(canvas, name, left, top, size, color):
+    mask = _load_alert_icon_mask(name)
+    if mask is None:
+        return False
+    canvas.paste(Image.new("RGB", (size, size), color), (round(left), round(top)),
+                 mask.resize((size, size), Image.Resampling.LANCZOS))
+    return True
+
+
+def _draw_lamp_tile(canvas, draw, level, icon, left, top, size, colors, radius):
+    """A rounded tile: the quiet tile with a muted glyph, or the level's colour with its glyph knocked out."""
+    draw.rounded_rectangle((left, top, left + size - 1, top + size - 1), radius=radius,
+                           fill=colors[LAMP_LEVEL_COLOURS[level]])
+    inset = max(3, round(size * 0.17))
+    _draw_alert_glyph(canvas, icon, left + inset, top + inset, size - 2 * inset,
+                      colors["muted"] if level == "idle" else colors["lamp_glyph"])
+
+
+def _draw_lamp_badge(canvas, draw, level, icon, center, size, colors):
+    """A round badge pinned to a spot on the car; a quiet one is the panel with an ink glyph."""
+    x, y = round(center[0]), round(center[1])
+    radius = size // 2
+    box = (x - radius, y - radius, x + radius, y + radius)
+    if level == "idle":
+        draw.ellipse(box, fill=colors["surface"], outline=colors["rule"], width=1)
+    else:
+        draw.ellipse(box, fill=colors[LAMP_LEVEL_COLOURS[level]])
+    inset = max(3, round(size * 0.2))
+    _draw_alert_glyph(canvas, icon, x - radius + inset, y - radius + inset, size - 2 * inset,
+                      colors["ink"] if level == "idle" else colors["lamp_glyph"])
 
 
 def _bool_status(value, true_text, false_text, unknown_text="UNKNOWN"):
@@ -3047,16 +3385,26 @@ def _center_text(draw, center_x, top, text, font, fill):
 
 
 # -- The dashboard page --------------------------------------------------------------------
-# Three columns under a one-line header: battery and charging with the car; security above
-# a top-down tyre map; climate above the location map. A strip of vehicle facts and the
-# freshness footer close the page.
+# Status lamps under a one-line header, then three columns: battery and charging with the car;
+# a top-down body map with the tyres, the lock and anything left open; climate above the
+# location map. A strip of vehicle facts and the freshness footer close the page.
 PAGE_LEFT, PAGE_RIGHT = 36, 764
 HEADER_RULE_Y = 62
+LAMP_TILE_TOP, LAMP_TILE_SIZE, LAMP_TEXT_Y, LAMP_RULE_Y = 70, 30, 104, 124
 COLUMNS = ((36, 318), (338, 516), (538, 764))
-COLUMN_TOP, COLUMN_SPLIT_Y, COLUMN_BOTTOM = 72, 212, 392
+COLUMN_TOP, COLUMN_BOTTOM = 130, 392
+CHARGING_RULE_Y = 306
+LOCATION_RULE_Y = LOCATION_MAP_BOX[1] - 29
 STRIP_RULE_Y = 398
 FOOTER_Y = 441
 VEHICLE_TOP_IMAGE_NAME = "vehicle_top.png"
+BODY_MAP_TOP, BODY_MAP_HEIGHT, BODY_ROWS_TOP = 152, 160, 330
+# Where parts sit on vehicle_top.png (nose up), as fractions of its width or height.
+BODY_SIDES = (0.08, 0.92)
+WHEEL_ROWS = {"front": 0.22, "rear": 0.77}
+DOOR_SPANS = {"front": (0.37, 0.555), "rear": (0.56, 0.73)}
+CHARGE_PORT_SPOT = (0.27, 0.9)
+ROOF_SPOT = 0.5
 
 
 def _draw_dashboard(canvas, draw, summary, theme, settings, colors, language, location_presentation):
@@ -3075,61 +3423,80 @@ def _draw_dashboard(canvas, draw, summary, theme, settings, colors, language, lo
             "power_kw": battery["power_kw"],
         }
         preferences, tires, software_update = {}, None, None
+    lamps = _status_lamps(summary, charging, tires, software_update, extended, settings, preferences, language)
 
     draw.rounded_rectangle((20, 16, 780, 464), radius=18, fill=colors["surface"], outline=colors["rule"], width=2)
-    _draw_dashboard_header(canvas, draw, vehicle, snapshot, colors, language)
+    _draw_dashboard_header(canvas, draw, vehicle, lamps, colors, language)
+    _draw_lamp_row(canvas, draw, lamps, colors)
     for x in (COLUMNS[0][1] + 10, COLUMNS[1][1] + 11):
         draw.line((x, COLUMN_TOP - 4, x, COLUMN_BOTTOM), fill=colors["rule"], width=1)
-    _draw_energy_column(canvas, draw, summary, charging, extended, settings, preferences, colors, language)
-    _draw_security_column(canvas, draw, vehicle, summary["closures"], extended, settings, preferences, colors, language)
-    _draw_tires_column(canvas, draw, tires, settings, preferences, colors, language)
+    _draw_energy_column(canvas, draw, summary, charging, extended, lamps, settings, preferences, colors, language)
+    _draw_body_column(canvas, draw, vehicle, summary["closures"], tires, charging, extended, settings, preferences,
+                      colors, language)
     _draw_climate_column(canvas, draw, summary["climate"], extended, settings, preferences, colors, language)
     _draw_location_column(canvas, draw, location_presentation, colors, language)
     _draw_vehicle_strip(canvas, draw, vehicle, software_update, extended, settings, preferences, colors, language)
     _draw_dashboard_footer(canvas, draw, snapshot, colors, language)
 
 
-def _draw_dashboard_header(canvas, draw, vehicle, snapshot, colors, language):
+def _draw_dashboard_header(canvas, draw, vehicle, lamps, colors, language):
     wordmark_right = _draw_vehicle_wordmark(canvas, vehicle["display_name"], colors)
     if not wordmark_right:
         name_font = _font(26, True)
         name = _ellipsize_text(draw, vehicle["display_name"], name_font, 260)
         draw.text((PAGE_LEFT, 22), name, font=name_font, fill=colors["ink"])
         wordmark_right = PAGE_LEFT + draw.textbbox((0, 0), name, font=name_font)[2]
+    verdict_left = _draw_verdict_pill(canvas, draw, lamps, colors, language)
     model_line = " / ".join(
         _enum_text(language, "provider", item) for item in (vehicle["model"], vehicle["trim"]) if item
     ) or _t(language, "vehicle_fallback")
     model_font = _font(15)
     model_left = wordmark_right + 12
-    draw.text((model_left, 33), _ellipsize_text(draw, model_line, model_font, 520 - model_left),
+    draw.text((model_left, 33), _ellipsize_text(draw, model_line, model_font, min(520, verdict_left - 16) - model_left),
               font=model_font, fill=colors["muted"])
-
-    freshness = _enum_text(language, "freshness", snapshot["freshness"])
-    freshness_text = f"{freshness} / {_age_text(snapshot['age_seconds'], language)}"
-    status_font = _font(14, True)
-    freshness_width = draw.textbbox((0, 0), freshness_text, font=status_font)[2]
-    _right_text(draw, PAGE_RIGHT, 30, freshness_text, status_font, colors["muted"])
-    divider_x = PAGE_RIGHT - freshness_width - 12
-    draw.line((divider_x, 30, divider_x, 48), fill=colors["rule"], width=1)
-    status_label = _enum_text(language, "connectivity", snapshot["vehicle_connectivity"])
-    status_color = _connectivity_color(snapshot["vehicle_connectivity"], colors)
-    label_width = draw.textbbox((0, 0), status_label, font=status_font)[2]
-    label_left = divider_x - 12 - label_width
-    draw.text((label_left, 30), status_label, font=status_font, fill=status_color)
-    draw.ellipse((label_left - 15, 35, label_left - 6, 44), fill=status_color)
     draw.line((PAGE_LEFT, HEADER_RULE_Y, PAGE_RIGHT, HEADER_RULE_Y), fill=colors["ink"], width=1)
 
 
-def _draw_energy_column(canvas, draw, summary, charging, extended, settings, preferences, colors, language):
+def _draw_verdict_pill(canvas, draw, lamps, colors, language):
+    """How many lamps need the owner, on the worst one's colour, or a green all clear; its left edge."""
+    attention = _attention_lamps(lamps)
+    level = attention[0].level if attention else "active"
+    text = _t(language, "verdict_issues", count=len(attention)) if attention else _t(language, "verdict_clear")
+    font = _font(15, True)
+    left = PAGE_RIGHT - draw.textbbox((0, 0), text, font=font)[2] - 47
+    draw.rounded_rectangle((left, 24, PAGE_RIGHT, 54), radius=15, fill=colors[LAMP_LEVEL_COLOURS[level]])
+    has_glyph = _draw_alert_glyph(canvas, "warning" if attention else "ok", left + 11, 30, 18, colors["lamp_glyph"])
+    draw.text((left + (35 if has_glyph else 16), 29), text, font=font, fill=colors["lamp_glyph"])
+    return left
+
+
+def _draw_lamp_row(canvas, draw, lamps, colors):
+    """The lamps side by side across the page, each a tile over its short state."""
+    width = (PAGE_RIGHT - PAGE_LEFT) / len(lamps)
+    for index, lamp in enumerate(lamps):
+        center = round(PAGE_LEFT + width * (index + 0.5))
+        _draw_lamp_tile(canvas, draw, lamp.level, lamp.icon, center - LAMP_TILE_SIZE // 2, LAMP_TILE_TOP,
+                        LAMP_TILE_SIZE, colors, radius=8)
+        # A long state steps down a size before it is shortened.
+        font = next((font for font in (_font(size, True) for size in (12, 11, 10))
+                     if draw.textbbox((0, 0), lamp.text, font=font)[2] <= width - 6), _font(10, True))
+        _center_text(draw, center, LAMP_TEXT_Y + (12 - font.size) // 2,
+                     _ellipsize_text(draw, lamp.text, font, width - 6), font,
+                     colors["muted"] if lamp.level == "idle" else colors["ink"])
+    draw.line((PAGE_LEFT, LAMP_RULE_Y, PAGE_RIGHT, LAMP_RULE_Y), fill=colors["rule"], width=1)
+
+
+def _draw_energy_column(canvas, draw, summary, charging, extended, lamps, settings, preferences, colors, language):
     left, right = COLUMNS[0]
     battery = summary["battery"]
     _section_label(canvas, draw, left, COLUMN_TOP, _t(language, "energy"), colors, "energy")
     level = battery["level_percent"]
     level_text = "--" if level is None else str(int(round(level)))
-    level_font = _font(54 if len(level_text) >= 3 else 62, True)
-    draw.text((left - 2, 142), level_text, font=level_font, fill=colors["ink"], anchor="ls")
-    level_right = draw.textbbox((left - 2, 142), level_text, font=level_font, anchor="ls")[2]
-    draw.text((level_right + 6, 142), "%", font=_font(24, True), fill=colors["muted"], anchor="ls")
+    level_font = _font(42 if len(level_text) >= 3 else 48, True)
+    baseline = COLUMN_TOP + 56
+    draw.text((left - 2, baseline), level_text, font=level_font, fill=colors["ink"], anchor="ls")
+    level_right = draw.textbbox((left - 2, baseline), level_text, font=level_font, anchor="ls")[2]
+    draw.text((level_right + 6, baseline), "%", font=_font(21, True), fill=colors["muted"], anchor="ls")
 
     rated = extended and battery["rated_range"] is not None
     hero_range = battery["rated_range"] if rated else battery["estimated_range"]
@@ -3138,38 +3505,47 @@ def _draw_energy_column(canvas, draw, summary, charging, extended, settings, pre
     if usable is not None and level is not None and abs(usable - level) >= 1:
         # Shown only when it differs from the level: the range is figured on the usable part.
         range_label = _t(language, "usable_with_label", value=int(round(usable)), label=range_label)
-    _right_text(draw, right, 92, range_label, _font(11, True), colors["muted"])
+    _right_text(draw, right, COLUMN_TOP + 2, range_label, _font(11, True), colors["muted"])
     limit = charging["charge_limit_percent"]
-    _draw_range_figure(draw, right, 131, hero_range, settings, preferences, colors, language)
-    _draw_limit_legend(draw, right, 141, hero_range, level, limit, settings, preferences, colors, language)
-    _battery_gauge(draw, (left, 156, right, 168), level, limit, colors)
-    # The side-on car spans the column between the gauge's scale and the charging rule.
-    _paste_vehicle_art(canvas, _load_vehicle_art(charging["state"]), (left + 6, 185, right - 6, 270))
+    _draw_range_figure(draw, right, baseline - 13, hero_range, settings, preferences, colors, language)
+    _draw_limit_legend(draw, right, baseline - 2, hero_range, level, limit, settings, preferences, colors, language)
+    gauge_top = baseline + 13
+    _battery_gauge(draw, (left, gauge_top, right, gauge_top + 11), level, limit, colors)
+    # The side-on car fills the column between the gauge's scale and the charging rule.
+    _paste_vehicle_art(canvas, _load_vehicle_art(charging["state"]),
+                       (left + 6, gauge_top + 30, right - 6, CHARGING_RULE_Y - 4))
 
-    draw.line((left, 273, right, 273), fill=colors["rule"], width=1)
-    heading_right = _section_label(canvas, draw, left, 281, _t(language, "charging"), colors, "charging")
-    state = charging["state"] or "unknown"
-    draw.text((heading_right + 16, 278), _ellipsize_text(draw, _enum_text(language, "charging", state),
-                                                          _font(15, True), 110),
-              font=_font(15, True), fill=_charging_state_color(state, colors))
-    cable = charging.get("cable_type") if extended else None
-    if cable:
-        cable_text = (_t(language, "cable_unknown") if str(cable).strip().lower() == "unknown"
-                      else _t(language, "cable", value=str(cable).upper()))
-        _right_text(draw, right, 283, _ellipsize_text(draw, cable_text, _font(10, True), 104),
-                    _font(10, True), colors["muted"])
+    draw.line((left, CHARGING_RULE_Y, right, CHARGING_RULE_Y), fill=colors["rule"], width=1)
+    heading_top = CHARGING_RULE_Y + 8
+    heading_right = _section_label(canvas, draw, left, heading_top, _t(language, "charging"), colors, "charging")
+    lamp = next(lamp for lamp in lamps if lamp.key == "charging")
+    state_font = _font(15, True)
+    state_text = _ellipsize_text(draw, lamp.text, state_font, 120)
+    draw.text((heading_right + 14, heading_top - 3), state_text, font=state_font,
+              fill=colors["ink"] if lamp.level == "idle" else colors[LAMP_LEVEL_COLOURS[lamp.level]])
+    if extended and _charging_plugged(charging):
+        # While plugged in, what the charge is set to do sits right of the state, never under it.
+        room = right - (heading_right + 14 + draw.textbbox((0, 0), state_text, font=state_font)[2] + 10)
+        flags = _ellipsize_text(draw, _charging_flags_text(charging, language), _font(10, True), room)
+        if room > 20 and flags:
+            _right_text(draw, right, heading_top + 1, flags, _font(10, True), colors["muted"])
+    _draw_stat_cells(draw, left, right, heading_top + 22,
+                     _charging_cells(battery, charging, extended, settings, preferences, language), colors)
 
-    limit_text = "--" if limit is None else f"{int(round(limit))}%"
-    power_text = _number_with_unit(charging["power_kw"], "unit_kw", None, language)
-    if extended:
-        rows = _v2_energy_rows(battery, charging, settings, preferences, limit_text, power_text, language)
-    else:
-        rows = ((_t(language, "limit"), limit_text),
-                (_t(language, "time_left"), _minutes_text(charging["time_to_full_minutes"], language)),
-                (_t(language, "power"), power_text))
-    for index, (label, value) in enumerate(rows):
-        _dashboard_row(draw, left, right, 301 + index * 13, label, value, colors,
-                       label_size=10, value_size=10, label_width=82)
+
+def _draw_stat_cells(draw, left, right, top, cells, colors, *, columns=3, widths=None, row_height=26):
+    """Figures in a grid, a small label over each value and a hairline between the columns."""
+    widths = widths or [(right - left) / columns] * columns
+    label_font, value_font = _font(9, True), _font(12, True)
+    for index, (label, value) in enumerate(cells):
+        row, column = divmod(index, len(widths))
+        x, y = round(left + sum(widths[:column])), top + row * row_height
+        room = widths[column] - (10 if column < len(widths) - 1 else 0)
+        if column:
+            draw.line((x - 6, y + 2, x - 6, y + row_height - 4), fill=colors["rule"], width=1)
+        draw.text((x, y), _ellipsize_text(draw, label, label_font, room), font=label_font, fill=colors["muted"])
+        draw.text((x, y + 11), _ellipsize_text(draw, str(value), value_font, room), font=value_font,
+                  fill=colors["ink"])
 
 
 def _draw_range_figure(draw, right, baseline, measurement, settings, preferences, colors, language):
@@ -3237,148 +3613,174 @@ def _battery_gauge(draw, box, level, limit, colors):
         draw.polygon(((x - 4, top - 8), (x + 4, top - 8), (x, top - 3)), fill=colors["ink"])
 
 
-def _draw_security_column(canvas, draw, vehicle, closures, extended, settings, preferences, colors, language):
+def _draw_body_column(canvas, draw, vehicle, closures, tires, charging, extended, settings, preferences, colors,
+                      language):
     left, right = COLUMNS[1]
-    _section_label(canvas, draw, left, COLUMN_TOP, _t(language, "security"), colors, "security")
-    lock_text = _bool_status(vehicle["locked"], _t(language, "locked"), _t(language, "unlocked"),
-                             _t(language, "unknown"))
-    lock_color = (colors["accent"] if vehicle["locked"] is False
-                  else colors["warning"] if vehicle["locked"] is None else colors["ink"])
-    _draw_padlock(draw, (left, 94, left + 22, 120), vehicle["locked"], lock_color, colors["surface"])
-    draw.text((left + 30, 92), lock_text, font=_font(25, True), fill=lock_color)
-    confirmed_open = bool(closures["open"]) or closures["charge_port_open"] is True
-    closure_color = (colors["accent"] if closures["all_closed"] is False or confirmed_open
-                     else colors["warning"] if closures["all_closed"] is None else colors["ink"])
-    detail_font = _font(13, True)
-    draw.text((left, 124), _closure_detail_line(draw, _closure_detail_lines(closures, language), detail_font,
-                                                right - left, language),
-              font=detail_font, fill=closure_color)
+    _section_label(canvas, draw, left, COLUMN_TOP, _t(language, "body_status"), colors, "security")
+    if tires is not None:
+        unit = _preferred_unit(settings, preferences, "pressureUnit", "pressure_unit", {"psi", "bar"}) or "bar"
+        _right_text(draw, right, COLUMN_TOP + 2, _t(language, "unit_psi" if unit == "psi" else "unit_bar"),
+                    _font(10, True), colors["muted"])
+    _draw_body_map(canvas, draw, vehicle, closures, tires, charging, settings, preferences, colors, language)
 
+    # Doors, trunks and windows by where they sit on the map; the charge port has its own row.
+    states = _opening_states(closures)
+    opened = [_opening_short_text(item, vehicle, language) for item in _OPENING_ORDER if states[item] is True]
+    if opened:
+        font = _font(11, True)
+        used = sum(draw.textbbox((0, 0), text, font=font)[2]
+                   for text in (_t(language, "openings"), _t(language, "openings_detail", items=""))) + 12
+        line = _closure_detail_line(draw, opened, font, right - left - used, language)
+        # When not even the first name fits whole beside the count, the count says it alone.
+        openings = (_t(language, "openings_detail", items=line) if line.startswith(opened[0])
+                    else _t(language, "lamp_openings_open", count=len(opened)))
+    elif any(state is None for state in states.values()):
+        openings = _t(language, "opening_incomplete")
+    else:
+        openings = _t(language, "all_access_secure")
+    port = _bool_status(closures["charge_port_open"], _t(language, "open_state"), _t(language, "closed_state"),
+                        _t(language, "unknown"))
     if extended:
-        sentry = _enum_text(language, "state", vehicle["sentry_mode"])
         flags = _security_flag_text(vehicle, settings, preferences, language)
         special = _t(language, "off_state") if flags == _t(language, "modes_off") else flags
     else:
-        sentry = special = _t(language, "not_reported")
-    port = _bool_status(closures["charge_port_open"], _t(language, "open_state"), _t(language, "closed_state"),
-                        _t(language, "unknown"))
-    rows = ((_t(language, "sentry_mode"), sentry, colors["ink"]),
-            (_t(language, "charge_port"), port,
-             colors["accent"] if closures["charge_port_open"] is True else colors["ink"]),
+        special = _t(language, "not_reported")
+    rows = ((_t(language, "openings"), openings, colors["ink"]),
+            (_t(language, "charge_port"), port, colors["ink"]),
             (_t(language, "special_modes"), special, colors["ink"]))
-    _ruled_rows(draw, left, right, 148, rows, colors)
+    _ruled_rows(draw, left, right, BODY_ROWS_TOP, rows, colors, step=20, label_width=None)
 
 
-def _draw_padlock(draw, box, locked, color, knockout):
-    """A padlock beside the lock state: shackle down when locked, lifted open when not, a ? when unknown."""
-    left, top, right, bottom = box
-    width, height = right - left, bottom - top
-    body_top = top + round(height * 0.44)
-    stroke = max(2, round(width * 0.16))
-    shackle_left, shackle_right = left + round(width * 0.2), right - round(width * 0.2)
-    lift = 0 if locked is True else round(height * 0.16)
-    arc_box = (shackle_left, top - lift, shackle_right, body_top + (shackle_right - shackle_left) // 2 - lift)
-    draw.arc(arc_box, 180, 360, fill=color, width=stroke)
-    arc_middle = (arc_box[1] + arc_box[3]) // 2
-    # The right leg always reaches the body; the left one only when the shackle is shut.
-    draw.line((shackle_right - stroke // 2, arc_middle, shackle_right - stroke // 2, body_top), fill=color, width=stroke)
-    if locked is True:
-        draw.line((shackle_left + stroke // 2, arc_middle, shackle_left + stroke // 2, body_top), fill=color,
-                  width=stroke)
-    draw.rounded_rectangle((left, body_top, right, bottom), radius=max(2, width // 6), fill=color)
-    center_x = (left + right) // 2
-    if locked is None:
-        font = _font(max(9, height // 2), True)
-        bounds = draw.textbbox((0, 0), "?", font=font)
-        draw.text((center_x - (bounds[2] - bounds[0]) / 2 - bounds[0], body_top + 1 - bounds[1] + 1), "?",
-                  font=font, fill=knockout)
-        return
-    hole = max(2, width // 7)
-    hole_y = body_top + (bottom - body_top) // 2 - 1
-    draw.ellipse((center_x - hole, hole_y - hole, center_x + hole, hole_y + hole), fill=knockout)
-    draw.rectangle((center_x - hole // 2, hole_y, center_x + hole // 2, hole_y + hole * 2), fill=knockout)
+def _draw_body_map(canvas, draw, vehicle, closures, tires, charging, settings, preferences, colors, language):
+    """The car from above: each tyre's pressure by its wheel, the lock on the roof, open doors swung
+    out, open windows and trunks in red and the charge port badged where it sits."""
+    left, right = COLUMNS[1]
+    center = (left + right) // 2
+    car = _paste_vehicle_art(canvas, _load_vehicle_top_art(),
+                             (center - 42, BODY_MAP_TOP, center + 42, BODY_MAP_TOP + BODY_MAP_HEIGHT))
+    car_left, car_top, car_right, car_bottom = car or (center - 40, BODY_MAP_TOP, center + 40,
+                                                       BODY_MAP_TOP + BODY_MAP_HEIGHT)
+    width, height = car_right - car_left, car_bottom - car_top
+    sides = (car_left + width * BODY_SIDES[0], car_left + width * BODY_SIDES[1])
+
+    levels = _tyre_levels(tires)[0] if tires is not None else dict.fromkeys(_TYRE_ORDER, "idle")
+    value_font, label_font = _font(22, True), _font(10, True)
+    for position in _TYRE_ORDER:
+        wheel_y = round(car_top + height * WHEEL_ROWS[position.split("_")[0]])
+        level = levels[position]
+        lit = level != "idle"
+        colour = colors[LAMP_LEVEL_COLOURS[level]]
+        pressure = ("--" if tires is None
+                    else _pressure_text(tires["pressures"][position], settings, preferences, language).split(" ")[0])
+        text_width = draw.textbbox((0, 0), pressure, font=value_font)[2]
+        label = _tire_abbreviation(position, language)
+        label_top, plate_top = wheel_y - 24, wheel_y - 11
+        if position.endswith("left"):
+            draw.text((left + 2, label_top), label, font=label_font, fill=colors["muted"])
+            plate = (left, plate_top, left + text_width + 10, plate_top + 28)
+            tick_x = round(sides[0]) - 3
+            lead = (plate[2] + 4, tick_x - 4)
+        else:
+            _right_text(draw, right - 2, label_top, label, label_font, colors["muted"])
+            plate = (right - text_width - 10, plate_top, right, plate_top + 28)
+            tick_x = round(sides[1]) + 3
+            lead = (tick_x + 4, plate[0] - 4)
+        if lit:
+            draw.rounded_rectangle(plate, radius=6, fill=colour)
+        draw.text((plate[0] + 5, plate_top + 1), pressure, font=value_font,
+                  fill=colors["lamp_glyph"] if lit else colors["ink"])
+        if lead[1] - lead[0] >= 2:
+            draw.line((lead[0], wheel_y, lead[1], wheel_y), fill=colour if lit else colors["rule"],
+                      width=2 if lit else 1)
+        draw.rounded_rectangle((tick_x - 2, wheel_y - 9, tick_x + 2, wheel_y + 9), radius=2,
+                               fill=colour if lit else colors["muted"])
+
+    red = colors["alert_crit"]
+    driver_on_left = _driver_on_left(vehicle)
+    for item, state in _opening_states(closures).items():
+        if state is not True:
+            continue
+        if item == "front_trunk":
+            draw.polygon(((car_left + width * 0.22, car_top + 3), (car_right - width * 0.22, car_top + 3),
+                          (car_right - width * 0.3, car_top - 8), (car_left + width * 0.3, car_top - 8)), fill=red)
+            continue
+        if item == "rear_trunk":
+            draw.polygon(((car_left + width * 0.2, car_bottom - 3), (car_right - width * 0.2, car_bottom - 3),
+                          (car_right - width * 0.28, car_bottom + 8), (car_left + width * 0.28, car_bottom + 8)),
+                         fill=red)
+            continue
+        side, end, kind = item.split("_")
+        on_left = (side == "driver") == driver_on_left
+        edge, outward = (sides[0], -1) if on_left else (sides[1], 1)
+        start, stop = (car_top + height * fraction for fraction in DOOR_SPANS[end])
+        if kind == "door":
+            # The door swung out on its front hinge, the way the app draws an open door.
+            length, angle = (stop - start) * 0.95, math.radians(38)
+            draw.line((edge, start, edge + outward * length * math.sin(angle), start + length * math.cos(angle)),
+                      fill=red, width=5)
+            draw.ellipse((edge - 3, start - 3, edge + 3, start + 3), fill=red)
+        else:
+            x = edge - outward * width * 0.06
+            draw.line((x, start + 4, x, stop - 4), fill=red, width=4)
+    if closures["charge_port_open"] is True:
+        _draw_lamp_badge(canvas, draw, "active" if _charging_plugged(charging) else "warn", "charge_port",
+                         (car_left + width * CHARGE_PORT_SPOT[0], car_top + height * CHARGE_PORT_SPOT[1]), 20, colors)
+    locked = vehicle["locked"]
+    _draw_lamp_badge(canvas, draw, "crit" if locked is False else "idle", "unlocked" if locked is False else "locked",
+                     (center, car_top + height * ROOF_SPOT), 26, colors)
 
 
-def _ruled_rows(draw, left, right, top, rows, colors, step=21):
+def _ruled_rows(draw, left, right, top, rows, colors, step=21, label_width=74):
+    """Label-value rows between hairlines; ``label_width=None`` gives each value all the room its label leaves."""
     for index, (label, value, value_color) in enumerate(rows):
         y = top + index * step
         if index:
             draw.line((left, y - 5, right, y - 5), fill=colors["rule"], width=1)
+        width = label_width if label_width is not None else draw.textbbox((0, 0), label, font=_font(11, True))[2] + 12
         _dashboard_row(draw, left, right, y, label, value, colors, label_size=11, value_size=11,
-                       label_width=74, value_color=value_color)
-
-
-def _draw_tires_column(canvas, draw, tires, settings, preferences, colors, language):
-    left, right = COLUMNS[1]
-    draw.line((left, COLUMN_SPLIT_Y, right, COLUMN_SPLIT_Y), fill=colors["rule"], width=1)
-    _section_label(canvas, draw, left, COLUMN_SPLIT_Y + 8, _t(language, "tires"), colors, "tires")
-    center = (left + right) // 2
-    if tires is None:
-        _center_text(draw, center, 300, _t(language, "not_reported_v1"), _font(11, True), colors["muted"])
-        return
-    unit = _preferred_unit(settings, preferences, "pressureUnit", "pressure_unit", {"psi", "bar"}) or "bar"
-    _right_text(draw, right, COLUMN_SPLIT_Y + 10, _t(language, "unit_psi" if unit == "psi" else "unit_bar"),
-                _font(10, True), colors["muted"])
-    car_box = _paste_vehicle_art(canvas, _load_vehicle_top_art(), (center - 32, 238, center + 32, 358))
-    car_left, car_top, car_right, car_bottom = car_box or (center - 22, 238, center + 22, 358)
-    for position, row_top, wheel_y in (("front_left", 240, car_top + (car_bottom - car_top) * 0.2),
-                                       ("front_right", 240, car_top + (car_bottom - car_top) * 0.2),
-                                       ("rear_left", 298, car_top + (car_bottom - car_top) * 0.74),
-                                       ("rear_right", 298, car_top + (car_bottom - car_top) * 0.74)):
-        warning = _tire_warning_level(tires, position)
-        color = (colors["accent"] if warning == "hard"
-                 else colors["warning"] if warning in {"soft", "unknown"} else colors["ink"])
-        pressure = _pressure_text(tires["pressures"][position], settings, preferences, language).split(" ", 1)[0]
-        label = _tire_abbreviation(position, language)
-        value_font = _font(22, True)
-        if position.endswith("left"):
-            draw.text((left + 2, row_top), label, font=_font(10, True), fill=colors["muted"])
-            draw.text((left + 2, row_top + 13), pressure, font=value_font, fill=color)
-            text_right = left + 4 + draw.textbbox((0, 0), pressure, font=value_font)[2]
-            draw.line((text_right + 6, wheel_y, car_left - 4, wheel_y), fill=colors["rule"], width=1)
-            draw.line((car_left - 4, wheel_y - 8, car_left - 4, wheel_y + 8), fill=colors["muted"], width=2)
-        else:
-            _right_text(draw, right - 2, row_top, label, _font(10, True), colors["muted"])
-            _right_text(draw, right - 2, row_top + 13, pressure, value_font, color)
-            text_left = right - 4 - draw.textbbox((0, 0), pressure, font=value_font)[2]
-            draw.line((car_right + 4, wheel_y, text_left - 6, wheel_y), fill=colors["rule"], width=1)
-            draw.line((car_right + 4, wheel_y - 8, car_right + 4, wheel_y + 8), fill=colors["muted"], width=2)
-    status, status_color = _tire_status(tires, colors, language)
-    _center_text(draw, center, 366, _ellipsize_text(draw, status, _font(12, True), right - left), _font(12, True),
-                 status_color)
+                       label_width=width, value_color=value_color)
 
 
 def _draw_climate_column(canvas, draw, climate, extended, settings, preferences, colors, language):
     left, right = COLUMNS[2]
     _section_label(canvas, draw, left, COLUMN_TOP, _t(language, "climate"), colors, "climate")
+    note = _climate_note(climate, extended, language)
+    if note:
+        _right_text(draw, right, COLUMN_TOP + 2, _ellipsize_text(draw, note, _font(10, True), 90), _font(10, True),
+                    colors["muted"])
     status = _bool_status(climate["is_climate_on"], _t(language, "hvac_on"), _t(language, "hvac_off"),
                           _t(language, "unknown"))
-    draw.text((left, 92), status, font=_font(25, True), fill=colors["ink"])
-    if extended:
-        keeper = _enum_text(language, "keeper", climate["keeper_mode"])
-        _right_text(draw, right, 100, _ellipsize_text(draw, keeper, _font(10, True), 80), _font(10, True),
-                    colors["muted"])
+    status_font = _font(20, True)
+    draw.text((left, COLUMN_TOP + 17), status, font=status_font, fill=colors["ink"])
+    status_right = left + draw.textbbox((0, 0), status, font=status_font)[2]
     temperature_line = _t(language, "inside_outside",
                           inside=_temperature_text(climate["inside_temp_c"], settings, preferences, language),
                           outside=_temperature_text(climate["outside_temp_c"], settings, preferences, language))
-    draw.text((left, 124), _ellipsize_text(draw, temperature_line, _font(14, True), right - left),
-              font=_font(14, True), fill=colors["ink"])
+    _right_text(draw, right, COLUMN_TOP + 24,
+                _ellipsize_text(draw, temperature_line, _font(12, True), right - status_right - 10), _font(12, True),
+                colors["ink"])
+    _draw_stat_cells(draw, left, right, COLUMN_TOP + 47, _climate_cells(climate, extended, settings, preferences,
+                                                                        language), colors, widths=(52, 52, 42, 80))
 
-    middle = (left + right) // 2
-    for index, cells in enumerate(_climate_cells(climate, extended, settings, preferences, language)):
-        y = 148 + index * 21
-        if index:
-            draw.line((left, y - 5, right, y - 5), fill=colors["rule"], width=1)
-        for (label, value), (cell_left, cell_right) in zip(cells, ((left, middle - 8), (middle + 8, right))):
-            _dashboard_row(draw, cell_left, cell_right, y, label, value, colors, label_size=10, value_size=11,
-                           label_width=50)
-    draw.line((middle, 144, middle, 200), fill=colors["rule"], width=1)
+
+def _climate_note(climate, extended, language):
+    """A keeper mode or a defroster at work, named beside the heading; None when neither is on."""
+    if not extended:
+        return None
+    keeper = str(climate["keeper_mode"] or "off").strip().lower()
+    if keeper not in {"off", "unknown"}:
+        return _enum_text(language, "keeper", keeper)
+    if str(climate["defrost_mode"] or "off").strip().lower() not in {"off", "unknown"}:
+        return _t(language, "defrost")
+    if climate["rear_defroster_on"] is True:
+        return _t(language, "rear_defrost")
+    return None
 
 
 def _climate_cells(climate, extended, settings, preferences, language):
+    keys = ("driver_target", "passenger_target", "fan", "overheat_protect")
     if not extended:
-        unknown = _t(language, "not_reported")
-        return (((_t(language, "driver_target"), unknown), (_t(language, "passenger_target"), unknown)),)
+        return tuple((_t(language, key), "--") for key in keys)
     fan = "--" if climate["fan_status"] is None else f"{climate['fan_status']:g}"
     overheat = climate["cabin_overheat"]
     overheat_text = "--"
@@ -3386,23 +3788,17 @@ def _climate_cells(climate, extended, settings, preferences, language):
         overheat_text = _enum_text(language, "state", overheat["mode"])
         if overheat["temp_limit"]:
             overheat_text += f"/{_enum_text(language, 'state', overheat['temp_limit'])}"
-    return (
-        ((_t(language, "driver_target"),
-          _temperature_text(climate["driver_target_temp_c"], settings, preferences, language)),
-         (_t(language, "passenger_target"),
-          _temperature_text(climate["passenger_target_temp_c"], settings, preferences, language))),
-        ((_t(language, "auto_hvac"), _enum_text(language, "state", climate["hvac_auto_mode"])),
-         (_t(language, "fan"), fan)),
-        ((_t(language, "defrost"), _enum_text(language, "state", climate["defrost_mode"])),
-         (_t(language, "overheat_protect"), overheat_text)),
-    )
+    values = (_temperature_text(climate["driver_target_temp_c"], settings, preferences, language),
+              _temperature_text(climate["passenger_target_temp_c"], settings, preferences, language),
+              fan, overheat_text)
+    return tuple((_t(language, key), value) for key, value in zip(keys, values))
 
 
 def _draw_location_column(canvas, draw, location_presentation, colors, language):
     left, right = COLUMNS[2]
-    draw.line((left, COLUMN_SPLIT_Y, right, COLUMN_SPLIT_Y), fill=colors["rule"], width=1)
-    _section_label(canvas, draw, left, COLUMN_SPLIT_Y + 8, _t(language, "location"), colors, "location")
+    draw.line((left, LOCATION_RULE_Y, right, LOCATION_RULE_Y), fill=colors["rule"], width=1)
     map_left, map_top, map_right, map_bottom = LOCATION_MAP_BOX
+    _section_label(canvas, draw, left, map_top - 22, _t(language, "location"), colors, "location")
     location_map = (location_presentation or {}).get("map_image")
     if not (isinstance(location_map, Image.Image) and location_map.size == LOCATION_MAP_SIZE):
         draw.rounded_rectangle(LOCATION_MAP_BOX, radius=6, outline=colors["rule"], width=1)
