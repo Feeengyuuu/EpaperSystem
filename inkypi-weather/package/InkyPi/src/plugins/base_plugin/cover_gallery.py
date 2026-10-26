@@ -35,6 +35,8 @@ TIMELINE_H = 30
 SHADOW = 4
 # A page's own wordmark stands this tall in its header.
 WORDMARK_H = 30
+# Header art keeps this far from the subtitle and the date.
+HEADER_ART_GAP = 12
 DAY = {"paper": (249, 246, 239), "ink": (24, 24, 28), "muted": (104, 100, 94), "rule": (206, 200, 189),
        "card": (255, 255, 255), "frame": (40, 38, 36)}
 NIGHT = {"paper": (20, 21, 25), "ink": (238, 236, 230), "muted": (160, 156, 148), "rule": (70, 70, 76),
@@ -142,12 +144,13 @@ def art_sizes(count, dimensions, *, timeline=False):
 
 
 def compose(images, labels, dimensions, *, title, subtitle="", date_text="", accent=(0, 70, 200), dark=False,
-            timeline=False, logo=None, wordmark=None, style="gallery"):
+            timeline=False, logo=None, wordmark=None, style="gallery", header_art=None):
     """The gallery page for ``images`` (already loaded) and their ``labels``.
 
     ``style`` sets the page's backdrop over the works' own colour wash: "gallery" lights each
     work with a spotlight, "newsstand" stands them on a shelf, "comic" lays a halftone.
     ``wordmark`` (RGBA) replaces the lettered title; its black parts take the page's ink.
+    ``header_art`` (RGBA, transparent) fills the header between the subtitle and the date.
     """
     colors = palette(dark)
     width, height = dimensions
@@ -159,7 +162,7 @@ def compose(images, labels, dimensions, *, title, subtitle="", date_text="", acc
     if len(years) >= 2 and max(years) > min(years):
         span = f"跨越 {_year_text(min(years))}–{_year_text(max(years))} · {max(years) - min(years)} 年"
         subtitle = f"{subtitle} · {span}" if subtitle else span
-    _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark)
+    _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark, header_art)
     for index, (image, label, (image_box, label_box)) in enumerate(zip(images, labels, boxes), start=1):
         frame = _framed(page, image, image_box, colors)
         label_box = _under(frame, label_box)
@@ -171,7 +174,7 @@ def compose(images, labels, dimensions, *, title, subtitle="", date_text="", acc
     return page
 
 
-def _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark=None):
+def _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark=None, art=None):
     x = MARGIN
     if logo is not None:
         page.paste(logo, (x, HEADER_TOP + (28 - logo.height) // 2), logo)
@@ -193,9 +196,23 @@ def _header(page, draw, title, subtitle, date_text, accent, colors, width, logo,
         draw.text((width - MARGIN - date_w, HEADER_TOP + 8), date_text, font=date_font, fill=colors["ink"])
     if subtitle:
         sub_font = _font(12)
-        draw.text((x, HEADER_TOP + 8), _clip(draw, subtitle, sub_font, width - MARGIN - date_w - 16 - x), font=sub_font,
-                  fill=colors["muted"])
+        subtitle = _clip(draw, subtitle, sub_font, width - MARGIN - date_w - 16 - x)
+        draw.text((x, HEADER_TOP + 8), subtitle, font=sub_font, fill=colors["muted"])
+        x += draw.textlength(subtitle, font=sub_font)
+    if art is not None:
+        _header_art(page, art, (round(x) + HEADER_ART_GAP, 3, round(width - MARGIN - date_w) - HEADER_ART_GAP, HEADER_RULE - 3))
     draw.line((MARGIN, HEADER_RULE, width - MARGIN, HEADER_RULE), fill=colors["ink"], width=2)
+
+
+def _header_art(page, art, box):
+    """``art`` as large as ``box`` holds, centred in it; left out when the room is too narrow."""
+    left, top, right, bottom = box
+    room_w, room_h = right - left, bottom - top
+    if room_w < 60 or room_h < 12:
+        return
+    scale = min(room_w / art.width, room_h / art.height)
+    fitted = art.resize((max(1, round(art.width * scale)), max(1, round(art.height * scale))), Image.Resampling.LANCZOS)
+    page.paste(fitted, (left + (room_w - fitted.width) // 2, top + (room_h - fitted.height) // 2), fitted)
 
 
 def _framed(page, image, box, colors):

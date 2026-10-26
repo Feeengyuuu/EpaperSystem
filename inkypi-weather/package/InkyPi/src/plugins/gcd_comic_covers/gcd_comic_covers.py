@@ -118,6 +118,8 @@ _PROVIDER_CACHE_WRITES_ENABLED = ContextVar(
 )
 # The gallery page's own wordmark (GPT Image 2.5; assets/gallery_wordmark.source.json).
 GALLERY_WORDMARK_PATH = Path(__file__).with_name("assets") / "gallery_wordmark.png"
+# Comics flying on the wind across the header (GPT Image 2.5; tools/build_flying_header_art.py).
+HEADER_ART_PATH = Path(__file__).with_name("assets") / "header_flying_comics.png"
 
 
 class GcdCoverImageUnavailable(RuntimeError):
@@ -634,7 +636,8 @@ class GcdComicCovers(BasePlugin):
             subtitle="今日漫画 · " + " / ".join(sources),
             date_text=f"{now.month}月{now.day}日 周{'一二三四五六日'[now.weekday()]}",
             accent=COMIC_ACCENT, dark=_gallery_dark(settings),
-            wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="comic")
+            wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="comic",
+            header_art=cover_gallery.load_wordmark(HEADER_ART_PATH))
 
     def _placeholder_cover(self, cover):
         """A designed stand-in for a cover whose scan the source withholds: the series and issue

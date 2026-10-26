@@ -188,6 +188,8 @@ WINDOW_SHORT_LABELS = {
 # Dashboard geometry for the 800x480 panel; cards keep a 16px gutter.
 DASHBOARD_MARGIN = 16
 HEADER_RULE_Y = 38
+# Dollar bills on the wind across the header (GPT Image 2.5; tools/build_flying_header_art.py).
+HEADER_MONEY_PATH = os.path.join(os.path.dirname(__file__), "assets", "header_flying_bills.png")
 TOP_CARDS = (48, 186)
 SUMMARY_CARD_WIDTH = 300
 HOLDINGS_TOP = 198
@@ -2067,6 +2069,20 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		self._header_logo_cache[cache_key] = logo
 		return logo
 
+	def _draw_header_money(self, img, box):
+		"""Dollar bills on the wind across the header's free stretch, as large as it holds."""
+		left, top, right, bottom = [int(value) for value in box]
+		if right - left < 60 or bottom - top < 12 or not os.path.exists(HEADER_MONEY_PATH):
+			return
+		try:
+			art = Image.open(HEADER_MONEY_PATH).convert("RGBA")
+		except (OSError, ValueError) as e:
+			logging.warning(f"Could not load the header bills: {type(e).__name__}")
+			return
+		scale = min((right - left) / art.width, (bottom - top) / art.height)
+		art = art.resize((max(1, round(art.width * scale)), max(1, round(art.height * scale))), Image.Resampling.LANCZOS)
+		img.paste(art, (left + (right - left - art.width) // 2, top + (bottom - top - art.height) // 2), art)
+
 	def _draw_header(self, img, draw, width, stock_data, header_brand=None, updated_at=None):
 		colors = _active_stock_colors()
 		margin = DASHBOARD_MARGIN
@@ -2079,8 +2095,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			header_logo = tinted
 		if header_logo:
 			img.paste(header_logo, (margin + 4, (HEADER_RULE_Y - header_logo.height) // 2), header_logo)
+			title_right = margin + 4 + header_logo.width
 		else:
 			draw.text((margin + 4, 7), "STOCK TRACKER", fill=colors["ink"], font=self._font(22, True))
+			title_right = margin + 4 + self._text_width(draw, "STOCK TRACKER", self._font(22, True))
 
 		center_y = HEADER_RULE_Y / 2
 		chip_font = self._font(11, True)
@@ -2101,12 +2119,14 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			right = chip[0] - 8
 		source_label = self._source_label(stock_data).upper()
 		source_font = self._font(12, True)
+		source_left = right - 4 - self._text_width(draw, source_label, source_font)
 		draw.text(
-			(right - 4 - self._text_width(draw, source_label, source_font), self._centered_text_y(draw, source_label, source_font, center_y)),
+			(source_left, self._centered_text_y(draw, source_label, source_font, center_y)),
 			source_label,
 			fill=colors["ink"],
 			font=source_font,
 		)
+		self._draw_header_money(img, (title_right + 14, 4, source_left - 14, HEADER_RULE_Y - 5))
 		draw.line((margin, HEADER_RULE_Y, width - margin, HEADER_RULE_Y), fill=colors["accent_gold"], width=3)
 
 	@staticmethod
