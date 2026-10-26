@@ -133,21 +133,25 @@ def _title_band(page, box):
     return [page.getpixel((x, y)) for x in range(x0, x1) for y in range(y0, y1)]
 
 
+def _lettered(pixels):
+    """Whether the title's vermilion lettering is among ``pixels``."""
+    return any(red > 180 and green < 80 and blue < 80 for red, green, blue in pixels)
+
+
 def test_the_page_title_heads_a_landscape_poster_and_moves_to_the_column_for_a_tall_one():
     assert poster_layout.TITLE_ART.is_file()
-    red = poster_layout.TITLE_RED
     margin, band = poster_layout.MARGIN, poster_layout.TITLE_H
     landscape = poster_layout.render_single(_meta(), Image.new("RGB", (900, 600), (40, 40, 200)), (800, 480), "day")
-    # The lettering and its double rule sit over the poster, the poster below the band.
+    # The lettering and its quotation sit over the poster, the poster below the band.
     title = _title_band(landscape, (margin, margin, 560, margin + band))
-    assert red in title and (40, 40, 200) not in title
+    assert _lettered(title) and (40, 40, 200) not in title
     assert landscape.getpixel((300, margin + poster_layout.TITLE_BAND + 20)) == (40, 40, 200)
 
     portrait = Image.new("RGB", (400, 600), (40, 40, 200))
     tall = poster_layout.render_single(_meta(), portrait, (800, 480), "night")
     # A tall poster keeps the full height; the title heads the details column instead.
     assert tall.getpixel((100, margin + 2)) == (40, 40, 200)
-    assert red in _title_band(tall, (340, margin, 788, margin + band))
+    assert _lettered(_title_band(tall, (340, margin, 788, margin + band)))
 
 
 def test_spare_room_in_the_column_takes_another_poster():
@@ -171,7 +175,7 @@ def test_three_portraits_share_one_shelf_with_captions():
     for _poster, image in posters:
         assert image.getpixel((0, 0)) in row
     # The page's title runs across the top, above the shelf.
-    assert poster_layout.TITLE_RED in _title_band(page, (12, 12, 788, 12 + poster_layout.TITLE_H))
+    assert _lettered(_title_band(page, (12, 12, 788, 12 + poster_layout.TITLE_H)))
     # The shelf leaves room for the captions under the posters.
     assert page.getpixel((130, 480 - poster_layout.MARGIN - 10)) != (200, 40, 40)
 
@@ -229,3 +233,41 @@ def test_spare_room_pictures_pack_into_the_rows_that_cover_the_most():
     used = sum(max(size[1] for _i, size in row) + poster_layout.PACK_CAPTION for row in tall)
     assert used <= 300
     assert poster_layout.pack_rows([1.0], (100, 40)) == []
+
+
+def _red_rows(page, box):
+    x0, y0, x1, y1 = box
+    return {y for y in range(y0, y1) for x in range(x0, x1) if page.getpixel((x, y)) == poster_layout.TITLE_RED}
+
+
+def test_the_little_red_book_and_a_quotation_follow_the_title_the_same_one_for_the_same_poster():
+    from plugins.backtothedate.quotations import QUOTATIONS
+    from utils.fonts import load_font
+
+    # The brush hand draws every character of every quotation itself.
+    hand = load_font(str(poster_layout.QUOTE_FONT), 20)
+    assert all(hand.covers(text) for text, _source in QUOTATIONS)
+    portrait = Image.new("RGB", (400, 600), (40, 40, 200))
+    margin, band = poster_layout.MARGIN, poster_layout.TITLE_H
+
+    def title(url):
+        page = poster_layout.render_single({**_meta(), "url": url}, portrait, (800, 480), "day")
+        return page.crop((480, margin, 788, margin + band))
+
+    # The book's crimson cover stands the title's height beside the lettering, where the double rule was.
+    assert poster_layout.BOOK_ART.is_file() and poster_layout.SIGNATURE_ART.is_file()
+    quoted = title("https://chineseposters.net/posters/pc-1959-001")
+    crimson = {y for y in range(quoted.height) for x in range(quoted.width)
+               if (lambda r, g, b: r > 90 and g < 60 and b < 70)(*quoted.getpixel((x, y)))}
+    assert len(crimson) >= band - 4 and not _red_rows(quoted, (0, band // 2 - 3, quoted.width, band // 2 + 3))
+    assert quoted.tobytes() == title("https://chineseposters.net/posters/pc-1959-001").tobytes()
+    assert len({title(f"https://chineseposters.net/posters/pc-1966-{index:03d}").tobytes() for index in range(6)}) > 1
+
+
+def test_without_room_for_a_quotation_the_title_keeps_its_double_rule():
+    canvas = Image.new("RGB", (300, 60), (243, 234, 216))
+
+    poster_layout._page_title(canvas, (0, 10, 280, 10 + poster_layout.TITLE_H), poster_layout.palette("day"), "seed")
+
+    rows = _red_rows(canvas, (200, 10, 280, 10 + poster_layout.TITLE_H))
+    assert rows and len(rows) <= 4

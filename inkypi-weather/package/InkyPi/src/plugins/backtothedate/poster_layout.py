@@ -10,19 +10,25 @@ on one shelf, each captioned with its Chinese title, year and designer. Sections
 fit are left out, last first; a poster without stored details shows its title alone.
 
 Every page is headed 宣传画廊, lettered like a 1958-1966 poster headline (generated art) and
-followed by a red double rule: over the poster when the poster leaves room above it, else at
-the top of the details column, so a tall poster is not made smaller for it.
+followed by the Little Red Book's cover and a quotation of Mao's in a brush hand (a red double
+rule where there is no room for one): over the poster when the poster leaves room above it,
+else at the top of the details column, so a tall poster is not made smaller for it. The
+quotation is drawn by lot from those that fit, the same one for the same poster.
 """
 
 from __future__ import annotations
 
+import random
 import re
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
 
 from plugins.backtothedate.poster_meta import decode_photo, split_chinese
+from plugins.backtothedate.quotations import QUOTATIONS
 from utils.app_utils import get_base_ui_font
+from utils.fonts import load_font
 from utils.local_wordmark import paste_local_wordmark
 
 # All text is Microsoft YaHei (the base UI font), the titles in its bold.
@@ -44,6 +50,18 @@ TITLE_H = 34
 TITLE_BAND = TITLE_H + 8
 # The lettering's vermilion, for the double rule after it.
 TITLE_RED = (200, 30, 30)
+# The quotation beside the title: the Little Red Book's cover (a photograph, its ground cut
+# away) BOOK_H tall, then Zhi Mang Xing kept to the quotations' characters, at the largest size
+# that fits on one line, else at a smaller one on two, signed after its last line with a brush
+# dash and Mao's signature SIGNATURE_SCALE times the writing's size; with less than
+# QUOTE_MIN_ROOM beside the title, the double rule instead.
+QUOTE_FONT = Path(__file__).resolve().parent / "assets" / "ZhiMangXing-Quotations.ttf"
+BOOK_ART = Path(__file__).resolve().parent / "assets" / "little_red_book.png"
+SIGNATURE_ART = Path(__file__).resolve().parent / "assets" / "mao_signature.png"
+QUOTE_ONE_LINE, QUOTE_TWO_LINES = (26, 24, 22, 20, 18), (19, 18, 16, 15)
+BOOK_H = TITLE_H + 6
+SIGNATURE_DASH, SIGNATURE_SCALE, SIGNATURE_GAP = "——", 1.45, 6
+QUOTE_MIN_ROOM = 150
 _CJK = re.compile(r"[⺀-鿿＀-￯]")
 
 
@@ -152,9 +170,118 @@ def _contained(size, room):
     return max(1, round(size[0] * scale)), max(1, round(size[1] * scale))
 
 
-def _page_title(canvas, box, colors):
-    """The page's title at the left of ``box`` (the lettering, or bold text without it) and a
-    red double rule from its end to the box's right."""
+@lru_cache(maxsize=16)
+def _quote_font(size):
+    return load_font(str(QUOTE_FONT), size)
+
+
+def _two_lines(draw, text, font, width, tail=0):
+    """``text`` in two lines within ``width``, the second leaving ``tail`` for the signature,
+    broken after the comma nearest its middle (else anywhere); None when it does not fit."""
+    breaks = [index + 1 for index, char in enumerate(text[:-1]) if char in "，、；："] or list(range(1, len(text)))
+    for cut in sorted(breaks, key=lambda index: abs(len(text) / 2 - index)):
+        lines = [text[:cut], text[cut:]]
+        if draw.textlength(lines[0], font=font) <= width and draw.textlength(lines[1], font=font) + tail <= width:
+            return lines
+    return None
+
+
+@lru_cache(maxsize=16)
+def _signature(height, ink):
+    """Mao's signature ``height`` px tall in ``ink``, or None without the file."""
+    try:
+        with Image.open(SIGNATURE_ART) as source:
+            strokes = source.convert("RGBA").getchannel("A")
+    except (OSError, ValueError):
+        return None
+    strokes = strokes.resize((max(1, round(strokes.width * height / strokes.height)), height), Image.LANCZOS)
+    signature = Image.new("RGBA", strokes.size, (*ink, 255))
+    signature.putalpha(strokes)
+    return signature
+
+
+def _signed(draw, font):
+    """(dash font, dash width, signature height) after a quotation in ``font``, and the width
+    they take after its last line."""
+    dash_font = _quote_font(max(12, font.size - 4))
+    dash_w = draw.textlength(SIGNATURE_DASH, font=dash_font)
+    height = round(font.size * SIGNATURE_SCALE)
+    signature = _signature(height, (0, 0, 0))
+    width = SIGNATURE_GAP + dash_w + 2 + signature.width if signature is not None else 0
+    return (dash_font, dash_w, height), width
+
+
+def _quotation_layout(draw, text, width, two_line_sizes):
+    """(font, lines) for a quotation, signed, in ``width`` beside the title: one line at a
+    QUOTE_ONE_LINE size, else two at one of ``two_line_sizes``; None when it does not fit."""
+    if QUOTE_FONT.is_file():
+        for size in QUOTE_ONE_LINE:
+            font = _quote_font(size)
+            if draw.textlength(text, font=font) + _signed(draw, font)[1] <= width:
+                return font, [text]
+        for size in two_line_sizes:
+            font = _quote_font(size)
+            lines = _two_lines(draw, text, font, width, _signed(draw, font)[1])
+            if lines:
+                return font, lines
+    return None
+
+
+@lru_cache(maxsize=4)
+def _book(height):
+    """The Little Red Book's cover ``height`` px tall, or None without the file."""
+    try:
+        with Image.open(BOOK_ART) as source:
+            book = source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+    return book.resize((max(1, round(book.width * height / book.height)), height), Image.LANCZOS)
+
+
+def _draw_quotation(canvas, box, colors, seed):
+    """The Little Red Book and a quotation drawn by ``seed`` from those that fit ``box`` beside
+    it; False when none does."""
+    x0, y0, x1, y1 = box
+    draw = ImageDraw.Draw(canvas)
+    book = _book(BOOK_H)
+    book_w = book.width + 10 if book is not None else 0
+    order = [text for text, _source in QUOTATIONS]
+    random.Random(seed).shuffle(order)
+    # Drawn from those that fit at a readable size; the smallest sizes only when none does.
+    layout = next((found for sizes in (QUOTE_TWO_LINES[:2], QUOTE_TWO_LINES[2:]) for text in order
+                   if (found := _quotation_layout(draw, text, x1 - x0 - book_w, sizes))), None)
+    if layout is None:
+        return False
+    middle = (y0 + y1) / 2
+    if book is not None:
+        top = round(middle - book.height / 2)
+        shadow = Image.new("RGBA", book.size, (*colors["shadow"], 255))
+        canvas.paste(shadow, (x0 + 2, top + 2), book)
+        canvas.paste(book, (x0, top), book)
+    font, lines = layout
+    pitch = font.size + 2
+    top = middle - pitch * (len(lines) - 1) / 2
+    for index, line in enumerate(lines):
+        # Twice, a pixel apart: the hand's hairline strokes given a brush's weight on e-paper.
+        for nudge in (0, 1):
+            draw.text((x0 + book_w + nudge, top + index * pitch), line, font=font, fill=colors["ink"], anchor="lm")
+    # Signed after the last line: a brush dash, then his signature.
+    (dash_font, dash_w, height), _width = _signed(draw, font)
+    signature = _signature(height, tuple(colors["ink"]))
+    if signature is not None:
+        x = x0 + book_w + draw.textlength(lines[-1], font=font) + SIGNATURE_GAP
+        y = top + (len(lines) - 1) * pitch
+        for nudge in (0, 1):
+            draw.text((x + nudge, y), SIGNATURE_DASH, font=dash_font, fill=colors["ink"], anchor="lm")
+        for nudge in (0, 1):
+            canvas.paste(signature, (round(x + dash_w + 2) + nudge, round(y - signature.height / 2)), signature)
+    return True
+
+
+def _page_title(canvas, box, colors, seed=""):
+    """The page's title at the left of ``box`` (the lettering, or bold text without it), then the
+    Little Red Book and a quotation drawn by ``seed``, or a red double rule to the box's right
+    where no quotation fits."""
     x0, y0, x1, y1 = box
     draw = ImageDraw.Draw(canvas)
     pasted = paste_local_wordmark(canvas, TITLE_ART, (x0, y0, min(x1, x0 + 512), y1), align="left")
@@ -164,10 +291,17 @@ def _page_title(canvas, box, colors):
         font = _title(TITLE_H - 10)
         draw.text((x0, (y0 + y1) / 2), TITLE_TEXT, font=font, fill=colors["accent"], anchor="lm")
         right = x0 + round(draw.textlength(TITLE_TEXT, font=font))
+    if x1 - right >= QUOTE_MIN_ROOM and _draw_quotation(canvas, (right + 12, y0, x1, y1), colors, seed):
+        return
     if x1 - right >= 40:
         middle = (y0 + y1) // 2
         draw.rectangle((right + 10, middle - 3, x1 - 1, middle - 1), fill=TITLE_RED)
         draw.line((right + 10, middle + 2, x1 - 1, middle + 2), fill=TITLE_RED, width=1)
+
+
+def _quotation_seed(posters):
+    """The posters' identity, so the same poster keeps the same quotation through redraws."""
+    return "|".join(str((poster or {}).get("url") or (poster or {}).get("title") or "") for poster in posters)
 
 
 def render_single(poster, image, dimensions, mode="day", extras=()):
@@ -175,11 +309,12 @@ def render_single(poster, image, dimensions, mode="day", extras=()):
     width, height = dimensions
     canvas = Image.new("RGB", dimensions, colors["paper"])
     image = trim_margins(image)
+    seed = _quotation_seed([poster])
     beside = _contained(image.size, (width - 2 * MARGIN - MIN_COLUMN - GAP, height - 2 * MARGIN))
     above = _contained(image.size, (width - 2 * MARGIN, height - 2 * MARGIN - TITLE_BAND - MIN_STRIP - GAP))
     if above[0] * above[1] > beside[0] * beside[1] * 1.05:
         left = (width - above[0]) // 2
-        _page_title(canvas, (left, MARGIN, left + above[0], MARGIN + TITLE_H), colors)
+        _page_title(canvas, (left, MARGIN, left + above[0], MARGIN + TITLE_H), colors, seed)
         top = MARGIN + TITLE_BAND
         box = _poster(canvas, image, (left, top, left + above[0], top + above[1]), colors)
         _info_strip(canvas, poster, (MARGIN, box[3] + GAP, width - MARGIN, height - MARGIN), colors)
@@ -189,14 +324,14 @@ def render_single(poster, image, dimensions, mode="day", extras=()):
     if beside[1] <= room:
         # A poster held by its width leaves room above it: the title heads it, the poster
         # sits centred in the rest.
-        _page_title(canvas, (MARGIN, MARGIN, MARGIN + beside[0], MARGIN + TITLE_H), colors)
+        _page_title(canvas, (MARGIN, MARGIN, MARGIN + beside[0], MARGIN + TITLE_H), colors, seed)
         top = MARGIN + TITLE_BAND + (room - beside[1]) // 2
     else:
         top = (height - beside[1]) // 2
         column_top += TITLE_BAND
     box = _poster(canvas, image, (MARGIN, top, MARGIN + beside[0], top + beside[1]), colors)
     if column_top > MARGIN:
-        _page_title(canvas, (box[2] + GAP, MARGIN, width - MARGIN, MARGIN + TITLE_H), colors)
+        _page_title(canvas, (box[2] + GAP, MARGIN, width - MARGIN, MARGIN + TITLE_H), colors, seed)
     _info_column(canvas, poster, (box[2] + GAP, column_top, width - MARGIN, height - MARGIN), colors, extras)
     return canvas
 
@@ -430,7 +565,8 @@ def render_shelf(items, dimensions, mode="day"):
     width, height = dimensions
     canvas = Image.new("RGB", dimensions, colors["paper"])
     draw = ImageDraw.Draw(canvas)
-    _page_title(canvas, (MARGIN, MARGIN, width - MARGIN, MARGIN + TITLE_H), colors)
+    _page_title(canvas, (MARGIN, MARGIN, width - MARGIN, MARGIN + TITLE_H), colors,
+                _quotation_seed([poster for poster, _image in items]))
     count = len(items)
     gap = 10
     column = (width - 2 * MARGIN - gap * (count - 1)) / count

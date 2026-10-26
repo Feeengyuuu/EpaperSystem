@@ -1,0 +1,13 @@
+{
+  "image": "mao_signature.png",
+  "subject": "毛泽东's signature",
+  "source": "https://commons.wikimedia.org/wiki/File:Mao_Zedong_Signature.svg",
+  "licence": "Public domain (Wikimedia Commons)",
+  "source_sha256": "f940991be95e3f79f3ce5c629425728bf230ff1b9a1970a2b364afc46319f548",
+  "processing": "the SVG drawn 8x by a headless browser, cropped to its strokes, kept as black on transparent (the page tints it with its ink), scaled to 72 px tall",
+  "size": [
+    160,
+    72
+  ],
+  "sha256": "7c0ca38c10e6919cf0cb04572bbc4e094d435faf26e4ba755d48ab7f14d1232e"
+}

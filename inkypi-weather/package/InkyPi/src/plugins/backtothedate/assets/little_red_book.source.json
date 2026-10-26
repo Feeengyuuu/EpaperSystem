@@ -1,0 +1,14 @@
+{
+  "image": "little_red_book.png",
+  "subject": "《毛主席语录》《毛主席的五篇著作》《毛主席诗词》三合一版 (the Little Red Book), front cover",
+  "source": "https://commons.wikimedia.org/wiki/File:Chairman_Mao%27s_Little_Red_Book,_%223_in_1%22_version.jpg",
+  "author": "Cctv 1234 (Wikimedia Commons)",
+  "licence": "CC BY 4.0 (https://creativecommons.org/licenses/by/4.0)",
+  "source_sha1": "859cf19225638e2f4b8e144255ba22bf4b2787ae",
+  "processing": "the red cover cut from the cloth by colour, its four corners warped to an upright 5:7 rectangle (14 px of curled edge trimmed at 500 px wide), corners rounded, transparent outside, scaled to 120x168",
+  "size": [
+    120,
+    168
+  ],
+  "sha256": "ef4bdae5780f09d6973f52cab0d2f65906caa706940706c3592e3b0c3f4baa15"
+}

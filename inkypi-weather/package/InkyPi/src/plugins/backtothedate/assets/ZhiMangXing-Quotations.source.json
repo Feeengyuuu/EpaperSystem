@@ -1,0 +1,11 @@
+{
+  "font": "ZhiMangXing-Quotations.ttf",
+  "source": "https://github.com/google/fonts/raw/main/ofl/zhimangxing/ZhiMangXing-Regular.ttf",
+  "source_sha256": "644e0cae9b40f0b10ab729a01bd32032e3973bac22be3dccae01bf6ae7fde969",
+  "designer": "Wei Zhimang",
+  "licence": "SIL Open Font License 1.1 (ZhiMangXing-OFL.txt)",
+  "characters": "the 292 characters of quotations.py, their punctuation and the signature",
+  "missing_from_source": "",
+  "sha256": "0df20b7b5338877c4bfe62136b247f8538b15e64ec66062c739cda46ee402a77",
+  "bytes": 137408
+}
