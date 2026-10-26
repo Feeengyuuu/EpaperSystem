@@ -44,6 +44,10 @@ BAR = 6
 EARTH_SKY_LEVEL = 24
 EARTH_LIMB_INSET = 0.012
 EARTH_SIZE = 136
+# Bilibili: the lead video's cover height and the rows' thumbnail height at most.
+BILI_LEAD_HEIGHT = 120
+BILI_THUMB_HEIGHT = 50
+BILI_TWO_LINE_SIZE = 14
 
 
 def _rgb(value):
@@ -154,7 +158,8 @@ def _bilibili(canvas, payload, images):
         canvas.text(((left + right) / 2, (top + bottom) / 2), "B站数据暂不可用", 14, "muted", anchor="mm")
         return
     lead = videos[0]
-    cover_box = (left + 8, top + 4, right - 8, top + 144)
+    # A little shorter than 16:9, so the three rows under it each get room for every line.
+    cover_box = (left + 8, top + 4, right - 8, top + 4 + BILI_LEAD_HEIGHT)
     _paste_fit(canvas, images.get(sources.safe_image_url(lead.get("cover"))), cover_box)
     _rank_chip(canvas, (cover_box[0] + 6, cover_box[1] + 6), 1, BRANDS["bilibili"])
     views = f"{count_text(lead.get('views'))}播放"
@@ -173,19 +178,28 @@ def _bilibili(canvas, payload, images):
     meta = " · ".join(part for part in (lead.get("owner"), lead.get("section"), lead.get("reason")) if part)
     canvas.text((left + 10, y + 2), meta, 10, "muted", bold=False, width=right - left - 20)
     row_top = y + 22
-    row_h = (bottom - 8 - row_top) / 3
+    row_h = (bottom - 6 - row_top) / 3
     for index, video in enumerate(videos[1:4], start=2):
         y0 = row_top + (index - 2) * row_h
         canvas.rule((left + 8, y0 - 3, right - 8, y0 - 3))
-        thumb = (left + 8, int(y0 + 2), left + 96, int(y0 + 2 + 50))
+        # Everything stays inside the row, clear of the next rule: the 16:9 thumbnail, the
+        # views line at the row's foot and the title fitted into the room above it.
+        thumb_h = int(min(BILI_THUMB_HEIGHT, row_h - 8))
+        thumb = (left + 8, int(y0 + 1), left + 8 + round(thumb_h * 16 / 9), int(y0 + 1) + thumb_h)
         _paste_fit(canvas, images.get(sources.safe_image_url(video.get("cover"))), thumb, radius=4)
         _rank_chip(canvas, (thumb[0] + 2, thumb[1] + 2), index, BRANDS["bilibili"])
-        # A short title is set larger and centred over its meta line; a long one wraps smaller.
-        size, lines = _fitted_title(canvas, video.get("title"), right - thumb[2] - 16, 32, largest=17, smallest=11)
+        meta_y = y0 + row_h - 19
+        # The glyphs of a title's last line reach a fifth of its size below its pitch.
+        title_h = meta_y - 7 - y0
+        # A short title is set larger and centred over its views line; a long one wraps smaller.
+        size, lines = _fitted_title(canvas, video.get("title"), right - thumb[2] - 16, title_h, largest=16, smallest=11)
+        if len(lines) > 1 and size > BILI_TWO_LINE_SIZE:
+            # Two-line titles share one size, so the rows keep one rhythm.
+            size, lines = _fitted_title(canvas, video.get("title"), right - thumb[2] - 16, title_h,
+                                        largest=BILI_TWO_LINE_SIZE, smallest=11)
         block = len(lines) * (size + 4) - 4
         for number, line in enumerate(lines):
-            canvas.text((thumb[2] + 8, y0 + 2 + (34 - block) / 2 + number * (size + 4)), line, size)
-        meta_y = y0 + 40
+            canvas.text((thumb[2] + 8, y0 + (title_h - block) / 2 + number * (size + 4)), line, size)
         x = thumb[2] + 8
         x += canvas.text((x, meta_y), f"{count_text(video.get('views'))}播放", 10, "muted", bold=False) + 6
         gain = _view_gain(video, previous_views)
