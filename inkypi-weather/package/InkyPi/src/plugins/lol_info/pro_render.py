@@ -77,6 +77,8 @@ LOL_ARCHETYPES = {"damage": "输出核心", "farm": "发育机器", "teamfight":
 CHAMPION_CENTERED_URL = "https://ddragon.leagueoflegends.com/cdn/img/champion/centered/{key}_0.jpg"
 DRAGON_COLOURS = {"infernal": (226, 88, 52), "mountain": (176, 132, 86), "ocean": (62, 152, 214),
                   "cloud": (196, 214, 228), "hextech": (88, 196, 214), "chemtech": (118, 196, 78), "elder": (236, 198, 112)}
+# The event's official mark heading the pro's schedule stands this tall at most.
+EVENT_MARK_HEIGHT = 16
 LOL_STAGE_DAYS = 45
 # An upcoming match's event logo fits this box before the event's name.
 CS2_EVENT_LOGO = (30, 13)
@@ -469,8 +471,6 @@ class ProRenderMixin:
             upcoming = None
         matches = data.get("matches") or []
         pro = bool(results or upcoming)
-        title = "赛程与战绩" if pro else "最近排位"
-        self._text(draw, (x0, y0), title, fonts["small_bold"], colors["muted"])
         record = ((series or (results[0] if results else {}) or {}).get("ours") or {}).get("record")
         stage = lolesports_pro.STAGE_NAMES.get((series or (results[0] if results else {}) or {}).get("stage") or "", "")
         note_left = x1
@@ -478,15 +478,15 @@ class ProRenderMixin:
             note = f"{stage} {record[0]}胜{record[1]}负"
             note_left = x1 - self._text_width(draw, note, fonts["tiny"])
             self._text(draw, (note_left, y0 + 2), note, fonts["tiny"], colors["muted"])
-        if pro:
-            # The event the pro is playing in, by its official mark, between the title and the record.
-            current = series or (results[0] if results else None) or upcoming or {}
-            room = (x0 + self._text_width(draw, title, fonts["small_bold"]) + 10, y0, note_left - 10, y0 + 15)
-            mark = self._event_mark(current.get("league"), current.get("start"), (room[2] - room[0], room[3] - room[1]),
-                                    colors)
-            if mark is not None:
-                image.paste(mark, ((room[0] + room[2] - mark.width) // 2, room[1] + (room[3] - room[1] - mark.height) // 2),
-                            mark)
+        # The event the pro is playing in heads the section by its official mark (the column is too
+        # narrow for the title beside it); without one the title stands.
+        current = series or (results[0] if results else None) or upcoming or {}
+        mark = self._event_mark(current.get("league"), current.get("start"), (note_left - 8 - x0, EVENT_MARK_HEIGHT),
+                                colors) if pro else None
+        if mark is not None:
+            image.paste(mark, (x0, y0 + 8 - mark.height // 2), mark)
+        else:
+            self._text(draw, (x0, y0), "赛程与战绩" if pro else "最近排位", fonts["small_bold"], colors["muted"])
         y = y0 + 20
         if upcoming:
             self._draw_lol_next(image, draw, upcoming, (x0, y, x1), colors, fonts)

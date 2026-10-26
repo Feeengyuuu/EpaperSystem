@@ -233,19 +233,31 @@ def _stage_row(league, stage="Swiss"):
             "ours": {"code": "HLE", "wins": 0, "record": [1, 2]}, "theirs": {"code": "IG", "wins": 1}}
 
 
-@pytest.mark.parametrize("league", ["worlds", "msi", "lck"])
-def test_the_schedule_header_carries_the_events_official_mark(plugin, league):
+@pytest.mark.parametrize("league", ["worlds", "msi", "lck", "first_stand"])
+def test_the_schedule_is_headed_by_the_events_official_mark(plugin, league):
     colors = plugin._render_colors({"mode": "night"})
     image = Image.new("RGB", (800, 480), colors["background"])
     draw = ImageDraw.Draw(image)
     fonts = plugin._pro_fonts()
-    box = (230, 180, 420, 470)
+    texts = []
+    original = plugin._text
+
+    def record(draw_obj, xy, text, *args, **kwargs):
+        texts.append(str(text))
+        return original(draw_obj, xy, text, *args, **kwargs)
+
+    plugin._text = record
+    box = (442, 180, 604, 470)  # the real column, 162 px wide
     plugin._draw_lol_stage(image, draw, {"esports": {"results": [_stage_row(league)]}}, {"team": "HLE"}, box, colors, fonts)
 
-    title_end = box[0] + plugin._text_width(draw, "赛程与战绩", fonts["small_bold"])
-    note_start = box[2] - plugin._text_width(draw, "瑞士轮 1胜2负", fonts["tiny"])
-    between = set(image.crop((int(title_end) + 10, box[1], int(note_start) - 10, box[1] + 15)).get_flattened_data())
-    assert between - {tuple(colors["background"])}, f"no {league} mark between the title and the record"
+    assert "瑞士轮 1胜2负" in texts
+    if league == "first_stand":
+        # No mark for this event: the title stays.
+        assert "赛程与战绩" in texts
+        return
+    assert "赛程与战绩" not in texts
+    mark = image.crop((box[0], box[1], box[0] + 30, box[1] + 16))
+    assert set(mark.get_flattened_data()) - {tuple(colors["background"])}, f"no {league} mark at the section's head"
 
 
 def test_an_event_without_a_mark_leaves_the_header_clear(plugin):
