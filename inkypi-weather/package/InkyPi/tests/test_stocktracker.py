@@ -613,6 +613,18 @@ def test_holding_metrics_derive_day_change_for_window_based_providers():
     assert cash_metrics["weight"] == pytest.approx(50 / 270 * 100)
 
 
+def test_the_portfolio_total_is_printed_as_a_banknote():
+    plugin = StockTracker({"id": "stocktracker"})
+    image = Image.new("RGB", (340, 200), stocktracker_module.PANEL_GOLD)
+
+    plugin._draw_banknote_value(image, (10, 30, 330, 66), 263717.19)
+
+    colours = set(image.crop((10, 30, 330, 66)).get_flattened_data())
+    assert {stocktracker_module.BILL_GREEN, stocktracker_module.BILL_CREAM, stocktracker_module.BILL_GOLD} <= colours
+    # The plate's rounded corners leave the card showing.
+    assert image.getpixel((10, 30)) == stocktracker_module.PANEL_GOLD
+
+
 def test_summary_stats_show_account_balances_then_best_mover():
     plugin = StockTracker({"id": "stocktracker"})
     rows = [_stock("SPCX", [100.0, 110.0], 2), _stock("AAPL", [100.0, 95.0], 1)]

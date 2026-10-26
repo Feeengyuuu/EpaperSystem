@@ -108,6 +108,14 @@ GRID = (190, 177, 134)
 BORDER = INK
 ACCENT_BLUE = (0, 92, 185)  # 100B-25R PANTONE 285 family
 ACCENT_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
+# The portfolio total is printed like a banknote: a deep greenback plate with fine guilloche
+# waves, a cream double border with corner rosettes, a gold dollar seal and the figure in cream
+# with an engraved shadow. The note keeps its own colours on both pages.
+BILL_GREEN = (30, 92, 58)
+BILL_GUILLOCHE = (70, 134, 92)
+BILL_CREAM = (241, 234, 202)
+BILL_GOLD = (232, 186, 62)
+BILL_SHADOW = (8, 38, 22)
 ACCENT_ORANGE = (245, 122, 38)  # 100Y-50R PANTONE ORANGE 021 family
 CINNABAR = (222, 45, 38)  # 100Y-100R PANTONE RED 032 family
 MALACHITE = (0, 152, 82)  # 100Y-100B PANTONE 354 family
@@ -1604,14 +1612,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		)
 		change_color = self._change_color(day_percent)
 
-		value_text = self._money(total_value)
-		value_font = self._fit_font(draw, value_text, right - left - 28, 34, True, 20)
-		draw.text(
-			(left + 14, self._centered_text_y(draw, value_text, value_font, top + 52)),
-			value_text,
-			fill=colors["ink"],
-			font=value_font,
-		)
+		self._draw_banknote_value(img, (left + 10, top + 33, right - 10, top + 69), total_value)
 
 		pill = (left + 12, top + 72, right - 12, top + 96)
 		pill_center = (pill[1] + pill[3]) / 2
@@ -1672,6 +1673,50 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			fill=colors["grid"],
 			width=1,
 		)
+
+	def _draw_banknote_value(self, img, box, value):
+		"""The portfolio total as a banknote: guilloche waves on a greenback plate inside a cream
+		double border with corner rosettes, a gold dollar seal at the left, the figure in cream over
+		an engraved shadow, and two gold glints at the top right."""
+		left, top, right, bottom = (int(round(edge)) for edge in box)
+		width, height = right - left, bottom - top
+		note = Image.new("RGB", (width, height), BILL_GREEN)
+		pen = ImageDraw.Draw(note)
+		middle = height / 2
+		for phase in range(5):
+			for crest in (1, -1):
+				points = [
+					(x, middle + crest * (height / 2 - 6) * math.sin(2 * math.pi * x / 46 + phase * 0.9))
+					for x in range(0, width + 1, 2)
+				]
+				pen.line(points, fill=BILL_GUILLOCHE, width=1)
+		pen.rounded_rectangle((2, 2, width - 3, height - 3), radius=6, outline=BILL_CREAM, width=1)
+		pen.rounded_rectangle((5, 5, width - 6, height - 6), radius=4, outline=BILL_CREAM, width=1)
+		for x, y in ((5, 5), (width - 6, 5), (5, height - 6), (width - 6, height - 6)):
+			pen.ellipse((x - 3, y - 3, x + 3, y + 3), fill=BILL_GREEN, outline=BILL_CREAM, width=1)
+		seal_r = height / 2 - 7
+		seal_x = 10 + seal_r
+		pen.ellipse((seal_x - seal_r, middle - seal_r, seal_x + seal_r, middle + seal_r), fill=BILL_GOLD,
+					outline=BILL_SHADOW, width=1)
+		pen.ellipse((seal_x - seal_r + 3, middle - seal_r + 3, seal_x + seal_r - 3, middle + seal_r - 3),
+					outline=BILL_GREEN, width=1)
+		dollar_font = self._font(int(seal_r * 1.5), True)
+		pen.text((seal_x, middle), "$", fill=BILL_GREEN, font=dollar_font, anchor="mm")
+		figure = f"{value:,.2f}"
+		text_left = seal_x + seal_r + 8
+		figure_font = self._fit_font(pen, figure, width - text_left - 22, 30, True, 16)
+		figure_y = self._centered_text_y(pen, figure, figure_font, middle)
+		pen.text((text_left + 1, figure_y + 2), figure, fill=BILL_SHADOW, font=figure_font)
+		pen.text((text_left, figure_y), figure, fill=BILL_CREAM, font=figure_font)
+		for cx, cy, size in ((width - 14, 10, 5), (width - 22, 17, 3)):
+			pen.polygon(
+				[(cx, cy - size), (cx + size * 0.3, cy - size * 0.3), (cx + size, cy), (cx + size * 0.3, cy + size * 0.3),
+				 (cx, cy + size), (cx - size * 0.3, cy + size * 0.3), (cx - size, cy), (cx - size * 0.3, cy - size * 0.3)],
+				fill=BILL_GOLD,
+			)
+		mask = Image.new("L", (width, height), 0)
+		ImageDraw.Draw(mask).rounded_rectangle((0, 0, width - 1, height - 1), radius=8, fill=255)
+		img.paste(note, (left, top), mask)
 
 	def _draw_sparkline(
 		self,
