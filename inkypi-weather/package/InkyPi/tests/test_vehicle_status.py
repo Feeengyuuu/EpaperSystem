@@ -4,6 +4,7 @@ from io import BytesIO
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -2695,6 +2696,36 @@ def test_lamp_row_fits_long_english_states_with_the_portable_font(tmp_path, monk
     width = (vehicle_module.PAGE_RIGHT - vehicle_module.PAGE_LEFT) / len(LAMP_KEYS) - 6
     assert all(draw.textbbox((0, 0), lamps[key].text, font=vehicle_module._font(10, True))[2] <= width
                for key in ("link", "charging", "modes"))
+
+
+# Latin that may stay in Chinese copy: the model's name, units, and names of things to type.
+_ZH_ALLOWED_LATIN = {"Model", "Y", "API", "https", "C", "F"}
+
+
+def test_simplified_chinese_copy_has_no_english_words():
+    for key, text in vehicle_module._UI_TEXT["zh-CN"].items():
+        words = set(re.findall(r"[A-Za-z]+", re.sub(r"\{[a-z_]+\}", "", text)))
+        assert words <= _ZH_ALLOWED_LATIN, (key, text)
+    for category, values in vehicle_module._ENUM_TEXT["zh-CN"].items():
+        for key, text in values.items():
+            assert set(re.findall(r"[A-Za-z]+", text)) <= _ZH_ALLOWED_LATIN, (category, key, text)
+
+
+def test_tesla_codes_reach_the_chinese_page_as_chinese():
+    vehicle = {"exterior_color": "StealthGrey", "roof_color": "RoofColorGlass", "wheel_type": "Arachnid21Grey"}
+    climate = vehicle_module.sanitize_summary(_summary_v2())["climate"]
+    climate["cabin_overheat"] = {"mode": "FanOnly", "temp_limit": "High"}
+    charging = vehicle_module.sanitize_summary(_summary_v2())["charging"]
+    charging.update(state="Disconnected", cable_type="GB_AC")
+
+    assert vehicle_module._vehicle_appearance_text(vehicle, "zh-CN") == "星空灰/玻璃顶/21寸"
+    assert vehicle_module._vehicle_appearance_text(vehicle, "en") == "STEALTHGREY/ROOFCOLORGLASS/ARACHNID21GREY"
+    assert dict(vehicle_module._climate_cells(climate, True, {}, {}, "zh-CN"))["过热保护"] == "仅风扇/高"
+    cells = dict(vehicle_module._charging_cells({"estimated_range": None}, charging, True, {}, {}, "zh-CN"))
+    assert cells["接口"] == "国标交流"
+    assert vehicle_module._enum_text("zh-CN", "provider", "LongRange") == "长续航版"
+    assert vehicle_module._t("zh-CN", "pressure_unit_label", unit=vehicle_module._t("zh-CN", "unit_psi")) == "单位 磅"
+    assert vehicle_module._pressure_text({"value": 2.62, "unit": "bar"}, {"pressureUnit": "psi"}, {}, "zh-CN") == "38 磅"
 
 
 _ALERT_ICON_ASSETS = tuple(sorted(vehicle_module.ALERT_ICON_NAMES))

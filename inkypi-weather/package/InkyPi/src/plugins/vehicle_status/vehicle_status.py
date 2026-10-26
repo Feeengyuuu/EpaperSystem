@@ -13,6 +13,7 @@ import json
 import logging
 import math
 from pathlib import Path
+import re
 import threading
 import time
 from typing import NamedTuple
@@ -379,7 +380,6 @@ _UI_TEXT = {
         "seat_rear_left": "RL",
         "seat_rear_right": "RR",
         "seat_rear_center": "RC",
-        "not_reported_v1": "NOT REPORTED BY V1",
         "hard_warning": "HARD WARNING {positions}",
         "low_pressure": "LOW PRESSURE {positions}",
         "pressure_unknown": "STATUS UNKNOWN",
@@ -455,6 +455,7 @@ _UI_TEXT = {
         "unit_kph": "KM/H",
         "unit_bar": "BAR",
         "unit_psi": "PSI",
+        "pressure_unit_label": "{unit}",
         "unit_c": " C",
         "unit_f": " F",
         "age_seconds": "{value}S",
@@ -568,7 +569,6 @@ _UI_TEXT = {
         "seat_rear_left": "后左",
         "seat_rear_right": "后右",
         "seat_rear_center": "后中",
-        "not_reported_v1": "V1 未上报",
         "hard_warning": "严重告警 {positions}",
         "low_pressure": "胎压偏低 {positions}",
         "pressure_unknown": "状态未知",
@@ -576,8 +576,8 @@ _UI_TEXT = {
         "pressure_ok": "胎压正常",
         "updated": "{age}前更新 / {freshness}",
         "read_only_footer": "只读 / 不唤醒 / 不发送指令",
-        "location_current": "当前位置 / GOOGLE MAPS",
-        "location_last_known": "上次位置 {age} 前 / GOOGLE MAPS",
+        "location_current": "当前位置 / 谷歌地图",
+        "location_last_known": "上次位置 {age}前 / 谷歌地图",
         "location_unavailable": "位置不可用",
         "verdict_issues": "{count} 项需要注意",
         "verdict_clear": "车况良好",
@@ -643,7 +643,8 @@ _UI_TEXT = {
         "unit_mph": "英里/时",
         "unit_kph": "公里/时",
         "unit_bar": "巴",
-        "unit_psi": "PSI",
+        "unit_psi": "磅",
+        "pressure_unit_label": "单位 {unit}",
         "unit_c": "°C",
         "unit_f": "°F",
         "age_seconds": "{value}秒",
@@ -736,9 +737,16 @@ _ENUM_TEXT = {
             "false": "关闭",
             "unknown": "未知",
             "engaged": "已锁定",
+            "disengaged": "未锁定",
+            "blocking": "受阻",
             "not_installed": "未安装",
             "start_at": "定时启动",
             "depart_by": "按时出发",
+            # Cabin overheat protection's mode and the cabin temperature it acts at.
+            "fan_only": "仅风扇",
+            "high": "高",
+            "medium": "中",
+            "low": "低",
         },
         "keeper": {
             "dog": "爱犬模式",
@@ -747,24 +755,55 @@ _ENUM_TEXT = {
             "off": "关闭",
             "unknown": "未知",
         },
+        # The charge cable Tesla reports plugged in.
+        "cable": {
+            "iec": "欧标",
+            "sae": "美标",
+            "gb_ac": "国标交流",
+            "gb_dc": "国标直流",
+            "tesla": "特斯拉",
+        },
         "provider": {
             "performance": "高性能版",
+            "long_range": "长续航版",
+            "standard_range": "标准续航版",
+            "rwd": "后轮驱动版",
             "midnightsilver": "午夜银",
             "colored": "同色车顶",
             "uberturbine20": "20寸涡轮轮毂",
             "us": "美规",
+            "gb": "国标",
+            "eu": "欧规",
+            "supercharger": "超充",
+            "tesla": "特斯拉",
             "installed": "已安装",
             "not_installed": "未安装",
             "modely": "Model Y",
         },
+        # Short names for the vehicle strip: Tesla's China names for its paints, then roofs and ports.
         "provider_compact": {
+            "stealthgrey": "星空灰",
+            "pearlwhite": "珍珠白",
+            "solidblack": "纯黑",
+            "obsidianblack": "黑曜石黑",
+            "deepblue": "深海蓝",
+            "quicksilver": "冷光银",
+            "ultrared": "烈焰红",
+            "redmulticoat": "红色多涂层",
+            "midnightcherryred": "午夜樱桃红",
+            "silvermetallic": "银色",
             "midnightsilver": "午夜银",
+            "roofcolorglass": "玻璃顶",
+            "glass": "玻璃顶",
+            "black": "黑色",
             "colored": "同色",
             "uberturbine20": "20涡轮",
             "us": "美规",
+            "gb": "国标",
+            "eu": "欧规",
             "installed": "后排加热",
             "not_installed": "无天窗",
-            "my2021": "MY21",
+            "my2021": "2021款",
         },
     },
 }
@@ -2654,8 +2693,7 @@ def _charging_cells(battery, charging, extended, settings, preferences, language
             (_t(language, "rate"), _speed_text(charging["rate"], settings, preferences, language)),
         )
     cable = charging["cable_type"]
-    cable_text = (_t(language, "unknown") if cable is None or str(cable).strip().lower() == "unknown"
-                  else str(cable).upper())
+    cable_text = _enum_text(language, "cable", None if str(cable).strip().lower() == "unknown" else cable)
     return (
         (_t(language, "charge_limit"), limit_text),
         (_t(language, "last_added"), added),
@@ -2759,11 +2797,23 @@ def _vehicle_appearance_text(vehicle, language):
         for value in (
             vehicle["exterior_color"],
             vehicle["roof_color"],
-            vehicle["wheel_type"],
         )
         if value is not None
     ]
+    if vehicle["wheel_type"] is not None:
+        values.append(_wheel_text(vehicle["wheel_type"], language))
     return "/".join(values) or _t(language, "not_reported")
+
+
+def _wheel_text(value, language):
+    """A wheel by its short name, or in Chinese by its size when Tesla's code is not one we know:
+    "Arachnid21Grey" reads 21寸."""
+    text = _compact_provider_text(language, value)
+    if language == "zh-CN" and text == str(value).strip():
+        size = next((int(match) for match in re.findall(r"\d{2}", str(value)) if 15 <= int(match) <= 23), None)
+        if size is not None:
+            return f"{size}寸"
+    return text
 
 
 def _vehicle_config_text(vehicle, language):
@@ -3619,8 +3669,9 @@ def _draw_body_column(canvas, draw, vehicle, closures, tires, charging, extended
     _section_label(canvas, draw, left, COLUMN_TOP, _t(language, "body_status"), colors, "security")
     if tires is not None:
         unit = _preferred_unit(settings, preferences, "pressureUnit", "pressure_unit", {"psi", "bar"}) or "bar"
-        _right_text(draw, right, COLUMN_TOP + 2, _t(language, "unit_psi" if unit == "psi" else "unit_bar"),
-                    _font(10, True), colors["muted"])
+        unit_text = _t(language, "pressure_unit_label",
+                       unit=_t(language, "unit_psi" if unit == "psi" else "unit_bar"))
+        _right_text(draw, right, COLUMN_TOP + 2, unit_text, _font(10, True), colors["muted"])
     _draw_body_map(canvas, draw, vehicle, closures, tires, charging, settings, preferences, colors, language)
 
     # Doors, trunks and windows by where they sit on the map; the charge port has its own row.
