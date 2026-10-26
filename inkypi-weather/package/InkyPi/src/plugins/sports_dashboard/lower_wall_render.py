@@ -4,8 +4,9 @@ Two or three games get a card each, side by side. Four or more become a
 two-column board of scoreboard rows; when the best game is a final or a
 playoff game it keeps a full-width strip on top. Rows reuse each sport's
 ScorebugSpec, so clocks, team names and logos match the league panels.
-On a card each team's row carries its own colour (a slanted slab at the
-edge, a stripe along its foot) and the leader's score is set in an ink box.
+On a card the left edge carries the two teams' colours beside their rows,
+the away colour turning into the stripe between them, and the leader's
+score is set in an ink box.
 Text stays in pure ink on the six-ink panel.
 """
 
@@ -25,8 +26,8 @@ WALL_CONTROL_ROOM_MIN_WIDTH = 170
 # Up to six remaining games get a small card each (three per row); more use rows.
 WALL_TILE_LIMIT = 6
 WALL_TILE_COLUMNS = 3
-# The card's left edge carries the two teams' colours in a bar this wide, each bending into
-# its row's foot stripe through a fillet of this radius.
+# The card's left edge carries the two teams' colours in a bar this wide; the away colour
+# bends into the stripe between the rows through a fillet of this radius.
 WALL_SLAB_WIDTH = 9
 WALL_JOINT_RADIUS = 5
 
@@ -144,7 +145,8 @@ class LowerWallRenderMixin:
         clock, clock_font = self._fit_text_ellipsis(draw, clock, inner_x2 - inner_x1 - 12, 13, bold=True, min_size=9)
         self._draw_text_in_box(draw, (inner_x1 + 11, y1 + 32, inner_x2, y1 + 50), clock, clock_font, COLORS["text"])
         leader = self._wall_leader(event)
-        for (top, bottom), side, colour in zip(rows, ("a", "b"), colours):
+        # Only the away row carries a foot stripe: it divides the two rows.
+        for (top, bottom), side, colour in zip(rows, ("a", "b"), (colours[0], None)):
             self._draw_wall_team_line(image, draw, (inner_x1, top, inner_x2, bottom), event, side, spec, colour, leader == side)
         if detail:
             detail_top = rows_top + 2 * row_height
@@ -319,7 +321,8 @@ class LowerWallRenderMixin:
         draw.rounded_rectangle((inner_x2 - clock_w - 5, y1 + 3, inner_x2 + 3, y1 + 18), radius=4, fill=COLORS["panel"])
         self._draw_text_in_box(draw, (inner_x1 + 30, y1 + 3, inner_x2, y1 + 18), clock, clock_font, COLORS["text"], align="right")
         leader = self._wall_leader(event)
-        for (top, bottom), side, colour in zip(rows, ("a", "b"), colours):
+        # Only the away row carries a foot stripe: it divides the two rows.
+        for (top, bottom), side, colour in zip(rows, ("a", "b"), (colours[0], None)):
             self._draw_wall_tile_team(image, draw, (inner_x1, top, inner_x2, bottom), event, side, spec, colour, leader == side)
 
     def _draw_wall_tile_team(self, image, draw, box, event, side, spec, colour=None, leads=False):
@@ -401,8 +404,8 @@ class LowerWallRenderMixin:
         """A game's own colours on its card: a band across the top cut diagonally between
         the away and home colours, and the card's left edge in one unbroken bar of the same two
         colours, the away one flowing on from the band down to the end of its row (``rows``:
-        (top, bottom) for a, then b), the home one from there to the card's foot; each turns
-        into its row's foot stripe through a rounded joint. Returns the two colours."""
+        (top, bottom) for a, then b) and turning through a rounded joint into the stripe that
+        divides the two rows, the home one running on to the card's foot. Returns the two colours."""
         x1, y1, x2, y2 = [int(value) for value in box]
         colours = self._wall_team_colours(event, accent)
         band_bottom = split_y - 2
@@ -413,14 +416,13 @@ class LowerWallRenderMixin:
         first_end = min(int(rows[0][1]), y2 - 2)
         spans = ((y1 + 1, first_end), (first_end + 1, y2 - 1))
         edge = x1 + WALL_SLAB_WIDTH - 1
-        for (top, bottom), (_row_top, row_bottom), colour in zip(spans, rows, colours):
+        for (top, bottom), colour in zip(spans, colours):
             draw.rectangle((x1 + 1, top, edge, bottom), fill=colour)
-            # The bar bends into the row's foot stripe (drawn with the row) through a curved fillet.
-            foot = min(int(row_bottom), y2 - 2)
-            joint = WALL_JOINT_RADIUS
-            draw.pieslice((edge - joint, foot - 2 * joint, edge + joint, foot), 0, 90, fill=colour)
-            draw.rectangle((edge, foot - joint, edge + joint, foot), fill=colour)
-            draw.pieslice((edge + 1, foot - 2 * joint - 1, edge + 2 * joint + 1, foot - 1), 90, 180, fill=COLORS["panel"])
+        # The away bar bends into the stripe under its row (drawn with the row) through a fillet.
+        joint = WALL_JOINT_RADIUS
+        draw.pieslice((edge - joint, first_end - 2 * joint, edge + joint, first_end), 0, 90, fill=colours[0])
+        draw.rectangle((edge, first_end - joint, edge + joint, first_end), fill=colours[0])
+        draw.pieslice((edge + 1, first_end - 2 * joint - 1, edge + 2 * joint + 1, first_end - 1), 90, 180, fill=COLORS["panel"])
         draw.rounded_rectangle((x1, y1, x2, y2), radius=5, outline=COLORS["border"], width=2)
         draw.line((x1 + 9, band_bottom + 1, x2 - 2, band_bottom + 1), fill=COLORS["border"], width=1)
         return colours

@@ -626,9 +626,9 @@ def test_wall_cards_carry_each_teams_colour(boxes):
     # One unbroken edge: the away colour runs on from the band to its row's end, the home one after.
     assert image.getpixel((4, 21)) == (200, 16, 46)
     assert image.getpixel((4, 55)) == (29, 66, 138)
-    # Each colour bends into its row's foot through a fillet.
+    # The away colour bends into the stripe between the rows; the home one runs on to the foot.
     assert image.getpixel((10, 52)) == (200, 16, 46)
-    assert image.getpixel((10, 86)) == (29, 66, 138)
+    assert image.getpixel((10, 86)) == (255, 255, 255)
 
 
 def test_wall_marks_the_leaders_score_with_an_ink_box(boxes):
