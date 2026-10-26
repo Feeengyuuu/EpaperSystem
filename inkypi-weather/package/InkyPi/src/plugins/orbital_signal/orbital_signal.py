@@ -52,8 +52,11 @@ LAUNCH_PHOTO_CACHE_BUDGET = CacheBudget(
 )
 # Team logos, league icons and event art for the market columns (each at most 128 px).
 MARKET_MARK_CACHE_BUDGET = CacheBudget(30 * 24 * 60 * 60, 96, 8 * 1024 * 1024)
-# A matchup's two logos (px), the league icon in its chip and the leader's logo by its name.
-MATCHUP_LOGO, LEAGUE_ICON, LEADER_LOGO = 28, 14, 14
+# A matchup's two logos (px tall at most), the league icon in its chip and the leader's logo by
+# its name. The matchup stands mid-art on a paper plate of MATCHUP_PLATE_ALPHA across the column,
+# MATCHUP_PAD round each logo.
+MATCHUP_LOGO, LEAGUE_ICON, LEADER_LOGO = 38, 14, 14
+MATCHUP_PAD, MATCHUP_PLATE_ALPHA = 4, 175
 # Each market column is themed by its event's art: kept at EVENT_ART_SIDE px, laid ART_H px tall
 # across the column's top, its lowest ART_FADE share fading into the paper; the question is printed
 # over the fade, haloed in the paper colour. The leading option shows its picture (Polymarket's own,
@@ -1411,12 +1414,23 @@ class OrbitalSignal(BasePlugin):
         logos = [self._market_mark(team.get("mark"), MATCHUP_LOGO) for team in teams[:2]] if image is not None else []
         title = str(market.get("title") or "MARKET").upper()
         if len(logos) == 2 and all(logos):
-            for logo, slot in zip(logos, (cx - 26, cx + 26)):
-                image.paste(logo, (round(slot - logo.width / 2), art_box[1] + 8 + (MATCHUP_LOGO - logo.height) // 2), logo)
-            vs_font = self._font(10, True, family)
-            vs_w = draw.textbbox((0, 0), "VS", font=vs_font)[2]
-            draw.text((cx - vs_w / 2, art_box[1] + 16), "VS", font=vs_font, fill=palette["ink"], stroke_width=2,
-                      stroke_fill=palette["paper"])
+            # The matchup sits in the middle of the art above the question, on a soft paper plate.
+            middle = art_box[1] + (QUESTION_TOP - ART_TOP) // 2
+            plate_box = (art_box[0] + 4, middle - MATCHUP_LOGO / 2 - 6, art_box[2] - 4, middle + MATCHUP_LOGO / 2 + 6)
+            plate = Image.new("L", image.size, 0)
+            ImageDraw.Draw(plate).rounded_rectangle(plate_box, radius=8, fill=MATCHUP_PLATE_ALPHA)
+            image.paste(palette["paper"], (0, 0), plate)
+            vs_font = self._font(13, True, family)
+            vs_box = draw.textbbox((0, 0), "VS", font=vs_font)
+            # Each logo fits its half of the plate beside the VS (a wordmark runs wide, a crest tall).
+            slot_w = (plate_box[2] - plate_box[0] - vs_box[2] - 4 * MATCHUP_PAD) / 2
+            for logo, side in zip(logos, (-1, 1)):
+                logo = logo.copy()
+                logo.thumbnail((max(1, int(slot_w)), MATCHUP_LOGO), Image.Resampling.LANCZOS)
+                slot = cx + side * (vs_box[2] / 2 + MATCHUP_PAD + slot_w / 2)
+                image.paste(logo, (round(slot - logo.width / 2), round(middle - logo.height / 2)), logo)
+            draw.text((cx - vs_box[2] / 2, middle - (vs_box[1] + vs_box[3]) / 2), "VS", font=vs_font,
+                      fill=palette["ink"], stroke_width=2, stroke_fill=palette["paper"])
             title = " vs ".join(str(team.get("alias") or team.get("name")) for team in teams[:2]).upper()
         self._draw_question(draw, title, cx, width, top + QUESTION_TOP, palette, family)
         self._draw_league_tag(draw, market, cx, width, top + TAG_TOP, palette, family, image)
