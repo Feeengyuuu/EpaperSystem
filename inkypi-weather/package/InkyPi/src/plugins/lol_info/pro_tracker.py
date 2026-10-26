@@ -17,7 +17,8 @@ How fresh each piece is (the owner's update cadence):
   newest pictures, one drawn at random per render): CS2_PLAYER_HOURS; their bo3.gg map pool
   and career: CS2_MAP_HOURS; their team's latest win on bo3.gg: CS2_WIN_HOURS (a won match
   is read once); the CS2 board's ratings: CS2_BOARD_BATCH stale players (older than
-  CS2_BOARD_HOURS) per CS2 render.
+  CS2_BOARD_HOURS) per CS2 render; the logos of the events their matches name: HLTV's
+  event lists every CS2_EVENT_HOURS at most, only while one is missing.
 This keeps a render under ~20 Riot calls, well inside a development key's 100 per 2 minutes.
 """
 
@@ -32,6 +33,7 @@ import urllib.parse
 from runtime.refresh_contracts import TaskCancelled
 from utils.http_client import get_http_session
 
+from plugins.sports_dashboard import cs2_branding
 from plugins.sports_dashboard.common import LOLESPORTS_API_KEY
 
 from . import bo3_stats, hltv_players, lolesports_pro
@@ -56,6 +58,15 @@ CS2_MAP_HOURS = 24
 CS2_WIN_HOURS = 6
 # HLTV answers bursts with a 403/429 challenge; after one, leave it alone for this long.
 HLTV_BACKOFF_HOURS = 6
+# The logos of the events the tracked players' matches are in, for those the sports dashboard
+# does not bundle: HLTV's event lists (ongoing and upcoming, then the recent archive) are read
+# at most every CS2_EVENT_HOURS while one is missing, plus the page of up to CS2_EVENT_PAGES
+# listed events whose listing shows no logo; a logo is kept while a player's match names its
+# event, or CS2_EVENT_KEEP_DAYS after.
+CS2_EVENT_LISTS = ("/events", "/events/archive")
+CS2_EVENT_HOURS = 12
+CS2_EVENT_PAGES = 1
+CS2_EVENT_KEEP_DAYS = 14
 LOL_ESPORTS_STATE = "pro_lol_esports.json"
 LOL_SCHEDULE_MINUTES = 60
 # A series older than this no longer heads the LoL page's pro corner.
@@ -500,6 +511,8 @@ class ProTrackerMixin:
                     if self._hltv_refused(exc):
                         state["hltv_backoff_until"] = now + HLTV_BACKOFF_HOURS * 3600
                 players[name] = entry
+            if state.get("hltv_backoff_until", 0) <= now:
+                changed = self._refresh_cs2_event_logos(session, state, now) or changed
         if refresh:
             changed = self._refresh_cs2_bo3(get_http_session(), players, pick["player"], now) or changed
             changed = self._choose_cs2_photo(players, pick["player"]["nick"]) or changed
@@ -514,8 +527,72 @@ class ProTrackerMixin:
                           "team": entry.get("team") or item.get("team", ""),
                           "team_logo": entry.get("team_logo_night") or item.get("team_logo", "")})
         row = next((item for item in roster if item["nick"] == pick["player"]["nick"]), pick["player"])
-        return {"player": {**row, **(players.get(row["nick"]) or {})}, "board": board,
-                "top20_year": state.get("top20_year") or 2025}
+        player = {**row, **(players.get(row["nick"]) or {})}
+        logos = state.get("event_logos") or {}
+        player["event_logos"] = {name: logos[name]["logo"] for name, _day in self._cs2_events({row["nick"]: player})
+                                 if (logos.get(name) or {}).get("logo")}
+        return {"player": player, "board": board, "top20_year": state.get("top20_year") or 2025}
+
+    @staticmethod
+    def _cs2_events(players):
+        """Each (event, day) the players' matches name: an upcoming match's local day, "" for a result."""
+        events = set()
+        for entry in players.values():
+            for match in (entry or {}).get("upcoming") or []:
+                if match.get("event") and isinstance(match.get("unix_ms"), (int, float)):
+                    events.add((match["event"], f"{datetime.fromtimestamp(match['unix_ms'] / 1000):%Y-%m-%d}"))
+            events.update((match["event"], "") for match in (entry or {}).get("recent") or [] if match.get("event"))
+        return events
+
+    def _refresh_cs2_event_logos(self, session, state, now):
+        """Find on HLTV's event lists the logos of the events the tracked players' matches name that the
+        sports dashboard does not bundle (False when none is missing or the lists were read lately)."""
+        known = dict(state.get("event_logos") or {})
+        events = self._cs2_events(state.get("players") or {})
+        missing = {name for name, day in events if name not in known and not self._cs2_event_logo_file(name, day)}
+        if not missing or now - float(state.get("events_ts") or 0) < CS2_EVENT_HOURS * 3600:
+            return False
+        state["events_ts"] = now
+        unlisted = []
+        for path in CS2_EVENT_LISTS:
+            try:
+                rows = cs2_branding.parse_catalog(hltv_players.fetch(session, path))
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("HLTV event list %s unavailable: %s", path, exc)
+                if self._hltv_refused(exc):
+                    state["hltv_backoff_until"] = now + HLTV_BACKOFF_HOURS * 3600
+                    break
+                continue
+            for row in rows:
+                if row["name"] in missing and row["name"] not in known:
+                    # The dark-page copy first: the CS2 page is dark in both modes.
+                    logo = row.get("event_logo_url_dark") or row.get("event_logo_url")
+                    if logo:
+                        known[row["name"]] = {"logo": logo, "seen": now}
+                    else:
+                        unlisted.append(row)
+        # A big event's listing shows no logo; its own page does.
+        for row in unlisted[:CS2_EVENT_PAGES]:
+            if state.get("hltv_backoff_until", 0) > now:
+                break
+            try:
+                logos = cs2_branding.parse_event_logos(hltv_players.fetch(session, row["path"]), row["name"])
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("HLTV event page %s unavailable: %s", row["path"], exc)
+                if self._hltv_refused(exc):
+                    state["hltv_backoff_until"] = now + HLTV_BACKOFF_HOURS * 3600
+                continue
+            if logos:
+                known[row["name"]] = {"logo": logos.get("event_logo_url_dark") or logos["event_logo_url"], "seen": now}
+        named = {name for name, _day in events}
+        state["event_logos"] = {name: {**value, "seen": now if name in named else value.get("seen", now)}
+                                for name, value in known.items()
+                                if name in named or now - float(value.get("seen") or 0) <= CS2_EVENT_KEEP_DAYS * 86400}
+        return True
 
     def _refresh_cs2_bo3(self, session, players, player, now):
         """Re-read the shown player's bo3.gg numbers that went stale: the map pool and career after

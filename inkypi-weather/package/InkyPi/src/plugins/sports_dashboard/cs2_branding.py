@@ -248,6 +248,13 @@ def local_event_branding(card):
     return _bundled_paths(event, "LOCAL") if event else {}
 
 
+def local_named_branding(name):
+    """Bundled logo of the one edition HLTV calls exactly ``name``, for a match listed without its date."""
+    key = normalized_name(name)
+    events = [event for event in _local_events() if key and normalized_name(event.get("name")) == key]
+    return _bundled_paths(events[0], "LOCAL") if len(events) == 1 else {}
+
+
 def local_family_branding(card):
     """The bundled series logo of a recent past edition, when nothing edition-specific exists."""
     event = family_match_event(_local_events(), _local_main(card))

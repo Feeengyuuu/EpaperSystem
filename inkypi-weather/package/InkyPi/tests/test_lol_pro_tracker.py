@@ -528,6 +528,85 @@ def test_each_cs2_render_draws_another_of_the_newest_pictures_and_a_redraw_keeps
     assert plugin._cs2_data(pick, refresh=False)["player"]["photo_pick"] == shown[-1]
 
 
+EVENT_LIST = ('<a href="/events/9434/rlg-tesla-cup-2026" class="a-reset ongoing-event"><img alt="RLG Tesla Cup 2026" '
+              'src="https://img-cdn.hltv.org/eventlogo/tesla.png" class="logo" title="RLG Tesla Cup 2026">'
+              '<div class="event-name-small"><div class="text-ellipsis">RLG Tesla Cup 2026</div></div>'
+              '<span data-unix="1793098800000"></span><span data-unix="1793271600000"></span></a>'
+              '<a href="/events/9500/big-event-2026" class="a-reset big-event"><div class="big-event-name">Big Event 2026'
+              '</div><span data-unix="1794000000000"></span><span data-unix="1794500000000"></span></a>')
+BIG_EVENT_PAGE = ('<img alt="Big Event 2026" src="https://img-cdn.hltv.org/eventlogo/big-day.png" class="event-logo day-only">'
+                  '<img alt="Big Event 2026" src="https://img-cdn.hltv.org/eventlogo/big-night.png" '
+                  'class="event-logo night-only">')
+
+
+def _cs2_state_with_matches(upcoming, recent):
+    """Every Top 20 player's page and donk's bo3.gg numbers fresh, donk's matches as given."""
+    now = time.time()
+    players = {row["nick"]: {"page_ts": now} for row in pro_tracker.CS2_TOP20_2025}
+    players["donk"].update(upcoming=upcoming, recent=recent, map_pool_ts=now, win_ts=now)
+    return {"top20_ts": now, "players": players}
+
+
+def test_cs2_event_logos_come_from_hltvs_event_lists_for_events_without_a_bundled_logo(plugin, monkeypatch, tmp_path):
+    calls = []
+    pages = {"/events": EVENT_LIST, "/events/archive": "", "/events/9500/big-event-2026": BIG_EVENT_PAGE}
+
+    def fetch(_session, path, timeout=None):
+        calls.append(path)
+        return pages[path]
+
+    monkeypatch.setattr(hltv_players, "fetch", fetch)
+    monkeypatch.setattr(pro_tracker, "get_http_session", lambda: None)
+
+    def day(*date):
+        return time.mktime((*date, 12, 0, 0, 0, 0, -1)) * 1000
+
+    # IEM Beijing and PGL Masters Bucharest are bundled with the sports dashboard; the rest are not.
+    state = _cs2_state_with_matches(
+        [{"opponent": "Alliance", "event": "RLG Tesla Cup 2026", "unix_ms": day(2026, 10, 27)},
+         {"opponent": "NAVI", "event": "IEM Beijing 2026", "unix_ms": day(2026, 11, 3)},
+         {"opponent": "FaZe", "event": "Big Event 2026", "unix_ms": day(2026, 11, 10)}],
+        [{"opponent": "MOUZ", "event": "PGL Masters Bucharest 2026", "score": "2 : 1", "won": True},
+         {"opponent": "9z", "event": "Nowhere Cup 2026", "score": "0 : 2", "won": False}])
+    (tmp_path / pro_tracker.CS2_STATE).write_text(json.dumps(state), encoding="utf-8")
+    pick = next(item for item in plugin._tracked_pool({}) if item["kind"] == "cs2" and item["player"]["nick"] == "donk")
+
+    player = plugin._cs2_data(pick)["player"]
+
+    # The listing's logo where it shows one, else the event's own page (its dark-page copy).
+    assert calls == ["/events", "/events/archive", "/events/9500/big-event-2026"]
+    assert player["event_logos"] == {"RLG Tesla Cup 2026": "https://img-cdn.hltv.org/eventlogo/tesla.png",
+                                     "Big Event 2026": "https://img-cdn.hltv.org/eventlogo/big-night.png"}
+    # An event found nowhere waits CS2_EVENT_HOURS before the lists are read again.
+    calls.clear()
+    assert plugin._cs2_data(pick)["player"]["event_logos"]["RLG Tesla Cup 2026"].endswith("tesla.png") and calls == []
+    # With every event bundled, the lists are not read at all.
+    state = _cs2_state_with_matches([{"opponent": "NAVI", "event": "IEM Beijing 2026", "unix_ms": day(2026, 11, 3)}],
+                                    [{"opponent": "MOUZ", "event": "PGL Masters Bucharest 2026", "score": "2 : 1"}])
+    (tmp_path / pro_tracker.CS2_STATE).write_text(json.dumps(state), encoding="utf-8")
+    assert plugin._cs2_data(pick)["player"]["event_logos"] == {} and calls == []
+
+
+def test_every_cs2_match_shows_its_events_logo(plugin):
+    green = (10, 200, 90)
+    plugin._image_from_url = lambda url, label="": (Image.new("RGBA", (40, 40), (*green, 255))
+                                                    if "eventlogo" in str(url) else None)
+    colors = plugin._render_colors({"mode": "night"})
+    image = Image.new("RGB", (800, 480), colors["background"])
+    player = {"upcoming": [{"opponent": "Alliance", "event": "RLG Tesla Cup 2026", "unix_ms": 1793098800000}],
+              "recent": [{"opponent": "MOUZ", "event": "RLG Tesla Cup 2026", "score": "2 : 1", "won": True}],
+              "event_logos": {"RLG Tesla Cup 2026": "https://img-cdn.hltv.org/eventlogo/tesla.png"}}
+
+    plugin._draw_cs2_matches(image, ImageDraw.Draw(image), player, (228, 168, 388, 462), colors, plugin._pro_fonts())
+
+    def has_logo(box):
+        return green in [colour for _count, colour in image.crop(box).getcolors(maxcolors=1 << 16)]
+
+    # Before the upcoming match's event name, and at the end of the result's row.
+    assert has_logo((228, 168 + 47, 228 + pro_render.CS2_EVENT_LOGO[0], 168 + 62))
+    assert has_logo((388 - pro_render.CS2_RESULT_EVENT_LOGO[0], 168 + 64, 388, 168 + 84))
+
+
 def test_the_loadout_leads_with_the_awp_only_for_a_sniper():
     def slot(weapon):
         return {"weapon": weapon, "skin": "x", "image": f"https://skins-cdn.hltv.org/skin/{weapon}.png"}

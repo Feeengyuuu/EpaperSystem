@@ -80,8 +80,9 @@ DRAGON_COLOURS = {"infernal": (226, 88, 52), "mountain": (176, 132, 86), "ocean"
 # The event's official mark heading the pro's schedule stands this tall at most.
 EVENT_MARK_HEIGHT = 16
 LOL_STAGE_DAYS = 45
-# An upcoming match's event logo fits this box before the event's name.
-CS2_EVENT_LOGO = (30, 13)
+# A match's event logo fits this box before an upcoming match's event name, and the narrower
+# one at a result's end, which leaves the opponent's name its room.
+CS2_EVENT_LOGO, CS2_RESULT_EVENT_LOGO = (30, 15), (24, 15)
 # HLTV's own mark leads the Top 20 board's title.
 HLTV_LOGO, BOARD_LOGO_SIZE = "hltv-logo.png", 22
 # The CS2 page's middle carries the loadout, so its game logo keeps the band's top-left corner
@@ -1196,6 +1197,8 @@ class ProRenderMixin:
         pool = player.get("map_pool") or []
         win = self._cs2_recent_win(player)
         slot = bool(win or player.get("photos"))
+        # Every match names its event, each led (or a result ended) by that event's logo.
+        links = player.get("event_logos") or {}
         self._text(draw, (x0, y0), "赛程与战绩", fonts["small_bold"], colors["muted"])
         y = y0 + 20
         # With the slot below to fill, the next match is enough; without it, the next two.
@@ -1212,16 +1215,17 @@ class ProRenderMixin:
             self._single(draw, (name_x, y + 12), match.get("opponent"), fonts["small_bold"], colors["ink"],
                          x1 - name_x, 8)
             event_x = x0
-            mark = self._cs2_event_logo(match.get("event"), when)
+            mark = self._cs2_event_logo(match.get("event"), when, links)
             if mark is not None:
-                image.paste(mark, (x0, y + 28 + (CS2_EVENT_LOGO[1] - mark.height) // 2), mark)
+                image.paste(mark, (x0, y + 27 + (CS2_EVENT_LOGO[1] - mark.height) // 2), mark)
                 event_x += mark.width + 4
             self._single(draw, (event_x, y + 27), match.get("event"), fonts["tiny"], colors["muted"], x1 - event_x, 7)
             y += 44
         own_logo = self._cs2_team_logo(player.get("team_logo_night") or player.get("team_logo"), player.get("team"), 16)
         # The latest win takes the slot's room, so one result fewer is listed above it.
         for match in (player.get("recent") or [])[:3 if win else 4]:
-            self._draw_cs2_result(image, draw, match, own_logo, (x0, y, x1), colors, fonts)
+            self._draw_cs2_result(image, draw, match, own_logo, (x0, y, x1), colors, fonts,
+                                  event_logo=self._cs2_event_logo(match.get("event"), None, links, CS2_RESULT_EVENT_LOGO))
             y += 24
             if y > y1 - 20:
                 break
@@ -1390,28 +1394,44 @@ class ProRenderMixin:
                      colors["ink"] if won else colors["muted"], kd_right - 30 - name_x, 8)
 
     @staticmethod
-    @lru_cache(maxsize=16)
+    @lru_cache(maxsize=32)
     def _cs2_event_logo_file(name, day):
-        """The bundled logo of the event (its dark-page copy first) the sports dashboard keeps, or ""."""
-        card = {"event_name": name, "main": {"event_name": name, "start": f"{day}T12:00:00+00:00"}}
-        paths = cs2_branding.local_event_branding(card) or cs2_branding.local_family_branding(card)
+        """The bundled logo of the event (its dark-page copy first) the sports dashboard keeps, or "".
+        A match listed without its date (a result) is matched on HLTV's exact name alone."""
+        if not day:
+            paths = cs2_branding.local_named_branding(name)
+        else:
+            card = {"event_name": name, "main": {"event_name": name, "start": f"{day}T12:00:00+00:00"}}
+            paths = cs2_branding.local_event_branding(card) or cs2_branding.local_family_branding(card)
         return str(paths.get("event_logo_path_dark") or paths.get("event_logo_path") or "")
 
-    def _cs2_event_logo(self, name, when):
-        """The event's logo contained in CS2_EVENT_LOGO, or None when none is bundled."""
-        path = self._cs2_event_logo_file(str(name or ""), f"{when:%Y-%m-%d}") if name else ""
-        if not path or not os.path.isfile(path):
+    def _cs2_event_logo(self, name, when, links=None, box=CS2_EVENT_LOGO):
+        """The event's logo contained in ``box``: the bundled one, else the one HLTV's event lists gave
+        for that name (``links``); None when neither has one."""
+        if not name:
             return None
-        try:
-            with Image.open(path) as source:
-                logo = self._trim_alpha(source.convert("RGBA"))
-        except OSError:
+        logo = None
+        path = self._cs2_event_logo_file(str(name), f"{when:%Y-%m-%d}" if when else "")
+        if path and os.path.isfile(path):
+            try:
+                with Image.open(path) as source:
+                    logo = source.convert("RGBA")
+            except OSError:
+                logo = None
+        if logo is None and (links or {}).get(name):
+            logo = self._image_from_url(links[name], name)
+        if logo is None:
             return None
-        return ImageOps.contain(logo, CS2_EVENT_LOGO, method=Image.Resampling.LANCZOS) if logo.width > 1 else None
+        logo = self._trim_alpha(logo.convert("RGBA"))
+        return ImageOps.contain(logo, box, method=Image.Resampling.LANCZOS) if logo.width > 1 else None
 
-    def _draw_cs2_result(self, image, draw, match, own_logo, line, colors, fonts, team_logo=None):
-        """One result as HLTV lists them: a 胜/负 tag, then both logos around the score; a loss is greyed out."""
+    def _draw_cs2_result(self, image, draw, match, own_logo, line, colors, fonts, team_logo=None, event_logo=None):
+        """One result as HLTV lists them: a 胜/负 tag, then both logos around the score, and the event's
+        logo at the row's end; a loss is greyed out."""
         x0, y, x1 = line
+        if event_logo is not None:
+            image.paste(event_logo, (x1 - event_logo.width, y + 3 + (16 - event_logo.height) // 2), event_logo)
+            x1 -= event_logo.width + 4
         won = bool(match.get("won"))
         draw.rounded_rectangle((x0, y + 2, x0 + 18, y + 20), radius=4, fill=colors["green"] if won else colors["red"])
         label = "胜" if won else "负"
