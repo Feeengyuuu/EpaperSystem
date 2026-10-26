@@ -217,6 +217,9 @@ ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
 ICON_MIN_CONTRAST = 2.0
 STAT_ICON_SIZE = 26
 LAYER_ICON_SIZE = 18
+# The print's progress as a game-style gauge: PROGRESS_SEGMENTS slanted blocks (slant a share of
+# the bar's height) PROGRESS_SEGMENT_GAP px apart.
+PROGRESS_SEGMENTS, PROGRESS_SEGMENT_SLANT, PROGRESS_SEGMENT_GAP = 20, 0.45, 3
 # The stage line's icon by what the printer is doing, first match wins (lower-case stage words).
 STAGE_ICONS = (
     (("paused", "pause"), "paused"),
@@ -1036,7 +1039,7 @@ class BambuMonitor(BasePlugin):
                 self._paste_icon(canvas, "layers", x1 - layers_w - 4, top + 43, LAYER_ICON_SIZE, align="right")
             else:
                 self._paste_icon(canvas, "layers", x1, top + 24, LAYER_ICON_SIZE, align="right")
-        self._draw_progress_bar(draw, (x0, top + 78, x1, top + 92), progress / 100, state_color, ticks=10)
+        self._draw_segmented_bar(draw, (x0, top + 78, x1, top + 92), progress / 100, state_color, PROGRESS_SEGMENTS)
 
         chip_w = (x1 - x0 - 12) // 2
         self._draw_stat_chip(draw, (x0, top + 104, x0 + chip_w, top + 144), "REMAINING",
@@ -1193,6 +1196,28 @@ class BambuMonitor(BasePlugin):
             text_x += 12
         draw.text((text_x, y + height / 2), text, fill=ink, font=font, anchor="lm")
         return box
+
+    def _draw_segmented_bar(self, draw, box, fraction, color, segments):
+        """A game-style gauge: ``segments`` slanted blocks with gaps between them, those done in
+        ``color``, the one under way filled as far as it has got, the rest in the track's tone."""
+        left, top, right, bottom = box
+        track = _blend(_active_color("rule", RULE), _active_color("panel", PANEL), 0.55)
+        skew = (bottom - top) * PROGRESS_SEGMENT_SLANT
+        pitch = (right - left - skew + PROGRESS_SEGMENT_GAP) / segments
+        width = pitch - PROGRESS_SEGMENT_GAP
+        done = max(0.0, min(1.0, fraction)) * segments
+
+        def block(x0, x1):
+            return [(x0 + skew, top), (x1 + skew, top), (x1, bottom), (x0, bottom)]
+
+        for index in range(segments):
+            x0 = left + index * pitch
+            draw.polygon(block(x0, x0 + width), fill=track)
+            share = max(0.0, min(1.0, done - index))
+            if share >= 1:
+                draw.polygon(block(x0, x0 + width), fill=color)
+            elif share > 0:
+                draw.polygon(block(x0, x0 + max(2.0, width * share)), fill=color)
 
     def _draw_progress_bar(self, draw, box, fraction, color, ticks=0):
         left, top, right, bottom = box
