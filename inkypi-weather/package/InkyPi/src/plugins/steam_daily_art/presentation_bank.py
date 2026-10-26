@@ -26,6 +26,7 @@ from utils.safe_image import ImageLimitError, safe_open_image
 from plugins.base_plugin import presentation_bank_kit as kit
 
 
+STEAM_SHELF_RENDER_VERSION = "info-shelf-v1"
 STEAM_MEDIA_HOST_SUFFIXES = (
     "steamstatic.com",
     "steamcontent.com",
@@ -56,6 +57,12 @@ def settings_key(settings):
         "country_code": str(settings.get("countryCode") or "US").strip().upper()[:2],
         "language": str(settings.get("language") or "english").strip().lower(),
         "show_caption": str(settings.get("showCaption") or "false").strip().lower(),
+        # The info shelf and the owner's account change the pixels; images banked before
+        # them (or with other choices) are replaced.
+        "info_shelf": str(settings.get("infoShelf") or "on").strip().lower(),
+        "personalize": str(settings.get("personalize") or "on").strip().lower(),
+        "steam_id": str(settings.get("steamId") or "").strip(),
+        "render": STEAM_SHELF_RENDER_VERSION,
     }
     return _json_hash(payload)
 

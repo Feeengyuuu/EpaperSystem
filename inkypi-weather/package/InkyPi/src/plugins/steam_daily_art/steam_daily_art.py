@@ -36,6 +36,8 @@ from io import BytesIO
 from urllib.parse import urlencode, urljoin
 
 from plugins.pixiv_r18_ranking.pixiv_r18_ranking import _PinnedHTTPSResponse
+from plugins.steam_daily_art import shelf as info_shelf
+from runtime.refresh_contracts import TaskCancelled
 from security.ssrf import get_ssrf_policy
 
 from plugins.context_cache import write_context
@@ -51,7 +53,35 @@ STEAM_STORE_ITEMS_URL = "https://api.steampowered.com/IStoreBrowseService/GetIte
 STEAM_STORE_ASSET_ROOT = "https://shared.akamai.steamstatic.com/store_item_assets/"
 STEAM_JSON_HOSTS = ("store.steampowered.com", "api.steampowered.com")
 STEAM_DAILY_ART_VERSION = "fresh-frontpage-ranked-live-list-v1"
-STEAM_DAILY_ART_RENDER_VERSION = "same-game-lit-scene-v2"
+STEAM_DAILY_ART_RENDER_VERSION = "info-shelf-personal-v3"
+# The info shelf and the owner's Steam account (wishlist, library): Chinese store facts,
+# each cached for its own while.
+STEAM_WISHLIST_URL = "https://api.steampowered.com/IWishlistService/GetWishlist/v1/"
+STEAM_OWNED_GAMES_URL = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/"
+STEAM_TAG_LIST_URL = "https://api.steampowered.com/IStoreService/GetTagList/v1/"
+SHELF_LANGUAGE = "schinese"
+SHELF_DETAILS_TTL = 6 * 3600
+WISHLIST_TTL = 6 * 3600
+WISHLIST_DEALS_TTL = 3 * 3600
+OWNED_TTL = 24 * 3600
+TAG_NAMES_TTL = 30 * 24 * 3600
+STORE_ITEMS_BATCH = 100
+MAX_WISHLIST_ITEMS = 1000
+MAX_WISHLIST_DEALS = 24
+MAX_SHELF_DETAILS = 400
+MAX_BLURBS = 400
+MAX_SHELF_CACHE_BYTES = 2 * 1024 * 1024
+NEW_RELEASE_DAYS = 14
+# Steam's English blurbs become one Chinese line with the model the news brief uses.
+BLURB_MODEL = "gpt-5-mini"
+BLURB_TIMEOUT_SECONDS = 25
+BLURB_MAX_CHARS = 36
+BLURB_INSTRUCTIONS = (
+    "把每个 Steam 游戏的英文简介改写成一句简体中文介绍：说清楚这是什么游戏、怎么玩，"
+    f"不超过 {BLURB_MAX_CHARS - 4} 个汉字，不要引号、书名号和句末标点。"
+    "只返回一个 JSON 对象：键是原样的 appid，值是这句中文。"
+)
+CARD_SHELF_HEIGHT = 112
 STEAM_ITEM_KINDS = {0: "app", 1: "sub", 2: "bundle"}
 MAX_STORE_ITEM_BYTES = 512 * 1024
 MAX_ART_GAMES = 3
@@ -81,6 +111,24 @@ STEAM_MEDIA_HOST_SUFFIXES = (
     "steamusercontent.com",
     "akamaihd.net",
 )
+
+
+def _has_cjk(text):
+    """Whether the text has Chinese characters (the CJK unified ideographs)."""
+    return any(0x4E00 <= ord(char) <= 0x9FFF for char in str(text or ""))
+
+
+def _first_sentence(text, limit=90):
+    """The description's first sentence (when it is not too short), cut to ``limit`` characters,
+    an English one at a word."""
+    text = " ".join(str(text or "").split())
+    ends = [index for index in (text.find(mark) for mark in ("。", "！", "？", ". ", "! ", "? ")) if index >= 8]
+    if ends:
+        text = text[:min(ends)]
+    if len(text) > limit:
+        cut = text[:limit]
+        text = cut if _has_cjk(cut) or " " not in cut else cut.rsplit(" ", 1)[0]
+    return text.rstrip(".。")
 
 
 class _OptionalMediaUnavailable(RuntimeError):
@@ -192,6 +240,15 @@ class SteamDailyArt(BasePlugin):
         return instance_profile_fingerprint(base, instance_uuid or "unbound-preview")
 
     def generate_image(self, settings, device_config):
+        # The shelf's keys (Steam, OpenAI) and the device's clock come from its config.
+        previous = getattr(self, "_active_device_config", None)
+        self._active_device_config = device_config
+        try:
+            return self._generate_image(settings, device_config)
+        finally:
+            self._active_device_config = previous
+
+    def _generate_image(self, settings, device_config):
         settings = settings or {}
         if self.presentation_mode(settings) is PresentationMode.PREPARED_BANK:
             if get_presentation_instance_uuid(settings) is None:
@@ -428,10 +485,15 @@ class SteamDailyArt(BasePlugin):
             self._check_data_deadline(deadline)
             data = self._fetch_featured_categories(settings)
             self._check_data_deadline(deadline)
-            items = self._collect_items(data, settings.get("sourceCategory", "fresh_frontpage"))
+            items = self._personalize(self._collect_items(data, settings.get("sourceCategory", "fresh_frontpage")), settings)
             if not items:
                 raise RuntimeError("No Steam promotional items found.")
             existing = {record["artwork_id"] for record in profile["records"]}
+            # The shelf's facts for every candidate in one store lookup (and one AI call).
+            self._prepare_shelf(
+                [item for item in items if self._item_identity(item) not in existing][:MAX_DATA_ATTEMPTS],
+                settings,
+            )
             attempts = 0
             for item in items:
                 if attempts >= MAX_DATA_ATTEMPTS or downloaded >= MAX_DATA_NEW_MEDIA:
@@ -490,11 +552,28 @@ class SteamDailyArt(BasePlugin):
         )
         tiers = (ART_SCENE, ART_TITLED) if scenes_first else (ART_TITLED, ART_SCENE)
         image_url, image, art_kind = self._choose_artwork(item, settings, dimensions, tiers)
+        info = self._shelf_info(item, settings)
+        band = None
+        if info is not None:
+            band = info_shelf.find_flat_band(image)
+            if band is None and art_kind == ART_TITLED:
+                # A capsule's painted title may sit at its foot: the art moves up whole onto
+                # a mat in its own hue, and the shelf takes the mat below it.
+                image, band = info_shelf.card(image, CARD_SHELF_HEIGHT)
         if logo is not None and art_kind == ART_SCENE:
-            image = self._overlay_logo(image, logo, settings)
+            if info is not None:
+                # The logo finds its place above the shelf.
+                top = info_shelf.shelf_top(image.height, band)
+                upper = self._overlay_logo(image.crop((0, 0, image.width, top)), logo, settings)
+                image = image.copy()
+                image.paste(upper, (0, 0))
+            else:
+                image = self._overlay_logo(image, logo, settings)
         else:
             logo_url = None
-        if settings.get("showCaption") == "true":
+        if info is not None:
+            image = info_shelf.draw_shelf(image, info, band)
+        elif settings.get("showCaption") == "true":
             image = self._add_caption(image, item.get("name", "Steam"))
         return image_url, logo_url, image
 
@@ -585,10 +664,18 @@ class SteamDailyArt(BasePlugin):
 
     def _fit_artwork(self, image, dimensions, tier):
         target_width, target_height = dimensions
+        resample = Image.Resampling.LANCZOS
+        grid = info_shelf.pixel_grid(image)
+        if grid is not None:
+            # Pixel art at its own grid, enlarged without smoothing so its pixels stay square.
+            image, resample = info_shelf.to_native(image, grid), Image.Resampling.NEAREST
+        elif max(target_width / image.width, target_height / image.height) > 1 and info_shelf.is_hard_edged(image):
+            # Hard-edged art enlarged by an uneven factor still keeps its edges sharp.
+            resample = Image.Resampling.NEAREST
         if tier == ART_TITLED and image.width / image.height > target_width / target_height * 1.12:
             # Cropping a wide header to the display would cut its painted title.
-            return self._contain_on_canvas(image, dimensions)
-        return self._smart_cover(image, dimensions)
+            return self._contain_on_canvas(image, dimensions, resample)
+        return self._smart_cover(image, dimensions, resample)
 
     @staticmethod
     def _scene_light(image, dimensions):
@@ -611,7 +698,7 @@ class SteamDailyArt(BasePlugin):
 
     def _items_without_state(self, settings):
         data = self._fetch_featured_categories(settings)
-        items = self._collect_items(data, settings.get("sourceCategory", "fresh_frontpage"))
+        items = self._personalize(self._collect_items(data, settings.get("sourceCategory", "fresh_frontpage")), settings)
         if not items:
             raise RuntimeError("No Steam promotional items found.")
         return items
@@ -839,6 +926,9 @@ class SteamDailyArt(BasePlugin):
             settings.get("countryCode", "US"),
             settings.get("language", "english"),
             settings.get("showCaption", "false"),
+            settings.get("infoShelf", "on"),
+            settings.get("personalize", "on"),
+            settings.get("steamId", ""),
         ]
         return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
 
@@ -906,6 +996,449 @@ class SteamDailyArt(BasePlugin):
                 STEAM_STORE_ASSET_ROOT + path[:-len(".jpg")] + ".600x338.jpg" + suffix,
             ))
         return found
+
+    # The info shelf and the owner's Steam account ------------------------------------
+
+    @staticmethod
+    def _setting_on(settings, key):
+        return str((settings or {}).get(key) or "on").strip().lower() not in {"off", "false", "hide", "0"}
+
+    def _env_key(self, name):
+        device_config = getattr(self, "_active_device_config", None)
+        if device_config is not None and hasattr(device_config, "load_env_key"):
+            return str(device_config.load_env_key(name) or "").strip()
+        return os.getenv(name, "").strip()
+
+    def _steam_id(self, settings):
+        """The owner's 64-bit Steam id: the plugin's setting, else the Steam profile page's."""
+        value = str((settings or {}).get("steamId") or "").strip()
+        if not value:
+            from plugins.steam_profile_dashboard.steam_profile_dashboard import DEFAULT_STEAM_ID
+
+            value = DEFAULT_STEAM_ID
+        return value if value.isdecimal() and len(value) == 17 else ""
+
+    def _shelf_cache_path(self):
+        return Path(self._cache_dir()) / "shelf-cache.json"
+
+    def _read_shelf_cache(self):
+        path = self._shelf_cache_path()
+        try:
+            if path.stat().st_size > MAX_SHELF_CACHE_BYTES:
+                return {}
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _write_shelf_cache(self, data):
+        text = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        if len(text.encode("utf-8")) > MAX_SHELF_CACHE_BYTES:
+            # The store facts are the bulk and the cheapest to fetch again.
+            text = json.dumps({**data, "details": {}}, ensure_ascii=False, separators=(",", ":"))
+        path = self._shelf_cache_path()
+        temp = path.with_name(path.name + ".tmp")
+        try:
+            temp.write_text(text, encoding="utf-8")
+            os.replace(temp, path)
+        except OSError as exc:
+            logger.warning("Steam shelf cache could not be written: %s", exc)
+
+    def _cached_lookup(self, name, key, ttl, fetch):
+        """A lookup kept in the shelf cache: the stored value while fresh for ``key``, else
+        ``fetch()``'s; when that fails, the stored value (however old) or None."""
+        entry = self._read_shelf_cache().get(name)
+        entry = entry if isinstance(entry, dict) and entry.get("key") == key else {}
+        if entry and time.time() - float(entry.get("at") or 0) < ttl:
+            return entry.get("value")
+        try:
+            value = fetch()
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            # Only the kind of failure: the owned-games URL carries the Steam key.
+            logger.warning("Steam %s lookup failed: %s", name, type(exc).__name__)
+            return entry.get("value")
+        cache = self._read_shelf_cache()
+        cache[name] = {"key": key, "at": time.time(), "value": value}
+        self._write_shelf_cache(cache)
+        return value
+
+    def _fetch_profile_json(self, url, label):
+        """Every shelf and account lookup goes through here."""
+        return self._fetch_json(url, label=label, max_bytes=MAX_JSON_BYTES)
+
+    def _store_items(self, appids, country, data_request):
+        """GetItems for these apps with the store's simplified Chinese text."""
+        query = {
+            "ids": [{"appid": int(appid)} for appid in appids],
+            "context": {"language": SHELF_LANGUAGE, "country_code": country},
+            "data_request": data_request,
+        }
+        url = f"{STEAM_STORE_ITEMS_URL}?{urlencode({'input_json': json.dumps(query, separators=(',', ':'))})}"
+        response = self._fetch_profile_json(url, "store items").get("response")
+        items = response.get("store_items") if isinstance(response, dict) else None
+        return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+
+    def _store_details(self, appids, settings):
+        """The shelf's store facts per app id, those not fetched within SHELF_DETAILS_TTL asked
+        for in one batch; older facts stand when the lookup fails."""
+        country, _language = self._store_locale(settings)
+        wanted = list(dict.fromkeys(str(appid) for appid in appids if str(appid or "").isdecimal()))
+        cache = self._read_shelf_cache()
+        details = cache.get("details") if isinstance(cache.get("details"), dict) else {}
+        now = time.time()
+
+        def fresh(appid):
+            entry = details.get(appid)
+            return (
+                isinstance(entry, dict)
+                and entry.get("country") == country
+                and now - float(entry.get("at") or 0) < SHELF_DETAILS_TTL
+            )
+
+        stale = [appid for appid in wanted if not fresh(appid)]
+        if stale:
+            try:
+                entries = self._store_items(
+                    stale[:STORE_ITEMS_BATCH],
+                    country,
+                    {"include_basic_info": True, "include_tag_count": 6, "include_reviews": True, "include_release": True},
+                )
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("Steam store details lookup failed: %s", type(exc).__name__)
+            else:
+                for entry in entries:
+                    parsed = self._parse_store_details(entry)
+                    if parsed is not None:
+                        details[str(entry.get("appid"))] = {**parsed, "at": now, "country": country}
+                details = dict(sorted(details.items(), key=lambda pair: float(pair[1].get("at") or 0))[-MAX_SHELF_DETAILS:])
+                cache = self._read_shelf_cache()
+                cache["details"] = details
+                self._write_shelf_cache(cache)
+        return {appid: details[appid] for appid in wanted if isinstance(details.get(appid), dict)}
+
+    @staticmethod
+    def _parse_store_details(entry):
+        if not isinstance(entry, dict) or entry.get("success") != 1:
+            return None
+
+        def number(value):
+            try:
+                return int(value or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        basic = entry.get("basic_info") if isinstance(entry.get("basic_info"), dict) else {}
+        reviews = (entry.get("reviews") or {}).get("summary_filtered") if isinstance(entry.get("reviews"), dict) else None
+        reviews = reviews if isinstance(reviews, dict) else {}
+        release = entry.get("release") if isinstance(entry.get("release"), dict) else {}
+        option = entry.get("best_purchase_option") if isinstance(entry.get("best_purchase_option"), dict) else {}
+        developers = basic.get("developers") if isinstance(basic.get("developers"), list) else []
+        tags = entry.get("tags") if isinstance(entry.get("tags"), list) else []
+        review_count = number(reviews.get("review_count"))
+        return {
+            "name": " ".join(str(entry.get("name") or "").split())[:120],
+            "description": " ".join(str(basic.get("short_description") or "").split())[:400],
+            "developer": next(
+                (str(item["name"]).strip() for item in developers if isinstance(item, dict) and item.get("name")),
+                "",
+            )[:60],
+            "tags": [str(tag["tagid"]) for tag in tags if isinstance(tag, dict) and tag.get("tagid")][:6],
+            "review_label": str(reviews.get("review_score_label") or "")[:20] if review_count else "",
+            "review_percent": number(reviews.get("percent_positive")),
+            "review_count": review_count,
+            "release": number(release.get("steam_release_date")),
+            "coming_soon": bool(release.get("is_coming_soon")),
+            "free": bool(entry.get("is_free")),
+            "discount": 0 if option.get("hide_discount_pct_for_compliance") else number(option.get("discount_pct")),
+            "final": str(option.get("formatted_final_price") or "")[:24],
+            "original": str(option.get("formatted_original_price") or "")[:24],
+        }
+
+    def _tag_names(self):
+        """Steam's tag names in simplified Chinese by tag id."""
+
+        def fetch():
+            payload = self._fetch_profile_json(f"{STEAM_TAG_LIST_URL}?{urlencode({'language': SHELF_LANGUAGE})}", "tag list")
+            response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+            tags = response.get("tags") if isinstance(response.get("tags"), list) else []
+            return {
+                str(tag["tagid"]): str(tag["name"])[:16]
+                for tag in tags
+                if isinstance(tag, dict) and tag.get("tagid") and tag.get("name")
+            }
+
+        names = self._cached_lookup("tag_names", SHELF_LANGUAGE, TAG_NAMES_TTL, fetch)
+        return names if isinstance(names, dict) else {}
+
+    def _wishlist(self, settings):
+        """The owner's public wishlist: {app id: priority}."""
+        steam_id = self._steam_id(settings)
+        if not steam_id:
+            return {}
+
+        def fetch():
+            payload = self._fetch_profile_json(f"{STEAM_WISHLIST_URL}?{urlencode({'steamid': steam_id})}", "wishlist")
+            items = (payload.get("response") or {}).get("items") if isinstance(payload.get("response"), dict) else None
+            wishlist = {}
+            for item in (items if isinstance(items, list) else [])[:MAX_WISHLIST_ITEMS]:
+                appid = str(item.get("appid") or "") if isinstance(item, dict) else ""
+                if appid.isdecimal():
+                    wishlist[appid] = int(item.get("priority") or 0)
+            return wishlist
+
+        wishlist = self._cached_lookup("wishlist", steam_id, WISHLIST_TTL, fetch)
+        return wishlist if isinstance(wishlist, dict) else {}
+
+    def _wishlist_deals(self, settings, wishlist):
+        """The wishlist's games on sale now, deepest cut first, as pool items."""
+        if not wishlist:
+            return []
+        country, _language = self._store_locale(settings)
+
+        def fetch():
+            deals = []
+            ids = list(wishlist)
+            for start in range(0, len(ids), STORE_ITEMS_BATCH):
+                for entry in self._store_items(ids[start:start + STORE_ITEMS_BATCH], country, {}):
+                    facts = self._parse_store_details(entry)
+                    if facts and facts["discount"] > 0:
+                        deals.append({
+                            "id": int(entry["appid"]),
+                            "type": 0,
+                            "name": facts["name"],
+                            "discounted": True,
+                            "discount_percent": facts["discount"],
+                            "_wishlist": True,
+                            "_category_key": "wishlist",
+                            "_category_tags": ["wishlist"],
+                        })
+            deals.sort(key=lambda deal: (-deal["discount_percent"], wishlist.get(str(deal["id"]), 0)))
+            return deals[:MAX_WISHLIST_DEALS]
+
+        key = f"{self._steam_id(settings)}|{country}|{len(wishlist)}"
+        deals = self._cached_lookup("wishlist_deals", key, WISHLIST_DEALS_TTL, fetch)
+        return [dict(deal) for deal in deals if isinstance(deal, dict)] if isinstance(deals, list) else []
+
+    def _owned_appids(self, settings):
+        """The owner's library (needs STEAM_API_KEY); empty without it."""
+        steam_id = self._steam_id(settings)
+        api_key = self._env_key("STEAM_API_KEY")
+        if not steam_id or not api_key:
+            return set()
+
+        def fetch():
+            query = urlencode({"key": api_key, "steamid": steam_id, "include_played_free_games": 1})
+            payload = self._fetch_profile_json(f"{STEAM_OWNED_GAMES_URL}?{query}", "owned games")
+            games = (payload.get("response") or {}).get("games") if isinstance(payload.get("response"), dict) else None
+            return sorted(
+                str(game["appid"]) for game in (games if isinstance(games, list) else [])
+                if isinstance(game, dict) and str(game.get("appid") or "").isdecimal()
+            )
+
+        owned = self._cached_lookup("owned", steam_id, OWNED_TTL, fetch)
+        return set(owned) if isinstance(owned, list) else set()
+
+    def _personalize(self, items, settings):
+        """The pool made the owner's own: games from the wishlist (and its deals the front page
+        lacks) take every other place, deepest discount first; games already owned go last."""
+        if not self._setting_on(settings, "personalize"):
+            return items
+        wishlist = self._wishlist(settings)
+        owned = self._owned_appids(settings)
+        mine, rest, held = [], [], []
+        present = set()
+        for item in items:
+            appid = self._app_id(item)
+            item = dict(item)
+            if appid:
+                present.add(appid)
+            if appid and appid in wishlist:
+                item["_wishlist"] = True
+                mine.append(item)
+            elif appid and appid in owned:
+                item["_owned"] = True
+                held.append(item)
+            else:
+                rest.append(item)
+        mine.extend(deal for deal in self._wishlist_deals(settings, wishlist) if str(deal["id"]) not in present)
+        mine.sort(key=lambda item: -int(item.get("discount_percent") or 0))
+        merged = []
+        for index in range(max(len(mine), len(rest))):
+            merged.extend(group[index] for group in (mine, rest) if index < len(group))
+        return merged + held
+
+    def _prepare_shelf(self, items, settings):
+        """The candidates' store facts in one batch and their Chinese lines in one AI call."""
+        if not self._setting_on(settings, "infoShelf"):
+            return
+        appids = [appid for appid in (self._app_id(item) for item in items) if appid]
+        if appids:
+            self._blurbs(self._store_details(appids, settings))
+            self._tag_names()
+
+    def _shelf_info(self, item, settings):
+        """What the shelf says about this game, or None without its store facts."""
+        appid = self._app_id(item)
+        if not appid or not self._setting_on(settings, "infoShelf"):
+            return None
+        facts = self._store_details([appid], settings).get(appid)
+        if not facts:
+            return None
+        names = self._tag_names()
+        now = self._shelf_now()
+        return {
+            "reasons": self._shelf_reasons(item, facts, now),
+            "price": self._shelf_price(facts),
+            "line": self._blurbs({appid: facts}).get(appid) or facts.get("name") or str(item.get("name") or ""),
+            "tags": [names[tag] for tag in facts.get("tags") or [] if tag in names][:4],
+            "credit": " / ".join(
+                part for part in (facts.get("developer"), self._release_label(facts, now), self._review_label(facts)) if part
+            ),
+        }
+
+    def _shelf_now(self):
+        device_config = getattr(self, "_active_device_config", None)
+        now = self._now_for_device(device_config) if device_config is not None else datetime.now()
+        return now if now.tzinfo is not None else now.astimezone()
+
+    @staticmethod
+    def _release_age_days(facts, now):
+        released = facts.get("release")
+        if not released:
+            return None
+        return (now - datetime.fromtimestamp(int(released), tz=now.tzinfo)).total_seconds() / 86400
+
+    def _shelf_reasons(self, item, facts, now):
+        """Why the game is here, the owner's own reasons first; at most three."""
+        tags = set(item.get("_category_tags") or [])
+        age = self._release_age_days(facts, now)
+        reasons = []
+        if item.get("_wishlist"):
+            reasons.append(("wishlist", "愿望单特惠" if facts.get("discount") else "在你的愿望单"))
+        if "daily_deals" in tags:
+            reasons.append(("daily_deal", "今日特惠"))
+        elif "specials" in tags and not item.get("_wishlist"):
+            reasons.append(("deal", "特惠"))
+        if age is not None and 0 <= age < 1:
+            reasons.append(("new", "今日发售"))
+        elif "new_releases" in tags or (age is not None and 0 <= age < NEW_RELEASE_DAYS):
+            reasons.append(("new", "新品"))
+        if "top_sellers" in tags:
+            reasons.append(("top_seller", "热销"))
+        if "spotlights" in tags:
+            reasons.append(("spotlight", "首页推荐"))
+        if "coming_soon" in tags or facts.get("coming_soon"):
+            reasons.append(("coming_soon", "即将推出"))
+        if item.get("_owned"):
+            reasons.append(("owned", "已在你的库中"))
+        if item.get("_owned") and len(reasons) > 3:
+            reasons = [*reasons[:2], reasons[-1]]
+        return reasons[:3]
+
+    @staticmethod
+    def _shelf_price(facts):
+        if facts.get("free"):
+            return {"label": "免费开玩"}
+        if facts.get("discount") and facts.get("final"):
+            return {"discount": facts["discount"], "final": facts["final"], "original": facts.get("original") or ""}
+        if facts.get("final"):
+            return {"final": facts["final"]}
+        if facts.get("coming_soon"):
+            return {"label": "即将推出"}
+        return None
+
+    def _release_label(self, facts, now):
+        released = facts.get("release")
+        if not released:
+            return ""
+        day = datetime.fromtimestamp(int(released), tz=now.tzinfo)
+        age = (now - day).total_seconds() / 86400
+        if age < 0:
+            return f"{day:%m/%d} 发售"
+        if age < 1:
+            return "今日发售"
+        if age < NEW_RELEASE_DAYS:
+            return f"{day:%m/%d} 发售"
+        return f"{day.year} 年发售"
+
+    @staticmethod
+    def _review_label(facts):
+        if not facts.get("review_label") or not facts.get("review_count"):
+            return ""
+        return f"{facts['review_label']} {facts['review_percent']}%"
+
+    def _blurbs(self, details):
+        """One line in Chinese per app: Steam's own Chinese description when it has one, else
+        an AI line from the English one (cached against that text), else the English cut."""
+        cache = self._read_shelf_cache()
+        known = cache.get("blurbs") if isinstance(cache.get("blurbs"), dict) else {}
+        lines, missing = {}, {}
+        for appid, facts in details.items():
+            text = str(facts.get("description") or "")
+            if not text:
+                continue
+            if _has_cjk(text):
+                lines[appid] = _first_sentence(text)
+                continue
+            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+            entry = known.get(appid)
+            if isinstance(entry, dict) and entry.get("source") == digest and entry.get("text"):
+                lines[appid] = str(entry["text"])
+            else:
+                missing[appid] = (digest, text)
+        if missing:
+            translated = self._translate_blurbs({appid: text for appid, (_digest, text) in missing.items()})
+            if translated:
+                cache = self._read_shelf_cache()
+                known = cache.get("blurbs") if isinstance(cache.get("blurbs"), dict) else {}
+                for appid, line in translated.items():
+                    known[appid] = {"source": missing[appid][0], "text": line, "at": time.time()}
+                cache["blurbs"] = dict(sorted(known.items(), key=lambda pair: float(pair[1].get("at") or 0))[-MAX_BLURBS:])
+                self._write_shelf_cache(cache)
+                lines.update(translated)
+        for appid, (_digest, text) in missing.items():
+            lines.setdefault(appid, _first_sentence(text))
+        return lines
+
+    def _translate_blurbs(self, texts):
+        """{app id: one Chinese line} from the English blurbs in one model call; {} without a
+        key, with too little of the data deadline left, or when the call fails."""
+        api_key = self._env_key("OPEN_AI_SECRET") or self._env_key("OPENAI_API_KEY")
+        if not api_key or not texts:
+            return {}
+        deadline = getattr(self, "_active_data_deadline", None)
+        if deadline is not None and deadline - time.monotonic() < BLURB_TIMEOUT_SECONDS + 5:
+            return {}
+        try:
+            from openai import OpenAI
+
+            client = OpenAI(api_key=api_key, timeout=BLURB_TIMEOUT_SECONDS, max_retries=0)
+            response = client.responses.create(
+                model=BLURB_MODEL,
+                instructions=BLURB_INSTRUCTIONS,
+                input=json.dumps(texts, ensure_ascii=False),
+                max_output_tokens=1600,
+                reasoning={"effort": "minimal"},
+                text={"format": {"type": "json_object"}, "verbosity": "low"},
+            )
+            reply = json.loads(getattr(response, "output_text", "") or "{}")
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Steam blurb translation failed: %s", type(exc).__name__)
+            return {}
+        if not isinstance(reply, dict):
+            return {}
+        lines = {}
+        for appid, line in reply.items():
+            line = " ".join(str(line or "").split()).strip("。.!！\"'“”「」《》")
+            if str(appid) in texts and _has_cjk(line):
+                lines[str(appid)] = line[:BLURB_MAX_CHARS]
+        return lines
 
     def _fetch_json(self, url, *, label, max_bytes):
         deadline = getattr(self, "_active_data_deadline", None)
@@ -1033,7 +1566,7 @@ class SteamDailyArt(BasePlugin):
         data = self._fetch_featured_categories(settings)
         items = [
             item
-            for item in self._collect_items(data, source_category)
+            for item in self._personalize(self._collect_items(data, source_category), settings)
             if self._item_identity(item) not in exclude
         ]
         if not items:
@@ -1347,13 +1880,13 @@ class SteamDailyArt(BasePlugin):
                 raise RuntimeError("Steam target address must be public")
         return approved.normalized_url
 
-    def _smart_cover(self, image, dimensions):
+    def _smart_cover(self, image, dimensions, resample=Image.Resampling.LANCZOS):
         target_width, target_height = dimensions
         target_ratio = target_width / target_height
         image_ratio = image.width / image.height
 
         if image_ratio < target_ratio * 0.82:
-            return self._contain_on_canvas(image, dimensions)
+            return self._contain_on_canvas(image, dimensions, resample)
 
         if abs(image_ratio - target_ratio) < 0.01:
             cropped = image
@@ -1366,9 +1899,9 @@ class SteamDailyArt(BasePlugin):
             y = self._best_crop_offset(image, crop_height, horizontal=False)
             cropped = image.crop((0, y, image.width, y + crop_height))
 
-        return cropped.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        return cropped.resize((target_width, target_height), resample)
 
-    def _contain_on_canvas(self, image, dimensions):
+    def _contain_on_canvas(self, image, dimensions, resample=Image.Resampling.LANCZOS):
         target_width, target_height = dimensions
         image_ratio = image.width / image.height
         target_ratio = target_width / target_height
@@ -1380,7 +1913,7 @@ class SteamDailyArt(BasePlugin):
             new_height = target_height
             new_width = max(1, int(target_height * image_ratio))
 
-        fitted = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        fitted = image.resize((new_width, new_height), resample)
 
         # A solid black or white mat, matched to the art's edges, prints cleanly;
         # a pale blurred backdrop would dither into noise on the e-paper.

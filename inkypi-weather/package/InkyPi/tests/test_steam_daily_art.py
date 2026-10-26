@@ -42,6 +42,18 @@ class FakeDeviceConfig:
         return values.get(key, default)
 
 
+@pytest.fixture(autouse=True)
+def _offline_shelf_and_account(monkeypatch):
+    """The shelf's store facts, the wishlist and the library stay offline in tests: without
+    store facts no shelf is drawn, so the art tests below see the art alone."""
+
+    def offline(self, url, label):
+        raise RuntimeError(f"offline in tests: {label}")
+
+    monkeypatch.setattr(SteamDailyArt, "_fetch_profile_json", offline)
+    monkeypatch.setattr(SteamDailyArt, "_translate_blurbs", lambda self, texts: {})
+
+
 def make_plugin(tmp_path, monkeypatch):
     plugin = SteamDailyArt({"id": "steam_daily_art"})
     monkeypatch.setattr(plugin, "_cache_dir", lambda *args, **kwargs: tmp_path)
@@ -1695,3 +1707,286 @@ def test_store_lookup_host_is_a_json_authority(tmp_path, monkeypatch):
     assert plugin._validate_steam_target(api, kind="json") == api.normalized_url
     with pytest.raises(RuntimeError, match="authority"):
         plugin._validate_steam_target(api, kind="media")
+
+
+# Info shelf and the owner's Steam account ------------------------------------------
+
+from plugins.steam_daily_art import shelf as info_shelf  # noqa: E402
+
+FIELD = (0, 255, 39)
+
+
+def _field_art(field_top=312, size=(800, 480)):
+    """Sky with a castle-like block, then a flat field with a few sprites on it."""
+    art = Image.new("RGB", size, (150, 205, 225))
+    draw = ImageDraw.Draw(art)
+    draw.rectangle((60, 80, 160, field_top), fill=(120, 90, 70))
+    draw.rectangle((0, field_top, size[0], size[1]), fill=FIELD)
+    for x in (140, 380, 650):
+        draw.rectangle((x, field_top - 14, x + 18, field_top + 2), fill=(200, 40, 40))
+    return art
+
+
+def test_flat_band_is_found_at_the_foot_of_flat_art_only():
+    band = info_shelf.find_flat_band(_field_art())
+
+    assert band is not None
+    top, colour = band
+    assert 310 <= top <= 316
+    assert colour == FIELD
+    gradient = Image.linear_gradient("L").resize((800, 480)).convert("RGB")
+    assert info_shelf.find_flat_band(gradient) is None
+
+
+def test_pixel_grid_finds_upscaled_pixel_art_but_not_smooth_or_noisy_art():
+    import random
+
+    rng = random.Random(7)
+    # Pixel art: flat sprites on a flat ground, drawn at 90x60 and enlarged four times.
+    native = Image.new("RGB", (90, 60), (90, 160, 210))
+    sprites = ImageDraw.Draw(native)
+    for _ in range(60):
+        x, y = rng.randrange(88), rng.randrange(58)
+        colour = (rng.randrange(256), rng.randrange(256), rng.randrange(256))
+        sprites.rectangle((x, y, x + rng.randrange(1, 5), y + rng.randrange(1, 4)), fill=colour)
+    pixel = native.resize((360, 240), Image.Resampling.NEAREST).crop((1, 2, 359, 240))
+
+    # Exact grids are recovered from lossless art; JPEG pixel art is left to is_hard_edged.
+    grid = info_shelf.pixel_grid(pixel)
+
+    assert grid == (4, 3, 2)
+    assert info_shelf.to_native(pixel, grid).size == (88, 59)
+    smooth = Image.linear_gradient("L").resize((360, 240)).convert("RGB")
+    assert info_shelf.pixel_grid(smooth) is None
+    noise = Image.new("RGB", (360, 240))
+    noise.putdata([(rng.randrange(256), rng.randrange(256), rng.randrange(256)) for _ in range(360 * 240)])
+    assert info_shelf.pixel_grid(noise) is None
+
+
+def _pixel_scene(factor):
+    """A small pixel-art scene (sky, ground, a castle, sprites) enlarged without smoothing."""
+    native = Image.new("RGB", (100, 60), (120, 190, 225))
+    draw = ImageDraw.Draw(native)
+    draw.rectangle((0, 42, 99, 59), fill=FIELD)
+    draw.rectangle((8, 14, 22, 42), fill=(150, 120, 90))
+    for y in range(16, 40, 5):
+        draw.rectangle((11, y, 13, y + 2), fill=(40, 30, 30))
+        draw.rectangle((17, y, 19, y + 2), fill=(40, 30, 30))
+    for x in range(30, 96, 7):
+        draw.rectangle((x, 38, x + 2, 41), fill=(200, 40, 40))
+        draw.rectangle((x, 36, x + 1, 37), fill=(250, 220, 170))
+    size = (round(100 * factor), round(60 * factor))
+    return native.resize(size, Image.Resampling.NEAREST)
+
+
+def test_hard_edged_flat_art_is_told_from_gradients_and_painted_art():
+    assert info_shelf.is_hard_edged(_pixel_scene(2.5))
+    assert not info_shelf.is_hard_edged(Image.linear_gradient("L").resize((800, 480)).convert("RGB"))
+    painted = Image.radial_gradient("L").resize((800, 480)).convert("RGB")
+    ImageDraw.Draw(painted).ellipse((200, 100, 600, 400), outline=(250, 250, 250), width=3)
+    assert not info_shelf.is_hard_edged(painted.resize((200, 120)).resize((800, 480), Image.Resampling.BICUBIC))
+
+
+def test_hard_edged_art_is_enlarged_without_smoothing(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    art = _pixel_scene(2.5)
+
+    assert info_shelf.pixel_grid(art) is None
+    fitted = plugin._fit_artwork(art, (800, 480), steam_daily_art_module.ART_TITLED)
+
+    # Nearest-neighbour keeps only the art's own colours; smoothing would add blends at edges.
+    assert set(fitted.get_flattened_data()) <= set(art.get_flattened_data())
+
+
+SHELF_INFO = {
+    "reasons": [("wishlist", "愿望单特惠"), ("spotlight", "首页推荐")],
+    "price": {"discount": 30, "final": "$4.89", "original": "$6.99"},
+    "line": "俄罗斯方块加即时战略",
+    "tags": ["策略", "休闲"],
+    "credit": "Loop Forge / 今日发售",
+}
+
+
+def test_shelf_sits_on_the_flat_block_and_leaves_the_art_above_it():
+    art = _field_art()
+    band = info_shelf.find_flat_band(art)
+    start = info_shelf.shelf_top(art.height, band)
+
+    shelved = info_shelf.draw_shelf(art, SHELF_INFO, band)
+
+    assert ImageChops.difference(art.crop((0, 0, 800, start)), shelved.crop((0, 0, 800, start))).getbbox() is None
+    below = set(shelved.crop((0, start + 3, 800, 480)).get_flattened_data())
+    assert info_shelf.palette(FIELD)["base"] in below
+    assert (255, 255, 255) in below
+    assert info_shelf.DEAL_GREEN in below
+    # The bright field is gone under the shelf.
+    assert FIELD not in below
+
+
+def test_shelf_without_a_flat_block_fades_in_at_the_foot():
+    art = Image.linear_gradient("L").resize((800, 480)).convert("RGB")
+
+    shelved = info_shelf.draw_shelf(art, SHELF_INFO)
+
+    start = info_shelf.shelf_top(480)
+    assert ImageChops.difference(art.crop((0, 0, 800, start)), shelved.crop((0, 0, 800, start))).getbbox() is None
+    assert shelved.getpixel((400, 470)) != art.getpixel((400, 470))
+
+
+def test_card_keeps_titled_art_whole_above_the_shelf():
+    art = Image.new("RGB", (800, 480), (200, 30, 30))
+    ImageDraw.Draw(art).rectangle((300, 440, 500, 479), fill=(255, 255, 255))  # a title at the foot
+
+    carded, band = info_shelf.card(art, 112)
+
+    art_height = 480 - 112
+    assert band[0] + info_shelf.GROUND_KEEP == art_height
+    assert (255, 255, 255) in set(carded.crop((0, art_height - 40, 800, art_height)).get_flattened_data())
+    assert carded.getpixel((5, 200)) == band[1]
+    assert info_shelf.shelf_top(480, band) == art_height
+
+
+def _personal_plugin(tmp_path, monkeypatch, wishlist, owned, deals):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    monkeypatch.setattr(plugin, "_wishlist", lambda _settings: wishlist)
+    monkeypatch.setattr(plugin, "_owned_appids", lambda _settings: owned)
+    monkeypatch.setattr(plugin, "_wishlist_deals", lambda _settings, _wishlist: [dict(deal) for deal in deals])
+    return plugin
+
+
+def test_personalize_gives_wishlist_games_every_other_turn_and_owned_games_last(tmp_path, monkeypatch):
+    deals = [{"id": 20, "type": 0, "name": "Deal", "discount_percent": 50, "_wishlist": True}]
+    plugin = _personal_plugin(tmp_path, monkeypatch, {"10": 0, "20": 1}, {"30"}, deals)
+    items = [{"id": 10, "type": 0, "discount_percent": 10}, {"id": 30, "type": 0}, {"id": 40, "type": 0},
+             {"id": 50, "type": 0}, {"id": 60, "type": 2}]
+
+    ordered = plugin._personalize(items, {})
+
+    assert [item["id"] for item in ordered] == [20, 40, 10, 50, 60, 30]
+    assert ordered[2]["_wishlist"] is True and ordered[-1]["_owned"] is True
+    assert plugin._personalize(items, {"personalize": "off"}) == items
+
+
+def test_wishlist_deal_already_on_the_front_page_is_not_added_twice(tmp_path, monkeypatch):
+    deals = [{"id": 10, "type": 0, "name": "Deal", "discount_percent": 40, "_wishlist": True}]
+    plugin = _personal_plugin(tmp_path, monkeypatch, {"10": 0}, set(), deals)
+
+    ordered = plugin._personalize([{"id": 10, "type": 0}, {"id": 40, "type": 0}], {})
+
+    assert [item["id"] for item in ordered] == [10, 40]
+
+
+def _store_entry(appid, description, **extra):
+    return {
+        "appid": appid, "success": 1, "name": f"Game {appid}", "is_free": extra.get("free", False),
+        "basic_info": {"short_description": description, "developers": [{"name": "Loop Forge"}]},
+        "tags": [{"tagid": 9}, {"tagid": 4182}],
+        "reviews": {"summary_filtered": {"review_count": extra.get("reviews", 0), "percent_positive": 93,
+                                         "review_score_label": "特别好评"}},
+        "release": {"steam_release_date": 1792963736},
+        "best_purchase_option": {"discount_pct": extra.get("discount", 30), "formatted_final_price": "$4.89",
+                                 "formatted_original_price": "$6.99",
+                                 "hide_discount_pct_for_compliance": extra.get("hide", False)},
+    }
+
+
+def test_store_details_are_fetched_in_one_batch_parsed_and_cached(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    calls = []
+
+    def fetch(url, label):
+        calls.append(url)
+        return {"response": {"store_items": [_store_entry(1, "一款游戏。还有更多", reviews=1200),
+                                             _store_entry(2, "An English blurb.", hide=True)]}}
+
+    monkeypatch.setattr(plugin, "_fetch_profile_json", fetch)
+
+    details = plugin._store_details(["1", "2", "1"], {})
+    again = plugin._store_details(["2", "1"], {})
+
+    assert len(calls) == 1 and "schinese" in calls[0]
+    assert set(details) == {"1", "2"} and again == details
+    assert details["1"]["review_label"] == "特别好评" and details["1"]["discount"] == 30
+    assert details["2"]["review_label"] == "" and details["2"]["discount"] == 0
+    assert details["1"]["tags"] == ["9", "4182"] and details["1"]["developer"] == "Loop Forge"
+
+
+def test_lines_translate_only_english_blurbs_and_remember_them(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    asked = []
+
+    def translate(texts):
+        asked.append(dict(texts))
+        return {"2": "俄罗斯方块加即时战略"}
+
+    monkeypatch.setattr(plugin, "_translate_blurbs", translate)
+    details = {"1": {"description": "一款关于火车的合作游戏。和朋友一起修铁路"},
+               "2": {"description": "Tetromancer is a Tetris battler. Clear lines to conjure an army."}}
+
+    lines = plugin._blurbs(details)
+    again = plugin._blurbs(details)
+
+    assert lines == {"1": "一款关于火车的合作游戏", "2": "俄罗斯方块加即时战略"} == again
+    assert asked == [{"2": details["2"]["description"]}]
+    # A blurb Steam rewrites is translated again.
+    plugin._blurbs({"2": {"description": "A new English blurb."}})
+    assert len(asked) == 2
+
+
+def test_shelf_info_gives_the_reasons_price_tags_and_credit(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    from datetime import timedelta, timezone
+
+    now = datetime(2026, 10, 26, 3, 0, tzinfo=timezone.utc)
+    facts = {"name": "Tetromancer", "description": "一款方块战争游戏", "developer": "Loop Forge", "tags": ["9", "4182"],
+             "review_label": "特别好评", "review_percent": 93, "review_count": 1200,
+             "release": int((now - timedelta(hours=3)).timestamp()), "coming_soon": False, "free": False,
+             "discount": 30, "final": "$4.89", "original": "$6.99"}
+    monkeypatch.setattr(plugin, "_store_details", lambda appids, _settings: {"4898560": facts})
+    monkeypatch.setattr(plugin, "_tag_names", lambda: {"9": "策略", "4182": "单人"})
+    monkeypatch.setattr(plugin, "_shelf_now", lambda: now)
+    item = {"id": 4898560, "type": 0, "_wishlist": True, "_category_tags": ["new_releases", "spotlights", "top_sellers"]}
+
+    info = plugin._shelf_info(item, {})
+
+    assert info["reasons"] == [("wishlist", "愿望单特惠"), ("new", "今日发售"), ("top_seller", "热销")]
+    assert info["price"] == {"discount": 30, "final": "$4.89", "original": "$6.99"}
+    assert info["line"] == "一款方块战争游戏" and info["tags"] == ["策略", "单人"]
+    assert info["credit"] == "Loop Forge / 今日发售 / 特别好评 93%"
+    assert plugin._shelf_info(item, {"infoShelf": "off"}) is None
+    assert plugin._shelf_info({"id": 5, "type": 2}, {}) is None
+
+
+def test_shelf_is_left_out_without_store_facts(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+
+    assert plugin._shelf_info({"id": 4898560, "type": 0}, {}) is None
+
+
+def test_owned_games_lookup_never_logs_the_steam_key(tmp_path, monkeypatch, caplog):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    plugin._active_device_config = SimpleNamespace(load_env_key=lambda name: "SECRETKEY123" if name == "STEAM_API_KEY" else "")
+
+    def failing(url, label):
+        raise RuntimeError(f"request failed for {url}")
+
+    monkeypatch.setattr(plugin, "_fetch_profile_json", failing)
+    with caplog.at_level(logging.WARNING):
+        assert plugin._owned_appids({"steamId": "76561198000000000"}) == set()
+
+    assert "SECRETKEY123" not in caplog.text
+    assert "owned lookup failed" in caplog.text
+
+
+def test_render_item_puts_the_shelf_on_the_arts_flat_block(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    art = _field_art()
+    monkeypatch.setattr(plugin, "_download_first_available_logo", lambda _item: (None, None))
+    monkeypatch.setattr(plugin, "_choose_artwork", lambda *_args: ("https://example.test/a.jpg", art, steam_daily_art_module.ART_TITLED))
+    monkeypatch.setattr(plugin, "_shelf_info", lambda _item, _settings: SHELF_INFO)
+
+    _url, _logo, image = plugin._render_item({"id": 1, "type": 0}, {}, (800, 480))
+
+    start = info_shelf.shelf_top(480, info_shelf.find_flat_band(art))
+    assert ImageChops.difference(art.crop((0, 0, 800, start)), image.crop((0, 0, 800, start))).getbbox() is None
+    assert FIELD not in set(image.crop((0, start + 3, 800, 480)).get_flattened_data())

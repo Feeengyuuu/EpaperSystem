@@ -89,8 +89,31 @@
 </div>
 
 <div class="form-group">
+    <label for="infoShelf" class="form-label">Info Shelf:</label>
+    <select id="infoShelf" name="infoShelf" class="form-input">
+        <option value="on">Show why it is here, price, tags</option>
+        <option value="off">Art only</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="personalize" class="form-label">My Steam:</label>
+    <select id="personalize" name="personalize" class="form-input">
+        <option value="on">Wishlist deals first, owned games last</option>
+        <option value="off">Store order only</option>
+    </select>
+</div>
+
+<div class="form-group">
+    <label for="steamId" class="form-label">Steam ID (64-bit):</label>
+    <input type="text" id="steamId" name="steamId" value="" maxlength="17" inputmode="numeric" placeholder="Same as the Steam profile page" class="form-input">
+</div>
+
+<div class="form-group">
     <span style="color: var(--text-primary);">
         Fetches current Steam store promotional items from frontpage categories such as spotlights, deals, top sellers, and new releases. Rotation follows Steam's order and skips repeats until the pool is exhausted.
+        With My Steam on, discounted games from your public wishlist take every other turn, and games you already own (needs STEAM_API_KEY) come last.
+        The info shelf writes one Chinese line per game; English-only store text is translated with OpenAI when OPEN_AI_SECRET is set.
     </span>
 </div>
 
@@ -113,6 +136,9 @@
         document.getElementById('logoSize').value = pluginSettings.logoSize || 'normal';
         document.getElementById('countryCode').value = pluginSettings.countryCode || 'US';
         document.getElementById('language').value = pluginSettings.language || 'english';
+        document.getElementById('infoShelf').value = pluginSettings.infoShelf || 'on';
+        document.getElementById('personalize').value = pluginSettings.personalize || 'on';
+        document.getElementById('steamId').value = pluginSettings.steamId || '';
 
         const showCaption = pluginSettings.showCaption === 'true';
         document.getElementById('showCaption').checked = showCaption;

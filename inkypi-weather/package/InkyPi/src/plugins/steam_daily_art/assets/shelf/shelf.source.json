@@ -1,0 +1,29 @@
+{
+  "built_at": "2026-10-26T00:25:56+00:00",
+  "icons": {
+    "source": "https://cdn.creativeclaw.co/u/e25dbd7a/images/82c1be97-a71f-4a69-824a-619b324dbdd0.png",
+    "files": [
+      "wishlist",
+      "deal",
+      "new",
+      "top_seller",
+      "spotlight",
+      "coming_soon",
+      "owned",
+      "daily_deal"
+    ],
+    "note": "Generated with image/gpt-image-2.5-sunburst (Creative Claw), transparent, one row split on its gaps"
+  },
+  "marks": {
+    "steam_icon": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/83/Steam_icon_logo.svg/250px-Steam_icon_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Steam_icon_logo.svg",
+      "license": "Public domain (Wikimedia Commons)"
+    },
+    "steam_wordmark": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Steam_2016_logo_black.svg/500px-Steam_2016_logo_black.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Steam_2016_logo_black.svg",
+      "license": "Public domain (Wikimedia Commons)"
+    }
+  }
+}
