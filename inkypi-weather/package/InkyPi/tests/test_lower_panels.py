@@ -339,10 +339,12 @@ def test_mlb_footer_bills_the_game_in_official_marks_else_the_text_line(boxes):
     # Series mark, game number and the ballpark's logo, its yellow roofline as printed.
     assert texts == ["GAME 6"]
     assert any(red > 200 and 150 < green < 220 and blue < 110 for red, green, blue in ballpark.get_flattened_data())
-    _named, texts = footer(venue="Tropicana Field")
-    assert texts == ["GAME 6", "Tropicana Field"]
-    _line, texts = footer(venue="Oracle Park", series_game="")
-    assert texts == ["Oracle Park"]
+    _named, texts = footer(venue="London Stadium")
+    assert texts == ["GAME 6", "London Stadium"]
+    park, texts = footer(venue="Oracle Park", series_game="")
+    assert texts == [] and park.getchannel("R").getextrema()[1] > 150
+    _line, texts = footer(venue="London Stadium", series_game="")
+    assert texts == ["London Stadium"]
 
 
 def test_mlb_series_rows_lead_with_the_game_date_and_keep_played_results(boxes):
@@ -430,7 +432,7 @@ def test_venue_line_shows_the_arenas_own_logo_else_its_name():
     chase, _draw = _render(lambda plugin, image, draw: plugin._draw_kit_venue(image, draw, (20, 20, 260, 34), "Chase Center"))
     # Chase's blue octagon sits between the two words.
     assert any(blue > 150 and red < 60 for red, _green, blue in chase.crop((20, 20, 260, 34)).get_flattened_data())
-    other, _draw = _render(lambda plugin, image, draw: plugin._draw_kit_venue(image, draw, (20, 20, 260, 34), "Barclays Center"))
+    other, _draw = _render(lambda plugin, image, draw: plugin._draw_kit_venue(image, draw, (20, 20, 260, 34), "Accor Arena"))
     assert not any(blue > 150 and red < 60 for red, _green, blue in other.crop((20, 20, 260, 34)).get_flattened_data())
     assert len(set(other.crop((20, 20, 260, 34)).get_flattened_data())) > 2
 
@@ -1273,3 +1275,13 @@ def test_live_wall_header_carries_the_wordmark_the_control_room_and_league_count
     crowded, now = _wall_games(16)
     _render(lambda plugin, image, draw: plugin._draw_lower_live_wall(image, draw, (0, 0, 555, 267), crowded, now))
     assert [name for name, right in pasted if right] == ["live_now_wordmark.png"]
+
+
+def test_every_league_home_venue_has_its_logo():
+    # The World Series parks, a renamed one and an alias the feeds use resolve to their own files.
+    for venue, key in (("Tropicana Field", "tropicana_field"), ("Daikin Park", "daikin_park"),
+                       ("Toyota Center", "toyota_center"), ("crypto.com Arena", "crypto_com_arena"),
+                       ("Michelob ULTRA Arena", "michelob_ultra_arena")):
+        assert VENUE_LOGO_KEYS[re.sub(r"[^a-z0-9]", "", venue.lower())] == key
+        assert (Path(LOCAL_VENUE_LOGO_DIR) / f"{key}.png").is_file()
+    assert len(set(VENUE_LOGO_KEYS.values())) >= 68

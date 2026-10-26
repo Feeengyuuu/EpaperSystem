@@ -456,11 +456,47 @@ LOCAL_WALL_BAND_ART_PATHS = {
 LOCAL_LIVE_NOW_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "live_now_wordmark.png")
 LOCAL_LIVE_WALL_CONTROL_ROOM_PATH = os.path.join(LOCAL_DECOR_DIR, "live_wall_control_room.png")
 LOCAL_TV_LOGO_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "logos", "tv"))
-# Arenas whose own logo stands in for the venue's name on a game card, by the name with only
-# its letters and digits, lower case.
+# Every MLB, NBA and WNBA home venue's own logo stands in for its name on a game card, by the
+# name with only its letters and digits, lower case (assets/logos/venues, venues.source.json).
 LOCAL_VENUE_LOGO_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "logos", "venues"))
-VENUE_LOGO_KEYS = {"chasecenter": "chase_center", "statefarmarena": "state_farm_arena",
-                   "americanfamilyfield": "american_family_field"}
+VENUE_LOGO_KEYS = {
+    "americanairlinescenter": "american_airlines_center", "americanfamilyfield": "american_family_field",
+    "angelstadium": "angel_stadium", "ballarena": "ball_arena",
+    "barclayscenter": "barclays_center", "buschstadium": "busch_stadium",
+    "camdenyards": "oriole_park_at_camden_yards", "capitalonearena": "capital_one_arena",
+    "carefirstarena": "carefirst_arena", "chasecenter": "chase_center",
+    "chasefield": "chase_field", "citifield": "citi_field",
+    "citizensbankpark": "citizens_bank_park", "climatepledgearena": "climate_pledge_arena",
+    "cocacolacoliseum": "coca_cola_coliseum", "collegeparkcenter": "college_park_center",
+    "comericapark": "comerica_park", "coorsfield": "coors_field",
+    "cryptocomarena": "crypto_com_arena", "daikinpark": "daikin_park",
+    "deltacenter": "delta_center", "dodgerstadium": "dodger_stadium",
+    "fedexforum": "fedexforum", "fenwaypark": "fenway_park",
+    "fiservforum": "fiserv_forum", "frostbankcenter": "frost_bank_center",
+    "gainbridgefieldhouse": "gainbridge_fieldhouse", "gatewaycenterarena": "gateway_center_arena",
+    "gatewaycenterarenacollegepark": "gateway_center_arena", "globelifefield": "globe_life_field",
+    "golden1center": "golden_1_center", "greatamericanballpark": "great_american_ball_park",
+    "intuitdome": "intuit_dome", "kaseyacenter": "kaseya_center",
+    "kauffmanstadium": "kauffman_stadium", "kiacenter": "kia_center",
+    "littlecaesarsarena": "little_caesars_arena", "loandepotpark": "loandepot_park",
+    "madisonsquaregarden": "madison_square_garden", "michelobultraarena": "michelob_ultra_arena",
+    "modacenter": "moda_center", "mohegansunarena": "mohegan_sun_arena",
+    "mortgagematchupcenter": "mortgage_matchup_center", "nationalspark": "nationals_park",
+    "oraclepark": "oracle_park", "orioleparkatcamdenyards": "oriole_park_at_camden_yards",
+    "paycomcenter": "paycom_center", "petcopark": "petco_park",
+    "pncpark": "pnc_park", "progressivefield": "progressive_field",
+    "ratefield": "rate_field", "rocketarena": "rocket_arena",
+    "rogerscentre": "rogers_centre", "scotiabankarena": "scotiabank_arena",
+    "smoothiekingcenter": "smoothie_king_center", "spectrumcenter": "spectrum_center",
+    "statefarmarena": "state_farm_arena", "sutterhealthpark": "sutter_health_park",
+    "targetcenter": "target_center", "targetfield": "target_field",
+    "tdgarden": "td_garden", "tmobilepark": "t_mobile_park",
+    "toyotacenter": "toyota_center", "toyotacenterhouston": "toyota_center",
+    "tropicanafield": "tropicana_field", "truistpark": "truist_park",
+    "unitedcenter": "united_center", "wintrustarena": "wintrust_arena",
+    "wrigleyfield": "wrigley_field", "xfinitymobilearena": "xfinity_mobile_arena",
+    "yankeestadium": "yankee_stadium",
+}
 LOCAL_NBA_COURT_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_court_strip.png")
 LOCAL_TI_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "the_international_title_wordmark.png")
 LOCAL_MLB_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_header_cutout.png")

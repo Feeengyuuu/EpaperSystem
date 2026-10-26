@@ -1,5 +1,5 @@
 {
-  "source": "Wikimedia Commons, each file rendered to PNG by Commons, unless a logo names its own source",
+  "source": "Each venue's logo as its English Wikipedia infobox shows it (Wikimedia Commons or English Wikipedia, rendered to PNG by Wikimedia), unless a logo names its own source",
   "processing": "cropped to the alpha bounding box, scaled to 48 px high (max 480 wide) with LANCZOS",
   "logos": {
     "chase_center": {
@@ -38,6 +38,852 @@
       "sha256": "448b01f4353bef703b32719b16c9a07f539e7871033905562f13404eab420a03",
       "size": [
         108,
+        48
+      ]
+    },
+    "tropicana_field": {
+      "file": "Tropicana Field.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Tropicana_Field.svg",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/thumb/c/c6/Tropicana_Field.svg/960px-Tropicana_Field.svg.png",
+      "licence": "Non-free logo on English Wikipedia (trademark of the Tampa Bay Rays / Tropicana); shown to name the venue",
+      "original_sha1": "49c8f190f1cc34fa174a01930ce02489379a61f1",
+      "source_png_sha256": "725d221b521a8ffbcd187579dabccae7cfd2018d9f7a9de9fbcda5023c469059",
+      "sha256": "d141425373e4a224ebd5f194bef60883647e1ead4dbff4667f9b17bb7d9a6b9e",
+      "size": [
+        70,
+        48
+      ]
+    },
+    "american_airlines_center": {
+      "file": "American Airlines Center logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:American_Airlines_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/5/58/American_Airlines_Center_logo.svg/960px-American_Airlines_Center_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "237b333f1e8eff5cf2c9516a7b7a6821b391d40c",
+      "source_png_sha256": "46e882fb52ab27821e41b6b72254cfe1520bc8c7b6efe29d07ac2ee6c4d556e1",
+      "sha256": "5a337a6b8bdc9dbfdfd35b4655948a0c8738a6c2e1a05109ecfcf4605916fef3",
+      "size": [
+        148,
+        48
+      ]
+    },
+    "angel_stadium": {
+      "file": "Angel Stadium of Anaheim.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Angel_Stadium_of_Anaheim.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/6/64/Angel_Stadium_of_Anaheim.svg/960px-Angel_Stadium_of_Anaheim.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "0cd71c8560f3231420a3d90a29ac75055d60ea9a",
+      "source_png_sha256": "7087918d1f99c873e25a880c0badad2902bbc610f90915dbc391db61ab201fc9",
+      "sha256": "b71089b9b8c99c63221a928ac93283469fd8dd28ae8706a062a7d3a14a0470f0",
+      "size": [
+        134,
+        48
+      ]
+    },
+    "ball_arena": {
+      "file": "Ball Arena logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Ball_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/Ball_Arena_logo.svg/960px-Ball_Arena_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "e3dee6479221b35657316e989f9f885bd1954738",
+      "source_png_sha256": "0dac9c003781e742d6a4c8047254934d7ed0700dcdbc1cb7252403d36176648b",
+      "sha256": "0607446b1e38639c4d28ec4e8cec6d3ccb8718633a517ca07bf56e0533f136d4",
+      "size": [
+        71,
+        48
+      ]
+    },
+    "barclays_center": {
+      "file": "Barclays Center logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Barclays_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/4/4d/Barclays_Center_logo.svg/960px-Barclays_Center_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "769764b5869029c0a1b981f11565c46f7fa9f022",
+      "source_png_sha256": "938632152972435df94747dcbf5b60cc5f1bc9d7ec6cbfca50a80e43201bb934",
+      "sha256": "271497286600dfe43a57e57f0f015d88b96587602fbe09a2bc52ea4985bddb3d",
+      "size": [
+        102,
+        48
+      ]
+    },
+    "busch_stadium": {
+      "file": "Busch Stadium.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Busch_Stadium.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/6/6c/Busch_Stadium.svg/960px-Busch_Stadium.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "1f39293b000020dbd657ac7a5af2763bd66c0cbc",
+      "source_png_sha256": "7c04ec246a4bb17e3c402e16a36433b145ce0195bf88578ad31ea1445a1277b9",
+      "sha256": "91c22f315a1df44324477905a405d00bda8f58298eea8351bc042a04144707b9",
+      "size": [
+        59,
+        48
+      ]
+    },
+    "capital_one_arena": {
+      "file": "Capital One Arena logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Capital_One_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/14/Capital_One_Arena_logo.svg/960px-Capital_One_Arena_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "3ba55c00c62cd01d1207ecfd158229641e4f29ca",
+      "source_png_sha256": "dd3b2068c137e1397e65787d4702822a0c26dd0f68441cb23b22bce94b81118e",
+      "sha256": "71e73bb1b6c2cfdc68cd5baafa44baff409c6aabb753f3ab2908993ebda384b2",
+      "size": [
+        123,
+        48
+      ]
+    },
+    "carefirst_arena": {
+      "file": "CareFirst Arena logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:CareFirst_Arena_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/7/76/CareFirst_Arena_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "3601ad6c0757132bdc6ccdad93bba31ee4170c40",
+      "source_png_sha256": "57c904f866dfa15bb071a9fcd3715620d293a87bebe559a1608d308ff5d4f3c5",
+      "sha256": "1b4049a89d25cd94d7d7dc3fea86bda526a951496a9e04cd2ab57751458c58f5",
+      "size": [
+        148,
+        48
+      ]
+    },
+    "chase_field": {
+      "file": "Chase field logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Chase_field_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/6/63/Chase_field_logo.svg/960px-Chase_field_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "c846d3e6180d5380a3765db73cda3cb04fd7e994",
+      "source_png_sha256": "c24f13e8830d382b9e9b73d6fa3e783557e87135029b4d4672f5762beb6caceb",
+      "sha256": "11b1d27660ef7a427b47386975186d7229dfbabfe51a32e007b1c391d3e0ed5c",
+      "size": [
+        192,
+        48
+      ]
+    },
+    "citi_field": {
+      "file": "Citi Field.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Citi_Field.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ea/Citi_Field.svg/960px-Citi_Field.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "8d7c1df61981fa01f3adc1fb41e5711ff92de667",
+      "source_png_sha256": "803a7a39d9b8e9d1dfb26d0bc64886d915fd2d0c31de4758c456843439b1cffa",
+      "sha256": "14ae85d5660ffa9e7a0e582c1018335da0731a36d128546137b743c36559c214",
+      "size": [
+        48,
+        48
+      ]
+    },
+    "citizens_bank_park": {
+      "file": "Citizens Bank Park.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Citizens_Bank_Park.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/0/0f/Citizens_Bank_Park.svg/960px-Citizens_Bank_Park.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "db911007f309083e5b0d217a06e75b5f5f108507",
+      "source_png_sha256": "64908a574dfddfceb30311790c29b3f84d23839695ce060c7455785f996bb589",
+      "sha256": "24c5bb89a8566a3f23c32f92d16e5e443c78015dde9af3a15b64c87cc2ca81f3",
+      "size": [
+        58,
+        48
+      ]
+    },
+    "climate_pledge_arena": {
+      "file": "Climate Pledge Arena logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Climate_Pledge_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/65/Climate_Pledge_Arena_logo.svg/960px-Climate_Pledge_Arena_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "5ab1fa9840e551f74e63c9e60b2a41370713e311",
+      "source_png_sha256": "3c7757523f15811cdc547f5dafb1f9072603eea245c4992a75722278f0438c76",
+      "sha256": "5c89c41944c5ec9f669b9066e4df01e688519d8c1fa28e6ab764f9fd678f7cb6",
+      "size": [
+        89,
+        48
+      ]
+    },
+    "coca_cola_coliseum": {
+      "file": "Coca-Cola_Coliseum.png",
+      "page": "https://en.wikipedia.org/wiki/File:Coca-Cola_Coliseum.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/6/60/Coca-Cola_Coliseum.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "f988db50a61021676d531accd5350e5f39f8fb4e",
+      "source_png_sha256": "0d3a0f6d3cf5ac240c4e9532b67e09658de44595c7234348fc24ba96274e76be",
+      "sha256": "ea13e7e266130a03a7ee794729db061161de88d7c82f6c44732bfd28714661b8",
+      "size": [
+        100,
+        48
+      ]
+    },
+    "college_park_center": {
+      "file": "College Park Center logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:College_Park_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/7/78/College_Park_Center_logo.svg/960px-College_Park_Center_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "6014f04228522a943bc9901f3e0237be82c60bb7",
+      "source_png_sha256": "4830950009cc2ef12a9fa92f3ddf39ca279c3b3ddef48e3704b0fc29d88b7d40",
+      "sha256": "f457f43b8a0db23445b1521b4feca7fb805e24bd85db2d1e3928a466069db135",
+      "size": [
+        340,
+        48
+      ]
+    },
+    "comerica_park": {
+      "file": "Comerica Park.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Comerica_Park.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/a/ae/Comerica_Park.svg/960px-Comerica_Park.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "7ff1f8345b2a55d0780fed4885f0e2040b884fe6",
+      "source_png_sha256": "d33457cd68a01e52f7e3c9b4b40a0d52c7dc8266953459bb73d46a8de8d2b2ff",
+      "sha256": "59589108eb2460ec5bd2298469a227c75ec7fe46f499098b34f596c88fc0622f",
+      "size": [
+        61,
+        48
+      ]
+    },
+    "coors_field": {
+      "file": "Coors Field logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Coors_Field_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/6/61/Coors_Field_logo.svg/960px-Coors_Field_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "91971640ec0964eec9f6bd51df39797de7e69326",
+      "source_png_sha256": "3c1b4a666986e04ad0a158de59350d926d7c2ca6e8d31ae50a8509033a969204",
+      "sha256": "b5c427b1f92c4ef0964003e8086da82bae18b7247cd3c70b20119300cdcc158e",
+      "size": [
+        50,
+        48
+      ]
+    },
+    "daikin_park": {
+      "file": "Daikin_Park_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Daikin_Park_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e0/Daikin_Park_logo.svg/960px-Daikin_Park_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "b8c797adeb73456523da2e5cea952f1a68e6fc97",
+      "source_png_sha256": "dcfde6fa560c4d52c007ff237e8ad20baa0231d6ecf8702f29766f6dc452485b",
+      "sha256": "5a437104a5b0be9f282ff13ed0eb1620a7786279ea9d572d06f09dabbfef7125",
+      "size": [
+        52,
+        48
+      ]
+    },
+    "delta_center": {
+      "file": "Delta Center logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Delta_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cc/Delta_Center_logo.svg/960px-Delta_Center_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "e5cb72d6622ca2aa225937e36f87b71f0116ad3d",
+      "source_png_sha256": "357768d22188255fa67865e42e455a2d770a18e3148ecfe40040281f22eec84d",
+      "sha256": "8bda4dc71983a7985851fa3dcf54a351bb631e11941533d301b7e93674f6323f",
+      "size": [
+        196,
+        48
+      ]
+    },
+    "dodger_stadium": {
+      "file": "Dodger Stadium.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Dodger_Stadium.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/5/54/Dodger_Stadium.svg/960px-Dodger_Stadium.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "fe95689b4d36c3b1e28bde6e7c254eda2db9faa0",
+      "source_png_sha256": "2309619c7d326c563bded638bff51881c43167e40bc4c2af70c1fddcff32ac45",
+      "sha256": "00b0231e2b3ef8b8b8a58c5608caf7af3859b3c740bee1c4febac5ed6d76b2d8",
+      "size": [
+        89,
+        48
+      ]
+    },
+    "fedexforum": {
+      "file": "FedExForum logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:FedExForum_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4e/FedExForum_logo.svg/960px-FedExForum_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "7e8cd762af05722684c8b34705f5e685834b4b8b",
+      "source_png_sha256": "19fb00ba531196aeabcea9f27f55ddc7dd2df246833f183438a24925b24ceea3",
+      "sha256": "761aec37f4e07c5a5f0afc0de7df13a58ade8de2ae07c448b8f68b584e6b38bd",
+      "size": [
+        341,
+        48
+      ]
+    },
+    "fenway_park": {
+      "file": "Fenway Park logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Fenway_Park_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/7/71/Fenway_Park_logo.svg/960px-Fenway_Park_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "5b7b96f7573b73dccc8ca2be37d5c6e33d4ac86c",
+      "source_png_sha256": "3e0e5a416355b0cec78b2adcecbeebb2a53203fed9fc24f162a5ca2d5fb025db",
+      "sha256": "da5e3cb38d2fe08a3b166b1b5c4aa5dfe8e3918aedbd10da97b2832d0547c436",
+      "size": [
+        48,
+        48
+      ]
+    },
+    "fiserv_forum": {
+      "file": "Fiserv_forum_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Fiserv_forum_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Fiserv_forum_logo.svg/960px-Fiserv_forum_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "a03260365c59daa33afaf9d67d5ce232e26172d0",
+      "source_png_sha256": "530ab700da0c42c940bc5ff2892012874214b42408215a140758d488169af03d",
+      "sha256": "8070af4c5c4287d1f232a30094edd169a32963a9f6a7dfbb3e121ac26438a969",
+      "size": [
+        177,
+        48
+      ]
+    },
+    "frost_bank_center": {
+      "file": "Frost_Bank_Center_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Frost_Bank_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5a/Frost_Bank_Center_logo.svg/960px-Frost_Bank_Center_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "157cf311dccd84cc32bd54a5584b205fc719028d",
+      "source_png_sha256": "e5e92c0c2485205024cf5fb011d6584fec0861c2a0991320a350789ef0fca75a",
+      "sha256": "e7ca0fdca42862126da1d9ae7b40766faefee72a7ff3dcc544280b8d7857c9cb",
+      "size": [
+        181,
+        48
+      ]
+    },
+    "gainbridge_fieldhouse": {
+      "file": "Gainbridge_Fieldhouse_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Gainbridge_Fieldhouse_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/67/Gainbridge_Fieldhouse_logo.svg/960px-Gainbridge_Fieldhouse_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "8fc3d11b9acc5575b05d947f7c2cd1709b9cff9e",
+      "source_png_sha256": "ea695608712e227254507b687a692516e5ee08ebb7ddde2cbf78f80f8cea3178",
+      "sha256": "b837e1a26761b6c5ead4b4091501c9469a1314b705a1544faaba9513773ad1e5",
+      "size": [
+        226,
+        48
+      ]
+    },
+    "gateway_center_arena": {
+      "file": "Gateway Center Arena logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Gateway_Center_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/e/e2/Gateway_Center_Arena_logo.svg/960px-Gateway_Center_Arena_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "50d372b0551e5e6ee7d92285799aa0c720c4bc78",
+      "source_png_sha256": "10aa41d569065b37b85c4d52c1a949beeb3daf9212aaf17f14aa95edbb035d2e",
+      "sha256": "33696c598c07a73fd28d333a9429679f6588e781f679e4f18e685c92af1fcbe6",
+      "size": [
+        96,
+        48
+      ]
+    },
+    "globe_life_field": {
+      "file": "Globe Life Field logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Globe_Life_Field_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/4/43/Globe_Life_Field_logo.svg/960px-Globe_Life_Field_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "8be16b2d01efd9b2bd72ac12bfac7f9730b8bcb2",
+      "source_png_sha256": "6c997bc30eafb873ce64b3296238ca13a8413c885a4db1a5acdcccacf79e361d",
+      "sha256": "f283c5006cd40d0eecc14921240314ca1beb12004a0734f99ce5f4a3759f663d",
+      "size": [
+        378,
+        48
+      ]
+    },
+    "golden_1_center": {
+      "file": "Golden 1 Center logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Golden_1_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/2/20/Golden_1_Center_logo.svg/960px-Golden_1_Center_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "15fde0168326ee6102a8cbf0ea83b0dbc22a685a",
+      "source_png_sha256": "6195a43724dbcbf85d8c3fffe7e66882d8432a81c0de18492402968fe956b733",
+      "sha256": "595b53b3c3653975516043d64f5e3e9fe27016e3b5a86be75595bd0645689a09",
+      "size": [
+        250,
+        48
+      ]
+    },
+    "great_american_ball_park": {
+      "file": "Great American Ball Park logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Great_American_Ball_Park_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/7/78/Great_American_Ball_Park_logo.svg/960px-Great_American_Ball_Park_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "e5ce04162d8431b6a7dd7c30ecbd825c496a9948",
+      "source_png_sha256": "8616e8b9e83b187affaf951a6ec7a438772f65d1d785f9fa8b673f23b88a6450",
+      "sha256": "a65187c9c0c2b096c785b1cb99b653da57123144d4c1f3c4b56456a14d27bfff",
+      "size": [
+        214,
+        48
+      ]
+    },
+    "intuit_dome": {
+      "file": "Intuit_Dome_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Intuit_Dome_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/24/Intuit_Dome_logo.svg/960px-Intuit_Dome_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "341ea6061809eda1b5725dc1edaab6269fd2772e",
+      "source_png_sha256": "1a658c47b2cf658859ffa6b2bd3ecdd8e0fc79a302da32c4f2eac77861482c7b",
+      "sha256": "55d0a1a5a0dc2c053c346901afc3efffd5967be652bac707562d504ff929b0cd",
+      "size": [
+        465,
+        48
+      ]
+    },
+    "kaseya_center": {
+      "file": "Kaseya Center.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Kaseya_Center.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/f/f3/Kaseya_Center.svg/960px-Kaseya_Center.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "7547dabcd38784d71e89b1ff5ef24359f4d4e79d",
+      "source_png_sha256": "7b7c60f2d7ed71f9901244f2252678f55209489e1627d2081afba4caec656867",
+      "sha256": "847188d8d0144388a32aef7a3650353f7a464849a65849041fd3e1cd9ad037b4",
+      "size": [
+        179,
+        48
+      ]
+    },
+    "kauffman_stadium": {
+      "file": "Kauffman_Stadium_logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Kauffman_Stadium_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/e/e9/Kauffman_Stadium_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "ade6d1d0e74347653a73dbae31f42bed32ab82b4",
+      "source_png_sha256": "6bc073dd9ebc0f62117c7ad5043082004602cbe75ce7c5061f9364f10a3e853c",
+      "sha256": "f40da49a6a44199f3558d9cc763bb758cad000c583533dffa80a371fe0d999d5",
+      "size": [
+        109,
+        48
+      ]
+    },
+    "kia_center": {
+      "file": "Kia Center logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Kia_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f2/Kia_Center_logo.svg/960px-Kia_Center_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "e03e420bcf8c5552bd6fd70c8408c3c158cd6ff7",
+      "source_png_sha256": "ab648a723423469bbaa56d8924c014f8b99fab6cca74d904684140aec0423cd9",
+      "sha256": "b822c458512d3a14bed14419afdd59e1ae86ed6774a3793131d5cf4ee015a625",
+      "size": [
+        456,
+        48
+      ]
+    },
+    "little_caesars_arena": {
+      "file": "Little_Caesars_Arena_logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Little_Caesars_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/6/6c/Little_Caesars_Arena_logo.svg/960px-Little_Caesars_Arena_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "c4ddd939006c1842f7612ac09b5d01e989fcbaef",
+      "source_png_sha256": "05d5b2bfac442e924f03683c517511a5cf05243b161c2623d6572d4164e364ce",
+      "sha256": "baa53aa18d6441a1e828312a8ccec1bfae54bd899e8372648ae36df771fcd7f2",
+      "size": [
+        77,
+        48
+      ]
+    },
+    "madison_square_garden": {
+      "file": "Madison Square Garden logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Madison_Square_Garden_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/0/04/Madison_Square_Garden_logo.svg/960px-Madison_Square_Garden_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "b6c869ef61762697dc842d9f24b433b5673fb4be",
+      "source_png_sha256": "4a8c453522a8471079196c009bf6fee1eb96ccfa882d3d5e6fe8bf7c87740706",
+      "sha256": "fc1680b2279a192fe63ba23ff756709c831937113d906fb4d10266b6956f3ac0",
+      "size": [
+        160,
+        48
+      ]
+    },
+    "michelob_ultra_arena": {
+      "file": "Michelob Ultra Arena logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Michelob_Ultra_Arena_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/a/a2/Michelob_Ultra_Arena_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "96b6b2b19da4062ff2c25d9797c223233bb271f7",
+      "source_png_sha256": "e37a2fcffff265012c6f935ed4bee794d656f31c478de07643848a30150b29b7",
+      "sha256": "3921444a2c4db128179b35a87d42ba698295701787060b762009d5c4525721b5",
+      "size": [
+        134,
+        48
+      ]
+    },
+    "moda_center": {
+      "file": "Moda Center logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Moda_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/4/40/Moda_Center_logo.svg/960px-Moda_Center_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "5f111050ac9b0f5a100bb894b4664efc576ad0b6",
+      "source_png_sha256": "3d18d891d53daab00d84a3d01ee61f17e23b77e1b8ee6cafefbee0e5fef8a340",
+      "sha256": "52ba29796078b2b392dfce2b3f40de86a2b08c6dbc10b45f3f7315e94395b00d",
+      "size": [
+        134,
+        48
+      ]
+    },
+    "mohegan_sun_arena": {
+      "file": "Mohegan Sun Arena logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Mohegan_Sun_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/4/48/Mohegan_Sun_Arena_logo.svg/960px-Mohegan_Sun_Arena_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "56ebdaee56062be0f2e29b1df52265c822db40d2",
+      "source_png_sha256": "ee0d3e35472d2fbf2be549089907269419fed38942ecbee20615b6a438462b4e",
+      "sha256": "a6fca0d7e1726f31b96b5d677af9d019901419751042140a29a8dd267017e26f",
+      "size": [
+        95,
+        48
+      ]
+    },
+    "mortgage_matchup_center": {
+      "file": "Mortgage Matchup Center logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Mortgage_Matchup_Center_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/7/77/Mortgage_Matchup_Center_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "c81a15e4d422c4ed169a11a6d604afeeee2ae815",
+      "source_png_sha256": "dc42081d1d716e1458f0cd7f7a58cdcb971fdbdcc2ad2250a04a4b20628e5057",
+      "sha256": "849aed9114141b0a2930a2dd9bbd20dbc7fc6b27bf5c45f7dcc2f00fcc928d63",
+      "size": [
+        99,
+        48
+      ]
+    },
+    "nationals_park": {
+      "file": "Nationals Park.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Nationals_Park.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/e/e1/Nationals_Park.svg/960px-Nationals_Park.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "f83164d9cf1143e01100721e12ed699f0a227706",
+      "source_png_sha256": "ae387d5f6064f1e974f4212e0fc090b52b8eb4703fd267b0b12b3a8791eeb594",
+      "sha256": "ba03a7f70891802770f7d806fb49be5b06291c71d765a3251ca47caa57c65992",
+      "size": [
+        49,
+        48
+      ]
+    },
+    "oracle_park": {
+      "file": "Oracle Park logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Oracle_Park_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/4/4b/Oracle_Park_logo.svg/960px-Oracle_Park_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "d5129ff1447eff2237ac84877251c95d794529a0",
+      "source_png_sha256": "6721af20dab5b9ccbf5cec349f5efe77826c6afca59c916df32c39550cdf5b87",
+      "sha256": "4f9c91ce337d4f7ce822759500eec2bb23aaa2c15df61727755b8a7f2938b277",
+      "size": [
+        132,
+        48
+      ]
+    },
+    "oriole_park_at_camden_yards": {
+      "file": "Oriole Park logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Oriole_Park_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/5/5c/Oriole_Park_logo.svg/960px-Oriole_Park_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "c1cb6252baa9f36cf0c7fbc90e39714b995da63c",
+      "source_png_sha256": "f3aa0a4aae2724065fa4ed237deeaf0d208eb3457ddc3eca7cf739e81f5c8dcc",
+      "sha256": "1c6cee3cf924362a30a6317a29156ffa603d7ae829aab1f77ca9d79f9eee972f",
+      "size": [
+        109,
+        48
+      ]
+    },
+    "pnc_park": {
+      "file": "PNC Park logo 2021.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:PNC_Park_logo_2021.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cd/PNC_Park_logo_2021.svg/960px-PNC_Park_logo_2021.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "83f73ad3aa68121222073a710ea15495b66d8ceb",
+      "source_png_sha256": "21fb17cd986b7f3996540e049f4bc8f36915f4b7aabd4ee6978c5eb814386b56",
+      "sha256": "3223139c1176c534833ee754d0f9e3940c9e7146ee492809e8387c86cb2560d7",
+      "size": [
+        313,
+        48
+      ]
+    },
+    "paycom_center": {
+      "file": "Paycom Center logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Paycom_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/0/08/Paycom_Center_logo.svg/960px-Paycom_Center_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "2212c321cee868183af0122b4a27e3c9d2ea4982",
+      "source_png_sha256": "f581766a05d75ef9afe00c0e1f6f0a46af8bca4504b57ad368e2cee9e28d3020",
+      "sha256": "9d6734bfa708ff66a020e38001dae2dc8256ccbb041be422ff94f3e2855a0a3a",
+      "size": [
+        344,
+        48
+      ]
+    },
+    "petco_park": {
+      "file": "Petco Park logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Petco_Park_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fe/Petco_Park_logo.svg/960px-Petco_Park_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "ef3c848b2ce487ff1a9fcad4b72bcde08cf0fa64",
+      "source_png_sha256": "356b4eb65bcb3fad66b60541963412b7bd09271ffa2c74cd8398bab217041ac2",
+      "sha256": "b104e65d4f9c7c5e617fcd6520262f0eb751e86dae72e999eeb34c9579ace313",
+      "size": [
+        91,
+        48
+      ]
+    },
+    "progressive_field": {
+      "file": "Progressive_Field_Logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Progressive_Field_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/c/cf/Progressive_Field_Logo.svg/960px-Progressive_Field_Logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "9e39f870b3a2849225f37c33ac2620a6bb6cc22f",
+      "source_png_sha256": "9a1ec678f7f814699c2b678989cbfccabe159d2302f1a0cd02416b1d9283d728",
+      "sha256": "522e6141272fdbc1501d850e7f42e6aaa207d12d851b42c2078208f0c6754909",
+      "size": [
+        78,
+        48
+      ]
+    },
+    "rate_field": {
+      "file": "Rate_Field.jpg",
+      "page": "https://en.wikipedia.org/wiki/File:Rate_Field.jpg",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/7/7e/Rate_Field.jpg",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "90f321ed44eec98a76e2d9df181b0174a375e033",
+      "source_png_sha256": "272c63be93f04bcf3cc8a3b4b1052f9424c4a02b0d5240c53a658ccca2f28645",
+      "sha256": "ed70eb4604e4affd5a2f17f89ecd31f32d47886c2e14ded1761b51f872e13464",
+      "size": [
+        242,
+        48
+      ],
+      "processing": "white ground to alpha (colour-to-alpha), cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "rocket_arena": {
+      "file": "Rocket Arena logo red.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Rocket_Arena_logo_red.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/34/Rocket_Arena_logo_red.svg/960px-Rocket_Arena_logo_red.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "9c57c91a1b17f40d5cfa8b03befdfadf11ba657b",
+      "source_png_sha256": "e81a4e98c40e77c60f8d6893dbfaa2bbac864647a05fd5c1bffc350e71a87e9e",
+      "sha256": "7a657708b8b11bc48f6a64ef05f61cd409a3e0e66ca8b0b9d0078c764e59eb01",
+      "size": [
+        461,
+        48
+      ]
+    },
+    "rogers_centre": {
+      "file": "Rogers Centre.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Rogers_Centre.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ad/Rogers_Centre.svg/960px-Rogers_Centre.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "8eec3b2cc7215d4bb59735dd679f6e15b4bf71fc",
+      "source_png_sha256": "a25bc07e10185b6f7c960d2a8d84a05134529cb3529154477482d39e542bc12b",
+      "sha256": "63f8ea0b6156dcd367f7bb203853b53b2f873aa7abc3ee8e5eab249a2fd2a0c0",
+      "size": [
+        80,
+        48
+      ]
+    },
+    "scotiabank_arena": {
+      "file": "Scotiabank Arena Logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Scotiabank_Arena_Logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/c/cd/Scotiabank_Arena_Logo.png",
+      "licence": "Public domain",
+      "original_sha1": "2f09360226c8e7644ecdec30db545c69884e45f2",
+      "source_png_sha256": "aafc486d845c382ea7bca41effcbe76f170db89eae409490b57bc0a7ea0cc29b",
+      "sha256": "6705497eb31313820044dc118bfd20026e9cd69b6fd405217b2bccbf4950c2f3",
+      "size": [
+        162,
+        48
+      ]
+    },
+    "smoothie_king_center": {
+      "file": "Smoothie_King_Center_logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Smoothie_King_Center_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/1/16/Smoothie_King_Center_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "7d26b9aa4f078cb30e17fca5f4923fdcb02e79ce",
+      "source_png_sha256": "f9846b991cdf5bf7265fa7d98bd7f3a1c9416cf7d2228dce3fb617d6a4245390",
+      "sha256": "9a0a526a45d221cc2840cb8966849fe35e0224d547994733c2f105672061727a",
+      "size": [
+        46,
+        48
+      ]
+    },
+    "spectrum_center": {
+      "file": "Spectrum Center logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Spectrum_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fc/Spectrum_Center_logo.svg/960px-Spectrum_Center_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "8cfb0441b85907915211179a6cfd40ed283f6be6",
+      "source_png_sha256": "4eb31745505dc9ca09d4674f6a142d6b53c0fe5f9feaf31f9c0ee37c738cad6c",
+      "sha256": "f4420b8b4f34a14855519b8d1d1fdbeb473ee9af01c1d84de1ad3ad19cedc0a0",
+      "size": [
+        141,
+        48
+      ]
+    },
+    "sutter_health_park": {
+      "file": "Sutter Health Park.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Sutter_Health_Park.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/f/fa/Sutter_Health_Park.svg/960px-Sutter_Health_Park.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "77a29c493c0df8360c1e95856b782c07f44d7d15",
+      "source_png_sha256": "93bf63268a308e2734a3e96e369a704af08e9ec7be1254e7cb978fd43ab41696",
+      "sha256": "8e24e196462786d30de3b8b0fdd069bf53c537220881d061c7d5a3049e9823bb",
+      "size": [
+        128,
+        48
+      ]
+    },
+    "t_mobile_park": {
+      "file": "T_mobile_park_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:T_mobile_park_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c4/T_mobile_park_logo.svg/960px-T_mobile_park_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "8a9064bc788b46f28d200c1c37ea5ac0dbf669e5",
+      "source_png_sha256": "5a34c108a16d8119ac30e7610cb5e74ae2294a9ef97fb548e6337a77709d16fc",
+      "sha256": "0fc1af3f851d1c3d7e673f87eb8c513eae866054d7991e53baacc6f02e6a0d24",
+      "size": [
+        101,
+        48
+      ]
+    },
+    "td_garden": {
+      "file": "TD Garden Logo-Primary.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:TD_Garden_Logo-Primary.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/78/TD_Garden_Logo-Primary.svg/960px-TD_Garden_Logo-Primary.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "6287b2424d0d55661a2c2a68bc3da462b9391f2d",
+      "source_png_sha256": "ad7e7ca5683cacccbde26e8e345c89e64d25a912f8e643c1bd7e062efbedfc10",
+      "sha256": "61aa22f6f39dbb181367f80366f96c02f768c8f86c2d597717c2b1f3ed240902",
+      "size": [
+        278,
+        48
+      ]
+    },
+    "target_center": {
+      "file": "Target Center logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Target_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Target_Center_logo.svg/960px-Target_Center_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "f22a981bc918fce6f7b2e75317884fb5f59e78c5",
+      "source_png_sha256": "c85f01fff575cfdcbf05fd629c055e2af40317955204d1cedfd952002ffe7a03",
+      "sha256": "d69ad4b5e8c8ef3362808ddb7db425fe40c986d5a8a30ffb4166e903ed67bb74",
+      "size": [
+        435,
+        48
+      ]
+    },
+    "target_field": {
+      "file": "Target field logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Target_field_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/44/Target_field_logo.svg/960px-Target_field_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "12e1c71a8f7fc2532b66207c6eddf871acec4d3f",
+      "source_png_sha256": "f746240e9233500b9c9d515016800a62ea19c2649538aff42c4db134cdd5302e",
+      "sha256": "1d41c9eb330aad26173c5d23bce82f0d71ec26f0806f886df3167c3899b5c686",
+      "size": [
+        91,
+        48
+      ]
+    },
+    "toyota_center": {
+      "file": "Toyota center logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Toyota_center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/c/ca/Toyota_center_logo.svg/960px-Toyota_center_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "03bcd82ac385747b6d7a97ecdfbf18ef4366cb23",
+      "source_png_sha256": "76f799337080bbdd348b095c832b41dd77a2c7ab0dabf21b5d80c9fcd555e915",
+      "sha256": "d199e3d8412f1c312e952ea9060ac7485768af6e1431c8821c736888085ae31e",
+      "size": [
+        125,
+        48
+      ]
+    },
+    "truist_park": {
+      "file": "Truist Park logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Truist_Park_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8d/Truist_Park_logo.svg/960px-Truist_Park_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "e7f69fab6f9ebde5f29e4d63073ac11541aa816c",
+      "source_png_sha256": "6362980b632bb9b1a80b478aa78d2f90c2e578bd7b873ddd0c9ee99f1a32f330",
+      "sha256": "f813ea91e573c25af23f2a207ec7ff5426195b3239ba9916f3c3e03eb262a40a",
+      "size": [
+        54,
+        48
+      ]
+    },
+    "united_center": {
+      "file": "United Center logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:United_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/1/1e/United_Center_logo.svg/960px-United_Center_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "6b7f75384efb5a6f64ae092b8b853131ec65a05a",
+      "source_png_sha256": "6201ff275d0c091d51583fac6b4245d9819f585fab0b5f75891e6d3524534ccf",
+      "sha256": "3bf16ea805b8d5c9ca69bdb6f48c917436f9bc9e7b11821a194bee6ff5eab1d4",
+      "size": [
+        472,
+        48
+      ]
+    },
+    "wintrust_arena": {
+      "file": "Wintrust Arena logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Wintrust_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/0/08/Wintrust_Arena_logo.svg/960px-Wintrust_Arena_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "067079dabcc80d40af37708d79fc9fca2ac56c13",
+      "source_png_sha256": "e9dc3bb883584a9e1bd141401c9a862c1d8380c862e4132d3f143c695521bc29",
+      "sha256": "efdcabf7b306f132bf536784f45f6ee3b6219259f8bfb6386486b218c49b9fb4",
+      "size": [
+        148,
+        48
+      ]
+    },
+    "wrigley_field": {
+      "file": "Wrigley Field Logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Wrigley_Field_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/f/fa/Wrigley_Field_Logo.svg/960px-Wrigley_Field_Logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "01471db3804fe8cda1c591edaa156cfe65963ee6",
+      "source_png_sha256": "471e554fa72fd5cbe0ae163fefa565aed495fd14b65edf5a1d9f9af8e5c4790b",
+      "sha256": "d70b850ca0b41c1012186212316d2ef2bebc9c8d69babb6880616ce5356a41a3",
+      "size": [
+        191,
+        48
+      ]
+    },
+    "xfinity_mobile_arena": {
+      "file": "Xfinity Mobile Arena.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Xfinity_Mobile_Arena.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/99/Xfinity_Mobile_Arena.svg/960px-Xfinity_Mobile_Arena.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "927cbb84026d2f286758ffd362aad654464e00d4",
+      "source_png_sha256": "ba0c1b2cfba0c68c5e3c5c00299db6109bc7d22c89b58d1816c727ec320f980a",
+      "sha256": "6517f6ef2893a2e870a4af8b73dc487c8a40dc58b507a5456868bda98ebecc67",
+      "size": [
+        186,
+        48
+      ]
+    },
+    "yankee_stadium": {
+      "file": "Yankee Stadium Logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Yankee_Stadium_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/e/e2/Yankee_Stadium_Logo.svg/960px-Yankee_Stadium_Logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "070f3ac8cce91e01c0217aad515ebd8a6a0a1ff3",
+      "source_png_sha256": "83d48bfc0a80a014161cc042216b13cc8b536e3fb6533e9f936a78a4d260e15d",
+      "sha256": "90cdbc83a86daad622aabdffa886fdc14d76eebf538b396c7814f7ab74b09f13",
+      "size": [
+        45,
+        48
+      ]
+    },
+    "crypto_com_arena": {
+      "file": "Crypto.com Arena logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Crypto.com_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/9/93/Crypto.com_Arena_logo.svg/960px-Crypto.com_Arena_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "648a5d8653073d0f468127637840196d149be5f6",
+      "source_png_sha256": "e716618894ef8cf8ad66049ecf085df3fa45780abb6bb1bb3796fdddd98ae889",
+      "sha256": "3a894e3196cecf3b6a53d12b15d9e803feabd973914e78c04993f4fc61294ca5",
+      "size": [
+        175,
+        48
+      ]
+    },
+    "loandepot_park": {
+      "file": "LoanDepot Park logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:LoanDepot_Park_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/9/90/LoanDepot_Park_logo.svg/960px-LoanDepot_Park_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "31d4c438423e35253d816687d7947cf3a28d08ef",
+      "source_png_sha256": "4857a83ecf59e59402a8e0c72751a1f80c488e44fa2a3cfc67168a5eae03fef0",
+      "sha256": "b85653001bdd8bc18a2471236481d733610bc4f9afa60ba3f7a3717c49b5abb9",
+      "size": [
+        54,
         48
       ]
     }
