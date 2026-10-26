@@ -188,3 +188,17 @@ def test_the_sale_price_hangs_on_a_yellow_tag_with_a_green_dollar_sign():
         assert green not in digits, mode
         assert digits.count(deals_render.PRICE_TAG) >= 200, mode
         assert digits.count(deals_render.PRICE_TAG_INK) >= 40, mode
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_the_store_and_the_price_source_are_named_by_their_official_marks(mode):
+    page = render_page(DealSnapshot(offers()[:2], NOW, "live", "steam"), {}, theme={"mode": mode}, now=NOW)
+    ink = (250, 250, 240) if mode == "night" else (8, 12, 10)
+
+    # Steam's round mark after the title rule: its own black by day, the page's ink at night.
+    header = {page.getpixel((x, y)) for x in range(220, 252) for y in range(24, 52)}
+    assert ink in header if mode == "night" else any(max(pixel) < 30 for pixel in header)
+    # CheapShark's gold-and-grey shark opens the footer, its lettering in ink after it.
+    shark = [page.getpixel((x, y)) for x in range(14, 40) for y in range(452, 474)]
+    assert any(red > 180 and green > 120 and blue < 90 for red, green, blue in shark)
+    assert ink in {page.getpixel((x, y)) for x in range(40, 120) for y in range(456, 470)}

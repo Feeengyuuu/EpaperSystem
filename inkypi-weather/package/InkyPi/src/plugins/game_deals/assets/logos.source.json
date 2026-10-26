@@ -1,0 +1,39 @@
+{
+  "built_at": "2026-10-26T16:34:22+00:00",
+  "logos": {
+    "steam_logo": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c1/Steam_2016_logo_black.svg/960px-Steam_2016_logo_black.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Steam_2016_logo_black.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "0fae24ad8d8a5970e8d72dc2f029176e853796736c92afe488a889934d78a67f",
+      "size": [
+        212,
+        64
+      ],
+      "sha256": "d68f7fd46eae51c04cad924b7c218cd1eba621c7eca6b13799312c6eecb03b38"
+    },
+    "cheapshark_mark": {
+      "source": "https://www.cheapshark.com/img/logo_image.png",
+      "page": "https://www.cheapshark.com/",
+      "licence": "CheapShark's trademark, shown to name the price source",
+      "source_sha256": "9bd3d9be01a203da4a5cbf1ea353c2f29dc0fdbac39045a950c0a4722354a006",
+      "size": [
+        72,
+        64
+      ],
+      "sha256": "7cc5adaeca7fa77b4b3c0df6359b8ea3c2fcd52bbb5c51cd3f1397d2dbd0a567"
+    },
+    "cheapshark_letters": {
+      "source": "https://www.cheapshark.com/img/footer_text.png",
+      "page": "https://www.cheapshark.com/",
+      "licence": "CheapShark's trademark, shown to name the price source",
+      "source_sha256": "986e35479b89f1676a7e9adebd005b81a97b8895302c1a76d18382e513343f96",
+      "size": [
+        257,
+        40
+      ],
+      "sha256": "447db7e8b08dd89c0621b22e959e321bce9ae8f26b9df00481d2a1587516912b",
+      "processing": "white strokes kept (luminance > 150), the shadow dropped, closed 3 px, black on transparent: tinted with the page's ink"
+    }
+  }
+}

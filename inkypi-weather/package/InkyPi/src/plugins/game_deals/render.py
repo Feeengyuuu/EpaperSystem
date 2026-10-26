@@ -27,10 +27,34 @@ PRICE_TAG = (255, 212, 0)
 PRICE_TAG_INK = (8, 12, 10)
 PRICE_TAG_POINT = 9
 PRICE_TAG_PAD = (PRICE_TAG_POINT + 4, 6)
+# The official marks' heights: Steam's logo in the header, CheapShark's shark and lettering in the footer.
+STEAM_LOGO_HEIGHT, CHEAPSHARK_MARK_HEIGHT, CHEAPSHARK_LETTERS_HEIGHT = 30, 22, 13
 
 
 def _font(size, bold=False):
     return get_base_ui_font(size, bold=bold)
+
+
+def _mark(name, height, ink=None):
+    """An official mark from assets/ (tools/build_game_deals_logos.py) ``height`` tall; with
+    ``ink``, its shape in that colour (black artwork on a night page, lettering kept as a mask)."""
+    try:
+        with Image.open(Path(__file__).with_name("assets") / f"{name}.png") as source:
+            mark = source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+    mark = mark.resize((max(1, round(mark.width * height / mark.height)), height), Image.Resampling.LANCZOS)
+    if ink is not None:
+        tinted = Image.new("RGBA", mark.size, (*ink, 255))
+        tinted.putalpha(mark.getchannel("A"))
+        mark = tinted
+    return mark
+
+
+def _paste_mark(image, mark, x, middle):
+    """Paste ``mark`` with its left edge at ``x`` and centred on ``middle``; the x after it."""
+    image.paste(mark, (round(x), round(middle - mark.height / 2)), mark)
+    return x + mark.width
 
 
 def _title_line(text, width):
@@ -90,7 +114,11 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
     if not paste_local_wordmark(image, assets / "title_wordmark.png", (14, 8, 197, 58)):
         draw.text((14, 10), "游戏优惠", font=_font(43, True), fill=ink, anchor="lt")
     draw.line((207, 17, 207, 56), fill=ink, width=2)
-    draw.text((220, 30), "STEAM ‧ 美国区", font=_font(20, True), fill=ink, anchor="lt")
+    # The store by its own logo (black artwork, in the page's ink at night), then the region.
+    steam = _mark("steam_logo", STEAM_LOGO_HEIGHT, ink if night else None)
+    region_x = _paste_mark(image, steam, 220, 38) + 8 if steam is not None else 220
+    draw.text((region_x, 38), "‧ 美国区" if steam is not None else "STEAM ‧ 美国区", font=_font(20, True), fill=ink,
+              anchor="lm")
     if not paste_local_wordmark(image, assets / "usd_wordmark.png", (587, 18, 680, 54)):
         draw.rectangle((619, 20, 680, 52), outline=ink, width=2)
         draw.text((626, 25), "USD", font=_font(24, True), fill=ink, anchor="lt")
@@ -174,7 +202,13 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         draw.text((80, 245), detail, font=_font(23), fill=muted, anchor="lt")
 
     draw.line((14, 445, 785, 445), fill=ink, width=2)
-    draw.text((14, 455), "CheapShark ‧ Steam 美元报价", font=_font(15, True), fill=ink, anchor="lt")
+    # The prices' source by its marks: the CheapShark shark, then its lettering in the page's ink.
+    shark, letters = _mark("cheapshark_mark", CHEAPSHARK_MARK_HEIGHT), _mark("cheapshark_letters", CHEAPSHARK_LETTERS_HEIGHT, ink)
+    if shark is not None and letters is not None:
+        source_x = _paste_mark(image, letters, _paste_mark(image, shark, 14, 463) + 5, 463) + 7
+        draw.text((source_x, 463), "‧ Steam 美元报价", font=_font(15, True), fill=ink, anchor="lm")
+    else:
+        draw.text((14, 455), "CheapShark ‧ Steam 美元报价", font=_font(15, True), fill=ink, anchor="lt")
     stamp = snapshot.fetched_at.astimezone(LOCAL_ZONE).strftime("%m/%d %H:%M") if snapshot.fetched_at else "暂无数据"
     if snapshot.state == "stale":
         status, status_color = f"缓存已过期 ‧ {stamp}", (226, 79, 59) if night else (166, 35, 24)
