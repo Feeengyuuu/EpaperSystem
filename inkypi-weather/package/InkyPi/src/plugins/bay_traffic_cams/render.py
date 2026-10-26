@@ -39,6 +39,8 @@ SIDE = (464, 58, 788, 470)
 # A still older than this is marked as not updating.
 STALE_MINUTES = 30
 WEEKDAYS = "一二三四五六日"
+# Caltrans' logo in the header's note, this tall.
+CALTRANS_LOGO_HEIGHT = 15
 
 
 def _rgb(value):
@@ -97,6 +99,23 @@ def _nav_arrow(bearing, size):
 
 def _paste(canvas, art, xy):
     canvas.image.paste(art, (round(xy[0]), round(xy[1])), art)
+
+
+def _source_logo(canvas, height):
+    """Caltrans' logo (assets/logos) ``height`` tall: its blue-green mark as printed, its black
+    lettering in the page's ink where the page is dark; None without the file."""
+    logo = _art("logos", "caltrans", height)
+    if logo is None:
+        return None
+    paper, ink = canvas.color("paper"), canvas.color("ink")
+    if sum(paper) < sum(ink):
+        pixels = logo.load()
+        for y in range(logo.height):
+            for x in range(logo.width):
+                red, green, blue, alpha = pixels[x, y]
+                if alpha and max(red, green, blue) < 110 and max(red, green, blue) - min(red, green, blue) < 40:
+                    pixels[x, y] = (*ink, alpha)
+    return logo
 
 
 def crt_style(settings):
@@ -398,7 +417,12 @@ def render_page(dimensions, payload, settings, now):
     cameras = payload["cameras"]
     roving = bool(cameras and cameras[0].get("patrol"))
     near = len(cameras) - (1 if roving else 0)
-    note = "Caltrans 实时监控"
+    # The cameras' owner by its own logo (its black lettering in the page's ink on a dark page).
+    caltrans = _source_logo(canvas, CALTRANS_LOGO_HEIGHT)
+    if caltrans is not None:
+        _paste(canvas, caltrans, (x, 26 - caltrans.height / 2))
+        x += caltrans.width + 7
+    note = "实时监控" if caltrans is not None else "Caltrans 实时监控"
     if roving:
         note += " · 湾区随机巡视"
     if near:

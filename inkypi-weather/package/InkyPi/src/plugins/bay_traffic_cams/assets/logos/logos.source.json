@@ -1,0 +1,16 @@
+{
+  "logos": {
+    "caltrans": {
+      "source": "https://dot.ca.gov/-/media/dot-media/images/logos/caltrans/caltranslogo.png",
+      "page": "https://dot.ca.gov/",
+      "licence": "Caltrans' official logo from its own site header, shown to name the camera source",
+      "source_sha256": "7481c1e0c4ee9539f13e00d496bfa69b7540d8b0cb8711b334d4059cef7201df",
+      "processing": "cropped to its visible pixels, scaled to 64 px tall; the page inks its black lettering on a dark page",
+      "size": [
+        343,
+        53
+      ],
+      "sha256": "2b33b4c8876e32517fbbb2847970692ff0fe4a53b67ec5e07d095e4b6390d9c2"
+    }
+  }
+}
