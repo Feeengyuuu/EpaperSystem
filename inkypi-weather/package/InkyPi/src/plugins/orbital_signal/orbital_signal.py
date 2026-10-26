@@ -55,10 +55,10 @@ MARKET_MARK_CACHE_BUDGET = CacheBudget(30 * 24 * 60 * 60, 96, 8 * 1024 * 1024)
 # A matchup's two logos (px), the league icon in its chip and the leader's logo by its name.
 MATCHUP_LOGO, LEAGUE_ICON, LEADER_LOGO = 28, 14, 14
 # Each market column is themed by its event's art: kept at EVENT_ART_SIDE px, laid ART_H px tall
-# across the column's top, its lowest ART_FADE share fading into the paper the question is printed
-# on. The leading option shows its picture (Polymarket's own, its team's logo, or for a person their
-# Wikipedia portrait) in a LEADER_AVATAR px disc by its name.
-EVENT_ART_SIDE, ART_H, ART_FADE = 220, 92, 0.42
+# across the column's top, its lowest ART_FADE share fading into the paper; the question is printed
+# over the fade, haloed in the paper colour. The leading option shows its picture (Polymarket's own,
+# its team's logo, or for a person their Wikipedia portrait) in a LEADER_AVATAR px disc by its name.
+EVENT_ART_SIDE, ART_H, ART_FADE = 220, 120, 0.55
 LEADER_AVATAR = 26
 WIKI_SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
 WIKI_USER_AGENT = "InkyPi OrbitalSignal/1.0 (https://github.com/Feeengyuuu/EpaperSystem)"
@@ -1452,7 +1452,8 @@ class OrbitalSignal(BasePlugin):
         y += (QUESTION_LINES - len(lines)) * QUESTION_LINE / 2
         for line in lines:
             line_w = draw.textbbox((0, 0), line, font=font)[2]
-            draw.text((cx - line_w / 2, y), line, font=font, fill=palette["ink"])
+            draw.text((cx - line_w / 2, y), line, font=font, fill=palette["ink"], stroke_width=2,
+                      stroke_fill=palette["paper"])
             y += QUESTION_LINE
 
     def _draw_market_facts(self, draw, facts, left, right, top, palette, family, image):

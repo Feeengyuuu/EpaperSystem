@@ -1201,10 +1201,11 @@ def test_market_columns_fill_the_panel_without_the_console_strip():
     # The generated console strip is gone; the columns themselves reach down to the footer.
     assert not hasattr(module, "MARKET_ART_PATH")
     assert not (Path(module.__file__).with_name("assets") / "market-console.png").exists()
-    # The question sits under the event art, not over it.
+    # The question is printed over the event art's fade (haloed in the paper colour), never over
+    # the art's solid part.
     questions = [call for call in draw.text_calls if call["text"] in {"WORLD CUP", "WINNER", "NEXT PRIME", "MINISTER"}]
     assert len(questions) == 4
-    assert min(call["bbox"][1] for call in questions) >= 58 + ART_TOP + ART_H
+    assert min(call["bbox"][1] for call in questions) >= 58 + ART_TOP + ART_H * (1 - ART_FADE)
     # Volume, heat and end read as a labelled table at the foot of each column, all in the ink,
     # clear of the footer's rule.
     facts = [call for call in draw.text_calls if call["xy"][1] >= 58 + FACTS_TOP]
