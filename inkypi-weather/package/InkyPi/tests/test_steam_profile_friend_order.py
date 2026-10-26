@@ -33,10 +33,10 @@ def panel_names(plugin, monkeypatch, friends):
     original = _Console.text
 
     def record(self, box, value, *args, **kwargs):
-        # Friend names: 17 px tall on a row of someone in a game, 12 px under a tile's avatar.
+        # Friend names: 17 px tall on a row of someone in a game, 11 px under a tile's avatar.
         left, top, _right, bottom = box
         if (FRIEND_LIST[0] <= left < FRIEND_LIST[2] and FRIEND_LIST[1] <= top < FRIEND_LIST[3]
-                and bottom - top in (17, 12) and value != "更多在线"):
+                and bottom - top in (17, 11) and value != "更多在线"):
             names.append(str(value))
         return original(self, box, value, *args, **kwargs)
 
