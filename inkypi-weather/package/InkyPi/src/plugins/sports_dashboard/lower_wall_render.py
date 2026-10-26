@@ -5,8 +5,8 @@ two-column board of scoreboard rows; when the best game is a final or a
 playoff game it keeps a full-width strip on top. Rows reuse each sport's
 ScorebugSpec, so clocks, team names and logos match the league panels.
 On a card the left edge carries the two teams' colours beside their rows,
-the away colour turning into the stripe between them, and the leader's
-score is set in an ink box.
+each turning into a tapered stripe (the away one between the rows, the home
+one along the card's bottom edge), and the leader's score is set in an ink box.
 Text stays in pure ink on the six-ink panel.
 """
 
@@ -26,8 +26,8 @@ WALL_CONTROL_ROOM_MIN_WIDTH = 170
 # Up to six remaining games get a small card each (three per row); more use rows.
 WALL_TILE_LIMIT = 6
 WALL_TILE_COLUMNS = 3
-# The card's left edge carries the two teams' colours in a bar this wide; the away colour
-# bends into the stripe between the rows through a fillet of this radius.
+# The card's left edge carries the two teams' colours in a bar this wide; each colour bends
+# into its team's stripe through a fillet of this radius.
 WALL_SLAB_WIDTH = 9
 WALL_JOINT_RADIUS = 5
 
@@ -145,9 +145,10 @@ class LowerWallRenderMixin:
         clock, clock_font = self._fit_text_ellipsis(draw, clock, inner_x2 - inner_x1 - 12, 13, bold=True, min_size=9)
         self._draw_text_in_box(draw, (inner_x1 + 11, y1 + 32, inner_x2, y1 + 50), clock, clock_font, COLORS["text"])
         leader = self._wall_leader(event)
-        # Only the away row carries a foot stripe: it divides the two rows.
-        for (top, bottom), side, colour in zip(rows, ("a", "b"), (colours[0], None)):
-            self._draw_wall_team_line(image, draw, (inner_x1, top, inner_x2, bottom), event, side, spec, colour, leader == side)
+        # The away stripe divides the rows; the home one runs along the card's bottom edge.
+        for (top, bottom), side, colour, foot in zip(rows, ("a", "b"), colours, (None, y2 - 2)):
+            self._draw_wall_team_line(image, draw, (inner_x1, top, inner_x2, bottom), event, side, spec, colour, leader == side,
+                                      foot)
         if detail:
             detail_top = rows_top + 2 * row_height
             detail, detail_font = self._fit_text_ellipsis(draw, detail, inner_x2 - inner_x1, 11, bold=True, min_size=8)
@@ -155,7 +156,7 @@ class LowerWallRenderMixin:
         if footer:
             self._draw_kit_footer(draw, (inner_x1, y2 - 20, inner_x2, y2 - 6), f"TV {footer}")
 
-    def _draw_wall_team_line(self, image, draw, box, event, side, spec, colour=None, leads=False):
+    def _draw_wall_team_line(self, image, draw, box, event, side, spec, colour=None, leads=False, foot=None):
         x1, y1, x2, y2 = box
         logo = min(28, y2 - y1)
         fallback = spec.hook("logo_fallback", event, side, default=event.get(f"team_{side}_code"))
@@ -169,8 +170,7 @@ class LowerWallRenderMixin:
         name, name_font = self._kit_team_name(draw, spec, event, side, score_left - 8 - name_x, 14, True, min_size=9)
         self._draw_text_in_box(draw, (name_x, y1, score_left - 8, y2), name, name_font, COLORS["text"])
         if colour is not None:
-            # The team's colour runs along the row's foot from its slab to its score.
-            draw.rectangle((x1 - 7, y2 - 1, score_left - 8, y2), fill=colour)
+            self._draw_wall_stripe(draw, x1 - 7, score_left - 8, y2 if foot is None else foot, colour)
 
     def _draw_wall_golf_card(self, draw, box, event):
         x1, y1, x2, y2 = box
@@ -321,11 +321,12 @@ class LowerWallRenderMixin:
         draw.rounded_rectangle((inner_x2 - clock_w - 5, y1 + 3, inner_x2 + 3, y1 + 18), radius=4, fill=COLORS["panel"])
         self._draw_text_in_box(draw, (inner_x1 + 30, y1 + 3, inner_x2, y1 + 18), clock, clock_font, COLORS["text"], align="right")
         leader = self._wall_leader(event)
-        # Only the away row carries a foot stripe: it divides the two rows.
-        for (top, bottom), side, colour in zip(rows, ("a", "b"), (colours[0], None)):
-            self._draw_wall_tile_team(image, draw, (inner_x1, top, inner_x2, bottom), event, side, spec, colour, leader == side)
+        # The away stripe divides the rows; the home one runs along the card's bottom edge.
+        for (top, bottom), side, colour, foot in zip(rows, ("a", "b"), colours, (None, y2 - 2)):
+            self._draw_wall_tile_team(image, draw, (inner_x1, top, inner_x2, bottom), event, side, spec, colour, leader == side,
+                                      foot)
 
-    def _draw_wall_tile_team(self, image, draw, box, event, side, spec, colour=None, leads=False):
+    def _draw_wall_tile_team(self, image, draw, box, event, side, spec, colour=None, leads=False, foot=None):
         x1, y1, x2, y2 = box
         logo = min(18, y2 - y1)
         fallback = spec.hook("logo_fallback", event, side, default=event.get(f"team_{side}_code"))
@@ -339,8 +340,7 @@ class LowerWallRenderMixin:
         name, name_font = self._kit_team_name(draw, spec, event, side, score_left - 6 - name_x, 12, True, min_size=8)
         self._draw_text_in_box(draw, (name_x, y1, score_left - 6, y2), name, name_font, COLORS["text"])
         if colour is not None:
-            # The team's colour runs along the row's foot from its slab to its score.
-            draw.rectangle((x1 - 7, y2 - 1, score_left - 6, y2), fill=colour)
+            self._draw_wall_stripe(draw, x1 - 7, score_left - 6, y2 if foot is None else foot, colour)
 
     def _draw_wall_row(self, image, draw, box, game, now, last):
         x1, y1, x2, y2 = box
@@ -405,7 +405,8 @@ class LowerWallRenderMixin:
         the away and home colours, and the card's left edge in one unbroken bar of the same two
         colours, the away one flowing on from the band down to the end of its row (``rows``:
         (top, bottom) for a, then b) and turning through a rounded joint into the stripe that
-        divides the two rows, the home one running on to the card's foot. Returns the two colours."""
+        divides the two rows, the home one running on to the card's foot and turning there into a
+        stripe along its bottom edge. Returns the two colours."""
         x1, y1, x2, y2 = [int(value) for value in box]
         colours = self._wall_team_colours(event, accent)
         band_bottom = split_y - 2
@@ -418,14 +419,25 @@ class LowerWallRenderMixin:
         edge = x1 + WALL_SLAB_WIDTH - 1
         for (top, bottom), colour in zip(spans, colours):
             draw.rectangle((x1 + 1, top, edge, bottom), fill=colour)
-        # The away bar bends into the stripe under its row (drawn with the row) through a fillet.
+        # Each bar bends through a fillet into its team's stripe (drawn with the row): the away
+        # one under its row, the home one along the card's bottom edge.
         joint = WALL_JOINT_RADIUS
-        draw.pieslice((edge - joint, first_end - 2 * joint, edge + joint, first_end), 0, 90, fill=colours[0])
-        draw.rectangle((edge, first_end - joint, edge + joint, first_end), fill=colours[0])
-        draw.pieslice((edge + 1, first_end - 2 * joint - 1, edge + 2 * joint + 1, first_end - 1), 90, 180, fill=COLORS["panel"])
+        for foot, colour in ((first_end, colours[0]), (y2 - 2, colours[1])):
+            draw.pieslice((edge - joint, foot - 2 * joint, edge + joint, foot), 0, 90, fill=colour)
+            draw.rectangle((edge, foot - joint, edge + joint, foot), fill=colour)
+            draw.pieslice((edge + 1, foot - 2 * joint - 1, edge + 2 * joint + 1, foot - 1), 90, 180, fill=COLORS["panel"])
         draw.rounded_rectangle((x1, y1, x2, y2), radius=5, outline=COLORS["border"], width=2)
         draw.line((x1 + 9, band_bottom + 1, x2 - 2, band_bottom + 1), fill=COLORS["border"], width=1)
         return colours
+
+    @staticmethod
+    def _draw_wall_stripe(draw, left, right, foot, colour):
+        """A team's stripe ending on ``foot``: three pixels thick where it leaves the edge bar,
+        tapering to a hairline at the score, like a speed stroke."""
+        if right - left < 6:
+            return
+        draw.polygon([(left, foot - 2), (right, foot), (left, foot)], fill=colour)
+        draw.line((left, foot, right, foot), fill=colour, width=1)
 
     def _wall_team_colours(self, event, accent):
         return (self._wall_team_colour(event, "a", accent),
