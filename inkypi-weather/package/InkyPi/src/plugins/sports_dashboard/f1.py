@@ -24,6 +24,11 @@ from runtime.refresh_contracts import TaskCancelled
 
 SportsDashboard = None
 
+# The season's results for the drivers' bars: Grand Prix then sprint pages, one per render.
+F1_FORM_SOURCES = ("current/results.json", "current/sprint.json")
+F1_FORM_PAGE = 100
+F1_FORM_RETRY_SECONDS = 600
+
 
 class F1Mixin:
     def _load_f1_events(self, settings, timezone_info):
@@ -124,64 +129,80 @@ class F1Mixin:
                 row["form"] = history
 
     def _load_f1_season_form(self, settings, through):
-        """The season's results by driver, fetched once the standings count a round the cached
-        results lack (at most hourly while Jolpica catches up or fails)."""
+        """The season's results by driver. The lower region renders against a deadline on the
+        Pi, so once the standings count a round the cached season lacks, its results come one
+        Jolpica page per render (kept between renders, a pause after a failure); the last whole
+        season stands until every page is in."""
         path = self._f1_season_form_cache_path()
         cache = self._read_json_file(path)
-        cached = cache.get("form") if cache.get("version") == F1_FORM_STATE_VERSION else None
+        if cache.get("version") != F1_FORM_STATE_VERSION:
+            cache = {}
+        form = cache.get("form") if isinstance(cache.get("form"), dict) else {}
+        if cache.get("through") == through or self._provider_cache_only(settings):
+            return form
         now_utc = datetime.now(timezone.utc)
-        if isinstance(cached, dict) and (
-            cache.get("through") == through
-            or self._cache_is_fresh_seconds(cache, 3600, now_utc)
-            or self._provider_cache_only(settings)
-        ):
-            return cached
-        if self._provider_cache_only(settings) or self._f1_jolpica_calls_left(settings, now_utc) <= 0:
-            return cached or {}
-        season = through.split("/")[0]
-        form, last = cached or {}, None
-        try:
-            form, last = f1_domain.season_form(*self._fetch_f1_season_pages(settings))
-        except TaskCancelled:
-            raise
-        except Exception as exc:
-            logger.warning("F1 season results fetch failed: %s", exc)
-        finally:
-            self._record_f1_jolpica_call(settings, now_utc)
-        payload = {
-            "version": F1_FORM_STATE_VERSION,
-            "through": f"{season}/{last}" if last else cache.get("through"),
-            "fetched_at": now_utc.isoformat(),
-            "form": form,
-        }
+        pending = cache.get("pending") if isinstance(cache.get("pending"), dict) else {}
+        if pending.get("through") != through:
+            pending = {"through": through, "offsets": {}, "totals": {}, "pages": {}}
+        failed_at = self._parse_cached_utc(pending.get("failed_at"))
+        if failed_at is not None and now_utc - failed_at < timedelta(seconds=F1_FORM_RETRY_SECONDS):
+            return form
+        offsets, totals, pages = pending["offsets"], pending["totals"], pending["pages"]
+        source = next((suffix for suffix in F1_FORM_SOURCES if offsets.get(suffix, 0) < totals.get(suffix, 1)), None)
+        if source is not None:
+            if self._f1_jolpica_calls_left(settings, now_utc) <= 0:
+                return form
+            try:
+                total, races = self._fetch_f1_season_page(settings, source, offsets.get(source, 0))
+            except TaskCancelled:
+                raise
+            except Exception as exc:
+                logger.warning("F1 season results page failed: %s", exc)
+                pending["failed_at"] = now_utc.isoformat()
+                self._write_f1_season_form(path, {**cache, "version": F1_FORM_STATE_VERSION, "pending": pending})
+                return form
+            finally:
+                self._record_f1_jolpica_call(settings, now_utc)
+            totals[source] = total
+            offsets[source] = offsets.get(source, 0) + F1_FORM_PAGE
+            pages.setdefault(source, []).extend(races)
+            pending.pop("failed_at", None)
+        if all(offsets.get(suffix, 0) >= totals.get(suffix, 1) for suffix in F1_FORM_SOURCES):
+            form, _last = f1_domain.season_form(*(pages.get(suffix, []) for suffix in F1_FORM_SOURCES))
+            cache = {"version": F1_FORM_STATE_VERSION, "through": through, "fetched_at": now_utc.isoformat(), "form": form}
+        else:
+            cache = {**cache, "version": F1_FORM_STATE_VERSION, "pending": pending}
+        self._write_f1_season_form(path, cache)
+        return form
+
+    def _write_f1_season_form(self, path, payload):
         try:
             self._write_json_file(path, payload)
         except OSError as exc:
             logger.warning("Failed to write F1 season results cache: %s", exc)
-        return form
 
-    def _fetch_f1_season_pages(self, settings):
-        """The current season's Grand Prix and sprint results, every page of each."""
-        base_url = self._f1_jolpica_base_url(settings)
-        session = get_http_session()
-        pages = []
-        for suffix in ("current/results.json", "current/sprint.json"):
-            races, offset, total = [], 0, 1
-            # Thirty rounds of twenty-two cars fit well inside ten pages.
-            while offset < total and offset < 1000:
-                response = session.get(
-                    f"{base_url}/{suffix}",
-                    params={"limit": 100, "offset": offset},
-                    headers={"Accept": "application/json", "User-Agent": "InkyPi/1.0"},
-                    timeout=20,
-                )
-                response.raise_for_status()
-                data = (response.json() or {}).get("MRData") or {}
-                total = int(data.get("total") or 0)
-                races.extend((data.get("RaceTable") or {}).get("Races") or [])
-                offset += 100
-            pages.append(races)
-        return pages
+    def _fetch_f1_season_page(self, settings, suffix, offset):
+        """One page of the season's Grand Prix or sprint results: (rows in all, its races with
+        only each row's driver, place and points)."""
+        response = get_http_session().get(
+            f"{self._f1_jolpica_base_url(settings)}/{suffix}",
+            params={"limit": F1_FORM_PAGE, "offset": offset},
+            headers={"Accept": "application/json", "User-Agent": "InkyPi/1.0"},
+            timeout=20,
+        )
+        response.raise_for_status()
+        data = (response.json() or {}).get("MRData") or {}
+        races = []
+        for race in (data.get("RaceTable") or {}).get("Races") or []:
+            key = "SprintResults" if "SprintResults" in race else "Results"
+            rows = [
+                {"position": row.get("position"), "points": row.get("points"),
+                 "Driver": {"driverId": (row.get("Driver") or {}).get("driverId")}}
+                for row in race.get(key) or []
+                if isinstance(row, dict)
+            ]
+            races.append({"round": race.get("round"), key: rows})
+        return int(data.get("total") or 0), races
 
     def _f1_jolpica_cache_is_fresh(self, cache, settings, timezone_info, now_utc):
         cache_hours = self._int_setting(settings, "f1CacheHours", DEFAULT_F1_CACHE_HOURS, 1, 24)

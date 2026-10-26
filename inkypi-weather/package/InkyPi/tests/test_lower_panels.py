@@ -848,46 +848,52 @@ def test_f1_points_bar_tells_the_season_race_by_race():
     assert {plain.getpixel((x, 5)) for x in range(1, 98)} == {team}
 
 
-def test_f1_season_form_is_fetched_once_per_round_and_kept_on_failure(monkeypatch, tmp_path):
+def test_f1_season_form_comes_one_page_per_render_and_is_kept_on_failure(monkeypatch, tmp_path):
     plugin = _plugin()
     monkeypatch.setattr(plugin, "_f1_season_form_cache_path", lambda: tmp_path / "form.json")
     monkeypatch.setattr(plugin, "_f1_jolpica_state_path", lambda: tmp_path / "state.json")
     fetches = []
+    pages = {
+        ("current/results.json", 0): (150, [_jolpica_race(17, [("antonelli", 2, 18)])]),
+        ("current/results.json", 100): (150, [_jolpica_race(18, [("antonelli", 1, 25)])]),
+        ("current/sprint.json", 0): (1, [_jolpica_race(18, [("antonelli", 1, 8)], key="SprintResults")]),
+    }
 
-    def fetch(_settings):
-        fetches.append(1)
-        return [_jolpica_race(18, [("antonelli", 1, 25)])], []
+    def fetch(_settings, suffix, offset):
+        fetches.append((suffix, offset))
+        return pages[(suffix, offset)]
 
-    monkeypatch.setattr(plugin, "_fetch_f1_season_pages", fetch)
-    parsed = {"driver_standings": [{"driver_id": "antonelli"}, {"driver_id": "nobody"}]}
+    monkeypatch.setattr(plugin, "_fetch_f1_season_page", fetch)
 
-    plugin._attach_f1_season_form(parsed, {}, "2026/18")
-    plugin._attach_f1_season_form({"driver_standings": [{"driver_id": "antonelli"}]}, {}, "2026/18")
+    def attach(through, settings=None):
+        parsed = {"driver_standings": [{"driver_id": "antonelli"}, {"driver_id": "nobody"}]}
+        plugin._attach_f1_season_form(parsed, settings or {}, through)
+        return parsed["driver_standings"]
 
-    assert parsed["driver_standings"][0]["form"] == [[18, 25.0, 1]]
-    assert "form" not in parsed["driver_standings"][1]
-    assert len(fetches) == 1
+    # One page per render; the bars wait for the whole season.
+    assert "form" not in attach("2026/18")[0]
+    assert "form" not in attach("2026/18")[0]
+    rows = attach("2026/18")
+    assert rows[0]["form"] == [[17, 18.0, 2], [18, 33.0, 1]]
+    assert "form" not in rows[1]
+    assert fetches == [("current/results.json", 0), ("current/results.json", 100), ("current/sprint.json", 0)]
+    attach("2026/18")
+    assert len(fetches) == 3
 
-    # A newer round the provider fails on keeps the old season and waits an hour to ask again.
-    def fail(_settings):
-        fetches.append(1)
+    # A newer round the provider fails on keeps the last season and waits before asking again.
+    def fail(_settings, suffix, offset):
+        fetches.append((suffix, offset))
         raise RuntimeError("down")
 
-    cache = json.loads((tmp_path / "form.json").read_text(encoding="utf-8"))
-    cache["fetched_at"] = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-    (tmp_path / "form.json").write_text(json.dumps(cache), encoding="utf-8")
-    monkeypatch.setattr(plugin, "_fetch_f1_season_pages", fail)
-    later = {"driver_standings": [{"driver_id": "antonelli"}]}
-    plugin._attach_f1_season_form(later, {}, "2026/19")
-    plugin._attach_f1_season_form(later, {}, "2026/19")
-
-    assert later["driver_standings"][0]["form"] == [[18, 25.0, 1]]
-    assert len(fetches) == 2
+    monkeypatch.setattr(plugin, "_fetch_f1_season_page", fail)
+    assert attach("2026/19")[0]["form"] == [[17, 18.0, 2], [18, 33.0, 1]]
+    assert attach("2026/19")[0]["form"] == [[17, 18.0, 2], [18, 33.0, 1]]
+    assert len(fetches) == 4
 
     # A theme-only redraw never asks.
     (tmp_path / "form.json").unlink()
-    plugin._attach_f1_season_form({"driver_standings": [{"driver_id": "antonelli"}]}, {"_theme_render_only": True}, "2026/19")
-    assert len(fetches) == 2
+    attach("2026/19", {"_theme_render_only": True})
+    assert len(fetches) == 4
 
 
 def test_f1_side_cars_cover_every_team_and_match_their_sources():
