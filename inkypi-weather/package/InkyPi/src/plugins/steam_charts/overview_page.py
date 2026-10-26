@@ -18,6 +18,9 @@ from PIL import Image, ImageDraw, ImageOps
 from utils.flat_icons import draw_icon
 
 ICON_DIR = Path(__file__).resolve().parent / "assets" / "icons"
+# SteamCharts' own site icon, SOURCE_ICON_SIZE square before its address in the header.
+SOURCE_ICON_PATH = Path(__file__).resolve().parent / "assets" / "steamcharts_icon.png"
+SOURCE_ICON_SIZE = 16
 HEADER_H = 56
 SECTION_TOP = 62
 ROWS_TOP = 90
@@ -89,6 +92,16 @@ def _shown(part):
     """The part cropped to what shows: the art carries near-clear specks across its whole canvas."""
     box = part.getchannel("A").point(lambda alpha: 255 if alpha > 24 else 0).getbbox()
     return part.crop(box) if box else None
+
+
+@lru_cache(maxsize=4)
+def _steamcharts_icon(size):
+    """SteamCharts' site icon ``size`` square, or None without the file."""
+    try:
+        with Image.open(SOURCE_ICON_PATH) as source:
+            return source.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+    except (OSError, ValueError):
+        return None
 
 
 @lru_cache(maxsize=32)
@@ -165,9 +178,14 @@ class LiveOverviewMixin:
         """Logo and wordmark standing on the header rule, the 48-hour line, then the totals by the source."""
         self._paste_steam_logo(image, *LOGO_BOX, colors)
         self._overview_wordmark(image, colors)
+        # The source by its own site icon (green bars on a dark tile) before its address.
         site = "steamcharts.com"
-        draw.text((788 - draw.textlength(site, font=self._font(9)), 12), site, font=self._font(9), fill=colors["muted"])
         text_left = 788 - draw.textlength(site, font=self._font(9))
+        draw.text((text_left, 12), site, font=self._font(9), fill=colors["muted"])
+        source_icon = _steamcharts_icon(SOURCE_ICON_SIZE)
+        if source_icon is not None:
+            image.paste(source_icon, (round(text_left) - 4 - source_icon.width, 17 - source_icon.height // 2), source_icon)
+            text_left -= 4 + source_icon.width
         if updated_at_text:
             width = draw.textlength(updated_at_text, font=self._font(11))
             draw.text((788 - width, 38), updated_at_text, font=self._font(11), fill=colors["muted"])

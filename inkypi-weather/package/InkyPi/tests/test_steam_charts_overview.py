@@ -222,3 +222,15 @@ def test_a_long_game_name_runs_on_to_the_player_count(monkeypatch):
                                               {"table_variant": "top_games", "games": []}], {}, {"mode": "day"}, "")
 
     assert "Waifusitter - Furry Collection" in [text for text, _xy in drawn]
+
+
+def test_the_header_names_steamcharts_by_its_site_icon():
+    plugin = _plugin()
+    totals = {"online": 35_630_000, "online_peak": 40_120_000, "spark": [1, 3, 2]}
+
+    image = plugin._render_live_overview((800, 480), [], totals, {"mode": "day"}, "刷新时间 10/23 10:51")
+
+    # The icon's green bars on its dark tile stand just left of "steamcharts.com" in the top right corner.
+    corner = [image.getpixel((x, y)) for x in range(690, 760) for y in range(8, 27)]
+    assert any(green > 150 and red < 140 and blue < 110 for red, green, blue in corner)
+    assert overview_page.SOURCE_ICON_PATH.is_file()

@@ -1,0 +1,13 @@
+{
+  "image": "steamcharts_icon.png",
+  "source": "https://steamcharts.com/assets/favicon.ico",
+  "page": "https://steamcharts.com/",
+  "licence": "SteamCharts' own site icon, shown to name the data source",
+  "source_sha256": "12b9c7482fe51a553e8ddeb316a47197c4b86196ccc7656dbef3e7a7e0b0328d",
+  "processing": "the icon's 64 px frame from the .ico, as published",
+  "size": [
+    64,
+    64
+  ],
+  "sha256": "d6d9df8535b459e54e152672839fd9b4c1b295d175da5c2968f006918a06f9a8"
+}
