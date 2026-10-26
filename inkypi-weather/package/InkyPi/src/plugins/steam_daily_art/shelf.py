@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import colorsys
 from functools import lru_cache
+import zlib
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageStat
@@ -63,6 +64,19 @@ HARD_EDGE_MIN_FLAT = 0.82
 HARD_EDGE_MAX_GENTLE = 0.12
 HARD_EDGE_MIN_SHARP = 0.002
 WHITE = (255, 255, 255)
+# The shelf's ground covers the art at this opacity (of 255), so the picture shows through.
+SHELF_OPACITY = 204
+# Each tag chip takes its own colour, picked by the tag's words (the same tag keeps its colour
+# from game to game unless two tags on one shelf would share it): deep, saturated fills that
+# carry white words on the panel.
+TAG_COLOURS = (
+    (31, 111, 209),
+    (214, 84, 22),
+    (33, 136, 74),
+    (138, 68, 200),
+    (200, 44, 104),
+    (14, 132, 132),
+)
 # Steam's own colours for a discount.
 DEAL_GREEN = (76, 107, 34)
 DEAL_LIME = (190, 238, 17)
@@ -221,7 +235,7 @@ def draw_shelf(image, info, band=None):
         _top, colour = band
         start = shelf_top(height, band)
         colours = palette(colour)
-        ImageDraw.Draw(canvas).rectangle((0, start, width, height), fill=colours["base"])
+        canvas.paste(colours["base"], (0, start, width, height), Image.new("L", (width, height - start), SHELF_OPACITY))
         ImageDraw.Draw(canvas).rectangle((0, start, width, start + 2), fill=colours["rim"])
         content_top = start + 3
     else:
@@ -231,7 +245,7 @@ def draw_shelf(image, info, band=None):
         mask = Image.new("L", (1, SCRIM_HEIGHT))
         for row in range(SCRIM_HEIGHT):
             share = min(1.0, row / SCRIM_FADE)
-            mask.putpixel((0, row), round(255 * share * share * (3 - 2 * share)))
+            mask.putpixel((0, row), round(SHELF_OPACITY * share * share * (3 - 2 * share)))
         canvas.paste(colours["base"], (0, start, width, height), mask.resize((width, SCRIM_HEIGHT)))
         content_top = start + SCRIM_FADE - 16
     draw = ImageDraw.Draw(canvas)
@@ -321,8 +335,21 @@ def _draw_head(canvas, draw, info, y, width, colours):
         x += chip_w + 8
 
 
+def tag_colours(tags):
+    """A colour per tag, by its words, none repeated on one shelf while colours remain."""
+    used, colours = set(), []
+    for tag in tags:
+        index = zlib.crc32(str(tag).encode("utf-8")) % len(TAG_COLOURS)
+        while index in used and len(used) < len(TAG_COLOURS):
+            index = (index + 1) % len(TAG_COLOURS)
+        used.add(index)
+        colours.append(TAG_COLOURS[index])
+    return colours
+
+
 def _draw_foot(canvas, draw, info, y, width, colours):
-    """The tags as outlined chips at the left; who made it and the Steam wordmark at the right."""
+    """The tags as chips in their own colours at the left; who made it and the Steam wordmark
+    at the right."""
     right = width - MARGIN
     mark = _asset("steam_wordmark", WORDMARK_HEIGHT, WHITE)
     if mark is not None:
@@ -338,10 +365,11 @@ def _draw_foot(canvas, draw, info, y, width, colours):
         draw.text((right - credit_w, y + 3), credit, font=credit_font, fill=WHITE)
         right -= credit_w + 14
     x = MARGIN
-    for tag in info.get("tags") or []:
+    tags = list(info.get("tags") or [])
+    for tag, fill in zip(tags, tag_colours(tags)):
         chip_w = draw.textlength(tag, font=tag_font) + 18
         if x + chip_w > right:
             break
-        draw.rounded_rectangle((x, y + 1, x + chip_w, y + 23), radius=5, outline=colours["rim"], width=2)
-        draw.text((x + 9, y + 3), tag, font=tag_font, fill=WHITE)
+        draw.rounded_rectangle((x, y + 1, x + chip_w, y + 23), radius=5, fill=fill)
+        draw.text((x + 9, _text_y(draw, tag, tag_font, y + 1, 22)), tag, font=tag_font, fill=WHITE)
         x += chip_w + 6

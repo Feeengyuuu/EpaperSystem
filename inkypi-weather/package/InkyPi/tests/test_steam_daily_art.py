@@ -1816,11 +1816,25 @@ def test_shelf_sits_on_the_flat_block_and_leaves_the_art_above_it():
 
     assert ImageChops.difference(art.crop((0, 0, 800, start)), shelved.crop((0, 0, 800, start))).getbbox() is None
     below = set(shelved.crop((0, start + 3, 800, 480)).get_flattened_data())
-    assert info_shelf.palette(FIELD)["base"] in below
+    # The deep ground covers the field at 80%: a fifth of the picture shows through.
+    base = info_shelf.palette(FIELD)["base"]
+    alpha = info_shelf.SHELF_OPACITY / 255
+    ground = tuple(round(b * alpha + f * (1 - alpha)) for b, f in zip(base, FIELD))
+    assert any(max(abs(a - b) for a, b in zip(pixel, ground)) <= 2 for pixel in below)
     assert (255, 255, 255) in below
     assert info_shelf.DEAL_GREEN in below
-    # The bright field is gone under the shelf.
     assert FIELD not in below
+    assert set(info_shelf.tag_colours(SHELF_INFO["tags"])) <= below
+
+
+def test_each_tag_on_a_shelf_gets_its_own_colour_and_keeps_it():
+    tags = ["多人", "合作", "在线合作", "本地合作", "休闲", "策略"]
+
+    colours = info_shelf.tag_colours(tags)
+
+    assert len(set(colours)) == len(tags)
+    assert set(colours) <= set(info_shelf.TAG_COLOURS)
+    assert info_shelf.tag_colours(["合作"])[0] == info_shelf.tag_colours(["合作", "多人"])[0]
 
 
 def test_shelf_without_a_flat_block_fades_in_at_the_foot():
