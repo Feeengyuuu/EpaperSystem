@@ -17,7 +17,7 @@ from functools import lru_cache
 import zlib
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageStat
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageStat
 
 from utils.app_utils import get_base_ui_font
 
@@ -47,6 +47,9 @@ ICON_SIZE = 18
 WORDMARK_HEIGHT = 15
 # The developer's logo before its name in the credit line.
 STUDIO_LOGO = 18
+# A studio avatar whose four corners agree within STUDIO_GROUND_TOLERANCE has a flat ground,
+# cut away; a mark left darker than STUDIO_DARK_MARK (lightness) is drawn in white for the dark bar.
+STUDIO_GROUND_TOLERANCE, STUDIO_DARK_MARK = 30, 70
 # Pixel art: the largest block (2..PIXEL_MAX_BLOCK) at which one grid offset rebuilds the art
 # within PIXEL_MAX_ERROR on average with at most PIXEL_MAX_BAD of its pixels off by
 # PIXEL_BAD_STEP or more, while the worst offset is PIXEL_CONTRAST times worse (smooth art is
@@ -375,6 +378,33 @@ def _studio_mark(logo):
     return logo.convert("RGB").resize((STUDIO_LOGO, STUDIO_LOGO), Image.Resampling.LANCZOS)
 
 
+def _studio_cutout(logo):
+    """The studio's logo without the flat ground its avatar square is published on: when the four
+    corners share one colour, that colour is cut away from the edges in, and a mark left dark is
+    drawn in white for the dark bar. None when the avatar has no flat ground (a photo)."""
+    size = STUDIO_LOGO * 4
+    art = logo.convert("RGB").resize((size, size), Image.Resampling.LANCZOS)
+    corners = [art.getpixel(point) for point in ((0, 0), (size - 1, 0), (0, size - 1), (size - 1, size - 1))]
+    if max(max(channel) - min(channel) for channel in zip(*corners)) > STUDIO_GROUND_TOLERANCE:
+        return None
+    ground = tuple(sum(channel) // 4 for channel in zip(*corners))
+    near = Image.new("L", art.size, 0)
+    near.putdata([255 if max(abs(a - b) for a, b in zip(pixel, ground)) <= STUDIO_GROUND_TOLERANCE else 0
+                  for pixel in art.get_flattened_data()])
+    for corner in ((0, 0), (size - 1, 0), (0, size - 1), (size - 1, size - 1)):
+        if near.getpixel(corner) == 255:
+            ImageDraw.floodfill(near, corner, 128)
+    alpha = near.point(lambda value: 0 if value == 128 else 255)
+    if not alpha.getbbox() or alpha.histogram()[255] < size * size * 0.04:
+        return None
+    kept = [pixel for pixel, keep in zip(art.get_flattened_data(), alpha.get_flattened_data()) if keep]
+    lightness = sum(0.299 * r + 0.587 * g + 0.114 * b for r, g, b in kept) / len(kept)
+    mark = Image.new("RGB", art.size, WHITE) if lightness < STUDIO_DARK_MARK else art
+    mark = mark.convert("RGBA")
+    mark.putalpha(alpha.filter(ImageFilter.GaussianBlur(1)))
+    return mark.resize((STUDIO_LOGO, STUDIO_LOGO), Image.Resampling.LANCZOS)
+
+
 @lru_cache(maxsize=1)
 def _studio_mask():
     mask = Image.new("L", (STUDIO_LOGO * 4, STUDIO_LOGO * 4), 0)
@@ -415,7 +445,12 @@ def _draw_foot(canvas, draw, info, y, width, colours):
         right -= credit_w
         if logo is not None:
             right -= 6 + STUDIO_LOGO
-            canvas.paste(_studio_mark(logo), (int(right), y + (24 - STUDIO_LOGO) // 2), _studio_mask())
+            # The mark alone where its avatar has a flat ground; a photo keeps its rounded square.
+            cutout = _studio_cutout(logo)
+            if cutout is not None:
+                canvas.paste(cutout, (int(right), y + (24 - STUDIO_LOGO) // 2), cutout)
+            else:
+                canvas.paste(_studio_mark(logo), (int(right), y + (24 - STUDIO_LOGO) // 2), _studio_mask())
         right -= 14
     x = MARGIN
     tags = list(info.get("tags") or [])

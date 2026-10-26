@@ -2177,3 +2177,24 @@ def test_studio_logo_stands_before_the_developers_name():
     foot = shelved.crop((400, 440, 800, 480))
     reds = [x for x in range(foot.width) for y in range(foot.height) if foot.getpixel((x, y)) == (200, 30, 30)]
     assert reds
+
+
+def test_a_studio_avatars_flat_ground_is_cut_away():
+    from PIL import ImageDraw as Draw
+
+    from plugins.steam_daily_art import shelf
+
+    def avatar(ground, mark):
+        image = Image.new("RGB", (64, 64), ground)
+        Draw.Draw(image).ellipse((16, 16, 48, 48), fill=mark)
+        return image
+
+    red = shelf._studio_cutout(avatar((255, 255, 255), (200, 30, 30)))
+    # The white ground is gone round the red disc, which keeps its colour.
+    assert red.getpixel((0, 0))[3] == 0 and red.getpixel((9, 9))[:3][0] > 150 and red.getpixel((9, 9))[3] > 200
+    # A black mark would vanish on the dark bar: it is drawn in white.
+    black = shelf._studio_cutout(avatar((255, 255, 255), (10, 10, 10)))
+    assert black.getpixel((9, 9))[:3] == (255, 255, 255)
+    # A photo-like avatar with no flat ground keeps its rounded square.
+    photo = Image.linear_gradient("L").convert("RGB").resize((64, 64))
+    assert shelf._studio_cutout(photo) is None
