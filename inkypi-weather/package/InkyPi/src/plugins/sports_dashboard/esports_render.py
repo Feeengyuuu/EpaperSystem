@@ -2135,7 +2135,15 @@ class EsportsRenderMixin:
         self._draw_centered(draw, ((left_area[0] + left_area[1]) / 2, team_y), team_a, font_a, COLORS["text"])
         self._draw_centered(draw, ((right_area[0] + right_area[1]) / 2, team_y), team_b, font_b, COLORS["text"])
 
+        odds = event.get("odds") or {}
+        has_odds = not is_recent and bool(odds.get("team_a") and odds.get("team_b"))
         stage = self._lpl_stage_label(event, league_key=league_key)
+        if has_odds:
+            # The match format, then the odds' source and how much has been traded on its market.
+            source = " ".join(part for part in (str(odds.get("bookmaker") or ""),
+                                                self._odds_volume_label(odds.get("volume"))) if part)
+            extras = [f"BO{odds['best_of']}" if odds.get("best_of") else "", source]
+            stage = " · ".join(part for part in (stage, *extras) if part)
         stage_text, stage_font = self._fit_text(draw, stage, card_x2 - card_x1 - 42, 11, bold=True, min_size=7)
         self._draw_centered_in_box(
             draw,
@@ -2145,11 +2153,45 @@ class EsportsRenderMixin:
             COLORS[config["accent"]],
         )
 
-        odds = event.get("odds") or {}
-        has_odds = not is_recent and bool(odds.get("team_a") and odds.get("team_b"))
         if has_odds:
             self._draw_lpl_odds_text(draw, (left_area[0], y + 117, left_area[1], y + 129), odds.get("team_a"), max_size=11)
             self._draw_lpl_odds_text(draw, (right_area[0], y + 117, right_area[1], y + 129), odds.get("team_b"), max_size=11)
+            if odds.get("share_a") is not None and odds.get("share_b") is not None:
+                self._draw_lol_win_share(draw, (left_area[1] + 8, y + 108, right_area[0] - 8, y + 130), odds,
+                                         COLORS[config["accent"]])
+
+    def _draw_lol_win_share(self, draw, box, odds, accent):
+        """Each side's win chance as the market prices it: the two percentages over a bar split in
+        that ratio."""
+        left, top, right, bottom = [int(value) for value in box]
+        if right - left < 40:
+            return
+        share_a, share_b = float(odds["share_a"]), float(odds["share_b"])
+        total = share_a + share_b or 1.0
+        font = self._font(9, True)
+        self._draw_text_in_box(draw, (left, top, right, top + 11), f"{share_a / total:.0%}", font, COLORS["text"])
+        self._draw_text_in_box(draw, (left, top, right, top + 11), f"{share_b / total:.0%}", font, COLORS["text"],
+                               align="right")
+        bar_top, bar_bottom = bottom - 8, bottom - 2
+        split = left + round((right - left) * share_a / total)
+        draw.rounded_rectangle((left, bar_top, right, bar_bottom), radius=3, fill=COLORS["panel"], outline=COLORS["border"],
+                               width=1)
+        if split - left >= 4:
+            draw.rounded_rectangle((left, bar_top, split, bar_bottom), radius=3, fill=accent, outline=COLORS["border"],
+                                   width=1)
+
+    @staticmethod
+    def _odds_volume_label(volume):
+        """A market's traded volume as "$278K"; "" below a hundred dollars."""
+        try:
+            volume = float(volume or 0)
+        except (TypeError, ValueError):
+            return ""
+        if volume >= 1_000_000:
+            return f"${volume / 1_000_000:.1f}M"
+        if volume >= 1_000:
+            return f"${volume / 1_000:.0f}K"
+        return f"${volume:.0f}" if volume >= 100 else ""
 
     def _draw_lpl_little_round(self, draw, center_x, y, event):
         little_round = (event or {}).get("little_round") or {}

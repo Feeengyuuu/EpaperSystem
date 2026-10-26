@@ -2424,6 +2424,9 @@ class EsportsMixin:
     def _load_lol_esports_sidebar_cards(self, settings, device_config, timezone_info, now):
         lpl_events, lpl_source_state = self._load_lpl_events(settings, timezone_info)
         lpl_events = self._attach_lpl_odds(lpl_events, settings, device_config, timezone_info)
+        # Polymarket prices matches in every LoL league; its odds fill those without bookmaker odds.
+        crowd_odds = self._polymarket_lol_offers(settings, timezone_info)
+        lpl_events = self._attach_polymarket_odds(lpl_events, crowd_odds)
         lpl_selected = self._select_lpl_events(lpl_events, now)
         cards = [
             {
@@ -2435,7 +2438,7 @@ class EsportsMixin:
         ]
         if self._bool_setting(settings, "lckEnabled", True):
             lck_events, lck_source_state = self._load_lck_events(settings, timezone_info)
-            lck_selected = self._select_lck_events(lck_events, now)
+            lck_selected = self._select_lck_events(self._attach_polymarket_odds(lck_events, crowd_odds), now)
             cards.append(
                 {
                     "league_key": "LCK",
@@ -2446,7 +2449,8 @@ class EsportsMixin:
             )
         if self._bool_setting(settings, "msiEnabled", True):
             msi_events, msi_source_state, msi_featured_event = self._load_msi_events(settings, timezone_info, now)
-            msi_selected = self._select_msi_events(msi_events, now, featured_event=msi_featured_event)
+            msi_selected = self._select_msi_events(self._attach_polymarket_odds(msi_events, crowd_odds), now,
+                                                   featured_event=msi_featured_event)
             cards.append(
                 {
                     "league_key": "MSI",
