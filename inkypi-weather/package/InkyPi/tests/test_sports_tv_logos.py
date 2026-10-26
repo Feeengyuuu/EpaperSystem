@@ -53,3 +53,15 @@ def test_the_card_and_its_rows_carry_the_logos_and_keep_the_odds_inside_the_row(
     # The row's last two pixel rows above its border carry no text.
     foot = {image.getpixel((x, y)) for x in range(20, 250) for y in (156 + 30, 156 + 31)}
     assert foot <= {COLORS["panel"]}
+
+
+def test_the_wnba_series_card_names_its_data_source_by_espns_logo():
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    image = Image.new("RGB", (300, 60), COLORS["panel"])
+
+    left = plugin._draw_wnba_data_source(image, (120, 10, 290, 38))
+
+    # ESPN's red wordmark ends at the box's right edge and the title stops short of it.
+    reds = [x for x in range(120, 300) for y in range(10, 38)
+            if (lambda r, g, b: r > 170 and g < 80 and b < 80)(*image.getpixel((x, y)))]
+    assert 200 < left < 290 and reds and min(reds) >= left and max(reds) <= 290

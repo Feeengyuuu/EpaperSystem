@@ -14,7 +14,7 @@ The NBA offseason page is drawn by nba.py and is unchanged.
 """
 
 from .common import *
-from .scorebug_kit import KIT_TILE_HEIGHT, ScorebugSpec
+from .scorebug_kit import KIT_TILE_HEIGHT, ScorebugSpec, _kit_inked_where_faint
 
 SportsDashboard = None
 
@@ -35,6 +35,9 @@ LEADERS_PENDING_MIN_HEIGHT = 40
 WNBA_SERIES_ROW_HEIGHT, WNBA_SERIES_ROW_PITCH = 20, 22
 # The game card's networks, as logos under its tiles.
 WNBA_CARD_TV_LOGO_HEIGHT = 18
+# Where the series tracker's scores come from (the hub reads ESPN's scoreboard and summaries), as
+# that network's logo (assets/logos/tv) in the tracker's top right corner.
+WNBA_DATA_SOURCE, WNBA_SOURCE_LOGO_HEIGHT = "espn", 16
 # The series tracker: each game's slot over its caption, and a played game's winner logo.
 WNBA_TRACKER_HEIGHT, WNBA_SLOT_LOGO_SIZE = 40, 12
 
@@ -385,8 +388,11 @@ class BasketballRenderMixin:
         length = SportsDashboard._basketball_series_length(main, series)
         mark = self._draw_event_mark(image, SportsDashboard._wnba_series_mark_path(main), (inner_x1, y1 + 4, inner_x1 + 72, y1 + 48), align="left")
         title = SportsDashboard._basketball_series_title(main)
+        # Where the scores come from: ESPN's logo in the card's top right corner.
+        source_left = self._draw_wnba_data_source(image, (inner_x1 + 120, y1 + 10, inner_x2, y1 + 38))
         if mark:
-            self._draw_text_in_box(draw, (mark[2] + 10, y1 + 8, inner_x2, y1 + 24), title, self._font(13, True), COLORS["text"])
+            self._draw_text_in_box(draw, (mark[2] + 10, y1 + 8, min(inner_x2, source_left - 6), y1 + 24), title,
+                                   self._font(13, True), COLORS["text"])
             self._draw_text_in_box(draw, (mark[2] + 10, y1 + 26, inner_x2, y1 + 40), f"BEST OF {length}", self._font(9, False), COLORS["text"])
             score_y = y1 + 52
         else:
@@ -427,6 +433,19 @@ class BasketballRenderMixin:
         self._draw_kit_spare_filler(image, (inner_x1, list_y + 2, inner_x2, y2 - 6), spec)
 
         self._draw_wnba_series_game_card(image, draw, (left_x2 + 10, y1, x2, y2), main, now, spec, state)
+
+    def _draw_wnba_data_source(self, image, box):
+        """The scores' source (ESPN) as its official logo WNBA_SOURCE_LOGO_HEIGHT tall, right-aligned and
+        centred in ``box``, inked where it would fade into the card; the logo's left edge, or the box's
+        right edge without it."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        path = os.path.join(LOCAL_TV_LOGO_DIR, f"{WNBA_DATA_SOURCE}.png")
+        logo = self._load_local_logo(path, (x2 - x1, WNBA_SOURCE_LOGO_HEIGHT), alpha_threshold=8) if os.path.exists(path) else None
+        if not logo:
+            return x2
+        logo = _kit_inked_where_faint(logo, COLORS["panel"])
+        image.paste(logo, (x2 - logo.width, (y1 + y2 - logo.height) // 2), logo)
+        return x2 - logo.width
 
     def _draw_basketball_series_slots(self, image, draw, box, main, series, length, spec, history=None, now=None):
         """One slot per game, its number at the top left, over its date. A played game shows
