@@ -30,7 +30,7 @@ from plugins.backtothedate.poster_meta import decode_photo, split_chinese
 from plugins.backtothedate.quotations import QUOTATIONS
 from utils.app_utils import get_base_ui_font
 from utils.fonts import load_font
-from utils.local_wordmark import paste_local_wordmark
+from utils.local_wordmark import load_source_logo, paste_local_wordmark, paste_source_logos
 
 # All text is Microsoft YaHei (the base UI font), the titles in its bold.
 PALETTES = {
@@ -64,6 +64,12 @@ BOOK_H = TITLE_H + 6
 # The brush dash before the signature: its length and thickness as shares of the writing's size.
 SIGNATURE_DASH, SIGNATURE_SCALE, SIGNATURE_GAP = (1.5, 0.16), 1.45, 6
 QUOTE_MIN_ROOM = 150
+# The sources' logos at the details' bottom right (assets/logos, tools/build_source_logos.py):
+# each one's height, and its name for when the file is missing.
+SOURCE_LOGO_DIR = Path(__file__).resolve().parent / "assets" / "logos"
+SOURCE_LOGO_H = {"chineseposters": 12, "wikipedia_zh": 15}
+SOURCE_NAMES = {"chineseposters": "chineseposters.net", "wikipedia_zh": "中文维基百科"}
+SOURCE_LOGO_GAP = 8
 _CJK = re.compile(r"[⺀-鿿＀-￯]")
 
 
@@ -410,18 +416,33 @@ def _info_strip(canvas, poster, box, colors):
     right = middle + middle_w + GAP
     right_w = x1 - right
     summary = meta.get("theme_summary")
+    sources_top = _sources(canvas, x1, y1, colors, bool(summary))
     y = y0 + 1
     if summary:
         draw.text((right, y), "时代背景", font=_ui(9, bold=True), fill=colors["accent"])
         y += 13
         font = _ui(9)
-        for line in wrap(draw, summary, font, right_w, max(1, int((y1 - y - 11) // 12))):
+        for line in wrap(draw, summary, font, right_w, max(1, int((sources_top - 2 - y) // 12))):
             draw.text((right, y), line, font=font, fill=colors["ink"])
             y += 12
-    sources = ["chineseposters.net"] + (["中文维基百科"] if summary else [])
-    footer = " · ".join(sources)
-    font = _ui(8)
-    draw.text((x1 - draw.textlength(footer, font=font), y1 - 10), footer, font=font, fill=colors["muted"])
+
+
+def _sources(canvas, right, bottom, colors, wikipedia):
+    """The sources at the bottom right, ending at ``right`` and standing on ``bottom``: the
+    collection's masthead and, with the theme's background quoted, Chinese Wikipedia's logo
+    (their names in type without the files). Returns the row's top."""
+    names = ("chineseposters", "wikipedia_zh") if wikipedia else ("chineseposters",)
+    ink = colors["ink"] if colors is PALETTES["night"] else None
+    logos = [load_source_logo(SOURCE_LOGO_DIR / f"{name}.png", SOURCE_LOGO_H[name], ink) for name in names]
+    if None in logos:
+        draw = ImageDraw.Draw(canvas)
+        footer, font = " · ".join(SOURCE_NAMES[name] for name in names), _ui(8)
+        draw.text((right - draw.textlength(footer, font=font), bottom - 10), footer, font=font, fill=colors["muted"])
+        return bottom - 10
+    height = max(logo.height for logo in logos)
+    width = sum(logo.width for logo in logos) + SOURCE_LOGO_GAP * (len(logos) - 1)
+    paste_source_logos(canvas, logos, right - width, bottom - height / 2, SOURCE_LOGO_GAP)
+    return bottom - height
 
 
 def _info_column(canvas, poster, box, colors, extras=()):
@@ -430,11 +451,7 @@ def _info_column(canvas, poster, box, colors, extras=()):
     width = x1 - x0
     meta = dict((poster or {}).get("meta") or {})
     title_en = meta.get("title_en") or str((poster or {}).get("title") or "")
-    footer_font = _ui(8)
-    footer_y = y1 - 10
-    sources = ["chineseposters.net"] + (["中文维基百科"] if meta.get("theme_summary") else [])
-    draw.text((x0, footer_y), " · ".join(sources), font=footer_font, fill=colors["muted"])
-    limit = footer_y - 8
+    limit = _sources(canvas, x1, y1, colors, bool(meta.get("theme_summary"))) - 8
     y = y0
 
     kicker = "  ·  ".join(part for part in (meta.get("date"), _theme_name(meta)) if part)

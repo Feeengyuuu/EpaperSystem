@@ -1,0 +1,50 @@
+{
+  "logos": {
+    "zgdypw": {
+      "source": "https://zgdypf.zgdypw.cn/favicon.ico",
+      "page": "https://zgdypf.zgdypw.cn/box",
+      "licence": "The official China chart's (\u4e2d\u56fd\u7535\u5f71\u7968\u623f) site icon, shown to name the source",
+      "source_sha256": "1c3aa82d5e8666e65871b5a3331e4309fa65f03746e4485e395de2b59f52ffcc",
+      "processing": "the white ground cleared",
+      "size": [
+        28,
+        19
+      ],
+      "sha256": "3202c9fc8d4a7bf6c2959f44bc5552dcb8115b96279d386dc0f6dcf1829803d2"
+    },
+    "the_numbers": {
+      "source": "https://www.the-numbers.com/site-images/numbers-logo-r.svg",
+      "page": "https://www.the-numbers.com/",
+      "licence": "The Numbers' logo from its own site header, shown to name the source",
+      "source_sha256": "3603016b2fd39e3d24f3e7b8308221e4c22afddac1803078e52e300e515530c5",
+      "size": [
+        386,
+        64
+      ],
+      "sha256": "9c9ee31b1987f566e8a442e373528bbd2f3cb6c2f03de219d51252203e46805e"
+    },
+    "maoyan": {
+      "source": "https://s0.pipi.cn/festatic/moviepro/image/logo-text-color_8ee29f55.png",
+      "page": "https://piaofang.maoyan.com/dashboard",
+      "licence": "Maoyan Pro's logo from its own site header, shown to name the source",
+      "source_sha256": "ed17913395eb925e3dd12954b76f40143d3817a7ac64c9c2b9ab20172b6fbbe5",
+      "processing": "white lettering (for a dark header) set near-black",
+      "size": [
+        284,
+        64
+      ],
+      "sha256": "58509cf16b7be145575a78d18b5c3fd1f7517134466c07ed0f2c810de2fc3aac"
+    },
+    "tmdb": {
+      "source": "https://www.themoviedb.org/assets/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg",
+      "page": "https://www.themoviedb.org/about/logos-attribution",
+      "licence": "TMDB's attribution logo, as its terms ask",
+      "source_sha256": "8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c",
+      "size": [
+        495,
+        64
+      ],
+      "sha256": "7129bbcf254e1010a9bdcf2c9c8bfcde4dc54795c52c1a59c998efdea620a3da"
+    }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "logos": {
+    "ecb": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/cb/Logo_European_Central_Bank.svg/500px-Logo_European_Central_Bank.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_European_Central_Bank.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "a90720e4edf62a0adb581e572b29a663ad49b921ed23257f12ec9d2144c9ffe0",
+      "size": [
+        77,
+        64
+      ],
+      "sha256": "b899b5eae9d49f3590dc370817203bf93538469395c3595237d2327b2f5471f8"
+    },
+    "bls": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/76/Bureau_of_Labor_Statistics_logo.svg/500px-Bureau_of_Labor_Statistics_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Bureau_of_Labor_Statistics_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "1d8f34b90545118768c41579298f89b933e2b016d4740d96bcc287e9528f40bd",
+      "size": [
+        73,
+        64
+      ],
+      "sha256": "67e77edd78d23ed5731941f9ea93999ef11e49a619827e1401612cf1599c02ec"
+    },
+    "sec": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1c/Seal_of_the_United_States_Securities_and_Exchange_Commission.svg/500px-Seal_of_the_United_States_Securities_and_Exchange_Commission.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_the_United_States_Securities_and_Exchange_Commission.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "1ab6bcc3262299b1f8e1d59ef129eb70f8f7805e19af62dee2e9c74d71a92dc6",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "c6237c67d2b4f3235c335d718f99bbaea2b228295fc241f5374b8df117df28fe"
+    },
+    "yahoo_finance": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8f/Yahoo%21_Finance_logo_2021.png/500px-Yahoo%21_Finance_logo_2021.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Yahoo!_Finance_logo_2021.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "60bb20dad631cb8af7639076031375bbc68d9930608949863ac3b073199eab81",
+      "size": [
+        175,
+        64
+      ],
+      "sha256": "bf59493871292e84a3710cebe20ca701418ec0a6fb6cd1d312238685355631be"
+    },
+    "coingecko": {
+      "source": "https://static.coingecko.com/s/coingecko-logo-5683263fd3ea8a4f152dd5f7299acfc5f84ee73955428acff22913b8e59e6c54.svg",
+      "page": "https://www.coingecko.com/",
+      "licence": "CoinGecko's logo from its own site, shown to name the source",
+      "source_sha256": "89ab396a115cf666882811803bb6591f05eaf86b6259c9b943adb0d8990f79f8",
+      "size": [
+        293,
+        64
+      ],
+      "sha256": "fdbfd156c6eff4ec75bf572da80b7b9321ae13883b48bf466cb4f43ddaf18add"
+    },
+    "finnhub": {
+      "source": "https://finnhub.io/static/img/webp/finnhub-logo.webp",
+      "page": "https://finnhub.io/",
+      "licence": "Finnhub's mark from its own site, shown to name the source",
+      "source_sha256": "282c2302867672276258faddf809d8cbf5597b6406a17f9c340993348ec5b77c",
+      "size": [
+        100,
+        64
+      ],
+      "sha256": "f42add9a31593fff79b5334d82f11f79570742197bf388c02693ef606361337e"
+    },
+    "fred": {
+      "source": "https://fred.stlouisfed.org/images/FRED_Logo_Home_Page.svg",
+      "page": "https://fred.stlouisfed.org/",
+      "licence": "FRED's logo (Federal Reserve Bank of St. Louis), shown to name the source",
+      "source_sha256": "312a9c9c05fafedf3cad54a78fdfe00df2e15d2d78a89cc8867ca92b032f6c33",
+      "processing": "captured in a browser (the site answers scripts with a bot check), drawn 8x by a headless browser, cropped, 64 px tall",
+      "size": [
+        324,
+        64
+      ],
+      "sha256": "ef2878641cf353dc94225f30ec962e27b05d738a6a4fdfe75a2ad8b051dd8831"
+    }
+  }
+}

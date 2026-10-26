@@ -5,7 +5,7 @@ import sys
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -271,3 +271,17 @@ def test_without_room_for_a_quotation_the_title_keeps_its_double_rule():
 
     rows = _red_rows(canvas, (200, 10, 280, 10 + poster_layout.TITLE_H))
     assert rows and len(rows) <= 4
+
+
+def test_the_sources_stand_at_the_bottom_right_by_their_logos():
+    colors = poster_layout.palette("day")
+    canvas = Image.new("RGB", (400, 120), colors["paper"])
+
+    top = poster_layout._sources(canvas, 390, 110, colors, wikipedia=True)
+
+    left, upper, right, lower = ImageChops.difference(canvas, Image.new("RGB", canvas.size, colors["paper"])).getbbox()
+    assert top == upper == 110 - poster_layout.SOURCE_LOGO_H["wikipedia_zh"]
+    assert right <= 390 and lower <= 110 and left > 200
+    # The collection's masthead, in its own red, leads; Chinese Wikipedia's logo ends the row.
+    red, green, blue = canvas.getpixel((left + 1, 104))
+    assert red > 150 and green < 80 and blue < 80

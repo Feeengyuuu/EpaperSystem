@@ -253,3 +253,14 @@ def test_icons_are_transparent_white_silhouettes():
             assert icon.mode == "RGBA" and max(icon.size) == 128
             assert icon.getchannel("A").getextrema()[0] == 0
             assert icon.getchannel("A").getbbox() is not None
+
+
+def test_footer_names_the_sources_by_their_logos():
+    page = two_markets._Page(BoxOfficeTopMovies({"id": "box_office_top_movies"}), (800, 480), {})
+
+    runs = two_markets._source_runs(page, ["中国电影票房", "The Numbers", "Box Office Mojo"])
+
+    assert isinstance(runs[0], Image.Image) and runs[1] == " 中国电影票房"
+    assert runs[2] == " / " and isinstance(runs[3], Image.Image) and runs[3].height == 11
+    assert runs[4:] == [" / ", "Box Office Mojo"]
+    assert [type(run) for run in two_markets._source_runs(page, ["TMDb", "猫眼"])] == [Image.Image, str, Image.Image]

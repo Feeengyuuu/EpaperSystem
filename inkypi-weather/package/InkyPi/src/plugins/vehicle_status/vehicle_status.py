@@ -30,6 +30,7 @@ from security.ssrf import get_ssrf_policy
 from utils.app_utils import get_base_ui_font
 from utils.atomic_file import atomic_write_json
 from utils.http_client import HttpStatusError, get_http_client
+from utils.local_wordmark import load_source_logo
 from utils.safe_image import ImageLimits, safe_open_image
 
 
@@ -3447,6 +3448,10 @@ CHARGING_RULE_Y = 306
 LOCATION_RULE_Y = LOCATION_MAP_BOX[1] - 29
 STRIP_RULE_Y = 398
 FOOTER_Y = 441
+# Tesla, whose fleet API the snapshot comes from, named by its wordmark after the freshness line
+# (assets/logos/tesla.png, tools/build_source_logos.py).
+TESLA_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "logos" / "tesla.png"
+TESLA_LOGO_HEIGHT, TESLA_LOGO_GAP = 10, 12
 VEHICLE_TOP_IMAGE_NAME = "vehicle_top.png"
 BODY_MAP_TOP, BODY_MAP_HEIGHT, BODY_ROWS_TOP = 152, 160, 330
 # Where parts sit on vehicle_top.png (nose up), as fractions of its width or height.
@@ -3949,9 +3954,14 @@ def _draw_dashboard_footer(canvas, draw, snapshot, colors, language):
     left = PAGE_LEFT + 22 if _draw_dashboard_icon(canvas, "freshness", PAGE_LEFT, FOOTER_Y - 2, colors, size=16) \
         else PAGE_LEFT
     freshness = _enum_text(language, "freshness", snapshot["freshness"])
-    draw.text((left, FOOTER_Y), _t(language, "updated", age=_age_text(snapshot["age_seconds"], language),
-                                   freshness=freshness),
-              font=_font(12, True), fill=colors["muted"])
+    updated = _t(language, "updated", age=_age_text(snapshot["age_seconds"], language), freshness=freshness)
+    font = _font(12, True)
+    draw.text((left, FOOTER_Y), updated, font=font, fill=colors["muted"])
+    logo = load_source_logo(TESLA_LOGO_PATH, TESLA_LOGO_HEIGHT)
+    if logo is not None:
+        top, bottom = draw.textbbox((left, FOOTER_Y), updated, font=font)[1::2]
+        x = left + draw.textlength(updated, font=font) + TESLA_LOGO_GAP
+        canvas.paste(logo, (round(x), round((top + bottom - logo.height) / 2)), logo)
     _right_text(draw, PAGE_RIGHT, FOOTER_Y, _t(language, "read_only_footer"), _font(12, True), colors["accent"])
 
 

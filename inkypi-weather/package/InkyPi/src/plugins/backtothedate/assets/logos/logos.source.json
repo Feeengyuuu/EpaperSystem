@@ -1,0 +1,37 @@
+{
+  "logos": {
+    "wikipedia_zh": {
+      "source": [
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Wikipedia-logo-v2-zh-hans.svg/500px-Wikipedia-logo-v2-zh-hans.svg.png",
+        "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Wikipedia-wordmark-zh-hans.svg/500px-Wikipedia-wordmark-zh-hans.svg.png"
+      ],
+      "page": [
+        "https://commons.wikimedia.org/wiki/File:Wikipedia-logo-v2-zh-hans.svg",
+        "https://commons.wikimedia.org/wiki/File:Wikipedia-wordmark-zh-hans.svg"
+      ],
+      "licence": "globe: CC BY-SA 3.0 (Wikimedia Commons); wordmark: Public domain (Wikimedia Commons)",
+      "source_sha256": [
+        "c241c49f93b7e3757af878bd6dc51ef93ba44ac8f445cf4395112225158e2245",
+        "f4150df3a5fd28ace3bc467658795d6c236caa01cee9c56b51be5df3eadabcbd"
+      ],
+      "processing": "the logo's globe (its lettering below cut off) with the \u7ef4\u57fa\u767e\u79d1 wordmark beside it",
+      "size": [
+        266,
+        64
+      ],
+      "sha256": "bf554f65107389d3d064f152d52f40fb9c71c19dc57c15182f1bd0fd52bb6734"
+    },
+    "chineseposters": {
+      "source": "https://chineseposters.net/themes/cpnetv2/css/fonts/montserrat-semibold-webfont.woff2",
+      "page": "https://chineseposters.net/",
+      "licence": "The site's name as its header sets it (Montserrat, SIL Open Font License)",
+      "source_sha256": "177855e0ffc26fbf215a13dfbb5b59f8a5e442a9b5e928e16656b38fb6bba452",
+      "processing": "the site has no logo; its header's name redrawn: capitals in its web font, white on #cb2400",
+      "size": [
+        592,
+        64
+      ],
+      "sha256": "5f624b9d082a15ef39207801f6dff13d70e1ec6e340dd902a5b046d6172606a7"
+    }
+  }
+}

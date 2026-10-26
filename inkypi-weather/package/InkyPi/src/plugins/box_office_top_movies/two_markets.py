@@ -15,7 +15,7 @@ import re
 from PIL import Image, ImageDraw
 
 from plugins.base_plugin.render_provenance import SourceProvenance
-from utils.local_wordmark import paste_local_wordmark
+from utils.local_wordmark import load_source_logo, paste_local_wordmark
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +29,14 @@ NORTH_AMERICA_SHARED_KEYS = (
 )
 ICON_DIR = Path(__file__).resolve().parent / "assets" / "two_markets"
 BASE_SIZE = (800, 480)
+# The footer names its sources by their logos (assets/logos, tools/build_source_logos.py):
+# source label -> (logo, its height, text kept beside it), each as tall as its lettering reads
+# (Maoyan's name in small CJK type stands tallest). The official chart's mark is its site's icon,
+# so its name stays beside it; a label without a logo stays in type.
+LOGO_DIR = Path(__file__).resolve().parent / "assets" / "logos"
+SOURCE_LOGOS = {"中国电影票房": ("zgdypw", 13, "中国电影票房"), "猫眼专业版": ("maoyan", 15, ""),
+                "猫眼": ("maoyan", 15, ""), "The Numbers": ("the_numbers", 11, ""), "TMDb": ("tmdb", 10, "")}
+SOURCE_LOGO_GAP = "  "
 
 # Worst first: the page is as fresh as its staler column.
 _PROVENANCE_ORDER = (
@@ -368,25 +376,47 @@ def _draw_row(page, left, right, market, movie, top, leader, *, first):
 
 def _draw_footer(page, china, america):
     colors = page.colors
-    parts = [china_total(china.movies)]
-    if america is not None:
-        parts.append(america_total(america.movies))
+    runs = []
+    totals = [china_total(china.movies)] + ([america_total(america.movies)] if america is not None else [])
+    for total in (total for total in totals if total):
+        runs += [total, " · "]
     sources = [china.source_label] + ([america.source_label] if america is not None else [])
-    parts.append("数据 " + " / ".join(dict.fromkeys(label for label in sources if label)))
-    parts.append(_poster_credit(china.movies + (america.movies if america is not None else [])))
-    text = " · ".join(part for part in parts if part)
+    runs += ["数据 "] + _source_runs(page, dict.fromkeys(label for label in sources if label)) + [" · "]
+    posters = _poster_sources(china.movies + (america.movies if america is not None else []))
+    runs += ["海报 "] + _source_runs(page, posters) if posters else ["海报待补"]
     font = page.font(11, bold=False)
-    text_w = page.draw.textlength(text, font=font) / page.sx
-    start = (BASE_SIZE[0] - text_w) / 2
-    page.text((start, 461), text, 11, colors["text"], bold=False)
+    widths = [page.draw.textlength(run, font=font) / page.sx if isinstance(run, str) else run.width / page.sx
+              for run in runs]
+    start = (BASE_SIZE[0] - sum(widths)) / 2
     middle = page.y(469)
-    for reel_x, line in ((10, (34, start - 10)), (772, (start + text_w + 10, 766))):
+    x = start
+    for run, width in zip(runs, widths):
+        if isinstance(run, str):
+            page.text((x, 461), run, 11, colors["text"], bold=False)
+        else:
+            page.canvas.paste(run, (page.x(x), round(middle - run.height / 2)), run)
+        x += width
+    for reel_x, line in ((10, (34, start - 10)), (772, (x + 10, 766))):
         paste_icon(page.canvas, "reel", page.x(reel_x), page.y(460), page.y(18), colors["camera"])
         if line[1] > line[0]:
             page.draw.line((page.x(line[0]), middle, page.x(line[1]), middle), fill=colors["rule"], width=1)
 
 
-def _poster_credit(movies):
+def _source_runs(page, labels):
+    """The sources as runs of the footer: each one's logo (the official chart's mark keeps its
+    name beside it), else its name; a little space between logos, " / " beside a name."""
+    ink = page.colors["text"] if page.colors is PALETTES["night"] else None
+    runs = []
+    for label in labels:
+        key, height, beside = SOURCE_LOGOS.get(label, (None, 0, ""))
+        logo = load_source_logo(LOGO_DIR / f"{key}.png", page.y(height), ink) if key else None
+        if runs:
+            runs.append(SOURCE_LOGO_GAP if logo is not None and isinstance(runs[-1], Image.Image) else " / ")
+        runs += [logo, " " + beside] if logo is not None and beside else [logo if logo is not None else label]
+    return runs
+
+
+def _poster_sources(movies):
     names = {"tmdb": "TMDb", "maoyan": "猫眼", "the_numbers": "The Numbers"}
     sources = []
     for movie in movies:
@@ -396,4 +426,4 @@ def _poster_credit(movies):
         if not source:
             source = "maoyan" if "pipi.cn" in movie.poster_url else "tmdb"
         sources.append(names.get(source, "TMDb"))
-    return "海报 " + " / ".join(dict.fromkeys(sources)) if sources else "海报待补"
+    return list(dict.fromkeys(sources))

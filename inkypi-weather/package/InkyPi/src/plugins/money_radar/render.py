@@ -8,7 +8,7 @@ from pathlib import Path
 from PIL import Image, ImageOps
 
 from utils.flat_icons import draw_icon
-from utils.local_wordmark import paste_header_art, paste_local_wordmark
+from utils.local_wordmark import load_source_logo, paste_local_wordmark, paste_source_logos
 from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_image
 
@@ -36,6 +36,14 @@ COIN_NAMES = {"bitcoin": "比特币", "ethereum": "以太坊", "solana": "Solana
 # the flags FX_FLAG_HEIGHT tall.
 FX_OTHERS = (("EUR", "flag-eu", "€"), ("JPY", "flag-jp", "¥"), ("HKD", "flag-hk", "HK$"))
 FX_FLAG_HEIGHT = 10
+# The header names the page's sources by their logos (assets/logos), between the colour key and
+# the date: official statistics over market data, the tallest that fits two rows of them.
+SOURCE_LOGO_ROWS = (("ecb", "fred", "bls", "sec"), ("yahoo_finance", "coingecko", "finnhub"))
+SOURCE_LOGO_HEIGHTS = range(19, 11, -1)
+SOURCE_LOGO_GAP = 6
+# Logos whose black lettering takes the night ink (True: every dark part, as Yahoo prints its
+# wordmark white on dark grounds); the seals and emblems keep their printed colours.
+SOURCE_LOGO_INKED = {"fred": False, "coingecko": False, "yahoo_finance": True}
 MACRO_ICON_SIZE = 18
 EARNINGS_ROWS = 2
 # Ticker chips in each brand's own published colour, as is (no snapping to the panel's
@@ -532,6 +540,27 @@ def _kind_key(canvas, x, y):
     return x - 10
 
 
+def _source_logos(canvas, left, right, night):
+    """The sources' logos in two centred rows between ``left`` and ``right``, as tall as they fit;
+    nothing when even the smallest do not."""
+    ink = canvas.color("ink") if night else None
+    for height in SOURCE_LOGO_HEIGHTS:
+        rows = [[load_source_logo(ASSETS / "logos" / f"{name}.png", height,
+                                  ink if name in SOURCE_LOGO_INKED else None,
+                                  dark_parts=SOURCE_LOGO_INKED.get(name, False)) for name in names]
+                for names in SOURCE_LOGO_ROWS]
+        rows = [[logo for logo in row if logo is not None] for row in rows]
+        widths = [sum(logo.width for logo in row) + SOURCE_LOGO_GAP * (len(row) - 1) for row in rows if row]
+        if widths and max(widths) <= right - left:
+            break
+    else:
+        return
+    middles = (28 - height / 2 - 2, 28 + height / 2 + 2)
+    for row, middle in zip(rows, middles):
+        width = sum(logo.width for logo in row) + SOURCE_LOGO_GAP * (len(row) - 1)
+        paste_source_logos(canvas.image, row, (left + right - width) / 2, middle, SOURCE_LOGO_GAP)
+
+
 def render_page(dimensions, payload, settings, now):
     now = local_now(now)
     canvas = PageCanvas(_palette(settings), family=settings.get("fontFamily") or "Microsoft YaHei")
@@ -545,7 +574,7 @@ def render_page(dimensions, payload, settings, now):
         title_right = 16 + canvas.text((16, 27), "资金雷达", 30, anchor="lm")
     subtitle_right = _kind_key(canvas, title_right + 14, 30)
     date_left = 788 - canvas.text((788, 27), f"{now:%m.%d} 周{WEEKDAYS[now.weekday()]} {now:%H:%M}", 16, anchor="rm")
-    paste_header_art(canvas.image, ASSETS / "header_art.png", subtitle_right, date_left)
+    _source_logos(canvas, subtitle_right + 12, date_left - 12, night)
     canvas.rule((12, 52, 788, 52), "ink", 2)
     _fx_tile(canvas, payload, TILES[0])
     coins = payload["crypto"]["data"].get("coins", [])

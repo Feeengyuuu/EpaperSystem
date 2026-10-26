@@ -1,0 +1,15 @@
+{
+  "logos": {
+    "tesla": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/6/62/Tesla_Motors_Logo.svg/500px-Tesla_Motors_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Tesla_Motors_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "30eb958681ad4381d0feb5addfd651ed815cda44cf40858f156a6e815368e1d6",
+      "size": [
+        485,
+        64
+      ],
+      "sha256": "54dad1d83e959f73ba8d19d23c4a84bbf24bb4e83f866cda170a5e1a98ffc98d"
+    }
+  }
+}

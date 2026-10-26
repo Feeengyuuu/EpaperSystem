@@ -135,7 +135,35 @@ def test_header_art_centres_in_the_free_span_and_skips_a_narrow_one(tmp_path):
     assert pasted[0] - 314 in {646 - pasted[2], 646 - pasted[2] - 1}
 
 
-@pytest.mark.parametrize("plugin", ["money_radar", "nature_nearby", "tech_play"])
+def test_source_logo_is_cropped_scaled_and_inked_only_where_asked(tmp_path):
+    path = tmp_path / "logo.png"
+    logo = Image.new("RGBA", (60, 30), (0, 0, 0, 0))
+    logo.paste((20, 20, 20, 255), (5, 5, 25, 25))      # black lettering
+    logo.paste((80, 20, 160, 255), (25, 5, 45, 25))    # a dark brand purple
+    logo.paste((230, 30, 30, 255), (45, 5, 55, 25))    # a bright brand red
+    logo.save(path)
+    ink = (240, 240, 240)
+
+    plain = local_wordmark.load_source_logo(path, 10)
+    inked = local_wordmark.load_source_logo(path, 10, ink)
+    dark = local_wordmark.load_source_logo(path, 10, ink, dark_parts=True)
+
+    assert plain.size == (25, 10)
+    assert plain.getpixel((4, 5))[:3] == (20, 20, 20)
+    assert inked.getpixel((4, 5))[:3] == ink and inked.getpixel((14, 5))[:3] == (80, 20, 160)
+    red = dark.getpixel((22, 5))[:3]
+    assert dark.getpixel((14, 5))[:3] == ink and red[0] > 220 and max(red[1:]) < 40
+    assert local_wordmark.load_source_logo(tmp_path / "missing.png", 10) is None
+
+
+def test_money_radar_names_its_sources_by_logo():
+    logos = Path(local_wordmark.__file__).resolve().parents[1] / "plugins" / "money_radar" / "assets" / "logos"
+    record = (logos / "logos.source.json").read_text(encoding="utf-8")
+    for name in ("ecb", "fred", "bls", "sec", "yahoo_finance", "coingecko", "finnhub"):
+        assert (logos / f"{name}.png").is_file() and f'"{name}"' in record
+
+
+@pytest.mark.parametrize("plugin", ["nature_nearby", "tech_play"])
 def test_aggregate_pages_ship_their_header_art(plugin):
     assets = Path(local_wordmark.__file__).resolve().parents[1] / "plugins" / plugin / "assets"
     with Image.open(assets / "header_art.png") as source:

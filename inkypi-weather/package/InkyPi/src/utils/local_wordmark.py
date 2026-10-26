@@ -6,6 +6,7 @@ from pathlib import Path
 from PIL import Image
 
 from utils.safe_image import ImageLimits, safe_open_image
+from utils.theme_utils import relative_luminance
 
 
 _LIMITS = ImageLimits(max_bytes=4 * 1024 * 1024, max_width=2048, max_height=2048,
@@ -58,6 +59,51 @@ def paste_local_wordmark(image, path, box, *, align="center"):
         return (x, y, x + fitted.width, y + fitted.height)
     except (OSError, ValueError, SyntaxError):
         return False
+
+
+@lru_cache(maxsize=32)
+def _load_source_logo(path, modified_ns, byte_size):
+    with safe_open_image(path, limits=_LIMITS) as source:
+        logo = source.convert("RGBA")
+    bounds = logo.getchannel("A").point(lambda value: 255 if value > 16 else 0).getbbox()
+    return logo.crop(bounds) if bounds else None
+
+
+def load_source_logo(path, height, ink=None, *, dark_parts=False):
+    """A data source's official logo ``height`` px tall (tools/build_source_logos.py), or None
+    without the file. With ``ink`` (a dark page) its near-black lettering takes that colour, and
+    with ``dark_parts`` every dark part of it too (a logo its maker prints light on dark grounds);
+    its coloured parts stay as printed."""
+    try:
+        asset = Path(path)
+        info = asset.stat()
+        logo = _load_source_logo(str(asset), info.st_mtime_ns, info.st_size)
+    except (OSError, ValueError, SyntaxError):
+        return None
+    if logo is None or height < 1:
+        return None
+    logo = logo.resize((max(1, round(logo.width * height / logo.height)), int(height)), Image.Resampling.LANCZOS)
+    if ink is not None:
+        ink = tuple(ink)[:3]
+        pixels = logo.load()
+        for y in range(logo.height):
+            for x in range(logo.width):
+                red, green, blue, alpha = pixels[x, y]
+                if not alpha:
+                    continue
+                neutral = max(red, green, blue) < 110 and max(red, green, blue) - min(red, green, blue) < 40
+                if neutral or (dark_parts and relative_luminance((red, green, blue)) < 0.09):
+                    pixels[x, y] = (*ink, alpha)
+    return logo
+
+
+def paste_source_logos(image, logos, left, middle, gap):
+    """``logos`` (images) side by side from ``left``, centred on ``middle``; the row's right end."""
+    x = left
+    for logo in logos:
+        image.paste(logo, (round(x), round(middle - logo.height / 2)), logo)
+        x += logo.width + gap
+    return x - gap if logos else left
 
 
 def paste_header_art(image, path, left, right, *, top=6, bottom=50, gap=14, min_width=80):
