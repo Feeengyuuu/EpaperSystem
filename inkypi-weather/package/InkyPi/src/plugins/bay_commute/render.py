@@ -6,11 +6,12 @@ import math
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageColor, ImageDraw, ImageOps
 from utils.app_utils import get_base_ui_font, get_font
 from utils.local_wordmark import paste_local_wordmark
 from utils.safe_image import ImageLimits, safe_open_image
 
+from .map_view import source_logo
 from .sources import COMPASS, PACIFIC, local_now, next_tides, parse_time, rank_roads, road_state, select_roads
 
 
@@ -163,7 +164,14 @@ def draw_roads(canvas, payload, now):
     placed = paste_local_wordmark(canvas.image, ASSETS / "section_roads.png", (16, TOP, 216, TOP + 42), align="left")
     if not placed:
         canvas.text((18, TOP + 3), "道路封闭", 29)
-    canvas.text((placed[2] + 12 if placed else 171, TOP + 16), "CALTRANS ‧ D4", 13, "muted")
+    # The closures' source: Caltrans by its logo, then its Bay Area district.
+    source_x = placed[2] + 12 if placed else 171
+    caltrans = source_logo("caltrans", 14, ImageColor.getrgb(canvas.palette["ink"]) if canvas.palette is NIGHT else None)
+    if caltrans is not None:
+        canvas.image.paste(caltrans, (source_x, TOP + 23 - caltrans.height // 2), caltrans)
+        canvas.text((source_x + caltrans.width + 6, TOP + 16), "D4", 13, "muted")
+    else:
+        canvas.text((source_x, TOP + 16), "CALTRANS ‧ D4", 13, "muted")
     map_x, map_y, map_w, map_h = MAP_BOX
     map_image = render_map(rows, size=(map_w, map_h), night=canvas.palette is NIGHT)
     canvas.image.paste(map_image, (map_x, map_y))
@@ -356,12 +364,20 @@ def draw_tides(canvas, payload, settings, now):
         canvas.rule((488, SHORE_BOX[1] + 14, 783, SHORE_BOX[1] + 14))
     draw_chart(canvas, data, now)
     label = "NOAA ‧ MLLW ‧ 英尺"
+    noaa = None
     if source["state"] == "stale_cache":
         label = "过期预测缓存 ‧ " + data.get("prediction_date", "")
     elif source["state"] == "unavailable":
         label = "潮汐数据暂不可用 ‧ 道路独立更新"
+    else:
+        # The predictions' source by NOAA's round logo before the datum and the unit.
+        noaa = source_logo("noaa", 18)
+        label = "MLLW ‧ 英尺" if noaa is not None else label
     canvas.text((783, 418), label, 12,
                 "orange" if source["state"] in {"stale_cache", "unavailable"} else "muted", anchor="rt")
+    if noaa is not None:
+        label_width = canvas.draw.textlength(label, font=canvas.font(12))
+        canvas.image.paste(noaa, (round(783 - label_width - 5 - noaa.width), 418 + 8 - noaa.height // 2), noaa)
 
 
 def draw_buoy(canvas, payload):

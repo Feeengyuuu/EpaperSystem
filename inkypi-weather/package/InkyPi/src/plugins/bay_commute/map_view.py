@@ -38,6 +38,26 @@ _CITY_LABELS = (
 MARKER_FILL = (218, 77, 15)
 
 
+def source_logo(name, height, ink=None):
+    """A data source's official logo (assets/logos/<name>.png, tools/build_source_logos.py)
+    ``height`` tall; with ``ink`` (a dark page), its black lettering takes that colour while its
+    coloured parts stay as printed. None without the file."""
+    try:
+        with Image.open(ASSETS / "logos" / f"{name}.png") as source:
+            logo = source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+    logo = logo.resize((max(1, round(logo.width * height / logo.height)), height), Image.Resampling.LANCZOS)
+    if ink is not None:
+        pixels = logo.load()
+        for y in range(logo.height):
+            for x in range(logo.width):
+                red, green, blue, alpha = pixels[x, y]
+                if alpha and max(red, green, blue) < 110 and max(red, green, blue) - min(red, green, blue) < 40:
+                    pixels[x, y] = (*ink, alpha)
+    return logo
+
+
 def draw_marker(draw, x, y, number, radius, font):
     """The numbered closure marker; the road list draws the very same one beside each entry."""
     draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=MARKER_FILL, outline="white", width=1)
@@ -152,9 +172,15 @@ def render_map(rows, size=DEFAULT_SIZE, night=False):
 
     # Attribution is drawn before points so a real edge location is never hidden.
     draw.rectangle((0, size[1] - 16, size[0], size[1]), fill=paper)
+    # The base map's source: USGS by its logo, then the product's name.
     attribution = "USGS ‧ The National Map"
     attr_font = get_base_ui_font(11, bold=True)
-    draw.text((3, size[1] - 14), attribution, font=attr_font, fill=ink, anchor="lt")
+    usgs = source_logo("usgs", 12, ink if night else None)
+    if usgs is not None:
+        image.paste(usgs, (3, size[1] - 14), usgs)
+        draw.text((3 + usgs.width + 5, size[1] - 14), "The National Map", font=attr_font, fill=ink, anchor="lt")
+    else:
+        draw.text((3, size[1] - 14), attribution, font=attr_font, fill=ink, anchor="lt")
     markers = []
     number_font = get_base_ui_font(12, bold=True)
     for index, row in enumerate(rows[:3], 1):

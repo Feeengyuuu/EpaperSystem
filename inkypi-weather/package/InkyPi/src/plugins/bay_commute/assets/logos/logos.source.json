@@ -1,0 +1,38 @@
+{
+  "logos": {
+    "caltrans": {
+      "source": "https://dot.ca.gov/-/media/dot-media/images/logos/caltrans/caltranslogo.png",
+      "page": "https://dot.ca.gov/",
+      "licence": "Caltrans' official logo from its own site header, shown to name the source",
+      "source_sha256": "7481c1e0c4ee9539f13e00d496bfa69b7540d8b0cb8711b334d4059cef7201df",
+      "size": [
+        343,
+        53
+      ],
+      "sha256": "2b33b4c8876e32517fbbb2847970692ff0fe4a53b67ec5e07d095e4b6390d9c2"
+    },
+    "usgs": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1c/USGS_logo_green.svg/500px-USGS_logo_green.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:USGS_logo_green.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "2f07a405abb8ff5b499c77e4312cafc69cccca7d1a1100ce8ff03541e252edf2",
+      "size": [
+        260,
+        64
+      ],
+      "sha256": "b56dc0b4f5c0d319cc243c38b254bfdd3a1da968dc4139f064c235365ae29493",
+      "processing": "the top 66% kept (the mark and letters, not the tagline)"
+    },
+    "noaa": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/79/NOAA_logo.svg/500px-NOAA_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:NOAA_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "01856578d8c58ca056723e5af7eb624c82f3a0fbb2bd5181e36be7304d585f3b",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "abbc58f54dbe1bc72b9be3394b6c12d49fc6e3251133a8dcc1641c4f19d86ed9"
+    }
+  }
+}
