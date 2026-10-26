@@ -1797,7 +1797,7 @@ def test_hard_edged_art_is_enlarged_without_smoothing(tmp_path, monkeypatch):
     art = _pixel_scene(2.5)
 
     assert info_shelf.pixel_grid(art) is None
-    fitted = plugin._fit_artwork(art, (800, 480), steam_daily_art_module.ART_TITLED)
+    fitted = plugin._fit_artwork(art, (800, 480))
 
     # Nearest-neighbour keeps only the art's own colours; smoothing would add blends at edges.
     assert set(fitted.get_flattened_data()) <= set(art.get_flattened_data())
@@ -1852,17 +1852,31 @@ def test_shelf_without_a_flat_block_fades_in_at_the_foot():
     assert shelved.getpixel((400, 470)) != art.getpixel((400, 470))
 
 
-def test_card_keeps_titled_art_whole_above_the_shelf():
-    art = Image.new("RGB", (800, 480), (200, 30, 30))
-    ImageDraw.Draw(art).rectangle((300, 440, 500, 479), fill=(255, 255, 255))  # a title at the foot
+def test_titled_art_fills_the_page_under_the_fading_shelf(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    # A capsule with no flat block at its foot: once kept whole on a mat, now edge to edge.
+    art = Image.linear_gradient("L").rotate(90).resize((616, 353)).convert("RGB")
+    fitted = plugin._fit_artwork(art, (800, 480))
+    monkeypatch.setattr(plugin, "_download_first_available_logo", lambda _item: (None, None))
+    monkeypatch.setattr(plugin, "_choose_artwork",
+                        lambda *_args: ("https://example.test/a.jpg", fitted, steam_daily_art_module.ART_TITLED))
+    monkeypatch.setattr(plugin, "_shelf_info", lambda _item, _settings: SHELF_INFO)
 
-    carded, band = info_shelf.card(art, 112)
+    _url, _logo, image = plugin._render_item({"id": 1, "type": 0}, {}, (800, 480))
 
-    art_height = 480 - 112
-    assert band[0] + info_shelf.GROUND_KEEP == art_height
-    assert (255, 255, 255) in set(carded.crop((0, art_height - 40, 800, art_height)).get_flattened_data())
-    assert carded.getpixel((5, 200)) == band[1]
-    assert info_shelf.shelf_top(480, band) == art_height
+    start = info_shelf.shelf_top(480)
+    assert ImageChops.difference(fitted.crop((0, 0, 800, start)), image.crop((0, 0, 800, start))).getbbox() is None
+    assert fitted.getpixel((2, 200)) != fitted.getpixel((400, 200))  # the art reaches the page's sides
+
+
+def test_a_wide_titled_header_is_cropped_to_fill_the_page(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    header = Image.new("RGB", (460, 215), (200, 40, 40))
+
+    fitted = plugin._fit_artwork(header, (800, 480))
+
+    assert fitted.size == (800, 480)
+    assert set(fitted.get_flattened_data()) == {(200, 40, 40)}
 
 
 def _personal_plugin(tmp_path, monkeypatch, wishlist, owned, deals):

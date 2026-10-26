@@ -219,19 +219,6 @@ def shelf_top(height, band=None):
     return height - SCRIM_HEIGHT
 
 
-def card(image, shelf_height):
-    """Titled art kept whole above the shelf: scaled to the height the shelf leaves and centred
-    on a mat in its own deep hue. Returns (image, band), the band starting where the art ends."""
-    rgb = image.convert("RGB")
-    width, height = rgb.size
-    art_height = max(1, height - shelf_height)
-    art_width = max(1, round(width * art_height / height))
-    mat = palette(rgb.resize((1, 1), Image.Resampling.BOX).getpixel((0, 0)))["base"]
-    canvas = Image.new("RGB", (width, height), mat)
-    canvas.paste(rgb.resize((art_width, art_height), Image.Resampling.LANCZOS), ((width - art_width) // 2, 0))
-    return canvas, (art_height - GROUND_KEEP, mat)
-
-
 def draw_shelf(image, info, band=None):
     """The art with its info shelf: on its flat block (``band`` = (top, colour)) or, without
     one, on a band fading in at its foot. ``info``: reasons [(icon, label)], price

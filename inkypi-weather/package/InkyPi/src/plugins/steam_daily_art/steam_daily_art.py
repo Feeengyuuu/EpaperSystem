@@ -114,8 +114,6 @@ BLURB_JSON_SCHEMA = {
     },
     "required": ["lines"],
 }
-# Three shelf rows (reasons and price, the line, tags and credit) with their margins.
-CARD_SHELF_HEIGHT = 124
 STEAM_ITEM_KINDS = {0: "app", 1: "sub", 2: "bundle"}
 MAX_STORE_ITEM_BYTES = 512 * 1024
 MAX_ART_GAMES = 3
@@ -589,12 +587,9 @@ class SteamDailyArt(BasePlugin):
         info = self._shelf_info(item, settings)
         band = None
         if info is not None:
-            # A flat block too short for every row leaves the shelf to the fading band or a card.
+            # A flat block too short for every row leaves the shelf to the band fading in over
+            # the art's foot; the art fills the page either way.
             band = info_shelf.band_fits(image.height, info_shelf.find_flat_band(image), info)
-            if band is None and art_kind == ART_TITLED:
-                # A capsule's painted title may sit at its foot: the art moves up whole onto
-                # a mat in its own hue, and the shelf takes the mat below it.
-                image, band = info_shelf.card(image, CARD_SHELF_HEIGHT)
         if logo is not None and art_kind == ART_SCENE:
             if info is not None:
                 # The logo finds its place above the shelf.
@@ -625,7 +620,7 @@ class SteamDailyArt(BasePlugin):
                 source = self._download_artwork(url, search)
                 if source is None:
                     continue
-                image = self._fit_artwork(source, dimensions, tier)
+                image = self._fit_artwork(source, dimensions)
                 # A scene is judged by the crop it shows; titled art by its own
                 # pixels, since a contain canvas would pad it with light backdrop.
                 if self._is_lit(self._scene_light(image if tier == ART_SCENE else source, dimensions)):
@@ -697,7 +692,9 @@ class SteamDailyArt(BasePlugin):
                 logger.warning(f"Steam image candidate failed: {url} | {e}")
             return None
 
-    def _fit_artwork(self, image, dimensions, tier):
+    def _fit_artwork(self, image, dimensions):
+        """The art cropped to fill the page (a wide header loses its sides, not the page its
+        edges); only art far taller than the page is kept whole."""
         target_width, target_height = dimensions
         resample = Image.Resampling.LANCZOS
         grid = info_shelf.pixel_grid(image)
@@ -707,9 +704,6 @@ class SteamDailyArt(BasePlugin):
         elif max(target_width / image.width, target_height / image.height) > 1 and info_shelf.is_hard_edged(image):
             # Hard-edged art enlarged by an uneven factor still keeps its edges sharp.
             resample = Image.Resampling.NEAREST
-        if tier == ART_TITLED and image.width / image.height > target_width / target_height * 1.12:
-            # Cropping a wide header to the display would cut its painted title.
-            return self._contain_on_canvas(image, dimensions, resample)
         return self._smart_cover(image, dimensions, resample)
 
     @staticmethod
