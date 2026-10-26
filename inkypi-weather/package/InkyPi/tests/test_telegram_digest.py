@@ -1790,3 +1790,17 @@ def test_focus_chats_offer_twice_the_candidates(tmp_path, monkeypatch):
     )
 
     assert len(payload["messages"]) == 6
+
+
+def test_the_leads_tag_shares_the_headlines_first_line(tmp_path):
+    from utils.app_utils import get_base_ui_font
+
+    plugin = _plugin(tmp_path)
+    draw = ImageDraw.Draw(Image.new("RGB", (400, 100)))
+    font = get_base_ui_font(24, bold=True)
+
+    lines = plugin._wrap_text(draw, "苹果折叠屏新机出现屏幕裂痕的报道引发讨论", font, 240, 3, first_indent=60)
+
+    # The first line leaves the tag's room before it; the next ones use the full width.
+    assert len(lines) >= 2
+    assert plugin._text_width(draw, lines[0], font) <= 180 < plugin._text_width(draw, lines[0] + lines[1][:1], font) + 60

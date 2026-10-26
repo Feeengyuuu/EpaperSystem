@@ -332,13 +332,18 @@ class BriefingPageMixin:
         x0, y0, x1, y1 = box
         colour = self._tag_colour(item, p)
         y = y0
-        if show_tag:
-            self._chip(draw, x0, y + self._y(2), self._tag(item), colour, self._f(12, "bold"))
-            y += self._y(30)
         headline_font = self._f(headline_size, "bold")
-        lines = self._wrap_text(draw, display_headline(item), headline_font, x1 - x0, headline_lines)
-        for line in lines:
-            draw.text((x0, y), line, font=headline_font, fill=p["ink"])
+        # The tag leads the headline's first line rather than standing on a line of its own,
+        # so the room it took goes to the summary.
+        tag_font = self._f(12, "bold")
+        indent = self._text_width(draw, self._tag(item), tag_font) + self._x(7) * 2 + self._x(8) if show_tag else 0
+        lines = self._wrap_text(draw, display_headline(item), headline_font, x1 - x0, headline_lines, first_indent=indent)
+        for index, line in enumerate(lines):
+            left = x0 + (indent if index == 0 else 0)
+            if index == 0 and show_tag:
+                top, bottom = draw.textbbox((left, y), line or "国", font=headline_font)[1::2]
+                self._chip(draw, x0, round((top + bottom) / 2 - self._y(10)), self._tag(item), colour, tag_font)
+            draw.text((left, y), line, font=headline_font, fill=p["ink"])
             y += int(headline_size * 1.3 * self._page_scale)
         body_size = 17 if headline_size >= 30 else 15
         body_font = self._f(body_size, "normal")

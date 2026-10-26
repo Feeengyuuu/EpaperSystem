@@ -1705,7 +1705,9 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
             cleaned.append(ch)
         return re.sub(r"\s+", " ", "".join(cleaned)).strip()
 
-    def _wrap_text(self, draw, text, font, max_width, max_lines):
+    def _wrap_text(self, draw, text, font, max_width, max_lines, first_indent=0):
+        """Lines of ``text`` within ``max_width``, the first ``first_indent`` narrower (a tag
+        stands before it), at most ``max_lines``, the last ellipsized when text is left over."""
         max_width = int(max_width or 0)
         max_lines = int(max_lines or 0)
         if max_width <= 0 or max_lines <= 0:
@@ -1723,7 +1725,8 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
         while index < len(tokens) and len(lines) < max_lines:
             token = tokens[index]
             candidate = current + token if current else token.lstrip()
-            if self._text_width(draw, candidate, font) <= max_width:
+            limit = max_width - (first_indent if not lines else 0)
+            if self._text_width(draw, candidate, font) <= limit:
                 current = candidate
                 index += 1
                 continue
@@ -1741,10 +1744,10 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
             # One token wider than the line: split it by characters.
             chunk = ""
             for char in candidate:
-                if chunk and self._text_width(draw, chunk + char, font) > max_width:
+                if chunk and self._text_width(draw, chunk + char, font) > limit:
                     break
                 chunk += char
-            chunk = self._clip_text(draw, chunk, font, max_width) or candidate[:1]
+            chunk = self._clip_text(draw, chunk, font, limit) or candidate[:1]
             lines.append(chunk)
             rest = candidate[len(chunk):]
             if rest:
@@ -1755,7 +1758,7 @@ class TelegramDigest(BriefingPageMixin, RefreshOnDisplayPresentationMixin, BaseP
             lines.append(current)
         lines = lines[:max_lines]
         if index < len(tokens) and lines:
-            lines[-1] = self._ellipsize_text(draw, lines[-1], font, max_width)
+            lines[-1] = self._ellipsize_text(draw, lines[-1], font, max_width - (first_indent if len(lines) == 1 else 0))
         return lines
 
     def _ellipsize_text(self, draw, text, font, max_width):
