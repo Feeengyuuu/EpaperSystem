@@ -32,8 +32,10 @@ NIGHT = {
     "badge_ink": "#0e171f",
 }
 COIN_NAMES = {"bitcoin": "比特币", "ethereum": "以太坊", "solana": "Solana"}
-# What a dollar buys elsewhere, along the foot of the dollar/yuan card: (currency, flag).
-FX_OTHERS = (("EUR", "flag-eu"), ("JPY", "flag-jp"), ("HKD", "flag-hk"))
+# What a dollar buys elsewhere, along the foot of the dollar/yuan card: (currency, flag, sign),
+# the flags FX_FLAG_HEIGHT tall.
+FX_OTHERS = (("EUR", "flag-eu", "€"), ("JPY", "flag-jp", "¥"), ("HKD", "flag-hk", "HK$"))
+FX_FLAG_HEIGHT = 10
 MACRO_ICON_SIZE = 18
 EARNINGS_ROWS = 2
 # Ticker chips in each brand's own published colour, as is (no snapping to the panel's
@@ -213,35 +215,45 @@ def _fx_tile(canvas, payload, box):
         canvas.text((left + 10, 120), "汇率暂不可用", 15, "muted", anchor="lm")
         return
     latest, first = series[-1][1], series[0][1]
-    canvas.text((left + 10, 114), f"{latest:.4f}", 28, anchor="lm")
+    canvas.text((left + 10, 114), f"¥{latest:.4f}", 28, anchor="lm")
     change = (latest / first - 1) * 100
     _change_line(canvas, (left + 10, 138), change, f"{change:+.2f}%", f"{len(series)} 个交易日")
     sparkline(canvas, (left + 12, 150, right - 12, 176), [value for _day, value in series], CARD_ACCENTS["fx"])
-    # A dollar in the other currencies: each one's flag and the rate, spread across the foot (a
-    # currency without its flag keeps its code).
-    others = []
-    for code, flag in FX_OTHERS:
+    # A dollar in the other currencies: each one's flag, its sign and the rate, spread across the
+    # foot; when they run long the yen loses its decimal first, then the type steps down.
+    rates = []
+    for code, flag, sign in FX_OTHERS:
         rows = (data.get("series") or {}).get(code) or []
         if rows:
-            mark = _asset(flag, 11)
-            rate = f"{rows[-1][1]:.1f}" if code == "JPY" else f"{rows[-1][1]:.2f}"
-            others.append((mark, rate if mark is not None else f"{code} {rate}"))
+            rates.append((_asset(flag, FX_FLAG_HEIGHT), code, sign, rows[-1][1]))
+    if not rates:
+        return
     room = right - left - 20
-    for size in (12, 11, 10):
-        widths = [(mark.width + 4 if mark is not None else 0) + canvas.width(text, size) for mark, text in others]
-        if sum(widths) + 8 * (len(others) - 1) <= room:
+
+    def layout(size, whole_yen):
+        texts = [(f"{sign}{rate:.0f}" if code == "JPY" and whole_yen else
+                  f"{sign}{rate:.1f}" if code == "JPY" else f"{sign}{rate:.2f}") if mark is not None else
+                 f"{code} {rate:.2f}" for mark, code, sign, rate in rates]
+        widths = [(mark.width + 3 if mark is not None else 0) + canvas.width(text, size)
+                  for (mark, _code, _sign, _rate), text in zip(rates, texts)]
+        return texts, widths
+
+    for size, whole_yen in ((12, False), (11, False), (12, True), (11, True), (10, True)):
+        texts, widths = layout(size, whole_yen)
+        if sum(widths) + 4 * (len(rates) - 1) <= room:
             break
-    gap = (room - sum(widths)) / (len(others) - 1) if len(others) > 1 else 0
+    gap = (room - sum(widths)) / (len(rates) - 1) if len(rates) > 1 else 0
     x = left + 10
-    for (mark, text), width in zip(others, widths):
+    for (mark, _code, _sign, _rate), text, width in zip(rates, texts, widths):
+        start_x = x
         if mark is not None:
             # A hairline round each flag, so Japan's white field still reads as a flag on the card.
             top = round(187 - mark.height / 2)
             _paste(canvas, mark, (x, top))
             canvas.draw.rectangle((round(x) - 1, top - 1, round(x) + mark.width, top + mark.height), outline=canvas.color("muted"))
-            x += mark.width + 4
+            x += mark.width + 3
         canvas.text((x, 187), text, size, anchor="lm", width=right - 10 - x)
-        x += width - (mark.width + 4 if mark is not None else 0) + gap
+        x = start_x + width + gap
 
 
 def _coin_tile(canvas, coin, box):
