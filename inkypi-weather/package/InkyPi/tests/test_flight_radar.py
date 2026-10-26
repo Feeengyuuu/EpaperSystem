@@ -751,3 +751,25 @@ def test_strips_estimate_landing_and_take_off_times_for_bay_flights():
     assert pro_view.flight_time(plugin, departure, now) == "约 09:25 起飞"
     assert pro_view.flight_time(plugin, overflight, now) == ""
     assert pro_view.flight_time(plugin, {**arrival, "on_ground": True}, now) == ""
+
+
+def test_strips_show_each_route_as_its_progress_between_two_big_codes():
+    from plugins.flight_radar import pro_view
+
+    # The aircraft sits by its phase: just out, passing, nearly in; on the ground at its Bay end.
+    assert pro_view._strip_progress("departure", {}) < pro_view._strip_progress("overflight", {}) \
+        < pro_view._strip_progress("arrival", {})
+    assert pro_view._strip_progress("ground", {"origin": "SFO", "destination": "JFK"}) == 0.0
+    assert pro_view._strip_progress("ground", {"origin": "JFK", "destination": "SFO"}) == 1.0
+
+    plugin = _plugin()
+    theme = plugin._theme(_canonical_theme("day"))
+    plane = {"callsign": "UAL737", "origin": "SEA", "destination": "SFO", "lat": 37.71, "lon": -122.2,
+             "speed_kt": 176}
+    image = Image.new("RGB", (300, 40), theme["panel2"])
+    pro_view._strip_route(plugin, image, ImageDraw.Draw(image), plane, "arrival", (10, 4, 290, 36), "预计 13:18 到",
+                          theme)
+    # Both codes in ink at the ends, the route line and the aircraft in the arrival colour between.
+    assert theme["ink"] in set(image.crop((10, 4, 70, 26)).get_flattened_data())
+    assert theme["ink"] in set(image.crop((230, 4, 290, 26)).get_flattened_data())
+    assert theme["blue"] in set(image.crop((100, 4, 230, 26)).get_flattened_data())

@@ -9,10 +9,11 @@
   rings, bearing ticks, SFO's extended final approach course, each target
   with its history trail and an ATC data block (callsign; altitude in hundreds of feet and
   ground speed in tens of knots) on a leader line.
-- Flight progress strips for the nearest flights: the airline's wordmark, callsign, a phase
-  bar and icon, an estimated landing or take-off time for flights to or from the Bay's three
-  airports, the route between the two airports' logos (or their countries' flags) with codes
-  and cities, type, registration, altitude, speed and distance.
+- Flight progress strips for the nearest flights: the airline's wordmark, callsign and a phase
+  chip; the origin and destination as big codes with their airports' logos (or countries'
+  flags) and cities, the flight's line between them with the aircraft on it and an estimated
+  landing or take-off time for flights to or from the Bay's three airports; then type and
+  registration, altitude and speed, and distance.
 """
 
 from __future__ import annotations
@@ -59,8 +60,14 @@ BOARD = (16, 52, 784, 92)
 SCOPE = (16, 98, 456, 468)
 STRIPS = (466, 98, 784, 468)
 MAX_DATA_BLOCKS = 10
-# The airline wordmark on a strip matches the callsign line's height.
-STRIP_LOGO_HEIGHT = 18
+# A strip: STRIP_H tall, STRIP_GAP apart. The airline wordmark matches the callsign line's height;
+# a route end's airport logo or flag is STRIP_ROUTE_MARK tall. The aircraft sits on the route line
+# by its phase (STRIP_PROGRESS of the way along), and the phase chip reads PHASE_CODES.
+STRIP_H, STRIP_GAP = 66, 2
+STRIP_LOGO_HEIGHT = 14
+STRIP_ROUTE_MARK = 12
+STRIP_PROGRESS = {"departure": 0.18, "arrival": 0.86, "overflight": 0.5}
+PHASE_CODES = {"arrival": "ARR", "departure": "DEP", "ground": "GND", "overflight": "OVR"}
 # At night, dark logo parts (luminance below NIGHT_INK_BELOW) that are not reds (red channel below
 # NIGHT_RED_FROM) - navy, black, deep blue - turn to the theme's ink instead of sitting on a plate.
 NIGHT_INK_BELOW = 90
@@ -753,39 +760,6 @@ def _phase_icon(plugin, draw, box, phase, theme):
         draw.line((x0 + 1, y1 - 1, x1 - 1, y1 - 1), fill=colour, width=2)
 
 
-def _route_line(plugin, image, draw, plane, xy, width, theme, font, small):
-    """origin mark + code + city -> destination mark + code + city, ending within ``width``;
-    False when the route is unknown."""
-    origin, destination = str(plane.get("origin") or "").upper(), str(plane.get("destination") or "").upper()
-    if not (origin and destination):
-        return False
-    x, y = xy
-    right = x + width
-    parts = []
-    for code, city in ((origin, plane.get("origin_city")), (destination, plane.get("destination_city"))):
-        name = plugin._localized_city_name(code) or plugin._localized_city_name(city)
-        parts.append((code, "" if name == code else name, route_mark(code, 14, 34)))
-    arrow_w = 14
-    fixed = sum((mark.width + 3 if mark is not None else 0) + draw.textlength(code, font=font) + 3
-                for code, _name, mark in parts) + arrow_w
-    city_w = max(0, (width - fixed) / 2)
-    for index, (code, name, mark) in enumerate(parts):
-        if index:
-            draw.text((x + 2, y + 8), "→", font=font, fill=theme["muted"], anchor="lm")
-            x += arrow_w
-        if mark is not None:
-            mark = on_panel(mark, theme["panel2"], theme)
-            image.paste(mark, (round(x), round(y + 8 - mark.height / 2)), mark)
-            x += mark.width + 3
-        draw.text((x, y + 8), code, font=font, fill=theme["ink"], anchor="lm")
-        x += draw.textlength(code, font=font) + 3
-        if name and city_w > 12:
-            fitted = _fit(draw, name, small, min(city_w, right - x))
-            draw.text((x, y + 8), fitted, font=small, fill=theme["muted"], anchor="lm")
-            x += draw.textlength(fitted, font=small) + 2
-    return True
-
-
 def _place(plugin, code, city):
     code = str(code or "").strip().upper()
     name = plugin._localized_city_name(code) if code else plugin._localized_city_name(city)
@@ -838,61 +812,110 @@ def flight_time(plugin, plane, now):
     return ""
 
 
+def _strip_progress(phase, plane):
+    """Where along its route the aircraft is drawn: just out, passing, or nearly in; on the ground
+    at whichever end is a Bay airport."""
+    if phase == "ground":
+        if str(plane.get("origin") or "").upper() in BAY_AIRPORTS:
+            return 0.0
+        return 1.0 if str(plane.get("destination") or "").upper() in BAY_AIRPORTS else 0.5
+    return STRIP_PROGRESS[phase]
+
+
+def _strip_route(plugin, image, draw, plane, phase, box, timing, theme):
+    """The route as big origin and destination codes, each with its mark and city under it, the
+    flight's line between them with the aircraft on it and the estimated time over it; the
+    transponder code when the route is unknown."""
+    left, top, right, _bottom = box
+    middle = top + 9
+    role = theme[PHASES[phase][1]]
+    big, city_font = plugin._font(20, "bold"), plugin._city_font(9, "bold")
+    origin, destination = str(plane.get("origin") or "").upper(), str(plane.get("destination") or "").upper()
+    if not (origin and destination):
+        route = f"航线未知 · 应答机 {str(plane.get('hex') or '').upper()}"
+        draw.text((left, middle), _fit(draw, route, plugin._city_font(11, "bold"), right - left), font=plugin._city_font(
+            11, "bold"), fill=theme["muted"], anchor="lm")
+        return
+    ends = []
+    for code, city, align in ((origin, plane.get("origin_city"), "left"), (destination, plane.get("destination_city"),
+                                                                           "right")):
+        name = plugin._localized_city_name(code) or plugin._localized_city_name(city) or ""
+        mark = route_mark(code, STRIP_ROUTE_MARK, 26)
+        mark = on_panel(mark, theme["panel2"], theme) if mark is not None else None
+        code_w = draw.textlength(code, font=big)
+        width = code_w + (mark.width + 3 if mark is not None else 0)
+        x = left if align == "left" else right - width
+        if mark is not None:
+            image.paste(mark, (round(x), round(middle - mark.height / 2)), mark)
+            x += mark.width + 3
+        draw.text((x, middle), code, font=big, fill=theme["ink"], anchor="lm")
+        if name and name != code:
+            draw.text((left if align == "left" else right, middle + 15), _fit(draw, name, city_font, (right - left) / 2 - 4),
+                      font=city_font, fill=theme["muted"], anchor="lm" if align == "left" else "rm")
+        ends.append((left + width, right - width))
+    line_left, line_right = ends[0][0] + 8, ends[1][1] - 8
+    if line_right - line_left < 20:
+        return
+    draw.line((line_left, middle, line_right, middle), fill=theme["card_line"], width=2)
+    plane_x = line_left + (line_right - line_left) * _strip_progress(phase, plane)
+    draw.line((line_left, middle, plane_x, middle), fill=role, width=2)
+    points = plugin._rotate_plane_points(plugin._material_flight_points(0.8), math.radians(90), plane_x, middle)
+    draw.polygon(points, fill=role)
+    if timing:
+        # "预计 09:31 到" / "约 09:12 起飞": the clock and the verb over the line.
+        draw.text(((line_left + line_right) / 2, middle - 10), " ".join(timing.split()[1:]), font=plugin._city_font(
+            10, "bold"), fill=role, anchor="mm")
+
+
 def _strips(plugin, image, snapshot, theme, now):
+    """Each flight as a progress strip: the airline and callsign with the phase as a chip, then
+    where it flies from and to with its progress and time between, then the aircraft, its level
+    and speed and its distance in fixed places along the foot."""
     draw = ImageDraw.Draw(image)
     x0, y0, x1, y1 = STRIPS
     draw.rounded_rectangle(STRIPS, radius=7, fill=theme["panel"], outline=theme["line"], width=1)
     draw.text((x0 + 10, y0 + 6), "FLIGHT STRIPS", font=plugin._font(13, "bold"), fill=theme["ink"])
     planes, center = strip_order(plugin, snapshot)
-    draw.text((x1 - 10, y0 + 9), "最近航班 · 航线与时刻", font=plugin._font(9, "bold"), fill=theme["muted"], anchor="ra")
-    strip_h, gap, top = 66, 2, y0 + 28
-    call_font, route_font = plugin._font(15, "bold"), plugin._city_font(11, "bold")
-    meta_font = plugin._font(9, "bold")
+    draw.text((x1 - 10, y0 + 9), "最近航班 · 航线 · 进度 · 时刻", font=plugin._font(9, "bold"), fill=theme["muted"],
+              anchor="ra")
+    call_font, chip_font, meta_font = plugin._font(12, "bold"), plugin._font(9, "bold"), plugin._font(9, "bold")
     for index, plane in enumerate(planes[:5]):
-        sx0, sy0 = x0 + 6, top + index * (strip_h + gap)
-        sx1, sy1 = x1 - 6, sy0 + strip_h
+        sx0, sy0 = x0 + 6, y0 + 28 + index * (STRIP_H + STRIP_GAP)
+        sx1, sy1 = x1 - 6, sy0 + STRIP_H
         phase = _phase(plugin, plane, center)
         name, role = PHASES[phase]
-        draw.rounded_rectangle((sx0, sy0, sx1, sy1), radius=5, fill=theme["panel2"], outline=theme["card_line"], width=1)
-        draw.rectangle((sx0 + 1, sy0 + 1, sx0 + 5, sy1 - 1), fill=theme[role])
+        draw.rounded_rectangle((sx0, sy0, sx1, sy1), radius=6, fill=theme["panel2"], outline=theme["card_line"], width=1)
         callsign = str(plane.get("callsign") or plane.get("hex") or "未知").strip()
-        # The airline's wordmark sits on the callsign's line, left of it; the route and the
-        # aircraft lines below run from the strip's left edge.
-        line_y = sy0 + 13
-        logo_left, logo_right = sx0 + 10, sx0 + 74
-        logo = airline_logo(callsign[:3], logo_right - logo_left, STRIP_LOGO_HEIGHT)
+        # Line 1: the airline's wordmark and the callsign; the phase as a chip at the right.
+        logo = airline_logo(callsign[:3], 54, STRIP_LOGO_HEIGHT)
         if logo is not None:
-            logo_x = round((logo_left + logo_right - logo.width) / 2)
             logo = on_panel(logo, theme["panel2"], theme)
-            image.paste(logo, (logo_x, round(line_y - logo.height / 2)), logo)
+            image.paste(logo, (sx0 + 8, round(sy0 + 10 - logo.height / 2)), logo)
+            call_x = sx0 + 12 + max(logo.width, 36)
         else:
-            draw.text(((logo_left + logo_right) / 2, line_y), callsign[:3], font=plugin._font(14, "bold"),
-                      fill=theme["muted"], anchor="mm")
-        icon = (sx1 - 28, sy0 + 3, sx1 - 8, sy0 + 23)
-        _phase_icon(plugin, draw, icon, phase, theme)
-        text_x = sx0 + 82
-        lines_x = sx0 + 10
-        timing = flight_time(plugin, plane, now)
-        timing_font = plugin._city_font(10, "bold")
-        timing_w = draw.textlength(timing, font=timing_font) + 8 if timing else 0
-        fitted = _fit(draw, callsign, call_font, icon[0] - 6 - text_x - timing_w)
-        draw.text((text_x, sy0 + 4), fitted, font=call_font, fill=theme["ink"])
-        if timing:
-            draw.text((text_x + draw.textlength(fitted, font=call_font) + 8, sy0 + 13), timing, font=timing_font,
-                      fill=theme[role], anchor="lm")
-        distance = plugin._format_distance(plane.get("distance_nm"))
-        draw.text((sx1 - 8, sy0 + 47), distance, font=meta_font, fill=theme["muted"], anchor="ra")
-        if not _route_line(plugin, image, draw, plane, (lines_x, sy0 + 26), sx1 - 8 - lines_x, theme,
-                           plugin._font(10, "bold"), plugin._city_font(9, "bold")):
-            route = f"航线未知 · 应答机 {str(plane.get('hex') or '').upper()}"
-            draw.text((lines_x, sy0 + 27), _fit(draw, route, route_font, sx1 - 8 - lines_x), font=route_font,
-                      fill=theme["muted"])
+            draw.text((sx0 + 8, sy0 + 10), callsign[:3], font=plugin._font(11, "bold"), fill=theme["muted"], anchor="lm")
+            call_x = sx0 + 44
+        chip = f"{name} {PHASE_CODES[phase]}"
+        chip_w = draw.textlength(chip, font=chip_font) + 12
+        draw.rounded_rectangle((sx1 - 8 - chip_w, sy0 + 3, sx1 - 8, sy0 + 17), radius=7, fill=theme[role])
+        draw.text((sx1 - 8 - chip_w / 2, sy0 + 10), chip, font=chip_font, fill=theme["panel"], anchor="mm")
+        draw.text((call_x, sy0 + 10), _fit(draw, callsign, call_font, sx1 - 14 - chip_w - call_x), font=call_font,
+                  fill=theme["ink"], anchor="lm")
+        # Line 2: the route with its progress and time.
+        _strip_route(plugin, image, draw, plane, phase, (sx0 + 10, sy0 + 22, sx1 - 10, sy0 + 50),
+                     flight_time(plugin, plane, now), theme)
+        # Line 3: the aircraft, then its level and speed, then its distance.
         speed = plugin._number(plane.get("speed_kt"))
-        pieces = [str(plane.get("type") or "").upper(), str(plane.get("registration") or "").upper(),
-                  _altitude(plugin, plane), f"{int(speed)} kt" if speed is not None and not plane.get("on_ground") else ""]
-        draw.text((lines_x, sy0 + 46), _fit(draw, " · ".join(piece for piece in pieces if piece), meta_font,
-                                            sx1 - 14 - lines_x - draw.textlength(distance, font=meta_font)),
-                  font=meta_font, fill=theme["muted"])
+        aircraft = " · ".join(piece for piece in (str(plane.get("type") or "").upper(),
+                                                  str(plane.get("registration") or "").upper()) if piece)
+        state = " · ".join(piece for piece in (_altitude(plugin, plane), f"{int(speed)} kt" if speed is not None
+                                               and not plane.get("on_ground") else "") if piece)
+        foot = sy0 + 58
+        draw.text((sx0 + 10, foot), _fit(draw, aircraft, meta_font, (sx1 - sx0) / 2 - 40), font=meta_font,
+                  fill=theme["muted"], anchor="lm")
+        draw.text(((sx0 + sx1) / 2 + 12, foot), state, font=meta_font, fill=theme["ink"], anchor="mm")
+        draw.text((sx1 - 10, foot), plugin._format_distance(plane.get("distance_nm")), font=meta_font,
+                  fill=theme["muted"], anchor="rm")
     if not planes:
         draw.text(((x0 + x1) / 2, (y0 + y1) / 2), "等待航班数据", font=plugin._font(13, "bold"), fill=theme["muted"],
                   anchor="mm")
