@@ -38,6 +38,8 @@ TITLES = {"bilibili": "B站热门", "bangumi": "今日新番", "wiki": "维基�
 LOGOS = {"bilibili": (("bilibili_tv", "bilibili"), 19, "热门"), "bangumi": ("bangumi", 18, "今日新番"),
          "wiki": ("wikipedia", 20, "维基热读"), "epic": ("nasa", 20, "今日地球"),
          "songs": ("apple_music", 15, "热歌"), "puzzle": ("chesscom", 17, "每日棋题")}
+# Cards whose title leads their row and whose logo stands at its right end, naming the source.
+LOGO_RIGHT = {"epic", "songs", "puzzle"}
 # Cards whose source colour runs all the way round them, so the area stands out.
 RINGED = {"bilibili"}
 SHORT_NAMES = {"bilibili": "B站", "bangumi": "新番", "wiki": "维基", "epic": "地球", "songs": "热歌",
@@ -127,12 +129,18 @@ def _card(canvas, name, note="", *, title=None, logo=True):
     x = left + 10
     file_name, height, logo_title = LOGOS.get(name, (None, 0, None))
     art = _logo(file_name, height, sum(canvas.color("paper")) < 200) if logo and file_name else None
-    if art is not None:
+    end = right - 10
+    if art is not None and name in LOGO_RIGHT:
+        # The title leads the row; the logo closes it where the source's name was written.
+        canvas.image.paste(art, (end - art.width, round(middle - art.height / 2)), art)
+        end -= art.width + 6
+    elif art is not None:
         canvas.image.paste(art, (x, round(middle - art.height / 2)), art)
         x += art.width + 6
-    canvas.text((x, middle), title or (logo_title if art is not None else TITLES[name]), 14, anchor="lm")
+    used = canvas.text((x, middle), title or (logo_title if art is not None else TITLES[name]), 14, anchor="lm")
     if note:
-        canvas.text((right - 10, top + BAR + 12), note, 11, "muted", anchor="rm", bold=False, width=right - left - 110)
+        width = end - x - used - 10 if name in LOGO_RIGHT else right - left - 110
+        canvas.text((end, middle), note, 11, "muted", anchor="rm", bold=False, width=width)
     return top + BAR + 24
 
 
@@ -417,7 +425,7 @@ def earth_disc(picture, size):
 def _epic(canvas, payload, images, now):
     data = payload["epic"]["data"]
     frames = data.get("frames") or []
-    top = _card(canvas, "epic", "NASA EPIC · DSCOVR")
+    top = _card(canvas, "epic", "EPIC · DSCOVR")
     left, _top, right, bottom = CARDS["epic"]
     # The frame the plugin found a picture for (the nearest cached one when now's is missing).
     index = payload.get("epic_frame_index")
@@ -491,7 +499,7 @@ def _songs(canvas, payload, images):
 def _puzzle(canvas, payload, images):
     puzzle = payload["puzzle"]["data"]
     previous = ((payload.get("history") or {}).get("puzzle") or {}).get("previous") or {}
-    top = _card(canvas, "puzzle", "Chess.com")
+    top = _card(canvas, "puzzle")
     left, _top, right, bottom = CARDS["puzzle"]
     if not puzzle.get("fen"):
         canvas.text(((left + right) / 2, (top + bottom) / 2), "棋题暂不可用", 13, "muted", anchor="mm")
