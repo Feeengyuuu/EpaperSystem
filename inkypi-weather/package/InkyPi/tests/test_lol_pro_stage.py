@@ -226,3 +226,30 @@ def test_the_identity_rows_show_the_teams_league_logo_and_the_servers_flag(plugi
     assert (200, 30, 160) in set(image.crop((150, 120, 400, 150)).get_flattened_data())
     for league in set(pro_render.TEAM_LEAGUES.values()):
         assert plugin._asset_logo(f"leagues/{league}.png", pro_render.LEAGUE_MARK) is not None
+
+
+def _stage_row(league, stage="Swiss"):
+    return {"start": time.time() - 3600, "won": False, "league": league, "stage": stage,
+            "ours": {"code": "HLE", "wins": 0, "record": [1, 2]}, "theirs": {"code": "IG", "wins": 1}}
+
+
+@pytest.mark.parametrize("league", ["worlds", "msi", "lck"])
+def test_the_schedule_header_carries_the_events_official_mark(plugin, league):
+    colors = plugin._render_colors({"mode": "night"})
+    image = Image.new("RGB", (800, 480), colors["background"])
+    draw = ImageDraw.Draw(image)
+    fonts = plugin._pro_fonts()
+    box = (230, 180, 420, 470)
+    plugin._draw_lol_stage(image, draw, {"esports": {"results": [_stage_row(league)]}}, {"team": "HLE"}, box, colors, fonts)
+
+    title_end = box[0] + plugin._text_width(draw, "赛程与战绩", fonts["small_bold"])
+    note_start = box[2] - plugin._text_width(draw, "瑞士轮 1胜2负", fonts["tiny"])
+    between = set(image.crop((int(title_end) + 10, box[1], int(note_start) - 10, box[1] + 15)).get_flattened_data())
+    assert between - {tuple(colors["background"])}, f"no {league} mark between the title and the record"
+
+
+def test_an_event_without_a_mark_leaves_the_header_clear(plugin):
+    colors = plugin._render_colors({"mode": "night"})
+    assert plugin._event_mark("first_stand", None, (80, 15), colors) is None
+    worlds = plugin._event_mark("worlds", time.time(), (80, 15), colors)
+    assert worlds is not None and worlds.height <= 15 and worlds.width > worlds.height * 3

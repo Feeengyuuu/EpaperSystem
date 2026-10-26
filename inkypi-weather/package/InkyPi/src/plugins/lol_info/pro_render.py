@@ -20,7 +20,13 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 from .hltv_players import ROLE_LABELS as CS2_ROLE_LABELS
 from plugins.sports_dashboard import cs2_branding
-from plugins.sports_dashboard.common import LOCAL_CS2_TEAM_LOGO_DIR
+from plugins.sports_dashboard.common import (
+    LOCAL_CS2_TEAM_LOGO_DIR,
+    LOCAL_MSI_LOGO_PATH,
+    LOCAL_WORLDS_LOGO_PATH,
+    LOCAL_WORLDS_WORDMARK_PATHS,
+)
+from utils.safe_image import safe_open_image
 from utils.fonts import load_font
 
 from . import lolesports_pro
@@ -463,13 +469,24 @@ class ProRenderMixin:
             upcoming = None
         matches = data.get("matches") or []
         pro = bool(results or upcoming)
-        self._text(draw, (x0, y0), "赛程与战绩" if pro else "最近排位", fonts["small_bold"], colors["muted"])
+        title = "赛程与战绩" if pro else "最近排位"
+        self._text(draw, (x0, y0), title, fonts["small_bold"], colors["muted"])
         record = ((series or (results[0] if results else {}) or {}).get("ours") or {}).get("record")
         stage = lolesports_pro.STAGE_NAMES.get((series or (results[0] if results else {}) or {}).get("stage") or "", "")
+        note_left = x1
         if pro and record and stage:
             note = f"{stage} {record[0]}胜{record[1]}负"
-            self._text(draw, (x1 - self._text_width(draw, note, fonts["tiny"]), y0 + 2), note, fonts["tiny"],
-                       colors["muted"])
+            note_left = x1 - self._text_width(draw, note, fonts["tiny"])
+            self._text(draw, (note_left, y0 + 2), note, fonts["tiny"], colors["muted"])
+        if pro:
+            # The event the pro is playing in, by its official mark, between the title and the record.
+            current = series or (results[0] if results else None) or upcoming or {}
+            room = (x0 + self._text_width(draw, title, fonts["small_bold"]) + 10, y0, note_left - 10, y0 + 15)
+            mark = self._event_mark(current.get("league"), current.get("start"), (room[2] - room[0], room[3] - room[1]),
+                                    colors)
+            if mark is not None:
+                image.paste(mark, ((room[0] + room[2] - mark.width) // 2, room[1] + (room[3] - room[1] - mark.height) // 2),
+                            mark)
         y = y0 + 20
         if upcoming:
             self._draw_lol_next(image, draw, upcoming, (x0, y, x1), colors, fonts)
@@ -493,6 +510,27 @@ class ProRenderMixin:
             return
         if y1 - y >= 50:
             self._paste_asset_logo(image, "art-lol-filler.png", (x0, y + 6, x1, y1))
+
+    def _event_mark(self, league, start, max_size, colors):
+        """The event's official mark within ``max_size``: the Worlds edition's wordmark (its emblem
+        for an edition without one) and MSI's emblem in the page's ink, being one-colour marks; a
+        league's own logo as it is. None for anything else or a missing file."""
+        league = str(league or "").lower()
+        if league in ("lck", "lpl", "lec"):
+            return self._asset_logo(f"leagues/{league}.png", max_size)
+        if league == "worlds":
+            year = datetime.fromtimestamp(float(start)).year if start else datetime.now().year
+            path = LOCAL_WORLDS_WORDMARK_PATHS.get(year) or LOCAL_WORLDS_LOGO_PATH
+        elif league == "msi":
+            path = LOCAL_MSI_LOGO_PATH
+        else:
+            return None
+        if not os.path.isfile(path) or max_size[0] < 12 or max_size[1] < 8:
+            return None
+        with safe_open_image(path) as source:
+            mark = self._trim_alpha(source.convert("RGBA"))
+        mark.thumbnail(max_size, Image.Resampling.LANCZOS)
+        return self._tint_opaque_pixels(mark, colors["ink"])
 
     def _draw_lol_next(self, image, draw, upcoming, line, colors, fonts):
         """The next series (a red 直播中 tag while it runs): when, "vs [logo] team", league and stage."""
