@@ -11,6 +11,7 @@ from utils.safe_image import ImageLimits, safe_open_image
 from utils.theme_utils import contrast_ratio, relative_luminance
 from datetime import datetime, timedelta
 from contextvars import ContextVar
+from functools import lru_cache
 import colorsys
 import json
 import logging
@@ -48,6 +49,28 @@ FILAMENT_BLACK = (14, 15, 16)
 FILAMENT_WHITE = (250, 250, 246)
 FILAMENT_DARK_BORDER = (24, 26, 28)
 FILAMENT_LIGHT_BORDER = (232, 235, 230)
+
+
+@lru_cache(maxsize=48)
+def _icon(name, size, ground, ink):
+    """A generated icon ``size`` px on its longer side, its outlines in ``ink`` where they would
+    vanish on ``ground``; None when the file is missing."""
+    path = os.path.join(ICON_DIR, f"{name}.png")
+    if not os.path.isfile(path):
+        return None
+    try:
+        with Image.open(path) as source:
+            art = source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+    art.thumbnail((size, size), Image.Resampling.LANCZOS)
+    pixels = art.load()
+    for y in range(art.height):
+        for x in range(art.width):
+            red, green, blue, alpha = pixels[x, y]
+            if alpha >= 8 and contrast_ratio((red, green, blue), ground) < ICON_MIN_CONTRAST:
+                pixels[x, y] = (*ink, alpha)
+    return art
 
 
 def _blend(foreground, background, amount):
@@ -188,6 +211,21 @@ AMS_SPOOL_RADIUS = 22
 AMS_USE_PILL_HEIGHT = 18
 AMS_USE_PILL_PAD = 11
 SPEED_LEVEL_NAMES = {"1": "SILENT", "2": "STANDARD", "3": "SPORT", "4": "LUDICROUS"}
+# Generated comic-print icons (icons/, GPT Image 2.5; icons.source.json) beside each reading.
+# On a dark page their black outlines take the page's ink.
+ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+ICON_MIN_CONTRAST = 2.0
+STAT_ICON_SIZE = 26
+LAYER_ICON_SIZE = 18
+# The stage line's icon by what the printer is doing, first match wins (lower-case stage words).
+STAGE_ICONS = (
+    (("paused", "pause"), "paused"),
+    (("filament",), "ams"),
+    (("leveling", "scanning", "build plate", "lidar", "homing", "sweeping"), "leveling"),
+    (("heat", "temperature", "preheat"), "heating"),
+    (("calibrat", "inspecting", "cleaning"), "stage"),
+    (("printing",), "nozzle"),
+)
 # The printer's stg_cur sub-stage codes; others (and -1/255 idle) are not shown.
 PRINT_STAGE_NAMES = {
     0: "Printing",
@@ -815,13 +853,36 @@ class BambuMonitor(BasePlugin):
         camera_right = width - margin - JOB_COLUMN_WIDTH - LAYOUT_GAP
         camera_bottom = CONTENT_TOP + round((camera_right - margin) * 9 / 16)
         self._draw_camera_hero(img, draw, (margin, CONTENT_TOP, camera_right, camera_bottom), status)
-        self._draw_ams_strip(draw, (margin, camera_bottom + 8, camera_right, height - 14), status)
+        self._draw_ams_strip(draw, (margin, camera_bottom + 8, camera_right, height - 14), status, canvas=img)
         self._draw_job_column(
             draw,
             (camera_right + LAYOUT_GAP, HEADER_RULE_Y + 2, width - margin, height - 14),
             status,
+            canvas=img,
         )
         return img
+
+    def _paste_icon(self, canvas, name, x, y, size, ground=None, align="left"):
+        """Paste a generated icon, its left (or right) edge at ``x`` and its middle at ``y``;
+        returns its width, 0 when there is no canvas or file."""
+        if canvas is None:
+            return 0
+        icon = _icon(name, size, tuple(ground or _active_color("paper", PAPER)), tuple(_active_color("ink", INK)))
+        if icon is None:
+            return 0
+        left = x - icon.width if align == "right" else x
+        canvas.paste(icon, (round(left), round(y - icon.height / 2)), icon)
+        return icon.width
+
+    def _stage_icon(self, status):
+        """The icon for what the printer is doing: its state when idle, done, paused or failed,
+        else the stage it reports."""
+        state = self._state_label(status.get("state"))
+        named = {"IDLE": "idle", "DONE": "finish", "PAUSED": "paused", "ERROR": "error", "OFFLINE": "error"}
+        if state in named:
+            return named[state]
+        stage = str(self._display_stage(status.get("stage")) or "").lower()
+        return next((icon for words, icon in STAGE_ICONS if any(word in stage for word in words)), "stage")
 
     def _draw_header(self, canvas, draw, status, width):
         margin = LAYOUT_MARGIN
@@ -953,7 +1014,7 @@ class BambuMonitor(BasePlugin):
             draw.rounded_rectangle(band, radius=8, fill=_active_color("panel", PANEL), outline=cinnabar, width=1)
             self._draw_fit_text_ellipsis(draw, str(warning), band[0] + 10, band[1] + 6, band[2] - band[0] - 20, 12, True, cinnabar)
 
-    def _draw_job_column(self, draw, box, status):
+    def _draw_job_column(self, draw, box, status, canvas=None):
         x0, top, x1, bottom = box
         ink = _active_color("ink", INK)
         rule = _active_color("rule", RULE)
@@ -961,44 +1022,57 @@ class BambuMonitor(BasePlugin):
         progress = int(max(0, min(100, self._num(status.get("progress"), 0) or 0)))
         layers = self._layer_text(status)
         layer_font = self._font(11, True)
+        layers_w = self._text_width(draw, layers, layer_font) if layers else 0
         # "100%" shrinks so it never runs into the layer count beside it.
-        percent_w = x1 - x0 + 3 - (self._text_width(draw, layers, layer_font) + 8 if layers else 0)
+        percent_w = x1 - x0 + 3 - (layers_w + 8 if layers else 0)
         percent_font = self._fit_font(draw, f"{progress}%", percent_w, 64, True, 44)
         draw.text((x0 - 3, top + 62), f"{progress}%", fill=ink, font=percent_font, anchor="ls")
         if layers:
             draw.text((x1, top + 36), layers, fill=ink, font=layer_font, anchor="ra")
+            # The layers icon leads the count where the percentage leaves room, else stands over it;
+            # it never makes the percentage smaller.
+            percent_right = x0 - 3 + self._text_width(draw, f"{progress}%", percent_font)
+            if x1 - layers_w - 4 - LAYER_ICON_SIZE >= percent_right + 6:
+                self._paste_icon(canvas, "layers", x1 - layers_w - 4, top + 43, LAYER_ICON_SIZE, align="right")
+            else:
+                self._paste_icon(canvas, "layers", x1, top + 24, LAYER_ICON_SIZE, align="right")
         self._draw_progress_bar(draw, (x0, top + 78, x1, top + 92), progress / 100, state_color, ticks=10)
 
         chip_w = (x1 - x0 - 12) // 2
         self._draw_stat_chip(draw, (x0, top + 104, x0 + chip_w, top + 144), "REMAINING",
-                             self._remaining_text(status.get("remaining_minutes")))
-        self._draw_stat_chip(draw, (x1 - chip_w, top + 104, x1, top + 144), "FINISH", status.get("finish_at") or "--")
+                             self._remaining_text(status.get("remaining_minutes")), canvas=canvas, icon="remaining")
+        self._draw_stat_chip(draw, (x1 - chip_w, top + 104, x1, top + 144), "FINISH", status.get("finish_at") or "--",
+                             canvas=canvas, icon="finish")
 
         # An idle or finished printer still reports the job it last ran.
         job_label = "LAST JOB" if self._state_label(status.get("state")) in ("IDLE", "DONE") else "JOB"
-        self._draw_section_label(draw, x0, top + 156, job_label, _active_color("accent_gold", ACCENT_GOLD))
+        self._draw_section_label(draw, x0, top + 156, job_label, _active_color("accent_gold", ACCENT_GOLD),
+                                 canvas=canvas, icon="job")
         self._draw_wrapped_text(draw, str(status.get("file") or "No active job"), x0, top + 174, x1 - x0, 3, 15)
         draw.line((x0, top + 238, x1, top + 238), fill=rule, width=1)
 
         half = (x1 - x0 - 20) // 2
         self._draw_thermo(draw, x0, top + 248, half, "NOZZLE", status.get("nozzle"), status.get("nozzle_target"),
-                          NOZZLE_SCALE_C, _active_color("cinnabar", CINNABAR))
+                          NOZZLE_SCALE_C, _active_color("cinnabar", CINNABAR), canvas=canvas, icon="nozzle")
         self._draw_thermo(draw, x1 - half, top + 248, half, "BED", status.get("bed"), status.get("bed_target"),
-                          BED_SCALE_C, _active_color("accent_orange", ACCENT_ORANGE))
-        self._draw_stat_chip(draw, (x0, top + 312, x0 + chip_w, top + 352), "SPEED", self._speed_text(status.get("speed")))
-        self._draw_stat_chip(draw, (x1 - chip_w, top + 312, x1, top + 352), "PART FAN", self._fan_text(status.get("fan")))
+                          BED_SCALE_C, _active_color("accent_orange", ACCENT_ORANGE), canvas=canvas, icon="bed")
+        self._draw_stat_chip(draw, (x0, top + 312, x0 + chip_w, top + 352), "SPEED", self._speed_text(status.get("speed")),
+                             canvas=canvas, icon="speed")
+        self._draw_stat_chip(draw, (x1 - chip_w, top + 312, x1, top + 352), "PART FAN", self._fan_text(status.get("fan")),
+                             canvas=canvas, icon="fan")
 
-        self._draw_section_label(draw, x0, top + 366, "STAGE", _active_color("accent_blue", ACCENT_BLUE))
+        self._draw_section_label(draw, x0, top + 366, "STAGE", _active_color("accent_blue", ACCENT_BLUE),
+                                 canvas=canvas, icon=self._stage_icon(status))
         source = str(status.get("source") or "").upper()
         if source:
             self._draw_pill(draw, x1, top + 362, source, self._source_color(source), size=10, dot=False, align="right")
         stage = self._display_stage(status.get("stage")) or self._state_label(status.get("state")).title()
         self._draw_fit_text_ellipsis(draw, stage, x0, top + 384, x1 - x0, 13, True, ink)
 
-    def _draw_ams_strip(self, draw, box, status):
+    def _draw_ams_strip(self, draw, box, status, canvas=None):
         left, top, right, bottom = box
         ink = _active_color("ink", INK)
-        self._draw_section_label(draw, left, top, "AMS", _active_color("malachite", MALACHITE))
+        self._draw_section_label(draw, left, top, "AMS", _active_color("malachite", MALACHITE), canvas=canvas, icon="ams")
 
         tiles_top = top + 18
         trays = self._visible_trays(status.get("ams") or [])
@@ -1132,20 +1206,30 @@ class BambuMonitor(BasePlugin):
             x = left + round((right - left) * index / ticks)
             draw.line((x, top + 2, x, bottom - 2), fill=_active_color("paper", PAPER), width=1)
 
-    def _draw_stat_chip(self, draw, box, label, value):
+    def _draw_stat_chip(self, draw, box, label, value, canvas=None, icon=None):
+        """A label over its value in a soft chip, the reading's icon at its right."""
         left, top, right, bottom = box
         ink = _active_color("ink", INK)
-        draw.rounded_rectangle(box, radius=8, fill=_blend(_active_color("rule", RULE), _active_color("panel", PANEL), 0.18),
-                               outline=_active_color("rule", RULE), width=1)
+        fill = _blend(_active_color("rule", RULE), _active_color("panel", PANEL), 0.18)
+        draw.rounded_rectangle(box, radius=8, fill=fill, outline=_active_color("rule", RULE), width=1)
+        icon_w = self._paste_icon(canvas, icon, right - 7, (top + bottom) / 2, STAT_ICON_SIZE, ground=fill,
+                                  align="right") if icon else 0
         draw.text((left + 10, top + 6), label, fill=ink, font=self._font(10, True))
-        self._draw_fit_text_ellipsis(draw, str(value), left + 10, top + 19, right - left - 20, 15, True, ink)
+        self._draw_fit_text_ellipsis(draw, str(value), left + 10, top + 19, right - left - 20 - (icon_w + 4 if icon_w else 0),
+                                     15, True, ink)
 
-    def _draw_section_label(self, draw, x, y, text, color):
-        draw.rounded_rectangle((x, y + 2, x + 4, y + 12), radius=2, fill=color)
-        draw.text((x + 9, y), text, fill=_active_color("ink", INK), font=self._font(11, True))
+    def _draw_section_label(self, draw, x, y, text, color, canvas=None, icon=None):
+        """A section's name led by its icon, or by a short bar in its colour without one."""
+        icon_w = self._paste_icon(canvas, icon, x - 1, y + 7, 17) if icon else 0
+        if not icon_w:
+            draw.rounded_rectangle((x, y + 2, x + 4, y + 12), radius=2, fill=color)
+        draw.text((x + (icon_w + 4 if icon_w else 9), y), text, fill=_active_color("ink", INK), font=self._font(11, True))
 
-    def _draw_thermo(self, draw, x, y, width, label, current, target, scale, color):
+    def _draw_thermo(self, draw, x, y, width, label, current, target, scale, color, canvas=None, icon=None):
         ink = _active_color("ink", INK)
+        if icon:
+            # The heater's icon stands at the right of its label row, clear of the reading below.
+            self._paste_icon(canvas, icon, x + width, y + 6, 22, align="right")
         draw.text((x, y), label, fill=ink, font=self._font(10, True))
         current = self._num(current)
         target = self._num(target)

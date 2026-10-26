@@ -1,0 +1,185 @@
+{
+ "generator": "Creative Claw image/gpt-image-2.5-sunburst (1024x1024, transparent)",
+ "job_id": "c2da91ae-f71c-4b31-ab4d-8dddabe69899",
+ "prompt": "16 matching vintage-comic print icons, thick black outlines, flat fills in the page's cinnabar/orange/gold/malachite/cobalt/cream, transparent, 4x4 grid",
+ "processing": "cut into 4x4 cells, alpha below 24 cleared, cropped to the alpha box, scaled to 96 px max",
+ "source_sha256": "a8efd6772b808a2ec58dd400a7280339221fefedf66edf27dc293f768be8723d",
+ "icons": {
+  "remaining": {
+   "cell": [
+    0,
+    0
+   ],
+   "size": [
+    69,
+    96
+   ],
+   "sha256": "ce07444d5aa2186a016c779b1e012350c28e9c463e81de96c8196416c3b4ed74"
+  },
+  "finish": {
+   "cell": [
+    0,
+    1
+   ],
+   "size": [
+    87,
+    96
+   ],
+   "sha256": "8744e469f4131dec1a9d5f5432ecfe6750d783eab6a6a11c4d760645bc175c40"
+  },
+  "job": {
+   "cell": [
+    0,
+    2
+   ],
+   "size": [
+    96,
+    83
+   ],
+   "sha256": "6d9c26ebd4d22aec0261a0d3facaf0489484b972da3669fcaccbcad7df3523c4"
+  },
+  "layers": {
+   "cell": [
+    0,
+    3
+   ],
+   "size": [
+    96,
+    96
+   ],
+   "sha256": "f5fa48715a046e578c33b3f9ecdfe1fc873c8a08a25b3222000407a4301d6881"
+  },
+  "nozzle": {
+   "cell": [
+    1,
+    0
+   ],
+   "size": [
+    60,
+    96
+   ],
+   "sha256": "e1bd09f5013aa723da4900edca44f366c95ff367f6949dbfa716222fe9c02ff8"
+  },
+  "bed": {
+   "cell": [
+    1,
+    1
+   ],
+   "size": [
+    96,
+    75
+   ],
+   "sha256": "b77c076053b3902fda4e1bc4676958089861ece500271378b967825ee96ac98e"
+  },
+  "speed": {
+   "cell": [
+    1,
+    2
+   ],
+   "size": [
+    96,
+    69
+   ],
+   "sha256": "5e7202341704b2bc0720dc9ea0a8278b15b550e4e9b1007d0012713171d60e7b"
+  },
+  "fan": {
+   "cell": [
+    1,
+    3
+   ],
+   "size": [
+    96,
+    95
+   ],
+   "sha256": "5e2e21b329b2c6560c2082326591bfdc8f65705a67855da3332760b236f7ab8d"
+  },
+  "ams": {
+   "cell": [
+    2,
+    0
+   ],
+   "size": [
+    92,
+    96
+   ],
+   "sha256": "6d22a79dd701481e6e4db9704dc059a663633b4c433bbad1f11214fcdefc3aec"
+  },
+  "stage": {
+   "cell": [
+    2,
+    1
+   ],
+   "size": [
+    96,
+    96
+   ],
+   "sha256": "084284433583c633a9d4ad5aa40454c2a6aa90dd76ec97cbfb1c0393a59f22c8"
+  },
+  "camera": {
+   "cell": [
+    2,
+    2
+   ],
+   "size": [
+    96,
+    69
+   ],
+   "sha256": "56d3596178881de15036ebd6e33c56333b918fdf944a5111c499eb3dca1af7f3"
+  },
+  "error": {
+   "cell": [
+    2,
+    3
+   ],
+   "size": [
+    96,
+    84
+   ],
+   "sha256": "83d37bac8f307d388f7d3c57fa722ac4348be0eb42d397d02aa4aa03b8c88b83"
+  },
+  "idle": {
+   "cell": [
+    3,
+    0
+   ],
+   "size": [
+    96,
+    96
+   ],
+   "sha256": "ed539c8aea305c0b65a95f798a9f7b4e35f8e9db4ce5b3dde2a45cc685512f37"
+  },
+  "heating": {
+   "cell": [
+    3,
+    1
+   ],
+   "size": [
+    49,
+    96
+   ],
+   "sha256": "771ab47a4be7e30a9c0f62040023e2af248c0676540b29d066dc794fb32f61b8"
+  },
+  "leveling": {
+   "cell": [
+    3,
+    2
+   ],
+   "size": [
+    96,
+    33
+   ],
+   "sha256": "eb5fcd0a1309886cdc9122bf93ec7d3c6aba1807d2470baa1a69c65d6afd60aa"
+  },
+  "paused": {
+   "cell": [
+    3,
+    3
+   ],
+   "size": [
+    96,
+    96
+   ],
+   "sha256": "41975fcec7d3aabca7434c6ffaa8243b25024567601a46e6d8ca2958549bbbe1"
+  }
+ }
+}
