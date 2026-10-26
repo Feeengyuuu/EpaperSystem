@@ -1,0 +1,274 @@
+{
+ "generator": "Creative Claw image/gpt-image-2.5-sunburst (1536x1024, transparent)",
+ "generated": "2026-10-26",
+ "job_id": "0bf8b85a-376a-4bb8-9028-20193e1347bb",
+ "prompt": "24 matching flat sticker icons for an events notice board, thick dark slate outlines, flat fills in the page's vermilion/teal/gold/cobalt/violet/amber/cream, transparent, 6x4 grid",
+ "processing": "cut into 6x4 cells, alpha below 24 cleared, cropped to the alpha box, scaled to 64 px max",
+ "source_sha256": "aa76abc211f8891fffdebcad3164238380472af7aded351a34a12182218726b1",
+ "icons": {
+  "guitar": {
+   "cell": [
+    0,
+    0
+   ],
+   "size": [
+    61,
+    64
+   ],
+   "sha256": "f504a92dfa1e7a89ed053e82c9d49dba894dc0a48b93081e6ae18586cbb3e079"
+  },
+  "microphone": {
+   "cell": [
+    0,
+    1
+   ],
+   "size": [
+    38,
+    64
+   ],
+   "sha256": "28f96272b364d51c7951924f3a70b8c54e79f56a283ba7802d38602d2a2267da"
+  },
+  "turntable": {
+   "cell": [
+    0,
+    2
+   ],
+   "size": [
+    64,
+    64
+   ],
+   "sha256": "92d8b5032ea14fc86607ba15933beaa72fa76723c0387ac80ca5502a3119b61f"
+  },
+  "saxophone": {
+   "cell": [
+    0,
+    3
+   ],
+   "size": [
+    50,
+    64
+   ],
+   "sha256": "5c2a52832a32165638dfafc09c13b5e811e36f46b96ce687406459b671a06880"
+  },
+  "violin": {
+   "cell": [
+    0,
+    4
+   ],
+   "size": [
+    51,
+    64
+   ],
+   "sha256": "00cb8816b7f26471850e965600abc5cc7ac9ab9740303d0d9ae1cdb51c8b4341"
+  },
+  "country": {
+   "cell": [
+    0,
+    5
+   ],
+   "size": [
+    56,
+    64
+   ],
+   "sha256": "1f6a34a926d95600a49a5536ff7e1509e26c8675693ed8527c7a722712e121dd"
+  },
+  "maracas": {
+   "cell": [
+    1,
+    0
+   ],
+   "size": [
+    54,
+    64
+   ],
+   "sha256": "392f51e277d334739c3917a9a0da4b9ed1a36892c29e0d38007a34d53d93dd43"
+  },
+  "basketball": {
+   "cell": [
+    1,
+    1
+   ],
+   "size": [
+    54,
+    64
+   ],
+   "sha256": "a03e67e8317bad4b316f0a1deb994060450d824869e51e8cdb05e6fee0f055a2"
+  },
+  "hockey": {
+   "cell": [
+    1,
+    2
+   ],
+   "size": [
+    61,
+    64
+   ],
+   "sha256": "09dbb7e57e821d4ee7e82038df8e9aa529cd3f5facefb0d95841f5ac12a5813d"
+  },
+  "football": {
+   "cell": [
+    1,
+    3
+   ],
+   "size": [
+    54,
+    64
+   ],
+   "sha256": "678bd32420507c13fa5ac27b02f36f87fc3aedfd6a06e29181d5a93788ad22d0"
+  },
+  "baseball": {
+   "cell": [
+    1,
+    4
+   ],
+   "size": [
+    58,
+    64
+   ],
+   "sha256": "49bc38010b0df76cc2859dfbd9fa6399ab5712a293fa4a69408fcba461479cf4"
+  },
+  "soccer": {
+   "cell": [
+    1,
+    5
+   ],
+   "size": [
+    51,
+    64
+   ],
+   "sha256": "c4cad55356ba594e12fef7c07fa749f2a180641e12fcc5dbe62d70ff05aafabb"
+  },
+  "boxing": {
+   "cell": [
+    2,
+    0
+   ],
+   "size": [
+    45,
+    64
+   ],
+   "sha256": "aea17a6da13dce6a320576251ac92173927ff088626cbd018b2405c63cd963f6"
+  },
+  "racing": {
+   "cell": [
+    2,
+    1
+   ],
+   "size": [
+    55,
+    64
+   ],
+   "sha256": "70fb3c9941c569bedee05cebc182fb9165ec8cd0101d5bcd416a65a0862759e1"
+  },
+  "skate": {
+   "cell": [
+    2,
+    2
+   ],
+   "size": [
+    56,
+    64
+   ],
+   "sha256": "5f3b2d0a076456fd6595a539ba972b5b5e72b8dc5af0cf7d7f0ec90816ebf02c"
+  },
+  "masks": {
+   "cell": [
+    2,
+    3
+   ],
+   "size": [
+    64,
+    48
+   ],
+   "sha256": "6cfa45b4e81f4f259c81d85ef13fbc1d99383d5ef2a3722822873660cb78099a"
+  },
+  "comedy": {
+   "cell": [
+    2,
+    4
+   ],
+   "size": [
+    49,
+    64
+   ],
+   "sha256": "15b913c1a6b75ff4086b25414d016e823ba39eb0cc47f9178aa72b805eb5cbbb"
+  },
+  "ballet": {
+   "cell": [
+    2,
+    5
+   ],
+   "size": [
+    43,
+    64
+   ],
+   "sha256": "f0d7e7a3c345b6c99cd99450770173fe62f16fbf1eb8c8f91681dbe2ad07a431"
+  },
+  "circus": {
+   "cell": [
+    3,
+    0
+   ],
+   "size": [
+    64,
+    60
+   ],
+   "sha256": "c214de596f7783ef5bfa3d1a303dbd74e4bc372d1f95fedfcd3a6bf15ce71025"
+  },
+  "magic": {
+   "cell": [
+    3,
+    1
+   ],
+   "size": [
+    58,
+    64
+   ],
+   "sha256": "ba100f5fbbf62f767eb8335ce16c67f7fc7d3e3deb58e873fca0a3896a7c371d"
+  },
+  "film": {
+   "cell": [
+    3,
+    2
+   ],
+   "size": [
+    64,
+    64
+   ],
+   "sha256": "0038e2f0af46c6111e11dbbf0b26ca0d503cc05cd22133c463779d879e690241"
+  },
+  "ticket": {
+   "cell": [
+    3,
+    3
+   ],
+   "size": [
+    64,
+    49
+   ],
+   "sha256": "1dad14423f9c1a89fe92e7faea73c6c5740ee340f1c058d191f8ad83331d4e03"
+  },
+  "ferris": {
+   "cell": [
+    3,
+    4
+   ],
+   "size": [
+    64,
+    61
+   ],
+   "sha256": "487aa9ec4a93c5d11ce0b6b47b48c63bebbaf5a53c0d2f0f5520000b43cfc944"
+  },
+  "balloons": {
+   "cell": [
+    3,
+    5
+   ],
+   "size": [
+    59,
+    64
+   ],
+   "sha256": "05fa6702644b9251058714fe2a6ca5398b03b2ef137c9d7cce8d135fae5b7adc"
+  }
+ }
+}

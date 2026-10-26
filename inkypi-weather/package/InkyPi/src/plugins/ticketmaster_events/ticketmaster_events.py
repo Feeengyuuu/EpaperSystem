@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -30,8 +31,12 @@ from utils.http_client import get_http_client, get_http_session
 logger = logging.getLogger(__name__)
 
 DISCOVERY_EVENTS_URL = "https://app.ticketmaster.com/discovery/v2/events.json"
-# v3 adds the week's counts, the on-sale-soon list and each event's sale and tour facts.
+# v3 adds the week's counts, the on-sale-soon list and each event's sale and tour facts. An event's
+# age limit, family and multi-day flags are optional extras: a cache from before them shows none.
 STATE_VERSION = "ticketmaster-events-v3"
+# An age limit as the event's notes state it: "21+", "18 and over", "ages 21 and up".
+AGE_PATTERN = re.compile(r"\b(21|18|16)\s*(?:\+|and\s+(?:over|up|older)|or\s+older)", re.IGNORECASE)
+ALL_AGES_PATTERN = re.compile(r"\ball\s+ages\b", re.IGNORECASE)
 # The page lists a featured event and LIST_EVENTS - 1 more, the soonest first.
 MAX_ITEMS = LIST_EVENTS = 8
 # Repeat showtimes collapse into one listing, so ask for enough rows to fill.
@@ -424,6 +429,9 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
                        "subgenre": _classification_name(classification.get("subGenre")),
                        "sale_start": _clean_text((((row.get("sales") or {}).get("public") or {}).get("startDateTime") or "")),
                        "tour_dates": self._tour_dates(row),
+                       "age": self._age_limit(row),
+                       "family": classification.get("family") is True,
+                       "multi_day": dates.get("spanMultipleDays") is True,
                        "has_art": bool(image_url)},
             )
             listings[listing] = event
@@ -438,6 +446,18 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
             return int((((attractions[0] or {}).get("upcomingEvents") or {}).get("_total")) or 0) if attractions else 0
         except (TypeError, ValueError):
             return 0
+
+    @staticmethod
+    def _age_limit(row):
+        """'21+' / '18+' from the event's notes, '限龄' when Ticketmaster only says an age limit is
+        enforced, '全龄' for a show billed as all ages, else ""."""
+        notes = " ".join(_clean_text(row.get(key) or "") for key in ("pleaseNote", "info"))
+        match = AGE_PATTERN.search(notes)
+        if match:
+            return f"{match.group(1)}+"
+        if ((row.get("ageRestrictions") or {}).get("legalAgeEnforced")) is True:
+            return "限龄"
+        return "全龄" if ALL_AGES_PATTERN.search(notes) else ""
 
     @staticmethod
     def _segment_key(row):
