@@ -2270,7 +2270,8 @@ def test_live_dashboard_hangs_stage_lights_in_place_of_the_header_art(monkeypatc
     dark = plugin._render_dashboard(cards, (800, 480), theme, now, False, None)
 
     # Light falls between the masthead and the middle card.
-    assert lit.getpixel((400, 95)) != dark.getpixel((400, 95))
+    above_middle = (390, 88, 410, 100)
+    assert lit.crop(above_middle).tobytes() != dark.crop(above_middle).tobytes()
 
 
 def test_stage_light_falls_only_on_the_bare_page():
@@ -2285,7 +2286,7 @@ def test_stage_light_falls_only_on_the_bare_page():
 
     # The beam lights the page round the counter-like block but leaves the block itself alone.
     assert page.crop((300, 60, 501, 91)).getcolors() == [(201 * 31, (0, 160, 60))]
-    assert page.getpixel((400, 100)) != (240, 240, 240)
+    assert len(page.crop((390, 95, 410, 105)).getcolors()) > 1
 
 
 def test_status_total_badges_use_semantic_backgrounds_in_both_themes():

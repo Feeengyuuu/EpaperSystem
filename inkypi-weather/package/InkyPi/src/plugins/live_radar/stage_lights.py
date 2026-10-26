@@ -4,9 +4,11 @@ card, each throwing a beam in its card's platform colour onto the card like a fi
 Pseudo-3D and kept quiet: shaded cans on a slim truss, each lens foreshortened toward its card
 and aimed down the middle of its beam; the beam's edges run from the lens exactly to the card's
 top corners, a little brighter than the light inside, and the light fades with distance, with a
-faint pool where it meets the card. Light only falls on the bare page, never over the
-masthead's lettering, counters or bubble. It changes with the refresh slot: the streaks and dust
-in each beam shift, and the most-watched of the three cards gets the brightest lamp.
+faint pool where it meets the card. The beam is printed in halftone dots like the rest of the
+comic page (BEAM_STYLE "soft" draws it as smooth light instead). Light only falls on the bare
+page, never over the masthead's lettering, counters or bubble. It changes with the refresh slot:
+the streaks and dust in each beam shift, and the most-watched of the three cards gets the
+brightest lamp.
 """
 
 from __future__ import annotations
@@ -34,8 +36,8 @@ BEAM_SOFTNESS = 0.9
 EDGE_SHARE = 1.5
 STREAK_SHARE = 0.7
 STREAKS_PER_BEAM = 3
-# "soft" light, or "halftone": the beam printed as dots on the page's comic grid.
-BEAM_STYLE = "soft"
+# "halftone": the beam printed as dots on the page's comic grid, or "soft" light.
+BEAM_STYLE = "halftone"
 HALFTONE_PITCH = 5
 HALFTONE_MAX_RADIUS = 1.35
 HALFTONE_OPACITY = 0.6
@@ -269,8 +271,7 @@ def hang(image, lamps, theme, untouched=None):
         mask = _beam_mask(image.size, lamp, mode)
         if BEAM_STYLE == "halftone":
             mask = _halftone(mask, BEAM_ALPHA[mode] * lamp["strength"])
-        else:
-            _dust(mask, lamp, mode)
+        _dust(mask, lamp, mode)
         if untouched is not None:
             mask = ImageChops.multiply(mask, untouched)
         image.paste(Image.new("RGB", image.size, lamp["light"]), mask=mask)
