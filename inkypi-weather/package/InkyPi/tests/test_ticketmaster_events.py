@@ -1002,3 +1002,47 @@ def test_the_page_renders_the_week_band_and_the_sales_opening_soon(monkeypatch, 
 
     x0, y0, _x1, _y1 = WEEK_BAND
     assert colors["accent"] in {image.getpixel((x, y0 + 3)) for x in range(x0 + 4, x0 + 100)}
+
+
+def test_the_featured_title_parts_the_headliner_from_the_rest_of_the_bill():
+    from plugins.ticketmaster_events.week_page import title_parts
+
+    assert title_parts("Lenny Pearce - Toddler Rave World Tour") == ("Lenny Pearce", "Toddler Rave World Tour")
+    assert title_parts("Tyler, The Creator: CHROMAKOPIA") == ("Tyler, The Creator", "CHROMAKOPIA")
+    assert title_parts("Inner Wave w/ Heathers") == ("Inner Wave", "w/ Heathers")
+    assert title_parts("Disney On Ice presents Let's Dance!") == ("Disney On Ice", "Let's Dance!")
+    # A title naming nothing more, or a break at its very edge, stays whole.
+    assert title_parts("Golden State Warriors vs. Memphis Grizzlies") == (
+        "Golden State Warriors vs. Memphis Grizzlies", "")
+    assert title_parts("Doors 7:30 PM") == ("Doors 7:30 PM", "")
+    assert title_parts("A - B") == ("A - B", "")
+
+
+def test_a_venue_named_after_its_city_says_the_city_once():
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+
+    def place(venue, city):
+        return plugin._place_line(TicketmasterEvent(rank=1, title="x", venue_name=venue, city=city))
+
+    assert place("Fox Theater - Oakland", "Oakland") == "Fox Theater · Oakland"
+    assert place("SAP Center at San Jose", "San Jose") == "SAP Center · San Jose"
+    assert place("Oakland Arena", "Oakland") == "Oakland Arena · Oakland"
+    assert place("Oakland", "Oakland") == "Oakland · Oakland"
+    assert place("", "Berkeley") == "地点待定 · Berkeley"
+
+
+def test_the_featured_poster_takes_the_room_its_title_leaves():
+    from plugins.ticketmaster_events import week_page
+
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({})
+    feet = []
+    for title in ("Lenny Pearce - Toddler Rave World Tour", "Golden State Warriors vs. Memphis Grizzlies Tonight"):
+        image = Image.new("RGB", (800, 480), colors["paper"])
+        event = TicketmasterEvent(rank=1, title=title, local_date="2026-10-27", local_time="18:00:00",
+                                  venue_name="Fox Theater", city="Oakland", segment="Music", distance="27.4 mi")
+        feet.append(plugin._draw_featured(image, ImageDraw.Draw(image), event, datetime(2026, 10, 26).date(), colors))
+
+    # The text ends where the section under it still has its full room, whatever the title's lines.
+    bottom = week_page.HERO[3] - 8 - week_page.SECTION_H - 16
+    assert all(abs(foot - bottom) <= 4 for foot in feet)

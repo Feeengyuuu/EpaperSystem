@@ -1,8 +1,8 @@
 """The Local Events page: the featured event first, what is next beside it, the week below.
 
 800 x 480, by importance: the featured event (the biggest tour starting soon) largest, its
-title on its poster, its place, price and kind under it with the public sales opening this
-week; beside it a notice board of the next seven events by start time, one slip each with its
+poster over its headliner and the rest of the bill, its place, price and kind under them with
+the public sales opening this week; beside it a notice board of the next seven events by start time, one slip each with its
 kind's colour and sticker, time, poster, title, price tag, place, distance and what to know
 before buying; along the foot the next seven days' counts and mix of kinds. The page lies on
 the featured poster, blurred and washed into the paper, so its colour follows what is on, and
@@ -69,7 +69,16 @@ TOUR_CALLOUT_DATES = 10
 MARGIN, HEADER_H = 16, 54
 CARD_TOP, CARD_BOTTOM = 64, 420
 HERO = (MARGIN, CARD_TOP, 324, CARD_BOTTOM)
-POSTER_H = 188
+# The featured card, one kind of fact per tier: the poster with the when and the sale on it;
+# the headliner as the title (TITLE_SIZES, two lines at most) beside the kind's colour, the rest
+# of the bill as the subtitle; the place and distance by a pin; the facts as chips; then, past
+# a dotted rule, the week's sales or mix of kinds, kept SECTION_H. The poster takes the room
+# the text leaves, POSTER_H to POSTER_MAX tall.
+POSTER_H, POSTER_MAX, SECTION_H = 140, 172, 60
+TITLE_SIZES, SUBTITLE_SIZE = (21, 19, 17), 14
+# A title's headliner and the rest of the bill part at ' - ', ': ', '|', 'presents', or before
+# 'w/' / 'with' / 'feat.' (which stay on the subtitle).
+TITLE_BREAK = re.compile(r"\s+[-–—|]\s+|:\s+|\s+presents\s+|\s+(?=(?:w/|with|feat\.?|ft\.?)\s)", re.IGNORECASE)
 LIST = (336, CARD_TOP, 800 - MARGIN, CARD_BOTTOM)
 # The list's slips: SLIP_H tall every ROW_H from SLIP_TOP under the list's top, each with a
 # THUMB poster and its kind's icon, STICKER px, laid straight over the poster's corner.
@@ -117,6 +126,16 @@ def kind_of(event):
         if kind:
             return kind
     return SEGMENT_KINDS.get(segment, ("", "ticket"))
+
+
+def title_parts(title):
+    """(title, subtitle): the headliner and the rest of the bill ('Lenny Pearce', 'Toddler Rave
+    World Tour'), or the whole title and "" when it names nothing more."""
+    text = str(title or "").strip()
+    match = TITLE_BREAK.search(text)
+    if match and match.start() >= 2 and len(text) - match.end() >= 3:
+        return text[:match.start()].strip(), text[match.end():].strip()
+    return text, ""
 
 
 def price_label(price, lowest=False):
@@ -186,9 +205,8 @@ class WeekPageMixin:
         self._draw_page_header(image, draw, settings, generated_at, stale, days, colors)
         for box in (HERO, LIST, WEEK_BAND):
             self._frost(image, box, colors)
-        if events:
-            self._draw_featured(image, draw, events[0], today, colors)
-        self._draw_on_sale(draw, on_sale or [], days, getattr(generated_at, "tzinfo", None), colors)
+        foot = self._draw_featured(image, draw, events[0], today, colors) if events else HERO[1] + 8 + POSTER_H
+        self._draw_on_sale(draw, on_sale or [], days, getattr(generated_at, "tzinfo", None), colors, foot + 16)
         self._draw_next(image, draw, events[1:1 + LIST_ROWS], today, colors,
                         now=generated_at if isinstance(generated_at, datetime) else None)
         self._draw_week_band(draw, days, today, colors)
@@ -270,33 +288,32 @@ class WeekPageMixin:
 
     # -- the featured event ---------------------------------------------------------------
     def _draw_featured(self, image, draw, event, today, colors):
-        """The poster with the title over its foot, the day and time on a gold chip, the tour's
-        size and the sale status; under it the place and the price, kind, distance and repeats."""
+        """The featured event in tiers, each holding one kind of fact: the poster with the day and
+        time on a gold chip and the tour's size and sale status on its top right; the headliner as
+        the title beside the kind's colour, the rest of the bill under it; the place by a pin with
+        the distance at the right; the price, kind, age and repeats as chips. Returns the y where
+        the card's text ends."""
         x0, y0, x1, _y1 = HERO
         pad = 8
         px0, py0, px1 = x0 + pad, y0 + pad, x1 - pad
         width = px1 - px0
-        poster = self._load_event_image(event)
-        art = ImageOps.fit((poster or self._placeholder_event_image(event, (width, POSTER_H), colors)).convert("RGB"),
-                           (width, POSTER_H), method=Image.Resampling.LANCZOS)
-        # A dark shade rises from the poster's foot for the title to sit on.
-        title_font = self._font(21, bold=True)
-        for size in (21, 19, 17):
+        kind_colour = self._event_color(event, colors)
+        # The title's lines are set first: the poster takes the height the text leaves it.
+        title, subtitle = title_parts(event.title)
+        text_x, text_w = px0 + 10, width - 10
+        title_font = self._font(TITLE_SIZES[-1], bold=True)
+        for size in TITLE_SIZES:
             title_font = self._font(size, bold=True)
-            if len(self._wrap_full_text(draw, event.title, title_font, width - 20)) <= 2:
+            if len(self._wrap_full_text(draw, title, title_font, text_w)) <= 2:
                 break
-        lines = self._wrap_text(draw, event.title, title_font, width - 20, 2)
-        shade_h = 18 + len(lines) * (title_font.size + 4)
-        ramp = Image.linear_gradient("L").resize((1, shade_h + 30)).resize((width, shade_h + 30))
-        shade = Image.new("RGB", (width, shade_h + 30), (12, 14, 18))
-        foot = art.crop((0, POSTER_H - shade_h - 30, width, POSTER_H))
-        art.paste(Image.composite(shade, foot, ramp.point(lambda value: int(value * 0.86))), (0, POSTER_H - shade_h - 30))
+        lines = self._wrap_text(draw, title, title_font, text_w, 2)
+        text_h = 10 + len(lines) * (title_font.size + 4) + (SUBTITLE_SIZE + 6 if subtitle else 0) + 47
+        poster_h = max(POSTER_H, min(POSTER_MAX, HERO[3] - 8 - SECTION_H - 16 - py0 - text_h))
+        poster = self._load_event_image(event)
+        art = ImageOps.fit((poster or self._placeholder_event_image(event, (width, poster_h), colors)).convert("RGB"),
+                           (width, poster_h), method=Image.Resampling.LANCZOS)
         image.paste(art, (px0, py0))
-        text_y = py0 + POSTER_H - 10 - len(lines) * (title_font.size + 4)
-        for line in lines:
-            draw.text((px0 + 10, text_y), line, fill=(250, 248, 240), font=title_font)
-            text_y += title_font.size + 4
-        draw.rectangle((px0, py0 + POSTER_H, px1, py0 + POSTER_H + 4), fill=self._event_color(event, colors))
+        draw.rectangle((px0, py0 + poster_h, px1, py0 + poster_h + 3), fill=kind_colour)
         # When, on the gold chip.
         day = _day(event.local_date)
         top_text = day_label(day, today) if day and (day - today).days < 7 else (f"{day:%m/%d}" if day else "待定")
@@ -323,36 +340,70 @@ class WeekPageMixin:
             draw.rectangle((tag_x - tag_w, py0 + 8, tag_x, py0 + 28), fill=fill)
             draw.text((tag_x - tag_w + 7, py0 + 10), text, fill=color, font=chip_font)
             tag_x -= tag_w + 6
-        # Where, then the facts as chips.
-        y = py0 + POSTER_H + 10
-        place_font = self._font(15, bold=True)
-        draw.text((px0, y), self._fit_text(draw, self._place_line(event), place_font, width), fill=colors["ink"],
-                  font=place_font)
-        y += 24
+        # What: the headliner, then the rest of the bill, beside a bar of the kind's colour.
+        block_top = y = py0 + poster_h + 10
+        for line in lines:
+            draw.text((text_x, y), line, fill=colors.get("title", colors["ink"]), font=title_font)
+            y += title_font.size + 4
+        if subtitle:
+            subtitle_font = self._font(SUBTITLE_SIZE, bold=True)
+            draw.text((text_x, y + 1), self._fit_text(draw, subtitle, subtitle_font, text_w), fill=colors["muted"],
+                      font=subtitle_font)
+            y += SUBTITLE_SIZE + 6
+        draw.rectangle((px0, block_top + 2, px0 + 3, y - 4), fill=kind_colour)
+        # Where: a pin, the place, and the distance at the right.
+        y += 5
+        meta_font = self._font(13, bold=True)
+        distance = event.distance or ""
+        distance_w = draw.textlength(distance, font=meta_font) if distance else 0
+        if distance:
+            draw.text((px1 - distance_w, y), distance, fill=colors["muted"], font=meta_font)
+        self._draw_pin(draw, (px0 + 5, y + 8), colors["accent"], colors["paper"])
+        place_x = px0 + 14
+        draw.text((place_x, y), self._fit_text(draw, self._place_line(event), meta_font,
+                                                px1 - place_x - (distance_w + 10 if distance else 0)),
+                  fill=colors["ink"], font=meta_font)
+        y += 22
+        # The facts as chips: the price solid, the kind edged in its colour.
         fact_font = self._font(12, bold=True)
         x = px0
-        facts = [(price_label(event.price), colors["accent"], True),
-                 (self._kind_text(event), self._event_color(event, colors), False),
-                 (event.distance, colors["muted"], False), ((event.extra or {}).get("age") or "", colors["muted"], False),
+        facts = [(price_label(event.price), colors["accent"], True), (self._kind_text(event), kind_colour, False),
+                 ((event.extra or {}).get("age") or "", colors["muted"], False),
                  (self._more_text(event), colors["muted"], False)]
+        drawn = False
         for text, colour, solid in facts:
             if not text:
                 continue
-            text_w = draw.textlength(text, font=fact_font) + 14
-            if x + text_w > px1:
+            chip = draw.textlength(text, font=fact_font) + 14
+            if x + chip > px1:
                 break
             if solid:
-                draw.rounded_rectangle((x, y, x + text_w, y + 20), radius=10, fill=colour)
+                draw.rounded_rectangle((x, y, x + chip, y + 20), radius=10, fill=colour)
                 draw.text((x + 7, y + 2), text, fill=colors["paper"], font=fact_font)
             else:
-                draw.rounded_rectangle((x, y, x + text_w, y + 20), radius=10, outline=colour, width=2)
+                draw.rounded_rectangle((x, y, x + chip, y + 20), radius=10, outline=colour, width=2)
                 draw.text((x + 7, y + 2), text, fill=colors["ink"], font=fact_font)
-            x += text_w + 6
+            x += chip + 6
+            drawn = True
+        return y + 20 if drawn else y - 4
+
+    @staticmethod
+    def _draw_pin(draw, tip, fill, hole):
+        """A map pin ``tip`` its point: a round head over a point, with a hole."""
+        x, y = tip
+        draw.polygon(((x - 4, y - 5), (x + 4, y - 5), (x, y + 2)), fill=fill)
+        draw.ellipse((x - 5, y - 13, x + 5, y - 3), fill=fill)
+        draw.ellipse((x - 2, y - 10, x + 2, y - 6), fill=hole)
 
     @staticmethod
     def _place_line(event):
-        """'Venue · City' (the state is left out: everything is within driving range)."""
-        return " · ".join(part for part in (event.venue_name or "地点待定", event.city) if part)
+        """'Venue · City' (the state is left out: everything is within driving range); a venue
+        named after its city says it once ('Fox Theater - Oakland' in Oakland: 'Fox Theater · Oakland')."""
+        venue, city = event.venue_name or "地点待定", event.city or ""
+        if city:
+            short = re.sub(rf"\s*(?:[-–—,·]|\bat\b|\bin\b)\s*{re.escape(city)}$", "", venue, flags=re.IGNORECASE)
+            venue = short if short and short != venue else venue
+        return " · ".join(part for part in (venue, city) if part)
 
     def _kind_text(self, event):
         """'音乐 · 摇滚': the segment and the kind in Chinese (a genre with no Chinese name as
@@ -370,13 +421,14 @@ class WeekPageMixin:
         return f"+{more} 场" if more else ""
 
     # -- public sales opening soon (or the week's mix), in the featured card's foot ----------
-    def _draw_on_sale(self, draw, on_sale, days, tz, colors):
+    def _draw_on_sale(self, draw, on_sale, days, tz, colors, top):
+        """Under a dotted rule from ``top``: the public sales opening this week, else the week's
+        mix of kinds as a bar beside its heading with each kind's share under it."""
         x0, _y0, x1, y1 = HERO
         x, right = x0 + 8, x1 - 8
-        top = HERO[1] + 8 + POSTER_H + 66
         head_font, row_font = self._font(13, bold=True), self._font(12, bold=True)
         for dot in range(x, right, 5):
-            draw.point((dot, top - 6), fill=colors["line"])
+            draw.point((dot, top - 8), fill=colors["line"])
         if on_sale:
             draw.text((x, top), "即将开售", fill=colors["accent"], font=head_font)
             draw.text((x + 62, top + 2), "公开售票开始", fill=colors["muted"], font=self._font(11, bold=True))
@@ -404,10 +456,12 @@ class WeekPageMixin:
         whole = sum(totals.values())
         if not whole:
             return
-        self._draw_mix_bar(draw, totals, (x, top + 22, right, top + 30), colors)
-        cursor, y = x, top + 38
+        bar_left = x + draw.textlength("本周类别", font=head_font) + 10
+        self._draw_mix_bar(draw, totals, (bar_left, top + 5, right, top + 13), colors)
+        cursor, y = x, top + 22
         for key, label in SEGMENT_LABELS.items():
-            if not totals.get(key):
+            # A kind under a percent of the week is only a sliver of the bar.
+            if totals.get(key, 0) * 100 < whole:
                 continue
             text = f"{label} {totals[key] * 100 // whole}%"
             text_w = draw.textlength(text, font=row_font)
