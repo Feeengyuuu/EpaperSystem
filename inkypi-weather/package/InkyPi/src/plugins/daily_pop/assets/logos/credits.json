@@ -2,16 +2,31 @@
   "assets": [
     {
       "name": "bilibili",
-      "description_page": "https://commons.wikimedia.org/wiki/File:Bilibili_2023.svg",
+      "description_page": "https://en.wikipedia.org/wiki/File:Bilibili_logo.svg",
       "license": "Public domain",
       "author": "Bilibili Inc.",
-      "source_png": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/12/Bilibili_2023.svg/330px-Bilibili_2023.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
-      "source_sha256": "1261bf8e596a03319c0d850bf418c5100c04c77273fbb1b99d90b306e61c4508",
-      "modifications": "Wikimedia PNG render trimmed to its alpha, 40 px tall.",
+      "source_png": "https://upload.wikimedia.org/wikipedia/en/thumb/b/b7/Bilibili_logo.svg/500px-Bilibili_logo.svg.png",
+      "source_sha256": "d698a1cbf1d06c5bed14d5dc1099a80162acaf327a6665cddca780d736759ee3",
+      "modifications": "Wikipedia PNG render trimmed to its alpha, 40 px tall.",
       "files": [
         {
           "file": "bilibili.png",
-          "sha256": "cac4830f3b1a3732f934d8b4215361b56bc64671b402125db7f179ed948f5a7b"
+          "sha256": "bc8f1a594417e420224e85ee5729aa3b31ee39b1f6144ea45ef8210f5636d3a2"
+        }
+      ]
+    },
+    {
+      "name": "bilibili_tv",
+      "description_page": "https://www.bilibili.com/",
+      "license": "Bilibili's own site icon (its trademark), shown to name the source",
+      "author": "Bilibili Inc.",
+      "source_png": "https://www.bilibili.com/favicon.ico",
+      "source_sha256": "2681561eb24e7435fea1acf26f3af95e4efc9f7d451587b58bef62f030f337e9",
+      "modifications": "32 px site icon trimmed to its alpha; not enlarged.",
+      "files": [
+        {
+          "file": "bilibili_tv.png",
+          "sha256": "e1eb384640d47dc4065fee176e9aa3137ab3a9b78e902471a2c1dc1fe7f832d9"
         }
       ]
     },

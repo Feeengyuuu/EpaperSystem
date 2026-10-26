@@ -26,16 +26,19 @@ DAY = {"paper": "#ffffff", "ink": "#121a20", "muted": "#3a454d", "rule": "#a6a6a
 NIGHT = {"paper": "#000000", "ink": "#edf1ea", "muted": "#c6d0d5", "rule": "#5a5a5a", "up": "#6fd38f",
          "down": "#ff6b6b", "new": "#ff6b6b", "badge_ink": "#000000", "shade": "#000000"}
 # Each source's own colour, as a solid bar on its card.
-BRANDS = {"bilibili": (0xFB, 0x72, 0x99), "bangumi": (0xF0, 0x91, 0x99), "wiki": (0x33, 0x66, 0xCC),
+# Bilibili is its official blue (the wordmark's), as on its logo.
+BRANDS = {"bilibili": (0x00, 0xA1, 0xD6), "bangumi": (0xF0, 0x91, 0x99), "wiki": (0x33, 0x66, 0xCC),
           "epic": (0x0B, 0x3D, 0x91), "songs": (0xFA, 0x24, 0x3C), "puzzle": (0x81, 0xB6, 0x4C)}
 CARDS = {"bilibili": (12, 58, 276, 468), "bangumi": (284, 58, 520, 312), "wiki": (284, 318, 520, 468),
          "epic": (528, 58, 788, 262), "songs": (528, 268, 788, 372), "puzzle": (528, 378, 788, 468)}
 TITLES = {"bilibili": "B站热门", "bangumi": "今日新番", "wiki": "维基热读", "epic": "今日地球",
           "songs": "Apple 热歌", "puzzle": "每日棋题"}
 # Each card's official logo (file in assets/logos, height) and the title that follows it.
-LOGOS = {"bilibili": ("bilibili", 16, "热门"), "bangumi": ("bangumi", 18, "今日新番"),
+LOGOS = {"bilibili": (("bilibili_tv", "bilibili"), 19, "热门"), "bangumi": ("bangumi", 18, "今日新番"),
          "wiki": ("wikipedia", 20, "维基热读"), "epic": ("nasa", 20, "今日地球"),
          "songs": ("apple_music", 15, "热歌"), "puzzle": ("chesscom", 17, "每日棋题")}
+# Cards whose source colour runs all the way round them, so the area stands out.
+RINGED = {"bilibili"}
 SHORT_NAMES = {"bilibili": "B站", "bangumi": "新番", "wiki": "维基", "epic": "地球", "songs": "热歌",
                "puzzle": "棋题"}
 WEEKDAYS = "一二三四五六日"
@@ -74,7 +77,19 @@ def count_text(value):
 
 @lru_cache(maxsize=16)
 def _logo(file_name, height, night):
-    """An official logo (assets/logos), its dark-page version by night when there is one."""
+    """An official logo (assets/logos), its dark-page version by night when there is one; a
+    tuple of names sets its parts side by side (Bilibili's TV icon, then its wordmark)."""
+    if isinstance(file_name, tuple):
+        parts = [part for part in (_logo(name, height, night) for name in file_name) if part is not None]
+        if not parts:
+            return None
+        gap = max(2, height // 4)
+        art = Image.new("RGBA", (sum(part.width for part in parts) + gap * (len(parts) - 1), height), (0, 0, 0, 0))
+        x = 0
+        for part in parts:
+            art.paste(part, (x, 0), part)
+            x += part.width + gap
+        return art
     for name in ((f"{file_name}_night", file_name) if night else (file_name,)):
         path = ASSETS / "logos" / f"{name}.png"
         if path.is_file():
@@ -88,7 +103,9 @@ def _card(canvas, name, note="", *, title=None, logo=True):
     """The card's frame, its source colour along the top and its title row (led by the source's
     official logo); returns the content top."""
     left, top, right, bottom = CARDS[name]
-    canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
+    ringed = name in RINGED
+    canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, width=2 if ringed else 1,
+                                  outline=BRANDS[name] if ringed else canvas.color("rule"))
     canvas.draw.rounded_rectangle((left, top, right, top + BAR), radius=6, fill=BRANDS[name],
                                   corners=(True, True, False, False))
     middle = top + BAR + 12
