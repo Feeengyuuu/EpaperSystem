@@ -46,6 +46,10 @@ SOURCE_LOGO_GAP = 6
 SOURCE_LOGO_INKED = {"fred": False, "coingecko": False, "yahoo_finance": True}
 MACRO_ICON_SIZE = 18
 EARNINGS_ROWS = 2
+# Each earnings row leads with the company's mark: the same files the stock tracker's Robinhood
+# holdings list shows (stocktracker/assets/logos/<symbol>.png), in a HOLDING_LOGO_SLOT-wide slot.
+HOLDING_LOGOS = Path(__file__).resolve().parents[1] / "stocktracker" / "assets" / "logos"
+HOLDING_LOGO_SIZE, HOLDING_LOGO_SLOT = 14, 20
 # Ticker chips in each brand's own published colour, as is (no snapping to the panel's
 # inks): (fill, text, outline). Brands whose colours are close keep apart by the shape of
 # their mark: Nintendo is a red outlined pill, SpaceX black on white, Apple plain black.
@@ -443,11 +447,26 @@ def _earnings(canvas, payload, now, left, right, top, rows):
         draw_icon(canvas.draw, "calendar", (left, y - 7), 13, canvas.color("ink"), canvas.color("paper"))
         canvas.text((left + 19, y), _weekday_date(item["date"]), 12, anchor="lm")
         hour = EARNINGS_HOURS.get(item.get("hour"), "")
-        canvas.text((left + 104, y), f"{item['symbol']} {hour}", 13, anchor="lm")
+        logo = _holding_logo(canvas, item["symbol"], HOLDING_LOGO_SIZE)
+        if logo is not None:
+            slot = left + 100 + (HOLDING_LOGO_SLOT - logo.width) / 2
+            canvas.image.paste(logo, (round(slot), round(y - logo.height / 2)), logo)
+        canvas.text((left + 104 + HOLDING_LOGO_SLOT, y), f"{item['symbol']} {hour}", 13, anchor="lm")
         remaining = days_until(item["date"], now)
         canvas.text((right, y), "今天" if remaining == 0 else f"{remaining} 天后", 12, "muted",
                     anchor="rm", bold=False)
     return len(items)
+
+
+def _holding_logo(canvas, symbol, size):
+    """The company's mark as the Robinhood holdings page shows it, at most ``size`` tall and
+    HOLDING_LOGO_SLOT wide, its black parts in the night ink; None without one."""
+    path = HOLDING_LOGOS / f"{str(symbol or '').strip().lower()}.png"
+    ink = canvas.color("ink") if canvas.color("paper") == _rgb(NIGHT["paper"]) else None
+    logo = load_source_logo(path, size, ink)
+    if logo is not None and logo.width > HOLDING_LOGO_SLOT:
+        logo = load_source_logo(path, max(1, round(size * HOLDING_LOGO_SLOT / logo.width)), ink)
+    return logo
 
 
 def _filings(canvas, payload, left, right, top, rows):

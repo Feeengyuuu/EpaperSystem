@@ -363,3 +363,16 @@ def test_the_dollar_card_shows_each_currency_by_its_flag_and_sign():
     assert {"¥157", "¥156.8"} & set(drawn)
     foot = {canvas.image.getpixel((x, 187)) for x in range(20, 200)}
     assert any(blue > 120 and red < 60 for red, _green, blue in foot)  # the EU flag's blue
+
+
+def test_earnings_rows_lead_with_the_holdings_mark():
+    day = PageCanvas(money_render._palette({}))
+    night = PageCanvas(money_render._palette({"_inkypi_theme": {"mode": "night"}}))
+
+    google = money_render._holding_logo(day, "GOOGL", money_render.HOLDING_LOGO_SIZE)
+    apple = money_render._holding_logo(night, "aapl", money_render.HOLDING_LOGO_SIZE)
+
+    assert google.height <= money_render.HOLDING_LOGO_SIZE and google.width <= money_render.HOLDING_LOGO_SLOT
+    # Apple's black mark takes the night ink.
+    assert night.color("ink") in {pixel[:3] for pixel in apple.get_flattened_data() if pixel[3] == 255}
+    assert money_render._holding_logo(day, "ZZZZ", money_render.HOLDING_LOGO_SIZE) is None
