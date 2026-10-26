@@ -59,7 +59,8 @@ def test_club_separator_change_preserves_punctuation_inside_provider_names():
 @pytest.mark.parametrize("palette", [DAY_COLORS, DEEP_NIGHT_COLORS], ids=["day", "night"])
 def test_mls_upcoming_row_draws_supported_separator_in_both_themes(monkeypatch, palette):
     plugin = SportsDashboard({"id": "sports_dashboard"})
-    adapted = plugin._club_football_worldcup_event(_mls_event(), timezone.utc)
+    # A network without a bundled logo stays named in the row's context line, separator and all.
+    adapted = plugin._club_football_worldcup_event(_mls_event(broadcast="TVA Sports"), timezone.utc)
     image = Image.new("RGB", (270, 40), palette["panel"])
     draw = ImageDraw.Draw(image)
     drawn = []
@@ -79,12 +80,33 @@ def test_mls_upcoming_row_draws_supported_separator_in_both_themes(monkeypatch, 
     finally:
         _ACTIVE_COLORS.reset(token)
 
-    metadata_fonts = [font for text, font in drawn if text == "Apple TV | ScottsMiracle-Gro Field"]
+    metadata_fonts = [font for text, font in drawn if text == "TVA Sports | ScottsMiracle-Gro Field"]
     assert len(metadata_fonts) == 1
     font = metadata_fonts[0]
     separator = font.getmask("|")
     missing = font.getmask("\U0010ffff")
     assert (separator.size, bytes(separator)) != (missing.size, bytes(missing))
+
+
+def test_a_network_with_a_logo_leaves_the_row_line_to_the_ground(monkeypatch):
+    plugin = SportsDashboard({"id": "sports_dashboard"})
+    adapted = plugin._club_football_worldcup_event(_mls_event(), timezone.utc)
+    image = Image.new("RGB", (270, 40), DAY_COLORS["panel"])
+    draw = ImageDraw.Draw(image)
+    drawn = []
+    original_text = draw.text
+
+    def record_text(xy, text, *args, **kwargs):
+        drawn.append(str(text))
+        return original_text(xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(draw, "text", record_text)
+    monkeypatch.setattr(plugin, "_draw_worldcup_row_lineup", lambda *_args, **_kwargs: None)
+
+    plugin._draw_worldcup_mini_match_row(image, draw, 0, 269, 0, 33, adapted, "VS", show_time=True)
+
+    # Apple TV is its logo after the date; the line keeps the ground alone.
+    assert "ScottsMiracle-Gro Field" in drawn and not any("Apple TV" in text for text in drawn)
 
 
 @pytest.mark.parametrize("round_value", [21, {"number": 21}, {"text": "Round 21"}])
