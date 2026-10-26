@@ -18,6 +18,7 @@ quotation is drawn by lot from those that fit, the same one for the same poster.
 
 from __future__ import annotations
 
+import math
 import random
 import re
 from functools import lru_cache
@@ -60,7 +61,8 @@ BOOK_ART = Path(__file__).resolve().parent / "assets" / "little_red_book.png"
 SIGNATURE_ART = Path(__file__).resolve().parent / "assets" / "mao_signature.png"
 QUOTE_ONE_LINE, QUOTE_TWO_LINES = (26, 24, 22, 20, 18), (19, 18, 16, 15)
 BOOK_H = TITLE_H + 6
-SIGNATURE_DASH, SIGNATURE_SCALE, SIGNATURE_GAP = "——", 1.45, 6
+# The brush dash before the signature: its length and thickness as shares of the writing's size.
+SIGNATURE_DASH, SIGNATURE_SCALE, SIGNATURE_GAP = (1.5, 0.16), 1.45, 6
 QUOTE_MIN_ROOM = 150
 _CJK = re.compile(r"[⺀-鿿＀-￯]")
 
@@ -200,15 +202,40 @@ def _signature(height, ink):
     return signature
 
 
+@lru_cache(maxsize=16)
+def _brush_dash(length, thickness, ink):
+    """A brush's dash ``length`` px long in ``ink``: pressed down at the start, thinning as it
+    runs a little uphill, and lifted off to a point."""
+    scale = 4
+    width, height = length * scale, thickness * 3 * scale
+    upper, lower = [], []
+    steps = 48
+    for step in range(steps + 1):
+        t = step / steps
+        x = t * (width - scale)
+        middle = height * 0.58 - t * height * 0.16 - math.sin(t * math.pi) * height * 0.05
+        # The press at the start, the run, and the lift: half the stroke's breadth at ``t``.
+        half = thickness * scale / 2 * (0.82 + 0.5 * math.exp(-((t - 0.06) / 0.07) ** 2)) * (1 - t ** 2.6 * 0.92)
+        upper.append((x, middle - half))
+        lower.append((x, middle + half * 0.9))
+    stroke = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(stroke).polygon(upper + lower[::-1], fill=255)
+    start = upper[0][1], lower[0][1]
+    ImageDraw.Draw(stroke).ellipse((0, start[0], (start[1] - start[0]) * 0.8, start[1]), fill=255)
+    stroke = stroke.resize((length, thickness * 3), Image.LANCZOS)
+    dash = Image.new("RGBA", stroke.size, (*ink, 255))
+    dash.putalpha(stroke)
+    return dash
+
+
 def _signed(draw, font):
-    """(dash font, dash width, signature height) after a quotation in ``font``, and the width
-    they take after its last line."""
-    dash_font = _quote_font(max(12, font.size - 4))
-    dash_w = draw.textlength(SIGNATURE_DASH, font=dash_font)
+    """(dash length, dash thickness, signature height) after a quotation in ``font``, and the
+    width they take after its last line."""
+    length, thickness = round(font.size * SIGNATURE_DASH[0]), max(2, round(font.size * SIGNATURE_DASH[1]))
     height = round(font.size * SIGNATURE_SCALE)
     signature = _signature(height, (0, 0, 0))
-    width = SIGNATURE_GAP + dash_w + 2 + signature.width if signature is not None else 0
-    return (dash_font, dash_w, height), width
+    width = SIGNATURE_GAP + length + 3 + signature.width if signature is not None else 0
+    return (length, thickness, height), width
 
 
 def _quotation_layout(draw, text, width, two_line_sizes):
@@ -266,15 +293,15 @@ def _draw_quotation(canvas, box, colors, seed):
         for nudge in (0, 1):
             draw.text((x0 + book_w + nudge, top + index * pitch), line, font=font, fill=colors["ink"], anchor="lm")
     # Signed after the last line: a brush dash, then his signature.
-    (dash_font, dash_w, height), _width = _signed(draw, font)
+    (length, thickness, height), _width = _signed(draw, font)
     signature = _signature(height, tuple(colors["ink"]))
     if signature is not None:
-        x = x0 + book_w + draw.textlength(lines[-1], font=font) + SIGNATURE_GAP
+        x = round(x0 + book_w + draw.textlength(lines[-1], font=font) + SIGNATURE_GAP)
         y = top + (len(lines) - 1) * pitch
+        dash = _brush_dash(length, thickness, tuple(colors["ink"]))
+        canvas.paste(dash, (x, round(y - dash.height / 2 + 1)), dash)
         for nudge in (0, 1):
-            draw.text((x + nudge, y), SIGNATURE_DASH, font=dash_font, fill=colors["ink"], anchor="lm")
-        for nudge in (0, 1):
-            canvas.paste(signature, (round(x + dash_w + 2) + nudge, round(y - signature.height / 2)), signature)
+            canvas.paste(signature, (x + length + 3 + nudge, round(y - signature.height / 2)), signature)
     return True
 
 
