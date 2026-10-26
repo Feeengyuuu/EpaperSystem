@@ -1,3 +1,5 @@
+from runtime.refresh_contracts import TaskCancelled
+
 from .common import *
 from .espn_date_range import fetch_scoreboard
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
@@ -125,6 +127,20 @@ class OffseasonHubMixin:
                 except Exception as exc:
                     errors[key] = _safe_exception_text(exc)
                     payloads[key] = {}
+            # The scoreboard window holds only the next few days; a playoff series' earlier
+            # games come from one game summary, kept compact.
+            event_id = SportsDashboard._wnba_series_event_id(payloads.get("wnba"))
+            if event_id:
+                try:
+                    summary_url = self._wnba_scoreboard_url(settings).rsplit("/scoreboard", 1)[0] + "/summary"
+                    series = SportsDashboard._compact_wnba_series(
+                        fetch_scoreboard(session, summary_url, {"event": event_id}), event_id)
+                    if series:
+                        payloads["wnba_series"] = series
+                except TaskCancelled:
+                    raise
+                except Exception as exc:
+                    errors["wnba_series"] = _safe_exception_text(exc)
         finally:
             self._record_offseason_hub_call(settings, now_utc)
         return {
@@ -267,7 +283,8 @@ class OffseasonHubMixin:
         payloads = (payload or {}).get("payloads") or {}
         return {
             "mlb": SportsDashboard._parse_mlb_scoreboard(payloads.get("mlb"), timezone_info),
-            "wnba": SportsDashboard._parse_wnba_scoreboard(payloads.get("wnba"), timezone_info),
+            "wnba": {**SportsDashboard._parse_wnba_scoreboard(payloads.get("wnba"), timezone_info),
+                     "series_history": SportsDashboard._parse_wnba_series(payloads.get("wnba_series"), timezone_info)},
             "pga": SportsDashboard._parse_pga_scoreboard(payloads.get("pga"), timezone_info, now),
             "nfl": SportsDashboard._parse_football_scoreboard(payloads.get("nfl"), timezone_info, "NFL"),
             "ncaa": SportsDashboard._parse_football_scoreboard(payloads.get("ncaa"), timezone_info, "NCAA"),
@@ -1347,6 +1364,7 @@ class OffseasonHubMixin:
             "week_label": str(((parsed or {}).get("week_label") or "")).strip(),
             "order": {"MLB": 0, "WNBA": 1, "PGA": 2, "NFL": 3, "NCAA": 4}.get(sport, 99),
             "calendar": list((parsed or {}).get("calendar") or []),
+            "series_history": list((parsed or {}).get("series_history") or []),
         }
 
     @staticmethod

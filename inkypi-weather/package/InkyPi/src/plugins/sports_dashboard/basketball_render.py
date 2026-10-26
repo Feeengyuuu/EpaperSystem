@@ -35,6 +35,8 @@ LEADERS_PENDING_MIN_HEIGHT = 40
 WNBA_SERIES_ROW_HEIGHT, WNBA_SERIES_ROW_PITCH = 20, 22
 # The game card's networks, as logos under its tiles.
 WNBA_CARD_TV_LOGO_HEIGHT = 18
+# The series tracker: each game's slot over its caption, and a played game's winner logo.
+WNBA_TRACKER_HEIGHT, WNBA_SLOT_LOGO_SIZE = 40, 12
 
 
 class BasketballRenderMixin:
@@ -68,8 +70,9 @@ class BasketballRenderMixin:
         main = card.get("main") or {}
         content = (x1 + 12, y1 + 57, x2 - 12, y2 - 7)
         series = SportsDashboard._basketball_series_games(card.get("events"), main)
-        if main and len(series) >= 2:
-            self._draw_wnba_series_tracker(image, draw, content, main, series, now, spec)
+        history = SportsDashboard._wnba_series_slots(card.get("series_history"), main)
+        if main and (len(series) >= 2 or history):
+            self._draw_wnba_series_tracker(image, draw, content, main, series, now, spec, history)
             return
         others = SportsDashboard._kit_scoreboard_order(card.get("events"), main)
         self._draw_basketball_faceoff(image, draw, content, main, others, now, spec)
@@ -373,7 +376,7 @@ class BasketballRenderMixin:
 
     # Series tracker layout (WNBA playoffs) -----------------------------------
 
-    def _draw_wnba_series_tracker(self, image, draw, box, main, series, now, spec):
+    def _draw_wnba_series_tracker(self, image, draw, box, main, series, now, spec, history=None):
         x1, y1, x2, y2 = [int(value) for value in box]
         left_x2 = x1 + 300
         state = SportsDashboard._hub_event_state(main)
@@ -405,14 +408,17 @@ class BasketballRenderMixin:
             self._draw_text_in_box(draw, win_box, str(wins[side]), self._font(28, wins[side] >= wins["b" if side == "a" else "a"]), COLORS["text"], align=align)
         draw.line((middle - 4, score_y + 17, middle + 4, score_y + 17), fill=COLORS["border"], width=2)
 
-        tracker_y = score_y + 42
-        self._draw_basketball_series_slots(draw, (inner_x1, tracker_y, inner_x2, tracker_y + 18), main, series, length, spec)
+        tracker_y = score_y + 36
+        self._draw_basketball_series_slots(image, draw, (inner_x1, tracker_y, inner_x2, tracker_y + WNBA_TRACKER_HEIGHT),
+                                           main, series, length, spec, history, now)
 
-        list_y = tracker_y + 26
+        # The games still to play, each led by its date; the results are in the slots above.
+        ahead = [event for event in series if SportsDashboard._hub_event_state(event) != "final"]
+        list_y = tracker_y + WNBA_TRACKER_HEIGHT + 4
         # Roomy rows with the date large when the whole list fits, else compact ones.
-        tall = len(series) * WNBA_SERIES_ROW_PITCH <= y2 - 6 - list_y
+        tall = len(ahead) * WNBA_SERIES_ROW_PITCH - 2 <= y2 - 6 - list_y
         row_h, pitch = (WNBA_SERIES_ROW_HEIGHT, WNBA_SERIES_ROW_PITCH) if tall else (14, 16)
-        for event in series:
+        for event in ahead:
             if list_y + row_h > y2 - 6:
                 break
             self._draw_wnba_series_game_row(image, draw, (inner_x1, list_y, inner_x2, list_y + row_h), event, now, spec)
@@ -422,28 +428,83 @@ class BasketballRenderMixin:
 
         self._draw_wnba_series_game_card(image, draw, (left_x2 + 10, y1, x2, y2), main, now, spec, state)
 
-    def _draw_basketball_series_slots(self, draw, box, main, series, length, spec):
+    def _draw_basketball_series_slots(self, image, draw, box, main, series, length, spec, history=None, now=None):
+        """One slot per game, its number at the top left, over its date. A played game shows
+        the winner's logo beside the number under a band in their colour, and the score,
+        winner's first; the game on now or next up is filled (LIVE and its score, or 今天 and
+        the tip-off); a later one shows its weekday and tip-off."""
         x1, y1, x2, y2 = [int(value) for value in box]
         gap = 4
         slot_w = (x2 - x1 - gap * (length - 1)) / max(1, length)
-        by_number = {SportsDashboard._basketball_game_number(event): event for event in series}
+        slots = {**SportsDashboard._wnba_slots_from_events(series, main), **(history or {})}
         main_number = SportsDashboard._basketball_game_number(main)
+        sides = {str(main.get("team_a_code") or ""): "a", str(main.get("team_b_code") or ""): "b"}
+        caption_font, line_font, bold_font = self._font(8, False), self._font(9, False), self._font(9, True)
+        bottom = y2 - 11
         for number in range(1, length + 1):
             left = int(x1 + (number - 1) * (slot_w + gap))
             right = int(left + slot_w)
-            event = by_number.get(number)
-            state = SportsDashboard._hub_event_state(event) if event else "scheduled"
-            winner = SportsDashboard._basketball_series_game_winner(main, event) if event and state == "final" else ""
-            label = f"G{number}"
-            if winner:
-                ink_key = self._kit_team_ink_key(main.get(f"team_{winner}_color"), spec.accent)
-                draw.rounded_rectangle((left, y1, right, y2), radius=3, fill=COLORS[ink_key], outline=COLORS["border"], width=1)
-                code = str(main.get(f"team_{winner}_code") or label)
-                self._draw_centered_in_box(draw, (left, y1, right, y2), code, self._font(9, True), COLORS[self._kit_ink_text_key(ink_key)])
+            game = slots.get(number) or {}
+            state, start = game.get("state") or "scheduled", game.get("start")
+            dated = isinstance(start, datetime)
+            if dated:
+                self._draw_centered_in_box(draw, (left - 2, bottom + 1, right + 2, y2), f"{start:%m/%d}", caption_font, COLORS["text"])
+            scores = game.get("scores") or {}
+            side = sides.get(game.get("winner") or "")
+            label_box = (left + 3, y1 + 4, right, y1 + 16)
+            if state == "final" and side:
+                draw.rounded_rectangle((left, y1, right, bottom), radius=3, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+                ink_key = self._kit_team_ink_key(main.get(f"team_{side}_color"), spec.accent)
+                draw.rectangle((left + 1, y1 + 1, right - 1, y1 + 3), fill=COLORS[ink_key])
+                self._draw_text_in_box(draw, label_box, f"G{number}", caption_font, COLORS["text"])
+                size = WNBA_SLOT_LOGO_SIZE
+                self._draw_team_logo(image, draw, main.get(f"team_{side}_logo"), right - size - 3, y1 + 5, size,
+                                     spec.hook("logo_fallback", main, side))
+                points = sorted((value for value in scores.values() if value is not None), reverse=True)
+                if len(points) == 2:
+                    self._draw_centered_in_box(draw, (left, y1 + 17, right, bottom - 1), f"{points[0]}-{points[1]}", bold_font,
+                                               COLORS["text"])
                 continue
-            current = number == main_number or state == "live"
-            draw.rounded_rectangle((left, y1, right, y2), radius=3, fill=COLORS[spec.tag] if current else COLORS["panel"], outline=COLORS["border"], width=2 if current else 1)
-            self._draw_centered_in_box(draw, (left, y1, right, y2), label, self._font(9, current), COLORS["text"])
+            current = state == "live" or number == main_number
+            draw.rounded_rectangle((left, y1, right, bottom), radius=3, fill=COLORS[spec.tag] if current else COLORS["panel"],
+                                   outline=COLORS["border"], width=2 if current else 1)
+            if state == "live":
+                status = "LIVE"
+                detail = "-".join(str(scores.get(str(main.get(f"team_{key}_code") or ""), "")) for key in ("a", "b"))
+            elif dated:
+                status = "今天" if now is not None and start.date() == now.date() else "周" + "一二三四五六日"[start.weekday()]
+                detail = f"{start.hour % 12 or 12}:{start:%M}"
+            else:
+                status, detail = "", "—"
+            self._draw_text_in_box(draw, label_box, f"G{number}", caption_font, COLORS["text"])
+            if status:
+                self._draw_text_in_box(draw, (left, y1 + 4, right - 3, y1 + 16), status, bold_font if current else caption_font,
+                                       COLORS["text"], align="right")
+            self._draw_centered_in_box(draw, (left, y1 + 17, right, bottom - 1), detail, bold_font if current else line_font,
+                                       COLORS["text"])
+
+    @staticmethod
+    def _wnba_slots_from_events(series, main):
+        """{game number: slot} from the scoreboard's series games (state, start, winner's code,
+        scores by code)."""
+        slots = {}
+        for event in series or []:
+            number = SportsDashboard._basketball_game_number(event)
+            if not number:
+                continue
+            state = SportsDashboard._hub_event_state(event)
+            side = SportsDashboard._nba_winner_side(event) if state == "final" else ""
+            codes = {key: str(event.get(f"team_{key}_code") or "") for key in ("a", "b")}
+            slots[number] = {"state": state, "start": event.get("start"), "winner": codes.get(side, ""),
+                             "scores": {codes[key]: SportsDashboard._lpl_int_value(event.get(f"wins_{key}")) for key in ("a", "b")}}
+        return slots
+
+    @staticmethod
+    def _wnba_series_slots(history, main):
+        """{game number: slot} from the stored series history when it is the main game's series."""
+        teams = {str((main or {}).get("team_a_code") or ""), str((main or {}).get("team_b_code") or "")}
+        games = [game for game in history or [] if set(game.get("codes") or []) == teams]
+        return {game["number"]: game for game in games} if games and len(games) == len(history) else {}
 
     def _draw_wnba_series_game_row(self, image, draw, box, event, now, spec):
         """A series game as a schedule row led by its date: the game tag (filled for today's

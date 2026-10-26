@@ -32,6 +32,67 @@ class NBAMixin:
         return {"events": events}
 
     @staticmethod
+    def _wnba_series_event_id(payload):
+        """The scoreboard's playoff game whose summary lists its series: the live or next one,
+        else the latest; "" when no playoff series is on the board."""
+        candidates = []
+        for event in (payload or {}).get("events") or []:
+            competition = (((event or {}).get("competitions") or [{}])[0]) or {}
+            series = competition.get("series") if isinstance(competition.get("series"), Mapping) else {}
+            event_id = str((event or {}).get("id") or "")
+            if series.get("type") != "playoff" or not event_id.isdigit():
+                continue
+            status = competition.get("status") or event.get("status") or {}
+            finished = str((status.get("type") or {}).get("state") or "") == "post"
+            candidates.append((finished, str(competition.get("date") or event.get("date") or ""), event_id))
+        ahead = sorted(item for item in candidates if not item[0])
+        if ahead:
+            return ahead[0][2]
+        return max(candidates, key=lambda item: item[1])[2] if candidates else ""
+
+    @staticmethod
+    def _compact_wnba_series(summary, event_id):
+        """The playoff series holding ``event_id`` from an ESPN game summary, kept small: its
+        games in order, each with its date, state and both teams' code, name, score and result."""
+        for series in (summary or {}).get("seasonseries") or []:
+            events = [event for event in (series or {}).get("events") or [] if isinstance(event, Mapping)]
+            if (series or {}).get("type") != "playoff" or not any(str(event.get("id")) == event_id for event in events):
+                continue
+            games = []
+            for event in events[:7]:
+                teams = []
+                for competitor in event.get("competitors") or []:
+                    if isinstance(competitor, Mapping):
+                        team = competitor.get("team") or {}
+                        teams.append({"code": str(team.get("abbreviation") or ""), "name": str(team.get("displayName") or ""),
+                                      "score": str(competitor.get("score") or ""), "winner": competitor.get("winner") is True})
+                games.append({"id": str(event.get("id") or ""), "date": str(event.get("date") or ""),
+                              "state": str((event.get("statusType") or {}).get("state") or event.get("status") or ""),
+                              "teams": teams[:2]})
+            return {"title": str(series.get("title") or ""), "summary": str(series.get("summary") or ""), "games": games}
+        return {}
+
+    @staticmethod
+    def _parse_wnba_series(series, timezone_info):
+        """The stored series' games: [{number, start, state (final/live/scheduled), codes,
+        scores by code, winner code}], with the scoreboard's team codes."""
+        parsed = []
+        for number, game in enumerate((series or {}).get("games") or [], start=1):
+            teams = [team for team in (game or {}).get("teams") or [] if isinstance(team, Mapping)]
+            start = SportsDashboard._parse_start_time(game.get("date"), timezone_info) if isinstance(game, Mapping) else None
+            if not start or len(teams) != 2:
+                continue
+            state = {"post": "final", "in": "live"}.get(str(game.get("state") or ""), "scheduled")
+            codes = [SportsDashboard._wnba_normalized_team_code(team.get("code"), team.get("name")) for team in teams]
+            parsed.append({
+                "number": number, "event_id": str(game.get("id") or ""), "start": start, "state": state, "codes": codes,
+                "scores": ({code: SportsDashboard._lpl_int_value(team.get("score")) for code, team in zip(codes, teams)}
+                           if state != "scheduled" else {}),
+                "winner": next((code for code, team in zip(codes, teams) if team.get("winner")), "") if state == "final" else "",
+            })
+        return parsed
+
+    @staticmethod
     def _localize_wnba_event_team(event, side):
         if not isinstance(event, MutableMapping):
             return

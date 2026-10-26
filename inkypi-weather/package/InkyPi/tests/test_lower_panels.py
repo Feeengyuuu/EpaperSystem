@@ -400,6 +400,98 @@ def test_wnba_series_rows_lead_with_the_game_date_and_keep_the_networks_small(bo
     assert logos and logos[3] - logos[1] <= 12
 
 
+def _summary_game(event_id, date, state, *teams):
+    return {"id": event_id, "date": date, "statusType": {"state": state},
+            "competitors": [{"team": {"abbreviation": code, "displayName": name}, "score": score, "winner": winner}
+                            for code, name, score, winner in teams]}
+
+
+def test_a_playoff_series_history_comes_compact_from_one_game_summary():
+    board = {"events": [
+        {"id": "9", "date": "2026-10-24T17:00Z", "competitions": [{"series": {"type": "playoff"},
+                                                                   "status": {"type": {"state": "post"}}}]},
+        {"id": "12", "date": "2026-10-30T00:00Z", "competitions": [{"series": {"type": "playoff"},
+                                                                    "status": {"type": {"state": "pre"}}}]},
+        {"id": "11", "date": "2026-10-27T00:00Z", "competitions": [{"series": {"type": "playoff"},
+                                                                    "status": {"type": {"state": "pre"}}}]},
+    ]}
+    assert SportsDashboard._wnba_series_event_id(board) == "11"
+    assert SportsDashboard._wnba_series_event_id({"events": [board["events"][0]]}) == "9"
+    assert SportsDashboard._wnba_series_event_id({"events": [{"id": "5", "competitions": [{}]}]}) == ""
+    summary = {"boxscore": {"huge": "x" * 1000}, "seasonseries": [
+        {"type": "season", "events": [_summary_game("1", "2026-06-25T02:00:00Z", "post",
+                                                    ("GS", "Golden State Valkyries", "77", True),
+                                                    ("ATL", "Atlanta Dream", "66", False))]},
+        {"type": "playoff", "title": "Playoff Series", "summary": "Series tied 1-1", "events": [
+            _summary_game("10", "2026-10-17T19:30:00Z", "post", ("GS", "Golden State Valkyries", "68", True),
+                          ("ATL", "Atlanta Dream", "64", False)),
+            _summary_game("11", "2026-10-20T00:00:00Z", "post", ("GS", "Golden State Valkyries", "65", False),
+                          ("ATL", "Atlanta Dream", "79", True)),
+            _summary_game("12", "2026-10-27T00:00:00Z", "pre", ("GS", "Golden State Valkyries", "0", None),
+                          ("ATL", "Atlanta Dream", "0", None)),
+        ]},
+    ]}
+
+    series = SportsDashboard._compact_wnba_series(summary, "11")
+    assert "boxscore" not in json.dumps(series) and len(series["games"]) == 3
+    assert SportsDashboard._compact_wnba_series(summary, "99") == {}
+    games = SportsDashboard._parse_wnba_series(series, LA)
+    assert [game["number"] for game in games] == [1, 2, 3]
+    assert [game["state"] for game in games] == ["final", "final", "scheduled"]
+    assert games[1]["winner"] == "ATL" and games[1]["scores"] == {"GS": 65, "ATL": 79}
+    assert games[2]["scores"] == {} and games[2]["start"].tzinfo is not None
+
+
+def test_the_hub_fetch_adds_the_playoff_series_from_one_game_summary(monkeypatch):
+    import plugins.sports_dashboard.offseason_hub as offseason_hub_module
+
+    calls = []
+    board = {"events": [{"id": "11", "date": "2026-10-27T00:00Z",
+                         "competitions": [{"series": {"type": "playoff"}, "status": {"type": {"state": "pre"}}}]}]}
+    summary = {"seasonseries": [{"type": "playoff", "events": [
+        _summary_game("11", "2026-10-27T00:00:00Z", "pre", ("GS", "Golden State Valkyries", "0", None),
+                      ("ATL", "Atlanta Dream", "0", None))]}]}
+
+    def fetch(_session, url, params):
+        calls.append((url, params))
+        return summary if url.endswith("/wnba/summary") else (board if "/wnba/" in url else {})
+
+    monkeypatch.setattr(offseason_hub_module, "fetch_scoreboard", fetch)
+    monkeypatch.setattr(offseason_hub_module, "get_http_session", lambda: None)
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_record_offseason_hub_call", lambda *_args: None)
+    payload = plugin._fetch_offseason_hub_payload({}, LA, "key", datetime(2026, 10, 26, 18, tzinfo=timezone.utc))
+
+    assert [params for url, params in calls if url.endswith("/summary")] == [{"event": "11"}]
+    assert payload["payloads"]["wnba_series"]["games"][0]["id"] == "11"
+    assert "wnba_series" not in payload["errors"]
+
+
+def test_series_tracker_slots_show_each_played_games_winner_score_and_date(boxes):
+    spec = _plugin()._basketball_spec("WNBA")
+    main = {"team_a_code": "ATL", "team_b_code": "GS", "team_a_color": "#C8102E", "team_b_color": "#4B2E83",
+            "headline": "WNBA Finals - Game 3", "start": NOW.replace(hour=17)}
+    history = SportsDashboard._wnba_series_slots([
+        {"number": 1, "start": NOW - timedelta(days=4), "state": "final", "codes": ["GS", "ATL"],
+         "scores": {"GS": 68, "ATL": 64}, "winner": "GS"},
+        {"number": 2, "start": NOW - timedelta(days=2), "state": "final", "codes": ["GS", "ATL"],
+         "scores": {"GS": 65, "ATL": 79}, "winner": "ATL"},
+        {"number": 3, "start": NOW.replace(hour=17), "state": "scheduled", "codes": ["ATL", "GS"], "scores": {},
+         "winner": ""},
+        {"number": 4, "start": NOW.replace(hour=17) + timedelta(days=3), "state": "scheduled", "codes": ["ATL", "GS"],
+         "scores": {}, "winner": ""},
+    ], main)
+    _render(lambda plugin, image, draw: plugin._draw_basketball_series_slots(
+        image, draw, (20, 20, 300, 60), main, [], 7, spec, history, NOW))
+
+    texts = [text for _box, text, _font in boxes]
+    assert {"68-64", "79-65", "G1", "G2", "G3", "G7"} <= set(texts)
+    assert {"10/14", "10/16", "10/18", "10/21"} <= set(texts)
+    assert "今天" in texts and "5:00" in texts and "周三" in texts
+    # Another series' history (other teams) is ignored.
+    assert SportsDashboard._wnba_series_slots([{"number": 1, "codes": ["MIN", "NY"]}], main) == {}
+
+
 def test_scoreboard_groups_later_games_under_one_day_tab_and_each_kickoff_once(boxes):
     sunday = (NOW + timedelta(days=7)).replace(hour=10, minute=0)
     games = [_ticker_game("SF", "ATL", 0, start=sunday), _ticker_game("CLE", "TEN", 0, start=sunday),
