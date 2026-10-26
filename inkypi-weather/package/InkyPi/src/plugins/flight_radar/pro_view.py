@@ -82,6 +82,13 @@ TERRAIN_TINTS = (0.0, 0.10, 0.18, 0.26, 0.33)
 CONTOUR_FT, INDEX_CONTOUR_FT = 200, 1000
 CONTOUR_STRENGTH = (0.38, 0.62)
 CONTOUR_SMOOTHING = 1.4
+# The scope as a recessed screen: outside its rim the map sinks into this shade, from the first
+# share at the rim to the second in the far corners; inside, a soft shadow this many pixels deep
+# (at most this strong) runs round the rim, and a bezel rings it.
+SCOPE_SHADE_DAY, SCOPE_SHADE_NIGHT = (34, 46, 58), (0, 0, 0)
+SCOPE_OUTSIDE_SHADE = {"day": (0.42, 0.62), "night": (0.55, 0.78)}
+SCOPE_RIM_SHADOW, SCOPE_RIM_SHADOW_PEAK = 14, 0.22
+SCOPE_BEZEL = 4
 EXPLICIT_MAPS = {"google", "google_static", "image", "static_image", "local", "local_image", "local_calibrated",
                  "none", "off", "false"}
 WHITE = (255, 255, 255)
@@ -445,14 +452,30 @@ def _navaid_symbol(draw, point, kind, theme):
 
 
 def _dim_outside(image, box, centre, radius, theme):
-    """Fade the map outside the scope's circle toward the panel, so the scope reads as round."""
+    """Sink the map outside the scope's circle into a shade that deepens toward the corners, and
+    shadow the screen just inside its rim, so the scope reads as a round, recessed display."""
     x0, y0, x1, y1 = (int(value) for value in box)
     region = image.crop((x0, y0, x1, y1))
-    faded = Image.blend(region, Image.new("RGB", region.size, theme["panel"]), 0.55)
-    mask = Image.new("L", region.size, 255)
     cx, cy = centre[0] - x0, centre[1] - y0
-    ImageDraw.Draw(mask).ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=0)
-    image.paste(Image.composite(faded, region, mask), (x0, y0))
+    reach = math.hypot(max(cx, region.width - cx), max(cy, region.height - cy)) + 2
+    night = sum(theme["panel"][:3]) < 330
+    shade = SCOPE_SHADE_NIGHT if night else SCOPE_SHADE_DAY
+    low, high = SCOPE_OUTSIDE_SHADE["night" if night else "day"]
+
+    def strength(level):
+        # Pillow's radial gradient reaches 255 in its corners, at the square's half side times √2.
+        distance = level / 255 * reach * math.sqrt(2)
+        if distance >= radius:
+            return round(255 * (low + (high - low) * min(1.0, (distance - radius) / max(1.0, reach - radius))))
+        inside = (distance - (radius - SCOPE_RIM_SHADOW)) / SCOPE_RIM_SHADOW
+        return round(255 * SCOPE_RIM_SHADOW_PEAK * inside ** 2) if inside > 0 else 0
+
+    ramp = Image.radial_gradient("L").point([strength(level) for level in range(256)])
+    side = round(reach * 2)
+    ramp = ramp.resize((side, side), Image.Resampling.BILINEAR)
+    mask = ramp.crop((round(reach - cx), round(reach - cy), round(reach - cx) + region.width,
+                      round(reach - cy) + region.height))
+    image.paste(Image.composite(Image.new("RGB", region.size, shade), region, mask), (x0, y0))
 
 
 def _rings(plugin, draw, centre, radius, display_nm, theme):
@@ -469,6 +492,10 @@ def _rings(plugin, draw, centre, radius, display_nm, theme):
         draw.text((cx + r * 0.707 + 2, cy - r * 0.707 - 2), str(nm), font=font, fill=theme["muted"], anchor="ld",
                   stroke_width=2, stroke_fill=theme["panel"])
         nm += step
+    # The bezel: a dark band round the screen with a thin lit edge outside it, then the rim.
+    outer = radius + SCOPE_BEZEL
+    draw.ellipse((cx - outer - 1, cy - outer - 1, cx + outer + 1, cy + outer + 1), outline=theme["panel"], width=1)
+    draw.ellipse((cx - outer, cy - outer, cx + outer, cy + outer), outline=theme["ink"], width=SCOPE_BEZEL)
     draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), outline=theme["ink"], width=2)
     for bearing in range(0, 360, 10):
         angle = math.radians(bearing)
