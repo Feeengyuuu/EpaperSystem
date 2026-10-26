@@ -32,6 +32,10 @@ TITLE_ASSET_PATH = Path(__file__).resolve().parent / "assets" / "daily_image_wor
 # Shape strip between the title and the date; its end rules are drawn here so they stay crisp,
 # and the asset is cropped symmetrically about the rules' axis.
 ORNAMENT_ASSET_PATH = Path(__file__).resolve().parent / "assets" / "daily_image_header_ornament.png"
+# Wikimedia's logo, crediting a Wikimedia picture at the head of its source line.
+WIKIMEDIA_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "wikimedia_logo.png"
+# The logo stands this much taller than the source line it heads.
+WIKIMEDIA_LOGO_SCALE = 1.3
 
 
 class LayoutOverflowError(ValueError):
@@ -47,6 +51,18 @@ def _source_date(payload, now):
         return datetime.strptime(str(payload.get("date", "")), "%Y-%m-%d")
     except (TypeError, ValueError):
         return now
+
+
+def _source_logo(payload, height):
+    """Wikimedia's logo ``height`` tall when the picture comes from Wikimedia, else None."""
+    if str(payload.get("source") or "Wikimedia").strip().casefold() != "wikimedia" or height < 6:
+        return None
+    try:
+        with Image.open(WIKIMEDIA_LOGO_PATH) as source:
+            logo = source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+    return logo.resize((max(1, round(logo.width * height / logo.height)), height), Image.Resampling.LANCZOS)
 
 
 def _history_image_index(events, payload):
@@ -393,11 +409,16 @@ class _Page:
     def photograph(self, source):
         text = _text(self.payload.get("image_caption") or self.payload.get("daily_image_title")
                      or self.payload.get("title"))
-        source_label = self.plugin._source_label(self.payload)
         width = self.photo_right - self.photo_left
+        # A Wikimedia picture is credited by Wikimedia's logo before the rest of the source line.
+        source_label = self.plugin._source_label(self.payload)
         source_font = self.font(source_label, self.minimum_font)
-        source_lines = self.wrap(source_label, source_font, lambda _: width)
         source_step = self.line_height(source_label, source_font)
+        logo = _source_logo(self.payload, round(source_step * WIKIMEDIA_LOGO_SCALE))
+        indent = logo.width + self.px(6) if logo is not None else 0
+        if logo is not None:
+            source_label = self.plugin._source_label(self.payload, named=False)
+        source_lines = self.wrap(source_label, source_font, lambda index: width - (indent if index == 0 else 0))
         footer_y = self.bottom - len(source_lines) * source_step
         minimum_image_height = self.px(200)
         for size in range(max(self.minimum_font, self.px(17)), self.minimum_font - 1, -1):
@@ -441,7 +462,9 @@ class _Page:
                                  "bounds": [self.photo_left, caption_y, self.photo_right, footer_y - self.px(9)],
                                  "complete": "".join(lines) == text,
                                  "shortened": "".join(lines) != text}
-        source_records = [self.ink(line, self.photo_left, footer_y + index * source_step,
+        if logo is not None:
+            self.image.paste(logo, (self.photo_left, footer_y + (source_step - logo.height) // 2), logo)
+        source_records = [self.ink(line, self.photo_left + (indent if index == 0 else 0), footer_y + index * source_step,
                                   source_font, self.palette["muted"])
                           for index, line in enumerate(source_lines)]
         self.audit["source"] = {"source_text": source_label, "lines": source_records, "complete": True}

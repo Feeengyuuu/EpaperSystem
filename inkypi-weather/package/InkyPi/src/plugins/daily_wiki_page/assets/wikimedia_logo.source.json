@@ -1,0 +1,13 @@
+{
+  "image": "wikimedia_logo.png",
+  "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/81/Wikimedia-logo.svg/250px-Wikimedia-logo.svg.png",
+  "page": "https://commons.wikimedia.org/wiki/File:Wikimedia-logo.svg",
+  "licence": "Public domain on Wikimedia Commons; a Wikimedia Foundation trademark, shown to name the picture's source",
+  "source_sha256": "d4b38ae7d76fe809537dfbcebd42f1d73f18523509efd1a8691d8029b2283f94",
+  "processing": "cropped to its visible pixels, scaled to 64 px tall",
+  "size": [
+    63,
+    64
+  ],
+  "sha256": "b8475fd489fe7d035d87a5800cf8b24d1c1f7ab43c4a1cc7771658d5f730e82c"
+}

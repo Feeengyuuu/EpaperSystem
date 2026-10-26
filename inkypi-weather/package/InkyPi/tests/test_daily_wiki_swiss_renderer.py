@@ -664,3 +664,17 @@ def test_the_photograph_melts_into_the_page_through_a_wash_of_itself(plugin, pay
     assert beside != background and beside != (80, 120, 160)
     # The wash has faded to the page at the slot's very edge.
     assert image.getpixel((slot_left, slot_top)) == background
+
+
+def test_a_wikimedia_picture_is_credited_by_wikimedias_logo():
+    from plugins.daily_wiki_page import swiss_renderer as renderer
+    from plugins.daily_wiki_page.daily_wiki_page import DailyWikiPage
+
+    plugin = DailyWikiPage({"id": "daily_wiki_page"})
+    payload = {"source": "Wikimedia", "language": "zh-cn", "source_state": "live"}
+
+    assert plugin._source_label(payload) == "WIKIMEDIA / ZH-CN / LIVE"
+    # With the logo before it, the line keeps only the edition and its state.
+    assert plugin._source_label(payload, named=False) == "ZH-CN / LIVE"
+    assert renderer._source_logo(payload, 17).height == 17
+    assert renderer._source_logo({**payload, "source": "Bing"}, 17) is None

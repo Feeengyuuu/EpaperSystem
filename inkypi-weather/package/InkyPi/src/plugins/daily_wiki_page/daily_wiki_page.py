@@ -1071,8 +1071,9 @@ class DailyWikiPage(BasePlugin):
             return ""
         return str(value)
 
-    def _source_label(self, payload):
-        parts = [payload.get("source") or "Wikimedia", payload.get("language"), payload.get("source_state")]
+    def _source_label(self, payload, named=True):
+        """'WIKIMEDIA / ZH-CN / LIVE'; without the source's name when its logo stands before it."""
+        parts = [payload.get("source") or "Wikimedia" if named else None, payload.get("language"), payload.get("source_state")]
         return " / ".join(str(part).upper() for part in parts if part)
 
     def _palette(self, settings, day=None):
