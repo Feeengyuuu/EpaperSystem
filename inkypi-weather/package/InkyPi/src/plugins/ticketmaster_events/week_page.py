@@ -29,6 +29,11 @@ GENRE_ICON_DIR = Path(__file__).with_name("genre_icons")
 # Ticketmaster's wordmark (tools/build_source_logos.py), this tall before the header's weekly count.
 TICKETMASTER_LOGO_PATH = Path(__file__).with_name("assets") / "ticketmaster.png"
 TICKETMASTER_LOGO_HEIGHT = 18
+# The header's legend of kinds: LEGEND_SIZE type, centred on LEGEND_MIDDLE (the wordmark's middle)
+# between LEGEND_LEFT (past the wordmark) and LEGEND_GAP short of the source and count, its
+# entries LEGEND_MIN_SPACE to LEGEND_MAX_SPACE apart.
+LEGEND_SIZE, LEGEND_MIDDLE, LEGEND_LEFT, LEGEND_GAP = 13, 27, 282, 18
+LEGEND_MIN_SPACE, LEGEND_MAX_SPACE = 8, 18
 GENRE_KINDS = {
     "rock": ("摇滚", "guitar"), "metal": ("金属", "guitar"), "alternative": ("另类", "guitar"), "punk": ("朋克", "guitar"),
     "pop": ("流行", "microphone"), "r&b": ("R&B", "microphone"), "ballads/romantic": ("情歌", "microphone"),
@@ -229,21 +234,32 @@ class WeekPageMixin:
         draw.text((headline_left, 3), headline, fill=colors.get("accent", colors["ink"]), font=total_font)
         # The listings' source by Ticketmaster's own wordmark, before the week's count.
         mark = _ticketmaster_logo(TICKETMASTER_LOGO_HEIGHT, None if colors["mode"] != "dark" else tuple(colors["ink"]))
+        block_left = headline_left
         if mark is not None:
-            image.paste(mark, (round(headline_left) - 14 - mark.width, 17 - mark.height // 2), mark)
+            block_left = round(headline_left) - 14 - mark.width
+            image.paste(mark, (block_left, 17 - mark.height // 2), mark)
         when = generated_at.strftime("%m/%d %H:%M") if isinstance(generated_at, datetime) else ""
         note = f"{self._place_label(settings)} · {'缓存 ' if stale else ''}{when} 更新"
         note_w = draw.textlength(note, font=small)
         draw.text((right - note_w, 32), note, fill=colors.get("header_muted", colors["muted"]), font=small)
-        # The kinds' colours, as the list and the week band use them.
-        legend_font = self._font(12, bold=True)
-        x = 282
-        for key, label in SEGMENT_LABELS.items():
-            if x + 52 > right - note_w - 10:
-                break
-            draw.ellipse((x, 37, x + 9, 46), fill=self._segment_color(key, colors))
-            draw.text((x + 12, 33), label, fill=colors.get("header_muted", colors["muted"]), font=legend_font)
-            x += 14 + draw.textlength(label, font=legend_font) + 10
+        block_left = min(block_left, right - note_w)
+        # The kinds' colours, as the list and the week band use them, centred on the wordmark's
+        # middle in the room between it and the source and count at the right.
+        legend_font = self._font(LEGEND_SIZE, bold=True)
+        items = [(key, label, 12 + draw.textlength(label, font=legend_font)) for key, label in SEGMENT_LABELS.items()]
+        left, room = LEGEND_LEFT, block_left - LEGEND_GAP - LEGEND_LEFT
+        while items and sum(width for *_rest, width in items) + LEGEND_MIN_SPACE * (len(items) - 1) > room:
+            items.pop()
+        if not items:
+            return
+        used = sum(width for *_rest, width in items)
+        space = min(LEGEND_MAX_SPACE, (room - used) / max(1, len(items) - 1))
+        x = left + (room - used - space * (len(items) - 1)) / 2
+        for key, label, width in items:
+            draw.ellipse((x, LEGEND_MIDDLE - 4.5, x + 9, LEGEND_MIDDLE + 4.5), fill=self._segment_color(key, colors))
+            draw.text((x + 12, LEGEND_MIDDLE), label, fill=colors.get("header_muted", colors["muted"]), font=legend_font,
+                      anchor="lm")
+            x += width + space
 
     def _place_label(self, settings):
         radius = self._bounded_int(settings.get("radiusMiles"), 50, 1, 250)
