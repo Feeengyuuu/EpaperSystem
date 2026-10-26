@@ -1,12 +1,20 @@
 {
  "airports": [
   {
-   "ident": "KCCR",
-   "iata": "CCR",
-   "name": "Buchanan Field",
-   "type": "medium_airport",
-   "lat": 37.9897,
-   "lon": -122.057
+   "ident": "KC83",
+   "iata": "",
+   "name": "Byron Airport",
+   "type": "small_airport",
+   "lat": 37.82647,
+   "lon": -121.6217
+  },
+  {
+   "ident": "KE16",
+   "iata": "",
+   "name": "San Martin Airport",
+   "type": "small_airport",
+   "lat": 37.0816,
+   "lon": -121.597
   },
   {
    "ident": "KHAF",
@@ -91,63 +99,48 @@
  ],
  "runways": [
   {
-   "airport": "KCCR",
+   "airport": "KC83",
    "ends": [
-    37.982,
-    -122.061,
-    37.9945,
-    -122.054
-   ],
-   "width_ft": 150.0,
-   "length_ft": 5001.0,
-   "idents": [
-    "01L",
-    "19R"
-   ]
-  },
-  {
-   "airport": "KCCR",
-   "ends": [
-    37.9839,
-    -122.058,
-    37.9909,
-    -122.055
+    37.8223,
+    -121.63,
+    37.826,
+    -121.621
    ],
    "width_ft": 75.0,
-   "length_ft": 2770.0,
+   "length_ft": 3000.0,
    "idents": [
-    "01R",
-    "19L"
+    "05",
+    "23"
    ]
   },
   {
-   "airport": "KCCR",
+   "airport": "KC83",
    "ends": [
-    37.9965,
-    -122.059,
-    37.9852,
-    -122.052
+    37.8357,
+    -121.632,
+    37.8269,
+    -121.621
    ],
-   "width_ft": 150.0,
-   "length_ft": 4602.0,
+   "width_ft": 100.0,
+   "length_ft": 4500.0,
    "idents": [
-    "14L",
-    "32R"
+    "12",
+    "30"
    ]
   },
   {
-   "airport": "KCCR",
+   "airport": "KE16",
    "ends": [
-    37.9959,
-    -122.06,
-    37.989,
-    -122.056
+    37.0855,
+    -121.599,
+    37.0777,
+    -121.595
    ],
    "width_ft": 75.0,
-   "length_ft": 2798.0,
+   "length_ft": 3095.0,
    "idents": [
-    "14R",
-    "32L"
+    "14",
+    "32"
    ]
   },
   {
@@ -468,22 +461,6 @@
  ],
  "navaids": [
   {
-   "ident": "CC",
-   "name": "Kanan",
-   "type": "NDB",
-   "lat": 38.0464,
-   "lon": -122.033,
-   "frequency": "335"
-  },
-  {
-   "ident": "CCR",
-   "name": "Concord",
-   "type": "VOR-DME",
-   "lat": 38.0449,
-   "lon": -122.045,
-   "frequency": "117.0"
-  },
-  {
    "ident": "LV",
    "name": "Reiga",
    "type": "NDB",
@@ -516,14 +493,6 @@
    "frequency": "113.9"
   },
   {
-   "ident": "PYE",
-   "name": "Point Reyes",
-   "type": "VORTAC",
-   "lat": 38.0798,
-   "lon": -122.868,
-   "frequency": "113.7"
-  },
-  {
    "ident": "SAU",
    "name": "Sausalito",
    "type": "VORTAC",
@@ -554,6 +523,78 @@
    "lat": 37.3747,
    "lon": -121.945,
    "frequency": "114.1"
+  }
+ ],
+ "spots": [
+  {
+   "lat": 37.37875,
+   "lon": -121.63054,
+   "feet": 4250
+  },
+  {
+   "lat": 37.44958,
+   "lon": -121.70144,
+   "feet": 3810
+  },
+  {
+   "lat": 37.51,
+   "lon": -121.70013,
+   "feet": 3780
+  },
+  {
+   "lat": 37.8027,
+   "lon": -121.91546,
+   "feet": 3730
+  },
+  {
+   "lat": 37.19125,
+   "lon": -121.84455,
+   "feet": 3710
+  },
+  {
+   "lat": 37.5475,
+   "lon": -121.6069,
+   "feet": 3630
+  },
+  {
+   "lat": 37.23291,
+   "lon": -121.9194,
+   "feet": 3400
+  },
+  {
+   "lat": 37.28083,
+   "lon": -122.09271,
+   "feet": 3190
+  },
+  {
+   "lat": 37.20791,
+   "lon": -122.17018,
+   "feet": 2640
+  },
+  {
+   "lat": 37.49958,
+   "lon": -121.87213,
+   "feet": 2610
+  },
+  {
+   "lat": 37.83708,
+   "lon": -122.5969,
+   "feet": 2530
+  },
+  {
+   "lat": 37.74958,
+   "lon": -121.80779,
+   "feet": 2510
+  },
+  {
+   "lat": 37.42875,
+   "lon": -122.30804,
+   "feet": 2350
+  },
+  {
+   "lat": 37.27354,
+   "lon": -122.23714,
+   "feet": 2310
   }
  ]
 }

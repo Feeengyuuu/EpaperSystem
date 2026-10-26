@@ -4,8 +4,9 @@
 - An airport board for SFO, SJC and OAK under their logos: the METAR's flight category in its standard colour
   (VFR green, MVFR blue, IFR red, LIFR magenta), wind, visibility or ceiling and temperature,
   with the FAA's status for the airport.
-- A radar scope on a chart of the Bay (USGS water and relief, OurAirports runways, airports and
-  navaids): range rings, bearing ticks, SFO's extended final approach course, each target
+- A radar scope framing SFO, OAK and SJC on a chart of the Bay (USGS water and relief, 3DEP
+  contours, height tints and spot elevations, OurAirports runways, airports and navaids): range
+  rings, bearing ticks, SFO's extended final approach course, each target
   with its history trail and an ATC data block (callsign; altitude in hundreds of feet and
   ground speed in tens of knots) on a leader line.
 - Flight progress strips for the nearest flights: the airline's wordmark, callsign, a phase
@@ -28,7 +29,8 @@ from utils.local_wordmark import paste_local_wordmark
 from utils.safe_image import ImageLimits, safe_open_image
 
 from .flight_radar import (
-    DEFAULT_CENTER_LABEL, DEFAULT_LATITUDE, DEFAULT_LONGITUDE, DEFAULT_RADIUS_NM, FAA_AIRPORTS, faa_label,
+    DEFAULT_CENTER_LABEL, DEFAULT_DISPLAY_RADIUS_NM, DEFAULT_LATITUDE, DEFAULT_LONGITUDE, DEFAULT_RADIUS_NM, FAA_AIRPORTS,
+    faa_label,
 )
 
 
@@ -48,6 +50,10 @@ APPROACH_FACTOR, APPROACH_MINUTES = 1.15, 2
 # SFO's runways 28L/28R: arrivals fly the extended centreline in from the east-south-east.
 SFO_FINAL_BEARING = 118
 SFO_FINAL_NM = 14
+# With no centre or range of its own set, the scope frames the Bay's three airports: centred on
+# the circle through SFO, OAK and SJC (13.2 NM round), with room to spare.
+BAY_VIEW_CENTER = (37.5001, -122.1472)
+BAY_VIEW_NM = 16
 HEADER_H = 46
 BOARD = (16, 52, 784, 92)
 SCOPE = (16, 98, 456, 468)
@@ -65,7 +71,17 @@ _CHART_LIMITS = ImageLimits(max_bytes=2 * 1024 * 1024, max_width=2048, max_heigh
 CHART_PLACES = (("旧金山", 37.7793, -122.4193), ("奥克兰", 37.8044, -122.2712), ("圣何塞", 37.3382, -121.8863),
                 ("帕洛阿尔托", 37.4419, -122.1430), ("海沃德", 37.6688, -122.0808), ("圣马特奥", 37.5630, -122.3255),
                 ("核桃溪", 37.9101, -122.0652))
+OCEAN_LABEL = (37.40, -122.52)
 HOME = (37.5485, -121.9886)
+# Terrain from the chart's elevation layer: the land tinted towards TERRAIN (day, night) by
+# TERRAIN_TINTS per TINT_BAND_FT band, contours every CONTOUR_FT with an index contour every
+# INDEX_CONTOUR_FT, drawn in TERRAIN blended this far from the panel (thin, index).
+TERRAIN = ((160, 122, 76), (176, 150, 104))
+TINT_BAND_FT = 1000
+TERRAIN_TINTS = (0.0, 0.10, 0.18, 0.26, 0.33)
+CONTOUR_FT, INDEX_CONTOUR_FT = 200, 1000
+CONTOUR_STRENGTH = (0.38, 0.62)
+CONTOUR_SMOOTHING = 1.4
 EXPLICIT_MAPS = {"google", "google_static", "image", "static_image", "local", "local_image", "local_calibrated",
                  "none", "off", "false"}
 WHITE = (255, 255, 255)
@@ -213,10 +229,10 @@ def _scope(plugin, image, snapshot, theme, settings, device_config):
     cx, cy = (inner[0] + inner[2]) / 2, (inner[1] + inner[3]) / 2 + 4
     radius_px = min(inner[2] - inner[0], inner[3] - inner[1]) / 2 - 12
     center = snapshot.get("center") or {}
-    center_lat = plugin._number(center.get("lat")) or DEFAULT_LATITUDE
-    center_lon = plugin._number(center.get("lon")) or DEFAULT_LONGITUDE
-    radius_nm = plugin._number(snapshot.get("radius_nm")) or DEFAULT_RADIUS_NM
-    display_nm = plugin._display_radius(settings, radius_nm)
+    center_lat, center_lon, display_nm = scope_view(plugin, snapshot, settings)
+    airport = plugin._project_geo(plugin._number(center.get("lat")) or DEFAULT_LATITUDE,
+                                  plugin._number(center.get("lon")) or DEFAULT_LONGITUDE, center_lat, center_lon,
+                                  display_nm, cx, cy, radius_px)
     mode = str(settings.get("mapMode") or "").strip().lower()
     charted = mode not in EXPLICIT_MAPS and _chart_layer(plugin, image, inner, (center_lat, center_lon), display_nm,
                                                           (cx, cy), radius_px, theme)
@@ -238,7 +254,7 @@ def _scope(plugin, image, snapshot, theme, settings, device_config):
     trail_draw = ImageDraw.Draw(overlay)
     for plane, (px, py) in plotted:
         plugin._draw_plane_trail(trail_draw, px, py, plane, cx, cy, label, center_lat, center_lon, display_nm,
-                                 radius_px, theme)
+                                 radius_px, theme, airport_xy=airport)
     if plotted:
         image.paste(Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB"))
     draw = ImageDraw.Draw(image)
@@ -254,6 +270,26 @@ def _scope(plugin, image, snapshot, theme, settings, device_config):
     _legend(plugin, draw, inner, theme)
     if not plotted:
         draw.text((cx, cy), "NO TRAFFIC", font=plugin._font(16, "bold"), fill=theme["muted"], anchor="mm")
+
+
+def scope_view(plugin, snapshot, settings):
+    """(latitude, longitude, radius NM) the scope shows: the page's own centre and range when its
+    settings give ones other than the form's defaults, else the Bay's three airports framed by
+    BAY_VIEW_CENTER and BAY_VIEW_NM."""
+    settings = settings or {}
+    center = snapshot.get("center") or {}
+    radius_nm = plugin._number(snapshot.get("radius_nm")) or DEFAULT_RADIUS_NM
+
+    def own(key, default):
+        value = plugin._number(settings.get(key))
+        return value is not None and abs(value - default) > 1e-4
+
+    if own("latitude", DEFAULT_LATITUDE) or own("longitude", DEFAULT_LONGITUDE):
+        return (plugin._number(center.get("lat")) or DEFAULT_LATITUDE, plugin._number(center.get("lon")) or DEFAULT_LONGITUDE,
+                plugin._display_radius(settings, radius_nm))
+    if own("displayRadiusNm", DEFAULT_DISPLAY_RADIUS_NM):
+        return (*BAY_VIEW_CENTER, plugin._display_radius(settings, radius_nm))
+    return (*BAY_VIEW_CENTER, min(BAY_VIEW_NM, radius_nm))
 
 
 @lru_cache(maxsize=1)
@@ -295,13 +331,23 @@ def _chart_layer(plugin, image, box, center, display_nm, centre, radius, theme):
             round((bounds["north"] - north) / (bounds["north"] - bounds["south"]) * height),
             round((east - bounds["west"]) / (bounds["east"] - bounds["west"]) * width),
             round((bounds["north"] - south) / (bounds["north"] - bounds["south"]) * height))
-    water, shade, _unused = layers.crop(crop).resize(size, Image.Resampling.BILINEAR).split()
-    land = Image.new("RGB", size, theme["panel"])
-    hills = Image.new("RGB", size, plugin._blend_color(theme["ink"], theme["panel"], 0.30))
+    water, shade, heights = layers.crop(crop).resize(size, Image.Resampling.BILINEAR).split()
+    # A light blur smooths the stored height steps, so contours run as lines rather than stairs.
+    heights = heights.filter(ImageFilter.GaussianBlur(CONTOUR_SMOOTHING))
+    sea_mask = water.point(lambda value: 255 if value > 127 else 0)
+    terrain = TERRAIN[1 if sum(theme["panel"]) < 330 else 0]
+    step = int(manifest.get("elevation_step_ft") or 20)
+    land = _terrain_tints(heights, step, theme["panel"], terrain)
+    hills = Image.new("RGB", size, plugin._blend_color(theme["ink"], theme["panel"], 0.24))
     land = Image.composite(hills, land, shade.point(lambda value: min(255, value * 2)))
     sea = Image.composite(Image.new("RGB", size, theme["map_water"]), land, water)
-    shore = ImageChops.subtract(water.point(lambda value: 255 if value > 127 else 0),
-                                water.point(lambda value: 255 if value > 127 else 0).filter(ImageFilter.MinFilter(3)))
+    # Contours on land only: thin every CONTOUR_FT, a double-width index line every INDEX_CONTOUR_FT.
+    dry = ImageChops.invert(sea_mask.filter(ImageFilter.MaxFilter(3)))
+    for every, both_sides, strength in ((CONTOUR_FT, False, CONTOUR_STRENGTH[0]),
+                                        (INDEX_CONTOUR_FT, True, CONTOUR_STRENGTH[1])):
+        lines = ImageChops.multiply(_contour_lines(heights, max(1, every // step), both_sides), dry)
+        sea.paste(plugin._blend_color(terrain, theme["panel"], strength), mask=lines)
+    shore = ImageChops.subtract(sea_mask, sea_mask.filter(ImageFilter.MinFilter(3)))
     sea.paste(theme["map_water_line"], mask=shore)
     image.paste(sea, (x0, y0))
     draw = ImageDraw.Draw(image)
@@ -314,9 +360,18 @@ def _chart_layer(plugin, image, box, center, display_nm, centre, radius, theme):
         point = at(lat, lon)
         if point and x0 < point[0] < x1 and y0 < point[1] < y1:
             draw.text(point, name, font=plugin._city_font(8, "normal"), fill=theme["muted"], anchor="mm")
-    ocean = at(lat0 - 0.12, lon0 - 0.48)
+    ocean = at(*OCEAN_LABEL)
     if ocean:
         draw.text(ocean, "太平洋", font=plugin._city_font(10, "bold"), fill=theme["map_water_line"], anchor="mm")
+    # Spot elevations as on a sectional: a summit's dot and its height in feet.
+    for spot in features.get("spots") or []:
+        point = at(spot["lat"], spot["lon"])
+        if not point or not (x0 + 8 < point[0] < x1 - 8 and y0 + 8 < point[1] < y1 - 8):
+            continue
+        sx, sy = point
+        draw.polygon(((sx, sy - 3), (sx - 3, sy + 2), (sx + 3, sy + 2)), fill=plugin._blend_color(terrain, theme["ink"], 0.4))
+        draw.text((sx, sy + 3), f"{spot['feet']:,}", font=small, fill=theme["muted"], anchor="ma", stroke_width=2,
+                  stroke_fill=theme["panel"])
     sizes = {"large_airport": 3, "medium_airport": 2, "small_airport": 2}
     kinds = {airport["ident"]: airport for airport in features.get("airports") or []}
     for runway in features.get("runways") or []:
@@ -346,6 +401,24 @@ def _chart_layer(plugin, image, box, center, display_nm, centre, radius, theme):
         draw.text((hx + 5, hy), "家", font=plugin._city_font(9, "bold"), fill=theme["ink"], anchor="lm",
                   stroke_width=2, stroke_fill=theme["panel"])
     return True
+
+
+def _terrain_tints(heights, step, panel, terrain):
+    """The panel tinted towards the terrain colour by height band, as a sectional's tints."""
+    def share(units):
+        return round(255 * TERRAIN_TINTS[min(len(TERRAIN_TINTS) - 1, units * step // TINT_BAND_FT)])
+
+    return Image.composite(Image.new("RGB", heights.size, terrain), Image.new("RGB", heights.size, panel),
+                           heights.point(share))
+
+
+def _contour_lines(heights, units, both_sides):
+    """A mask of the lines where the height crosses a multiple of ``units``: the low side's pixels,
+    or both sides' for a heavier line."""
+    bands = heights.point(lambda value: value // units)
+    higher = bands.filter(ImageFilter.MaxFilter(3))
+    edges = ImageChops.difference(higher, bands.filter(ImageFilter.MinFilter(3)) if both_sides else bands)
+    return edges.point(lambda value: 255 if value else 0)
 
 
 def _navaid_symbol(draw, point, kind, theme):

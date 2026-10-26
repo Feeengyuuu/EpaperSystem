@@ -1566,11 +1566,14 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
             for right, forward in points
         ]
 
-    def _draw_plane_trail(self, draw, x, y, plane, cx, cy, center_label, center_lat, center_lon, radius_nm, radius_px, theme):
+    def _draw_plane_trail(self, draw, x, y, plane, cx, cy, center_label, center_lat, center_lon, radius_nm, radius_px, theme,
+                          airport_xy=None):
+        """``airport_xy``: where the centre airport sits on the scope when the scope is not centred
+        on it; a flight without a route counts as arriving when it heads towards that point."""
         track = self._number(plane.get("track"))
         if plane.get("on_ground"):
             return
-        flow = self._aircraft_flow(plane, center_label, cx, cy, x, y, track)
+        flow = self._aircraft_flow(plane, center_label, *(airport_xy or (cx, cy)), x, y, track)
         color = theme["trail_departure"] if flow == "departure" else theme["trail_arrival"]
         history_points = self._project_track_points(
             plane.get("track_points") or [],

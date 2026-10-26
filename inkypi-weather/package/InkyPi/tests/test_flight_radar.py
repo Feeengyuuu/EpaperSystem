@@ -669,9 +669,40 @@ def test_strips_and_scope_carry_airport_marks_phase_icons_and_the_chart():
     now = datetime(2026, 10, 25, 9, 12, tzinfo=flight_radar_module.ZoneInfo("America/Los_Angeles"))
     charted = plugin._render(snapshot, (800, 480), {"_inkypi_theme": _canonical_theme("day")}, now)
     plain = plugin._render(snapshot, (800, 480), {"_inkypi_theme": _canonical_theme("day"), "mapMode": "none"}, now)
-    # The chart paints water west of SFO; with no map the panel stays plain there.
-    x, y = 120, 300
+    # The chart paints the Bay south of the scope's centre; with no map the panel stays plain there.
+    x, y = 270, 300
     assert charted.getpixel((x, y)) != plain.getpixel((x, y))
+
+
+def test_scope_frames_the_three_bay_airports_on_a_terrain_chart():
+    from plugins.flight_radar import pro_view
+
+    plugin = _plugin()
+    snapshot = _sample_snapshot()
+    lat, lon, radius = pro_view.scope_view(plugin, snapshot, {})
+    assert radius < flight_radar_module.DEFAULT_DISPLAY_RADIUS_NM
+    # SFO, OAK and SJC all sit inside the ring, at least a mile and a half in from it.
+    for airport in pro_view.BAY_AIRPORTS.values():
+        assert plugin._distance_nm(lat, lon, *airport) < radius - 1.5
+    # The settings form's defaults keep that view; the page's own centre or range replaces it.
+    defaults = {"latitude": "37.6213", "longitude": "-122.3790", "displayRadiusNm": "20"}
+    assert pro_view.scope_view(plugin, snapshot, defaults) == (lat, lon, radius)
+    assert pro_view.scope_view(plugin, snapshot, {"displayRadiusNm": "30"}) == (lat, lon, 30)
+    own = pro_view.scope_view(plugin, {**snapshot, "center": {"lat": 37.7, "lon": -122.2}}, {"latitude": "37.7",
+                                                                                             "longitude": "-122.2"})
+    assert own == (37.7, -122.2, flight_radar_module.DEFAULT_DISPLAY_RADIUS_NM)
+
+    # The chart covers that view and carries 3DEP heights and the summits' spot elevations.
+    manifest, layers, features = pro_view._chart()
+    bounds = manifest["bounds_wgs84"]
+    assert bounds["south"] < lat - radius / 60 and bounds["north"] > lat + radius / 60
+    heights = layers.getchannel("B")
+    assert heights.getextrema()[1] * manifest["elevation_step_ft"] > 3000
+    assert any(spot["feet"] > 2000 for spot in features["spots"])
+    # Contours: one line where the height crosses a band; a double line for an index contour.
+    ramp = Image.linear_gradient("L").resize((20, 40))
+    assert 0 < pro_view._contour_lines(ramp, 64, False).histogram()[255] < pro_view._contour_lines(ramp, 64, True).histogram()[255]
+    assert pro_view._contour_lines(Image.new("L", (20, 20), 30), 10, True).getextrema() == (0, 0)
 
 
 def test_strips_estimate_landing_and_take_off_times_for_bay_flights():
