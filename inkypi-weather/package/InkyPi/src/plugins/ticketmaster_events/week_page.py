@@ -26,6 +26,9 @@ STATUS_LABELS = {"onsale": "售票中", "offsale": "停售", "postponed": "延�
 # Each kind's Chinese name and sticker (genre_icons/<icon>.png), by Ticketmaster sub-genre or
 # genre; a kind not named here takes its segment's.
 GENRE_ICON_DIR = Path(__file__).with_name("genre_icons")
+# Ticketmaster's wordmark (tools/build_source_logos.py), this tall before the header's weekly count.
+TICKETMASTER_LOGO_PATH = Path(__file__).with_name("assets") / "ticketmaster.png"
+TICKETMASTER_LOGO_HEIGHT = 18
 GENRE_KINDS = {
     "rock": ("摇滚", "guitar"), "metal": ("金属", "guitar"), "alternative": ("另类", "guitar"), "punk": ("朋克", "guitar"),
     "pop": ("流行", "microphone"), "r&b": ("R&B", "microphone"), "ballads/romantic": ("情歌", "microphone"),
@@ -127,6 +130,23 @@ def price_label(price, lowest=False):
     return f"{text} 起" if starting else text.replace("-", "–")
 
 
+@lru_cache(maxsize=4)
+def _ticketmaster_logo(height, ink=None):
+    """Ticketmaster's wordmark (assets/ticketmaster.png, black) ``height`` tall, in ``ink`` when
+    given (a dark page); None without the file."""
+    try:
+        with Image.open(TICKETMASTER_LOGO_PATH) as source:
+            mark = source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+    mark = mark.resize((max(1, round(mark.width * height / mark.height)), height), Image.Resampling.LANCZOS)
+    if ink is not None:
+        tinted = Image.new("RGBA", mark.size, (*ink, 255))
+        tinted.putalpha(mark.getchannel("A"))
+        mark = tinted
+    return mark
+
+
 @lru_cache(maxsize=64)
 def _genre_icon(name, size, ground, ink):
     """A kind's sticker ``size`` px on its longer side, its dark outlines in ``ink`` where they
@@ -205,8 +225,12 @@ class WeekPageMixin:
         counted = [day["count"] for day in days if isinstance(day.get("count"), int)]
         total_font, small = self._font(22, bold=True), self._font(13, bold=True)
         headline = f"本周 {sum(counted):,} 场" if counted else "本地活动"
-        draw.text((right - draw.textlength(headline, font=total_font), 3), headline,
-                  fill=colors.get("accent", colors["ink"]), font=total_font)
+        headline_left = right - draw.textlength(headline, font=total_font)
+        draw.text((headline_left, 3), headline, fill=colors.get("accent", colors["ink"]), font=total_font)
+        # The listings' source by Ticketmaster's own wordmark, before the week's count.
+        mark = _ticketmaster_logo(TICKETMASTER_LOGO_HEIGHT, None if colors["mode"] != "dark" else tuple(colors["ink"]))
+        if mark is not None:
+            image.paste(mark, (round(headline_left) - 14 - mark.width, 17 - mark.height // 2), mark)
         when = generated_at.strftime("%m/%d %H:%M") if isinstance(generated_at, datetime) else ""
         note = f"{self._place_label(settings)} · {'缓存 ' if stale else ''}{when} 更新"
         note_w = draw.textlength(note, font=small)

@@ -1,0 +1,15 @@
+{
+  "logos": {
+    "ticketmaster": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7d/TicketMaster_wordmark.svg/500px-TicketMaster_wordmark.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:TicketMaster_wordmark.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "9c6dc4742128191ef258fbd34020a6e6593dfcdbbe9b9c4f012bb072c191dd60",
+      "size": [
+        451,
+        64
+      ],
+      "sha256": "ba2574f276bd54c8667717b192fcfb8d25787765efd04f99bf5c4ac8fea2c140"
+    }
+  }
+}
