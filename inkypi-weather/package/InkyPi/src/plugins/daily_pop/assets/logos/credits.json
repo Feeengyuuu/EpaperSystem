@@ -112,6 +112,21 @@
           "sha256": "0b5e9e0fbdccbfbbcdf6899599048ffa1ad5175dc7f10669656d56d921fce6fd"
         }
       ]
+    },
+    {
+      "name": "wiki_globe",
+      "description_page": "https://commons.wikimedia.org/wiki/File:Wikipedia-logo-v2.svg",
+      "license": "CC BY-SA 3.0",
+      "author": "Version 1 by Nohat (concept by Paullusmagnus); Wikimedia",
+      "source_png": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/80/Wikipedia-logo-v2.svg/960px-Wikipedia-logo-v2.svg.png",
+      "source_sha256": "5bf2c814ac914240d3146ef8dd6c9e129f6c0d67bf629a11941c2202cccd6ae6",
+      "modifications": "The puzzle globe trimmed to its alpha, 240 px at most; the page shades it as a sphere when drawing.",
+      "files": [
+        {
+          "file": "wiki_globe.png",
+          "sha256": "1556ca04ffe1bdbf4070764d94387bbc205ab56a9662bdd6feea9b5962ab2797"
+        }
+      ]
     }
   ]
 }

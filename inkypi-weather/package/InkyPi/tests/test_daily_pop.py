@@ -67,6 +67,36 @@ def test_epic_frames_sort_and_the_globe_turns_with_the_time_of_day():
     # 10:30 Pacific is 17:30 UTC: the 20:00 frame is nearest by time of day.
     assert sources.epic_frame_index(epic, NOW) == 2
     assert sources.facing(5, -100).endswith("上空")
+    assert sources.epic_frames_ahead(epic, NOW, 2) == [2, 0]
+    assert sources.epic_frames_by_nearness(epic, NOW) == [2, 1, 0]
+
+
+def test_a_cached_render_shows_the_nearest_cached_earth_not_an_empty_circle(tmp_path, monkeypatch):
+    from plugins.daily_pop import daily_pop as module
+
+    rows = [{"image": f"epic_1b_20261023{hour:02d}0000", "date": f"2026-10-23 {hour:02d}:00:00",
+             "centroid_coordinates": {"lat": 0, "lon": 0}} for hour in (2, 14, 20)]
+    epic = sources.normalize_epic(rows)
+    cached = {epic["frames"][1]["image"]}  # only the 14:00 frame was fetched at the last refresh
+    fetched = []
+
+    def load(urls, _directory, *, cached_only, **_options):
+        if not cached_only:
+            fetched.extend(urls)
+            cached.update(urls)
+        return {url: Image.new("RGB", (4, 4)) for url in urls if url in cached}
+
+    monkeypatch.setattr(module, "load_thumbnails", load)
+    monkeypatch.setattr(module, "EPIC_PREFETCH", 2)
+    plugin = module.DailyPop({"id": "daily_pop"})
+    monkeypatch.setattr(plugin, "_cache_subdir", lambda name: tmp_path / name)
+
+    # Now wants the 20:00 frame, which the cache lacks: the nearest cached one (14:00) stands in.
+    index, url, picture = plugin._earth(epic, NOW, False, {})
+    assert (index, url) == (1, epic["frames"][1]["image"]) and picture is not None
+    # A refresh fetches the frame for now and the ones the clock turns to next.
+    index, url, _picture = plugin._earth(epic, NOW, True, {})
+    assert index == 2 and fetched == [epic["frames"][i]["image"] for i in (2, 0)]
 
 
 def test_chart_moves_mark_new_entries_and_places_gained():
@@ -110,3 +140,16 @@ def test_page_renders_long_text_without_any_images(mode):
 
     assert image.size == (800, 480)
     assert len(image.getcolors(800 * 480)) > 4
+
+
+def test_wiki_globe_is_a_lit_sphere_with_a_glow():
+    from plugins.daily_pop.render import WIKI_GLOW_PAD, wiki_globe
+
+    sphere = wiki_globe(94, False)
+
+    assert sphere.size == (94 + 2 * WIKI_GLOW_PAD,) * 2
+    lit, shaded = sphere.getpixel((40, 40)), sphere.getpixel((80, 84))
+    # Light from the upper left: the near side brighter than the far side.
+    assert sum(lit[:3]) > sum(shaded[:3])
+    # The blue glow just outside the disc, on its right.
+    assert sphere.getpixel((94 + WIKI_GLOW_PAD + 1, 53))[3] > 0

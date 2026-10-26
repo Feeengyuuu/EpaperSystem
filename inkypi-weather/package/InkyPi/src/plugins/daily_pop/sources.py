@@ -292,9 +292,24 @@ def epic_frame_index(epic, now):
     return min(range(len(frames)), key=lambda index: distance(frames[index]))
 
 
-def epic_frame_for(epic, now):
+def epic_frames_ahead(epic, now, count):
+    """The frame for now and the ``count - 1`` the clock turns to next, as indexes."""
+    frames = (epic or {}).get("frames") or []
     index = epic_frame_index(epic, now)
-    return None if index is None else epic["frames"][index]["image"]
+    return [] if index is None else [(index + step) % len(frames) for step in range(min(count, len(frames)))]
+
+
+def epic_frames_by_nearness(epic, now):
+    """Every frame's index, the one whose time of day is nearest now's first."""
+    frames = (epic or {}).get("frames") or []
+    minute = now.astimezone(timezone.utc).hour * 60 + now.astimezone(timezone.utc).minute
+
+    def distance(index):
+        taken = datetime.fromisoformat(frames[index]["taken"])
+        delta = abs(taken.hour * 60 + taken.minute - minute)
+        return min(delta, 1440 - delta)
+
+    return sorted(range(len(frames)), key=distance)
 
 
 def facing(lat, lon):

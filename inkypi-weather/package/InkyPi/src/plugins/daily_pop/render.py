@@ -7,11 +7,12 @@ charts mark each entry's move since the previous refresh, the globe follows the 
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 from utils.local_wordmark import paste_local_wordmark
 from utils.page_canvas import PageCanvas
@@ -47,6 +48,20 @@ BAR = 6
 EARTH_SKY_LEVEL = 24
 EARTH_LIMB_INSET = 0.012
 EARTH_SIZE = 136
+# 维基热读: the Wikipedia globe (assets/logos/wiki_globe.png) shaded as a sphere, its centre
+# WIKI_GLOBE_X into the card so its left side sinks behind the frame; the titles sit WIKI_ROW
+# apart on an orbit WIKI_ORBIT_GAP outside it, the first ones larger.
+WIKI_GLOBE_RADIUS = 47
+WIKI_GLOBE_X = 18
+WIKI_GLOW_PAD = 6
+WIKI_ORBIT_GAP = 14
+WIKI_ROW = 24
+WIKI_BAR = 4
+WIKI_TITLE_MIN = 10
+WIKI_LIGHT = (0.32, 0.28)
+WIKI_SHADE = 0.5
+WIKI_NODE_RADII = (8, 7, 7, 6, 6)
+WIKI_TITLE_SIZES = (14, 13, 13, 12, 12)
 # Bilibili: the lead video's cover height and the rows' thumbnail height at most.
 BILI_LEAD_HEIGHT = 120
 BILI_THUMB_HEIGHT = 50
@@ -276,27 +291,104 @@ def _bangumi(canvas, payload, images, now):
 
 # --- Wikipedia most read -------------------------------------------------------------------------
 
+@lru_cache(maxsize=4)
+def wiki_globe(diameter, night):
+    """Wikipedia's puzzle globe shaded as a lit sphere: light from the upper left, the far side
+    in shade, a soft highlight and a thin blue glow round it. An RGBA square with WIKI_GLOW_PAD
+    around the ``diameter`` disc; None without the file."""
+    try:
+        with Image.open(ASSETS / "logos" / "wiki_globe.png") as source:
+            art = source.convert("RGBA")
+    except OSError:
+        return None
+    art = art.resize((diameter, max(1, round(art.height * diameter / art.width))), Image.Resampling.LANCZOS)
+    pad, size = WIKI_GLOW_PAD, diameter + 2 * WIKI_GLOW_PAD
+    globe = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    # The logo's round foot sits on the circle; its missing pieces stay open at the top.
+    globe.alpha_composite(art, (pad, pad + diameter - art.height))
+    light = Image.radial_gradient("L").resize((diameter * 2, diameter * 2), Image.Resampling.BILINEAR)
+    lit = (round(diameter * (1 - WIKI_LIGHT[0])), round(diameter * (1 - WIKI_LIGHT[1])))
+    light = light.crop((lit[0], lit[1], lit[0] + diameter, lit[1] + diameter))
+    shade = light.point(lambda value: 255 - round(value * WIKI_SHADE))
+    rgb = Image.merge("RGB", globe.crop((pad, pad, pad + diameter, pad + diameter)).split()[:3])
+    rgb = ImageChops.multiply(rgb, Image.merge("RGB", (shade, shade, shade)))
+    glint = Image.new("L", (diameter, diameter), 0)
+    spot = diameter * WIKI_LIGHT[0], diameter * WIKI_LIGHT[1]
+    ImageDraw.Draw(glint).ellipse((spot[0] - diameter * 0.16, spot[1] - diameter * 0.12,
+                                   spot[0] + diameter * 0.16, spot[1] + diameter * 0.12), fill=150)
+    glint = glint.filter(ImageFilter.GaussianBlur(diameter * 0.07))
+    rgb = Image.composite(Image.new("RGB", rgb.size, (255, 255, 255)), rgb, glint)
+    disc = globe.getchannel("A").crop((pad, pad, pad + diameter, pad + diameter))
+    glow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse((pad - 1, pad - 1, pad + diameter, pad + diameter), outline=(*BRANDS["wiki"], 255),
+                                 width=3 if night else 2)
+    glow = glow.filter(ImageFilter.GaussianBlur(2.2))
+    sphere = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    sphere.alpha_composite(glow)
+    body = rgb.convert("RGBA")
+    body.putalpha(disc)
+    sphere.alpha_composite(body, (pad, pad))
+    return sphere
+
+
 def _wiki(canvas, payload):
-    articles = payload["wiki"]["data"].get("articles") or []
+    """The most read set round the Wikipedia globe: a lit sphere sunk into the card's left
+    edge, a thin orbit round it and the five titles in order along the orbit, the first one
+    largest; each one's views under it."""
+    articles = (payload["wiki"]["data"].get("articles") or [])[:5]
     top = _card(canvas, "wiki", "中文维基 · 昨日阅读量")
     left, _top, right, bottom = CARDS["wiki"]
     if not articles:
         canvas.text(((left + right) / 2, (top + bottom) / 2), "维基数据暂不可用", 14, "muted", anchor="mm")
         return
-    most = max(article.get("views") or 1 for article in articles)
-    row_h = (bottom - 6 - top) / 5
-    for index, article in enumerate(articles[:5]):
-        y = top + index * row_h + row_h / 2
-        canvas.text((left + 14, y), str(index + 1), 12, BRANDS["wiki"] if index < 3 else "muted", anchor="mm")
+    night = sum(canvas.color("paper")) < 200
+    centre = (left + WIKI_GLOBE_X, (top + bottom - 6) / 2)
+    sphere = wiki_globe(WIKI_GLOBE_RADIUS * 2, night)
+    if sphere is not None:
+        x = round(centre[0] - sphere.width / 2)
+        y = round(centre[1] - sphere.height / 2)
+        # Only the part inside the card's frame shows: the globe rises from its edge.
+        cut = max(0, left + 1 - x)
+        visible = sphere.crop((cut, 0, sphere.width, sphere.height))
+        canvas.image.paste(visible, (x + cut, y), visible)
+    orbit = WIKI_GLOBE_RADIUS + WIKI_ORBIT_GAP
+    # The rows keep an even step down the card; each sits where the orbit crosses its height.
+    rows = [centre[1] + (index - (len(articles) - 1) / 2) * WIKI_ROW for index in range(len(articles))]
+    span = math.degrees(math.asin(min(1.0, max(abs(y - centre[1]) for y in rows) / orbit)))
+    canvas.draw.arc((centre[0] - orbit, centre[1] - orbit, centre[0] + orbit, centre[1] + orbit),
+                    -span - 8, span + 8, fill=BRANDS["wiki"], width=1)
+    outer = orbit + 7
+    canvas.draw.arc((centre[0] - outer, centre[1] - outer, centre[0] + outer, centre[1] + outer),
+                    -span - 4, span + 4, fill=canvas.color("rule"), width=1)
+    most = max(article.get("views") or 0 for article in articles) or 1
+    for index, (article, y) in enumerate(zip(articles, rows)):
+        node = (centre[0] + math.sqrt(max(0.0, orbit ** 2 - (y - centre[1]) ** 2)), y)
+        radius = WIKI_NODE_RADII[index]
+        lead = index < 3
+        canvas.draw.ellipse((node[0] - radius, node[1] - radius, node[0] + radius, node[1] + radius),
+                            fill=BRANDS["wiki"] if lead else canvas.color("paper"),
+                            outline=BRANDS["wiki"] if lead else canvas.color("rule"), width=1)
+        canvas.text(node, str(index + 1), radius + 3, (255, 255, 255) if lead else "muted", anchor="mm")
+        text_x = node[0] + radius + 5
+        # The title has the whole row; a long one steps down in size before it would be cut.
+        width = right - 8 - text_x
+        size = next((size for size in range(WIKI_TITLE_SIZES[index], WIKI_TITLE_MIN - 1, -1)
+                     if canvas.width(article.get("title") or "", size) <= width), WIKI_TITLE_MIN)
+        canvas.text((text_x, y - 6), article.get("title"), size, anchor="lm", width=width)
+        # Yesterday's reads in a small box at the end of the bar that draws them.
         views = count_text(article.get("views"))
-        views_w = canvas.width(views, 10, bold=False)
-        bar_right = right - 14 - views_w - 6
-        bar_left = left + 28
-        # How it compares with the most read, as a thin solid bar under the title.
-        share = max(0.08, (article.get("views") or 0) / most)
-        canvas.draw.rectangle((bar_left, y + 7, bar_left + (bar_right - bar_left) * share, y + 9), fill=BRANDS["wiki"])
-        canvas.text((bar_left, y - 2), article.get("title"), 12, anchor="lm", width=bar_right - bar_left)
-        canvas.text((right - 12, y - 2), views, 10, "muted", anchor="rm", bold=False)
+        box_w = canvas.width(views, 9, bold=False) + 8
+        box = (right - 8 - box_w, y, right - 8, y + 11)
+        canvas.draw.rounded_rectangle(box, radius=3, outline=BRANDS["wiki"] if lead else canvas.color("rule"), width=1)
+        canvas.text(((box[0] + box[2]) / 2, (box[1] + box[3]) / 2), views, 9, "ink" if lead else "muted",
+                    anchor="mm", bold=False)
+        # Yesterday's reads as a bar on a track: the most read fills it, the rest in proportion.
+        track = (text_x, y + 4, box[0] - 4, y + 4 + WIKI_BAR)
+        canvas.draw.rounded_rectangle(track, radius=WIKI_BAR / 2, fill=canvas.color("rule"))
+        share = max(0.04, (article.get("views") or 0) / most)
+        fill = (track[0], track[1], track[0] + (track[2] - track[0]) * share, track[3])
+        canvas.draw.rounded_rectangle(fill, radius=WIKI_BAR / 2,
+                                      fill=BRANDS["wiki"] if lead else canvas.color("muted"))
 
 
 # --- Earth ---------------------------------------------------------------------------------------
@@ -327,7 +419,10 @@ def _epic(canvas, payload, images, now):
     frames = data.get("frames") or []
     top = _card(canvas, "epic", "NASA EPIC · DSCOVR")
     left, _top, right, bottom = CARDS["epic"]
-    index = sources.epic_frame_index(data, now)
+    # The frame the plugin found a picture for (the nearest cached one when now's is missing).
+    index = payload.get("epic_frame_index")
+    if index is None or not 0 <= index < len(frames):
+        index = sources.epic_frame_index(data, now)
     frame = frames[index] if index is not None else None
     picture = images.get(sources.safe_image_url(payload.get("epic_frame_url")))
     size = min(EARTH_SIZE, bottom - top - 22)

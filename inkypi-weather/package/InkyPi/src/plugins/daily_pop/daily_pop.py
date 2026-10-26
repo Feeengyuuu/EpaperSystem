@@ -32,6 +32,10 @@ CACHE_SCHEMA = 1
 CACHE_BUDGET = CacheBudget(30 * 86400, 16, 4 * 1024 * 1024)
 DEFAULT_FONT = "Microsoft YaHei"
 TASK_SECONDS = 50
+# EPIC's frames come about every 1 h 50 min: a refresh fetches the one for now and the next
+# ones, kept apart from the covers at twice the globe's size.
+EPIC_PREFETCH = 3
+EARTH_PIXELS = (272, 272)
 HISTORY_FILE = "history.json"
 
 
@@ -141,16 +145,37 @@ class DailyPop(BasePlugin):
         return {**results, "history": history, "provenance": combined_provenance(results.values())}
 
     def _images(self, payload, now, *, allow_network, context):
-        epic = payload["epic"]["data"]
-        frame_url = sources.epic_frame_for(epic, now)
         urls = [video.get("cover") for video in payload["bilibili"]["data"].get("videos", [])[:4]]
         urls += [show.get("cover") for show in payload["bangumi"]["data"].get("shows", [])[:6]]
         urls += [song.get("artwork") for song in payload["songs"]["data"].get("songs", [])[:3]]
-        urls += [payload["puzzle"]["data"].get("image"), frame_url]
-        images = load_thumbnails(urls, self._cache_subdir("covers"), http=get_http_client(), context=context,
-                                 cached_only=not allow_network, safe_url=sources.safe_image_url,
-                                 user_agent=sources.USER_AGENT, size=(480, 480))
-        return images, frame_url
+        urls += [payload["puzzle"]["data"].get("image")]
+        options = {"http": get_http_client(), "context": context, "safe_url": sources.safe_image_url,
+                   "user_agent": sources.USER_AGENT}
+        images = load_thumbnails(urls, self._cache_subdir("covers"), cached_only=not allow_network,
+                                 size=(480, 480), **options)
+        frame_index, frame_url, earth = self._earth(payload["epic"]["data"], now, allow_network, options)
+        if earth is not None:
+            images[frame_url] = earth
+        return images, frame_url, frame_index
+
+    def _earth(self, epic, now, allow_network, options):
+        """The EPIC frame to show and its picture: the one for now when it is at hand, else the
+        nearest one in time that is cached. A refresh also fetches the frames the clock turns
+        to next, so the cached renders between refreshes keep a globe as the hours pass (a frame
+        the cache lacks once left the circle empty)."""
+        frames = (epic or {}).get("frames") or []
+        directory = self._cache_subdir("earth")
+        if allow_network:
+            ahead = [frames[index]["image"] for index in sources.epic_frames_ahead(epic, now, EPIC_PREFETCH)]
+            for picture in load_thumbnails(ahead, directory, cached_only=False, size=EARTH_PIXELS, **options).values():
+                picture.close()
+        for index in sources.epic_frames_by_nearness(epic, now):
+            url = sources.safe_image_url(frames[index]["image"])
+            found = load_thumbnails([url], directory, cached_only=True, size=EARTH_PIXELS, **options)
+            if found:
+                return index, url, found[url]
+        index = sources.epic_frame_index(epic, now)
+        return index, None if index is None else frames[index]["image"], None
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
         return self.render_themed_image(settings, device_config, theme_render_only=True,
@@ -169,8 +194,8 @@ class DailyPop(BasePlugin):
         now = sources.local_now()
         _checkpoint(context)
         payload = self._payload(settings, now, allow_network=not cache_only, context=context)
-        images, frame_url = self._images(payload, now, allow_network=not cache_only, context=context)
-        payload["epic_frame_url"] = frame_url
+        images, frame_url, frame_index = self._images(payload, now, allow_network=not cache_only, context=context)
+        payload["epic_frame_url"], payload["epic_frame_index"] = frame_url, frame_index
         try:
             image = render_page(self.get_dimensions(device_config), payload, settings, now, images)
         finally:
