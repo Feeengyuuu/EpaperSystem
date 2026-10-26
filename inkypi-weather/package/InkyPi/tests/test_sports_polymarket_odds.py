@@ -77,3 +77,25 @@ def test_offers_come_from_one_cached_request_and_never_on_a_theme_redraw(monkeyp
     assert len(calls) == 1 and calls[0][1]["tag_id"] == lol_worlds_module.POLYMARKET_LOL_TAG_ID
     assert [offer["home_odds"] for offer in first] == ["1.13"] and again == first
     assert (tmp_path / "polymarket_lol.json").is_file()
+
+
+def test_the_stage_line_names_polymarket_by_its_logo():
+    from PIL import Image, ImageDraw
+
+    plugin = _plugin()
+    image = Image.new("RGB", (240, 30), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    drawn = []
+    original = plugin._draw_text_in_box
+
+    def record(draw, box, text, *args, **kwargs):
+        drawn.append(text)
+        return original(draw, box, text, *args, **kwargs)
+
+    plugin._draw_text_in_box = record
+
+    assert plugin._draw_stage_with_logo(image, draw, (0, 8, 200, 22), "Swiss Stage · BO1", "$456K", (200, 30, 30))
+    # The text either side of the logo; the name itself is the logo's own lettering.
+    assert drawn == ["Swiss Stage · BO1 · ", " $456K"]
+    # With no room for the logo the line is left to the text fallback.
+    assert not plugin._draw_stage_with_logo(image, draw, (0, 8, 90, 22), "Swiss Stage · BO1", "$456K", (200, 30, 30))

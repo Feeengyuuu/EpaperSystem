@@ -9,6 +9,8 @@ from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_ali
 # "G2 Esports", "Aurora Gaming"); NAVI is the acronym of Natus Vincere.
 CS2_TEAM_NAME_NOISE = frozenset({"team", "esports", "esport", "gaming", "club", "gg"})
 CS2_TEAM_ALIASES = {"navi": "natusvincere"}
+# Polymarket's logo (assets/logos/polymarket.png) on a LoL card's stage line, this tall.
+STAGE_LOGO_HEIGHT = 10
 
 SportsDashboard = None
 
@@ -2129,29 +2131,34 @@ class EsportsRenderMixin:
 
         team_a_label = self._lpl_display_team_from_event(event, "a", league_key=league_key)
         team_b_label = self._lpl_display_team_from_event(event, "b", league_key=league_key)
-        team_y = y + 104
-        team_a, font_a = self._fit_text(draw, team_a_label, left_area[1] - left_area[0], 19, bold=True, min_size=12)
-        team_b, font_b = self._fit_text(draw, team_b_label, right_area[1] - right_area[0], 19, bold=True, min_size=12)
+        # The names stand clear of the odds under them (the device's YaHei hangs lower than other faces).
+        team_y = y + 98
+        team_a, font_a = self._fit_text(draw, team_a_label, left_area[1] - left_area[0], 18, bold=True, min_size=12)
+        team_b, font_b = self._fit_text(draw, team_b_label, right_area[1] - right_area[0], 18, bold=True, min_size=12)
         self._draw_centered(draw, ((left_area[0] + left_area[1]) / 2, team_y), team_a, font_a, COLORS["text"])
         self._draw_centered(draw, ((right_area[0] + right_area[1]) / 2, team_y), team_b, font_b, COLORS["text"])
 
         odds = event.get("odds") or {}
         has_odds = not is_recent and bool(odds.get("team_a") and odds.get("team_b"))
         stage = self._lpl_stage_label(event, league_key=league_key)
+        stage_box = (card_x1 + 21, y + 138, card_x2 - 21, y + 152)
+        stage_colour = COLORS[config["accent"]]
         if has_odds:
-            # The match format, then the odds' source and how much has been traded on its market.
-            source = " ".join(part for part in (str(odds.get("bookmaker") or ""),
-                                                self._odds_volume_label(odds.get("volume"))) if part)
-            extras = [f"BO{odds['best_of']}" if odds.get("best_of") else "", source]
-            stage = " · ".join(part for part in (stage, *extras) if part)
-        stage_text, stage_font = self._fit_text(draw, stage, card_x2 - card_x1 - 42, 11, bold=True, min_size=7)
-        self._draw_centered_in_box(
-            draw,
-            (card_x1 + 21, y + 138, card_x2 - 21, y + 152),
-            stage_text,
-            stage_font,
-            COLORS[config["accent"]],
-        )
+            # The match format, then the odds' source (Polymarket by its logo) and how much has been
+            # traded on its market.
+            volume = self._odds_volume_label(odds.get("volume"))
+            bookmaker = str(odds.get("bookmaker") or "")
+            stage = " · ".join(part for part in (stage, f"BO{odds['best_of']}" if odds.get("best_of") else "") if part)
+            # The logo line may run a little closer to the card's sides than the text line does.
+            logo_box = (card_x1 + 12, stage_box[1], card_x2 - 12, stage_box[3])
+            if bookmaker == "Polymarket" and self._draw_stage_with_logo(image, draw, logo_box, stage, volume,
+                                                                        stage_colour):
+                stage = None
+            else:
+                stage = " · ".join(part for part in (stage, " ".join(part for part in (bookmaker, volume) if part)) if part)
+        if stage is not None:
+            stage_text, stage_font = self._fit_text(draw, stage, card_x2 - card_x1 - 42, 11, bold=True, min_size=7)
+            self._draw_centered_in_box(draw, stage_box, stage_text, stage_font, stage_colour)
 
         if has_odds:
             self._draw_lpl_odds_text(draw, (left_area[0], y + 117, left_area[1], y + 129), odds.get("team_a"), max_size=11)
@@ -2179,6 +2186,36 @@ class EsportsRenderMixin:
         if split - left >= 4:
             draw.rounded_rectangle((left, bar_top, split, bar_bottom), radius=3, fill=accent, outline=COLORS["border"],
                                    width=1)
+
+    def _draw_stage_with_logo(self, image, draw, box, stage, volume, colour):
+        """"Swiss Stage · BO1 · [Polymarket] $456K" centred in ``box``, the logo in the line's colour;
+        False (nothing drawn) without the logo or room for it."""
+        left, top, right, bottom = [int(value) for value in box]
+        logo = self._load_local_logo(os.path.join(LOCAL_TEAM_LOGO_DIR, "polymarket.png"), (200, STAGE_LOGO_HEIGHT),
+                                     alpha_threshold=8)
+        if not logo:
+            return False
+        tinted = Image.new("RGBA", logo.size, (*colour[:3], 255))
+        tinted.putalpha(logo.getchannel("A"))
+        head = f"{stage} · " if stage else ""
+        tail = f" {volume}" if volume else ""
+        for size in (11, 10, 9, 8):
+            font = self._font(size, True)
+            width = self._text_width(draw, head, font) + tinted.width + self._text_width(draw, tail, font)
+            if width <= right - left:
+                break
+        else:
+            return False
+        x = left + (right - left - width) / 2
+        middle = (top + bottom) / 2
+        if head:
+            self._draw_text_in_box(draw, (round(x), top, right, bottom), head, font, colour)
+            x += self._text_width(draw, head, font)
+        image.paste(tinted, (round(x), round(middle - tinted.height / 2)), tinted)
+        x += tinted.width
+        if tail:
+            self._draw_text_in_box(draw, (round(x), top, right, bottom), tail, font, colour)
+        return True
 
     @staticmethod
     def _odds_volume_label(volume):
