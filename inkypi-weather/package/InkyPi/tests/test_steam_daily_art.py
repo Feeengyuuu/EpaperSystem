@@ -42,6 +42,10 @@ class FakeDeviceConfig:
         return values.get(key, default)
 
 
+# The real translation call, kept before the offline fixture replaces it for every test.
+ORIGINAL_TRANSLATE_BLURBS = SteamDailyArt._translate_blurbs
+
+
 @pytest.fixture(autouse=True)
 def _offline_shelf_and_account(monkeypatch):
     """The shelf's store facts, the wishlist and the library stay offline in tests: without
@@ -2034,3 +2038,66 @@ def test_the_price_paid_is_the_largest_text_on_the_shelf(monkeypatch):
     assert max(sizes) == info_shelf.PRICE_SIZE
     assert info_shelf.PRICE_SIZE >= round(21 * 1.3)
     assert info_shelf.CUT_SIZE in sizes and info_shelf.ORIGINAL_SIZE in sizes
+
+
+def test_a_flat_block_too_short_for_every_row_is_left_to_the_fading_band():
+    short = _field_art(field_top=380)
+    band = info_shelf.find_flat_band(short)
+
+    assert band is not None
+    assert info_shelf.band_fits(480, band, SHELF_INFO) is None
+    tall = _field_art()
+    assert info_shelf.band_fits(480, info_shelf.find_flat_band(tall), SHELF_INFO) is not None
+    assert info_shelf.band_fits(480, None, SHELF_INFO) is None
+
+
+def test_the_translation_asks_for_strict_json_lines_like_the_news_brief(tmp_path, monkeypatch):
+    import openai
+
+    plugin = make_plugin(tmp_path, monkeypatch)
+    plugin._active_device_config = SimpleNamespace(load_env_key=lambda name: "sk-test" if name == "OPEN_AI_SECRET" else "")
+    asked = {}
+
+    class FakeResponses:
+        def create(self, **kwargs):
+            asked.update(kwargs)
+            return SimpleNamespace(output_text=json.dumps(
+                {"lines": [{"appid": "2", "line": "潜行之后是硬核战术枪战。"}, {"appid": "9", "line": "不在请求里"}]},
+                ensure_ascii=False,
+            ))
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            asked["client"] = kwargs
+            self.responses = FakeResponses()
+
+    monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
+
+    lines = ORIGINAL_TRANSLATE_BLURBS(plugin, {"2": "Teeth-clenching stealth, followed by tactical gunplay."})
+
+    assert lines == {"2": "潜行之后是硬核战术枪战"}
+    assert asked["text"]["format"]["type"] == "json_schema" and asked["text"]["format"]["strict"] is True
+    assert asked["reasoning"] == {"effort": "low"}
+    assert asked["client"]["max_retries"] == 0
+    assert json.loads(asked["input"]) == [{"appid": "2", "text": "Teeth-clenching stealth, followed by tactical gunplay."}]
+
+
+def test_a_refused_translation_says_why_without_the_key(tmp_path, monkeypatch, caplog):
+    import openai
+
+    plugin = make_plugin(tmp_path, monkeypatch)
+    plugin._active_device_config = SimpleNamespace(load_env_key=lambda name: "sk-secret-123" if name == "OPEN_AI_SECRET" else "")
+
+    class Refusing:
+        def __init__(self, **kwargs):
+            self.responses = SimpleNamespace(create=self.create)
+
+        @staticmethod
+        def create(**kwargs):
+            raise ValueError("Unsupported parameter: 'reasoning.effort'")
+
+    monkeypatch.setattr(openai, "OpenAI", Refusing)
+    with caplog.at_level(logging.WARNING):
+        assert ORIGINAL_TRANSLATE_BLURBS(plugin, {"2": "An English blurb."}) == {}
+
+    assert "Unsupported parameter" in caplog.text and "sk-secret-123" not in caplog.text

@@ -34,6 +34,8 @@ SCRIM_HEIGHT = 146
 SCRIM_FADE = 42
 MARGIN = 24
 ROW_GAP = 8
+# Room kept clear above and below the shelf's rows.
+SHELF_PADDING = 16
 CHIP_HEIGHT = 26
 # The head row: the price paid at PRICE_SIZE (about a third larger than the rest of the row),
 # Steam's discount box at CUT_SIZE and the struck price at ORIGINAL_SIZE.
@@ -251,7 +253,7 @@ def draw_shelf(image, info, band=None):
     draw = ImageDraw.Draw(canvas)
     rows = _rows(info)
     room = height - content_top
-    while rows and sum(row_height for _kind, row_height in rows) + ROW_GAP * (len(rows) - 1) > room - 16:
+    while rows and sum(row_height for _kind, row_height in rows) + ROW_GAP * (len(rows) - 1) > room - SHELF_PADDING:
         rows.pop()
     if not rows:
         return canvas
@@ -267,6 +269,21 @@ def draw_shelf(image, info, band=None):
             _draw_foot(canvas, draw, info, y, width, colours)
         y += row_height + ROW_GAP
     return canvas
+
+
+def rows_height(info):
+    """How tall the shelf's rows stand together, gaps included."""
+    rows = _rows(info)
+    return sum(row_height for _kind, row_height in rows) + ROW_GAP * max(0, len(rows) - 1)
+
+
+def band_fits(height, band, info):
+    """The flat block when every row of the shelf fits on it, else None: the band fading in at
+    the foot (or a card) then holds them all."""
+    if band is None:
+        return None
+    room = height - shelf_top(height, band) - 3 - SHELF_PADDING
+    return band if room >= rows_height(info) else None
 
 
 def _rows(info):

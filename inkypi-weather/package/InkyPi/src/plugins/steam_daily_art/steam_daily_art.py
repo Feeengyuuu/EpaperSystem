@@ -74,14 +74,32 @@ MAX_SHELF_CACHE_BYTES = 2 * 1024 * 1024
 NEW_RELEASE_DAYS = 14
 # Steam's English blurbs become one Chinese line with the model the news brief uses.
 BLURB_MODEL = "gpt-5-mini"
-BLURB_TIMEOUT_SECONDS = 25
+BLURB_TIMEOUT_SECONDS = 30
 BLURB_MAX_CHARS = 36
 BLURB_INSTRUCTIONS = (
-    "把每个 Steam 游戏的英文简介改写成一句简体中文介绍：说清楚这是什么游戏、怎么玩，"
+    "输入是 Steam 游戏的英文简介列表。把每条改写成一句简体中文介绍：说清楚这是什么游戏、怎么玩，"
     f"不超过 {BLURB_MAX_CHARS - 4} 个汉字，不要引号、书名号和句末标点。"
-    "只返回一个 JSON 对象：键是原样的 appid，值是这句中文。"
+    "按 JSON 返回：lines 里每条一项，appid 原样照抄，line 是这句中文。"
 )
-CARD_SHELF_HEIGHT = 112
+BLURB_MAX_OUTPUT_TOKENS = 3000
+BLURB_JSON_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "lines": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {"appid": {"type": "string"}, "line": {"type": "string"}},
+                "required": ["appid", "line"],
+            },
+        },
+    },
+    "required": ["lines"],
+}
+# Three shelf rows (reasons and price, the line, tags and credit) with their margins.
+CARD_SHELF_HEIGHT = 124
 STEAM_ITEM_KINDS = {0: "app", 1: "sub", 2: "bundle"}
 MAX_STORE_ITEM_BYTES = 512 * 1024
 MAX_ART_GAMES = 3
@@ -555,7 +573,8 @@ class SteamDailyArt(BasePlugin):
         info = self._shelf_info(item, settings)
         band = None
         if info is not None:
-            band = info_shelf.find_flat_band(image)
+            # A flat block too short for every row leaves the shelf to the fading band or a card.
+            band = info_shelf.band_fits(image.height, info_shelf.find_flat_band(image), info)
             if band is None and art_kind == ART_TITLED:
                 # A capsule's painted title may sit at its foot: the art moves up whole onto
                 # a mat in its own hue, and the shelf takes the mat below it.
@@ -1417,27 +1436,34 @@ class SteamDailyArt(BasePlugin):
             from openai import OpenAI
 
             client = OpenAI(api_key=api_key, timeout=BLURB_TIMEOUT_SECONDS, max_retries=0)
+            # The same Responses API shape as the news brief: a strict JSON schema, a short think.
             response = client.responses.create(
                 model=BLURB_MODEL,
                 instructions=BLURB_INSTRUCTIONS,
-                input=json.dumps(texts, ensure_ascii=False),
-                max_output_tokens=1600,
-                reasoning={"effort": "minimal"},
-                text={"format": {"type": "json_object"}, "verbosity": "low"},
+                input=json.dumps([{"appid": appid, "text": text} for appid, text in texts.items()], ensure_ascii=False),
+                max_output_tokens=BLURB_MAX_OUTPUT_TOKENS,
+                reasoning={"effort": "low"},
+                text={
+                    "format": {"type": "json_schema", "name": "steam_lines", "strict": True, "schema": BLURB_JSON_SCHEMA},
+                    "verbosity": "low",
+                },
             )
             reply = json.loads(getattr(response, "output_text", "") or "{}")
         except TaskCancelled:
             raise
         except Exception as exc:
-            logger.warning("Steam blurb translation failed: %s", type(exc).__name__)
+            # The provider's message names what it refused; it never carries the key.
+            logger.warning("Steam blurb translation failed: %s: %s", type(exc).__name__, str(exc)[:200])
             return {}
-        if not isinstance(reply, dict):
-            return {}
+        rows = reply.get("lines") if isinstance(reply, dict) else None
         lines = {}
-        for appid, line in reply.items():
-            line = " ".join(str(line or "").split()).strip("。.!！\"'“”「」《》")
-            if str(appid) in texts and _has_cjk(line):
-                lines[str(appid)] = line[:BLURB_MAX_CHARS]
+        for row in rows if isinstance(rows, list) else []:
+            if not isinstance(row, dict):
+                continue
+            appid = str(row.get("appid") or "")
+            line = " ".join(str(row.get("line") or "").split()).strip("。.!！\"'“”「」《》")
+            if appid in texts and _has_cjk(line):
+                lines[appid] = line[:BLURB_MAX_CHARS]
         return lines
 
     def _fetch_json(self, url, *, label, max_bytes):
