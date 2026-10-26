@@ -29,13 +29,20 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
 )
 import plugins.orbital_signal.launch_photo as launch_photo_module  # noqa: E402
 from plugins.orbital_signal.orbital_signal import (  # noqa: E402
+    ART_H,
+    ART_TOP,
     DAY_PALETTE,
     DEFAULT_FONT,
+    FACTS_TOP,
     LAUNCH_SPLIT_X,
+    LEADER_Y,
     MISSION_MARKS,
     NIGHT_PALETTE,
+    PERCENT_Y,
     PLUGIN_ID,
+    QUESTION_TOP,
     ROCKET_MARKS,
+    TAG_TOP,
     OrbitalSignal,
     _name_mark,
 )
@@ -172,7 +179,7 @@ class RecordingDraw:
         # A text's halo (stroke_fill) colours its outline; only its width changes the box.
         bbox = self.delegate.textbbox(xy, text, font=font,
                                       **{key: value for key, value in kwargs.items() if key != "stroke_fill"})
-        self.text_calls.append({"xy": xy, "text": text, "bbox": bbox})
+        self.text_calls.append({"xy": xy, "text": text, "bbox": bbox, "fill": fill})
         return self.delegate.text(xy, text, font=font, fill=fill, **kwargs)
 
     def ellipse(self, xy, **kwargs):
@@ -982,8 +989,8 @@ def test_market_card_keeps_representative_title_and_leader_complete():
 
     # Question and leader wrap onto lines of their own, every word kept.
     lines = [call["text"] for call in draw.text_calls]
-    title_lines = [call["text"] for call in draw.text_calls if 58 + 96 < call["xy"][1] < 58 + 140]
-    leader_lines = [call["text"] for call in draw.text_calls if 58 + 206 < call["xy"][1] < 58 + 232]
+    title_lines = [call["text"] for call in draw.text_calls if 58 + QUESTION_TOP <= call["xy"][1] < 58 + TAG_TOP]
+    leader_lines = [call["text"] for call in draw.text_calls if 58 + LEADER_Y - 2 <= call["xy"][1] < 58 + PERCENT_Y]
     assert " ".join(title_lines) == title
     assert " ".join(leader_lines) == leader
     assert not any(line.endswith("...") for line in lines)
@@ -1181,11 +1188,30 @@ def test_timeline_spaces_launches_evenly_and_labels_the_real_gaps():
     assert abs((centres[1] - centres[0]) - (centres[2] - centres[1])) <= 2
 
 
-def test_rendered_page_fills_the_room_under_the_market_columns_with_art():
+def test_market_columns_fill_the_panel_without_the_console_strip():
+    from plugins.orbital_signal import orbital_signal as module
+
     plugin = OrbitalSignal({"id": PLUGIN_ID})
-    page = plugin._render_page((800, 480), plugin._fixture_payload(NOW), {}, NOW)
-    room = page.crop((LAUNCH_SPLIT_X + 10, 58 + 306, 790, 442))
-    assert sum(1 for pixel in room.get_flattened_data() if pixel != DAY_PALETTE["paper"]) > 2500
+    draw = RecordingDraw()
+    markets = plugin._fixture_payload(NOW)["markets"]
+
+    plugin._draw_markets(draw, (LAUNCH_SPLIT_X, 58, 800, 448), markets, DAY_PALETTE, None)
+
+    # The generated console strip is gone; the columns themselves reach down to the footer.
+    assert not hasattr(module, "MARKET_ART_PATH")
+    assert not (Path(module.__file__).with_name("assets") / "market-console.png").exists()
+    # The question sits under the event art, not over it.
+    questions = [call for call in draw.text_calls if call["text"] in {"WORLD CUP", "WINNER", "NEXT PRIME", "MINISTER"}]
+    assert len(questions) == 4
+    assert min(call["bbox"][1] for call in questions) >= 58 + ART_TOP + ART_H
+    # Volume, heat and end read as a labelled table at the foot of each column, all in the ink,
+    # clear of the footer's rule.
+    facts = [call for call in draw.text_calls if call["xy"][1] >= 58 + FACTS_TOP]
+    assert [call["text"] for call in facts if call["text"] in {"VOL", "HEAT", "ENDS"}].count("VOL") == 3
+    first_end = datetime.fromisoformat(markets[0]["end_date"].replace("Z", "+00:00"))
+    assert {call["text"] for call in facts} >= {"VOL", "HEAT", "ENDS", "$4.6M", f"{first_end:%d %b}".upper()}
+    assert all(call["fill"] == DAY_PALETTE["ink"] for call in facts)
+    assert 58 + 360 < max(call["bbox"][3] for call in facts) <= 446
 
 
 def test_fact_cells_get_icons_and_mission_types_read_short():

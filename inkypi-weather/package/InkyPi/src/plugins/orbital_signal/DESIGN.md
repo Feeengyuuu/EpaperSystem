@@ -52,5 +52,9 @@ real data. The page now has:
   local time, rocket and mission, and the real time between stops written on
   the line, so launches minutes or days apart read alike.
 - Right: MARKET HEAT as three gauge columns (question, category, 24h move,
-  dial, leader, probability, 24h volume, end date, heat), and the generated
-  `assets/market-console.png` strip in the room below them.
+  dial, leader, probability, 24h volume, end date, heat).
+- 2026-10-26: the owner had the generated console strip under the columns
+  removed and the columns opened up to fill the panel, "modern and direct":
+  the question sits under the event art instead of over it, the type is a
+  size larger, and volume, heat and end form a labelled table under a
+  hairline, all in the ink.
