@@ -459,7 +459,8 @@ LOCAL_TV_LOGO_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "as
 # Arenas whose own logo stands in for the venue's name on a game card, by the name with only
 # its letters and digits, lower case.
 LOCAL_VENUE_LOGO_DIR = resolve_path(os.path.join("plugins", "sports_dashboard", "assets", "logos", "venues"))
-VENUE_LOGO_KEYS = {"chasecenter": "chase_center", "statefarmarena": "state_farm_arena"}
+VENUE_LOGO_KEYS = {"chasecenter": "chase_center", "statefarmarena": "state_farm_arena",
+                   "americanfamilyfield": "american_family_field"}
 LOCAL_NBA_COURT_STRIP_PATH = os.path.join(LOCAL_DECOR_DIR, "nba_court_strip.png")
 LOCAL_TI_TITLE_WORDMARK_PATH = os.path.join(LOCAL_DECOR_DIR, "the_international_title_wordmark.png")
 LOCAL_MLB_HEADER_CUTOUT_PATH = os.path.join(LOCAL_DECOR_DIR, "mlb_header_cutout.png")

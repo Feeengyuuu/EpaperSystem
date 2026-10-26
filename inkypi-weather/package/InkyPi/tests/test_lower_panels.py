@@ -3,6 +3,7 @@
 import ast
 import hashlib
 import json
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -325,6 +326,56 @@ def test_mlb_live_and_final_cards_fill_the_spare_band_with_the_ballpark():
 
     band = image.crop((28, 185, 342, 236))
     assert sum(1 for pixel in band.get_flattened_data() if pixel != COLORS["panel"]) > 2000
+
+
+def test_mlb_footer_bills_the_game_in_official_marks_else_the_text_line(boxes):
+    def footer(**fields):
+        boxes.clear()
+        game = _game("MLB", **{"series_game": "World Series Game 6", **fields})
+        image, _draw = _render(lambda plugin, image, draw: plugin._draw_mlb_footer(image, draw, (28, 220, 342, 248), game, "scheduled"))
+        return image.crop((28, 220, 342, 248)), [text for _box, text, _font in boxes]
+
+    ballpark, texts = footer(venue="American Family Field")
+    # Series mark, game number and the ballpark's logo, its yellow roofline as printed.
+    assert texts == ["GAME 6"]
+    assert any(red > 200 and 150 < green < 220 and blue < 110 for red, green, blue in ballpark.get_flattened_data())
+    _named, texts = footer(venue="Tropicana Field")
+    assert texts == ["GAME 6", "Tropicana Field"]
+    _line, texts = footer(venue="Oracle Park", series_game="")
+    assert texts == ["Oracle Park"]
+
+
+def test_mlb_series_rows_lead_with_the_game_date_and_keep_played_results(boxes):
+    spec = _plugin()._mlb_spec()
+    ahead = _game("MLB", start=NOW.replace(hour=17) + timedelta(days=3), series_game="World Series Game 6", broadcast="FOX")
+    played = _game("MLB", "post", NOW - timedelta(days=1), series_game="World Series Game 2", team_a_code="TB",
+                   team_b_code="MIL", wins_a=3, wins_b=4)
+
+    def rows(height):
+        _render(lambda plugin, image, draw: [plugin._draw_mlb_series_game_row(image, draw, (370, y, 545, y + height), event, NOW, spec)
+                                             for y, event in ((20, ahead), (44, played))])
+        return {text: font for _box, text, font in boxes}
+
+    texts = rows(20)
+    assert {"G6", "10/21", "周三 5:00 PM", "G2", "10/17"} <= set(texts)
+    assert texts["10/21"].size == 13
+    assert any(text.endswith("4-3") for text in texts)
+    boxes.clear()
+    assert rows(15)["10/21"].size == 10
+
+
+def test_mlb_series_list_uses_roomy_rows_only_when_the_whole_series_fits(boxes):
+    spec = _plugin()._mlb_spec()
+    series = [_game("MLB", start=NOW + timedelta(days=number), series_game=f"World Series Game {number}") for number in range(1, 8)]
+    main = {**series[0], "series_summary": "Series tied 0-0"}
+
+    def date_sizes(games):
+        boxes.clear()
+        _render(lambda plugin, image, draw: plugin._draw_mlb_series_list(image, draw, (370, 55, 545, 260), main, games, NOW, spec))
+        return {font.size for _box, text, font in boxes if re.fullmatch(r"\d\d/\d\d", text)}
+
+    assert date_sizes(series[2:]) == {13}
+    assert date_sizes(series) == {10}
 
 
 @pytest.mark.parametrize("code", ["PL", "PD", "BL1", "SA", "FL1", "MLS"])

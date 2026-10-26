@@ -1,5 +1,5 @@
 {
-  "source": "Wikimedia Commons, each file rendered to PNG by Commons",
+  "source": "Wikimedia Commons, each file rendered to PNG by Commons, unless a logo names its own source",
   "processing": "cropped to the alpha bounding box, scaled to 48 px high (max 480 wide) with LANCZOS",
   "logos": {
     "chase_center": {
@@ -25,6 +25,19 @@
       "sha256": "ddd81fba75627ce84e55d254789b7dffb40e2a5268c889f6ff7a7319c7736e4a",
       "size": [
         165,
+        48
+      ]
+    },
+    "american_family_field": {
+      "file": "AmFamField800-copy.jpg",
+      "page": "https://ballparkdigest.com/2020/09/03/american-family-field-logo-unveiled/",
+      "source": "American Family Field primary logo as released by the Milwaukee Brewers and American Family Insurance at its unveiling on 2020-09-03 (press artwork, published by Ballpark Digest)",
+      "processing": "white ground to alpha (colour-to-alpha), cropped to the alpha bounding box, scaled to 48 px high (max 480 wide) with LANCZOS",
+      "licence": "Trademark of American Family Insurance / Milwaukee Brewers; shown to name the venue",
+      "source_sha256": "97d5ff0da4a464d8fe2c3c37735fb8ba4f0b944ceddf95813dabae20e3521d63",
+      "sha256": "448b01f4353bef703b32719b16c9a07f539e7871033905562f13404eab420a03",
+      "size": [
+        108,
         48
       ]
     }

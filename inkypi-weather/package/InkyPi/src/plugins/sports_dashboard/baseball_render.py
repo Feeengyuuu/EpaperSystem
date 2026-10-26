@@ -19,6 +19,9 @@ MLB_CARD_WIDTH = 340
 MLB_TABLE_ROW_HEIGHT = 24
 MLB_TABLE_HEADER_HEIGHT = 14
 MLB_TABLE_MIN_INNING_WIDTH = 13
+MLB_FOOTER_HEIGHT = 28
+MLB_FOOTER_MARK_WIDTH = 48
+MLB_SERIES_ROW_HEIGHT, MLB_SERIES_ROW_PITCH = 20, 22
 
 
 class BaseballRenderMixin:
@@ -78,22 +81,66 @@ class BaseballRenderMixin:
         self._draw_kit_status_row(draw, left, top + 8, right, spec, state, SportsDashboard._mlb_pill_label(event, now), context, series, series_logo)
         table_bottom = self._draw_mlb_line_table(image, draw, (left, top + 33, right), event, state, spec)
         y = table_bottom + 8
+        footer = (left, bottom - 6 - MLB_FOOTER_HEIGHT, right, bottom - 6)
         if state in {"live", "final"}:
             people = self._draw_mlb_matchup if state == "live" else self._draw_mlb_decisions
             people(image, draw, (left, y, right, y + 16), event, spec)
-            self._draw_mlb_ballpark(image, (left, y + 20, right, bottom - 22), event)
+            self._draw_mlb_ballpark(image, (left, y + 20, right, footer[1] - 4), event)
+            # The band above already carries the series mark.
+            self._draw_mlb_footer(image, draw, footer, event, state, with_mark=False)
+            return
+        budget = right - left - self._text_width(draw, "SP", self._font(8, False)) - 6
+        probables = self._mlb_first_fitting(draw, [SportsDashboard._mlb_probables_label(event, full) for full in (True, False)], budget, 10)
+        if probables:
+            self._draw_kit_labeled_line(draw, (left, y, right, y + 14), "SP", probables)
+            y += 20
+        tiles = [
+            ("FIRST PITCH", SportsDashboard._kit_countdown_label(event.get("start"), now)),
+            ("TV", str(event.get("broadcast") or "").strip() or "TBD"),
+        ]
+        self._draw_kit_tiles(draw, (left, y, right, footer[1] - 4), tiles, spec, tile_h=min(36, footer[1] - 4 - y), image=image)
+        self._draw_mlb_footer(image, draw, footer, event, state)
+
+    def _draw_mlb_footer(self, image, draw, box, event, state, with_mark=True):
+        """The game's billing in official marks, centred: the postseason series mark, the
+        game number, a rule, then the ballpark's own logo, or its name where it has none.
+        The text line when neither mark is bundled."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        height = y2 - y1
+        mark_path = SportsDashboard._mlb_series_mark_path(event) if with_mark else None
+        mark = self._load_local_logo(mark_path, (MLB_FOOTER_MARK_WIDTH, height), alpha_threshold=8) if mark_path else None
+        venue = str(event.get("venue") or "").strip()
+        venue_logo = self._kit_venue_logo(venue, ((x2 - x1) // 2, height))
+        if not mark and not venue_logo:
+            self._draw_kit_footer(draw, (x1, y2 - 12, x2, y2), SportsDashboard._mlb_footer_label(event, state))
+            return
+        gap = 8
+        number = SportsDashboard._mlb_game_number(event)
+        game, game_font = f"GAME {number}" if number else "", self._font(11, True)
+        game_w = self._text_width(draw, game, game_font) if game else 0
+        lead = [width for width in (mark.width if mark else 0, game_w) if width]
+        lead_w = sum(lead) + gap * (len(lead) - 1) if lead else 0
+        venue_font = self._font(10, False)
+        if venue_logo:
+            venue_w = venue_logo.width
         else:
-            budget = right - left - self._text_width(draw, "SP", self._font(8, False)) - 6
-            probables = self._mlb_first_fitting(draw, [SportsDashboard._mlb_probables_label(event, full) for full in (True, False)], budget, 10)
-            if probables:
-                self._draw_kit_labeled_line(draw, (left, y, right, y + 14), "SP", probables)
-                y += 20
-            tiles = [
-                ("FIRST PITCH", SportsDashboard._kit_countdown_label(event.get("start"), now)),
-                ("TV", str(event.get("broadcast") or "").strip() or "TBD"),
-            ]
-            self._draw_kit_tiles(draw, (left, y, right, bottom - 22), tiles, spec, tile_h=min(36, bottom - 22 - y), image=image)
-        self._draw_kit_footer(draw, (left, bottom - 19, right, bottom - 7), SportsDashboard._mlb_footer_label(event, state))
+            venue, venue_font = self._fit_text_ellipsis(draw, venue, x2 - x1 - lead_w - 2 * gap - 1, 10, bold=False, min_size=8)
+            venue_w = self._text_width(draw, venue, venue_font) if venue else 0
+        divider = 2 * gap + 1 if lead_w and venue_w else 0
+        x = x1 + (x2 - x1 - lead_w - divider - venue_w) // 2
+        if mark:
+            self._draw_event_mark(image, mark_path, (x, y1, x + mark.width, y2), align="left")
+            x += mark.width + gap
+        if game:
+            self._draw_text_in_box(draw, (x, y1, x + game_w, y2), game, game_font, COLORS["text"])
+            x += game_w + gap
+        if divider:
+            draw.line((x, y1 + 6, x, y2 - 6), fill=COLORS["border"], width=1)
+            x += gap + 1
+        if venue_logo:
+            image.paste(venue_logo, (x, y1 + (height - venue_logo.height) // 2), venue_logo)
+        elif venue_w:
+            self._draw_text_in_box(draw, (x, y1, x + venue_w, y2), venue, venue_font, COLORS["text"])
 
     def _draw_mlb_ballpark(self, image, box, event):
         """The card's spare band: the postseason series mark on the right and
@@ -284,36 +331,59 @@ class BaseballRenderMixin:
             y = y1 + 41
         else:
             y = self._draw_kit_column_header(draw, x1, y1, x2, spec, title, status)
+        # Roomy rows with the date large when the whole series fits above the other
+        # games, else compact ones.
+        tall = len(series) * MLB_SERIES_ROW_PITCH - 2 <= y2 - 44 - y
+        row_h, pitch = (MLB_SERIES_ROW_HEIGHT, MLB_SERIES_ROW_PITCH) if tall else (15, 16)
         for event in series:
-            if y + 15 > y2 - 44:
+            if y + row_h > y2 - 44:
                 break
-            state = SportsDashboard._hub_event_state(event)
-            number = SportsDashboard._mlb_game_number(event)
-            self._draw_text_in_box(draw, (x1, y, x1 + 22, y + 15), f"G{number}" if number else "G", self._font(9, True), COLORS["text"])
-            if state == "scheduled":
-                # When on the left, the networks as logos on the right.
-                top, bottom, _key = SportsDashboard._mlb_state_labels(event, now)
-                text = f"{top} {bottom}".strip() if not top.endswith("M") else top
-                text, font = self._fit_text_ellipsis(draw, text, (x2 - x1) // 2, 10, bold=event is main, min_size=8)
-                self._draw_text_in_box(draw, (x1 + 24, y, x2, y + 15), text, font, COLORS["text"])
-                broadcast_x1 = x1 + 30 + self._text_width(draw, text, font)
-                self._draw_series_row_broadcast(image, draw, (broadcast_x1, y, x2, y + 15), event)
-                y += 16
-                continue
-            winner = SportsDashboard._mlb_winner_side(event)
-            runs = sorted((event.get("wins_a") or 0, event.get("wins_b") or 0), reverse=True)
-            text = SportsDashboard._mlb_inning_label(event)
-            logo_room = 0
-            if state == "final" and winner:
-                logo_room = 16
-                text = self._mlb_first_fitting(draw, [f"{SportsDashboard._mlb_display_team_from_event(event, winner, full=full)} {runs[0]}-{runs[1]}"
-                                                     for full in (True, False)], x2 - x1 - 26 - logo_room, 10)
-            text, font = self._fit_text_ellipsis(draw, text, x2 - x1 - 26 - logo_room, 10, bold=True, min_size=8)
-            self._draw_text_in_box(draw, (x1 + 24, y, x2, y + 15), text, font, COLORS["mlb_live" if state == "live" else "text"], align="right")
-            if logo_room:
-                self._draw_series_row_winner_logo(image, draw, event, winner, x2 - self._text_width(draw, text, font) - logo_room, y, y + 15, spec)
-            y += 16
+            self._draw_mlb_series_game_row(image, draw, (x1, y, x2, y + row_h), event, now, spec)
+            y += pitch
         return y
+
+    def _draw_mlb_series_game_row(self, image, draw, box, event, now, spec):
+        """A series game as a schedule row led by its date, like the WNBA card's: the game
+        tag (filled for today's game), the date in bold, the weekday and first pitch (or the
+        inning) after it, then the networks' logos, or the winner and score once played."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        tall = y2 - y1 >= MLB_SERIES_ROW_HEIGHT
+        state = SportsDashboard._hub_event_state(event)
+        number = SportsDashboard._mlb_game_number(event)
+        start = event.get("start")
+        dated = isinstance(start, datetime)
+        today = dated and start.date() == now.date()
+        tag = (x1, y1 + 2, x1 + 22, y2 - 2) if tall else (x1, y1 + 1, x1 + 22, y2 - 1)
+        draw.rounded_rectangle(tag, radius=3, fill=COLORS[spec.tag] if today or state == "live" else COLORS["panel"],
+                               outline=COLORS["border"], width=1)
+        self._draw_centered_in_box(draw, tag, f"G{number}" if number else "G", self._font(9, True), COLORS["text"])
+        x = x1 + 27
+        if dated:
+            date_font = self._font(13 if tall else 10, True)
+            date = f"{start:%m/%d}"
+            self._draw_text_in_box(draw, (x, y1, x + 44, y2), date, date_font, COLORS["text"])
+            x += self._text_width(draw, date, date_font) + 5
+        if state == "scheduled":
+            top, _bottom, _key = SportsDashboard._mlb_state_labels(event, now)
+            when = f"{'今天' if today else '周' + '一二三四五六日'[start.weekday()]} {SportsDashboard._format_time(start)}" if dated else top
+            when, when_font = self._fit_text(draw, when, x2 - x - 30, 10 if tall else 9, bold=False, min_size=7)
+            self._draw_text_in_box(draw, (x, y1, x2, y2), when, when_font, COLORS["text"])
+            # The networks stay small beside the time: logos of a compact row's height.
+            inset = (y2 - y1 - 15) // 2
+            self._draw_series_row_broadcast(image, draw, (x + self._text_width(draw, when, when_font) + 5, y1 + inset, x2, y2 - inset), event)
+            return
+        winner = SportsDashboard._mlb_winner_side(event) if state == "final" else ""
+        if not winner:
+            text, font = self._fit_text(draw, SportsDashboard._mlb_inning_label(event), x2 - x, 10, bold=True, min_size=8)
+            self._draw_text_in_box(draw, (x, y1, x2, y2), text, font, COLORS["mlb_live" if state == "live" else "text"])
+            return
+        runs = sorted((event.get("wins_a") or 0, event.get("wins_b") or 0), reverse=True)
+        logo_room = 16
+        text = self._mlb_first_fitting(draw, [f"{SportsDashboard._mlb_display_team_from_event(event, winner, full=full)} {runs[0]}-{runs[1]}"
+                                             for full in (True, False)], x2 - x - logo_room, 10)
+        text, font = self._fit_text_ellipsis(draw, text, x2 - x - logo_room, 10, bold=True, min_size=8)
+        self._draw_text_in_box(draw, (x, y1, x2, y2), text, font, COLORS["text"], align="right")
+        self._draw_series_row_winner_logo(image, draw, event, winner, x2 - self._text_width(draw, text, font) - logo_room, y1, y2, spec)
 
     def _draw_mlb_ball_icon(self, draw, x, y, size=8):
         x, y = int(x), int(y)

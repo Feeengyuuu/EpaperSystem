@@ -362,26 +362,33 @@ class ScorebugKitMixin:
                     return
         self._draw_kit_footer(draw, (x1, y2 - 12, x2, y2), label)
 
+    def _kit_venue_logo(self, venue, size):
+        """The venue's official logo fitted to ``size`` and inked for the theme's card, else None."""
+        key = VENUE_LOGO_KEYS.get(re.sub(r"[^a-z0-9]", "", str(venue or "").lower()))
+        logo = self._load_local_logo(os.path.join(LOCAL_VENUE_LOGO_DIR, f"{key}.png"), size, alpha_threshold=8) if key else None
+        if not logo:
+            return None
+        # The logos are print art for a white ground, so a light card shows them as
+        # printed (a ballpark's yellow roofline stays yellow).
+        if _kit_luminance(COLORS["panel"]) < 0.2:
+            # On a dark card the lettering is ink throughout, as on the arenas' own
+            # dark-ground lockups; the brand colours stay.
+            logo = _kit_inked_where_faint(logo, COLORS["panel"])
+            pixels = logo.load()
+            for y in range(logo.height):
+                for x in range(logo.width):
+                    red, green, blue, alpha = pixels[x, y]
+                    if alpha >= 8 and max(red, green, blue) - min(red, green, blue) < 28:
+                        pixels[x, y] = (*COLORS["text"], alpha)
+        return logo
+
     def _draw_kit_venue(self, image, draw, box, venue):
         """The venue as its arena's official logo centred in ``box``, else its name as a footer line."""
         if not venue:
             return
         x1, y1, x2, y2 = [int(value) for value in box]
-        key = VENUE_LOGO_KEYS.get(re.sub(r"[^a-z0-9]", "", venue.lower()))
-        logo = (self._load_local_logo(os.path.join(LOCAL_VENUE_LOGO_DIR, f"{key}.png"), (x2 - x1, y2 - y1), alpha_threshold=8)
-                if key else None)
+        logo = self._kit_venue_logo(venue, (x2 - x1, y2 - y1))
         if logo:
-            logo = _kit_inked_where_faint(logo, COLORS["panel"])
-            if _kit_luminance(COLORS["panel"]) < 0.2:
-                # On a dark card the lettering is ink throughout, as on the arenas' own
-                # dark-ground lockups; the brand colours stay.
-                logo = logo.copy()
-                pixels = logo.load()
-                for y in range(logo.height):
-                    for x in range(logo.width):
-                        red, green, blue, alpha = pixels[x, y]
-                        if alpha >= 8 and max(red, green, blue) - min(red, green, blue) < 28:
-                            pixels[x, y] = (*COLORS["text"], alpha)
             image.paste(logo, (x1 + (x2 - x1 - logo.width) // 2, y1 + (y2 - y1 - logo.height) // 2), logo)
             return
         self._draw_kit_footer(draw, box, venue)
