@@ -1053,7 +1053,7 @@ class MagazineCovers(BasePlugin):
         shops = sorted({cover_info.provider_label(record) for record in list(records)[:count]} - {""})
         return cover_gallery.compose(
             [ImageOps.exif_transpose(image).convert("RGB") for image in images[:count]], labels, tuple(dimensions),
-            title="MAGAZINES", subtitle="本期封面 · " + " / ".join(shops) if shops else "本期封面",
+            title="MAGAZINES", subtitle="本期封面", sources=shops,
             date_text=f"{now.month}月{now.day}日 周{'一二三四五六日'[now.weekday()]}",
             accent=GALLERY_ACCENT, dark=self._gallery_dark(settings),
             wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="newsstand")

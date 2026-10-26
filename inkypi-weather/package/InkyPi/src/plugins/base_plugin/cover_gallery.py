@@ -37,6 +37,16 @@ SHADOW = 4
 WORDMARK_H = 30
 # Header art keeps this far from the subtitle and the date.
 HEADER_ART_GAP = 12
+# Sources named by their logos (assets/source_logos, tools/build_source_logos.py): in the header
+# after its subtitle, HEADER_SOURCE_H tall, and at the head of a label's last line, LABEL_SOURCE_H.
+SOURCE_LOGO_DIR = Path(__file__).with_name("assets") / "source_logos"
+SOURCE_LOGOS = {
+    "the met": "met", "the metropolitan museum of art": "met", "art institute of chicago": "aic",
+    "europeana": "europeana", "harvard art museums": "harvard", "comic vine": "comicvine",
+    "grand comics database": "gcd", "gcd": "gcd", "internet archive": "internet_archive",
+    "wikimedia commons": "wikimedia_commons", "library of congress": "loc", "美国国会图书馆": "loc", "gallica": "gallica",
+}
+HEADER_SOURCE_H, LABEL_SOURCE_H = 18, 13
 DAY = {"paper": (249, 246, 239), "ink": (24, 24, 28), "muted": (104, 100, 94), "rule": (206, 200, 189),
        "card": (255, 255, 255), "frame": (40, 38, 36)}
 NIGHT = {"paper": (20, 21, 25), "ink": (238, 236, 230), "muted": (160, 156, 148), "rule": (70, 70, 76),
@@ -57,6 +67,9 @@ class Label:
     # A paragraph (a cover's headline) wrapped into whatever room the label has left.
     body: str = ""
     extra: dict = field(default_factory=dict)
+    # Where the work comes from, shown by its logo at the head of the last line (its name in text
+    # when there is no logo for it).
+    source_logo: str = ""
 
 
 def year_of(text):
@@ -86,6 +99,23 @@ def load_wordmark(path):
 
 def palette(dark):
     return NIGHT if dark else DAY
+
+
+@lru_cache(maxsize=16)
+def _source_art(key):
+    try:
+        with safe_open_image(SOURCE_LOGO_DIR / f"{key}.png") as source:
+            return source.convert("RGBA")
+    except (OSError, ValueError):
+        return None
+
+
+def source_logo(name, colors, height):
+    """The logo of the source called ``name`` ``height`` px tall, its near-black parts in the
+    page's ink; None when there is none for it."""
+    key = SOURCE_LOGOS.get(str(name or "").strip().casefold())
+    art = _source_art(key) if key else None
+    return _inked_wordmark(art, colors, height) if art is not None else None
 
 
 def _font(size, bold=False):
@@ -144,13 +174,14 @@ def art_sizes(count, dimensions, *, timeline=False):
 
 
 def compose(images, labels, dimensions, *, title, subtitle="", date_text="", accent=(0, 70, 200), dark=False,
-            timeline=False, logo=None, wordmark=None, style="gallery", header_art=None):
+            timeline=False, logo=None, wordmark=None, style="gallery", header_art=None, sources=()):
     """The gallery page for ``images`` (already loaded) and their ``labels``.
 
     ``style`` sets the page's backdrop over the works' own colour wash: "gallery" lights each
     work with a spotlight, "newsstand" stands them on a shelf, "comic" lays a halftone.
     ``wordmark`` (RGBA) replaces the lettered title; its black parts take the page's ink.
     ``header_art`` (RGBA, transparent) fills the header between the subtitle and the date.
+    ``sources`` are named after the subtitle by their logos (in text when one has none).
     """
     colors = palette(dark)
     width, height = dimensions
@@ -159,22 +190,24 @@ def compose(images, labels, dimensions, *, title, subtitle="", date_text="", acc
     _backdrop(page, images, boxes, colors, style, accent, dark)
     draw = ImageDraw.Draw(page)
     years = [label.year for label in labels if isinstance(label.year, int)]
+    span = ""
     if len(years) >= 2 and max(years) > min(years):
         span = f"跨越 {_year_text(min(years))}–{_year_text(max(years))} · {max(years) - min(years)} 年"
-        subtitle = f"{subtitle} · {span}" if subtitle else span
-    _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark, header_art)
+    _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark, header_art,
+            sources=sources, span=span)
     for index, (image, label, (image_box, label_box)) in enumerate(zip(images, labels, boxes), start=1):
         frame = _framed(page, image, image_box, colors)
         label_box = _under(frame, label_box)
         swatch_w = _swatches(draw, image, (label_box[2], label_box[1] + TITLE_ROW + 4), colors)
-        _label(draw, label, label_box, index, accent, colors, numbered=timeline, reserve=swatch_w + 6)
+        _label(draw, label, label_box, index, accent, colors, numbered=timeline, reserve=swatch_w + 6, page=page)
     if timeline:
         _timeline(draw, labels, (MARGIN, height - BOTTOM - TIMELINE_H + 6, width - MARGIN, height - BOTTOM), accent,
                   colors)
     return page
 
 
-def _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark=None, art=None):
+def _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark=None, art=None, sources=(),
+            span=""):
     x = MARGIN
     if logo is not None:
         page.paste(logo, (x, HEADER_TOP + (28 - logo.height) // 2), logo)
@@ -194,11 +227,31 @@ def _header(page, draw, title, subtitle, date_text, accent, colors, width, logo,
     date_w = draw.textlength(date_text, font=date_font) if date_text else 0
     if date_text:
         draw.text((width - MARGIN - date_w, HEADER_TOP + 8), date_text, font=date_font, fill=colors["ink"])
-    if subtitle:
-        sub_font = _font(12)
-        subtitle = _clip(draw, subtitle, sub_font, width - MARGIN - date_w - 16 - x)
-        draw.text((x, HEADER_TOP + 8), subtitle, font=sub_font, fill=colors["muted"])
-        x += draw.textlength(subtitle, font=sub_font)
+    sub_font = _font(12)
+    limit = width - MARGIN - date_w - 16
+    # The subtitle, then its sources by their logos (or names), then the works' span.
+    parts = [("text", subtitle)] if subtitle else []
+    for name in sources:
+        mark = source_logo(name, colors, HEADER_SOURCE_H)
+        parts.append(("logo", mark) if mark is not None else ("text", name))
+    if span:
+        parts.append(("text", span))
+    previous = None
+    for kind, part in parts:
+        if previous is not None:
+            joint = " " if kind == "logo" and previous == "logo" else " · "
+            draw.text((x, HEADER_TOP + 8), joint, font=sub_font, fill=colors["muted"])
+            x += draw.textlength(joint, font=sub_font)
+        if kind == "logo":
+            if x + part.width > limit:
+                break
+            page.paste(part, (round(x), HEADER_TOP + 15 - part.height // 2), part)
+            x += part.width
+        else:
+            shown = _clip(draw, part, sub_font, limit - x)
+            draw.text((x, HEADER_TOP + 8), shown, font=sub_font, fill=colors["muted"])
+            x += draw.textlength(shown, font=sub_font)
+        previous = kind
     if art is not None:
         _header_art(page, art, (round(x) + HEADER_ART_GAP, 3, round(width - MARGIN - date_w) - HEADER_ART_GAP, HEADER_RULE - 3))
     draw.line((MARGIN, HEADER_RULE, width - MARGIN, HEADER_RULE), fill=colors["ink"], width=2)
@@ -243,9 +296,10 @@ def _under(frame, box, min_width=LABEL_MIN_W):
     return x0, top, x1, bottom
 
 
-def _label(draw, label, box, index, accent, colors, numbered, reserve=0):
+def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=None):
     """Three tight lines under a work: its (numbered) title; its chip and first fact, leaving
-    ``reserve`` px at the right for the swatches; then its other facts run together."""
+    ``reserve`` px at the right for the swatches; then its source's logo and its other facts
+    run together."""
     left, top, right, _bottom = box
     x = left
     if numbered:
@@ -270,10 +324,17 @@ def _label(draw, label, box, index, accent, colors, numbered, reserve=0):
     if first:
         draw.text((x, y + 1), _clip(draw, first, fact_font, right - reserve - x), font=fact_font, fill=colors["ink"])
     y += CHIP_ROW
+    # The source's logo leads the line (its name in text when it has none).
+    x = left
+    mark = source_logo(label.source_logo, colors, LABEL_SOURCE_H) if label.source_logo and page is not None else None
+    if mark is not None:
+        page.paste(mark, (x, y + 1 + (FACT_ROW - 2 - mark.height) // 2), mark)
+        x += mark.width + 6
+    named = label.source_logo if label.source_logo and mark is None else ""
     # Small text stays in solid ink: a grey this size dithers into noise on the panel.
-    rest = " · ".join(str(part) for part in (*label.lines[1:], label.body, label.source) if part)
+    rest = " · ".join(str(part) for part in (*label.lines[1:], label.body, label.source, named) if part)
     if rest:
-        draw.text((left, y), _clip(draw, rest, fact_font, right - left), font=fact_font, fill=colors["ink"])
+        draw.text((x, y), _clip(draw, rest, fact_font, right - x), font=fact_font, fill=colors["ink"])
 
 
 def _timeline(draw, labels, box, accent, colors):

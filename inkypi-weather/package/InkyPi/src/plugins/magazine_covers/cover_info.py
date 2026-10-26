@@ -115,8 +115,9 @@ def gallery_label(record, this_year):
         headline = str(record.get("title") or "").split("|")[0].strip()
         headline = "" if headline.lower().startswith(("buy ", "best sellers")) else headline
     category = CATEGORY_LABELS.get(info["category"], "")
-    return Label(title=info["publication"], chip=chip, lines=(beside,), body=headline,
-                 source=" · ".join(part for part in (category, provider_label(record)) if part))
+    # Where the scan came from leads the last line by its logo; the category follows the headline.
+    return Label(title=info["publication"], chip=chip, lines=(beside,), body=headline, source=category,
+                 source_logo=provider_label(record))
 
 
 @lru_cache(maxsize=len(CATEGORY_LABELS))

@@ -1,0 +1,115 @@
+{
+  "logos": {
+    "met": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/73/The_Metropolitan_Museum_of_Art_Logo.svg/500px-The_Metropolitan_Museum_of_Art_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:The_Metropolitan_Museum_of_Art_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "2279fc65e01f4472fcffa28edc94d730ad885f2b27216211a30837df6139ead3",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "04109f1c787c2e4b8e42859088f59cac75d814013fa1e48032adfc4fe040b784"
+    },
+    "aic": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/32/Art_Institute_of_Chicago_logo.svg/500px-Art_Institute_of_Chicago_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Art_Institute_of_Chicago_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "2946ef76fde4c0bfdf0ed1847c07dbbdd073c841ea7badcea3f7e7c41edbf7db",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "74c11442165554ca0afc69a4dd694675eb5866b8004a3fb0b80181474ff1c900"
+    },
+    "europeana": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/49/Europeana_logo_black.svg/500px-Europeana_logo_black.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Europeana_logo_black.svg",
+      "licence": "CC BY-SA 4.0 (Wikimedia Commons)",
+      "source_sha256": "e1daacee6ded3e59bb0d047025e0d4a5c087daaa335efd90468c94e89d3ba403",
+      "size": [
+        117,
+        64
+      ],
+      "sha256": "d8b879eb8382eafe8e26d598fc9fa49ca24c63b9f863c87ce931a413f23d42b8"
+    },
+    "harvard": {
+      "source": "https://harvardartmuseums.org/assets/images/HAM-Wordmark-Knockout.png",
+      "page": "https://harvardartmuseums.org/",
+      "licence": "Harvard Art Museums' wordmark from its own site, shown to name the source",
+      "source_sha256": "e0ce46d54173bed00dc5a11051b3fd55c69ef15da0b94807f41d248b4a2e42bc",
+      "size": [
+        213,
+        64
+      ],
+      "sha256": "b999cdf6e7c2ab7710bbe60c6e8c1d99d607be35276e1b5576f239c4422993e3"
+    },
+    "gcd": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/8/8d/Grand_Comics_Database_logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Grand_Comics_Database_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "277e0077fbe0eb6f2a7615cb0cf40db119aba8ef411ca95c20983828581b3932",
+      "size": [
+        89,
+        64
+      ],
+      "sha256": "9869276a9f637e13dfbca87cbd07bf16fbbdd06749973a75a39580d775715fe0"
+    },
+    "internet_archive": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/71/Internet_Archive_logo_wide_black.svg/500px-Internet_Archive_logo_wide_black.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Internet_Archive_logo_wide_black.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "8490719b2df70dd6ddd0d5bd23eb5aa288f00e1f79c3878df53b50d10dbe6966",
+      "size": [
+        471,
+        64
+      ],
+      "sha256": "b530d349f12c4e167dafd602d30b16894fab5a540d0b996529d5b3ce04fe640a"
+    },
+    "wikimedia_commons": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Commons-logo.svg/500px-Commons-logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Commons-logo.svg",
+      "licence": "CC BY-SA 3.0 (Wikimedia Commons)",
+      "source_sha256": "66df37aacba29e9ac75c42a552191869eef61a003629b8be2bb27ee4b7ad693b",
+      "size": [
+        47,
+        64
+      ],
+      "sha256": "efd57bcb760185caba1d7f26dc9bc5ad30d8abbaf6cb3024007d0fe29f892445"
+    },
+    "loc": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/be/Logo_of_the_United_States_Library_of_Congress.svg/500px-Logo_of_the_United_States_Library_of_Congress.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_of_the_United_States_Library_of_Congress.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "fa2fc1b7dfc3f28c1971305aca90d3ea0840bef20a7dc4a14636618602dbddb6",
+      "size": [
+        258,
+        64
+      ],
+      "sha256": "fb115f7dc3e8bc7391446af496207d885d4506a57a292d960e432c67d5a75c6f"
+    },
+    "gallica": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e8/Logo_Gallica_2025.png/500px-Logo_Gallica_2025.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_Gallica_2025.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "8b66345266721f04671537f47bdee0146680eaf422bcb0321a0aeb6a0204b829",
+      "size": [
+        364,
+        64
+      ],
+      "sha256": "465eb2fd698f5c98bd56e374220c894e40a8b24d9b01d583994192cc176c7286"
+    },
+    "comicvine": {
+      "source": "https://comicvine.gamespot.com/ (the header's inline SVG, svg.symbol-logo-comicvine)",
+      "page": "https://comicvine.gamespot.com/",
+      "licence": "Comic Vine's trademark, shown to name the source",
+      "source_sha256": "d018a1aee7f7e6b14e66ea16a66bf6e9a7e3bfeeeda8dd758bfcbbf10b29b34a",
+      "processing": "captured in a browser (the site answers scripts with a bot check), drawn 8x by a headless browser, cropped, 64 px tall",
+      "size": [
+        121,
+        64
+      ],
+      "sha256": "e81a786f2d84a9286818dabf6757c5d732f70bb1048a9e1f4b7e4b53094327b4"
+    }
+  }
+}

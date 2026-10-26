@@ -633,7 +633,7 @@ class GcdComicCovers(BasePlugin):
         now = datetime.now()
         return cover_gallery.compose(
             images, [_comic_label(cover) for cover in covers], tuple(dimensions), title="COMIC COVERS",
-            subtitle="今日漫画 · " + " / ".join(sources),
+            subtitle="今日漫画", sources=sources,
             date_text=f"{now.month}月{now.day}日 周{'一二三四五六日'[now.weekday()]}",
             accent=COMIC_ACCENT, dark=_gallery_dark(settings),
             wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="comic",
@@ -2452,10 +2452,14 @@ def _comic_label(cover):
     if publisher.startswith(("http://", "https://")):
         publisher = ""
     title = _clean_text(cover.get("title") or "")
-    lines = tuple(part for part in (publisher or "出版社不详", title if title and title != series else "") if part)
+    # Comic Vine's issue list names no publisher; the issue's cover date tells more than "unknown".
+    cover_day = re.match(r"^(\d{4})-(\d{2})", _clean_text(cover.get("cover_date") or ""))
+    cover_month = f"封面 {cover_day.group(1)}.{cover_day.group(2)}" if cover_day else ""
+    first = publisher or (cover_month if cover_month and not chip.startswith(cover_month[3:]) else "") or "出版社不详"
+    lines = tuple(part for part in (first, title if title and title != series else "") if part)
     return cover_gallery.Label(title=f"{series} #{number}" if number else series, chip=chip, lines=lines,
                                body=_credit_people(cover.get("cover_credits")),
-                               source="Grand Comics Database" if _comic_source(cover) == "GCD" else "Comic Vine")
+                               source_logo="Grand Comics Database" if _comic_source(cover) == "GCD" else "Comic Vine")
 
 
 def _gallery_dark(settings):

@@ -1210,7 +1210,7 @@ class DailyArt(BasePlugin):
         now = datetime.now()
         return cover_gallery.compose(
             images[:visible], labels, tuple(dimensions), title=DAILY_ART_TITLE,
-            subtitle="今日馆藏 · " + " / ".join(sources) if sources else "今日馆藏",
+            subtitle="今日馆藏", sources=sources,
             date_text=f"{now.month}月{now.day}日 周{'一二三四五六日'[now.weekday()]}",
             accent=DAILY_ART_ACCENT, dark=self._gallery_dark(settings), timeline=True,
             wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="gallery")
@@ -1220,9 +1220,13 @@ class DailyArt(BasePlugin):
         get = lambda key: _clean_text(getattr(artwork, key, "") or "")  # noqa: E731
         date = get("date")
         lines = (get("artist") or "佚名", get("medium"), get("culture"))
+        # The collection's logo leads the last line; a holding museum other than it (Europeana's
+        # partners) is still named after it.
+        source, museum = get("source_label"), get("museum")
+        same = cover_gallery.SOURCE_LOGOS.get(museum.casefold()) == cover_gallery.SOURCE_LOGOS.get(source.casefold())
         return cover_gallery.Label(
             title=get("title") or "Untitled", chip=date[:18], lines=tuple(line for line in lines if line),
-            source=get("museum") or get("source_label"), year=cover_gallery.year_of(date))
+            source="" if same else museum, source_logo=source or museum, year=cover_gallery.year_of(date))
 
     @staticmethod
     def _gallery_dark(settings):

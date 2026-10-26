@@ -2253,8 +2253,11 @@ def test_gallery_frames_each_work_over_its_wall_label_and_timeline(tmp_path, mon
     for (image_box, _label_box), color in zip(cover_gallery.columns(3, (800, 480), timeline=True), colors):
         assert rendered.getpixel(((image_box[0] + image_box[2]) // 2, image_box[3] - 40)) == color
     assert {"Artwork 0", "1638", "Artist 0", "Example Museum"} <= set(drawn)
-    # The header says which museums lent the day's works and how many years they span.
-    assert any("The Met" in text and "跨越 1638–1785 · 147 年" in text for text in drawn)
+    # The header says which museums lent the day's works, by their logos (The Met's red), and how
+    # many years the works span.
+    assert {"今日馆藏", "跨越 1638–1785 · 147 年"} <= set(drawn) and not any("The Met" in text for text in drawn)
+    header = [rendered.getpixel((x, y)) for x in range(240, 420) for y in range(14, 36)]
+    assert any(red > 150 and green < 80 and blue < 80 for red, green, blue in header)
     # The page's own wordmark heads it in the ink (no lettered title).
     assert "DAILY ART" not in drawn
     assert any(sum(rendered.getpixel((x, y))) < 120 for x in range(20, 240) for y in range(16, 44))
