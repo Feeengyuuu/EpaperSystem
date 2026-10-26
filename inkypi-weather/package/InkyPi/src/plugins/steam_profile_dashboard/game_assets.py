@@ -25,6 +25,9 @@ from utils.safe_image import ImageLimits, safe_open_image
 
 
 APPDETAILS_URL = "https://store.steampowered.com/api/appdetails"
+# The store's item API names an app's own community icon, demos included (whose AppHub page
+# only redirects to the store).
+STORE_ITEMS_URL = "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/"
 ICON_URL = "https://shared.fastly.steamstatic.com/community_assets/images/apps/{appid}/{icon_hash}.jpg"
 METADATA_TTL = 7 * 24 * 60 * 60
 IMAGE_TTL = 30 * 24 * 60 * 60
@@ -89,7 +92,8 @@ class SteamGameAssets:
     """Public get_background/get_icon return a new PIL image or None.
 
     ``record`` may contain the exact AppID's ``img_icon_url`` hash from Steam's
-    owned/recent games API. Otherwise the official AppHub page supplies the icon.
+    owned/recent games API. Otherwise the store's item API (then the official AppHub page)
+    supplies the icon.
     Diagnostics distinguish downloaded, disk, memory, missing and budget cases.
     A zero network budget skips HTTP. ``read_only=True`` additionally prohibits
     metadata writes, directory creation and eviction, even for new API hashes.
@@ -351,6 +355,24 @@ class SteamGameAssets:
                     return self._source(appid, kind, None, meta, allow_hub_fallback=False)
             return source
 
+    def _store_icon_url(self, appid):
+        """This exact app's community icon as the store's item API names it, or None."""
+        query = {"ids": [{"appid": int(appid)}], "context": {"language": "english", "country_code": "US"},
+                 "data_request": {"include_assets": True}}
+        try:
+            payload = json.loads(self._request(
+                STORE_ITEMS_URL, 256 * 1024, params={"input_json": json.dumps(query, separators=(",", ":"))},
+            ))
+        except (OSError, ValueError, HttpStatusError):
+            # The AppHub page is still asked; a deadline or cancellation goes on up.
+            return None
+        items = ((payload if isinstance(payload, dict) else {}).get("response") or {}).get("store_items") or []
+        entry = next((item for item in items if isinstance(item, dict) and str(item.get("appid")) == appid), {})
+        icon = (entry.get("assets") or {}).get("community_icon") if isinstance(entry.get("assets"), dict) else None
+        if isinstance(icon, str) and re.fullmatch(r"[a-fA-F0-9]{40}", icon):
+            return ICON_URL.format(appid=appid, icon_hash=icon)
+        return None
+
     def _resolve_url(self, appid, kind, record, meta, now):
         url = _asset_url(meta.get(f"{kind}_url"), appid, kind)
         if kind == "icon" and isinstance(record, dict) and _appid(record.get("appid")) == appid:
@@ -379,10 +401,12 @@ class SteamGameAssets:
                 candidate = next((valid for field in ("header_image", "capsule_image", "capsule_imagev5")
                                   if (valid := _asset_url(data.get(field), appid, kind))), None)
             else:
-                body = self._request(f"https://steamcommunity.com/app/{appid}/", 1024 * 1024)
-                parser = _AppHubIcon()
-                parser.feed(body.decode("utf-8", errors="replace"))
-                candidate = next((valid for value in parser.urls if (valid := _asset_url(value, appid, kind))), None)
+                candidate = self._store_icon_url(appid)
+                if not candidate:
+                    body = self._request(f"https://steamcommunity.com/app/{appid}/", 1024 * 1024)
+                    parser = _AppHubIcon()
+                    parser.feed(body.decode("utf-8", errors="replace"))
+                    candidate = next((valid for value in parser.urls if (valid := _asset_url(value, appid, kind))), None)
             if not candidate:
                 raise ValueError("Steam did not return identity-bound official artwork")
             if candidate != url:

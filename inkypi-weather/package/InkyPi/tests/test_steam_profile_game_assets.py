@@ -44,6 +44,9 @@ class Session:
         self.calls = []
 
     def request(self, method, url, **kwargs):
+        # The store's item API answers "no icon" (unrecorded) unless a test queued its own store reply.
+        if url.startswith(game_assets.STORE_ITEMS_URL) and not (self.responses and getattr(self.responses[0], "store", False)):
+            return Response(b"{}")
         self.calls.append((method, url, kwargs))
         assert self.responses, f"Unexpected network request: {url}"
         response = self.responses.pop(0)
@@ -61,6 +64,13 @@ def picture(size=(460, 215), color=(30, 80, 120)):
 def details(appid=APPID, **overrides):
     data = {"steam_appid": int(appid), "header_image": HEADER, **overrides}
     return Response(json.dumps({APPID: {"success": True, "data": data}}).encode())
+
+
+def store_items(appid=APPID, icon_hash=ICON_HASH):
+    response = Response(json.dumps({"response": {"store_items": [
+        {"appid": int(appid), "assets": {"community_icon": icon_hash}}]}}).encode())
+    response.store = True
+    return response
 
 
 def hub(url=ICON):
@@ -289,3 +299,19 @@ def test_cache_growth_prunes_owned_old_groups_preserving_visible_and_unknown_fil
     assert unknown.read_text(encoding="utf-8") == "user file"
     assert invalid.exists()
     assert result.size == (30, 30)  # close releases originals, never returned copies.
+
+
+def test_an_app_outside_the_library_gets_its_icon_from_the_store_items_api(tmp_path):
+    # A demo's AppHub page only redirects to the store; the store's item API still names its icon.
+    session = Session(store_items(), picture((32, 32)))
+    assets = SteamGameAssets(tmp_path, session)
+
+    assert assets.get_icon(APPID, (16, 16)) is not None
+    assert [url for _method, url, _kwargs in session.calls] == [game_assets.STORE_ITEMS_URL, ICON]
+    assert assets.sources[f"{APPID}:icon"]["url"] == ICON
+
+
+def test_a_store_items_answer_for_another_app_is_not_used(tmp_path):
+    session = Session(store_items(appid="123"), hub(), picture((32, 32)))
+    assert SteamGameAssets(tmp_path, session).get_icon(APPID, (16, 16)) is not None
+    assert "steamcommunity.com/app/" in session.calls[1][1]

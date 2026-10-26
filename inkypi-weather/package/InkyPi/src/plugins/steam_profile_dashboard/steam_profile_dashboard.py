@@ -66,9 +66,10 @@ STEAM_PRIMARY_GAME_LANGUAGE = "schinese"
 STEAM_SECONDARY_GAME_LANGUAGE = "english"
 STEAM_RECENT_GAME_LIMIT = 6
 STEAM_LEFT_GAME_ITEM_TARGET = 4
-# Distinct games one console render may load: hero 1, recent rows 4, top three 3
-# and the games of four visible online friends.
-STEAM_CONSOLE_GAME_ASSET_LIMIT = 12
+# Distinct games one console render may load: hero 1, recent rows 4, top three 3, the
+# games of four visible online friends, and room to spare so the friends (drawn last)
+# are never squeezed out by the art drawn before them.
+STEAM_CONSOLE_GAME_ASSET_LIMIT = 16
 STEAM_BADGE_ICON_LIMIT = 48
 OPTIONAL_MEDIA_NEGATIVE_TTL_SECONDS = 6 * 60 * 60
 OPTIONAL_MEDIA_NEGATIVE_CACHE_LIMIT = 256
