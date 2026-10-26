@@ -25,7 +25,20 @@ WHITE = (242, 248, 253)
 CYAN = (129, 213, 246)
 MUTED = (138, 169, 191)
 GREEN = (129, 237, 105)
+# Steam's presence colours for an avatar's ring: online blue, away or busy amber (in a game: GREEN).
+STEAM_ONLINE = (87, 203, 222)
+AWAY = (234, 176, 72)
 FRIEND_GAME_ICON = 14
+# The online friends: those in a game first, each a wide row on the game's artwork (at most
+# FRIEND_PLAYING_ROWS), then everyone else as small tiles, FRIEND_COLUMNS to a row, filling
+# FRIEND_LIST; the last tile counts the ones that do not fit. Avatars keep FRIEND_AVATAR.
+FRIEND_LIST = (600, 46, 784, 201)
+FRIEND_AVATAR = 32
+FRIEND_PLAYING_ROWS = 2
+FRIEND_PLAYING_H = 38
+FRIEND_COLUMNS = 3
+FRIEND_TILE = (58, 49)
+FRIEND_GAP = 3
 # Black ink around the hero title keeps it legible over busy game artwork.
 TITLE_OUTLINE = 2
 RAIL_SIZE = (181, 480)
@@ -566,41 +579,87 @@ class _Console:
             message = "好友列表暂不可用" if data.get("friend_count") is None else "目前没有在线好友"
             self.text((607, 110, 780, 148), message, 15, self.c["muted"], lines=2)
             return
-        visible = friends[:4]
-        # Friend avatars can be slow; resolve every visible friend's game icon
+        playing = [friend for friend in friends if friend.get("gameid") or friend.get("gameextrainfo")]
+        rows = playing[:FRIEND_PLAYING_ROWS]
+        top = FRIEND_LIST[1] + len(rows) * (FRIEND_PLAYING_H + FRIEND_GAP)
+        grid_rows = max(0, (FRIEND_LIST[3] - top + FRIEND_GAP) // (FRIEND_TILE[1] + FRIEND_GAP))
+        rest = [friend for friend in friends if friend not in rows]
+        slots = grid_rows * FRIEND_COLUMNS
+        tiles = rest[:slots] if len(rest) <= slots else rest[:max(0, slots - 1)]
+        hidden = len(rest) - len(tiles)
+        # Friend avatars can be slow; resolve every shown friend's game icon
         # first so they cannot spend the shared game-media network budget.
         game_icons = {}
-        for friend in visible:
+        for friend in rows + tiles:
             appid = _appid(friend.get("gameid"))
             if appid and appid not in game_icons:
                 game_icons[appid] = self.plugin._game_square_icon(data, appid, FRIEND_GAME_ICON)
-        for index, friend in enumerate(visible):
-            y = 48 + index * 39
-            url = friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar")
-            avatar = self.plugin._avatar_image(url, 32, decorative_outline=False)
-            if avatar is not None:
-                self.image.paste(avatar, (605, y), avatar if avatar.mode == "RGBA" else None)
-            self.text((646, y + 1, 783, y + 19), self.plugin._friend_display_id(friend),
-                      14, bold=True, min_size=11)
-            state, color = self.plugin._persona_text(friend)
-            has_game = bool(friend.get("gameid") or friend.get("gameextrainfo"))
-            if not has_game:
-                self.draw.ellipse((646, y + 23, 652, y + 29), fill=color)
-                self.text((658, y + 21, 783, y + 35), state, 12, color)
-                continue
-            name = self.plugin._display_game_name(data, friend.get("gameid"), friend.get("gameextrainfo"))
-            icon = game_icons.get(_appid(friend.get("gameid")))
-            if icon is None:
-                # Without an official icon keep the in-game status dot; never
-                # draw a placeholder that could read as a different game.
-                self.draw.ellipse((646, y + 23, 652, y + 29), fill=GREEN)
-                text_x = 658
-            else:
-                # The green frame keeps the in-game status cue the dot carried.
-                self.draw.rounded_rectangle((645, y + 20, 660, y + 35), radius=2, outline=GREEN)
-                self.image.paste(icon, (646, y + 21), icon if icon.mode == "RGBA" else None)
-                text_x = 665
-            self.text((text_x, y + 21, 783, y + 35), name or "游戏中", 11, self.c["accent"])
+        for index, friend in enumerate(rows):
+            self._playing_friend(friend, FRIEND_LIST[1] + index * (FRIEND_PLAYING_H + FRIEND_GAP), game_icons)
+        shown = tiles + ([None] if hidden else [])
+        lines = [shown[start:start + FRIEND_COLUMNS] for start in range(0, len(shown), FRIEND_COLUMNS)]
+        # The tiles share out the room left: their rows evenly down it, each row centred across.
+        width = FRIEND_LIST[2] - FRIEND_LIST[0]
+        step_x = (width - FRIEND_TILE[0]) / max(1, FRIEND_COLUMNS - 1)
+        room = FRIEND_LIST[3] - top
+        gap_y = max(FRIEND_GAP, (room - len(lines) * FRIEND_TILE[1]) / (len(lines) + 1)) if lines else 0
+        for row, line in enumerate(lines):
+            y = round(top + gap_y + row * (FRIEND_TILE[1] + gap_y)) if gap_y > FRIEND_GAP \
+                else top + row * (FRIEND_TILE[1] + FRIEND_GAP)
+            first = FRIEND_LIST[0] + (width - FRIEND_TILE[0] - step_x * (len(line) - 1)) / 2
+            for column, friend in enumerate(line):
+                self._friend_tile(friend, round(first + column * step_x), y, game_icons, hidden)
+
+    def _friend_ring(self, friend, x, y):
+        """The friend's avatar with a ring in their presence colour (Steam's: green in a game,
+        blue online, amber away or busy) round it."""
+        playing = bool(friend.get("gameid") or friend.get("gameextrainfo"))
+        state = _number(friend.get("personastate"))
+        colour = GREEN if playing else (STEAM_ONLINE if state in (1, 5, 6) else AWAY)
+        self.draw.ellipse((x - 2, y - 2, x + FRIEND_AVATAR + 1, y + FRIEND_AVATAR + 1), outline=colour, width=2)
+        url = friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar")
+        avatar = self.plugin._avatar_image(url, FRIEND_AVATAR, decorative_outline=False)
+        if avatar is not None:
+            self.image.paste(avatar, (x, y), avatar if avatar.mode == "RGBA" else None)
+
+    def _playing_friend(self, friend, y, game_icons):
+        """A friend in a game as a wide row on that game's own artwork: the avatar, the name and
+        the game with its icon."""
+        x, right = FRIEND_LIST[0], FRIEND_LIST[2]
+        appid = friend.get("gameid")
+        self.art((x, y, right, y + FRIEND_PLAYING_H), appid, strength=120)
+        self._friend_ring(friend, x + 4, y + 3)
+        self.text((x + 43, y + 2, right - 4, y + 19), self.plugin._friend_display_id(friend), 14,
+                  bold=True, min_size=11)
+        name = self.plugin._display_game_name(self.data, appid, friend.get("gameextrainfo"))
+        icon = game_icons.get(_appid(appid))
+        text_x = x + 43
+        if icon is not None:
+            self.image.paste(icon, (text_x, y + 21), icon if icon.mode == "RGBA" else None)
+            text_x += FRIEND_GAME_ICON + 4
+        self.text((text_x, y + 20, right - 4, y + 36), name or "游戏中", 11, GREEN, bold=True)
+
+    def _friend_tile(self, friend, x, y, game_icons, hidden):
+        """A friend as a small tile on the panel itself: the ringed avatar over the name (a game's
+        icon pinned to the avatar while playing); ``None`` is the tile counting the ones left out."""
+        width, height = FRIEND_TILE
+        avatar_x = x + (width - FRIEND_AVATAR) // 2
+        if friend is None:
+            self.draw.ellipse((avatar_x, y + 3, avatar_x + FRIEND_AVATAR, y + 3 + FRIEND_AVATAR),
+                              outline=self.c["accent"], width=2)
+            self.text((avatar_x, y + 3, avatar_x + FRIEND_AVATAR, y + 3 + FRIEND_AVATAR), f"+{hidden}", 14,
+                      self.c["accent"], bold=True, align="center")
+            self.text((x + 2, y + 36, x + width - 2, y + height - 1), "更多在线", 10, self.c["muted"], align="center")
+            return
+        self._friend_ring(friend, avatar_x, y + 3)
+        icon = game_icons.get(_appid(friend.get("gameid")))
+        if icon is not None:
+            badge = (avatar_x + FRIEND_AVATAR - FRIEND_GAME_ICON + 4, y + 3 + FRIEND_AVATAR - FRIEND_GAME_ICON + 2)
+            self.draw.rounded_rectangle((badge[0] - 1, badge[1] - 1, badge[0] + FRIEND_GAME_ICON,
+                                         badge[1] + FRIEND_GAME_ICON), radius=2, fill=self.c["navy"], outline=GREEN)
+            self.image.paste(icon, badge, icon if icon.mode == "RGBA" else None)
+        self.text((x + 2, y + 36, x + width - 2, y + height - 1), self.plugin._friend_display_id(friend), 11,
+                  bold=True, min_size=9, align="center")
 
     def recent(self, items):
         recent_ids = {_appid(game.get("appid")) for game in self.data.get("recent_games") or []}

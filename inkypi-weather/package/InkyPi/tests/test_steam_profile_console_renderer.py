@@ -19,6 +19,8 @@ from plugins.steam_profile_dashboard.console_renderer import (
     _Console,
     CANVAS,
     CYAN,
+    FRIEND_LIST,
+    FRIEND_TILE,
     GREEN,
     PANEL,
     render_console,
@@ -116,9 +118,9 @@ def test_game_art_and_icons_are_preserved_over_a_solid_page_canvas(plugin, data,
     # The game being played lends its art once more, small, for the page's colours.
     assert backgrounds == expected + Counter({"108600": 1})
     assert icons == expected
-    # The live friend's total belongs in the heading; only four visible avatars
-    # should cause asset work even when more friends are online.
-    assert sum(kind == "avatar" for kind, _, _ in plugin.asset_calls) == 5
+    # The live friend's total belongs in the heading; the profile photo and the six online
+    # friends' tiles are the only avatars fetched.
+    assert sum(kind == "avatar" for kind, _, _ in plugin.asset_calls) == 7
     avatar_positions = [index for index, (kind, _, _) in enumerate(plugin.asset_calls)
                         if kind == "avatar"]
     game_positions = [index for index, (kind, _, _) in enumerate(plugin.asset_calls)
@@ -324,10 +326,10 @@ def test_friend_remark_and_game_activity_use_provider_display_names(plugin, data
     data["friends"][0].update(remark="城", gameid="108600", gameextrainfo="Project Zomboid")
     monkeypatch.setattr(plugin, "_friend_display_id", lambda friend: friend.get("remark") or friend["personaname"])
     render_console(plugin, data, (800, 480))
-    friend_names = [text for box, text in displayed if box[0] == 646]
+    friend_names = [text for box, text in displayed if box[0] == FRIEND_LIST[0] + 43]
     assert "城" in friend_names
     assert "Friend 0" not in friend_names
-    assert any(text == "Project Zomboid" and box[0] == 665 for box, text in displayed)
+    assert any(text == "Project Zomboid" and box[0] == FRIEND_LIST[0] + 61 for box, text in displayed)
 
 
 def test_selected_navy_design_is_stable_across_themes_and_scales_to_device(plugin, data):
@@ -339,20 +341,17 @@ def test_selected_navy_design_is_stable_across_themes_and_scales_to_device(plugi
     assert data == original
 
 
-def _friend_row_y(index):
-    return 48 + index * 39
-
-
 def test_friend_game_activity_shows_the_game_icon_before_its_name(plugin, data, displayed):
     data["friends"][0].update(gameid="1172470", gameextrainfo="Company of Heroes 3")
     image = render_console(plugin, data, (800, 480))
-    y = _friend_row_y(0)
+    x, y = FRIEND_LIST[:2]
 
     assert ("icon", "1172470", 14) in plugin.asset_calls
-    # The fixture icon is a solid colour; the status dot is replaced by the icon.
-    assert image.getpixel((652, y + 27)) == (200, 80, 40)
-    assert image.getpixel((645, y + 27)) == GREEN
-    assert any(text == "Company of Heroes 3" and box[0] == 665 for box, text in displayed)
+    # A friend in a game leads the list as a row: the fixture's solid icon before the game's
+    # name, and the avatar ringed in the in-game green.
+    assert image.getpixel((x + 50, y + 28)) == (200, 80, 40)
+    assert image.getpixel((x + 20, y + 1)) == GREEN
+    assert any(text == "Company of Heroes 3" and box[0] == x + 61 for box, text in displayed)
 
 
 def test_game_logos_sit_on_the_page_without_a_border(plugin, data):
@@ -390,10 +389,11 @@ def test_friend_game_without_icon_keeps_the_status_dot(plugin, data, displayed, 
     )
     data["friends"][0].update(gameid="1172470", gameextrainfo="Company of Heroes 3")
     image = render_console(plugin, data, (800, 480))
-    y = _friend_row_y(0)
+    x, y = FRIEND_LIST[:2]
 
-    assert image.getpixel((649, y + 26)) == GREEN
-    assert any(text == "Company of Heroes 3" and box[0] == 658 for box, text in displayed)
+    # No placeholder icon: the game's name takes its place, the ring still says in a game.
+    assert image.getpixel((x + 20, y + 1)) == GREEN
+    assert any(text == "Company of Heroes 3" and box[0] == x + 43 for box, text in displayed)
 
 
 def test_friend_game_icons_are_fetched_before_any_friend_avatar(plugin, data):
@@ -529,9 +529,10 @@ def test_the_page_takes_the_colours_of_the_game_being_played(plugin, data, monke
     data["profile"].update(gameid="730", gameextrainfo="Counter-Strike 2")
     other = render_console(plugin, data, (800, 480))
 
-    # The panel colour beside the friends' heading follows each game's own hue.
-    assert abs(_hue(playing.getpixel((700, 120))) - _hue((200, 40, 30))) < 0.05
-    assert abs(_hue(other.getpixel((700, 120))) - _hue((40, 150, 140))) < 0.05
+    # The panel colour between the friends' tiles follows each game's own hue.
+    gap = (FRIEND_LIST[0] + FRIEND_TILE[0] + 1, 120)
+    assert abs(_hue(playing.getpixel(gap)) - _hue((200, 40, 30))) < 0.05
+    assert abs(_hue(other.getpixel(gap)) - _hue((40, 150, 140))) < 0.05
 
 
 def test_equipped_profile_background_becomes_a_still_image_record():

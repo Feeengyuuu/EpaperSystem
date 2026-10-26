@@ -3,7 +3,7 @@
 from PIL import Image
 import pytest
 
-from plugins.steam_profile_dashboard.console_renderer import _Console, render_console
+from plugins.steam_profile_dashboard.console_renderer import FRIEND_LIST, _Console, render_console
 from plugins.steam_profile_dashboard.steam_profile_dashboard import SteamProfileDashboard
 
 OFFLINE, ONLINE, BUSY, AWAY, SNOOZE, TRADE, PLAY = range(7)
@@ -33,8 +33,10 @@ def panel_names(plugin, monkeypatch, friends):
     original = _Console.text
 
     def record(self, box, value, *args, **kwargs):
-        # Friend names sit in the panel's text column, one per 39 px row.
-        if box[0] == 646 and (box[1] - 49) % 39 == 0:
+        # Friend names: 17 px tall on a row of someone in a game, 12 px under a tile's avatar.
+        left, top, _right, bottom = box
+        if (FRIEND_LIST[0] <= left < FRIEND_LIST[2] and FRIEND_LIST[1] <= top < FRIEND_LIST[3]
+                and bottom - top in (17, 12) and value != "更多在线"):
             names.append(str(value))
         return original(self, box, value, *args, **kwargs)
 
@@ -62,7 +64,8 @@ def test_panel_lists_playing_friends_before_online_before_away(plugin, monkeypat
                friend("Zed", ONLINE, game="570"), friend("Ann", ONLINE, game="730"),
                friend("Offline Pal", OFFLINE)]
 
-    assert panel_names(plugin, monkeypatch, friends) == ["Ann", "Zed", "Feed Me", "Jw"]
+    # Everyone signed in now has a place: the away friend follows the online ones.
+    assert panel_names(plugin, monkeypatch, friends) == ["Ann", "Zed", "Feed Me", "Jw", "城"]
 
 
 def test_panel_orders_ties_by_the_name_it_shows(plugin, monkeypatch):
