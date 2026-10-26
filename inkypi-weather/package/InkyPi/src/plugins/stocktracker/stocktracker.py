@@ -198,6 +198,60 @@ DASHBOARD_MARGIN = 16
 HEADER_RULE_Y = 38
 # Dollar bills on the wind across the header (GPT Image 2.5; tools/build_flying_header_art.py).
 HEADER_MONEY_PATH = os.path.join(os.path.dirname(__file__), "assets", "header_flying_bills.png")
+# Taking the art apart: a stroke of at least HEADER_BILL_AREA pixels is a bill, of at least
+# HEADER_COIN_AREA a coin; smaller marks (a coin's motion lines) go with the nearest piece, and
+# one cut off at the art's edge is left out. Pieces fly at least HEADER_MONEY_MIN_GAP apart.
+HEADER_BILL_AREA, HEADER_COIN_AREA, HEADER_MONEY_MIN_GAP = 2500, 300, 4
+_HEADER_MONEY_PIECES = {}
+
+
+def _header_money_pieces():
+	"""([(bill, top)], [(coin, top)], art height) from the header art, bills and coins left to
+	right, each cut to its own strokes; None without the art. Worked out once per process."""
+	if "pieces" in _HEADER_MONEY_PIECES:
+		return _HEADER_MONEY_PIECES["pieces"]
+	pieces = None
+	try:
+		with Image.open(HEADER_MONEY_PATH) as source:
+			art = source.convert("RGBA")
+	except (OSError, ValueError) as e:
+		logging.warning(f"Could not load the header bills: {type(e).__name__}")
+	else:
+		# Number each connected stroke by flooding it with its own grey level.
+		labels = art.getchannel("A").point(lambda value: 255 if value > 24 else 0)
+		strokes = []
+		while len(strokes) < 250:
+			bounds = labels.point(lambda value: 255 if value == 255 else 0).getbbox()
+			if not bounds:
+				break
+			seed = next(x for x in range(bounds[0], bounds[2]) if labels.getpixel((x, bounds[1])) == 255)
+			level = len(strokes) + 1
+			ImageDraw.floodfill(labels, (seed, bounds[1]), level)
+			mask = labels.point(lambda value, level=level: 255 if value == level else 0)
+			strokes.append((mask.histogram()[255], mask.getbbox(), mask))
+		big = [stroke for stroke in strokes if stroke[0] >= HEADER_COIN_AREA]
+		groups = {id(stroke): [stroke] for stroke in big}
+		for stroke in strokes:
+			area, (x0, _y0, x1, _y1), _mask = stroke
+			if area >= HEADER_COIN_AREA or x0 == 0 or x1 == art.width:
+				continue
+			middle = (x0 + x1) / 2
+			nearest = min(big, key=lambda other: abs((other[1][0] + other[1][2]) / 2 - middle), default=None)
+			if nearest is not None:
+				groups[id(nearest)].append(stroke)
+		bills, coins = [], []
+		for stroke in sorted(big, key=lambda stroke: stroke[1][0]):
+			mask = Image.new("L", art.size, 0)
+			for _area, _box, part in groups[id(stroke)]:
+				mask.paste(255, (0, 0), part)
+			x0, y0, x1, y1 = mask.getbbox()
+			piece = art.crop((x0, y0, x1, y1))
+			piece.putalpha(Image.composite(piece.getchannel("A"), Image.new("L", piece.size, 0), mask.crop((x0, y0, x1, y1))))
+			(bills if stroke[0] >= HEADER_BILL_AREA else coins).append((piece, y0))
+		if bills and coins:
+			pieces = (bills, coins, art.height)
+	_HEADER_MONEY_PIECES["pieces"] = pieces
+	return pieces
 TOP_CARDS = (48, 186)
 SUMMARY_CARD_WIDTH = 300
 HOLDINGS_TOP = 198
@@ -2114,19 +2168,36 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		self._header_logo_cache[cache_key] = logo
 		return logo
 
-	def _draw_header_money(self, img, box):
-		"""Dollar bills on the wind across the header's free stretch, as large as it holds."""
+	def _draw_header_money(self, img, box, turn=0):
+		"""Dollar bills on the wind filling the header's free stretch: the art's bills and coins
+		taken apart and flown again, bill and coin by turns from ``turn`` on, at the stretch's
+		height and spaced out to reach both its ends."""
 		left, top, right, bottom = [int(value) for value in box]
-		if right - left < 60 or bottom - top < 12 or not os.path.exists(HEADER_MONEY_PATH):
+		pieces = _header_money_pieces()
+		if right - left < 60 or bottom - top < 12 or not pieces:
 			return
-		try:
-			art = Image.open(HEADER_MONEY_PATH).convert("RGBA")
-		except (OSError, ValueError) as e:
-			logging.warning(f"Could not load the header bills: {type(e).__name__}")
+		bills, coins, art_height = pieces
+		scale = (bottom - top) / art_height
+		flight, used = [], 0
+		for index in range(64):
+			piece, piece_top = bills[(turn + index // 2) % len(bills)] if index % 2 == 0 else coins[(turn + index // 2) % len(coins)]
+			width = max(1, round(piece.width * scale))
+			if used + width + HEADER_MONEY_MIN_GAP * len(flight) > right - left:
+				break
+			flight.append((piece, piece_top, width))
+			used += width
+		if len(flight) > 1 and len(flight) % 2 == 0:
+			# The flight ends on a bill, not a coin.
+			used -= flight.pop()[2]
+		if not flight:
 			return
-		scale = min((right - left) / art.width, (bottom - top) / art.height)
-		art = art.resize((max(1, round(art.width * scale)), max(1, round(art.height * scale))), Image.Resampling.LANCZOS)
-		img.paste(art, (left + (right - left - art.width) // 2, top + (bottom - top - art.height) // 2), art)
+		gap = (right - left - used) / max(1, len(flight) - 1)
+		x = left if len(flight) > 1 else left + (right - left - used) / 2
+		for piece, piece_top, width in flight:
+			height = max(1, round(piece.height * scale))
+			art = piece.resize((width, height), Image.Resampling.LANCZOS)
+			img.paste(art, (round(x), top + round(piece_top * scale)), art)
+			x += width + gap
 
 	def _draw_header(self, img, draw, width, stock_data, header_brand=None, updated_at=None):
 		colors = _active_stock_colors()
@@ -2171,7 +2242,9 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			fill=colors["ink"],
 			font=source_font,
 		)
-		self._draw_header_money(img, (title_right + 14, 4, source_left - 14, HEADER_RULE_Y - 5))
+		# The flight starts from another bill each hour.
+		self._draw_header_money(img, (title_right + 14, 4, source_left - 14, HEADER_RULE_Y - 5),
+								turn=(updated_at or datetime.now()).hour)
 		draw.line((margin, HEADER_RULE_Y, width - margin, HEADER_RULE_Y), fill=colors["accent_gold"], width=3)
 
 	@staticmethod

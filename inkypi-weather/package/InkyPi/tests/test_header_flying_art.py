@@ -36,17 +36,20 @@ def test_stock_header_flies_its_bills_between_the_logo_and_the_source():
     pasted = []
     original = plugin._draw_header_money
 
-    def record(img, box):
+    def record(img, box, **kwargs):
         pasted.append(box)
-        return original(img, box)
+        return original(img, box, **kwargs)
 
     plugin._draw_header_money = record
     plugin._draw_header(image, ImageDraw.Draw(image), 800, [{"symbol": "NVDA"}], header_brand="robinhood")
 
     left, top, right, bottom = pasted[0]
     assert 100 < left < right and bottom <= stocktracker.HEADER_RULE_Y
-    greens = [x for x in range(left, right) if image.getpixel((x, (top + bottom) // 2))[1] > 120 > image.getpixel((x, (top + bottom) // 2))[0]]
+    greens = [x for x in range(left, right) if any(
+        image.getpixel((x, y))[1] > 120 > image.getpixel((x, y))[0] for y in range(top, bottom))]
     assert greens, "no bills were drawn"
+    # The bills and coins are flown again to fill the stretch from end to end.
+    assert min(greens) < left + 30 and max(greens) > right - 30
 
 
 def test_the_flying_art_is_installed_with_its_record():
@@ -55,3 +58,17 @@ def test_the_flying_art_is_installed_with_its_record():
             assert art.mode == "RGBA" and art.getchannel("A").getextrema()[0] == 0, path.name
         record = json.loads(path.with_suffix(".source.json").read_text(encoding="utf-8"))
         assert record["source"].startswith("https://cdn.creativeclaw.co/"), path.name
+
+
+def test_the_bills_fly_in_turns_from_another_bill_each_hour():
+    bills, coins, _height = stocktracker._header_money_pieces()
+    plugin = StockTracker({"id": "stocktracker"})
+    flights = []
+    for turn in (0, 1):
+        image = Image.new("RGB", (500, 50), (255, 255, 255))
+        plugin._draw_header_money(image, (0, 4, 500, 45), turn=turn)
+        flights.append(image.tobytes())
+
+    # Four bills and three coins, the cut-off scrap at the art's right edge left out.
+    assert (len(bills), len(coins)) == (4, 3)
+    assert flights[0] != flights[1]
