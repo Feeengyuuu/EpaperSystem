@@ -102,6 +102,9 @@ _PROVIDER_HOST_SUFFIXES = {
     "met": ("metmuseum.org",),
     "artic": ("artic.edu",),
     "harvard": ("harvard.edu",),
+    "cleveland": ("clevelandart.org",),
+    "vam": ("vam.ac.uk",),
+    "smk": ("smk.dk",),
 }
 _FEDERATED_PUBLIC_SOURCES = frozenset({"europeana"})
 

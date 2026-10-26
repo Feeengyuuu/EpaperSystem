@@ -45,6 +45,8 @@ SOURCE_LOGOS = {
     "europeana": "europeana", "harvard art museums": "harvard", "comic vine": "comicvine",
     "grand comics database": "gcd", "gcd": "gcd", "internet archive": "internet_archive",
     "wikimedia commons": "wikimedia_commons", "library of congress": "loc", "美国国会图书馆": "loc", "gallica": "gallica",
+    "cleveland museum of art": "cleveland", "v&a": "vam", "victoria and albert museum": "vam", "smk": "smk",
+    "smk – statens museum for kunst": "smk", "statens museum for kunst": "smk",
 }
 HEADER_SOURCE_H, LABEL_SOURCE_H = 18, 13
 DAY = {"paper": (249, 246, 239), "ink": (24, 24, 28), "muted": (104, 100, 94), "rule": (206, 200, 189),

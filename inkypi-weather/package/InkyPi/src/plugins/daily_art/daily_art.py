@@ -60,7 +60,9 @@ DAILY_ART_RENDER_STYLE_VERSION = "daily-art-gallery-v2"
 # The gallery's accent: the label numbers, date chips and timeline markers.
 DAILY_ART_ACCENT = (0, 70, 200)
 DAILY_ART_TITLE = "DAILY ART"
-DEFAULT_SOURCES = ("met", "artic", "europeana", "harvard")
+DEFAULT_SOURCES = ("met", "artic", "cleveland", "vam", "smk", "europeana", "harvard")
+# The open collections that need no key; Europeana and Harvard need one each.
+OPEN_SOURCES = ("met", "artic", "cleveland", "vam", "smk")
 DEFAULT_QUERY_TERMS = (
     "painting",
     "portrait",
@@ -90,6 +92,11 @@ ARTIC_SEARCH_URL = "https://api.artic.edu/api/v1/artworks/search"
 ARTIC_IIIF_BASE_URL = "https://www.artic.edu/iiif/2"
 EUROPEANA_SEARCH_URL = "https://api.europeana.eu/record/v2/search.json"
 HARVARD_OBJECT_URL = "https://api.harvardartmuseums.org/object"
+# Keyless open-access collections: the Cleveland Museum of Art (CC0), the V&A and SMK (public domain).
+CLEVELAND_SEARCH_URL = "https://openaccess-api.clevelandart.org/api/artworks/"
+VAM_SEARCH_URL = "https://api.vam.ac.uk/v2/objects/search"
+VAM_IMAGE_SIZE = "full/!1200,1200/0/default.jpg"
+SMK_SEARCH_URL = "https://api.smk.dk/api/v1/art/search/"
 
 REQUEST_HEADERS = {
     "User-Agent": "InkyPi DailyArt/1.0",
@@ -808,6 +815,12 @@ class DailyArt(BasePlugin):
                     candidates.extend(self._fetch_met_candidates(term, limit, rng))
                 elif source == "artic":
                     candidates.extend(self._fetch_artic_candidates(term, limit, settings, rng))
+                elif source == "cleveland":
+                    candidates.extend(self._fetch_cleveland_candidates(term, limit, rng))
+                elif source == "vam":
+                    candidates.extend(self._fetch_vam_candidates(term, limit, rng))
+                elif source == "smk":
+                    candidates.extend(self._fetch_smk_candidates(term, limit, rng))
                 elif source == "europeana":
                     key = self._env_value(device_config, EUROPEANA_ENV_KEYS, settings, ("europeanaApiKey",))
                     if key:
@@ -929,6 +942,123 @@ class DailyArt(BasePlugin):
                 image_url=image_url,
                 page_url=f"https://www.artic.edu/artworks/{record.get('id')}",
                 culture=_first_text(record, ["place_of_origin"]),
+            ))
+        return candidates
+
+    def _fetch_cleveland_candidates(self, term, limit, rng):
+        """The Cleveland Museum of Art's CC0 works with an image (no key)."""
+        params = {"q": term, "has_image": 1, "cc0": 1, "limit": min(100, int(limit) * 3)}
+        payload = self._get_json(CLEVELAND_SEARCH_URL, params, headers=REQUEST_HEADERS)
+        records = payload.get("data") if isinstance(payload, dict) else []
+        if not isinstance(records, list):
+            return []
+        rng.shuffle(records)
+        candidates = []
+        for record in records[: int(limit)]:
+            images = record.get("images") if isinstance(record, dict) else None
+            image_url = _first_text((images or {}).get("web") or {}, ["url"])
+            if not image_url:
+                continue
+            creators = record.get("creators") if isinstance(record.get("creators"), list) else []
+            # "Rembrandt van Rijn (Dutch, 1606–1669)": the name before its parenthesis.
+            artist = _first_text(creators[0], ["description"]).split(" (")[0] if creators else ""
+            culture = record.get("culture") if isinstance(record.get("culture"), list) else []
+            candidates.append(ArtworkCandidate(
+                source="cleveland",
+                source_label="Cleveland Museum of Art",
+                artwork_id=f"cleveland:{record.get('id')}",
+                title=_first_text(record, ["title"]) or "Untitled",
+                artist=artist,
+                date=_first_text(record, ["creation_date"]),
+                medium=_first_text(record, ["technique", "type"]),
+                museum="Cleveland Museum of Art",
+                rights="CC0",
+                image_url=image_url,
+                page_url=_first_text(record, ["url"]),
+                culture=_clean_text(culture[0]) if culture else _first_text(record, ["department"]),
+            ))
+        return candidates
+
+    def _fetch_vam_candidates(self, term, limit, rng):
+        """The Victoria and Albert Museum's objects with an image (no key), its IIIF image."""
+        params = {"q": term, "images_exist": 1, "page_size": int(limit), "page": rng.randint(1, 4)}
+        payload = self._get_json(VAM_SEARCH_URL, params, headers=REQUEST_HEADERS)
+        records = payload.get("records") if isinstance(payload, dict) else []
+        if not records and params["page"] > 1:
+            payload = self._get_json(VAM_SEARCH_URL, {**params, "page": 1}, headers=REQUEST_HEADERS)
+            records = payload.get("records") if isinstance(payload, dict) else []
+        if not isinstance(records, list):
+            return []
+        rng.shuffle(records)
+        candidates = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            base = _first_text(record.get("_images") or {}, ["_iiif_image_base_url"])
+            number = _first_text(record, ["systemNumber"])
+            if not base or not number:
+                continue
+            maker = record.get("_primaryMaker") if isinstance(record.get("_primaryMaker"), dict) else {}
+            # The V&A files makers surname first ("Goyen, Jan van"): set as they are known.
+            surname, _comma, forenames = _first_text(maker, ["name"]).partition(", ")
+            candidates.append(ArtworkCandidate(
+                source="vam",
+                source_label="V&A",
+                artwork_id=f"vam:{number}",
+                title=_first_text(record, ["_primaryTitle", "objectType"]) or "Untitled",
+                artist=f"{forenames} {surname}" if forenames and "," not in forenames else surname or forenames,
+                date=_first_text(record, ["_primaryDate"]),
+                medium=_first_text(record, ["objectType"]),
+                museum="Victoria and Albert Museum",
+                rights="© Victoria and Albert Museum, London",
+                image_url=f"{base.rstrip('/')}/{VAM_IMAGE_SIZE}",
+                page_url=f"https://collections.vam.ac.uk/item/{number}/",
+                culture=_first_text(record, ["_primaryPlace"]),
+            ))
+        return candidates
+
+    def _fetch_smk_candidates(self, term, limit, rng):
+        """SMK - the National Gallery of Denmark's public-domain works with an image (no key),
+        their English titles."""
+        params = {"keys": term, "filters": "[has_image:true],[public_domain:true]", "offset": rng.randrange(0, 60),
+                  "rows": int(limit), "lang": "en"}
+        payload = self._get_json(SMK_SEARCH_URL, params, headers=REQUEST_HEADERS)
+        records = payload.get("items") if isinstance(payload, dict) else []
+        if not records and params["offset"]:
+            payload = self._get_json(SMK_SEARCH_URL, {**params, "offset": 0}, headers=REQUEST_HEADERS)
+            records = payload.get("items") if isinstance(payload, dict) else []
+        if not isinstance(records, list):
+            return []
+        rng.shuffle(records)
+        candidates = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            image_url = _first_text(record, ["image_thumbnail"])
+            number = _first_text(record, ["object_number"])
+            if not image_url or not number:
+                continue
+            titles = record.get("titles") if isinstance(record.get("titles"), list) else []
+            production = record.get("production") if isinstance(record.get("production"), list) else []
+            maker = production[0] if production and isinstance(production[0], dict) else {}
+            artist = " ".join(part for part in (_first_text(maker, ["creator_forename"]),
+                                                _first_text(maker, ["creator_surname"])) if part) \
+                or _first_text(maker, ["creator"])
+            dates = record.get("production_date") if isinstance(record.get("production_date"), list) else []
+            techniques = record.get("techniques") if isinstance(record.get("techniques"), list) else []
+            candidates.append(ArtworkCandidate(
+                source="smk",
+                source_label="SMK",
+                artwork_id=f"smk:{number}",
+                title=_first_text(titles[0], ["title"]) if titles and isinstance(titles[0], dict) else "Untitled",
+                artist=artist,
+                date=_first_text(dates[0], ["period"]) if dates and isinstance(dates[0], dict) else "",
+                medium=_clean_text(techniques[0]) if techniques else "",
+                museum="SMK – Statens Museum for Kunst",
+                rights="Public Domain",
+                image_url=image_url,
+                page_url=_first_text(record, ["frontend_url"]),
+                culture="Denmark",
             ))
         return candidates
 
@@ -1542,10 +1672,10 @@ class DailyArt(BasePlugin):
     def _enabled_sources(self, settings, device_config):
         mode = self._source_mode(settings)
         if mode == "open":
-            source_names = ["met", "artic"]
+            source_names = list(OPEN_SOURCES)
         elif mode == "keyed":
             source_names = ["europeana", "harvard"]
-        elif mode in {"met", "artic", "europeana", "harvard"}:
+        elif mode in DEFAULT_SOURCES:
             source_names = [mode]
         else:
             raw = str(settings.get("sources") or "").strip()
@@ -1785,6 +1915,12 @@ def _source_tokens(value):
         "metropolitan": "met",
         "europeana": "europeana",
         "harvard": "harvard",
+        "cma": "cleveland",
+        "clevelandart": "cleveland",
+        "v&a": "vam",
+        "va": "vam",
+        "victoria-and-albert": "vam",
+        "statens-museum-for-kunst": "smk",
     }
     tokens = []
     for raw in re.split(r"[,;\s]+", str(value or "").strip().lower()):

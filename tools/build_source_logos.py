@@ -15,7 +15,9 @@
   Wikimedia Commons, the Library of Congress and Gallica from Commons; Harvard Art Museums' white
   wordmark from its own site, kept as a black mask the page tints. Comic Vine's logo is the inline
   SVG its site header draws; the site answers scripts with a bot check, so that one was captured
-  in a browser and rasterized once (base_plugin/assets/source_logos/comicvine.png).
+  in a browser and rasterized once (base_plugin/assets/source_logos/comicvine.png). Daily Art's
+  keyless collections: the Cleveland Museum of Art and the V&A from Commons (public domain), and
+  SMK's wordmark, the inline SVG symbol its own site header draws (smk.dk).
 - 资金雷达 (money_radar), whose header names the page's sources: the ECB (its reference rates,
   served by Frankfurter), BLS, the SEC seal and Yahoo Finance from Commons (public domain);
   CoinGecko's SVG and Finnhub's mark from their own sites. FRED's logo is the SVG its home page
@@ -42,6 +44,7 @@ import base64
 import hashlib
 import io
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -108,6 +111,10 @@ LOGOS = {
             [COVERS], 1.0),
     "gallica": (("https://upload.wikimedia.org/wikipedia/commons/thumb/e/e8/Logo_Gallica_2025.png/500px-Logo_Gallica_2025.png",
                  "https://commons.wikimedia.org/wiki/File:Logo_Gallica_2025.png", PUBLIC_DOMAIN), [COVERS], 1.0),
+    "cleveland": ((COMMONS.format(path="7/74/Logo_Cleveland_Museum_of_Art.svg", name="Logo_Cleveland_Museum_of_Art.svg"),
+                   COMMONS_FILE.format(name="Logo_Cleveland_Museum_of_Art.svg"), PUBLIC_DOMAIN), [COVERS], 1.0),
+    "vam": ((COMMONS.format(path="d/d7/Victoria_and_Albert_Museum_Logo.svg", name="Victoria_and_Albert_Museum_Logo.svg"),
+             COMMONS_FILE.format(name="Victoria_and_Albert_Museum_Logo.svg"), PUBLIC_DOMAIN), [COVERS], 1.0),
     "ecb": ((COMMONS.format(path="c/cb/Logo_European_Central_Bank.svg", name="Logo_European_Central_Bank.svg"),
              COMMONS_FILE.format(name="Logo_European_Central_Bank.svg"), PUBLIC_DOMAIN), [MONEY], 1.0),
     "bls": ((COMMONS.format(path="7/76/Bureau_of_Labor_Statistics_logo.svg", name="Bureau_of_Labor_Statistics_logo.svg"),
@@ -142,6 +149,7 @@ WIKIPEDIA_GLOBE = ("https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Wi
 WIKIPEDIA_WORDMARK = ("https://upload.wikimedia.org/wikipedia/commons/thumb/c/c2/Wikipedia-wordmark-zh-hans.svg/"
                       "500px-Wikipedia-wordmark-zh-hans.svg.png", COMMONS_FILE.format(name="Wikipedia-wordmark-zh-hans.svg"),
                       PUBLIC_DOMAIN)
+SMK_SITE = "https://www.smk.dk/"
 CHINESEPOSTERS_FONT = "https://chineseposters.net/themes/cpnetv2/css/fonts/montserrat-semibold-webfont.woff2"
 CHINESEPOSTERS_RED = (203, 36, 0)
 
@@ -256,7 +264,19 @@ def _chineseposters(records):
         "processing": "the site has no logo; its header's name redrawn: capitals in its web font, white on #cb2400"})
 
 
-COMPOSED = {"wikipedia_zh": _wikipedia_zh, "chineseposters": _chineseposters}
+def _smk(records):
+    """SMK's wordmark: the svg-logo symbol inlined in its site's pages, drawn in black."""
+    page = _fetch(SMK_SITE)
+    symbol = re.search(rb'<symbol id="svg-logo"([^>]*)>(.*?)</symbol>', page, re.S)
+    view_box = re.search(rb'viewBox="([^"]+)"', symbol.group(1)).group(1)
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="' + view_box + b'"><g fill="#000">' + symbol.group(2) + b"</g></svg>"
+    _write(records, COVERS, "smk", _fit(_visible(_rasterize(svg))), {
+        "source": SMK_SITE + " (the page's inline SVG symbol svg-logo)", "page": SMK_SITE,
+        "licence": "SMK's wordmark from its own site, shown to name the source",
+        "source_sha256": hashlib.sha256(svg).hexdigest(), "processing": "the symbol drawn in black, cropped, 64 px tall"})
+
+
+COMPOSED = {"wikipedia_zh": _wikipedia_zh, "chineseposters": _chineseposters, "smk": _smk}
 
 
 def main(keys=()):

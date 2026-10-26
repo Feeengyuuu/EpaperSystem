@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import random
 import socket
 import sys
 import time
@@ -304,20 +305,22 @@ def test_settings_default_font_is_microsoft_yahei():
 def test_enabled_sources_skips_keyed_sources_without_keys(tmp_path):
     plugin = make_plugin(tmp_path)
 
-    assert plugin._enabled_sources({"sourceMode": "all"}, FakeDeviceConfig()) == ["met", "artic"]
+    assert plugin._enabled_sources({"sourceMode": "all"}, FakeDeviceConfig()) == ["met", "artic", "cleveland", "vam", "smk"]
 
 
-def test_open_source_mode_includes_art_institute_without_keys(tmp_path):
+def test_open_source_mode_includes_every_keyless_collection(tmp_path):
     plugin = make_plugin(tmp_path)
 
-    assert plugin._enabled_sources({"sourceMode": "open"}, FakeDeviceConfig()) == ["met", "artic"]
+    assert plugin._enabled_sources({"sourceMode": "open"}, FakeDeviceConfig()) == ["met", "artic", "cleveland", "vam", "smk"]
+    assert plugin._enabled_sources({"sourceMode": "smk"}, FakeDeviceConfig()) == ["smk"]
 
 
 def test_enabled_sources_uses_manual_device_keys(tmp_path):
     plugin = make_plugin(tmp_path)
     device = FakeDeviceConfig(env={"Europeana_Key": "eu-secret", "Harvard_Art_Key": "ha-secret"})
 
-    assert plugin._enabled_sources({"sourceMode": "all"}, device) == ["met", "artic", "europeana", "harvard"]
+    assert plugin._enabled_sources({"sourceMode": "all"}, device) == ["met", "artic", "cleveland", "vam", "smk",
+                                                                       "europeana", "harvard"]
 
 
 def test_harvard_key_accepts_device_harverd_typo(tmp_path):
@@ -2277,3 +2280,41 @@ def test_years_read_from_museum_dates():
     assert cover_gallery.year_of("ca. 1750") == 1750 and cover_gallery.year_of("1780–85 (?)") == 1780
     assert cover_gallery.year_of("19th century") == 1850 and cover_gallery.year_of("500 B.C.") == -500
     assert cover_gallery.year_of("undated") is None
+
+
+def test_keyless_collections_map_their_records_and_media_hosts(tmp_path, monkeypatch):
+    from plugins.daily_art.presentation_bank import provider_media_host_allowed
+
+    plugin = make_plugin(tmp_path)
+    payloads = {
+        daily_art_module.CLEVELAND_SEARCH_URL: {"data": [{
+            "id": 7, "title": "Landscape with a Windmill", "creation_date": "1646", "technique": "oil on wood",
+            "creators": [{"description": "Jacob van Ruisdael (Dutch, 1628/29–1682)"}], "culture": ["Netherlands"],
+            "url": "https://clevelandart.org/art/1967.19",
+            "images": {"web": {"url": "https://openaccess-cdn.clevelandart.org/1967.19/1967.19_web.jpg"}}}]},
+        daily_art_module.VAM_SEARCH_URL: {"records": [{
+            "systemNumber": "O133993", "_primaryTitle": "Landscape with Stream", "_primaryDate": "1628",
+            "_primaryMaker": {"name": "Goyen, Jan van"}, "objectType": "Oil painting",
+            "_images": {"_iiif_image_base_url": "https://framemark.vam.ac.uk/collections/2007BP0756/"}}]},
+        daily_art_module.SMK_SEARCH_URL: {"items": [{
+            "object_number": "KMS1551", "titles": [{"title": "Landscape at Kolding"}],
+            "production": [{"creator": "Paulsen, Julius", "creator_forename": "Julius", "creator_surname": "Paulsen"}],
+            "production_date": [{"period": "1896"}], "techniques": ["Oil on canvas"],
+            "image_thumbnail": "https://iip-thumb.smk.dk/iiif/jp2/g732df44c_KMS1551.tif.jp2/full/!1024,/0/default.jpg",
+            "frontend_url": "https://open.smk.dk/artwork/image/KMS1551"}]},
+    }
+    monkeypatch.setattr(plugin, "_get_json", lambda url, params, headers=None: payloads[url])
+    rng = random.Random(1)
+
+    cleveland = plugin._fetch_cleveland_candidates("landscape", 3, rng)[0]
+    vam = plugin._fetch_vam_candidates("landscape", 3, rng)[0]
+    smk = plugin._fetch_smk_candidates("landscape", 3, rng)[0]
+
+    assert (cleveland.artist, cleveland.source_label, cleveland.rights) == ("Jacob van Ruisdael", "Cleveland Museum of Art", "CC0")
+    assert vam.artist == "Jan van Goyen" and vam.image_url.endswith("/full/!1200,1200/0/default.jpg")
+    assert (smk.artist, smk.title, smk.date) == ("Julius Paulsen", "Landscape at Kolding", "1896")
+    # Each collection's images come only from its own hosts.
+    for candidate in (cleveland, vam, smk):
+        host = candidate.image_url.split("/")[2]
+        assert provider_media_host_allowed(candidate.source, host)
+        assert not provider_media_host_allowed(candidate.source, "example.com")

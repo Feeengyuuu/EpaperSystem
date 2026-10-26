@@ -110,6 +110,40 @@
         64
       ],
       "sha256": "e81a786f2d84a9286818dabf6757c5d732f70bb1048a9e1f4b7e4b53094327b4"
+    },
+    "cleveland": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/74/Logo_Cleveland_Museum_of_Art.svg/500px-Logo_Cleveland_Museum_of_Art.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_Cleveland_Museum_of_Art.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "84b19f7f6591cd94a0e13174de35745346220394aaac9496eb436f6a15d4a273",
+      "size": [
+        84,
+        64
+      ],
+      "sha256": "7ca4a982753d0e28331211309f36dd3e6f6ad167b9e1badc1beb1a9280993a0e"
+    },
+    "vam": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d7/Victoria_and_Albert_Museum_Logo.svg/500px-Victoria_and_Albert_Museum_Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Victoria_and_Albert_Museum_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "d4e3abe89a6cae51dd186414ac4af8ad1f06e8fcc078ee7214e9ec14a1d09370",
+      "size": [
+        111,
+        64
+      ],
+      "sha256": "6af45efa6cf533cfb4c657f261d6e4010566e03426edf055a464b1383ad84185"
+    },
+    "smk": {
+      "source": "https://www.smk.dk/ (the page's inline SVG symbol svg-logo)",
+      "page": "https://www.smk.dk/",
+      "licence": "SMK's wordmark from its own site, shown to name the source",
+      "source_sha256": "5182539f6e58ce23593dcc3796c36d8419b444cfb56e5f9688901944cf75ee5e",
+      "processing": "the symbol drawn in black, cropped, 64 px tall",
+      "size": [
+        187,
+        64
+      ],
+      "sha256": "da7496ffa1c76a69ba594358d9ebcf4363849d872ddf5ce70d2d59b4c3aaed67"
     }
   }
 }
