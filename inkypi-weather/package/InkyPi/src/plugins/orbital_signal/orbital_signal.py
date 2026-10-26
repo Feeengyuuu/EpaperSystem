@@ -55,10 +55,10 @@ MARKET_MARK_CACHE_BUDGET = CacheBudget(30 * 24 * 60 * 60, 96, 8 * 1024 * 1024)
 # A matchup's two logos (px), the league icon in its chip and the leader's logo by its name.
 MATCHUP_LOGO, LEAGUE_ICON, LEADER_LOGO = 28, 14, 14
 # Each market column is themed by its event's art: kept at EVENT_ART_SIDE px, laid ART_H px tall
-# across the column's top and cut straight at its foot, the question printed under it. The leading
-# option shows its picture (Polymarket's own, its team's logo, or for a person their Wikipedia
-# portrait) in a LEADER_AVATAR px disc by its name.
-EVENT_ART_SIDE, ART_H = 220, 92
+# across the column's top, its lowest ART_FADE share fading into the paper the question is printed
+# on. The leading option shows its picture (Polymarket's own, its team's logo, or for a person their
+# Wikipedia portrait) in a LEADER_AVATAR px disc by its name.
+EVENT_ART_SIDE, ART_H, ART_FADE = 220, 92, 0.42
 LEADER_AVATAR = 26
 WIKI_SUMMARY_URL = "https://en.wikipedia.org/api/rest_v1/page/summary/{title}"
 WIKI_USER_AGENT = "InkyPi OrbitalSignal/1.0 (https://github.com/Feeengyuuu/EpaperSystem)"
@@ -1473,8 +1473,9 @@ class OrbitalSignal(BasePlugin):
             y += MARKET_FACT_ROW
 
     def _paste_event_art(self, image, key, box, palette):
-        """The event's art cover-cropped to ``box`` and cut straight on every side, so the column's
-        top takes its theme without a frame and the question below starts on clean paper."""
+        """The event's art cover-cropped to ``box``, its sides cut straight and its foot fading into
+        the paper over its lowest ART_FADE, so the column's top takes its theme without a frame and
+        the question below starts on clean paper."""
         mark = launch_photo.load_cached_mark(self._mark_namespace(), key) if key else None
         if mark is None:
             return
@@ -1483,7 +1484,13 @@ class OrbitalSignal(BasePlugin):
         flat.alpha_composite(mark)
         art = ImageOps.fit(flat.convert("RGB"), (x1 - x0, y1 - y0), method=Image.Resampling.LANCZOS,
                            centering=(0.5, 0.4))
-        image.paste(art, (x0, y0))
+        fade = max(1, round(art.height * ART_FADE))
+        solid = art.height - fade
+        # An eased ramp: the art holds its strength into the fade, then thins out to the paper.
+        ramp = [255] * solid + [round(255 * (1 - (step / fade)) ** 1.6) for step in range(1, fade + 1)]
+        mask = Image.new("L", (1, art.height))
+        mask.putdata(ramp)
+        image.paste(art, (x0, y0), mask.resize(art.size))
 
     def _draw_league_tag(self, draw, market, cx, width, tag_top, palette, family, image):
         """The league (its icon on a paper square, its name on the category colour) and the day's move."""

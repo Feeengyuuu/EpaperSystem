@@ -29,6 +29,7 @@ from plugins.base_plugin.render_provenance import (  # noqa: E402
 )
 import plugins.orbital_signal.launch_photo as launch_photo_module  # noqa: E402
 from plugins.orbital_signal.orbital_signal import (  # noqa: E402
+    ART_FADE,
     ART_H,
     ART_TOP,
     DAY_PALETTE,
@@ -1348,7 +1349,7 @@ def test_the_market_columns_draw_cached_team_marks_and_polymarket_logo(tmp_path)
     assert tuple(DAY_PALETTE["ink"][:3]) in colours((477, 68, 640, 98))
 
 
-def test_event_art_is_cut_straight_at_its_foot(tmp_path):
+def test_event_art_fades_into_the_paper_at_its_foot(tmp_path):
     plugin = OrbitalSignal({"id": PLUGIN_ID})
     plugin._cache_dir = lambda create=True: tmp_path / "cache"
     art = Image.new("RGBA", (220, 220), (30, 120, 200, 255))
@@ -1360,9 +1361,11 @@ def test_event_art_is_cut_straight_at_its_foot(tmp_path):
 
     plugin._paste_event_art(image, key, (10, 20, 110, 20 + ART_H), DAY_PALETTE)
 
-    # The art keeps its own colour down to its last row, then the paper starts: no fade.
-    assert image.getpixel((60, 20 + ART_H - 1)) == (30, 120, 200)
-    assert image.getpixel((60, 20 + ART_H)) == DAY_PALETTE["paper"]
+    # The art keeps its own colour above its fade, thins out through it and ends on the paper.
+    assert image.getpixel((60, 22)) == (30, 120, 200)
+    middle = image.getpixel((60, 20 + round(ART_H * (1 - ART_FADE / 2))))
+    assert middle not in {(30, 120, 200), DAY_PALETTE["paper"]}
+    assert image.getpixel((60, 20 + ART_H - 1)) == DAY_PALETTE["paper"]
 
 
 def test_a_market_keeps_its_leaders_own_picture_and_encodes_upload_urls():
