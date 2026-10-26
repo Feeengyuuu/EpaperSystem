@@ -22,7 +22,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageStat
 from utils.app_utils import get_base_ui_font
 
 ASSET_DIR = Path(__file__).resolve().parent / "assets" / "shelf"
-REASON_ICONS = ("wishlist", "deal", "new", "top_seller", "spotlight", "coming_soon", "owned", "daily_deal")
+REASON_ICONS = ("wishlist", "deal", "new", "top_seller", "spotlight", "coming_soon", "owned", "daily_deal", "steam_icon")
 # A flat block: rows whose pixels are nearly all within FLAT_TOLERANCE of the colour at the
 # art's foot, at least FLAT_MIN_SHARE of the height.
 FLAT_TOLERANCE = 28
@@ -45,6 +45,8 @@ CUT_SIZE = 22
 ORIGINAL_SIZE = 15
 ICON_SIZE = 18
 WORDMARK_HEIGHT = 15
+# The developer's logo before its name in the credit line.
+STUDIO_LOGO = 18
 # Pixel art: the largest block (2..PIXEL_MAX_BLOCK) at which one grid offset rebuilds the art
 # within PIXEL_MAX_ERROR on average with at most PIXEL_MAX_BAD of its pixels off by
 # PIXEL_BAD_STEP or more, while the worst offset is PIXEL_CONTRAST times worse (smooth art is
@@ -352,6 +354,34 @@ def _draw_head(canvas, draw, info, y, width, colours):
         x += chip_w + 8
 
 
+def _fit_credit(draw, credit, font, width):
+    """The credit line in ``width``: its parts in reading order joined by " / ", the readiest to
+    give way dropped first while it is too wide, then cut. ``credit`` is a string or a list of
+    (text, give) with give 0 never dropped."""
+    if isinstance(credit, str):
+        return _fit(draw, credit, font, width)
+    parts = [(str(text), int(give)) for text, give in credit or [] if text]
+    while parts:
+        line = " / ".join(text for text, _give in parts)
+        if draw.textlength(line, font=font) <= width or max(give for _text, give in parts) == 0:
+            return _fit(draw, line, font, width)
+        drop = max(range(len(parts)), key=lambda index: (parts[index][1], index))
+        parts.pop(drop)
+    return ""
+
+
+def _studio_mark(logo):
+    """The studio's logo at the credit's size, as it is published (its own square)."""
+    return logo.convert("RGB").resize((STUDIO_LOGO, STUDIO_LOGO), Image.Resampling.LANCZOS)
+
+
+@lru_cache(maxsize=1)
+def _studio_mask():
+    mask = Image.new("L", (STUDIO_LOGO * 4, STUDIO_LOGO * 4), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, STUDIO_LOGO * 4 - 1, STUDIO_LOGO * 4 - 1), radius=12, fill=255)
+    return mask.resize((STUDIO_LOGO, STUDIO_LOGO), Image.Resampling.LANCZOS)
+
+
 def tag_colours(tags):
     """A colour per tag, by its words, none repeated on one shelf while colours remain."""
     used, colours = set(), []
@@ -373,14 +403,20 @@ def _draw_foot(canvas, draw, info, y, width, colours):
         canvas.paste(mark, (right - mark.width, y + (24 - mark.height) // 2), mark)
         right -= mark.width + 14
     credit_font = _font(13, False)
-    credit = info.get("credit") or ""
     tag_font = _font(13, True)
     tags_w = sum(draw.textlength(tag, font=tag_font) + 18 + 6 for tag in info.get("tags") or [])
-    credit = _fit(draw, credit, credit_font, max(0, right - MARGIN - min(tags_w, (right - MARGIN) * 0.55) - 12))
+    logo = info.get("studio_logo")
+    logo_w = STUDIO_LOGO + 6 if logo is not None else 0
+    budget = max(0, right - MARGIN - min(tags_w, (right - MARGIN) * 0.55) - 12 - logo_w)
+    credit = _fit_credit(draw, info.get("credit"), credit_font, budget)
     if credit:
         credit_w = draw.textlength(credit, font=credit_font)
-        draw.text((right - credit_w, y + 3), credit, font=credit_font, fill=WHITE)
-        right -= credit_w + 14
+        draw.text((right - credit_w, _text_y(draw, credit, credit_font, y, 24)), credit, font=credit_font, fill=WHITE)
+        right -= credit_w
+        if logo is not None:
+            right -= 6 + STUDIO_LOGO
+            canvas.paste(_studio_mark(logo), (int(right), y + (24 - STUDIO_LOGO) // 2), _studio_mask())
+        right -= 14
     x = MARGIN
     tags = list(info.get("tags") or [])
     for tag, fill in zip(tags, tag_colours(tags)):

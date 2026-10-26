@@ -51,7 +51,8 @@ STEAM_CDN_ASSET_URL = "https://cdn.cloudflare.steamstatic.com/steam/apps/{appid}
 # names above exist for older apps.
 STEAM_STORE_ITEMS_URL = "https://api.steampowered.com/IStoreBrowseService/GetItems/v1/"
 STEAM_STORE_ASSET_ROOT = "https://shared.akamai.steamstatic.com/store_item_assets/"
-STEAM_JSON_HOSTS = ("store.steampowered.com", "api.steampowered.com")
+# steamcommunity.com serves a studio's (creator clan's) profile, whose avatar is its logo.
+STEAM_JSON_HOSTS = ("store.steampowered.com", "api.steampowered.com", "steamcommunity.com")
 STEAM_DAILY_ART_VERSION = "fresh-frontpage-ranked-live-list-v1"
 STEAM_DAILY_ART_RENDER_VERSION = "info-shelf-personal-v3"
 # The info shelf and the owner's Steam account (wishlist, library): Chinese store facts,
@@ -60,6 +61,21 @@ STEAM_WISHLIST_URL = "https://api.steampowered.com/IWishlistService/GetWishlist/
 STEAM_OWNED_GAMES_URL = "https://api.steampowered.com/IPlayerService/GetOwnedGames/v1/"
 STEAM_TAG_LIST_URL = "https://api.steampowered.com/IStoreService/GetTagList/v1/"
 SHELF_LANGUAGE = "schinese"
+# Store facts cached under an older shape are fetched again.
+SHELF_DETAILS_VERSION = 2
+# A studio's logo: its creator clan's Steam avatar, from the clan's public profile.
+STEAM_CLAN_XML_URL = "https://steamcommunity.com/gid/{gid}/memberslistxml/?xml=1"
+CLAN_STEAMID_BASE = 103582791429521408
+STUDIO_AVATAR_RE = re.compile(
+    r"<avatarFull>\s*(?:<!\[CDATA\[)?\s*(https://avatars\.(?:[a-z]+\.)?steamstatic\.com/[0-9a-f]{40}_full\.jpg)"
+)
+STUDIO_LOGO_TTL = 30 * 24 * 3600
+STUDIO_LOGO_SIZE = 48
+MAX_STUDIO_PAGE_BYTES = 512 * 1024
+MAX_STUDIOS = 300
+MAX_NEW_STUDIO_LOGOS = 4
+# Steam Deck compatibility categories worth a word.
+DECK_LABELS = {3: "Steam Deck 已验证", 2: "Steam Deck 可玩"}
 SHELF_DETAILS_TTL = 6 * 3600
 WISHLIST_TTL = 6 * 3600
 WISHLIST_DEALS_TTL = 3 * 3600
@@ -1084,8 +1100,11 @@ class SteamDailyArt(BasePlugin):
         return value
 
     def _fetch_profile_json(self, url, label):
-        """Every shelf and account lookup goes through here."""
+        """Every shelf and account lookup goes through here (or the page fetch below)."""
         return self._fetch_json(url, label=label, max_bytes=MAX_JSON_BYTES)
+
+    def _fetch_profile_text(self, url, label):
+        return self._fetch_bytes(url, label=label, max_bytes=MAX_STUDIO_PAGE_BYTES).decode("utf-8", "replace")
 
     def _store_items(self, appids, country, data_request):
         """GetItems for these apps with the store's simplified Chinese text."""
@@ -1113,6 +1132,7 @@ class SteamDailyArt(BasePlugin):
             return (
                 isinstance(entry, dict)
                 and entry.get("country") == country
+                and entry.get("v") == SHELF_DETAILS_VERSION
                 and now - float(entry.get("at") or 0) < SHELF_DETAILS_TTL
             )
 
@@ -1122,7 +1142,8 @@ class SteamDailyArt(BasePlugin):
                 entries = self._store_items(
                     stale[:STORE_ITEMS_BATCH],
                     country,
-                    {"include_basic_info": True, "include_tag_count": 6, "include_reviews": True, "include_release": True},
+                    {"include_basic_info": True, "include_tag_count": 6, "include_reviews": True, "include_release": True,
+                     "include_platforms": True},
                 )
             except TaskCancelled:
                 raise
@@ -1132,7 +1153,7 @@ class SteamDailyArt(BasePlugin):
                 for entry in entries:
                     parsed = self._parse_store_details(entry)
                     if parsed is not None:
-                        details[str(entry.get("appid"))] = {**parsed, "at": now, "country": country}
+                        details[str(entry.get("appid"))] = {**parsed, "at": now, "country": country, "v": SHELF_DETAILS_VERSION}
                 details = dict(sorted(details.items(), key=lambda pair: float(pair[1].get("at") or 0))[-MAX_SHELF_DETAILS:])
                 cache = self._read_shelf_cache()
                 cache["details"] = details
@@ -1155,16 +1176,21 @@ class SteamDailyArt(BasePlugin):
         reviews = reviews if isinstance(reviews, dict) else {}
         release = entry.get("release") if isinstance(entry.get("release"), dict) else {}
         option = entry.get("best_purchase_option") if isinstance(entry.get("best_purchase_option"), dict) else {}
-        developers = basic.get("developers") if isinstance(basic.get("developers"), list) else []
+        developers = [item for item in basic.get("developers") or [] if isinstance(item, dict) and item.get("name")]
+        publishers = [item for item in basic.get("publishers") or [] if isinstance(item, dict) and item.get("name")]
+        made_by = {str(item["name"]).strip() for item in developers}
         tags = entry.get("tags") if isinstance(entry.get("tags"), list) else []
+        platforms = entry.get("platforms") if isinstance(entry.get("platforms"), dict) else {}
         review_count = number(reviews.get("review_count"))
         return {
             "name": " ".join(str(entry.get("name") or "").split())[:120],
             "description": " ".join(str(basic.get("short_description") or "").split())[:400],
-            "developer": next(
-                (str(item["name"]).strip() for item in developers if isinstance(item, dict) and item.get("name")),
-                "",
+            "developer": (str(developers[0]["name"]).strip() if developers else "")[:60],
+            "developer_clan": str(developers[0].get("creator_clan_account_id") or "") if developers else "",
+            "publisher": next(
+                (str(item["name"]).strip() for item in publishers if str(item["name"]).strip() not in made_by), ""
             )[:60],
+            "deck": number(platforms.get("steam_deck_compat_category")),
             "tags": [str(tag["tagid"]) for tag in tags if isinstance(tag, dict) and tag.get("tagid")][:6],
             "review_label": str(reviews.get("review_score_label") or "")[:20] if review_count else "",
             "review_percent": number(reviews.get("percent_positive")),
@@ -1296,8 +1322,18 @@ class SteamDailyArt(BasePlugin):
             return
         appids = [appid for appid in (self._app_id(item) for item in items) if appid]
         if appids:
-            self._blurbs(self._store_details(appids, settings))
+            details = self._store_details(appids, settings)
+            self._blurbs(details)
             self._tag_names()
+            # A few new studios' logos per refill; the rest come with later ones.
+            fetched = 0
+            for facts in details.values():
+                deadline = getattr(self, "_active_data_deadline", None)
+                if fetched >= MAX_NEW_STUDIO_LOGOS or (deadline is not None and deadline - time.monotonic() < 15):
+                    break
+                if facts.get("developer_clan") and self._studio_logo(facts["developer_clan"], fetch=False) is None:
+                    fetched += 1
+                    self._studio_logo(facts["developer_clan"])
 
     def _shelf_info(self, item, settings):
         """What the shelf says about this game, or None without its store facts."""
@@ -1310,14 +1346,67 @@ class SteamDailyArt(BasePlugin):
         names = self._tag_names()
         now = self._shelf_now()
         return {
-            "reasons": self._shelf_reasons(item, facts, now),
+            # The Steam Deck's verdict, with Steam's own mark, follows the reasons while there is room.
+            "reasons": self._shelf_reasons(item, facts, now)
+            + ([("steam_icon", DECK_LABELS[facts["deck"]])] if facts.get("deck") in DECK_LABELS else []),
             "price": self._shelf_price(facts),
             "line": self._blurbs({appid: facts}).get(appid) or facts.get("name") or str(item.get("name") or ""),
             "tags": [names[tag] for tag in facts.get("tags") or [] if tag in names][:4],
-            "credit": " / ".join(
-                part for part in (facts.get("developer"), self._release_label(facts, now), self._review_label(facts)) if part
-            ),
+            # In reading order, each with how readily it gives way when the row is short.
+            "credit": [
+                (text, give)
+                for text, give in (
+                    (facts.get("developer"), 0),
+                    (f"{facts['publisher']} 发行" if facts.get("publisher") else "", 3),
+                    (self._release_label(facts, now), 2),
+                    (self._review_label(facts), 1),
+                )
+                if text
+            ],
+            "studio_logo": self._studio_logo(facts.get("developer_clan")) if facts.get("developer") else None,
         }
+
+    def _studio_logo_path(self, clan):
+        return Path(self._cache_dir()) / "studio-logos" / f"{int(clan)}.png"
+
+    def _open_studio_logo(self, path):
+        try:
+            return safe_open_image(str(path)).convert("RGB")
+        except (OSError, ValueError):
+            return None
+
+    def _studio_logo(self, clan_id, fetch=True):
+        """The studio's logo (its Steam creator clan's avatar), kept for STUDIO_LOGO_TTL; None
+        when it has none. ``fetch`` False answers from what is kept alone."""
+        clan = str(clan_id or "").strip()
+        if not clan.isdecimal() or not int(clan):
+            return None
+        path = self._studio_logo_path(clan)
+        studios = self._read_shelf_cache().get("studios")
+        entry = studios.get(clan) if isinstance(studios, dict) and isinstance(studios.get(clan), dict) else {}
+        if entry and time.time() - float(entry.get("at") or 0) < STUDIO_LOGO_TTL:
+            return self._open_studio_logo(path) if entry.get("url") and path.is_file() else None
+        if not fetch:
+            return self._open_studio_logo(path) if path.is_file() else None
+        try:
+            page = self._fetch_profile_text(STEAM_CLAN_XML_URL.format(gid=CLAN_STEAMID_BASE + int(clan)), "studio page")
+            match = STUDIO_AVATAR_RE.search(page)
+            url = match.group(1) if match else ""
+            if url:
+                logo = self._download_image(url).resize((STUDIO_LOGO_SIZE, STUDIO_LOGO_SIZE), Image.Resampling.LANCZOS)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                logo.save(path)
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            logger.warning("Steam studio logo lookup failed: %s", type(exc).__name__)
+            return self._open_studio_logo(path) if path.is_file() else None
+        cache = self._read_shelf_cache()
+        studios = cache.get("studios") if isinstance(cache.get("studios"), dict) else {}
+        studios[clan] = {"at": time.time(), "url": url}
+        cache["studios"] = dict(sorted(studios.items(), key=lambda pair: float(pair[1].get("at") or 0))[-MAX_STUDIOS:])
+        self._write_shelf_cache(cache)
+        return self._open_studio_logo(path) if url else None
 
     def _shelf_now(self):
         device_config = getattr(self, "_active_device_config", None)
@@ -1467,6 +1556,17 @@ class SteamDailyArt(BasePlugin):
         return lines
 
     def _fetch_json(self, url, *, label, max_bytes):
+        payload = self._fetch_bytes(url, label=label, max_bytes=max_bytes)
+        try:
+            value = json.loads(payload.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Steam {label} response is not JSON") from exc
+        if not isinstance(value, dict):
+            raise RuntimeError(f"Steam {label} response has an invalid shape")
+        return value
+
+    def _fetch_bytes(self, url, *, label, max_bytes):
+        """A Steam store, API or community page's body within ``max_bytes``."""
         deadline = getattr(self, "_active_data_deadline", None)
         approved = get_ssrf_policy().resolve_and_validate(url)
         self._validate_steam_target(approved, kind="json")
@@ -1492,13 +1592,7 @@ class SteamDailyArt(BasePlugin):
                 payload.extend(chunk)
         finally:
             response.close()
-        try:
-            value = json.loads(payload.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"Steam {label} response is not JSON") from exc
-        if not isinstance(value, dict):
-            raise RuntimeError(f"Steam {label} response has an invalid shape")
-        return value
+        return bytes(payload)
 
     def _collect_items(self, data, source_category):
         matched = []

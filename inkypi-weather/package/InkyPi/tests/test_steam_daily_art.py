@@ -55,6 +55,7 @@ def _offline_shelf_and_account(monkeypatch):
         raise RuntimeError(f"offline in tests: {label}")
 
     monkeypatch.setattr(SteamDailyArt, "_fetch_profile_json", offline)
+    monkeypatch.setattr(SteamDailyArt, "_fetch_profile_text", offline)
     monkeypatch.setattr(SteamDailyArt, "_translate_blurbs", lambda self, texts: {})
 
 
@@ -1897,11 +1898,15 @@ def test_wishlist_deal_already_on_the_front_page_is_not_added_twice(tmp_path, mo
 def _store_entry(appid, description, **extra):
     return {
         "appid": appid, "success": 1, "name": f"Game {appid}", "is_free": extra.get("free", False),
-        "basic_info": {"short_description": description, "developers": [{"name": "Loop Forge"}]},
+        "basic_info": {"short_description": description,
+                       "developers": [{"name": "Loop Forge", "creator_clan_account_id": 46173202}],
+                       "publishers": [{"name": "Loop Forge", "creator_clan_account_id": 46173202},
+                                      *([{"name": extra["publisher"]}] if extra.get("publisher") else [])]},
         "tags": [{"tagid": 9}, {"tagid": 4182}],
         "reviews": {"summary_filtered": {"review_count": extra.get("reviews", 0), "percent_positive": 93,
                                          "review_score_label": "特别好评"}},
         "release": {"steam_release_date": 1792963736},
+        "platforms": {"windows": True, "steam_deck_compat_category": extra.get("deck", 0)},
         "best_purchase_option": {"discount_pct": extra.get("discount", 30), "formatted_final_price": "$4.89",
                                  "formatted_original_price": "$6.99",
                                  "hide_discount_pct_for_compliance": extra.get("hide", False)},
@@ -1914,7 +1919,8 @@ def test_store_details_are_fetched_in_one_batch_parsed_and_cached(tmp_path, monk
 
     def fetch(url, label):
         calls.append(url)
-        return {"response": {"store_items": [_store_entry(1, "一款游戏。还有更多", reviews=1200),
+        return {"response": {"store_items": [_store_entry(1, "一款游戏。还有更多", reviews=1200, deck=3,
+                                                          publisher="Daedalic Entertainment"),
                                              _store_entry(2, "An English blurb.", hide=True)]}}
 
     monkeypatch.setattr(plugin, "_fetch_profile_json", fetch)
@@ -1927,6 +1933,9 @@ def test_store_details_are_fetched_in_one_batch_parsed_and_cached(tmp_path, monk
     assert details["1"]["review_label"] == "特别好评" and details["1"]["discount"] == 30
     assert details["2"]["review_label"] == "" and details["2"]["discount"] == 0
     assert details["1"]["tags"] == ["9", "4182"] and details["1"]["developer"] == "Loop Forge"
+    assert details["1"]["developer_clan"] == "46173202"
+    assert details["1"]["publisher"] == "Daedalic Entertainment" and details["2"]["publisher"] == ""
+    assert details["1"]["deck"] == 3
 
 
 def test_lines_translate_only_english_blurbs_and_remember_them(tmp_path, monkeypatch):
@@ -1970,8 +1979,12 @@ def test_shelf_info_gives_the_reasons_price_tags_and_credit(tmp_path, monkeypatc
     assert info["reasons"] == [("wishlist", "愿望单特惠"), ("new", "今日发售"), ("top_seller", "热销")]
     assert info["price"] == {"discount": 30, "final": "$4.89", "original": "$6.99"}
     assert info["line"] == "一款方块战争游戏" and info["tags"] == ["策略", "单人"]
-    assert info["credit"] == "Loop Forge / 今日发售 / 特别好评 93%"
+    assert info["credit"] == [("Loop Forge", 0), ("今日发售", 2), ("特别好评 93%", 1)]
+    assert info["studio_logo"] is None
     assert plugin._shelf_info(item, {"infoShelf": "off"}) is None
+    verified = {**facts, "deck": 3}
+    monkeypatch.setattr(plugin, "_store_details", lambda appids, _settings: {"4898560": verified})
+    assert plugin._shelf_info(item, {})["reasons"][-1] == ("steam_icon", "Steam Deck 已验证")
     assert plugin._shelf_info({"id": 5, "type": 2}, {}) is None
 
 
@@ -2101,3 +2114,66 @@ def test_a_refused_translation_says_why_without_the_key(tmp_path, monkeypatch, c
         assert ORIGINAL_TRANSLATE_BLURBS(plugin, {"2": "An English blurb."}) == {}
 
     assert "Unsupported parameter" in caplog.text and "sk-secret-123" not in caplog.text
+
+
+STUDIO_PAGE = (
+    "<?xml version=\"1.0\"?><memberList><groupID64>103582791475694610</groupID64><groupDetails>"
+    "<groupName><![CDATA[Loop Forge Studios]]></groupName>"
+    "<avatarFull><![CDATA[https://avatars.fastly.steamstatic.com/ea188325c1208d56fa1d44bfe7fd934d81b1ec7a_full.jpg]]></avatarFull>"
+    "</groupDetails></memberList>"
+)
+
+
+def test_studio_logo_is_the_clans_avatar_fetched_once_and_kept(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    pages, images = [], []
+
+    def page(url, label):
+        pages.append(url)
+        return STUDIO_PAGE if "103582791475694610" in url else "<memberList><groupDetails></groupDetails></memberList>"
+
+    def download(url):
+        images.append(url)
+        return Image.new("RGB", (184, 184), (200, 30, 30))
+
+    monkeypatch.setattr(plugin, "_fetch_profile_text", page)
+    monkeypatch.setattr(plugin, "_download_image", download)
+
+    logo = plugin._studio_logo("46173202")
+    again = plugin._studio_logo("46173202")
+    none = plugin._studio_logo("2750327")
+    still_none = plugin._studio_logo("2750327")
+
+    assert logo.size == (48, 48) and logo.getpixel((24, 24)) == (200, 30, 30)
+    assert again is not None
+    assert none is None and still_none is None
+    assert pages == [
+        "https://steamcommunity.com/gid/103582791475694610/memberslistxml/?xml=1",
+        "https://steamcommunity.com/gid/103582791432271735/memberslistxml/?xml=1",
+    ]
+    assert images == ["https://avatars.fastly.steamstatic.com/ea188325c1208d56fa1d44bfe7fd934d81b1ec7a_full.jpg"]
+    assert plugin._studio_logo("") is None and plugin._studio_logo("0") is None
+
+
+def test_credit_gives_way_part_by_part_before_it_is_cut():
+    draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    font = info_shelf._font(13, False)
+    parts = [("Indoor Astronaut", 0), ("Daedalic 发行", 3), ("2020 年发售", 2), ("特别好评 93%", 1)]
+    full = " / ".join(text for text, _give in parts)
+
+    assert info_shelf._fit_credit(draw, parts, font, 2000) == full
+    narrower = draw.textlength("Indoor Astronaut / 2020 年发售 / 特别好评 93%", font=font) + 2
+    assert info_shelf._fit_credit(draw, parts, font, narrower) == "Indoor Astronaut / 2020 年发售 / 特别好评 93%"
+    assert info_shelf._fit_credit(draw, parts, font, 60).endswith("...")
+    assert info_shelf._fit_credit(draw, "Loop Forge / 今日发售", font, 2000) == "Loop Forge / 今日发售"
+
+
+def test_studio_logo_stands_before_the_developers_name():
+    info = {**SHELF_INFO, "credit": [("Loop Forge", 0), ("今日发售", 2)], "studio_logo": Image.new("RGB", (48, 48), (200, 30, 30))}
+    art = _field_art()
+
+    shelved = info_shelf.draw_shelf(art, info, info_shelf.find_flat_band(art))
+
+    foot = shelved.crop((400, 440, 800, 480))
+    reds = [x for x in range(foot.width) for y in range(foot.height) if foot.getpixel((x, y)) == (200, 30, 30)]
+    assert reds
