@@ -602,6 +602,38 @@ def test_metar_gives_each_bay_airport_its_category_wind_and_ceiling():
     assert flight_radar_module.parse_metar({"error": 1}) == {}
 
 
+def test_targets_take_their_aircraft_class_and_keep_climb_category_and_squawk():
+    from plugins.flight_radar import pro_view
+
+    classes = {kind: pro_view.aircraft_class({"type": kind}) for kind in
+               ("B77W", "B744", "A320", "CRJ2", "DH8D", "C56X", "C172", "C17", "EC35")}
+    assert classes == {"B77W": "heavy", "B744": "quad", "A320": "narrowbody", "CRJ2": "regional",
+                       "DH8D": "turboprop", "C56X": "bizjet", "C172": "light", "C17": "quad", "EC35": "helicopter"}
+    assert pro_view.aircraft_class({"type": "", "category": "A7"}) == "helicopter"
+    assert all((pro_view.AIRCRAFT_DIR / f"{name}.png").is_file() for name in pro_view.AIRCRAFT_SCALES)
+    plane = _plugin()._normalize_readsb_aircraft(
+        {"hex": "abc123", "flight": "SWA2031 ", "lat": 37.5, "lon": -122.2, "alt_baro": 4400, "gs": 210,
+         "track": 120, "baro_rate": 1792, "category": "A3", "squawk": "7700", "t": "B38M"},
+        "adsb_lol", 37.62, -122.38)
+    assert (plane["vertical_rate"], plane["category"], plane["squawk"]) == (1792, "A3", "7700")
+
+
+def test_an_emergency_squawk_rings_its_target_in_red():
+    plugin = _plugin()
+    snapshot = _sample_snapshot()
+    snapshot["aircraft"][0].update(type="B738", squawk="7700", vertical_rate=-1500, altitude_ft=6000)
+    theme = plugin._theme(_canonical_theme("day"))
+    now = datetime(2026, 10, 25, 9, 12, tzinfo=flight_radar_module.ZoneInfo("America/Los_Angeles"))
+
+    alarmed = plugin._render(snapshot, (800, 480), {"_inkypi_theme": _canonical_theme("day")}, now)
+    snapshot["aircraft"][0]["squawk"] = "4521"
+    quiet = plugin._render(snapshot, (800, 480), {"_inkypi_theme": _canonical_theme("day")}, now)
+
+    scope = (16, 98, 456, 468)
+    assert theme["red"] in set(alarmed.crop(scope).get_flattened_data())
+    assert alarmed.crop(scope).tobytes() != quiet.crop(scope).tobytes()
+
+
 def test_pro_view_orders_strips_and_lays_out_the_board_scope_and_strips():
     from plugins.flight_radar import pro_view
 

@@ -82,6 +82,36 @@ TERRAIN_TINTS = (0.0, 0.10, 0.18, 0.26, 0.33)
 CONTOUR_FT, INDEX_CONTOUR_FT = 200, 1000
 CONTOUR_STRENGTH = (0.38, 0.62)
 CONTOUR_SMOOTHING = 1.4
+# Each target is drawn as its aircraft class's plan-view silhouette (assets/aircraft, GPT Image 2.5),
+# turned to its track, coloured by its altitude band and sized by the class's bulk. The class
+# comes from the ICAO type designator (first matching prefix), else the ADS-B emitter category.
+AIRCRAFT_DIR = ASSETS / "aircraft"
+# Short designators that would wrongly prefix others (C17 the Globemaster, not the C172) match whole.
+AIRCRAFT_EXACT = {"C17": "quad", "C5M": "quad", "C5": "quad"}
+AIRCRAFT_CLASSES = (
+    ("quad", ("B74", "A38", "A34", "B52")),
+    ("heavy", ("B77", "B78", "A33", "A35", "B76", "A30", "MD11", "DC10", "IL96", "KC")),
+    ("regional", ("CRJ", "E17", "E75", "E14", "E13", "E45", "F70", "F100")),
+    ("turboprop", ("DH8", "AT4", "AT7", "SF34", "B190", "JS4", "SW4", "BE20", "BE30", "D328", "C130")),
+    ("bizjet", ("C25", "C50", "C51", "C52", "C55", "C56", "C68", "C70", "C75", "CL3", "CL6", "GLF", "GL5", "GL6", "GL7",
+                "GLEX", "F2T", "F900",
+                "FA", "LJ", "E50", "E55", "PC24", "HDJT", "PRM1", "H25", "G28", "G15", "SF50")),
+    ("light", ("C1", "C2", "P28", "PA", "SR2", "BE3", "BE5", "BE9", "DA4", "DA6", "M20", "RV", "TBM", "PC12", "C82")),
+    ("helicopter", ("EC", "AS3", "AS5", "R22", "R44", "R66", "B06", "B407", "B429", "H60", "S76", "A109", "A119",
+                    "A139", "A169", "H125", "H135", "H145", "MD5", "B212", "B412")),
+    ("narrowbody", ("A31", "A32", "A2", "B73", "B37", "B38", "B39", "B75", "BCS", "E19", "E29", "MD8", "MD9", "B71",
+                    "C919", "A22")),
+)
+CATEGORY_CLASSES = {"A1": "light", "A2": "bizjet", "A3": "narrowbody", "A4": "narrowbody", "A5": "heavy",
+                    "A6": "bizjet", "A7": "helicopter"}
+# Each class's length on the scope, as a share of the base length.
+AIRCRAFT_BASE_SIZE = 22
+AIRCRAFT_SCALES = {"quad": 1.32, "heavy": 1.22, "narrowbody": 1.0, "regional": 0.9, "turboprop": 0.9,
+                   "bizjet": 0.8, "light": 0.72, "helicopter": 0.82}
+# Transponder codes for hijack, radio failure and emergency: the target gets a red ring.
+EMERGENCY_SQUAWKS = {"7500": "HIJACK", "7600": "NORDO", "7700": "EMERG"}
+# A climb or descent faster than this (ft/min) gets its arrow in the data block.
+VERTICAL_ARROW_FPM = 400
 # The scope as a recessed screen: outside its rim the map sinks into this shade, from the first
 # share at the rim to the second in the far corners; inside, a soft shadow this many pixels deep
 # (at most this strong) runs round the rim, and a bezel rings it.
@@ -266,7 +296,8 @@ def _scope(plugin, image, snapshot, theme, settings, device_config):
         image.paste(Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB"))
     draw = ImageDraw.Draw(image)
     for plane, (px, py) in plotted:
-        plugin._draw_plane_marker(draw, px, py, plane, theme)
+        if not _draw_aircraft(plugin, image, draw, (px, py), plane, theme):
+            plugin._draw_plane_marker(draw, px, py, plane, theme)
     _data_blocks(plugin, draw, plotted, inner, theme)
 
     title = plugin._font(10, "bold")
@@ -529,10 +560,62 @@ def _final_approach(plugin, draw, centre, radius, display_nm, center_lat, center
               stroke_fill=theme["panel"])
 
 
+def aircraft_class(plane):
+    """The silhouette class for a target: by its ICAO type designator, else its ADS-B category."""
+    designator = str((plane or {}).get("type") or "").upper().split(" ")[0]
+    if designator in AIRCRAFT_EXACT:
+        return AIRCRAFT_EXACT[designator]
+    if designator:
+        for name, prefixes in AIRCRAFT_CLASSES:
+            if designator.startswith(prefixes):
+                return name
+    return CATEGORY_CLASSES.get(str((plane or {}).get("category") or "").upper(), "narrowbody")
+
+
+@lru_cache(maxsize=16)
+def _silhouette(name):
+    path = AIRCRAFT_DIR / f"{name}.png"
+    if not path.is_file():
+        return None
+    with safe_open_image(path, limits=_LOGO_LIMITS) as source:
+        return source.convert("RGBA").getchannel("A")
+
+
+def _draw_aircraft(plugin, image, draw, point, plane, theme):
+    """The target as its class's silhouette turned to its track, in its altitude band's colour on
+    a halo, with a red ring for an emergency squawk; False without the silhouette file."""
+    name = aircraft_class(plane)
+    shape = _silhouette(name)
+    if shape is None:
+        return False
+    length = AIRCRAFT_BASE_SIZE * AIRCRAFT_SCALES.get(name, 1.0)
+    scale = 4
+    side = round(length * scale)
+    mask = shape.copy()
+    mask.thumbnail((side, side), Image.Resampling.LANCZOS)
+    track = plugin._number(plane.get("track")) or 0
+    # PIL turns anticlockwise; a track is clockwise from north.
+    mask = mask.rotate(-track, resample=Image.Resampling.BICUBIC, expand=True)
+    size = (max(1, round(mask.width / scale)), max(1, round(mask.height / scale)))
+    body = mask.resize(size, Image.Resampling.LANCZOS)
+    halo = body.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.MaxFilter(3))
+    edge = body.filter(ImageFilter.MaxFilter(3))
+    x, y = point
+    corner = (round(x - size[0] / 2), round(y - size[1] / 2))
+    image.paste(theme["plane_halo"], corner, halo)
+    image.paste(theme["plane_outline"], corner, edge)
+    image.paste(plugin._altitude_color(plane.get("altitude_ft"), plane.get("on_ground"), theme), corner, body)
+    if str(plane.get("squawk") or "") in EMERGENCY_SQUAWKS:
+        ring = max(size) / 2 + 5
+        draw.ellipse((x - ring, y - ring, x + ring, y + ring), outline=theme["red"], width=2)
+    return True
+
+
 def _data_blocks(plugin, draw, plotted, box, theme):
-    """ATC data blocks for the nearest airborne targets: the callsign over the altitude in hundreds
-    of feet and the ground speed in tens of knots, on a leader line, placed in the first free
-    corner around the target."""
+    """ATC full data blocks for the nearest airborne targets, on a leader line in the first free
+    corner around the target: the callsign; the altitude in hundreds of feet with a climb or
+    descent arrow, then the ground speed in tens of knots; and the aircraft type (or, for an
+    emergency squawk, its code and meaning in red)."""
     call_font, data_font = plugin._font(9, "bold"), plugin._font(8, "bold")
     airborne = [(plane, point) for plane, point in plotted if not plane.get("on_ground") and plane.get("callsign")]
     airborne.sort(key=lambda item: plugin._number(item[0].get("distance_nm")) or 999)
@@ -541,10 +624,17 @@ def _data_blocks(plugin, draw, plotted, box, theme):
         callsign = str(plane.get("callsign") or "").strip()[:8]
         altitude = plugin._number(plane.get("altitude_ft"))
         speed = plugin._number(plane.get("speed_kt"))
-        data = f"{round(max(0.0, altitude or 0) / 100):03d} {round((speed or 0) / 10):02d}"
-        width = max(draw.textlength(callsign, font=call_font), draw.textlength(data, font=data_font)) + 2
-        height = 21
-        for ox, oy in ((14, -26), (14, 6), (-14 - width, -26), (-14 - width, 6)):
+        rate = plugin._number(plane.get("vertical_rate")) or 0
+        level = f"{round(max(0.0, altitude or 0) / 100):03d}"
+        knots = f"{round((speed or 0) / 10):02d}"
+        squawk = str(plane.get("squawk") or "")
+        third = f"{squawk} {EMERGENCY_SQUAWKS[squawk]}" if squawk in EMERGENCY_SQUAWKS else \
+            str(plane.get("type") or "").split(" ")[0][:4]
+        arrow_w = 7 if abs(rate) >= VERTICAL_ARROW_FPM else 3
+        data_w = draw.textlength(level, font=data_font) + arrow_w + draw.textlength(knots, font=data_font)
+        width = max(draw.textlength(callsign, font=call_font), data_w, draw.textlength(third, font=data_font)) + 2
+        height = 31 if third else 21
+        for ox, oy in ((14, -height - 5), (14, 6), (-14 - width, -height - 5), (-14 - width, 6)):
             bx, by = px + ox, py + oy
             block = (bx, by, bx + width, by + height)
             if (block[0] < box[0] + 2 or block[2] > box[2] - 2 or block[1] < box[1] + 16 or block[3] > box[3] - 16
@@ -555,8 +645,19 @@ def _data_blocks(plugin, draw, plotted, box, theme):
             anchor_y = by + height if oy < 0 else by
             draw.line((px, py, anchor_x, anchor_y), fill=theme["ink"], width=1)
             draw.text((bx, by), callsign, font=call_font, fill=theme["ink"], stroke_width=2, stroke_fill=theme["panel"])
-            draw.text((bx, by + 11), data, font=data_font, fill=theme["muted"], stroke_width=2,
+            draw.text((bx, by + 11), level, font=data_font, fill=theme["muted"], stroke_width=2,
                       stroke_fill=theme["panel"])
+            arrow_x = bx + draw.textlength(level, font=data_font) + 1
+            if abs(rate) >= VERTICAL_ARROW_FPM:
+                # Up for a climb, down for a descent, beside the altitude it changes.
+                tip, base = (by + 12, by + 18) if rate > 0 else (by + 18, by + 12)
+                draw.polygon(((arrow_x, base), (arrow_x + 5, base), (arrow_x + 2.5, tip)), fill=theme["ink"])
+            draw.text((arrow_x + arrow_w - 1, by + 11), knots, font=data_font, fill=theme["muted"], stroke_width=2,
+                      stroke_fill=theme["panel"])
+            if third:
+                emergency = squawk in EMERGENCY_SQUAWKS
+                draw.text((bx, by + 21), third, font=data_font, fill=theme["red"] if emergency else theme["muted"],
+                          stroke_width=2, stroke_fill=theme["panel"])
             placed.append(block)
             break
 

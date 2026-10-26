@@ -722,6 +722,12 @@ class FlightRadar(RefreshOnDisplayPresentationMixin, BasePlugin):
             "on_ground": on_ground,
             "type": self._clean_label(item.get("t") or item.get("desc") or "", 18).upper(),
             "registration": self._clean_label(item.get("r") or "", 12).upper(),
+            # Climb or descent (ft/min), the ADS-B emitter category (A1 light .. A7 rotorcraft) and
+            # the transponder code, for the scope's symbols and data blocks.
+            "vertical_rate": self._number(item.get("baro_rate") if item.get("baro_rate") is not None
+                                          else item.get("geom_rate")),
+            "category": self._clean_label(item.get("category") or "", 2).upper(),
+            "squawk": self._clean_label(item.get("squawk") or "", 4),
             "route": "",
             "origin": "",
             "destination": "",
