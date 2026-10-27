@@ -37,6 +37,7 @@ from urllib.parse import urlencode, urljoin
 
 from plugins.pixiv_r18_ranking.pixiv_r18_ranking import _PinnedHTTPSResponse
 from plugins.steam_daily_art import shelf as info_shelf
+from plugins.steam_daily_art import blurb_ai, blurbs
 from runtime.refresh_contracts import TaskCancelled
 from security.ssrf import get_ssrf_policy
 
@@ -54,7 +55,7 @@ STEAM_STORE_ASSET_ROOT = "https://shared.akamai.steamstatic.com/store_item_asset
 # steamcommunity.com serves a studio's (creator clan's) profile, whose avatar is its logo.
 STEAM_JSON_HOSTS = ("store.steampowered.com", "api.steampowered.com", "steamcommunity.com")
 STEAM_DAILY_ART_VERSION = "fresh-frontpage-ranked-live-list-v1"
-STEAM_DAILY_ART_RENDER_VERSION = "info-shelf-personal-v3"
+STEAM_DAILY_ART_RENDER_VERSION = "info-shelf-personal-v4-groq-zh"
 # The info shelf and the owner's Steam account (wishlist, library): Chinese store facts,
 # each cached for its own while.
 STEAM_WISHLIST_URL = "https://api.steampowered.com/IWishlistService/GetWishlist/v1/"
@@ -62,7 +63,7 @@ STEAM_OWNED_GAMES_URL = "https://api.steampowered.com/IPlayerService/GetOwnedGam
 STEAM_TAG_LIST_URL = "https://api.steampowered.com/IStoreService/GetTagList/v1/"
 SHELF_LANGUAGE = "schinese"
 # Store facts cached under an older shape are fetched again.
-SHELF_DETAILS_VERSION = 2
+SHELF_DETAILS_VERSION = 3
 # A studio's logo: its creator clan's Steam avatar, from the clan's public profile.
 STEAM_CLAN_XML_URL = "https://steamcommunity.com/gid/{gid}/memberslistxml/?xml=1"
 CLAN_STEAMID_BASE = 103582791429521408
@@ -85,35 +86,8 @@ STORE_ITEMS_BATCH = 100
 MAX_WISHLIST_ITEMS = 1000
 MAX_WISHLIST_DEALS = 24
 MAX_SHELF_DETAILS = 400
-MAX_BLURBS = 400
 MAX_SHELF_CACHE_BYTES = 2 * 1024 * 1024
 NEW_RELEASE_DAYS = 14
-# Steam's English blurbs become one Chinese line with the model the news brief uses.
-BLURB_MODEL = "gpt-5-mini"
-BLURB_TIMEOUT_SECONDS = 30
-BLURB_MAX_CHARS = 36
-BLURB_INSTRUCTIONS = (
-    "输入是 Steam 游戏的英文简介列表。把每条改写成一句简体中文介绍：说清楚这是什么游戏、怎么玩，"
-    f"不超过 {BLURB_MAX_CHARS - 4} 个汉字，不要引号、书名号和句末标点。"
-    "按 JSON 返回：lines 里每条一项，appid 原样照抄，line 是这句中文。"
-)
-BLURB_MAX_OUTPUT_TOKENS = 3000
-BLURB_JSON_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "lines": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {"appid": {"type": "string"}, "line": {"type": "string"}},
-                "required": ["appid", "line"],
-            },
-        },
-    },
-    "required": ["lines"],
-}
 STEAM_ITEM_KINDS = {0: "app", 1: "sub", 2: "bundle"}
 MAX_STORE_ITEM_BYTES = 512 * 1024
 MAX_ART_GAMES = 3
@@ -272,13 +246,20 @@ class SteamDailyArt(BasePlugin):
         return instance_profile_fingerprint(base, instance_uuid or "unbound-preview")
 
     def generate_image(self, settings, device_config):
-        # The shelf's keys (Steam, OpenAI) and the device's clock come from its config.
+        # The shelf's keys and the device's clock come from its config.
         previous = getattr(self, "_active_device_config", None)
+        previous_blurb_attempt = getattr(self, "_blurb_request_attempted", False)
+        previous_deadline = getattr(self, "_active_data_deadline", None)
+        self._blurb_request_attempted = False
         self._active_device_config = device_config
+        if (settings or {}).get("_theme_render_only") is not True:
+            self._active_data_deadline = previous_deadline or time.monotonic() + MAX_DATA_SECONDS
         try:
             return self._generate_image(settings, device_config)
         finally:
             self._active_device_config = previous
+            self._blurb_request_attempted = previous_blurb_attempt
+            self._active_data_deadline = previous_deadline
 
     def _generate_image(self, settings, device_config):
         settings = settings or {}
@@ -320,6 +301,9 @@ class SteamDailyArt(BasePlugin):
             while True:
                 item = self._select_item(settings, rotation_key, exclude=frozenset(skipped))
                 try:
+                    # New DATA artwork prepares AI text; cached display and previews never do.
+                    if settings.get("_theme_render_only") is not True:
+                        self._prepare_shelf([item], settings)
                     image_url, logo_url, image = self._render_item(item, settings, dimensions)
                     break
                 except _UnusableArtwork as exc:
@@ -455,7 +439,7 @@ class SteamDailyArt(BasePlugin):
         raise RuntimeError("No Steam promotional art is fit for the display.")
 
     def _generate_banked_image(self, settings, device_config):
-        deadline = time.monotonic() + MAX_DATA_SECONDS
+        deadline = getattr(self, "_active_data_deadline", None) or time.monotonic() + MAX_DATA_SECONDS
         previous_deadline = getattr(self, "_active_data_deadline", None)
         self._active_data_deadline = deadline
         try:
@@ -1179,6 +1163,11 @@ class SteamDailyArt(BasePlugin):
         return {
             "name": " ".join(str(entry.get("name") or "").split())[:120],
             "description": " ".join(str(basic.get("short_description") or "").split())[:400],
+            # Preserve explicit metadata; unknown numeric types are not guessed as DLC.
+            "app_type": entry.get("app_type") if isinstance(entry.get("app_type"), (str, int)) else "",
+            "is_dlc": entry.get("is_dlc") if isinstance(entry.get("is_dlc"), bool) else None,
+            "parent_name": str((entry.get("fullgame") or {}).get("name") or "")[:80]
+            if isinstance(entry.get("fullgame"), dict) else "",
             "developer": (str(developers[0]["name"]).strip() if developers else "")[:60],
             "developer_clan": str(developers[0].get("creator_clan_account_id") or "") if developers else "",
             "publisher": next(
@@ -1311,14 +1300,14 @@ class SteamDailyArt(BasePlugin):
         return merged + held
 
     def _prepare_shelf(self, items, settings):
-        """The candidates' store facts in one batch and their Chinese lines in one AI call."""
+        """Prepare DATA facts and a bounded free-AI batch; rendering itself only reads lines."""
         if not self._setting_on(settings, "infoShelf"):
             return
         appids = [appid for appid in (self._app_id(item) for item in items) if appid]
         if appids:
             details = self._store_details(appids, settings)
-            self._blurbs(details)
             self._tag_names()
+            self._blurbs(details, allow_generate=True)
             # A few new studios' logos per refill; the rest come with later ones.
             fetched = 0
             for facts in details.values():
@@ -1344,7 +1333,8 @@ class SteamDailyArt(BasePlugin):
             "reasons": self._shelf_reasons(item, facts, now)
             + ([("steam_icon", DECK_LABELS[facts["deck"]])] if facts.get("deck") in DECK_LABELS else []),
             "price": self._shelf_price(facts),
-            "line": self._blurbs({appid: facts}).get(appid) or facts.get("name") or str(item.get("name") or ""),
+            "line": self._blurbs({appid: {**facts, "tag_names": [names[tag] for tag in facts.get("tags") or [] if tag in names]}}).get(appid)
+            or facts.get("name") or str(item.get("name") or ""),
             "tags": [names[tag] for tag in facts.get("tags") or [] if tag in names][:4],
             # In reading order, each with how readily it gives way when the row is short.
             "credit": [
@@ -1473,81 +1463,20 @@ class SteamDailyArt(BasePlugin):
             return ""
         return f"{facts['review_label']} {facts['review_percent']}%"
 
-    def _blurbs(self, details):
-        """One line in Chinese per app: Steam's own Chinese description when it has one, else
-        an AI line from the English one (cached against that text), else the English cut."""
-        cache = self._read_shelf_cache()
-        known = cache.get("blurbs") if isinstance(cache.get("blurbs"), dict) else {}
-        lines, missing = {}, {}
-        for appid, facts in details.items():
-            text = str(facts.get("description") or "")
-            if not text:
-                continue
-            if _has_cjk(text):
-                lines[appid] = _first_sentence(text)
-                continue
-            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-            entry = known.get(appid)
-            if isinstance(entry, dict) and entry.get("source") == digest and entry.get("text"):
-                lines[appid] = str(entry["text"])
-            else:
-                missing[appid] = (digest, text)
-        if missing:
-            translated = self._translate_blurbs({appid: text for appid, (_digest, text) in missing.items()})
-            if translated:
-                cache = self._read_shelf_cache()
-                known = cache.get("blurbs") if isinstance(cache.get("blurbs"), dict) else {}
-                for appid, line in translated.items():
-                    known[appid] = {"source": missing[appid][0], "text": line, "at": time.time()}
-                cache["blurbs"] = dict(sorted(known.items(), key=lambda pair: float(pair[1].get("at") or 0))[-MAX_BLURBS:])
-                self._write_shelf_cache(cache)
-                lines.update(translated)
-        for appid, (_digest, text) in missing.items():
-            lines.setdefault(appid, _first_sentence(text))
-        return lines
+    def _blurbs(self, details, *, allow_generate=False):
+        """All languages share a versioned Chinese line cache; only DATA may generate."""
+        return blurbs.lines(self, details, _first_sentence, allow_generate=allow_generate)
 
-    def _translate_blurbs(self, texts):
-        """{app id: one Chinese line} from the English blurbs in one model call; {} without a
-        key, with too little of the data deadline left, or when the call fails."""
-        api_key = self._env_key("OPEN_AI_SECRET") or self._env_key("OPENAI_API_KEY")
-        if not api_key or not texts:
+    def _translate_blurbs(self, sources):
+        """Groq-only chat adapter; a confirmed Free account is required, never paid fallback."""
+        if not blurbs.free_enabled(self):
             return {}
         deadline = getattr(self, "_active_data_deadline", None)
-        if deadline is not None and deadline - time.monotonic() < BLURB_TIMEOUT_SECONDS + 5:
+        if deadline is None or deadline - time.monotonic() < blurbs.MIN_DATA_REMAINING:
             return {}
-        try:
-            from openai import OpenAI
-
-            client = OpenAI(api_key=api_key, timeout=BLURB_TIMEOUT_SECONDS, max_retries=0)
-            # The same Responses API shape as the news brief: a strict JSON schema, a short think.
-            response = client.responses.create(
-                model=BLURB_MODEL,
-                instructions=BLURB_INSTRUCTIONS,
-                input=json.dumps([{"appid": appid, "text": text} for appid, text in texts.items()], ensure_ascii=False),
-                max_output_tokens=BLURB_MAX_OUTPUT_TOKENS,
-                reasoning={"effort": "low"},
-                text={
-                    "format": {"type": "json_schema", "name": "steam_lines", "strict": True, "schema": BLURB_JSON_SCHEMA},
-                    "verbosity": "low",
-                },
-            )
-            reply = json.loads(getattr(response, "output_text", "") or "{}")
-        except TaskCancelled:
-            raise
-        except Exception as exc:
-            # The provider's message names what it refused; it never carries the key.
-            logger.warning("Steam blurb translation failed: %s: %s", type(exc).__name__, str(exc)[:200])
-            return {}
-        rows = reply.get("lines") if isinstance(reply, dict) else None
-        lines = {}
-        for row in rows if isinstance(rows, list) else []:
-            if not isinstance(row, dict):
-                continue
-            appid = str(row.get("appid") or "")
-            line = " ".join(str(row.get("line") or "").split()).strip("。.!！\"'“”「」《》")
-            if appid in texts and _has_cjk(line):
-                lines[appid] = line[:BLURB_MAX_CHARS]
-        return lines
+        config = getattr(self, "_active_device_config", None)
+        width = max(0, int(self.get_dimensions(config)[0]) - 2 * info_shelf.MARGIN) if config is not None else 752
+        return blurb_ai.request_lines(sources, self._env_key("GROQ_API_KEY"), max_width=width)
 
     def _fetch_json(self, url, *, label, max_bytes):
         payload = self._fetch_bytes(url, label=label, max_bytes=max_bytes)

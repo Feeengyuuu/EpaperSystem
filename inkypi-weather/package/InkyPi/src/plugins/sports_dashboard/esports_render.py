@@ -2459,8 +2459,14 @@ class EsportsRenderMixin:
         self._draw_esports_match_text(draw, (center_x + 16, team_top, logo_x - 6, team_bottom), team_b, font_b, COLORS["text"], align="right")
         odds = event.get("odds") or {}
         if odds.get("team_a") and odds.get("team_b"):
-            self._draw_lpl_odds_text(draw, (text_x1, y + 31, center_x - 16, y + 43), odds.get("team_a"), max_size=9, align="left")
-            self._draw_lpl_odds_text(draw, (center_x + 16, y + 31, logo_x - 6, y + 43), odds.get("team_b"), max_size=9, align="right")
+            # Keep actual odds ink below the names, including composite faces
+            # whose Pillow bearing differs from the default FreeType path.
+            for side, left, right, align in (
+                ("team_a", text_x1, center_x - 16, "left"),
+                ("team_b", center_x + 16, logo_x - 6, "right"),
+            ):
+                value, font = self._fit_text(draw, str(odds[side]).strip(), max(1, right - left), 9, bold=True, min_size=7)
+                self._draw_esports_match_text(draw, (left, y + 34, right, y + 42), value, font, COLORS["text"], align=align)
 
     def _draw_lpl_recent_rows(self, image, draw, right_x, right_w, y, events, league_key="LPL"):
         self._draw_section_header(draw, right_x, right_w, y, "RECENT", self._lol_sidebar_color(league_key, "accent"))

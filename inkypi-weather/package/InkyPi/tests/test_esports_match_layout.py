@@ -129,3 +129,40 @@ def test_lol_compact_names_and_scores_fit_between_mirrored_logos(monkeypatch, pr
         assert [row[3] for row in names] == ["left", "right"]
         assert names[0][2][2] < score[1][0]
         assert names[1][2][0] > score[1][2]
+
+
+@pytest.mark.parametrize("private", [False, True])
+@pytest.mark.parametrize("league_key", ["LPL", "LCK", "MSI", "WORLDS"])
+@pytest.mark.parametrize("teams,odds", [(("CFO", "KC"), ("4.88", "1.26")),
+                                      (("International 中文 Alpha", "International 中文 Omega"), ("123.45", "9.87"))])
+def test_lol_upcoming_odds_have_actual_ink_gap_without_moving_matchup(monkeypatch, private, league_key, teams, odds):
+    plugin, labels, logos = capture_matchups(monkeypatch, private)
+    now = datetime(2026, 10, 27, 12, tzinfo=timezone.utc)
+    y = 275
+    event = {"start": now, "state": "unstarted", "team_a": teams[0], "team_b": teams[1],
+             "odds": {"team_a": odds[0], "team_b": odds[1]}}
+    image = Image.new("RGB", (800, 480))
+    with type_scope("riot"):
+        plugin._draw_lpl_next_row(image, ImageDraw.Draw(image), 556, 244, y, event, now, league_key=league_key)
+    prices = [row for row in labels if row[0] in odds]
+    names = [row for row in labels if row[1][1] == y + 18 and row[0] != "VS"]
+    assert [row[0] for row in prices] == list(odds)  # Full decimal values survive fitting.
+    assert [row[3] for row in prices] == ["left", "right"]
+    assert [row[1] for row in names] == [(612, y + 18, 662, y + 34), (694, y + 18, 744, y + 34)]
+    assert next(row for row in labels if row[0] == "VS")[1] == (665, y + 18, 691, y + 34)
+    assert logos == [(580, y + 13, 26), (750, y + 13, 26)]
+    for name, price in zip(names, prices):
+        assert price[2][1] - name[2][3] >= 2
+        assert y + 44 - price[2][3] >= 2
+        assert price[1][0] <= price[2][0] <= price[2][2] <= price[1][2]
+
+
+@pytest.mark.parametrize("odds", [{}, {"team_a": "4.88"}, {"team_b": "1.26"}])
+def test_lol_upcoming_incomplete_odds_do_not_invent_a_price(monkeypatch, odds):
+    plugin, labels, _ = capture_matchups(monkeypatch, True)
+    now = datetime(2026, 10, 27, 12, tzinfo=timezone.utc)
+    event = {"start": now, "state": "unstarted", "team_a": "CFO", "team_b": "KC", "odds": odds}
+    image = Image.new("RGB", (800, 480))
+    with type_scope("riot"):
+        plugin._draw_lpl_next_row(image, ImageDraw.Draw(image), 556, 244, 275, event, now, league_key="WORLDS")
+    assert {row[0] for row in labels}.isdisjoint({"4.88", "1.26"})

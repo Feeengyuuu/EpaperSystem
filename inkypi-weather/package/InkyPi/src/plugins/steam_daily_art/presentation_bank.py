@@ -26,7 +26,7 @@ from utils.safe_image import ImageLimitError, safe_open_image
 from plugins.base_plugin import presentation_bank_kit as kit
 
 
-STEAM_SHELF_RENDER_VERSION = "info-shelf-v1"
+STEAM_SHELF_RENDER_VERSION = "info-shelf-v2-groq-zh"
 STEAM_MEDIA_HOST_SUFFIXES = (
     "steamstatic.com",
     "steamcontent.com",

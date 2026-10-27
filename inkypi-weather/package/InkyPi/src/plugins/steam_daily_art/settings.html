@@ -113,7 +113,7 @@
     <span style="color: var(--text-primary);">
         Fetches current Steam store promotional items from frontpage categories such as spotlights, deals, top sellers, and new releases. Rotation follows Steam's order and skips repeats until the pool is exhausted.
         With My Steam on, discounted games from your public wishlist take every other turn, and games you already own (needs STEAM_API_KEY) come last.
-        The info shelf writes one Chinese line per game; English-only store text is translated with OpenAI when OPEN_AI_SECRET is set.
+        The info shelf summarizes public store descriptions in one Chinese line. Groq Free generation requires GROQ_API_KEY and STEAM_BLURB_GROQ_FREE_CONFIRMED=1 after confirming the account plan. Results are cached; display rotation does not call AI. If unavailable or limited, the official description remains, with no paid-provider fallback.
     </span>
 </div>
 

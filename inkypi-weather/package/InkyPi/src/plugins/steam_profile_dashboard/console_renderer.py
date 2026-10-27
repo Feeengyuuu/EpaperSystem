@@ -34,6 +34,7 @@ FRIEND_GAME_ICON = 14
 # In-game friends keep wide artwork rows. The remaining content area adapts:
 # up to three use generous name rows, four to six use an equal two-column grid,
 # and larger populations use a bounded denser grid or a narrow overflow column.
+FRIEND_PANEL = (594, 10, 790, 205)
 FRIEND_LIST = (600, 46, 784, 201)
 FRIEND_AVATAR = 38
 FRIEND_ROW_AVATAR = 32
@@ -569,7 +570,7 @@ class _Console:
 
     def friends(self):
         data = self.data
-        self.panel((594, 10, 790, 205), header=32)
+        self.panel(FRIEND_PANEL, header=32)
         self.small_symbol("people", 605, 19)
         self.text((630, 10, 710, 42), "在线好友", 18, self.c["accent"], bold=True)
         counter = f"{_value(data.get('online_friend_count'))}/{_value(data.get('friend_count'))}"
@@ -715,12 +716,8 @@ class _Console:
         for index, friend in enumerate(shown):
             y = start + index * (size + 4)
             self._paste_friend_portrait(friend, left, y, size, portraits)
-            if friend.get("gameid") or friend.get("gameextrainfo"):
-                # In-game portraits have no green circular rim, including overflow.
-                self.draw.rectangle((left + size - 3, y + size - 3, left + size - 1, y + size - 1), fill=GREEN)
-            else:
-                self.draw.ellipse((left, y, left + size - 1, y + size - 1),
-                                  outline=self._friend_ring_colour(friend), width=1)
+            self.draw.ellipse((left, y, left + size - 1, y + size - 1),
+                              outline=self._friend_ring_colour(friend), width=1)
         if hidden:
             self.text((732, FRIEND_LIST[3] - 13, 784, FRIEND_LIST[3]), f"{hidden} more…", 10,
                       self.c["muted"], min_size=9, align="center")
@@ -760,30 +757,34 @@ class _Console:
             x, y, right, bottom = box
             height = bottom - y
         width = right - x
+        # Text keeps its inset; only featured-row artwork reaches the inner border.
+        cover_width = (FRIEND_PANEL[2] if box is None else right) - x
         appid = friend.get("gameid")
         source = backgrounds.get(_appid(appid))
         with ExitStack() as owned:
             rgb = owned.enter_context(source.convert("RGB") if source is not None
-                                      else Image.new("RGB", (width, height), self.c["navy"]))
-            art = owned.enter_context(ImageOps.fit(rgb, (width, height), method=Image.Resampling.LANCZOS))
-            shade = owned.enter_context(Image.new("RGBA", (width, height)))
+                                      else Image.new("RGB", (cover_width, height), self.c["navy"]))
+            art = owned.enter_context(ImageOps.fit(rgb, (cover_width, height), method=Image.Resampling.LANCZOS))
+            shade = owned.enter_context(Image.new("RGBA", (cover_width, height)))
             pen = ImageDraw.Draw(shade)
-            for column in range(width):
-                pen.line((column, 0, column, height), fill=(*self.c["navy"], round(196 - 84 * column / (width - 1))))
+            # Keep the cover visible across the entire rectangle. Glyph outlines
+            # carry contrast, so the name area no longer needs an opaque wash.
+            for column in range(cover_width):
+                pen.line((column, 0, column, height), fill=(*self.c["navy"], round(86 - 68 * column / max(1, cover_width - 1))))
             art.paste(shade, (0, 0), shade)
-            mask = owned.enter_context(Image.new("L", (width * 4, height * 4)))
+            mask = owned.enter_context(Image.new("L", (cover_width * 4, height * 4)))
             pen = ImageDraw.Draw(mask)
-            pen.rounded_rectangle((0, 0, width * 4 - 1, height * 4 - 1), radius=height * 2, fill=255)
-            pen.rectangle((height * 2, 0, width * 4 - 1, height * 4 - 1), fill=255)
-            fitted_mask = owned.enter_context(mask.resize((width, height), Image.Resampling.LANCZOS))
+            pen.rounded_rectangle((0, 0, cover_width * 4 - 1, height * 4 - 1), radius=height * 2, fill=255)
+            pen.rectangle((height * 2, 0, cover_width * 4 - 1, height * 4 - 1), fill=255)
+            fitted_mask = owned.enter_context(mask.resize((cover_width, height), Image.Resampling.LANCZOS))
             self.image.paste(art, (x, y), fitted_mask)
         portrait_size = min(FRIEND_ROW_AVATAR, max(16, height - 6), max(16, width // 3 - 6))
         avatar_y = y + (height - portrait_size) // 2
-        self._paste_friend_portrait(friend, x + 3, avatar_y, portrait_size, portraits)
+        self._friend_ring(friend, x + 3, avatar_y, portrait_size, portraits=portraits)
         text_x = x + portrait_size + 11
         half = min(19, height // 2)
-        self.text((text_x, y + 1, right - 5, y + half), self.plugin._friend_display_id(friend),
-                  13 if width >= 150 else 11, WHITE, bold=True, min_size=9)
+        self._playing_friend_label((text_x, y + 1, right - 5, y + half), self.plugin._friend_display_id(friend),
+                                   13 if width >= 150 else 11, bold=True)
         name = self.plugin._display_game_name(self.data, appid, friend.get("gameextrainfo"))
         icon = game_icons.get(_appid(appid))
         icon_size = min(FRIEND_GAME_ICON, max(9, height - half - 5))
@@ -794,7 +795,15 @@ class _Console:
             with icon.resize((icon_size, icon_size), Image.Resampling.LANCZOS) as small:
                 self.image.paste(small, (text_x, game_y + 1), small if small.mode == "RGBA" else None)
             text_x += icon_size + 4
-        self.text((text_x, game_y, right - 4, y + height - 2), name or "游戏中", 10, WHITE, bold=False, min_size=9)
+        self._playing_friend_label((text_x, game_y, right - 4, y + height - 2), name or "游戏中", 10, outline=0)
+
+    def _playing_friend_label(self, box, value, size, *, bold=False, outline=1):
+        """White row text: outlined friend identity, plain game name."""
+        # Dense rows keep their existing glyph size instead of clipping a new stroke.
+        outline = outline if box[3] - box[1] >= 12 else 0
+        with self._text_bitmap(value, box[2] - box[0], box[3] - box[1], size, WHITE,
+                               bold=bold, min_size=9, outline=outline) as block:
+            self.text(box, value, size, WHITE, bold=bold, min_size=9, prepared=block)
 
     def _friend_tile(self, friend, x, y, game_icons, hidden):
         """A friend as a small tile on the panel itself: the ringed avatar over the name (a game's

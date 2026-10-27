@@ -349,11 +349,78 @@ def test_friend_game_activity_shows_the_game_icon_before_its_name(plugin, data, 
     x, y = FRIEND_LIST[:2]
 
     assert ("icon", "1172470", 14) in plugin.asset_calls
-    # A friend in a game leads the list as a row: the fixture's solid icon before the game's
-    # name, while the avatar itself has no green rim.
+    # The actual playing state marks both the avatar's ring and the game's small icon.
     assert image.getpixel((x + 50, y + 28)) == (200, 80, 40)
-    assert image.getpixel((x + 20, y + 1)) != GREEN
+    assert image.getpixel((x + 20, y + 1)) == GREEN
+    assert image.getpixel((x + 42, y + 26)) == GREEN
     assert any(text == "Company of Heroes 3" and box[0] == x + 61 for box, text in displayed)
+
+
+def test_playing_friend_cover_fills_the_right_rectangle_without_losing_image_detail(plugin):
+    console = _Console(plugin, {})
+    console.panel(console_renderer.FRIEND_PANEL, header=32)
+    x, y, right, _ = FRIEND_LIST
+    panel_right = console_renderer.FRIEND_PANEL[2]
+    width, height = right - x, console_renderer.FRIEND_PLAYING_H
+    cover = Image.new("RGB", (width, height))
+    draw = ImageDraw.Draw(cover)
+    for box, color in (((0, 0, 61, height), (230, 45, 35)),
+                       ((62, 0, 122, height), (35, 220, 50)),
+                       ((123, 0, width, height), (35, 75, 235))):
+        draw.rectangle(box, fill=color)
+    friend = {"personaname": "Friend", "gameid": "570", "gameextrainfo": "Dota 2"}
+    console._playing_friend(friend, y, {}, {"570": cover}, {})
+    for row in (y, y + height - 1):
+        # The cover remains identifiable behind the name and out to the square edge.
+        assert console.image.getpixel((x + 45, row))[0] > 155
+        assert console.image.getpixel((x + 105, row))[1] > 160
+        assert console.image.getpixel((panel_right - 1, row))[2] > 180
+        assert console.image.getpixel((panel_right, row)) == console.c["border"]
+    cover.close()
+
+
+def test_compact_playing_cover_stays_inside_its_own_column(plugin):
+    console = _Console(plugin, {})
+    before = console.image.crop((730, 46, 791, 84))
+    cover = Image.new("RGB", (184, 38), (245, 245, 235))
+    friend = {"personaname": "Friend", "gameid": "570", "gameextrainfo": "Dota 2"}
+    console._playing_friend(friend, 46, {}, {"570": cover}, {}, box=(600, 46, 730, 78))
+    assert ImageChops.difference(before, console.image.crop((730, 46, 791, 84))).getbbox() is None
+    before.close()
+    cover.close()
+
+
+def test_playing_friend_name_is_outlined_but_game_name_is_plain_white(plugin):
+    console = _Console(plugin, {})
+    x, y, right, _ = FRIEND_LIST
+    cover = Image.new("RGB", (right - x, console_renderer.FRIEND_PLAYING_H), (245, 245, 235))
+    friend = {"personaname": "Bright Friend", "gameid": "570", "gameextrainfo": "Dota 2"}
+    console._playing_friend(friend, y, {}, {"570": cover}, {})
+    for box, outlined in (((x + 43, y + 1, right - 5, y + 19), True),
+                          ((x + 43, y + 20, right - 4, y + 36), False)):
+        pixels = dict((color, count) for count, color in console.image.crop(box).getcolors(1 << 16))
+        # A 10 px regular face can have just one fully opaque glyph pixel. Count
+        # near-white antialiasing too; the shaded cover is outside this tolerance.
+        white_ink = sum(count for color, count in pixels.items()
+                        if max(abs(value - target) for value, target in zip(color, console_renderer.WHITE)) <= 12)
+        assert white_ink > 10
+        if outlined:
+            assert pixels.get(console.c["canvas"], 0) > 10
+        else:
+            assert pixels.get(console.c["canvas"], 0) == 0
+    cover.close()
+
+
+@pytest.mark.parametrize("playing", [{"gameid": "570"}, {"gameextrainfo": "Dota 2"}])
+def test_playing_ring_is_retained_when_the_avatar_shrinks_to_the_overflow_column(plugin, playing):
+    console = _Console(plugin, {})
+    friend = {"personaname": "Playing", "personastate": 3, **playing}
+    avatar = Image.new("RGBA", (46, 46), (105, 120, 90, 255))
+    console._friend_overflow_column([(friend, "cached-avatar")], 1, 165, {id(friend): avatar})
+    # 30 px miniature, with its own 1 px playing ring rather than an away ring or square dot.
+    assert console.image.getpixel((758, 168)) == GREEN
+    assert console.image.getpixel((748, 190)) == (105, 120, 90)
+    avatar.close()
 
 
 def test_game_logos_sit_on_the_page_without_a_border(plugin, data):
@@ -393,8 +460,8 @@ def test_friend_game_without_icon_keeps_the_status_dot(plugin, data, displayed, 
     image = render_console(plugin, data, (800, 480))
     x, y = FRIEND_LIST[:2]
 
-    # Without a game logo, keep its name and artwork; never invent an icon or green rim.
-    assert image.getpixel((x + 20, y + 1)) != GREEN
+    # Without a game logo, the real playing state still has its green avatar ring.
+    assert image.getpixel((x + 20, y + 1)) == GREEN
     assert any(text == "Company of Heroes 3" and box[0] == x + 43 for box, text in displayed)
 
 
@@ -658,10 +725,11 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-adaptive-roster-v50"
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:2] == (
-        "midnight-console-horizontal-friends-v49", "midnight-console-adaptive-friend-mosaic-v48")
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[2:9] == (
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-full-cover-friends-v51"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:3] == (
+        "midnight-console-adaptive-roster-v50", "midnight-console-horizontal-friends-v49",
+        "midnight-console-adaptive-friend-mosaic-v48")
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[3:10] == (
         "midnight-console-whole-avatar-frame-v47",
         "midnight-console-profile-backdrop-v46",
         "midnight-console-game-hue-v45",

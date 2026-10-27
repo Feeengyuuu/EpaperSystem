@@ -1952,13 +1952,13 @@ def test_store_details_are_fetched_in_one_batch_parsed_and_cached(tmp_path, monk
     assert details["1"]["deck"] == 3
 
 
-def test_lines_translate_only_english_blurbs_and_remember_them(tmp_path, monkeypatch):
+def test_line_rendering_uses_official_text_without_generating_ai(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path, monkeypatch)
     asked = []
 
     def translate(texts):
         asked.append(dict(texts))
-        return {"2": "俄罗斯方块加即时战略"}
+        raise AssertionError("reading a shelf must never generate text")
 
     monkeypatch.setattr(plugin, "_translate_blurbs", translate)
     details = {"1": {"description": "一款关于火车的合作游戏。和朋友一起修铁路"},
@@ -1967,11 +1967,19 @@ def test_lines_translate_only_english_blurbs_and_remember_them(tmp_path, monkeyp
     lines = plugin._blurbs(details)
     again = plugin._blurbs(details)
 
-    assert lines == {"1": "一款关于火车的合作游戏", "2": "俄罗斯方块加即时战略"} == again
-    assert asked == [{"2": details["2"]["description"]}]
-    # A blurb Steam rewrites is translated again.
-    plugin._blurbs({"2": {"description": "A new English blurb."}})
-    assert len(asked) == 2
+    assert lines == {"1": "一款关于火车的合作游戏", "2": "Tetromancer is a Tetris battler"} == again
+    assert asked == []
+
+
+def test_store_details_preserve_explicit_dlc_metadata_without_guessing_numeric_type():
+    source = _store_entry(17, "An expansion that adds a new region.")
+    source.update({"app_type": "dlc", "is_dlc": True, "fullgame": {"name": "The Original Game"}})
+    facts = SteamDailyArt._parse_store_details(source)
+    assert facts["app_type"] == "dlc" and facts["is_dlc"] is True
+    assert facts["parent_name"] == "The Original Game"
+    source.update({"app_type": 4, "is_dlc": None, "fullgame": None})
+    facts = SteamDailyArt._parse_store_details(source)
+    assert facts["app_type"] == 4 and facts["is_dlc"] is None and facts["parent_name"] == ""
 
 
 def test_shelf_info_gives_the_reasons_price_tags_and_credit(tmp_path, monkeypatch):
@@ -2078,38 +2086,50 @@ def test_a_flat_block_too_short_for_every_row_is_left_to_the_fading_band():
     assert info_shelf.band_fits(480, None, SHELF_INFO) is None
 
 
-def test_the_translation_asks_for_strict_json_lines_like_the_news_brief(tmp_path, monkeypatch):
+def test_the_free_translation_uses_groq_chat_strict_json_without_responses_parameters(tmp_path, monkeypatch):
     import openai
+    import time
+    from plugins.steam_daily_art import blurb_ai
 
     plugin = make_plugin(tmp_path, monkeypatch)
-    plugin._active_device_config = SimpleNamespace(load_env_key=lambda name: "sk-test" if name == "OPEN_AI_SECRET" else "")
+    monkeypatch.setattr(plugin, "_env_key", lambda name: {"GROQ_API_KEY": "fake-test-key", blurb_ai.FREE_CONFIRM_ENV: "1"}.get(name, ""))
+    plugin._active_data_deadline = time.monotonic() + 40
     asked = {}
+    line = "在荒野中收集资源搭建营地与伙伴合作探索未知世界求生"
 
-    class FakeResponses:
+    class FakeChat:
         def create(self, **kwargs):
             asked.update(kwargs)
-            return SimpleNamespace(output_text=json.dumps(
-                {"lines": [{"appid": "2", "line": "潜行之后是硬核战术枪战。"}, {"appid": "9", "line": "不在请求里"}]},
-                ensure_ascii=False,
-            ))
+            message = SimpleNamespace(content=json.dumps({"lines": [{"appid": "2", "line": line}]}, ensure_ascii=False), refusal=None)
+            return SimpleNamespace(choices=[SimpleNamespace(finish_reason="stop", message=message)])
 
     class FakeOpenAI:
         def __init__(self, **kwargs):
             asked["client"] = kwargs
-            self.responses = FakeResponses()
+            self.chat = SimpleNamespace(completions=FakeChat())
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
 
     monkeypatch.setattr(openai, "OpenAI", FakeOpenAI)
 
-    lines = ORIGINAL_TRANSLATE_BLURBS(plugin, {"2": "Teeth-clenching stealth, followed by tactical gunplay."})
+    source = blurb_ai.public_source("2", {"name": "Survival", "app_type": "game", "description": "Survive the wilderness with friends, build camps and explore."})
+    lines = ORIGINAL_TRANSLATE_BLURBS(plugin, {"2": source})
 
-    assert lines == {"2": "潜行之后是硬核战术枪战"}
-    assert asked["text"]["format"]["type"] == "json_schema" and asked["text"]["format"]["strict"] is True
-    assert asked["reasoning"] == {"effort": "low"}
+    assert lines == {"2": line}
+    assert asked["response_format"]["type"] == "json_schema" and asked["response_format"]["json_schema"]["strict"] is True
+    assert asked["reasoning_effort"] == "low"
     assert asked["client"]["max_retries"] == 0
-    assert json.loads(asked["input"]) == [{"appid": "2", "text": "Teeth-clenching stealth, followed by tactical gunplay."}]
+    assert asked["client"]["base_url"] == blurb_ai.BASE_URL and asked["model"] == blurb_ai.MODEL
+    assert asked["client"]["timeout"] == blurb_ai.TIMEOUT_SECONDS
+    assert not {"input", "text", "reasoning", "tools", "stream"}.intersection(asked)
+    assert json.loads(asked["messages"][1]["content"]) == [source]
 
 
-def test_a_refused_translation_says_why_without_the_key(tmp_path, monkeypatch, caplog):
+def test_an_openai_key_never_enables_a_paid_translation_fallback(tmp_path, monkeypatch):
     import openai
 
     plugin = make_plugin(tmp_path, monkeypatch)
@@ -2117,17 +2137,10 @@ def test_a_refused_translation_says_why_without_the_key(tmp_path, monkeypatch, c
 
     class Refusing:
         def __init__(self, **kwargs):
-            self.responses = SimpleNamespace(create=self.create)
-
-        @staticmethod
-        def create(**kwargs):
-            raise ValueError("Unsupported parameter: 'reasoning.effort'")
+            raise AssertionError("a paid-provider client must not be created")
 
     monkeypatch.setattr(openai, "OpenAI", Refusing)
-    with caplog.at_level(logging.WARNING):
-        assert ORIGINAL_TRANSLATE_BLURBS(plugin, {"2": "An English blurb."}) == {}
-
-    assert "Unsupported parameter" in caplog.text and "sk-secret-123" not in caplog.text
+    assert ORIGINAL_TRANSLATE_BLURBS(plugin, {"2": "An English blurb."}) == {}
 
 
 STUDIO_PAGE = (
