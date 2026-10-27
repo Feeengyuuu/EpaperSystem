@@ -250,7 +250,7 @@ def _guide_sign(canvas, text, xy, height, max_width, *, series="EM"):
     canvas.draw.rounded_rectangle((x, y, x + width, y + height), radius=3, fill=GUIDE_GREEN)
     canvas.draw.rounded_rectangle((x + 1.5, y + 1.5, x + width - 1.5, y + height - 1.5), radius=2, outline=WHITE,
                                   width=1)
-    legend.draw(canvas, x + 5, y + height / 2, WHITE)
+    legend.draw(canvas, x + 5, y + height / 2 + 1, WHITE)
     return width
 
 
