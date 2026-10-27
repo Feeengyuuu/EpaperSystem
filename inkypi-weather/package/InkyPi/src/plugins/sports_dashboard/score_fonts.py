@@ -84,7 +84,7 @@ def fit_score(draw, text, max_width, size, bold=False, min_size=8, *, sport, max
     sizes = [*range(size, min(size, min_size) - 1, -1), *range(min(size, min_size) - 1, 0, -1)]
     for candidate in sizes:
         font = score_font(sport, candidate, bold, league=league)
-        if not font.covers(font.safe_text(text)):
+        if not font.covers(text):
             font = render_font(get_base_ui_font, candidate, bold)
         box = draw.textbbox((0, 0), text, font=font)
         if box[2] - box[0] <= max_width and (max_height is None or box[3] - box[1] <= max_height):
