@@ -1,0 +1,31 @@
+{
+  "source": "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip",
+  "release": "v4.1",
+  "archive_bytes": 33707794,
+  "archive_sha256": "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e",
+  "files": [
+    {
+      "path": "LICENSE.txt",
+      "member": "LICENSE.txt",
+      "bytes": 4380,
+      "sha256": "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a",
+      "source": "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip"
+    },
+    {
+      "path": "Inter-Bold.ttf",
+      "member": "extras/ttf/Inter-Bold.ttf",
+      "bytes": 420428,
+      "sha256": "288316099b1e0a47a4716d159098005eef7c0066921f34e3200393dbdb01947f",
+      "source": "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip"
+    },
+    {
+      "path": "Inter-SemiBold.ttf",
+      "member": "extras/ttf/Inter-SemiBold.ttf",
+      "bytes": 419744,
+      "sha256": "78a843fade9d4612a5567302fb595b56976eb5fcebf4fea5a5912d638bafcde3",
+      "source": "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip"
+    }
+  ],
+  "license": "SIL Open Font License 1.1",
+  "role": "Open-source airport-style alternative; not Revolver Airport"
+}
