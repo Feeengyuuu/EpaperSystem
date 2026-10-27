@@ -7239,15 +7239,21 @@ def test_standalone_sport_panels_draw_their_own_information():
     seen_texts = []
     logo_calls = []
     original_fit_text = plugin._fit_text
+    original_fit_score = plugin._fit_score
 
     def capture_fit_text(draw_obj, text, *args, **kwargs):
         seen_texts.append(str(text))
         return original_fit_text(draw_obj, text, *args, **kwargs)
 
+    def capture_fit_score(draw_obj, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_score(draw_obj, text, *args, **kwargs)
+
     def capture_team_logo(_image, _draw, logo_url, _x, _y, size, fallback_text):
         logo_calls.append((str(logo_url or ""), int(size), str(fallback_text or "")))
 
     plugin._fit_text = capture_fit_text
+    plugin._fit_score = capture_fit_score
     plugin._draw_team_logo = capture_team_logo
     for sport in ("MLB", "WNBA", "PGA", "NFL", "NCAA"):
         card = next(card for card in selected["cards"] if card["sport"] == sport)
