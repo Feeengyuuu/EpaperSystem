@@ -11,6 +11,7 @@ import math
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
 from plugins.steam_profile_dashboard.avatar_frame import AVATAR_BOX, AVATAR_SIZE, FRAME_ORIGIN
+from plugins.steam_profile_dashboard.friend_avatars import load_mosaic_avatars
 from plugins.steam_profile_dashboard.rank_ladder import TIERS, rank_border, rank_for
 from plugins.steam_profile_dashboard.sidebar_assets import STROKE_COUNT, name_stroke, sidebar_asset
 
@@ -683,8 +684,7 @@ class _Console:
         columns = 1 if len(records) == 1 else 2 if len(records) <= 4 else 3
         gap = 2 if columns == 2 else 1
         size = 22 if len(records) == 2 else (FRIEND_AVATAR - gap * (columns - 1)) // columns
-        avatars = [(friend, self.plugin._avatar_image(url, size, decorative_outline=False)) for friend, url in records]
-        avatars = [(friend, avatar) for friend, avatar in avatars if avatar is not None]
+        avatars = load_mosaic_avatars(self.plugin, records, size)
         if len(avatars) == 2:
             # Diagonally opposed circles can be larger without overlapping each other.
             positions = [(x, y), (x + FRIEND_AVATAR - size, y + FRIEND_AVATAR - size)]
