@@ -8,8 +8,10 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import struct
 import sys
 from types import SimpleNamespace
+import zlib
 
 import pytest
 
@@ -32,6 +34,43 @@ def test_original_font_metadata_and_required_score_glyphs_are_readable():
     result = fonts.validate_font(PAYLOAD, NAME, DIGEST, len(PAYLOAD))
     assert "Inter" in result["family"]
     assert result["digits"] == "0123456789"
+
+
+def test_missing_family_is_recorded_honestly_when_style_and_score_glyphs_are_valid(monkeypatch):
+    """Official Premier League raw fonts have no family name but retain a style."""
+    from PIL import ImageFont
+
+    real = ImageFont.truetype(__import__("io").BytesIO(PAYLOAD), 32)
+    fake = SimpleNamespace(getname=lambda: (None, "Regular"), getbbox=real.getbbox, getmask=real.getmask)
+    monkeypatch.setattr(ImageFont, "truetype", lambda *args, **kwargs: fake)
+    result = fonts.validate_font(PAYLOAD, "sports-epl-score.ttf", DIGEST, len(PAYLOAD))
+    assert result["family"] == "" and result["style"] == "Regular"
+    fake.getname = lambda: (None, "")
+    with pytest.raises(fonts.PrivateFontError, match="metadata is missing"):
+        fonts.validate_font(PAYLOAD, "sports-epl-score.ttf", DIGEST, len(PAYLOAD))
+
+
+def test_raw_woff1_container_is_validated_without_conversion_on_install():
+    """Build an in-memory WOFF fixture from the bundled OFL Inter, never a private font."""
+    count = struct.unpack_from(">H", PAYLOAD, 4)[0]
+    offset = 44 + 20 * count
+    records, chunks = [], []
+    for index in range(count):
+        tag, checksum, start, length = struct.unpack_from(">4sIII", PAYLOAD, 12 + 16 * index)
+        raw = PAYLOAD[start:start + length]
+        compressed = zlib.compress(raw)
+        stored = compressed if len(compressed) < len(raw) else raw
+        records.append(struct.pack(">4sIIII", tag, offset, len(stored), len(raw), checksum))
+        padded = stored + b"\0" * (-len(stored) % 4)
+        chunks.append(padded)
+        offset += len(padded)
+    header = struct.pack(">4sIIHHIHHIIIII", b"wOFF", 0x10000, offset, count, 0, len(PAYLOAD), 1, 0, 0, 0, 0, 0, 0)
+    payload = header + b"".join(records) + b"".join(chunks)
+    digest = hashlib.sha256(payload).hexdigest()
+    result = fonts.validate_font(payload, "sports-seriea-score.woff", digest, len(payload))
+    assert "Inter" in result["family"] and result["digits"] == "0123456789"
+    with pytest.raises(fonts.PrivateFontError, match="format"):
+        fonts.validate_font(payload, "sports-seriea-score.woff2", digest, len(payload))
 
 
 @pytest.mark.parametrize("name,digest,size", [("../sports-nba-score.ttf", DIGEST, len(PAYLOAD)),
@@ -153,10 +192,11 @@ def test_identical_owner_font_is_noop_and_different_one_is_refused(file_ops):
     assert (root / NAME).read_bytes() == PAYLOAD
 
 
-def test_other_format_refuses_even_if_target_is_identical(file_ops):
+@pytest.mark.parametrize("extension", ["otf", "woff", "woff2"])
+def test_other_format_refuses_even_if_target_is_identical(file_ops, extension):
     root, _, _ = file_ops
     (root / NAME).write_bytes(PAYLOAD)
-    (root / "sports-nba-score.woff2").write_bytes(b"owner other format")
+    (root / f"sports-nba-score.{extension}").write_bytes(b"owner other format")
     with pytest.raises(fonts.PrivateFontError, match="another format"):
         fonts._existing_font(123, NAME, DIGEST, 984)
     assert len(list(root.iterdir())) == 2
@@ -234,6 +274,20 @@ def test_updater_uses_verified_current_venv_helper_under_update_lock(updater, mo
                       str(root / "install" / "lib" / "private_score_fonts.py"), NAME, DIGEST, str(len(PAYLOAD))]]
     receipt = json.loads(capsys.readouterr().out)
     assert receipt["commit"] == COMMIT and receipt["artifact_sha256"] == ARTIFACT
+
+
+@pytest.mark.parametrize("name", sorted(fonts.FONT_NAMES))
+def test_updater_and_validator_support_exactly_the_same_fixed_name_registry(updater, monkeypatch, name):
+    module, _, _ = updater
+    calls = []
+
+    def run(command, **kwargs):
+        calls.append(command)
+        return SimpleNamespace(returncode=0, stdout=b'{"status":"unchanged"}', stderr=b"")
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    assert module.run_private_score_font((name, *ARGS[1:])) == 0
+    assert calls[0][3] == name
 
 
 @pytest.mark.parametrize("case", ["journal", "artifact", "identity", "updater", "helper", "history"])

@@ -78,7 +78,8 @@ cleanup rules.
 ### Owner-provided private score fonts
 
 After a release containing this capability has successfully deployed, the owner
-can install a separately licensed local NBA or WNBA score font. No font is
+can install a separately licensed local sport/league score font. Supported keys
+are `nba`, `wnba`, `mls`, `epl`, `laliga`, `bundesliga`, `seriea`, `ligue1` and `f1`. No font is
 downloaded by the command, and a public URL alone does not establish a license.
 Keep the original font under the ignored `outputs/` directory, never in Git.
 
@@ -94,10 +95,14 @@ the round's full commit, release id and artifact checksum bind the request to a
 committed deployment. No saved settings, source, cache, service state or sudoers
 are changed. Installation uses the same update lock as a release transaction.
 
-Only `sports-{nba|wnba}-score.{ttf|otf|woff2}` beneath
+Only `sports-<supported-key>-score.{ttf|otf|woff|woff2}` beneath
 `/var/lib/inkypi/data/fonts` are allowed. The raw font must be at most 2 MiB and
 Pillow must read its metadata, distinct digits and score separator on both the
 workstation and device. Bytes travel through SSH stdin, with no transport file.
+Some official webfonts omit the family name while retaining a style name; the
+receipt records the missing family as empty, and the original bytes, format,
+hash, glyph visibility and distinct digit checks still apply. A font with no
+family or style metadata is refused. No conversion or inferred font name occurs.
 The existing directory must be root:inkypi, mode 0750, and contain no conflicting
 format for that league. Components and targets are checked without following
 symlinks. A new root:inkypi, mode 0640 file is published atomically without

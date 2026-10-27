@@ -19,11 +19,13 @@ import sys
 
 MAX_BYTES = 2 * 1024 * 1024
 FONT_DIRECTORY = Path("/var/lib/inkypi/data/fonts")
+LEAGUES = ("nba", "wnba", "mls", "epl", "laliga", "bundesliga", "seriea", "ligue1", "f1")
+EXTENSIONS = ("ttf", "otf", "woff", "woff2")
 FONT_NAMES = frozenset(
     f"sports-{league}-score.{extension}"
-    for league in ("nba", "wnba") for extension in ("ttf", "otf", "woff2")
+    for league in LEAGUES for extension in EXTENSIONS
 )
-MAGIC = {".ttf": b"\x00\x01\x00\x00", ".otf": b"OTTO", ".woff2": b"wOF2"}
+MAGIC = {".ttf": b"\x00\x01\x00\x00", ".otf": b"OTTO", ".woff": b"wOFF", ".woff2": b"wOF2"}
 
 
 class PrivateFontError(RuntimeError):
@@ -36,7 +38,7 @@ def require(condition, message):
 
 
 def validate_request(name, sha256, size):
-    require(name in FONT_NAMES, "only fixed NBA/WNBA score font names are allowed")
+    require(name in FONT_NAMES, "only fixed sport/league score font names are allowed")
     require(isinstance(sha256, str) and re.fullmatch(r"[0-9a-f]{64}", sha256), "invalid font SHA256")
     require(isinstance(size, int) and not isinstance(size, bool) and 0 < size <= MAX_BYTES,
             "font must contain 1 through 2097152 bytes")
@@ -53,7 +55,9 @@ def validate_font(payload: bytes, name: str, sha256: str, size: int) -> dict:
     try:
         font = ImageFont.truetype(io.BytesIO(payload), 32)
         family, style = font.getname()
-        require(bool(family.strip()) and bool(style.strip()), "font metadata is missing")
+        family = family.strip() if isinstance(family, str) else ""
+        style = style.strip() if isinstance(style, str) else ""
+        require(bool(family or style), "font metadata is missing")
         for char in "0123456789-":
             box = font.getbbox(char)
             require(0 < box[2] - box[0] <= 256 and 0 < box[3] - box[1] <= 256,
