@@ -74,3 +74,41 @@ hardware write, so a plugin whose source is briefly unavailable can report a
 degraded refresh; `probe` saves the latest renders read-only, and
 `health-record` re-checks health later. See `AGENTS.md` for the storage and
 cleanup rules.
+
+### Owner-provided private score fonts
+
+After a release containing this capability has successfully deployed, the owner
+can install a separately licensed local NBA or WNBA score font. No font is
+downloaded by the command, and a public URL alone does not establish a license.
+Keep the original font under the ignored `outputs/` directory, never in Git.
+
+```powershell
+& $Py tools\release\epaper_release.py private-fonts --task-dir $Task --league nba --font outputs\private-fonts\owner-font.woff2
+& $Py tools\release\epaper_release.py private-fonts --task-dir $Task --league nba --font outputs\private-fonts\owner-font.woff2 --execute
+```
+
+The first command validates the local file and records a plan without contacting
+the device. The second uses the pinned SSH connection and the existing trusted
+`inkypi-update` sudo entry. The deployed updater must match the current release;
+the round's full commit, release id and artifact checksum bind the request to a
+committed deployment. No saved settings, source, cache, service state or sudoers
+are changed. Installation uses the same update lock as a release transaction.
+
+Only `sports-{nba|wnba}-score.{ttf|otf|woff2}` beneath
+`/var/lib/inkypi/data/fonts` are allowed. The raw font must be at most 2 MiB and
+Pillow must read its metadata, distinct digits and score separator on both the
+workstation and device. Bytes travel through SSH stdin, with no transport file.
+The existing directory must be root:inkypi, mode 0750, and contain no conflicting
+format for that league. Components and targets are checked without following
+symlinks. A new root:inkypi, mode 0640 file is published atomically without
+replacement; an identical existing font is a no-op, and any different existing
+font is refused for owner review. A temporary file in that same directory is
+removed on handled success or failure. Following a connection loss, retry the
+same command to determine whether it installed before the connection ended.
+
+The task retains `private-fonts-<league>-plan.json` and an append-only list of
+attempt receipts in `private-fonts-<league>.json`, containing paths, hashes and
+font metadata, never font bytes. Both archive builders explicitly exclude the
+private basenames. Display acceptance still uses the normal `show-plugins` and
+`snapshot` steps after installation; a font installation receipt alone is not
+physical display proof.

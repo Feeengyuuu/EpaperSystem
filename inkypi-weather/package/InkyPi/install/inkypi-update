@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -682,6 +683,71 @@ def run_update(args) -> int:
     return 0
 
 
+def run_private_score_font(arguments):
+    """Use the existing sudo capability, never a caller-supplied Python script."""
+    if len(arguments) != 6:
+        raise ValueError("private font needs name, font SHA256, size, release id, commit and artifact SHA256")
+    name, font_sha, size, release_id, commit, artifact_sha = arguments
+    if not re.fullmatch(r"sports-(?:nba|wnba)-score\.(?:ttf|otf|woff2)", name):
+        raise ValueError("private font name is not allowed")
+    if not all(re.fullmatch(r"[0-9a-f]{64}", value) for value in (font_sha, artifact_sha)):
+        raise ValueError("private font hash is invalid")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError("private font release commit is invalid")
+    if not size.isdecimal() or not 0 < int(size) <= 2 * 1024 * 1024:
+        raise ValueError("private font size is invalid")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}", release_id) or not release_id.endswith("-" + commit[:8]):
+        raise ValueError("private font release identity is invalid")
+    layout = ReleaseLayout("/opt/inkypi", "/var/lib/inkypi/update")
+    for path in (layout.install_root, layout.releases_dir, layout.state_root, layout.history_dir):
+        if path.is_symlink() or not path.is_dir():
+            raise RuntimeError("installed layout is unavailable for private fonts")
+    if layout.lock_path.is_symlink():
+        raise RuntimeError("private font update lock cannot be a symlink")
+    with UpdateLock(layout.lock_path):
+        root = layout.release_path(release_id)
+        if layout.journal_path.exists() or layout.journal_path.is_symlink():
+            raise RuntimeError("private font installation requires a completed update")
+        if layout.current_link.resolve(strict=True) != root or root.is_symlink():
+            raise RuntimeError("private font release is not current")
+        if _committed_current_release(layout) != release_id:
+            raise RuntimeError("private font release has no committed history")
+        if not _private_font_artifact_committed(layout, release_id, artifact_sha):
+            raise RuntimeError("private font release artifact does not match the deployed round")
+        current_updater = root / "install" / "inkypi-update"
+        if (Path(__file__).resolve() != INSTALLED_UPDATER or INSTALLED_UPDATER.is_symlink()
+                or current_updater.is_symlink()
+                or _sha256_file(INSTALLED_UPDATER) != _sha256_file(current_updater)):
+            raise RuntimeError("installed updater does not match the current release")
+        helper = root / "install" / "lib" / "private_score_fonts.py"
+        if not helper.is_file() or any(part.is_symlink() for part in (helper, helper.parent, helper.parent.parent)):
+            raise RuntimeError("current release private font helper is unavailable")
+        completed = subprocess.run(
+            [str(root / "venv_inkypi" / "bin" / "python"), "-I", str(helper), name, font_sha, size],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+        )
+        # Only this fixed helper's JSON is relayed; there is no configuration output.
+        if completed.returncode:
+            print(completed.stderr.decode("utf-8", errors="replace"), file=sys.stderr, end="")
+            return completed.returncode
+        result = json.loads(completed.stdout)
+        result.update(release_id=release_id, commit=commit, artifact_sha256=artifact_sha)
+        print(json.dumps(result, ensure_ascii=True))
+        return 0
+
+
+def _private_font_artifact_committed(layout, release_id, artifact_sha):
+    for path in layout.history_dir.glob("*.json"):
+        try:
+            item = UpdateJournal.load(path)
+        except (OSError, ValueError, RuntimeError):
+            continue
+        if (item.release_id == release_id and item.phase is UpdatePhase.COMMITTED
+                and item.metadata.get("artifact_sha256") == artifact_sha):
+            return True
+    return False
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -735,6 +801,14 @@ def build_parser():
 def main(argv=None) -> int:
     parser = build_parser()
     raw_arguments = tuple(sys.argv[1:] if argv is None else argv)
+    if raw_arguments and raw_arguments[0] == "--private-score-font":
+        if os.name != "nt" and os.geteuid() != 0:
+            parser.error("inkypi-update must run as root")
+        try:
+            return run_private_score_font(raw_arguments[1:])
+        except Exception as error:
+            print(f"Private score font refused: {error}", file=sys.stderr)
+            return 1
     if "--recover-only" in raw_arguments:
         if raw_arguments != ("--recover-only",):
             parser.error("--recover-only cannot be combined with update inputs")

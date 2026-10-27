@@ -80,7 +80,8 @@ def is_packaged(policy, path: PurePosixPath) -> bool:
     return not (any(part in policy.EXCLUDED_NAMES for part in path.parts)
                 or path.as_posix() in policy.MIGRATION_CONTROL_MEMBERS
                 or path.name in policy.MIGRATION_CONTROL_NAMES
-                or policy.is_device_owned_yahei_font(path) or policy.is_runtime_plugin_cache(path)
+                or policy.is_device_owned_yahei_font(path) or policy.is_device_owned_score_font(path)
+                or policy.is_runtime_plugin_cache(path)
                 or policy.is_runtime_display_image(path) or path.suffix == ".pyc")
 
 

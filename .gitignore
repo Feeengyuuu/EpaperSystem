@@ -63,3 +63,10 @@ inkypi-weather/package/InkyPi/src/static/images/current_image.png
 .codex_tmp/
 # Proprietary fonts must not be committed (Microsoft EULA); install locally instead
 **/msyh*.tt[cf]
+# Owner-provided runtime score fonts are private device data, never source assets.
+**/sports-nba-score.ttf
+**/sports-nba-score.otf
+**/sports-nba-score.woff2
+**/sports-wnba-score.ttf
+**/sports-wnba-score.otf
+**/sports-wnba-score.woff2

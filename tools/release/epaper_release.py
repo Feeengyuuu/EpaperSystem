@@ -10,6 +10,7 @@ holds deployment.json:
   build          package committed HEAD and prove its change set against the live release
   backup         re-package the live release as the next .backups/previous candidate
   deploy         16 MiB verified chunks + transactional inkypi-update (dry run unless --execute)
+  private-fonts  install one owner-supplied score font after a passed deploy (dry run unless --execute)
   health-gate    record postdeploy health and compare it with predeploy
   rebaseline-config  only when the release itself migrates saved settings: accept that
                  recorded migration as the acceptance configuration (reason required;
@@ -61,6 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_argument("--release-label", required=True,
                      help="short release name, e.g. layout -> deploy-<UTC>-layout-<commit8>")
     sub.add_argument("--execute", action="store_true", help="contact and change the device (default: dry run)")
+    sub = command("private-fonts", "Install one device-only NBA/WNBA score font into the deployed release's durable data.")
+    sub.add_argument("--league", choices=("nba", "wnba"), required=True)
+    sub.add_argument("--font", type=Path, required=True, help="owner-provided local raw TTF, OTF or WOFF2; never packaged")
+    sub.add_argument("--execute", action="store_true", help="install through the trusted updater (default: dry run)")
     sub = command("health-gate", "Record health after deployment and compare it with the predeploy record.")
     sub.add_argument("--before", default="predeploy")
     sub.add_argument("--after", default="postdeploy")
@@ -105,6 +110,7 @@ def run(args: argparse.Namespace, ctx: TaskContext) -> tuple[object, int]:
     import release_build
     import release_checks
     import release_deploy
+    import release_private_fonts
     from release_device import Device
 
     def device() -> Device:
@@ -122,6 +128,8 @@ def run(args: argparse.Namespace, ctx: TaskContext) -> tuple[object, int]:
         return release_build.backup(ctx), 0
     if args.command == "deploy":
         return release_deploy.deploy(ctx, args.release_label, execute=args.execute, connect=device), 0
+    if args.command == "private-fonts":
+        return release_private_fonts.install(ctx, args.league, args.font, execute=args.execute, connect=device), 0
     if args.command == "health-gate":
         ctx.require_deployed()
         release_checks.record_health(ctx, device(), args.after)
