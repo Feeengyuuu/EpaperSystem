@@ -12544,7 +12544,8 @@ def test_worldcup_recent_row_draws_team_side_extra_time_and_penalty_score_chips(
 
     plugin._draw_worldcup_recent_team_identity = lambda *_args, **_kwargs: None
 
-    def record_chip(_draw, box, text, align="left"):
+    def record_chip(_draw, box, text, align="left", *, league=None):
+        assert league is None
         chip_calls.append((tuple(int(value) for value in box), text, align))
 
     plugin._draw_worldcup_score_detail_chip = record_chip
