@@ -674,7 +674,7 @@ class _Console:
                   bold=True, min_size=9, align="center")
 
     def _friend_mosaic(self, friends, x, y):
-        """Fit up to nine actual remaining avatars inside the former 38px count circle."""
+        """Adapt one to nine actual avatars to the former 38px count circle."""
         records = [(friend, friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar"))
                    for friend in friends]
         records = [(friend, url) for friend, url in records if url][:9]
@@ -682,21 +682,26 @@ class _Console:
             return 0
         columns = 1 if len(records) == 1 else 2 if len(records) <= 4 else 3
         gap = 2 if columns == 2 else 1
-        size = (FRIEND_AVATAR - gap * (columns - 1)) // columns
+        size = 22 if len(records) == 2 else (FRIEND_AVATAR - gap * (columns - 1)) // columns
         avatars = [(friend, self.plugin._avatar_image(url, size, decorative_outline=False)) for friend, url in records]
         avatars = [(friend, avatar) for friend, avatar in avatars if avatar is not None]
-        rows = math.ceil(len(avatars) / columns)
-        top = y + (FRIEND_AVATAR - rows * size - max(0, rows - 1) * gap) // 2
-        for start in range(0, len(avatars), columns):
-            line = avatars[start:start + columns]
-            left = x + (FRIEND_AVATAR - len(line) * size - (len(line) - 1) * gap) // 2
-            for index, (friend, avatar) in enumerate(line):
-                avatar_x = left + index * (size + gap)
-                self.image.paste(avatar, (avatar_x, top), avatar if avatar.mode == "RGBA" else None)
-                # Draw inside the portrait's bounds so even 12px neighbours retain a gap.
-                self.draw.ellipse((avatar_x, top, avatar_x + size - 1, top + size - 1),
-                                  outline=self._friend_ring_colour(friend), width=1)
-            top += size + gap
+        if len(avatars) == 2:
+            # Diagonally opposed circles can be larger without overlapping each other.
+            positions = [(x, y), (x + FRIEND_AVATAR - size, y + FRIEND_AVATAR - size)]
+        else:
+            positions = []
+            rows = math.ceil(len(avatars) / columns)
+            top = y + (FRIEND_AVATAR - rows * size - max(0, rows - 1) * gap) // 2
+            for start in range(0, len(avatars), columns):
+                line = avatars[start:start + columns]
+                left = x + (FRIEND_AVATAR - len(line) * size - (len(line) - 1) * gap) // 2
+                positions.extend((left + index * (size + gap), top) for index in range(len(line)))
+                top += size + gap
+        for (friend, avatar), (avatar_x, top) in zip(avatars, positions):
+            self.image.paste(avatar, (avatar_x, top), avatar if avatar.mode == "RGBA" else None)
+            # Draw inside the portrait's bounds so even 12px neighbours retain a gap.
+            self.draw.ellipse((avatar_x, top, avatar_x + size - 1, top + size - 1),
+                              outline=self._friend_ring_colour(friend), width=1)
         return len(avatars)
 
     def recent(self, items):
