@@ -2,6 +2,8 @@
   "asset": "polymarket-logo.png",
   "source": "https://commons.wikimedia.org/wiki/File:Polymarket.svg (1280 px render)",
   "owner": "Polymarket (trademark); the file is public domain on Wikimedia Commons",
+  "official_brand_guidance": "https://polymarket.com/brand",
+  "footer_treatment": "Existing transparent mark reused at 16px high; monochrome dark/light ink follows the official preference for black or white logos. No background panel is added.",
   "processing": "cropped to alpha and scaled to 64 px tall (LANCZOS); drawn in the page's ink",
   "source_sha256": "516752fd55044f56f3d66f27026bb7b6bbc6aafdb6d6dbf149ae25a2432237bc",
   "sha256": "eb25cc3d8c68dff224ebdf0735ce7ae4dcce7fbf185b56ebe9dc46dbfe280202",

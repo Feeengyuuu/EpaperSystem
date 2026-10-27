@@ -35,6 +35,7 @@ from utils.app_utils import (
 from . import launch_photo
 from .market_style import BRAND_FADE_HEIGHT, market_background_color, market_header_palette, market_palette
 from .sources import _parse_time, _upload_url, _utc, fetch_launches, fetch_market_events
+from .source_footer import draw_footer
 
 
 logger = logging.getLogger(__name__)
@@ -815,7 +816,7 @@ class OrbitalSignal(BasePlugin):
             family,
         )
         self._draw_markets(draw, boxes["markets"], payload.get("markets") or [], palette, family, image=image)
-        self._draw_footer(draw, boxes["footer"], palette, family)
+        self._draw_footer(image, boxes["footer"], palette, family)
         return image
 
     def _draw_header(self, image, draw, box, payload, now, palette, family):
@@ -1612,12 +1613,5 @@ class OrbitalSignal(BasePlugin):
         disc.paste(art, (0, 0), mask)
         return disc.resize((size, size), Image.Resampling.LANCZOS)
 
-    def _draw_footer(self, draw, box, palette, family):
-        left, top, right, bottom = box
-        draw.rectangle(box, fill=palette["paper"])
-        draw.line((left, top, right, top), fill=palette["rule"], width=3)
-        footer_font = self._font(11, True, family)
-        draw.text((17, top + 10), "SOURCES  THE SPACE DEVS | POLYMARKET", font=footer_font, fill=palette["ink"])
-        right_text = "CROWD PROBABILITY | NOT ADVICE"
-        text_width = draw.textbbox((0, 0), right_text, font=footer_font)[2]
-        draw.text((right - 17 - text_width, top + 10), right_text, font=footer_font, fill=palette["ink"])
+    def _draw_footer(self, image, box, palette, family):
+        draw_footer(image, box, palette, self._font(10, True, family), self._font(9, True, family))
