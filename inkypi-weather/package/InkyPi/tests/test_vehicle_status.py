@@ -1101,19 +1101,22 @@ def test_v2_unknown_openings_never_render_as_all_closed(tmp_path, monkeypatch):
     _assert_changes_only_within(unknown_image, closed_image, BODY_COLUMN_REGION, _lamp_box("openings"))
 
 
-def test_v2_rr_hard_warning_changes_only_the_tyre_map_lamp_and_verdict(tmp_path, monkeypatch):
+@pytest.mark.parametrize("theme_mode,red", [("day", (200, 30, 50)), ("night", (255, 96, 96))])
+def test_v2_rr_hard_warning_changes_only_the_tyre_map_lamp_and_verdict(tmp_path, monkeypatch, theme_mode, red):
     safe = _summary_v2()
     safe["tires"]["soft_warnings"] = {position: False for position in safe["tires"]["soft_warnings"]}
     safe["tires"]["hard_warnings"] = {position: False for position in safe["tires"]["hard_warnings"]}
     warning = deepcopy(safe)
     warning["tires"]["hard_warnings"]["rear_right"] = True
 
-    safe_image = _render_payload(tmp_path / "safe", monkeypatch, safe)
-    warning_image = _render_payload(tmp_path / "warning", monkeypatch, warning)
+    # Explicit themes keep this color assertion independent of the current UTC hour.
+    settings = {"themeMode": theme_mode}
+    safe_image = _render_payload(tmp_path / "safe", monkeypatch, safe, settings)
+    warning_image = _render_payload(tmp_path / "warning", monkeypatch, warning, settings)
 
     # The rear-right pressure sits on a red plate, its lamp lights and the verdict counts one more.
     _assert_changes_only_within(safe_image, warning_image, (338, 126, 518, 330), _lamp_box("tyres"), VERDICT_REGION)
-    red, rear_right_plate = (200, 30, 50), (466, 250, 518, 300)
+    rear_right_plate = (466, 250, 518, 300)
     assert _visible_color_bbox(warning_image, rear_right_plate, red) is not None
     assert _visible_color_bbox(safe_image, rear_right_plate, red) is None
 
