@@ -77,22 +77,14 @@ def ticker_colors(symbol):
 
 def chip(canvas,x,y,symbol,width=64):
     symbol=str(symbol or '').upper()
-    edge=brand_color(canvas,symbol)
-    if edge==canvas.color('paper'):edge=canvas.color('rule')
     night=canvas.color('paper')==render._rgb(render.NIGHT['paper'])
-    if night and sum(channel*weight for channel,weight in zip(edge,(.2126,.7152,.0722)))<115:
-        edge=tuple(round(channel*.6+255*.4) for channel in edge)
-    # The logo stays on its neutral slot; brand color fills only the ticker compartment.
-    canvas.draw.rounded_rectangle((x,y-8,x+width,y+8),radius=3,fill=canvas.color('paper'),outline=edge,width=1)
     path=render.HOLDING_LOGOS/f'{symbol.lower()}.png'
-    # A small neutral backing keeps original blue/red/black marks legible on black.
-    # The mark itself retains its original published colors, including monochrome black.
-    logo=load_source_logo(path,12 if night else 14)
+    # Paste onto the page without a backing or enclosing frame. Only near-black
+    # marks take the night ink; the source alpha and brand colors are retained.
+    logo=load_source_logo(path,12 if night else 14,ink=canvas.color('ink') if night else None)
     if logo is not None:
         if logo.width>17:
             logo.thumbnail((17,12 if night else 14),Image.Resampling.LANCZOS)
-        if night:
-            canvas.draw.rounded_rectangle((x+3,y-7,x+21,y+7),radius=2,fill=(232,236,238))
         canvas.image.paste(logo,(round(x+4+(17-logo.width)/2),round(y-logo.height/2)),logo)
         compartment_left=x+22
     else:compartment_left=x+2
