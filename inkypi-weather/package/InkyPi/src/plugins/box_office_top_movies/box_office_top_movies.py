@@ -867,9 +867,16 @@ class BoxOfficeTopMovies(BasePlugin):
         parser.feed(html_text or "")
         movies = []
         seen_titles = set()
+        chart_columns = {}
+        chart_width = 0
 
         for row in parser.rows:
             cells = [cell.get("text", "") for cell in row]
+            headings = [re.sub(r"[^a-z]", "", cell.lower()) for cell in cells]
+            if "theaters" in headings or "theatres" in headings:
+                chart_columns = {heading: index for index, heading in enumerate(headings)}
+                chart_width = len(cells)
+                continue
             if len(cells) < 3:
                 continue
             rank = self._rank_from_cell(cells[0])
@@ -889,6 +896,17 @@ class BoxOfficeTopMovies(BasePlugin):
             total_gross = money_values[-1] if len(money_values) > 1 else ""
             theaters = self._theater_count_from_cells(cells)
             weeks = self._last_small_int(cells)
+            extra = {}
+            theater_column = chart_columns.get("theaters", chart_columns.get("theatres"))
+            if theater_column is not None and len(cells) == chart_width:
+                # Rank and release days are integers too. Derived figures must use
+                # the actual Theaters column, not the legacy integer heuristic.
+                count = cells[theater_column].replace(",", "").strip()
+                theaters = str(int(count)) if count.isdigit() and int(count) > 0 else ""
+                extra["theaters_verified"] = bool(theaters)
+                average_column = chart_columns.get("theateraverage", chart_columns.get("theatreaverage"))
+                if theaters and average_column is not None:
+                    extra["theater_average"] = self._money_text(cells[average_column])
 
             movies.append(BoxOfficeMovie(
                 rank=rank,
@@ -898,6 +916,7 @@ class BoxOfficeTopMovies(BasePlugin):
                 theaters=theaters,
                 weeks=weeks,
                 chart_url=title_link or chart_url,
+                extra=extra,
             ))
 
         movies.sort(key=lambda movie: movie.rank)

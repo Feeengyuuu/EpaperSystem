@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 import logging
+import math
 from pathlib import Path
 import re
 
@@ -128,6 +129,44 @@ def america_chips(movie):
     return (("bars", "累计", compact_money(movie.total_gross) or "—"),
             ("seats", "影院", thousands(movie.theaters) or "—"),
             ("calendar", "上映", f"{days}天" if days else "—"))
+
+
+def china_today_gross(movie):
+    """The official feed's amount is in ten-thousand yuan, not a percentage."""
+    raw = str((movie.extra or {}).get("today_box_wan") or "").replace(",", "").strip()
+    if not re.fullmatch(r"\d+(?:\.\d+)?", raw):
+        return None
+    value = float(raw)
+    if not math.isfinite(value):
+        return None
+    return f"{value / 10000:.2f}亿" if value >= 10000 else f"{value:,.2f}万"
+
+
+def theater_average(movie):
+    """Use a source-verified cinema count; old heuristic caches remain readable."""
+    extra = movie.extra or {}
+    if not extra.get("theaters_verified"):
+        return None
+    count = str(movie.theaters or "").replace(",", "").strip()
+    gross = money_value(movie.weekend_gross)
+    if not count.isdigit() or int(count) <= 0 or gross is None or not math.isfinite(gross):
+        return None
+    reported = money_value(extra.get("theater_average"))
+    value = reported if reported is not None and math.isfinite(reported) else gross / int(count)
+    return f"${value:,.0f}"
+
+
+def hero_details(market, movie, runner_up=None):
+    facts = list(china_chips(movie) if market == "china" else america_chips(movie))
+    if market == "china" and runner_up is not None:
+        first, second = share_value(movie.weekend_gross), share_value(runner_up.weekend_gross)
+        if first is not None and second is not None and 0 <= second < first <= 100:
+            facts.append(("bars", "领先#2", f"+{first - second:.2f}pp"))
+    elif market == "america":
+        average = theater_average(movie)
+        if average:
+            facts.append(("bars", "单馆", average))
+    return [fact for fact in facts if fact[2] not in ("", "—")]
 
 
 def china_total(movies):
@@ -268,7 +307,7 @@ def _draw_column(page, left, right, market, snapshot):
         page.text((left + 24, 240), "北美数据暂不可用，稍后自动重试", 14, colors["text"])
         return
     movies = snapshot.movies
-    _draw_hero(page, left, right, market, movies[0])
+    _draw_hero(page, left, right, market, movies[0], movies[1] if len(movies) > 1 else None)
     leader = _metric_value(market, movies[0]) or 0
     for index, movie in enumerate(movies[1:5]):
         _draw_row(page, left, right, market, movie, 240 + index * 54, leader, first=index == 0)
@@ -290,7 +329,7 @@ def _draw_banner(page, left, right, market):
         return
     paste_icon(page.canvas, "liberty", tile_centre, page.y(51), page.y(27), BANNER_TEXT, max_width=page.x(24),
                anchor="center")
-    title_end = left + 54 + page.text((left + 54, 51), "北美 · 本周", 18, BANNER_TEXT)
+    title_end = left + 54 + page.text((left + 54, 51), "北美 · 本期", 18, BANNER_TEXT)
     # The skyline ends at the banner's right margin and the caption stops short of it.
     skyline = paste_icon(page.canvas, "skyline", page.x(right - 10), page.y(54), page.y(24), BANNER_TEXT,
                          max_width=page.x(54), anchor="right")
@@ -307,7 +346,7 @@ def _banner_caption(page, start, end, caption):
             return
 
 
-def _draw_hero(page, left, right, market, movie):
+def _draw_hero(page, left, right, market, movie, runner_up=None):
     colors = page.colors
     accent = colors[market]["accent"]
     page.poster(movie, left + 8, 88, 102, 146)
@@ -319,24 +358,39 @@ def _draw_hero(page, left, right, market, movie):
     primary, secondary = page.plugin._display_titles(movie)
     page.text((x, 82), primary, 26, colors["text"], max_width=width, sizes=(24, 22, 20))
     if secondary:
-        page.text((x, 116), secondary, 13, _subtitle_color(colors, accent), max_width=width)
-    label = "今日占比" if market == "china" else "本周票房"
-    page.text((x, 136), label, 11, colors["text"])
-    page.text((x, 148), movie.weekend_gross or "—", 30, accent, max_width=width, sizes=(26, 22))
-    chips = china_chips(movie) if market == "china" else america_chips(movie)
-    chip_w = (width - 12) / 3
-    for index, (icon, chip_label, value) in enumerate(chips):
-        _draw_chip(page, x + index * (chip_w + 6), 196, chip_w, icon, chip_label, value, accent)
+        page.text((x, 114), secondary, 12, _subtitle_color(colors, accent), max_width=width)
+    label = "今日占比" if market == "china" else "本期票房"
+    today = china_today_gross(movie) if market == "china" else None
+    metric_width = 140 if today else width
+    page.text((x, 133), label, 11, colors["text"])
+    page.text((x, 146), movie.weekend_gross or "—", 30, accent, max_width=metric_width,
+              sizes=(28, 26, 24, 22, 20, 18))
+    if today:
+        amount_x = x + 148
+        page.text((amount_x, 133), "今日票房", 11, colors["text"])
+        page.text((amount_x, 150), today, 21, colors["text"], max_width=width - 148, sizes=(19, 17, 15))
+    _draw_hero_details(page, x, width, hero_details(market, movie, runner_up), accent)
 
 
-def _draw_chip(page, x, y, w, icon, label, value, accent):
+def _draw_hero_details(page, x, width, facts, accent):
+    """Two aligned rows use the card's full width without tiny nested boxes."""
     colors = page.colors
-    page.draw.rounded_rectangle((page.x(x), page.y(y), page.x(x + w), page.y(y + 36)), radius=page.x(4),
-                                fill=colors["chip"], outline=colors["chip_line"], width=1)
-    taken = paste_icon(page.canvas, icon, page.x(x + 5), page.y(y + 9), page.y(18), accent, max_width=page.x(20))
-    text_x = x + 7 + (taken / page.sx if taken else 0) + 4
-    page.text((text_x, y + 3), label, 10, colors["text"], bold=False)
-    page.text((text_x, y + 16), value, 13, colors["text"], max_width=x + w - 4 - text_x, sizes=(12, 11))
+    page.draw.line((page.x(x), page.y(183), page.x(x + width), page.y(183)), fill=colors["rule"], width=1)
+    cell_width = (width - 12) / 2
+    for index, (icon, label, value) in enumerate(facts[:4]):
+        left = x + (index % 2) * (cell_width + 12)
+        top = 188 + (index // 2) * 25
+        paste_icon(page.canvas, icon, page.x(left), page.y(top + 1), page.y(13), accent, max_width=page.x(14))
+        label_width = page.text((left + 18, top), label, 10, colors["text"], bold=False)
+        value_width = cell_width - 18 - label_width - 5
+        font = page.font(13)
+        for size in (12, 11):
+            if page.draw.textlength(value, font=font) <= page.x(value_width):
+                break
+            font = page.font(size)
+        value = page.plugin._fit_text(page.draw, value, font, page.x(value_width))
+        page.draw.text((page.x(left + cell_width) - page.draw.textlength(value, font=font), page.y(top - 1)),
+                       value, font=font, fill=colors["text"])
 
 
 def _subtitle_color(colors, accent):
