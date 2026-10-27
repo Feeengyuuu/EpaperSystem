@@ -545,11 +545,14 @@ class WeekPageMixin:
         kind_colour = self._event_color(event, colors)
         draw.rectangle(box, fill=colors["paper"])
         draw.line((sx0, sy1, sx1, sy1), fill=colors["line"])
+        # The time and type label share one colour field; the poster retains its own pixels.
+        draw.rectangle((sx0, sy0 + 2, sx0 + 53 + THUMB[0], sy0 + 43), fill=kind_colour)
+        time_ink = chip_ink(kind_colour, colors)
         # The day appears once per chronological group, with a full rule at the boundary.
         if day_text:
             draw.line((sx0, sy0, sx1, sy0), fill=colors["muted"])
-            draw.text((sx0 + 2, sy0 + 3), day_text, fill=colors["ink"], font=self._font(11, bold=True))
-        draw.text((sx0 + 2, sy0 + 20), clock(event.local_time) or "全天", fill=colors["ink"], font=self._font(16, bold=True))
+            draw.text((sx0 + 2, sy0 + 3), day_text, fill=time_ink, font=self._font(11, bold=True))
+        draw.text((sx0 + 2, sy0 + 20), clock(event.local_time) or "全天", fill=time_ink, font=self._font(16, bold=True))
         # Colour, label and sticker all express the same provider classification.
         thumb_x, thumb_y = sx0 + 53, sy0 + 2
         self._paste_event_image(image, event, (thumb_x, thumb_y, THUMB[0], THUMB[1]), colors)
@@ -646,7 +649,7 @@ class WeekPageMixin:
             left = round(x0 + 8 + index * cell_w)
             right = round(left + cell_w - 6)
             if index == 0:
-                draw.rounded_rectangle((left - 4, y0 + 3, right + 2, y1 - 3), radius=5, outline=colors["accent"], width=2)
+                draw.rounded_rectangle((left - 4, y0 + 3, right + 2, y1 - 3), radius=5, outline=colors["accent"], width=1)
             label = f"{day_label(current, today)} {current:%m/%d}"
             draw.text((left, y0 + 5), label, fill=colors["accent"] if current.weekday() >= 5 else colors["muted"],
                       font=label_font)
