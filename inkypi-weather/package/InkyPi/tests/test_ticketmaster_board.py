@@ -125,7 +125,7 @@ def test_the_board_renders_a_slip_per_event_with_its_kind_colour(tmp_path):
     teal = colors["segment_colors"]["sports"]
     for index in range(7):
         top = LIST[1] + SLIP_TOP + index * ROW_H
-        assert image.getpixel((LIST[0] + 62, top + 32)) == teal
+        assert image.getpixel((LIST[0] + 8, top + 32)) == teal
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])

@@ -675,9 +675,7 @@ class WeekPageMixin:
         kind_colour = self._event_color(event, colors)
         draw.rectangle(box, fill=colors["paper"])
         draw.line((sx0, sy1, sx1, sy1), fill=colors["line"])
-        # The time and type label share one colour field; the poster retains its own pixels.
-        draw.rectangle((sx0, sy0 + 2, sx0 + 53 + THUMB[0], sy0 + 43), fill=kind_colour)
-        time_ink = chip_ink(kind_colour, colors)
+        time_ink = colors["ink"]
         # The day appears once per chronological group, with a full rule at the boundary.
         if day_text:
             draw.line((sx0, sy0, sx1, sy0), fill=colors["muted"])
@@ -689,16 +687,16 @@ class WeekPageMixin:
         label, icon = kind_of(event)
         label = label or "未分类"
         tile_right = thumb_x + THUMB[0]
-        draw.rectangle((thumb_x, thumb_y, tile_right, sy0 + 43), outline=kind_colour)
-        draw.rectangle((thumb_x, sy0 + 31, tile_right, sy0 + 43), fill=kind_colour)
         label_font = self._font(11, bold=True)
         label = self._fit_text(draw, label, label_font, THUMB[0] - 4)
-        label_ink = chip_ink(kind_colour, colors)
         draw.text((thumb_x + (THUMB[0] - draw.textlength(label, font=label_font)) / 2, sy0 + 31),
-                  label, fill=label_ink, font=label_font)
+                  label, fill=colors["ink"], font=label_font)
         art = _genre_icon(icon, STICKER, tuple(colors["paper"]), tuple(colors["ink"]))
         if art is not None:
             image.paste(art, (tile_right - art.width + 4, sy0 + 10), art)
+        # A single category-colour contour encloses the neutral time, poster and type area.
+        # Draw it last so neither the poster nor its sticker interrupts the outline.
+        draw.rectangle((sx0, sy0 + 2, tile_right + 4, sy0 + 43), outline=kind_colour, width=1)
         text_x, right = tile_right + 9, sx1 - 3
         # The title has the full text-column width; prices no longer shorten the artist name.
         title_font = self._font(15, bold=True)
