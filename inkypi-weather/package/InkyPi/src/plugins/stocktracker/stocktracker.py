@@ -313,6 +313,14 @@ HOLDING_CATEGORIES = {
 }
 # The rail left of the rows: a bar in the kind's colour, its name, share of the portfolio and day.
 HOLDING_RAIL_W = 46
+# A row's weight bar is filled in its kind's colour. An ink tick marks where its weight stood at
+# the window's start (from the window's price change, at today's shares) once it has moved by
+# WEIGHT_DRIFT_MIN points: past the bar's end for a position that grew, beyond it over an
+# outline of the lost share for one that shrank.
+WEIGHT_DRIFT_MIN = 0.3
+# A row's trend ends on a gold star at the window's high and a ring at its low (within
+# EXTREME_SLACK percent).
+EXTREME_SLACK = 0.3
 
 _LEGACY_STOCK_COLORS = {
 	"mode": "day",
@@ -2461,6 +2469,14 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			if align == "right":
 				x -= self._text_width(draw, label, header_font)
 			draw.text((x, self._centered_text_y(draw, label, header_font, header_center)), label, fill=colors["ink"], font=header_font)
+			if key == "weight_bar":
+				# The weight bars' tick is the window's start: its key beside the column's name.
+				tick_x = x + self._text_width(draw, label, header_font) + 7
+				draw.rectangle((tick_x, header_center - 4, tick_x + 1, header_center + 4), fill=colors["ink"])
+				key_font = self._font(8, True)
+				key_text = f"{window_short} AGO"
+				draw.text((tick_x + 4, self._centered_text_y(draw, key_text, key_font, header_center)), key_text,
+						  fill=colors["ink"], font=key_font)
 			if sorted_by_day and key == "day_pl":
 				# The rows follow today's impact: a small sort mark before the column's name.
 				draw.polygon(((x - 10, header_center - 2), (x - 4, header_center - 2), (x - 7, header_center + 2)),
@@ -2487,7 +2503,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			hidden = [item for item in ranked if id(item) not in shown]
 		if visible:
 			row_height = min((rows_bottom - rows_top) / len(visible), HOLDING_ROW_MAX_HEIGHT)
-			max_weight = max((item["weight"] for item in visible), default=0.0)
+			self._set_window_weights(metrics)
+			# The bars share one scale with the shares at the window's start, so a shrunk largest
+			# position still shows what it lost.
+			max_weight = max((max(item["weight"], item.get("weight_then") or 0.0) for item in visible), default=0.0)
 			groups = self._holding_groups(visible, metrics)
 			index = 0
 			for group_index, (category, items, weight, day_percent) in enumerate(groups):
@@ -2518,6 +2537,18 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				ticker_theme=ticker_theme,
 				theme_context=theme_context,
 			)
+
+	@staticmethod
+	def _set_window_weights(metrics):
+		"""Each holding's share of the portfolio at the window's start as ``weight_then``: its value
+		then from the window's price change at today's shares, cash and holdings without a window
+		as they are now."""
+		then = [item["value"] / (1 + item["window_percent"] / 100)
+				if not item["is_cash"] and item["window_percent"] is not None and item["window_percent"] > -100
+				else item["value"] for item in metrics]
+		total = sum(then)
+		for item, value in zip(metrics, then):
+			item["weight_then"] = value / total * 100 if total else None
 
 	@staticmethod
 	def _holding_category(item):
@@ -2661,12 +2692,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			text_at(columns["shares"], self._shares(self._finite_float(data.get("shares"))), row_font)
 		text_at(columns["value"], self._money(item["value"]), bold_font)
 
-		bar_left, bar_right = columns["weight_bar"]
-		bar_top, bar_bottom = round(center_y - 3), round(center_y + 3)
-		draw.rectangle((bar_left, bar_top, bar_right, bar_bottom), outline=colors["grid"], width=1)
-		if max_weight > 0 and item["weight"] > 0:
-			fill_right = bar_left + max(2, round((bar_right - bar_left) * item["weight"] / max_weight))
-			draw.rectangle((bar_left, bar_top, fill_right, bar_bottom), fill=colors["ink"])
+		self._draw_weight_bar(draw, columns["weight_bar"], center_y, item, max_weight)
 		text_at(columns["weight"], f"{item['weight']:.1f}%", row_font)
 
 		if day_percent is None:
@@ -2692,11 +2718,40 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		)
 		text_at(columns["window"], f"{window_percent:+.1f}%", bold_font)
 
+	def _draw_weight_bar(self, draw, span, center_y, item, max_weight):
+		"""The row's weight against the largest shown, filled in its kind's colour, with the tick
+		of its weight at the window's start when that moved by WEIGHT_DRIFT_MIN points or more."""
+		colors = _active_stock_colors()
+		bar_left, bar_right = span
+		bar_top, bar_bottom = round(center_y - 3), round(center_y + 3)
+		draw.rectangle((bar_left, bar_top, bar_right, bar_bottom), outline=colors["grid"], width=1)
+		if max_weight <= 0:
+			return
+		colour = colors[HOLDING_CATEGORIES.get(self._holding_category(item), HOLDING_CATEGORIES["other"])[1]]
+
+		def at(weight):
+			return bar_left + max(2, round((bar_right - bar_left) * min(1.0, weight / max_weight)))
+
+		fill_right = at(item["weight"]) if item["weight"] > 0 else bar_left
+		if item["weight"] > 0:
+			draw.rectangle((bar_left, bar_top, fill_right, bar_bottom), fill=colour)
+		then = item.get("weight_then")
+		if then is None or abs(then - item["weight"]) < WEIGHT_DRIFT_MIN:
+			return
+		tick_x = at(then)
+		if tick_x > fill_right:
+			# The share it lost since: an outline in its colour out to where it stood.
+			draw.rectangle((fill_right, bar_top + 1, tick_x, bar_bottom - 1), outline=colour, width=1)
+		draw.rectangle((tick_x - 1, bar_top - 2, tick_x, bar_bottom + 2), fill=colors["ink"])
+
 	@staticmethod
 	def _draw_row_sparkline(draw, box, closes, color):
+		"""The window's closes as a line in ``color``; its end a gold star at the window's high, a
+		ring at its low (within EXTREME_SLACK percent), else a dot."""
 		left, top, right, bottom = box
 		if len(closes) < 2 or right <= left or bottom <= top:
 			return
+		colors = _active_stock_colors()
 		low, high = min(closes), max(closes)
 		span = high - low
 		last = len(closes) - 1
@@ -2709,7 +2764,15 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		]
 		draw.line(points, fill=color, width=2, joint="curve")
 		end_x, end_y = points[-1]
-		draw.ellipse((end_x - 2, end_y - 2, end_x + 2, end_y + 2), fill=color)
+		if span >= 1e-9 and closes[-1] >= high * (1 - EXTREME_SLACK / 100):
+			waist = 1.5
+			draw.polygon([(end_x, end_y - 5), (end_x + waist, end_y - waist), (end_x + 5, end_y), (end_x + waist, end_y + waist),
+						  (end_x, end_y + 5), (end_x - waist, end_y + waist), (end_x - 5, end_y), (end_x - waist, end_y - waist)],
+						 fill=COIN_GOLD, outline=colors["ink"])
+		elif span >= 1e-9 and closes[-1] <= low * (1 + EXTREME_SLACK / 100):
+			draw.ellipse((end_x - 4, end_y - 4, end_x + 4, end_y + 4), fill=colors["paper"], outline=color, width=2)
+		else:
+			draw.ellipse((end_x - 2, end_y - 2, end_x + 2, end_y + 2), fill=color)
 
 	def _create_dashboard(
 		self,

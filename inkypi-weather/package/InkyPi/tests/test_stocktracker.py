@@ -1505,3 +1505,46 @@ def test_stock_tracker_publishes_only_holding_symbols_for_money_radar(monkeypatc
     assert published["plugin_id"] == "stocktracker"
     assert published["payload"]["symbols"] == ["NVDA", "AAPL"]
     assert "shares" not in str(published["payload"]) and "value" not in published["payload"]
+
+
+def test_weight_bars_take_their_kinds_colour_and_mark_the_windows_start():
+    plugin = StockTracker({"id": "stocktracker"})
+    # NVDA doubled over the window, VTI held still, cash stayed cash: NVDA's share grew, the others shrank.
+    metrics = [
+        {"data": {"symbol": "NVDA"}, "is_cash": False, "value": 200.0, "weight": 50.0, "window_percent": 100.0},
+        {"data": {"symbol": "VTI"}, "is_cash": False, "value": 100.0, "weight": 25.0, "window_percent": 0.0},
+        {"data": {"symbol": "CASH"}, "is_cash": True, "value": 100.0, "weight": 25.0, "window_percent": None},
+    ]
+    plugin._set_window_weights(metrics)
+    assert [round(item["weight_then"], 1) for item in metrics] == [33.3, 33.3, 33.3]
+
+    image = Image.new("RGB", (200, 40), stocktracker_module.PAPER)
+    draw = ImageDraw.Draw(image)
+    plugin._draw_weight_bar(draw, (20, 120), 10, metrics[0], 50.0)
+    plugin._draw_weight_bar(draw, (20, 120), 30, metrics[1], 50.0)
+
+    # NVDA (tech) fills blue to its end with the ink tick a third of the way in.
+    assert image.getpixel((40, 10)) == stocktracker_module.ACCENT_BLUE
+    assert image.getpixel((87, 7)) == stocktracker_module.INK
+    # VTI (index) fills green to its half; the share it lost is outlined out to its tick.
+    assert image.getpixel((50, 30)) == stocktracker_module.MALACHITE
+    assert image.getpixel((80, 28)) == stocktracker_module.MALACHITE and image.getpixel((80, 30)) != stocktracker_module.MALACHITE
+    assert image.getpixel((87, 27)) == stocktracker_module.INK
+
+
+def test_a_rows_trend_ends_on_a_star_at_the_windows_high_and_a_ring_at_its_low():
+    plugin = StockTracker({"id": "stocktracker"})
+
+    def trend(closes, colour):
+        image = Image.new("RGB", (60, 30), stocktracker_module.PAPER)
+        plugin._draw_row_sparkline(ImageDraw.Draw(image), (5, 5, 50, 25), closes, colour)
+        return image
+
+    high = trend([10, 11, 10.5, 12], stocktracker_module.MALACHITE)
+    low = trend([12, 11, 11.5, 10], stocktracker_module.CINNABAR)
+    middle = trend([10, 12, 11], stocktracker_module.CINNABAR)
+
+    assert stocktracker_module.COIN_GOLD in set(high.get_flattened_data())
+    # The low ends on a ring: its rim in the line's colour around paper.
+    assert low.getpixel((50, 25)) == stocktracker_module.PAPER and low.getpixel((46, 25)) == stocktracker_module.CINNABAR
+    assert stocktracker_module.COIN_GOLD not in set(middle.get_flattened_data())
