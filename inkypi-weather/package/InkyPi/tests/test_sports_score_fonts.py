@@ -39,7 +39,7 @@ def test_score_uses_complete_digits_that_fit_ink_box(sport, value, width, height
     assert 4 <= top < bottom <= 4 + height
 
 
-def test_private_override_is_limited_to_nba_wnba_and_missing_files_fall_back(tmp_path):
+def test_nba_wnba_overrides_do_not_leak_to_mlb_and_bad_files_fall_back(tmp_path):
     fonts = tmp_path / "fonts"
     fonts.mkdir(parents=True)
     source = score_fonts.FONT_DIR / "BarlowCondensed-SemiBold.ttf"
@@ -86,3 +86,19 @@ def test_wide_score_can_shrink_below_preferred_minimum_without_losing_digits():
     assert text == "1999"
     bounds = draw.textbbox((0, 0), text, font=font)
     assert bounds[2] - bounds[0] <= 20
+
+
+def test_missing_original_symbol_uses_ui_font_without_normalizing_text(monkeypatch):
+    class DigitsOnlyFont:
+        def covers(self, text):
+            return text.isascii()
+
+        def safe_text(self, text):
+            pytest.fail("Coverage must check the original symbol before any substitution")
+
+    monkeypatch.setattr(score_fonts, "score_font", lambda *_args, **_kwargs: DigitsOnlyFont())
+    draw = ImageDraw.Draw(Image.new("RGB", (120, 30)))
+    text, font = score_fonts.fit_score(draw, "−12", 100, 20, True, sport="F1", max_height=24)
+    assert text == "−12"
+    assert Path(font.path) == Path(SportsDashboard._font(20, True).path)
+    assert font.covers(text)
