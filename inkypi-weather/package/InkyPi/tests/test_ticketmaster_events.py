@@ -952,11 +952,13 @@ def test_the_week_loader_counts_each_day_and_lists_sales_opening_soon():
     assert len(days) == 7 and all("startDateTime" not in call for call in calls)
     assert [day["count"] for day in week["days"]] == [40, 12, 12, 12, 12, 12, 12]
     assert week["days"][0]["segments"] == {"music": 2, "sports": 1}
+    assert week["days"][0]["kind_counts"] == {"music|music": 2, "sports|sports": 1}
+    assert week["days"][0]["sample_count"] == 3
     # The featured event is the biggest tour starting within two days; the rest follow by time.
     assert events[0].extra["tour_dates"] == 23 and len(events) == ticketmaster_module.LIST_EVENTS
     assert [event.rank for event in events] == list(range(1, len(events) + 1))
     assert on_sale == [{"title": "Big Tour", "venue": "Chase Center", "city": "San Francisco", "date": "2027-03-01",
-                        "sale_start": "2026-10-28T17:00:00Z", "segment": "music"}]
+                        "sale_start": "2026-10-28T17:00:00Z", "segment": "music", "kind": "music|music"}]
     assert calls[-1]["sort"] == "onSaleStartDate,asc" and "localStartDateTime" not in calls[-1]
 
 

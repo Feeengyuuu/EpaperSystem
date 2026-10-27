@@ -24,7 +24,7 @@ from plugins.base_plugin.render_provenance import (
 )
 from plugins.context_cache import write_context
 
-from .week_page import HEADER_H, KIND_COLORS, KIND_COLOR_KEYS, WeekPageMixin, kind_key
+from .week_page import HEADER_H, WeekPageMixin, category_color, category_key, event_category
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_client, get_http_session
 
@@ -464,6 +464,11 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
         name = _classification_name((((row.get("classifications") or [{}])[0] or {}).get("segment")))
         return name.casefold() if name.casefold() in SEGMENT_KEYS else "miscellaneous"
 
+    @staticmethod
+    def _category_key(row):
+        classification = ((row.get("classifications") or [{}])[0] or {})
+        return category_key(*(_classification_name(classification.get(name)) for name in ("segment", "genre", "subGenre")))
+
     def _load_overview(self, settings, api_key, now):
         """(events, week, on_sale): the soonest events, each of the next WEEK_DAYS days' count and
         mix of kinds, and the events whose public sale opens soon. The first day finds which
@@ -494,12 +499,15 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
                 continue
             day_rows = (((data or {}).get("_embedded") or {}).get("events") or [])
             rows.extend(day_rows)
-            segments = {}
+            segments, kinds = {}, {}
             for row in day_rows:
                 key = self._segment_key(row)
                 segments[key] = segments.get(key, 0) + 1
+                kind = self._category_key(row)
+                kinds[kind] = kinds.get(kind, 0) + 1
             total = self._safe_int(((data or {}).get("page") or {}).get("totalElements"), len(day_rows))
-            days.append({"date": day.isoformat(), "count": total, "segments": segments})
+            days.append({"date": day.isoformat(), "count": total, "segments": segments,
+                         "kind_counts": kinds, "sample_count": len(day_rows)})
         events = self._featured_first(self._events_from_discovery({"_embedded": {"events": rows}}, LIST_EVENTS), now)
         if not events:
             raise RuntimeError("Ticketmaster Discovery API returned no displayable events.")
@@ -551,7 +559,7 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
             listed.append({"title": title, "venue": _clean_text(venue.get("name") or ""),
                            "city": _clean_text(((venue.get("city") or {}).get("name") or "")),
                            "date": _clean_text((((row.get("dates") or {}).get("start") or {}).get("localDate") or "")),
-                           "sale_start": sale, "segment": self._segment_key(row)})
+                           "sale_start": sale, "segment": self._segment_key(row), "kind": self._category_key(row)})
             if len(listed) >= ON_SALE_SHOWN:
                 break
         return listed
@@ -753,12 +761,7 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
         return place
 
     def _event_color(self, event, colors):
-        key = KIND_COLOR_KEYS.get(kind_key(event))
-        specific = KIND_COLORS.get(colors["mode"], {}).get(key)
-        if specific:
-            return specific
-        segment = (event.segment or "").strip().lower()
-        return (colors.get("segment_colors") or {}).get(segment, colors.get("accent", colors["line"]))
+        return category_color(event_category(event), colors)
 
     @staticmethod
     def _blend(first, second, ratio):
