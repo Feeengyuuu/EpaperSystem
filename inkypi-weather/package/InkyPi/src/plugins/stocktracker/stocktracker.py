@@ -111,7 +111,7 @@ ACCENT_BLUE = (0, 92, 185)  # 100B-25R PANTONE 285 family
 ACCENT_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
 # The portfolio card, in a pixel-cut gold frame SUMMARY_FRAME px deep: between SUMMARY_CHART rows
 # under its top, the total (SUMMARY_FIGURE_SIZE type at most, its digits' middle
-# SUMMARY_FIGURE_FOOT rows above the chart's foot) by the generated gold dollar coin (COIN_ICON_PATH, SUMMARY_COIN px; drawn in COIN_GOLD rimmed
+# SUMMARY_FIGURE_FOOT rows above the chart's foot) by the supplied engraved dollar mark (COIN_ICON_PATH, SUMMARY_COIN px; drawn in COIN_GOLD rimmed
 # in COIN_RIM without the file) in today's colour: deep green up and deep red down on the day
 # page (GAIN_INK, LOSS_INK; the night page's own green and red), as is today's change under it.
 # Behind it the account's value over the window shows only as a trend, out to the frame on the
@@ -121,7 +121,7 @@ ACCENT_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
 SUMMARY_FRAME, SUMMARY_CHART, SUMMARY_GRID, SUMMARY_COIN, SUMMARY_FIGURE_SIZE = 7, (33, 92), 12, 40, 38
 SUMMARY_FIGURE_FOOT, SUMMARY_HILL_GAP, SUMMARY_BLUR, SUMMARY_FADE = 17, 6, 1.2, 10
 SUMMARY_FIGURE_TRACKING, SUMMARY_COIN_GAP = 3, 9
-COIN_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "coin_dollar.png")
+COIN_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "dollar_engraved.png")
 TOTAL_FIGURE_FONT = os.path.join(os.path.dirname(__file__), "assets", "fonts", "BodoniModa-Variable.ttf")
 COIN_GOLD, COIN_RIM = (232, 186, 62), (8, 38, 22)
 GAIN_INK, LOSS_INK = (0, 92, 50), (176, 32, 30)
@@ -216,7 +216,7 @@ _HEADER_MONEY_PIECES = {}
 
 @lru_cache(maxsize=4)
 def _coin_icon(size):
-	"""The generated gold dollar coin (COIN_ICON_PATH) trimmed and ``size`` px on its longer side;
+	"""The supplied metallic dollar mark (COIN_ICON_PATH), trimmed and ``size`` px on its longer side;
 	None without the file."""
 	try:
 		with Image.open(COIN_ICON_PATH) as source:
@@ -1702,7 +1702,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		stats=(),
 		curve_values=(),
 	):
-		"""The portfolio card in its gold frame: the total by its gold coin, in today's colour, standing
+		"""The portfolio card in its gold frame: the total by its metallic dollar mark, in today's colour, standing
 		on the floor of a softened chart of the account's value over the window; today's change in that
 		colour on the ruled row under it, then the first two balances."""
 		colors = _active_stock_colors()
@@ -1878,7 +1878,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				"coin": (round(x), round(middle - SUMMARY_COIN / 2))}
 
 	def _draw_total_figure(self, img, draw, figure, ink, halo):
-		"""The total by the gold dollar coin, in ``ink``, haloed in the chart's ground so the trend behind
+		"""The total by the metallic dollar mark, in ``ink``, haloed in the chart's ground so the trend behind
 		never cuts its digits."""
 		coin_x, coin_y = figure["coin"]
 		icon = _coin_icon(SUMMARY_COIN)

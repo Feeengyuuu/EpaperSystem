@@ -1,0 +1,7 @@
+{
+  "source": "User-provided transparent metallic dollar symbol",
+  "asset": "dollar_engraved.png",
+  "sha256": "5d27f3395156822388c3fa1915176e0aa90d4af57fb3ea528d287a81e4356c9b",
+  "modifications": "Original supplied PNG bytes preserved. Renderer trims transparent padding and scales proportionally for the portfolio total.",
+  "usage": "Low-key metallic dollar mark before the live total asset amount."
+}
