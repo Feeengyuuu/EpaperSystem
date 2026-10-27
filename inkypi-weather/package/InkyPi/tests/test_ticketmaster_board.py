@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 
 import pytest
+from PIL import Image, ImageDraw
 
 from plugins.ticketmaster_events.ticketmaster_events import TicketmasterEvent, TicketmasterEvents
 from plugins.ticketmaster_events.week_page import (
@@ -10,6 +11,8 @@ from plugins.ticketmaster_events.week_page import (
     GENRE_KINDS,
     SEGMENT_KINDS,
     _genre_icon,
+    chip_ink,
+    kind_key,
     kind_of,
     price_label,
 )
@@ -111,9 +114,125 @@ def test_the_board_renders_a_slip_per_event_with_its_kind_colour(tmp_path):
 
     image = plugin._render_events((800, 480), events, {}, "Ticketmaster Discovery", NOW)
 
-    from plugins.ticketmaster_events.week_page import LIST, ROW_H, SLIP_H, SLIP_TOP
+    from plugins.ticketmaster_events.week_page import LIST, ROW_H, SLIP_TOP
 
     teal = colors["segment_colors"]["sports"]
     for index in range(7):
         top = LIST[1] + SLIP_TOP + index * ROW_H
-        assert image.getpixel((LIST[0] + 10, top + SLIP_H // 2)) == teal
+        assert image.getpixel((LIST[0] + 62, top + 32)) == teal
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_music_genres_have_distinct_colours_and_legible_labels(mode):
+    from tests.test_ticketmaster_events import _canonical_theme
+
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({"_inkypi_theme": _canonical_theme(mode)})
+    genres = ["Pop", "Hip-Hop/Rap", "Dance/Electronic", "Alternative", "Rock", "Comedy"]
+    palette = [plugin._event_color(event(genre=genre), colors) for genre in genres]
+
+    assert len(set(palette)) == len(genres)
+    for colour in palette + list(colors["segment_colors"].values()):
+        assert contrast_ratio(colour, chip_ink(colour, colors)) >= 4.5
+
+
+def test_type_label_icon_and_colour_follow_the_same_classification():
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({})
+    alternative = event("Music", "Rock", " Alternative ")
+    assert kind_key(alternative) == "alternative"
+    assert kind_of(alternative) == ("另类", "guitar")
+    assert plugin._event_color(alternative, colors) == plugin._event_color(event(genre="Alternative"), colors)
+    assert plugin._event_color(alternative, colors) != plugin._event_color(event(genre="Rock"), colors)
+    # An unsupported subgenre falls back to the known genre, not a guess from the title.
+    unknown = event("Music", "Pop", "Undefined", title="A Comedy of Errors")
+    assert kind_key(unknown) == "pop"
+    assert plugin._event_color(unknown, colors) == plugin._event_color(event(genre="Pop"), colors)
+    assert plugin._kind_text(event("Music", "Comedy")) == "喜剧"
+    assert kind_key(event("Film", "Comedy")) == "film"
+    assert plugin._event_color(event("Film", "Comedy"), colors) == colors["segment_colors"]["film"]
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_dense_slip_preserves_distance_age_and_sale_state_without_overlapping(mode):
+    from tests.test_ticketmaster_events import _canonical_theme
+
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({"_inkypi_theme": _canonical_theme(mode)})
+    image = Image.new("RGB", (800, 480), colors["paper"])
+    draw = ImageDraw.Draw(image)
+    calls = []
+    original_text = draw.text
+
+    def record_text(position, text, **kwargs):
+        calls.append((text, draw.textbbox(position, text, font=kwargs["font"])))
+        original_text(position, text, **kwargs)
+
+    draw.text = record_text
+    show = event("Music", "Dance/Electronic", title="An exceptionally long artist and tour title for this narrow list",
+                 local_time="20:30:00", venue_name="An exceptionally long venue name that must fit", city="San Francisco",
+                 distance="123.4 mi", status="rescheduled", price="$38-250",
+                 extra={"age": "21+", "sale_start": "2026-10-28T17:00:00Z", "tour_dates": 30})
+    plugin._draw_slip(image, draw, show, (344, 92, 776, 137), "今天", colors, NOW)
+
+    labels = [text for text, _box in calls]
+    assert "电子" in labels and "21+" in labels and "改期" in labels and "10/28 开售" in labels
+    assert any(text.endswith("123.4 mi") for text in labels)
+    assert all(344 <= box[0] <= box[2] <= 776 and 92 <= box[1] <= box[3] <= 137 for _text, box in calls)
+    title_box = next(box for text, box in calls if text.startswith("An exceptionally long artist"))
+    place_box = next(box for text, box in calls if text.endswith("123.4 mi"))
+    fact_box = next(box for text, box in calls if text == "21+")
+    assert title_box[3] < place_box[1]
+    assert abs(place_box[1] - fact_box[1]) <= 1
+    facts = [box for text, box in calls if text in {"改期", "10/28 开售", "21+", "巡演"}]
+    assert all(place_box[2] + 8 <= box[0] for box in facts)
+    assert all(left[2] + 8 <= right[0] for left, right in zip(facts, facts[1:]))
+
+
+@pytest.mark.parametrize("marker", ["(SOLD OUT)", "[ sold out ]"])
+def test_explicit_sold_out_title_wins_over_conflicting_onsale_zero_price_metadata(marker):
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({})
+    image = Image.new("RGB", (800, 480), colors["paper"])
+    draw = ImageDraw.Draw(image)
+    labels = []
+    original_text = draw.text
+
+    def record_text(position, text, **kwargs):
+        labels.append(text)
+        original_text(position, text, **kwargs)
+
+    draw.text = record_text
+    show = event("Music", "Alternative", "Indie Pop", title=f"Blu DeTiger - The Want You Baby Tonight Tour {marker}",
+                 status="onsale", price="From $0", extra={"age": "21+"})
+    original = show.to_dict()
+    plugin._draw_slip(image, draw, show, (344, 92, 776, 137), "今天", colors, NOW)
+    assert "售罄" in labels and "21+" in labels
+    assert "免费" not in labels and "售票中" not in labels
+    assert show.to_dict() == original
+
+
+@pytest.mark.parametrize("title", ["Sold Out Tour", "Not sold out", "The Band (NOT SOLD OUT)", "The Band (Sold Out Soon)"])
+def test_sold_out_is_not_guessed_from_loose_title_words(title):
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    assert plugin._slip_facts(event(title=title, status="onsale"), NOW) == []
+
+
+@pytest.mark.parametrize("status, label", [("postponed", "延期"), ("rescheduled", "改期")])
+def test_featured_date_change_is_not_hidden_by_a_sold_out_title(status, label):
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({})
+    image = Image.new("RGB", (800, 480), colors["paper"])
+    draw = ImageDraw.Draw(image)
+    labels = []
+    original_text = draw.text
+
+    def record_text(position, text, **kwargs):
+        labels.append(text)
+        original_text(position, text, **kwargs)
+
+    draw.text = record_text
+    show = event(title="Artist (SOLD OUT)", status=status, price="From $0")
+    plugin._draw_featured(image, draw, show, NOW.date(), colors)
+    assert label in labels and "售票中" not in labels and "免费" not in labels
+    assert plugin._slip_facts(show, NOW)[:2] == [(label, True), ("售罄", True)]
