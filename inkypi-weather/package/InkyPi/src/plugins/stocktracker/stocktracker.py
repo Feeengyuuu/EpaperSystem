@@ -1698,6 +1698,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		colors = _active_stock_colors()
 		left, top, right, bottom = (int(edge) for edge in box)
 		self._draw_gold_frame(draw, box, colors["panel_gold"])
+		# The holdings' falling money carries on up through the portfolio card, under its chart.
+		doodles = (left + 4, top + 4, right - 4, bottom - 4)
+		paint_doodles(img, doodles, HOLDINGS_DOODLES_PATH, colors["malachite"], strength=HOLDINGS_DOODLES_STRENGTH,
+					  radius=3, offset=doodles[:2])
 		if not self._draw_section_wordmark(img, "PORTFOLIO", left + 10, top + 8):
 			draw.text((left + 13, top + 11), "PORTFOLIO", fill=colors["ink"], font=self._font(16, True))
 		today_ink = self._today_ink(day_percent)

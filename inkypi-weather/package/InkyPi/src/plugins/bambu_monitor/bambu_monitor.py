@@ -6,6 +6,7 @@ from plugins.base_plugin.render_provenance import (
 
 from PIL import Image, ImageDraw, ImageOps
 from utils.app_utils import get_base_ui_font
+from utils.doodle_backdrop import paint_doodles
 from utils.image_utils import text_width
 from utils.safe_image import ImageLimits, safe_open_image
 from utils.theme_utils import contrast_ratio, relative_luminance
@@ -29,6 +30,9 @@ WHITE = (255, 255, 255)
 # linework, and limited vintage comic process-color accents.
 PAPER = (255, 248, 220)  # 25Y PANTONE 100, vintage comic paper ground
 PANEL = (255, 253, 240)
+# Quiet 3D-printing doodles (spools, nozzles, layered cubes, calipers) under the job column, in
+# gold, and in each AMS tile's free space, in that tray's filament colour.
+PRINT_DOODLES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "doodles", "printing.png")
 PANEL_BLUE = (235, 246, 255)  # 25B PANTONE 304 family, paper-tinted
 PANEL_GOLD = (255, 239, 176)  # 50Y PANTONE 101 family, paper-tinted
 PANEL_GREEN = (235, 249, 236)  # 50Y-25B PANTONE 358 family, paper-tinted
@@ -857,6 +861,8 @@ class BambuMonitor(BasePlugin):
         camera_bottom = CONTENT_TOP + round((camera_right - margin) * 9 / 16)
         self._draw_camera_hero(img, draw, (margin, CONTENT_TOP, camera_right, camera_bottom), status)
         self._draw_ams_strip(draw, (margin, camera_bottom + 8, camera_right, height - 14), status, canvas=img)
+        column = (camera_right + LAYOUT_GAP - 4, HEADER_RULE_Y + 6, width - margin + 4, height - 10)
+        paint_doodles(img, column, PRINT_DOODLES, _active_color("accent_gold", ACCENT_GOLD), offset=column[:2])
         self._draw_job_column(
             draw,
             (camera_right + LAYOUT_GAP, HEADER_RULE_Y + 2, width - margin, height - 14),
@@ -1089,6 +1095,11 @@ class BambuMonitor(BasePlugin):
         for index, tray in enumerate(trays):
             x = left + index * (slot_w + AMS_SLOT_GAP)
             self._draw_ams_tile(draw, (x, tiles_top, x + slot_w, bottom), tray)
+            if canvas is not None:
+                tile = (x + 2, tiles_top + 2, x + slot_w - 2, bottom - 2)
+                tint = self._filament_swatch_color(tray.get("color")) or _active_color("rule", RULE)
+                paint_doodles(canvas, tile, PRINT_DOODLES, tint,
+                              grounds=[_active_color("panel", PANEL)], radius=CARD_RADIUS - 2, offset=tile[:2])
 
     @staticmethod
     def _visible_trays(trays):
