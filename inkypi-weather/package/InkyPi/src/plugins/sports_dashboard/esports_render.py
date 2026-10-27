@@ -1,4 +1,5 @@
 from functools import lru_cache
+from math import ceil
 
 from PIL import ImageFilter
 
@@ -11,6 +12,7 @@ CS2_TEAM_NAME_NOISE = frozenset({"team", "esports", "esport", "gaming", "club", 
 CS2_TEAM_ALIASES = {"navi": "natusvincere"}
 # Polymarket's logo (assets/logos/polymarket.png) on a LoL card's stage line, this tall.
 STAGE_LOGO_HEIGHT = 10
+ESPORTS_SOURCE_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "sources")
 
 SportsDashboard = None
 
@@ -904,22 +906,15 @@ class EsportsRenderMixin:
                     title_text, title_font, COLORS["text"], align="left",
                 )
             source_label = self._source_label(source_state)
-            source_label, source_font = self._fit_text_ellipsis(
-                draw,
-                source_label,
-                max(1, badge_x - title_left - 6),
-                8,
-                bold=True,
-                min_size=6,
-            )
-            self._draw_text_in_box(
-                draw,
-                (title_left, header_y + 30, badge_x - 6, header_y + 46),
-                source_label,
-                source_font,
-                COLORS["muted"],
-                align="left",
-            )
+            source_box = (title_left, header_y + 30, badge_x - 6, header_y + 46)
+            if not (series == "CS" and self._draw_cs2_provider_label(
+                image, draw, source_box, source_label, COLORS["muted"],
+            )):
+                source_label, source_font = self._fit_text_ellipsis(
+                    draw, source_label, max(1, source_box[2] - source_box[0]),
+                    8, bold=True, min_size=6,
+                )
+                self._draw_text_in_box(draw, source_box, source_label, source_font, COLORS["muted"])
             self._draw_valve_status_badge(draw, badge_x, header_y + 29, badge_width, 18, status_text, status == "LIVE")
         else:
             self._draw_valve_esports_logo(image, draw, panel_left + 1, header_y + 4, 70, 40, primary)
@@ -1174,7 +1169,7 @@ class EsportsRenderMixin:
                 bold=True,
                 min_size=6,
             )
-            self._draw_text_in_box(draw, subtitle_box, subtitle, subtitle_font, accent)
+            self._draw_cs2_source_credit(image, draw, subtitle_box, primary, source, subtitle, subtitle_font, accent)
         elif event_logo_drawn:
             meta_x1 = card_x1 + 104
             meta_x2 = card_x2 - 16
@@ -1226,12 +1221,9 @@ class EsportsRenderMixin:
                 bold=True,
                 min_size=6,
             )
-            self._draw_text_in_box(
-                draw,
-                subtitle_box,
-                subtitle,
-                subtitle_font,
-                accent,
+            self._draw_cs2_source_credit(
+                image, draw, subtitle_box, primary,
+                event.get("source") or primary.get("source") or "Valve", subtitle, subtitle_font, accent,
             )
         else:
             header = self._valve_focus_header_layout(card_x1, card_x2, y)
@@ -1252,7 +1244,10 @@ class EsportsRenderMixin:
             )
             subtitle_box = header["subtitle_box"]
             subtitle, subtitle_font = self._fit_text_ellipsis(draw, subtitle, subtitle_box[2] - subtitle_box[0], 9, bold=True, min_size=7)
-            self._draw_text_in_box(draw, subtitle_box, subtitle, subtitle_font, accent)
+            self._draw_cs2_source_credit(
+                image, draw, subtitle_box, primary,
+                event.get("source") or primary.get("source") or "Valve", subtitle, subtitle_font, accent,
+            )
 
         center_x = (card_x1 + card_x2) / 2
         board_y1 = y + 88
@@ -1404,6 +1399,60 @@ class EsportsRenderMixin:
             return "SOURCE: PANDASCORE"
         value = value.upper()
         return "OFFICIAL TRACK" if "OFFICIAL" in value else f"{value} TRACK"
+
+    def _draw_cs2_source_credit(self, image, draw, box, primary, source, fallback, font, color):
+        """Keep the provider credit separate from the Valve event-scope mark."""
+        if str(primary.get("series") or "").upper() == "CS" and str(source).strip().casefold() == "pandascore":
+            if self._draw_cs2_provider_label(image, draw, box, "PANDASCORE", color, attribution=True):
+                return
+        self._draw_text_in_box(draw, box, fallback, font, color)
+
+    def _draw_cs2_provider_label(self, image, draw, box, label, color, *, attribution=False):
+        """Draw the bundled official wordmark and retain the feed's status text."""
+        brand, _, state = str(label).strip().upper().partition(" ")
+        if brand != "PANDASCORE":
+            return False
+        x1, y1, x2, y2 = [int(value) for value in box]
+        text = "Source:" if attribution else state
+        font = self._font(8 if attribution else 7, True)
+        text_width = int(ceil(self._text_width(draw, text, font))) if text else 0
+        gap = 4 if text else 0
+        # Preserve the official geometry and alpha; light paper uses a dark monochrome treatment.
+        on_light = sum(COLORS["panel"]) > 384
+        width = min(74, x2 - x1 - text_width - gap)
+        height = min(12, y2 - y1)
+        if width < 40 or height < 6:
+            return False  # Crowded/error states retain the existing full text fallback.
+        logo = self._load_local_logo(
+            os.path.join(ESPORTS_SOURCE_LOGO_DIR, "pandascore.png"), (width, height), alpha_threshold=8,
+        )
+        if logo is None:
+            return False
+        left = x1 + (text_width + gap if attribution else 0)
+        top = y1 + (y2 - y1 - logo.height) // 2
+        if on_light:
+            with Image.new("RGBA", logo.size, COLORS["text"]) as monochrome:
+                with logo.getchannel("A") as alpha:
+                    monochrome.putalpha(alpha)
+                image.paste(monochrome, (left, top), monochrome)
+        else:
+            image.paste(logo, (left, top), logo)
+        text_x = x1 if attribution else left + logo.width + gap
+        self._draw_text_in_box(draw, (text_x, y1, text_x + text_width, y2), text, font, color)
+        return True
+
+    def _draw_cs2_empty_recent(self, image, draw, box):
+        """Valve identifies the competition scope here, never the score provider."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        logo = self._load_local_logo(
+            os.path.join(ESPORTS_SOURCE_LOGO_DIR, "valve.png"), (49, y2 - y1), alpha_threshold=8,
+        )
+        if logo is None:
+            return False
+        text, font = self._fit_text_ellipsis(draw, "暂无更多赛果", x2 - x1 - logo.width - 8, 13, bold=True, min_size=11)
+        image.paste(logo, (x1, y1 + (y2 - y1 - logo.height) // 2), logo)
+        self._draw_text_in_box(draw, (x1 + logo.width + 8, y1, x2, y2), text, font, COLORS["muted"])
+        return True
 
     @staticmethod
     def _valve_team_display_name(event, side):
@@ -1581,7 +1630,14 @@ class EsportsRenderMixin:
                 if "schedule_state" in primary:
                     unavailable = primary["schedule_state"] != "fresh"
                 empty_text = "Schedule unavailable" if unavailable else "No further event matches"
-            draw.text((right_x + 18, y + 36), empty_text, font=self._font(14, True), fill=COLORS["muted"])
+            scope_drawn = (
+                title == "RECENT" and str(primary.get("series") or "").upper() == "CS"
+                and self._draw_cs2_empty_recent(
+                    image, draw, (right_x + 18, y + 36, right_x + right_w - 18, y + 54),
+                )
+            )
+            if not scope_drawn:
+                draw.text((right_x + 18, y + 36), empty_text, font=self._font(14, True), fill=COLORS["muted"])
             self._draw_valve_ti_empty_slot_filler(
                 image,
                 right_x + 14,
