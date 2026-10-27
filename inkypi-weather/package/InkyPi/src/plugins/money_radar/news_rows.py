@@ -85,10 +85,10 @@ def chip(canvas,x,y,symbol,width=64):
     if logo is not None:
         if logo.width>17:
             logo.thumbnail((17,12 if night else 14),Image.Resampling.LANCZOS)
-        canvas.image.paste(logo,(round(x+4+(17-logo.width)/2),round(y-logo.height/2)),logo)
-        compartment_left=x+22
-    else:compartment_left=x+2
-    compartment=(compartment_left,y-7,x+width-1,y+7)
+        canvas.image.paste(logo,(round(x+width-18+(17-logo.width)/2),round(y-logo.height/2)),logo)
+        compartment_right=x+width-21
+    else:compartment_right=x+width-1
+    compartment=(x+2,y-7,compartment_right,y+7)
     _primary,fill,foreground,_ratio=ticker_colors(symbol)
     canvas.draw.rounded_rectangle(compartment,radius=2,fill=fill)
     code_width=compartment[2]-compartment[0]-2
