@@ -1,0 +1,48 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1536x1024",
+  "generated": "2026-10-27",
+  "processing": "RGB, cover-fitted to 480x320 with LANCZOS, JPEG quality 85",
+  "rendering": "one scene per hour behind the friends not in a game, veiled in the panel's navy",
+  "assets": {
+    "desk.jpg": {
+      "scene": "a cozy gamer's desk at night by a rainy city window",
+      "job_id": "1ec01d14-98eb-4e60-b8bc-ac53bce977ca",
+      "source_sha256": "667b46bc45fa5b98a632a217de5d0356e189ff5613c783a0d76289eb421625ca",
+      "sha256": "190c68de1193e6ab1c7da13c84145bbd8c8f6052180512e7b23ba4735afe8e30",
+      "size": [
+        480,
+        320
+      ]
+    },
+    "valley.jpg": {
+      "scene": "a fantasy valley at night with a castle on a cliff",
+      "job_id": "62c5dd3a-e8c1-4926-8f9a-79b90fb3ed44",
+      "source_sha256": "5c21b41a4b64dce18fa44925f2db8e442b18823467d900ce9371b9e8bfd07eb2",
+      "sha256": "74dee1b55a37e52dd35c6600cb15687df173cd30d57a1d9240d6072c24eef0f0",
+      "size": [
+        480,
+        320
+      ]
+    },
+    "alley.jpg": {
+      "scene": "a rainy neon alley with an arcade glow, no lettering",
+      "job_id": "0c17df23-e721-4173-908b-b83f1baf416b",
+      "source_sha256": "6d8906d455adeff8a4f72123af5d564bfe1fef7476ca2e7efe459216e331605e",
+      "sha256": "60dd5afd6a8d2280783f3e8fb503b211b2416ec35b63b60090dcc84fdc5e0be5",
+      "size": [
+        480,
+        320
+      ]
+    },
+    "nebula.jpg": {
+      "scene": "a spaceship lounge window onto a blue nebula and ringed planet",
+      "job_id": "253e0a72-61c5-49b3-9c78-ff93da47bb05",
+      "source_sha256": "9b818f2a4c5f913779b256f1c0b038458cf29ebd3b9284e85734109a9e8ad69a",
+      "sha256": "848ef80704ad400bcc220fb91629d2727d6d4f7df316829f2d904550d450e986",
+      "size": [
+        480,
+        320
+      ]
+    }
+  }
+}

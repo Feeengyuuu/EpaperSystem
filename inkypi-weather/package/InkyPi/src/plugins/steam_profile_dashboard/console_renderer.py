@@ -7,7 +7,9 @@ does not contain game-specific images, names, or network requests.
 
 import colorsys
 from contextlib import ExitStack
+from datetime import datetime
 import math
+from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
@@ -31,6 +33,12 @@ GREEN = (129, 237, 105)
 STEAM_ONLINE = (87, 203, 222)
 AWAY = (234, 176, 72)
 FRIEND_GAME_ICON = 14
+# Quiet scenes behind the friends who are not in a game (and an in-game row without artwork),
+# one per hour in turn, veiled in the panel's navy so white names read on them.
+FRIEND_BACKDROP_DIR = Path(__file__).resolve().parent / "assets" / "friend_backdrops"
+FRIEND_BACKDROPS = ("desk", "valley", "alley", "nebula")
+FRIEND_BACKDROP_VEIL = 0.5
+FRIEND_BACKDROP_FADE = 12
 # In-game friends keep wide artwork rows. The remaining content area adapts:
 # up to three use generous name rows, four to six use an equal two-column grid,
 # and larger populations use a bounded denser grid or a narrow overflow column.
@@ -641,6 +649,7 @@ class _Console:
         return {"mode": "grid", "capacity": 9 - len(rows), "top": top, "columns": columns}
 
     def _friends_content(self, rows, primary, mini, overflow, game_icons, backgrounds, portraits, plan):
+        self._friend_backdrop_area(plan["top"])
         for index, friend in enumerate(rows):
             self._playing_friend(friend, FRIEND_LIST[1] + index * (FRIEND_PLAYING_H + FRIEND_GAP),
                                  game_icons, backgrounds, portraits)
@@ -669,6 +678,38 @@ class _Console:
                 self._friend_roster_row(friend, box, game_icons, backgrounds, portraits)
             if plan["mode"] == "overflow":
                 self._friend_overflow_column(mini, overflow, top, portraits)
+
+    def _friend_backdrop(self, size):
+        """This hour's placeholder scene fitted to ``size`` under the navy veil; None when missing."""
+        try:
+            moment = datetime.strptime(str(self.data.get("updated_at") or ""), "%Y-%m-%d %H:%M")
+            index = (moment.toordinal() * 24 + moment.hour) % len(FRIEND_BACKDROPS)
+        except ValueError:
+            index = 0
+        try:
+            with Image.open(FRIEND_BACKDROP_DIR / f"{FRIEND_BACKDROPS[index]}.jpg") as source:
+                scene = ImageOps.fit(source.convert("RGB"), size, method=Image.Resampling.LANCZOS)
+        except OSError:
+            return None
+        with scene:
+            return Image.blend(scene, Image.new("RGB", size, self.c["navy"]), FRIEND_BACKDROP_VEIL)
+
+    def _friend_backdrop_area(self, top):
+        """The scene under the friends below the in-game rows, fading in from its top edge and
+        rounded into the panel's lower corners."""
+        left, right, bottom = FRIEND_PANEL[0] + 2, FRIEND_PANEL[2] - 2, FRIEND_PANEL[3] - 2
+        size = (right - left, bottom - top)
+        if size[1] < 16:
+            return
+        scene = self._friend_backdrop(size)
+        if scene is None:
+            return
+        with scene, Image.new("L", size, 0) as mask:
+            pen = ImageDraw.Draw(mask)
+            pen.rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=6, fill=255)
+            for row in range(min(FRIEND_BACKDROP_FADE, size[1])):
+                pen.line((0, row, size[0] - 1, row), fill=round(255 * row / FRIEND_BACKDROP_FADE))
+            self.image.paste(scene, (left, top), mask)
 
     def _friend_roster_row(self, friend, box, game_icons, backgrounds, portraits):
         left, top, right, bottom = box
@@ -762,6 +803,11 @@ class _Console:
         appid = friend.get("gameid")
         source = backgrounds.get(_appid(appid))
         with ExitStack() as owned:
+            if source is None:
+                # No artwork for this game: the hour's placeholder scene stands in for it.
+                source = self._friend_backdrop((cover_width, height))
+                if source is not None:
+                    owned.callback(source.close)
             rgb = owned.enter_context(source.convert("RGB") if source is not None
                                       else Image.new("RGB", (cover_width, height), self.c["navy"]))
             art = owned.enter_context(ImageOps.fit(rgb, (cover_width, height), method=Image.Resampling.LANCZOS))
