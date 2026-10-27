@@ -148,6 +148,13 @@ F1_DRIVER_ZH = {
 
 
 class F1RenderMixin:
+    def _fit_f1_metric(self, draw, text, width, size, bold=False, *, max_height=13):
+        """Use the private F1 face for complete Latin readouts, keeping Chinese legible."""
+        text = str(text)
+        if not text.isascii():
+            return self._fit_text(draw, text, width, size, bold=bold, min_size=7)
+        return self._fit_score(draw, text, width, size, bold=bold, sport="F1", max_height=max_height)
+
     def _draw_f1_compact_panel(self, image, draw, bounds, selected, source_state, now):
         selected = selected or {}
         spec = ScorebugSpec("F1", "f1_accent", "f1_live", "f1_tag", "panel_blue")
@@ -184,7 +191,7 @@ class F1RenderMixin:
         header_y = y1 + 8
         self._draw_f1_logo(image, draw, x1 + 15, header_y - 2, 74, 34)
         if not self._draw_local_wordmark(image, LOCAL_F1_TITLE_WORDMARK_PATH, x1 + 96, header_y, 142, 20):
-            title, title_font = self._fit_text(draw, "FORMULA 1", 142, 17, bold=True, min_size=12)
+            title, title_font = self._fit_f1_metric(draw, "FORMULA 1", 142, 17, bold=True, max_height=20)
             draw.text((x1 + 96, header_y + 1), title, font=title_font, fill=COLORS["text"])
         source_label, source_font = self._fit_text(draw, self._f1_source_label(selected, source_state), 124, 10, bold=True, min_size=7)
         draw.text((x1 + 97, header_y + 22), source_label, font=source_font, fill=COLORS["muted"])
@@ -247,7 +254,7 @@ class F1RenderMixin:
         label, value, value_key = SportsDashboard._f1_countdown_block(selected, now)
         label_font = self._font(9, True)
         self._draw_text_in_box(draw, (count_x1, y1 + 6, x2 - 10, y1 + 18), label, label_font, COLORS[spec.live] if live_session else COLORS["text"], align="right")
-        value, value_font = self._fit_text(draw, value, x2 - 10 - count_x1, 17, bold=True, min_size=10)
+        value, value_font = self._fit_f1_metric(draw, value, x2 - 10 - count_x1, 17, bold=True, max_height=23)
         self._draw_text_in_box(draw, (count_x1, y1 + 19, x2 - 10, y1 + 42), value, value_font, COLORS[value_key], align="right")
         return x2 - 10 - max(self._text_width(draw, label, label_font), self._text_width(draw, value, value_font))
 
@@ -290,12 +297,13 @@ class F1RenderMixin:
             draw.line((positions[index], axis_y, positions[index + 1], axis_y), fill=COLORS["border"] if done else COLORS["line"], width=3 if done else 1)
         for position, session, state in zip(positions, sessions, states):
             label = str(session.get("label") or "").upper()
-            self._draw_centered_in_box(draw, (position - 26, y1, position + 26, y1 + 12), label, self._font(9, state in {"live", "next"} or label == "RACE"), COLORS[spec.live] if state == "live" else COLORS["text"])
+            label, label_font = self._fit_f1_metric(draw, label, 52, 9, state in {"live", "next"} or label == "RACE", max_height=12)
+            self._draw_centered_in_box(draw, (position - 26, y1, position + 26, y1 + 12), label, label_font, COLORS[spec.live] if state == "live" else COLORS["text"])
             self._draw_f1_session_node(draw, position, axis_y, state, label == "RACE", spec)
             start = session.get("start")
             if isinstance(start, datetime):
                 when = f"{start.strftime('%a').upper()} {SportsDashboard._format_time(start)}"
-                when, when_font = self._fit_text(draw, when, int(step) - 2 if len(sessions) > 1 else 80, 9, bold=state == "next", min_size=7)
+                when, when_font = self._fit_f1_metric(draw, when, min(60, int(step) - 2) if len(sessions) > 1 else 60, 9, bold=state == "next")
                 self._draw_centered_in_box(draw, (position - 30, axis_y + 11, position + 30, axis_y + 24), when, when_font, COLORS["text"])
 
     def _draw_f1_session_node(self, draw, x, y, state, is_race, spec):
@@ -342,14 +350,15 @@ class F1RenderMixin:
             if y + F1_ROW_HEIGHT > y2 + 1:
                 break
             ink_key = SportsDashboard._f1_team_ink_key(row.get("constructor"))
-            self._draw_text_in_box(draw, (x1, y, x1 + 14, y + 13), str(row.get("position") or ""), self._font(10, True), COLORS["text"])
+            position_text, position_font = self._fit_f1_metric(draw, str(row.get("position") or ""), 14, 10, True)
+            self._draw_text_in_box(draw, (x1, y, x1 + 14, y + 13), position_text, position_font, COLORS["text"])
             self._paste_f1_team_logo(image, draw, row.get("constructor"), (x1 + 16, y + 1), ink_key)
             self._draw_text_in_box(draw, (name_x, y, name_x + name_w, y + 13), name, name_font, COLORS["text"])
             points = SportsDashboard._f1_points(row.get("points"))
             points_text = str(row.get("points") or "0").removesuffix(".0")
-            points_font = self._font(10, True)
-            points_w = self._text_width(draw, points_text, points_font)
             points_x2 = x2 - wins_w
+            points_text, points_font = self._fit_f1_metric(draw, points_text, max(18, points_x2 - name_x - name_w - 4), 10, True)
+            points_w = self._text_width(draw, points_text, points_font)
             bar_x1, bar_x2 = name_x + 3 + name_w, points_x2 - points_w - 6
             if bar_x2 - bar_x1 > 10:
                 # The bar alone, on the panel: no empty track behind the shorter ones.
@@ -398,11 +407,13 @@ class F1RenderMixin:
         shown = rows[:max(0, (y2 + 1 - y) // F1_ROW_HEIGHT)]
         # Each driver's car (the team's official side view) races in the room the names leave,
         # the leader's nose before the widest gap.
-        gap_widths = [
-            self._text_width(draw, gap, self._font(9, (row.get("position") or index + 1) == 1))
+        # Fit and measure the same font: longer official digits must not overlap names/cars.
+        gap_readouts = [
+            self._fit_f1_metric(draw, SportsDashboard._f1_gap_label(row, row.get("position") or index + 1, live),
+                                max(28, int((x2 - x1) * 0.36)), 9, (row.get("position") or index + 1) == 1)
             for index, row in enumerate(shown)
-            if (gap := SportsDashboard._f1_gap_label(row, row.get("position") or index + 1, live))
         ]
+        gap_widths = [self._text_width(draw, gap, font) for gap, font in gap_readouts if gap]
         car_x2 = x2 - max([0, *gap_widths]) - 8 - (12 if any(row.get("fastest_lap") for row in shown) else 0)
         cars = []
         for index, row in enumerate(rows):
@@ -414,18 +425,18 @@ class F1RenderMixin:
             if not self._draw_f1_place_numeral(image, (x1, y), position):
                 badge_fill = COLORS["amber"] if position == 1 else COLORS[spec.tag]
                 draw.rounded_rectangle((x1, y + 1, x1 + 20, y + 13), radius=3, fill=badge_fill, outline=COLORS["border"], width=1)
-                self._draw_centered_in_box(draw, (x1, y + 1, x1 + 20, y + 13), f"P{position}", self._font(8, True), COLORS["text"])
+                position_text, position_font = self._fit_f1_metric(draw, f"P{position}", 20, 8, True, max_height=12)
+                self._draw_centered_in_box(draw, (x1, y + 1, x1 + 20, y + 13), position_text, position_font, COLORS["text"])
             self._paste_f1_team_logo(image, draw, team, (x1 + 23, y + 1), ink_key)
-            gap = SportsDashboard._f1_gap_label(row, position, live)
-            gap_font = self._font(9, position == 1)
+            gap, gap_font = gap_readouts[index]
             gap_w = self._text_width(draw, gap, gap_font) if gap else 0
             right = x2 - gap_w - 6
             if row.get("fastest_lap"):
                 right -= 12
                 self._draw_f1_fastest_lap(draw, right + 6, y + 7)
             gained = None if live else SportsDashboard._f1_places_gained(row, position)
-            moved_font = self._font(8, True)
             moved = f"{abs(gained)}" if gained else ""
+            moved, moved_font = self._fit_f1_metric(draw, moved, 20, 8, True)
             moved_w = self._text_width(draw, moved, moved_font) + 10 if moved else 0
             name_x = x1 + 23 + F1_LOGO_SIZE[0] + 3
             label = SportsDashboard._f1_driver_zh(row)
