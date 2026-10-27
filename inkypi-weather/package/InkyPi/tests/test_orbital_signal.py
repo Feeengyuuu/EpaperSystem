@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 
 try:
@@ -1348,6 +1348,49 @@ def test_the_market_columns_draw_cached_team_marks_and_polymarket_logo(tmp_path)
     assert (0, 40, 90) in colours((560, 100, 640, 140))
     # Polymarket's logo heads the columns in the page's ink.
     assert tuple(DAY_PALETTE["ink"][:3]) in colours((477, 68, 640, 98))
+
+
+@pytest.mark.parametrize("palette", [DAY_PALETTE, NIGHT_PALETTE], ids=["day", "night"])
+@pytest.mark.parametrize("change", [0.205, 1.0, -1.0])
+def test_league_badge_and_daily_move_stay_inside_their_market_column(monkeypatch, palette, change):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    mark = Image.new("RGBA", (14, 14), (0, 40, 90, 255))
+    monkeypatch.setattr(plugin, "_market_mark", lambda *_args: mark)
+    image = Image.new("RGB", (800, 480), palette["paper"])
+    draw = ImageDraw.Draw(image)
+    column_width = (800 - LAUNCH_SPLIT_X - 24) / 3
+    center = LAUNCH_SPLIT_X + 12 + column_width * 2.5
+    content_width = column_width - 8
+
+    plugin._draw_league_tag(
+        draw, {"category": "SPORT", "league": "NFL", "league_mark": "nfl", "change_24h": change},
+        center, content_width, 246, palette, DEFAULT_FONT, image,
+    )
+
+    # The source mark, league name and move all keep their margin from the separator/page edge.
+    bounds = ImageChops.difference(image, Image.new("RGB", image.size, palette["paper"])).getbbox()
+    assert bounds[0] >= round(center - content_width / 2)
+    assert bounds[2] <= round(center + content_width / 2) + 1
+
+
+@pytest.mark.parametrize("palette", [DAY_PALETTE, NIGHT_PALETTE], ids=["day", "night"])
+def test_dark_source_league_mark_keeps_its_colour_on_a_light_backplate(monkeypatch, palette):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    source_colour = (0, 40, 90)
+    mark = Image.new("RGBA", (14, 14), (*source_colour, 255))
+    monkeypatch.setattr(plugin, "_market_mark", lambda *_args: mark)
+    image = Image.new("RGB", (200, 60), palette["paper"])
+    draw = ImageDraw.Draw(image)
+
+    plugin._draw_league_tag(
+        draw, {"category": "SPORT", "league": "NFL", "league_mark": "nfl", "change_24h": 0.205},
+        100, 97, 20, palette, DEFAULT_FONT, image,
+    )
+
+    left = next(x for x in range(image.width) if image.getpixel((x, 20)) == palette["orange"])
+    # A coloured provider icon stays readable in both themes, without tinting its original ink.
+    assert min(image.getpixel((left + 1, 21))) >= 230
+    assert image.getpixel((left + 9, 29)) == source_colour
 
 
 def test_event_art_fades_into_the_paper_at_its_foot(tmp_path):

@@ -55,6 +55,7 @@ MARKET_MARK_CACHE_BUDGET = CacheBudget(30 * 24 * 60 * 60, 96, 8 * 1024 * 1024)
 # A matchup's two logos (px tall at most), the league icon in its chip and the leader's logo by
 # its name. The matchup stands mid-art, MATCHUP_PAD round each logo.
 MATCHUP_LOGO, LEAGUE_ICON, LEADER_LOGO = 38, 14, 14
+LEAGUE_ICON_PAPER = (255, 252, 244)
 MATCHUP_PAD = 4
 # Each market column is themed by its event's art: kept at EVENT_ART_SIDE px, laid ART_H px tall
 # across the column's top, its lowest ART_FADE share fading into the paper; the question is printed
@@ -1520,7 +1521,7 @@ class OrbitalSignal(BasePlugin):
         for change_size, pad, gap in ((13, 7, 6), (11, 5, 4)):
             change_font = self._font(change_size, True, family)
             change_w = draw.textbbox((0, 0), change_text, font=change_font)[2]
-            label_room = max(20, width - icon_w - gap - change_w - 2 * pad)
+            label_room = max(0, width - icon_w - gap - change_w - 2 * pad)
             for candidate in candidates:
                 label_font = self._fit_font(draw, candidate, label_room, 10, 8, family)
                 if draw.textbbox((0, 0), candidate, font=label_font)[2] <= label_room:
@@ -1532,7 +1533,8 @@ class OrbitalSignal(BasePlugin):
         label_w = draw.textbbox((0, 0), label, font=label_font)[2] + 2 * pad
         x = round(cx - (icon_w + label_w + gap + change_w) / 2)
         if league_icon is not None:
-            draw.rectangle((x, tag_top, x + 18, tag_top + 18), fill=palette["white"], outline=tag_color)
+            # Original coloured provider marks need a light backing in both themes.
+            draw.rectangle((x, tag_top, x + 18, tag_top + 18), fill=LEAGUE_ICON_PAPER, outline=tag_color)
             image.paste(league_icon, (x + 9 - league_icon.width // 2, tag_top + 9 - league_icon.height // 2), league_icon)
             x += icon_w
         draw.rectangle((x, tag_top, x + label_w, tag_top + 18), fill=tag_color)
