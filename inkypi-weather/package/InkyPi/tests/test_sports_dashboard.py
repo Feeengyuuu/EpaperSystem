@@ -4992,16 +4992,16 @@ def test_lck_sidebar_uses_lck_logo_and_plain_team_names(monkeypatch):
     image = Image.new("RGB", (800, 480), COLORS["paper"])
     seen_texts = []
     logo_calls = []
-    original_fit_text = plugin._fit_text
+    original_match_text = plugin._draw_esports_match_text
 
-    def record_fit_text(draw_obj, text, *args, **kwargs):
+    def record_match_text(draw_obj, box, text, *args, **kwargs):
         seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
+        return original_match_text(draw_obj, box, text, *args, **kwargs)
 
     def record_lol_logo(_image, _draw, _x, _y, _width, _height, logo_path=None, fallback_text=None):
         logo_calls.append((logo_path, fallback_text))
 
-    monkeypatch.setattr(plugin, "_fit_text", record_fit_text)
+    monkeypatch.setattr(plugin, "_draw_esports_match_text", record_match_text)
     monkeypatch.setattr(plugin, "_draw_lpl_logo", record_lol_logo)
 
     plugin._draw_lpl_sidebar(image, 552, selected, "LCK LIVE DATA", now, league_key="LCK")
@@ -5591,26 +5591,26 @@ def test_lpl_focus_stage_label_draws_along_the_card_foot():
     image = Image.new("RGB", (320, 220), COLORS["paper"])
     draw = ImageDraw.Draw(image)
     centered_labels = []
-    centered_points = []
+    match_labels = []
     fit_text_calls = []
     original_centered_in_box = plugin._draw_centered_in_box
-    original_centered = plugin._draw_centered
+    original_match_text = plugin._draw_esports_match_text
     original_fit_text = plugin._fit_text
 
     def capture_centered_in_box(draw_obj, box, text, *args, **kwargs):
         centered_labels.append((box, str(text)))
         return original_centered_in_box(draw_obj, box, text, *args, **kwargs)
 
-    def capture_centered(draw_obj, center, text, *args, **kwargs):
-        centered_points.append((center, str(text)))
-        return original_centered(draw_obj, center, text, *args, **kwargs)
+    def capture_match_text(draw_obj, box, text, *args, **kwargs):
+        match_labels.append((box, str(text)))
+        return original_match_text(draw_obj, box, text, *args, **kwargs)
 
     def capture_fit_text(draw_obj, text, max_width, size, bold=False, min_size=11):
         fit_text_calls.append((str(text), max_width, size, bold, min_size))
         return original_fit_text(draw_obj, text, max_width, size, bold=bold, min_size=min_size)
 
     plugin._draw_centered_in_box = capture_centered_in_box
-    plugin._draw_centered = capture_centered
+    plugin._draw_esports_match_text = capture_match_text
     plugin._fit_text = capture_fit_text
     event = {
         "start": datetime(2026, 6, 13, 9, 0, tzinfo=timezone.utc),
@@ -5630,13 +5630,19 @@ def test_lpl_focus_stage_label_draws_along_the_card_foot():
 
     final_box = next(box for box, text in centered_labels if text == "Final")
     final_fit = next(call for call in fit_text_calls if call[0] == "Final")
-    vs_center = next(center for center, text in centered_points if text == "VS")
+    vs_box = next(box for box, text in match_labels if text == "VS")
+    team_boxes = [box for box, text in match_labels if text in {"BLG", "TES"}]
+    odds_boxes = [box for box, text in centered_labels if text in {"1.40", "2.75"}]
     assert final_fit[2] == 11
     assert final_box[0] > 20
     assert final_box[2] < 200
     assert final_box[1] >= 138
     assert final_box[3] <= 152
-    assert final_box[1] > vs_center[1]
+    assert len(team_boxes) == 2
+    assert len(odds_boxes) == 2
+    assert final_box[1] > vs_box[3]
+    assert final_box[1] >= max(box[3] for box in team_boxes) + 16
+    assert final_box[1] >= max(box[3] for box in odds_boxes) + 4
 
 
 
@@ -5645,26 +5651,26 @@ def test_msi_focus_stage_label_draws_below_team_names():
     image = Image.new("RGB", (320, 220), COLORS["paper"])
     draw = ImageDraw.Draw(image)
     centered_labels = []
-    centered_points = []
+    match_labels = []
     fit_text_calls = []
     original_centered_in_box = plugin._draw_centered_in_box
-    original_centered = plugin._draw_centered
+    original_match_text = plugin._draw_esports_match_text
     original_fit_text = plugin._fit_text
 
     def capture_centered_in_box(draw_obj, box, text, *args, **kwargs):
         centered_labels.append((box, str(text)))
         return original_centered_in_box(draw_obj, box, text, *args, **kwargs)
 
-    def capture_centered(draw_obj, center, text, *args, **kwargs):
-        centered_points.append((center, str(text)))
-        return original_centered(draw_obj, center, text, *args, **kwargs)
+    def capture_match_text(draw_obj, box, text, *args, **kwargs):
+        match_labels.append((box, str(text)))
+        return original_match_text(draw_obj, box, text, *args, **kwargs)
 
     def capture_fit_text(draw_obj, text, max_width, size, bold=False, min_size=11):
         fit_text_calls.append((str(text), max_width, size, bold, min_size))
         return original_fit_text(draw_obj, text, max_width, size, bold=bold, min_size=min_size)
 
     plugin._draw_centered_in_box = capture_centered_in_box
-    plugin._draw_centered = capture_centered
+    plugin._draw_esports_match_text = capture_match_text
     plugin._fit_text = capture_fit_text
     event = {
         "start": datetime(2026, 6, 27, 20, 0, tzinfo=timezone.utc),
@@ -5683,12 +5689,13 @@ def test_msi_focus_stage_label_draws_below_team_names():
 
     stage_box = next(box for box, text in centered_labels if text == "Play In Knockouts")
     stage_fit = next(call for call in fit_text_calls if call[0] == "Play In Knockouts")
-    team_y = max(center[1] for center, text in centered_points if text in {"T1", "TLAW"})
-    vs_center = next(center for center, text in centered_points if text == "VS")
+    team_boxes = [box for box, text in match_labels if text in {"T1", "TLAW"}]
+    vs_box = next(box for box, text in match_labels if text == "VS")
     assert stage_fit[2] == 11
-    assert stage_box[1] >= team_y + 16
+    assert len(team_boxes) == 2
+    assert stage_box[1] >= max(box[3] for box in team_boxes) + 16
     assert stage_box[3] <= 152
-    assert stage_box[3] > vs_center[1]
+    assert stage_box[1] > vs_box[3]
 
 def test_lpl_display_team_names_prefer_uppercase_team_codes():
     assert SportsDashboard._lpl_display_team_name("BLG") == "BLG"

@@ -20,7 +20,6 @@ from plugins.steam_profile_dashboard.console_renderer import (
     CANVAS,
     CYAN,
     FRIEND_LIST,
-    FRIEND_TILE,
     GREEN,
     PANEL,
     render_console,
@@ -487,16 +486,79 @@ def test_mini_rings_match_large_avatar_presence_without_covering_neighbours(
 
 
 @pytest.mark.parametrize("count", [8, 15])
-def test_overflow_mosaic_keeps_the_first_three_names_and_hides_extra_names(plugin, data, displayed, count):
+def test_dense_grid_keeps_nine_named_friends_before_counting_hidden_people(plugin, data, displayed, count):
     data["friends"] = [{"steamid": str(index), "personaname": f"Friend {index:02}", "personastate": 1,
                         "avatarfull": f"cached-avatar-{index}"} for index in range(count)]
     data["online_friend_count"] = count
     render_console(plugin, data, (800, 480))
     labels = [text for _box, text in displayed]
-    assert all(f"Friend {index:02}" in labels for index in range(3))
-    assert all(f"Friend {index:02}" not in labels for index in range(3, count))
+    visible = min(count, 9)
+    assert all(f"Friend {index:02}" in labels for index in range(visible))
+    assert all(f"Friend {index:02}" not in labels for index in range(visible, count))
     assert "+3" not in labels and "更多在线" not in labels
-    assert f"{count - 6} more…" in labels
+    if count > visible:
+        assert f"{count - visible} more…" in labels
+    else:
+        assert not any(text.endswith("more…") for text in labels)
+
+
+def test_six_online_friends_share_a_two_column_three_row_grid_without_tiny_overflow(plugin, data, displayed, monkeypatch):
+    circles = []
+    original = _Console._friend_ring
+
+    def ring(self, friend, x, y, size=38, **kwargs):
+        circles.append((friend["steamid"], x, y, size))
+        return original(self, friend, x, y, size, **kwargs)
+
+    monkeypatch.setattr(_Console, "_friend_ring", ring)
+    render_console(plugin, data, (800, 480))
+    assert len(circles) == 6
+    assert len({x for _person, x, _y, _size in circles}) == 2
+    assert len({y for _person, _x, y, _size in circles}) == 3
+    assert min(size for _person, _x, _y, size in circles) >= 30
+    labels = [text for _box, text in displayed]
+    assert all(friend["personaname"] in labels for friend in data["friends"])
+    assert not any(text.endswith("more…") for text in labels)
+    assert max(y + size for _person, _x, y, size in circles) > 175
+
+
+def test_long_friend_remarks_receive_full_width_rows_when_grid_names_would_be_clipped(plugin, data, monkeypatch):
+    boxes = []
+    original = _Console._friend_roster_row
+    for index, friend in enumerate(data["friends"]):
+        friend["_inkypi_friend_remark"] = f"Very Long Friendly Name {index}"
+
+    def row(self, friend, box, *args):
+        boxes.append(box)
+        return original(self, friend, box, *args)
+
+    monkeypatch.setattr(_Console, "_friend_roster_row", row)
+    render_console(plugin, data, (800, 480))
+    assert len(boxes) == 6
+    assert all(box[0] == FRIEND_LIST[0] and box[2] == FRIEND_LIST[2] for box in boxes)
+    assert len({box[1] for box in boxes}) == 6
+
+
+def test_busy_friend_panel_shares_one_portrait_budget_and_counts_missing_miniatures(plugin, data, displayed, monkeypatch):
+    data["friends"] = [{"steamid": str(index), "personaname": f"Friend {index:02}", "personastate": 1,
+                        "avatarfull": f"cached-avatar-{index}"} for index in range(13)]
+    data["online_friend_count"] = 13
+    for friend in data["friends"][:2]:
+        friend.update(gameid="730", gameextrainfo="Counter-Strike 2")
+    batches = []
+    original = console_renderer.load_mosaic_avatars
+
+    def limited(owner, records, size):
+        batches.append(records)
+        # One of three miniature portraits is absent. Its person still belongs
+        # in the hidden count; named rows remain visible even without a portrait.
+        return original(owner, records[:-1], size)
+
+    monkeypatch.setattr(console_renderer, "load_mosaic_avatars", limited)
+    render_console(plugin, data, (800, 480))
+    assert len(batches) == 1 and len(batches[0]) == 8
+    assert len({id(friend) for friend, _url in batches[0]}) == 8
+    assert "6 more…" in [text for _box, text in displayed]
 
 
 def test_overflow_without_avatar_urls_keeps_a_count_instead_of_inventing_portraits(plugin, displayed):
@@ -596,9 +658,10 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-horizontal-friends-v49"
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[0] == "midnight-console-adaptive-friend-mosaic-v48"
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[1:8] == (
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-adaptive-roster-v50"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:2] == (
+        "midnight-console-horizontal-friends-v49", "midnight-console-adaptive-friend-mosaic-v48")
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[2:9] == (
         "midnight-console-whole-avatar-frame-v47",
         "midnight-console-profile-backdrop-v46",
         "midnight-console-game-hue-v45",
@@ -639,7 +702,7 @@ def test_the_page_takes_the_colours_of_the_game_being_played(plugin, data, monke
     other = render_console(plugin, data, (800, 480))
 
     # The panel colour between the friends' tiles follows each game's own hue.
-    gap = (FRIEND_LIST[0] + FRIEND_TILE[0] + 1, 60)
+    gap = (FRIEND_LIST[0] + 1, 50)
     assert abs(_hue(playing.getpixel(gap)) - _hue((200, 40, 30))) < 0.05
     assert abs(_hue(other.getpixel(gap)) - _hue((40, 150, 140))) < 0.05
 

@@ -12,7 +12,8 @@ from PIL import Image, ImageColor, ImageDraw, ImageOps
 from utils.app_utils import get_base_ui_font
 from utils.fonts import load_font
 from .map_view import draw_marker, render_map, source_logo
-from .render import ASSETS, DIRECTIONS, FACILITIES, KINDS, draw_water, paste_sticker, source_label, tide_now
+from .render import ASSETS, FACILITIES, KINDS, draw_water, paste_sticker, source_label, tide_now
+from .direction_plaques import draw_direction
 from .sources import COMPASS, PACIFIC, local_now, next_tides, parse_time, rank_roads, road_state, select_roads
 from .traffic_icons import draw_icon
 
@@ -247,8 +248,8 @@ def roads(page, payload, now):
         page.image.paste(icon, (281, y + 30), icon)
         icon.close()
         page.text((299, y + 31), label, 11, color)
-        direction = DIRECTIONS.get(row.get("direction"), row.get("direction") or "方向未报")
-        page.text((482, y + 32), direction, 11, "muted", align="right", width=90)
+        draw_direction(page, row.get("direction"), right=482, top=y + 25,
+                       interstate=str(row.get("route") or "").startswith("I-"))
         kind = KINDS.get(row.get("kind"), row.get("kind") or "施工")
         facility = FACILITIES.get(row.get("facility"), "")
         if row.get("kind") == "Full" and "匝道" in facility:

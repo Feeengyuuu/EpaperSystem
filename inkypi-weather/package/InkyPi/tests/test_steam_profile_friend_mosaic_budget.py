@@ -220,12 +220,16 @@ def test_friend_panel_without_portrait_urls_never_requests_legacy_media(subject,
     friends = [{"steamid": str(index), "personaname": f"Friend {index}", "personastate": 1}
                for index in range(8)]
     monkeypatch.setattr(subject.plugin, "_avatar_image", lambda *_args, **_kwargs: pytest.fail("Legacy avatar fetch"))
+    monkeypatch.setattr(console_renderer, "load_mosaic_avatars",
+                        lambda *_args, **_kwargs: pytest.fail("No portrait URLs should not start an optional batch"))
     console = _Console(subject.plugin, {"friends": friends, "online_friend_count": 8, "friend_count": 57})
     labels = []
     monkeypatch.setattr(console, "text", lambda _box, text, *_args, **_kwargs: labels.append(text))
     console.friends()
 
-    assert "5 more…" in labels
+    # Missing portrait media must not hide identities that fit in the adaptive grid.
+    assert all(labels.count(friend["personaname"]) == 1 for friend in friends)
+    assert not any("more" in label for label in labels)
     assert subject.clock.now == 100 and subject.clients == [] and subject.calls == []
 
 

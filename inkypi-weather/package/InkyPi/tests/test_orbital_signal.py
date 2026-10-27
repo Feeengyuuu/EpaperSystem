@@ -1189,14 +1189,16 @@ def test_timeline_spaces_launches_evenly_and_labels_the_real_gaps():
     assert abs((centres[1] - centres[0]) - (centres[2] - centres[1])) <= 2
 
 
-def test_market_columns_fill_the_panel_without_the_console_strip():
+@pytest.mark.parametrize("palette", [DAY_PALETTE, NIGHT_PALETTE], ids=["day", "night"])
+def test_market_columns_fill_the_panel_without_the_console_strip(palette):
     from plugins.orbital_signal import orbital_signal as module
+    from plugins.orbital_signal.market_style import market_palette
 
     plugin = OrbitalSignal({"id": PLUGIN_ID})
     draw = RecordingDraw()
     markets = plugin._fixture_payload(NOW)["markets"]
 
-    plugin._draw_markets(draw, (LAUNCH_SPLIT_X, 58, 800, 448), markets, DAY_PALETTE, None)
+    plugin._draw_markets(draw, (LAUNCH_SPLIT_X, 58, 800, 448), markets, palette, None)
 
     # The generated console strip is gone; the columns themselves reach down to the footer.
     assert not hasattr(module, "MARKET_ART_PATH")
@@ -1206,13 +1208,13 @@ def test_market_columns_fill_the_panel_without_the_console_strip():
     questions = [call for call in draw.text_calls if call["text"] in {"WORLD CUP", "WINNER", "NEXT PRIME", "MINISTER"}]
     assert len(questions) == 4
     assert min(call["bbox"][1] for call in questions) >= 58 + ART_TOP + ART_H * (1 - ART_FADE)
-    # Volume, heat and end read as a labelled table at the foot of each column, all in the ink,
+    # Volume, heat and end read as a labelled table at each column's foot, all in the local market ink,
     # clear of the footer's rule.
     facts = [call for call in draw.text_calls if call["xy"][1] >= 58 + FACTS_TOP]
     assert [call["text"] for call in facts if call["text"] in {"VOL", "HEAT", "ENDS"}].count("VOL") == 3
     first_end = datetime.fromisoformat(markets[0]["end_date"].replace("Z", "+00:00"))
     assert {call["text"] for call in facts} >= {"VOL", "HEAT", "ENDS", "$4.6M", f"{first_end:%d %b}".upper()}
-    assert all(call["fill"] == DAY_PALETTE["ink"] for call in facts)
+    assert all(call["fill"] == market_palette(palette)["ink"] for call in facts)
     assert 58 + 360 < max(call["bbox"][3] for call in facts) <= 446
 
 
@@ -1346,8 +1348,8 @@ def test_the_market_columns_draw_cached_team_marks_and_polymarket_logo(tmp_path)
 
     assert (200, 30, 60) in colours((462, 100, 560, 140))
     assert (0, 40, 90) in colours((560, 100, 640, 140))
-    # Polymarket's logo heads the columns in the page's ink.
-    assert tuple(DAY_PALETTE["ink"][:3]) in colours((477, 68, 640, 98))
+    # The monochrome wordmark stays foreground ink over a quiet brand-blue wash.
+    assert (14, 34, 71) in colours((477, 68, 640, 98))
 
 
 @pytest.mark.parametrize("palette", [DAY_PALETTE, NIGHT_PALETTE], ids=["day", "night"])

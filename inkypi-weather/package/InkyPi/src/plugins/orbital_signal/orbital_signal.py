@@ -33,6 +33,7 @@ from utils.app_utils import (
 )
 
 from . import launch_photo
+from .market_style import BRAND_FADE_HEIGHT, market_background_color, market_header_palette, market_palette
 from .sources import _parse_time, _upload_url, _utc, fetch_launches, fetch_market_events
 
 
@@ -1379,22 +1380,30 @@ class OrbitalSignal(BasePlugin):
     def _draw_markets(self, draw, box, markets, palette, family, image=None):
         """MARKET HEAT: three gauge columns reaching down the whole panel."""
         left, top, right, bottom = box
-        draw.rectangle(box, fill=palette["paper"])
+        palette = market_palette(palette)
+        heading = market_header_palette(palette)
+        # The brand treatment is confined to the markets; launch/header/footer keep their palette.
+        draw.rectangle((left, top, right - 1, bottom - 1), fill=palette["paper"])
+        # Keep the brand color behind the information: no hard edge under the logo band.
+        for offset in range(min(BRAND_FADE_HEIGHT, bottom - top)):
+            draw.line((left, top + offset, right - 1, top + offset),
+                      fill=market_background_color(palette, offset))
+        draw.line((left, top, left, bottom - 1), fill=palette["rule"])
         # Polymarket's own logo heads the markets; the lettered title is the fallback.
-        logo = self._polymarket_logo(POLYMARKET_LOGO_HEIGHT, palette) if image is not None else None
+        logo = self._polymarket_logo(POLYMARKET_LOGO_HEIGHT, heading) if image is not None else None
         if logo is not None:
             image.paste(logo, (left + 15, top + 12), logo)
             title_right = left + 15 + logo.width
         else:
             title_font = self._font(23, True, family)
-            draw.text((left + 15, top + 11), "MARKET HEAT", font=title_font, fill=palette["ink"])
+            draw.text((left + 15, top + 11), "MARKET HEAT", font=title_font, fill=heading["ink"])
             title_right = draw.textbbox((left + 15, top + 11), "MARKET HEAT", font=title_font)[2]
             # The bulb starts 3 px left of its origin; keep an 8 px optical gap after the title.
-            self._draw_thermometer(draw, (title_right + 11, top + 8), palette)
+            self._draw_thermometer(draw, (title_right + 11, top + 8), heading)
         note_font, note = self._font(9, True, family), "TOP 3 / 24H VOL"
         note_w = draw.textbbox((0, 0), note, font=note_font)[2]
         if right - 12 - note_w > title_right + 32:
-            draw.text((right - 12 - note_w, top + 22), note, font=note_font, fill=palette["ink"])
+            draw.text((right - 12 - note_w, top + 22), note, font=note_font, fill=heading["ink"])
 
         if not markets:
             draw.text((left + 18, top + 72), "NO MARKET DATA", font=self._font(22, True, family), fill=palette["ink"])

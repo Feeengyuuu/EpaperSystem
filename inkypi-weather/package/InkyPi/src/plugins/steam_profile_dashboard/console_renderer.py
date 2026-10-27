@@ -31,10 +31,9 @@ GREEN = (129, 237, 105)
 STEAM_ONLINE = (87, 203, 222)
 AWAY = (234, 176, 72)
 FRIEND_GAME_ICON = 14
-# The online friends: those in a game first, each a wide row on the game's artwork (at most
-# FRIEND_PLAYING_ROWS), then everyone else as small tiles, FRIEND_COLUMNS to a row, filling
-# FRIEND_LIST; the last tile shows a miniature mosaic of the remaining friends. A tile's avatar is FRIEND_AVATAR,
-# its name FRIEND_NAME_GAP under it; a row's avatar is FRIEND_ROW_AVATAR.
+# In-game friends keep wide artwork rows. The remaining content area adapts:
+# up to three use generous name rows, four to six use an equal two-column grid,
+# and larger populations use a bounded denser grid or a narrow overflow column.
 FRIEND_LIST = (600, 46, 784, 201)
 FRIEND_AVATAR = 38
 FRIEND_ROW_AVATAR = 32
@@ -581,20 +580,22 @@ class _Console:
                          key=lambda friend: (self.plugin._friend_presence_rank(friend),
                                              self.plugin._friend_display_id(friend).casefold()))
         if not friends:
-            message = "好友列表暂不可用" if data.get("friend_count") is None else "目前没有在线好友"
+            unavailable = data.get("friend_count") is None or _number(data.get("online_friend_count")) > 0
+            message = "好友列表暂不可用" if unavailable else "目前没有在线好友"
             self.text((607, 110, 780, 148), message, 15, self.c["muted"], lines=2)
             return
         playing = [friend for friend in friends if friend.get("gameid") or friend.get("gameextrainfo")]
         rows = playing[:FRIEND_PLAYING_ROWS]
         rest = [friend for friend in friends if friend not in rows]
-        primary = rest[:3]
+        total = max(len(friends), _number(data.get("online_friend_count")))
+        plan = self._friend_layout(rows, rest, total)
+        primary = rest[:plan["capacity"]]
         mini = [(friend, friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar"))
-                for friend in rest[3:]]
-        mini = [(friend, url) for friend, url in mini if url][:3]
+                for friend in rest[len(primary):]] if plan["mode"] == "overflow" else []
+        mini = [(friend, url) for friend, url in mini if url][:min(3, 9 - len(rows) - len(primary))]
         records = [(friend, friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar"))
                    for friend in rows + primary]
         records = [(friend, url) for friend, url in records if url] + mini
-        total = max(len(friends), _number(data.get("online_friend_count")))
         overflow = max(0, total - len(rows) - len(primary))
         # Fetch all game media first, then share one optional 8s budget across every
         # visible friend's portrait. Drawing never falls back to the legacy 25s fetch.
@@ -610,57 +611,118 @@ class _Console:
                 if appid and appid not in game_icons:
                     icon = self.plugin._game_square_icon(data, appid, FRIEND_GAME_ICON)
                     game_icons[appid] = retain(icon)
-            for friend in rows:
+            for friend in rows + primary:
                 appid = _appid(friend.get("gameid"))
                 if appid and appid not in backgrounds:
                     source = self.plugin._game_background(data, appid, (FRIEND_LIST[2] - FRIEND_LIST[0], FRIEND_PLAYING_H))
                     backgrounds[appid] = retain(source)
             portraits = {id(friend): retain(avatar)
                          for friend, avatar in load_mosaic_avatars(self.plugin, records, 46)} if records else {}
-            self._friends_content(rows, primary, mini, overflow, game_icons, backgrounds, portraits)
+            self._friends_content(rows, primary, mini, overflow, game_icons, backgrounds, portraits, plan)
 
-    def _friends_content(self, rows, primary, mini, overflow, game_icons, backgrounds, portraits):
+    def _friend_layout(self, rows, rest, total):
+        """Prefer legible equal-size cells before relegating real people to overflow."""
+        top = FRIEND_LIST[1] + len(rows) * (FRIEND_PLAYING_H + FRIEND_GAP)
+        height = FRIEND_LIST[3] - top
+        remaining = max(len(rest), total - len(rows))
+        if len(rows) and remaining > (6 if len(rows) == 1 else 4):
+            return {"mode": "overflow", "capacity": max(1, height // 24), "top": top, "columns": 1}
+        if remaining <= 3:
+            return {"mode": "rows", "capacity": 3, "top": top, "columns": 1}
+        # Long remarks earn a full-width row when most would be shortened in an
+        # equal two-column grid. Normal short names get visibly larger portraits.
+        if not rows and remaining <= 6:
+            font = self.plugin._font(9, bold=True)
+            long_names = sum(self.draw.textlength(self.plugin._friend_display_id(f), font=font) > 84 for f in rest)
+            if long_names > len(rest) / 2:
+                return {"mode": "rows", "capacity": 6, "top": top, "columns": 1}
+        columns = 2 if remaining <= 6 else 3
+        return {"mode": "grid", "capacity": 9 - len(rows), "top": top, "columns": columns}
+
+    def _friends_content(self, rows, primary, mini, overflow, game_icons, backgrounds, portraits, plan):
         for index, friend in enumerate(rows):
             self._playing_friend(friend, FRIEND_LIST[1] + index * (FRIEND_PLAYING_H + FRIEND_GAP),
                                  game_icons, backgrounds, portraits)
-        top = FRIEND_LIST[1] + len(rows) * (FRIEND_PLAYING_H + FRIEND_GAP)
-        if overflow:
-            avatar_y = top + (FRIEND_LIST[3] - top - 48) // 2
+        top, bottom = plan["top"], FRIEND_LIST[3]
+        if plan["mode"] == "grid" and primary:
+            columns = plan["columns"]
+            row_count = math.ceil(len(primary) / columns)
+            footer = 14 if overflow else 0
+            row_height = (bottom - top - footer) / row_count
+            cell_width = (FRIEND_LIST[2] - FRIEND_LIST[0]) / columns
             for index, friend in enumerate(primary):
-                left = FRIEND_LIST[0] + index * 43
-                self._friend_ring(friend, left + 5, avatar_y, 32, portraits=portraits)
-                self.text((left + 1, avatar_y + 37, left + 42, avatar_y + 49),
-                          self.plugin._friend_display_id(friend), 10, WHITE, bold=True, min_size=9, align="center")
-            self._friend_fan(mini, overflow, avatar_y, portraits)
-        elif primary:
-            size = 46 if len(primary) == 1 else 42 if len(primary) == 2 else 38
-            gap = 24 if len(primary) == 2 else 19
-            width = len(primary) * size + max(0, len(primary) - 1) * gap
-            left = FRIEND_LIST[0] + (FRIEND_LIST[2] - FRIEND_LIST[0] - width) // 2
-            y = top + (FRIEND_LIST[3] - top - size - 17) // 2
+                row, column = divmod(index, columns)
+                box = (round(FRIEND_LIST[0] + column * cell_width), round(top + row * row_height),
+                       round(FRIEND_LIST[0] + (column + 1) * cell_width) - 2,
+                       round(top + (row + 1) * row_height) - 1)
+                self._friend_grid_cell(friend, box, game_icons, backgrounds, portraits)
+            if overflow:
+                self.text((FRIEND_LIST[0], bottom - 13, FRIEND_LIST[2], bottom), f"{overflow} more…", 10,
+                          self.c["muted"], min_size=9, align="right")
+        else:
+            right = 730 if plan["mode"] == "overflow" else FRIEND_LIST[2]
+            row_height = (bottom - top) / max(1, len(primary))
             for index, friend in enumerate(primary):
-                x = left + index * (size + gap)
-                self._friend_ring(friend, x, y, size, portraits=portraits)
-                self.text((x - 8, y + size + 5, x + size + 8, y + size + 17),
-                          self.plugin._friend_display_id(friend), 11, WHITE, bold=True, min_size=9, align="center")
+                box = (FRIEND_LIST[0], round(top + index * row_height), right,
+                       round(top + (index + 1) * row_height) - 1)
+                self._friend_roster_row(friend, box, game_icons, backgrounds, portraits)
+            if plan["mode"] == "overflow":
+                self._friend_overflow_column(mini, overflow, top, portraits)
 
-    def _friend_fan(self, records, remaining, avatar_y, portraits):
-        """Three real miniature portraits; the label counts every person not shown."""
+    def _friend_roster_row(self, friend, box, game_icons, backgrounds, portraits):
+        left, top, right, bottom = box
+        if friend.get("gameid") or friend.get("gameextrainfo"):
+            return self._playing_friend(friend, top, game_icons, backgrounds, portraits, box=box)
+        height = bottom - top
+        size = min(46, max(18, height - 8))
+        x, y = left + 3, top + (height - size) // 2
+        self._friend_ring(friend, x, y, size, portraits=portraits)
+        text_x = x + size + 9
+        name = self.plugin._friend_display_id(friend)
+        status, _colour = self.plugin._persona_text(friend)
+        if height >= 35:
+            middle = (top + bottom) // 2
+            self.text((text_x, middle - 17, right - 3, middle + 2), name, 13, WHITE, bold=True, min_size=10)
+            self.text((text_x, middle + 3, right - 3, middle + 17), status, 10, self.c["muted"], min_size=9)
+        else:
+            show_status = right - left >= 160
+            self.text((text_x, top + 2, right - (30 if show_status else 3), bottom - 1), name,
+                      11, WHITE, bold=True, min_size=9)
+            if show_status:
+                self.text((right - 27, top + 2, right - 2, bottom - 1), status, 9,
+                          self.c["muted"], min_size=9, align="right")
+
+    def _friend_grid_cell(self, friend, box, game_icons, backgrounds, portraits):
+        left, top, right, bottom = box
+        if friend.get("gameid") or friend.get("gameextrainfo"):
+            return self._playing_friend(friend, top, game_icons, backgrounds, portraits, box=box)
+        height = bottom - top
+        size = min(46, max(18, height - 19))
+        x, y = (left + right - size) // 2, top + max(3, (height - size - 14) // 2)
+        self._friend_ring(friend, x, y, size, portraits=portraits)
+        self.text((left + 2, y + size + 3, right - 1, bottom), self.plugin._friend_display_id(friend),
+                  11 if right - left >= 80 else 10, WHITE, bold=True, min_size=9, align="center")
+
+    def _friend_overflow_column(self, records, remaining, top, portraits):
+        """Use the right-hand height for real small portraits and an exact hidden count."""
         shown = [friend for friend, _url in records if id(friend) in portraits]
-        size = 22 if len(shown) <= 1 else 20 if len(shown) == 2 else 18
-        step = 15 if len(shown) == 3 else size + 2
-        width = size + max(0, len(shown) - 1) * step
-        left = 732 + (51 - width) // 2
-        y = avatar_y + (32 - size) // 2 + 2
-        for index, friend in enumerate(shown):
-            x = left + index * step
-            self.draw.ellipse((x - 1, y - 1, x + size, y + size), fill=self.c["panel"])
-            self._paste_friend_portrait(friend, x, y, size, portraits)
-            self.draw.ellipse((x, y, x + size - 1, y + size - 1),
-                              outline=self._friend_ring_colour(friend), width=1)
         hidden = max(0, remaining - len(shown))
+        available = FRIEND_LIST[3] - top - (14 if hidden else 0)
+        size = min(32, max(12, (available - max(0, len(shown) - 1) * 4 - 6) // max(1, len(shown))))
+        group_height = len(shown) * size + max(0, len(shown) - 1) * 4
+        left = 733 + (51 - size) // 2
+        start = top + (available - group_height) // 2
+        for index, friend in enumerate(shown):
+            y = start + index * (size + 4)
+            self._paste_friend_portrait(friend, left, y, size, portraits)
+            if friend.get("gameid") or friend.get("gameextrainfo"):
+                # In-game portraits have no green circular rim, including overflow.
+                self.draw.rectangle((left + size - 3, y + size - 3, left + size - 1, y + size - 1), fill=GREEN)
+            else:
+                self.draw.ellipse((left, y, left + size - 1, y + size - 1),
+                                  outline=self._friend_ring_colour(friend), width=1)
         if hidden:
-            self.text((730, avatar_y + 37, 784, avatar_y + 50), f"{hidden} more…", 10,
+            self.text((732, FRIEND_LIST[3] - 13, 784, FRIEND_LIST[3]), f"{hidden} more…", 10,
                       self.c["muted"], min_size=9, align="center")
 
     @staticmethod
@@ -690,10 +752,14 @@ class _Console:
                 finally:
                     avatar.close()
 
-    def _playing_friend(self, friend, y, game_icons, backgrounds, portraits):
+    def _playing_friend(self, friend, y, game_icons, backgrounds, portraits, *, box=None):
         """The portrait opens into its game's artwork; the far edge stays square."""
         x, right = FRIEND_LIST[0], FRIEND_LIST[2]
-        width, height = right - x, FRIEND_PLAYING_H
+        height = FRIEND_PLAYING_H
+        if box is not None:
+            x, y, right, bottom = box
+            height = bottom - y
+        width = right - x
         appid = friend.get("gameid")
         source = backgrounds.get(_appid(appid))
         with ExitStack() as owned:
@@ -711,18 +777,24 @@ class _Console:
             pen.rectangle((height * 2, 0, width * 4 - 1, height * 4 - 1), fill=255)
             fitted_mask = owned.enter_context(mask.resize((width, height), Image.Resampling.LANCZOS))
             self.image.paste(art, (x, y), fitted_mask)
-        self._paste_friend_portrait(friend, x + 3, y + 3, FRIEND_ROW_AVATAR, portraits)
-        self.text((x + 43, y + 1, right - 8, y + 19), self.plugin._friend_display_id(friend),
-                  13, WHITE, bold=True, min_size=11)
+        portrait_size = min(FRIEND_ROW_AVATAR, max(16, height - 6), max(16, width // 3 - 6))
+        avatar_y = y + (height - portrait_size) // 2
+        self._paste_friend_portrait(friend, x + 3, avatar_y, portrait_size, portraits)
+        text_x = x + portrait_size + 11
+        half = min(19, height // 2)
+        self.text((text_x, y + 1, right - 5, y + half), self.plugin._friend_display_id(friend),
+                  13 if width >= 150 else 11, WHITE, bold=True, min_size=9)
         name = self.plugin._display_game_name(self.data, appid, friend.get("gameextrainfo"))
         icon = game_icons.get(_appid(appid))
-        text_x = x + 43
+        icon_size = min(FRIEND_GAME_ICON, max(9, height - half - 5))
+        game_y = y + half + 1
         if icon is not None:
-            self.draw.rounded_rectangle((text_x - 1, y + 20, text_x + FRIEND_GAME_ICON, y + 35),
+            self.draw.rounded_rectangle((text_x - 1, game_y, text_x + icon_size, game_y + icon_size + 1),
                                         radius=2, fill=self.c["navy"], outline=GREEN, width=1)
-            self.image.paste(icon, (text_x, y + 21), icon if icon.mode == "RGBA" else None)
-            text_x += FRIEND_GAME_ICON + 4
-        self.text((text_x, y + 20, right - 7, y + 36), name or "游戏中", 10, WHITE, bold=False, min_size=9)
+            with icon.resize((icon_size, icon_size), Image.Resampling.LANCZOS) as small:
+                self.image.paste(small, (text_x, game_y + 1), small if small.mode == "RGBA" else None)
+            text_x += icon_size + 4
+        self.text((text_x, game_y, right - 4, y + height - 2), name or "游戏中", 10, WHITE, bold=False, min_size=9)
 
     def _friend_tile(self, friend, x, y, game_icons, hidden):
         """A friend as a small tile on the panel itself: the ringed avatar over the name (a game's
