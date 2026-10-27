@@ -430,15 +430,17 @@ def test_overflow_mosaic_uses_only_remaining_avatar_records_inside_one_avatar_sl
     assert bounds and 720 <= bounds[0] < bounds[2] <= 758 and 140 <= bounds[1] < bounds[3] <= 178
 
 
-def test_overflow_mosaic_keeps_the_first_five_names_and_hides_extra_names(plugin, data, displayed):
-    data["friends"] = [{"steamid": str(index), "personaname": f"Friend {index}", "personastate": 1,
-                        "avatarfull": f"cached-avatar-{index}"} for index in range(8)]
-    data["online_friend_count"] = 8
+@pytest.mark.parametrize("count", [8, 15])
+def test_overflow_mosaic_keeps_the_first_five_names_and_hides_extra_names(plugin, data, displayed, count):
+    data["friends"] = [{"steamid": str(index), "personaname": f"Friend {index:02}", "personastate": 1,
+                        "avatarfull": f"cached-avatar-{index}"} for index in range(count)]
+    data["online_friend_count"] = count
     render_console(plugin, data, (800, 480))
     labels = [text for _box, text in displayed]
-    assert all(f"Friend {index}" in labels for index in range(5))
-    assert all(f"Friend {index}" not in labels for index in range(5, 8))
-    assert "+3" not in labels and "更多在线" in labels
+    assert all(f"Friend {index:02}" in labels for index in range(5))
+    assert all(f"Friend {index:02}" not in labels for index in range(5, count))
+    assert "+3" not in labels and "更多在线" not in labels
+    assert ("+1" in labels) == (count == 15)
 
 
 def test_overflow_without_avatar_urls_keeps_a_count_instead_of_inventing_portraits(plugin, displayed):
@@ -446,7 +448,7 @@ def test_overflow_without_avatar_urls_keeps_a_count_instead_of_inventing_portrai
     console._friend_tile(None, 710, 140, {}, [{"personaname": "Hidden"}] * 3)
     assert not plugin.asset_calls
     labels = [text for _box, text in displayed]
-    assert "+3" in labels and "Hidden" not in labels
+    assert "+3" in labels and "Hidden" not in labels and "更多在线" not in labels
 
 
 def test_official_asset_budget_covers_main_panels_and_four_friend_games(tmp_path):

@@ -649,14 +649,15 @@ class _Console:
         avatar_x, avatar_y = x + (width - FRIEND_AVATAR) // 2, y + 1
         name_box = (x + 2, avatar_y + FRIEND_AVATAR + FRIEND_NAME_GAP, x + width - 2, y + height)
         if friend is None:
-            shown = self._friend_mosaic(hidden, avatar_x, avatar_y)
+            # Without a name beneath it, lower the group slightly within the same tile.
+            shown = self._friend_mosaic(hidden, avatar_x, avatar_y + 4)
             if not shown:
                 self.draw.ellipse((avatar_x, avatar_y, avatar_x + FRIEND_AVATAR, avatar_y + FRIEND_AVATAR),
                                   outline=self.c["accent"], width=2)
                 self.text((avatar_x, avatar_y, avatar_x + FRIEND_AVATAR, avatar_y + FRIEND_AVATAR), f"+{len(hidden)}", 15,
                           self.c["accent"], bold=True, align="center")
-            caption = f"+{len(hidden) - shown} 在线" if shown and shown < len(hidden) else "更多在线"
-            self.text(name_box, caption, 10, self.c["muted"], align="center")
+            if shown and shown < len(hidden):
+                self.text(name_box, f"+{len(hidden) - shown}", 10, self.c["muted"], align="center")
             return
         self._friend_ring(friend, avatar_x, avatar_y)
         icon = game_icons.get(_appid(friend.get("gameid")))
