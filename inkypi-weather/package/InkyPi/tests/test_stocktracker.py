@@ -840,6 +840,31 @@ def _trend_panel(values, theme_context=None):
     return image, colors
 
 
+@pytest.mark.parametrize("values, expected", [
+    ([260000, 270000, 265000], "RANGE $10.0K  ·  -1.85% FROM HIGH"),
+    ([265000, 265000, 265000], "RANGE $0  ·  +0.00% FROM HIGH"),
+    ([0, 0], "RANGE $0"),
+])
+def test_detailed_trend_context_uses_only_the_drawn_window_and_fits_between_dates(monkeypatch, values, expected):
+    plugin = StockTracker({"id": "stocktracker"})
+    image = Image.new("RGB", (800, 480))
+    draw = ImageDraw.Draw(image)
+    texts = []
+    original = draw.text
+
+    def record(xy, text, **kwargs):
+        texts.append((text, draw.textbbox(xy, text, font=kwargs["font"])))
+        return original(xy, text, **kwargs)
+
+    monkeypatch.setattr(draw, "text", record)
+    plugin._draw_sparkline(image, draw, (328, 48, 784, 186), values, window_label="1M",
+                          date_range=(datetime(2026, 9, 25), datetime(2026, 10, 27)), extremes=True)
+    assert any(text == f"START ${values[0]:,.0f}" for text, _box in texts)
+    [box] = [box for text, box in texts if text == expected]
+    assert 400 <= box[0] < box[2] <= 712
+    assert 174 <= box[1] < box[3] <= 186
+
+
 def test_trend_panel_splits_gain_and_loss_around_the_start_baseline():
     image, colors = _trend_panel(DIP_THEN_RISE)
     # Plot inner box (328, 106, 750, 186); the start value 100 sits at y=152.
