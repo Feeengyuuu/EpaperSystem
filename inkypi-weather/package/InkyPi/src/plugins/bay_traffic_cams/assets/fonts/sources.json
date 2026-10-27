@@ -1,0 +1,17 @@
+{
+  "purpose": "English guide-sign and cardinal-direction legends; Roadgeek is a third-party digital recreation, not an FHWA or Caltrans issued font file.",
+  "family": "Roadgeek 2014",
+  "upstream": "https://github.com/sammdot/roadgeek-fonts",
+  "release": "3.1",
+  "archive": "https://github.com/sammdot/roadgeek-fonts/releases/download/3.1/RG2014-3.10.zip",
+  "license": "MIT",
+  "license_revision": "c0fa597a91fcb69eb752b192d23291b28cbfa0eb",
+  "license_url": "https://raw.githubusercontent.com/sammdot/roadgeek-fonts/c0fa597a91fcb69eb752b192d23291b28cbfa0eb/LICENSE",
+  "provenance_note": "The author's subsequent licensing commit changes LICENSE and README only; release 3.1 font sources are unchanged. The original released TTF bytes are bundled with the author-published license.",
+  "files": {
+    "RG2014EM.ttf": {"series": "E Modified", "use": "Mixed-case place and street names", "sha256": "dd0896a980bd6ce4e95a77cc0d968fb7c8f68e0bff38af3ea18a53acce12ba2e"},
+    "RG2014D.ttf": {"series": "D", "use": "Compact secondary camera street names", "sha256": "7bcef1f46d35a9c640d5d7547d48f0e908ea122d982faf7c31f68686fedcfa98"},
+    "RG2014C.ttf": {"series": "C", "use": "Cardinal direction plaques", "sha256": "63636995109d3456f54cf3871cb77fd5cada7533925f71870577ec33a400d01e"},
+    "LICENSE.txt": {"sha256": "080b7df73bbc27e102dd0bddc5aa7242b84adf677b3dd47d6d94a6e0e24a70de"}
+  }
+}
