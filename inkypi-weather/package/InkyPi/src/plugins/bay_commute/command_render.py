@@ -7,9 +7,10 @@ from functools import lru_cache
 import math
 from pathlib import Path
 
-from PIL import Image, ImageColor, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageColor, ImageDraw, ImageOps
 
 from utils.app_utils import get_base_ui_font
+from utils.fonts import load_font
 from .map_view import draw_marker, render_map, source_logo
 from .render import ASSETS, DIRECTIONS, FACILITIES, KINDS, draw_water, paste_sticker, source_label, tide_now
 from .sources import COMPASS, PACIFIC, local_now, next_tides, parse_time, rank_roads, road_state, select_roads
@@ -33,14 +34,14 @@ def font(size, role="body", bold=True):
     if role == "number":
         path = PLUGIN_ROOT / "flight_radar/assets/fonts" / ("Inter-Bold.ttf" if bold else "Inter-SemiBold.ttf")
         try:
-            return ImageFont.truetype(str(path), size)
+            return load_font(path, size)
         except OSError:
             pass
     if role == "road":
         path = PLUGIN_ROOT / "bay_traffic_cams/assets/fonts/RG2014D.ttf"
         try:
             for em in range(size, size * 2 + 1):
-                face = ImageFont.truetype(str(path), em)
+                face = load_font(path, em)
                 box = face.getbbox("H")
                 if box[3] - box[1] >= size:
                     return face
