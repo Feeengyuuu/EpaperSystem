@@ -84,6 +84,9 @@ def plugin(monkeypatch):
     monkeypatch.setattr(plugin, "_game_square_icon", icon)
     monkeypatch.setattr(plugin, "_avatar_image", avatar)
     monkeypatch.setattr(plugin, "_profile_avatar_image", avatar, raising=False)
+    monkeypatch.setattr(console_renderer, "load_mosaic_avatars", lambda owner, records, size: [
+        (friend, owner._avatar_image(url, size, decorative_outline=False)) for friend, url in records
+    ])
     return plugin
 
 
