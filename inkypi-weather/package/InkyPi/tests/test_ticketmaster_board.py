@@ -182,7 +182,11 @@ def test_dense_slip_preserves_distance_age_and_sale_state_without_overlapping(mo
     title_box = next(box for text, box in calls if text.startswith("An exceptionally long artist"))
     place_box = next(box for text, box in calls if text.endswith("123.4 mi"))
     fact_box = next(box for text, box in calls if text == "21+")
-    assert title_box[3] <= place_box[1] and place_box[3] <= fact_box[1]
+    assert title_box[3] < place_box[1]
+    assert abs(place_box[1] - fact_box[1]) <= 1
+    facts = [box for text, box in calls if text in {"改期", "10/28 开售", "21+", "巡演"}]
+    assert all(place_box[2] + 8 <= box[0] for box in facts)
+    assert all(left[2] + 8 <= right[0] for left, right in zip(facts, facts[1:]))
 
 
 @pytest.mark.parametrize("marker", ["(SOLD OUT)", "[ sold out ]"])
@@ -212,3 +216,23 @@ def test_explicit_sold_out_title_wins_over_conflicting_onsale_zero_price_metadat
 def test_sold_out_is_not_guessed_from_loose_title_words(title):
     plugin = TicketmasterEvents({"id": "ticketmaster_events"})
     assert plugin._slip_facts(event(title=title, status="onsale"), NOW) == []
+
+
+@pytest.mark.parametrize("status, label", [("postponed", "延期"), ("rescheduled", "改期")])
+def test_featured_date_change_is_not_hidden_by_a_sold_out_title(status, label):
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({})
+    image = Image.new("RGB", (800, 480), colors["paper"])
+    draw = ImageDraw.Draw(image)
+    labels = []
+    original_text = draw.text
+
+    def record_text(position, text, **kwargs):
+        labels.append(text)
+        original_text(position, text, **kwargs)
+
+    draw.text = record_text
+    show = event(title="Artist (SOLD OUT)", status=status, price="From $0")
+    plugin._draw_featured(image, draw, show, NOW.date(), colors)
+    assert label in labels and "售票中" not in labels and "免费" not in labels
+    assert plugin._slip_facts(show, NOW)[:2] == [(label, True), ("售罄", True)]

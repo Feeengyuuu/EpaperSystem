@@ -105,11 +105,12 @@ def age_notice(text):
         return ""
     return "全龄" if match.group(3) else f"{match.group(1) or match.group(2)}+"
 LIST = (336, CARD_TOP, 800 - MARGIN, CARD_BOTTOM)
-# Seven rows keep a consistent time column, a poster/type tile, and three text tiers.
+# Seven rows keep a consistent time column, a poster/type tile, and two spacious text lines.
 ROW_H, LIST_ROWS = 47, 7
 SLIP_TOP, SLIP_H = 28, 45
 THUMB = (52, 29)
 STICKER = 21
+SLIP_PLACE_MIN, SLIP_FACT_GAP = 72, 8
 WEEK_BAND = (MARGIN, 428, 800 - MARGIN, 474)
 # The page backdrop: the featured poster blurred at a small size, laid over the paper at this
 # strength (day, night); the cards frost it back by CARD_FROST.
@@ -370,7 +371,10 @@ class WeekPageMixin:
         if tour >= 5:
             tags.append((f"巡演 {tour} 场", colors["outline"], colors["paper"]))
         sold_out = bool(SOLD_OUT_NOTICE.search(event.title or ""))
-        status = "售罄" if sold_out else STATUS_LABELS.get((event.status or "onsale").lower(), (event.status or "").upper())
+        source_status = (event.status or "onsale").lower()
+        status = STATUS_LABELS.get(source_status, (event.status or "").upper())
+        if sold_out and source_status in {"onsale", "offsale"}:
+            status = "售罄"
         if status:
             tags.append((status, colors.get("status_chip", colors["chip"]), colors.get("status_ink", colors["chip_ink"])))
         tag_x = px1 - 8
@@ -536,7 +540,7 @@ class WeekPageMixin:
             draw.text((x0, y0 + 40), "近期没有更多活动", fill=colors["muted"], font=self._font(15, bold=True))
 
     def _draw_slip(self, image, draw, event, box, day_text, colors, now):
-        """Time, poster/type tile, then title, location and buying facts in separate tiers."""
+        """Time and type beside the title; location, full distance and facts on the second line."""
         sx0, sy0, sx1, sy1 = box
         kind_colour = self._event_color(event, colors)
         draw.rectangle(box, fill=colors["paper"])
@@ -565,35 +569,39 @@ class WeekPageMixin:
         text_x, right = tile_right + 9, sx1 - 3
         # The title has the full text-column width; prices no longer shorten the artist name.
         title_font = self._font(15, bold=True)
-        draw.text((text_x, sy0), self._fit_text(draw, event.title, title_font, right - text_x),
+        draw.text((text_x, sy0 + 3), self._fit_text(draw, event.title, title_font, right - text_x),
                   fill=colors["ink"], font=title_font)
-        # Place and distance get their own line. Distance stays complete when a venue is long.
+        # Reserve the complete distance and important facts before fitting the venue.
         meta_font = self._font(11, bold=True)
         distance = f" · {event.distance}" if event.distance else ""
-        room = right - text_x - draw.textlength(distance, font=meta_font)
-        place = self._place_line(event)
-        if draw.textlength(place, font=meta_font) > room:
-            place = event.venue_name or place
-        draw.text((text_x, sy0 + 17), self._fit_text(draw, place, meta_font, max(room, 10)) + distance, fill=colors["muted"],
-                  font=meta_font)
-        # Buying facts occupy a quiet third line, with warnings kept ahead of price/tour data.
+        distance_w = draw.textlength(distance, font=meta_font)
         facts = self._slip_facts(event, now)
         price = "" if SOLD_OUT_NOTICE.search(event.title or "") else price_label(event.price, lowest=True)
         if price:
-            position = next((index for index, (_text, alarm) in enumerate(facts) if not alarm), len(facts))
-            facts.insert(position, (price, False))
+            facts.append((price, False))
         if not facts and (event.status or "").lower() == "onsale":
             facts.append(("售票中", False))
-        x, y = text_x, sy0 + 31
+        shown, facts_w = [], 0
         for text, alarm in facts:
             fact_w = draw.textlength(text, font=meta_font) + 8
-            if x + fact_w > right:
+            if distance_w + SLIP_PLACE_MIN + facts_w + SLIP_FACT_GAP + fact_w > right - text_x:
                 break
+            shown.append((text, alarm, fact_w))
+            facts_w += SLIP_FACT_GAP + fact_w
+        room = right - text_x - distance_w - facts_w
+        place = self._place_line(event)
+        if draw.textlength(place, font=meta_font) > room:
+            place = event.venue_name or place
+        location = self._fit_text(draw, place, meta_font, max(room, 10)) + distance
+        y = sy0 + 25
+        draw.text((text_x, y), location, fill=colors["muted"], font=meta_font)
+        x = text_x + draw.textlength(location, font=meta_font) + SLIP_FACT_GAP
+        for text, alarm, fact_w in shown:
             fill = colors["accent"] if alarm else self._blend(colors["paper"], kind_colour, 0.12)
             fact_ink = chip_ink(fill, colors)
-            draw.rounded_rectangle((x, y, x + fact_w, y + 12), radius=2, fill=fill)
-            draw.text((x + 4, y - 1), text, fill=fact_ink, font=meta_font)
-            x += fact_w + 4
+            draw.rounded_rectangle((x, y - 1, x + fact_w, y + 12), radius=2, fill=fill)
+            draw.text((x + 4, y), text, fill=fact_ink, font=meta_font)
+            x += fact_w + SLIP_FACT_GAP
 
     def _slip_facts(self, event, now):
         """[(text, alarm)] to know before buying, most important first: a sale stopped or a date
@@ -604,11 +612,11 @@ class WeekPageMixin:
         # Some public listings retain onsale/$0 metadata after their title is marked SOLD OUT.
         # Only the explicit bracketed marker takes priority; an artist/title word never does.
         sold_out = bool(SOLD_OUT_NOTICE.search(event.title or ""))
-        if sold_out:
-            facts.append(("售罄", True))
         status = (event.status or "").lower()
         if status in STATUS_LABELS and status != "onsale":
             facts.append((STATUS_LABELS[status], True))
+        if sold_out:
+            facts.append(("售罄", True))
         sale = self._parse_datetime(extra.get("sale_start")) if extra.get("sale_start") else None
         if not sold_out and sale and now and sale > now:
             facts.append((f"{sale.astimezone(now.tzinfo):%m/%d} 开售" if now.tzinfo else f"{sale:%m/%d} 开售", False))
