@@ -83,6 +83,14 @@ def is_runtime_plugin_cache(path: PurePath) -> bool:
     )
 
 
+def is_device_owned_score_font(path: PurePath) -> bool:
+    """Owner fonts are not redistributable package assets, even if misplaced."""
+    return path.name.casefold() in {
+        f"sports-{league}-score.{extension}"
+        for league in ("nba", "wnba") for extension in ("ttf", "otf", "woff2")
+    }
+
+
 def is_runtime_display_image(path: PurePath) -> bool:
     """Return whether a member belongs to mutable display runtime state."""
 
@@ -132,6 +140,7 @@ def build_release_archive(
                 continue
             if (
                 is_device_owned_yahei_font(relative)
+                or is_device_owned_score_font(relative)
                 or is_runtime_plugin_cache(relative)
                 or is_runtime_display_image(relative)
             ):

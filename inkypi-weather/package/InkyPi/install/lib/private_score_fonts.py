@@ -1,0 +1,197 @@
+"""Validate and atomically install one owner-supplied, device-only score font.
+
+The installed updater invokes this fixed helper with the current release's
+Python. Font bytes arrive on stdin, never in the release archive or a transport
+file. There are no configurable destination paths or replacement operations.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import stat
+import sys
+
+MAX_BYTES = 2 * 1024 * 1024
+FONT_DIRECTORY = Path("/var/lib/inkypi/data/fonts")
+FONT_NAMES = frozenset(
+    f"sports-{league}-score.{extension}"
+    for league in ("nba", "wnba") for extension in ("ttf", "otf", "woff2")
+)
+MAGIC = {".ttf": b"\x00\x01\x00\x00", ".otf": b"OTTO", ".woff2": b"wOF2"}
+
+
+class PrivateFontError(RuntimeError):
+    """A private font could not be verified or safely installed."""
+
+
+def require(condition, message):
+    if not condition:
+        raise PrivateFontError(message)
+
+
+def validate_request(name, sha256, size):
+    require(name in FONT_NAMES, "only fixed NBA/WNBA score font names are allowed")
+    require(isinstance(sha256, str) and re.fullmatch(r"[0-9a-f]{64}", sha256), "invalid font SHA256")
+    require(isinstance(size, int) and not isinstance(size, bool) and 0 < size <= MAX_BYTES,
+            "font must contain 1 through 2097152 bytes")
+
+
+def validate_font(payload: bytes, name: str, sha256: str, size: int) -> dict:
+    """Inspect original font metadata and distinct visible digits with Pillow."""
+    from PIL import ImageFont
+
+    validate_request(name, sha256, size)
+    require(len(payload) == size, "font byte count differs from the declared size")
+    require(hashlib.sha256(payload).hexdigest() == sha256, "font SHA256 mismatch")
+    require(payload[:4] == MAGIC[Path(name).suffix], "font format does not match its extension")
+    try:
+        font = ImageFont.truetype(io.BytesIO(payload), 32)
+        family, style = font.getname()
+        require(bool(family.strip()) and bool(style.strip()), "font metadata is missing")
+        for char in "0123456789-":
+            box = font.getbbox(char)
+            require(0 < box[2] - box[0] <= 256 and 0 < box[3] - box[1] <= 256,
+                    "score glyph has invalid or excessive bounds")
+        missing = bytes(font.getmask(chr(0x10FFFF)))
+        digits = [bytes(font.getmask(char)) for char in "0123456789"]
+        require(all(mask and any(mask) and mask != missing for mask in digits),
+                "font does not contain readable digits 0123456789")
+        require(len(set(digits)) == 10, "font digit glyphs are not distinct")
+        dash = bytes(font.getmask("-"))
+        require(dash and any(dash) and dash != missing, "font has no readable score separator")
+        bounds = font.getbbox("0123456789")
+        require(bounds[2] > bounds[0] and bounds[3] > bounds[1], "font digits have no visible bounds")
+    except (OSError, ValueError) as error:
+        raise PrivateFontError("Pillow cannot read this raw font") from error
+    return {"family": family, "style": style, "digits": "0123456789", "digit_bbox": list(bounds)}
+
+
+def _open_directory(path):
+    """Walk every component using O_NOFOLLOW, including the mutable data parent."""
+    require(path.is_absolute(), "font directory must be absolute")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    descriptor = os.open(os.sep, flags)
+    try:
+        for component in path.parts[1:]:
+            require(component not in {"", ".", ".."}, "unsafe directory component")
+            following = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = following
+        return descriptor
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _directory_identity(descriptor):
+    info = os.fstat(descriptor)
+    return info.st_dev, info.st_ino
+
+
+def _verify_directory(descriptor, gid):
+    info = os.fstat(descriptor)
+    require(stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and info.st_gid == gid
+            and stat.S_IMODE(info.st_mode) == 0o750,
+            "font directory must already be root:inkypi with mode 0750")
+    reopened = _open_directory(FONT_DIRECTORY)
+    try:
+        require(_directory_identity(reopened) == _directory_identity(descriptor),
+                "font directory changed during installation")
+    finally:
+        os.close(reopened)
+
+
+def _existing_font(descriptor, name, sha256, gid):
+    alternatives = FONT_NAMES - {name}
+    stem = name.rsplit(".", 1)[0]
+    for alternative in sorted(alternatives):
+        if alternative.rsplit(".", 1)[0] != stem:
+            continue
+        try:
+            os.stat(alternative, dir_fd=descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        raise PrivateFontError("another format already exists for this league; owner review required")
+    try:
+        member = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+    except FileNotFoundError:
+        return False
+    try:
+        info = os.fstat(member)
+        require(stat.S_ISREG(info.st_mode) and info.st_size <= MAX_BYTES,
+                "existing target is not a regular bounded font")
+        require(info.st_uid == 0 and info.st_gid == gid and stat.S_IMODE(info.st_mode) == 0o640,
+                "existing font permissions differ; owner review required")
+        with os.fdopen(os.dup(member), "rb") as stream:
+            actual = hashlib.file_digest(stream, "sha256").hexdigest()
+        require(actual == sha256, "existing owner font differs; replacement is forbidden")
+        return True
+    finally:
+        os.close(member)
+
+
+def _publish(descriptor, name, payload, gid):
+    temporary = ".private-score-font-" + secrets.token_hex(12)
+    member = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                     0o600, dir_fd=descriptor)
+    try:
+        with os.fdopen(member, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fchown(stream.fileno(), 0, gid)
+            os.fchmod(stream.fileno(), 0o640)
+            os.fsync(stream.fileno())
+        _verify_directory(descriptor, gid)
+        # link is an atomic no-replace publication on the same filesystem.
+        # replace/rename could overwrite an owner file created concurrently.
+        os.link(temporary, name, src_dir_fd=descriptor, dst_dir_fd=descriptor,
+                follow_symlinks=False)
+    finally:
+        os.unlink(temporary, dir_fd=descriptor)
+        os.fsync(descriptor)
+
+
+def install_font(payload, name, sha256, size):
+    """Called only under the updater's shared update lock; no service restart."""
+    metadata = validate_font(payload, name, sha256, size)
+    import grp
+
+    require(os.geteuid() == 0, "private font installation requires the installed updater")
+    gid = grp.getgrnam("inkypi").gr_gid
+    descriptor = _open_directory(FONT_DIRECTORY)
+    try:
+        _verify_directory(descriptor, gid)
+        existing = _existing_font(descriptor, name, sha256, gid)
+        if not existing:
+            _publish(descriptor, name, payload, gid)
+        _verify_directory(descriptor, gid)
+        return {"status": "unchanged" if existing else "installed", "destination": str(FONT_DIRECTORY / name),
+                "sha256": sha256, "bytes": size, "uid": 0, "gid": gid, "mode": "0640", "font": metadata}
+    finally:
+        os.close(descriptor)
+
+
+def main(argv=None):
+    arguments = sys.argv[1:] if argv is None else argv
+    require(len(arguments) == 3, "expected fixed font name, SHA256 and byte count")
+    name, sha256, size = arguments
+    size = int(size)
+    validate_request(name, sha256, size)
+    payload = sys.stdin.buffer.read(MAX_BYTES + 1)
+    result = install_font(payload, name, sha256, size)
+    print(json.dumps(result, ensure_ascii=True))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (PrivateFontError, OSError, ValueError, KeyError) as error:
+        print(json.dumps({"status": "refused", "reason": str(error)}), file=sys.stderr)
+        raise SystemExit(2)
