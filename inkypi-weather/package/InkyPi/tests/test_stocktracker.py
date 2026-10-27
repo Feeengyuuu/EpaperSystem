@@ -698,9 +698,57 @@ def test_the_portfolio_total_sits_over_its_chart_in_todays_colour():
 
     assert stocktracker_module.MALACHITE not in set(up.crop((30, 54, 300, 90)).get_flattened_data())
     assert tints(up)[0] > 200 and tints(down)[1] > 200 and tints(up)[1] < tints(down)[1]
-    # The gold frame: its band runs along the card's top edge, its corners cut.
+    # The slim inner gold rule and chamfered corners preserve the card footprint.
     assert up.getpixel((166, 23)) == stocktracker_module.ACCENT_GOLD
     assert up.getpixel((16, 20)) == stocktracker_module.PAPER
+
+
+@pytest.mark.parametrize("value", [22361.83, 266124.56, 9999999.99, -123456.78])
+def test_engraved_bodoni_total_fits_the_portfolio_chart(value):
+    plugin = StockTracker({"id": "stocktracker"})
+    draw = ImageDraw.Draw(Image.new("RGB", (340, 200)))
+    plot = (23, 53, 310, 112)
+    figure = plugin._total_figure_layout(draw, plot, value)
+    assert figure["text"] == f"{value:,.2f}"
+    assert figure["font"].getname()[0] == "Bodoni Moda"
+    boxes = [draw.textbbox((figure["origin"][0] + offset, figure["origin"][1]), character,
+                          font=figure["font"], stroke_width=2) for character, offset in figure["glyphs"]]
+    bounds = (min(box[0] for box in boxes), min(box[1] for box in boxes),
+              max(box[2] for box in boxes), max(box[3] for box in boxes))
+    assert bounds[0] >= figure["coin"][0] + stocktracker_module.SUMMARY_COIN
+    assert bounds[2] <= plot[2] and bounds[1] >= plot[1] and bounds[3] < plot[3]
+    first, second = figure["glyphs"][:2]
+    assert second[1] - figure["font"].getlength(first[0]) == pytest.approx(figure["font"].size / 38)
+
+
+def test_banknote_engraving_stays_inside_digits_and_keeps_punctuation_solid():
+    plugin = StockTracker({"id": "stocktracker"})
+    ink, ground = (80, 180, 120), (5, 15, 25)
+    image = Image.new("RGB", (340, 200), ground)
+    draw = ImageDraw.Draw(image)
+    figure = plugin._total_figure_layout(draw, (23, 53, 310, 112), 888888.88)
+    plugin._draw_total_figure(image, draw, figure, ink, ground)
+    glyphs = Image.new("L", image.size)
+    glyph_draw = ImageDraw.Draw(glyphs)
+    solid = Image.new("RGB", image.size, ground)
+    solid_draw = ImageDraw.Draw(solid)
+    for character, offset in figure["glyphs"]:
+        position = (figure["origin"][0] + offset, figure["origin"][1])
+        if character.isdecimal():
+            glyph_draw.text(position, character, font=figure["font"], fill=255)
+        solid_draw.text(position, character, font=figure["font"], fill=ink, stroke_width=2, stroke_fill=ground)
+        solid_draw.text(position, character, font=figure["font"], fill=ink, stroke_width=1,
+                        stroke_fill=plugin._blend(ink, ground, 0.72))
+    cut_colour = plugin._blend(ink, ground, 0.55)
+    cuts = [(x, y) for y in range(53, 112) for x in range(70, 310)
+            if image.getpixel((x, y)) == cut_colour and solid.getpixel((x, y)) != cut_colour]
+    assert len(cuts) > 20
+    assert all(glyphs.getpixel(point) > 200 for point in cuts)
+    for character, offset in figure["glyphs"]:
+        if character in ",.":
+            left = figure["origin"][0] + offset
+            right = left + figure["font"].getlength(character)
+            assert not any(left <= x < right for x, _y in cuts)
 
 
 def test_summary_stats_show_account_balances_then_best_mover():

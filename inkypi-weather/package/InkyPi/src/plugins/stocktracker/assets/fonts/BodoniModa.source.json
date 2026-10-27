@@ -1,0 +1,13 @@
+{
+  "family": "Bodoni Moda",
+  "authors": "The Bodoni Moda Project Authors / Owen Earl",
+  "license": "SIL Open Font License 1.1",
+  "license_file": "BodoniModa-OFL.txt",
+  "upstream_repository": "https://github.com/indestructible-type/Bodoni",
+  "upstream_commit": "30ce6cdc354ef179a3b72ba0f0e71826e599348c",
+  "source_url": "https://raw.githubusercontent.com/indestructible-type/Bodoni/30ce6cdc354ef179a3b72ba0f0e71826e599348c/fonts/variable/BodoniModa%5Bopsz%2Cwght%5D.ttf",
+  "catalogue_metadata": "https://raw.githubusercontent.com/google/fonts/main/ofl/bodonimoda/METADATA.pb",
+  "font_file": "BodoniModa-Variable.ttf",
+  "sha256": "550f5e34ee0a828d7941b1fe9bc58b34e5260d3f33a61532e6d0a0114e79a5cf",
+  "modifications": "None; original variable font bytes. Renderer selects wght=700, opsz=11 at runtime."
+}

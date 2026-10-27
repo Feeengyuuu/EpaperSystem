@@ -75,7 +75,7 @@ MPLCONFIGDIR = _default_mpl_config_dir()
 os.environ.setdefault("MPLCONFIGDIR", MPLCONFIGDIR)
 os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
 from utils.fonts import load_font
 from utils.app_utils import get_base_ui_font, get_font
 from utils.image_utils import text_width
@@ -121,6 +121,7 @@ ACCENT_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
 SUMMARY_FRAME, SUMMARY_CHART, SUMMARY_GRID, SUMMARY_COIN, SUMMARY_FIGURE_SIZE = 7, (33, 92), 12, 40, 38
 SUMMARY_FIGURE_FOOT, SUMMARY_HILL_GAP, SUMMARY_BLUR, SUMMARY_FADE = 17, 6, 1.2, 10
 COIN_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "coin_dollar.png")
+TOTAL_FIGURE_FONT = os.path.join(os.path.dirname(__file__), "assets", "fonts", "BodoniModa-Variable.ttf")
 COIN_GOLD, COIN_RIM = (232, 186, 62), (8, 38, 22)
 GAIN_INK, LOSS_INK = (0, 92, 50), (176, 32, 30)
 ACCENT_ORANGE = (245, 122, 38)  # 100Y-50R PANTONE ORANGE 021 family
@@ -1764,24 +1765,17 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				draw.line((cell_left, stats_top + 4, cell_left, bottom - SUMMARY_FRAME - 3), fill=colors["grid"], width=1)
 
 	def _draw_gold_frame(self, draw, box, fill):
-		"""A pixel-cut gold frame: a gold band, lit along its top and left and shaded along its bottom
-		and right, between an outer and an inner ink line, its corners notched, over the page's
-		orange shadow; ``fill`` inside."""
+		"""A slim double frame with chamfered corners and restrained gold accents."""
 		colors = _active_stock_colors()
 		left, top, right, bottom = (int(edge) for edge in box)
 		gold = colors["frame_gold"]
-		light = colors["frame_light"]
-		shade = colors["frame_shade"]
-		draw.polygon(self._notched(left + 3, top + 4, right + 3, bottom + 4, 3), fill=colors["shadow"])
-		draw.polygon(self._notched(left, top, right, bottom, 3), fill=colors["border"])
-		draw.polygon(self._notched(left + 2, top + 2, right - 2, bottom - 2, 2), fill=gold)
-		edge = SUMMARY_FRAME - 1
-		draw.line((left + 3, top + 2, right - 3, top + 2), fill=light)
-		draw.line((left + 2, top + 3, left + 2, bottom - 3), fill=light)
-		draw.line((left + 3, bottom - 2, right - 3, bottom - 2), fill=shade)
-		draw.line((right - 2, top + 3, right - 2, bottom - 3), fill=shade)
-		draw.rectangle((left + edge, top + edge, right - edge, bottom - edge), fill=colors["border"])
-		draw.rectangle((left + SUMMARY_FRAME, top + SUMMARY_FRAME, right - SUMMARY_FRAME, bottom - SUMMARY_FRAME), fill=fill)
+		outer = self._notched(left, top, right, bottom, 4)
+		inner = self._notched(left + 3, top + 3, right - 3, bottom - 3, 3)
+		draw.polygon(outer, fill=fill)
+		draw.line(outer + [outer[0]], fill=colors["border"], width=1)
+		draw.line(inner + [inner[0]], fill=gold, width=1)
+		for x, y, direction in ((left + 9, top, 1), (right - 9, bottom, -1)):
+			draw.line((x, y, x + 25 * direction, y), fill=colors["accent_gold"], width=2)
 
 	@staticmethod
 	def _notched(left, top, right, bottom, notch):
@@ -1848,14 +1842,34 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		text's origin and the coin's top left. Both rise as far as they must for the comma's tail
 		(with the halo) and the coin to clear the foot; the coin keeps to the digits' middle."""
 		text = f"{value:,.2f}"
-		font = self._fit_font(draw, text, plot[2] - plot[0] - SUMMARY_COIN - 25, SUMMARY_FIGURE_SIZE, True, 16)
-		text_w = self._text_width(draw, text, font)
+		max_width = plot[2] - plot[0] - SUMMARY_COIN - 25
+		def tracked_glyphs(font):
+			tracking = font.size / SUMMARY_FIGURE_SIZE
+			x, glyphs = 0.0, []
+			for character in text:
+				glyphs.append((character, x))
+				x += font.getlength(character) + tracking
+			return glyphs, x - tracking
+		try:
+			font = load_font(TOTAL_FIGURE_FONT, SUMMARY_FIGURE_SIZE)
+			# The unchanged variable font's axes are weight, optical size. Low optical size
+			# retains the fine serifs on the native e-paper raster; weight gives engraving room.
+			font.set_variation_by_axes([700, 11])
+			while font.size > 16 and tracked_glyphs(font)[1] > max_width:
+				font = font.font_variant(size=font.size - 1)
+		except (OSError, ValueError):
+			font = self._fit_font(draw, text, max_width, SUMMARY_FIGURE_SIZE, True, 16)
+		glyphs, text_w = tracked_glyphs(font)
+		while font.size > 16 and text_w > max_width:
+			font = font.font_variant(size=font.size - 1)
+			glyphs, text_w = tracked_glyphs(font)
 		x = plot[0] + (plot[2] - plot[0] - SUMMARY_COIN - 5 - text_w) / 2
 		digits = draw.textbbox((0, 0), "0", font=font)
 		reach = draw.textbbox((0, 0), text, font=font, stroke_width=2)[3]
 		middle = min(plot[3] - SUMMARY_FIGURE_FOOT, plot[3] - 1 - reach + (digits[1] + digits[3]) / 2,
 					 plot[3] - 2 - SUMMARY_COIN / 2)
-		return {"text": text, "font": font, "origin": (x + SUMMARY_COIN + 5, round(middle - (digits[1] + digits[3]) / 2)),
+		return {"text": text, "font": font, "glyphs": glyphs,
+				"origin": (x + SUMMARY_COIN + 5, round(middle - (digits[1] + digits[3]) / 2)),
 				"coin": (round(x), round(middle - SUMMARY_COIN / 2))}
 
 	def _draw_total_figure(self, img, draw, figure, ink, halo):
@@ -1871,7 +1885,29 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			draw.ellipse((center[0] - radius, center[1] - radius, center[0] + radius, center[1] + radius), fill=COIN_GOLD,
 						 outline=COIN_RIM, width=2)
 			draw.text(center, "$", fill=COIN_RIM, font=self._font(int(SUMMARY_COIN * 0.62), True), anchor="mm")
-		draw.text(figure["origin"], figure["text"], fill=ink, font=figure["font"], stroke_width=2, stroke_fill=halo)
+		origin, font, glyphs = figure["origin"], figure["font"], figure["glyphs"]
+		bounds = []
+		for character, offset in glyphs:
+			position = (origin[0] + offset, origin[1])
+			draw.text(position, character, fill=ink, font=font, stroke_width=2, stroke_fill=halo)
+			draw.text(position, character, fill=ink, font=font, stroke_width=1,
+					  stroke_fill=self._blend(ink, halo, 0.72))
+			bounds.append(draw.textbbox(position, character, font=font))
+		# Engraved horizontal cuts belong only inside thick strokes. Eroding the glyph
+		# mask keeps hairlines, serifs and punctuation intact at the display's native size.
+		left, top = math.floor(min(box[0] for box in bounds)), math.floor(min(box[1] for box in bounds))
+		right, bottom = math.ceil(max(box[2] for box in bounds)), math.ceil(max(box[3] for box in bounds))
+		mask = Image.new("L", (right - left + 2, bottom - top + 2))
+		mask_draw = ImageDraw.Draw(mask)
+		for character, offset in glyphs:
+			if character.isdecimal():
+				mask_draw.text((origin[0] + offset - left + 1, origin[1] - top + 1), character, fill=255, font=font)
+		cuts = Image.new("L", mask.size)
+		cut_draw = ImageDraw.Draw(cuts)
+		for y in range(3, mask.height - 1, 3):
+			cut_draw.line((0, y, mask.width - 1, y), fill=255)
+		cuts = ImageChops.multiply(cuts, mask.filter(ImageFilter.MinFilter(3)))
+		img.paste(self._blend(ink, halo, 0.55), (left - 1, top - 1), cuts)
 
 	def _draw_sparkline(
 		self,
