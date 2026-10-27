@@ -790,6 +790,8 @@ class WorldCupRenderMixin:
             return
         center_label = self._worldcup_score_or_vs(event)
         center_label, center_font = self._fit_text(draw, center_label, 64, 17, bold=True, min_size=11)
+        if event.get("wins_a") is not None and event.get("wins_b") is not None:
+            center_label, center_font = self._fit_score(draw, center_label, 64, 17, bold=True, sport="SOCCER", max_height=20)
         self._draw_centered(draw, (center_x, flag_y + flag_h / 2 + 1), center_label, center_font, COLORS["text"])
         if is_recent:
             detail_y1 = flag_y + flag_h + 1
@@ -985,6 +987,8 @@ class WorldCupRenderMixin:
             caption = self._lpl_countdown_label(event.get("start"), now) or "VS"
             caption_fill = COLORS["muted"]
         headline, headline_font = self._fit_text(draw, headline, 92, 24, bold=True, min_size=13)
+        if (is_live or is_recent) and event.get("wins_a") is not None and event.get("wins_b") is not None:
+            headline, headline_font = self._fit_score(draw, headline, 92, 24, bold=True, sport="SOCCER", max_height=26)
         self._draw_centered(draw, (center_x, middle - 8), headline, headline_font, COLORS["text"])
         caption, caption_font = self._fit_text(draw, caption, 92, 10, bold=True, min_size=7)
         self._draw_centered(draw, (center_x, middle + 18), caption, caption_font, caption_fill)
@@ -1229,6 +1233,8 @@ class WorldCupRenderMixin:
             )
         score = self._worldcup_score_or_vs(event)
         score, score_font = self._fit_text(draw, score, score_w, 10, bold=True, min_size=7)
+        if event.get("wins_a") is not None and event.get("wins_b") is not None:
+            score, score_font = self._fit_score(draw, score, score_w, 10, bold=True, sport="SOCCER", max_height=team_y2 - team_y1)
         self._draw_centered_in_box(draw, (left_score_edge, team_y1, right_score_edge, team_y2), score, score_font, COLORS["text"])
         if right_label:
             self._draw_worldcup_score_detail_chip(
@@ -1431,6 +1437,9 @@ class WorldCupRenderMixin:
         team_a, font_a = self._fit_text(draw, event.get("team_a"), max(20, center_x - left_text_x - 4), 10, bold=True, min_size=7)
         self._draw_text_in_box(draw, (left_text_x, y - 1, center_x - 28, team_bottom), team_a, font_a, COLORS["text"])
         center_text, center_font = self._fit_text(draw, center_text, 52, 10, bold=True, min_size=7)
+        if re.fullmatch(r"\d+\s*[-–]\s*\d+", center_text):
+            center_text, center_font = self._fit_score(draw, center_text, 52, 10, bold=True,
+                                                      sport="SOCCER", max_height=team_bottom - y + 1)
         self._draw_centered_in_box(draw, (center_x - 26, y - 1, center_x + 26, team_bottom), center_text, center_font, COLORS["text"])
         right_w = self._draw_worldcup_presented_flag(
             image,

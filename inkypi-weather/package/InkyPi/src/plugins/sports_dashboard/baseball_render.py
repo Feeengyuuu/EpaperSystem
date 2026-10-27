@@ -206,7 +206,9 @@ class BaseballRenderMixin:
                 if text:
                     left = int(x1 + team_w + index * col_w)
                     right = int(x1 + team_w + (index + 1) * col_w)
-                    self._draw_centered_in_box(draw, (left, row_y1, right, row_y2), text, self._font(12, live and index + 1 == current), COLORS["text"])
+                    text, font = self._fit_score(draw, text, right - left - 2, 12,
+                                                 bold=live and index + 1 == current, sport="MLB", max_height=row_y2 - row_y1)
+                    self._draw_centered_in_box(draw, (left, row_y1, right, row_y2), text, font, COLORS["text"])
             if state == "scheduled":
                 continue
             line = event.get("away_line" if side == "a" else "home_line") or {}
@@ -216,7 +218,11 @@ class BaseballRenderMixin:
                     value = event.get(f"wins_{side}")
                 left = totals_x1 + index * total_w
                 font = self._font(15 if key == "runs" else 11, key == "runs" and not dimmed)
-                self._draw_centered_in_box(draw, (left, row_y1, left + total_w, row_y2), "-" if value is None else str(value), font, COLORS["text"])
+                text = "-" if value is None else str(value)
+                if key == "runs":
+                    text, font = self._fit_score(draw, text, total_w - 2, 15, bold=not dimmed,
+                                                 sport="MLB", max_height=row_y2 - row_y1)
+                self._draw_centered_in_box(draw, (left, row_y1, left + total_w, row_y2), text, font, COLORS["text"])
         return y2
 
     def _mlb_table_names(self, draw, event, spec, slot, count, room):

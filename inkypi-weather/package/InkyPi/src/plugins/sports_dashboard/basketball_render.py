@@ -212,7 +212,8 @@ class BasketballRenderMixin:
             winner = SportsDashboard._nba_winner_side(event) if state == "final" else ""
             for side, (left, right, align) in (("a", (x1, center_x - 9, "right")), ("b", (center_x + 9, x2, "left"))):
                 score = event.get(f"wins_{side}")
-                text, font = self._fit_text(draw, "-" if score is None else str(score), right - left, 30, bold=winner in ("", side), min_size=16)
+                text, font = self._fit_score(draw, "-" if score is None else str(score), right - left, 30,
+                                             bold=winner in ("", side), min_size=16, sport=spec.sport, max_height=32)
                 self._draw_text_in_box(draw, (left, y1 + 20, right, y1 + 52), text, font, COLORS["text"], align=align)
             draw.line((center_x - 4, y1 + 36, center_x + 4, y1 + 36), fill=COLORS["border"], width=2)
             sub = SportsDashboard._basketball_series_label(event) or (
@@ -411,7 +412,10 @@ class BasketballRenderMixin:
             name, name_font = self._kit_team_name(draw, spec, main, side, name_box[2] - name_box[0], 14, True, min_size=9)
             self._draw_text_in_box(draw, name_box, name, name_font, COLORS["text"], align="left" if side == "a" else "right")
             win_box = (middle - 30, score_y, middle - 8, score_y + 34) if side == "a" else (middle + 8, score_y, middle + 30, score_y + 34)
-            self._draw_text_in_box(draw, win_box, str(wins[side]), self._font(28, wins[side] >= wins["b" if side == "a" else "a"]), COLORS["text"], align=align)
+            value, font = self._fit_score(draw, str(wins[side]), win_box[2] - win_box[0], 28,
+                                          bold=wins[side] >= wins["b" if side == "a" else "a"],
+                                          sport=spec.sport, max_height=34)
+            self._draw_text_in_box(draw, win_box, value, font, COLORS["text"], align=align)
         draw.line((middle - 4, score_y + 17, middle + 4, score_y + 17), fill=COLORS["border"], width=2)
 
         tracker_y = score_y + 36
@@ -481,7 +485,9 @@ class BasketballRenderMixin:
                                      spec.hook("logo_fallback", main, side))
                 points = sorted((value for value in scores.values() if value is not None), reverse=True)
                 if len(points) == 2:
-                    self._draw_centered_in_box(draw, (left, y1 + 17, right, bottom - 1), f"{points[0]}-{points[1]}", bold_font,
+                    value, font = self._fit_score(draw, f"{points[0]}-{points[1]}", right - left - 4, 9, bold=True,
+                                                  sport=spec.sport, max_height=bottom - y1 - 18)
+                    self._draw_centered_in_box(draw, (left, y1 + 17, right, bottom - 1), value, font,
                                                COLORS["text"])
                 continue
             current = state == "live" or number == main_number
@@ -499,7 +505,11 @@ class BasketballRenderMixin:
             if status:
                 self._draw_text_in_box(draw, (left, y1 + 4, right - 3, y1 + 16), status, bold_font if current else caption_font,
                                        COLORS["text"], align="right")
-            self._draw_centered_in_box(draw, (left, y1 + 17, right, bottom - 1), detail, bold_font if current else line_font,
+            detail_font = bold_font if current else line_font
+            if state == "live":
+                detail, detail_font = self._fit_score(draw, detail, right - left - 4, 9, bold=current,
+                                                      sport=spec.sport, max_height=bottom - y1 - 18)
+            self._draw_centered_in_box(draw, (left, y1 + 17, right, bottom - 1), detail, detail_font,
                                        COLORS["text"])
 
     @staticmethod
@@ -588,7 +598,8 @@ class BasketballRenderMixin:
                 value_font = self._font(12, True)
             else:
                 value = "-" if event.get(f"wins_{side}") is None else str(event.get(f"wins_{side}"))
-                value_font = self._font(22, not dimmed)
+                value, value_font = self._fit_score(draw, value, 62, 22, bold=not dimmed,
+                                                    sport=spec.sport, max_height=28)
             value_w = self._text_width(draw, value, value_font) if value else 0
             name, name_font = self._kit_team_name(draw, spec, event, side, right - value_w - 8 - (left + 36), 14,
                                                   not dimmed, min_size=9)
