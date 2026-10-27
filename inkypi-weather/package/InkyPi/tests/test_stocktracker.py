@@ -613,16 +613,36 @@ def test_holding_metrics_derive_day_change_for_window_based_providers():
     assert cash_metrics["weight"] == pytest.approx(50 / 270 * 100)
 
 
-def test_the_portfolio_total_is_printed_as_a_banknote():
+def test_the_portfolio_total_sits_over_its_chart_in_todays_colour():
     plugin = StockTracker({"id": "stocktracker"})
-    image = Image.new("RGB", (340, 200), stocktracker_module.PANEL_GOLD)
+    values = [250000, 248000, 252000, 258000, 255000, 262000, 266124.56]
 
-    plugin._draw_banknote_value(image, (10, 30, 330, 66), 263717.19)
+    def card(day_percent):
+        image = Image.new("RGB", (340, 200), stocktracker_module.PAPER)
+        plugin._draw_summary(image, ImageDraw.Draw(image), (16, 20, 316, 158), 266124.56, day_percent * 2600,
+                             day_percent, stats=[("INVESTED", "$260,836.97"), ("CASH", "$5,285.57")],
+                             curve_values=values)
+        return image, set(image.get_flattened_data())
 
-    colours = set(image.crop((10, 30, 330, 66)).get_flattened_data())
-    assert {stocktracker_module.BILL_GREEN, stocktracker_module.BILL_CREAM, stocktracker_module.BILL_GOLD} <= colours
-    # The plate's rounded corners leave the card showing.
-    assert image.getpixel((10, 30)) == stocktracker_module.PANEL_GOLD
+    up, up_colours = card(0.84)
+    down, down_colours = card(-0.84)
+    _flat, flat_colours = card(0.0)
+
+    # The figure and today's change take today's colour: deep green up, deep red down, ink when flat.
+    assert stocktracker_module.GAIN_INK in up_colours and stocktracker_module.LOSS_INK not in up_colours
+    assert stocktracker_module.LOSS_INK in down_colours and stocktracker_module.GAIN_INK not in down_colours
+    assert not {stocktracker_module.GAIN_INK, stocktracker_module.LOSS_INK} & flat_colours
+
+    # The trend behind is softened (no hard line colour) and tinted with the day: greenish up, reddish down.
+    def tints(image):
+        chart = image.crop((30, 54, 300, 90)).get_flattened_data()
+        return (sum(1 for r, g, b in chart if g > r + 30), sum(1 for r, g, b in chart if r > g + 60 and r > b + 60))
+
+    assert stocktracker_module.MALACHITE not in set(up.crop((30, 54, 300, 90)).get_flattened_data())
+    assert tints(up)[0] > 200 and tints(down)[1] > 200 and tints(up)[1] < tints(down)[1]
+    # The gold frame: its band runs along the card's top edge, its corners cut.
+    assert up.getpixel((166, 23)) == stocktracker_module.ACCENT_GOLD
+    assert up.getpixel((16, 20)) == stocktracker_module.PAPER
 
 
 def test_summary_stats_show_account_balances_then_best_mover():

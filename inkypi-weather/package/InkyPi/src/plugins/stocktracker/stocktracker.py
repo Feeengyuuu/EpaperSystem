@@ -75,7 +75,7 @@ MPLCONFIGDIR = _default_mpl_config_dir()
 os.environ.setdefault("MPLCONFIGDIR", MPLCONFIGDIR)
 os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 from utils.fonts import load_font
 from utils.app_utils import get_base_ui_font, get_font
 from utils.image_utils import text_width
@@ -94,6 +94,7 @@ import json
 import logging
 import math
 import re
+from functools import lru_cache
 from datetime import datetime, timedelta
 
 WHITE = (255, 255, 255)
@@ -108,14 +109,20 @@ GRID = (190, 177, 134)
 BORDER = INK
 ACCENT_BLUE = (0, 92, 185)  # 100B-25R PANTONE 285 family
 ACCENT_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
-# The portfolio total is printed like a banknote: a deep greenback plate with fine guilloche
-# waves, a cream double border with corner rosettes, a gold dollar seal and the figure in cream
-# with an engraved shadow. The note keeps its own colours on both pages.
-BILL_GREEN = (30, 92, 58)
-BILL_GUILLOCHE = (70, 134, 92)
-BILL_CREAM = (241, 234, 202)
-BILL_GOLD = (232, 186, 62)
-BILL_SHADOW = (8, 38, 22)
+# The portfolio card, in a pixel-cut gold frame SUMMARY_FRAME px deep: between SUMMARY_CHART rows
+# under its top, the total (its digits' middle SUMMARY_FIGURE_FOOT rows above the chart's foot)
+# by the generated gold dollar coin (COIN_ICON_PATH, SUMMARY_COIN px; drawn in COIN_GOLD rimmed
+# in COIN_RIM without the file) in today's colour: deep green up and deep red down on the day
+# page (GAIN_INK, LOSS_INK; the night page's own green and red), as is today's change under it.
+# Behind it the account's value over the window shows only as a trend, out to the frame on the
+# left, right and foot: a hill on a fine grid (SUMMARY_GRID px) resting on the chart's foot, its
+# low SUMMARY_HILL_GAP above it, tinted in today's colour and blurred by SUMMARY_BLUR, its top
+# SUMMARY_FADE rows fading into the card, a sparkle on today's value.
+SUMMARY_FRAME, SUMMARY_CHART, SUMMARY_GRID, SUMMARY_COIN = 7, (33, 92), 12, 34
+SUMMARY_FIGURE_FOOT, SUMMARY_HILL_GAP, SUMMARY_BLUR, SUMMARY_FADE = 15, 6, 1.2, 10
+COIN_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "coin_dollar.png")
+COIN_GOLD, COIN_RIM = (232, 186, 62), (8, 38, 22)
+GAIN_INK, LOSS_INK = (0, 92, 50), (176, 32, 30)
 ACCENT_ORANGE = (245, 122, 38)  # 100Y-50R PANTONE ORANGE 021 family
 CINNABAR = (222, 45, 38)  # 100Y-100R PANTONE RED 032 family
 MALACHITE = (0, 152, 82)  # 100Y-100B PANTONE 354 family
@@ -203,6 +210,22 @@ HEADER_MONEY_PATH = os.path.join(os.path.dirname(__file__), "assets", "header_fl
 # one cut off at the art's edge is left out. Pieces fly at least HEADER_MONEY_MIN_GAP apart.
 HEADER_BILL_AREA, HEADER_COIN_AREA, HEADER_MONEY_MIN_GAP = 2500, 300, 4
 _HEADER_MONEY_PIECES = {}
+
+
+@lru_cache(maxsize=4)
+def _coin_icon(size):
+	"""The generated gold dollar coin (COIN_ICON_PATH) trimmed and ``size`` px on its longer side;
+	None without the file."""
+	try:
+		with Image.open(COIN_ICON_PATH) as source:
+			art = source.convert("RGBA")
+	except (OSError, ValueError):
+		return None
+	bounds = art.getchannel("A").getbbox()
+	if bounds:
+		art = art.crop(bounds)
+	art.thumbnail((size, size), Image.Resampling.LANCZOS)
+	return art
 
 
 def _header_money_pieces():
@@ -1653,124 +1676,178 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		day_percent,
 		day_label="TODAY",
 		stats=(),
+		curve_values=(),
 	):
+		"""The portfolio card in its gold frame: the total by its gold coin, in today's colour, standing
+		on the floor of a softened chart of the account's value over the window; today's change in that
+		colour on the ruled row under it, then the first two balances."""
 		colors = _active_stock_colors()
-		left, top, right, bottom = box
-		self._draw_box(
-			draw,
-			box,
-			"PORTFOLIO",
-			accent=colors["accent_gold"],
-			fill=colors["panel_gold"],
-			canvas=img,
-		)
-		change_color = self._change_color(day_percent)
+		left, top, right, bottom = (int(edge) for edge in box)
+		self._draw_gold_frame(draw, box, colors["panel_gold"])
+		if not self._draw_section_wordmark(img, "PORTFOLIO", left + 10, top + 8):
+			draw.text((left + 13, top + 11), "PORTFOLIO", fill=colors["ink"], font=self._font(16, True))
+		today_ink = self._today_ink(day_percent)
+		# The chart runs out to the frame on the left, right and foot; the window's dates are the
+		# trend card's to name.
+		plot = (left + SUMMARY_FRAME, top + SUMMARY_CHART[0], right - SUMMARY_FRAME + 1, top + SUMMARY_CHART[1])
+		chart_bg = self._blend(colors["panel"], colors["panel_gold"], 0.6)
+		self._draw_summary_chart(img, draw, plot, curve_values, chart_bg, self._change_color(day_percent),
+								 colors["panel_gold"])
+		self._draw_total_figure(img, draw, self._total_figure_layout(draw, plot, total_value), today_ink, chart_bg)
 
-		self._draw_banknote_value(img, (left + 10, top + 33, right - 10, top + 69), total_value)
-
-		pill = (left + 12, top + 72, right - 12, top + 96)
-		pill_center = (pill[1] + pill[3]) / 2
-		draw.rounded_rectangle(pill, radius=7, fill=colors["panel"], outline=change_color, width=2)
-		self._draw_change_arrow(draw, pill[0] + 9, pill_center, day_percent, size=10)
+		# Today's change, in today's colour by its solid arrow.
+		inner_left, inner_right = left + SUMMARY_FRAME, right - SUMMARY_FRAME
+		row_top = plot[3]
+		draw.line((inner_left, row_top, inner_right, row_top), fill=colors["border"], width=1)
+		row_mid = row_top + 11
+		self._draw_change_arrow(draw, inner_left + 6, row_mid, day_percent, size=12)
 		label_font = self._font(10, True)
 		label_width = self._text_width(draw, day_label, label_font)
 		draw.text(
-			(pill[2] - 9 - label_width, self._centered_text_y(draw, day_label, label_font, pill_center)),
+			(inner_right - 6 - label_width, self._centered_text_y(draw, day_label, label_font, row_mid)),
 			day_label,
 			fill=colors["ink"],
 			font=label_font,
 		)
 		change_text = self._change_text(day_change, day_percent)
-		change_font = self._fit_font(draw, change_text, pill[2] - pill[0] - 38 - label_width, 17, True, 11)
-		# Ink numbers with a solid colored arrow: colored type dithers into noise on the panel.
+		change_font = self._fit_font(draw, change_text, inner_right - inner_left - 40 - label_width, 17, True, 11)
 		draw.text(
-			(pill[0] + 25, self._centered_text_y(draw, change_text, change_font, pill_center)),
+			(inner_left + 24, self._centered_text_y(draw, change_text, change_font, row_mid)),
 			change_text,
-			fill=colors["ink"],
+			fill=today_ink,
 			font=change_font,
 		)
 
-		stats = list(stats)[:4]
+		# The balances, two cells side by side.
+		stats = list(stats)[:2]
+		stats_top = row_top + 22
+		draw.line((inner_left, stats_top, inner_right, stats_top), fill=colors["border"], width=1)
 		if not stats:
 			return
-		grid_left, grid_right = left + 12, right - 12
-		grid_top, grid_bottom = top + 102, bottom - 6
-		cell_w = (grid_right - grid_left) / 2
-		cell_h = (grid_bottom - grid_top) / 2
+		center_y = (stats_top + bottom - SUMMARY_FRAME) / 2 + 0.5
+		cell_w = (inner_right - inner_left) / len(stats)
 		stat_label_font = self._font(9, True)
-		draw.line((grid_left, grid_top, grid_right, grid_top), fill=colors["grid"], width=1)
 		for index, (label, value) in enumerate(stats):
-			column, row = index % 2, index // 2
-			cell_left = grid_left + column * cell_w
+			cell_left = inner_left + index * cell_w
 			cell_right = cell_left + cell_w
-			center_y = grid_top + row * cell_h + cell_h / 2
-			label_x = cell_left + (8 if column else 2)
-			draw.text(
-				(label_x, self._centered_text_y(draw, label, stat_label_font, center_y)),
-				label,
-				fill=colors["ink"],
-				font=stat_label_font,
-			)
+			label_x = cell_left + 7
+			draw.text((label_x, self._centered_text_y(draw, label, stat_label_font, center_y)), label,
+					  fill=colors["ink"], font=stat_label_font)
 			label_width = self._text_width(draw, label, stat_label_font)
-			value_font = self._fit_font(draw, value, cell_right - label_x - label_width - 8, 12, True, 8)
-			value_x = cell_right - 2 - self._text_width(draw, value, value_font)
-			draw.text(
-				(value_x, self._centered_text_y(draw, value, value_font, center_y)),
-				value,
-				fill=colors["ink"],
-				font=value_font,
-			)
-			if row == 0 and len(stats) > 2:
-				draw.line((cell_left + 2, grid_top + cell_h, cell_right - 2, grid_top + cell_h), fill=colors["grid"], width=1)
-		draw.line(
-			(grid_left + cell_w, grid_top + 3, grid_left + cell_w, grid_bottom - 2),
-			fill=colors["grid"],
-			width=1,
-		)
+			value_font = self._fit_font(draw, value, cell_right - label_x - label_width - 14, 13, True, 8)
+			value_x = cell_right - 7 - self._text_width(draw, value, value_font)
+			draw.text((value_x, self._centered_text_y(draw, value, value_font, center_y)), value, fill=colors["ink"],
+					  font=value_font)
+			if index:
+				draw.line((cell_left, stats_top + 4, cell_left, bottom - SUMMARY_FRAME - 3), fill=colors["grid"], width=1)
 
-	def _draw_banknote_value(self, img, box, value):
-		"""The portfolio total as a banknote: guilloche waves on a greenback plate inside a cream
-		double border with corner rosettes, a gold dollar seal at the left, the figure in cream over
-		an engraved shadow, and two gold glints at the top right."""
-		left, top, right, bottom = (int(round(edge)) for edge in box)
-		width, height = right - left, bottom - top
-		note = Image.new("RGB", (width, height), BILL_GREEN)
-		pen = ImageDraw.Draw(note)
-		middle = height / 2
-		for phase in range(5):
-			for crest in (1, -1):
-				points = [
-					(x, middle + crest * (height / 2 - 6) * math.sin(2 * math.pi * x / 46 + phase * 0.9))
-					for x in range(0, width + 1, 2)
-				]
-				pen.line(points, fill=BILL_GUILLOCHE, width=1)
-		pen.rounded_rectangle((2, 2, width - 3, height - 3), radius=6, outline=BILL_CREAM, width=1)
-		pen.rounded_rectangle((5, 5, width - 6, height - 6), radius=4, outline=BILL_CREAM, width=1)
-		for x, y in ((5, 5), (width - 6, 5), (5, height - 6), (width - 6, height - 6)):
-			pen.ellipse((x - 3, y - 3, x + 3, y + 3), fill=BILL_GREEN, outline=BILL_CREAM, width=1)
-		seal_r = height / 2 - 7
-		seal_x = 10 + seal_r
-		pen.ellipse((seal_x - seal_r, middle - seal_r, seal_x + seal_r, middle + seal_r), fill=BILL_GOLD,
-					outline=BILL_SHADOW, width=1)
-		pen.ellipse((seal_x - seal_r + 3, middle - seal_r + 3, seal_x + seal_r - 3, middle + seal_r - 3),
-					outline=BILL_GREEN, width=1)
-		dollar_font = self._font(int(seal_r * 1.5), True)
-		pen.text((seal_x, middle), "$", fill=BILL_GREEN, font=dollar_font, anchor="mm")
-		figure = f"{value:,.2f}"
-		text_left = seal_x + seal_r + 8
-		figure_font = self._fit_font(pen, figure, width - text_left - 22, 30, True, 16)
-		figure_y = self._centered_text_y(pen, figure, figure_font, middle)
-		pen.text((text_left + 1, figure_y + 2), figure, fill=BILL_SHADOW, font=figure_font)
-		pen.text((text_left, figure_y), figure, fill=BILL_CREAM, font=figure_font)
-		for cx, cy, size in ((width - 14, 10, 5), (width - 22, 17, 3)):
-			pen.polygon(
-				[(cx, cy - size), (cx + size * 0.3, cy - size * 0.3), (cx + size, cy), (cx + size * 0.3, cy + size * 0.3),
-				 (cx, cy + size), (cx - size * 0.3, cy + size * 0.3), (cx - size, cy), (cx - size * 0.3, cy - size * 0.3)],
-				fill=BILL_GOLD,
-			)
-		mask = Image.new("L", (width, height), 0)
-		ImageDraw.Draw(mask).rounded_rectangle((0, 0, width - 1, height - 1), radius=8, fill=255)
-		img.paste(note, (left, top), mask)
+	def _draw_gold_frame(self, draw, box, fill):
+		"""A pixel-cut gold frame: a gold band, lit along its top and left and shaded along its bottom
+		and right, between an outer and an inner ink line, its corners notched, over the page's
+		orange shadow; ``fill`` inside."""
+		colors = _active_stock_colors()
+		left, top, right, bottom = (int(edge) for edge in box)
+		gold = colors["accent_gold"]
+		light = self._blend((255, 255, 255), gold, 0.5)
+		shade = self._blend(colors["accent_orange"], gold, 0.65)
+		draw.polygon(self._notched(left + 3, top + 4, right + 3, bottom + 4, 3), fill=colors["accent_orange"])
+		draw.polygon(self._notched(left, top, right, bottom, 3), fill=colors["border"])
+		draw.polygon(self._notched(left + 2, top + 2, right - 2, bottom - 2, 2), fill=gold)
+		edge = SUMMARY_FRAME - 1
+		draw.line((left + 3, top + 2, right - 3, top + 2), fill=light)
+		draw.line((left + 2, top + 3, left + 2, bottom - 3), fill=light)
+		draw.line((left + 3, bottom - 2, right - 3, bottom - 2), fill=shade)
+		draw.line((right - 2, top + 3, right - 2, bottom - 3), fill=shade)
+		draw.rectangle((left + edge, top + edge, right - edge, bottom - edge), fill=colors["border"])
+		draw.rectangle((left + SUMMARY_FRAME, top + SUMMARY_FRAME, right - SUMMARY_FRAME, bottom - SUMMARY_FRAME), fill=fill)
+
+	@staticmethod
+	def _notched(left, top, right, bottom, notch):
+		"""A rectangle's outline with its corners cut ``notch`` px, pixel-art fashion."""
+		return [(left + notch, top), (right - notch, top), (right, top + notch), (right, bottom - notch),
+				(right - notch, bottom), (left + notch, bottom), (left, bottom - notch), (left, top + notch)]
+
+	@staticmethod
+	def _today_ink(percent):
+		"""The total's and today's change's colour: deep green up, deep red down (the night page's own
+		green and red), ink when flat."""
+		colors = _active_stock_colors()
+		if percent is None or abs(percent) <= 0.005:
+			return colors["ink"]
+		if colors["mode"] == "night":
+			return colors["malachite"] if percent > 0 else colors["cinnabar"]
+		return GAIN_INK if percent > 0 else LOSS_INK
+
+	def _draw_summary_chart(self, img, draw, plot, values, chart_bg, tint, card):
+		"""The account's value over the window behind the total, only its trend and softened: a fine
+		grid and the values as a hill in ``tint`` from the left edge to the right resting on the foot,
+		blurred by SUMMARY_BLUR, its top SUMMARY_FADE rows fading into the ``card`` colour above it,
+		with a sparkle on today's value."""
+		colors = _active_stock_colors()
+		width, height = plot[2] - plot[0], plot[3] - plot[1]
+		layer = Image.new("RGB", (width, height), chart_bg)
+		pen = ImageDraw.Draw(layer)
+		grid = self._blend(colors["grid"], chart_bg, 0.5)
+		for x in range(SUMMARY_GRID, width, SUMMARY_GRID):
+			pen.line((x, 0, x, height), fill=grid)
+		for y in range(SUMMARY_GRID, height, SUMMARY_GRID):
+			pen.line((0, y, width, y), fill=grid)
+		values = [float(value) for value in values or () if math.isfinite(float(value))]
+		end = None
+		if len(values) >= 2:
+			# Unpadded, the window's low nearly touches the foot and its high the top: the swings show.
+			vmin, vmax = trend_chart.value_bounds(values, 0.0)
+			points = trend_chart.plot_points((0, 3, width - 9, height - SUMMARY_HILL_GAP), values, vmin, vmax)
+			curve = trend_chart.monotone_curve(points)
+			# Today's value carries on flat to the right edge, past its sparkle.
+			ridge = [*curve, (width, curve[-1][1])]
+			pen.polygon([(0, height), *ridge, (width, height)], fill=self._blend(tint, chart_bg, 0.26))
+			pen.line([(round(x), round(y)) for x, y in ridge], fill=tint, width=2, joint="curve")
+			end = (plot[0] + round(points[-1][0]), plot[1] + round(points[-1][1]))
+		layer = layer.filter(ImageFilter.GaussianBlur(SUMMARY_BLUR))
+		fade = Image.linear_gradient("L").resize((width, SUMMARY_FADE)).transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+		layer.paste(Image.new("RGB", (width, SUMMARY_FADE), card), (0, 0), fade)
+		img.paste(layer, plot[:2])
+		if end:
+			self._draw_sparkle(draw, end, 6, COIN_GOLD, colors["ink"])
+			self._draw_sparkle(draw, (end[0] - 5, end[1] - 10), 2, COIN_GOLD, None)
+			self._draw_sparkle(draw, (end[0] + 2, end[1] - 15), 2, COIN_GOLD, None)
+
+	@staticmethod
+	def _draw_sparkle(draw, center, size, fill, outline):
+		"""A four-point star ``size`` px from its centre to each point."""
+		x, y = center
+		waist = max(1, size * 0.3)
+		draw.polygon([(x, y - size), (x + waist, y - waist), (x + size, y), (x + waist, y + waist), (x, y + size),
+					  (x - waist, y + waist), (x - size, y), (x - waist, y - waist)], fill=fill, outline=outline)
+
+	def _total_figure_layout(self, draw, plot, value):
+		"""Where the total goes, centred with its coin across the chart's foot: its text and font, the
+		text's origin and the coin's top left (raised as far as it must to clear the foot)."""
+		text = f"{value:,.2f}"
+		font = self._fit_font(draw, text, plot[2] - plot[0] - SUMMARY_COIN - 32, 28, True, 16)
+		text_w = self._text_width(draw, text, font)
+		x = plot[0] + (plot[2] - plot[0] - SUMMARY_COIN - 5 - text_w) / 2
+		digits = draw.textbbox((0, 0), "0", font=font)
+		middle = plot[3] - SUMMARY_FIGURE_FOOT
+		coin_top = min(middle - SUMMARY_COIN / 2, plot[3] - SUMMARY_COIN - 2)
+		return {"text": text, "font": font, "origin": (x + SUMMARY_COIN + 5, round(middle - (digits[1] + digits[3]) / 2)),
+				"coin": (round(x), round(coin_top))}
+
+	def _draw_total_figure(self, img, draw, figure, ink, halo):
+		"""The total by the gold dollar coin, in ``ink``, haloed in the chart's ground so the trend behind
+		never cuts its digits."""
+		coin_x, coin_y = figure["coin"]
+		icon = _coin_icon(SUMMARY_COIN)
+		if icon is not None:
+			img.paste(icon, (coin_x + (SUMMARY_COIN - icon.width) // 2, coin_y + (SUMMARY_COIN - icon.height) // 2), icon)
+		else:
+			radius = SUMMARY_COIN / 2
+			center = (coin_x + radius, coin_y + radius)
+			draw.ellipse((center[0] - radius, center[1] - radius, center[0] + radius, center[1] + radius), fill=COIN_GOLD,
+						 outline=COIN_RIM, width=2)
+			draw.text(center, "$", fill=COIN_RIM, font=self._font(int(SUMMARY_COIN * 0.62), True), anchor="mm")
+		draw.text(figure["origin"], figure["text"], fill=ink, font=figure["font"], stroke_width=2, stroke_fill=halo)
 
 	def _draw_sparkline(
 		self,
@@ -2687,6 +2764,18 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 
 			card_top, card_bottom = TOP_CARDS
 			summary_right = margin + SUMMARY_CARD_WIDTH
+			curve_values, supplemental_history = self._portfolio_curve(
+				stock_data,
+				history_points,
+				period=tracking_period,
+				now=updated_at,
+				account_value_override=account_value_override,
+			)
+			date_range = self._curve_date_range(
+				stock_data,
+				supplemental_history,
+				account_value_override=account_value_override,
+			)
 			self._draw_summary(
 				img,
 				draw,
@@ -2696,13 +2785,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				day_percent,
 				day_label="TODAY" if all_live else "LAST SESSION",
 				stats=self._summary_stats(metrics, portfolio_meta),
-			)
-			curve_values, supplemental_history = self._portfolio_curve(
-				stock_data,
-				history_points,
-				period=tracking_period,
-				now=updated_at,
-				account_value_override=account_value_override,
+				curve_values=curve_values,
 			)
 			self._draw_sparkline(
 				img,
@@ -2712,11 +2795,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				supplemental_history,
 				history_markers_on_prefix=True,
 				window_label=window_short,
-				date_range=self._curve_date_range(
-					stock_data,
-					supplemental_history,
-					account_value_override=account_value_override,
-				),
+				date_range=date_range,
 				extremes=True,
 			)
 			self._draw_holdings(
