@@ -110,16 +110,16 @@ BORDER = INK
 ACCENT_BLUE = (0, 92, 185)  # 100B-25R PANTONE 285 family
 ACCENT_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
 # The portfolio card, in a pixel-cut gold frame SUMMARY_FRAME px deep: between SUMMARY_CHART rows
-# under its top, the total (its digits' middle SUMMARY_FIGURE_FOOT rows above the chart's foot)
-# by the generated gold dollar coin (COIN_ICON_PATH, SUMMARY_COIN px; drawn in COIN_GOLD rimmed
+# under its top, the total (SUMMARY_FIGURE_SIZE type at most, its digits' middle
+# SUMMARY_FIGURE_FOOT rows above the chart's foot) by the generated gold dollar coin (COIN_ICON_PATH, SUMMARY_COIN px; drawn in COIN_GOLD rimmed
 # in COIN_RIM without the file) in today's colour: deep green up and deep red down on the day
 # page (GAIN_INK, LOSS_INK; the night page's own green and red), as is today's change under it.
 # Behind it the account's value over the window shows only as a trend, out to the frame on the
 # left, right and foot: a hill on a fine grid (SUMMARY_GRID px) resting on the chart's foot, its
 # low SUMMARY_HILL_GAP above it, tinted in today's colour and blurred by SUMMARY_BLUR, its top
 # SUMMARY_FADE rows fading into the card, a sparkle on today's value.
-SUMMARY_FRAME, SUMMARY_CHART, SUMMARY_GRID, SUMMARY_COIN = 7, (33, 92), 12, 34
-SUMMARY_FIGURE_FOOT, SUMMARY_HILL_GAP, SUMMARY_BLUR, SUMMARY_FADE = 15, 6, 1.2, 10
+SUMMARY_FRAME, SUMMARY_CHART, SUMMARY_GRID, SUMMARY_COIN, SUMMARY_FIGURE_SIZE = 7, (33, 92), 12, 40, 38
+SUMMARY_FIGURE_FOOT, SUMMARY_HILL_GAP, SUMMARY_BLUR, SUMMARY_FADE = 17, 6, 1.2, 10
 COIN_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "coin_dollar.png")
 COIN_GOLD, COIN_RIM = (232, 186, 62), (8, 38, 22)
 GAIN_INK, LOSS_INK = (0, 92, 50), (176, 32, 30)
@@ -1823,16 +1823,18 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 
 	def _total_figure_layout(self, draw, plot, value):
 		"""Where the total goes, centred with its coin across the chart's foot: its text and font, the
-		text's origin and the coin's top left (raised as far as it must to clear the foot)."""
+		text's origin and the coin's top left. Both rise as far as they must for the comma's tail
+		(with the halo) and the coin to clear the foot; the coin keeps to the digits' middle."""
 		text = f"{value:,.2f}"
-		font = self._fit_font(draw, text, plot[2] - plot[0] - SUMMARY_COIN - 32, 28, True, 16)
+		font = self._fit_font(draw, text, plot[2] - plot[0] - SUMMARY_COIN - 25, SUMMARY_FIGURE_SIZE, True, 16)
 		text_w = self._text_width(draw, text, font)
 		x = plot[0] + (plot[2] - plot[0] - SUMMARY_COIN - 5 - text_w) / 2
 		digits = draw.textbbox((0, 0), "0", font=font)
-		middle = plot[3] - SUMMARY_FIGURE_FOOT
-		coin_top = min(middle - SUMMARY_COIN / 2, plot[3] - SUMMARY_COIN - 2)
+		reach = draw.textbbox((0, 0), text, font=font, stroke_width=2)[3]
+		middle = min(plot[3] - SUMMARY_FIGURE_FOOT, plot[3] - 1 - reach + (digits[1] + digits[3]) / 2,
+					 plot[3] - 2 - SUMMARY_COIN / 2)
 		return {"text": text, "font": font, "origin": (x + SUMMARY_COIN + 5, round(middle - (digits[1] + digits[3]) / 2)),
-				"coin": (round(x), round(coin_top))}
+				"coin": (round(x), round(middle - SUMMARY_COIN / 2))}
 
 	def _draw_total_figure(self, img, draw, figure, ink, halo):
 		"""The total by the gold dollar coin, in ``ink``, haloed in the chart's ground so the trend behind
