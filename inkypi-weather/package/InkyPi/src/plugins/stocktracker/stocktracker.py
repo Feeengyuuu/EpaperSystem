@@ -121,6 +121,7 @@ ACCENT_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
 SUMMARY_FRAME, SUMMARY_CHART, SUMMARY_GRID, SUMMARY_FIGURE_SIZE = 7, (33, 92), 12, 38
 SUMMARY_FIGURE_FOOT, SUMMARY_HILL_GAP, SUMMARY_BLUR, SUMMARY_FADE = 17, 6, 1.2, 10
 SUMMARY_FIGURE_TRACKING = 3
+SUMMARY_NIGHT_EDGE = (230, 225, 208)
 TOTAL_FIGURE_FONT = os.path.join(os.path.dirname(__file__), "assets", "fonts", "BodoniModa-Variable.ttf")
 COIN_GOLD = (232, 186, 62)
 GAIN_INK, LOSS_INK = (0, 92, 50), (176, 32, 30)
@@ -1861,14 +1862,20 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 	def _draw_total_figure(self, img, draw, figure, ink, halo):
 		"""Engrave the currency sign and digits together, haloed clear of the chart behind."""
 		origin, font, glyphs = figure["origin"], figure["font"], figure["glyphs"]
-		currency_ink = _active_stock_colors()["currency_gold"]
+		colors = _active_stock_colors()
+		currency_ink = colors["currency_gold"]
 		bounds = []
 		for character, offset in glyphs:
 			position = (origin[0] + offset, origin[1])
 			glyph_ink = currency_ink if character == "$" else ink
 			draw.text(position, character, fill=glyph_ink, font=font, stroke_width=2, stroke_fill=halo)
+			edge = self._blend(glyph_ink, halo, 0.72)
+			if colors["mode"] == "night" and character != "$":
+				# A single fine rim stays inside the existing halo. Small fitted totals
+				# get a quieter rim so the semantic ink and engraved interiors remain visible.
+				edge = self._blend(SUMMARY_NIGHT_EDGE, halo, min(0.82, 0.82 * font.size / SUMMARY_FIGURE_SIZE))
 			draw.text(position, character, fill=glyph_ink, font=font, stroke_width=1,
-					  stroke_fill=self._blend(glyph_ink, halo, 0.72))
+					  stroke_fill=edge)
 			bounds.append(draw.textbbox(position, character, font=font))
 		# Engraved horizontal cuts belong only inside thick strokes. Eroding the glyph
 		# mask keeps hairlines, serifs and punctuation intact at the display's native size.
@@ -1931,14 +1938,17 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 
 		start = values[0]
 		vmin, vmax = trend_chart.value_bounds(values)
-		inner = (plot[0] + 8, plot[1] + 6, plot[2] - 10, plot[3] - 6)
+		inner = (plot[0] + (42 if window_label else 8), plot[1] + 6, plot[2] - 10, plot[3] - 6)
 		points = trend_chart.plot_points(inner, values, vmin, vmax)
 		curve = trend_chart.monotone_curve(points)
 		base_y = points[0][1]
 		gain, loss = colors["malachite"], colors["cinnabar"]
 
 		self._fill_against_baseline(img, plot, curve, base_y, chart_bg)
-		self._draw_dashed_line(draw, plot[0] + 4, plot[2] - 4, round(base_y), colors["muted"])
+		if window_label and max(values) - min(values) >= 0.005:
+			self._draw_trend_scale(draw, plot, inner, vmin, vmax, chart_bg)
+		self._draw_dashed_line(draw, inner[0] - 3 if window_label else plot[0] + 4,
+							   plot[2] - 4, round(base_y), colors["muted"])
 		for run, above in trend_chart.split_at_baseline(curve, base_y):
 			draw.line(
 				[(round(x), round(y)) for x, y in run],
@@ -1954,7 +1964,8 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			width=2,
 		)
 		ended_up = values[-1] >= start
-		baseline_rect = self._draw_baseline_label(draw, plot, base_y, self._money(start, 0), chart_bg, below=ended_up)
+		baseline_text = ("START " if window_label else "") + self._money(start, 0)
+		baseline_rect = self._draw_baseline_label(draw, plot, base_y, baseline_text, chart_bg, below=ended_up)
 		if extremes:
 			self._draw_extreme_tags(draw, plot, values, points, chart_bg, avoid=[baseline_rect])
 		self._draw_latest_value_marker(
@@ -1962,6 +1973,47 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			(round(points[-1][0]), round(points[-1][1])),
 			gain if ended_up else loss,
 		)
+		if window_label and date_range:
+			self._draw_trend_context(draw, plot, bottom, values, chart_bg)
+
+	def _draw_trend_scale(self, draw, plot, inner, vmin, vmax, chart_bg):
+		"""At most three round dollar levels, on the curve's own padded value scale."""
+		colors = _active_stock_colors()
+		raw_step = (vmax - vmin) / 3
+		magnitude = 10 ** math.floor(math.log10(raw_step))
+		step = next(multiplier * magnitude for multiplier in (1, 2, 5, 10) if multiplier * magnitude >= raw_step)
+		font = self._font(9)
+		line = self._blend(colors["muted"], chart_bg, 0.18)
+		ink = self._blend(colors["muted"], chart_bg, 0.72)
+		first = math.ceil(vmin / step) * step
+		for index in range(3):
+			value = first + index * step
+			if value > vmax:
+				break
+			y = inner[3] - (inner[3] - inner[1]) * (value - vmin) / (vmax - vmin)
+			self._draw_dashed_line(draw, inner[0] - 3, plot[2] - 4, round(y), line, dash=2, gap=5)
+			scale, suffix = (1e6, "M") if abs(value) >= 1e6 else (1e3, "K") if abs(value) >= 1e3 else (1, "")
+			precision = max(0, math.ceil(math.log10(scale / step)))
+			text = f"${value / scale:.{precision}f}{suffix}"
+			# A tiny observed range can demand more precision than this compact axis can show.
+			# Keep the grid rather than rounding several different levels to the same amount.
+			if self._text_width(draw, text, font) <= inner[0] - plot[0] - 8:
+				draw.text((plot[0] + 4, self._centered_text_y(draw, text, font, y)), text, fill=ink, font=font)
+
+	def _draw_trend_context(self, draw, plot, bottom, values, chart_bg):
+		"""Range and latest distance from the observed high; neither is investment performance."""
+		colors = _active_stock_colors()
+		high, low = max(values), min(values)
+		text = f"RANGE {self._compact_money(high - low)}"
+		if high > 0:
+			text += f"  ·  {(values[-1] / high - 1) * 100:+.2f}% FROM HIGH"
+		font = self._font(9)
+		width = self._text_width(draw, text, font)
+		if width > plot[2] - plot[0] - 130:
+			return
+		y = self._centered_text_y(draw, text, font, (plot[3] + bottom) / 2 + 0.5)
+		draw.text(((plot[0] + plot[2] - width) / 2, y), text,
+				  fill=self._blend(colors["muted"], chart_bg, 0.78), font=font)
 
 	def _draw_trend_return(self, draw, anchor, values, window_label):
 		"""Window return right-aligned in the trend card's title row."""
