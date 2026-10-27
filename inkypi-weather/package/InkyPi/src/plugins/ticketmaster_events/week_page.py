@@ -683,18 +683,19 @@ class WeekPageMixin:
         draw.text((sx0 + 2, sy0 + 20), clock(event.local_time) or "全天", fill=time_ink, font=self._font(16, bold=True))
         # Colour, label and sticker all express the same provider classification.
         thumb_x, thumb_y = sx0 + 53, sy0 + 2
+        tile_right = thumb_x + THUMB[0]
+        draw.rectangle((thumb_x, thumb_y, tile_right + 4, sy0 + 43), fill=kind_colour)
         self._paste_event_image(image, event, (thumb_x, thumb_y, THUMB[0], THUMB[1]), colors)
         label, icon = kind_of(event)
         label = label or "未分类"
-        tile_right = thumb_x + THUMB[0]
         label_font = self._font(11, bold=True)
         label = self._fit_text(draw, label, label_font, THUMB[0] - 4)
         draw.text((thumb_x + (THUMB[0] - draw.textlength(label, font=label_font)) / 2, sy0 + 31),
-                  label, fill=colors["ink"], font=label_font)
+                  label, fill=chip_ink(kind_colour, colors), font=label_font)
         art = _genre_icon(icon, STICKER, tuple(colors["paper"]), tuple(colors["ink"]))
         if art is not None:
             image.paste(art, (tile_right - art.width + 4, sy0 + 10), art)
-        # A single category-colour contour encloses the neutral time, poster and type area.
+        # One category-colour contour encloses the neutral time and coloured poster/type tile.
         # Draw it last so neither the poster nor its sticker interrupts the outline.
         draw.rectangle((sx0, sy0 + 2, tile_right + 4, sy0 + 43), outline=kind_colour, width=1)
         text_x, right = tile_right + 9, sx1 - 3
