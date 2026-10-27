@@ -26,6 +26,7 @@ from plugins.sports_dashboard.cache_io import read_json_file, write_json_file
 from plugins.sports_dashboard.ncaa_localization import NCAA_ADDITIONAL_SCHOOLS
 from plugins.sports_dashboard.render_fonts import render_font, render_font_scope
 from plugins.sports_dashboard.score_fonts import fit_score, score_font
+from plugins.sports_dashboard.source_credits import draw_source_credit
 from plugins.sports_dashboard.esports_fonts import active as esports_type_active, active_font, esports_role
 from runtime.sports_asset_metrics import record_asset_metric
 from utils.app_utils import get_base_ui_font, resolve_path
@@ -3723,8 +3724,9 @@ class SportsDashboardCommonMixin:
             title, title_font = self._fit_text(draw, title_text, 134, 22, bold=True, min_size=15)
             draw.text((title_x, header_y), title, font=title_font, fill=COLORS["text"])
         source_label = self._standalone_sport_source_label(sport, card, source_state)
-        source_label, source_font = self._fit_text(draw, source_label, 112, 10, bold=True, min_size=7)
-        draw.text((title_x, header_y + 24), source_label, font=source_font, fill=COLORS["muted"])
+        if not self._draw_source_credit(image, draw, (title_x, header_y + 24, title_x + 112, header_y + 38), source_label, size=10):
+            source_label, source_font = self._fit_text(draw, source_label, 112, 10, bold=True, min_size=7)
+            draw.text((title_x, header_y + 24), source_label, font=source_font, fill=COLORS["muted"])
         status = str((card or {}).get("status") or "NEXT").upper()
         strip_drawn = self._draw_standalone_sport_header_cutout(
             image,
@@ -4395,6 +4397,12 @@ class SportsDashboardCommonMixin:
         if day_delta == 1:
             return "TOMORROW"
         return f"{WEEKDAYS[match_time.weekday()]} {match_time.strftime('%m/%d')}"
+
+    def _draw_source_credit(self, image, draw, box, label, color=None, *, size=9, min_size=7, align="left"):
+        return draw_source_credit(
+            self, image, draw, box, label, color or COLORS["muted"], size=size,
+            min_size=min_size, align=align, on_light=sum(COLORS["panel"]) > 384, ink=COLORS["text"],
+        )
 
     @staticmethod
     def _source_label(source_state):

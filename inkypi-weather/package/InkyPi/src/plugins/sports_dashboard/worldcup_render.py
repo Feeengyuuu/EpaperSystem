@@ -207,8 +207,9 @@ class WorldCupRenderMixin:
             fetched_at,
             source_timezone_info,
         )
-        source_text, source_font = self._fit_text(draw, source, 140, 9, bold=True, min_size=7)
-        draw.text((title_x, source_y), source_text, font=source_font, fill=COLORS["muted"])
+        if not self._draw_source_credit(image, draw, (title_x, source_y, title_x + 140, source_y + 12), source):
+            source_text, source_font = self._fit_text(draw, source, 140, 9, bold=True, min_size=7)
+            draw.text((title_x, source_y), source_text, font=source_font, fill=COLORS["muted"])
         if not presentation or bool(presentation.get("show_worldcup_banner")):
             self._draw_worldcup_header_banner(image, x1 + 225, y1, x2 - 90, y1 + 47)
         elif competition == "club":
@@ -724,8 +725,13 @@ class WorldCupRenderMixin:
             if source:
                 status_text = f"{source} {status_text}"
         if not club:
-            status_text, status_font = self._fit_text(draw, status_text, x2 - x1 - 42, 16, bold=True, min_size=10)
-            self._draw_centered(draw, ((x1 + x2) / 2, y1 + 41), status_text, status_font, COLORS["text"])
+            # The source token is independent from the confirmed clock/score.
+            if not self._draw_source_credit(
+                image, draw, (x1 + 21, y1 + 34, x2 - 21, y1 + 50), status_text,
+                COLORS["text"], size=16, min_size=10, align="center",
+            ):
+                status_text, status_font = self._fit_text(draw, status_text, x2 - x1 - 42, 16, bold=True, min_size=10)
+                self._draw_centered(draw, ((x1 + x2) / 2, y1 + 41), status_text, status_font, COLORS["text"])
 
         center_x = (x1 + x2) / 2
         # National flags stand 36 px tall (at most twice as wide), starting beside the status line.

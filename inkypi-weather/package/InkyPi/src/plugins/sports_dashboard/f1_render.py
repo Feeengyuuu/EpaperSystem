@@ -193,8 +193,10 @@ class F1RenderMixin:
         if not self._draw_local_wordmark(image, LOCAL_F1_TITLE_WORDMARK_PATH, x1 + 96, header_y, 142, 20):
             title, title_font = self._fit_f1_metric(draw, "FORMULA 1", 142, 17, bold=True, max_height=20)
             draw.text((x1 + 96, header_y + 1), title, font=title_font, fill=COLORS["text"])
-        source_label, source_font = self._fit_text(draw, self._f1_source_label(selected, source_state), 124, 10, bold=True, min_size=7)
-        draw.text((x1 + 97, header_y + 22), source_label, font=source_font, fill=COLORS["muted"])
+        source_label = self._f1_source_label(selected, source_state)
+        if not self._draw_source_credit(image, draw, (x1 + 97, header_y + 22, x1 + 242, header_y + 36), source_label, size=10):
+            source_label, source_font = self._fit_text(draw, source_label, 145, 10, bold=True, min_size=7)
+            draw.text((x1 + 97, header_y + 22), source_label, font=source_font, fill=COLORS["muted"])
         if not self._draw_f1_team_grid(image, draw, (x1 + 250, y1 + 4, x2 - 92, y1 + 46), selected.get("constructor_standings")):
             self._draw_f1_header_track_strip(draw, x1 + 250, header_y + 2, x2 - 92, y1 + 47)
         status = str(selected.get("status") or "BREAK").upper()

@@ -87,8 +87,10 @@ class BasketballRenderMixin:
         if not self._draw_local_wordmark(image, LOCAL_NBA_TITLE_WORDMARK_PATH, x1 + 52, header_y - 1, 86, 22):
             title, title_font = self._fit_text(draw, "NBA", 86, 22, bold=True, min_size=17)
             draw.text((x1 + 52, header_y), title, font=title_font, fill=COLORS["text"])
-        source_label, source_font = self._fit_text(draw, self._source_label(source_state), 96, 10, bold=True, min_size=7)
-        draw.text((x1 + 52, header_y + 22), source_label, font=source_font, fill=COLORS["muted"])
+        source_label = self._source_label(source_state)
+        if not self._draw_source_credit(image, draw, (x1 + 52, header_y + 22, x1 + 148, header_y + 36), source_label, size=10):
+            source_label, source_font = self._fit_text(draw, source_label, 96, 10, bold=True, min_size=7)
+            draw.text((x1 + 52, header_y + 22), source_label, font=source_font, fill=COLORS["muted"])
         self._draw_nba_header_court_strip(image, x1 + 150, header_y + 2, x2 - 92, y1 + 47)
         self._draw_status_pill(draw, x2 - 84, header_y + 4, pill, is_live)
         draw.line((x1 + 12, y1 + 48, x2 - 12, y1 + 48), fill=COLORS["border"], width=1)

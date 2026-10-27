@@ -52,6 +52,22 @@
       ],
       "processing": "Official art, transparent alpha bounding-box crop and proportional LANCZOS resize only; SVG rasterized in headless Chrome. Original colors retained.",
       "rights": "Trademark of its respective owner, used only to identify the score source; no affiliation or endorsement implied."
+    },
+    "openf1": {
+      "creator": "OpenF1 / br-g",
+      "license": "CC-BY-NC-SA-4.0",
+      "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "repository_license_url": "https://github.com/br-g/openf1/blob/main/LICENSE",
+      "source_url": "https://raw.githubusercontent.com/br-g/openf1/main/documentation/images/logo.png",
+      "official_site": "https://openf1.org/",
+      "source_sha256": "e672300f1eea15eaa7495d144bdfba6336010a149dd67649a5137cc7be535600",
+      "sha256": "36c8ae89e955630fe26e77f7eab7d1adf0291a4ad87172a58b4a00b92012f846",
+      "size": [
+        232,
+        60
+      ],
+      "processing": "Official repository wordmark: transparent alpha bounding-box crop and proportional LANCZOS resize only. Night retains the original white/red art. Day applies theme ink to a copy preserving the original alpha and geometry; this monochrome treatment is not claimed as an official variant. No backing rectangle.",
+      "rights": "OpenF1 trademark used to identify this data provider; not the Formula 1 league logo. No affiliation or endorsement implied."
     }
   }
 }

@@ -1829,8 +1829,9 @@ class NBAMixin:
         title_text, title_font = self._fit_text(draw, "NBA", 82, 25, bold=True, min_size=18)
         draw.text((58, header_y + 2), title_text, font=title_font, fill=COLORS["text"])
         source_label = self._source_label(source_state)
-        source_label, source_font = self._fit_text(draw, source_label, 116, 11, bold=True, min_size=8)
-        draw.text((58, header_y + 29), source_label, font=source_font, fill=COLORS["muted"])
+        if not self._draw_source_credit(image, draw, (58, header_y + 29, 174, header_y + 40), source_label, size=11, min_size=8):
+            source_label, source_font = self._fit_text(draw, source_label, 116, 11, bold=True, min_size=8)
+            draw.text((58, header_y + 29), source_label, font=source_font, fill=COLORS["muted"])
         self._draw_status_pill(draw, width - 92, header_y + 4, "LIVE" if live else "NEXT", bool(live))
         draw.line((14, top_y + 48, width - 14, top_y + 48), fill=COLORS["border"], width=1)
 

@@ -683,16 +683,12 @@ class ClubFootballRenderMixin:
         odds_triplet = self._club_worldcup_odds_triplet(focus)
         if odds_triplet:
             attribution, _ = self._club_odds_source_labels(focus)
-            attribution, attribution_font = self._fit_text(
-                draw, attribution, 74, 7, bold=True, min_size=6
-            )
-            self._draw_right_aligned(
-                draw,
-                (right - 8, y(207)),
-                attribution,
-                attribution_font,
-                COLORS["muted"],
-            )
+            if not self._draw_source_credit(
+                panel, draw, (right - 82, y(207), right - 8, y(215)), attribution,
+                size=7, min_size=6, align="right",
+            ):
+                attribution, attribution_font = self._fit_text(draw, attribution, 74, 7, bold=True, min_size=6)
+                self._draw_right_aligned(draw, (right - 8, y(207)), attribution, attribution_font, COLORS["muted"])
             odds_boxes = (
                 (left + 35, y(216), left + 105, y(229)),
                 ((left + right) / 2 - 28, y(216), (left + right) / 2 + 28, y(229)),
@@ -752,13 +748,11 @@ class ClubFootballRenderMixin:
             fill=palette["text"],
         )
         odds_header_font = self._font(8, bold=True)
-        self._draw_right_aligned(
-            draw,
-            (right - 9, top + 8),
-            "ESPN/API-F \u8d54\u7387",
-            odds_header_font,
-            palette["muted"],
-        )
+        if not self._draw_source_credit(
+            panel, draw, (right - 103, top + 8, right - 9, top + 19), "ESPN/API-F \u8d54\u7387",
+            palette["muted"], size=8, align="right",
+        ):
+            self._draw_right_aligned(draw, (right - 9, top + 8), "ESPN/API-F \u8d54\u7387", odds_header_font, palette["muted"])
         rail = list((selected or {}).get("rail") or []) if isinstance(selected, Mapping) else []
         for row_index in range(5):
             row_top = top + rail_header_height + row_index * rail_row_height
@@ -895,15 +889,14 @@ class ClubFootballRenderMixin:
                     self._draw_worldcup_odds_text(
                         draw, box, text, max_size=6 if compact else 7
                     )
-                _, source_short = self._club_odds_source_labels(event)
+                attribution, source_short = self._club_odds_source_labels(event)
                 source_font = self._font(6, bold=True)
-                self._draw_right_aligned(
-                    draw,
-                    (right - 5, row_bottom - (9 if compact else 11)),
-                    source_short,
-                    source_font,
-                    COLORS["muted"],
-                )
+                source_top = row_bottom - (9 if compact else 11)
+                if not self._draw_source_credit(
+                    panel, draw, (right - 35, source_top, right - 5, row_bottom - 1),
+                    attribution.split("/", 1)[0], size=6, min_size=6, align="right",
+                ):
+                    self._draw_right_aligned(draw, (right - 5, source_top), source_short, source_font, COLORS["muted"])
 
     def _render_club_football_panel(self, dimensions, selected, source_state, fetched_at, now):
         if (

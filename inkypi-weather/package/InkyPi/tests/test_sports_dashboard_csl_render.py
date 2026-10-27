@@ -770,6 +770,9 @@ def test_worldcup_without_profile_matches_pre_profile_pixels(monkeypatch):
 
     monkeypatch.setattr(SportsDashboard, "_font", staticmethod(baseline_font))
     plugin = _plugin()
+    # This is the historical competition-layout baseline. Exercise its original
+    # text-source fallback; the default official-logo path is verified below.
+    monkeypatch.setattr(plugin, "_draw_source_credit", lambda *_args, **_kwargs: False)
 
     image = plugin._render_worldcup_api_panel(
         (536, 240),
@@ -783,3 +786,22 @@ def test_worldcup_without_profile_matches_pre_profile_pixels(monkeypatch):
     assert hashlib.sha256(image.tobytes()).hexdigest() == (
         "51a83d5e61e34acd1184bd89550f8ef05eb82d0ac2576f49f91721e9e4bd7227"
     )
+
+
+def test_worldcup_without_profile_draws_official_source_credit_by_default(monkeypatch):
+    plugin = _plugin()
+    credits = []
+    original_credit = plugin._draw_source_credit
+
+    def capture_credit(image, draw, box, label, *args, **kwargs):
+        drawn = original_credit(image, draw, box, label, *args, **kwargs)
+        credits.append((label, drawn))
+        return drawn
+
+    monkeypatch.setattr(plugin, "_draw_source_credit", capture_credit)
+    image = plugin._render_worldcup_api_panel(
+        (536, 240), _empty_selected(), "ESPN CACHE", None, 4, NOW,
+    )
+
+    assert image.size == (536, 240)
+    assert credits == [("ESPN CACHE", True)]

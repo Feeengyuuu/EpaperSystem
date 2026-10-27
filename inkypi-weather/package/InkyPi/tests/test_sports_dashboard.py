@@ -10471,7 +10471,7 @@ def test_worldcup_team_points_meta_shows_points_for_group_stage_alias():
     assert SportsDashboard._worldcup_team_points_meta(event, "a") == "PTS 4 / 1-1-0"
     assert SportsDashboard._worldcup_team_points_meta(event, "b") == "0-1-1 / PTS 1"
 
-def test_worldcup_main_card_draws_verified_source_in_status_line():
+def test_worldcup_main_card_draws_verified_source_in_status_line(monkeypatch):
     plugin = _plugin()
     la = ZoneInfo("America/Los_Angeles")
     event = {
@@ -10493,19 +10493,28 @@ def test_worldcup_main_card_draws_verified_source_in_status_line():
     }
     image = Image.new("RGB", (320, 180), COLORS["panel"])
     draw = ImageDraw.Draw(image)
-    seen_texts = []
-    original_fit_text = plugin._fit_text
+    source_credits = []
+    status_texts = []
+    original_credit = plugin._draw_source_credit
+    original_text = plugin._draw_text_in_box
 
-    def capture_fit_text(draw_obj, text, *args, **kwargs):
-        seen_texts.append(str(text))
-        return original_fit_text(draw_obj, text, *args, **kwargs)
+    def capture_credit(image_obj, draw_obj, box, label, *args, **kwargs):
+        drawn = original_credit(image_obj, draw_obj, box, label, *args, **kwargs)
+        source_credits.append((str(label), drawn))
+        return drawn
 
-    plugin._fit_text = capture_fit_text
+    def capture_text(draw_obj, box, text, *args, **kwargs):
+        status_texts.append(str(text))
+        return original_text(draw_obj, box, text, *args, **kwargs)
+
+    monkeypatch.setattr(plugin, "_draw_source_credit", capture_credit)
+    monkeypatch.setattr(plugin, "_draw_text_in_box", capture_text)
     plugin._draw_worldcup_flag = lambda *_args, **_kwargs: None
 
     plugin._draw_worldcup_main_card(image, draw, 0, 0, 300, 150, event, datetime(2026, 6, 11, 14, 0, tzinfo=la), "recent")
 
-    assert "ESPN 2-0" in seen_texts
+    assert ("ESPN 2-0", True) in source_credits
+    assert " 2-0" in status_texts
 
 
 def test_worldcup_scoreboard_source_label_identifies_overlay():
@@ -19746,20 +19755,21 @@ def test_club_focus_uses_worldcup_left_x_right_odds_order(monkeypatch):
         }
     )
     drawn_odds = []
-    right_aligned = []
+    source_credits = []
     original_odds = plugin._draw_worldcup_odds_text
-    original_right_aligned = plugin._draw_right_aligned
+    original_credit = plugin._draw_source_credit
 
     def record_odds(draw, box, text, max_size=11):
         drawn_odds.append((str(text), box))
         return original_odds(draw, box, text, max_size=max_size)
 
-    def record_right_aligned(draw, xy, text, font, color):
-        right_aligned.append((str(text), xy))
-        return original_right_aligned(draw, xy, text, font, color)
+    def record_credit(image, draw, box, label, *args, **kwargs):
+        drawn = original_credit(image, draw, box, label, *args, **kwargs)
+        source_credits.append((str(label), box, drawn))
+        return drawn
 
     monkeypatch.setattr(plugin, "_draw_worldcup_odds_text", record_odds)
-    monkeypatch.setattr(plugin, "_draw_right_aligned", record_right_aligned)
+    monkeypatch.setattr(plugin, "_draw_source_credit", record_credit)
     monkeypatch.setattr(
         plugin,
         "_load_team_logo",
@@ -19777,7 +19787,7 @@ def test_club_focus_uses_worldcup_left_x_right_odds_order(monkeypatch):
     ]
     assert [text for text, _ in focus_odds] == ["1.14", "X / 7.50", "15.00"]
     assert focus_odds[0][1][0] < focus_odds[1][1][0] < focus_odds[2][1][0]
-    assert ("ESPN/DK", (286, 211)) in right_aligned
+    assert ("ESPN/DK", (212, 211, 286, 219), True) in source_credits
 
 
 def test_club_worldcup_odds_triplet_requires_a_complete_three_way_market():

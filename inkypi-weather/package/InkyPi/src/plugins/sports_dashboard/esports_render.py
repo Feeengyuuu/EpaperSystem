@@ -1424,6 +1424,8 @@ class EsportsRenderMixin:
         if str(primary.get("series") or "").upper() == "CS" and str(source).strip().casefold() == "pandascore":
             if self._draw_cs2_provider_label(image, draw, box, "PANDASCORE", color, attribution=True):
                 return
+        if self._draw_source_credit(image, draw, box, fallback, color, size=8, min_size=6):
+            return
         self._draw_text_in_box(draw, box, fallback, font, color)
 
     def _draw_cs2_provider_label(self, image, draw, box, label, color, *, attribution=False):
