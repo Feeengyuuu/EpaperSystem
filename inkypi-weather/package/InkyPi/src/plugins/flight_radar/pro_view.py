@@ -26,6 +26,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
+from utils.fonts import load_font
 from utils.local_wordmark import paste_local_wordmark
 from utils.safe_image import ImageLimits, safe_open_image
 
@@ -131,6 +132,37 @@ EXPLICIT_MAPS = {"google", "google_static", "image", "static_image", "local", "l
 WHITE = (255, 255, 255)
 
 
+@lru_cache(maxsize=24)
+def _airport_face(size, weight):
+    face = "Bold" if weight == "bold" else "SemiBold"
+    return load_font(str(ASSETS / "fonts" / f"Inter-{face}.ttf"), size)
+
+
+def _airport_font(plugin, size, weight="semibold", text=""):
+    """Use an open airport-style face for Latin readouts; retain the CJK UI face."""
+    if any(ord(char) > 0x2FF for char in str(text)):
+        return plugin._font(size, "bold")
+    try:
+        return _airport_face(size, weight)
+    except OSError:
+        return plugin._font(size, "bold")
+
+
+def _draw_time(plugin, draw, center, timing, color):
+    """Center the airport clock and its Chinese verb as one baseline-aligned label."""
+    clock, _, verb = " ".join(timing.split()[1:]).partition(" ")
+    clock_font = _airport_font(plugin, 10)
+    verb_font = plugin._city_font(9, "bold")
+    clock_width = draw.textlength(clock, font=clock_font)
+    verb_width = draw.textlength(verb, font=verb_font)
+    gap = 3 if verb else 0
+    x = center[0] - (clock_width + gap + verb_width) / 2
+    baseline = center[1] + 4
+    draw.text((x, baseline), clock, font=clock_font, fill=color, anchor="ls")
+    if verb:
+        draw.text((x + clock_width + gap, baseline), verb, font=verb_font, fill=color, anchor="ls")
+
+
 def render_pro(plugin, image, snapshot, theme, now, settings, device_config):
     draw = ImageDraw.Draw(image)
     draw.rectangle((0, 0, image.width, image.height), fill=theme["bg"])
@@ -180,10 +212,10 @@ def _header(plugin, image, draw, snapshot, theme, now):
     draw.text((16, 32), f"{label} TRACON · {source} · {len(aircraft)} TRACKS", font=plugin._font(9, "bold"),
               fill=theme["header_muted"])
     zulu = now.astimezone(timezone.utc).strftime("%H%MZ")
-    zulu_font = plugin._font(24, "bold")
+    zulu_font = _airport_font(plugin, 24, "bold")
     draw.text((784, 5), zulu, font=zulu_font, fill=theme["header_ink"], anchor="ra")
     local_x = 784 - draw.textlength(zulu, font=zulu_font) - 10
-    draw.text((local_x, 9), now.strftime("%H:%M"), font=plugin._font(13, "bold"), fill=theme["header_ink"], anchor="ra")
+    draw.text((local_x, 9), now.strftime("%H:%M"), font=_airport_font(plugin, 13), fill=theme["header_ink"], anchor="ra")
     draw.text((local_x, 27), now.strftime("%Z").strip() or "LOCAL", font=plugin._font(9, "bold"),
               fill=theme["header_muted"], anchor="ra")
     warning = str(snapshot.get("warning") or "").upper()
@@ -196,7 +228,7 @@ def _header(plugin, image, draw, snapshot, theme, now):
     highest = max((plugin._number(plane.get("altitude_ft")) or 0 for plane in aircraft
                    if not plane.get("on_ground")), default=0)
     x = 238
-    font, small = plugin._font(15, "bold"), plugin._font(9, "bold")
+    font, small = _airport_font(plugin, 15, "bold"), plugin._font(9, "bold")
     for key in ("arrival", "departure", "ground"):
         name, role = PHASES[key]
         draw.rounded_rectangle((x, 12, x + 4, 34), radius=2, fill=theme[role])
@@ -224,7 +256,7 @@ def _board(plugin, image, draw, snapshot, theme):
     x0, y0, x1, y1 = BOARD
     gap = 8
     width = (x1 - x0 - gap * (len(FAA_AIRPORTS) - 1)) / len(FAA_AIRPORTS)
-    code_font, city_font = plugin._font(14, "bold"), plugin._font(9, "normal")
+    code_font, city_font = _airport_font(plugin, 14, "bold"), plugin._font(9, "normal")
     chip_font, line_font = plugin._font(9, "bold"), plugin._font(9, "bold")
     for index, code in enumerate(FAA_AIRPORTS):
         bx = x0 + index * (width + gap)
@@ -829,7 +861,7 @@ def _strip_route(plugin, image, draw, plane, phase, box, timing, theme):
     left, top, right, _bottom = box
     middle = top + 9
     role = theme[PHASES[phase][1]]
-    big, city_font = plugin._font(20, "bold"), plugin._city_font(9, "bold")
+    big, city_font = _airport_font(plugin, 21, "bold"), plugin._city_font(9, "bold")
     origin, destination = str(plane.get("origin") or "").upper(), str(plane.get("destination") or "").upper()
     if not (origin and destination):
         route = f"航线未知 · 应答机 {str(plane.get('hex') or '').upper()}"
@@ -863,8 +895,7 @@ def _strip_route(plugin, image, draw, plane, phase, box, timing, theme):
     draw.polygon(points, fill=role)
     if timing:
         # "预计 09:31 到" / "约 09:12 起飞": the clock and the verb over the line.
-        draw.text(((line_left + line_right) / 2, middle - 10), " ".join(timing.split()[1:]), font=plugin._city_font(
-            10, "bold"), fill=role, anchor="mm")
+        _draw_time(plugin, draw, ((line_left + line_right) / 2, middle - 10), timing, role)
 
 
 def _strips(plugin, image, snapshot, theme, now):
@@ -874,11 +905,11 @@ def _strips(plugin, image, snapshot, theme, now):
     draw = ImageDraw.Draw(image)
     x0, y0, x1, y1 = STRIPS
     draw.rounded_rectangle(STRIPS, radius=7, fill=theme["panel"], outline=theme["line"], width=1)
-    draw.text((x0 + 10, y0 + 6), "FLIGHT STRIPS", font=plugin._font(13, "bold"), fill=theme["ink"])
+    draw.text((x0 + 10, y0 + 6), "FLIGHT STRIPS", font=_airport_font(plugin, 13, "bold"), fill=theme["ink"])
     planes, center = strip_order(plugin, snapshot)
     draw.text((x1 - 10, y0 + 9), "最近航班 · 航线 · 进度 · 时刻", font=plugin._font(9, "bold"), fill=theme["muted"],
               anchor="ra")
-    call_font, chip_font, meta_font = plugin._font(12, "bold"), plugin._font(9, "bold"), plugin._font(9, "bold")
+    chip_font, meta_font = plugin._font(9, "bold"), _airport_font(plugin, 9)
     for index, plane in enumerate(planes[:5]):
         sx0, sy0 = x0 + 6, y0 + 28 + index * (STRIP_H + STRIP_GAP)
         sx1, sy1 = x1 - 6, sy0 + STRIP_H
@@ -886,6 +917,7 @@ def _strips(plugin, image, snapshot, theme, now):
         name, role = PHASES[phase]
         draw.rounded_rectangle((sx0, sy0, sx1, sy1), radius=6, fill=theme["panel2"], outline=theme["card_line"], width=1)
         callsign = str(plane.get("callsign") or plane.get("hex") or "未知").strip()
+        call_font = _airport_font(plugin, 12, text=callsign)
         # Line 1: the airline's wordmark and the callsign; the phase as a chip at the right.
         logo = airline_logo(callsign[:3], 54, STRIP_LOGO_HEIGHT)
         if logo is not None:
@@ -893,7 +925,8 @@ def _strips(plugin, image, snapshot, theme, now):
             image.paste(logo, (sx0 + 8, round(sy0 + 10 - logo.height / 2)), logo)
             call_x = sx0 + 12 + max(logo.width, 36)
         else:
-            draw.text((sx0 + 8, sy0 + 10), callsign[:3], font=plugin._font(11, "bold"), fill=theme["muted"], anchor="lm")
+            draw.text((sx0 + 8, sy0 + 10), callsign[:3], font=_airport_font(plugin, 11, text=callsign[:3]),
+                      fill=theme["muted"], anchor="lm")
             call_x = sx0 + 44
         chip = f"{name} {PHASE_CODES[phase]}"
         chip_w = draw.textlength(chip, font=chip_font) + 12
@@ -911,9 +944,11 @@ def _strips(plugin, image, snapshot, theme, now):
         state = " · ".join(piece for piece in (_altitude(plugin, plane), f"{int(speed)} kt" if speed is not None
                                                and not plane.get("on_ground") else "") if piece)
         foot = sy0 + 58
-        draw.text((sx0 + 10, foot), _fit(draw, aircraft, meta_font, (sx1 - sx0) / 2 - 40), font=meta_font,
+        aircraft_font = _airport_font(plugin, 9, text=aircraft)
+        draw.text((sx0 + 10, foot), _fit(draw, aircraft, aircraft_font, (sx1 - sx0) / 2 - 40), font=aircraft_font,
                   fill=theme["muted"], anchor="lm")
-        draw.text(((sx0 + sx1) / 2 + 12, foot), state, font=meta_font, fill=theme["ink"], anchor="mm")
+        draw.text(((sx0 + sx1) / 2 + 12, foot), state, font=_airport_font(plugin, 9, text=state),
+                  fill=theme["ink"], anchor="mm")
         draw.text((sx1 - 10, foot), plugin._format_distance(plane.get("distance_nm")), font=meta_font,
                   fill=theme["muted"], anchor="rm")
     if not planes:
