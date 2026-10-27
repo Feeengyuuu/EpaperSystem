@@ -10,6 +10,7 @@ away end zone is on the left and the home end zone on the right.
 """
 
 from .common import *
+from .card_backdrops import paint_list_backdrop
 from .scorebug_kit import KIT_SCOREBOARD_ROW_HEIGHT, ScorebugSpec
 
 SportsDashboard = None
@@ -41,6 +42,7 @@ class FootballRenderMixin:
         shown = games[: max(0, (bottom - top - 21) // KIT_SCOREBOARD_ROW_HEIGHT)]
         title = "AP TOP 25" if any(SportsDashboard._ncaa_game_is_ranked(event) for event in shown) else "SCOREBOARD"
         self._draw_kit_scoreboard_column(image, draw, (x1 + 12, top - 2, list_x2, bottom), games, now, spec, title=title, empty="No other college games")
+        paint_list_backdrop(image, (x1 + 12, top - 2, list_x2, bottom), "gridiron", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
         self._draw_ncaa_matchup_card(image, draw, (list_x2 + 18, top, x2 - 12, bottom), card, now, spec)
 
     def _draw_ncaa_matchup_card(self, image, draw, box, card, now, spec):
@@ -49,7 +51,7 @@ class FootballRenderMixin:
             self._draw_kit_empty_card(draw, box, spec, "No college schedule")
             return
         state = SportsDashboard._hub_event_state(event)
-        left, top, right, bottom = self._draw_kit_card(draw, box, spec, state)
+        left, top, right, bottom = self._draw_kit_card(draw, box, spec, state, image=image)
         self._draw_kit_status_row(
             draw, left, top + 8, right, spec, state,
             SportsDashboard._nfl_status_pill_label(event, now),
@@ -123,6 +125,7 @@ class FootballRenderMixin:
         self._draw_football_featured_card(image, draw, card_box, card, now, sport)
         games = SportsDashboard._football_scoreboard_events(card, sport)
         self._draw_kit_scoreboard_column(image, draw, column_box, games, now, spec, empty="No other NFL games")
+        paint_list_backdrop(image, column_box, "gridiron", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
 
     def _football_spec(self, sport):
         sport = "NCAA" if str(sport or "").upper() == "NCAA" else "NFL"
@@ -170,7 +173,7 @@ class FootballRenderMixin:
             self._draw_kit_empty_card(draw, bounds, spec, "No college schedule" if sport == "NCAA" else "No NFL schedule")
             return
         state = self._hub_event_state(event)
-        left, top, right, bottom = self._draw_kit_card(draw, bounds, spec, state)
+        left, top, right, bottom = self._draw_kit_card(draw, bounds, spec, state, image=image)
         right_label = self._football_header_week_label(card, event)
         if sport == "NCAA":
             right_label = SportsDashboard._ncaa_header_badge_label(event) or right_label

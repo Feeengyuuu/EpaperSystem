@@ -11,6 +11,7 @@ game by game, then the other games of the day.
 
 from .baseball_icons import BASEBALL_ICON_SIZE, BASEBALL_ICONS, baseball_icon
 from .common import *
+from .card_backdrops import paint_list_backdrop
 from .scorebug_kit import ScorebugSpec
 
 SportsDashboard = None
@@ -52,6 +53,7 @@ class BaseballRenderMixin:
             others = [event for event in others if event not in series]
         if column[3] - y >= 40:
             self._draw_kit_ticker(image, draw, (column[0], y, column[2], column[3]), others, now, spec, title="AROUND MLB")
+        paint_list_backdrop(image, column, "baseball", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
 
     def _mlb_spec(self):
         baseball = SportsDashboard
@@ -73,7 +75,7 @@ class BaseballRenderMixin:
     def _draw_mlb_scoreboard_card(self, image, draw, box, event, now, spec):
         x1, y1, x2, y2 = [int(value) for value in box]
         state = SportsDashboard._hub_event_state(event)
-        left, top, right, bottom = self._draw_kit_card(draw, box, spec, state)
+        left, top, right, bottom = self._draw_kit_card(draw, box, spec, state, image=image)
         context = str(event.get("broadcast") or "").strip() if state == "live" else SportsDashboard._mlb_context_label(event, state)
         series = self._mlb_first_fitting(draw, [SportsDashboard._mlb_series_label(event, full) for full in (True, False)], 110, 11, bold=False)
         series_side = SportsDashboard._mlb_series_side(event)

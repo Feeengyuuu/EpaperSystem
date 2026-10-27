@@ -8,6 +8,7 @@ events on tour.
 """
 
 from .common import *
+from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
 from .scorebug_kit import ScorebugSpec
 
 SportsDashboard = None
@@ -37,10 +38,12 @@ class GolfRenderMixin:
             self._draw_pga_board(draw, board, rows, state, spec)
         else:
             self._draw_pga_preview(draw, board, event, card.get("calendar") or [], now, spec)
+        paint_list_backdrop(image, board, "golf", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
 
     def _draw_pga_banner(self, image, draw, box, event, state, now, spec):
         x1, y1, x2, y2 = [int(value) for value in box]
         self._draw_hub_card_shell(draw, x1, y1, x2, y2, COLORS[spec.live] if state == "live" else COLORS[spec.accent])
+        paint_card_backdrop(image, card_backdrop_box(x1, y1, x2, y2), "golf", COLORS["panel"])
         pill = SportsDashboard._pga_pill_label(event, state, now)
         pill, pill_font = self._fit_text(draw, pill, 150, 11, bold=True, min_size=8)
         marker = 9 if state == "live" else 0

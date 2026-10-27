@@ -1,5 +1,6 @@
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
+from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
 from .scorebug_kit import _kit_inked_where_faint
 from .score_fonts import football_score_league
 from .tv_networks import tv_network_parts, tv_watch_rank
@@ -370,6 +371,7 @@ class WorldCupRenderMixin:
             presentation.get("show_worldcup_pitch_art")
         ):
             self._draw_worldcup_tactics_strip(image, draw, right_x1, right_x2, upcoming_used_bottom + 2, content_bottom, main_event)
+        paint_list_backdrop(image, (right_x1, content_y - 4, right_x2, content_bottom), "football", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
 
     def _attach_worldcup_standings_points(self, events, settings):
         """Overlay authoritative cumulative group PTS from ESPN's standings feed.
@@ -674,6 +676,7 @@ class WorldCupRenderMixin:
         draw.rounded_rectangle((x1 + 3, y1 + 3, x2 + 3, y2 + 3), radius=5, fill=COLORS["worldcup_shadow"])
         draw.rounded_rectangle((x1, y1, x2, y2), radius=5, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((x1 + 1, y1 + 1, x1 + 8, y2 - 1), fill=accent)
+        paint_card_backdrop(image, card_backdrop_box(x1, y1, x2, y2), "football", COLORS["panel"])
         if not event:
             empty_text = (
                 str(presentation.get("empty_schedule_text") or "No schedule")

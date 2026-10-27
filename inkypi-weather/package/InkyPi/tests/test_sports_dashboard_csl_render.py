@@ -9,6 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import plugins.sports_dashboard.worldcup_render as worldcup_render_module
 from plugins.sports_dashboard.sports_dashboard import (
     DAY_COLORS,
     DEEP_NIGHT_COLORS,
@@ -773,6 +774,9 @@ def test_worldcup_without_profile_matches_pre_profile_pixels(monkeypatch):
     # This is the historical competition-layout baseline. Exercise its original
     # text-source fallback; the default official-logo path is verified below.
     monkeypatch.setattr(plugin, "_draw_source_credit", lambda *_args, **_kwargs: False)
+    # The baseline predates the stadium scene and list pattern (test_sports_card_backdrops).
+    monkeypatch.setattr(worldcup_render_module, "paint_card_backdrop", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(worldcup_render_module, "paint_list_backdrop", lambda *_args, **_kwargs: False)
 
     image = plugin._render_worldcup_api_panel(
         (536, 240),

@@ -1,0 +1,162 @@
+{
+  "origin": "football, basketball and esports scenes supplied by the owner on 2026-10-27; the rest generated the same day with image/gpt-image-2.5-sunburst (Creative Claw), styled on the owner's three scenes",
+  "processing": "scenes 480 px wide, list patterns 320 px square tiles, LANCZOS, 256-colour optimised PNG; generated scenes keep ink_kept of their ink (toward the cream ground) so their 10th-percentile luma is 140, as dense as the owner's",
+  "rendering": {
+    "<sport>.png": "cover-fits the inner area of the sport's featured card, keeping the foot of the scene",
+    "list_<sport>.png": "tiled and faded under a list column; only the paper and panel pixels take it"
+  },
+  "assets": {
+    "football.png": {
+      "scene": "teal stadium: floodlights, stands and a goal net at the edges",
+      "source_sha256": "6e4524819194842e3942ef253d4a37ce300d09ad239a8250212bf6bbe358f747",
+      "sha256": "c0d44d4e4117583940c65ba3966155e361b5ce5a6c8da01e5a569c678110e705",
+      "size": [
+        480,
+        258
+      ]
+    },
+    "basketball.png": {
+      "scene": "orange arena: stands at the edges, court lines along the foot",
+      "source_sha256": "913515e1e0c66c5933b7dad432cc08e8486e71799491e261b6853da460eda20b",
+      "sha256": "b15a763aed88477ada27947a364aea34047cfa17236c6ce74c1223d978d1444e",
+      "size": [
+        480,
+        303
+      ]
+    },
+    "esports.png": {
+      "scene": "blue and red arena: two crowds facing a central stage",
+      "source_sha256": "4d9daf58888a7919a133e6d614d99d83ed0a784cc99d6030aa4fe13cfe61a092",
+      "sha256": "2cb2d22d9b2124a8332dd2c4228f71aea77f709fb89a3feaab7130840d4ba0ad",
+      "size": [
+        480,
+        357
+      ]
+    },
+    "baseball.png": {
+      "scene": "navy ballpark: light towers, grandstands, the diamond along the foot",
+      "job_id": "4b998438-d459-4c56-bf5b-63d98e8912e0",
+      "ink_kept": 0.621,
+      "source_sha256": "47af963470024683bcd0f633b475e3713d5014f7d8a93a0870ee10d86903102f",
+      "sha256": "014a22250c21523d53183f515323d39e6126516a8573daf9219fbc644d56003c",
+      "size": [
+        480,
+        320
+      ]
+    },
+    "gridiron.png": {
+      "scene": "green stadium: goal posts at the edges, yard lines along the foot",
+      "job_id": "716cf7f3-0524-4b82-8a7e-c8ec97853aa1",
+      "ink_kept": 0.643,
+      "source_sha256": "ad43bf704508540f341a34ca332929f32bfe6b228fff86cd5be44165cd49fb4b",
+      "sha256": "d3d879449d41f223e015aa80f95d7ae542886ff473a627d9bab0bb2a3312eda3",
+      "size": [
+        480,
+        320
+      ]
+    },
+    "golf.png": {
+      "scene": "olive and ochre course: pines, a bunker and a flagstick",
+      "job_id": "4890bb91-c1fe-4f28-988c-9d8a1a39590f",
+      "ink_kept": 0.687,
+      "source_sha256": "8f30965e2a0979a76032327d1538c9d1e0dea242cd97832af63de874d3bf574d",
+      "sha256": "6533f78916be68f39aff49f507481b5f7b1fcfcc635db1f9c18ad51da0848fb0",
+      "size": [
+        480,
+        320
+      ]
+    },
+    "motorsport.png": {
+      "scene": "crimson and charcoal circuit: grandstands, start gantry, kerbs",
+      "job_id": "a86e6a96-6144-4e98-9e54-679186649f52",
+      "ink_kept": 0.547,
+      "source_sha256": "c3979de95b2c3686da11ef3c42614c69469f2a91e4f9c9127e372f361f105a29",
+      "sha256": "e1fcbd5ba6aa485e71d71799b4febaa46d51d5f68a7a41c0b2a3a8352a0bbf1b",
+      "size": [
+        480,
+        320
+      ]
+    },
+    "tactical.png": {
+      "scene": "amber and slate shooter arena: crowds, LED screens, player booths",
+      "job_id": "2beb725c-49d6-4128-982c-ee3662fc70dd",
+      "ink_kept": 0.846,
+      "source_sha256": "13ed7e5e54b512642fefc1cdedbd196d2dba837e49f3d98cf85fa825d50a6496",
+      "sha256": "0d5f9750bcfa30090e7d83f4ba95dc63a5c844531d8cc8dd7d5a66e7ff9acba6",
+      "size": [
+        480,
+        400
+      ]
+    },
+    "list_football.png": {
+      "motifs": "tactics marks, balls, boots, whistles, corner flags, trophies (teal)",
+      "job_id": "fdc0074c-16a0-4969-af06-c5e2de9495af",
+      "source_sha256": "f933888f48bbacd01292be8682f08aefbb38a1ed860f392500e2f7452ced8488",
+      "sha256": "2bd945dc5ce5e1764a9297f96f285c7468a5cc2b610494800620867f3fd97ffe",
+      "size": [
+        320,
+        320
+      ]
+    },
+    "list_basketball.png": {
+      "motifs": "play diagrams, balls, hoops, sneakers, stopwatches (orange)",
+      "job_id": "cff944ad-4bff-4841-a6c4-f87fe3ebabb3",
+      "source_sha256": "5ce9bc084916fb99a8dc3e3e12c3570f9eba9d7d0c59c028a569d085a3a509e6",
+      "sha256": "5b530a2952ecb4d0461d4759e6fbd5f26b0616c28790a9697da283032f74bb6b",
+      "size": [
+        320,
+        320
+      ]
+    },
+    "list_esports.png": {
+      "motifs": "controllers, keys, headsets, crosshairs, minimaps, trophies (blue and red)",
+      "job_id": "c9ab573e-954e-4157-8fe1-14be8af76f70",
+      "source_sha256": "bda0f918d1408e60d43f224c99f0ab7d4243663a87e7100174a0aca38e408fbd",
+      "sha256": "73ac4d81fe870e17c8b6ff67c868cdd924be958ac7c815bbc7198ef9743b8740",
+      "size": [
+        320,
+        320
+      ]
+    },
+    "list_baseball.png": {
+      "motifs": "balls, crossed bats, gloves, home plates, caps, pennants (navy)",
+      "job_id": "75eb19e9-61f1-4d2f-ad96-fe14cb724075",
+      "source_sha256": "b48aa5bdea82ec42ac161f23047f50cae62974665784c001f7e72ecf9c3629ee",
+      "sha256": "a45b7354837e6b6f0c2bdd68fa97ea26b9474bffc0f8c19b5081880727e91a2a",
+      "size": [
+        320,
+        320
+      ]
+    },
+    "list_gridiron.png": {
+      "motifs": "play diagrams, footballs, helmets, goal posts, clipboards (green)",
+      "job_id": "bcad67a6-ba5a-4e69-a8dc-664930a5c10e",
+      "source_sha256": "c8f09e6cc0f4d185ae4a0d1719bbf39839aaaed41e233808ec9c40248158a943",
+      "sha256": "d1413444af75127fb3c32878ef0fe0a2f5b7e657c3c0ae28af52aeae899b0294",
+      "size": [
+        320,
+        320
+      ]
+    },
+    "list_golf.png": {
+      "motifs": "pin flags, balls, tees, clubs, bags, carts (olive and ochre)",
+      "job_id": "fb78f7cb-d6e9-4bce-9298-3fe7dd2d23e2",
+      "source_sha256": "5b8f2d52c647d3268a4097874492af0b1d54d6be91656e7ff5691da698468765",
+      "sha256": "c312ace261bab846c809292f34011e9b4c7dc1fc002dc9cc996ea175a931294b",
+      "size": [
+        320,
+        320
+      ]
+    },
+    "list_motorsport.png": {
+      "motifs": "chequered flags, tyres, helmets, steering wheels, circuit outlines (crimson)",
+      "job_id": "f2531b8e-e022-4df5-9316-f49c45a19a38",
+      "source_sha256": "aab3359bc02971510949bf6df7d63d3af1a89833289940ec4f6a06e3f64f92a1",
+      "sha256": "a10c851c69f3504a1d8a1f9fd5faae334c5656a9228fccbe6301eac8f9c85a2a",
+      "size": [
+        320,
+        320
+      ]
+    }
+  }
+}

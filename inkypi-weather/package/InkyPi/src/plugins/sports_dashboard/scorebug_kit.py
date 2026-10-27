@@ -13,6 +13,7 @@ small text dither into specks.
 """
 
 from .common import *
+from .card_backdrops import SPORT_BACKDROP_KINDS, card_backdrop_box, paint_card_backdrop
 from .tv_networks import tv_network_parts
 
 SportsDashboard = None
@@ -106,10 +107,13 @@ class ScorebugKitMixin:
         self._draw_vertical_split(draw, split_x, content_y - 5, bottom)
         return (x1 + 12, content_y, split_x - 9, bottom), (split_x + 6, content_y - 2, x2 - 12, bottom)
 
-    def _draw_kit_card(self, draw, bounds, spec, state):
-        """Card shell; returns the inner (left, top, right, bottom) content box."""
+    def _draw_kit_card(self, draw, bounds, spec, state, image=None):
+        """Card shell, over the sport's stadium art when ``image`` is given;
+        returns the inner (left, top, right, bottom) content box."""
         x1, y1, x2, y2 = [int(value) for value in bounds]
         self._draw_hub_card_shell(draw, x1, y1, x2, y2, COLORS[spec.live] if state == "live" else COLORS[spec.accent])
+        if image is not None:
+            paint_card_backdrop(image, card_backdrop_box(x1, y1, x2, y2), SPORT_BACKDROP_KINDS.get(spec.sport), COLORS["panel"])
         return x1 + 16, y1, x2 - 10, y2
 
     def _draw_kit_empty_card(self, draw, bounds, spec, text):

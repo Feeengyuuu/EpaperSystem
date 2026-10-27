@@ -14,6 +14,7 @@ The NBA offseason page is drawn by nba.py and is unchanged.
 """
 
 from .common import *
+from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
 from .scorebug_kit import KIT_TILE_HEIGHT, ScorebugSpec, _kit_inked_where_faint
 
 SportsDashboard = None
@@ -135,6 +136,7 @@ class BasketballRenderMixin:
         state = SportsDashboard._hub_event_state(event)
         hero_y2 = y1 + FACEOFF_HERO_HEIGHT
         self._draw_hub_card_shell(draw, x1, y1, x2, hero_y2, COLORS[spec.live] if state == "live" else COLORS[spec.accent])
+        paint_card_backdrop(image, card_backdrop_box(x1, y1, x2, hero_y2), "basketball", COLORS["panel"])
         center_x = (x1 + 8 + x2) // 2
         self._draw_faceoff_team(image, draw, (x1 + 14, y1 + 4, center_x - FACEOFF_CENTER_HALF_WIDTH, hero_y2 - 4), event, "a", state, spec)
         self._draw_faceoff_team(image, draw, (center_x + FACEOFF_CENTER_HALF_WIDTH, y1 + 4, x2 - 8, hero_y2 - 4), event, "b", state, spec)
@@ -158,6 +160,7 @@ class BasketballRenderMixin:
         else:
             self._draw_basketball_leader_duel(draw, (x1, lower_y1, split_x, y2), event, spec)
         self._draw_kit_ticker(image, draw, (split_x + 14, lower_y1 - 2, x2, y2), others, now, spec)
+        paint_list_backdrop(image, (split_x + 14, lower_y1 - 2, x2, y2), "basketball", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
 
     def _draw_faceoff_team(self, image, draw, box, event, side, state, spec):
         x1, y1, x2, y2 = [int(value) for value in box]
@@ -389,6 +392,7 @@ class BasketballRenderMixin:
         left_x2 = x1 + 300
         state = SportsDashboard._hub_event_state(main)
         self._draw_hub_card_shell(draw, x1, y1, left_x2, y2, COLORS[spec.accent])
+        paint_card_backdrop(image, card_backdrop_box(x1, y1, left_x2, y2), "basketball", COLORS["panel"])
         inner_x1, inner_x2 = x1 + 16, left_x2 - 10
         length = SportsDashboard._basketball_series_length(main, series)
         mark = self._draw_event_mark(image, SportsDashboard._wnba_series_mark_path(main), (inner_x1, y1 + 4, inner_x1 + 72, y1 + 48), align="left")

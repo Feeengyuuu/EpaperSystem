@@ -5,6 +5,7 @@ from PIL import ImageFilter
 
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
+from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
 from .esports_fonts import esports_role, esports_sidebar
 from .esports_font_runs import EsportsFont
 
@@ -388,6 +389,7 @@ class EsportsRenderMixin:
         draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS["ewc_shadow"])
         draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
+        paint_card_backdrop(image, card_backdrop_box(card_x1, y, card_x2, card_y2), "esports", COLORS["panel"], radius=4)
         if not match:
             draw.text((card_x1 + 20, y + 58), "No EWC match", font=self._font(19, True), fill=COLORS["text"])
             return
@@ -748,6 +750,7 @@ class EsportsRenderMixin:
         draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS["ewc_shadow"])
         draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
+        paint_card_backdrop(image, card_backdrop_box(card_x1, y, card_x2, card_y2), "esports", COLORS["panel"], radius=4)
         if not event:
             draw.text((card_x1 + 20, y + 58), "No EWC schedule", font=self._font(19, True), fill=COLORS["text"])
             return
@@ -963,6 +966,7 @@ class EsportsRenderMixin:
                 accent,
                 title=section_title,
             )
+        paint_list_backdrop(image, (right_x + 2, 274, width - 2, height - 2), "esports", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
 
     @staticmethod
     def _valve_sidebar_secondary_section(primary):
@@ -1140,6 +1144,7 @@ class EsportsRenderMixin:
         draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS["valve_shadow"])
         draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
+        paint_card_backdrop(image, card_backdrop_box(card_x1, y, card_x2, card_y2), "tactical", COLORS["panel"], radius=4)
 
         if not event:
             draw.text((card_x1 + 20, y + 58), "No Valve event", font=self._font(19, True), fill=COLORS["text"])
@@ -1929,6 +1934,7 @@ class EsportsRenderMixin:
             league_key=league_key,
         )
         self._draw_lpl_recent_rows(image, draw, right_x, right_w, 374, recent[:2], league_key=league_key)
+        paint_list_backdrop(image, (right_x + 2, 240, width - 2, height - 2), "esports", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
 
     @staticmethod
     def _worlds_header_wordmark_path(config, logo_path, now):
@@ -2144,6 +2150,7 @@ class EsportsRenderMixin:
         draw.rounded_rectangle((card_x1 + 4, y + 4, card_x2 + 4, card_y2 + 4), radius=6, fill=COLORS[config["shadow"]])
         draw.rounded_rectangle((card_x1, y, card_x2, card_y2), radius=6, fill=COLORS["panel"], outline=COLORS["border"], width=2)
         draw.rectangle((card_x1 + 1, y + 1, card_x1 + 8, card_y2 - 1), fill=accent)
+        paint_card_backdrop(image, card_backdrop_box(card_x1, y, card_x2, card_y2), "esports", COLORS["panel"], radius=4)
 
         if not event:
             draw.text((card_x1 + 20, y + 58), config["empty_schedule"], font=self._font(19, True), fill=COLORS["text"])

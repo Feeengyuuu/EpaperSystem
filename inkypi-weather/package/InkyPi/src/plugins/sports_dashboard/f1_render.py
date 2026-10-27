@@ -20,6 +20,7 @@ import os
 
 from PIL import Image, ImageDraw, ImageStat
 
+from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
 from .common import COLORS, LOCAL_DECOR_DIR, LOCAL_F1_TITLE_WORDMARK_PATH, LOCAL_TEAM_LOGO_DIR, datetime, re
 from .scorebug_kit import ScorebugSpec
 
@@ -185,6 +186,7 @@ class F1RenderMixin:
             title = SportsDashboard._f1_short_race_name(result.get("race_name")) or "LAST RACE"
             self._draw_f1_order(image, draw, (middle + 14, lower, right, bottom), title, result.get("top") or [], spec,
                                 race=result)
+        paint_list_backdrop(image, (left, lower, right, bottom), "motorsport", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
 
     def _draw_f1_header(self, image, draw, bounds, selected, source_state):
         x1, y1, x2, _y2 = [int(value) for value in bounds]
@@ -208,6 +210,7 @@ class F1RenderMixin:
         x1, y1, x2, y2 = [int(value) for value in box]
         live_session = selected.get("live_session")
         self._draw_hub_card_shell(draw, x1, y1, x2, y2, COLORS[spec.live] if live_session else COLORS[spec.accent])
+        paint_card_backdrop(image, card_backdrop_box(x1, y1, x2, y2), "motorsport", COLORS["panel"])
         # The host flag identifies the Grand Prix, as on F1's own race cards;
         # keep its proportions and outline it so white fields stay visible.
         flag = self._draw_event_mark(image, SportsDashboard._f1_country_flag_path(race), (x1 + 14, y1 + 9, x1 + 62, y2 - 9), align="center")

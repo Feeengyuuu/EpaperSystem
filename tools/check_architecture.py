@@ -48,6 +48,9 @@ BOUNDARIES = {
     "plugins/sports_dashboard/tv_networks.py": {
         "__future__", "re",
     },
+    "plugins/sports_dashboard/card_backdrops.py": {
+        "__future__", "functools", "pathlib", "PIL",
+    },
     "display/display_history.py": {
         "__future__", "collections.abc", "datetime", "json", "logging", "pathlib", "utils.atomic_file",
     },

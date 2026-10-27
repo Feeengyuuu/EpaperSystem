@@ -41,6 +41,7 @@ except ModuleNotFoundError:
 
 import plugins.sports_dashboard.sports_dashboard as sports_dashboard_module
 import plugins.sports_dashboard.common as sports_dashboard_common_module
+import plugins.sports_dashboard.esports_render as esports_render_module
 import plugins.sports_dashboard.f1_render as f1_render_module
 from plugins.base_plugin.render_provenance import (
     SourceProvenance,
@@ -3441,6 +3442,8 @@ def test_ewc_match_focus_card_draws_game_logo_and_name_without_box_chrome(monkey
     monkeypatch.setattr(plugin, "_draw_text_in_box", record_draw_text_in_box)
     monkeypatch.setattr(plugin, "_load_local_team_logo", lambda *_args: None)
     monkeypatch.setattr(plugin, "_load_team_logo_for_render", lambda *_args: None)
+    # The stadium scene behind the card is covered in test_sports_card_backdrops.
+    monkeypatch.setattr(esports_render_module, "paint_card_backdrop", lambda *_args, **_kwargs: False)
 
     plugin._draw_ewc_match_focus_card(image, draw, 556, 244, 78, match, datetime(2026, 7, 2, 9, 0, tzinfo=la), False)
 
@@ -15946,8 +15949,10 @@ def test_blast_sidebar_places_up_next_and_recent_inside_480px(monkeypatch):
     assert rows[-1][1] + 50 < image.height
 
 
-def test_valve_ti_empty_slot_filler_yields_to_two_up_next_rows():
+def test_valve_ti_empty_slot_filler_yields_to_two_up_next_rows(monkeypatch):
     plugin = _plugin()
+    # Only the filler art matters here; the list's doodle pattern is covered in test_sports_card_backdrops.
+    monkeypatch.setattr(esports_render_module, "paint_list_backdrop", lambda *_args, **_kwargs: False)
     now = datetime(2026, 8, 22, 12, 0, tzinfo=timezone.utc)
     main = {
         "series": "TI",
