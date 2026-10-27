@@ -329,6 +329,7 @@ _LEGACY_STOCK_COLORS = {
 	"frame_light": (255, 226, 142),
 	"frame_shade": (248, 148, 35),
 	"coin_gold": COIN_GOLD,
+	"currency_gold": (180, 125, 20),
 }
 _ACTIVE_STOCK_COLORS = ContextVar("stocktracker_render_colors", default=None)
 
@@ -397,6 +398,7 @@ def _stock_render_colors(theme_context):
 		"frame_light": _blend_rgb(gold, panel, 0.65),
 		"frame_shade": _blend_rgb(gold, panel, 0.32),
 		"coin_gold": gold,
+		"currency_gold": (239, 194, 111),
 	}
 
 
@@ -1859,28 +1861,32 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 	def _draw_total_figure(self, img, draw, figure, ink, halo):
 		"""Engrave the currency sign and digits together, haloed clear of the chart behind."""
 		origin, font, glyphs = figure["origin"], figure["font"], figure["glyphs"]
+		currency_ink = _active_stock_colors()["currency_gold"]
 		bounds = []
 		for character, offset in glyphs:
 			position = (origin[0] + offset, origin[1])
-			draw.text(position, character, fill=ink, font=font, stroke_width=2, stroke_fill=halo)
-			draw.text(position, character, fill=ink, font=font, stroke_width=1,
-					  stroke_fill=self._blend(ink, halo, 0.72))
+			glyph_ink = currency_ink if character == "$" else ink
+			draw.text(position, character, fill=glyph_ink, font=font, stroke_width=2, stroke_fill=halo)
+			draw.text(position, character, fill=glyph_ink, font=font, stroke_width=1,
+					  stroke_fill=self._blend(glyph_ink, halo, 0.72))
 			bounds.append(draw.textbbox(position, character, font=font))
 		# Engraved horizontal cuts belong only inside thick strokes. Eroding the glyph
 		# mask keeps hairlines, serifs and punctuation intact at the display's native size.
 		left, top = math.floor(min(box[0] for box in bounds)), math.floor(min(box[1] for box in bounds))
 		right, bottom = math.ceil(max(box[2] for box in bounds)), math.ceil(max(box[3] for box in bounds))
-		mask = Image.new("L", (right - left + 2, bottom - top + 2))
-		mask_draw = ImageDraw.Draw(mask)
+		digit_mask = Image.new("L", (right - left + 2, bottom - top + 2))
+		currency_mask = Image.new("L", digit_mask.size)
 		for character, offset in glyphs:
 			if character.isdecimal() or character == "$":
+				mask_draw = ImageDraw.Draw(currency_mask if character == "$" else digit_mask)
 				mask_draw.text((origin[0] + offset - left + 1, origin[1] - top + 1), character, fill=255, font=font)
-		cuts = Image.new("L", mask.size)
+		cuts = Image.new("L", digit_mask.size)
 		cut_draw = ImageDraw.Draw(cuts)
-		for y in range(3, mask.height - 1, 3):
-			cut_draw.line((0, y, mask.width - 1, y), fill=255)
-		cuts = ImageChops.multiply(cuts, mask.filter(ImageFilter.MinFilter(3)))
-		img.paste(self._blend(ink, halo, 0.55), (left - 1, top - 1), cuts)
+		for y in range(3, cuts.height - 1, 3):
+			cut_draw.line((0, y, cuts.width - 1, y), fill=255)
+		for glyph_ink, mask in ((ink, digit_mask), (currency_ink, currency_mask)):
+			engraving = ImageChops.multiply(cuts, mask.filter(ImageFilter.MinFilter(3)))
+			img.paste(self._blend(glyph_ink, halo, 0.55), (left - 1, top - 1), engraving)
 
 	def _draw_sparkline(
 		self,

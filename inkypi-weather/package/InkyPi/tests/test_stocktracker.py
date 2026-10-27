@@ -735,16 +735,18 @@ def test_banknote_engraving_covers_currency_and_digits_but_keeps_punctuation_sol
     glyph_draw = ImageDraw.Draw(glyphs)
     solid = Image.new("RGB", image.size, ground)
     solid_draw = ImageDraw.Draw(solid)
+    currency_ink = stocktracker_module._active_stock_colors()["currency_gold"]
     for character, offset in figure["glyphs"]:
         position = (figure["origin"][0] + offset, figure["origin"][1])
         if character.isdecimal() or character == "$":
             glyph_draw.text(position, character, font=figure["font"], fill=255)
-        solid_draw.text(position, character, font=figure["font"], fill=ink, stroke_width=2, stroke_fill=ground)
-        solid_draw.text(position, character, font=figure["font"], fill=ink, stroke_width=1,
-                        stroke_fill=plugin._blend(ink, ground, 0.72))
-    cut_colour = plugin._blend(ink, ground, 0.55)
+        glyph_ink = currency_ink if character == "$" else ink
+        solid_draw.text(position, character, font=figure["font"], fill=glyph_ink, stroke_width=2, stroke_fill=ground)
+        solid_draw.text(position, character, font=figure["font"], fill=glyph_ink, stroke_width=1,
+                        stroke_fill=plugin._blend(glyph_ink, ground, 0.72))
+    cut_colours = {plugin._blend(colour, ground, 0.55) for colour in (ink, currency_ink)}
     cuts = [(x, y) for y in range(53, 112) for x in range(23, 310)
-            if image.getpixel((x, y)) == cut_colour and solid.getpixel((x, y)) != cut_colour]
+            if image.getpixel((x, y)) in cut_colours and solid.getpixel((x, y)) != image.getpixel((x, y))]
     assert len(cuts) > 20
     assert all(glyphs.getpixel(point) > 200 for point in cuts)
     dollar_offset = next(offset for character, offset in figure["glyphs"] if character == "$")
@@ -756,6 +758,31 @@ def test_banknote_engraving_covers_currency_and_digits_but_keeps_punctuation_sol
             left = figure["origin"][0] + offset
             right = left + figure["font"].getlength(character)
             assert not any(left <= x < right for x, _y in cuts)
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+@pytest.mark.parametrize("change", [-1.0, 1.0])
+def test_total_dollar_is_gold_while_digits_keep_their_gain_loss_colour(mode, change):
+    plugin = StockTracker({"id": "stocktracker"})
+    colors = stocktracker_module._stock_render_colors(_canonical_theme(mode))
+    token = stocktracker_module._ACTIVE_STOCK_COLORS.set(colors)
+    try:
+        image = Image.new("RGB", (340, 200), colors["panel"])
+        draw = ImageDraw.Draw(image)
+        figure = plugin._total_figure_layout(draw, (23, 53, 310, 112), 266124.56)
+        ink = plugin._today_ink(change)
+        plugin._draw_total_figure(image, draw, figure, ink, colors["panel"])
+    finally:
+        stocktracker_module._ACTIVE_STOCK_COLORS.reset(token)
+    dollar_offset = figure["glyphs"][0][1]
+    dollar_box = draw.textbbox((figure["origin"][0] + dollar_offset, figure["origin"][1]), "$",
+                              font=figure["font"])
+    gold_pixels = [(x, y) for y in range(53, 112) for x in range(23, 310)
+                   if image.getpixel((x, y)) == colors["currency_gold"]]
+    assert len(gold_pixels) > 20
+    assert all(dollar_box[0] <= x <= dollar_box[2] and dollar_box[1] <= y <= dollar_box[3]
+               for x, y in gold_pixels)
+    assert ink in set(image.get_flattened_data())
 
 
 def test_total_font_fallback_also_fits_every_asset_digit(monkeypatch):
