@@ -471,9 +471,9 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
 
     def _load_overview(self, settings, api_key, now):
         """(events, week, on_sale): the soonest events, each of the next WEEK_DAYS days' count and
-        mix of kinds, and the events whose public sale opens soon. The first day finds which
-        location parameters Ticketmaster answers; the other days and the on-sale list reuse them,
-        and a day or list that fails is left out rather than failing the page."""
+        mix of kinds, and the events whose public sale opens soon. The first response with events
+        selects the location for later days and the on-sale list. Until then, each day retries the
+        preferred locations; a failed later day or on-sale list is left out rather than failing the page."""
         today = now.date()
         base, rows, days = None, [], []
         for offset in range(WEEK_DAYS):
@@ -486,8 +486,9 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
                     for params in self._request_param_candidates(settings, api_key, DAY_ROWS):
                         params = self._day_params(params, window)
                         data = self._fetch_ticketmaster_json(params)
-                        base = params
-                        if (data or {}).get("_embedded"):
+                        # An empty evening must not pin later days to the city fallback.
+                        if ((data or {}).get("_embedded") or {}).get("events"):
+                            base = params
                             break
                 else:
                     data = self._fetch_ticketmaster_json(self._day_params(base, window))
