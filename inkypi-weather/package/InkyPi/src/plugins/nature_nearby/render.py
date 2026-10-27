@@ -9,6 +9,7 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
+from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import paste_header_art, paste_local_wordmark
 from utils.page_canvas import PageCanvas
@@ -42,6 +43,11 @@ SPECIES_CARD = (310, 58, 788, 300)
 GROUP_CARD = (12, 336, 300, 468)
 RECENT_CARD = (310, 306, 788, 468)
 HEADER = 28
+# Quiet nature doodles in each card's colour under its content, by the card's icon: leaves,
+# birds and butterflies, or the naturalist's binoculars, notebook and lens.
+DOODLES = {icon: Path(__file__).resolve().parent / "assets" / "doodles" / f"{name}.png"
+           for icon, name in (("leaf", "wildlife"), ("trophy", "fieldwork"), ("pulse", "wildlife"),
+                              ("clock", "fieldwork"))}
 
 
 def _rgb(value):
@@ -110,10 +116,13 @@ def _paste_logo(canvas, name, xy, height, anchor="lm"):
 def _card(canvas, box, bar, icon, title, detail="", logo=None):
     """A card in its own colour: a frame, a solid band along the top and the header rule in it,
     then the section icon, title and a right-aligned detail led by its source's logo."""
-    left, top, right, _bottom = box
+    left, top, right, bottom = box
     colour = canvas.color(bar)
     canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
     canvas.draw.rounded_rectangle((left, top, right, top + 5), radius=7, fill=colour, corners=(True, True, False, False))
+    if icon in DOODLES:
+        doodles = (left + 2, top + HEADER + 2, right - 2, bottom - 2)
+        paint_doodles(canvas.image, doodles, DOODLES[icon], colour, radius=5, offset=doodles[:2])
     draw_icon(canvas.draw, icon, (left + 10, top + 7), 18, colour, canvas.color("paper"))
     width = canvas.text((left + 34, top + 16), title, 16, anchor="lm")
     if detail:

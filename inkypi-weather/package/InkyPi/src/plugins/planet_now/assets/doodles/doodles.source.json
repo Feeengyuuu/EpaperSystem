@@ -1,0 +1,48 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the page doodle tiles",
+  "generated": "2026-10-27",
+  "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map (ink on white), tiled and tinted at draw time by utils.doodle_backdrop",
+  "assets": {
+    "weather.png": {
+      "motifs": "weather satellites, clouds, sun, rain, wind swirls, fog, radar dish, thermometer, moon",
+      "job_id": "4eda5291-7673-4b43-a3d2-f4aad7ddd6cc",
+      "source_sha256": "1ce18f212ee8e31f6c872d117f99cff718a1e917c9f950d51fb179da6e73497a",
+      "sha256": "3397f3b47b7c31fb0a4a11f8288f378c36c6165d02688f47f401937278ca9e48",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "grid.png": {
+      "motifs": "wind turbines, solar panels, pylons, bolts, batteries, plugs, a dam, a cooling tower",
+      "job_id": "18ef7b70-4924-47f0-a63e-bc04f93dbf4e",
+      "source_sha256": "92099a5f0719a2d70eef9dcfe830f66f382158f0a70c017fe4f6215e4aa68f37",
+      "sha256": "91b0161fbd956542021e90e5a2cbb97c45981cd7638e80a105825c0b518b295e",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "trends.png": {
+      "motifs": "magnifiers, trend arrows, flames, newspapers, phones, megaphones, TVs, notes, bar charts",
+      "job_id": "b3e6eadb-19c0-427a-a01f-624f91445cb1",
+      "source_sha256": "13f97145bc53d3709aed5dcd054164ca13e36a945e0e4e7c15184f7136da764d",
+      "sha256": "be42b0d6dd8cce8d541abdf9d8bbc4b3682e9889895032ec12a912baa1705378",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "space.png": {
+      "motifs": "stars, ringed planets, satellites, rockets, moon phases, orbits, telescopes, comets",
+      "job_id": "be7993cd-9652-41d8-a6d5-9755c093c6e3",
+      "source_sha256": "2ea734124669f0bcc5563a67349788df18ac07f130086eaec7bbc3a997c8c59e",
+      "sha256": "f6ebc61223302cc6608f8f0a7b00ee0d8723ec4a859b9c89a860bc11a9eaa0cc",
+      "size": [
+        480,
+        480
+      ]
+    }
+  }
+}

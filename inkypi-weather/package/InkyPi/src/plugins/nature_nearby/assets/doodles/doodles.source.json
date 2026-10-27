@@ -1,0 +1,28 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the page doodle tiles",
+  "generated": "2026-10-27",
+  "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map (ink on white), tiled and tinted at draw time by utils.doodle_backdrop",
+  "assets": {
+    "wildlife.png": {
+      "motifs": "oak leaves, ferns, mushrooms, acorns, butterflies, songbirds, feathers, bees, snails",
+      "job_id": "8e8e1134-97f0-4eaa-8aa2-d076f7b7c25d",
+      "source_sha256": "8d388e44843a7ffc40644b33b7b2919fc18d48f891e9a22bd2bcfdef291e99ce",
+      "sha256": "eb18ba7d59a65fca1f28263bcad0b37b90ac16bf5de9c9e208af7540d4a29323",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "fieldwork.png": {
+      "motifs": "binoculars, field notebooks, magnifiers, cameras, footprints, compasses, jars, boots",
+      "job_id": "910dbadb-be29-4dbc-8de6-0cc99d23fa0a",
+      "source_sha256": "3fb867f66ebb38f998dd3ca0ccde993e0b0724a27b761e832fe16aa5ee08d079",
+      "sha256": "b2e2dd9bb920589e21ea0b4ed58ab7e821a61bfb83a703ca9081ad94a4d67259",
+      "size": [
+        480,
+        480
+      ]
+    }
+  }
+}

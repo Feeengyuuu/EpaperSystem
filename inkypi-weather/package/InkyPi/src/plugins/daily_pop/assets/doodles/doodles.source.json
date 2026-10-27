@@ -33,6 +33,36 @@
         480,
         480
       ]
+    },
+    "video.png": {
+      "motifs": "play buttons, retro TVs, video cameras, bullet comments, coins, thumbs-up, share arrows",
+      "job_id": "7e2b71ad-219c-44cd-89af-2223c754907b",
+      "source_sha256": "dbe0586a592ceb1b3babcc99b49f36d74bd7b0317f46954635acbc57ededa17d",
+      "sha256": "ea155112f151f99a73ff04b24dd38661b821d9e815017144c378f2a1b9803dc8",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "anime.png": {
+      "motifs": "cherry blossoms, magic wands, cat ears, onigiri, ribbons, paper cranes, film strips",
+      "job_id": "66ce2a00-d7bb-45c0-9a27-0e228da47caf",
+      "source_sha256": "7381626f151a12f5220a7a69baef1f99e42cf913cf406bf232a96bd6a0c1dc91",
+      "sha256": "44d2dedf7192e1bcc0514f53fd7a3324871e211eae0841b8d568c56a5de000ca",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "books.png": {
+      "motifs": "open books, book stacks, puzzle pieces, magnifiers, quills, light bulbs, globes",
+      "job_id": "c7d08a58-a68c-43c2-9703-f3af4c7efa45",
+      "source_sha256": "76ec65b4e0628834eb04da23323813250ef54cb3c7c34db64375249e12d1f03f",
+      "sha256": "9b2c043877e984b2695611fa0bc953159be2e0c12f086fe5990c276571d62b33",
+      "size": [
+        480,
+        480
+      ]
     }
   }
 }

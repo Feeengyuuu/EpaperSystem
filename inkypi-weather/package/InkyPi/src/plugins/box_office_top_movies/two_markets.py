@@ -16,6 +16,7 @@ import re
 from PIL import Image, ImageDraw
 
 from plugins.base_plugin.render_provenance import SourceProvenance
+from utils.doodle_backdrop import paint_doodles
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ NORTH_AMERICA_SHARED_KEYS = (
     "_inkypi_theme", "_theme_render_only", "_movie_media_only", "forceRefresh", "force_refresh",
 )
 ICON_DIR = Path(__file__).resolve().parent / "assets" / "two_markets"
+# Quiet cinema doodles in each market's colour under its column: lanterns and the Temple of
+# Heaven for the mainland, the Statue of Liberty and palms for North America.
+DOODLES = {"china": ICON_DIR / "doodles" / "cinema_cn.png", "america": ICON_DIR / "doodles" / "cinema_us.png"}
 BASE_SIZE = (800, 480)
 # The footer names its sources by their logos (assets/logos, tools/build_source_logos.py):
 # source label -> (logo, its height, text kept beside it), each as tall as its lettering reads
@@ -303,6 +307,8 @@ def _draw_column(page, left, right, market, snapshot):
     page.draw.rounded_rectangle((page.x(left), page.y(48), page.x(right), page.y(456)), radius=page.x(8),
                                 fill=colors["panel"], outline=roles["accent"], width=1)
     _draw_banner(page, left, right, market)
+    box = (page.x(left) + 2, page.y(81), page.x(right) - 2, page.y(456) - 2)
+    paint_doodles(page.canvas, box, DOODLES[market], roles["accent"], radius=page.x(6), offset=box[:2])
     if snapshot is None or not snapshot.movies:
         page.text((left + 24, 240), "北美数据暂不可用，稍后自动重试", 14, colors["text"])
         return

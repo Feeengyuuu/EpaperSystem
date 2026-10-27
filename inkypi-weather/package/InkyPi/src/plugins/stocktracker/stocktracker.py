@@ -76,6 +76,7 @@ os.environ.setdefault("MPLCONFIGDIR", MPLCONFIGDIR)
 os.makedirs(os.environ["MPLCONFIGDIR"], exist_ok=True)
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
+from utils.doodle_backdrop import paint_doodles
 from utils.fonts import load_font
 from utils.app_utils import get_base_ui_font, get_font
 from utils.image_utils import text_width
@@ -207,6 +208,9 @@ DASHBOARD_MARGIN = 16
 HEADER_RULE_Y = 38
 # Dollar bills on the wind across the header (GPT Image 2.5; tools/build_flying_header_art.py).
 HEADER_MONEY_PATH = os.path.join(os.path.dirname(__file__), "assets", "header_flying_bills.png")
+# Bills and coins drifting down, quietly, behind the holdings table.
+HOLDINGS_DOODLES_PATH = os.path.join(os.path.dirname(__file__), "assets", "doodles", "money.png")
+HOLDINGS_DOODLES_STRENGTH = 0.16
 # Taking the art apart: a stroke of at least HEADER_BILL_AREA pixels is a bill, of at least
 # HEADER_COIN_AREA a coin; smaller marks (a coin's motion lines) go with the nearest piece, and
 # one cut off at the art's edge is left out. Pieces fly at least HEADER_MONEY_MIN_GAP apart.
@@ -2543,6 +2547,9 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			canvas=img,
 		)
 		self._draw_holdings_status(draw, (right - 14, top + 22), metrics, tracking_window_label)
+		doodles = (left + 3, top + 30, right - 3, bottom - 3)
+		paint_doodles(img, doodles, HOLDINGS_DOODLES_PATH, colors["malachite"], strength=HOLDINGS_DOODLES_STRENGTH,
+					  radius=4, offset=doodles[:2])
 
 		table_left, table_right = left + 12, right - 12
 		rows_left = table_left + HOLDING_RAIL_W

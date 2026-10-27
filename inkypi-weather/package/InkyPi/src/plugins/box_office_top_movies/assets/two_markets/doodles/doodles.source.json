@@ -1,0 +1,28 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the page doodle tiles",
+  "generated": "2026-10-27",
+  "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map (ink on white), tiled and tinted at draw time by utils.doodle_backdrop",
+  "assets": {
+    "cinema_cn.png": {
+      "motifs": "film reels, popcorn, clapperboards, 3D glasses, tickets, lanterns, Temple of Heaven, fans",
+      "job_id": "5eb4a9b6-756a-4249-9ce9-4900cb486179",
+      "source_sha256": "81373ddc028c6306a34645834096b41eff45c8cf0a7b776ac406f4d624f0f50d",
+      "sha256": "55acc098ec01407d2df78cfed8b22b67f8465460abfa483e8caa44be67efb15f",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "cinema_us.png": {
+      "motifs": "film reels, popcorn, clapperboards, tickets, director's chairs, stars, Statue of Liberty, palms",
+      "job_id": "e69406ac-e103-4471-a6e6-cd72f472c0c8",
+      "source_sha256": "af6f49f541dbd6889a4ade68f0157ded117ca1c97356209d916531155d8a9227",
+      "sha256": "cff992abcad83eb543d868748bef6097f40d7c85495f6c7691b6ff531c79dcb2",
+      "size": [
+        480,
+        480
+      ]
+    }
+  }
+}

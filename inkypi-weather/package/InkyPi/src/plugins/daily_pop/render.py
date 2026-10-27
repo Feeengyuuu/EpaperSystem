@@ -44,7 +44,8 @@ LOGO_RIGHT = {"epic", "songs", "puzzle"}
 # Cards whose source colour runs all the way round them, so the area stands out.
 RINGED = {"bilibili"}
 # Quiet doodles in the source's colour under a card's content.
-DOODLES = {"epic": "space", "songs": "music", "puzzle": "chess"}
+DOODLES = {"bilibili": "video", "bangumi": "anime", "wiki": "books", "epic": "space", "songs": "music",
+           "puzzle": "chess"}
 SHORT_NAMES = {"bilibili": "B站", "bangumi": "新番", "wiki": "维基", "epic": "地球", "songs": "热歌",
                "puzzle": "棋题"}
 WEEKDAYS = "一二三四五六日"
@@ -203,6 +204,7 @@ def _bilibili(canvas, payload, images):
     moves = chart_moves(videos, history.get("previous"), "title") if history.get("previous") else {}
     previous_views = {row.get("title"): row.get("views") for row in history.get("previous") or []}
     top = _card(canvas, "bilibili", "热门推荐 TOP 6")
+    _doodles(canvas, "bilibili", top)
     left, _top, right, bottom = CARDS["bilibili"]
     if not videos:
         canvas.text(((left + right) / 2, (top + bottom) / 2), "B站数据暂不可用", 14, "muted", anchor="mm")
@@ -284,6 +286,7 @@ def _bangumi(canvas, payload, images, now):
     shows = data.get("shows") or []
     note = f"周{WEEKDAYS[now.weekday()]} · 共 {data['count']} 部" if data.get("count") else ""
     top = _card(canvas, "bangumi", note)
+    _doodles(canvas, "bangumi", top)
     left, _top, right, bottom = CARDS["bangumi"]
     if not shows:
         canvas.text(((left + right) / 2, (top + bottom) / 2), "番组数据暂不可用", 14, "muted", anchor="mm")
@@ -355,6 +358,7 @@ def _wiki(canvas, payload):
     largest; each one's views under it."""
     articles = (payload["wiki"]["data"].get("articles") or [])[:5]
     top = _card(canvas, "wiki", "中文维基 · 昨日阅读量")
+    _doodles(canvas, "wiki", top)
     left, _top, right, bottom = CARDS["wiki"]
     if not articles:
         canvas.text(((left + right) / 2, (top + bottom) / 2), "维基数据暂不可用", 14, "muted", anchor="mm")

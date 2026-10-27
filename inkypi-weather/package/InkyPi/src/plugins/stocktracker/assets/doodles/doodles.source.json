@@ -1,0 +1,18 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the page doodle tiles",
+  "generated": "2026-10-27",
+  "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map (ink on white), tiled and tinted at draw time by utils.doodle_backdrop",
+  "assets": {
+    "money.png": {
+      "motifs": "dollar bills and milled coins drifting down",
+      "job_id": "e2052b7a-3018-4157-a554-7c359be55d19",
+      "source_sha256": "89271fb93af58a8d953b77643393b2837785620a075c144e969b33d415cc63a2",
+      "sha256": "2312585b40b7c2df4e81ddc6f0a5773a9abd2e49c2f0ef8a077330a5100ed247",
+      "size": [
+        480,
+        480
+      ]
+    }
+  }
+}

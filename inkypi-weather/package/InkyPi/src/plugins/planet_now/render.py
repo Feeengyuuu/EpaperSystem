@@ -20,6 +20,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageOps
 
+from utils.doodle_backdrop import paint_doodles
 from utils.local_wordmark import paste_header_art, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_image
@@ -60,6 +61,10 @@ CARD_BAND = 5
 CARDS = {"earth": (12, 58, 394, 264), "grid": (406, 58, 788, 264), "trends": (12, 270, 300, 474),
          "space": (312, 270, 788, 474)}
 SECTION_ART = {"earth": "section-earth", "grid": "section-grid", "trends": "section-trends", "space": "section-space"}
+# Quiet doodles in each card's colour under its content: weather for the sky, turbines and
+# pylons for the grid, search and news for the trends, rockets and planets for space.
+DOODLES = {key: Path(__file__).resolve().parent / "assets" / "doodles" / f"{name}.png"
+           for key, name in (("earth", "weather"), ("grid", "grid"), ("trends", "trends"), ("space", "space"))}
 # Each source's official logo in assets/logos (tools/build_planet_now_logos.py): the height it
 # is set at in a card's header and its name in words should the file be missing.
 SOURCE_LOGOS = {"noaa": (18, "NOAA"), "caiso": (16, "CAISO"), "apple_music": (12, "Apple Music"),
@@ -182,7 +187,7 @@ def _chip(canvas, xy, text, *, size=11, fill="chip", color="chip_ink", anchor="l
 def _card(canvas, key, title, detail="", source=None):
     """A card in its own colour: a band across the top, a frame and header rule, its generated
     icon and title, and at the right its source's official logo (SOURCE_LOGOS) before a detail."""
-    left, top, right, _bottom = box = CARDS[key]
+    left, top, right, bottom = box = CARDS[key]
     colour = canvas.color(key)
     canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
     canvas.draw.rounded_rectangle((left, top, right, top + CARD_BAND), radius=7, fill=colour,
@@ -199,6 +204,8 @@ def _card(canvas, key, title, detail="", source=None):
     if logo is not None:
         _paste(canvas, logo, (x - logo.width, top + 17 - logo.height / 2))
     canvas.rule((left + 8, top + HEADER + 2, right - 8, top + HEADER + 2), colour)
+    doodles = (left + 2, top + HEADER + 4, right - 2, bottom - 2)
+    paint_doodles(canvas.image, doodles, DOODLES[key], colour, radius=5, offset=doodles[:2])
 
 
 def _local_time(iso):
