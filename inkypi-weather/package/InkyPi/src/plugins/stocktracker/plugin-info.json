@@ -1,7 +1,7 @@
 {
     "schema_version": 2,
     "capabilities": {"supports_live_refresh": false, "supports_presentation_refresh": true, "supports_day_night_theme": true},
-    "theme": {"presentation": "ui", "day": {"background": "#f1f4ec", "accent": "#3d7a45"}, "night": {"background": "#0b150c", "accent": "#7fd58a"}},
+    "theme": {"presentation": "ui", "day": {"background": "#f1f4ec", "accent": "#3d7a45"}, "night": {"background": "#000000", "panel": "#0a0d10", "ink": "#edf1ed", "muted": "#b4beb8", "rule": "#505b58", "accent": "#6bccff"}},
     "display_name": "Stock Tracker",
     "id": "stocktracker",
     "class": "StockTracker",

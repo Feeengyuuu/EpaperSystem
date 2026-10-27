@@ -339,6 +339,11 @@ _LEGACY_STOCK_COLORS = {
 	"cinnabar": CINNABAR,
 	"malachite": MALACHITE,
 	"chart_marker_green": CHART_MARKER_GREEN,
+	"shadow": ACCENT_ORANGE,
+	"frame_gold": ACCENT_GOLD,
+	"frame_light": (255, 226, 142),
+	"frame_shade": (248, 148, 35),
+	"coin_gold": COIN_GOLD,
 }
 _ACTIVE_STOCK_COLORS = ContextVar("stocktracker_render_colors", default=None)
 
@@ -379,26 +384,34 @@ def _stock_render_colors(theme_context):
 	muted = canonical["muted"]
 	rule = canonical["rule"]
 	accent = canonical["accent"]
-	gold = canonical["gold"]
-	green = canonical["green"]
-	red = canonical["red"]
+	# Keep small data marks bright enough for colour e-paper while toning down the wide
+	# comic-frame bands. Gold and orange stay distinct for bonds and mobility holdings.
+	gold = (226, 177, 96)
+	orange = (235, 146, 88)
+	green = (130, 210, 155)
+	red = (255, 116, 108)
 	return {
 		"mode": mode,
 		"white": panel,
 		"paper": background,
 		"panel": panel,
-		"panel_blue": _blend_rgb(accent, panel, 0.11 if mode == "day" else 0.18),
-		"panel_gold": _blend_rgb(gold, panel, 0.16 if mode == "day" else 0.20),
+		"panel_blue": _blend_rgb(accent, panel, 0.07),
+		"panel_gold": _blend_rgb(gold, panel, 0.07),
 		"ink": ink,
 		"muted": muted,
 		"grid": rule,
-		"border": ink,
+		"border": _blend_rgb(ink, panel, 0.38),
 		"accent_blue": accent,
 		"accent_gold": gold,
-		"accent_orange": gold,
+		"accent_orange": orange,
 		"cinnabar": red,
 		"malachite": green,
 		"chart_marker_green": green,
+		"shadow": _blend_rgb(gold, background, 0.17),
+		"frame_gold": _blend_rgb(gold, panel, 0.48),
+		"frame_light": _blend_rgb(gold, panel, 0.65),
+		"frame_shade": _blend_rgb(gold, panel, 0.32),
+		"coin_gold": gold,
 	}
 
 
@@ -1560,10 +1573,11 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		accent = colors["accent_blue"] if accent is None else accent
 		fill = colors["panel"] if fill is None else fill
 		left, top, right, bottom = [int(v) for v in box]
-		draw.rectangle((left + 3, top + 4, right + 3, bottom + 4), fill=colors["accent_orange"])
+		draw.rectangle((left + 3, top + 4, right + 3, bottom + 4), fill=colors["shadow"])
 		draw.rectangle((left, top, right, bottom), fill=fill)
 		draw.rectangle((left, top, right, bottom), outline=colors["border"], width=2)
-		draw.rectangle((left, top, right, top + 6), fill=accent)
+		band = self._blend(accent, fill, 0.6) if colors["mode"] == "night" else accent
+		draw.rectangle((left, top, right, top + 6), fill=band)
 		if title:
 			if canvas is not None and self._draw_section_wordmark(canvas, title, left + 10, top + 8):
 				return
@@ -1755,10 +1769,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		orange shadow; ``fill`` inside."""
 		colors = _active_stock_colors()
 		left, top, right, bottom = (int(edge) for edge in box)
-		gold = colors["accent_gold"]
-		light = self._blend((255, 255, 255), gold, 0.5)
-		shade = self._blend(colors["accent_orange"], gold, 0.65)
-		draw.polygon(self._notched(left + 3, top + 4, right + 3, bottom + 4, 3), fill=colors["accent_orange"])
+		gold = colors["frame_gold"]
+		light = colors["frame_light"]
+		shade = colors["frame_shade"]
+		draw.polygon(self._notched(left + 3, top + 4, right + 3, bottom + 4, 3), fill=colors["shadow"])
 		draw.polygon(self._notched(left, top, right, bottom, 3), fill=colors["border"])
 		draw.polygon(self._notched(left + 2, top + 2, right - 2, bottom - 2, 2), fill=gold)
 		edge = SUMMARY_FRAME - 1
@@ -1817,9 +1831,9 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		layer.paste(Image.new("RGB", (width, SUMMARY_FADE), card), (0, 0), fade)
 		img.paste(layer, plot[:2])
 		if end:
-			self._draw_sparkle(draw, end, 6, COIN_GOLD, colors["ink"])
-			self._draw_sparkle(draw, (end[0] - 5, end[1] - 10), 2, COIN_GOLD, None)
-			self._draw_sparkle(draw, (end[0] + 2, end[1] - 15), 2, COIN_GOLD, None)
+			self._draw_sparkle(draw, end, 6, colors["coin_gold"], colors["ink"])
+			self._draw_sparkle(draw, (end[0] - 5, end[1] - 10), 2, colors["coin_gold"], None)
+			self._draw_sparkle(draw, (end[0] + 2, end[1] - 15), 2, colors["coin_gold"], None)
 
 	@staticmethod
 	def _draw_sparkle(draw, center, size, fill, outline):
@@ -2353,8 +2367,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		):
 			return TICKER_PALETTES[mode]
 		colors = _active_stock_colors()
+		if mode != colors["mode"]:
+			colors = _stock_render_colors({"mode": mode})
 		return {
-			"fill": colors["paper"] if mode == colors["mode"] else TICKER_PALETTES[mode]["fill"],
+			"fill": colors["paper"] if mode == _active_stock_colors()["mode"] else TICKER_PALETTES[mode]["fill"],
 			"border": colors["accent_gold"],
 			"top_line": colors["accent_orange"],
 			"separator": colors["grid"],
@@ -2377,6 +2393,10 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 
 		left, top, right, bottom = box
 		palette = self._ticker_palette(ticker_theme, theme_context)
+		ticker_mode = self._ticker_theme_key(ticker_theme, theme_context)
+		ticker_colors = _active_stock_colors()
+		if ticker_mode != ticker_colors["mode"]:
+			ticker_colors = _stock_render_colors({"mode": ticker_mode})
 		ticker_top = max(top, bottom - 36)
 		ticker_bottom = bottom - 7
 		if ticker_bottom - ticker_top < 24:
@@ -2400,7 +2420,11 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				draw.line((seg_left, strip[1] + 4, seg_left, strip[3] - 4), fill=palette["separator"], width=1)
 
 			logo_x = seg_left + 5
-			logo = self._holding_logo_image(data.get("symbol"), logo_size)
+			logo_theme = _ACTIVE_STOCK_COLORS.set(ticker_colors)
+			try:
+				logo = self._holding_logo_image(data.get("symbol"), logo_size)
+			finally:
+				_ACTIVE_STOCK_COLORS.reset(logo_theme)
 			if logo:
 				logo_y = int(round((strip[1] + strip[3] - logo.height) / 2))
 				img.paste(logo, (logo_x, logo_y), logo)
@@ -2413,6 +2437,11 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			price = data.get("price_text", self._money(float(data.get("price") or 0)))
 			change = data.get("change_text", f"{float(data.get('change_percent') or 0):+.2f}%")
 			change_color = data.get("change_text_color", self._change_color(float(data.get("change_percent") or 0)))
+			if _active_stock_colors()["mode"] == "night":
+				# Source snapshots may retain the day render's dark red/green. Resolve the
+				# change from its value in the ticker's own theme (which can override the page).
+				percent = float(data.get("change_percent") or 0)
+				change_color = ticker_colors["malachite" if percent > 0.005 else "cinnabar" if percent < -0.005 else "muted"]
 			value_text = self._compact_money(float(data.get("total_value") or 0))
 			price_width = self._text_width(draw, price, price_font)
 			max_symbol_width = max(22, text_right - text_left - price_width - 3)
@@ -2768,7 +2797,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 			waist = 1.5
 			draw.polygon([(end_x, end_y - 5), (end_x + waist, end_y - waist), (end_x + 5, end_y), (end_x + waist, end_y + waist),
 						  (end_x, end_y + 5), (end_x - waist, end_y + waist), (end_x - 5, end_y), (end_x - waist, end_y - waist)],
-						 fill=COIN_GOLD, outline=colors["ink"])
+					 fill=colors["coin_gold"], outline=colors["ink"])
 		elif span >= 1e-9 and closes[-1] <= low * (1 + EXTREME_SLACK / 100):
 			draw.ellipse((end_x - 4, end_y - 4, end_x + 4, end_y + 4), fill=colors["paper"], outline=color, width=2)
 		else:

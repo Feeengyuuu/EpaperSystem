@@ -520,6 +520,64 @@ def test_stock_day_theme_restores_original_dashboard_colors():
     assert _stock_render_colors(_canonical_theme("night")) is not _LEGACY_STOCK_COLORS
 
 
+def test_stock_night_manifest_keeps_data_distinct_and_frame_quieter_than_text():
+    from utils.theme_utils import contrast_ratio, resolve_palette_roles
+
+    manifest = json.loads(Path(stocktracker_module.__file__).with_name("plugin-info.json").read_text())
+    colors = stocktracker_module._stock_render_colors({
+        "mode": "night", "palette": resolve_palette_roles(manifest["theme"], "night"),
+    })
+    # Small figures and semantic marks stay legible; the broad decorative frame is quieter.
+    for key in ("ink", "muted", "accent_blue", "malachite", "cinnabar", "accent_orange", "accent_gold"):
+        assert contrast_ratio(colors[key], colors["panel"]) >= 4.5, key
+    assert contrast_ratio(colors["frame_light"], colors["panel"]) < contrast_ratio(colors["muted"], colors["panel"])
+    assert max(abs(a - b) for a, b in zip(colors["accent_blue"], colors["malachite"])) >= 80
+    assert max(abs(a - b) for a, b in zip(colors["accent_orange"], colors["accent_gold"])) >= 25
+
+
+@pytest.mark.parametrize("ticker_mode", ["day", "night"])
+def test_night_page_ticker_uses_its_own_theme_instead_of_cached_day_inks(ticker_mode, monkeypatch):
+    plugin = StockTracker({"id": "stocktracker"})
+    theme = _canonical_theme("night")
+    colors = stocktracker_module._stock_render_colors(theme)
+    expected = stocktracker_module._LEGACY_STOCK_COLORS if ticker_mode == "day" else colors
+    rows = [_stock("AAPL", [100, 105], 1), _stock("DOWN", [100, 95], 1)]
+    logo_modes = []
+    original_logo = plugin._holding_logo_image
+
+    def logo(symbol, size):
+        logo_modes.append(stocktracker_module._active_stock_colors()["mode"])
+        return original_logo(symbol, size)
+
+    monkeypatch.setattr(plugin, "_holding_logo_image", logo)
+    for row in rows:
+        row["change_text_color"] = (3, 4, 5)  # Source/cache ink has no authority over the new theme.
+    token = stocktracker_module._ACTIVE_STOCK_COLORS.set(colors)
+    text_colors = {}
+    try:
+        image = Image.new("RGB", (800, 60), colors["paper"])
+        draw = ImageDraw.Draw(image)
+        original_text = draw.text
+
+        def text(xy, value, **kwargs):
+            text_colors[value] = kwargs.get("fill")
+            return original_text(xy, value, **kwargs)
+
+        monkeypatch.setattr(draw, "text", text)
+        plugin._draw_hidden_holdings_ticker(image, draw, (10, 10, 790, 50), rows,
+                                           ticker_theme=ticker_mode, theme_context=theme)
+    finally:
+        stocktracker_module._ACTIVE_STOCK_COLORS.reset(token)
+    pixels = set(image.get_flattened_data())
+    assert (3, 4, 5) not in pixels
+    assert expected["ink"] in pixels
+    assert text_colors["+5.00%"] == expected["malachite"]
+    assert text_colors["-5.00%"] == expected["cinnabar"]
+    assert logo_modes == [ticker_mode, ticker_mode]
+    if ticker_mode == "day":
+        assert stocktracker_module.PANEL_GOLD in pixels
+
+
 def test_stock_dashboard_draws_hidden_holdings_as_horizontal_night_ticker():
     plugin = StockTracker({"id": "stocktracker"})
     stock_data = _hidden_ticker_stock_data()
