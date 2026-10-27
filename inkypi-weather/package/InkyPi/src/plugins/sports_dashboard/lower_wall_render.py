@@ -219,7 +219,8 @@ class LowerWallRenderMixin:
         score = event.get(f"wins_{side}")
         score_text = "-" if score is None else str(score)
         size = max(14, min(24, y2 - y1 - 8))
-        score_text, score_font = self._fit_text(draw, score_text, 44, size, bold=True, min_size=12)
+        score_text, score_font = self._fit_score(draw, score_text, 44, size, bold=True, min_size=12,
+                                                sport=spec.sport, max_height=y2 - y1 - 4)
         score_left = self._draw_wall_score(draw, (x2 - 56, y1 + 2, x2, y2 - 2), score_text, score_font, leads)
         name_x = x1 + logo + 6
         name, name_font = self._kit_team_name(draw, spec, event, side, score_left - 8 - name_x, 14, True, min_size=9)
@@ -389,7 +390,8 @@ class LowerWallRenderMixin:
         score = event.get(f"wins_{side}")
         # The score's size follows the row, so the leader's ink box still holds it.
         size = max(11, min(17, y2 - y1 - 6))
-        score_text, score_font = self._fit_text(draw, "-" if score is None else str(score), 34, size, bold=True, min_size=9)
+        score_text, score_font = self._fit_score(draw, "-" if score is None else str(score), 34, size, bold=True,
+                                                min_size=9, sport=spec.sport, max_height=y2 - y1 - 2)
         score_left = self._draw_wall_score(draw, (x2 - 44, y1 + 1, x2, y2 - 1), score_text, score_font, leads)
         name_x = x1 + logo + 5
         name, name_font = self._kit_team_name(draw, spec, event, side, score_left - 6 - name_x, 12, True, min_size=8)
@@ -435,7 +437,8 @@ class LowerWallRenderMixin:
         center = (middle_x1 + middle_x2) // 2
         score = f"{event.get('wins_a') if event.get('wins_a') is not None else '-'}" \
                 f" - {event.get('wins_b') if event.get('wins_b') is not None else '-'}"
-        score_font = self._font(22, True)
+        score, score_font = self._fit_score(draw, score, max(30, (middle_x2 - middle_x1) / 2), 22,
+                                            bold=True, sport=spec.sport, max_height=y2 - y1 - 24)
         score_w = self._text_width(draw, score, score_font)
         self._draw_text_in_box(draw, (center - score_w // 2 - 1, y1 + 12, center + score_w // 2 + 2, y2 - 12),
                                score, score_font, COLORS["text"], align="center")

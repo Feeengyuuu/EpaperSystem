@@ -562,6 +562,9 @@ class ClubFootballRenderMixin:
 
         display_value = self._club_event_score_or_time(focus, now)
         score_font = self._font(30 if "–" in display_value else 22, bold=True)
+        if "–" in display_value:
+            display_value, score_font = self._fit_score(draw, display_value, 92, 30, bold=True,
+                                                        sport="SOCCER", max_height=32)
         self._draw_centered(
             draw,
             ((left + right) / 2, y(88)),

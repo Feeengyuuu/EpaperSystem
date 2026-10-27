@@ -212,7 +212,8 @@ class ScorebugKitMixin:
                 self._draw_text_in_box(draw, score_box, line, line_font, COLORS["text"], align="right")
             return
         score = event.get(f"wins_{side}")
-        score_text, score_font = self._fit_text(draw, "-" if score is None else str(score), score_box[2] - score_box[0], 26, bold=not dimmed, min_size=16)
+        score_text, score_font = self._fit_score(draw, "-" if score is None else str(score), score_box[2] - score_box[0], 26,
+                                                bold=not dimmed, min_size=16, sport=spec.sport, max_height=y2 - y1)
         self._draw_text_in_box(draw, score_box, score_text, score_font, COLORS["text"], align="right")
         if winner == side:
             middle = (y1 + y2) // 2
@@ -521,7 +522,8 @@ class ScorebugKitMixin:
             self._draw_team_logo(image, draw, event.get(f"{prefix}_logo"), team_x, line_y1, 11, spec.hook("logo_fallback", event, side, default=event.get(f"{prefix}_code")))
             score = spec.hook("row_score", event, side, default=event.get(f"wins_{side}")) if state != "scheduled" else None
             score_text = "" if score is None else str(score)
-            score_font = self._font(11, not dimmed)
+            score_text, score_font = self._fit_score(draw, score_text, 34, 11, bold=not dimmed,
+                                                    sport=spec.sport, max_height=line_y2 - line_y1)
             score_w = self._text_width(draw, score_text, score_font) if score_text else 0
             name_x = team_x + 15
             name_budget = x2 - 2 - score_w - 6 - name_x - (9 if offense == side else 0)
@@ -652,6 +654,9 @@ class ScorebugKitMixin:
             else:
                 middle_text = f"{event.get('wins_a') if event.get('wins_a') is not None else '-'}-{event.get('wins_b') if event.get('wins_b') is not None else '-'}"
             middle_font = self._font(10, True)
+            if state != "scheduled":
+                middle_text, middle_font = self._fit_score(draw, middle_text, min(68, (x2 - x1) / 3), 10,
+                                                          bold=True, sport=spec.sport, max_height=15)
             middle_w = self._text_width(draw, middle_text, middle_font)
             team_x1 = x1 + 60
             center = (team_x1 + x2) // 2

@@ -83,7 +83,8 @@ class GolfRenderMixin:
         if country:
             self._draw_centered_in_box(draw, (badge[0], y2 - 13, badge[2], y2 - 2), country, self._font(8, False), COLORS["text"])
         score = str(row.get("score") or "E").strip() or "E"
-        score_font = self._font(18 if leader else 16, True)
+        score, score_font = self._fit_score(draw, score, 42, 18 if leader else 16, bold=True,
+                                            sport="PGA", max_height=y2 - y1 - 4)
         score_w = self._text_width(draw, score, score_font)
         under_par = score.startswith("-")
         self._draw_text_in_box(draw, (x2 - 6 - score_w, y1, x2 - 6, y2), score, score_font, COLORS[spec.live] if under_par else COLORS["text"], align="right")
