@@ -1046,3 +1046,32 @@ def test_the_featured_poster_takes_the_room_its_title_leaves():
     # The text ends where the section under it still has its full room, whatever the title's lines.
     bottom = week_page.HERO[3] - 8 - week_page.SECTION_H - 16
     assert all(abs(foot - bottom) <= 4 for foot in feet)
+
+
+def test_an_age_limit_after_the_title_is_a_chip_not_the_subtitle():
+    from plugins.ticketmaster_events.week_page import age_notice
+
+    assert age_notice("Ages 14+ (No children under 5 allowed)") == "14+"
+    assert age_notice("21+ Show") == "21+"
+    assert age_notice("All Ages") == "全龄"
+    assert age_notice("Toddler Rave World Tour") == age_notice("Tour 2026") == ""
+
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({})
+    drawn = []
+
+    class Pen:
+        def __getattr__(self, name):
+            draw = ImageDraw.Draw(image)
+            if name != "text":
+                return getattr(draw, name)
+            return lambda xy, text, **kwargs: (drawn.append(text), draw.text(xy, text, **kwargs))
+
+    image = Image.new("RGB", (800, 480), colors["paper"])
+    event = TicketmasterEvent(rank=1, title="Oh, Mary! (Touring) - Ages 14+ (No children under 5 allowed)",
+                              local_date="2026-10-27", local_time="19:00:00", venue_name="Curran Theatre",
+                              city="San Francisco", segment="Arts & Theatre", genre="Theatre")
+    plugin._draw_featured(image, Pen(), event, datetime(2026, 10, 26).date(), colors)
+
+    assert "Oh, Mary! (Touring)" in drawn and "14+" in drawn
+    assert not any("No children" in text for text in drawn)

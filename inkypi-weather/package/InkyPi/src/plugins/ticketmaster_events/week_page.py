@@ -79,6 +79,17 @@ TITLE_SIZES, SUBTITLE_SIZE = (21, 19, 17), 14
 # A title's headliner and the rest of the bill part at ' - ', ': ', '|', 'presents', or before
 # 'w/' / 'with' / 'feat.' (which stay on the subtitle).
 TITLE_BREAK = re.compile(r"\s+[-–—|]\s+|:\s+|\s+presents\s+|\s+(?=(?:w/|with|feat\.?|ft\.?)\s)", re.IGNORECASE)
+# A bill that goes on to an age limit ('Ages 14+ (No children under 5…)', '21+', 'All Ages')
+# has no subtitle: the limit is a fact for the chips.
+AGE_NOTICE = re.compile(r"(?:ages?\s*(\d+)\s*\+|(\d+)\s*\+|(all\s+ages))(?:\W|$)", re.IGNORECASE)
+
+
+def age_notice(text):
+    """'14+' / '全龄' when ``text`` opens with an age limit, else ""."""
+    match = AGE_NOTICE.match(str(text or "").strip())
+    if not match:
+        return ""
+    return "全龄" if match.group(3) else f"{match.group(1) or match.group(2)}+"
 LIST = (336, CARD_TOP, 800 - MARGIN, CARD_BOTTOM)
 # The list's slips: SLIP_H tall every ROW_H from SLIP_TOP under the list's top, each with a
 # THUMB poster and its kind's icon, STICKER px, laid straight over the poster's corner.
@@ -300,6 +311,9 @@ class WeekPageMixin:
         kind_colour = self._event_color(event, colors)
         # The title's lines are set first: the poster takes the height the text leaves it.
         title, subtitle = title_parts(event.title)
+        age = (event.extra or {}).get("age") or ""
+        if age_notice(subtitle):
+            age, subtitle = age or age_notice(subtitle), ""
         text_x, text_w = px0 + 10, width - 10
         title_font = self._font(TITLE_SIZES[-1], bold=True)
         for size in TITLE_SIZES:
@@ -368,7 +382,7 @@ class WeekPageMixin:
         fact_font = self._font(12, bold=True)
         x = px0
         facts = [(price_label(event.price), colors["accent"], True), (self._kind_text(event), kind_colour, False),
-                 ((event.extra or {}).get("age") or "", colors["muted"], False),
+                 (age, colors["muted"], False),
                  (self._more_text(event), colors["muted"], False)]
         drawn = False
         for text, colour, solid in facts:
