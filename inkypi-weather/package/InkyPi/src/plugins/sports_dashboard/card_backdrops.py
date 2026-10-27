@@ -16,7 +16,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 from utils.doodle_backdrop import exact_colour_mask
 
@@ -41,8 +41,10 @@ CARD_BACKDROP_BAND_RATIO = 1.4
 CARD_BACKDROP_BAND_CENTRE = 0.6
 # Share of each ink's strength that glows on the night panel.
 CARD_BACKDROP_NIGHT_GLOW = 0.55
-# How much of the list pattern shows: enough to notice, faint enough to read through.
-LIST_BACKDROP_STRENGTH = 0.5
+# How much of the list pattern shows, softened by this blur: enough to notice, faint and soft
+# enough that the rows read straight through it.
+LIST_BACKDROP_STRENGTH = 0.35
+LIST_BACKDROP_BLUR = 1.2
 # Width of a card shell's left accent stripe (with its outline) and outline.
 CARD_BACKDROP_STRIPE = 9
 CARD_BACKDROP_OUTLINE = 2
@@ -114,7 +116,8 @@ def _list_backdrop_pattern(kind, size, panel):
     for top in range(0, size[1], tile.height):
         for left in range(0, size[0], tile.width):
             canvas.paste(tile, (left, top))
-    return Image.blend(Image.new("RGB", size, panel), _toned(canvas, panel), LIST_BACKDROP_STRENGTH)
+    soft = _toned(canvas, panel).filter(ImageFilter.GaussianBlur(LIST_BACKDROP_BLUR))
+    return Image.blend(Image.new("RGB", size, panel), soft, LIST_BACKDROP_STRENGTH)
 
 
 def _toned(art, panel):

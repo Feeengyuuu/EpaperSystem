@@ -2170,12 +2170,13 @@ class EsportsRenderMixin:
         # line above the logos, so nothing runs into them.
         tag_text, tag_font = self._fit_text(draw, tag, 112, 11, bold=True, min_size=8)
         pill_w = self._text_width(draw, tag_text, tag_font) + 18
-        pill = (card_x1 + 16, y + 11, card_x1 + 16 + pill_w, y + 28)
+        # The pill and date sit a little below the card's top edge, clear of the arena's top rim.
+        pill = (card_x1 + 16, y + 15, card_x1 + 16 + pill_w, y + 32)
         draw.rounded_rectangle(pill, radius=8, fill=COLORS[config["live"]] if is_live else COLORS[config["tag"]])
         self._draw_centered_in_box(draw, pill, tag_text, tag_font, COLORS["paper_text"] if is_live else COLORS["text"])
         date_text = event["start"].strftime("%m/%d")
         date_text, date_font = self._fit_text(draw, date_text, 54, 12, bold=True, min_size=9)
-        self._draw_right_aligned(draw, (card_x2 - 12, y + 13), date_text, date_font, COLORS["muted"])
+        self._draw_right_aligned(draw, (card_x2 - 12, y + 17), date_text, date_font, COLORS["muted"])
 
         # Under the pill, the logos stand at the card's edges; between them, the one thing that matters
         # most in large type (the start time, or the series score once it starts) with a small line

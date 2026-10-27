@@ -787,8 +787,10 @@ def test_worldcup_without_profile_matches_pre_profile_pixels(monkeypatch):
         NOW,
     )
 
+    # Rebased 2026-10-27 only for the status pill, whose word now centres right of its colour
+    # block (the old baseline was 51a83d5e…, identical outside the pill's text).
     assert hashlib.sha256(image.tobytes()).hexdigest() == (
-        "51a83d5e61e34acd1184bd89550f8ef05eb82d0ac2576f49f91721e9e4bd7227"
+        "9ef6fcd8140fbd18b2628f3976464f435741b1148c263c87f22e98bcf5440604"
     )
 
 
