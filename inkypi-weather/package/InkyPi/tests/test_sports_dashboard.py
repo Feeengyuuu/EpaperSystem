@@ -8078,6 +8078,7 @@ def test_f1_compact_panel_draws_core_labels():
     seen_texts = []
     seen_wordmarks = []
     original_fit_text = plugin._fit_text
+    original_fit_score = plugin._fit_score
     original_wordmark = plugin._draw_local_wordmark
 
     def record_fit_text(draw_arg, text, max_width, size, bold=False, min_size=11):
@@ -8089,7 +8090,12 @@ def test_f1_compact_panel_draws_core_labels():
         seen_wordmarks.append((Path(path).name, drawn))
         return drawn
 
+    def record_fit_score(draw_arg, text, *args, **kwargs):
+        seen_texts.append(str(text))
+        return original_fit_score(draw_arg, text, *args, **kwargs)
+
     plugin._fit_text = record_fit_text
+    plugin._fit_score = record_fit_score
     plugin._draw_local_wordmark = record_wordmark
 
     plugin._draw_f1_compact_panel(
