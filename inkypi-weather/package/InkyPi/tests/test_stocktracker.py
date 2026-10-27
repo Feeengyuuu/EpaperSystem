@@ -718,7 +718,8 @@ def test_engraved_bodoni_total_fits_the_portfolio_chart(value):
     assert bounds[0] >= figure["coin"][0] + stocktracker_module.SUMMARY_COIN
     assert bounds[2] <= plot[2] and bounds[1] >= plot[1] and bounds[3] < plot[3]
     first, second = figure["glyphs"][:2]
-    assert second[1] - figure["font"].getlength(first[0]) == pytest.approx(figure["font"].size / 38)
+    assert second[1] - figure["font"].getlength(first[0]) == pytest.approx(3 * figure["font"].size / 38)
+    assert figure["origin"][0] - figure["coin"][0] - stocktracker_module.SUMMARY_COIN == pytest.approx(9, abs=0.5)
 
 
 def test_banknote_engraving_stays_inside_digits_and_keeps_punctuation_solid():

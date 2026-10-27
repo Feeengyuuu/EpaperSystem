@@ -120,6 +120,7 @@ ACCENT_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
 # SUMMARY_FADE rows fading into the card, a sparkle on today's value.
 SUMMARY_FRAME, SUMMARY_CHART, SUMMARY_GRID, SUMMARY_COIN, SUMMARY_FIGURE_SIZE = 7, (33, 92), 12, 40, 38
 SUMMARY_FIGURE_FOOT, SUMMARY_HILL_GAP, SUMMARY_BLUR, SUMMARY_FADE = 17, 6, 1.2, 10
+SUMMARY_FIGURE_TRACKING, SUMMARY_COIN_GAP = 3, 9
 COIN_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "coin_dollar.png")
 TOTAL_FIGURE_FONT = os.path.join(os.path.dirname(__file__), "assets", "fonts", "BodoniModa-Variable.ttf")
 COIN_GOLD, COIN_RIM = (232, 186, 62), (8, 38, 22)
@@ -1842,9 +1843,9 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		text's origin and the coin's top left. Both rise as far as they must for the comma's tail
 		(with the halo) and the coin to clear the foot; the coin keeps to the digits' middle."""
 		text = f"{value:,.2f}"
-		max_width = plot[2] - plot[0] - SUMMARY_COIN - 25
+		max_width = plot[2] - plot[0] - SUMMARY_COIN - SUMMARY_COIN_GAP - 20
 		def tracked_glyphs(font):
-			tracking = font.size / SUMMARY_FIGURE_SIZE
+			tracking = SUMMARY_FIGURE_TRACKING * font.size / SUMMARY_FIGURE_SIZE
 			x, glyphs = 0.0, []
 			for character in text:
 				glyphs.append((character, x))
@@ -1863,13 +1864,13 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		while font.size > 16 and text_w > max_width:
 			font = font.font_variant(size=font.size - 1)
 			glyphs, text_w = tracked_glyphs(font)
-		x = plot[0] + (plot[2] - plot[0] - SUMMARY_COIN - 5 - text_w) / 2
+		x = plot[0] + (plot[2] - plot[0] - SUMMARY_COIN - SUMMARY_COIN_GAP - text_w) / 2
 		digits = draw.textbbox((0, 0), "0", font=font)
 		reach = draw.textbbox((0, 0), text, font=font, stroke_width=2)[3]
 		middle = min(plot[3] - SUMMARY_FIGURE_FOOT, plot[3] - 1 - reach + (digits[1] + digits[3]) / 2,
 					 plot[3] - 2 - SUMMARY_COIN / 2)
 		return {"text": text, "font": font, "glyphs": glyphs,
-				"origin": (x + SUMMARY_COIN + 5, round(middle - (digits[1] + digits[3]) / 2)),
+				"origin": (x + SUMMARY_COIN + SUMMARY_COIN_GAP, round(middle - (digits[1] + digits[3]) / 2)),
 				"coin": (round(x), round(middle - SUMMARY_COIN / 2))}
 
 	def _draw_total_figure(self, img, draw, figure, ink, halo):
