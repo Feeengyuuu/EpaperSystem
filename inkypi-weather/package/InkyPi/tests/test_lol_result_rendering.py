@@ -88,7 +88,7 @@ def test_finished_lpl_yields_to_next_cs2_match_before_local_midnight(monkeypatch
     # At 21:00 PDT, tomorrow's 03:00 CS2 game must replace a three-day-old
     # LPL final immediately, without waiting for the local date to change.
     header, focus = render_schedule(monkeypatch, tmp_path, other_match=True)
-    assert "PANDASCORE DATA" in header
+    assert "DATA" in header  # The CS2 provider name is now its official wordmark.
     assert "NEXT" in header
     assert "FINAL RESULT" not in focus
 

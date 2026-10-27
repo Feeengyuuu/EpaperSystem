@@ -1,6 +1,34 @@
 {
-  "purpose": "Identifies the score providers of the LIVE NOW wall, independently of league and broadcaster logos.",
+  "purpose": "Official wordmarks identifying score providers, plus Valve as the CS2 event scope; Valve is not credited as a score provider.",
   "logos": {
+    "pandascore": {
+      "source_url": "https://cdn.prod.website-files.com/6226020835afd4c096f7826a/63ef44bfabe869d7c87608b8_PandaScore_Logo.svg",
+      "official_site": "https://www.pandascore.co/",
+      "source_sha256": "d128645ca04242e7997b805600c4c768b01ab4b8688328c94d752cfa0df003a8",
+      "sha256": "508ba96aa78457536c2cc556f256298b1e89e4bf8518764966cb4475db6c9c3d",
+      "size": [
+        480,
+        72
+      ],
+      "processing": "Official header SVG rasterized at 3x with transparent alpha using PyMuPDF; original white artwork and geometry retained. Light-theme rendering uses a neutral dark backing.",
+      "rights": "PandaScore trademark, used to identify the data source. Retains Source: attribution. No open artwork license is asserted.",
+      "attribution_terms": "https://www.pandascore.co/terms-and-condition"
+    },
+    "valve": {
+      "source_url": "https://www.valvesoftware.com/en/",
+      "official_site": "https://www.valvesoftware.com/en/",
+      "source_location": "Inline SVG at header.main_header .logo svg",
+      "source_sha256": "c98c52eea3d4bc0ee6b3910434a665d0beaa39b696b963e62075c86d6c0b3825",
+      "official_stylesheet": "https://www.valvesoftware.com/public/css/global.css",
+      "standalone_svg_sha256": "5a5d7dcc0637edd99b2e4b59c9030cd81c75a19109534522265a96809c531b40",
+      "sha256": "da6bfd0cfbd793fa6bd4122f6b68b7e2a08fcab6a9d5a239c06129dc5c3456c5",
+      "size": [
+        654,
+        182
+      ],
+      "processing": "Original SVG geometry with the official CSS fill #f74843 inlined, rasterized at 3x with transparent alpha using PyMuPDF. Letter cutouts remain transparent. The raster is then reduced proportionally to 654x182 with LANCZOS for the local image-size budget.",
+      "rights": "Valve trademark, used only to identify the event scope, not the data provider. No open artwork license is asserted."
+    },
     "espn": {
       "source_url": "https://a.espncdn.com/redesign/assets/img/logos/espn-404@2x.png",
       "official_site": "https://www.espn.com/",

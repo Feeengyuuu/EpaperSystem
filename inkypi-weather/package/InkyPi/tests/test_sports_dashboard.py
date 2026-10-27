@@ -15352,7 +15352,15 @@ def test_pandascore_sidebar_renders_required_source_attribution(monkeypatch):
     selected = SportsDashboard._select_valve_esports([card], now)
     image = Image.new("RGB", (800, 480), COLORS["paper"])
     seen_texts = []
+    source_logos = []
     original_draw_text_in_box = plugin._draw_text_in_box
+    original_load_local_logo = plugin._load_local_logo
+
+    def record_logo(path, size, **kwargs):
+        logo = original_load_local_logo(path, size, **kwargs)
+        if str(path).endswith("pandascore.png") and logo is not None:
+            source_logos.append(logo.size)
+        return logo
 
     def record_text(draw, box, text, font, color, align="left"):
         seen_texts.append(str(text))
@@ -15366,6 +15374,7 @@ def test_pandascore_sidebar_renders_required_source_attribution(monkeypatch):
         )
 
     monkeypatch.setattr(plugin, "_draw_text_in_box", record_text)
+    monkeypatch.setattr(plugin, "_load_local_logo", record_logo)
     monkeypatch.setattr(plugin, "_load_team_logo", lambda *_args: None)
 
     plugin._draw_valve_esports_sidebar(
@@ -15376,11 +15385,12 @@ def test_pandascore_sidebar_renders_required_source_attribution(monkeypatch):
         now,
     )
 
-    assert "SOURCE: PANDASCORE" in seen_texts
+    assert "Source:" in seen_texts
+    assert len(source_logos) == 2  # Header provider and the explicit source credit.
     assert "PORTO 2026" in seen_texts
     assert "08/26" in seen_texts
     assert "11:30" in seen_texts
-    assert "PANDASCORE DATA" in seen_texts
+    assert "DATA" in seen_texts
     assert "PANDASCORE LIVE" not in seen_texts
 
 
