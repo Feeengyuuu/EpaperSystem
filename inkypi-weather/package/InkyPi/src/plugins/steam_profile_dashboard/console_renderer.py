@@ -613,12 +613,16 @@ class _Console:
             for column, friend in enumerate(line):
                 self._friend_tile(friend, round(first + column * step_x), y, game_icons, hidden)
 
+    @staticmethod
+    def _friend_ring_colour(friend):
+        playing = bool(friend.get("gameid") or friend.get("gameextrainfo"))
+        state = _number(friend.get("personastate"))
+        return GREEN if playing else (STEAM_ONLINE if state in (1, 5, 6) else AWAY)
+
     def _friend_ring(self, friend, x, y, size=FRIEND_AVATAR):
         """The friend's avatar ``size`` across with a ring in their presence colour (Steam's:
         green in a game, blue online, amber away or busy) round it."""
-        playing = bool(friend.get("gameid") or friend.get("gameextrainfo"))
-        state = _number(friend.get("personastate"))
-        colour = GREEN if playing else (STEAM_ONLINE if state in (1, 5, 6) else AWAY)
+        colour = self._friend_ring_colour(friend)
         self.draw.ellipse((x - 2, y - 2, x + size + 1, y + size + 1), outline=colour, width=2)
         url = friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar")
         avatar = self.plugin._avatar_image(url, size, decorative_outline=False)
@@ -671,22 +675,27 @@ class _Console:
 
     def _friend_mosaic(self, friends, x, y):
         """Fit up to nine actual remaining avatars inside the former 38px count circle."""
-        urls = [friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar") for friend in friends]
-        urls = [url for url in urls if url][:9]
-        if not urls:
+        records = [(friend, friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar"))
+                   for friend in friends]
+        records = [(friend, url) for friend, url in records if url][:9]
+        if not records:
             return 0
-        columns = 1 if len(urls) == 1 else 2 if len(urls) <= 4 else 3
+        columns = 1 if len(records) == 1 else 2 if len(records) <= 4 else 3
         gap = 2 if columns == 2 else 1
         size = (FRIEND_AVATAR - gap * (columns - 1)) // columns
-        avatars = [self.plugin._avatar_image(url, size, decorative_outline=False) for url in urls]
-        avatars = [avatar for avatar in avatars if avatar is not None]
+        avatars = [(friend, self.plugin._avatar_image(url, size, decorative_outline=False)) for friend, url in records]
+        avatars = [(friend, avatar) for friend, avatar in avatars if avatar is not None]
         rows = math.ceil(len(avatars) / columns)
         top = y + (FRIEND_AVATAR - rows * size - max(0, rows - 1) * gap) // 2
         for start in range(0, len(avatars), columns):
             line = avatars[start:start + columns]
             left = x + (FRIEND_AVATAR - len(line) * size - (len(line) - 1) * gap) // 2
-            for index, avatar in enumerate(line):
-                self.image.paste(avatar, (left + index * (size + gap), top), avatar if avatar.mode == "RGBA" else None)
+            for index, (friend, avatar) in enumerate(line):
+                avatar_x = left + index * (size + gap)
+                self.image.paste(avatar, (avatar_x, top), avatar if avatar.mode == "RGBA" else None)
+                # Draw inside the portrait's bounds so even 12px neighbours retain a gap.
+                self.draw.ellipse((avatar_x, top, avatar_x + size - 1, top + size - 1),
+                                  outline=self._friend_ring_colour(friend), width=1)
             top += size + gap
         return len(avatars)
 

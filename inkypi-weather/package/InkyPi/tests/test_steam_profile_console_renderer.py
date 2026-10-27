@@ -430,6 +430,35 @@ def test_overflow_mosaic_uses_only_remaining_avatar_records_inside_one_avatar_sl
     assert bounds and 720 <= bounds[0] < bounds[2] <= 758 and 140 <= bounds[1] < bounds[3] <= 178
 
 
+@pytest.mark.parametrize("presence,colour", [
+    ({"personastate": 1}, console_renderer.STEAM_ONLINE),
+    ({"personastate": 5}, console_renderer.STEAM_ONLINE),
+    ({"personastate": "6"}, console_renderer.STEAM_ONLINE),
+    ({"personastate": 2}, console_renderer.AWAY),
+    ({"personastate": 3}, console_renderer.AWAY),
+    ({"personastate": 4}, console_renderer.AWAY),
+    ({"personastate": 3, "gameid": "730"}, GREEN),
+    ({"personastate": 1, "gameextrainfo": "Game"}, GREEN),
+])
+@pytest.mark.parametrize("count,ring_x,centre_y", [(3, 728, 148), (9, 725, 145)])
+def test_mini_rings_match_large_avatar_presence_without_covering_neighbours(
+        plugin, presence, colour, count, ring_x, centre_y):
+    friend = {"avatarfull": "cached-avatar", **presence}
+    console = _Console(plugin, {})
+    console._friend_ring(friend, 300, 100, size=18)
+    assert console.image.getpixel((308, 98)) == colour
+    before = console.image.copy()
+    console._friend_mosaic([friend] * count, 720, 140)
+
+    assert console.image.getpixel((ring_x, 140)) == colour
+    assert console.image.getpixel((ring_x, centre_y)) == (105, 120, 90)
+    # Both the 18px triangle and 12px dense grid leave their original column gap clear.
+    gap_x = 738 if count == 3 else 732
+    assert console.image.getpixel((gap_x, centre_y)) == before.getpixel((gap_x, centre_y))
+    bounds = ImageChops.difference(before, console.image).getbbox()
+    assert bounds and 720 <= bounds[0] < bounds[2] <= 758 and 140 <= bounds[1] < bounds[3] <= 178
+
+
 @pytest.mark.parametrize("count", [8, 15])
 def test_overflow_mosaic_keeps_the_first_five_names_and_hides_extra_names(plugin, data, displayed, count):
     data["friends"] = [{"steamid": str(index), "personaname": f"Friend {index:02}", "personastate": 1,
