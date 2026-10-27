@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from PIL import Image, ImageDraw, ImageOps
 
 from .club_football_localization import contains_chinese
+from .score_fonts import football_score_league
 from .common import (
     CLUB_LEAGUE_MONOCHROME_ICON_CODES,
     COLORS,
@@ -564,7 +565,8 @@ class ClubFootballRenderMixin:
         score_font = self._font(30 if "–" in display_value else 22, bold=True)
         if "–" in display_value:
             display_value, score_font = self._fit_score(draw, display_value, 92, 30, bold=True,
-                                                        sport="SOCCER", max_height=32)
+                                                        sport="SOCCER", max_height=32,
+                                                        league=football_score_league(focus))
         self._draw_centered(
             draw,
             ((left + right) / 2, y(88)),
@@ -853,6 +855,11 @@ class ClubFootballRenderMixin:
             score_text, score_font = self._fit_text(
                 draw, score, score_width, 9 if compact else 10, bold=True, min_size=7
             )
+            if "–" in score:
+                score_text, score_font = self._fit_score(
+                    draw, score, score_width, 9 if compact else 10, bold=True, sport="SOCCER",
+                    max_height=12, league=football_score_league(event),
+                )
             self._draw_centered(
                 draw,
                 (score_center_x, row_top + (18 if compact else 22)),

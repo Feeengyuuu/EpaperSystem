@@ -39,7 +39,7 @@ def test_score_uses_complete_digits_that_fit_ink_box(sport, value, width, height
     assert 4 <= top < bottom <= 4 + height
 
 
-def test_private_override_is_limited_to_nba_wnba_and_missing_files_fall_back(tmp_path):
+def test_nba_wnba_overrides_do_not_leak_to_mlb_and_bad_files_fall_back(tmp_path):
     fonts = tmp_path / "fonts"
     fonts.mkdir(parents=True)
     source = score_fonts.FONT_DIR / "BarlowCondensed-SemiBold.ttf"

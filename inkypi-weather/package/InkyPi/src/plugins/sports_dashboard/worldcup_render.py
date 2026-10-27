@@ -1,6 +1,7 @@
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 from .scorebug_kit import _kit_inked_where_faint
+from .score_fonts import football_score_league
 from .tv_networks import tv_network_parts, tv_watch_rank
 
 SportsDashboard = None
@@ -791,7 +792,8 @@ class WorldCupRenderMixin:
         center_label = self._worldcup_score_or_vs(event)
         center_label, center_font = self._fit_text(draw, center_label, 64, 17, bold=True, min_size=11)
         if event.get("wins_a") is not None and event.get("wins_b") is not None:
-            center_label, center_font = self._fit_score(draw, center_label, 64, 17, bold=True, sport="SOCCER", max_height=20)
+            center_label, center_font = self._fit_score(draw, center_label, 64, 17, bold=True, sport="SOCCER", max_height=20,
+                                                       league=football_score_league(event, presentation))
         self._draw_centered(draw, (center_x, flag_y + flag_h / 2 + 1), center_label, center_font, COLORS["text"])
         if is_recent:
             detail_y1 = flag_y + flag_h + 1
@@ -988,7 +990,8 @@ class WorldCupRenderMixin:
             caption_fill = COLORS["muted"]
         headline, headline_font = self._fit_text(draw, headline, 92, 24, bold=True, min_size=13)
         if (is_live or is_recent) and event.get("wins_a") is not None and event.get("wins_b") is not None:
-            headline, headline_font = self._fit_score(draw, headline, 92, 24, bold=True, sport="SOCCER", max_height=26)
+            headline, headline_font = self._fit_score(draw, headline, 92, 24, bold=True, sport="SOCCER", max_height=26,
+                                                     league=football_score_league(event, presentation))
         self._draw_centered(draw, (center_x, middle - 8), headline, headline_font, COLORS["text"])
         caption, caption_font = self._fit_text(draw, caption, 92, 10, bold=True, min_size=7)
         self._draw_centered(draw, (center_x, middle + 18), caption, caption_font, caption_fill)
@@ -997,6 +1000,9 @@ class WorldCupRenderMixin:
             # Extra time and penalties, home first: "P4 / P3".
             detail = " / ".join(part or "-" for part in details)
             detail, detail_font = self._fit_text(draw, detail, 82, 8, bold=True, min_size=6)
+            if football_score_league(event, presentation):
+                detail, detail_font = self._fit_score(draw, detail, 82, 8, bold=True, sport="SOCCER", max_height=9,
+                                                       league=football_score_league(event, presentation))
             self._draw_centered(draw, (center_x, middle + 29), detail, detail_font, COLORS["muted"])
 
         name_max, name_min = 14, 9
@@ -1230,17 +1236,20 @@ class WorldCupRenderMixin:
                 (left_score_edge - left_detail_w - detail_gap, team_y1 + 1, left_score_edge - detail_gap, team_y2 - 1),
                 left_label,
                 align="right",
+                league=football_score_league(event, presentation),
             )
         score = self._worldcup_score_or_vs(event)
         score, score_font = self._fit_text(draw, score, score_w, 10, bold=True, min_size=7)
         if event.get("wins_a") is not None and event.get("wins_b") is not None:
-            score, score_font = self._fit_score(draw, score, score_w, 10, bold=True, sport="SOCCER", max_height=team_y2 - team_y1)
+            score, score_font = self._fit_score(draw, score, score_w, 10, bold=True, sport="SOCCER", max_height=team_y2 - team_y1,
+                                               league=football_score_league(event, presentation))
         self._draw_centered_in_box(draw, (left_score_edge, team_y1, right_score_edge, team_y2), score, score_font, COLORS["text"])
         if right_label:
             self._draw_worldcup_score_detail_chip(
                 draw,
                 (right_score_edge + detail_gap, team_y1 + 1, right_score_edge + detail_gap + right_detail_w, team_y2 - 1),
                 right_label,
+                league=football_score_league(event, presentation),
             )
         badge_b = self._draw_worldcup_recent_team_identity(
             image,
@@ -1264,7 +1273,7 @@ class WorldCupRenderMixin:
         self._draw_worldcup_odds_text(draw, (right_area[0], points_y, right_area[1] - badge, y + row_h - 1), right_meta,
                                       max_size=7)
 
-    def _draw_worldcup_score_detail_chip(self, draw, box, text, align="left"):
+    def _draw_worldcup_score_detail_chip(self, draw, box, text, align="left", *, league=None):
         text = str(text or "").strip()
         if not text:
             return
@@ -1272,6 +1281,9 @@ class WorldCupRenderMixin:
         if right - left < 20 or bottom - top < 7:
             return
         text, font = self._fit_text(draw, text, max(1, right - left), 9, bold=True, min_size=6)
+        if league:
+            text, font = self._fit_score(draw, text, max(1, right - left), 9, bold=True, sport="SOCCER",
+                                         max_height=bottom - top, league=league)
         self._draw_text_in_box(draw, (left, top - 1, right, bottom + 1), text, font, COLORS["text"], align=align)
 
     def _draw_worldcup_recent_team_identity(
@@ -1439,7 +1451,8 @@ class WorldCupRenderMixin:
         center_text, center_font = self._fit_text(draw, center_text, 52, 10, bold=True, min_size=7)
         if re.fullmatch(r"\d+\s*[-–]\s*\d+", center_text):
             center_text, center_font = self._fit_score(draw, center_text, 52, 10, bold=True,
-                                                      sport="SOCCER", max_height=team_bottom - y + 1)
+                                                      sport="SOCCER", max_height=team_bottom - y + 1,
+                                                      league=football_score_league(event, presentation))
         self._draw_centered_in_box(draw, (center_x - 26, y - 1, center_x + 26, team_bottom), center_text, center_font, COLORS["text"])
         right_w = self._draw_worldcup_presented_flag(
             image,
