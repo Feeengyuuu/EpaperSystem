@@ -13,7 +13,7 @@ PRIVATE_FONT_NAME = "game-deals-price.ttf"
 REQUIRED_GLYPHS = "0123456789$.,"
 ASSET = Path(__file__).with_name("assets") / "price-tag-graphite-gold.png"
 FALLBACK_FONT = Path(__file__).parents[1] / "stocktracker/assets/fonts/BodoniModa-Variable.ttf"
-MONEY_GREEN = ((203, 255, 200), (104, 237, 134))
+MONEY_GREEN = ((233, 255, 229), (183, 235, 193))
 CHAMPAGNE_GOLD = ((255, 229, 164), (189, 140, 49))
 SCALE = 4
 
