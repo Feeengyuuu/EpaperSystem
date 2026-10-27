@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import pytest
 from PIL import Image, ImageDraw
@@ -978,6 +979,61 @@ def test_a_later_day_that_fails_is_left_out_but_today_failing_fails_the_refresh(
     plugin._fetch_ticketmaster_json = lambda params: (_ for _ in ()).throw(RuntimeError("down"))
     with pytest.raises(RuntimeError):
         plugin._load_overview({}, "key", now)
+
+
+@pytest.mark.parametrize("successful_location", ["postalCode", "latlong"])
+@pytest.mark.parametrize("empty_embedded", [False, True])
+def test_an_empty_evening_retries_the_preferred_location_tomorrow(successful_location, empty_embedded):
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    now = datetime(2026, 10, 26, 20, 42, 12, tzinfo=ZoneInfo("America/Los_Angeles"))
+    calls = []
+    empty = {"_embedded": {"events": []}, "page": {"totalElements": 0}} if empty_embedded else {"page": {"totalElements": 0}}
+
+    def fetch(params):
+        calls.append(dict(params))
+        if "onsaleStartDateTime" in params:
+            return empty
+        day = params["localStartDateTime"][:10]
+        if day == "2026-10-26" or successful_location not in params:
+            return empty
+        payload = _day_payload(1, ["Music"], day=day)
+        payload["_embedded"]["events"][0]["classifications"][0]["genre"] = {"name": "Rock"}
+        return payload
+
+    plugin._fetch_ticketmaster_json = fetch
+    events, week, on_sale = plugin._load_overview({"postalCode": "94539", "city": "Fremont"}, "test-key", now)
+
+    day_calls = [call for call in calls if "localStartDateTime" in call]
+    assert [next(key for key in ("postalCode", "latlong", "city") if key in call) for call in day_calls[:3]] == [
+        "postalCode", "latlong", "city",
+    ]
+    assert all(call["localStartDateTime"] == "2026-10-26T20:42:00,2026-10-26T23:59:59" for call in day_calls[:3])
+    assert "postalCode" in day_calls[3]
+    assert day_calls[3]["localStartDateTime"] == "2026-10-27T00:00:00,2026-10-27T23:59:59"
+    successful_index = 3 if successful_location == "postalCode" else 4
+    assert all(successful_location in call and "city" not in call for call in day_calls[successful_index:])
+    assert len(day_calls) == 9 + (successful_location == "latlong")
+    assert len(calls) == len(day_calls) + 1 and successful_location in calls[-1]
+    assert [day["count"] for day in week["days"]] == [0, 1, 1, 1, 1, 1, 1]
+    assert week["days"][0]["kind_counts"] == {}
+    assert week["days"][1]["kind_counts"] == {"music|rock": 1}
+    assert len(events) == 6 and all(event.local_date > "2026-10-26" for event in events)
+    assert on_sale == []
+
+
+def test_a_whole_empty_week_keeps_the_existing_no_events_failure():
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    calls = []
+
+    def fetch(params):
+        calls.append(dict(params))
+        return {"page": {"totalElements": 0}}
+
+    plugin._fetch_ticketmaster_json = fetch
+    with pytest.raises(RuntimeError, match="returned no displayable events"):
+        plugin._load_overview({}, "test-key", datetime(2026, 10, 26, 20, 42, tzinfo=timezone.utc))
+    assert len(calls) == ticketmaster_module.WEEK_DAYS * 3
+    assert all("onsaleStartDateTime" not in call for call in calls)
 
 
 def test_the_page_renders_the_week_band_and_the_sales_opening_soon(monkeypatch, tmp_path):
