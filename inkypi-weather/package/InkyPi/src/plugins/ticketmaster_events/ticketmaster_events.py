@@ -24,7 +24,7 @@ from plugins.base_plugin.render_provenance import (
 )
 from plugins.context_cache import write_context
 
-from .week_page import HEADER_H, WeekPageMixin
+from .week_page import HEADER_H, KIND_COLORS, KIND_COLOR_KEYS, WeekPageMixin, kind_key
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_client, get_http_session
 
@@ -753,6 +753,10 @@ class TicketmasterEvents(WeekPageMixin, BoxOfficeTopMovies):
         return place
 
     def _event_color(self, event, colors):
+        key = KIND_COLOR_KEYS.get(kind_key(event))
+        specific = KIND_COLORS.get(colors["mode"], {}).get(key)
+        if specific:
+            return specific
         segment = (event.segment or "").strip().lower()
         return (colors.get("segment_colors") or {}).get(segment, colors.get("accent", colors["line"]))
 

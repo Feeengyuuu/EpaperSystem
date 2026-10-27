@@ -61,6 +61,19 @@ GENRE_KINDS = {
 }
 SEGMENT_KINDS = {"music": ("音乐", "microphone"), "sports": ("体育", "ticket"), "arts & theatre": ("戏剧", "masks"),
                  "film": ("电影", "film"), "miscellaneous": ("其他", "ticket")}
+# Specific musical kinds need their own visual identity even when every row is Music.
+# These colours belong to named genres, never to words guessed from an artist's title.
+KIND_COLOR_KEYS = {
+    "pop": "pop", "r&b": "pop", "ballads/romantic": "pop",
+    "hip-hop/rap": "rap", "dance/electronic": "electronic", "alternative": "alternative",
+    "rock": "rock", "metal": "rock", "punk": "rock", "comedy": "comedy",
+}
+KIND_COLORS = {
+    "color": {"pop": (160, 48, 80), "rap": (125, 77, 9), "electronic": (39, 87, 152),
+              "alternative": (40, 102, 67), "rock": (155, 61, 40), "comedy": (120, 65, 137)},
+    "dark": {"pop": (235, 139, 169), "rap": (229, 188, 88), "electronic": (123, 175, 232),
+             "alternative": (123, 194, 148), "rock": (238, 136, 102), "comedy": (190, 153, 218)},
+}
 # A sticker's dark outline (below ICON_OUTLINE_LUMINANCE) turns to the ink where it would vanish
 # into the paper (night).
 ICON_MIN_CONTRAST, ICON_OUTLINE_LUMINANCE = 2.0, 0.18
@@ -82,6 +95,7 @@ TITLE_BREAK = re.compile(r"\s+[-–—|]\s+|:\s+|\s+presents\s+|\s+(?=(?:w/|with
 # A bill that goes on to an age limit ('Ages 14+ (No children under 5…)', '21+', 'All Ages')
 # has no subtitle: the limit is a fact for the chips.
 AGE_NOTICE = re.compile(r"(?:ages?\s*(\d+)\s*\+|(\d+)\s*\+|(all\s+ages))(?:\W|$)", re.IGNORECASE)
+SOLD_OUT_NOTICE = re.compile(r"(?:\(\s*SOLD\s+OUT\s*\)|\[\s*SOLD\s+OUT\s*\])", re.IGNORECASE)
 
 
 def age_notice(text):
@@ -91,14 +105,11 @@ def age_notice(text):
         return ""
     return "全龄" if match.group(3) else f"{match.group(1) or match.group(2)}+"
 LIST = (336, CARD_TOP, 800 - MARGIN, CARD_BOTTOM)
-# The list's slips: SLIP_H tall every ROW_H from SLIP_TOP under the list's top, each with a
-# THUMB poster and its kind's icon, STICKER px, laid straight over the poster's corner.
+# Seven rows keep a consistent time column, a poster/type tile, and three text tiers.
 ROW_H, LIST_ROWS = 47, 7
-SLIP_TOP, SLIP_H = 28, 43
-THUMB = (64, 37)
-STICKER = 28
-# The facts on a slip's second line leave the place at least this wide.
-SLIP_PLACE_MIN = 96
+SLIP_TOP, SLIP_H = 28, 45
+THUMB = (52, 29)
+STICKER = 21
 WEEK_BAND = (MARGIN, 428, 800 - MARGIN, 474)
 # The page backdrop: the featured poster blurred at a small size, laid over the paper at this
 # strength (day, night); the cards frost it back by CARD_FROST.
@@ -126,17 +137,30 @@ def clock(value):
     return str(value or "")[:5]
 
 
-def kind_of(event):
-    """(Chinese name, icon) of the event's kind: its sub-genre's or genre's, else its segment's;
-    a film is a film whatever its genre. ("", "ticket") when Ticketmaster names no kind."""
+def kind_key(event):
+    """Known sub-genre, genre, then segment, with film kept in its own category."""
     segment = (event.segment or "").strip().casefold()
     if segment == "film":
-        return SEGMENT_KINDS["film"]
+        return segment
     for name in ((event.extra or {}).get("subgenre"), event.genre):
-        kind = GENRE_KINDS.get((name or "").strip().casefold())
-        if kind:
-            return kind
-    return SEGMENT_KINDS.get(segment, ("", "ticket"))
+        key = (name or "").strip().casefold()
+        if key in GENRE_KINDS:
+            return key
+    return segment
+
+
+def kind_of(event):
+    """Chinese name and sticker from the same classification used by its colour."""
+    key = kind_key(event)
+    return GENRE_KINDS.get(key, SEGMENT_KINDS.get(key, ("", "ticket")))
+
+
+def chip_ink(fill, colors):
+    """Keep small type readable even on a mid-tone category colour."""
+    ink = max((colors["paper"], colors["ink"]), key=lambda candidate: contrast_ratio(candidate, fill))
+    if contrast_ratio(ink, fill) < 4.5:
+        ink = max(((0, 0, 0), (255, 255, 255)), key=lambda candidate: contrast_ratio(candidate, fill))
+    return ink
 
 
 def title_parts(title):
@@ -345,7 +369,8 @@ class WeekPageMixin:
         tour = (event.extra or {}).get("tour_dates") or 0
         if tour >= 5:
             tags.append((f"巡演 {tour} 场", colors["outline"], colors["paper"]))
-        status = STATUS_LABELS.get((event.status or "onsale").lower(), (event.status or "").upper())
+        sold_out = bool(SOLD_OUT_NOTICE.search(event.title or ""))
+        status = "售罄" if sold_out else STATUS_LABELS.get((event.status or "onsale").lower(), (event.status or "").upper())
         if status:
             tags.append((status, colors.get("status_chip", colors["chip"]), colors.get("status_ink", colors["chip_ink"])))
         tag_x = px1 - 8
@@ -381,7 +406,8 @@ class WeekPageMixin:
         # The facts as chips: the price solid, the kind edged in its colour.
         fact_font = self._font(12, bold=True)
         x = px0
-        facts = [(price_label(event.price), colors["accent"], True), (self._kind_text(event), kind_colour, False),
+        facts = [("" if sold_out else price_label(event.price), colors["accent"], True),
+                 (self._kind_text(event), kind_colour, False),
                  (age, colors["muted"], False),
                  (self._more_text(event), colors["muted"], False)]
         drawn = False
@@ -424,6 +450,8 @@ class WeekPageMixin:
         Ticketmaster gives it); "" when Ticketmaster names neither."""
         segment = SEGMENT_LABELS.get((event.segment or "").lower(), event.segment or "")
         label, _icon = kind_of(event)
+        if kind_key(event) == "comedy" and segment == "音乐":
+            return label
         if label == segment:
             genre = event.genre if event.genre and event.genre.lower() != (event.segment or "").lower() else ""
             label = genre if genre and genre.casefold() != "other" else ""
@@ -508,73 +536,64 @@ class WeekPageMixin:
             draw.text((x0, y0 + 40), "近期没有更多活动", fill=colors["muted"], font=self._font(15, bold=True))
 
     def _draw_slip(self, image, draw, event, box, day_text, colors, now):
-        """One notice: its kind's colour down the edge; the day (when it starts a day) and time;
-        the poster with the kind's sticker; the title with its price tag; under them the kind,
-        the place and distance, and what to know before buying."""
+        """Time, poster/type tile, then title, location and buying facts in separate tiers."""
         sx0, sy0, sx1, sy1 = box
         kind_colour = self._event_color(event, colors)
-        draw.rounded_rectangle(box, radius=4, fill=colors["paper"], outline=colors["line"])
-        draw.rounded_rectangle((sx0, sy0, sx0 + 10, sy1), radius=4, fill=kind_colour)
-        draw.rectangle((sx0 + 5, sy0 + 1, sx0 + 10, sy1 - 1), fill=colors["paper"])
-        # When.
+        draw.rectangle(box, fill=colors["paper"])
+        draw.line((sx0, sy1, sx1, sy1), fill=colors["line"])
+        # The day appears once per chronological group, with a full rule at the boundary.
         if day_text:
-            draw.text((sx0 + 10, sy0 + 3), day_text, fill=colors["accent"] if day_text != "今天" else colors["muted"],
-                      font=self._font(11, bold=True))
-        draw.text((sx0 + 10, sy0 + 18), clock(event.local_time) or "全天", fill=colors["ink"], font=self._font(17, bold=True))
-        # What it looks like, with the kind's sticker on the poster's corner.
-        thumb_x, thumb_y = sx0 + 60, sy0 + 3
+            draw.line((sx0, sy0, sx1, sy0), fill=colors["muted"])
+            draw.text((sx0 + 2, sy0 + 3), day_text, fill=colors["ink"], font=self._font(11, bold=True))
+        draw.text((sx0 + 2, sy0 + 20), clock(event.local_time) or "全天", fill=colors["ink"], font=self._font(16, bold=True))
+        # Colour, label and sticker all express the same provider classification.
+        thumb_x, thumb_y = sx0 + 53, sy0 + 2
         self._paste_event_image(image, event, (thumb_x, thumb_y, THUMB[0], THUMB[1]), colors)
         label, icon = kind_of(event)
-        cx, cy, radius = thumb_x + THUMB[0], sy0 + SLIP_H - STICKER // 2 - 1, STICKER // 2
+        label = label or "未分类"
+        tile_right = thumb_x + THUMB[0]
+        draw.rectangle((thumb_x, thumb_y, tile_right, sy0 + 43), outline=kind_colour)
+        draw.rectangle((thumb_x, sy0 + 31, tile_right, sy0 + 43), fill=kind_colour)
+        label_font = self._font(11, bold=True)
+        label = self._fit_text(draw, label, label_font, THUMB[0] - 4)
+        label_ink = chip_ink(kind_colour, colors)
+        draw.text((thumb_x + (THUMB[0] - draw.textlength(label, font=label_font)) / 2, sy0 + 31),
+                  label, fill=label_ink, font=label_font)
         art = _genre_icon(icon, STICKER, tuple(colors["paper"]), tuple(colors["ink"]))
         if art is not None:
-            image.paste(art, (cx - art.width // 2, cy - art.height // 2), art)
-        text_x, right = cx + radius + 6, sx1 - 6
-        # The title, with the lowest price on a tag.
-        price = price_label(event.price, lowest=True)
-        tag_font = self._font(12, bold=True)
-        tag_w = draw.textlength(price, font=tag_font) + 12 if price else 0
-        if price:
-            draw.rounded_rectangle((right - tag_w, sy0 + 4, right, sy0 + 20), radius=3,
-                                   fill=colors.get("date_chip", colors["chip"]))
-            draw.text((right - tag_w + 6, sy0 + 5), price, fill=colors.get("date_ink", colors["chip_ink"]), font=tag_font)
-        title_w = right - text_x - tag_w - (6 if price else 0)
+            image.paste(art, (tile_right - art.width + 4, sy0 + 10), art)
+        text_x, right = tile_right + 9, sx1 - 3
+        # The title has the full text-column width; prices no longer shorten the artist name.
         title_font = self._font(15, bold=True)
-        for size in (15, 14, 13):
-            title_font = self._font(size, bold=True)
-            if draw.textlength(event.title, font=title_font) <= title_w:
-                break
-        draw.text((text_x, sy0 + 2 + (15 - title_font.size) // 2), self._fit_text(draw, event.title, title_font, title_w),
+        draw.text((text_x, sy0), self._fit_text(draw, event.title, title_font, right - text_x),
                   fill=colors["ink"], font=title_font)
-        # The kind, then the place and distance, then the facts from the right.
+        # Place and distance get their own line. Distance stays complete when a venue is long.
         meta_font = self._font(11, bold=True)
-        y = sy0 + 24
-        x = text_x
-        if label:
-            chip_w = draw.textlength(label, font=meta_font) + 10
-            draw.rounded_rectangle((x, y, x + chip_w, y + 15), radius=7, outline=kind_colour, width=2)
-            draw.text((x + 5, y + 1), label, fill=colors["ink"], font=meta_font)
-            x += chip_w + 6
-        facts_right = right
-        for text, solid in self._slip_facts(event, now):
-            fact_w = draw.textlength(text, font=meta_font) + 10
-            if facts_right - fact_w < x + SLIP_PLACE_MIN:
-                break
-            if solid:
-                draw.rounded_rectangle((facts_right - fact_w, y, facts_right, y + 15), radius=3, fill=colors["accent"])
-                draw.text((facts_right - fact_w + 5, y + 1), text, fill=colors["paper"], font=meta_font)
-            else:
-                draw.rounded_rectangle((facts_right - fact_w, y, facts_right, y + 15), radius=3, outline=colors["outline"])
-                draw.text((facts_right - fact_w + 5, y + 1), text, fill=colors["ink"], font=meta_font)
-            facts_right -= fact_w + 4
-        # The distance is never cut; the city goes first when there is no room, then the venue gives way.
         distance = f" · {event.distance}" if event.distance else ""
-        room = facts_right - 4 - x - draw.textlength(distance, font=meta_font)
+        room = right - text_x - draw.textlength(distance, font=meta_font)
         place = self._place_line(event)
         if draw.textlength(place, font=meta_font) > room:
             place = event.venue_name or place
-        draw.text((x, y + 1), self._fit_text(draw, place, meta_font, max(room, 10)) + distance, fill=colors["muted"],
+        draw.text((text_x, sy0 + 17), self._fit_text(draw, place, meta_font, max(room, 10)) + distance, fill=colors["muted"],
                   font=meta_font)
+        # Buying facts occupy a quiet third line, with warnings kept ahead of price/tour data.
+        facts = self._slip_facts(event, now)
+        price = "" if SOLD_OUT_NOTICE.search(event.title or "") else price_label(event.price, lowest=True)
+        if price:
+            position = next((index for index, (_text, alarm) in enumerate(facts) if not alarm), len(facts))
+            facts.insert(position, (price, False))
+        if not facts and (event.status or "").lower() == "onsale":
+            facts.append(("售票中", False))
+        x, y = text_x, sy0 + 31
+        for text, alarm in facts:
+            fact_w = draw.textlength(text, font=meta_font) + 8
+            if x + fact_w > right:
+                break
+            fill = colors["accent"] if alarm else self._blend(colors["paper"], kind_colour, 0.12)
+            fact_ink = chip_ink(fill, colors)
+            draw.rounded_rectangle((x, y, x + fact_w, y + 12), radius=2, fill=fill)
+            draw.text((x + 4, y - 1), text, fill=fact_ink, font=meta_font)
+            x += fact_w + 4
 
     def _slip_facts(self, event, now):
         """[(text, alarm)] to know before buying, most important first: a sale stopped or a date
@@ -582,11 +601,16 @@ class WeekPageMixin:
         day, a big tour, a family show, several days."""
         extra = event.extra or {}
         facts = []
+        # Some public listings retain onsale/$0 metadata after their title is marked SOLD OUT.
+        # Only the explicit bracketed marker takes priority; an artist/title word never does.
+        sold_out = bool(SOLD_OUT_NOTICE.search(event.title or ""))
+        if sold_out:
+            facts.append(("售罄", True))
         status = (event.status or "").lower()
         if status in STATUS_LABELS and status != "onsale":
             facts.append((STATUS_LABELS[status], True))
         sale = self._parse_datetime(extra.get("sale_start")) if extra.get("sale_start") else None
-        if sale and now and sale > now:
+        if not sold_out and sale and now and sale > now:
             facts.append((f"{sale.astimezone(now.tzinfo):%m/%d} 开售" if now.tzinfo else f"{sale:%m/%d} 开售", False))
         if extra.get("age"):
             facts.append((extra["age"], False))
