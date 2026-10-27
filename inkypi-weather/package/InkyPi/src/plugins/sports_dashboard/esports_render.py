@@ -1417,11 +1417,10 @@ class EsportsRenderMixin:
         font = self._font(8 if attribution else 7, True)
         text_width = int(ceil(self._text_width(draw, text, font))) if text else 0
         gap = 4 if text else 0
-        # Keep the white official artwork legible on light paper without recoloring it.
+        # Preserve the official geometry and alpha; light paper uses a dark monochrome treatment.
         on_light = sum(COLORS["panel"]) > 384
-        padding = 1 if on_light else 0
-        width = min(74, x2 - x1 - text_width - gap - padding * 2)
-        height = min(12, y2 - y1 - padding * 2)
+        width = min(74, x2 - x1 - text_width - gap)
+        height = min(12, y2 - y1)
         if width < 40 or height < 6:
             return False  # Crowded/error states retain the existing full text fallback.
         logo = self._load_local_logo(
@@ -1430,11 +1429,15 @@ class EsportsRenderMixin:
         if logo is None:
             return False
         left = x1 + (text_width + gap if attribution else 0)
-        top = y1 + (y2 - y1 - logo.height - padding * 2) // 2
+        top = y1 + (y2 - y1 - logo.height) // 2
         if on_light:
-            draw.rectangle((left, top, left + logo.width + 1, top + logo.height + 1), fill=(28, 29, 34))
-        image.paste(logo, (left + padding, top + padding), logo)
-        text_x = x1 if attribution else left + logo.width + padding * 2 + gap
+            with Image.new("RGBA", logo.size, COLORS["text"]) as monochrome:
+                with logo.getchannel("A") as alpha:
+                    monochrome.putalpha(alpha)
+                image.paste(monochrome, (left, top), monochrome)
+        else:
+            image.paste(logo, (left, top), logo)
+        text_x = x1 if attribution else left + logo.width + gap
         self._draw_text_in_box(draw, (text_x, y1, text_x + text_width, y2), text, font, color)
         return True
 

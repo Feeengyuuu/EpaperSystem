@@ -41,6 +41,39 @@ def test_provider_mark_and_label_stay_inside_their_existing_slot(colors, attribu
     assert labels == ["Source:" if attribution else "CACHE"]
 
 
+@pytest.mark.parametrize("colors", [DAY_COLORS, DEEP_NIGHT_COLORS], ids=["day", "night"])
+def test_wordmark_transparency_reveals_the_panel_without_changing_the_cached_white_art(colors, monkeypatch):
+    plugin = _plugin()
+    path = str(Path(ESPORTS_SOURCE_LOGO_DIR) / "pandascore.png")
+    cached = plugin._load_local_logo(path, (74, 12), alpha_threshold=8)
+    cached_pixels = cached.tobytes()
+    image = Image.new("RGB", (100, 30), colors["panel"])
+    pasted = []
+    original_paste = image.paste
+
+    def record(art, xy, mask=None):
+        pasted.append((art.copy(), xy))
+        return original_paste(art, xy, mask)
+
+    monkeypatch.setattr(image, "paste", record)
+    token = _ACTIVE_COLORS.set(colors)
+    try:
+        assert plugin._draw_cs2_provider_label(image, ImageDraw.Draw(image), (4, 4, 96, 24), "PANDASCORE", colors["muted"])
+    finally:
+        _ACTIVE_COLORS.reset(token)
+    assert len(pasted) == 1
+    art, (left, top) = pasted[0]
+    transparent = [(x, y) for y in range(art.height) for x in range(art.width) if art.getpixel((x, y))[3] == 0]
+    assert transparent  # The real wordmark has gaps and counters, not an opaque rectangle.
+    assert all(image.getpixel((left + x, top + y)) == colors["panel"] for x, y in transparent)
+    assert art.getchannel("A").tobytes() == cached.getchannel("A").tobytes()
+    if colors is DAY_COLORS:
+        assert {pixel[:3] for pixel in art.get_flattened_data() if pixel[3] == 255} == {colors["text"]}
+    else:
+        assert art.tobytes() == cached_pixels
+    assert cached.tobytes() == cached_pixels
+
+
 @pytest.mark.parametrize("source", ["HLTV", "Valve", "OpenDota", "PandaScoreMirror", ""])
 def test_unknown_or_vendor_names_are_never_relabelled_as_pandascore(source, monkeypatch):
     plugin = _plugin()

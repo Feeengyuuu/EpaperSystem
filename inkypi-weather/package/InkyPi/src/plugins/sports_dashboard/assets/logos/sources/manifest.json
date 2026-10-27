@@ -10,7 +10,7 @@
         480,
         72
       ],
-      "processing": "Official header SVG rasterized at 3x with transparent alpha using PyMuPDF; original white artwork and geometry retained. Light-theme rendering uses a neutral dark backing.",
+      "processing": "Official header SVG rasterized at 3x with transparent alpha using PyMuPDF; bundled original white artwork and geometry retained. Night rendering uses the original white art. Day rendering applies theme ink as a monochrome treatment to a copy, preserving the original alpha and geometry with no backing rectangle; this treatment is not claimed as an official dark variant.",
       "rights": "PandaScore trademark, used to identify the data source. Retains Source: attribution. No open artwork license is asserted.",
       "attribution_terms": "https://www.pandascore.co/terms-and-condition"
     },
