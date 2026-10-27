@@ -68,6 +68,69 @@
       ],
       "processing": "Official repository wordmark: transparent alpha bounding-box crop and proportional LANCZOS resize only. Night retains the original white/red art. Day applies theme ink to a copy preserving the original alpha and geometry; this monochrome treatment is not claimed as an official variant. No backing rectangle.",
       "rights": "OpenF1 trademark used to identify this data provider; not the Formula 1 league logo. No affiliation or endorsement implied."
+    },
+    "csl": {
+      "source_url": "https://en.wikipedia.org/wiki/File:Chinese_Super_League.svg",
+      "official_site": "https://www.csl-china.com/",
+      "source_sha256": "d631f337802383e464a4713b42da92de02ace1ee96a52dfcb2e0238c6859da3c",
+      "processing": "SVG drawn 8x by a headless browser on a transparent page, cropped to its ink. The league's emblem and CSL lettering, colours kept.",
+      "licence": "Non-free logo as used in the English Wikipedia infobox (fair use)",
+      "rights": "Trademark of its respective owner, used only to identify the source; no affiliation or endorsement implied.",
+      "sha256": "e4e22c129b471cc3fa617eff26282bf01c11e92e013a7967637d2dc17a653519",
+      "size": [
+        135,
+        64
+      ]
+    },
+    "draftkings": {
+      "source_url": "https://en.wikipedia.org/wiki/File:DraftKings_logo.svg",
+      "official_site": "https://www.draftkings.com/",
+      "source_sha256": "360484e314944b3c7a5c08130155ddf7547e71ade8c2f40b823a435414493e64",
+      "processing": "SVG drawn 8x by a headless browser on a transparent page, cropped to its ink. Crown and stacked DRAFT KINGS lettering, colours kept.",
+      "licence": "Non-free logo as used in the English Wikipedia infobox (fair use)",
+      "rights": "Trademark of its respective owner, used only to identify the source; no affiliation or endorsement implied.",
+      "sha256": "c936ee71dda721ffdddae54a05995380e2241b8a3bf5c87ef6fdfb3d0ff40cb9",
+      "size": [
+        126,
+        64
+      ]
+    },
+    "bet365": {
+      "source_url": "https://commons.wikimedia.org/wiki/File:Bet365_Logo.svg",
+      "official_site": "https://www.bet365.com/",
+      "source_sha256": "f8146ca18ca739eca483b6bf477dd9609aa224f92eb00133d352b44d7429ba52",
+      "processing": "SVG drawn 8x by a headless browser on a transparent page, cropped to its ink. The official green tile with white bet and yellow 365.",
+      "licence": "Public domain (Wikimedia Commons, below the threshold of originality)",
+      "rights": "Trademark of its respective owner, used only to identify the source; no affiliation or endorsement implied.",
+      "sha256": "0e14341ce92ac7c1044c9b4632461e8bab1bc4e5aa87c2e94f0e5f32c2e7a3d6",
+      "size": [
+        125,
+        64
+      ]
+    },
+    "football_data": {
+      "source_url": "https://www.football-data.org/assets/logo.jpg",
+      "official_site": "https://www.football-data.org/",
+      "source_sha256": "d645e9e5941665d867224bf20bb714494fa24cc8f88ae7619c9f763101832bf5",
+      "processing": "Official logo (white lettering, green dash on a near-black ground): the ground cleared by colour distance with un-premultiplied edges, and its two lines set side by side on one line so it reads at caption size. White lettering is inked on light pages at draw time.",
+      "rights": "Trademark of its respective owner, used only to identify the source; no affiliation or endorsement implied.",
+      "sha256": "1762ab825840e873276b9a4664d74a0330dc970da4dce449870b34ab374cd7ea",
+      "size": [
+        557,
+        64
+      ]
+    },
+    "api_sports": {
+      "source_url": "https://www.api-football.com/public/img/home1/api-sports-small-logo3.png",
+      "official_site": "https://www.api-football.com/",
+      "source_sha256": "22fe2f36e5c205290b35ce8ae3ae8718151ec2a0726ef92b359763b45bc7b873",
+      "processing": "Official API-SPORTS badge with its white disk cleared; grey lettering and orange accent kept.",
+      "rights": "Trademark of its respective owner, used only to identify the source; no affiliation or endorsement implied.",
+      "sha256": "bbdfb6e2298f278b5c343550d8ebd1a0966e88142a0e8dc604d153047e160f3e",
+      "size": [
+        84,
+        64
+      ]
     }
   }
 }

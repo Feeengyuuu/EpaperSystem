@@ -19,6 +19,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import requests
@@ -78,7 +79,8 @@ def _browser():
 def _rasterize(svg):
     """The SVG drawn 8x on a transparent page by a headless browser."""
     SCRATCH.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=SCRATCH) as folder:
+    # The browser can still hold its profile when the folder is removed.
+    with tempfile.TemporaryDirectory(dir=SCRATCH, ignore_cleanup_errors=True) as folder:
         folder = Path(folder)
         (folder / "logo.svg").write_bytes(svg)
         (folder / "page.html").write_text(
@@ -86,11 +88,17 @@ def _rasterize(svg):
             "img{display:block;width:1824px;height:536px;object-fit:contain}</style>"
             "<img src='logo.svg'>", encoding="utf-8")
         shot = folder / "shot.png"
-        subprocess.run([_browser(), "--headless", "--disable-gpu", "--no-first-run", "--hide-scrollbars",
+        subprocess.run([_browser(), "--headless=new", "--disable-gpu", "--no-first-run", "--hide-scrollbars",
                         "--allow-file-access-from-files", "--default-background-color=00000000",
                         "--window-size=1824,536", f"--user-data-dir={folder / 'profile'}",
                         f"--screenshot={shot}", (folder / "page.html").as_uri()],
                        check=True, capture_output=True, timeout=60)
+        # Edge's launcher returns before its browser process has written the screenshot.
+        deadline = time.monotonic() + 30
+        size = -1
+        while time.monotonic() < deadline and not (shot.is_file() and shot.stat().st_size == size):
+            size = shot.stat().st_size if shot.is_file() else -1
+            time.sleep(0.5)
         with Image.open(shot) as image:
             return image.convert("RGBA")
 

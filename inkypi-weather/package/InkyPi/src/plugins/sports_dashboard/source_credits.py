@@ -8,8 +8,31 @@ from PIL import Image
 
 
 SOURCE_LOGO_DIR = Path(__file__).parent / "assets" / "logos" / "sources"
-SOURCE_MARKS = {"ESPN": "espn", "MLB": "mlb", "PANDASCORE": "pandascore", "VALVE": "valve", "OPENF1": "openf1"}
-SOURCE_TOKEN = re.compile(r"(?<![\w])(" + "|".join(SOURCE_MARKS) + r")(?![\w])", re.IGNORECASE)
+SOURCE_MARKS = {
+    "ESPN": "espn", "MLB": "mlb", "PANDASCORE": "pandascore", "VALVE": "valve", "OPENF1": "openf1",
+    # The CSL is the competition the ESPN data covers, like Valve for CS2 events.
+    "CSL": "csl",
+    "FD": "football_data", "FOOTBALL": "football_data",
+    "API-F": "api_sports", "API": "api_sports",
+    # Bookmakers behind the odds, as the club cards abbreviate them.
+    "BET365": "bet365", "365": "bet365", "DK": "draftkings",
+}
+# Longest first, so API-F wins over API.
+SOURCE_TOKEN = re.compile(
+    r"(?<![\w-])(" + "|".join(re.escape(token) for token in sorted(SOURCE_MARKS, key=len, reverse=True))
+    + r")(?![\w-])",
+    re.IGNORECASE,
+)
+# Marks drawn as tall as the caption type (badges and stacked marks); the rest at 80 percent.
+FULL_HEIGHT_MARKS = {"mlb", "csl", "api_sports", "bet365", "draftkings"}
+# Marks whose neutral lettering is drawn for one ground: white or light grey for a dark one,
+# black for a light one. Those strokes take the page's ink where they would vanish; the brand
+# colours stay as published.
+NEUTRAL_LETTERING_MARKS = {"csl", "football_data", "api_sports", "draftkings"}
+
+# A stroke is neutral when its channels differ by at most this; it vanishes on a light page above
+# NEUTRAL_LIGHT and on a dark page below NEUTRAL_DARK.
+NEUTRAL_SPREAD, NEUTRAL_LIGHT, NEUTRAL_DARK = 40, 150, 110
 
 
 def draw_source_credit(plugin, image, draw, box, label, color, *, size=9, min_size=7,
@@ -37,13 +60,16 @@ def draw_source_credit(plugin, image, draw, box, label, color, *, size=9, min_si
                 continue
             if index % 2:
                 brand = part.upper()
-                mark_height = min(height, max(6, font_size if brand == "MLB" else round(font_size * .8)))
+                key = SOURCE_MARKS[brand]
+                mark_height = min(height, max(6, font_size if key in FULL_HEIGHT_MARKS else round(font_size * .8)))
                 mark = plugin._load_local_logo(
-                    str(SOURCE_LOGO_DIR / f"{SOURCE_MARKS[brand]}.png"),
-                    (mark_height * 7, mark_height), alpha_threshold=8,
+                    str(SOURCE_LOGO_DIR / f"{key}.png"),
+                    (mark_height * 9, mark_height), alpha_threshold=8,
                 )
                 if mark is None:
                     return False
+                if key in NEUTRAL_LETTERING_MARKS:
+                    mark = _inked_neutrals(mark, ink, on_light)
                 runs.append((brand, mark, mark.width))
                 total_width += mark.width
             else:
@@ -73,3 +99,22 @@ def draw_source_credit(plugin, image, draw, box, label, color, *, size=9, min_si
                 cursor += run_width
             return True
     return False
+
+
+def _inked_neutrals(mark, ink, on_light):
+    """``mark`` with its neutral strokes that would vanish on the page in ``ink``.
+
+    On a light page that is white and light-grey lettering (made for a dark ground);
+    on a dark page, black and dark-grey lettering. Coloured strokes are left alone.
+    """
+    mark = mark.copy()
+    pixels = mark.load()
+    for y in range(mark.height):
+        for x in range(mark.width):
+            red, green, blue, alpha = pixels[x, y]
+            if not alpha or max(red, green, blue) - min(red, green, blue) > NEUTRAL_SPREAD:
+                continue
+            lightness = (red + green + blue) / 3
+            if (on_light and lightness > NEUTRAL_LIGHT) or (not on_light and lightness < NEUTRAL_DARK):
+                pixels[x, y] = (*ink[:3], alpha)
+    return mark
