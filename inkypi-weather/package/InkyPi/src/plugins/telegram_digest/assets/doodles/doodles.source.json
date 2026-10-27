@@ -1,0 +1,18 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the sports list patterns",
+  "generated": "2026-10-27",
+  "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map (ink on white), tiled and tinted at draw time by utils.doodle_backdrop",
+  "assets": {
+    "messages.png": {
+      "motifs": "paper planes, chat bubbles, envelopes, megaphones, newspapers, bells",
+      "job_id": "66bc058e-123a-4772-b1d2-fb59a2ee550a",
+      "source_sha256": "042c43dd1ee176f75085d94de57ddd4345293c041d328e2f0e16facb2ebe3756",
+      "sha256": "ce6f545aaff6aa9ff52f11e6391b5fe416207d4d4d39f709fd9c4eaf12c7ca02",
+      "size": [
+        480,
+        480
+      ]
+    }
+  }
+}

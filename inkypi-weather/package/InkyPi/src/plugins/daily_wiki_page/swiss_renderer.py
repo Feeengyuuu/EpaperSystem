@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from utils.doodle_backdrop import paint_doodles
 from utils.fonts import load_font
 
 
@@ -36,6 +37,8 @@ ORNAMENT_ASSET_PATH = Path(__file__).resolve().parent / "assets" / "daily_image_
 WIKIMEDIA_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "wikimedia_logo.png"
 # The logo stands this much taller than the source line it heads.
 WIKIMEDIA_LOGO_SCALE = 1.3
+# Quiet doodles in the day's accent under the photograph's column and the history column.
+DOODLE_DIR = Path(__file__).resolve().parent / "assets" / "doodles"
 
 
 class LayoutOverflowError(ValueError):
@@ -406,6 +409,13 @@ class _Page:
         self.draw.rectangle((left, self.bottom - self.px(47), right - 1, self.bottom - self.px(12)),
                             fill=self.palette["accent2"])
 
+    def doodles(self):
+        """Lay the photograph column's camera doodles and the history column's keepsakes
+        in the day's accent, before either column draws its content."""
+        for name, box in (("photo", (self.photo_left, self.top, self.photo_right, self.bottom)),
+                          ("history", (self.history_left, self.top, self.right, self.bottom))):
+            paint_doodles(self.image, box, DOODLE_DIR / f"{name}.png", self.palette["accent"], offset=box[:2])
+
     def photograph(self, source):
         text = _text(self.payload.get("image_caption") or self.payload.get("daily_image_title")
                      or self.payload.get("title"))
@@ -648,6 +658,7 @@ def render_page(plugin, dimensions, payload, settings, now):
     page.audit["media_available"] = {"daily_image": daily_image is not None, "history_image": history_image is not None}
     page.header()
     page.rail()
+    page.doodles()
     page.photograph(daily_image)
     page.history(history_image)
     page.audit["text_complete"] = page.audit["caption"]["complete"] and all(

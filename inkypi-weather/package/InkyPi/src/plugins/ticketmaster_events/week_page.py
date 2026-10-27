@@ -18,6 +18,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 
+from utils.doodle_backdrop import paint_doodles
 from utils.theme_utils import contrast_ratio, relative_luminance
 
 WEEKDAYS = "一二三四五六日"
@@ -29,6 +30,8 @@ GENRE_ICON_DIR = Path(__file__).with_name("genre_icons")
 # Ticketmaster's wordmark (tools/build_source_logos.py), this tall before the header's weekly count.
 TICKETMASTER_LOGO_PATH = Path(__file__).with_name("assets") / "ticketmaster.png"
 TICKETMASTER_LOGO_HEIGHT = 18
+# Quiet show doodles in the featured event's kind colour under the featured card.
+DOODLE_PATH = Path(__file__).with_name("assets") / "doodles" / "events.png"
 # The header's kind legend uses at most two balanced rows between the wordmark and source.
 # Visible kinds sharing a colour are named together; every member keeps its statistics key.
 LEGEND_SIZE, LEGEND_LEFT, LEGEND_GAP = 13, 276, 8
@@ -289,6 +292,8 @@ class WeekPageMixin:
         legend_keys = self._draw_page_header(image, draw, settings, generated_at, stale, days, colors, events)
         for box in (HERO, LIST, WEEK_BAND):
             self._frost(image, box, colors)
+        tint = self._event_color(events[0], colors) if events else colors["accent"]
+        paint_doodles(image, (HERO[0] + 1, HERO[1] + 1, HERO[2] - 1, HERO[3] - 1), DOODLE_PATH, tint, radius=5)
         foot = self._draw_featured(image, draw, events[0], today, colors) if events else HERO[1] + 8 + POSTER_H
         self._draw_on_sale(draw, on_sale or [], days, getattr(generated_at, "tzinfo", None), colors, foot + 16, legend_keys)
         self._draw_next(image, draw, events[1:1 + LIST_ROWS], today, colors,

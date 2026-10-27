@@ -14,6 +14,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
+from utils.doodle_backdrop import paint_doodles
 from utils.local_wordmark import paste_local_wordmark
 from utils.page_canvas import PageCanvas
 
@@ -42,6 +43,8 @@ LOGOS = {"bilibili": (("bilibili_tv", "bilibili"), 19, "热门"), "bangumi": ("b
 LOGO_RIGHT = {"epic", "songs", "puzzle"}
 # Cards whose source colour runs all the way round them, so the area stands out.
 RINGED = {"bilibili"}
+# Quiet doodles in the source's colour under a card's content.
+DOODLES = {"epic": "space", "songs": "music", "puzzle": "chess"}
 SHORT_NAMES = {"bilibili": "B站", "bangumi": "新番", "wiki": "维基", "epic": "地球", "songs": "热歌",
                "puzzle": "棋题"}
 WEEKDAYS = "一二三四五六日"
@@ -142,6 +145,13 @@ def _card(canvas, name, note="", *, title=None, logo=True):
         width = end - x - used - 10 if name in LOGO_RIGHT else right - left - 110
         canvas.text((end, middle), note, 11, "muted", anchor="rm", bold=False, width=width)
     return top + BAR + 24
+
+
+def _doodles(canvas, name, top):
+    """Lay the card's doodles in its source colour under the content it is about to draw."""
+    left, _top, right, bottom = CARDS[name]
+    paint_doodles(canvas.image, (left + 2, top - 4, right - 2, bottom - 2), ASSETS / "doodles" / f"{DOODLES[name]}.png",
+                  BRANDS[name], radius=4, offset=(left, top))
 
 
 def _paste_fit(canvas, picture, box, *, centering=(0.5, 0.5), radius=5):
@@ -426,6 +436,7 @@ def _epic(canvas, payload, images, now):
     data = payload["epic"]["data"]
     frames = data.get("frames") or []
     top = _card(canvas, "epic", "EPIC · DSCOVR")
+    _doodles(canvas, "epic", top)
     left, _top, right, bottom = CARDS["epic"]
     # The frame the plugin found a picture for (the nearest cached one when now's is missing).
     index = payload.get("epic_frame_index")
@@ -476,6 +487,7 @@ def _songs(canvas, payload, images):
         top = _card(canvas, "songs", "美国 · 热销榜", title="iTunes 热歌", logo=False)
     else:
         top = _card(canvas, "songs", "美国 · 播放最多")
+    _doodles(canvas, "songs", top)
     left, _top, right, bottom = CARDS["songs"]
     if not songs:
         canvas.text(((left + right) / 2, (top + bottom) / 2), "榜单暂不可用", 13, "muted", anchor="mm")
@@ -500,6 +512,7 @@ def _puzzle(canvas, payload, images):
     puzzle = payload["puzzle"]["data"]
     previous = ((payload.get("history") or {}).get("puzzle") or {}).get("previous") or {}
     top = _card(canvas, "puzzle")
+    _doodles(canvas, "puzzle", top)
     left, _top, right, bottom = CARDS["puzzle"]
     if not puzzle.get("fen"):
         canvas.text(((left + right) / 2, (top + bottom) / 2), "棋题暂不可用", 13, "muted", anchor="mm")

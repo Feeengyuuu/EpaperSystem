@@ -18,6 +18,8 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageOps
 
+from utils.doodle_backdrop import exact_colour_mask
+
 CARD_BACKDROP_DIR = Path(__file__).resolve().parent / "assets" / "decor" / "card_backdrops"
 CARD_BACKDROP_KINDS = ("football", "basketball", "esports", "baseball", "gridiron", "golf", "motorsport", "tactical")
 LIST_BACKDROP_KINDS = ("football", "basketball", "esports", "baseball", "gridiron", "golf", "motorsport")
@@ -85,7 +87,7 @@ def paint_list_backdrop(image, box, kind, panel, grounds):
         return False
     x1, y1 = int(box[0]), int(box[1])
     region = image.crop((x1, y1, x1 + size[0], y1 + size[1])).convert("RGB")
-    image.paste(pattern, (x1, y1), _ground_mask(region, [_rgb(ground) for ground in grounds]))
+    image.paste(pattern, (x1, y1), exact_colour_mask(region, [_rgb(ground) for ground in grounds]))
     return True
 
 
@@ -140,15 +142,6 @@ def _night_tones(art, panel):
     ink = ImageChops.multiply(art, Image.merge("RGB", (density, density, density)))
     glow = ink.point(lambda value: round(value * CARD_BACKDROP_NIGHT_GLOW))
     return ImageChops.add(glow, Image.new("RGB", art.size, panel))
-
-
-def _ground_mask(region, grounds):
-    mask = Image.new("L", region.size, 0)
-    for ground in grounds:
-        red, green, blue = ImageChops.difference(region, Image.new("RGB", region.size, ground)).split()
-        spread = ImageChops.lighter(ImageChops.lighter(red, green), blue)
-        mask = ImageChops.lighter(mask, spread.point(lambda value: 255 if value == 0 else 0))
-    return mask
 
 
 @lru_cache(maxsize=8)

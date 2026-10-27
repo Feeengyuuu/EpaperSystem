@@ -14,6 +14,7 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageDraw, ImageOps
 
 from plugins.telegram_digest.curation import VISIBLE_COUNT, display_headline, display_summary, original_excerpt
+from utils.doodle_backdrop import paint_doodles
 
 LIST_ROWS = VISIBLE_COUNT - 1
 PORTRAIT_RATIO = 1.05
@@ -27,6 +28,8 @@ SECOND_MIN_H, SECOND_LEAD_SUMMARY_LINES = 120, 4
 PORTRAIT_PHOTO_W, PORTRAIT_TEXT_MIN_W, PORTRAIT_FILL_SLACK = 176, 168, 28
 KIND_LABELS = {"private": "私聊", "group": "群聊", "channel": "频道"}
 ASSETS = Path(__file__).resolve().parent / "assets"
+# Quiet paper-plane and chat doodles in Telegram blue under the lead and the list.
+DOODLE_PATH = ASSETS / "doodles" / "messages.png"
 # Each story's source line starts with its chat's kind as a generated icon (megaphone for a
 # channel, people for a group, a speech bubble for a private chat); a story scored this
 # high carries the red 重要 mark before its headline.
@@ -71,6 +74,7 @@ class BriefingPageMixin:
         self._page_scale = scale
         messages = payload.get("messages") or []
         lead, rest = self._split_page_lead(messages)
+        self._draw_doodles(image, p)
         drawn = []
         if lead:
             promoted = self._draw_lead(image, draw, lead, p, rest)
@@ -97,6 +101,12 @@ class BriefingPageMixin:
 
     def _f(self, size, weight="normal"):
         return self._font(max(8, int(round(size * self._page_scale))), weight)
+
+    def _draw_doodles(self, image, p):
+        """Lay the doodles under the lead and the list before either is drawn."""
+        for box in ((self._x(14), self._y(56), self._x(470), self._y(446)),
+                    (self._x(486), self._y(50), self._x(786), self._y(446))):
+            paint_doodles(image, box, DOODLE_PATH, p["blue"], offset=box[:2])
 
     # --- header and footer ------------------------------------------------------
 

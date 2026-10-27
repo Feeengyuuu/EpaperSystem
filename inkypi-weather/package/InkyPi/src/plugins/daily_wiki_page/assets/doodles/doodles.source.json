@@ -1,0 +1,28 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the sports list patterns",
+  "generated": "2026-10-27",
+  "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map (ink on white), tiled and tinted at draw time by utils.doodle_backdrop",
+  "assets": {
+    "photo.png": {
+      "motifs": "cameras, lenses, film, frames, easel, palette, polaroids",
+      "job_id": "61edf0a4-efb9-4259-9dd3-8314dad9b9ba",
+      "source_sha256": "6632823827fff5ceb9cb4e82b851b5c2637f9aef5126356b0a69788aa31e50f8",
+      "sha256": "731b961c39aee7b698978519e4193c6eeeca04b57afb0e6c7ed7e94810ab7676",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "history.png": {
+      "motifs": "hourglasses, scrolls, quills, compass roses, sundials, columns, ships, coins",
+      "job_id": "1626dfba-c2b3-418c-9776-af006718cfc7",
+      "source_sha256": "b92b70677c13cf46942f0519e375991c0895f0d867110c432f9c5cfc30b77cf1",
+      "sha256": "3a8cf20405e1f1f6a15f71d219208bd2c37460d90cd51d741fe276c73a475a07",
+      "size": [
+        480,
+        480
+      ]
+    }
+  }
+}

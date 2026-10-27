@@ -1,0 +1,38 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the sports list patterns",
+  "generated": "2026-10-27",
+  "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map (ink on white), tiled and tinted at draw time by utils.doodle_backdrop",
+  "assets": {
+    "space.png": {
+      "motifs": "stars, ringed planets, satellites, rockets, moon phases, orbits, telescopes, comets",
+      "job_id": "be7993cd-9652-41d8-a6d5-9755c093c6e3",
+      "source_sha256": "2ea734124669f0bcc5563a67349788df18ac07f130086eaec7bbc3a997c8c59e",
+      "sha256": "f6ebc61223302cc6608f8f0a7b00ee0d8723ec4a859b9c89a860bc11a9eaa0cc",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "music.png": {
+      "motifs": "notes, vinyl, headphones, microphones, cassettes, guitars, equaliser bars",
+      "job_id": "895c4eed-50ef-4341-8c09-7b7e4023ca9b",
+      "source_sha256": "cfbb5720eeb875ecfa2360869cb2d28efea68210274d3931b6356de22fbe69f9",
+      "sha256": "df4df84410c28e9501850b9d9a9d88ff6ccffcd4ebc93509c225281aa81e2f6c",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "chess.png": {
+      "motifs": "chess pieces, chess clocks, small boards, trophies, move arrows",
+      "job_id": "f7277eb9-c6c4-48c6-89c4-8d9fc65e54de",
+      "source_sha256": "23cf41d357e1e17abbe2b643dab098b33b17c8a63a1f834904ad80b0c23d8162",
+      "sha256": "8f8b1913086dff2a3f360af986fad75b40f9eb20e4323e5e29f6692c9871d17f",
+      "size": [
+        480,
+        480
+      ]
+    }
+  }
+}

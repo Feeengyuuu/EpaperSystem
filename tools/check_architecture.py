@@ -49,6 +49,9 @@ BOUNDARIES = {
         "__future__", "re",
     },
     "plugins/sports_dashboard/card_backdrops.py": {
+        "__future__", "functools", "pathlib", "PIL", "utils.doodle_backdrop",
+    },
+    "utils/doodle_backdrop.py": {
         "__future__", "functools", "pathlib", "PIL",
     },
     "display/display_history.py": {
