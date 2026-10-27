@@ -593,8 +593,9 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-whole-avatar-frame-v47"
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:6] == (
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-adaptive-friend-mosaic-v48"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:7] == (
+        "midnight-console-whole-avatar-frame-v47",
         "midnight-console-profile-backdrop-v46",
         "midnight-console-game-hue-v45",
         "midnight-console-outlined-hero-title-v44",

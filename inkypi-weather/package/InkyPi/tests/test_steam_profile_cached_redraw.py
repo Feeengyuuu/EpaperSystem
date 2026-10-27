@@ -99,7 +99,9 @@ def tree_snapshot(root):
 
 @pytest.mark.parametrize("age,provenance", [(5, SourceProvenance.FRESH_CACHE), (4000, SourceProvenance.STALE_CACHE)])
 @pytest.mark.parametrize("source_theme,display_theme", [("day", "day"), ("night", "day"), ("day", "night")])
-@pytest.mark.parametrize("source_style", [OLD_STYLE, "midnight-console-black-base-aligned-v37"])
+@pytest.mark.parametrize("source_style", [
+    OLD_STYLE, "midnight-console-black-base-aligned-v37", "midnight-console-whole-avatar-frame-v47",
+])
 def test_compatible_styles_recompose_with_readonly_media_and_original_timestamps(
     tmp_path, monkeypatch, age, provenance, source_theme, display_theme, source_style,
 ):
