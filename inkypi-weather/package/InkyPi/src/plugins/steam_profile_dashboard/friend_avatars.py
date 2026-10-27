@@ -7,7 +7,7 @@ import time
 from PIL import Image, ImageDraw, ImageOps
 
 from runtime.long_task_executor import current_task_context
-from runtime.refresh_contracts import TaskContext, TaskDeadlineExceeded
+from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 from utils.http_client import create_single_attempt_http_client
 from utils.resource_cache import cached_resource_image, prune_resource_images
 from utils.safe_image import ImageLimits, safe_open_image
@@ -34,6 +34,7 @@ def load_mosaic_avatars(plugin, records, size, *, clock=None):
     cancel_event = parent.cancel_event if parent else threading.Event()
     read_only = bool(getattr(plugin, "_media_read_only", False))
     client, avatars, paths = None, [], []
+    complete = False
 
     def fetch(url):
         context = TaskContext(cancel_event, min(deadline, clock() + AVATAR_REQUEST_SECONDS), clock)
@@ -62,11 +63,16 @@ def load_mosaic_avatars(plugin, records, size, *, clock=None):
                     client = create_single_attempt_http_client()
                 source = cached_resource_image(path, lambda: fetch(url), ttl=AVATAR_TTL,
                                                label="steam_friend_mosaic")
-            if parent is not None:
-                parent.raise_if_cancelled()
+            try:
+                if parent is not None:
+                    parent.raise_if_cancelled()
+            except TaskCancelled:
+                if source is not None:
+                    source.close()
+                raise
             if source is None:
                 continue
-            with source, ImageOps.fit(source.convert("RGB"), (size, size),
+            with source, source.convert("RGB") as rgb, ImageOps.fit(rgb, (size, size),
                                       method=Image.Resampling.LANCZOS) as fitted:
                 with Image.new("L", (size, size), 0) as mask:
                     ImageDraw.Draw(mask).ellipse((0, 0, size - 1, size - 1), fill=255)
@@ -78,7 +84,11 @@ def load_mosaic_avatars(plugin, records, size, *, clock=None):
                                   prefixes=("avatar_", "gameicon_", "badgeicon_", "profilebg_"),
                                   max_files=384, max_bytes=32 * 1024 * 1024,
                                   max_age=90 * 24 * 3600, label="steam_profile_media", protected=paths)
+        complete = True
         return avatars
     finally:
+        if not complete:
+            for _friend, avatar in avatars:
+                avatar.close()
         if client is not None:
             client.close()

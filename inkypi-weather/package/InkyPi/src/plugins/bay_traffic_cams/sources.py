@@ -153,6 +153,7 @@ def normalize_cameras(payload, home):
         camera = {
             "id": name.split(" ", 1)[0][:12],
             "route": str(location.get("route") or "")[:10], "direction": str(location.get("direction") or ""),
+            "latitude": point[0], "longitude": point[1],
             "place": place_label(location), "town": str(location.get("nearbyPlace") or "")[:20],
             "distance_km": round(distance, 1), "bearing": round(bearing(home, point)), "image": image,
             "history": [url for url in history if url], "landmark": bool(LANDMARK.search(name)),

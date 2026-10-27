@@ -402,29 +402,6 @@ def draw_buoy(canvas, payload):
 
 
 def render_page(dimensions, payload, settings, now):
-    now = local_now(now)
-    canvas = Canvas(settings)
-    canvas.rule((464, TOP, 464, 434), "ink")
-    draw_roads(canvas, payload, now)
-    draw_tides(canvas, payload, settings, now)
-    draw_buoy(canvas, payload)
-    canvas.rule((10,444,790,444), "ink", 2)
-    roads = payload["roads"]
-    recorded = parse_time(roads.get("data", {}).get("source_updated_at"))
-    fetched = parse_time(roads.get("fetched_at"))
-    if recorded and fetched:
-        prefix = "道路缓存 " if roads["state"] == "stale_cache" else "道路来源 "
-        road_footer = (prefix + recorded.astimezone(PACIFIC).strftime("%m/%d %H:%M")
-                       + " ‧ 获取 " + fetched.astimezone(PACIFIC).strftime("%H:%M"))
-    else:
-        road_footer = "道路 " + source_label(roads, now)
-    canvas.text((18,451), road_footer, 12, width=427)
-    tide_source = payload["tides"]
-    prediction_date = tide_source.get("data", {}).get("prediction_date", "—").replace("-", "/")[-5:]
-    fetched = parse_time(tide_source.get("fetched_at"))
-    fetched_text = fetched.astimezone(PACIFIC).strftime("%m/%d %H:%M") if fetched else "—"
-    canvas.text((489,451), "预测 " + prediction_date + " ‧ 获取 " + fetched_text, 12, width=295)
-    result = canvas.image
-    if tuple(dimensions) != (800,480):
-        result = result.resize(tuple(dimensions), Image.Resampling.LANCZOS)
-    return result
+    from .command_render import render_page as command_page
+
+    return command_page(dimensions, payload, settings, now)

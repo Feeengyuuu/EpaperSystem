@@ -5,6 +5,7 @@ from PIL import ImageFilter
 
 from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
+from .esports_fonts import esports_role, esports_sidebar
 
 # Provider names add words the bundled CS2 catalog leaves out ("Team Spirit",
 # "G2 Esports", "Aurora Gaming"); NAVI is the acronym of Natus Vincere.
@@ -860,6 +861,7 @@ class EsportsRenderMixin:
         label = label or "ENTRIES"
         return f"{count} {label}"
 
+    @esports_sidebar("valve")
     def _draw_valve_esports_sidebar(self, image, left_width, selected, source_state, now):
         draw = ImageDraw.Draw(image)
         width, height = image.size
@@ -1359,6 +1361,7 @@ class EsportsRenderMixin:
             line = year[1] if year else ""
         return (" ".join(brand).upper() or "CS2", line)
 
+    @esports_role("original")
     def _draw_cs2_event_badge(self, image, box, name):
         draw = ImageDraw.Draw(image)
         x1, y1, x2, y2 = box
@@ -1375,6 +1378,7 @@ class EsportsRenderMixin:
         else:
             self._draw_centered(draw, ((x1 + x2) / 2, (y1 + y2) / 2), brand_text, brand_font, ink)
 
+    @esports_role("event")
     def _draw_cs2_event_caption(self, draw, box, caption):
         width = max(1, box[2] - box[0])
         words = str(caption).split()
@@ -1828,6 +1832,7 @@ class EsportsRenderMixin:
         config = SportsDashboard._lol_sidebar_config(league_key)
         return COLORS[config.get(role, "lpl_accent")]
 
+    @esports_sidebar("riot")
     def _draw_lpl_sidebar(self, image, left_width, selected, source_state, now, league_key="LPL"):
         config = self._lol_sidebar_config(league_key)
         draw = ImageDraw.Draw(image)

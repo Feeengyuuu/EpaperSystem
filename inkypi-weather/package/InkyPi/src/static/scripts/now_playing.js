@@ -233,8 +233,15 @@
     }
 
     heroImage.addEventListener("load", paintFavicon);
+    function syncMarsMotion() {
+        if (!window.PlanetMarsMotion) return;
+        if (nowPlaying.plugin_id === "planet_now") window.PlanetMarsMotion.mount(heroImage, "/api/current_image");
+        else window.PlanetMarsMotion.stop(heroImage);
+    }
+    heroImage.addEventListener("load", syncMarsMotion);
     if (heroImage.complete && heroImage.naturalWidth) {
         paintFavicon();
+        syncMarsMotion();
     }
 
     document.addEventListener("visibilitychange", () => {
@@ -272,6 +279,7 @@
         });
         ui.updateRelativeTimes(hero);
         updateTabTitle();
+        syncMarsMotion();
     }
 
     async function loadNowPlaying() {
@@ -385,8 +393,11 @@
         return [nowPlaying.plugin_instance || nowPlaying.display_name, nowPlaying.playlist].filter(Boolean).join(" · ");
     }
 
-    document.getElementById("heroMedia").addEventListener("click", () => ui.openLightbox(heroImage.src, heroCaption()));
-    document.getElementById("heroExpand").addEventListener("click", () => ui.openLightbox(heroImage.src, heroCaption()));
+    function openHeroPreview() {
+        ui.openLightbox(heroImage.src, heroCaption(), nowPlaying.plugin_id === "planet_now" ? "/api/current_image" : null);
+    }
+    document.getElementById("heroMedia").addEventListener("click", openHeroPreview);
+    document.getElementById("heroExpand").addEventListener("click", openHeroPreview);
 
     document.getElementById("heroRefresh").addEventListener("click", (event) => {
         const button = event.currentTarget;
@@ -627,7 +638,8 @@
         if (action === "preview") {
             const image = card.querySelector("[data-preview-image]");
             if (!image.hidden) {
-                ui.openLightbox(image.currentSrc || image.src, `${card.dataset.instance} · ${card.dataset.displayName}`);
+                ui.openLightbox(image.currentSrc || image.src, `${card.dataset.instance} · ${card.dataset.displayName}`,
+                    card.dataset.pluginId === "planet_now" ? card.dataset.imageUrl : null);
             }
         } else if (action === "display") {
             ui.withBusy(button, () => displayCard(card)).catch(ui.reportError);

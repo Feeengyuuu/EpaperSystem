@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from PIL import Image
 import pytest
 
-from plugins.steam_profile_dashboard import friend_avatars
+from plugins.steam_profile_dashboard import console_renderer, friend_avatars
 from plugins.steam_profile_dashboard.console_renderer import _Console
 from plugins.steam_profile_dashboard.steam_profile_dashboard import SteamProfileDashboard
 from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
@@ -165,3 +165,91 @@ def test_successful_optional_download_is_reused_without_another_request(subject,
     assert len(subject.calls) == 1 and len(subject.clients) == 1
     assert first[0][1].size == (38, 38) and second[0][1].size == (18, 18)
     assert first[0][1].getpixel((19, 19)) == second[0][1].getpixel((9, 9)) == (75, 125, 175, 255)
+
+
+def test_entire_friend_panel_shares_one_budget_after_game_art_and_counts_real_miniatures(subject, monkeypatch):
+    rows = records(8)
+    friends = [friend for friend, _url in rows]
+    for index, friend in enumerate(friends):
+        friend.update(steamid=str(index), personaname=f"Friend {index:02}")
+        if index < 2:
+            friend.update(gameid=str(730 + index), gameextrainfo=f"Game {index}")
+    seed(subject.plugin, rows[-1][1])
+    events, loads, acquired = [], [], []
+
+    def game_art(_data, _appid, size):
+        events.append("game")
+        image = Image.new("RGB", size if isinstance(size, tuple) else (size, size))
+        acquired.append(image)
+        return image
+
+    original_request = subject.client_type.request_bytes
+
+    def request(client, *args, **kwargs):
+        events.append("avatar")
+        return original_request(client, *args, **kwargs)
+
+    def avatars(plugin, selected, size):
+        loads.append((selected, size))
+        result = friend_avatars.load_mosaic_avatars(plugin, selected, size)
+        acquired.extend(image for _friend, image in result)
+        return result
+
+    monkeypatch.setattr(subject.plugin, "_game_square_icon", game_art)
+    monkeypatch.setattr(subject.plugin, "_game_background", game_art)
+    monkeypatch.setattr(subject.client_type, "request_bytes", request)
+    monkeypatch.setattr(console_renderer, "load_mosaic_avatars", avatars)
+    monkeypatch.setattr(subject.plugin, "_avatar_image", lambda *_args, **_kwargs: pytest.fail("Legacy avatar fetch"))
+    console = _Console(subject.plugin, {"friends": friends, "online_friend_count": 13, "friend_count": 57})
+    labels = []
+    monkeypatch.setattr(console, "text", lambda _box, text, *_args, **_kwargs: labels.append(text))
+    console.friends()
+
+    assert subject.clock.now == 108 and len(subject.calls) == 4
+    assert events == ["game"] * 4 + ["avatar"] * 4
+    assert len(loads) == 1 and loads[0] == (rows, 46)
+    # Two playing rows, three named friends, one obtained miniature; the other seven are hidden.
+    assert "7 more…" in labels and "5 more…" not in labels
+    assert all(client.closed for client in subject.clients)
+    for image in acquired:
+        with pytest.raises(ValueError, match="closed"):
+            image.getpixel((0, 0))
+
+
+def test_friend_panel_without_portrait_urls_never_requests_legacy_media(subject, monkeypatch):
+    friends = [{"steamid": str(index), "personaname": f"Friend {index}", "personastate": 1}
+               for index in range(8)]
+    monkeypatch.setattr(subject.plugin, "_avatar_image", lambda *_args, **_kwargs: pytest.fail("Legacy avatar fetch"))
+    console = _Console(subject.plugin, {"friends": friends, "online_friend_count": 8, "friend_count": 57})
+    labels = []
+    monkeypatch.setattr(console, "text", lambda _box, text, *_args, **_kwargs: labels.append(text))
+    console.friends()
+
+    assert "5 more…" in labels
+    assert subject.clock.now == 100 and subject.clients == [] and subject.calls == []
+
+
+def test_cancellation_closes_portraits_loaded_before_the_canceled_request(subject, monkeypatch):
+    rows = records(2)
+    seed(subject.plugin, rows[0][1])
+    created = []
+    original_new = friend_avatars.Image.new
+
+    def new(mode, *args, **kwargs):
+        image = original_new(mode, *args, **kwargs)
+        if mode == "RGBA":
+            created.append(image)
+        return image
+
+    def cancel(_self, _method, _url, **_kwargs):
+        subject.parent.cancel_event.set()
+        raise TaskCancelled("owner canceled")
+
+    monkeypatch.setattr(friend_avatars.Image, "new", new)
+    monkeypatch.setattr(subject.client_type, "request_bytes", cancel)
+    with pytest.raises(TaskCancelled):
+        friend_avatars.load_mosaic_avatars(subject.plugin, rows, 46)
+    assert len(created) == 1
+    with pytest.raises(ValueError, match="closed"):
+        created[0].getpixel((20, 20))
+    assert subject.clients[0].closed

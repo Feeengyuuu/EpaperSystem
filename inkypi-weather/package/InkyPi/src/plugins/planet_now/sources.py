@@ -506,7 +506,51 @@ def fetch_mars(context):
     picked = pick_mars(payload)
     if picked is None:
         raise ValueError("Perseverance listed no picture")
-    return picked
+    return {**picked, "photos": mars_album(payload, picked)}
+
+
+def mars_album(payload, first=None):
+    """A small collection of distinct landscape views, with each photo's own facts.
+
+    Keep the established scenic choice first. Exclude stereo/processing duplicates
+    at the same mast direction instead of filling the carousel with near copies.
+    """
+    first = first or pick_mars(payload)
+    if first is None:
+        return []
+    candidates = [row for row in (payload or {}).get("images") or [] if isinstance(row, dict)
+                  and row.get("sample_type") == "Full" and (row.get("image_files") or {}).get("medium")
+                  and int(row.get("sol") or 0) >= first["sol"] - MARS_RECENT_SOLS]
+    mosaics = mosaic_sequences(candidates)
+    ranked = sorted(((scenic_rank(row, mosaics), row) for row in candidates
+                     if scenic_rank(row, mosaics) is not None), key=lambda item: item[0])
+    result, seen_views = [first], set()
+    for _rank, row in ranked:
+        chosen = pick_mars({"images": [row]})
+        if chosen and chosen["image"] == first["image"]:
+            seen_views.add(_mars_view_key(row))
+    for rank, row in ranked:
+        if rank[0] or rank[2]:  # no off-horizon or monochrome padding
+            continue
+        view = _mars_view_key(row)
+        chosen = pick_mars({"images": [row]})
+        if view in seen_views or not chosen or any(photo["image"] == chosen["image"] for photo in result):
+            continue
+        if not safe_image_url(chosen["image"]):
+            continue
+        result.append(chosen)
+        seen_views.add(view)
+        if len(result) == 3:
+            break
+    return result
+
+
+def _mars_view_key(row):
+    try:
+        direction = round(float((row.get("extended") or {}).get("mastAz")) / 15)
+    except (ValueError, TypeError):
+        direction = None
+    return int(row.get("sol") or 0), _sequence(row), direction
 
 
 def valid_mars(data):

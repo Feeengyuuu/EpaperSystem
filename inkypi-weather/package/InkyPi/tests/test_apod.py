@@ -2475,7 +2475,8 @@ def test_apod_caption_legal_measured_180px_case_hides_kicker_and_stays_separate(
 
     assert 300 <= layout.caption_top <= 301
     assert 179 <= layout.caption_height <= 180
-    assert layout.show_kicker is False
+    # Inter fits more complete text within the same legal 180px band.
+    assert layout.kicker_y is None or layout.kicker_y >= layout.caption_top
     assert layout.title_bottom <= layout.credit_y
     assert layout.credit_bottom <= layout.date_y
     assert layout.date_bottom <= 480
@@ -2609,7 +2610,7 @@ def test_apod_caption_rewrites_legacy_warning_separator_for_bold_font():
 
 def test_apod_page_uses_clear_ascii_separators_without_moving_kp_rect(monkeypatch):
     page = _apod_page_module()
-    original_text = ImageDraw.ImageDraw.text
+    original_text = page.MixedDraw.text
     drawn_text = []
     kp_calls = []
 
@@ -2622,7 +2623,7 @@ def test_apod_page_uses_clear_ascii_separators_without_moving_kp_rect(monkeypatc
         return original_kp(canvas, draw, rect, snapshot, fonts)
 
     original_kp = page._draw_kp_panel
-    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    monkeypatch.setattr(page.MixedDraw, "text", capture_text)
     monkeypatch.setattr(page, "_draw_kp_panel", capture_kp)
 
     page.render_apod_page(
@@ -2765,7 +2766,7 @@ def test_apod_page_left_text_bboxes_stay_inside_the_tiles_and_never_use_ellipsis
     monkeypatch,
 ):
     page = _apod_page_module()
-    original_text = ImageDraw.ImageDraw.text
+    original_text = page.MixedDraw.text
     calls = []
 
     def capture_text(draw, xy, text, *args, **kwargs):
@@ -2774,7 +2775,7 @@ def test_apod_page_left_text_bboxes_stay_inside_the_tiles_and_never_use_ellipsis
         calls.append((xy, str(text), bbox))
         return original_text(draw, xy, text, *args, **kwargs)
 
-    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    monkeypatch.setattr(page.MixedDraw, "text", capture_text)
     page.render_apod_page(
         apod=_page_record(),
         title_zh="南冕座分子云与变色龙星团",
@@ -2866,7 +2867,7 @@ def test_apod_page_draws_every_required_role_at_approved_true_font_size(
     monkeypatch,
 ):
     page = _apod_page_module()
-    original_text = ImageDraw.ImageDraw.text
+    original_text = page.MixedDraw.text
     calls = []
 
     def capture_text(draw, xy, text, *args, **kwargs):
@@ -2888,7 +2889,7 @@ def test_apod_page_draws_every_required_role_at_approved_true_font_size(
         },
         donki_event={"kind": "FLR", "class_type": "M7.2"},
     )
-    monkeypatch.setattr(ImageDraw.ImageDraw, "text", capture_text)
+    monkeypatch.setattr(page.MixedDraw, "text", capture_text)
     page.render_apod_page(
         apod=_page_record(title_en="Aurora", title_zh="极光"),
         title_zh="极光",

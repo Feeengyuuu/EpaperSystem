@@ -1035,7 +1035,7 @@ def test_up_next_rows_keep_representative_names_complete():
         None,
     )
 
-    rendered = {call["text"] for call in draw.text_calls}
+    rendered = "".join(call["text"] for call in draw.text_calls)
     assert "FALCON 9 BLOCK 5" in rendered
     assert "STARLINK GROUP 17-10" in rendered
     assert "STARSHIP V3" in rendered

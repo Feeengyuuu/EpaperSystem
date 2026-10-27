@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Mapping
 from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageOps
 
 from plugins.apod.space_weather import SpaceWeatherSnapshot
+from utils.space_typography import MixedDraw, space_font
 from utils.app_utils import get_base_ui_font
 
 if TYPE_CHECKING:
@@ -165,21 +166,21 @@ def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont:
 def _load_fonts() -> Mapping[str, ImageFont.FreeTypeFont]:
     return {
         "brand": _font(27, bold=True),
-        "header_meta": _font(10, bold=True),
-        "kp_label": _font(10, bold=True),
-        "kp_number": _font(40, bold=True),
-        "kp_peak": _font(10, bold=True),
-        "dial": _font(10, bold=True),
-        "grs_value": _font(13, bold=True),
+        "header_meta": space_font("mono", 10),
+        "kp_label": space_font("public_semibold", 10),
+        "kp_number": space_font("mono", 40),
+        "kp_peak": space_font("mono", 10),
+        "dial": space_font("mono", 10),
+        "grs_value": space_font("mono", 13),
         "grs_name": _font(10, bold=True),
-        "metric_label": _font(10, bold=True),
-        "metric_value": _font(16, bold=True),
-        "probability_label": _font(10, bold=True),
-        "probability_value": _font(13, bold=True),
+        "metric_label": space_font("public_semibold", 10),
+        "metric_value": space_font("mono", 16),
+        "probability_label": space_font("public_semibold", 10),
+        "probability_value": space_font("mono", 13),
         "alert": _font(12, bold=True),
-        "source": _font(10, bold=True),
-        "caption_kicker": _font(10, bold=True),
-        "caption_meta": _font(10, bold=True),
+        "source": space_font("public_semibold", 10),
+        "caption_kicker": space_font("inter", 10),
+        "caption_meta": space_font("public_semibold", 10),
     }
 
 
@@ -282,7 +283,7 @@ def _complete_line_candidates(
 ) -> tuple[tuple[tuple[str, ...], ImageFont.FreeTypeFont], ...]:
     candidates = []
     for size in sizes:
-        font = _font(size, bold=bold)
+        font = space_font("inter" if bold else "public", size) if text.isascii() else _font(size, bold=bold)
         lines = _wrap_complete(draw, text, font, max_width)
         if len(lines) <= max_lines:
             candidates.append((lines, font))
@@ -485,7 +486,7 @@ def measure_apod_page(
     if tuple(dimensions) != PAGE_SIZE:
         raise ValueError("APOD page requires the approved 800x480 dimensions")
     probe = Image.new("RGB", (1, 1), PAGE_COLOR)
-    draw = ImageDraw.Draw(probe)
+    draw = MixedDraw(ImageDraw.Draw(probe))
     caption = _layout_caption(
         draw=draw,
         title_en=apod.title_en,
@@ -681,7 +682,12 @@ def _draw_metric_cell(canvas, draw, rect, icon, label, value, fonts) -> None:
     taken = _paste_icon(canvas, icon, x1 + 8, y1 + (y2 - y1 - 24) // 2, 24)
     text_x = x1 + 10 + (taken + 6 if taken else 0)
     _draw_text(draw, (text_x, y1 + 4), label, font=fonts["metric_label"], fill=LABEL_COLOR)
-    _draw_text(draw, (text_x, y1 + 18), value, font=fonts["metric_value"], fill=TEXT_COLOR)
+    selected = fonts["metric_value"]
+    for size in range(16, 7, -1):
+        selected = space_font("mono", size)
+        if _text_width(draw, value, selected) <= x2 - text_x - 8:
+            break
+    _draw_text(draw, (text_x, y1 + 18), value, font=selected, fill=TEXT_COLOR)
 
 
 def _draw_metrics_panel(canvas, draw, snapshot, fonts) -> None:
@@ -920,7 +926,7 @@ def _draw_wordmark(canvas: Image.Image) -> bool:
 def _draw_orbits(canvas) -> None:
     """Faint orbital arcs and a few stars behind the header, as in a mission display, kept inside it."""
     band = Image.new("RGB", (PAGE_SIZE[0], HEADER_RECT[3] - 1), HEADER_COLOR)
-    band_draw = ImageDraw.Draw(band)
+    band_draw = MixedDraw(ImageDraw.Draw(band))
     for box, start, end in ORBIT_ARCS:
         band_draw.arc(box, start=start, end=end, fill=ORBIT_COLOR, width=1)
     for x, y in HEADER_STARS:
@@ -1068,7 +1074,7 @@ def render_apod_page(
         raise ValueError("APOD page measurement does not match the photo rectangle")
 
     canvas = Image.new("RGB", PAGE_SIZE, PAGE_COLOR)
-    draw = ImageDraw.Draw(canvas)
+    draw = MixedDraw(ImageDraw.Draw(canvas))
     fonts = _load_fonts()
 
     _place_photo(canvas, fit_photo(source_image, measured.photo_size), layout.caption_top)

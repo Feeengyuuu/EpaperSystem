@@ -15,6 +15,7 @@ from utils.safe_image import ImageLimits, safe_open_image
 from .sources import (
     CURVE_POINTS, EARNINGS_HOURS, FORM_NAMES, ITEM_NAMES, days_until, local_now, parse_time, upcoming_earnings,
 )
+from .trend_lines import delta, direction as _direction, draw_segments, finite
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -155,28 +156,42 @@ def price_text(value):
     return f"${value:.4f}"
 
 
-def sparkline(canvas, box, values, color):
-    values = [value for value in values or [] if value is not None]
+_PERIOD_START = object()
+
+
+def sparkline(canvas, box, values, color=None, *, baseline=_PERIOD_START):
+    values = [finite(value) for value in values or []]
     left, top, right, bottom = box
-    if len(values) < 2:
+    valid = [value for value in values if value is not None]
+    if len(valid) < 2:
         canvas.text(((left + right) / 2, (top + bottom) / 2), "暂无走势", 12, "muted", anchor="mm", bold=False)
         return
-    low, high = min(values), max(values)
-    span = (high - low) or 1
+    baseline = values[0] if baseline is _PERIOD_START else finite(baseline)
+    limits = valid + ([baseline] if baseline is not None else [])
+    low, high = min(limits), max(limits)
+    if low == high:
+        low, high = low - 0.5, high + 0.5
+    span = high - low
     points = [(left + (right - left) * index / (len(values) - 1),
-               bottom - (bottom - top) * (value - low) / span) for index, value in enumerate(values)]
-    base_y = points[0][1]
-    for x in range(int(left), int(right), 6):
-        canvas.draw.line((x, base_y, x + 2, base_y), fill=canvas.color("rule"), width=1)
-    canvas.draw.line(points, fill=color, width=2, joint="curve")
-    end_x, end_y = points[-1]
-    canvas.draw.ellipse((end_x - 3, end_y - 3, end_x + 3, end_y + 3), fill=color)
+               bottom - (bottom - top) * (value - low) / span) if value is not None else None
+              for index, value in enumerate(values)]
+    if baseline is not None:
+        base_y = bottom - (bottom - top) * (baseline - low) / span
+        for x in range(int(left), int(right), 6):
+            canvas.draw.line((x, base_y, min(right, x + 2), base_y), fill=canvas.color("rule"), width=1)
+    differences = [delta(value, baseline) for value in values]
+    draw_segments(canvas, points, differences)
+    if points[-1] is not None:
+        end_x, end_y = points[-1]
+        canvas.draw.ellipse((end_x - 3, end_y - 3, end_x + 3, end_y + 3),
+                            fill=canvas.color(_direction(differences[-1])[1]))
 
 
-def _direction(change):
-    if change is None or abs(change) < 1e-9:
-        return "flat", "muted"
-    return ("up", "up") if change > 0 else ("down", "down")
+def _number(canvas, xy, value, size, width, tone="ink", *, anchor="lm"):
+    """Keep complete values and units; shrink type instead of ellipsizing numbers."""
+    while size > 1 and canvas.width(value, size) > width:
+        size -= 1
+    return canvas.text(xy, value, size, tone, anchor=anchor)
 
 
 def _change_line(canvas, xy, change, figure, note=""):
@@ -226,11 +241,15 @@ def _fx_tile(canvas, payload, box):
     if len(series) < 2:
         canvas.text((left + 10, 120), "汇率暂不可用", 15, "muted", anchor="lm")
         return
-    latest, first = series[-1][1], series[0][1]
-    canvas.text((left + 10, 114), f"¥{latest:.4f}", 28, anchor="lm")
-    change = (latest / first - 1) * 100
-    _change_line(canvas, (left + 10, 138), change, f"{change:+.2f}%", f"{len(series)} 个交易日")
-    sparkline(canvas, (left + 12, 150, right - 12, 176), [value for _day, value in series], CARD_ACCENTS["fx"])
+    latest, first = finite(series[-1][1]), finite(series[0][1])
+    if latest is None:
+        canvas.text((left + 10, 120), "汇率暂不可用", 15, "muted", anchor="lm")
+        return
+    change = (latest / first - 1) * 100 if first else None
+    _number(canvas, (left + 10, 114), f"¥{latest:.4f}", 28, right - left - 20, _direction(change)[1])
+    _change_line(canvas, (left + 10, 138), change, f"{change:+.2f}%" if change is not None else "—",
+                 f"{len(series)} 个交易日")
+    sparkline(canvas, (left + 12, 150, right - 12, 176), [value for _day, value in series])
     # A dollar in the other currencies: each one's flag, its sign and the rate, spread across the
     # foot; when they run long the yen loses its decimal first, then the type steps down.
     rates = []
@@ -274,11 +293,10 @@ def _coin_tile(canvas, coin, box):
     _tile_frame(canvas, left, right, name, _asset(f"coin-{coin['id']}", 22), coin["symbol"][:2],
                 accent=CARD_ACCENTS.get(coin["id"], "ink"))
     canvas.text((right - 10, TITLE_Y), coin["symbol"], 12, "muted", anchor="rm", bold=False)
-    canvas.text((left + 10, 114), price_text(coin["price"]), 28, anchor="lm", width=right - left - 20)
     day, week = coin.get("change_24h"), coin.get("change_7d")
+    _number(canvas, (left + 10, 114), price_text(coin["price"]), 28, right - left - 20, _direction(day)[1])
     _change_line(canvas, (left + 10, 138), day, f"{day:+.2f}%" if day is not None else "—", "24 小时")
-    color = canvas.color("up" if (week or 0) >= 0 else "down")
-    sparkline(canvas, (left + 12, 150, right - 12, 176), coin.get("sparkline"), color)
+    sparkline(canvas, (left + 12, 150, right - 12, 176), coin.get("sparkline"))
     if week is None:
         canvas.text((left + 10, 187), "7 天走势", 11, "muted", anchor="lm", bold=False)
     else:
@@ -291,15 +309,18 @@ def _yield_tile(canvas, payload, box):
     quotes = payload["markets"]["data"].get("quotes") or {}
     ten = quotes.get("^TNX")
     _tile_frame(canvas, left, right, "10 年期美债", mark_text="%", accent=CARD_ACCENTS["yield"])
-    if not ten:
+    if not ten or finite(ten.get("last")) is None:
         canvas.text((left + 10, 120), "利率暂不可用", 15, "muted", anchor="lm")
         return
-    canvas.text((left + 10, 114), f"{ten['last']:.2f}%", 28, anchor="lm")
-    change_bp = (ten["last"] - ten["month_ago"]) * 100
-    _change_line(canvas, (left + 10, 138), change_bp, f"{change_bp:+.0f} 基点", "30 天")
-    sparkline(canvas, (left + 12, 150, right - 12, 176), ten.get("series"), canvas.color("accent"))
+    change = delta(ten.get("last"), ten.get("month_ago"))
+    _number(canvas, (left + 10, 114), f"{ten['last']:.2f}%", 28, right - left - 20, _direction(change)[1])
+    change_bp = change * 100 if change is not None else None
+    _change_line(canvas, (left + 10, 138), change_bp,
+                 f"{change_bp:+.0f} 基点" if change_bp is not None else "—", "比1月前")
+    canvas.text((left + 12, 151), "3个月 · 虚线=1月前", 8, "muted", anchor="lm", bold=False)
+    sparkline(canvas, (left + 12, 158, right - 12, 176), ten.get("series"), baseline=ten.get("month_ago"))
     rest = [f"{label} {quotes[symbol]['last']:.2f}" for symbol, label in CURVE_POINTS
-            if symbol != "^TNX" and symbol in quotes]
+            if symbol != "^TNX" and symbol in quotes and finite(quotes[symbol].get("last")) is not None]
     canvas.text((left + 10, 187), " · ".join(rest), 11, "muted", anchor="lm", bold=False, width=right - left - 20)
 
 
@@ -311,9 +332,9 @@ def _curve(canvas, payload):
     title_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 18 - icon.height // 2)) + 6 if icon else 0)
     canvas.text((title_x, top + 18), "美债收益率曲线", 15, anchor="lm")
     quotes = payload["markets"]["data"].get("quotes") or {}
-    points = [(label, quotes[symbol]) for symbol, label in CURVE_POINTS if symbol in quotes]
+    points = [(label, quotes.get(symbol) or {}) for symbol, label in CURVE_POINTS]
     legend_x = right - 10
-    for label, color, dashed in (("一个月前", "past", True), ("今天", "accent", False)):
+    for label, color, dashed in (("一个月前", "past", True), ("今天", "muted", False)):
         width = canvas.text((legend_x, top + 18), label, 11, "muted", anchor="rm", bold=False)
         line_left = legend_x - width - 22
         if dashed:
@@ -322,12 +343,15 @@ def _curve(canvas, payload):
         else:
             canvas.draw.line((line_left, top + 18, line_left + 16, top + 18), fill=canvas.color(color), width=2)
         legend_x = line_left - 10
-    if len(points) < 2:
+    canvas.text((left + 10, top + 35), "绿升 / 红降 / 灰平或无基准 · 非利好判断 · pp=百分点",
+                9, "muted", anchor="lm", bold=False, width=right - left - 20)
+    if sum(finite(quote.get("last")) is not None for _label, quote in points) < 2:
         canvas.text(((left + right) / 2, (top + bottom) / 2 + 8), "收益率暂不可用", 14, "muted", anchor="mm")
         return
-    values = [quote["last"] for _label, quote in points] + [quote["month_ago"] for _label, quote in points]
+    values = [finite(quote.get(key)) for _label, quote in points for key in ("last", "month_ago")]
+    values = [value for value in values if value is not None]
     low, high = min(values) - 0.1, max(values) + 0.1
-    plot = (left + 44, top + 44, right - 16, bottom - 22)
+    plot = (left + 44, top + 57, right - 16, bottom - 22)
 
     def y_of(value):
         return plot[3] - (plot[3] - plot[1]) * (value - low) / (high - low)
@@ -338,21 +362,27 @@ def _curve(canvas, payload):
         canvas.rule((plot[0], y, plot[2], y))
         canvas.text((plot[0] - 6, y), f"{value:.1f}%", 11, "muted", anchor="rm", bold=False)
     xs = [plot[0] + (plot[2] - plot[0]) * index / (len(points) - 1) for index in range(len(points))]
-    past = [(x, y_of(quote["month_ago"])) for x, (_label, quote) in zip(xs, points)]
-    for (x1, y1), (x2, y2) in zip(past, past[1:]):
+    past = [(x, y_of(quote["month_ago"])) if finite(quote.get("month_ago")) is not None else None
+            for x, (_label, quote) in zip(xs, points)]
+    for start, end in zip(past, past[1:]):
+        if start is None or end is None:
+            continue
+        (x1, y1), (x2, y2) = start, end
         steps = max(1, int(abs(x2 - x1) // 6))
         for index in range(0, steps, 2):
             a, b = index / steps, min(1, (index + 1) / steps)
             canvas.draw.line((x1 + (x2 - x1) * a, y1 + (y2 - y1) * a, x1 + (x2 - x1) * b, y1 + (y2 - y1) * b),
                              fill=canvas.color("past"), width=2)
-    now_points = [(x, y_of(quote["last"])) for x, (_label, quote) in zip(xs, points)]
-    canvas.draw.line(now_points, fill=canvas.color("accent"), width=3, joint="curve")
-    for (x, y), (label, quote) in zip(now_points, points):
-        canvas.draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=canvas.color("accent"))
-        # Each yield is coloured by its move since a month ago, like every other change.
-        tone = _direction(quote["last"] - quote["month_ago"])[1]
-        canvas.text((x, y - 8), f"{quote['last']:.2f}", 11, "ink" if tone == "muted" else tone, anchor="mb",
-                    stroke="paper")
+    now_points = [(x, y_of(quote["last"])) if finite(quote.get("last")) is not None else None
+                  for x, (_label, quote) in zip(xs, points)]
+    changes = [delta(quote.get("last"), quote.get("month_ago")) for _label, quote in points]
+    draw_segments(canvas, now_points, changes, width=3)
+    for x, point, (label, quote), change in zip(xs, now_points, points, changes):
+        if point is not None:
+            _x, y = point
+            tone = _direction(change)[1]
+            canvas.draw.ellipse((x - 4, y - 4, x + 4, y + 4), fill=canvas.color(tone))
+            canvas.text((x, y - 8), f"{quote['last']:.2f}", 11, tone, anchor="mb", stroke="paper")
         canvas.text((x, bottom - 10), label, 12, anchor="mm", bold=False)
 
 
@@ -362,19 +392,19 @@ def _macro_tiles(canvas, payload):
     tiles = []
     for key, label, unit in (("cpi", "CPI 同比", "%"), ("unemployment", "失业率", "%")):
         item = macro.get(key)
-        if item and item.get("value") is not None:
+        if item and finite(item.get("value")) is not None:
             tiles.append((key, label, f"{item['value']:.1f}{unit}", item.get("previous"), item["value"],
                           f"{str(item.get('period'))[-2:].lstrip('0')} 月 · {macro.get('source', '')}"))
     if macro.get("fed_funds") or macro.get("mortgage30"):
         for key, label in (("fed_funds", "联邦基金利率"), ("mortgage30", "30 年房贷利率")):
             item = macro.get(key)
-            if item:
+            if item and finite(item.get("value")) is not None:
                 tiles.append((key, label, f"{item['value']:.2f}%", item.get("previous"), item["value"], "FRED"))
     else:
         for key, symbol, label, fmt in (("dxy", "DX-Y.NYB", "美元指数", "{:.1f}"), ("gold", "GC=F", "黄金", "${:,.0f}")):
             quote = quotes.get(symbol)
-            if quote:
-                tiles.append((key, label, fmt.format(quote["last"]), quote["month_ago"], quote["last"], "30 天"))
+            if quote and finite(quote.get("last")) is not None:
+                tiles.append((key, label, fmt.format(quote["last"]), quote.get("month_ago"), quote["last"], "比1月前"))
     for index, (key, label, value, previous, current, note) in enumerate(tiles[:4]):
         column, row = index % 2, index // 2
         left = 400 + column * 197
@@ -386,13 +416,22 @@ def _macro_tiles(canvas, payload):
         label_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 18 - icon.height // 2)) + 5 if icon else 0)
         canvas.text((label_x, top + 18), label, 13, anchor="lm", width=left + 118 - label_x)
         canvas.text((left + 181, top + 18), note, 11, "muted", anchor="rm", bold=False, width=80)
-        canvas.text((left + 10, top + 41), value, 22, anchor="lm")
-        if previous is not None:
-            change = current - previous
-            icon, tone = _direction(change)
-            draw_icon(canvas.draw, icon, (left + 120, top + 35), 11, canvas.color(tone), canvas.color("paper"))
-            canvas.text((left + 135, top + 41), f"{change:+.2f}" if abs(change) < 10 else f"{change:+,.0f}",
-                        13, tone, anchor="lm")
+        change = delta(current, previous)
+        icon, tone = _direction(change)
+        _number(canvas, (left + 10, top + 41), value, 22, 102, tone)
+        draw_icon(canvas.draw, icon, (left + 115, top + 35), 10, canvas.color(tone), canvas.color("paper"))
+        if change is None:
+            figure = "—"
+        elif key in {"cpi", "unemployment", "fed_funds", "mortgage30"}:
+            figure = f"{change:+.2f}pp"
+        elif key == "gold":
+            figure = f"{'+' if change >= 0 else '-'}${abs(change):,.0f}"
+        else:
+            figure = f"{change:+.2f}点"
+        _number(canvas, (left + 129, top + 40), figure, 13, 54, tone)
+        if key in {"cpi", "unemployment", "fed_funds", "mortgage30"}:
+            canvas.text((left + 154, top + 52), "较前期" if key in {"cpi", "unemployment"} else "较历史基准",
+                        7, "muted", anchor="mm", bold=False)
     if not tiles:
         canvas.text((594, 268), "宏观数据暂不可用", 14, "muted", anchor="mm")
 
@@ -416,20 +455,8 @@ def _ticker_chip(canvas, x, y, symbol, width=42):
 
 
 def _news(canvas, items, now, left, right, top, rows):
-    if not items:
-        canvas.text((left, top + 4), "暂无持仓相关新闻", 13, "muted", anchor="lm")
-        return
-    for index, item in enumerate(items[:rows]):
-        y = top + index * 19
-        stamp = parse_time(item.get("time"))
-        meta = ago(stamp, now).replace(" ", "") if stamp else ""
-        meta_width = canvas.text((right, y), meta, 11, "muted", anchor="rm", bold=False)
-        chip = _ticker_chip(canvas, left, y, item.get("symbol"))
-        canvas.text((left + chip + 6, y), item["title"], 12, anchor="lm", bold=False,
-                    width=right - left - chip - 14 - meta_width)
-        if index < min(rows, len(items)) - 1:
-            for x in range(int(left), int(right), 5):
-                canvas.draw.point((x, y + 9), fill=canvas.color("rule"))
+    from .news_rows import news
+    return news(canvas, items, now, left, right, top, rows)
 
 
 def _weekday_date(day):

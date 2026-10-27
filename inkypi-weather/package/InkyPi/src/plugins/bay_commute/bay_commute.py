@@ -189,6 +189,7 @@ class BayCommute(BasePlugin):
 
     def generate_image(self, settings, device_config):
         from .render import render_page
+        from .nearby_cameras import load_nearby
 
         settings = dict(settings or {})
         settings["_inkypi_theme"] = settings.get("_inkypi_theme") or self.resolve_theme(settings, device_config)
@@ -199,6 +200,12 @@ class BayCommute(BasePlugin):
         now = sources.local_now()
         _checkpoint(context)
         payload = self._payload(settings, now, allow_network=not cache_only, context=context)
-        image = render_page(self.get_dimensions(device_config), payload, settings, now)
+        payload["nearby_cameras"] = load_nearby(self, payload, now, context=context, allow_network=not cache_only)
+        try:
+            image = render_page(self.get_dimensions(device_config), payload, settings, now)
+        finally:
+            for frame in payload["nearby_cameras"].values():
+                if frame.get("image") is not None:
+                    frame["image"].close()
         _checkpoint(context)
         return attach_source_provenance(image, payload["provenance"], detail=PLUGIN_ID)

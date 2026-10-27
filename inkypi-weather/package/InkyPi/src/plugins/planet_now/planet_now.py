@@ -10,7 +10,7 @@ from plugins.base_plugin.source_book import Source, SourceBook, combined_provena
 from runtime.long_task_executor import (
     current_instance_identity, current_instance_identity_validator, task_context_or_default,
 )
-from runtime.refresh_contracts import TaskCancelled, TaskContext
+from runtime.refresh_contracts import TaskCancelled, TaskContext, TaskDeadlineExceeded
 from utils.app_utils import coerce_bool, get_available_font_names
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_client
@@ -54,10 +54,10 @@ class PlanetNow(BasePlugin):
         force = allow_network and coerce_bool(settings.get("forceRefresh"), default=False)
         book = self._book()
 
-        def load(name, fetch, fresh, usable, validate, timeout=12):
+        def load(name, fetch, fresh, usable, validate, timeout=12, *, upgrade=False):
             return book.load(Source(name, {"v": 1}, fetch, fresh_seconds=fresh, usable_seconds=usable,
                                     validate=validate, timeout_seconds=timeout),
-                             now, allow_network=allow_network, context=context, force=force)
+                             now, allow_network=allow_network, context=context, force=force or upgrade)
 
         payload = {
             "grid": load("grid", sources.fetch_grid, 10 * MINUTE, 6 * HOUR, sources.valid_grid),
@@ -71,11 +71,20 @@ class PlanetNow(BasePlugin):
             "iss": load("iss", lambda ctx: sources.fetch_iss(now, ctx), 4 * MINUTE, 3 * HOUR, sources.valid_iss),
             "people": load("people", sources.fetch_people, 6 * HOUR, 7 * DAY, sources.valid_people),
         }
+        old_mars = payload["mars"]["data"] or {}
+        if allow_network and old_mars.get("image") and not isinstance(old_mars.get("photos"), list):
+            # Upgrade an existing single-photo cache on the next real refresh,
+            # keeping SourceBook's old-photo fallback if NASA is unavailable.
+            payload["mars"] = load("mars", sources.fetch_mars, 6 * HOUR, 4 * DAY, sources.valid_mars,
+                                   timeout=18, upgrade=True)
         trends = (payload["trends"]["data"] or {}).get("items") or []
         wiki = (payload["wiki"]["data"] or {}).get("articles") or []
         urls = [item.get("picture") for item in trends[:5]]
         urls += [wiki[0].get("thumbnail")] if wiki else []
-        urls.append((payload["mars"]["data"] or {}).get("image"))
+        mars = payload["mars"]["data"] or {}
+        photos = mars.get("photos")
+        photos = photos if isinstance(photos, list) and photos else [mars]
+        urls += [photo.get("image") for photo in photos[:3] if isinstance(photo, dict)]
         urls += [person.get("image") for station in (payload["people"]["data"] or {}).get("stations") or []
                  for person in station.get("crew") or []][:12]
         images = load_thumbnails(urls, self.cache_dir(env_var="PLANET_NOW_CACHE_DIR", leaf="pictures", create=True,
@@ -83,6 +92,14 @@ class PlanetNow(BasePlugin):
                                  http=get_http_client(), context=context, cached_only=not allow_network,
                                  safe_url=sources.safe_image_url, user_agent=sources.USER_AGENT)
         payload["provenance"] = combined_provenance([payload[name] for name in CORE_FEEDS])
+        available = [photo for photo in photos[:3] if isinstance(photo, dict) and photo.get("image") in images]
+        if available:
+            # A normal refresh can change the photograph without adding panel writes
+            # or depending on a new NASA feed response every time.
+            # Thirteen minutes avoids an hourly scheduler repeatedly choosing the
+            # same member of a three-photo pool (60 / 10 would alias exactly).
+            selected = available[int(now.timestamp() // (13 * MINUTE)) % len(available)]
+            payload["mars"] = {**payload["mars"], "data": {**selected, "photos": available}}
         return payload, images
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
@@ -104,6 +121,15 @@ class PlanetNow(BasePlugin):
         payload, images = self._refresh(settings, now, allow_network=not cache_only, context=context)
         try:
             image = render_page(self.get_dimensions(device_config), payload, settings, now, images)
+            if not cache_only:
+                from .mars_motion import publish_motion
+
+                try:
+                    publish_motion(self.cache_dir(leaf="mars-motion", create=True), image, payload, settings, now, images)
+                except (TaskCancelled, TaskDeadlineExceeded):
+                    raise
+                except (OSError, ValueError, RuntimeError):
+                    logger.warning("Planet Now web motion unavailable; retaining the static render", exc_info=True)
         finally:
             for picture in images.values():
                 picture.close()

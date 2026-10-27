@@ -353,6 +353,15 @@ def plugin_instance_image(playlist_name, plugin_id, instance_name):
         # Return a placeholder or 404
         return "Image not yet generated", 404
 
+    if request.args.get("motion") == "mars":
+        if plugin_id != "planet_now":
+            return jsonify({"motion": None})
+        from plugins.planet_now.mars_motion import read_motion
+
+        response = jsonify({"motion": read_motion(image_path)})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     # Serve the image
     return send_from_directory(image_directory, image_filename)
 

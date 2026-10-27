@@ -239,7 +239,7 @@
     let lightboxNode = null;
     const LIGHTBOX_MAX_SCALE = 1.65;
 
-    function openLightbox(src, caption) {
+    function openLightbox(src, caption, motionEndpoint) {
         if (!lightboxNode) {
             lightboxNode = document.createElement("div");
             lightboxNode.className = "lightbox";
@@ -254,14 +254,18 @@
             });
             document.body.appendChild(lightboxNode);
         }
-        lightboxNode.querySelector("img").src = src;
+        const previewImage = lightboxNode.querySelector("img");
+        if (window.PlanetMarsMotion) window.PlanetMarsMotion.stop(previewImage);
+        previewImage.src = src;
         lightboxNode.querySelector(".lightbox-caption").textContent = caption || "";
         lightboxNode.classList.add("is-open");
         document.body.style.overflow = "hidden";
+        if (motionEndpoint && window.PlanetMarsMotion) window.PlanetMarsMotion.mount(previewImage, motionEndpoint);
     }
 
     function closeLightbox() {
         if (lightboxNode) {
+            if (window.PlanetMarsMotion) window.PlanetMarsMotion.stop(lightboxNode.querySelector("img"));
             lightboxNode.classList.remove("is-open");
             if (!openSheets.length) {
                 document.body.style.overflow = "";

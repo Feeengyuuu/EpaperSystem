@@ -87,7 +87,15 @@ def is_device_owned_score_font(path: PurePath) -> bool:
     """Owner fonts are not redistributable package assets, even if misplaced."""
     return path.name.casefold() in {
         f"sports-{league}-score.{extension}"
-        for league in ("nba", "wnba", "mls", "epl", "laliga", "bundesliga", "seriea", "ligue1", "f1")
+        for league in (
+            "nba", "wnba", "mls", "epl", "laliga", "bundesliga", "seriea", "ligue1", "f1",
+            "esports-cs2", "esports-cs2-regular", "esports-dota", "esports-dota-regular",
+            "esports-riot-heading", "esports-riot", "esports-riot-regular",
+            "esports-blast-heading", "esports-blast", "esports-esl-heading", "esports-iem-heading",
+            "esports-pgl-event", "esports-tesla-event", "esports-roboto-event",
+            "esports-industry-event", "esports-gear-event", "esports-cct-event",
+            "esports-dust2-event", "esports-montserrat-event",
+        )
         for extension in ("ttf", "otf", "woff", "woff2")
     }
 

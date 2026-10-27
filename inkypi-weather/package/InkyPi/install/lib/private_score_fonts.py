@@ -19,7 +19,15 @@ import sys
 
 MAX_BYTES = 2 * 1024 * 1024
 FONT_DIRECTORY = Path("/var/lib/inkypi/data/fonts")
-LEAGUES = ("nba", "wnba", "mls", "epl", "laliga", "bundesliga", "seriea", "ligue1", "f1")
+LEAGUES = (
+    "nba", "wnba", "mls", "epl", "laliga", "bundesliga", "seriea", "ligue1", "f1",
+    "esports-cs2", "esports-cs2-regular", "esports-dota", "esports-dota-regular",
+    "esports-riot-heading", "esports-riot", "esports-riot-regular",
+    "esports-blast-heading", "esports-blast", "esports-esl-heading", "esports-iem-heading",
+    "esports-pgl-event", "esports-tesla-event", "esports-roboto-event",
+    "esports-industry-event", "esports-gear-event", "esports-cct-event",
+    "esports-dust2-event", "esports-montserrat-event",
+)
 EXTENSIONS = ("ttf", "otf", "woff", "woff2")
 FONT_NAMES = frozenset(
     f"sports-{league}-score.{extension}"

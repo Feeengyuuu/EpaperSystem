@@ -12,6 +12,7 @@ Each card has its own colour, generated icon and band; small text stays in plain
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter
 from datetime import datetime
 from functools import lru_cache
@@ -22,6 +23,7 @@ from PIL import Image, ImageDraw, ImageOps
 from utils.local_wordmark import paste_header_art, paste_local_wordmark
 from utils.page_canvas import PageCanvas
 from utils.safe_image import ImageLimits, safe_open_image
+from utils.space_typography import SpaceCanvas
 
 from .sources import (
     HOME, ISS_PERIOD_MIN, LIGHT_KM_S, PACIFIC, RAIN_RADIUS_KM, decode_image, iss_ascending, iss_ground_track,
@@ -511,26 +513,31 @@ def _photo_shade(canvas, box, top):
     canvas.image.paste(Image.composite(region, Image.new("RGB", region.size, (8, 10, 14)), ramp), (x0, y0))
 
 
-def _mars_facts(canvas, mars, now, box):
+def _mars_facts(canvas, mars, now, box, *, shade=True):
     """Text laid into the photo over soft dark gradients: Earth's distance from Mars and the light
     time across it at the top, the sol, rover and crater, camera and Earth date at the bottom."""
     x0, y0, x1, y1 = box
     distance = mars_distance_km(now)
     white, soft = (255, 255, 255), (214, 220, 230)
-    _photo_shade(canvas, (x0, y0, x1, y0 + 40), top=True)
-    _photo_shade(canvas, (x0, y1 - 62, x1, y1), top=False)
+    if shade:
+        _photo_shade(canvas, (x0, y0, x1, y0 + 40), top=True)
+        _photo_shade(canvas, (x0, y1 - 62, x1, y1), top=False)
     canvas.text((x0 + 7, y0 + 6), f"距地球 {distance / 1e8:.2f} 亿km", 10, white, anchor="la")
     canvas.text((x0 + 7, y0 + 21), f"光行 {distance / LIGHT_KM_S / 60:.0f} 分钟", 9, soft, anchor="la", bold=False)
     canvas.draw.rounded_rectangle((x0 + 7, y1 - 47, x0 + 10, y1 - 8), radius=1, fill=canvas.color("space"))
     canvas.text((x0 + 15, y1 - 48), f"火星日 {mars.get('sol')}", 13, white, anchor="la", width=x1 - x0 - 20)
     canvas.text((x0 + 15, y1 - 30), "毅力号 · 杰泽罗", 9, soft, anchor="la", bold=False, width=x1 - x0 - 20)
-    taken = _local_time(str(mars.get("taken_utc") or "").replace("Z", "") + ("+00:00" if mars.get("taken_utc") else ""))
+    raw_taken = str(mars.get("taken_utc") or "").replace("Z", "+00:00")
+    if raw_taken and not re.search(r"[+-]\d\d:\d\d$", raw_taken):
+        raw_taken += "+00:00"
+    taken = _local_time(raw_taken)
     camera = str(mars.get("camera") or "").split(" ")[0]
     canvas.text((x0 + 15, y1 - 17), " · ".join(part for part in (camera, f"{taken:%m/%d}" if taken else "") if part), 9,
                 soft, anchor="la", bold=False, width=x1 - x0 - 20)
 
 
 def _space(canvas, payload, images, now):
+    canvas = SpaceCanvas(canvas)
     mars = payload.get("mars", {}).get("data") or {}
     iss = payload.get("iss", {}).get("data") or {}
     _card(canvas, "space", "太空近况", "· wheretheiss.at", source="nasa")

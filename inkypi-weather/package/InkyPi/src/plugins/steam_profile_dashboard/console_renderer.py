@@ -6,6 +6,7 @@ does not contain game-specific images, names, or network requests.
 """
 
 import colorsys
+from contextlib import ExitStack
 import math
 
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
@@ -585,34 +586,82 @@ class _Console:
             return
         playing = [friend for friend in friends if friend.get("gameid") or friend.get("gameextrainfo")]
         rows = playing[:FRIEND_PLAYING_ROWS]
-        top = FRIEND_LIST[1] + len(rows) * (FRIEND_PLAYING_H + FRIEND_GAP)
-        grid_rows = max(0, (FRIEND_LIST[3] - top + FRIEND_GAP) // (FRIEND_TILE[1] + FRIEND_GAP))
         rest = [friend for friend in friends if friend not in rows]
-        slots = grid_rows * FRIEND_COLUMNS
-        tiles = rest[:slots] if len(rest) <= slots else rest[:max(0, slots - 1)]
-        hidden = rest[len(tiles):]
-        # Friend avatars can be slow; resolve every shown friend's game icon
-        # first so they cannot spend the shared game-media network budget.
-        game_icons = {}
-        for friend in rows + tiles:
-            appid = _appid(friend.get("gameid"))
-            if appid and appid not in game_icons:
-                game_icons[appid] = self.plugin._game_square_icon(data, appid, FRIEND_GAME_ICON)
+        primary = rest[:3]
+        mini = [(friend, friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar"))
+                for friend in rest[3:]]
+        mini = [(friend, url) for friend, url in mini if url][:3]
+        records = [(friend, friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar"))
+                   for friend in rows + primary]
+        records = [(friend, url) for friend, url in records if url] + mini
+        total = max(len(friends), _number(data.get("online_friend_count")))
+        overflow = max(0, total - len(rows) - len(primary))
+        # Fetch all game media first, then share one optional 8s budget across every
+        # visible friend's portrait. Drawing never falls back to the legacy 25s fetch.
+        with ExitStack() as owned:
+            def retain(image):
+                if image is not None:
+                    owned.callback(image.close)
+                return image
+
+            game_icons, backgrounds = {}, {}
+            for friend in rows + primary:
+                appid = _appid(friend.get("gameid"))
+                if appid and appid not in game_icons:
+                    icon = self.plugin._game_square_icon(data, appid, FRIEND_GAME_ICON)
+                    game_icons[appid] = retain(icon)
+            for friend in rows:
+                appid = _appid(friend.get("gameid"))
+                if appid and appid not in backgrounds:
+                    source = self.plugin._game_background(data, appid, (FRIEND_LIST[2] - FRIEND_LIST[0], FRIEND_PLAYING_H))
+                    backgrounds[appid] = retain(source)
+            portraits = {id(friend): retain(avatar)
+                         for friend, avatar in load_mosaic_avatars(self.plugin, records, 46)} if records else {}
+            self._friends_content(rows, primary, mini, overflow, game_icons, backgrounds, portraits)
+
+    def _friends_content(self, rows, primary, mini, overflow, game_icons, backgrounds, portraits):
         for index, friend in enumerate(rows):
-            self._playing_friend(friend, FRIEND_LIST[1] + index * (FRIEND_PLAYING_H + FRIEND_GAP), game_icons)
-        shown = tiles + ([None] if hidden else [])
-        lines = [shown[start:start + FRIEND_COLUMNS] for start in range(0, len(shown), FRIEND_COLUMNS)]
-        # The tiles share out the room left: their rows evenly down it, each row centred across.
-        width = FRIEND_LIST[2] - FRIEND_LIST[0]
-        step_x = (width - FRIEND_TILE[0]) / max(1, FRIEND_COLUMNS - 1)
-        room = FRIEND_LIST[3] - top
-        gap_y = max(FRIEND_GAP, (room - len(lines) * FRIEND_TILE[1]) / (len(lines) + 1)) if lines else 0
-        for row, line in enumerate(lines):
-            y = round(top + gap_y + row * (FRIEND_TILE[1] + gap_y)) if gap_y > FRIEND_GAP \
-                else top + row * (FRIEND_TILE[1] + FRIEND_GAP)
-            first = FRIEND_LIST[0] + (width - FRIEND_TILE[0] - step_x * (len(line) - 1)) / 2
-            for column, friend in enumerate(line):
-                self._friend_tile(friend, round(first + column * step_x), y, game_icons, hidden)
+            self._playing_friend(friend, FRIEND_LIST[1] + index * (FRIEND_PLAYING_H + FRIEND_GAP),
+                                 game_icons, backgrounds, portraits)
+        top = FRIEND_LIST[1] + len(rows) * (FRIEND_PLAYING_H + FRIEND_GAP)
+        if overflow:
+            avatar_y = top + (FRIEND_LIST[3] - top - 48) // 2
+            for index, friend in enumerate(primary):
+                left = FRIEND_LIST[0] + index * 43
+                self._friend_ring(friend, left + 5, avatar_y, 32, portraits=portraits)
+                self.text((left + 1, avatar_y + 37, left + 42, avatar_y + 49),
+                          self.plugin._friend_display_id(friend), 10, WHITE, bold=True, min_size=9, align="center")
+            self._friend_fan(mini, overflow, avatar_y, portraits)
+        elif primary:
+            size = 46 if len(primary) == 1 else 42 if len(primary) == 2 else 38
+            gap = 24 if len(primary) == 2 else 19
+            width = len(primary) * size + max(0, len(primary) - 1) * gap
+            left = FRIEND_LIST[0] + (FRIEND_LIST[2] - FRIEND_LIST[0] - width) // 2
+            y = top + (FRIEND_LIST[3] - top - size - 17) // 2
+            for index, friend in enumerate(primary):
+                x = left + index * (size + gap)
+                self._friend_ring(friend, x, y, size, portraits=portraits)
+                self.text((x - 8, y + size + 5, x + size + 8, y + size + 17),
+                          self.plugin._friend_display_id(friend), 11, WHITE, bold=True, min_size=9, align="center")
+
+    def _friend_fan(self, records, remaining, avatar_y, portraits):
+        """Three real miniature portraits; the label counts every person not shown."""
+        shown = [friend for friend, _url in records if id(friend) in portraits]
+        size = 22 if len(shown) <= 1 else 20 if len(shown) == 2 else 18
+        step = 15 if len(shown) == 3 else size + 2
+        width = size + max(0, len(shown) - 1) * step
+        left = 732 + (51 - width) // 2
+        y = avatar_y + (32 - size) // 2 + 2
+        for index, friend in enumerate(shown):
+            x = left + index * step
+            self.draw.ellipse((x - 1, y - 1, x + size, y + size), fill=self.c["panel"])
+            self._paste_friend_portrait(friend, x, y, size, portraits)
+            self.draw.ellipse((x, y, x + size - 1, y + size - 1),
+                              outline=self._friend_ring_colour(friend), width=1)
+        hidden = max(0, remaining - len(shown))
+        if hidden:
+            self.text((730, avatar_y + 37, 784, avatar_y + 50), f"{hidden} more…", 10,
+                      self.c["muted"], min_size=9, align="center")
 
     @staticmethod
     def _friend_ring_colour(friend):
@@ -620,32 +669,60 @@ class _Console:
         state = _number(friend.get("personastate"))
         return GREEN if playing else (STEAM_ONLINE if state in (1, 5, 6) else AWAY)
 
-    def _friend_ring(self, friend, x, y, size=FRIEND_AVATAR):
+    def _paste_friend_portrait(self, friend, x, y, size, portraits):
+        avatar = portraits.get(id(friend))
+        if avatar is not None:
+            with avatar.resize((size, size), Image.Resampling.LANCZOS) as resized:
+                self.image.paste(resized, (x, y), resized if resized.mode == "RGBA" else None)
+
+    def _friend_ring(self, friend, x, y, size=FRIEND_AVATAR, *, portraits=None):
         """The friend's avatar ``size`` across with a ring in their presence colour (Steam's:
         green in a game, blue online, amber away or busy) round it."""
         colour = self._friend_ring_colour(friend)
         self.draw.ellipse((x - 2, y - 2, x + size + 1, y + size + 1), outline=colour, width=2)
-        url = friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar")
-        avatar = self.plugin._avatar_image(url, size, decorative_outline=False)
-        if avatar is not None:
-            self.image.paste(avatar, (x, y), avatar if avatar.mode == "RGBA" else None)
+        if portraits is not None:
+            self._paste_friend_portrait(friend, x, y, size, portraits)
+        else:
+            url = friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar")
+            for record, avatar in load_mosaic_avatars(self.plugin, [(friend, url)], size) if url else []:
+                try:
+                    self._paste_friend_portrait(record, x, y, size, {id(record): avatar})
+                finally:
+                    avatar.close()
 
-    def _playing_friend(self, friend, y, game_icons):
-        """A friend in a game as a wide row on that game's own artwork: the avatar, the name and
-        the game with its icon."""
+    def _playing_friend(self, friend, y, game_icons, backgrounds, portraits):
+        """The portrait opens into its game's artwork; the far edge stays square."""
         x, right = FRIEND_LIST[0], FRIEND_LIST[2]
+        width, height = right - x, FRIEND_PLAYING_H
         appid = friend.get("gameid")
-        self.art((x, y, right, y + FRIEND_PLAYING_H), appid, strength=120)
-        self._friend_ring(friend, x + 4, y + 3, FRIEND_ROW_AVATAR)
-        self.text((x + 43, y + 2, right - 4, y + 19), self.plugin._friend_display_id(friend), 14,
-                  bold=True, min_size=11)
+        source = backgrounds.get(_appid(appid))
+        with ExitStack() as owned:
+            rgb = owned.enter_context(source.convert("RGB") if source is not None
+                                      else Image.new("RGB", (width, height), self.c["navy"]))
+            art = owned.enter_context(ImageOps.fit(rgb, (width, height), method=Image.Resampling.LANCZOS))
+            shade = owned.enter_context(Image.new("RGBA", (width, height)))
+            pen = ImageDraw.Draw(shade)
+            for column in range(width):
+                pen.line((column, 0, column, height), fill=(*self.c["navy"], round(196 - 84 * column / (width - 1))))
+            art.paste(shade, (0, 0), shade)
+            mask = owned.enter_context(Image.new("L", (width * 4, height * 4)))
+            pen = ImageDraw.Draw(mask)
+            pen.rounded_rectangle((0, 0, width * 4 - 1, height * 4 - 1), radius=height * 2, fill=255)
+            pen.rectangle((height * 2, 0, width * 4 - 1, height * 4 - 1), fill=255)
+            fitted_mask = owned.enter_context(mask.resize((width, height), Image.Resampling.LANCZOS))
+            self.image.paste(art, (x, y), fitted_mask)
+        self._paste_friend_portrait(friend, x + 3, y + 3, FRIEND_ROW_AVATAR, portraits)
+        self.text((x + 43, y + 1, right - 8, y + 19), self.plugin._friend_display_id(friend),
+                  13, WHITE, bold=True, min_size=11)
         name = self.plugin._display_game_name(self.data, appid, friend.get("gameextrainfo"))
         icon = game_icons.get(_appid(appid))
         text_x = x + 43
         if icon is not None:
+            self.draw.rounded_rectangle((text_x - 1, y + 20, text_x + FRIEND_GAME_ICON, y + 35),
+                                        radius=2, fill=self.c["navy"], outline=GREEN, width=1)
             self.image.paste(icon, (text_x, y + 21), icon if icon.mode == "RGBA" else None)
             text_x += FRIEND_GAME_ICON + 4
-        self.text((text_x, y + 20, right - 4, y + 36), name or "游戏中", 11, GREEN, bold=True)
+        self.text((text_x, y + 20, right - 7, y + 36), name or "游戏中", 10, WHITE, bold=False, min_size=9)
 
     def _friend_tile(self, friend, x, y, game_icons, hidden):
         """A friend as a small tile on the panel itself: the ringed avatar over the name (a game's
@@ -698,7 +775,10 @@ class _Console:
                 positions.extend((left + index * (size + gap), top) for index in range(len(line)))
                 top += size + gap
         for (friend, avatar), (avatar_x, top) in zip(avatars, positions):
-            self.image.paste(avatar, (avatar_x, top), avatar if avatar.mode == "RGBA" else None)
+            try:
+                self.image.paste(avatar, (avatar_x, top), avatar if avatar.mode == "RGBA" else None)
+            finally:
+                avatar.close()
             # Draw inside the portrait's bounds so even 12px neighbours retain a gap.
             self.draw.ellipse((avatar_x, top, avatar_x + size - 1, top + size - 1),
                               outline=self._friend_ring_colour(friend), width=1)

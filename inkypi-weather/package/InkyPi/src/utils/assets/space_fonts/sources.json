@@ -1,0 +1,42 @@
+[
+  {
+    "source": "https://raw.githubusercontent.com/uswds/public-sans/develop/fonts/otf/PublicSans-Regular.otf",
+    "sha256": "89cca4915bd88489323ad0d0107f7cd1dc81164416584f3c3c6da00e187cd581",
+    "name": "PublicSans-Regular.otf",
+    "bytes": 57616
+  },
+  {
+    "source": "https://raw.githubusercontent.com/uswds/public-sans/develop/fonts/otf/PublicSans-SemiBold.otf",
+    "sha256": "57af521ce5bc5a3495293f83051765c32d45d04696218bf0cff2ac66a65ba849",
+    "name": "PublicSans-SemiBold.otf",
+    "bytes": 57416
+  },
+  {
+    "source": "https://raw.githubusercontent.com/uswds/public-sans/develop/OFL.txt",
+    "sha256": "157a9e77f7580246e97c769490e2e977ae94399f9d30f4556015c41fe8c28bac",
+    "name": "PublicSans-OFL.txt",
+    "bytes": 4390,
+    "bundled_sha256": "510d6e86ca0681edd7c5669df50c24b372a4d96b80bf507c2d29585132a24718",
+    "packaging_note": "Licence trailing whitespace normalized; source SHA256 above remains the original download identity."
+  },
+  {
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/dmmono/DMMono-Regular.ttf",
+    "sha256": "55b4c98f123daebb3ed27947ba47b2af00554fc6284d639a540bcef5e6258ad2",
+    "name": "DMMono-Regular.ttf",
+    "bytes": 49744
+  },
+  {
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/dmmono/DMMono-Medium.ttf",
+    "sha256": "fd327daf461db87b44a87def475d251bf03b997f7c07d9680592d75dbbfaad0b",
+    "name": "DMMono-Medium.ttf",
+    "bytes": 50360
+  },
+  {
+    "source": "https://raw.githubusercontent.com/google/fonts/main/ofl/dmmono/OFL.txt",
+    "sha256": "2bada5ea45c3c63b7f1ea1f88ce9672c9e4f0c42b2c3b7378949084fe55a3066",
+    "name": "DMMono-OFL.txt",
+    "bytes": 4484,
+    "bundled_sha256": "f5898de81851415b71431c1a8ea527c88a4e79caeb23936483428d2e911af40c",
+    "packaging_note": "Licence trailing whitespace normalized; source SHA256 above remains the original download identity."
+  }
+]

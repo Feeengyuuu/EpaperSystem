@@ -37,7 +37,7 @@ def data():
         "friend_count": 57,
         "online_friend_count": 6,
         "friends": [{"steamid": str(index), "personaname": f"Friend {index}",
-                     "personastate": 1} for index in range(6)],
+                     "personastate": 1, "avatarfull": f"cached-avatar-{index}"} for index in range(6)],
         "recent_games": [
             {"appid": 108600, "name": "Project Zomboid", "playtime_2weeks": 60,
              "playtime_forever": 180},
@@ -122,7 +122,7 @@ def test_game_art_and_icons_are_preserved_over_a_solid_page_canvas(plugin, data,
     assert backgrounds == expected + Counter({"108600": 1})
     assert icons == expected
     # The live friend's total belongs in the heading; the profile photo and the six online
-    # friends' tiles are the only avatars fetched.
+    # friends with available portraits are the only avatars fetched.
     assert sum(kind == "avatar" for kind, _, _ in plugin.asset_calls) == 7
     avatar_positions = [index for index, (kind, _, _) in enumerate(plugin.asset_calls)
                         if kind == "avatar"]
@@ -351,9 +351,9 @@ def test_friend_game_activity_shows_the_game_icon_before_its_name(plugin, data, 
 
     assert ("icon", "1172470", 14) in plugin.asset_calls
     # A friend in a game leads the list as a row: the fixture's solid icon before the game's
-    # name, and the avatar ringed in the in-game green.
+    # name, while the avatar itself has no green rim.
     assert image.getpixel((x + 50, y + 28)) == (200, 80, 40)
-    assert image.getpixel((x + 20, y + 1)) == GREEN
+    assert image.getpixel((x + 20, y + 1)) != GREEN
     assert any(text == "Company of Heroes 3" and box[0] == x + 61 for box, text in displayed)
 
 
@@ -394,8 +394,8 @@ def test_friend_game_without_icon_keeps_the_status_dot(plugin, data, displayed, 
     image = render_console(plugin, data, (800, 480))
     x, y = FRIEND_LIST[:2]
 
-    # No placeholder icon: the game's name takes its place, the ring still says in a game.
-    assert image.getpixel((x + 20, y + 1)) == GREEN
+    # Without a game logo, keep its name and artwork; never invent an icon or green rim.
+    assert image.getpixel((x + 20, y + 1)) != GREEN
     assert any(text == "Company of Heroes 3" and box[0] == x + 43 for box, text in displayed)
 
 
@@ -487,16 +487,16 @@ def test_mini_rings_match_large_avatar_presence_without_covering_neighbours(
 
 
 @pytest.mark.parametrize("count", [8, 15])
-def test_overflow_mosaic_keeps_the_first_five_names_and_hides_extra_names(plugin, data, displayed, count):
+def test_overflow_mosaic_keeps_the_first_three_names_and_hides_extra_names(plugin, data, displayed, count):
     data["friends"] = [{"steamid": str(index), "personaname": f"Friend {index:02}", "personastate": 1,
                         "avatarfull": f"cached-avatar-{index}"} for index in range(count)]
     data["online_friend_count"] = count
     render_console(plugin, data, (800, 480))
     labels = [text for _box, text in displayed]
-    assert all(f"Friend {index:02}" in labels for index in range(5))
-    assert all(f"Friend {index:02}" not in labels for index in range(5, count))
+    assert all(f"Friend {index:02}" in labels for index in range(3))
+    assert all(f"Friend {index:02}" not in labels for index in range(3, count))
     assert "+3" not in labels and "更多在线" not in labels
-    assert ("+1" in labels) == (count == 15)
+    assert f"{count - 6} more…" in labels
 
 
 def test_overflow_without_avatar_urls_keeps_a_count_instead_of_inventing_portraits(plugin, displayed):
@@ -596,8 +596,9 @@ def test_style_version_moves_on_while_previous_cache_stays_compatible():
         STEAM_DASHBOARD_STYLE_VERSION,
     )
 
-    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-adaptive-friend-mosaic-v48"
-    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[:7] == (
+    assert STEAM_DASHBOARD_STYLE_VERSION == "midnight-console-horizontal-friends-v49"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[0] == "midnight-console-adaptive-friend-mosaic-v48"
+    assert STEAM_CACHED_DISPLAY_COMPATIBLE_STYLES[1:8] == (
         "midnight-console-whole-avatar-frame-v47",
         "midnight-console-profile-backdrop-v46",
         "midnight-console-game-hue-v45",
@@ -638,7 +639,7 @@ def test_the_page_takes_the_colours_of_the_game_being_played(plugin, data, monke
     other = render_console(plugin, data, (800, 480))
 
     # The panel colour between the friends' tiles follows each game's own hue.
-    gap = (FRIEND_LIST[0] + FRIEND_TILE[0] + 1, 120)
+    gap = (FRIEND_LIST[0] + FRIEND_TILE[0] + 1, 60)
     assert abs(_hue(playing.getpixel(gap)) - _hue((200, 40, 30))) < 0.05
     assert abs(_hue(other.getpixel(gap)) - _hue((40, 150, 140))) < 0.05
 

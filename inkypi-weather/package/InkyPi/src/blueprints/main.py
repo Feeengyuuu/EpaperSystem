@@ -105,6 +105,13 @@ def get_current_image():
     if commit is None or not Path(commit.image_path).is_file():
         return jsonify({"error": "Image not found"}), 404
 
+    if request.args.get("motion") == "mars":
+        from plugins.planet_now.mars_motion import read_motion
+
+        response = jsonify({"motion": read_motion(commit.image_path)})
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     try:
         last_modified = datetime.fromisoformat(commit.committed_at)
     except (TypeError, ValueError):

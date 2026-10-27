@@ -688,7 +688,16 @@ def run_private_score_font(arguments):
     if len(arguments) != 6:
         raise ValueError("private font needs name, font SHA256, size, release id, commit and artifact SHA256")
     name, font_sha, size, release_id, commit, artifact_sha = arguments
-    if not re.fullmatch(r"sports-(?:nba|wnba|mls|epl|laliga|bundesliga|seriea|ligue1|f1)-score\.(?:ttf|otf|woff|woff2)", name):
+    registry = (
+        "nba|wnba|mls|epl|laliga|bundesliga|seriea|ligue1|f1|"
+        "esports-cs2|esports-cs2-regular|esports-dota|esports-dota-regular|"
+        "esports-riot-heading|esports-riot|esports-riot-regular|"
+        "esports-blast-heading|esports-blast|esports-esl-heading|esports-iem-heading|"
+        "esports-pgl-event|esports-tesla-event|esports-roboto-event|"
+        "esports-industry-event|esports-gear-event|esports-cct-event|"
+        "esports-dust2-event|esports-montserrat-event"
+    )
+    if not re.fullmatch(r"sports-(?:" + registry + r")-score\.(?:ttf|otf|woff|woff2)", name):
         raise ValueError("private font name is not allowed")
     if not all(re.fullmatch(r"[0-9a-f]{64}", value) for value in (font_sha, artifact_sha)):
         raise ValueError("private font hash is invalid")

@@ -20,6 +20,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from runtime.refresh_contracts import TaskCancelled
+from utils.space_typography import MixedDraw, space_font, space_type_scope, scoped_space_font
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_session
 from utils.safe_image import safe_open_image
@@ -316,6 +317,9 @@ class OrbitalSignal(BasePlugin):
         return NIGHT_PALETTE if mode == "night" else DAY_PALETTE
 
     def _font(self, size, bold=False, family=None):
+        preferred = scoped_space_font(size, bold)
+        if preferred is not None:
+            return preferred
         selected = str(family or "").strip() or DEFAULT_FONT
         weight = "bold" if bold else "normal"
         try:
@@ -907,11 +911,11 @@ class OrbitalSignal(BasePlugin):
     def _draw_flip_countdown(self, draw, x, y, units, palette, family):
         """'T-' then two flip-card pairs split by a colon, each pair's unit below it."""
         card_w, card_h = FLIP_CARD
-        prefix_font = self._font(34, True, family)
+        prefix_font = space_font("mono", 34)
         draw.text((x, y + 8), "T-", font=prefix_font, fill=palette["ink"])
         x += draw.textbbox((0, 0), "T-", font=prefix_font)[2] + 8
-        digit_font = self._font(44, True, family)
-        unit_font = self._font(10, True, family)
+        digit_font = space_font("mono", 44)
+        unit_font = space_font("mono", 10)
         middle = y + card_h // 2
         for index, (digits, unit) in enumerate(units):
             if index:
@@ -1134,6 +1138,10 @@ class OrbitalSignal(BasePlugin):
                              place_top + 2, palette)
 
     def _draw_launch(self, image, draw, box, launches, now, palette, family):
+        with space_type_scope():
+            return self._draw_launch_content(image, MixedDraw(draw, numbers=True), box, launches, now, palette, family)
+
+    def _draw_launch_content(self, image, draw, box, launches, now, palette, family):
         left, top, right, bottom = box
         draw.rectangle(box, fill=palette["paper"])
         draw.line((right - 2, top, right - 2, bottom), fill=palette["rule"], width=3)

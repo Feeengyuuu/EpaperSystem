@@ -26,6 +26,7 @@ from plugins.sports_dashboard.cache_io import read_json_file, write_json_file
 from plugins.sports_dashboard.ncaa_localization import NCAA_ADDITIONAL_SCHOOLS
 from plugins.sports_dashboard.render_fonts import render_font, render_font_scope
 from plugins.sports_dashboard.score_fonts import fit_score, score_font
+from plugins.sports_dashboard.esports_fonts import active as esports_type_active, active_font, esports_role
 from runtime.sports_asset_metrics import record_asset_metric
 from utils.app_utils import get_base_ui_font, resolve_path
 from utils.cache_manager import (
@@ -3914,6 +3915,7 @@ class SportsDashboardCommonMixin:
         value, value_font = self._fit_text(draw, text, 46, 13, bold=True, min_size=10)
         self._draw_centered_in_box(draw, (x, y + 2, x + 74, y + 22), value, value_font, COLORS["text"])
 
+    @esports_role("heading")
     def _draw_section_header(self, draw, right_x, right_w, y, title, accent=None):
         accent = accent or COLORS["blue"]
         draw.rectangle((right_x + 14, y + 3, right_x + 22, y + 21), fill=accent, outline=COLORS["border"], width=1)
@@ -4420,7 +4422,7 @@ class SportsDashboardCommonMixin:
 
     @staticmethod
     def _font(size, bold=False):
-        return render_font(get_base_ui_font, size, bold)
+        return active_font(size, bold) or render_font(get_base_ui_font, size, bold)
 
     _score_font = staticmethod(score_font)
     _fit_score = staticmethod(fit_score)
@@ -4432,6 +4434,9 @@ class SportsDashboardCommonMixin:
     @staticmethod
     def _fit_text(draw, text, max_width, size, bold=False, min_size=11):
         text = str(text or "")
+        if esports_type_active():
+            # Scores and clocks retain every digit; names keep a readable floor.
+            min_size = 1 if re.fullmatch(r"[\d\s:.+\-]+", text) else min(min_size, 7)
         for font_size in range(size, min_size - 1, -1):
             font = SportsDashboard._font(font_size, bold)
             if SportsDashboard._text_width(draw, text, font) <= max_width:

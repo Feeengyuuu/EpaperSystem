@@ -1,0 +1,46 @@
+[
+  {
+    "place": "san-jose",
+    "file": "san-jose.png",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/a/a6/Logo_of_San_Jose%2C_California.png",
+    "source_description_page": "https://commons.wikimedia.org/wiki/File:Logo_of_San_Jose,_California.png",
+    "official_city_reference": "https://www.sanjoseca.gov/news-stories/logo-guidelines",
+    "author": "City of San Jose government",
+    "sha256": "9de133e526c95adbe73538dd8d6f7b30347d231fcfd2f3c26214173496d8b596",
+    "sha1": "8ce91bd9a8c40b05a8f1775e85cc18119a26b263",
+    "bytes": 151771,
+    "dimensions": [
+      1752,
+      990
+    ],
+    "mode": "RGBA",
+    "alpha_extrema": [
+      0,
+      255
+    ],
+    "file_transformations": "None: original downloaded PNG bytes retained",
+    "note": "Official city government mark mirrored by Commons, not tourism/school/sports mark; direct city host returned 403"
+  },
+  {
+    "place": "redwood-city",
+    "file": "redwood-city.png",
+    "download_url": "https://upload.wikimedia.org/wikipedia/commons/6/60/Logo_of_Redwood_City%2C_California.png",
+    "source_description_page": "https://commons.wikimedia.org/wiki/File:Logo_of_Redwood_City,_California.png",
+    "official_city_reference": "https://www.redwoodcity.org/",
+    "author": "Redwood City",
+    "sha256": "ab7c0629dfc358f3f46e5632aa3a4f92d7f3cb7018f75b572d3373934636c9c3",
+    "sha1": "4f8180a01ff48e8ce853d23c5ac0636e3b55a3f3",
+    "bytes": 149673,
+    "dimensions": [
+      584,
+      778
+    ],
+    "mode": "RGBA",
+    "alpha_extrema": [
+      0,
+      255
+    ],
+    "file_transformations": "None: original downloaded PNG bytes retained",
+    "note": "Official city government mark mirrored by Commons, not tourism/school/sports mark; direct city host returned 403"
+  }
+]

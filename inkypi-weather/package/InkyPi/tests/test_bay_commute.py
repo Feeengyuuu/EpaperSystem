@@ -11,7 +11,8 @@ import pytest
 from plugins.base_plugin.render_provenance import SourceProvenance, read_source_provenance
 from plugins.bay_commute import sources
 from plugins.bay_commute.bay_commute import BayCommute
-from plugins.bay_commute.render import Canvas, render_page
+from plugins.bay_commute.command_render import Page as Canvas
+from plugins.bay_commute.render import render_page
 from runtime.refresh_contracts import TaskCancelled, TaskContext
 
 
@@ -391,7 +392,7 @@ def test_buoy_is_drawn_beside_the_tides_and_never_decides_provenance(plugin, mon
     with_buoy = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW)
     without = render_page((800, 480), {**payload, "buoy": {"state": "unavailable", "data": {}}},
                           {"_inkypi_theme": {"mode": "day"}}, NOW)
-    assert with_buoy.crop((700, 12, 790, 90)).tobytes() != without.crop((700, 12, 790, 90)).tobytes()
+    assert with_buoy.crop((510, 424, 790, 448)).tobytes() != without.crop((510, 424, 790, 448)).tobytes()
     assert with_buoy.crop((0, 100, 460, 480)).tobytes() == without.crop((0, 100, 460, 480)).tobytes()
 
     monkeypatch.setattr(sources, "fetch_buoy", lambda task: (_ for _ in ()).throw(OSError("offline")))
