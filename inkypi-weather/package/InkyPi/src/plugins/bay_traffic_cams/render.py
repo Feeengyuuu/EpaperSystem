@@ -20,6 +20,7 @@ from utils.local_wordmark import paste_local_wordmark
 from utils.page_canvas import PageCanvas
 
 from . import crt, sources
+from .sign_type import fit_sign
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -228,25 +229,28 @@ def _direction_plate(canvas, direction, xy, height):
         return 0
     x, y = xy
     size = height - 7
-    width = max(round(height * 2.1), canvas.width(label, size) + 10)
+    legend = fit_sign(canvas, label, size, 60, height - 5, series="C")
+    width = max(round(height * 2.1), legend.width + 10)
     canvas.draw.rounded_rectangle((x, y, x + width, y + height), radius=2, fill=WHITE)
     canvas.draw.rounded_rectangle((x + 1, y + 1, x + width - 1, y + height - 1), radius=2, outline=BLACK, width=2)
-    canvas.text((x + width / 2, y + height / 2 + 0.5), label, size, BLACK, anchor="mm")
+    legend.draw(canvas, x + (width - legend.width) / 2, y + height / 2 + 0.5, BLACK)
     return width
 
 
-def _guide_sign(canvas, text, xy, height, max_width):
+def _guide_sign(canvas, text, xy, height, max_width, *, series="EM"):
     """A green guide sign with a white border and legend, as wide as its text allows."""
     x, y = xy
-    size = height - 7
-    legend = canvas.fit(text, size, max(10, max_width - 10))
-    width = min(max_width, canvas.width(legend, size) + 10)
-    if width < 24:
+    if max_width < 24:
         return 0
+    size = height - 7
+    legend = fit_sign(canvas, text, size, max_width - 10, height - 5, series=series, min_size=max(11, size - 2))
+    if not legend.runs:
+        return 0
+    width = min(max_width, max(24, legend.width + 10))
     canvas.draw.rounded_rectangle((x, y, x + width, y + height), radius=3, fill=GUIDE_GREEN)
     canvas.draw.rounded_rectangle((x + 1.5, y + 1.5, x + width - 1.5, y + height - 1.5), radius=2, outline=WHITE,
                                   width=1)
-    canvas.text((x + 5, y + height / 2), legend, size, WHITE, anchor="lm")
+    legend.draw(canvas, x + 5, y + height / 2 + 1, WHITE)
     return width
 
 
@@ -396,7 +400,7 @@ def _side(canvas, payload, now):
         x = cx + _shield(canvas, camera["route"], (cx, top), 21) + 4
         _direction_plate(canvas, camera["direction"], (x, top + 2), 17)
         _where(canvas, camera, cx + cell_w, top + 10.5, 10)
-        _guide_sign(canvas, camera["place"], (cx, top + 25), 19, cell_w)
+        _guide_sign(canvas, camera["place"], (cx, top + 25), 19, cell_w, series="D")
 
 
 def render_page(dimensions, payload, settings, now):
