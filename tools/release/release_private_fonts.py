@@ -1,4 +1,4 @@
-"""Post-deployment installation of one owner-provided, device-only score font."""
+"""Post-deployment installation of one owner-provided, device-only registered font."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def font_policy():
     return module
 
 
-def _plan(ctx, league, source):
+def _plan(ctx, league, source, *, purpose=None):
     deployment = ctx.require_deployed()
     manifest = ctx.load("current-manifest.json")
     commit = require_commit(deployment.get("commit"), "Deployed commit")
@@ -43,11 +43,18 @@ def _plan(ctx, league, source):
     require(all(re.fullmatch(r"[0-9a-f]{64}", hashes.get(path, "")) for path in (HELPER, UPDATER)),
             "The deployed release does not contain the private-font installer capability")
     policy = font_policy()
-    require(league in policy.LEAGUES, "Unsupported private score font league")
+    require(bool(league) != bool(purpose), "Select exactly one private font league or purpose")
+    if purpose:
+        require(purpose in policy.PURPOSES, "Unsupported private font purpose")
+        selection = {"purpose": purpose}
+    else:
+        require(league in policy.LEAGUES, "Unsupported private score font league")
+        selection = {"league": league}
     source = Path(source)
     source = source if source.is_absolute() else ctx.repo / source
     require(not is_reparse_point(source) and source.is_file(), "Private font source must be a regular local file")
-    name = f"sports-{league}-score{source.suffix.lower()}"
+    name = policy.PURPOSES[purpose]["basename"] if purpose else f"sports-{league}-score{source.suffix.lower()}"
+    require(source.suffix.lower() == Path(name).suffix, "Private font format is not allowed for this purpose")
     try:
         info = source.stat()
         require(stat.S_ISREG(info.st_mode) and 0 < info.st_size <= policy.MAX_BYTES, "Private font is empty or exceeds 2 MiB")
@@ -57,7 +64,7 @@ def _plan(ctx, league, source):
         font = policy.validate_font(payload, name, sha256, info.st_size)
     except (OSError, policy.PrivateFontError) as error:
         raise ReleaseError(str(error)) from error
-    return {"status": "dry_run", "league": league, "source": str(source.absolute()), "font": font,
+    return {"status": "dry_run", **selection, "source": str(source.absolute()), "font": font,
             "destination": str(policy.FONT_DIRECTORY / name).replace("\\", "/"), "basename": name,
             "bytes": len(payload), "sha256": sha256, "release_id": release_id, "commit": commit,
             "artifact_sha256": artifact_sha, "transport": "pinned SSH stdin; no transport file",
@@ -71,10 +78,11 @@ def _save_attempt(ctx, league, record):
     ctx.save(name, history)
 
 
-def install(ctx, league, source, *, execute=False, connect):
-    plan, payload = _plan(ctx, league, source)
+def install(ctx, league, source, *, purpose=None, execute=False, connect):
+    plan, payload = _plan(ctx, league, source, purpose=purpose)
+    attempt_key = purpose or league
     if not execute:
-        ctx.save(f"private-fonts-{league}-plan.json", plan)
+        ctx.save(f"private-fonts-{attempt_key}-plan.json", plan)
         return plan
     record = {**plan, "status": "running", "started_at": datetime.now(timezone.utc).isoformat()}
     try:
@@ -105,5 +113,5 @@ def install(ctx, league, source, *, execute=False, connect):
         raise ReleaseError(str(error)) from error
     finally:
         record["completed_at"] = datetime.now(timezone.utc).isoformat()
-        _save_attempt(ctx, league, record)
+        _save_attempt(ctx, attempt_key, record)
     return record

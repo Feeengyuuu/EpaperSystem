@@ -1,0 +1,8 @@
+{
+  "source": "Generated for the owner with OpenAI image generation, 2026-10-27",
+  "purpose": "Graphite retail price tag with a champagne-gold rim; prices are rendered separately",
+  "processing": "Crop generated transparent margin at alpha >= 48 to (86,102,2090,614), then LANCZOS resize to the accepted 4x native working size 368x124 and optimize PNG losslessly",
+  "size": [368, 124],
+  "private_font": "Optional owner-provided Banknote Regular is loaded only from INKYPI_DATA_DIR/fonts/game-deals-price.ttf. No font bytes are included in this asset or repository.",
+  "fallback": "Existing OFL Bodoni Moda, then the base UI face if unavailable"
+}

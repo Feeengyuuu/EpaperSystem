@@ -1,4 +1,4 @@
-"""Validate and atomically install one owner-supplied, device-only score font.
+"""Validate and atomically install one owner-supplied, device-only font.
 
 The installed updater invokes this fixed helper with the current release's
 Python. Font bytes arrive on stdin, never in the release archive or a transport
@@ -29,10 +29,14 @@ LEAGUES = (
     "esports-dust2-event", "esports-montserrat-event",
 )
 EXTENSIONS = ("ttf", "otf", "woff", "woff2")
+PURPOSES = {
+    "game_deals_price": {"basename": "game-deals-price.ttf", "family": "Banknote", "style": "Regular",
+                         "glyphs": "0123456789$.,-"},
+}
 FONT_NAMES = frozenset(
     f"sports-{league}-score.{extension}"
     for league in LEAGUES for extension in EXTENSIONS
-)
+) | frozenset(item["basename"] for item in PURPOSES.values())
 MAGIC = {".ttf": b"\x00\x01\x00\x00", ".otf": b"OTTO", ".woff": b"wOFF", ".woff2": b"wOF2"}
 
 
@@ -46,7 +50,7 @@ def require(condition, message):
 
 
 def validate_request(name, sha256, size):
-    require(name in FONT_NAMES, "only fixed sport/league score font names are allowed")
+    require(name in FONT_NAMES, "only fixed private font names are allowed")
     require(isinstance(sha256, str) and re.fullmatch(r"[0-9a-f]{64}", sha256), "invalid font SHA256")
     require(isinstance(size, int) and not isinstance(size, bool) and 0 < size <= MAX_BYTES,
             "font must contain 1 through 2097152 bytes")
@@ -66,7 +70,12 @@ def validate_font(payload: bytes, name: str, sha256: str, size: int) -> dict:
         family = family.strip() if isinstance(family, str) else ""
         style = style.strip() if isinstance(style, str) else ""
         require(bool(family or style), "font metadata is missing")
-        for char in "0123456789-":
+        purpose = next((item for item in PURPOSES.values() if item["basename"] == name), None)
+        if purpose:
+            require((family, style) == (purpose["family"], purpose["style"]),
+                    "font family and style do not match the registered purpose")
+        required = purpose["glyphs"] if purpose else "0123456789-"
+        for char in required:
             box = font.getbbox(char)
             require(0 < box[2] - box[0] <= 256 and 0 < box[3] - box[1] <= 256,
                     "score glyph has invalid or excessive bounds")
@@ -75,13 +84,17 @@ def validate_font(payload: bytes, name: str, sha256: str, size: int) -> dict:
         require(all(mask and any(mask) and mask != missing for mask in digits),
                 "font does not contain readable digits 0123456789")
         require(len(set(digits)) == 10, "font digit glyphs are not distinct")
-        dash = bytes(font.getmask("-"))
-        require(dash and any(dash) and dash != missing, "font has no readable score separator")
+        for char in required[10:]:
+            mark = bytes(font.getmask(char))
+            require(mark and any(mark) and mark != missing, "font has no readable required separator or currency glyph")
         bounds = font.getbbox("0123456789")
         require(bounds[2] > bounds[0] and bounds[3] > bounds[1], "font digits have no visible bounds")
     except (OSError, ValueError) as error:
         raise PrivateFontError("Pillow cannot read this raw font") from error
-    return {"family": family, "style": style, "digits": "0123456789", "digit_bbox": list(bounds)}
+    result = {"family": family, "style": style, "digits": "0123456789", "digit_bbox": list(bounds)}
+    if purpose:
+        result["required_glyphs"] = required
+    return result
 
 
 def _open_directory(path):
@@ -120,8 +133,8 @@ def _verify_directory(descriptor, gid):
 
 
 def _existing_font(descriptor, name, sha256, gid):
-    alternatives = FONT_NAMES - {name}
     stem = name.rsplit(".", 1)[0]
+    alternatives = {f"{stem}.{extension}" for extension in EXTENSIONS} - {name}
     for alternative in sorted(alternatives):
         if alternative.rsplit(".", 1)[0] != stem:
             continue
@@ -129,7 +142,7 @@ def _existing_font(descriptor, name, sha256, gid):
             os.stat(alternative, dir_fd=descriptor, follow_symlinks=False)
         except FileNotFoundError:
             continue
-        raise PrivateFontError("another format already exists for this league; owner review required")
+        raise PrivateFontError("another format already exists for this font; owner review required")
     try:
         member = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
     except FileNotFoundError:

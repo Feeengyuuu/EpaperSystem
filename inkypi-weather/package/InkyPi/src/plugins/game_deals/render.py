@@ -9,6 +9,8 @@ from PIL import Image, ImageDraw
 from utils.app_utils import get_base_ui_font
 from utils.local_wordmark import paste_local_wordmark
 
+from .price_tag import PriceTags
+
 
 SIZE = (800, 480)
 LOCAL_ZONE = ZoneInfo("America/Los_Angeles")
@@ -21,12 +23,9 @@ ART_SIZE = (150, 62)
 BADGE_SIZE = (58, 28)
 # Room between the emboldened dollar sign and the digits after it.
 DOLLAR_GAP = 2
-# The sale price hangs on a yellow price tag: a pointed left end with a string hole,
-# the price in dark ink on it whatever the page's mode (yellow is one of the panel's own inks).
-PRICE_TAG = (255, 212, 0)
-PRICE_TAG_INK = (8, 12, 10)
-PRICE_TAG_POINT = 9
-PRICE_TAG_PAD = (PRICE_TAG_POINT + 4, 6)
+# Preserve the accepted sale/original/discount column positions while the
+# engraved type fits independently inside the sale-price slot.
+PRICE_TAG_PAD = (13, 6)
 # The official marks' heights: Steam's logo in the header, CheapShark's shark and lettering in the footer.
 STEAM_LOGO_HEIGHT, CHEAPSHARK_MARK_HEIGHT, CHEAPSHARK_LETTERS_HEIGHT = 30, 22, 13
 
@@ -77,28 +76,6 @@ def _fitted_font(text, width, preferred, minimum=14, bold=False):
     return _font(minimum, bold)
 
 
-def _draw_dollar(draw, origin, font, colour):
-    """The sale price's "$" in the badge green, emboldened, with a solid bar through it.
-
-    The UI font draws the dollar's bar as a hairline that the panel loses, so the sign
-    read as an "S"; the bar is redrawn two pixels wide from above the S to below it.
-    """
-    x, baseline = origin
-    draw.text((x, baseline), "$", font=font, fill=colour, anchor="ls", stroke_width=1, stroke_fill=colour)
-    left, top, right, bottom = font.getbbox("$", anchor="ls")
-    middle = x + (left + right) / 2
-    draw.rectangle((round(middle) - 1, round(baseline + top) - 1, round(middle), round(baseline + bottom) + 1), fill=colour)
-
-
-def _draw_price_tag(draw, box, hole_colour):
-    """A retail price tag: pointed at the left with a punched hole, square at the right."""
-    left, top, right, bottom = box
-    middle = (top + bottom) / 2
-    draw.polygon(((left, middle), (left + PRICE_TAG_POINT, top), (right, top), (right, bottom),
-                  (left + PRICE_TAG_POINT, bottom)), fill=PRICE_TAG)
-    draw.ellipse((left + 5, middle - 2.5, left + 10, middle + 2.5), fill=hole_colour)
-
-
 def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
     if tuple(dimensions) != SIZE:
         raise ValueError("Game Deals layout requires the device's 800x480 landscape display")
@@ -126,6 +103,7 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
     draw.line((14, 67, 785, 67), fill=ink, width=2)
 
     layout = []
+    price_tags = PriceTags() if snapshot.deals else None
     art_w, art_h = ART_SIZE
     badge_w, badge_h = BADGE_SIZE
     for index, deal in enumerate(snapshot.deals[:len(CARD_RECTS)]):
@@ -164,6 +142,9 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
             original_font = _fitted_font(original, prices_limit - 8 - DOLLAR_GAP - tag_pad - price_font.getlength(sale),
                                          15, 11)
         sale_w = price_font.getlength(sale) + DOLLAR_GAP + tag_pad
+        # Exceptional long amounts may use a smaller engraved font, never consume
+        # the original-price or discount columns or omit any amount characters.
+        sale_w = min(sale_w, prices_limit - 8 - original_font.getlength(original))
         original_x = text_x + sale_w + 8
 
         title_height = max(title_font.getbbox("Ag", anchor="lt")[3], title_font.getbbox(line, anchor="lt")[3])
@@ -172,11 +153,9 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         draw.text((text_x, group_top), line, font=title_font, fill=ink, anchor="lt")
         _, sale_top, _, sale_bottom = price_font.getbbox(sale, anchor="ls")
         baseline = price_row + badge_h / 2 - (sale_top + sale_bottom) / 2
-        _draw_price_tag(draw, (text_x, price_row - 1, text_x + sale_w, price_row + badge_h + 1), background)
-        price_x = text_x + PRICE_TAG_PAD[0]
-        _draw_dollar(draw, (price_x, baseline), price_font, green)
-        draw.text((price_x + price_font.getlength("$") + DOLLAR_GAP, baseline), sale[1:], font=price_font,
-                  fill=PRICE_TAG_INK, anchor="ls")
+        tag_box = tuple(map(round, (text_x, price_row - 1, text_x + sale_w, price_row + badge_h + 1)))
+        tag = price_tags.render(deal["sale_price"], (tag_box[2] - tag_box[0] + 1, tag_box[3] - tag_box[1] + 1))
+        image.paste(tag, tag_box[:2], tag)
         draw.text((original_x, baseline), original, font=original_font, fill=muted, anchor="ls")
         strike_y = round(baseline + original_font.getbbox("0", anchor="ls")[1] / 2)
         draw.line((original_x, strike_y, original_x + int(original_font.getlength(original)), strike_y),
@@ -189,7 +168,8 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         layout.append({"title": deal["title"], "lines": [line], "text_width": available,
                        "title_widths": [title_font.getlength(line)], "box": (x0, y0, x1, y1),
                        "prices_right": original_x + original_font.getlength(original),
-                       "badge_left": badge_left, "price_row": price_row})
+                       "badge_left": badge_left, "price_row": price_row,
+                       "sale_price": sale, "price_tag_box": tag_box, "price_font_size": tag.info["price_font_size"]})
     draw.line((399, 72, 399, 440), fill=ink, width=1)
     for row in range(1, ROWS):
         y = CARD_RECTS[row * 2][1] - (ROW_PITCH - CARD_HEIGHT) // 2

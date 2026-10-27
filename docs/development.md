@@ -75,7 +75,7 @@ degraded refresh; `probe` saves the latest renders read-only, and
 `health-record` re-checks health later. See `AGENTS.md` for the storage and
 cleanup rules.
 
-### Owner-provided private score fonts
+### Owner-provided private fonts
 
 After a release containing this capability has successfully deployed, the owner
 can install a separately licensed local sport/league score font. Supported keys
@@ -88,6 +88,18 @@ Keep the original font under the ignored `outputs/` directory, never in Git.
 & $Py tools\release\epaper_release.py private-fonts --task-dir $Task --league nba --font outputs\private-fonts\owner-font.woff2 --execute
 ```
 
+GameDeals has a separate registered purpose, `game_deals_price`; it is not a
+sports league. Use `--purpose` instead of `--league` for the owner-provided
+Banknote Regular TTF. This fixes the destination to
+`/var/lib/inkypi/data/fonts/game-deals-price.ttf` and additionally requires exact
+`Banknote` / `Regular` metadata and visible `0123456789$.,-` glyphs. No other
+format or destination is accepted for this purpose.
+
+```powershell
+& $Py tools\release\epaper_release.py private-fonts --task-dir $Task --purpose game_deals_price --font 'outputs\private-fonts\Banknote Regular.ttf'
+& $Py tools\release\epaper_release.py private-fonts --task-dir $Task --purpose game_deals_price --font 'outputs\private-fonts\Banknote Regular.ttf' --execute
+```
+
 The first command validates the local file and records a plan without contacting
 the device. The second uses the pinned SSH connection and the existing trusted
 `inkypi-update` sudo entry. The deployed updater must match the current release;
@@ -95,7 +107,7 @@ the round's full commit, release id and artifact checksum bind the request to a
 committed deployment. No saved settings, source, cache, service state or sudoers
 are changed. Installation uses the same update lock as a release transaction.
 
-Only `sports-<supported-key>-score.{ttf|otf|woff|woff2}` beneath
+Only `sports-<supported-key>-score.{ttf|otf|woff|woff2}` and the registered purpose's fixed basename beneath
 `/var/lib/inkypi/data/fonts` are allowed. The raw font must be at most 2 MiB and
 Pillow must read its metadata, distinct digits and score separator on both the
 workstation and device. Bytes travel through SSH stdin, with no transport file.
@@ -111,8 +123,8 @@ font is refused for owner review. A temporary file in that same directory is
 removed on handled success or failure. Following a connection loss, retry the
 same command to determine whether it installed before the connection ended.
 
-The task retains `private-fonts-<league>-plan.json` and an append-only list of
-attempt receipts in `private-fonts-<league>.json`, containing paths, hashes and
+The task retains `private-fonts-<league-or-purpose>-plan.json` and an append-only list of
+attempt receipts in `private-fonts-<league-or-purpose>.json`, containing paths, hashes and
 font metadata, never font bytes. Both archive builders explicitly exclude the
 private basenames. Display acceptance still uses the normal `show-plugins` and
 `snapshot` steps after installation; a font installation receipt alone is not

@@ -36,6 +36,37 @@ def test_original_font_metadata_and_required_score_glyphs_are_readable():
     assert result["digits"] == "0123456789"
 
 
+def test_price_purpose_is_not_a_sports_league_and_requires_its_own_metadata(monkeypatch):
+    from PIL import ImageFont
+
+    name = fonts.PURPOSES["game_deals_price"]["basename"]
+    assert name == "game-deals-price.ttf"
+    assert "game_deals_price" not in fonts.LEAGUES
+    with pytest.raises(fonts.PrivateFontError, match="family and style"):
+        fonts.validate_font(PAYLOAD, name, DIGEST, len(PAYLOAD))
+    # Only bundled OFL bytes are used; stand in for the owner's metadata.
+    real = ImageFont.truetype(__import__("io").BytesIO(PAYLOAD), 32)
+    fake = SimpleNamespace(getname=lambda: ("Banknote", "Regular"), getbbox=real.getbbox, getmask=real.getmask)
+    monkeypatch.setattr(ImageFont, "truetype", lambda *args, **kwargs: fake)
+    result = fonts.validate_font(PAYLOAD, name, DIGEST, len(PAYLOAD))
+    assert result["required_glyphs"] == "0123456789$.,-"
+    fake.getname = lambda: ("Banknote", "Bold")
+    with pytest.raises(fonts.PrivateFontError, match="family and style"):
+        fonts.validate_font(PAYLOAD, name, DIGEST, len(PAYLOAD))
+
+
+@pytest.mark.parametrize("missing", ["$", ".", ","])
+def test_price_font_requires_currency_and_decimal_glyphs(monkeypatch, missing):
+    from PIL import ImageFont
+
+    real = ImageFont.truetype(__import__("io").BytesIO(PAYLOAD), 32)
+    fake = SimpleNamespace(getname=lambda: ("Banknote", "Regular"), getbbox=real.getbbox,
+                           getmask=lambda char: real.getmask(chr(0x10FFFF) if char == missing else char))
+    monkeypatch.setattr(ImageFont, "truetype", lambda *args, **kwargs: fake)
+    with pytest.raises(fonts.PrivateFontError, match="readable"):
+        fonts.validate_font(PAYLOAD, "game-deals-price.ttf", DIGEST, len(PAYLOAD))
+
+
 def test_missing_family_is_recorded_honestly_when_style_and_score_glyphs_are_valid(monkeypatch):
     """Official Premier League raw fonts have no family name but retain a style."""
     from PIL import ImageFont
@@ -75,6 +106,9 @@ def test_raw_woff1_container_is_validated_without_conversion_on_install():
 
 @pytest.mark.parametrize("name,digest,size", [("../sports-nba-score.ttf", DIGEST, len(PAYLOAD)),
                                                ("sports-nfl-score.ttf", DIGEST, len(PAYLOAD)),
+                                               ("../game-deals-price.ttf", DIGEST, len(PAYLOAD)),
+                                               ("game-deals-price.otf", DIGEST, len(PAYLOAD)),
+                                               ("sports-game_deals_price-score.ttf", DIGEST, len(PAYLOAD)),
                                                (NAME, "A" * 64, len(PAYLOAD)),
                                                (NAME, DIGEST, 2 * 1024 * 1024 + 1),
                                                (NAME, DIGEST, True)])
@@ -152,11 +186,12 @@ def file_ops(tmp_path, monkeypatch):
     return tmp_path, calls, fake
 
 
-def test_atomic_publish_sets_permissions_before_visibility_and_removes_temporary(file_ops):
+@pytest.mark.parametrize("name", [NAME, "game-deals-price.ttf"])
+def test_atomic_publish_sets_permissions_before_visibility_and_removes_temporary(file_ops, name):
     root, calls, _ = file_ops
-    fonts._publish(123, NAME, PAYLOAD, 984)
-    assert (root / NAME).read_bytes() == PAYLOAD
-    assert [path.name for path in root.iterdir()] == [NAME]
+    fonts._publish(123, name, PAYLOAD, 984)
+    assert (root / name).read_bytes() == PAYLOAD
+    assert [path.name for path in root.iterdir()] == [name]
     assert calls.index(("owner", 0, 984)) < calls.index("link")
     assert calls.index(("mode", 0o640)) < calls.index("link")
     assert calls[-1] == ("fsync", True)
@@ -183,22 +218,24 @@ def test_permission_failure_leaves_no_target_or_temporary_file(file_ops):
     assert list(root.iterdir()) == []
 
 
-def test_identical_owner_font_is_noop_and_different_one_is_refused(file_ops):
+@pytest.mark.parametrize("name", [NAME, "game-deals-price.ttf"])
+def test_identical_owner_font_is_noop_and_different_one_is_refused(file_ops, name):
     root, _, _ = file_ops
-    (root / NAME).write_bytes(PAYLOAD)
-    assert fonts._existing_font(123, NAME, DIGEST, 984) is True
+    (root / name).write_bytes(PAYLOAD)
+    assert fonts._existing_font(123, name, DIGEST, 984) is True
     with pytest.raises(fonts.PrivateFontError, match="replacement is forbidden"):
-        fonts._existing_font(123, NAME, "0" * 64, 984)
-    assert (root / NAME).read_bytes() == PAYLOAD
+        fonts._existing_font(123, name, "0" * 64, 984)
+    assert (root / name).read_bytes() == PAYLOAD
 
 
 @pytest.mark.parametrize("extension", ["otf", "woff", "woff2"])
-def test_other_format_refuses_even_if_target_is_identical(file_ops, extension):
+@pytest.mark.parametrize("name", [NAME, "game-deals-price.ttf"])
+def test_other_format_refuses_even_if_target_is_identical(file_ops, extension, name):
     root, _, _ = file_ops
-    (root / NAME).write_bytes(PAYLOAD)
-    (root / f"sports-nba-score.{extension}").write_bytes(b"owner other format")
+    (root / name).write_bytes(PAYLOAD)
+    (root / f"{name.rsplit('.', 1)[0]}.{extension}").write_bytes(b"owner other format")
     with pytest.raises(fonts.PrivateFontError, match="another format"):
-        fonts._existing_font(123, NAME, DIGEST, 984)
+        fonts._existing_font(123, name, DIGEST, 984)
     assert len(list(root.iterdir())) == 2
 
 
@@ -312,6 +349,7 @@ def test_unverified_release_cannot_run_privileged_helper(updater, monkeypatch, c
 
 
 @pytest.mark.parametrize("args", [(), ("../../file", *ARGS[1:]), (*ARGS, "--install-root", "/tmp"),
+                                   ("game-deals-price.woff2", *ARGS[1:]),
                                    (ARGS[0], ARGS[1], "2097153", *ARGS[3:])])
 def test_updater_rejects_arbitrary_names_paths_sizes_or_extra_arguments(args, monkeypatch):
     module = load_updater()

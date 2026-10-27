@@ -42,6 +42,16 @@ def font(ctx):
     return path
 
 
+@pytest.fixture
+def banknote_metadata(monkeypatch):
+    """Exercise the policy without redistributing any private font bytes."""
+    from PIL import ImageFont
+
+    real = ImageFont.truetype(str(FONT), 32)
+    fake = SimpleNamespace(getname=lambda: ("Banknote", "Regular"), getbbox=real.getbbox, getmask=real.getmask)
+    monkeypatch.setattr(ImageFont, "truetype", lambda *args, **kwargs: fake)
+
+
 class FakeDevice:
     def __init__(self, *, active=RELEASE, status="installed", failure=None, mutate=None):
         self.active = active
@@ -83,6 +93,60 @@ def test_cli_private_fonts_is_dry_run_and_only_fixed_sports_leagues():
         assert accepted.league == league and accepted.execute is False
     with pytest.raises(SystemExit):
         parser.parse_args(["private-fonts", "--task-dir", "outputs/r", "--league", "nfl", "--font", "owner.ttf"])
+
+
+def test_cli_price_font_uses_a_separate_mutually_exclusive_purpose():
+    parser = epaper_release.build_parser()
+    base = ["private-fonts", "--task-dir", "outputs/r", "--font", "owner.ttf"]
+    args = parser.parse_args(base + ["--purpose", "game_deals_price"])
+    assert args.purpose == "game_deals_price" and args.league is None and args.execute is False
+    for options in ([], ["--purpose", "unknown"], ["--league", "game_deals_price"],
+                    ["--league", "nba", "--purpose", "game_deals_price"]):
+        with pytest.raises(SystemExit):
+            parser.parse_args(base + options)
+
+
+def test_price_font_plan_has_fixed_destination_and_separate_audit_key(ctx, font, banknote_metadata):
+    result = private.install(ctx, None, font, purpose="game_deals_price", connect=no_device)
+    assert result["purpose"] == "game_deals_price" and "league" not in result
+    assert result["destination"] == "/var/lib/inkypi/data/fonts/game-deals-price.ttf"
+    assert result["font"]["family"] == "Banknote"
+    assert result["font"]["required_glyphs"] == "0123456789$.,-"
+    assert ctx.load("private-fonts-game_deals_price-plan.json") == result
+
+
+def test_price_font_execute_preserves_original_bytes_and_receipt_guards(ctx, font, banknote_metadata):
+    device = FakeDevice()
+    result = private.install(ctx, None, font, purpose="game_deals_price", execute=True, connect=lambda: device)
+    assert device.calls[0][1] == font.read_bytes()
+    assert "game-deals-price.ttf" in shlex.split(device.calls[0][0])
+    assert result["uid"] == 0 and result["mode"] == "0640"
+    assert ctx.load("private-fonts-game_deals_price.json")["attempts"] == [result]
+    assert not ctx.has("private-fonts-mode.json")
+
+
+@pytest.mark.parametrize("mutation", [{"sha256": "f" * 64}, {"mode": "0666"}])
+def test_price_receipt_failure_keeps_purpose_audit_filename(ctx, font, banknote_metadata, mutation):
+    device = FakeDevice(mutate=mutation)
+    with pytest.raises(ReleaseError):
+        private.install(ctx, None, font, purpose="game_deals_price", execute=True, connect=lambda: device)
+    assert ctx.load("private-fonts-game_deals_price.json")["attempts"][0]["status"] == "failed_or_unconfirmed"
+    assert not ctx.has("private-fonts-mode.json") and not ctx.has("private-fonts-sha256.json")
+
+
+@pytest.mark.parametrize("league,purpose", [(None, None), ("nba", "game_deals_price"), (None, "unknown")])
+def test_invalid_role_refuses_before_device_contact(ctx, font, league, purpose):
+    with pytest.raises(ReleaseError):
+        private.install(ctx, league, font, purpose=purpose, execute=True, connect=no_device)
+
+
+def test_price_font_rejects_unregistered_family_and_non_ttf_source(ctx, font):
+    with pytest.raises(ReleaseError, match="family and style"):
+        private.install(ctx, None, font, purpose="game_deals_price", execute=True, connect=no_device)
+    other = font.with_suffix(".otf")
+    other.write_bytes(font.read_bytes())
+    with pytest.raises(ReleaseError, match="format is not allowed"):
+        private.install(ctx, None, other, purpose="game_deals_price", execute=True, connect=no_device)
 
 
 def test_dry_run_validates_original_bytes_without_transport_or_copy(ctx, font):
@@ -183,7 +247,7 @@ def test_private_font_basenames_are_excluded_by_both_archive_builders(tmp_path):
     policy = release_build.load_archive_policy(ROOT)
     source = tmp_path / "source"
     source.mkdir()
-    names = sorted(private.font_policy().FONT_NAMES)
+    names = sorted(private.font_policy().FONT_NAMES) + ["Banknote Regular.ttf"]
     for name in names:
         (source / name).write_bytes(b"private")
         assert not release_build.is_packaged(policy, PurePosixPath("misplaced/assets/" + name))

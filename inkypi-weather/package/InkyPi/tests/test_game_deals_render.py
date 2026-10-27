@@ -172,22 +172,29 @@ def test_manifest_cadence_and_display_redraw_do_not_request_provider_refresh():
     assert not manifest["capabilities"].get("allows_display_triggered_provider_refresh", False)
 
 
-def test_the_sale_price_hangs_on_a_yellow_tag_with_a_green_dollar_sign():
-    from plugins.game_deals import render as deals_render
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_sale_price_has_gold_currency_and_green_digits_on_a_dark_tag(mode, monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path))
+    page = render_page(DealSnapshot(offers()[:1], NOW, "live", "steam"), {}, theme={"mode": mode}, now=NOW)
+    x0, y0, x1, y1 = page.info["game_deals_layout"][0]["price_tag_box"]
+    # Exclude the gold artwork rim: currency and digits carry their own colors.
+    middle = [page.getpixel((x, y)) for x in range(x0 + 4, x1 - 3) for y in range(y0 + 5, y1 - 4)]
+    assert sum(r > g + 8 and g > b + 30 for r, g, b in middle) > 10
+    assert sum(g > r + 15 and g > b + 10 and g > 90 for r, g, b in middle) > 30
+    assert sum(max(rgb) < 90 for rgb in middle) > 200
+    assert (255, 212, 0) not in middle
 
-    snapshot = DealSnapshot(offers(), NOW, "live", "steam")
-    green = (20, 108, 58)
-    for mode in ("day", "night"):
-        page = render_page(snapshot, {}, theme={"mode": mode}, now=NOW)
-        card = page.info["game_deals_layout"][0]
-        sign_x, row = card["box"][0] + 160 + deals_render.PRICE_TAG_PAD[0], card["price_row"]
-        sign = [page.getpixel((x, y)) for x in range(sign_x, sign_x + 14) for y in range(row, row + 28)]
-        assert sign.count(green) >= 40, mode
-        # The digits after it are dark ink on the tag's yellow, by day and by night.
-        digits = [page.getpixel((x, y)) for x in range(sign_x + 18, sign_x + 60) for y in range(row, row + 28)]
-        assert green not in digits, mode
-        assert digits.count(deals_render.PRICE_TAG) >= 200, mode
-        assert digits.count(deals_render.PRICE_TAG_INK) >= 40, mode
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_long_price_keeps_all_digits_and_the_original_clear_of_discount(mode):
+    deal = {"title": "Full amount", "game_id": "123", "sale_price": "99999.99",
+            "normal_price": "100000.00", "discount_percent": 1}
+    image = render_page(DealSnapshot((deal,), NOW, "live", "steam"), {}, theme={"mode": mode}, now=NOW)
+    card = image.info["game_deals_layout"][0]
+    assert card["sale_price"] == "$99999.99"
+    assert card["prices_right"] <= card["badge_left"] - 4
+    assert card["price_tag_box"][2] < card["badge_left"]
+    assert card["price_font_size"] < 22
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
