@@ -703,7 +703,8 @@ def test_the_portfolio_total_sits_over_its_chart_in_todays_colour():
     assert up.getpixel((16, 20)) == stocktracker_module.PAPER
 
 
-@pytest.mark.parametrize("value", [22361.83, 266124.56, 9999999.99, -123456.78])
+@pytest.mark.parametrize("value", [22361.83, 266124.56, 9999999.99, -123456.78,
+                                   10**12, 10**15, 10**18, -(10**18)])
 def test_engraved_bodoni_total_fits_the_portfolio_chart(value):
     plugin = StockTracker({"id": "stocktracker"})
     draw = ImageDraw.Draw(Image.new("RGB", (340, 200)))
@@ -718,7 +719,7 @@ def test_engraved_bodoni_total_fits_the_portfolio_chart(value):
     assert bounds[0] >= figure["coin"][0] + stocktracker_module.SUMMARY_COIN
     assert bounds[2] <= plot[2] and bounds[1] >= plot[1] and bounds[3] < plot[3]
     first, second = figure["glyphs"][:2]
-    assert second[1] - figure["font"].getlength(first[0]) == pytest.approx(3 * figure["font"].size / 38)
+    assert second[1] - first[1] - figure["font"].getlength(first[0]) == pytest.approx(3 * figure["font"].size / 38)
     assert figure["origin"][0] - figure["coin"][0] - stocktracker_module.SUMMARY_COIN == pytest.approx(9, abs=0.5)
 
 
@@ -750,6 +751,20 @@ def test_banknote_engraving_stays_inside_digits_and_keeps_punctuation_solid():
             left = figure["origin"][0] + offset
             right = left + figure["font"].getlength(character)
             assert not any(left <= x < right for x, _y in cuts)
+
+
+def test_total_font_fallback_also_fits_every_asset_digit(monkeypatch):
+    monkeypatch.setattr(stocktracker_module, "TOTAL_FIGURE_FONT", "missing-portfolio-font.ttf")
+    plugin = StockTracker({"id": "stocktracker"})
+    draw = ImageDraw.Draw(Image.new("RGB", (340, 200)))
+    plot = (23, 53, 310, 112)
+    figure = plugin._total_figure_layout(draw, plot, -(10**18))
+    assert figure["text"] == "-1,000,000,000,000,000,000.00"
+    for character, offset in figure["glyphs"]:
+        box = draw.textbbox((figure["origin"][0] + offset, figure["origin"][1]), character,
+                           font=figure["font"], stroke_width=2)
+        assert plot[0] <= box[0] < box[2] <= plot[2]
+        assert plot[1] <= box[1] < box[3] < plot[3]
 
 
 def test_summary_stats_show_account_balances_then_best_mover():

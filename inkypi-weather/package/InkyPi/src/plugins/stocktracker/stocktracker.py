@@ -1846,22 +1846,26 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		max_width = plot[2] - plot[0] - SUMMARY_COIN - SUMMARY_COIN_GAP - 20
 		def tracked_glyphs(font):
 			tracking = SUMMARY_FIGURE_TRACKING * font.size / SUMMARY_FIGURE_SIZE
-			x, glyphs = 0.0, []
+			x, glyphs, bounds = 0.0, [], []
 			for character in text:
 				glyphs.append((character, x))
+				bounds.append(draw.textbbox((x, 0), character, font=font, stroke_width=2))
 				x += font.getlength(character) + tracking
-			return glyphs, x - tracking
+			# Fit the full visible ink and its halo, including serif overhangs. Offsets
+			# start at that left edge so the coin gap and centering use the same measure.
+			left, right = min(box[0] for box in bounds), max(box[2] for box in bounds)
+			return [(character, offset - left) for character, offset in glyphs], right - left
 		try:
 			font = load_font(TOTAL_FIGURE_FONT, SUMMARY_FIGURE_SIZE)
 			# The unchanged variable font's axes are weight, optical size. Low optical size
 			# retains the fine serifs on the native e-paper raster; weight gives engraving room.
 			font.set_variation_by_axes([700, 11])
-			while font.size > 16 and tracked_glyphs(font)[1] > max_width:
-				font = font.font_variant(size=font.size - 1)
 		except (OSError, ValueError):
-			font = self._fit_font(draw, text, max_width, SUMMARY_FIGURE_SIZE, True, 16)
+			font = self._font(SUMMARY_FIGURE_SIZE, True)
 		glyphs, text_w = tracked_glyphs(font)
-		while font.size > 16 and text_w > max_width:
+		# Do not stop at the former 16 px floor: long asset balances must retain all
+		# digits, separators and cents rather than clipping or switching to K/M notation.
+		while font.size > 1 and text_w > max_width:
 			font = font.font_variant(size=font.size - 1)
 			glyphs, text_w = tracked_glyphs(font)
 		x = plot[0] + (plot[2] - plot[0] - SUMMARY_COIN - SUMMARY_COIN_GAP - text_w) / 2
