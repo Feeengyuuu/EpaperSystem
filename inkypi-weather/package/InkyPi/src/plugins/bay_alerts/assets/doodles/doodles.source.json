@@ -1,0 +1,38 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the page doodle tiles",
+  "generated": "2026-10-27",
+  "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map (ink on white), tiled and tinted at draw time by utils.doodle_backdrop",
+  "assets": {
+    "alerts.png": {
+      "motifs": "isobars, cold and warm fronts, wind barbs, rain and fog symbols, flood waves, storm swirls",
+      "job_id": "f8c88859-d744-4e94-872c-833377f45940",
+      "source_sha256": "3300cd618b6a623764b6539343fe02710c573c73d36a260854bd065e7e475ab5",
+      "sha256": "e155d3f3062bb4dfe29292c5d3a1710044972e2bd8762791c4b10d8235796e2f",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "seismic.png": {
+      "motifs": "seismograph traces, epicentre rings, a seismometer drum, fault zigzags, station triangles",
+      "job_id": "d79447b4-5219-44c2-89b5-6f46ff247d6b",
+      "source_sha256": "896bff8b5e6ad7ff933d19a3ee98187abc2fdcbbd90bad3ef5214fb8462a6f94",
+      "sha256": "ea9bdcbf1d4ad2c498653b97b35170d980cdf4e545a50734a12143d23c2868ed",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "wildfire.png": {
+      "motifs": "contour patches, pines, a fire lookout, flames, smoke plumes, ridge lines",
+      "job_id": "2b850de1-fdb8-446d-ab73-9f7eee9c8222",
+      "source_sha256": "d053d65a91cc0869f697d27cc25d90455b7e0fcbcc4fc0d9b777e42667bd17c0",
+      "sha256": "35db16e309f6594f3f26e50791f9f1026c1e90e04539f22c5755649f69392e65",
+      "size": [
+        480,
+        480
+      ]
+    }
+  }
+}

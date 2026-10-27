@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import paste_local_wordmark
 from utils.page_canvas import PageCanvas
@@ -27,6 +28,7 @@ from .sources import PACIFIC, distance_km, local_now, parse_time
 DAY = {
     "paper": "#ffffff", "panel": "#efede4", "ink": "#141c22", "muted": "#232d35", "rule": "#a0a0a0",
     "water": "#eef3fb", "water_line": "#2554c7", "relief": "#141c22", "relief_density": 0.42,
+    "contour": "#ddd0b4", "contour_index": "#a8875a",
     "fault": "#c81e32", "alert": "#c81e32", "quake_day": "#c81e32", "quake_recent": "#e8a90c",
     # Refined crimson, cobalt, emerald and gold rather than the panel's pure inks (owner's choice).
     "home": "#2554c7", "ok": "#059669", "minor": "#2554c7", "moderate": "#e8a90c", "badge_ink": "#ffffff",
@@ -34,10 +36,15 @@ DAY = {
 NIGHT = {
     "paper": "#000000", "panel": "#182730", "ink": "#eef2ea", "muted": "#c3cdd2", "rule": "#5a5a5a",
     "water": "#14304a", "water_line": "#7aa2ff", "relief": "#eef2ea", "relief_density": 0.26,
+    "contour": "#3a3428", "contour_index": "#6e5f44",
     "fault": "#ff6b78", "alert": "#ff6b78", "quake_day": "#ff6b78", "quake_recent": "#fbbf24",
     "home": "#7aa2ff", "ok": "#34d399", "minor": "#7aa2ff", "moderate": "#fbbf24", "badge_ink": "#000000",
 }
 TITLE_WORDMARK = Path(__file__).resolve().parent / "assets" / "title_wordmark.png"
+# Quiet technical doodles in each card's colour under its rows, by the card's icon: weather-map
+# fronts and isobars, seismograph traces, field-map contours with pines and flames.
+DOODLES = {icon: Path(__file__).resolve().parent / "assets" / "doodles" / f"{name}.png"
+           for icon, name in (("alert", "alerts"), ("quake", "seismic"), ("fire", "wildfire"))}
 SEVERITY = {"Extreme": ("极端", "alert"), "Severe": ("严重", "alert"), "Moderate": ("中等", "moderate"),
             "Minor": ("轻微", "minor")}
 WEEKDAYS = "一二三四五六日"
@@ -219,10 +226,13 @@ def _card(canvas, box, bar, icon, title, detail, source, logos=()):
     """A card in its own colour: a frame, a solid band along the top and the header rule in it,
     then the section icon, title and a right-aligned detail, the sources' ``logos`` before it
     (their names in the detail when a logo is missing)."""
-    left, top, right, _bottom = box
+    left, top, right, bottom = box
     colour = canvas.color(bar)
     canvas.draw.rounded_rectangle(box, radius=7, outline=colour, width=2)
     canvas.draw.rounded_rectangle((left, top, right, top + 5), radius=7, fill=colour, corners=(True, True, False, False))
+    if icon in DOODLES:
+        doodles = (left + 2, top + 30, right - 2, bottom - 2)
+        paint_doodles(canvas.image, doodles, DOODLES[icon], colour, radius=5, offset=doodles[:2])
     draw_icon(canvas.draw, icon, (left + 10, top + 7), 18, colour, canvas.color("paper"))
     width = canvas.text((left + 34, top + 16), title, 16, anchor="lm")
     if source.get("state") == "stale_cache":

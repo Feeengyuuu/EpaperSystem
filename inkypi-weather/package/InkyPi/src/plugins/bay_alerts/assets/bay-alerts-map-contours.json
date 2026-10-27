@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "image_size": [
+    440,
+    408
+  ],
+  "source": "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage?bbox=-13663692.0499065%2C4478207.371500708%2C-13531659.55089023%2C4600637.506952158&bboxSR=3857&imageSR=3857&size=1760%2C1632&format=tiff&pixelType=F32&noDataInterpretation=esriNoDataMatchAny&interpolation=RSP_BilinearInterpolation&compression=None&f=image",
+  "fetched_at": "2026-10-27T22:52:19.289963+00:00",
+  "license": "Public domain (USGS 3D Elevation Program)",
+  "interval_m": 100,
+  "index_every": 5,
+  "values": {
+    "minor": 150,
+    "index": 255
+  },
+  "processing": "3DEP bare earth at 4x the map's grid, Gaussian 2.0 px, band edges at 100 m (index every 500 m), max-pooled to the map, cleared over the map's water",
+  "source_sha256": "bc800ab8bf030a3bcba37cb23758e8229c8e937581e08ba596c1f4483a201a99",
+  "sha256": "91f3b9e86e5e2952a59b4f69c652342ac7b4465803724a4b96397e8ada990485"
+}

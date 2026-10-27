@@ -26,6 +26,8 @@ BAY_MAP = "bay-alerts-map"
 CA_MAP = "california-map"
 ZONES = "bay-alerts-zones"
 FAULTS = "bay-alerts-faults"
+# Elevation contours (tools/build_bay_alerts_contours.py): every 100 m faint, every 500 m firmer.
+CONTOURS = "bay-alerts-map-contours"
 _OVERLAY_BYTES = 256 * 1024
 # NWS county zone of each Bay county ("Alameda" -> "CAC001"), for alerts that name no zone.
 COUNTY_ZONES = {name: "CAC" + code[3:] for code, name in BAY_COUNTIES.items()}
@@ -139,6 +141,19 @@ def _stipple(shade, density):
             bayer.paste(tile, (left, top))
     scaled = shade.point(lambda value: int(value * density))
     return ImageChops.subtract(scaled, bayer).point(lambda value: 255 if value > 0 else 0)
+
+
+def _draw_contours(image, palette, size):
+    """The land's contour lines over the relief; skipped when the layer is missing."""
+    try:
+        with safe_open_image(ASSETS / f"{CONTOURS}.png", limits=_LIMITS) as source:
+            lines = source.convert("L")
+    except (OSError, ValueError):
+        return
+    if lines.size != tuple(size):
+        return
+    image.paste(palette["contour"], mask=lines.point(lambda value: 255 if 0 < value < 255 else 0))
+    image.paste(palette["contour_index"], mask=lines.point(lambda value: 255 if value == 255 else 0))
 
 
 def _overlaps(first, second):
@@ -659,6 +674,7 @@ def render_bay_map(size, palette, fonts, *, quakes, alerts, home, home_label, no
         waterlines = source.convert("L")
     image = Image.new("RGB", size, palette["paper"])
     image.paste(palette["relief"], mask=_stipple(shade, palette["relief_density"]))
+    _draw_contours(image, palette, size)
     image.paste(palette["water"], mask=water)
     areas = _draw_alert_areas(image, palette, alerts, water, manifest, size)
     image.paste(palette["water_line"], mask=waterlines)
