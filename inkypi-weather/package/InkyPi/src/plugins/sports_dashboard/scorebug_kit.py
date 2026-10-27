@@ -202,6 +202,9 @@ class ScorebugKitMixin:
                 continue
             left = lines_x1 + index * KIT_SCOREBUG_PERIOD_WIDTH
             period_font = self._font(10, current == index + 1)
+            if spec.sport in {"NBA", "WNBA"}:
+                _value, period_font = self._fit_score(draw, str(value), KIT_SCOREBUG_PERIOD_WIDTH - 2, 10,
+                                                      bold=current == index + 1, sport=spec.sport, max_height=y2 - y1 - 2)
             self._draw_centered_in_box(draw, (left, y1, left + KIT_SCOREBUG_PERIOD_WIDTH, y2), str(value), period_font, COLORS["text"])
         score_right = x2 - 9 if winner else x2
         score_box = (score_right - KIT_SCOREBUG_SCORE_WIDTH + 6, y1, score_right, y2)

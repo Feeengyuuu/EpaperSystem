@@ -255,7 +255,9 @@ class BasketballRenderMixin:
             b = scores_b[index] if index < len(scores_b) else None
             value = f"{a}-{b}" if a is not None and b is not None else "—"
             self._draw_text_in_box(draw, (left + 6, y1, left + 26, y2), label, self._font(8, active), COLORS["text"])
-            value, value_font = self._fit_text(draw, value, right - left - 30, 11, bold=active or state == "final", min_size=8)
+            value, value_font = self._fit_score(draw, value, right - left - 31, 11,
+                                               bold=active or state == "final", min_size=8,
+                                               sport=spec.sport, max_height=y2 - y1 - 2)
             self._draw_text_in_box(draw, (left + 26, y1, right - 5, y2), value, value_font, COLORS["text"], align="right")
 
     def _draw_basketball_leader_duel(self, draw, box, event, spec):
