@@ -264,3 +264,55 @@ def test_footer_names_the_sources_by_their_logos():
     assert runs[2] == " / " and isinstance(runs[3], Image.Image) and runs[3].height == 11
     assert runs[4:] == [" / ", "Box Office Mojo"]
     assert [type(run) for run in two_markets._source_runs(page, ["TMDb", "猫眼"])] == [Image.Image, str, Image.Image]
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_champion_cards_show_extra_source_facts_without_touching_lower_rankings(mode, monkeypatch):
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    china, america = china_movies(), america_movies()
+    china[0].extra["today_box_wan"] = "24.60"
+    america[0].extra = {"theaters_verified": True, "theater_average": "$8,609"}
+    drawn = []
+    original = two_markets.ImageDraw.ImageDraw.text
+
+    def capture(draw, xy, text, *args, **kwargs):
+        drawn.append((xy, text, draw.textbbox(xy, text, font=kwargs.get("font"))))
+        return original(draw, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(two_markets.ImageDraw.ImageDraw, "text", capture)
+    image = two_markets.render_two_markets(plugin, (800, 480), snapshot(china, "中国电影票房"),
+                                         snapshot(america, "The Numbers"), {"_inkypi_theme": {"mode": mode}})
+    assert image.size == (800, 480)
+    texts = [text for _xy, text, _box in drawn]
+    assert "24.60万" in texts and "$8,609" in texts and "本期票房" in texts
+    assert "24.25%" in texts and "$30,775,377" in texts
+    # Supplemental facts remain in their own headliner; the next four films keep their rows.
+    for xy, text, box in drawn:
+        if text in ("24.60万", "$8,609", "+7.30pp"):
+            assert box[1] >= 130 and box[3] < 234
+            assert (128 <= box[0] < box[2] <= 384) if xy[0] < 400 else (526 <= box[0] < box[2] <= 782)
+    assert sum(text == "#2" and xy[1] == 252 for xy, text, _box in drawn) == 2
+
+
+def test_missing_or_unverified_source_values_do_not_become_new_hero_statistics():
+    movie = BoxOfficeMovie(rank=1, title="Cached film", weekend_gross="$24,002,731", theaters="3458")
+    assert two_markets.theater_average(movie) is None
+    assert all(label != "单馆" for _icon, label, _value in two_markets.hero_details("america", movie))
+    for raw in (None, "", "—", "nan", "not available"):
+        movie.extra = {"today_box_wan": raw}
+        assert two_markets.china_today_gross(movie) is None
+    movie.extra = {"today_box_wan": "0"}
+    assert two_markets.china_today_gross(movie) == "0.00万"
+    movie.extra = {"today_box_wan": "12000"}
+    assert two_markets.china_today_gross(movie) == "1.20亿"
+
+
+@pytest.mark.parametrize("count, expected", [("7", "$500"), ("-", None), ("0", None)])
+def test_single_cinema_average_uses_the_theaters_column_not_rank_or_release_days(count, expected):
+    plugin = BoxOfficeTopMovies({"id": "box_office_top_movies"})
+    html = f"""<table><tr><th>Rank</th><th>Movie</th><th>Gross</th><th>Theaters</th><th>Total Gross</th><th>Days</th></tr>
+      <tr><td>12</td><td><a href='/movie/Small-Release'>Small Release</a></td><td>$3,500</td>
+      <td>{count}</td><td>$10,000</td><td>17</td></tr></table>"""
+    movie = plugin._parse_the_numbers_chart(html)[0]
+    assert movie.theaters == (count if count == "7" else "")
+    assert two_markets.theater_average(movie) == expected
