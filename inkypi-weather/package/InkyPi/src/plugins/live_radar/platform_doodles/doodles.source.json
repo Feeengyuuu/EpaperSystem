@@ -1,0 +1,58 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the page doodle tiles",
+  "generated": "2026-10-27",
+  "processing": "greyscale, strokes thickened (3 px min filter at 1024), 360 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map tinted with the platform's brand colour by utils.doodle_backdrop; no platform marks drawn",
+  "assets": {
+    "bilibili.png": {
+      "motifs": "retro TV with antennae, bullet-comment lines, coins, thumbs-up, stars, gift boxes",
+      "job_id": "bed918f1-fa44-4005-80dc-6d3986229a6f",
+      "source_sha256": "82296de7c0512693677e30047fd2ee3a40326efb2b8e6bbfc1467200d5031e13",
+      "sha256": "be5224dedb260cfee8374ebf1be1040332b44d9f405a4437143f081f6e4ef789",
+      "size": [
+        360,
+        360
+      ]
+    },
+    "douyu.png": {
+      "motifs": "cartoon fish, gift rockets, fish balls, bubbles, microphones, crowns, controllers",
+      "job_id": "425640c3-a1c1-4b3b-bda1-d0a464f9e0b1",
+      "source_sha256": "c231165473daddc1d7fc2c9c76257c7205b4ed78ea7fb04a875deafdee1312eb",
+      "sha256": "00ba052a585df1b2986ae4491c7a63ae79c3fe1f938740ab8bd3ff4132c91f8e",
+      "size": [
+        360,
+        360
+      ]
+    },
+    "douyin.png": {
+      "motifs": "music notes, vinyl, phone frames, hearts, comment bubbles, share arrows, ring lights",
+      "job_id": "b942a6a8-8ed3-4cb1-928c-2ad0d56cc8e1",
+      "source_sha256": "205d24633c090a218207f4f04065459db2a8cc382310f8c84a38cfbeafb4ab89",
+      "sha256": "c4e005dc9a2d9cda66552d2114013231949bc6be857e8a0c7807d13abc15a565",
+      "size": [
+        360,
+        360
+      ]
+    },
+    "twitch.png": {
+      "motifs": "chat bubbles, controllers, joysticks, pixel hearts, gems, emote faces, headsets",
+      "job_id": "11bef756-5b92-4668-aa53-cc9b7640e4ca",
+      "source_sha256": "6d2042723bd1c37d11e86b001f75df571c944b6b121776449590a5db9b8682a6",
+      "sha256": "8959f2a1f8718e54891ad46454ef857c9f85f5c45607d43bf5f7472419e55881",
+      "size": [
+        360,
+        360
+      ]
+    },
+    "kick.png": {
+      "motifs": "lightning bolts, controllers, dice, flames, speech bubbles, microphones, rockets, trophies",
+      "job_id": "ef8d0a06-cd56-4792-bc02-94b8ee717f98",
+      "source_sha256": "2de49dd9ff33255d89cd5a6804987c4e36093e3de110cb2a28f7ba9617332d43",
+      "sha256": "3bade2bb989ab4906c0a33889d7d3a7c52ec7829541d5ecc2875716fc1d142af",
+      "size": [
+        360,
+        360
+      ]
+    }
+  }
+}

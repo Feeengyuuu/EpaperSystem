@@ -24,6 +24,7 @@ from plugins.base_plugin.render_provenance import (
 )
 from plugins.context_cache import write_context
 from plugins.live_radar import comic_art, placeholder_art, stage_lights
+from utils.doodle_backdrop import paint_doodles
 from runtime.refresh_contracts import TaskCancelled
 from utils.app_utils import get_base_ui_font
 from utils.http_client import get_http_session
@@ -195,6 +196,13 @@ PLATFORM_ICON_FILES = {
     platform: os.path.join(PLUGIN_DIR, "platform_icons", f"{platform}.png")
     for platform in ("douyu", "bilibili", "douyin", "twitch", "kick")
 }
+# Quiet doodles of each platform's world in its brand colour, under a live card's text panel
+# and an offline row, so the white room there says where the stream is.
+PLATFORM_DOODLE_FILES = {
+    platform: os.path.join(PLUGIN_DIR, "platform_doodles", f"{platform}.png")
+    for platform in ("douyu", "bilibili", "douyin", "twitch", "kick")
+}
+PLATFORM_DOODLE_STRENGTH = 0.28
 STATUS_ICON_FILES = {
     kind: os.path.join(PLUGIN_DIR, "status_icons", f"{kind}.png")
     for kind in ("live", "fav")
@@ -1794,6 +1802,9 @@ class LiveRadar(BasePlugin):
                 large,
                 snapshot_cache_seconds,
             )
+        if large:
+            panel_top = y + snapshot_h + 1 if snapshot_h else y + 4
+            self._draw_platform_doodles(image, (x + accent_w + 3, panel_top, x + w - 4, y + h - 4), card, radius=6)
 
         pill_font = self._font(10 if large else 9, "bold")
         body_font = self._font(20 if large else 14, "bold")
@@ -1948,6 +1959,14 @@ class LiveRadar(BasePlugin):
             title_y += line_h
 
         draw.text((text_x, meta_y), meta, fill=ink, font=meta_font)
+
+    @staticmethod
+    def _draw_platform_doodles(image, box, card, radius=0):
+        """Lay the card's platform doodles in its brand colour under what is drawn next."""
+        platform = card.get("platform")
+        if platform in PLATFORM_DOODLE_FILES and platform in PLATFORM_BRAND_COLORS:
+            paint_doodles(image, box, PLATFORM_DOODLE_FILES[platform], PLATFORM_BRAND_COLORS[platform],
+                          strength=PLATFORM_DOODLE_STRENGTH, radius=radius, offset=(box[0], box[1]))
 
     def _prepare_snapshot_image(self, snapshot, size, status):
         fitted = ImageOps.fit(
@@ -2132,6 +2151,7 @@ class LiveRadar(BasePlugin):
     def _draw_offline_list_row(self, image, draw, box, card, theme, avatar_cache_seconds=AVATAR_CACHE_SECONDS):
         x, y, w, h = [int(value) for value in box]
         ink, panel = theme["ink"], theme["panel"]
+        self._draw_platform_doodles(image, (x + 4, y + 1, x + w - 2, y + h - 1), card)
         draw.rectangle((x + 1, y, x + 3, y + h - 1), fill=self._brand_line(card, theme["line"]))
         platform = PLATFORMS.get(card["platform"], {"short": card["platform"][:2].upper()})
         avatar = max(14, min(24, h - 8))

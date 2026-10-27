@@ -12,10 +12,11 @@ from utils.doodle_backdrop import DOODLE_STRENGTH, exact_colour_mask, paint_dood
 PLUGINS = Path(__file__).resolve().parents[1] / "src" / "plugins"
 DOODLE_DIRS = [PLUGINS / name / "assets" / "doodles"
                for name in ("daily_wiki_page", "daily_pop", "telegram_digest", "ticketmaster_events")]
+DOODLE_DIRS.append(PLUGINS / "live_radar" / "platform_doodles")
 PATTERN = DOODLE_DIRS[0] / "photo.png"
 
 
-@pytest.mark.parametrize("folder", DOODLE_DIRS, ids=lambda folder: folder.parents[1].name)
+@pytest.mark.parametrize("folder", DOODLE_DIRS, ids=lambda folder: folder.relative_to(PLUGINS).parts[0])
 def test_every_doodle_tile_is_recorded_with_its_hash(folder):
     record = json.loads((folder / "doodles.source.json").read_text(encoding="utf-8"))["assets"]
 
@@ -69,3 +70,10 @@ def test_exact_colour_mask_and_missing_or_tiny_boxes():
     assert not paint_doodles(image, (0, 0, 39, 39), PATTERN.with_name("missing.png"), (0, 0, 0))
     assert not paint_doodles(image, (0, 0, 5, 39), PATTERN, (0, 0, 0))
     assert set(image.get_flattened_data()) == {(255, 255, 255)}
+
+
+def test_every_live_radar_platform_with_a_brand_colour_has_its_doodles():
+    from plugins.live_radar.live_radar import PLATFORM_BRAND_COLORS, PLATFORM_DOODLE_FILES
+
+    assert set(PLATFORM_DOODLE_FILES) == set(PLATFORM_BRAND_COLORS)
+    assert all(Path(path).is_file() for path in PLATFORM_DOODLE_FILES.values())
