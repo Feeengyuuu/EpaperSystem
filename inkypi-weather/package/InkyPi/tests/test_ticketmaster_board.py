@@ -351,3 +351,33 @@ def test_additional_weekly_kinds_with_a_shared_fallback_colour_are_grouped_neutr
     mix, sampled, total = sampled_mix(days, shown)
     assert mix == {"music|music": 2, OTHER_KINDS: 8} and sampled == total == 10
     assert len({category_color(key, colors) for key in (OTHER_KINDS, "|", UNCOUNTED)}) == 3
+
+
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_visible_shared_colour_has_one_named_legend_group_and_keeps_all_statistics_keys(mode):
+    from tests.test_ticketmaster_events import _canonical_theme
+
+    plugin = TicketmasterEvents({"id": "ticketmaster_events"})
+    colors = plugin._palette({"_inkypi_theme": _canonical_theme(mode)})
+    image = Image.new("RGB", (800, 480), colors["paper"])
+    draw = ImageDraw.Draw(image)
+    shown_text = []
+    original_text = draw.text
+
+    def record(position, text, **kwargs):
+        shown_text.append((text, draw.textbbox(position, text, **{key: kwargs[key] for key in ("font", "anchor") if key in kwargs})))
+        original_text(position, text, **kwargs)
+
+    draw.text = record
+    shows = [event(genre="Pop"), event(genre="R&B"), event(genre="Dance/Electronic")]
+    days = [{"count": 43, "sample_count": 30,
+             "kind_counts": {"music|pop": 10, "music|r&b": 12, "music|dance/electronic": 8}}]
+    shown = plugin._draw_page_header(image, draw, {}, NOW, False, days, colors, shows)
+    assert set(shown) == {event_category(show) for show in shows}
+    labels = [text for text, _box in shown_text]
+    assert labels.count("流行 / R&B") == 1 and "流行" not in labels and "R&B" not in labels
+    group_box = next(box for text, box in shown_text if text == "流行 / R&B")
+    assert 276 <= group_box[0] < group_box[2] < 520 and 0 <= group_box[1] < group_box[3] < 54
+    mix, sampled, total = sampled_mix(days, shown)
+    assert mix["music|pop"] == 10 and mix["music|r&b"] == 12 and OTHER_KINDS not in mix
+    assert (sampled, total, mix[UNCOUNTED]) == (30, 43, 13)

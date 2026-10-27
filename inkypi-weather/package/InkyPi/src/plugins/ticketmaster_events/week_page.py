@@ -29,9 +29,8 @@ GENRE_ICON_DIR = Path(__file__).with_name("genre_icons")
 # Ticketmaster's wordmark (tools/build_source_logos.py), this tall before the header's weekly count.
 TICKETMASTER_LOGO_PATH = Path(__file__).with_name("assets") / "ticketmaster.png"
 TICKETMASTER_LOGO_HEIGHT = 18
-# The header's legend of kinds: LEGEND_SIZE type, centred on LEGEND_MIDDLE (the wordmark's middle)
-# between LEGEND_LEFT (past the wordmark) and LEGEND_GAP short of the source and count, its
-# entries LEGEND_MIN_SPACE to LEGEND_MAX_SPACE apart.
+# The header's kind legend uses at most two balanced rows between the wordmark and source.
+# Visible kinds sharing a colour are named together; every member keeps its statistics key.
 LEGEND_SIZE, LEGEND_LEFT, LEGEND_GAP = 13, 276, 8
 OTHER_KINDS, UNCOUNTED = "__other_kinds__", "__uncounted__"
 GENRE_KINDS = {
@@ -354,37 +353,54 @@ class WeekPageMixin:
             for key, count in (day.get("kind_counts") or {}).items():
                 weekly[key] = weekly.get(key, 0) + count
         keys = list(visible)
-        used_colours = {category_color(key, colors): category_label(key) for key in keys}
+        groups = {}
+        for key in visible:
+            labels = groups.setdefault(category_color(key, colors), {})
+            labels.setdefault(category_label(key), []).append(key)
         for key in sorted(weekly, key=weekly.get, reverse=True):
             if key in keys:
                 continue
             colour, label = category_color(key, colors), category_label(key)
             # A fallback main-category colour must not acquire a second meaning in the legend.
-            if colour in used_colours and used_colours[colour] != label:
+            if colour in groups and label not in groups[colour]:
                 continue
             keys.append(key)
-            used_colours[colour] = label
+            groups.setdefault(colour, {}).setdefault(label, []).append(key)
         left, room = LEGEND_LEFT, block_left - LEGEND_GAP - LEGEND_LEFT
         legend_font = self._font(LEGEND_SIZE, bold=True)
         for size in (LEGEND_SIZE, 12, 11):
             legend_font = self._font(size, bold=True)
+            items = []
+            for colour, labels in groups.items():
+                words, members = [], []
+                for label, label_keys in labels.items():
+                    joined = " / ".join([*words, label])
+                    if words and 12 + draw.textlength(joined, font=legend_font) > room:
+                        text = " / ".join(words)
+                        items.append((members, text, colour, 12 + draw.textlength(text, font=legend_font)))
+                        words, members = [], []
+                    words.append(label)
+                    members.extend(label_keys)
+                text = " / ".join(words)
+                items.append((members, text, colour, 12 + draw.textlength(text, font=legend_font)))
             rows, used = [[]], 0
-            for key in keys:
-                width = 12 + draw.textlength(category_label(key), font=legend_font)
+            for item in items:
+                width = item[3]
                 if used + width > room and rows[-1]:
                     if len(rows) == 2:
                         break
                     rows.append([])
                     used = 0
-                rows[-1].append((key, width))
+                rows[-1].append(item)
                 used += width + 7
-            shown = [key for row in rows for key, _width in row]
+            included = {key for row in rows for members, _text, _colour, _width in row for key in members}
+            shown = [key for key in keys if key in included]
             if all(key in shown for key in visible):
                 break
         if len(rows) == 2:
             items = [item for row in rows for item in row]
             def row_width(items):
-                return sum(width for _key, width in items) + max(0, len(items) - 1) * 7
+                return sum(item[3] for item in items) + max(0, len(items) - 1) * 7
             splits = [index for index in range(1, len(items))
                       if max(row_width(items[:index]), row_width(items[index:])) <= room]
             if splits:
@@ -392,9 +408,9 @@ class WeekPageMixin:
                 rows = [items[:split], items[split:]]
         for index, row in enumerate(rows):
             x, middle = left, 16 + index * 23 if len(rows) > 1 else 27
-            for key, width in row:
-                draw.ellipse((x, middle - 4, x + 8, middle + 4), fill=category_color(key, colors))
-                draw.text((x + 12, middle), category_label(key), fill=colors.get("header_muted", colors["muted"]),
+            for _members, text, colour, width in row:
+                draw.ellipse((x, middle - 4, x + 8, middle + 4), fill=colour)
+                draw.text((x + 12, middle), text, fill=colors.get("header_muted", colors["muted"]),
                           font=legend_font, anchor="lm")
                 x += width + 7
         return shown
