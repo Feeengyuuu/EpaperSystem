@@ -409,6 +409,110 @@ def test_friend_game_icons_are_fetched_before_any_friend_avatar(plugin, data):
     assert max(friend_icons) < avatars[1]
 
 
+@pytest.mark.parametrize("count,avatar_size", [(0, None), (1, 38), (2, 22), (3, 18), (4, 18), (6, 12), (9, 12), (12, 12)])
+def test_overflow_mosaic_uses_only_remaining_avatar_records_inside_one_avatar_slot(plugin, monkeypatch, count, avatar_size):
+    calls = []
+
+    def avatar(url, size, **kwargs):
+        calls.append((url, size, kwargs))
+        return Image.new("RGB", (size, size), (170, 100, 60))
+
+    monkeypatch.setattr(plugin, "_avatar_image", avatar)
+    console = _Console(plugin, {})
+    before = console.image.copy()
+    remaining = [{"personaname": f"Hidden {index}", "avatarfull": f"cached-avatar-{index}"} for index in range(count)]
+    shown = console._friend_mosaic(remaining, 720, 140)
+
+    assert shown == min(count, 9)
+    assert [url for url, _size, _kwargs in calls] == [row["avatarfull"] for row in remaining[:9]]
+    assert all(size == avatar_size for _url, size, _kwargs in calls)
+    assert all(kwargs == {"decorative_outline": False} for _url, _size, kwargs in calls)
+    bounds = ImageChops.difference(before, console.image).getbbox()
+    if count:
+        assert bounds and 720 <= bounds[0] < bounds[2] <= 758 and 140 <= bounds[1] < bounds[3] <= 178
+    else:
+        assert bounds is None
+
+
+def test_two_large_mini_avatars_keep_both_circular_portraits_and_presence_rings(plugin, monkeypatch):
+    def avatar(url, size, **_kwargs):
+        result = Image.new("RGBA", (size, size))
+        ImageDraw.Draw(result).ellipse((0, 0, size - 1, size - 1), fill=url)
+        return result
+
+    monkeypatch.setattr(plugin, "_avatar_image", avatar)
+    console = _Console(plugin, {})
+    first = {"avatarfull": (80, 40, 20), "personastate": 1}
+    second = {"avatarfull": (20, 40, 80), "personastate": 2}
+    console._friend_mosaic([first, second], 720, 140)
+    assert console.image.getpixel((730, 150)) == first["avatarfull"]
+    assert console.image.getpixel((746, 166)) == second["avatarfull"]
+    assert console.image.getpixel((730, 140)) == console_renderer.STEAM_ONLINE
+    assert console.image.getpixel((746, 177)) == console_renderer.AWAY
+    # Neither diagonal circle covers the other's facing edge.
+    assert console.image.getpixel((738, 158)) == console_renderer.STEAM_ONLINE
+    assert console.image.getpixel((739, 159)) == console_renderer.AWAY
+
+
+@pytest.mark.parametrize("presence,colour", [
+    ({"personastate": 1}, console_renderer.STEAM_ONLINE),
+    ({"personastate": 5}, console_renderer.STEAM_ONLINE),
+    ({"personastate": "6"}, console_renderer.STEAM_ONLINE),
+    ({"personastate": 2}, console_renderer.AWAY),
+    ({"personastate": 3}, console_renderer.AWAY),
+    ({"personastate": 4}, console_renderer.AWAY),
+    ({"personastate": 3, "gameid": "730"}, GREEN),
+    ({"personastate": 1, "gameextrainfo": "Game"}, GREEN),
+])
+@pytest.mark.parametrize("count,ring_x,centre_y", [(3, 728, 148), (9, 725, 145)])
+def test_mini_rings_match_large_avatar_presence_without_covering_neighbours(
+        plugin, presence, colour, count, ring_x, centre_y):
+    friend = {"avatarfull": "cached-avatar", **presence}
+    console = _Console(plugin, {})
+    console._friend_ring(friend, 300, 100, size=18)
+    assert console.image.getpixel((308, 98)) == colour
+    before = console.image.copy()
+    console._friend_mosaic([friend] * count, 720, 140)
+
+    assert console.image.getpixel((ring_x, 140)) == colour
+    assert console.image.getpixel((ring_x, centre_y)) == (105, 120, 90)
+    # Both the 18px triangle and 12px dense grid leave their original column gap clear.
+    gap_x = 738 if count == 3 else 732
+    assert console.image.getpixel((gap_x, centre_y)) == before.getpixel((gap_x, centre_y))
+    bounds = ImageChops.difference(before, console.image).getbbox()
+    assert bounds and 720 <= bounds[0] < bounds[2] <= 758 and 140 <= bounds[1] < bounds[3] <= 178
+
+
+@pytest.mark.parametrize("count", [8, 15])
+def test_overflow_mosaic_keeps_the_first_five_names_and_hides_extra_names(plugin, data, displayed, count):
+    data["friends"] = [{"steamid": str(index), "personaname": f"Friend {index:02}", "personastate": 1,
+                        "avatarfull": f"cached-avatar-{index}"} for index in range(count)]
+    data["online_friend_count"] = count
+    render_console(plugin, data, (800, 480))
+    labels = [text for _box, text in displayed]
+    assert all(f"Friend {index:02}" in labels for index in range(5))
+    assert all(f"Friend {index:02}" not in labels for index in range(5, count))
+    assert "+3" not in labels and "更多在线" not in labels
+    assert ("+1" in labels) == (count == 15)
+
+
+def test_overflow_without_avatar_urls_keeps_a_count_instead_of_inventing_portraits(plugin, displayed):
+    console = _Console(plugin, {})
+    console._friend_tile(None, 710, 140, {}, [{"personaname": "Hidden"}] * 3)
+    assert not plugin.asset_calls
+    labels = [text for _box, text in displayed]
+    assert "+3" in labels and "Hidden" not in labels and "更多在线" not in labels
+
+
+def test_partial_missing_avatars_enlarge_the_available_portrait_and_count_every_missing_friend(plugin, displayed):
+    console = _Console(plugin, {})
+    friends = [{"personastate": 1, "avatarfull": "cached-avatar"}, {"personastate": 1}, {"personastate": 2}]
+    console._friend_tile(None, 710, 140, {}, friends)
+    assert plugin.asset_calls == [("avatar", "", 38)]
+    labels = [text for _box, text in displayed]
+    assert "+2" in labels and "更多在线" not in labels
+
+
 def test_official_asset_budget_covers_main_panels_and_four_friend_games(tmp_path):
     plugin = SteamProfileDashboard({"id": "steam_profile_dashboard"})
     plugin._cache_dir = lambda: tmp_path
