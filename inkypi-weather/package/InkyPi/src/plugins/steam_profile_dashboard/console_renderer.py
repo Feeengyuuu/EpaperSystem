@@ -31,7 +31,7 @@ AWAY = (234, 176, 72)
 FRIEND_GAME_ICON = 14
 # The online friends: those in a game first, each a wide row on the game's artwork (at most
 # FRIEND_PLAYING_ROWS), then everyone else as small tiles, FRIEND_COLUMNS to a row, filling
-# FRIEND_LIST; the last tile counts the ones that do not fit. A tile's avatar is FRIEND_AVATAR,
+# FRIEND_LIST; the last tile shows a miniature mosaic of the remaining friends. A tile's avatar is FRIEND_AVATAR,
 # its name FRIEND_NAME_GAP under it; a row's avatar is FRIEND_ROW_AVATAR.
 FRIEND_LIST = (600, 46, 784, 201)
 FRIEND_AVATAR = 38
@@ -589,7 +589,7 @@ class _Console:
         rest = [friend for friend in friends if friend not in rows]
         slots = grid_rows * FRIEND_COLUMNS
         tiles = rest[:slots] if len(rest) <= slots else rest[:max(0, slots - 1)]
-        hidden = len(rest) - len(tiles)
+        hidden = rest[len(tiles):]
         # Friend avatars can be slow; resolve every shown friend's game icon
         # first so they cannot spend the shared game-media network budget.
         game_icons = {}
@@ -644,16 +644,19 @@ class _Console:
 
     def _friend_tile(self, friend, x, y, game_icons, hidden):
         """A friend as a small tile on the panel itself: the ringed avatar over the name (a game's
-        icon pinned to the avatar while playing); ``None`` is the tile counting the ones left out."""
+        icon pinned to the avatar while playing); ``None`` is a nameless mosaic of those left out."""
         width, height = FRIEND_TILE
         avatar_x, avatar_y = x + (width - FRIEND_AVATAR) // 2, y + 1
         name_box = (x + 2, avatar_y + FRIEND_AVATAR + FRIEND_NAME_GAP, x + width - 2, y + height)
         if friend is None:
-            self.draw.ellipse((avatar_x, avatar_y, avatar_x + FRIEND_AVATAR, avatar_y + FRIEND_AVATAR),
-                              outline=self.c["accent"], width=2)
-            self.text((avatar_x, avatar_y, avatar_x + FRIEND_AVATAR, avatar_y + FRIEND_AVATAR), f"+{hidden}", 15,
-                      self.c["accent"], bold=True, align="center")
-            self.text(name_box, "更多在线", 10, self.c["muted"], align="center")
+            shown = self._friend_mosaic(hidden, avatar_x, avatar_y)
+            if not shown:
+                self.draw.ellipse((avatar_x, avatar_y, avatar_x + FRIEND_AVATAR, avatar_y + FRIEND_AVATAR),
+                                  outline=self.c["accent"], width=2)
+                self.text((avatar_x, avatar_y, avatar_x + FRIEND_AVATAR, avatar_y + FRIEND_AVATAR), f"+{len(hidden)}", 15,
+                          self.c["accent"], bold=True, align="center")
+            caption = f"+{len(hidden) - shown} 在线" if shown and shown < len(hidden) else "更多在线"
+            self.text(name_box, caption, 10, self.c["muted"], align="center")
             return
         self._friend_ring(friend, avatar_x, avatar_y)
         icon = game_icons.get(_appid(friend.get("gameid")))
@@ -664,6 +667,27 @@ class _Console:
             self.image.paste(icon, badge, icon if icon.mode == "RGBA" else None)
         self.text(name_box, self.plugin._friend_display_id(friend), 11,
                   bold=True, min_size=9, align="center")
+
+    def _friend_mosaic(self, friends, x, y):
+        """Fit up to nine actual remaining avatars inside the former 38px count circle."""
+        urls = [friend.get("avatarfull") or friend.get("avatarmedium") or friend.get("avatar") for friend in friends]
+        urls = [url for url in urls if url][:9]
+        if not urls:
+            return 0
+        columns = 1 if len(urls) == 1 else 2 if len(urls) <= 4 else 3
+        gap = 2 if columns == 2 else 1
+        size = (FRIEND_AVATAR - gap * (columns - 1)) // columns
+        avatars = [self.plugin._avatar_image(url, size, decorative_outline=False) for url in urls]
+        avatars = [avatar for avatar in avatars if avatar is not None]
+        rows = math.ceil(len(avatars) / columns)
+        top = y + (FRIEND_AVATAR - rows * size - max(0, rows - 1) * gap) // 2
+        for start in range(0, len(avatars), columns):
+            line = avatars[start:start + columns]
+            left = x + (FRIEND_AVATAR - len(line) * size - (len(line) - 1) * gap) // 2
+            for index, avatar in enumerate(line):
+                self.image.paste(avatar, (left + index * (size + gap), top), avatar if avatar.mode == "RGBA" else None)
+            top += size + gap
+        return len(avatars)
 
     def recent(self, items):
         recent_ids = {_appid(game.get("appid")) for game in self.data.get("recent_games") or []}
