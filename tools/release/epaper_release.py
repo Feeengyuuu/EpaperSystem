@@ -38,6 +38,8 @@ from release_task import REPO_ROOT, ReleaseError, TaskContext  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
+    from release_private_fonts import font_policy
+
     parser = argparse.ArgumentParser(prog="epaper_release.py", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True, metavar="command")
@@ -62,9 +64,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_argument("--release-label", required=True,
                      help="short release name, e.g. layout -> deploy-<UTC>-layout-<commit8>")
     sub.add_argument("--execute", action="store_true", help="contact and change the device (default: dry run)")
-    sub = command("private-fonts", "Install one device-only NBA/WNBA score font into the deployed release's durable data.")
-    sub.add_argument("--league", choices=("nba", "wnba"), required=True)
-    sub.add_argument("--font", type=Path, required=True, help="owner-provided local raw TTF, OTF or WOFF2; never packaged")
+    sub = command("private-fonts", "Install one device-only league score font into the deployed release's durable data.")
+    sub.add_argument("--league", choices=font_policy().LEAGUES, required=True)
+    sub.add_argument("--font", type=Path, required=True, help="owner-provided local raw TTF, OTF, WOFF or WOFF2; never packaged")
     sub.add_argument("--execute", action="store_true", help="install through the trusted updater (default: dry run)")
     sub = command("health-gate", "Record health after deployment and compare it with the predeploy record.")
     sub.add_argument("--before", default="predeploy")

@@ -74,10 +74,13 @@ def no_device():
     pytest.fail("local validation/dry run contacted a device")
 
 
-def test_cli_private_fonts_is_dry_run_and_only_two_leagues():
+def test_cli_private_fonts_is_dry_run_and_only_fixed_sports_leagues():
     parser = epaper_release.build_parser()
     args = parser.parse_args(["private-fonts", "--task-dir", "outputs/r", "--league", "nba", "--font", "owner.woff2"])
     assert args.execute is False and args.address is None
+    for league in private.font_policy().LEAGUES:
+        accepted = parser.parse_args(["private-fonts", "--task-dir", "outputs/r", "--league", league, "--font", "owner.woff"])
+        assert accepted.league == league and accepted.execute is False
     with pytest.raises(SystemExit):
         parser.parse_args(["private-fonts", "--task-dir", "outputs/r", "--league", "nfl", "--font", "owner.ttf"])
 
@@ -91,6 +94,12 @@ def test_dry_run_validates_original_bytes_without_transport_or_copy(ctx, font):
     assert sorted(item.name for item in ctx.task_dir.iterdir()) == [
         "current-manifest.json", "deployment.json", "private-fonts-nba-plan.json"]
     assert ctx.load("private-fonts-nba-plan.json")["source"] == str(font)
+
+
+@pytest.mark.parametrize("league", ["mls", "epl", "laliga", "bundesliga", "seriea", "ligue1", "f1"])
+def test_new_fixed_leagues_keep_exact_private_destinations(ctx, font, league):
+    result = private.install(ctx, league, font, connect=no_device)
+    assert result["destination"] == f"/var/lib/inkypi/data/fonts/sports-{league}-score.ttf"
 
 
 @pytest.mark.parametrize("change", ["not_passed", "commit", "artifact", "capability", "release"])
@@ -174,7 +183,7 @@ def test_private_font_basenames_are_excluded_by_both_archive_builders(tmp_path):
     policy = release_build.load_archive_policy(ROOT)
     source = tmp_path / "source"
     source.mkdir()
-    names = [f"sports-{league}-score.{ext}" for league in ("nba", "wnba") for ext in ("ttf", "otf", "woff2")]
+    names = sorted(private.font_policy().FONT_NAMES)
     for name in names:
         (source / name).write_bytes(b"private")
         assert not release_build.is_packaged(policy, PurePosixPath("misplaced/assets/" + name))
@@ -183,6 +192,11 @@ def test_private_font_basenames_are_excluded_by_both_archive_builders(tmp_path):
     policy.build_release_archive(source, target)
     with zipfile.ZipFile(target) as archive:
         assert archive.namelist() == ["BarlowCondensed-Bold.ttf"]
+    # A clean-archive checkout has no .git; isolate ignore rules from its parent.
+    ignore_repo = tmp_path / "ignore-repo"
+    ignore_repo.mkdir()
+    (ignore_repo / ".gitignore").write_bytes((ROOT / ".gitignore").read_bytes())
+    subprocess.run(["git", "-C", str(ignore_repo), "init", "-q"], check=True, capture_output=True)
     for name in names:
-        result = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "--no-index", "--", name], capture_output=True)
+        result = subprocess.run(["git", "-C", str(ignore_repo), "check-ignore", "--no-index", "--", name], capture_output=True)
         assert result.returncode == 0

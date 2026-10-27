@@ -42,11 +42,11 @@ def _plan(ctx, league, source):
     hashes = manifest.get("hashes", {})
     require(all(re.fullmatch(r"[0-9a-f]{64}", hashes.get(path, "")) for path in (HELPER, UPDATER)),
             "The deployed release does not contain the private-font installer capability")
-    require(league in {"nba", "wnba"}, "Only NBA/WNBA private score fonts are supported")
+    policy = font_policy()
+    require(league in policy.LEAGUES, "Unsupported private score font league")
     source = Path(source)
     source = source if source.is_absolute() else ctx.repo / source
     require(not is_reparse_point(source) and source.is_file(), "Private font source must be a regular local file")
-    policy = font_policy()
     name = f"sports-{league}-score{source.suffix.lower()}"
     try:
         info = source.stat()
