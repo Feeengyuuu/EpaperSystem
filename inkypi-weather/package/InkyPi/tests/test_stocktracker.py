@@ -710,20 +710,21 @@ def test_engraved_bodoni_total_fits_the_portfolio_chart(value):
     draw = ImageDraw.Draw(Image.new("RGB", (340, 200)))
     plot = (23, 53, 310, 112)
     figure = plugin._total_figure_layout(draw, plot, value)
-    assert figure["text"] == f"{value:,.2f}"
+    assert figure["text"] == (f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}")
     assert figure["font"].getname()[0] == "Bodoni Moda"
+    assert "$" in [character for character, _offset in figure["glyphs"]]
     boxes = [draw.textbbox((figure["origin"][0] + offset, figure["origin"][1]), character,
                           font=figure["font"], stroke_width=2) for character, offset in figure["glyphs"]]
     bounds = (min(box[0] for box in boxes), min(box[1] for box in boxes),
               max(box[2] for box in boxes), max(box[3] for box in boxes))
-    assert bounds[0] >= figure["coin"][0] + stocktracker_module.SUMMARY_COIN
+    assert bounds[0] >= plot[0] + 10
     assert bounds[2] <= plot[2] and bounds[1] >= plot[1] and bounds[3] < plot[3]
+    assert (bounds[0] + bounds[2]) / 2 == pytest.approx((plot[0] + plot[2]) / 2)
     first, second = figure["glyphs"][:2]
     assert second[1] - first[1] - figure["font"].getlength(first[0]) == pytest.approx(3 * figure["font"].size / 38)
-    assert figure["origin"][0] - figure["coin"][0] - stocktracker_module.SUMMARY_COIN == pytest.approx(9, abs=0.5)
 
 
-def test_banknote_engraving_stays_inside_digits_and_keeps_punctuation_solid():
+def test_banknote_engraving_covers_currency_and_digits_but_keeps_punctuation_solid():
     plugin = StockTracker({"id": "stocktracker"})
     ink, ground = (80, 180, 120), (5, 15, 25)
     image = Image.new("RGB", (340, 200), ground)
@@ -736,16 +737,20 @@ def test_banknote_engraving_stays_inside_digits_and_keeps_punctuation_solid():
     solid_draw = ImageDraw.Draw(solid)
     for character, offset in figure["glyphs"]:
         position = (figure["origin"][0] + offset, figure["origin"][1])
-        if character.isdecimal():
+        if character.isdecimal() or character == "$":
             glyph_draw.text(position, character, font=figure["font"], fill=255)
         solid_draw.text(position, character, font=figure["font"], fill=ink, stroke_width=2, stroke_fill=ground)
         solid_draw.text(position, character, font=figure["font"], fill=ink, stroke_width=1,
                         stroke_fill=plugin._blend(ink, ground, 0.72))
     cut_colour = plugin._blend(ink, ground, 0.55)
-    cuts = [(x, y) for y in range(53, 112) for x in range(70, 310)
+    cuts = [(x, y) for y in range(53, 112) for x in range(23, 310)
             if image.getpixel((x, y)) == cut_colour and solid.getpixel((x, y)) != cut_colour]
     assert len(cuts) > 20
     assert all(glyphs.getpixel(point) > 200 for point in cuts)
+    dollar_offset = next(offset for character, offset in figure["glyphs"] if character == "$")
+    dollar_left = figure["origin"][0] + dollar_offset
+    dollar_right = dollar_left + figure["font"].getlength("$")
+    assert any(dollar_left <= x < dollar_right for x, _y in cuts)
     for character, offset in figure["glyphs"]:
         if character in ",.":
             left = figure["origin"][0] + offset
@@ -759,7 +764,7 @@ def test_total_font_fallback_also_fits_every_asset_digit(monkeypatch):
     draw = ImageDraw.Draw(Image.new("RGB", (340, 200)))
     plot = (23, 53, 310, 112)
     figure = plugin._total_figure_layout(draw, plot, -(10**18))
-    assert figure["text"] == "-1,000,000,000,000,000,000.00"
+    assert figure["text"] == "-$1,000,000,000,000,000,000.00"
     for character, offset in figure["glyphs"]:
         box = draw.textbbox((figure["origin"][0] + offset, figure["origin"][1]), character,
                            font=figure["font"], stroke_width=2)

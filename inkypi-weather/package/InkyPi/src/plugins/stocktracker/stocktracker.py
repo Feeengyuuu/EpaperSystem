@@ -111,19 +111,18 @@ ACCENT_BLUE = (0, 92, 185)  # 100B-25R PANTONE 285 family
 ACCENT_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
 # The portfolio card, in a pixel-cut gold frame SUMMARY_FRAME px deep: between SUMMARY_CHART rows
 # under its top, the total (SUMMARY_FIGURE_SIZE type at most, its digits' middle
-# SUMMARY_FIGURE_FOOT rows above the chart's foot) by the supplied engraved dollar mark (COIN_ICON_PATH, SUMMARY_COIN px; drawn in COIN_GOLD rimmed
-# in COIN_RIM without the file) in today's colour: deep green up and deep red down on the day
+# SUMMARY_FIGURE_FOOT rows above the chart's foot) includes its engraved dollar sign in the
+# same type and today's colour: deep green up and deep red down on the day
 # page (GAIN_INK, LOSS_INK; the night page's own green and red), as is today's change under it.
 # Behind it the account's value over the window shows only as a trend, out to the frame on the
 # left, right and foot: a hill on a fine grid (SUMMARY_GRID px) resting on the chart's foot, its
 # low SUMMARY_HILL_GAP above it, tinted in today's colour and blurred by SUMMARY_BLUR, its top
 # SUMMARY_FADE rows fading into the card, a sparkle on today's value.
-SUMMARY_FRAME, SUMMARY_CHART, SUMMARY_GRID, SUMMARY_COIN, SUMMARY_FIGURE_SIZE = 7, (33, 92), 12, 40, 38
+SUMMARY_FRAME, SUMMARY_CHART, SUMMARY_GRID, SUMMARY_FIGURE_SIZE = 7, (33, 92), 12, 38
 SUMMARY_FIGURE_FOOT, SUMMARY_HILL_GAP, SUMMARY_BLUR, SUMMARY_FADE = 17, 6, 1.2, 10
-SUMMARY_FIGURE_TRACKING, SUMMARY_COIN_GAP = 3, 9
-COIN_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "dollar_engraved.png")
+SUMMARY_FIGURE_TRACKING = 3
 TOTAL_FIGURE_FONT = os.path.join(os.path.dirname(__file__), "assets", "fonts", "BodoniModa-Variable.ttf")
-COIN_GOLD, COIN_RIM = (232, 186, 62), (8, 38, 22)
+COIN_GOLD = (232, 186, 62)
 GAIN_INK, LOSS_INK = (0, 92, 50), (176, 32, 30)
 ACCENT_ORANGE = (245, 122, 38)  # 100Y-50R PANTONE ORANGE 021 family
 CINNABAR = (222, 45, 38)  # 100Y-100R PANTONE RED 032 family
@@ -212,22 +211,6 @@ HEADER_MONEY_PATH = os.path.join(os.path.dirname(__file__), "assets", "header_fl
 # one cut off at the art's edge is left out. Pieces fly at least HEADER_MONEY_MIN_GAP apart.
 HEADER_BILL_AREA, HEADER_COIN_AREA, HEADER_MONEY_MIN_GAP = 2500, 300, 4
 _HEADER_MONEY_PIECES = {}
-
-
-@lru_cache(maxsize=4)
-def _coin_icon(size):
-	"""The supplied metallic dollar mark (COIN_ICON_PATH), trimmed and ``size`` px on its longer side;
-	None without the file."""
-	try:
-		with Image.open(COIN_ICON_PATH) as source:
-			art = source.convert("RGBA")
-	except (OSError, ValueError):
-		return None
-	bounds = art.getchannel("A").getbbox()
-	if bounds:
-		art = art.crop(bounds)
-	art.thumbnail((size, size), Image.Resampling.LANCZOS)
-	return art
 
 
 def _header_money_pieces():
@@ -1702,7 +1685,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		stats=(),
 		curve_values=(),
 	):
-		"""The portfolio card in its gold frame: the total by its metallic dollar mark, in today's colour, standing
+		"""The portfolio card in its gold frame: the complete dollar amount, in today's colour, standing
 		on the floor of a softened chart of the account's value over the window; today's change in that
 		colour on the ruled row under it, then the first two balances."""
 		colors = _active_stock_colors()
@@ -1839,11 +1822,9 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 					  (x - waist, y + waist), (x - size, y), (x - waist, y - waist)], fill=fill, outline=outline)
 
 	def _total_figure_layout(self, draw, plot, value):
-		"""Where the total goes, centred with its coin across the chart's foot: its text and font, the
-		text's origin and the coin's top left. Both rise as far as they must for the comma's tail
-		(with the halo) and the coin to clear the foot; the coin keeps to the digits' middle."""
-		text = f"{value:,.2f}"
-		max_width = plot[2] - plot[0] - SUMMARY_COIN - SUMMARY_COIN_GAP - 20
+		"""Fit and centre the full currency amount, keeping punctuation and its halo above the foot."""
+		text = f"-${abs(value):,.2f}" if value < 0 else f"${value:,.2f}"
+		max_width = plot[2] - plot[0] - 20
 		def tracked_glyphs(font):
 			tracking = SUMMARY_FIGURE_TRACKING * font.size / SUMMARY_FIGURE_SIZE
 			x, glyphs, bounds = 0.0, [], []
@@ -1852,7 +1833,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 				bounds.append(draw.textbbox((x, 0), character, font=font, stroke_width=2))
 				x += font.getlength(character) + tracking
 			# Fit the full visible ink and its halo, including serif overhangs. Offsets
-			# start at that left edge so the coin gap and centering use the same measure.
+			# start at that left edge so fitting and centering use the same measure.
 			left, right = min(box[0] for box in bounds), max(box[2] for box in bounds)
 			return [(character, offset - left) for character, offset in glyphs], right - left
 		try:
@@ -1868,28 +1849,15 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		while font.size > 1 and text_w > max_width:
 			font = font.font_variant(size=font.size - 1)
 			glyphs, text_w = tracked_glyphs(font)
-		x = plot[0] + (plot[2] - plot[0] - SUMMARY_COIN - SUMMARY_COIN_GAP - text_w) / 2
+		x = plot[0] + (plot[2] - plot[0] - text_w) / 2
 		digits = draw.textbbox((0, 0), "0", font=font)
 		reach = draw.textbbox((0, 0), text, font=font, stroke_width=2)[3]
-		middle = min(plot[3] - SUMMARY_FIGURE_FOOT, plot[3] - 1 - reach + (digits[1] + digits[3]) / 2,
-					 plot[3] - 2 - SUMMARY_COIN / 2)
+		middle = min(plot[3] - SUMMARY_FIGURE_FOOT, plot[3] - 1 - reach + (digits[1] + digits[3]) / 2)
 		return {"text": text, "font": font, "glyphs": glyphs,
-				"origin": (x + SUMMARY_COIN + SUMMARY_COIN_GAP, round(middle - (digits[1] + digits[3]) / 2)),
-				"coin": (round(x), round(middle - SUMMARY_COIN / 2))}
+				"origin": (x, round(middle - (digits[1] + digits[3]) / 2))}
 
 	def _draw_total_figure(self, img, draw, figure, ink, halo):
-		"""The total by the metallic dollar mark, in ``ink``, haloed in the chart's ground so the trend behind
-		never cuts its digits."""
-		coin_x, coin_y = figure["coin"]
-		icon = _coin_icon(SUMMARY_COIN)
-		if icon is not None:
-			img.paste(icon, (coin_x + (SUMMARY_COIN - icon.width) // 2, coin_y + (SUMMARY_COIN - icon.height) // 2), icon)
-		else:
-			radius = SUMMARY_COIN / 2
-			center = (coin_x + radius, coin_y + radius)
-			draw.ellipse((center[0] - radius, center[1] - radius, center[0] + radius, center[1] + radius), fill=COIN_GOLD,
-						 outline=COIN_RIM, width=2)
-			draw.text(center, "$", fill=COIN_RIM, font=self._font(int(SUMMARY_COIN * 0.62), True), anchor="mm")
+		"""Engrave the currency sign and digits together, haloed clear of the chart behind."""
 		origin, font, glyphs = figure["origin"], figure["font"], figure["glyphs"]
 		bounds = []
 		for character, offset in glyphs:
@@ -1905,7 +1873,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		mask = Image.new("L", (right - left + 2, bottom - top + 2))
 		mask_draw = ImageDraw.Draw(mask)
 		for character, offset in glyphs:
-			if character.isdecimal():
+			if character.isdecimal() or character == "$":
 				mask_draw.text((origin[0] + offset - left + 1, origin[1] - top + 1), character, fill=255, font=font)
 		cuts = Image.new("L", mask.size)
 		cut_draw = ImageDraw.Draw(cuts)
