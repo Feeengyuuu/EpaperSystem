@@ -60,7 +60,7 @@ class LowerPanelMixin:
         self._record_region_choice("lower", now, [choice.get("key") or kind])
         try:
             if kind == "wall":
-                self._draw_lower_live_wall(image, draw, box, choice["games"], now)
+                self._draw_lower_live_wall(image, draw, box, choice["games"], now, settings)
                 self._write_nba_live_state(nba_selected, now, nba_source_state)
                 return SportsDashboard._lower_wall_provenance(
                     choice["games"], nba_source_state, hub_source_state,

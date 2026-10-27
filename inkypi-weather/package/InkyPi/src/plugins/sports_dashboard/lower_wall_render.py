@@ -30,10 +30,11 @@ WALL_TILE_COLUMNS = 3
 # into its team's stripe through a fillet of this radius.
 WALL_SLAB_WIDTH = 9
 WALL_JOINT_RADIUS = 5
+WALL_SOURCE_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "sources")
 
 
 class LowerWallRenderMixin:
-    def _draw_lower_live_wall(self, image, draw, bounds, games, now):
+    def _draw_lower_live_wall(self, image, draw, bounds, games, now, settings=None):
         x1, y1, x2, y2 = [int(value) for value in bounds]
         draw.rectangle((x1, y1, x2, y2), fill=COLORS["panel"])
         self._draw_halftone(draw, (x1, y1, x2, y2), COLORS["red"], COLORS["panel"], 22, 1)
@@ -44,11 +45,11 @@ class LowerWallRenderMixin:
             self._draw_wall_columns(image, draw, content, games, now)
         else:
             shown = self._draw_wall_board(image, draw, content, games, now)
-        self._draw_wall_header(image, draw, (x1, y1, x2, y2), games, shown)
+        self._draw_wall_header(image, draw, (x1, y1, x2, y2), games, shown, settings)
 
     # Header ---------------------------------------------------------------------
 
-    def _draw_wall_header(self, image, draw, bounds, games, shown):
+    def _draw_wall_header(self, image, draw, bounds, games, shown, settings=None):
         x1, y1, x2, _y2 = bounds
         header_y = y1 + 8
         title_right = self._paste_wall_art(image, LOCAL_LIVE_NOW_WORDMARK_PATH, (x1 + 14, header_y - 3, x1 + 182, header_y + 22))
@@ -61,6 +62,11 @@ class LowerWallRenderMixin:
         hidden = len(games) - shown
         summary_right = self._draw_wall_summary(image, draw, (x1 + 16, header_y + 24, x1 + 262, header_y + 39), games, sports,
                                                 hidden)
+        # This lower baseline stays below the large league logos and the LIVE pill.
+        # It may use the rest of the row without shortening any league counts.
+        summary_right = self._draw_wall_sources(
+            image, draw, (summary_right + 4, header_y + 28, x2 - 12, header_y + 39), games, settings,
+        )
         logo_x = x2 - 96
         for sport in reversed(sports[:4]):
             logo_x -= 34
@@ -89,6 +95,55 @@ class LowerWallRenderMixin:
             self._draw_text_in_box(draw, (x + 18, y1, x2, y2), count, font, COLORS["text"])
             x += 18 + self._text_width(draw, count, font) + 8
         return int(x)
+
+    @staticmethod
+    def _wall_score_sources(games, settings=None):
+        """Name the actual scoreboard endpoints, never the sidebar's esports feed."""
+        settings = settings or {}
+        sources = []
+        for sport in dict.fromkeys(game.get("sport") for game in games):
+            if sport not in {"MLB", "NBA", "WNBA", "NFL", "NCAA", "PGA"}:
+                continue
+            try:
+                url = getattr(SportsDashboard, f"_{sport.lower()}_scoreboard_url")(settings)
+                host = (urlparse(url).hostname or "").lower()
+            except ValueError:
+                host = ""
+            if sport == "MLB" and host == "statsapi.mlb.com":
+                source = "MLB"
+            elif sport != "MLB" and host in {ESPN_SITE_API_HOST, ESPN_LEGACY_SITE_API_HOST}:
+                source = "ESPN"
+            else:
+                source = "自定义"
+            if source not in sources:
+                sources.append(source)
+        return sources
+
+    def _draw_wall_sources(self, image, draw, box, games, settings=None):
+        """A small, transparent source credit beside the live league counts."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        sources = self._wall_score_sources(games, settings)
+        if not sources:
+            return x1
+        font = self._font(8, bold=False)
+        label_width = self._text_width(draw, "来源", font)
+        widths = {"MLB": 18, "ESPN": 32, "自定义": self._text_width(draw, "自定义", font)}
+        width = label_width + sum(widths[source] + 4 for source in sources)
+        if width > x2 - x1:
+            return x1
+        self._draw_text_in_box(draw, (x1, y1, x1 + label_width, y2), "来源", font, COLORS["muted"])
+        x = x1 + label_width + 4
+        for source in sources:
+            size = (widths[source], y2 - y1)
+            path = os.path.join(WALL_SOURCE_LOGO_DIR, f"{source.lower()}.png")
+            logo = self._load_local_logo(path, size, alpha_threshold=8) if source != "自定义" else None
+            if logo is not None:
+                image.paste(logo, (x, y1 + (y2 - y1 - logo.height) // 2), logo)
+            else:
+                text, fallback_font = self._fit_text(draw, source, size[0], 8, bold=True, min_size=7)
+                self._draw_text_in_box(draw, (x, y1, x + size[0], y2), text, fallback_font, COLORS["muted"])
+            x += size[0] + 4
+        return x - 4
 
     def _paste_wall_art(self, image, path, box, align="left", min_width=0):
         """Paste a decor image contained in box; returns its right edge, or None when it is missing or too narrow."""

@@ -1,0 +1,29 @@
+{
+  "purpose": "Identifies the score providers of the LIVE NOW wall, independently of league and broadcaster logos.",
+  "logos": {
+    "espn": {
+      "source_url": "https://a.espncdn.com/redesign/assets/img/logos/espn-404@2x.png",
+      "official_site": "https://www.espn.com/",
+      "source_sha256": "d410612c2773405c039fe6adabbee6d62aff42f3b7548baf1a5c9f875964fbce",
+      "sha256": "36449884007b161eaad8437589da7abceebbe0ece39747f75fd53e3cbf3033ca",
+      "size": [
+        174,
+        45
+      ],
+      "processing": "Official art, transparent alpha bounding-box crop and proportional LANCZOS resize only; SVG rasterized in headless Chrome. Original colors retained.",
+      "rights": "Trademark of its respective owner, used only to identify the score source; no affiliation or endorsement implied."
+    },
+    "mlb": {
+      "source_url": "https://www.mlbstatic.com/team-logos/league-on-dark/1.svg",
+      "official_site": "https://www.mlb.com/",
+      "source_sha256": "8eb13f1aee1ec1c3a28109dab9170d63b7a100be7cf16cd0e2335a0488886306",
+      "sha256": "fb31b410665a1cfac6e8428c348643515053aed64e09f497219364b1bd7c36a1",
+      "size": [
+        114,
+        64
+      ],
+      "processing": "Official art, transparent alpha bounding-box crop and proportional LANCZOS resize only; SVG rasterized in headless Chrome. Original colors retained.",
+      "rights": "Trademark of its respective owner, used only to identify the score source; no affiliation or endorsement implied."
+    }
+  }
+}
