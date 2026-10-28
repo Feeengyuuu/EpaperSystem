@@ -148,12 +148,15 @@
       <div class="mw-section-title">{% if v.icons.hourly %}<img class="mw-tile-icon" src="{{ v.icons.hourly }}" alt="">{% endif %}24 小时<span class="mw-section-note">{{ v.summary }}</span>{% if v.best %}<span class="mw-best-chip">最佳出门 {{ v.best.day }}{{ v.best.start }}–{{ v.best.end }}</span>{% endif %}</div>
       {% if v.hourly.points %}
       <svg viewBox="0 0 {{ v.hourly.width }} {{ v.hourly.height }}" class="mw-chart">
-        <defs><linearGradient id="mw-area-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="mw-area-top"/><stop offset="1" class="mw-area-foot"/></linearGradient></defs>
-        {% for band in v.hourly.night_bands %}<rect x="{{ band.x }}" y="0" width="{{ band.width }}" height="{{ v.hourly.height }}" class="mw-night"/>{% endfor %}
+        <defs><linearGradient id="mw-area-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="mw-area-top"/><stop offset="1" class="mw-area-foot"/></linearGradient>
+        {% if v.night_sky %}<clipPath id="mw-night-clip">{% for band in v.hourly.night_bands %}<rect x="{{ band.x }}" y="0" width="{{ band.width }}" height="{{ v.hourly.height }}" rx="6"/>{% endfor %}</clipPath>{% endif %}</defs>
+        {% if v.night_sky %}{% for band in v.hourly.night_bands %}<image href="{{ v.night_sky }}" x="{{ band.x }}" y="0" width="{{ band.width }}" height="{{ v.hourly.height }}" preserveAspectRatio="xMinYMid slice" clip-path="url(#mw-night-clip)" class="mw-night-sky"/>{% endfor %}
+        {% else %}{% for band in v.hourly.night_bands %}<rect x="{{ band.x }}" y="0" width="{{ band.width }}" height="{{ v.hourly.height }}" class="mw-night"/>{% endfor %}{% endif %}
         {% if v.best %}<rect x="{{ v.best.x }}" y="14" width="{{ v.best.width }}" height="84" rx="6" class="mw-best"/>{% endif %}
         {% if v.hourly.midnight %}{% set mid = v.hourly.midnight %}
-        <line x1="{{ mid.x }}" y1="2" x2="{{ mid.x }}" y2="{{ v.hourly.rain_base }}" class="mw-midnight"/>
-        <text x="{{ mid.x + (4 if mid.anchor == 'start' else -4) }}" y="11" text-anchor="{{ mid.anchor }}" class="mw-midnight-label">{{ mid.label }}</text>
+        {% set sky = ' mw-on-sky' if v.night_sky and mid.night else '' %}
+        <line x1="{{ mid.x }}" y1="2" x2="{{ mid.x }}" y2="{{ v.hourly.rain_base }}" class="mw-midnight{{ sky }}"/>
+        <text x="{{ mid.x + (4 if mid.anchor == 'start' else -4) }}" y="11" text-anchor="{{ mid.anchor }}" class="mw-midnight-label{{ sky }}">{{ mid.label }}</text>
         {% endif %}
         <path d="{{ v.hourly.area }}" class="mw-area"/>
         {% for point in v.hourly.points %}{% if point.rain_height > 0 %}
@@ -162,9 +165,10 @@
         <path d="{{ v.hourly.path }}" class="mw-curve"/>
         {% for point in v.hourly.points %}{% if point.label %}
         <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ 4 if point.extreme else 3 }}" class="mw-point {{ point.extreme }}"/>
-        <text x="{{ point.x }}" y="{{ point.y - 7 }}" class="mw-temp-label">{{ point.temperature }}°</text>
+        {% set sky = ' mw-on-sky' if v.night_sky and point.night else '' %}
+        <text x="{{ point.x }}" y="{{ point.y - 7 }}" class="mw-temp-label{{ sky }}">{{ point.temperature }}°</text>
         <image href="{{ point.icon }}" x="{{ point.x - 9 }}" y="98" width="18" height="18"/>
-        <text x="{{ point.x }}" y="{{ v.hourly.height - 2 }}" class="mw-time">{{ "现在" if loop.first else point.time }}</text>
+        <text x="{{ point.x }}" y="{{ v.hourly.height - 2 }}" class="mw-time{{ sky }}">{{ "现在" if loop.first else point.time }}</text>
         {% endif %}{% endfor %}
       </svg>
       {% endif %}

@@ -118,8 +118,14 @@
       "job_id": "9a1dbf8e-1df5-49e3-8b95-20311519a8f9",
       "source_sha256": "c2d51539413823993834aa28eece9d60df83bc81ec8ca6327e54967ce4e56b62",
       "sha256": "5189e182750e0b6f20877675b854d60cb8f5662cd3ab66170bed8c69e972419f"
+    },
+    "night-sky.jpg": {
+      "job_id": "9c475d63-1d91-4e31-9886-2c9cc1a1e8b8",
+      "source_sha256": "be52f8c695fbbbd911f593787a6411731e6e86a763aa12e759e9e0aee7c2ae5b",
+      "sha256": "3fef0af10150db8bfa5e17fe09340e0fda84cda871947aff844ef0f46c542426"
     }
   },
   "mascot": "mascot-*.png: the hero card's cloud mascot per weather, cropped to alpha bounds, 220 px square, transparent",
-  "tile_icons": "icon-*.png: each card's title icon (white glyph on the card colour), cut from one 4x2 transparent sheet, 64 px square"
+  "tile_icons": "icon-*.png: each card's title icon (white glyph on the card colour), cut from one 4x2 transparent sheet, 64 px square",
+  "night_sky": "night-sky.jpg: the 24-hour chart's night bands (generated 2026-10-28, first of two): a 2112x704 panorama (crescent moon at upper left, Milky Way, low hills) resized to 768x256, JPEG quality 85; each band shows it from its left edge"
 }

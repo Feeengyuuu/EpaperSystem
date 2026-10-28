@@ -75,6 +75,8 @@ TILE_ICONS = ("sun", "wind", "air", "uv", "humidity", "life", "hourly", "week")
 # transparent): the page masks the card's colour with it, tiled at DOODLE_TILE page pixels.
 CARD_DOODLES = ("sun", "moon", "wind", "air", "uv", "humidity", "life", "hourly", "week")
 DOODLE_TILE = 260
+# The night sky the 24-hour chart shows through its night bands (art/night-sky.jpg).
+NIGHT_SKY = "night-sky.jpg"
 
 
 def build_view(params, now, *, art_dir=None):
@@ -123,6 +125,7 @@ def build_view(params, now, *, art_dir=None):
     view["icons"] = _tile_icons(art_dir)
     view["doodles"] = _card_doodles(art_dir)
     view["doodle_tile"] = DOODLE_TILE
+    view["night_sky"] = _night_sky(art_dir)
     view["place_mark"] = _place_mark(art_dir, params.get("title"))
     return view
 
@@ -163,6 +166,13 @@ def _card_doodles(art_dir):
         return {}
     paths = {name: os.path.join(art_dir, "doodles", f"{name}.png") for name in CARD_DOODLES}
     return {name: path.replace("\\", "/") for name, path in paths.items() if os.path.isfile(path)}
+
+
+def _night_sky(art_dir):
+    """The 24-hour chart's night-sky picture with forward slashes for the svg image reference,
+    or "" without it (the night bands are then a flat tint)."""
+    path = os.path.join(art_dir, NIGHT_SKY) if art_dir else ""
+    return path.replace("\\", "/") if path and os.path.isfile(path) else ""
 
 
 def _hero_art(art_dir, code, night, force, celsius):
@@ -419,14 +429,16 @@ def _hourly(rows, now, astronomy):
         y = bottom - (temp - low) / span * (bottom - CURVE_TOP)
         moment = start + timedelta(hours=index)
         time = str(row.get("time") or "")
+        night = _is_night(moment, sunrise, sunset)
         if index and day and midnight is None:
-            midnight = {"x": round(x, 1), "label": "明天", "anchor": "end" if x > width - 40 else "start"}
+            midnight = {"x": round(x, 1), "label": "明天", "anchor": "end" if x > width - 40 else "start",
+                        "night": night}
         points.append({
             "x": round(x, 1), "y": round(y, 1), "temperature": int(round(temp)),
             "time": time, "when": f"明天 {time}" if day == 1 else time,
             "icon": str(row.get("icon") or "").replace("\\", "/"),
             "rain_chance": chance, "rain_height": round(chance / 100 * RAIN_HEIGHT, 1),
-            "night": _is_night(moment, sunrise, sunset), "label": index % LABEL_STEP == 0,
+            "night": night, "label": index % LABEL_STEP == 0,
             "extreme": "hi" if temp == high else "lo" if temp == low else "",
         })
     path = _smooth_path([(point["x"], point["y"]) for point in points])

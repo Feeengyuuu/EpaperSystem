@@ -150,6 +150,9 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 .mw-section-note { font-size: 11px; color: var(--muted); }
 .mw-chart { width: 500px; height: 128px; display: block; margin-top: 4px; overflow: visible; }
 .mw-night { fill: var(--night-band); }
+/* The night hours are a window onto a night sky; the labels over it turn to starlight. */
+.mw-night-sky { opacity: 0.92; }
+.theme-night .mw-night-sky { opacity: 0.8; }
 .mw-area { fill: url(#mw-area-fill); }
 .mw-area-top { stop-color: var(--accent); stop-opacity: 0.3; }
 .mw-area-foot { stop-color: var(--accent); stop-opacity: 0.04; }
@@ -163,6 +166,11 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 .mw-rain { fill: var(--blue); opacity: 0.85; }
 .mw-temp-label { font-size: 13px; font-weight: 700; text-anchor: middle; fill: var(--ink); }
 .mw-time { font-size: 11px; font-weight: 700; text-anchor: middle; fill: var(--ink); }
+.mw-on-sky { fill: #f4f6ff; }
+.mw-midnight.mw-on-sky { stroke: rgba(244, 246, 255, 0.7); }
+/* A halo in the ground's own colour keeps a label legible where it straddles a sky's edge. */
+.mw-temp-label, .mw-time, .mw-midnight-label { paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }
+.mw-temp-label.mw-on-sky, .mw-time.mw-on-sky, .mw-midnight-label.mw-on-sky { stroke: rgba(10, 16, 40, 0.85); }
 
 /* Week ----------------------------------------------------------------------------- */
 .mw-week {

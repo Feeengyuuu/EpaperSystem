@@ -228,6 +228,35 @@ def test_every_card_has_its_own_line_drawing_in_its_colour():
     assert build_view(params, now)["doodles"] == {}
 
 
+def test_the_night_hours_are_a_window_onto_a_night_sky():
+    import json
+    import re
+
+    record = json.loads((ART_DIR / "generated_art.source.json").read_text(encoding="utf-8"))["assets"]
+    assert (ART_DIR / modern_view.NIGHT_SKY).is_file() and modern_view.NIGHT_SKY in record
+    now = LA.localize(datetime(2026, 10, 24, 12, 50))
+    params = _params(now)
+    view = build_view(params, now, art_dir=str(ART_DIR))
+    bands = view["hourly"]["night_bands"]
+    assert bands and "\\" not in view["night_sky"] and view["night_sky"].endswith("night-sky.jpg")
+    html = Weather({"id": "weather"}).env.get_template("weather_modern.html").render(
+        **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
+        plugin_settings={}, style_sheets=[], font_faces=[])
+    # Each band shows the sky from its own left edge (the moon on the dusk side), clipped round.
+    skies = re.findall(r'<image href="[^"]*night-sky\.jpg" x="([\d.]+)"[^>]*xMinYMid slice', html)
+    assert [float(x) for x in skies] == [band["x"] for band in bands]
+    assert 'class="mw-night"' not in html
+    # Labels over the sky turn light; those by day stay in ink.
+    night_times = [point["time"] for point in view["hourly"]["points"] if point["label"] and point["night"]]
+    day_times = [point["time"] for point in view["hourly"]["points"][1:] if point["label"] and not point["night"]]
+    assert night_times and day_times
+    assert all(f'class="mw-time mw-on-sky">{time}<' in html for time in night_times)
+    assert all(f'class="mw-time">{time}<' in html for time in day_times)
+    # Without the picture the bands stay a flat tint.
+    plain = build_view(params, now)
+    assert plain["night_sky"] == ""
+
+
 def test_the_hero_illustration_follows_the_weather_the_hour_wind_and_heat():
     def art(code, night=False, force=0, celsius=18):
         return Path(modern_view._hero_art(str(ART_DIR), code, night, force, celsius)).stem
