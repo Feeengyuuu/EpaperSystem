@@ -111,6 +111,26 @@ def test_install_open_downloads_each_pinned_font_into_the_shared_helper(tmp_path
         font_dlc.main(["install", "nba"], install=install)
 
 
+def test_install_open_keeps_a_font_already_in_place_without_downloading(tmp_path, monkeypatch, capsys):
+    manifest = {key: _open_entry(key, WOFF2) for key in ("seriea", "esports-riot")}
+    monkeypatch.setattr(font_dlc, "load_manifest", lambda: manifest)
+    monkeypatch.setattr(font_dlc.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(font_dlc, "update_lock", nullcontext)
+    monkeypatch.setattr(store, "FONT_DIRECTORY", tmp_path)
+    # The owner's own Serie A face in another format, and the same Riot file from an earlier run.
+    (tmp_path / "sports-seriea-score.woff").write_bytes(b"wOFF")
+    (tmp_path / "sports-esports-riot-score.woff2").write_bytes(WOFF2)
+
+    def no_network(request, timeout):
+        pytest.fail("downloaded a font that is already installed")
+
+    assert font_dlc.main(["install", "--open"], opener=no_network,
+                         install=lambda *args: pytest.fail("installed")) == 0
+    out = capsys.readouterr().out
+    assert "seriea: kept (sports-seriea-score.woff is already installed)" in out
+    assert "esports-riot: kept" in out
+
+
 def test_add_installs_a_licensed_local_file_through_the_shared_helper(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(font_dlc.os, "geteuid", lambda: 0, raising=False)
     monkeypatch.setattr(font_dlc, "update_lock", nullcontext)

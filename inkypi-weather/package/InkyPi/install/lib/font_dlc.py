@@ -204,6 +204,12 @@ def main(argv=None, *, opener=urllib.request.urlopen, install=store.install_font
         failed = 0
         with update_lock():
             for key in keys:
+                # A font already in place stays: the same pinned file from an earlier run, or one
+                # the owner chose; replacing it is `remove` and then `install` or `add`.
+                present = installed(key)
+                if present not in (None, "?"):
+                    print(f"{key}: kept ({present} is already installed)")
+                    continue
                 try:
                     result = install_payload(key, download(fonts[key], opener), install)
                     print(f"{key}: {result['status']} ({fonts[key]['font']})")
