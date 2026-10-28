@@ -639,6 +639,26 @@ def test_changed_members_and_dependency_changes():
     assert release_build.dependency_changes(old_lock, old_lock) == {}
 
 
+def test_a_changed_runtime_lock_builds_only_in_a_round_that_reviewed_every_change(tmp_path):
+    reviewed = tmp_path / "dependency-changes.txt"
+    reviewed.write_text("# security round\npillow 12.3.0 13.0.0\n\nidna - 3.10  # new\nsix 1.17.0 -\n", encoding="utf-8")
+    changes = {"idna": {"before": None, "after": "3.10"}, "pillow": {"before": "12.3.0", "after": "13.0.0"},
+               "six": {"before": "1.17.0", "after": None}}
+
+    assert release_build.read_expected_dependency_changes(reviewed) == changes
+    release_build.check_dependency_changes({}, None)
+    release_build.check_dependency_changes(changes, release_build.read_expected_dependency_changes(reviewed))
+    with pytest.raises(ReleaseError, match="need their own reviewed round"):
+        release_build.check_dependency_changes(changes, None)
+    with pytest.raises(ReleaseError, match="differ from the reviewed list"):
+        release_build.check_dependency_changes({**changes, "urllib3": {"before": "2.8.0", "after": "2.9.0"}}, changes)
+    for text, message in (("pillow 12.3.0\n", "name, before and after"), ("pillow 1 1\n", "does not change"),
+                          ("../x 1 2\n", "Bad dependency name"), ("# nothing\n", "empty")):
+        reviewed.write_text(text, encoding="utf-8")
+        with pytest.raises(ReleaseError, match=message):
+            release_build.read_expected_dependency_changes(reviewed)
+
+
 def test_expected_change_lists_must_be_package_relative(tmp_path):
     good, bad = tmp_path / "good.txt", tmp_path / "bad.txt"
     good.write_text("src/utils/glyph_text.py\ntests/test_glyph_text.py\n", encoding="utf-8")

@@ -59,6 +59,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = command("build", "Package committed HEAD into the task folder.", device=False)
     sub.add_argument("--expect-changes", type=Path,
                      help="optional whitespace-separated list of package paths the release must change exactly")
+    sub.add_argument("--expect-dependency-changes", type=Path,
+                     help="reviewed 'name before after' lines ('-' for absent) the runtime lock must change "
+                          "exactly; without it a changed lock is refused")
     command("backup", "Prepare the live release's archive for .backups/previous.", device=False)
     sub = command("deploy", "Upload in verified chunks and run the transactional updater.")
     sub.add_argument("--release-label", required=True,
@@ -127,7 +130,10 @@ def run(args: argparse.Namespace, ctx: TaskContext) -> tuple[object, int]:
         return {**record, "health_predeploy": health}, 0
     if args.command == "build":
         expected = repo_path(ctx, args.expect_changes)
-        return release_build.build(ctx, release_build.read_expected_changes(expected) if expected else None), 0
+        reviewed = repo_path(ctx, args.expect_dependency_changes)
+        return release_build.build(
+            ctx, release_build.read_expected_changes(expected) if expected else None,
+            release_build.read_expected_dependency_changes(reviewed) if reviewed else None), 0
     if args.command == "backup":
         return release_build.backup(ctx), 0
     if args.command == "deploy":

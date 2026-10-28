@@ -138,6 +138,36 @@ def dependency_changes(old_lock: str, new_lock: str) -> dict[str, dict[str, str 
             for name in sorted(set(old) | set(new)) if old.get(name) != new.get(name)}
 
 
+def read_expected_dependency_changes(path: Path) -> dict[str, dict[str, str | None]]:
+    """Read a reviewed runtime dependency change list: ``name before after`` per line, ``-`` for absent.
+
+    Blank lines and ``#`` comments are ignored; the result has the shape of ``dependency_changes``.
+    """
+    changes = {}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        fields = line.split()
+        require(len(fields) == 3, f"Reviewed dependency change needs name, before and after: {line}")
+        name, before, after = fields
+        require(re.fullmatch(r"[A-Za-z0-9_.-]+", name) and name not in changes, f"Bad dependency name: {name}")
+        require(before != after, f"Reviewed dependency change does not change {name}")
+        changes[name] = {"before": None if before == "-" else before, "after": None if after == "-" else after}
+    require(changes, "The reviewed dependency change list is empty")
+    return changes
+
+
+def check_dependency_changes(changes: dict, reviewed: dict | None) -> None:
+    """A release changes the runtime lock only in a round that names every change in advance."""
+    if reviewed is None:
+        require(changes == {}, "Runtime dependency changes need their own reviewed round "
+                               f"(build --expect-dependency-changes): {changes}")
+    else:
+        require(changes == reviewed, f"Runtime dependency changes differ from the reviewed list: "
+                                     f"lock {changes}, reviewed {reviewed}")
+
+
 def read_expected_changes(path: Path) -> set[str]:
     """Read a whitespace-separated list of package-relative paths (the old expected-changes.txt)."""
     names = set(Path(path).read_text(encoding="utf-8").split())
@@ -207,8 +237,13 @@ def baseline(ctx: TaskContext, device: Device, base_manifest: Path | None = None
     return record
 
 
-def build(ctx: TaskContext, expect_changes: set[str] | None = None) -> dict:
-    """Package committed HEAD and prove its change set against the base manifest."""
+def build(ctx: TaskContext, expect_changes: set[str] | None = None,
+          expect_dependency_changes: dict | None = None) -> dict:
+    """Package committed HEAD and prove its change set against the base manifest.
+
+    A changed runtime lock is refused unless ``expect_dependency_changes`` names exactly the
+    same changes (the device then builds a fresh venv from the new lock instead of cloning).
+    """
     ctx.require_not_deployed()
     repo = ctx.repo
     require(not git(repo, "status", "--porcelain"), "Commit all reviewed source before building")
@@ -240,7 +275,7 @@ def build(ctx: TaskContext, expect_changes: set[str] | None = None) -> dict:
     lock = PACKAGE + "/install/requirements.txt"
     lock_member = "install/requirements.txt"
     changes = dependency_changes(git(repo, "show", base_commit + ":" + lock), git(repo, "show", commit + ":" + lock))
-    require(changes == {}, f"Runtime dependency changes need their own reviewed round: {changes}")
+    check_dependency_changes(changes, expect_dependency_changes)
     record = {"status": "passed", "commit": commit, "base_commit": base_commit,
               "base_release": preflight["base_release"], "artifact": str(target), "artifact_sha256": sha256,
               "file_count": inspection.file_count, "changed_files": sorted(changed),
