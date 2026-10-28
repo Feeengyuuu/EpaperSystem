@@ -242,9 +242,19 @@ def test_the_night_hours_are_a_window_onto_a_night_sky():
     html = Weather({"id": "weather"}).env.get_template("weather_modern.html").render(
         **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
         plugin_settings={}, style_sheets=[], font_faces=[])
-    # Each band shows the sky from its own left edge (the moon on the dusk side), clipped round.
+    # Each band shows the sky from its own left edge (the moon on the dusk side), dissolving into
+    # the card at its sides, top and foot rather than clipped to a box.
     skies = re.findall(r'<image href="[^"]*night-sky\.jpg" x="([\d.]+)"[^>]*xMinYMid slice', html)
     assert [float(x) for x in skies] == [band["x"] for band in bands]
+    assert "clip-path" not in html.split("mw-chart", 1)[1].split("</svg>", 1)[0]
+    for index, band in enumerate(bands, 1):
+        assert 0 < band["fade"] <= modern_view.NIGHT_SKY_MAX_FADE and band["fade_end"] == round(1 - band["fade"], 3)
+        assert f'<g mask="url(#mw-night-sides-{index})">' in html
+        # Eased in from each side: transparent at the edge, opaque a fade's width in.
+        assert band["stops"][0] == (0.0, 0.0) and band["stops"][-1] == (1.0, 0.0)
+        assert (band["fade"], 1.0) in band["stops"] and (band["fade_end"], 1.0) in band["stops"]
+        assert f'<stop offset="{band["fade"]}" stop-color="#fff" stop-opacity="1.0"/>' in html
+    assert html.count('mask="url(#mw-night-ends)"') == len(bands)
     assert 'class="mw-night"' not in html
     # Labels over the sky turn light; those by day stay in ink.
     night_times = [point["time"] for point in view["hourly"]["points"] if point["label"] and point["night"]]

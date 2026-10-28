@@ -75,8 +75,13 @@ TILE_ICONS = ("sun", "wind", "air", "uv", "humidity", "life", "hourly", "week")
 # transparent): the page masks the card's colour with it, tiled at DOODLE_TILE page pixels.
 CARD_DOODLES = ("sun", "moon", "wind", "air", "uv", "humidity", "life", "hourly", "week")
 DOODLE_TILE = 260
-# The night sky the 24-hour chart shows through its night bands (art/night-sky.jpg).
+# The night sky the 24-hour chart shows through its night bands (art/night-sky.jpg), its sides
+# dissolving into the card over this many chart pixels (at most NIGHT_SKY_MAX_FADE of a narrow band).
 NIGHT_SKY = "night-sky.jpg"
+NIGHT_SKY_FEATHER, NIGHT_SKY_MAX_FADE = 44, 0.34
+# The fade's ease (smoothstep): (share of the fade, opacity) from the band's edge inwards, so the
+# sky dissolves without a visible rim.
+NIGHT_SKY_EASE = ((0.0, 0.0), (0.25, 0.1), (0.5, 0.5), (0.75, 0.9), (1.0, 1.0))
 
 
 def build_view(params, now, *, art_dir=None):
@@ -487,7 +492,8 @@ def _is_night(moment, sunrise, sunset):
 
 
 def _night_bands(points, step, width):
-    """Shaded spans over the night hours; a night at either end reaches the chart's edge."""
+    """Shaded spans over the night hours; a night at either end reaches the chart's edge. Each
+    carries the share of its width over which the sky fades in at its left and out at its right."""
     bands, start, end = [], None, 0.0
     last = len(points) - 1
     for index, point in enumerate(points + [None]):
@@ -496,7 +502,12 @@ def _night_bands(points, step, width):
                 start = 0.0 if index == 0 else point["x"] - step / 2
             end = float(width) if index == last else point["x"] + step / 2
         elif start is not None:
-            bands.append({"x": round(start, 1), "width": round(end - start, 1)})
+            span = end - start
+            fade = round(min(NIGHT_SKY_MAX_FADE, NIGHT_SKY_FEATHER / max(1.0, span)), 3)
+            rise = [(round(fade * share, 3), opacity) for share, opacity in NIGHT_SKY_EASE]
+            stops = rise + [(round(1 - offset, 3), opacity) for offset, opacity in reversed(rise)]
+            bands.append({"x": round(start, 1), "width": round(span, 1), "fade": fade, "fade_end": round(1 - fade, 3),
+                          "stops": stops})
             start = None
     return bands
 

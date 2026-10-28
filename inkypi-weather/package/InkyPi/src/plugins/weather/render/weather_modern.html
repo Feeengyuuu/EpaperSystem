@@ -155,8 +155,13 @@
       {% if v.hourly.points %}
       <svg viewBox="0 0 {{ v.hourly.width }} {{ v.hourly.height }}" class="mw-chart">
         <defs><linearGradient id="mw-area-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="mw-area-top"/><stop offset="1" class="mw-area-foot"/></linearGradient>
-        {% if v.night_sky %}<clipPath id="mw-night-clip">{% for band in v.hourly.night_bands %}<rect x="{{ band.x }}" y="0" width="{{ band.width }}" height="{{ v.hourly.height }}" rx="6"/>{% endfor %}</clipPath>{% endif %}</defs>
-        {% if v.night_sky %}{% for band in v.hourly.night_bands %}<image href="{{ v.night_sky }}" x="{{ band.x }}" y="0" width="{{ band.width }}" height="{{ v.hourly.height }}" preserveAspectRatio="xMinYMid slice" clip-path="url(#mw-night-clip)" class="mw-night-sky"/>{% endfor %}
+        {# The night sky dissolves into the card: its sides fade over a band-sized share (one mask a
+           band), its top fades in and its foot softens (one mask for all). #}
+        {% if v.night_sky %}{% for band in v.hourly.night_bands %}<linearGradient id="mw-night-side-{{ loop.index }}">{% for offset, opacity in band.stops %}<stop offset="{{ offset }}" stop-color="#fff" stop-opacity="{{ opacity }}"/>{% endfor %}</linearGradient>
+        <mask id="mw-night-sides-{{ loop.index }}" maskContentUnits="objectBoundingBox"><rect width="1" height="1" fill="url(#mw-night-side-{{ loop.index }})"/></mask>{% endfor %}
+        <linearGradient id="mw-night-edge" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.08" stop-color="#fff" stop-opacity="0.1"/><stop offset="0.16" stop-color="#fff" stop-opacity="0.5"/><stop offset="0.26" stop-color="#fff" stop-opacity="0.92"/><stop offset="0.32" stop-color="#fff"/><stop offset="0.88" stop-color="#fff"/><stop offset="1" stop-color="#fff" stop-opacity="0.35"/></linearGradient>
+        <mask id="mw-night-ends" maskContentUnits="objectBoundingBox"><rect width="1" height="1" fill="url(#mw-night-edge)"/></mask>{% endif %}</defs>
+        {% if v.night_sky %}{% for band in v.hourly.night_bands %}<g mask="url(#mw-night-sides-{{ loop.index }})"><image href="{{ v.night_sky }}" x="{{ band.x }}" y="0" width="{{ band.width }}" height="{{ v.hourly.height }}" preserveAspectRatio="xMinYMid slice" mask="url(#mw-night-ends)" class="mw-night-sky"/></g>{% endfor %}
         {% else %}{% for band in v.hourly.night_bands %}<rect x="{{ band.x }}" y="0" width="{{ band.width }}" height="{{ v.hourly.height }}" class="mw-night"/>{% endfor %}{% endif %}
         {% if v.best %}<rect x="{{ v.best.x }}" y="14" width="{{ v.best.width }}" height="84" rx="6" class="mw-best"/>{% endif %}
         {% if v.hourly.midnight %}{% set mid = v.hourly.midnight %}
