@@ -792,6 +792,34 @@ def test_the_featured_wall_game_stands_in_its_sports_ground(monkeypatch):
     assert len(set(image.crop((x1, y1, x2, y2)).get_flattened_data())) > 40
 
 
+def test_wall_cards_name_the_series_or_score_leader_and_show_network_logos(monkeypatch):
+    games, now = _wall_games(9)
+    mlb = next(game for game in games if game["sport"] == "MLB")
+    ncaa = next(game for game in games if game["sport"] == "NCAA")
+    code = str(mlb["event"].get("team_a_code") or "").upper()
+    mlb = {**mlb, "event": {**mlb["event"], "series_summary": f"{code} leads 3-0", "broadcast": "FOX"}}
+    ncaa = {**ncaa, "event": {**ncaa["event"], "wins_a": 3, "wins_b": 17, "broadcast": "ESPN2",
+                              "record_a": "1-6", "record_b": "2-5"}, "tier": "C"}
+    notes, networks = [], []
+    original_note = SportsDashboard._draw_wall_team_note
+
+    def note(self, image, draw, box, event, spec, side, tail):
+        notes.append((event.get(f"team_{side}"), tail))
+        return original_note(self, image, draw, box, event, spec, side, tail)
+
+    monkeypatch.setattr(SportsDashboard, "_draw_wall_team_note", note)
+    monkeypatch.setattr(SportsDashboard, "_draw_kit_broadcast_logos",
+                        lambda self, image, draw, box, label, height: networks.append((label, height)))
+    _image, draw = _render(lambda plugin, image, draw: plugin._draw_lower_live_wall(image, draw, (0, 0, 555, 267),
+                                                                                     [mlb, ncaa], now))
+
+    # The series names its leader; the other game says who is ahead by how much, not the records.
+    assert notes == [(mlb["event"]["team_a"], " 3-0 领先"), (ncaa["event"]["team_b"], " 领先 14 分")]
+    assert networks == [("FOX", 14), ("ESPN2", 14)]
+    assert SportsDashboard._wall_margin_label({"wins_a": 3, "wins_b": 3}) == "比分持平"
+    assert SportsDashboard._wall_margin_label({"wins_a": None, "wins_b": 3}) == ""
+
+
 def test_wall_slot_scenes_exist_for_every_wall_league():
     for sport, path in LOCAL_WALL_SLOT_FILLER_PATHS.items():
         with Image.open(path) as scene:

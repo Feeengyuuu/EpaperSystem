@@ -31,6 +31,10 @@ WALL_TILE_COLUMNS = 3
 # into its team's stripe through a fillet of this radius.
 WALL_SLAB_WIDTH = 9
 WALL_JOINT_RADIUS = 5
+# A card's broadcast networks show as their logos this tall along its foot.
+WALL_TV_LOGO_HEIGHT = 14
+# The series line's team logo, beside its full name.
+WALL_SERIES_LOGO_SIZE = 15
 WALL_SOURCE_LOGO_DIR = os.path.join(LOCAL_TEAM_LOGO_DIR, "sources")
 
 
@@ -175,7 +179,8 @@ class LowerWallRenderMixin:
         accent = COLORS[spec.accent] if spec else self._hub_sport_accent(sport)
         self._draw_hub_card_shell(draw, x1, y1, x2, y2, accent)
         inner_x1, inner_x2 = x1 + 16, x2 - 9
-        detail = SportsDashboard._wall_detail_label(event) if spec else ""
+        # Under the teams: the series state, else who leads and by how much, else the records.
+        detail = (SportsDashboard._wall_detail_label(event) or SportsDashboard._wall_margin_label(event)) if spec else ""
         footer = str(event.get("broadcast") or "").strip() if spec else ""
         bottom = y2 - (24 if footer else 8) - (18 if detail else 0)
         row_height = max(30, min(46, (bottom - y1 - 56) // 2))
@@ -207,10 +212,70 @@ class LowerWallRenderMixin:
                                       foot)
         if detail:
             detail_top = rows_top + 2 * row_height
-            detail, detail_font = self._fit_text_ellipsis(draw, detail, inner_x2 - inner_x1, 11, bold=True, min_size=8)
-            self._draw_text_in_box(draw, (inner_x1, detail_top, inner_x2, detail_top + 16), detail, detail_font, COLORS["text"])
+            detail_box = (inner_x1, detail_top, inner_x2, detail_top + 16)
+            if not (self._draw_wall_series_line(image, draw, detail_box, event, spec)
+                    or self._draw_wall_margin_line(image, draw, detail_box, event, spec)):
+                detail, detail_font = self._fit_text_ellipsis(draw, detail, inner_x2 - inner_x1, 11, bold=True, min_size=8)
+                self._draw_text_in_box(draw, detail_box, detail, detail_font, COLORS["text"])
         if footer:
-            self._draw_kit_footer(draw, (inner_x1, y2 - 20, inner_x2, y2 - 6), f"TV {footer}")
+            # The networks' own logos, centred; a network without one keeps its name in type.
+            self._draw_kit_broadcast_logos(image, draw, (inner_x1, y2 - 21, inner_x2, y2 - 5), footer, WALL_TV_LOGO_HEIGHT)
+
+    def _draw_wall_series_line(self, image, draw, box, event, spec):
+        """The series state in words and the leader's logo: '[logo] 密尔沃基酿酒人 3-0 领先',
+        '系列赛 2-2 平'. False when the feed's summary has another shape or names neither team."""
+        verb, code, games = SportsDashboard._mlb_series_status(event)
+        if not verb:
+            return False
+        x1, y1, x2, y2 = [int(value) for value in box]
+        if verb == "tied":
+            text, font = self._fit_text_ellipsis(draw, f"系列赛 {games} 平", x2 - x1, 11, bold=True, min_size=8)
+            self._draw_text_in_box(draw, box, text, font, COLORS["text"])
+            return True
+        side = next((side for side in ("a", "b")
+                     if code and code == str(event.get(f"team_{side}_code") or "").strip().upper()), "")
+        if not side:
+            return False
+        self._draw_wall_team_note(image, draw, box, event, spec, side, f" {games} {'领先' if verb == 'leads' else '胜出'}")
+        return True
+
+    @staticmethod
+    def _wall_margin_label(event):
+        """'领先 14 分' / '比分持平' from the scoreboard, or '' while either score is unknown."""
+        try:
+            score_a, score_b = int(float((event or {}).get("wins_a"))), int(float((event or {}).get("wins_b")))
+        except (TypeError, ValueError):
+            return ""
+        return "比分持平" if score_a == score_b else f"领先 {abs(score_a - score_b)} 分"
+
+    def _draw_wall_margin_line(self, image, draw, box, event, spec):
+        """Who is ahead and by how much, with that team's logo: '[logo] 密苏里州立熊 领先 14 分';
+        '比分持平 3-3' when level. False while a score is unknown."""
+        label = SportsDashboard._wall_margin_label(event)
+        if not label:
+            return False
+        leader = self._wall_leader(event)
+        if leader is None:
+            text = f"{label} {event.get('wins_a')}-{event.get('wins_b')}"
+            text, font = self._fit_text_ellipsis(draw, text, int(box[2] - box[0]), 11, bold=True, min_size=8)
+            self._draw_text_in_box(draw, box, text, font, COLORS["text"])
+            return True
+        self._draw_wall_team_note(image, draw, box, event, spec, leader, " " + label)
+        return True
+
+    def _draw_wall_team_note(self, image, draw, box, event, spec, side, tail):
+        """``side``'s logo and name (the full one when it fits beside ``tail``), then ``tail``."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        logo = min(WALL_SERIES_LOGO_SIZE, y2 - y1)
+        fallback = spec.hook("logo_fallback", event, side, default=event.get(f"team_{side}_code"))
+        self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), x1, y1 + (y2 - y1 - logo) // 2, logo, fallback)
+        room = x2 - x1 - logo - 5 - self._text_width(draw, tail, self._font(11, True))
+        full = spec.hook("team_name", event, side, True, default=None)
+        short = (spec.hook("team_name", event, side, False, default=None) or event.get(f"team_{side}")
+                 or event.get(f"team_{side}_code") or "")
+        name, font = (full, self._font(11, True)) if full and self._text_width(draw, full, self._font(11, True)) <= room \
+            else self._fit_text_ellipsis(draw, short, room, 11, bold=True, min_size=8)
+        self._draw_text_in_box(draw, (x1 + logo + 5, y1, x2, y2), name + tail, font, COLORS["text"])
 
     def _draw_wall_team_line(self, image, draw, box, event, side, spec, colour=None, leads=False, foot=None):
         x1, y1, x2, y2 = box
