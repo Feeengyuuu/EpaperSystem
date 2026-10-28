@@ -17,12 +17,15 @@ from .scorebug_kit import ScorebugSpec
 SportsDashboard = None
 
 MLB_CARD_WIDTH = 340
-MLB_TABLE_ROW_HEIGHT = 24
+MLB_TABLE_ROW_HEIGHT = 22
 MLB_TABLE_HEADER_HEIGHT = 14
 MLB_TABLE_MIN_INNING_WIDTH = 13
 MLB_FOOTER_HEIGHT = 28
 MLB_FOOTER_MARK_WIDTH = 48
 MLB_SERIES_ROW_HEIGHT, MLB_SERIES_ROW_PITCH = 20, 22
+MLB_PROBABLES_HEIGHT = 28
+MLB_PROBABLES_LOGO = 22
+MLB_RACE_ROW_HEIGHT = 18
 
 
 class BaseballRenderMixin:
@@ -51,7 +54,9 @@ class BaseballRenderMixin:
         elif series:
             y = self._draw_mlb_series_list(image, draw, (column[0], y, column[2], column[3]), main, series, now, spec) + 6
             others = [event for event in others if event not in series]
-        if column[3] - y >= 40:
+        # With no other games, the series' race to its clinching win takes the ticker's place.
+        raced = not others and series and self._draw_mlb_series_race(image, draw, (column[0], y, column[2], column[3]), main, spec)
+        if not raced and column[3] - y >= 40:
             self._draw_kit_ticker(image, draw, (column[0], y, column[2], column[3]), others, now, spec, title="AROUND MLB")
         paint_list_backdrop(image, column, "baseball", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
 
@@ -82,7 +87,7 @@ class BaseballRenderMixin:
         series_logo = (lambda x, y: self._draw_mlb_team_logo(image, draw, event, series_side, x, y, 14, spec)) if series_side else None
         self._draw_kit_status_row(draw, left, top + 8, right, spec, state, SportsDashboard._mlb_pill_label(event, now), context, series, series_logo)
         table_bottom = self._draw_mlb_line_table(image, draw, (left, top + 33, right), event, state, spec)
-        y = table_bottom + 8
+        y = table_bottom + 6
         footer = (left, bottom - 6 - MLB_FOOTER_HEIGHT, right, bottom - 6)
         if state in {"live", "final"}:
             people = self._draw_mlb_matchup if state == "live" else self._draw_mlb_decisions
@@ -91,16 +96,15 @@ class BaseballRenderMixin:
             # The band above already carries the series mark.
             self._draw_mlb_footer(image, draw, footer, event, state, with_mark=False)
             return
-        budget = right - left - self._text_width(draw, "SP", self._font(8, False)) - 6
-        probables = self._mlb_first_fitting(draw, [SportsDashboard._mlb_probables_label(event, full) for full in (True, False)], budget, 10)
-        if probables:
-            self._draw_kit_labeled_line(draw, (left, y, right, y + 14), "SP", probables)
-            y += 20
+        if SportsDashboard._mlb_probables_label(event):
+            self._draw_mlb_probables(image, draw, (left, y, right, y + MLB_PROBABLES_HEIGHT), event, spec)
+            y += MLB_PROBABLES_HEIGHT + 5
         tiles = [
             ("FIRST PITCH", SportsDashboard._kit_countdown_label(event.get("start"), now)),
             ("TV", str(event.get("broadcast") or "").strip() or "TBD"),
         ]
-        self._draw_kit_tiles(draw, (left, y, right, footer[1] - 4), tiles, spec, tile_h=min(36, footer[1] - 4 - y), image=image)
+        self._draw_kit_tiles(draw, (left, y, right, footer[1] - 4), tiles, spec, tile_h=min(36, footer[1] - 5 - y),
+                             image=image, glass=True)
         self._draw_mlb_footer(image, draw, footer, event, state)
 
     def _draw_mlb_footer(self, image, draw, box, event, state, with_mark=True):
@@ -167,12 +171,15 @@ class BaseballRenderMixin:
         names, name_size, team_w = self._mlb_table_names(draw, event, spec, slot, count, totals_x1 - 4 - x1)
         col_w = (totals_x1 - 4 - (x1 + team_w)) / max(1, count)
         y2 = y1 + MLB_TABLE_HEADER_HEIGHT + 2 * MLB_TABLE_ROW_HEIGHT
-        draw.rounded_rectangle((x1, y1, x2, y2), radius=4, fill=COLORS[spec.tint], outline=COLORS["border"], width=1)
+        # Raised glass over the card's stadium art; the R/H/E column a clearer pane on it.
+        self._draw_kit_glass(image, (x1, y1, x2, y2), COLORS[spec.tint])
         current = len(innings) if live else 0
         if live and current:
             left = int(x1 + team_w + (current - 1) * col_w)
             draw.rectangle((left + 1, y1 + 1, int(left + col_w) - 1, y2 - 1), fill=COLORS[spec.tag])
-        draw.rectangle((totals_x1 - 2, y1 + 1, x2 - 1, y2 - 1), fill=COLORS["panel"])
+        totals = Image.new("L", (x2 - totals_x1 + 1, y2 - y1 - 1), round(255 * 0.7))
+        image.paste(COLORS["panel"], (totals_x1 - 2, y1 + 1, x2 - 1, y2), totals)
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=4, outline=COLORS["border"], width=1)
         header_y2 = y1 + MLB_TABLE_HEADER_HEIGHT
         for index in range(count):
             left = int(x1 + team_w + index * col_w)
@@ -289,6 +296,64 @@ class BaseballRenderMixin:
                 self._draw_mlb_team_logo(image, draw, event, side, cursor + 3, y1 + 1, logo, spec)
             cursor += logo_w + 10
 
+    def _draw_mlb_probables(self, image, draw, box, event, spec):
+        """The probable starters face to face: each team's logo at its own end, the pitcher's
+        name and under it his throwing hand and line (postseason when he has one), SP over VS
+        between them."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        self._draw_kit_glass(image, (x1, y1, x2, y2), COLORS[spec.tint])
+        middle = (x1 + x2) // 2
+        self._draw_centered_in_box(draw, (middle - 14, y1 + 2, middle + 14, y1 + 12), "SP", self._font(8, False), COLORS["text"])
+        self._draw_centered_in_box(draw, (middle - 14, y1 + 11, middle + 14, y2 - 2), "VS", self._font(11, True), COLORS["text"])
+        logo = MLB_PROBABLES_LOGO
+        logo_y = y1 + (y2 - y1 - logo) // 2
+        for side, align in (("a", "left"), ("b", "right")):
+            if align == "left":
+                self._draw_mlb_team_logo(image, draw, event, side, x1 + 5, logo_y, logo, spec)
+                text_box = (x1 + logo + 10, y1, middle - 16)
+            else:
+                self._draw_mlb_team_logo(image, draw, event, side, x2 - 5 - logo, logo_y, logo, spec)
+                text_box = (middle + 16, y1, x2 - logo - 10)
+            name = str(event.get(f"probable_{side}") or "").strip() or "待定"
+            room = text_box[2] - text_box[0]
+            lines = [text for text in SportsDashboard._mlb_pitcher_lines(event.get(f"probable_{side}_stats"))
+                     if self._text_width(draw, text, self._font(9, False)) <= room][:1]
+            name_box = (text_box[0], y1 + 2, text_box[2], y1 + 16) if lines else (text_box[0], y1, text_box[2], y2)
+            name, font = self._fit_text_ellipsis(draw, name, room, 11, bold=True, min_size=9)
+            self._draw_text_in_box(draw, name_box, name, font, COLORS["text"], align=align)
+            if lines:
+                self._draw_text_in_box(draw, (text_box[0], y1 + 15, text_box[2], y2 - 2), lines[0], self._font(9, False),
+                                       COLORS["text"], align=align)
+
+    def _draw_mlb_series_race(self, image, draw, box, main, spec):
+        """With no other games on the board: the series as a race to its clinching win, a row
+        per team (the leader first) with its logo, name, a dot per win needed (filled for those
+        won) and what each still needs. False when the series' status is unreadable."""
+        race = SportsDashboard._mlb_series_race(main)
+        x1, y1, x2, y2 = [int(value) for value in box]
+        if not race or y2 - y1 < 2 * MLB_RACE_ROW_HEIGHT + 2:
+            return False
+        draw.line((x1, y1, x2, y1), fill=COLORS["border"], width=1)
+        y = y1 + 2 + (y2 - y1 - 2 - 2 * MLB_RACE_ROW_HEIGHT) // 2
+        dot, gap = 9, 3
+        for side, wins, note in race["rows"]:
+            row_y2 = y + MLB_RACE_ROW_HEIGHT
+            self._draw_mlb_team_logo(image, draw, main, side, x1 + 1, y + 1, 16, spec)
+            name = SportsDashboard._mlb_display_team_from_event(main, side, full=False)
+            name_font = self._font(11, True)
+            self._draw_text_in_box(draw, (x1 + 21, y, x1 + 70, row_y2), name, name_font, COLORS["text"])
+            dots_x = x1 + 23 + max(36, self._text_width(draw, name, name_font)) + 4
+            for index in range(race["need"]):
+                left = dots_x + index * (dot + gap)
+                top = y + (MLB_RACE_ROW_HEIGHT - dot) // 2
+                draw.ellipse((left, top, left + dot, top + dot), outline=COLORS["border"], width=1,
+                             fill=COLORS[spec.live] if index < wins else COLORS["panel"])
+            note_x = dots_x + race["need"] * (dot + gap) + 2
+            note, font = self._fit_text(draw, note, x2 - note_x, 11, bold=True, min_size=8)
+            self._draw_text_in_box(draw, (note_x, y, x2, row_y2), note, font, COLORS["text"], align="right")
+            y = row_y2
+        return True
+
     def _draw_mlb_team_logo(self, image, draw, event, side, x, y, size, spec):
         self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), x, y, size, spec.hook("logo_fallback", event, side))
 
@@ -362,9 +427,13 @@ class BaseballRenderMixin:
         dated = isinstance(start, datetime)
         today = dated and start.date() == now.date()
         tag = (x1, y1 + 2, x1 + 22, y2 - 2) if tall else (x1, y1 + 1, x1 + 22, y2 - 1)
-        draw.rounded_rectangle(tag, radius=3, fill=COLORS[spec.tag] if today or state == "live" else COLORS["panel"],
-                               outline=COLORS["border"], width=1)
-        self._draw_centered_in_box(draw, tag, f"G{number}" if number else "G", self._font(9, True), COLORS["text"])
+        if today or state == "live":
+            # Today's (or the live) game stands out by a solid red tag lettered in white.
+            draw.rounded_rectangle(tag, radius=3, fill=COLORS[spec.live])
+            self._draw_centered_in_box(draw, tag, f"G{number}" if number else "G", self._font(9, True), (255, 255, 255))
+        else:
+            draw.rounded_rectangle(tag, radius=3, fill=COLORS["panel"], outline=COLORS["border"], width=1)
+            self._draw_centered_in_box(draw, tag, f"G{number}" if number else "G", self._font(9, True), COLORS["text"])
         x = x1 + 27
         if dated:
             date_font = self._font(13 if tall else 10, True)
@@ -506,6 +575,45 @@ class BaseballRenderMixin:
         if verb and team:
             return f"{team} {games} {'领先' if verb == 'leads' else '胜出'}"
         return str((event or {}).get("series_summary") or "").strip().upper().replace("SERIES ", "")
+
+    @staticmethod
+    def _mlb_pitcher_lines(stats):
+        """A probable starter's record under his name, longest first: throwing hand, then his
+        postseason (else season) wins-losses and ERA, the hand the first to go; [] without one."""
+        if not isinstance(stats, Mapping):
+            return []
+        hand = {"R": "右投", "L": "左投"}.get(str(stats.get("hand") or ""), "")
+        line, label = (stats.get("post"), "季后赛") if isinstance(stats.get("post"), Mapping) else (stats.get("season"), "")
+        if not isinstance(line, Mapping) or line.get("w") is None or line.get("l") is None:
+            return [hand] if hand else []
+        record, era = f"{line['w']}-{line['l']}", str(line.get("era") or "")
+        era = f"ERA {era}" if era else ""
+        texts = [" · ".join(part for part in (hand, f"{label} {record}".strip(), era) if part),
+                 " · ".join(part for part in (f"{label} {record}".strip(), era) if part),
+                 " · ".join(part for part in (record, era) if part)]
+        return list(dict.fromkeys(texts))
+
+    @staticmethod
+    def _mlb_series_race(event):
+        """The series as a race: {"need": wins to clinch, "rows": [(side, wins, note)]}, the
+        leader first; None when the status or the series' length is unknown."""
+        verb, code, games = SportsDashboard._mlb_series_status(event)
+        length = int((event or {}).get("series_length") or 0)
+        if not verb or length < 3 or "-" not in games:
+            return None
+        need = length // 2 + 1
+        high, low = sorted((int(value) for value in games.split("-")), reverse=True)
+        leader = SportsDashboard._mlb_series_side(event) or "a"
+        trailer = "b" if leader == "a" else "a"
+        world = str((event or {}).get("series_game") or "").lower().startswith("world series")
+        if verb == "wins":
+            notes = ("世界大赛冠军" if world else "晋级", "出局")
+        elif verb == "tied":
+            notes = (f"还差 {need - high} 胜",) * 2
+        else:
+            clinch = f"再胜 {need - high} 场{'夺冠' if world else '晋级'}" if need - high == 1 else f"还差 {need - high} 胜"
+            notes = (clinch, f"再输 {need - high} 场出局" if need - high == 1 else f"还差 {need - low} 胜")
+        return {"need": need, "rows": [(leader, high, notes[0]), (trailer, low, notes[1])]}
 
     @staticmethod
     def _mlb_probables_label(event, full=False):

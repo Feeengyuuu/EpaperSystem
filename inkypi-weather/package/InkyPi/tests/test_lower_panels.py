@@ -253,6 +253,115 @@ def test_mlb_series_and_probables_name_teams_in_chinese():
     assert SportsDashboard._mlb_probables_label(event) == "N. Martinez (光芒)  vs  J. Misiorowski (酿酒人)"
 
 
+def _pitcher_game(pk, when, state, away_id, home_id):
+    return {"gamePk": pk, "gameDate": when, "status": {"abstractGameState": state},
+            "teams": {"away": {"probablePitcher": {"id": away_id, "fullName": "A B"}},
+                      "home": {"probablePitcher": {"id": home_id, "fullName": "C D"} if home_id else None}}}
+
+
+def test_mlb_probable_starters_records_come_from_one_people_request():
+    payload = {"dates": [{"games": [
+        _pitcher_game(3, "2026-10-30T00:00:00Z", "Preview", 30, 31),
+        _pitcher_game(1, "2026-10-27T00:00:00Z", "Final", 10, 11),
+        _pitcher_game(2, "2026-10-29T00:00:00Z", "Preview", 20, None),
+    ]}, {"games": [_pitcher_game(4, "2026-10-31T00:00:00Z", "Preview", 20, 41),
+                   _pitcher_game(5, "2026-11-01T00:00:00Z", "Preview", 50, 51)]}]}
+    # The next three unplayed games, in order, each starter once; a finished game's are not asked.
+    assert SportsDashboard._mlb_probable_ids(payload) == ["20", "30", "31", "41"]
+    people = {"people": [
+        {"id": 20, "pitchHand": {"code": "R"}, "stats": [{"splits": [
+            {"gameType": "P", "stat": {"wins": 1, "losses": 0, "era": "2.70", "strikeOuts": 14}},
+            {"gameType": "R", "stat": {"wins": 16, "losses": 5, "era": "1.80", "strikeOuts": 252}}]}]},
+        {"id": 31, "pitchHand": {"code": "L"}, "stats": []},
+        {"fullName": "No id"},
+    ]}
+    compact = SportsDashboard._compact_mlb_pitchers(people)
+    assert compact == {"20": {"hand": "R", "post": {"w": 1, "l": 0, "era": "2.70", "k": 14},
+                              "season": {"w": 16, "l": 5, "era": "1.80", "k": 252}},
+                       "31": {"hand": "L"}}
+    game = _mlb_game(gamesInSeries=7)
+    game["teams"]["away"]["probablePitcher"] = {"id": 20, "fullName": "Jacob Misiorowski"}
+    event = SportsDashboard._parse_mlb_game(game, LA)
+    assert event["probable_a_id"] == "20" and event["series_length"] == 7
+    parsed = SportsDashboard._attach_mlb_pitchers({"events": [event]}, compact)
+    assert parsed["events"][0]["probable_a_stats"] == compact["20"]
+    assert "probable_b_stats" not in parsed["events"][0]
+    assert SportsDashboard._attach_mlb_pitchers({"events": [{"probable_a_id": "20"}]}, None)["events"] == [
+        {"probable_a_id": "20"}]
+
+
+def test_mlb_pitcher_lines_prefer_the_postseason_and_give_up_the_hand_first():
+    post = {"hand": "R", "post": {"w": 1, "l": 0, "era": "2.70"}, "season": {"w": 16, "l": 5, "era": "1.80"}}
+    assert SportsDashboard._mlb_pitcher_lines(post) == ["右投 · 季后赛 1-0 · ERA 2.70", "季后赛 1-0 · ERA 2.70",
+                                                        "1-0 · ERA 2.70"]
+    season = {"hand": "L", "season": {"w": 16, "l": 5, "era": "1.80"}}
+    assert SportsDashboard._mlb_pitcher_lines(season) == ["左投 · 16-5 · ERA 1.80", "16-5 · ERA 1.80"]
+    assert SportsDashboard._mlb_pitcher_lines({"hand": "R"}) == ["右投"]
+    assert SportsDashboard._mlb_pitcher_lines(None) == []
+
+
+@pytest.mark.parametrize(("summary", "game", "length", "expected"), [
+    ("MIL leads 3-1", "World Series Game 5", 7, (4, [("b", 3, "再胜 1 场夺冠"), ("a", 1, "再输 1 场出局")])),
+    ("TB leads 2-1", "ALDS Game 4", 5, (3, [("a", 2, "再胜 1 场晋级"), ("b", 1, "再输 1 场出局")])),
+    ("TB leads 2-0", "ALCS Game 3", 7, (4, [("a", 2, "还差 2 胜"), ("b", 0, "还差 4 胜")])),
+    ("Series tied 2-2", "World Series Game 5", 7, (4, [("a", 2, "还差 2 胜"), ("b", 2, "还差 2 胜")])),
+    ("MIL wins 4-1", "World Series Game 5", 7, (4, [("b", 4, "世界大赛冠军"), ("a", 1, "出局")])),
+])
+def test_mlb_series_race_says_what_each_team_still_needs(summary, game, length, expected):
+    event = {"team_a_code": "TB", "team_b_code": "MIL", "series_summary": summary, "series_game": game,
+             "series_length": length}
+    race = SportsDashboard._mlb_series_race(event)
+    assert (race["need"], race["rows"]) == expected
+    assert SportsDashboard._mlb_series_race({**event, "series_length": 0}) is None
+    assert SportsDashboard._mlb_series_race({**event, "series_summary": "Something else"}) is None
+
+
+def test_mlb_probable_starters_face_each_other_between_their_team_logos(boxes):
+    event = {"team_a_code": "MIL", "team_b_code": "TB", "team_a_logo": "mil.png", "team_b_logo": "tb.png",
+             "probable_a": "J. Misiorowski", "probable_b": "",
+             "probable_a_stats": {"hand": "R", "post": {"w": 1, "l": 0, "era": "2.70"}}}
+    logos = []
+    plugin = _plugin()
+    plugin._draw_team_logo = lambda _image, _draw, url, x, y, size, *_args: logos.append((url, x, size))
+    image = Image.new("RGB", (556, 268), COLORS["paper"])
+    draw = ImageDraw.Draw(image)
+    plugin._draw_mlb_probables(image, draw, (28, 150, 342, 180), event, plugin._mlb_spec())
+
+    _assert_fits(draw, boxes)
+    texts = {text: box for box, text, _font in boxes}
+    assert {"SP", "VS", "J. Misiorowski", "待定"} <= set(texts)
+    line = next(text for text in texts if "ERA 2.70" in text)
+    assert texts[line][0] == texts["J. Misiorowski"][0] and texts[line][1] > texts["J. Misiorowski"][1]
+    # Each team's logo at its own end; the unannounced starter's name is centred on its side.
+    assert [(url, size) for url, _x, size in logos] == [("mil.png", 22), ("tb.png", 22)]
+    assert logos[0][1] < texts["J. Misiorowski"][0] and logos[1][1] >= texts["待定"][2]
+    assert texts["待定"][1] == 150 and texts["待定"][3] == 180
+
+
+def test_mlb_series_race_takes_the_ticker_place_with_no_other_games(boxes):
+    sample_now = datetime(2026, 10, 28, 12, 0, tzinfo=LA)
+    games = []
+    for number, (day, summary) in enumerate(((23, ""), (24, "MIL leads 1-0"), (26, "MIL leads 2-0"), (27, "MIL leads 3-0"),
+                                             (28, "MIL leads 3-1")), start=1):
+        game = _mlb_game(gamePk=900 + number, gameDate=f"2026-10-{day}T{'00' if day < 28 else '23'}:08:00Z",
+                         description=f"World Series Game {number}", gamesInSeries=7,
+                         seriesStatus={"result": summary, "shortDescription": f"World Series Game {number}"},
+                         status={"abstractGameState": "Final" if day < 28 else "Preview",
+                                 "detailedState": "Final" if day < 28 else "Scheduled",
+                                 "codedGameState": "F" if day < 28 else "S"})
+        game["teams"] = {"away": {**game["teams"]["away"], "team": {"name": "Milwaukee Brewers"}},
+                         "home": {**game["teams"]["home"], "team": {"name": "Tampa Bay Rays"}}}
+        games.append(game)
+    parsed = SportsDashboard._parse_mlb_scoreboard({"dates": [{"games": games}]}, LA)
+    card = _hub_card("MLB", parsed, sample_now)
+    assert card["main"]["series_game"] == "World Series Game 5"
+    _render(lambda plugin, image, draw: plugin._draw_mlb_standalone_panel(
+        image, draw, (0, 0, 555, 267), card, "HUB LIVE", sample_now))
+    texts = [text for _box, text, _font in boxes]
+    assert "再胜 1 场夺冠" in texts and "再输 1 场出局" in texts
+    assert "AROUND MLB" not in texts and not any("No other" in text for text in texts)
+
+
 @pytest.mark.parametrize(("innings", "names"), [
     (9, ("坦帕湾光芒", "密尔沃基酿酒人")),
     (12, ("光芒", "酿酒人")),
@@ -518,6 +627,39 @@ def test_the_hub_fetch_adds_the_playoff_series_from_one_game_summary(monkeypatch
     assert [params for url, params in calls if url.endswith("/summary")] == [{"event": "11"}]
     assert payload["payloads"]["wnba_series"]["games"][0]["id"] == "11"
     assert "wnba_series" not in payload["errors"]
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_the_hub_fetch_adds_the_probable_starters_records_from_one_people_request(monkeypatch, fails):
+    import plugins.sports_dashboard.offseason_hub as offseason_hub_module
+
+    calls = []
+    board = {"dates": [{"games": [_pitcher_game(5, "2026-10-28T23:08:00Z", "Preview", 694819, 656876)]}]}
+    people = {"people": [{"id": 694819, "pitchHand": {"code": "R"}, "stats": []}]}
+
+    def fetch(_session, url, params):
+        calls.append((url, params))
+        if url.endswith("/people"):
+            if fails:
+                raise RuntimeError("people down")
+            return people
+        return board if "statsapi.mlb.com" in url else {}
+
+    monkeypatch.setattr(offseason_hub_module, "fetch_scoreboard", fetch)
+    monkeypatch.setattr(offseason_hub_module, "get_http_session", lambda: None)
+    plugin = _plugin()
+    monkeypatch.setattr(plugin, "_record_offseason_hub_call", lambda *_args: None)
+    payload = plugin._fetch_offseason_hub_payload({}, LA, "key", datetime(2026, 10, 28, 18, tzinfo=timezone.utc))
+
+    asked = [(url, params) for url, params in calls if url.endswith("/people")]
+    assert asked == [("https://statsapi.mlb.com/api/v1/people",
+                      {"personIds": "694819,656876", "hydrate": offseason_hub_module.MLB_PITCHER_HYDRATE})]
+    if fails:
+        assert "mlb_pitchers" not in payload["payloads"] and "people down" in payload["errors"]["mlb_pitchers"]
+    else:
+        assert payload["payloads"]["mlb_pitchers"] == {"694819": {"hand": "R"}}
+        parsed = SportsDashboard._parse_offseason_hub_payload(payload, LA, datetime(2026, 10, 28, 11, tzinfo=LA))
+        assert parsed["mlb"]["events"][0]["probable_a_stats"] == {"hand": "R"}
 
 
 def test_series_tracker_slots_show_each_played_games_winner_score_and_date(boxes):

@@ -25,6 +25,10 @@ KIT_SCOREBUG_PERIOD_WIDTH = 17
 KIT_SCOREBOARD_ROW_HEIGHT = 26
 KIT_SCOREBOARD_STATE_WIDTH = 44
 KIT_TILE_HEIGHT = 36
+# Raised glass panels over a card's stadium art: how much of the fill covers the art, and the
+# ink shadow's offset down and to the right.
+KIT_GLASS_ALPHA = 0.74
+KIT_GLASS_SHADOW = 2
 KIT_TICKER_ROW_HEIGHT = 17
 KIT_TICKER_LOGO_SIZE = 12
 KIT_TICKER_LOGO_GAP = 3
@@ -239,9 +243,27 @@ class ScorebugKitMixin:
 
     # Details ------------------------------------------------------------------
 
-    def _draw_kit_tiles(self, draw, box, tiles, spec, tile_h=KIT_TILE_HEIGHT, image=None):
+    def _draw_kit_glass(self, image, box, fill, radius=4, alpha=KIT_GLASS_ALPHA):
+        """A raised translucent panel at ``box``: a hard ink shadow down and to the right
+        (only where the panel does not cover it), ``fill`` letting the art beneath show
+        through, a light sheen along its top edge and an ink outline."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        offset = KIT_GLASS_SHADOW
+        size = (x2 - x1 + 1 + offset, y2 - y1 + 1 + offset)
+        panel = Image.new("L", size, 0)
+        ImageDraw.Draw(panel).rounded_rectangle((0, 0, x2 - x1, y2 - y1), radius=radius, fill=255)
+        shadow = Image.new("L", size, 0)
+        ImageDraw.Draw(shadow).rounded_rectangle((offset, offset, size[0] - 1, size[1] - 1), radius=radius, fill=255)
+        image.paste(COLORS["border"], (x1, y1, x1 + size[0], y1 + size[1]), ImageChops.subtract(shadow, panel))
+        image.paste(fill, (x1, y1, x1 + size[0], y1 + size[1]), panel.point(lambda value: round(value * alpha)))
+        draw = ImageDraw.Draw(image)
+        sheen = tuple(round(channel + (255 - channel) * 0.6) for channel in fill)
+        draw.line((x1 + radius, y1 + 1, x2 - radius, y1 + 1), fill=sheen, width=1)
+        draw.rounded_rectangle((x1, y1, x2, y2), radius=radius, outline=COLORS["border"], width=1)
+
+    def _draw_kit_tiles(self, draw, box, tiles, spec, tile_h=KIT_TILE_HEIGHT, image=None, glass=False):
         """Label-over-value tiles; with ``image`` a TV tile shows the networks'
-        logos."""
+        logos, and ``glass`` raises each tile as translucent glass over the card's art."""
         x1, y1, x2, _y2 = [int(value) for value in box]
         tiles = [tile for tile in tiles if tile]
         if not tiles:
@@ -252,7 +274,10 @@ class ScorebugKitMixin:
         for index, (label, value) in enumerate(tiles):
             left = x1 + index * (tile_w + gap)
             right = left + tile_w
-            draw.rounded_rectangle((left, y1, right, y1 + tile_h), radius=4, fill=COLORS[spec.tint], outline=COLORS["border"], width=1)
+            if glass and image is not None:
+                self._draw_kit_glass(image, (left, y1, right, y1 + tile_h), COLORS[spec.tint])
+            else:
+                draw.rounded_rectangle((left, y1, right, y1 + tile_h), radius=4, fill=COLORS[spec.tint], outline=COLORS["border"], width=1)
             self._draw_text_in_box(draw, (left + 7, y1 + 3, right - 4, y1 + 13), label, label_font, COLORS["text"])
             value_box = (left + 7, y1 + 14, right - 4, y1 + tile_h - 3)
             if image is not None and label == "TV" and self._draw_kit_tv_logos(image, draw, value_box, value, COLORS[spec.tint]):

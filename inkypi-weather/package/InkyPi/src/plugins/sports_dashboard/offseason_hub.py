@@ -6,6 +6,10 @@ from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_ali
 
 SportsDashboard = None
 
+# One people request adds the probable starters' throwing hand and season/postseason lines.
+MLB_PITCHER_HYDRATE = "stats(group=[pitching],type=[season],gameType=[R,P])"
+MLB_PITCHER_GAMES = 3
+
 
 class OffseasonHubMixin:
     def _load_offseason_hub(self, settings, timezone_info, now):
@@ -141,6 +145,18 @@ class OffseasonHubMixin:
                     raise
                 except Exception as exc:
                     errors["wnba_series"] = _safe_exception_text(exc)
+            pitchers = SportsDashboard._mlb_probable_ids(payloads.get("mlb"))
+            if pitchers:
+                try:
+                    people_url = self._mlb_scoreboard_url(settings).rsplit("/schedule", 1)[0] + "/people"
+                    compact = SportsDashboard._compact_mlb_pitchers(fetch_scoreboard(
+                        session, people_url, {"personIds": ",".join(pitchers), "hydrate": MLB_PITCHER_HYDRATE}))
+                    if compact:
+                        payloads["mlb_pitchers"] = compact
+                except TaskCancelled:
+                    raise
+                except Exception as exc:
+                    errors["mlb_pitchers"] = _safe_exception_text(exc)
         finally:
             self._record_offseason_hub_call(settings, now_utc)
         return {
@@ -282,7 +298,8 @@ class OffseasonHubMixin:
     def _parse_offseason_hub_payload(payload, timezone_info, now):
         payloads = (payload or {}).get("payloads") or {}
         return {
-            "mlb": SportsDashboard._parse_mlb_scoreboard(payloads.get("mlb"), timezone_info),
+            "mlb": SportsDashboard._attach_mlb_pitchers(SportsDashboard._parse_mlb_scoreboard(payloads.get("mlb"), timezone_info),
+                                                        payloads.get("mlb_pitchers")),
             "wnba": {**SportsDashboard._parse_wnba_scoreboard(payloads.get("wnba"), timezone_info),
                      "series_history": SportsDashboard._parse_wnba_series(payloads.get("wnba_series"), timezone_info)},
             "pga": SportsDashboard._parse_pga_scoreboard(payloads.get("pga"), timezone_info, now),
@@ -344,6 +361,8 @@ class OffseasonHubMixin:
             "record_b": SportsDashboard._mlb_record_label(home.get("leagueRecord")),
             "probable_a": SportsDashboard._mlb_pitcher_name(away.get("probablePitcher")),
             "probable_b": SportsDashboard._mlb_pitcher_name(home.get("probablePitcher")),
+            "probable_a_id": str((away.get("probablePitcher") or {}).get("id") or ""),
+            "probable_b_id": str((home.get("probablePitcher") or {}).get("id") or ""),
             "venue": str((game.get("venue") or {}).get("name") or "").strip(),
             "inning": SportsDashboard._lpl_int_value(linescore.get("currentInning")),
             "inning_label": str(linescore.get("currentInningOrdinal") or "").strip(),
@@ -1515,6 +1534,50 @@ class OffseasonHubMixin:
         return f"{parts[0][0]}. {parts[-1]}"[:16]
 
     @staticmethod
+    def _mlb_probable_ids(payload, games=MLB_PITCHER_GAMES):
+        """The probable starters' person ids for the next ``games`` games still to be played."""
+        upcoming = [game for bucket in (payload or {}).get("dates") or [] for game in (bucket or {}).get("games") or []
+                    if isinstance(game, Mapping) and (game.get("status") or {}).get("abstractGameState") == "Preview"]
+        ids = []
+        for game in sorted(upcoming, key=lambda game: str(game.get("gameDate") or ""))[:games]:
+            for side in ("away", "home"):
+                person = str((((game.get("teams") or {}).get(side) or {}).get("probablePitcher") or {}).get("id") or "")
+                if person.isdigit() and person not in ids:
+                    ids.append(person)
+        return ids
+
+    @staticmethod
+    def _compact_mlb_pitchers(payload):
+        """{person id: {"hand": "R"/"L", "season": line, "post": line}} from a people request,
+        each line {"w", "l", "era", "k"} for the regular season and the postseason."""
+        pitchers = {}
+        for person in (payload or {}).get("people") or []:
+            if not isinstance(person, Mapping) or not str(person.get("id") or "").isdigit():
+                continue
+            entry = {"hand": str((person.get("pitchHand") or {}).get("code") or "")[:1].upper()}
+            for stats in person.get("stats") or []:
+                for split in (stats or {}).get("splits") or []:
+                    key = {"R": "season", "P": "post"}.get(str((split or {}).get("gameType") or ""))
+                    stat = (split or {}).get("stat")
+                    if key and key not in entry and isinstance(stat, Mapping):
+                        entry[key] = {"w": SportsDashboard._lpl_int_value(stat.get("wins")),
+                                      "l": SportsDashboard._lpl_int_value(stat.get("losses")),
+                                      "era": str(stat.get("era") or "").strip()[:5],
+                                      "k": SportsDashboard._lpl_int_value(stat.get("strikeOuts"))}
+            pitchers[str(person["id"])] = entry
+        return pitchers
+
+    @staticmethod
+    def _attach_mlb_pitchers(parsed, pitchers):
+        """Each probable starter's record (see _compact_mlb_pitchers) as probable_<side>_stats."""
+        for event in (parsed or {}).get("events") or []:
+            for side in ("a", "b"):
+                record = (pitchers or {}).get(event.get(f"probable_{side}_id") or "")
+                if isinstance(record, Mapping):
+                    event[f"probable_{side}_stats"] = record
+        return parsed
+
+    @staticmethod
     def _mlb_base_state(offense):
         bases = []
         if isinstance(offense.get("first"), Mapping):
@@ -1556,6 +1619,7 @@ class OffseasonHubMixin:
             "scheduled_innings": SportsDashboard._lpl_int_value((linescore or {}).get("scheduledInnings")) or 9,
             "is_top_inning": (linescore or {}).get("isTopInning") is True,
             "series_summary": str(series.get("result") or "").strip(),
+            "series_length": SportsDashboard._lpl_int_value(game.get("gamesInSeries") or series.get("totalGames")) or 0,
             "series_game": str(game.get("description") or series.get("shortDescription") or "").split(",")[0].strip(),
             "decisions": [
                 {"label": label, "name": SportsDashboard._mlb_pitcher_name(decisions.get(key))}
