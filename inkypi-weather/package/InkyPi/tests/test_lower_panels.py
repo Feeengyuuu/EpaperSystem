@@ -448,12 +448,12 @@ def test_mlb_footer_bills_the_game_in_official_marks_else_the_text_line(boxes):
     # Series mark, game number and the ballpark's logo, its yellow roofline as printed.
     assert texts == ["GAME 6"]
     assert any(red > 200 and 150 < green < 220 and blue < 110 for red, green, blue in ballpark.get_flattened_data())
-    _named, texts = footer(venue="London Stadium")
-    assert texts == ["GAME 6", "London Stadium"]
+    _named, texts = footer(venue="Rice Park")
+    assert texts == ["GAME 6", "Rice Park"]
     park, texts = footer(venue="Oracle Park", series_game="")
     assert texts == [] and park.getchannel("R").getextrema()[1] > 150
-    _line, texts = footer(venue="London Stadium", series_game="")
-    assert texts == ["London Stadium"]
+    _line, texts = footer(venue="Rice Park", series_game="")
+    assert texts == ["Rice Park"]
 
 
 def test_mlb_series_rows_lead_with_the_game_date_and_keep_played_results(boxes):
@@ -555,6 +555,7 @@ def test_wnba_series_rows_lead_with_the_game_date_and_keep_the_networks_small(bo
 
     texts = [text for _box, text, _font in boxes]
     assert "10/21" in texts and "周三 5:00 PM" in texts
+    assert "6" in texts and "G6" not in texts
     date_font = next(font for _box, text, font in boxes if text == "10/21")
     assert date_font.size == 13
     # The networks' logos stay within a compact row's height, centred on the row.
@@ -680,7 +681,9 @@ def test_series_tracker_slots_show_each_played_games_winner_score_and_date(boxes
         image, draw, (20, 20, 300, 60), main, [], 7, spec, history, NOW))
 
     texts = [text for _box, text, _font in boxes]
-    assert {"68-64", "79-65", "G1", "G2", "G3", "G7"} <= set(texts)
+    # Each game is a numbered tank top, not a "G1" caption.
+    assert {"68-64", "79-65", "1", "2", "3", "7"} <= set(texts)
+    assert not any(text.startswith("G") and text[1:].isdigit() for text in texts)
     assert {"10/14", "10/16", "10/18", "10/21"} <= set(texts)
     assert "今天" in texts and "5:00" in texts and "周三" in texts
     # Another series' history (other teams) is ignored.
@@ -1467,6 +1470,56 @@ def test_live_wall_header_carries_the_wordmark_the_control_room_and_league_count
     crowded, now = _wall_games(16)
     _render(lambda plugin, image, draw: plugin._draw_lower_live_wall(image, draw, (0, 0, 555, 267), crowded, now))
     assert [name for name, right in pasted if right] == ["live_now_wordmark.png"]
+
+
+def test_series_games_are_tank_tops_in_the_winners_colour():
+    spec = _plugin()._basketball_spec("WNBA")
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_game_jersey(
+        image, draw, (20, 20), (18, 17), 6, COLORS["red"], COLORS["paper_text"], spec))
+    jersey = image.crop((20, 20, 38, 37))
+    colours = jersey.get_flattened_data()
+    red = tuple(COLORS["red"])
+    assert sum(all(abs(a - b) < 40 for a, b in zip(colour, red)) for colour in colours) > 40
+    assert tuple(COLORS["paper_text"]) in colours
+    # The straps leave the top corners and the neck's middle open.
+    paper = tuple(COLORS["paper"])
+    assert jersey.getpixel((0, 0)) == paper and jersey.getpixel((17, 0)) == paper and jersey.getpixel((9, 1)) == paper
+
+
+def test_a_venue_line_puts_the_grounds_logo_between_its_words_else_draws_nothing(boxes):
+    drawn = []
+
+    def line(venue, **kwargs):
+        boxes.clear()
+        image, _draw = _render(lambda plugin, image, draw: drawn.append(
+            plugin._draw_kit_venue_line(image, draw, (20, 20, 300, 34), venue, **kwargs)))
+        return image.crop((20, 20, 300, 34)), [text for _box, text, _font in boxes]
+
+    chase, texts = line("Chase Center", before="Game 3", after="San Francisco")
+    assert drawn.pop() and texts == ["Game 3", "·", "·", "San Francisco"]
+    assert any(blue > 150 and red < 60 for red, _green, blue in chase.get_flattened_data())
+    blank, texts = line("Accor Arena", before="Game 3")
+    assert drawn.pop() is False and texts == [] and len(set(blank.get_flattened_data())) == 1
+    assert SportsDashboard._stage_without_venue("第9轮 | ESPN+ | Chase Center", "Chase Center") == "第9轮 | ESPN+"
+
+
+def test_club_cards_and_football_footers_show_the_ground_as_its_logo(boxes):
+    club = {"start": NOW, "block": "第9轮 | Chase Center", "venue": "Chase Center", "broadcast": ""}
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_club_card_header(
+        image, draw, 0, 0, 300, club, "NEXT MATCH", False, False))
+    texts = [text for _box, text, _font in boxes]
+    assert "第9轮" in texts and not any("Chase Center" in text for text in texts)
+    assert any(blue > 150 and red < 60 for red, _green, blue in image.crop((16, 26, 290, 40)).get_flattened_data())
+    boxes.clear()
+    game = _game("NFL", venue="Chase Center", city="San Francisco")
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_football_footer(
+        image, draw, (20, 200, 320, 212), game, "NFL", include_tv=False))
+    texts = [text for _box, text, _font in boxes]
+    assert "San Francisco" in texts and not any("Chase Center" in text for text in texts)
+    boxes.clear()
+    _render(lambda plugin, image, draw: plugin._draw_football_footer(
+        image, draw, (20, 200, 320, 212), {**game, "venue": "Accor Arena"}, "NFL", include_tv=False))
+    assert any("Accor Arena" in text for _box, text, _font in boxes)
 
 
 def test_every_league_home_venue_has_its_logo():

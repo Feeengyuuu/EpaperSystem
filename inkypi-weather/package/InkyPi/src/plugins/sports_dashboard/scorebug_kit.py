@@ -25,6 +25,8 @@ KIT_SCOREBUG_PERIOD_WIDTH = 17
 KIT_SCOREBOARD_ROW_HEIGHT = 26
 KIT_SCOREBOARD_STATE_WIDTH = 44
 KIT_TILE_HEIGHT = 36
+# The space either side of the rule between a TV tile's networks and its venue logo.
+KIT_TILE_VENUE_GAP = 7
 # Raised glass panels over a card's stadium art: how much of the fill covers the art, and the
 # ink shadow's offset down and to the right.
 KIT_GLASS_ALPHA = 0.74
@@ -261,9 +263,10 @@ class ScorebugKitMixin:
         draw.line((x1 + radius, y1 + 1, x2 - radius, y1 + 1), fill=sheen, width=1)
         draw.rounded_rectangle((x1, y1, x2, y2), radius=radius, outline=COLORS["border"], width=1)
 
-    def _draw_kit_tiles(self, draw, box, tiles, spec, tile_h=KIT_TILE_HEIGHT, image=None, glass=False):
+    def _draw_kit_tiles(self, draw, box, tiles, spec, tile_h=KIT_TILE_HEIGHT, image=None, glass=False, venue=None):
         """Label-over-value tiles; with ``image`` a TV tile shows the networks'
-        logos, and ``glass`` raises each tile as translucent glass over the card's art."""
+        logos (and, given a ``venue`` with a logo, that logo after a rule at its right),
+        and ``glass`` raises each tile as translucent glass over the card's art."""
         x1, y1, x2, _y2 = [int(value) for value in box]
         tiles = [tile for tile in tiles if tile]
         if not tiles:
@@ -280,6 +283,8 @@ class ScorebugKitMixin:
                 draw.rounded_rectangle((left, y1, right, y1 + tile_h), radius=4, fill=COLORS[spec.tint], outline=COLORS["border"], width=1)
             self._draw_text_in_box(draw, (left + 7, y1 + 3, right - 4, y1 + 13), label, label_font, COLORS["text"])
             value_box = (left + 7, y1 + 14, right - 4, y1 + tile_h - 3)
+            if image is not None and label == "TV" and venue:
+                value_box = self._draw_kit_tile_venue(image, draw, value_box, venue, tile_h)
             if image is not None and label == "TV" and self._draw_kit_tv_logos(image, draw, value_box, value, COLORS[spec.tint]):
                 continue
             if SportsDashboard._kit_countdown_parts(value):
@@ -291,6 +296,21 @@ class ScorebugKitMixin:
             value, value_font = self._fit_text_ellipsis(draw, str(value or "--"), tile_w - 12, 15, bold=True, min_size=9)
             self._draw_text_in_box(draw, value_box, value, value_font, COLORS["text"])
         return y1 + tile_h
+
+    def _draw_kit_tile_venue(self, image, draw, box, venue, tile_h):
+        """The venue's logo at the right of a TV tile's value row (as tall as the tile allows,
+        at most half its width) after a short rule; the room left for the networks."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        height = min(tile_h - 8, y2 - y1 + 6)
+        logo = self._kit_venue_logo(venue, ((x2 - x1) // 2, height))
+        if logo is None:
+            return box
+        middle = (y1 + y2) // 2
+        logo_x = x2 - logo.width
+        image.paste(logo, (logo_x, middle - logo.height // 2), logo)
+        rule_x = logo_x - KIT_TILE_VENUE_GAP
+        draw.line((rule_x, y1 - 9, rule_x, y2), fill=COLORS["border"], width=1)
+        return (x1, y1, rule_x - KIT_TILE_VENUE_GAP, y2)
 
     def _draw_kit_countdown(self, draw, box, value, spec):
         """'IN 1H 40M' as a stopwatch and flip-clock cards: each number on a
@@ -425,6 +445,50 @@ class ScorebugKitMixin:
             image.paste(logo, (x1 + (x2 - x1 - logo.width) // 2, y1 + (y2 - y1 - logo.height) // 2), logo)
             return
         self._draw_kit_footer(draw, box, venue)
+
+    def _draw_kit_venue_line(self, image, draw, box, venue, before="", after="", *, size=9, bold=False,
+                             align="center", separator="·", logo_height=None, fill=None):
+        """``before``, the venue's official logo in place of its name, and ``after`` on one line in
+        ``box`` (centred, or from its left), parted by ``separator``; False, with nothing drawn, when
+        the venue has no logo, so the caller keeps its text line."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        before, after = str(before or "").strip(), str(after or "").strip()
+        height = int(logo_height or (y2 - y1))
+        logo = self._kit_venue_logo(venue, ((x2 - x1) // 2 if before or after else x2 - x1, height)) if venue else None
+        if logo is None:
+            return False
+        fill = COLORS["text"] if fill is None else fill
+        join_font = self._font(size, bold)
+        join_w = self._text_width(draw, separator, join_font) + 12
+        room = x2 - x1 - logo.width
+        # (text, font, width) for the text before the logo and the text after it.
+        pieces = []
+        for text in (before, after):
+            if not text or room - join_w < 16:
+                pieces.append(None)
+                continue
+            text, font = self._fit_text_ellipsis(draw, text, room - join_w, size, bold=bold, min_size=7)
+            width = self._text_width(draw, text, font)
+            pieces.append((text, font, width))
+            room -= width + join_w
+        total = logo.width + sum(piece[2] + join_w for piece in pieces if piece)
+        x = x1 if align == "left" else x1 + (x2 - x1 - total) // 2
+        for index, piece in enumerate(pieces):
+            if index == 1:
+                image.paste(logo, (x, y1 + (y2 - y1 - logo.height) // 2), logo)
+                x += logo.width
+            if not piece:
+                continue
+            text, font, width = piece
+            if index == 1:
+                self._draw_centered_in_box(draw, (x, y1, x + join_w, y2), separator, join_font, fill)
+                x += join_w
+            self._draw_text_in_box(draw, (x, y1, x + width, y2), text, font, fill)
+            x += width
+            if index == 0:
+                self._draw_centered_in_box(draw, (x, y1, x + join_w, y2), separator, join_font, fill)
+                x += join_w
+        return True
 
     def _draw_series_row_winner_logo(self, image, draw, event, side, x, y1, y2, spec):
         size = min(13, y2 - y1)

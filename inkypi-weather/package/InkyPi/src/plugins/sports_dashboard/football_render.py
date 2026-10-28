@@ -9,6 +9,8 @@ Yard values follow ESPN's frame (yards from the home goal line). On screen the
 away end zone is on the left and the home end zone on the right.
 """
 
+import math
+
 from .common import *
 from .card_backdrops import paint_list_backdrop
 from .scorebug_kit import KIT_SCOREBOARD_ROW_HEIGHT, ScorebugSpec
@@ -79,13 +81,7 @@ class FootballRenderMixin:
         dimmed = bool(winner) and winner != side
         ink_key = self._kit_team_ink_key(event.get(f"{prefix}_color"), spec.accent)
         rank = SportsDashboard._lpl_int_value(event.get(f"{prefix}_rank"))
-        badge = (x1, y1 + 5, x1 + 22, y1 + 27)
-        if rank:
-            draw.ellipse(badge, fill=COLORS[ink_key], outline=COLORS["border"], width=1)
-            self._draw_centered_in_box(draw, badge, str(rank), self._font(11 if rank < 10 else 10, True), COLORS[self._kit_ink_text_key(ink_key)])
-        else:
-            draw.ellipse(badge, fill=COLORS["panel"], outline=COLORS["border"], width=1)
-            self._draw_centered_in_box(draw, badge, "NR", self._font(7, False), COLORS["text"])
+        self._draw_ncaa_rank_football(image, draw, (x1 - 1, y1 + 8, x1 + 24, y1 + 24), rank, ink_key)
         self._draw_team_logo(image, draw, event.get(f"{prefix}_logo"), x1 + 28, y1 + 4, 24, SportsDashboard._event_team_logo_fallback(event, side, "NCAA"))
         name_x = x1 + 58
         has_ball = state == "live" and SportsDashboard._nfl_possession_side(event) == side
@@ -191,6 +187,34 @@ class FootballRenderMixin:
             self._draw_nfl_final_details(image, draw, details, event, sport)
         else:
             self._draw_nfl_pregame_details(image, draw, details, event, now, sport)
+
+    def _draw_ncaa_rank_football(self, image, draw, box, rank, ink_key):
+        """A team's poll rank as a college football filling ``box``: in the team's colour with
+        the rank on it, or, unranked, a leather ball with its laces; both with the white
+        stripes near the tips that college balls carry."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        width, height, scale = x2 - x1, y2 - y1, 4
+        fill = COLORS[ink_key] if rank else COLORS["amber"]
+        layer = Image.new("RGBA", (width * scale, height * scale), (0, 0, 0, 0))
+        pen = ImageDraw.Draw(layer)
+        span, half = width * scale - 1, (height * scale - 1) / 2
+        top = [(span * step / 24, half - half * math.sin(math.pi * step / 24) ** 0.7) for step in range(25)]
+        ball = top + [(x, 2 * half - y) for x, y in reversed(top[1:-1])]
+        pen.polygon(ball, fill=(*fill[:3], 255), outline=(*COLORS["text"][:3], 255), width=scale)
+        white = (255, 255, 255, 255)
+        for share in (0.2, 0.8):
+            stripe_x = span * share
+            reach = half * math.sin(math.pi * share) ** 0.7 - 1.5 * scale
+            pen.line((stripe_x, half - reach, stripe_x, half + reach), fill=white, width=int(1.4 * scale))
+        if not rank:
+            pen.line((span * 0.36, half, span * 0.64, half), fill=white, width=scale)
+            for share in (0.4, 0.5, 0.6):
+                pen.line((span * share, half - 1.5 * scale, span * share, half + 1.5 * scale), fill=white, width=scale)
+        layer = layer.resize((width, height), Image.Resampling.LANCZOS)
+        image.paste(layer, (x1, y1), layer)
+        if rank:
+            text_ink = COLORS[self._kit_ink_text_key(ink_key)]
+            self._draw_centered_in_box(draw, (x1, y1, x2 + 1, y2), str(rank), self._font(11 if rank < 10 else 10, True), text_ink)
 
     def _draw_nfl_football_icon(self, draw, x, y, width=11, height=7):
         x, y = int(x), int(y)
@@ -314,7 +338,7 @@ class FootballRenderMixin:
             if winner:
                 winner, winner_font = self._fit_text(draw, winner, x2 - x1, 14, bold=True, min_size=10)
                 self._draw_text_in_box(draw, (x1, y1, x2, y1 + 20), winner, winner_font, COLORS["text"])
-        self._draw_kit_footer(draw, (x1, y2 - 12, x2, y2), SportsDashboard._football_footer_label(event, sport))
+        self._draw_football_footer(image, draw, (x1, y2 - 12, x2, y2), event, sport)
 
     def _draw_nfl_pregame_details(self, image, draw, box, event, now, sport="NFL"):
         x1, y1, x2, y2 = [int(value) for value in box]
@@ -327,7 +351,14 @@ class FootballRenderMixin:
         tiles_bottom = self._draw_kit_tiles(draw, (x1, y1, x2, y2), tiles, spec, image=image)
         # Before kickoff ESPN's leaders are season totals for the two teams.
         self._draw_kit_leader_rows(image, draw, x1, tiles_bottom + 6, x2, y2 - 14, event, event.get("leaders"), spec, max_rows=2)
-        self._draw_kit_footer(draw, (x1, y2 - 12, x2, y2), SportsDashboard._football_footer_label(event, sport, include_tv=False))
+        self._draw_football_footer(image, draw, (x1, y2 - 12, x2, y2), event, sport, include_tv=False)
+
+    def _draw_football_footer(self, image, draw, box, event, sport, include_tv=True):
+        """The card's foot line, the stadium as its official logo where it has one."""
+        venue = str((event or {}).get("venue") or "").strip()
+        rest = SportsDashboard._football_footer_label({**(event or {}), "venue": ""}, sport, include_tv=include_tv)
+        if not self._draw_kit_venue_line(image, draw, box, venue, after=rest):
+            self._draw_kit_footer(draw, box, SportsDashboard._football_footer_label(event, sport, include_tv=include_tv))
 
     # Labels and geometry -----------------------------------------------------
 

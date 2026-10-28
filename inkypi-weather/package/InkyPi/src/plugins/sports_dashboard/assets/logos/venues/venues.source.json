@@ -886,6 +886,1458 @@
         54,
         48
       ]
+    },
+    "mclane_stadium": {
+      "file": "Mclane_stadium_logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Mclane_stadium_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/e/ef/Mclane_stadium_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "8bf8f219fac4426191104859a82b2396218dfdc4",
+      "source_png_sha256": "13ca10180394a1f575a63921fbb351e3bdeb6af58908bbbe19b28e3071a9edf8",
+      "sha256": "c73b7920e10604501146fd62a75577116fc9264077615cd757072acc079d8710",
+      "size": [
+        49,
+        48
+      ]
+    },
+    "california_memorial_stadium": {
+      "file": "California Memorial Stadium Logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:California_Memorial_Stadium_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/c/c0/California_Memorial_Stadium_Logo.svg/960px-California_Memorial_Stadium_Logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "55f3aceece9c5e6f567908725b122bf6e6651d51",
+      "source_png_sha256": "4b9446d127fffad37871fe4e2bccf393dd94a50723b306d0a8388f7e79dcbb9b",
+      "sha256": "4a2972357178f902b8d3d27fbf35973ab6845e9273d2f0862ee8ef83cd907ba7",
+      "size": [
+        68,
+        48
+      ]
+    },
+    "canvas_stadium": {
+      "file": "Canvas Stadium logo.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:Canvas_Stadium_logo.jpg",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/c/cc/Canvas_Stadium_logo.jpg",
+      "licence": "Public domain",
+      "original_sha1": "9278a11109b7508cdca66178dd32d7d25eb8ca5a",
+      "source_png_sha256": "7039be73e0891c7cdadc877f861c2e19573fa87f1554fac668820c934419993c",
+      "sha256": "f2f1f038a2fbbe23e9936ebedc8a033e74b1ae385487be991e91de319b765f0d",
+      "size": [
+        208,
+        48
+      ],
+      "processing": "white ground to alpha (colour-to-alpha), cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "center_parc_stadium": {
+      "file": "Center Parc Stadium logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Center_Parc_Stadium_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/1/15/Center_Parc_Stadium_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "c77effdc9db866c44b74465b64861018e152073b",
+      "source_png_sha256": "3d0424d6a07bd89bb9ad1828206921959005113fca672593d17f51d32868dc24",
+      "sha256": "a33b19e3a76583acd292696c94e4e2b0e300808c4438ee5e582702c06157986b",
+      "size": [
+        271,
+        48
+      ]
+    },
+    "tdecu_stadium": {
+      "file": "TDECU Stadium logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:TDECU_Stadium_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/9/9a/TDECU_Stadium_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "9b51a96fea4cbc40b34688e8caff24c559905af9",
+      "source_png_sha256": "0a8788c26bc108493dc326b6da5b3fa566953e422a34ebfb70b858959235ec75",
+      "sha256": "73a74575ceece3afdea017474f44fa8232215102a33988f0b8e2355c32539f18",
+      "size": [
+        123,
+        48
+      ]
+    },
+    "secu_stadium": {
+      "file": "Secu stadium maryland logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Secu_stadium_maryland_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/8/8f/Secu_stadium_maryland_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "4228f0bb975456182946dbb7216f878afbedb320",
+      "source_png_sha256": "b867ff14fe2e7cbc5bc4151681817fb33acd457cf06480f5aa95860b6ed30c7b",
+      "sha256": "3248cecc1c5f54e2eb02d64f449ebdad9258f3b7c64e9a8d414a29f271af9d9b",
+      "size": [
+        250,
+        48
+      ]
+    },
+    "simmons_bank_liberty_stadium": {
+      "file": "Liberty memorial stadium logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Liberty_memorial_stadium_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/b/b6/Liberty_memorial_stadium_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "b526b4ddac3f69c357ab545fb5d1650118f1b659",
+      "source_png_sha256": "8f86cf3ca7880481daa9726d16d35143c6a8ea35ee354e0444d87fad4c89e28a",
+      "sha256": "ba449034ac0963c0880bdadbc003b642c7f6ac5a2d9aa2b06411b9cd174f44c4",
+      "size": [
+        112,
+        48
+      ]
+    },
+    "huntington_bank_stadium": {
+      "file": "Huntington_Bank_Stadium_Logo,_2021.jpg",
+      "page": "https://en.wikipedia.org/wiki/File:Huntington_Bank_Stadium_Logo,_2021.jpg",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/4/43/Huntington_Bank_Stadium_Logo%2C_2021.jpg",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "b3682b55f303a9c6969ff12aecf7615c9dc39449",
+      "source_png_sha256": "862d2b0ea6bc2780d6611628ffc673b60d71713a573e751d4f68a9e49d740ab9",
+      "sha256": "f575f47d6f36f446ffadb2d09018ac6d03397afee1ac716a51f6fdb0f50c7546",
+      "size": [
+        85,
+        48
+      ],
+      "processing": "white ground to alpha (colour-to-alpha), cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "cefcu_stadium": {
+      "file": "CEFCU Stadium logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:CEFCU_Stadium_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/f/f5/CEFCU_Stadium_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "fe865d1984c26198bf10f9c76d1683e8eb765580",
+      "source_png_sha256": "ea8629f629e749c673345968623d577da0565c316fe1b2a32c77e180321d6304",
+      "sha256": "282b497951bcb1733da618b77d783d6b533ef84a32140983dd469fa568906f26",
+      "size": [
+        480,
+        46
+      ]
+    },
+    "jma_wireless_dome": {
+      "file": "JMA Wireless Dome logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:JMA_Wireless_Dome_logo.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7b/JMA_Wireless_Dome_logo.png/960px-JMA_Wireless_Dome_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "9bcd24a021beedffbe2a74b3d363b40d30713da7",
+      "source_png_sha256": "f66beb493ca1ae8b62279957ae96f281b0cba19d005e1b87bbf6fcbc96125a67",
+      "sha256": "9ff7ef6323e77bfe503cdc381183243d4c4b9d47fda24a8a475abf5a5d39fde5",
+      "size": [
+        72,
+        48
+      ]
+    },
+    "aviva_stadium": {
+      "file": "Aviva Stadium.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Aviva_Stadium.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f7/Aviva_Stadium.svg/960px-Aviva_Stadium.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "fab5b0c9f29605b112e35716fc7f8805801b5fa4",
+      "source_png_sha256": "aad8cba2d21c6042a7a4dbc21d05de24e9b0bfcedbf95f20d9a8a074432d50bf",
+      "sha256": "2788cb804ff097b91c1e21efe9c7f2935ff58637c5adef24af3e2d2ea02b32aa",
+      "size": [
+        68,
+        48
+      ]
+    },
+    "protective_stadium": {
+      "file": "Protective Stadium logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Protective_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/9/9f/Protective_Stadium_logo.svg/960px-Protective_Stadium_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "8862c7c39dcc1339b57c3f528ee25b47945639e4",
+      "source_png_sha256": "fdba3e10f1409f0cf13868b47d6f45c98a5429610983f545caeb4a8c8f1f385b",
+      "sha256": "0da39dd3d95e1162de7cf039ab7313c0a8c1b52c28b2bc81b93642ac4d13c0e1",
+      "size": [
+        370,
+        48
+      ]
+    },
+    "datcu_stadium": {
+      "file": "DATCU Stadium - Logo.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:DATCU_Stadium_-_Logo.jpg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/33/DATCU_Stadium_-_Logo.jpg/960px-DATCU_Stadium_-_Logo.jpg",
+      "licence": "CC BY-SA 4.0",
+      "original_sha1": "e44006528537a7c5d3812e2b69a73c39752916a4",
+      "source_png_sha256": "9c8cc7e09dd224064d6b903f63bf42627e85312e40044108d7cdd3546009fb7e",
+      "sha256": "6173df16b4eec7d998f2dfc3b48c36b2818b0220a8b25dd01380ccba5bdbf06a",
+      "size": [
+        148,
+        48
+      ],
+      "processing": "white ground to alpha (colour-to-alpha), cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "rice_eccles_stadium": {
+      "file": "Rice eccles stadium logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Rice_eccles_stadium_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/4/4a/Rice_eccles_stadium_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "bb255eb7dd46db06b977be032aa03419a1bf553c",
+      "source_png_sha256": "b91bba301db451d7d76a8cb7865acafab7fdbea46187932106d6e6637eab43d7",
+      "sha256": "d8a39199e2ed17b1f657412a34e06b16c31ef9fb37657eedab5bcd96c483ea3e",
+      "size": [
+        69,
+        48
+      ]
+    },
+    "alamodome": {
+      "file": "Alamodome_logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Alamodome_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/d/d7/Alamodome_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "2519f709fb49ffa86f12c2ecc238bf1277777226",
+      "source_png_sha256": "46cd71b4de88dbf13515e3f2183ab620d9dd6fb76106ed430de0e88d053e8064",
+      "sha256": "bf2d6d09fd0cfa43d9b732296624d6b4641820c2634f9806f1b07234c216e4d3",
+      "size": [
+        261,
+        48
+      ]
+    },
+    "firstbank_stadium": {
+      "file": "Firstbank stadium logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Firstbank_stadium_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/9/94/Firstbank_stadium_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "48e7a7f486a8e2039821854b97e093bd7d780dd3",
+      "source_png_sha256": "150a1673d5a50f42ec78c22268a94e1cd0549bb65c0a84921c0b6ec175f7a308",
+      "sha256": "1003060b0d9f9b4fd0b943f1804740aad17e4ab0a227f872f01da6834f251f2d",
+      "size": [
+        86,
+        48
+      ]
+    },
+    "emirates_stadium": {
+      "file": "Emirates Stadium logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Emirates_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/f/f0/Emirates_Stadium_logo.svg/960px-Emirates_Stadium_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "b9d1f4f25875c59c299cd5f83494fb89165b3240",
+      "source_png_sha256": "1a45d0c23f75bb9136239f09752858ca844579284b7fb4468ac6b07c73516d7e",
+      "sha256": "2e4085d493f4e323ecb37aca134134af29b54bce3ec05d9802ae28eb2101207b",
+      "size": [
+        74,
+        48
+      ]
+    },
+    "villa_park": {
+      "file": "Villa park logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Villa_park_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/2/26/Villa_park_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "7b837c562c84b7bafae70abd56948936a85f19bb",
+      "source_png_sha256": "135a632ba609b3ab95bc44c2b95ef67bf948997aa311a98137fd4b53bd7ca57b",
+      "sha256": "0c1c56c2c68c8c353ab72b54a947fde15e12b01ca851d1a54e4d3915c87f8b80",
+      "size": [
+        74,
+        48
+      ]
+    },
+    "american_express_stadium": {
+      "file": "Amex-Stadium-Logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Amex-Stadium-Logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/c/c3/Amex-Stadium-Logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "25825940b43d39a464c9347ca476111924bba69d",
+      "source_png_sha256": "5e85cbe3a87b8cc170c27de2fe4dc703bfd3ff8c51aef7ea701264ca425103a2",
+      "sha256": "5b096a2a8f35494060b81cac31ecefb25ca9aab593d352099aaa97f3d10a2e90",
+      "size": [
+        73,
+        48
+      ]
+    },
+    "gtech_community_stadium": {
+      "file": "Brentford Community Stadium logo.jpg",
+      "page": "https://en.wikipedia.org/wiki/File:Brentford_Community_Stadium_logo.jpg",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/2/26/Brentford_Community_Stadium_logo.jpg",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "42621c9497490e07edc43dcd5193e521d5bb7e58",
+      "source_png_sha256": "03e08f363db33ea3e7d00bb557ef1ae0307dccb1f4f9e9d13da229decb0f7ca6",
+      "sha256": "ead44f2f0693b76b442f9aa14a1a0b2933ab6c46d55ea1d83d50c564be4d7660",
+      "size": [
+        125,
+        48
+      ],
+      "processing": "white ground to alpha (colour-to-alpha), cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "coventry_building_society_arena": {
+      "file": "Coventry Building Society Arena logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Coventry_Building_Society_Arena_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/c/cd/Coventry_Building_Society_Arena_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "a792314188eb312636c9f4c481c6ffa72d2d5e40",
+      "source_png_sha256": "4fa99faff086aa0f053034d50ecf640c6c7c85514e39f342cb0cbbb748a659df",
+      "sha256": "a4e038b8f28ca0641ac4e64cd2eb1c7459476c1d10f0f0564d58edc5dbafbb5c",
+      "size": [
+        172,
+        48
+      ]
+    },
+    "selhurst_park": {
+      "file": "Selhurst Park logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Selhurst_Park_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/8/8e/Selhurst_Park_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "c401775a8b089ba75cf7a495efc88337169bce1c",
+      "source_png_sha256": "7d651fe668c15ce4fef69414276d326ae90564cfa6d269bc727e31dee5125f3a",
+      "sha256": "824c8ee5fced794aa1dac3769ef051494c1e688948e25f393879fac4f8429867",
+      "size": [
+        152,
+        48
+      ]
+    },
+    "hill_dickinson_stadium": {
+      "file": "Hill Dickinson Stadium logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Hill_Dickinson_Stadium_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/a/a3/Hill_Dickinson_Stadium_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "7cf8f62a48df566d2b6b88034fbda9ef51b6f780",
+      "source_png_sha256": "f29821263c606a2333f576080dafac45f18de22d8c0d4da7903053a5a324855f",
+      "sha256": "c1d610b6b98cfa60b14e5d9b2ff43eb901d511a7552b1026c998cf680041589f",
+      "size": [
+        105,
+        48
+      ]
+    },
+    "craven_cottage": {
+      "file": "Craven Cottage logo.jpg",
+      "page": "https://en.wikipedia.org/wiki/File:Craven_Cottage_logo.jpg",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/5/5a/Craven_Cottage_logo.jpg",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "5e90090c769130415c60ba229e8917b92c0ec064",
+      "source_png_sha256": "0a49c64de4572a049480c8569c7a780712deb4840a7fe6d4cdd0b59e4401fab5",
+      "sha256": "2c44daec368aaf2c3492d5cb07b2732de66a638e39c0735db86cf8376cce7858",
+      "size": [
+        238,
+        48
+      ],
+      "processing": "white ground to alpha (colour-to-alpha), cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "elland_road": {
+      "file": "Ellam Road Logo Leeds Utd..jpg",
+      "page": "https://en.wikipedia.org/wiki/File:Ellam_Road_Logo_Leeds_Utd..jpg",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/9/95/Ellam_Road_Logo_Leeds_Utd..jpg",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "bf32771ce8dd46003dd00d494c2156a4061daf82",
+      "source_png_sha256": "cc31b040455fc6161d8eee43d540d35e203a075c9f26b84c86f33649a48291ab",
+      "sha256": "09d50283d312772f9ec9686f59b8654e6108153b5e73dadd964a8c16b7bdb375",
+      "size": [
+        109,
+        48
+      ],
+      "processing": "white ground to alpha (colour-to-alpha), cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "etihad_stadium": {
+      "file": "Etihad Stadium logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Etihad_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/08/Etihad_Stadium_logo.svg/960px-Etihad_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "d747716b1ed11d2bfe54e2e1a71ad72be366c95a",
+      "source_png_sha256": "cbebfa5234a892417ab817806130b8fa97a7fef5c4a1e4c7c53a1ee2e71f249d",
+      "sha256": "22696bb326ea0d3a512f2581968c2af21e6390ee14e7120c95d75ee0207862d0",
+      "size": [
+        480,
+        33
+      ]
+    },
+    "st_james_park": {
+      "file": "St James' Park.png",
+      "page": "https://en.wikipedia.org/wiki/File:St_James%27_Park.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/d/de/St_James%27_Park.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "a2e2b8de86d70b905a843674300ff6c6aadbc39f",
+      "source_png_sha256": "30dfba82731f599ad5e8b8ebda5d445fe86cb5c2473cb8fc43ed45e283ed5eb8",
+      "sha256": "1d6035eff0a7a666d16ae6a0f4449496093b9dfa8efb9a73e8f20af1371395c0",
+      "size": [
+        176,
+        48
+      ]
+    },
+    "the_city_ground": {
+      "file": "The City Ground logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:The_City_Ground_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/1/11/The_City_Ground_logo.svg/960px-The_City_Ground_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "7bfebe8c26a471e0d33bf4e441666adf57e4bd61",
+      "source_png_sha256": "705ad1195465a46d293cfa655362f89be2b987caa3a50e931e3f2643fe445d35",
+      "sha256": "d07aa106f110c18ab7727eb11eec81620a61aab8e1a9a4881eacaef23408c623",
+      "size": [
+        259,
+        48
+      ]
+    },
+    "stadium_of_light": {
+      "file": "Stadium of light logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Stadium_of_light_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/1/10/Stadium_of_light_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "0ca12641b92dd00b8a4326b4de85c7f29c49a292",
+      "source_png_sha256": "e0386567d114fe52d57e6ee023482470faf68854bb6e705cd07c7a80fe1481ca",
+      "sha256": "d39a784f3695938bb7a618a72563e7aebb131075f09331e0b51fab955c9f104a",
+      "size": [
+        188,
+        48
+      ]
+    },
+    "tottenham_hotspur_stadium": {
+      "file": "Tottenham Hotspur Stadium logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Tottenham_Hotspur_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/42/Tottenham_Hotspur_Stadium_logo.svg/960px-Tottenham_Hotspur_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "5a04e552221ae2b5a893063d30b4d29d87f928ab",
+      "source_png_sha256": "f3f2f9ac67b48f10517a5aeac39e6f0c4944fee7aee03c1bcb46085f11ab4ee0",
+      "sha256": "b554fa90771a1ce28be84e131294dea8220fe57c14d8a9d6ffee58b3f7218827",
+      "size": [
+        77,
+        48
+      ]
+    },
+    "london_stadium": {
+      "file": "London_Stadium_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:London_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a6/London_Stadium_logo.svg/960px-London_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "d01fb3096002c2218e4ba530d9844619ff14760c",
+      "source_png_sha256": "953e1c96af20a7be281280e1f3740cd3a37346e1209c3dff9afb9ee039cc9ca4",
+      "sha256": "d889bf9c0135bceee8e5d0d698f905b9b87fc829f8d161956f206798526dd784",
+      "size": [
+        162,
+        48
+      ]
+    },
+    "molineux_stadium": {
+      "file": "Molineux Stadium logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Molineux_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/1/18/Molineux_Stadium_logo.svg/960px-Molineux_Stadium_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "fa831ab8950dddb7d725fbc2e4d3840c36663b8d",
+      "source_png_sha256": "87e7396508f8ea2c359818abd0b3f7961c95b6fbb1a89d8f8bdcf8ac6f96e395",
+      "sha256": "5a61bf84c7796e09a88a51b09dc74a2e559660fd298c96c550100559a7172e5a",
+      "size": [
+        146,
+        48
+      ]
+    },
+    "san_mam_s": {
+      "file": "San_Mamés_Stadium_logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:San_Mam%C3%A9s_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/5/54/San_Mam%C3%A9s_Stadium_logo.svg/960px-San_Mam%C3%A9s_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "1aeda7172a6addcbf84d33fd9386332539e2e745",
+      "source_png_sha256": "c49854101a088d41965aa8132f7fa6173529f84a72b5d84d3cb77299f289d06c",
+      "sha256": "12a2aed9b1c37af00ec17e399e133062794964003d3ee9e3ae231c965081b602",
+      "size": [
+        305,
+        48
+      ]
+    },
+    "estadio_la_cartuja": {
+      "file": "Estadio_de_La_Cartuja_logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Estadio_de_La_Cartuja_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/e/eb/Estadio_de_La_Cartuja_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "04abb09b631a314688a28d540713f07ea764a4f3",
+      "source_png_sha256": "127c87d4b3798bfa1e2dbc6faa703f4f28ff8f9f44763bd36cce31ee8b2a4846",
+      "sha256": "aa0dd7063d3cd38dbbca1564d8347ed6ad621e202762e10f6e01196cc37bddaf",
+      "size": [
+        60,
+        48
+      ]
+    },
+    "riazor": {
+      "file": "Estadio Riazor - Logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Estadio_Riazor_-_Logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/6/63/Estadio_Riazor_-_Logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "faf2a30cf38d6db352ad40e01c8a5a485347158f",
+      "source_png_sha256": "3b164dc7dc81e732afbd0a465f35c9c98f95618c5e70dd0a4a42c2b1f0b61a3b",
+      "sha256": "29b84646f65c8394578d46641da28c4bde1b172099b33836e97ef7b55cdf6dc0",
+      "size": [
+        111,
+        48
+      ]
+    },
+    "decathlon_arena_stade_pierre_mauroy": {
+      "file": "Stade_Pierre-Mauroy_logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Stade_Pierre-Mauroy_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/4/48/Stade_Pierre-Mauroy_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "01bbdd398789c342b5faaf4cceab228c11e018c7",
+      "source_png_sha256": "9a2955f27b3bb45cea3c17e993e6f895c92bd68d8359103fbae3c684b0670494",
+      "sha256": "ddaa3998165da0f7318f9c061b5032cdd2db2367011657f7b2b96a87d3c7cdcb",
+      "size": [
+        212,
+        48
+      ]
+    },
+    "groupama_stadium": {
+      "file": "Logo_Groupama_Stadium.png",
+      "page": "https://en.wikipedia.org/wiki/File:Logo_Groupama_Stadium.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/2/20/Logo_Groupama_Stadium.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "cb35867736c6f7f189fc89c32c974c08a077b471",
+      "source_png_sha256": "a5b7d8451b59073390701cf82554b3ecb92e2219dd2bc722149886cd3ece9ade",
+      "sha256": "bbf623a63549e07e8a0a0c8e75c3c15b269cb5ae319fd2fa244567f92c8b71ca",
+      "size": [
+        165,
+        48
+      ]
+    },
+    "stade_louis_ii": {
+      "file": "Logo_Louis_II_stade.png",
+      "page": "https://en.wikipedia.org/wiki/File:Logo_Louis_II_stade.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/b/bd/Logo_Louis_II_stade.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "caa1b878ddacb6393c9b6e4bb3ac50d3d416a908",
+      "source_png_sha256": "072ed32b65227df75d85c6b63e6fa593b5b34a4d403df0cd9c3b38cd2212dad5",
+      "sha256": "344b559f758c35f595f9c9e816fb34d083df1fcc1d588e5d9b366f591bee3ce5",
+      "size": [
+        247,
+        48
+      ]
+    },
+    "stade_v_lodrome": {
+      "file": "Cepac velodrome logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Cepac_velodrome_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/1/12/Cepac_velodrome_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "c96f575515fb1c972f317d1791ba3beb30d6b357",
+      "source_png_sha256": "5541f09f9a1b73964b161aaac839eb625256f7a8e3708d180ace4d727bd2001b",
+      "sha256": "c9ea1f604d38781ed1e0fea9370ce3288d61a67379ae2b308cd8990185c8f268",
+      "size": [
+        232,
+        48
+      ]
+    },
+    "parc_des_princes": {
+      "file": "Parc des Princes - Logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Parc_des_Princes_-_Logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/5/5c/Parc_des_Princes_-_Logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "77231f44c3059030478606363e573524aa130dae",
+      "source_png_sha256": "bf768e638aac2314b98ab122778123f787255c2ba141cd58111cf25c89032744",
+      "sha256": "8a3a60e731ac29240f1528215c0a70884bd999260196079f065b4212851bd6b7",
+      "size": [
+        123,
+        48
+      ]
+    },
+    "stade_bollaert_delelis": {
+      "file": "Logo Stade Bollaert delelis.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_Stade_Bollaert_delelis.jpg",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/1/1d/Logo_Stade_Bollaert_delelis.jpg",
+      "licence": "Public domain",
+      "original_sha1": "6d433df60d3eeb2fd5b0d4df926f4c30b0e5ea64",
+      "source_png_sha256": "1cb844b3d3626fb4d1569c1dcb46ecb7cf96ffc5480c01fe844f9d57918b0af9",
+      "sha256": "590161da85b0c681741dac9e44d71be1776af5c0926281670cfbf091bb55d7dc",
+      "size": [
+        48,
+        48
+      ],
+      "processing": "white ground to alpha (colour-to-alpha), cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "bayarena": {
+      "file": "BayArena logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:BayArena_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/3/31/BayArena_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "42bba6e59d35193e2e66e445bd7fe77e0527f332",
+      "source_png_sha256": "91eac6175134071336b2ad8db3b58c14281ed9c00496b0aa6a5963e0619930b0",
+      "sha256": "c5eb0ab7be7b0c36fde9e9ab7a9e6d47d3b64347542111cf1ea0c246341d43b9",
+      "size": [
+        204,
+        48
+      ]
+    },
+    "signal_iduna_park": {
+      "file": "SIGNAL IDUNA PARK Logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:SIGNAL_IDUNA_PARK_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/07/SIGNAL_IDUNA_PARK_Logo.svg/960px-SIGNAL_IDUNA_PARK_Logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "3c1cad962e02f4b47794f6869649cf25e7949357",
+      "source_png_sha256": "b42796f62d29066dce86494a541b73ac99da8e1af5f1685f2a6a18911f41aca7",
+      "sha256": "0a6fa77f72173aa659b748f65d09cf08f504a21e45869e3a6f2e53ec5a481c67",
+      "size": [
+        480,
+        43
+      ]
+    },
+    "wwk_arena": {
+      "file": "WWK ARENA Logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:WWK_ARENA_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/06/WWK_ARENA_Logo.svg/960px-WWK_ARENA_Logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "54151cfadba4813c19bca79a5356c1454fc2814b",
+      "source_png_sha256": "a61e94b4cc4ddc9dab4243375ea14adbde0bc8bc6016e1d0b20cd3e1e727b92f",
+      "sha256": "858fd498f1247b7c23783bccd2ed4f65e8d2f996b02c447063b3874fd783bbb2",
+      "size": [
+        173,
+        48
+      ]
+    },
+    "stadion_an_der_alten_f_rsterei": {
+      "file": "Logo An der Alten Foersterei.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_An_der_Alten_Foersterei.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/aa/Logo_An_der_Alten_Foersterei.svg/960px-Logo_An_der_Alten_Foersterei.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "5faca8badb3d5d61a801e4ff30712ace022adcca",
+      "source_png_sha256": "61a96216f1ce0119559776196ef010299e6bb018d32c57cd8c4e5adae3d20392",
+      "sha256": "119b6cc1ed56a591dc5f3b66d3ee27846d8545b6eb12465aa219807f9b78797f",
+      "size": [
+        192,
+        48
+      ]
+    },
+    "volksparkstadion": {
+      "file": "Volksparkstadion logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Volksparkstadion_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0e/Volksparkstadion_logo.svg/960px-Volksparkstadion_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "66b737088a5cab1fc7ce749e8cfa6f19b9b47c0e",
+      "source_png_sha256": "90cf12707a7f185e452370ed3bebb66f41c7351e8d47045cb33d257855bd356d",
+      "sha256": "f16ba2fb982cc3f60209afc9d32a483a67116386c8bd67e2dd7dc26ae8da7648",
+      "size": [
+        51,
+        48
+      ]
+    },
+    "rheinenergiestadion": {
+      "file": "RheinEnergieSTADION Logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:RheinEnergieSTADION_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f8/RheinEnergieSTADION_Logo.svg/960px-RheinEnergieSTADION_Logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "9993dade66ef409f207d5061fd82424695c799fe",
+      "source_png_sha256": "370147e38f45a172c4fe4637e2da62384e743324a886350e2a6aae94b6fd81d2",
+      "sha256": "dc48b1b3fc732150994672d9341a63d8d771a33e5f48453d8bcee1c328641d09",
+      "size": [
+        98,
+        48
+      ]
+    },
+    "allianz_arena": {
+      "file": "Allianz Arena logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Allianz_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/6/66/Allianz_Arena_logo.svg/960px-Allianz_Arena_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "d8e13012a44c54d27f03340ea64a6cb61b7e5f8f",
+      "source_png_sha256": "29cdf999a2ce8edde9f3360a14a673c8529e878579ebbe55fac5c4cd4239c83e",
+      "sha256": "68e5e99dc8e7670b58cb820b47856665c6659b9ddf546ea789b5637dfff79035",
+      "size": [
+        90,
+        48
+      ]
+    },
+    "veltins_arena": {
+      "file": "Veltins Arena Logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Veltins_Arena_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/a/ab/Veltins_Arena_Logo.svg/960px-Veltins_Arena_Logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "526a8c6e0d360270550acc021d1375788d6fe528",
+      "source_png_sha256": "50b0cf9f449a8e784c9d802b451ced39374d03d88cfca708bbe1dd110bf5f341",
+      "sha256": "994661be98cbccc6d59608d976e9db77f1896438f650a62c258c6ea6d91b3506",
+      "size": [
+        119,
+        48
+      ]
+    },
+    "europa_park_stadion": {
+      "file": "Europa Park Stadion logo.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:Europa_Park_Stadion_logo.jpg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cf/Europa_Park_Stadion_logo.jpg/960px-Europa_Park_Stadion_logo.jpg",
+      "licence": "CC BY-SA 4.0",
+      "original_sha1": "b07570db090c0f8440a98aa7da755ed6a1efc1b6",
+      "source_png_sha256": "443f6f3acd5a594b99460650c4a5cea5c7c90324f049892be706e8f8caaaee0a",
+      "sha256": "41dd68fc9b742a74c44d50d72f505e86af11f9aa94cad2f742bd823da12e16aa",
+      "size": [
+        109,
+        48
+      ],
+      "processing": "white ground to alpha (colour-to-alpha), cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "deutsche_bank_park": {
+      "file": "Logo_Deutsche_Bank_Park.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_Deutsche_Bank_Park.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4c/Logo_Deutsche_Bank_Park.svg/960px-Logo_Deutsche_Bank_Park.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "b9f37a9cc884f2aca65b220345594180b2d555e8",
+      "source_png_sha256": "96244492be40b0928c380956d39be9e4145e28266a32becf77e31a8bb3cfda2d",
+      "sha256": "a94debc638ced245158e3c7fb5016efd998788dbe20a5b52ce7f94e5054f3f2c",
+      "size": [
+        384,
+        48
+      ]
+    },
+    "weserstadion": {
+      "file": "Weserstadion_logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Weserstadion_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/8/81/Weserstadion_logo.svg/960px-Weserstadion_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "4deed18400b81e8cb9b398af6386a80531baa0dc",
+      "source_png_sha256": "6ff3130d4205cf7ad8b16fc10d5449b61c23a83f81800f54d7db4af43b780802",
+      "sha256": "c9cb24f3df43f2ad6837268bab9e1793cd7119278c5718459612c505dabdc99a",
+      "size": [
+        76,
+        48
+      ]
+    },
+    "prezero_arena": {
+      "file": "PreZero Arena Logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:PreZero_Arena_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e9/PreZero_Arena_Logo.svg/960px-PreZero_Arena_Logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "e05a1bb1d7bc4ab1e2d9832b1e6839ced662fd3e",
+      "source_png_sha256": "3613a4cdf4a13f938bd2f31e09efd1327b2389fb19c47c402970f8e098b673d8",
+      "sha256": "0162170748b888e05a3ad9ae2ff578a61e969da4dbb0ec2047b84caecc9794b2",
+      "size": [
+        207,
+        48
+      ]
+    },
+    "mhparena": {
+      "file": "MHPArena Stuttgart Logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:MHPArena_Stuttgart_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4a/MHPArena_Stuttgart_Logo.svg/960px-MHPArena_Stuttgart_Logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "cbb7b556a9cee352955b3450434fd3369d7510ec",
+      "source_png_sha256": "017d839d999613eb5e7b27d50ce1e1a5364ce08674fb3e61efd515c312bf2207",
+      "sha256": "feb0af7c2796060dcd850fafe33d977cf99059a7037f7a1482adcf0444bbf21d",
+      "size": [
+        221,
+        48
+      ]
+    },
+    "stadio_benito_stirpe": {
+      "file": "Stadio Benito Stirpe.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Stadio_Benito_Stirpe.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/74/Stadio_Benito_Stirpe.svg/960px-Stadio_Benito_Stirpe.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "85452f18cabf4dbe21c501d101a924c16000336f",
+      "source_png_sha256": "ec26989c930fc7bbc0fa8f1c3fd0d32399281eb552d2f7211c2ac8ce61a2fb03",
+      "sha256": "3d51280f7bed6891c8d9edcab97e99d0551304b1530f9f37dd96659a4c7d610f",
+      "size": [
+        128,
+        48
+      ]
+    },
+    "state_farm_stadium": {
+      "file": "State_Farm_Stadium_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:State_Farm_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/State_Farm_Stadium_logo.svg/960px-State_Farm_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "b0f4b00f7f27c1b5fc046917aa586f152d3d238a",
+      "source_png_sha256": "cc6b330c411d188ce8fe3d981e09c23d427ed3f568cb2cd5ff61f83a4efc66e5",
+      "sha256": "8b0140680d731c8db0fdebbfc6f65aab85ebd219fd3171c74bec0d404b261517",
+      "size": [
+        163,
+        48
+      ]
+    },
+    "highmark_stadium": {
+      "file": "HighmarkStadium.svg",
+      "page": "https://en.wikipedia.org/wiki/File:HighmarkStadium.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/e/ef/HighmarkStadium.svg/960px-HighmarkStadium.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "e526657e3c351b2600097014754b49d28649892c",
+      "source_png_sha256": "4bfd4ea8f57b1e7115759f794b1270d158e4e2c861d4dd256355f3e8422ae5ff",
+      "sha256": "55ab20343ff08158181991d24f171638b42f238a29dc6aee9bd0e6151432bbfe",
+      "size": [
+        111,
+        48
+      ]
+    },
+    "paycor_stadium": {
+      "file": "Paycor Stadium logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Paycor_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/7/73/Paycor_Stadium_logo.svg/960px-Paycor_Stadium_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "66570a44bc40a3e631448e0cf316e95a0c8b5bb2",
+      "source_png_sha256": "604d25f76b8de0c510e3a48b5e1c6e90997ee45427cbc2a405df9f0f9dfda32f",
+      "sha256": "44a19b5e5dfe9969e46e41525a4e1ab8ddcb59ae7a65edb03132ee3312b7a94c",
+      "size": [
+        69,
+        48
+      ]
+    },
+    "huntington_bank_field": {
+      "file": "Huntington Bank Field logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Huntington_Bank_Field_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/e/e1/Huntington_Bank_Field_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "7b89d901f56e20e42616f97f01f67c32d5a0491d",
+      "source_png_sha256": "4529e0d9ffbb4f57f7c6914ef6efe36db0306bee0e771a75e5e7760f3cbc29d4",
+      "sha256": "d8f8ccdc60b2abce8f802428e8b9b6d61da9ab9a8159f60dca9ddc1e88644398",
+      "size": [
+        218,
+        48
+      ]
+    },
+    "at_t_stadium": {
+      "file": "AT&T Stadium logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:AT%26T_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/73/AT%26T_Stadium_logo.svg/960px-AT%26T_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "aaab4ac06f76870386794e9d2962d693a5038cd2",
+      "source_png_sha256": "a2ef82c9a40cf41c5632c6b37fd1837ebb25599aec1dec9768c66da4c4fd7b53",
+      "sha256": "5c55cbfbfd8c92036f59d1bba26379e67f12fe99be4054fdd0a0c47885ed2888",
+      "size": [
+        64,
+        48
+      ]
+    },
+    "ford_field": {
+      "file": "Ford Field Stadium logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Ford_Field_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/Ford_Field_Stadium_logo.svg/960px-Ford_Field_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "8ab45abd6a43439f1d62593c50817be581ba8ebe",
+      "source_png_sha256": "669cbb1d1c272b8a19b38300baa709708b7aa8167a154ea73d9de04305acd055",
+      "sha256": "05df87760bbbd0f8a1c309d52bd340a42957cbf3f7ea1cd3eecd0072c391b9ef",
+      "size": [
+        99,
+        48
+      ]
+    },
+    "lambeau_field": {
+      "file": "Lambeau Field logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Lambeau_Field_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/7/77/Lambeau_Field_logo.svg/960px-Lambeau_Field_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "fdefe57bd4b4495d4707a0418c506199bbec82da",
+      "source_png_sha256": "614771879c6e07baeca229d89813ab33a13b350af202de5aa1bec22ced01eb1e",
+      "sha256": "4a8ff129cf1c699a5cd5f98f7f165ecf06d8a8965f6f3776ead317432ea922a4",
+      "size": [
+        56,
+        48
+      ]
+    },
+    "lucas_oil_stadium": {
+      "file": "Lucas_Oil_Stadium_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Lucas_Oil_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/27/Lucas_Oil_Stadium_logo.svg/960px-Lucas_Oil_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "14b74dffe68902f8d782a90d7b7936c953b03692",
+      "source_png_sha256": "911e44bc03cbbaca61f81b8c80682c48641eb3a58e97675cef3c94a7a236ce8a",
+      "sha256": "002404819d0bf9c7317708432516932528019b31987b9962eee94cdb2e52e370",
+      "size": [
+        165,
+        48
+      ]
+    },
+    "everbank_stadium": {
+      "file": "EverBank_Stadium.jpg",
+      "page": "https://en.wikipedia.org/wiki/File:EverBank_Stadium.jpg",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/2/22/EverBank_Stadium.jpg",
+      "licence": "Public domain",
+      "original_sha1": "7ad9ef97f3fd4461692e7395b4914c9d006e886c",
+      "source_png_sha256": "5e4ff13d13dd717b21aa39737cbe34d58a92883be4f193107e0f474c1aac52ab",
+      "sha256": "0a1f0c3f181a5d6f761c3181302620827d8caee8aa4cacafc9885519ad485e36",
+      "size": [
+        480,
+        42
+      ],
+      "processing": "white ground to alpha (colour-to-alpha), cropped to the alpha bounding box, scaled to 48 px high"
+    },
+    "wembley_stadium": {
+      "file": "Wembley stadium logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Wembley_stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/4/48/Wembley_stadium_logo.svg/960px-Wembley_stadium_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "cdefd95f0ef7a17518d451a24d799467b587f1b6",
+      "source_png_sha256": "a5a41ee5b315c99dd1b970111b6ffa6116e1a5ab10205d7f08aaeda476584982",
+      "sha256": "46308088e8898e1ba09664ecbf13bff73931e74ca88ec08e95bdd311830bdb8f",
+      "size": [
+        88,
+        48
+      ]
+    },
+    "arrowhead_stadium": {
+      "file": "Arrowhead Stadium logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Arrowhead_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2e/Arrowhead_Stadium_logo.svg/960px-Arrowhead_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "8593d4150854ca18121b569528138ced5b34f414",
+      "source_png_sha256": "20b0ec74a072fa2bd58f542559c3c00d845c9db18332efcd541b3dfed02f38f1",
+      "sha256": "75e4bb0ff3e9e539d46d97cc7f081c9c2bf627918c07c553e313cc44fd40dadd",
+      "size": [
+        456,
+        48
+      ]
+    },
+    "melbourne_cricket_ground": {
+      "file": "Melbourne Cricket Ground logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Melbourne_Cricket_Ground_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/7/77/Melbourne_Cricket_Ground_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "db6c9b60ec2871f19b3ec5729d33adad75bf69a3",
+      "source_png_sha256": "93b9c2a993435717ccf1361b5dce36f19c1f6862d585b524a3ed7485bdd99921",
+      "sha256": "290acd4786cc302f2a2a09fc6ce706d32ed19bda350ef952bb79a79ae7edd43e",
+      "size": [
+        57,
+        48
+      ]
+    },
+    "sofi_stadium": {
+      "file": "SoFi_Stadium_Logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:SoFi_Stadium_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/55/SoFi_Stadium_Logo.svg/960px-SoFi_Stadium_Logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "16176135ea5325dd9b46ee25ead4420fd3ba6a1c",
+      "source_png_sha256": "80d0247d7f626ffe2b80b62e4a9d04238866947c96361b210330d6affdbc27e0",
+      "sha256": "921e735b73e52e4791e9c5732e46ed5a908fe64f986bbe4e0dc350d8fd4d94d8",
+      "size": [
+        408,
+        48
+      ]
+    },
+    "allegiant_stadium": {
+      "file": "Allegiant stadium logo image.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Allegiant_stadium_logo_image.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/10/Allegiant_stadium_logo_image.svg/960px-Allegiant_stadium_logo_image.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "a921c2345a0858372267aa085de42c6635f224c9",
+      "source_png_sha256": "741ff66cf908314f34b99d6be63cf7cceb735e24865d61b932534c0bd0c0f8df",
+      "sha256": "31bf396d708e6403bf293c5fb61af87dc8c052536e605b356c057ff13339f23f",
+      "size": [
+        253,
+        48
+      ]
+    },
+    "hard_rock_stadium": {
+      "file": "Hard rock stadium florida logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Hard_rock_stadium_florida_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a9/Hard_rock_stadium_florida_logo.svg/960px-Hard_rock_stadium_florida_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "b16d5b1c3b4046a8e7cd1a082edd6d3a11853b40",
+      "source_png_sha256": "61da394329ddf7030e6ca9840e0419bb0fecc6fac2f72ed896d8c6f248050405",
+      "sha256": "a69fd378e3772aa7238082a98922103707720ee4df3df48fca56f224bcbb18ad",
+      "size": [
+        83,
+        48
+      ]
+    },
+    "u_s_bank_stadium": {
+      "file": "US Bank Stadium Minnesota logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:US_Bank_Stadium_Minnesota_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/39/US_Bank_Stadium_Minnesota_logo.svg/960px-US_Bank_Stadium_Minnesota_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "b1fb59e9d32653f52b0a3acc553bebdd401988ef",
+      "source_png_sha256": "d811da92b3d39e2a87e1f6e282452cf4bbd5639dd9070250e8f0cae20cccc0e3",
+      "sha256": "8b68e4aca0e65198825a7f6a73d8898458a4f6fa1356b729b8a805889578015b",
+      "size": [
+        346,
+        48
+      ]
+    },
+    "caesars_superdome": {
+      "file": "Caesars_Superdome_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Caesars_Superdome_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ac/Caesars_Superdome_logo.svg/960px-Caesars_Superdome_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "f300a58b48695ec2796ae43618acc070a38d98a5",
+      "source_png_sha256": "2e1567954479420df68f763c986a2a57f098ae7bb30a7a47a80de0a15b2ae322",
+      "sha256": "137bb16351aa62d3490ea5d0760031d75abf2fad73d03984710872d8616a746a",
+      "size": [
+        480,
+        33
+      ]
+    },
+    "stade_de_france": {
+      "file": "Stade de France logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Stade_de_France_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/d/d4/Stade_de_France_logo.svg/960px-Stade_de_France_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "4592c66a0b81d3c8b5379072fa3295f0236fa16f",
+      "source_png_sha256": "b7e151811c6bc8b2f5ef33539c758744b7473d559ecf6a61c76c8ef2a6e3f623",
+      "sha256": "6908370e5cd6397d862ff66f45e46b4ecb43b34f1a6084444893e3972e229e0a",
+      "size": [
+        327,
+        48
+      ]
+    },
+    "metlife_stadium": {
+      "file": "MetLife Stadium logo (2022).svg",
+      "page": "https://en.wikipedia.org/wiki/File:MetLife_Stadium_logo_(2022).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/9/9c/MetLife_Stadium_logo_%282022%29.svg/960px-MetLife_Stadium_logo_%282022%29.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "a25655dd474f805bd4a9b0c55944075a19d5073a",
+      "source_png_sha256": "d32baaec2cceaa9ab61c52b4f06e501f73dcaf4bdfe7b5aba29d5cd0229e1e28",
+      "sha256": "f7b304fbc046d0923b17d3b57be7e73be09ece2ad830564cbb6fb9a495ef4bb6",
+      "size": [
+        72,
+        48
+      ]
+    },
+    "lincoln_financial_field": {
+      "file": "Lincoln Financial Field logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Lincoln_Financial_Field_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/5/50/Lincoln_Financial_Field_logo.svg/960px-Lincoln_Financial_Field_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "4a63b8a2b495c961a1d869cb1bd6cff96670f8e6",
+      "source_png_sha256": "a93ebecab1215f26c53437a90fee1503c94fd67213c2b1b606fba716fac3ed64",
+      "sha256": "c74e82f8f13373a63793c0ab0d14e20e0e3d030d5a250405f99b3b6bf7963b37",
+      "size": [
+        220,
+        48
+      ]
+    },
+    "acrisure_stadium": {
+      "file": "Acrisure_Stadium_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Acrisure_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f0/Acrisure_Stadium_logo.svg/960px-Acrisure_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "4786c84d6c83515adb5a3bed47c1dc00715e4ba9",
+      "source_png_sha256": "9c433e472a0e43e3e920834cf9351edae4572d278dbc7f1f65eb9d2566d6535e",
+      "sha256": "072b3a8d0c01dbded24bd229a3d0e63701ee380a65a423687e14dff64dad0f20",
+      "size": [
+        86,
+        48
+      ]
+    },
+    "estadio_banorte": {
+      "file": "Estadio Banorte (logo).png",
+      "page": "https://commons.wikimedia.org/wiki/File:Estadio_Banorte_(logo).png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c0/Estadio_Banorte_%28logo%29.png/960px-Estadio_Banorte_%28logo%29.png",
+      "licence": "Public domain",
+      "original_sha1": "bc3d41cc69239ead4e7d1555cf0d78dd40ce48cd",
+      "source_png_sha256": "6e32e442dc815f0007101328e7542c506cbde91552079cde4e757f2590d2e064",
+      "sha256": "98cc382ccd8f664671c0182aca58789c6954677d044ae4b8f29ff8d785dd2340",
+      "size": [
+        238,
+        48
+      ]
+    },
+    "raymond_james_stadium": {
+      "file": "Raymond James Stadium logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Raymond_James_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/50/Raymond_James_Stadium_logo.svg/960px-Raymond_James_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "a03a58c25af271954f3230dedb5cbca0dbe956a7",
+      "source_png_sha256": "bc3ddfb19bb0a81a629e07ed82fdcb8e4a7bcdc5153ba0954fdc41ce3d84255d",
+      "sha256": "b3c1bc993d38e390737d239f4d6c5ee57a3eb6c2b0ab4125c7638a05e2763cb5",
+      "size": [
+        480,
+        28
+      ]
+    },
+    "northwest_stadium": {
+      "file": "Northwest Stadium logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Northwest_Stadium_logo.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/71/Northwest_Stadium_logo.png/960px-Northwest_Stadium_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "f3301d3e818fb2aa4f11130095d52db2dad8d845",
+      "source_png_sha256": "35d4da09456a4fecafef43d23621b273679a043c269f95c9de050901d261f7a5",
+      "sha256": "8365f7e15c8b9b4706f83c6eb1b55d66f41896aa655e4b1506b786d23ec92407",
+      "size": [
+        344,
+        48
+      ]
+    },
+    "mercedes_benz_stadium": {
+      "file": "Mercedes-Benz Stadium logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Mercedes-Benz_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/e/ed/Mercedes-Benz_Stadium_logo.svg/960px-Mercedes-Benz_Stadium_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "627b83faedc351d9f06a8cf98067a16abe1d0570",
+      "source_png_sha256": "b250e79cceaf720cc04900996aca224a2e2e841426ddc3cec5a18fb0dac7da95",
+      "sha256": "b234d84e070068dd91616ca1fd82f437610c9a5c0cd9b406aa5383c4a6236552",
+      "size": [
+        97,
+        48
+      ]
+    },
+    "q2_stadium": {
+      "file": "Q2_Stadium_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Q2_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c5/Q2_Stadium_logo.svg/960px-Q2_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "d8c237bbfce4b8e42cfb6a2b90bae9ececaa70a2",
+      "source_png_sha256": "1dda235863d8918fad1db05863e8a1717bd700a01eb0fb64681d8fc301ca4875",
+      "sha256": "a83298725ea66067fc60dab9ad062e39d995a0c1fa8fac1faa023ae3ee5ef8fb",
+      "size": [
+        98,
+        48
+      ]
+    },
+    "seatgeek_stadium": {
+      "file": "SeatGeek Stadium logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:SeatGeek_Stadium_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/1/11/SeatGeek_Stadium_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "3a37661daa933d0417b98cc6ae58106e00ca27e5",
+      "source_png_sha256": "de5664bb5878a6c4d64069a52a8ec7cfa5942381ac1b507485f51d48097c5c91",
+      "sha256": "d43c26634cc90d2747a598ca7d6479e475eb45b21e885ab3ec7d39459969bf9d",
+      "size": [
+        429,
+        48
+      ]
+    },
+    "soldier_field": {
+      "file": "Soldier Field Logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Soldier_Field_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/c/c4/Soldier_Field_Logo.svg/960px-Soldier_Field_Logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "4b4e71662c08c6e178b6c30077000cc813d28d4b",
+      "source_png_sha256": "66df3913ce52b3d75eaeec11e90b16af72cdfbe9abd55db81f60469dbae11b35",
+      "sha256": "e43714fbfb475c83926e54080b2043bbe2c7d6d3ad7152e8a2c446cef6014282",
+      "size": [
+        98,
+        48
+      ]
+    },
+    "tql_stadium": {
+      "file": "TQL Stadium logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:TQL_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bc/TQL_Stadium_logo.svg/960px-TQL_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "b2bc299fe6875e693ffd3c6ceb03241e0dae9844",
+      "source_png_sha256": "5cb5295f943f843582c99c310ce0a2f591e1a2c818d141bda56d4f2173b856fc",
+      "sha256": "31ebaffd084727f3668a9661b5e235d3505f193d56e893f57500340bf4f47623",
+      "size": [
+        427,
+        48
+      ]
+    },
+    "scottsmiracle_gro_field": {
+      "file": "ScottsMiracle-Gro Field logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:ScottsMiracle-Gro_Field_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fd/ScottsMiracle-Gro_Field_logo.svg/960px-ScottsMiracle-Gro_Field_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "4f9ffc3dc6349a6455141bd1caa065cd8faa8918",
+      "source_png_sha256": "890be37049d7168f8c8acba3c5bed4995b9ef17458a6a91990821ee98ca1c5e8",
+      "sha256": "18a3b5501d0871ac241f8a011f4eec22fc28890aee2c2a4c4341a3821c3ca996",
+      "size": [
+        205,
+        48
+      ]
+    },
+    "bank_of_america_stadium": {
+      "file": "Bank of America Stadium logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Bank_of_America_Stadium_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/c/ce/Bank_of_America_Stadium_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "6b976b271cd3171552164da57d72b63d4a6c576f",
+      "source_png_sha256": "57bb5566cbd7e32b4d0b4b07b0689dad375146dfc2e2ef1cbbd316edc81f31d5",
+      "sha256": "ad85b089eec344605deb25d20f4485f587cbf2bb0c23d9c6a39df07efdf62f66",
+      "size": [
+        480,
+        34
+      ]
+    },
+    "dick_s_sporting_goods_park": {
+      "file": "Dick's Sporting Goods Park logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Dick%27s_Sporting_Goods_Park_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/f/f5/Dick%27s_Sporting_Goods_Park_logo.svg/960px-Dick%27s_Sporting_Goods_Park_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "eeb12f9b11231a9e2df66e9db11279f2bf5f3d76",
+      "source_png_sha256": "cc7bb378c4e340ca5292f53608aac5cdd258cd18e989ca9c8325f29c0a7ae36d",
+      "sha256": "ddadb2e914c18b56bef161328d6057568d9c0110a11ee99480f9c046199a6bc9",
+      "size": [
+        47,
+        48
+      ]
+    },
+    "empower_field_at_mile_high": {
+      "file": "Empower Field logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Empower_Field_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/f/f2/Empower_Field_logo.svg/960px-Empower_Field_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "ec2520bfa67022a6791d1d92db2adb8f4ba697e8",
+      "source_png_sha256": "2ff0adf23c4565ff9cd88ac282a667cdbfede7264c719fc33820d0f8de4da155",
+      "sha256": "502a7e092f3fc7c83567f85e51116332db6541303cecad78d1f19abda0b5896a",
+      "size": [
+        61,
+        48
+      ]
+    },
+    "audi_field": {
+      "file": "Audi Field.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Audi_Field.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/05/Audi_Field.svg/960px-Audi_Field.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "ac01261edc70a89581353df75aabc97eda48f261",
+      "source_png_sha256": "96642c4ccb62227ff953fa01dbf513dfc2f0a665cf9ec0ba728abdaef0af8626",
+      "sha256": "6ecaa675bba87ce8f279a1ac08444edfd6f6bb49436be67ca9b404841e921df1",
+      "size": [
+        404,
+        48
+      ]
+    },
+    "m_t_bank_stadium": {
+      "file": "M&T Bank Stadium Logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:M%26T_Bank_Stadium_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5e/M%26T_Bank_Stadium_Logo.svg/960px-M%26T_Bank_Stadium_Logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "6503a2a37ea817ce0c2f4c47aaed7730161778b9",
+      "source_png_sha256": "d20effed436aa10bb2e8a50980c70e439616bd8db1c3765f40fde5b410d94bab",
+      "sha256": "82e65492669901802cf97fe892320bdd1c9a90dc5f4e9ef5b9fdca399d33a84f",
+      "size": [
+        166,
+        48
+      ]
+    },
+    "shell_energy_stadium": {
+      "file": "Shell Energy Stadium logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Shell_Energy_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/b/bf/Shell_Energy_Stadium_logo.svg/960px-Shell_Energy_Stadium_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "ccbb4975ba558181eb419b16747767f7f15367a3",
+      "source_png_sha256": "9fb0d97405cc85eef335c549ca2b493ed6cdea745219b6fcad439282f710e9f5",
+      "sha256": "1a8b0fce984202b2d7aaac0379e6e10fd34b653bea6523c08f96f0fad4faf035",
+      "size": [
+        167,
+        48
+      ]
+    },
+    "dignity_health_sports_park": {
+      "file": "DHSP.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Dignity_Health_Sports_Park_(logo).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/3/3d/Dignity_Health_Sports_Park_%28logo%29.svg/960px-Dignity_Health_Sports_Park_%28logo%29.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "0ef6b0209d162d385c576d683460d41f9d892f09",
+      "source_png_sha256": "b532d729eece595b751ea5bf3c74e8604132a3e974fe41c4b2ee6d1d808b8148",
+      "sha256": "35e1d035c013a72060cee299185bb9f6c336d3e7e900e31d30b096fdc3b4e787",
+      "size": [
+        205,
+        48
+      ]
+    },
+    "bmo_stadium": {
+      "file": "BMO stadium logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:BMO_stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/11/BMO_stadium_logo.svg/960px-BMO_stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "25d9fea74aca46f7213b719b3f9510ae20e1c442",
+      "source_png_sha256": "b727acc3f8c7e832f7ee9590ec32df46f55e680b8b34b6717da5e8f6b7fc24cc",
+      "sha256": "83ae18eefdb6f2fc6ca5f6d4c6c890d58511ea8c104c273a1edf9d7585d15116",
+      "size": [
+        327,
+        48
+      ]
+    },
+    "los_angeles_memorial_coliseum": {
+      "file": "La memorial coliseum logo 100th.png",
+      "page": "https://commons.wikimedia.org/wiki/File:La_memorial_coliseum_logo_100th.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/7/7e/La_memorial_coliseum_logo_100th.png",
+      "licence": "Public domain",
+      "original_sha1": "41ddc63efdd975303414e78ee709fad374ad1e16",
+      "source_png_sha256": "f29c2d80204daa3d2cbf6f836f32a09afa62b5298ea48537d6c1523b4e8416d0",
+      "sha256": "2daf36756d7b1c12f41c4133f319ab0de51ccc63af6680166311ffdab1d40371",
+      "size": [
+        50,
+        48
+      ]
+    },
+    "nu_stadium": {
+      "file": "Nu-stadium.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Nu-stadium.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/40/Nu-stadium.svg/960px-Nu-stadium.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "bb954970cf502ee19cf68d9cab82f86c5612107e",
+      "source_png_sha256": "134ca7fd7874b4fa25c907a93e62418e30b846890758fa54833c81b59c67f3c3",
+      "sha256": "75d6d51dfe673ea2792ee940e49fa6ced00cab461d6a050b789f1c7b2942e642",
+      "size": [
+        288,
+        48
+      ]
+    },
+    "allianz_field": {
+      "file": "Allianz Field logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Allianz_Field_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6a/Allianz_Field_logo.svg/960px-Allianz_Field_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "d2a1f88d8c6515de92dd2c2c5d18978774b4bcaa",
+      "source_png_sha256": "9b7d95cc4a3f08c37265bfdde45b483f5ba4105a8aed37ec84e95c18c330d436",
+      "sha256": "2a25c14c9184acb3559a25ea42ccbe05e5031a8957d52dcd3e3a027f0c2fb331",
+      "size": [
+        296,
+        48
+      ]
+    },
+    "stade_saputo": {
+      "file": "Saputo Stadium logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Saputo_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f6/Saputo_Stadium_logo.svg/960px-Saputo_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "e74098a6e249c3a1f2a46d0bd45edc1b9cdcdb78",
+      "source_png_sha256": "af386a8a20b93e7019cd742af9478f149c18843d7aa7533264fca5425e598512",
+      "sha256": "450e47e85d9f3201846b2258fd61b81212774355662863267a5706e9cdb50860",
+      "size": [
+        156,
+        48
+      ]
+    },
+    "gillette_stadium": {
+      "file": "Gilette Stadium Logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Gilette_Stadium_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Gilette_Stadium_Logo.svg/960px-Gilette_Stadium_Logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "6e1bc350309e1a4e250677bdb08d1f67a61744fc",
+      "source_png_sha256": "9f3ac458cd97148ea92357ef9cd4b99a60687139ab93860ecdfab600dae7a63d",
+      "sha256": "908204d94f39107253df525cc01bc1e00ac601d58a7181affa4e9bf4fa2cafe9",
+      "size": [
+        413,
+        48
+      ]
+    },
+    "inter_co_stadium": {
+      "file": "Inter&Co Stadium logo triplestack ltbg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Inter%26Co_Stadium_logo_triplestack_ltbg.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e3/Inter%26Co_Stadium_logo_triplestack_ltbg.png/960px-Inter%26Co_Stadium_logo_triplestack_ltbg.png",
+      "licence": "Public domain",
+      "original_sha1": "15b4e4c98eddbd7b3b35771c63755caa83e96dd7",
+      "source_png_sha256": "253ffdcfd77ae0c38b69e9fc841979bd63e01862611c62b2220739fd784bcfbd",
+      "sha256": "5fd38161b5ca6519ab5c823f31ce2a02d79d4a76dc6b8d03277ec46790ce9db3",
+      "size": [
+        69,
+        48
+      ]
+    },
+    "subaru_park": {
+      "file": "Subaru Park logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Subaru_Park_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/7/78/Subaru_Park_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "0c0ac1b0dfca3d340f73923b18a48d9e72db8606",
+      "source_png_sha256": "8b87e18942826d712a2b66f476b8f4d291dac3ce35a119d7adb3ad7ac5a04c50",
+      "sha256": "96a2db5c988d1968363ab3dea9ae1e95d105cc59322614f43dad9923cf1fb14f",
+      "size": [
+        324,
+        48
+      ]
+    },
+    "providence_park": {
+      "file": "ProvidencePark-logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:ProvidencePark-logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f2/ProvidencePark-logo.svg/960px-ProvidencePark-logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "437aa567b83df628fb2717a5e666025473e32b11",
+      "source_png_sha256": "0cecef05ee361d09a99375e8b0fcda5a9c36207f5f1cd97c03b8d62d6c6d1406",
+      "sha256": "d32d057226f81f8883de17c1e3504d7b28ddc0a4566bd31503310b6e31660b4c",
+      "size": [
+        41,
+        48
+      ]
+    },
+    "sports_illustrated_stadium": {
+      "file": "Sports Illustrated Stadium logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Sports_Illustrated_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e9/Sports_Illustrated_Stadium_logo.svg/960px-Sports_Illustrated_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "170db96712233535f4e7c7d27794e54e03cc9d71",
+      "source_png_sha256": "672d16029bcf8e053acfc1a9ca1d382ea4b217dc52827496e509553272898c28",
+      "sha256": "e58ab3113e31fa81d72f0689f780a61b3e0f53573a7338c8aced862ad08e45c1",
+      "size": [
+        129,
+        48
+      ]
+    },
+    "america_first_field": {
+      "file": "America_First_Field_logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:America_First_Field_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/0/05/America_First_Field_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "1b73c2336f59091313346e28c66ddb550ee84e31",
+      "source_png_sha256": "1ff60716fe0bfd40db3738c44aae7884d585dd29510b7a8b874b9404566d8da3",
+      "sha256": "616b92fb6c9d774cedcbacdc67c21f71096f07384493fe90cc85ffd194af69c4",
+      "size": [
+        122,
+        48
+      ]
+    },
+    "snapdragon_stadium": {
+      "file": "Snapdragon Stadium logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Snapdragon_Stadium_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/59/Snapdragon_Stadium_logo.svg/960px-Snapdragon_Stadium_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "dc57584f92fcbe785262474c610d6c392ea01cf0",
+      "source_png_sha256": "94cf65adc6bb30d95e7169cb1e1fd58c4a1b8922756f860ba002bed2238dac22",
+      "sha256": "6f8e73e3461b08e6c0ee2ecc4cde311c410afec858da0181796301b969f30675",
+      "size": [
+        387,
+        48
+      ]
+    },
+    "lumen_field": {
+      "file": "Lumen Field logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Lumen_Field_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/ba/Lumen_Field_logo.svg/960px-Lumen_Field_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "d93c6b074e6a16d90a8fd1bafe0df0b0280ed3d2",
+      "source_png_sha256": "ef4417a537b7d2fd3f80d62ad4fd43217503a8447fb1b2a6f229b4180e91a19f",
+      "sha256": "a8f37ad123217e9409f556c85fb76ae728bd671a6ff71cb0145e0798ea6a2e54",
+      "size": [
+        110,
+        48
+      ]
+    },
+    "levi_s_stadium": {
+      "file": "Levi's_Stadium_Logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Levi%27s_Stadium_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b5/Levi%27s_Stadium_Logo.svg/960px-Levi%27s_Stadium_Logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "36b39e7a443edc6f465b57287db77cb981c391ba",
+      "source_png_sha256": "126fbb4e397803852d0695502b6038eb86e76f1e8e326c8699a5decb8547d554",
+      "sha256": "6caa7b37b635e37b9f5fd13bcf415bd0e40bcf1281bd66b957917e82950238f1",
+      "size": [
+        228,
+        48
+      ]
+    },
+    "paypal_park": {
+      "file": "PayPal Park logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:PayPal_Park_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/PayPal_Park_logo.svg/960px-PayPal_Park_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "59c32d3228cbab2928897d0e737a9185255fc3c0",
+      "source_png_sha256": "9c0185f24d649bcf14e3b2360199c89fa25c687d0cebd6570a07ee27e6c4c2e8",
+      "sha256": "1ca3293edd8487a1dc76ba085e8274b1cccdf327afffff1a20ac9a90f2d1dff4",
+      "size": [
+        299,
+        48
+      ]
+    },
+    "sporting_park": {
+      "file": "Sporting Park logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Sporting_Park_logo.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/7/79/Sporting_Park_logo.png/960px-Sporting_Park_logo.png",
+      "licence": "Public domain",
+      "original_sha1": "986ba3a76d176a79a169040cab735d7c4f2ff048",
+      "source_png_sha256": "76d9665847c2162bb9e38cb105b2e01f45b640676214eee463f7c5e6aca9449a",
+      "sha256": "fc7d7103b2590c509785ab8cc040af4aded0d2d4fa0f2d17c6d69f0c704f13b1",
+      "size": [
+        111,
+        48
+      ]
+    },
+    "energizer_park": {
+      "file": "Energizer Park logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Energizer_Park_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/f/f2/Energizer_Park_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "b1ffc5a335d977753c7d5e7d9fd7994ddf5e8997",
+      "source_png_sha256": "41007e976f30af4c72bc306450fa95edadfe3b9eadd7de8f5ebea295748873b9",
+      "sha256": "07a0bdd226684b3f0e3afc291214c2cd032d01ced40521551ea0bd2baa5014ce",
+      "size": [
+        123,
+        48
+      ]
+    },
+    "bmo_field": {
+      "file": "BMO_Field_Logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:BMO_Field_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/b/bd/BMO_Field_Logo.svg/960px-BMO_Field_Logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "80514202691ee8aa738fc7f5b2774554c401fdb4",
+      "source_png_sha256": "4d4d25e238e3d0fd68b859adfc4c9c30911204764268e183d89e769b2db2b133",
+      "sha256": "b578e2ed342c87abf3c3b195149f12ab3a702ea94f4d3a91450e33e85ed22cb6",
+      "size": [
+        340,
+        48
+      ]
+    },
+    "bc_place": {
+      "file": "BC Place logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:BC_Place_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/e/ef/BC_Place_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "ac8e6a746b92689424c5f3d8d182c92e14df12db",
+      "source_png_sha256": "8634e8e8345dbdbab472b154b9a18fdad23abbba7cb867998bd6219ea90a2a97",
+      "sha256": "8973bcdd0e69a7ebf2af329428984eeb6ebc2a2123f3437145cb20473b83f517",
+      "size": [
+        67,
+        48
+      ]
     }
   }
 }

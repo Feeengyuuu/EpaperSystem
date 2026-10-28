@@ -103,15 +103,21 @@ class BaseballRenderMixin:
             ("FIRST PITCH", SportsDashboard._kit_countdown_label(event.get("start"), now)),
             ("TV", str(event.get("broadcast") or "").strip() or "TBD"),
         ]
+        # The ballpark's logo shares the TV tile, so the foot line keeps to the game's billing.
+        venue = str(event.get("venue") or "").strip()
+        in_tile = self._kit_venue_logo(venue, (60, 20)) is not None
         self._draw_kit_tiles(draw, (left, y, right, footer[1] - 4), tiles, spec, tile_h=min(36, footer[1] - 5 - y),
-                             image=image, glass=True)
-        self._draw_mlb_footer(image, draw, footer, event, state)
+                             image=image, glass=True, venue=venue if in_tile else None)
+        self._draw_mlb_footer(image, draw, footer, event, state, with_venue=not in_tile)
 
-    def _draw_mlb_footer(self, image, draw, box, event, state, with_mark=True):
+    def _draw_mlb_footer(self, image, draw, box, event, state, with_mark=True, with_venue=True):
         """The game's billing in official marks, centred: the postseason series mark, the
-        game number, a rule, then the ballpark's own logo, or its name where it has none.
-        The text line when neither mark is bundled."""
+        game number, a rule, then the ballpark's own logo, or its name where it has none
+        (left out ``with_venue`` False, when the TV tile shows it). The text line when
+        neither mark is bundled."""
         x1, y1, x2, y2 = [int(value) for value in box]
+        if not with_venue:
+            event = {**event, "venue": ""}
         height = y2 - y1
         mark_path = SportsDashboard._mlb_series_mark_path(event) if with_mark else None
         mark = self._load_local_logo(mark_path, (MLB_FOOTER_MARK_WIDTH, height), alpha_threshold=8) if mark_path else None

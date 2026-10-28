@@ -60,7 +60,7 @@ def test_club_separator_change_preserves_punctuation_inside_provider_names():
 def test_mls_upcoming_row_draws_supported_separator_in_both_themes(monkeypatch, palette):
     plugin = SportsDashboard({"id": "sports_dashboard"})
     # A network without a bundled logo stays named in the row's context line, separator and all.
-    adapted = plugin._club_football_worldcup_event(_mls_event(broadcast="TVA Sports"), timezone.utc)
+    adapted = plugin._club_football_worldcup_event(_mls_event(broadcast="TVA Sports", venue="Rice Park"), timezone.utc)
     image = Image.new("RGB", (270, 40), palette["panel"])
     draw = ImageDraw.Draw(image)
     drawn = []
@@ -80,7 +80,7 @@ def test_mls_upcoming_row_draws_supported_separator_in_both_themes(monkeypatch, 
     finally:
         _ACTIVE_COLORS.reset(token)
 
-    metadata_fonts = [font for text, font in drawn if text == "TVA Sports | ScottsMiracle-Gro Field"]
+    metadata_fonts = [font for text, font in drawn if text == "TVA Sports | Rice Park"]
     assert len(metadata_fonts) == 1
     font = metadata_fonts[0]
     separator = font.getmask("|")
@@ -88,9 +88,10 @@ def test_mls_upcoming_row_draws_supported_separator_in_both_themes(monkeypatch, 
     assert (separator.size, bytes(separator)) != (missing.size, bytes(missing))
 
 
-def test_a_network_with_a_logo_leaves_the_row_line_to_the_ground(monkeypatch):
+@pytest.mark.parametrize(("venue", "named"), [("Rice Park", True), ("ScottsMiracle-Gro Field", False)])
+def test_a_network_with_a_logo_leaves_the_row_line_to_the_ground(monkeypatch, venue, named):
     plugin = SportsDashboard({"id": "sports_dashboard"})
-    adapted = plugin._club_football_worldcup_event(_mls_event(), timezone.utc)
+    adapted = plugin._club_football_worldcup_event(_mls_event(venue=venue), timezone.utc)
     image = Image.new("RGB", (270, 40), DAY_COLORS["panel"])
     draw = ImageDraw.Draw(image)
     drawn = []
@@ -105,8 +106,13 @@ def test_a_network_with_a_logo_leaves_the_row_line_to_the_ground(monkeypatch):
 
     plugin._draw_worldcup_mini_match_row(image, draw, 0, 269, 0, 33, adapted, "VS", show_time=True)
 
-    # Apple TV is its logo after the date; the line keeps the ground alone.
-    assert "ScottsMiracle-Gro Field" in drawn and not any("Apple TV" in text for text in drawn)
+    # Apple TV is its logo after the date; the line keeps the ground alone, as its own logo
+    # where it has one (Columbus's green wordmark).
+    assert not any("Apple TV" in text for text in drawn)
+    assert (venue in drawn) is named
+    if not named:
+        line = image.crop((40, 0, 230, 14)).get_flattened_data()
+        assert any(green > red + 60 and green > blue + 30 for red, green, blue in line)
 
 
 @pytest.mark.parametrize("round_value", [21, {"number": 21}, {"text": "Round 21"}])

@@ -41,6 +41,14 @@ WNBA_CARD_TV_LOGO_HEIGHT = 18
 WNBA_DATA_SOURCE, WNBA_SOURCE_LOGO_HEIGHT = "espn", 16
 # The series tracker: each game's slot over its caption, and a played game's winner logo.
 WNBA_TRACKER_HEIGHT, WNBA_SLOT_LOGO_SIZE = 40, 12
+# A series game is marked by a tank top with its number on the chest (in place of "G1"): its
+# outline in a 100 x 100 box (straps, a scooped neck, deep armholes), and its size on a slot
+# and on a schedule row.
+GAME_JERSEY_OUTLINE = (
+    (24, 2), (37, 2), (39, 9), (43, 15), (50, 18), (57, 15), (61, 9), (63, 2), (76, 2),
+    (78, 13), (83, 24), (90, 31), (98, 35), (98, 98), (2, 98), (2, 35), (10, 31), (17, 24), (22, 13),
+)
+GAME_JERSEY_SLOT_SIZE, GAME_JERSEY_ROW_SIZE = (13, 14), (18, 17)
 
 
 class BasketballRenderMixin:
@@ -144,7 +152,7 @@ class BasketballRenderMixin:
 
         strip_y1 = hero_y2 + 6
         strip_y2 = strip_y1 + 20
-        self._draw_basketball_period_strip(draw, (x1, strip_y1, x2, strip_y2), event, state, spec)
+        self._draw_basketball_period_strip(draw, (x1, strip_y1, x2, strip_y2), event, state, spec, image=image)
 
         lower_y1 = strip_y2 + 7
         split_x = x1 + 316
@@ -231,11 +239,18 @@ class BasketballRenderMixin:
             sub, sub_font = self._fit_text_ellipsis(draw, sub, x2 - x1, 9, bold=False, min_size=8)
             self._draw_centered_in_box(draw, (x1, y1 + 56, x2, y1 + 68), sub, sub_font, COLORS["text"])
 
-    def _draw_basketball_period_strip(self, draw, box, event, state, spec):
+    def _draw_basketball_period_strip(self, draw, box, event, state, spec, image=None):
         x1, y1, x2, y2 = [int(value) for value in box]
         if state == "scheduled":
+            headline = str(event.get("headline") or "").strip()
+            venue = str(event.get("venue") or "").strip()
+            # The arena as its official logo after the headline (and the city after it).
+            rest = SportsDashboard._kit_venue_label({**event, "venue": ""}, include_tv=False)
+            if image is not None and self._draw_kit_venue_line(image, draw, (x1 + 4, y1, x2 - 4, y2), venue, headline, rest, size=10,
+                                         logo_height=min(14, y2 - y1)):
+                return
             parts = [
-                str(event.get("headline") or "").strip(),
+                headline,
                 SportsDashboard._kit_venue_label(event, include_tv=False),
             ]
             text = "  ·  ".join(part for part in parts if part)
@@ -487,7 +502,9 @@ class BasketballRenderMixin:
                 draw.rounded_rectangle((left, y1, right, bottom), radius=3, fill=COLORS["panel"], outline=COLORS["border"], width=1)
                 ink_key = self._kit_team_ink_key(main.get(f"team_{side}_color"), spec.accent)
                 draw.rectangle((left + 1, y1 + 1, right - 1, y1 + 3), fill=COLORS[ink_key])
-                self._draw_text_in_box(draw, label_box, f"G{number}", caption_font, COLORS["text"])
+                # The game's tank top in the winner's colour.
+                self._draw_game_jersey(image, draw, label_box[:2], GAME_JERSEY_SLOT_SIZE, number, COLORS[ink_key],
+                                       COLORS[self._kit_ink_text_key(ink_key)], spec)
                 size = WNBA_SLOT_LOGO_SIZE
                 self._draw_team_logo(image, draw, main.get(f"team_{side}_logo"), right - size - 3, y1 + 5, size,
                                      spec.hook("logo_fallback", main, side))
@@ -509,10 +526,13 @@ class BasketballRenderMixin:
                 detail = f"{start.hour % 12 or 12}:{start:%M}"
             else:
                 status, detail = "", "—"
-            self._draw_text_in_box(draw, label_box, f"G{number}", caption_font, COLORS["text"])
+            self._draw_game_jersey(image, draw, label_box[:2], GAME_JERSEY_SLOT_SIZE, number, COLORS["panel"],
+                                   COLORS["text"], spec)
             if status:
-                self._draw_text_in_box(draw, (left, y1 + 4, right - 3, y1 + 16), status, bold_font if current else caption_font,
-                                       COLORS["text"], align="right")
+                status_box = (left + 4 + GAME_JERSEY_SLOT_SIZE[0], y1 + 4, right - 2, y1 + 16)
+                status, status_font = self._fit_text(draw, status, status_box[2] - status_box[0], 9 if current else 8,
+                                                     bold=current, min_size=7)
+                self._draw_centered_in_box(draw, status_box, status, status_font, COLORS["text"])
             detail_font = bold_font if current else line_font
             if state == "live":
                 detail, detail_font = self._fit_score(draw, detail, right - left - 4, 9, bold=current,
@@ -543,6 +563,24 @@ class BasketballRenderMixin:
         games = [game for game in history or [] if set(game.get("codes") or []) == teams]
         return {game["number"]: game for game in games} if games and len(games) == len(history) else {}
 
+    def _draw_game_jersey(self, image, draw, origin, size, number, fill, ink, spec):
+        """Series game ``number`` as a tank top ``size`` big at ``origin``: ``fill`` inside an ink
+        outline, the number on its chest in the league's score type in ``ink``."""
+        x, y = [int(value) for value in origin]
+        width, height = [int(value) for value in size]
+        scale = 4
+        layer = Image.new("RGBA", (width * scale, height * scale), (0, 0, 0, 0))
+        outline = [((px / 100) * (width * scale - 1), (py / 100) * (height * scale - 1)) for px, py in GAME_JERSEY_OUTLINE]
+        ImageDraw.Draw(layer).polygon(outline, fill=(*fill[:3], 255), outline=(*COLORS["text"][:3], 255), width=scale)
+        layer = layer.resize((width, height), Image.Resampling.LANCZOS)
+        image.paste(layer, (x, y), layer)
+        if not number:
+            return
+        chest = (x + 1, y + round(height * 0.3), x + width - 1, y + height - 1)
+        text, font = self._fit_score(draw, str(number), chest[2] - chest[0], max(7, chest[3] - chest[1] + 2), bold=True,
+                                     sport=spec.sport, max_height=chest[3] - chest[1])
+        self._draw_centered_in_box(draw, chest, text, font, ink)
+
     def _draw_wnba_series_game_row(self, image, draw, box, event, now, spec):
         """A series game as a schedule row led by its date: the game tag (filled for today's
         game), the date in bold, the weekday and tip-off time (or the live clock, or FINAL)
@@ -553,10 +591,10 @@ class BasketballRenderMixin:
         number = SportsDashboard._basketball_game_number(event)
         start = event.get("start")
         today = isinstance(start, datetime) and start.date() == now.date()
-        tag = (x1, y1 + 2, x1 + 22, y2 - 2) if tall else (x1, y1, x1 + 22, y2)
-        draw.rounded_rectangle(tag, radius=3, fill=COLORS[spec.tag] if today or state == "live" else COLORS["panel"],
-                               outline=COLORS["border"], width=1)
-        self._draw_centered_in_box(draw, tag, f"G{number}" if number else "G", self._font(9, True), COLORS["text"])
+        # The game's tank top, filled for today's game or the one on now.
+        width, height = GAME_JERSEY_ROW_SIZE if tall else (GAME_JERSEY_ROW_SIZE[0] - 3, y2 - y1)
+        self._draw_game_jersey(image, draw, (x1 + 2, y1 + (y2 - y1 - height) // 2), (width, height), number,
+                               COLORS[spec.tag] if today or state == "live" else COLORS["panel"], COLORS["text"], spec)
         x = x1 + 27
         if isinstance(start, datetime):
             date_font = self._font(13 if tall else 10, True)

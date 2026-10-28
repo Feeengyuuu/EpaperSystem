@@ -10,6 +10,8 @@ LOCAL_CLUB_TEAM_LOGO_SCHEME = "local-club://"
 # The networks' logos on a card's top row (beside its status pill) and on a schedule row (after
 # its date), this tall; the first choice shrinks to fit down to TV_LOGO_MIN_SHARE of that.
 CLUB_CARD_TV_LOGO_HEIGHT, ROW_TV_LOGO_HEIGHT, TV_LOGO_MIN_SHARE = 15, 10, 0.7
+# The ground's logo on a club card's round line.
+CLUB_CARD_VENUE_LOGO_HEIGHT = 12
 
 
 class WorldCupRenderMixin:
@@ -944,6 +946,12 @@ class WorldCupRenderMixin:
         # Separators are "|" and "/": the device's bold YaHei draws "·" as a dash.
         stage = self._stage_without_broadcast(event, unshown) if logos is not None else self._clean_worldcup_stage(
             event.get("block"))
+        # The ground as its official logo after the round, where it has one.
+        venue = str(event.get("venue") or "").strip()
+        if self._draw_kit_venue_line(image, draw, (x1 + 16, y1 + 27, x2 - 18, y1 + 27 + CLUB_CARD_VENUE_LOGO_HEIGHT),
+                                     venue, self._stage_without_venue(stage, venue), size=9, bold=True,
+                                     align="left", separator="|", fill=COLORS["muted"]):
+            return
         stage_text, stage_font = self._fit_text_ellipsis(draw, stage, x2 - x1 - 34, 9, bold=True, min_size=7)
         draw.text((x1 + 16, y1 + 28), stage_text, font=stage_font, fill=COLORS["muted"])
 
@@ -982,6 +990,11 @@ class WorldCupRenderMixin:
         rest = " / ".join(unshown)
         return " | ".join((rest if part.strip() == label else part) for part in parts
                           if part.strip() and (part.strip() != label or rest))
+
+    @staticmethod
+    def _stage_without_venue(stage, venue):
+        """The context line with the ground's name left out (its logo stands for it)."""
+        return " | ".join(part for part in str(stage or "").split(" | ") if part.strip() and part.strip() != venue)
 
     def _draw_club_card_details(self, draw, x1, y2, center_x, areas, flag_y, flag_h, event, now, status_text,
                                 is_live, is_recent, presentation):
@@ -1408,6 +1421,12 @@ class WorldCupRenderMixin:
             stage, stage_x = self._stage_without_broadcast(event, unshown), stage_x + logos.width + 6
         else:
             stage = self._clean_worldcup_stage(event.get("block"))
+        venue = str(event.get("venue") or "").strip()
+        if right - stage_x >= 24 and self._draw_kit_venue_line(
+                image, draw, (stage_x, y + 2, right, y + 2 + ROW_TV_LOGO_HEIGHT), venue,
+                self._stage_without_venue(stage, venue), size=9, bold=True, align="left", separator="|",
+                fill=COLORS["muted"]):
+            stage = ""
         stage_text, stage_font = self._fit_text_ellipsis(draw, stage, right - stage_x, 9, bold=True, min_size=7)
         if stage_text.strip(". ") and right - stage_x >= 16:
             draw.text((stage_x, y + 1), stage_text, font=stage_font, fill=COLORS["muted"])
