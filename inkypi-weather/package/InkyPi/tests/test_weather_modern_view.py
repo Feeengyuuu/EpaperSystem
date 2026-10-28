@@ -89,9 +89,12 @@ def test_hourly_curve_and_week_bars_stay_in_their_boxes():
     hourly = view["hourly"]
 
     assert hourly["path"].startswith("M") and hourly["path"].count("C") == 23
+    # A dry day lets the curve take the rain bars' band as well.
+    assert hourly["curve_bottom"] == modern_view.DRY_CURVE_BOTTOM
     for point in hourly["points"]:
         assert 0 <= point["x"] <= hourly["width"]
-        assert modern_view.CURVE_TOP <= point["y"] <= modern_view.CURVE_BOTTOM
+        assert modern_view.CURVE_TOP <= point["y"] <= hourly["curve_bottom"]
+    assert build_view(_params(now, rain=0.5), now)["hourly"]["curve_bottom"] == modern_view.CURVE_BOTTOM
     assert [point["label"] for point in hourly["points"][:4]] == [True, False, False, True]
     week = view["week"]
     assert [day["name"] for day in week[:2]] == ["明天", "周一"] and len(week) == 7
@@ -143,6 +146,40 @@ def test_fun_features_follow_the_weather():
     assert night["mascot"]["key"] == "night" and night["mascot"]["line"].startswith("晚安")
     assert night["sun"]["countdown"].startswith("距日出 8小时")
     assert night["effect"]["kind"] == "stars"
+
+
+def test_an_evening_view_names_tomorrows_hours_as_tomorrow():
+    now = LA.localize(datetime(2026, 10, 24, 17, 42))
+    params = _params(now)
+    params["current_temperature"] = "20"
+    params["data_points"][3]["measurement"] = 0.4
+    view = build_view(params, now, art_dir=str(ART_DIR))
+
+    # Tomorrow's 09:00-16:00 is the best time out, said as tomorrow's everywhere it shows.
+    assert (view["best"]["day"], view["best"]["start"], view["best"]["end"]) == ("明天 ", "09:00", "16:00")
+    assert view["mascot"]["line"] == "明天 09:00 后出门正好！"
+    assert view["summary"].startswith("明天 04:00 最暖 21°")
+    points = view["hourly"]["points"]
+    assert points[6]["when"] == "23:00" and points[7]["when"] == "明天 00:00"
+    assert view["hourly"]["midnight"]["x"] == points[7]["x"]
+    # 36 minutes to sunset reads in minutes; a fall to 10° overnight replaces the sun-cream tip.
+    assert view["sun"]["countdown"] == "距日落 36分钟"
+    assert view["tips"][-1] == "夜间低至 10°"
+
+    plugin = Weather({"id": "weather"})
+    html = plugin.env.get_template("weather_modern.html").render(
+        **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
+        plugin_settings={}, style_sheets=[], font_faces=[])
+    assert "最佳出门 明天 09:00–16:00" in html and "mw-midnight" in html
+
+
+def test_wind_and_visibility_read_plainly():
+    now = LA.localize(datetime(2026, 10, 24, 12, 50))
+    view = build_view(_params(now), now)
+    assert (view["wind"]["beaufort"], view["wind"]["sign"]) == ("微风", "旗帜展开")
+    assert view["visibility"] == {"value": "≥10", "unit": "km"}
+    assert modern_view._visibility({"measurement": "≥32.9", "unit": "km"})["value"] == "≥33"
+    assert modern_view._visibility({"measurement": 6.4, "unit": "mi"})["value"] == 6.4
 
 
 def test_every_weather_has_its_mascot():

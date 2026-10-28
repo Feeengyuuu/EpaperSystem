@@ -47,6 +47,10 @@ WEEKDAY_NAMES = "一二三四五六日"
 WIND_DIRECTIONS = ("北", "东北", "东", "东南", "南", "西南", "西", "西北")
 # Upper bounds of Beaufort forces 0-11 in m/s; 12 above the last.
 BEAUFORT_MS = (0.3, 1.6, 3.4, 5.5, 8.0, 10.8, 13.9, 17.2, 20.8, 24.5, 28.5, 32.7)
+# Each force's Chinese name and what it does on land.
+BEAUFORT_NAMES = ("无风", "软风", "轻风", "微风", "和风", "清风", "强风", "疾风", "大风", "烈风", "狂风", "暴风", "飓风")
+BEAUFORT_SIGNS = ("烟直上", "烟示风向", "树叶微响", "旗帜展开", "尘土飞扬", "小树摇摆", "电线有声", "步行困难",
+                  "折断树枝", "屋瓦吹落", "拔起树木", "损毁严重", "摧毁极大")
 AQI_LABELS = ("优", "良", "中等", "差", "很差", "极差")
 AQI_COLOURS = ("#2e9e5b", "#9ccc3c", "#f2b705", "#e8701a", "#c62828", "#7b1fa2")
 UV_BANDS = ((3, "弱", "无需防晒"), (6, "中等", "注意防晒"), (8, "强", "需要防晒"), (11, "很强", "避免暴晒"),
@@ -58,7 +62,11 @@ CHART_SIZE = (500, 128)
 CHART_PAD_X = 16
 CURVE_TOP, CURVE_BOTTOM = 26, 70
 RAIN_BASE, RAIN_HEIGHT = 96, 22
+# With no rain in the 24 hours the curve takes the rain bars' band too.
+DRY_CURVE_BOTTOM = 86
 LABEL_STEP = 3
+# A drop this large (in Celsius) over the next 12 hours is worth a tip of its own.
+COOLING_TIP_C = 6
 
 
 # Each card's generated icon heading its title (with the card's own colour in the CSS).
@@ -88,7 +96,8 @@ def build_view(params, now, *, art_dir=None):
         "high": today.get("high"),
         "low": today.get("low"),
         "summary": _summary(hourly),
-        "tips": _tips(feels, units, hourly, points.get("UV Index")),
+        "tips": _tips(feels, units, hourly, points.get("UV Index"), _number(params.get("current_temperature")),
+                      bool(sun.get("night"))),
         "sun": sun,
         "moon": _moon(today),
         "wind": _wind(points.get("Wind"), units),
@@ -96,7 +105,7 @@ def build_view(params, now, *, art_dir=None):
         "uv": _uv(points.get("UV Index")),
         "humidity": _humidity(points.get("Humidity")),
         "pressure": _plain(points.get("Pressure")),
-        "visibility": _plain(points.get("Visibility")),
+        "visibility": _visibility(points.get("Visibility")),
         "hourly": hourly,
         "week": _week(forecast[1:8]),
     }
@@ -195,16 +204,16 @@ def _summary(hourly):
     if not points:
         return ""
     warmest = max(points, key=lambda point: point["temperature"])
-    parts = [f"{warmest['time']} 最暖 {warmest['temperature']}°"]
+    parts = [f"{warmest['when']} 最暖 {warmest['temperature']}°"]
     wet = next((point for point in points if point["rain_chance"] >= 40), None)
     if wet:
-        parts.append(f"{wet['time']} 起可能有雨（{wet['rain_chance']}%）")
+        parts.append(f"{wet['when']} 起可能有雨（{wet['rain_chance']}%）")
     else:
         parts.append("未来 24 小时无雨")
     return "，".join(parts)
 
 
-def _tips(feels, units, hourly, uv_point):
+def _tips(feels, units, hourly, uv_point, current, night):
     tips = []
     celsius = _celsius(feels, units)
     if celsius is not None:
@@ -217,9 +226,30 @@ def _tips(feels, units, hourly, uv_point):
     chances = [point["rain_chance"] for point in hourly.get("points") or []]
     tips.append("记得带伞" if chances and max(chances) >= 40 else "不用带伞")
     uv = _number((uv_point or {}).get("measurement"))
-    if uv is not None:
-        tips.append("注意防晒" if uv >= 3 else "无需防晒")
+    cooling = _cooling(hourly, current, units)
+    if uv is not None and uv >= 3 and not night:
+        tips.append("注意防晒")
+    elif cooling:
+        tips.append(cooling)
+    elif uv is not None:
+        tips.append("无需防晒")
     return tips
+
+
+def _cooling(hourly, current, units):
+    """"夜间低至 8°" when the next 12 hours fall COOLING_TIP_C or more below now, else "".
+
+    The lead names the part of the day in four characters, so the tip fits its pill.
+    """
+    points = (hourly.get("points") or [])[1:13]
+    if current is None or not points:
+        return ""
+    coldest = min(points, key=lambda point: point["temperature"])
+    if _celsius(current, units) - _celsius(coldest["temperature"], units) < COOLING_TIP_C:
+        return ""
+    hour = int(coldest["time"][:2]) if coldest["time"][:2].isdigit() else 0
+    lead = "夜间低至" if coldest["night"] else "早晨低至" if hour < 11 else "稍后降至"
+    return f"{lead} {coldest['temperature']}°"
 
 
 # Gauges -------------------------------------------------------------------------------
@@ -256,7 +286,7 @@ def _sun(astronomy, now):
         target = sunrise if local_now < sunrise else sunrise + timedelta(days=1)
         label = "距日出"
     left = max(0, int((target - local_now).total_seconds() // 60))
-    sun["countdown"] = f"{label} {left // 60}小时{left % 60:02d}分"
+    sun["countdown"] = f"{label} {left // 60}小时{left % 60:02d}分" if left >= 60 else f"{label} {left}分钟"
     return sun
 
 
@@ -283,6 +313,8 @@ def _wind(point, units):
         "heading": round((degrees + 180) % 360),
         "name": "无风" if force == 0 else f"{direction}风 {force} 级",
         "force": force,
+        "beaufort": BEAUFORT_NAMES[force],
+        "sign": BEAUFORT_SIGNS[force],
     }
 
 
@@ -334,6 +366,15 @@ def _humidity(point):
     return {"value": int(round(value)), "feel": feel, "fill": round(max(0.0, min(100.0, value)), 1)}
 
 
+def _visibility(point):
+    """Visibility in whole kilometres or miles from 10 up ("≥32.9" reads "≥33")."""
+    plain = _plain(point)
+    number = _number(plain.get("value"))
+    if number is not None and number >= 10:
+        plain["value"] = ("≥" if str(plain["value"]).startswith("≥") else "") + f"{number:.0f}"
+    return plain
+
+
 def _plain(point):
     point = point or {}
     value = point.get("measurement")
@@ -350,31 +391,55 @@ def _hourly(rows, now, astronomy):
         return {}
     width, height = CHART_SIZE
     temps = [_number(row.get("temperature")) for row in rows]
+    chances = [int(round(max(0.0, min(1.0, _number(row.get("precipitation")) or 0.0)) * 100)) for row in rows]
     low, high = min(temps), max(temps)
     span = max(1.0, high - low)
+    bottom = CURVE_BOTTOM if any(chances) else DRY_CURVE_BOTTOM
     step = (width - 2 * CHART_PAD_X) / (len(rows) - 1)
     sunrise, sunset = _sun_times(astronomy)
     start = now.replace(minute=0, second=0, microsecond=0)
-    points = []
-    for index, (row, temp) in enumerate(zip(rows, temps)):
+    points, midnight = [], None
+    for index, (row, temp, chance, day) in enumerate(zip(rows, temps, chances, _day_offsets(rows, start))):
         x = CHART_PAD_X + index * step
-        y = CURVE_BOTTOM - (temp - low) / span * (CURVE_BOTTOM - CURVE_TOP)
-        chance = int(round(max(0.0, min(1.0, _number(row.get("precipitation")) or 0.0)) * 100))
+        y = bottom - (temp - low) / span * (bottom - CURVE_TOP)
         moment = start + timedelta(hours=index)
+        time = str(row.get("time") or "")
+        if index and day and midnight is None:
+            midnight = {"x": round(x, 1), "label": "明天", "anchor": "end" if x > width - 40 else "start"}
         points.append({
             "x": round(x, 1), "y": round(y, 1), "temperature": int(round(temp)),
-            "time": str(row.get("time") or ""), "icon": str(row.get("icon") or "").replace("\\", "/"),
+            "time": time, "when": f"明天 {time}" if day == 1 else time,
+            "icon": str(row.get("icon") or "").replace("\\", "/"),
             "rain_chance": chance, "rain_height": round(chance / 100 * RAIN_HEIGHT, 1),
             "night": _is_night(moment, sunrise, sunset), "label": index % LABEL_STEP == 0,
+            "extreme": "hi" if temp == high else "lo" if temp == low else "",
         })
     path = _smooth_path([(point["x"], point["y"]) for point in points])
-    area = f"{path} L{points[-1]['x']},{RAIN_BASE - RAIN_HEIGHT - 2} L{points[0]['x']},{RAIN_BASE - RAIN_HEIGHT - 2} Z"
+    floor = bottom + 2 if bottom == DRY_CURVE_BOTTOM else RAIN_BASE - RAIN_HEIGHT - 2
+    area = f"{path} L{points[-1]['x']},{floor} L{points[0]['x']},{floor} Z"
     return {
         "width": width, "height": height, "path": path, "area": area, "points": points,
         "night_bands": _night_bands(points, step, width), "bar_width": round(max(2.0, step * 0.62), 1),
-        "rain_base": RAIN_BASE, "high": int(round(high)), "low": int(round(low)),
-        "any_rain": any(point["rain_chance"] >= 10 for point in points),
+        "rain_base": RAIN_BASE, "high": int(round(high)), "low": int(round(low)), "curve_bottom": bottom,
+        "midnight": midnight, "any_rain": any(point["rain_chance"] >= 10 for point in points),
     }
+
+
+def _day_offsets(rows, start):
+    """Each row's day counted from today (0): an "HH:MM" running back past midnight starts the
+    next day; a row without a readable time counts by the hour from ``start``."""
+    offsets, day, previous = [], 0, None
+    for index, row in enumerate(rows):
+        match = re.match(r"(\d{1,2}):\d{2}", str(row.get("time") or ""))
+        if match is None:
+            offsets.append(((start + timedelta(hours=index)).date() - start.date()).days)
+            continue
+        hour = int(match.group(1))
+        if previous is not None and hour < previous:
+            day += 1
+        previous = hour
+        offsets.append(day)
+    return offsets
 
 
 def _sun_times(astronomy):
@@ -475,6 +540,7 @@ def _best_window(hourly, units):
     if len(best) < 2:
         return {}
     return {"start": best[0]["time"], "end": best[-1]["time"],
+            "day": "明天 " if best[0]["when"] != best[0]["time"] else "",
             "x": round(best[0]["x"] - step / 2, 1), "width": round(best[-1]["x"] - best[0]["x"] + step, 1)}
 
 
@@ -530,7 +596,7 @@ def _mascot_line(view, scene, celsius):
     if scene == "rain":
         return "下雨了，路上慢点哦"
     if soon:
-        return f"{soon['time']} 要下雨，带伞哦"
+        return f"{soon['when']} 要下雨，带伞哦"
     if scene == "snow":
         return "下雪啦！小心路滑"
     if scene == "fog":
@@ -548,7 +614,7 @@ def _mascot_line(view, scene, celsius):
     if sun.get("night"):
         return f"晚安～明早 {sun.get('rise', '')} 日出"
     if best:
-        return f"{best['start']} 后出门正好！"
+        return f"{best['day']}{best['start']} 后出门正好！"
     return "今天也要开心呀！"
 
 

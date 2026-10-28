@@ -14,7 +14,7 @@
       {% for m in v.effect.marks %}
         {% if m.shape == "ray" %}<polygon points="{{ m.points }}" class="mw-fx-ray"/>
         {% elif m.shape == "star" %}<circle cx="{{ m.x }}" cy="{{ m.y }}" r="{{ m.r }}" class="mw-fx-star"/>
-        {% elif m.shape == "cloud" %}<g class="mw-fx-cloud" transform="translate({{ m.x }} {{ m.y }})"><circle cx="0" cy="6" r="7"/><circle cx="10" cy="2" r="9"/><circle cx="22" cy="6" r="7"/><rect x="0" y="6" width="22" height="7"/></g>
+        {% elif m.shape == "cloud" %}<g class="mw-fx-cloud-shade" transform="translate({{ m.x + 1 }} {{ m.y + 2 }})"><circle cx="0" cy="6" r="7"/><circle cx="10" cy="2" r="9"/><circle cx="22" cy="6" r="7"/><rect x="0" y="6" width="22" height="7"/></g><g class="mw-fx-cloud" transform="translate({{ m.x }} {{ m.y }})"><circle cx="0" cy="6" r="7"/><circle cx="10" cy="2" r="9"/><circle cx="22" cy="6" r="7"/><rect x="0" y="6" width="22" height="7"/></g>
         {% elif m.shape == "drop" %}<line x1="{{ m.x1 }}" y1="{{ m.y1 }}" x2="{{ m.x2 }}" y2="{{ m.y2 }}" class="mw-fx-drop"/>
         {% elif m.shape == "bolt" %}<polygon points="{{ m.points }}" class="mw-fx-bolt"/>
         {% elif m.shape == "flake" %}<g class="mw-fx-flake" transform="translate({{ m.x }} {{ m.y }})"><line x1="-{{ m.r }}" y1="0" x2="{{ m.r }}" y2="0"/><line x1="0" y1="-{{ m.r }}" x2="0" y2="{{ m.r }}"/><line x1="-{{ m.r * 0.7 }}" y1="-{{ m.r * 0.7 }}" x2="{{ m.r * 0.7 }}" y2="{{ m.r * 0.7 }}"/><line x1="-{{ m.r * 0.7 }}" y1="{{ m.r * 0.7 }}" x2="{{ m.r * 0.7 }}" y2="-{{ m.r * 0.7 }}"/></g>
@@ -85,6 +85,7 @@
           <div><div class="mw-big">{{ v.wind.speed }}<span class="mw-unit">{{ v.wind.unit }}</span></div>
           <div class="mw-small">{{ v.wind.name }}</div></div>
         </div>
+        <div class="mw-foot mw-wind-sign">{{ v.wind.beaufort }}<span class="mw-dot" aria-hidden="true"></span>{{ v.wind.sign }}</div>
         {% endif %}
       </div>
 
@@ -135,18 +136,23 @@
     </section>
 
     <section class="mw-hours mw-t-hourly">
-      <div class="mw-section-title">{% if v.icons.hourly %}<img class="mw-tile-icon" src="{{ v.icons.hourly }}" alt="">{% endif %}24 小时<span class="mw-section-note">{{ v.summary }}</span>{% if v.best %}<span class="mw-best-chip">最佳出门 {{ v.best.start }}–{{ v.best.end }}</span>{% endif %}</div>
+      <div class="mw-section-title">{% if v.icons.hourly %}<img class="mw-tile-icon" src="{{ v.icons.hourly }}" alt="">{% endif %}24 小时<span class="mw-section-note">{{ v.summary }}</span>{% if v.best %}<span class="mw-best-chip">最佳出门 {{ v.best.day }}{{ v.best.start }}–{{ v.best.end }}</span>{% endif %}</div>
       {% if v.hourly.points %}
       <svg viewBox="0 0 {{ v.hourly.width }} {{ v.hourly.height }}" class="mw-chart">
+        <defs><linearGradient id="mw-area-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="mw-area-top"/><stop offset="1" class="mw-area-foot"/></linearGradient></defs>
         {% for band in v.hourly.night_bands %}<rect x="{{ band.x }}" y="0" width="{{ band.width }}" height="{{ v.hourly.height }}" class="mw-night"/>{% endfor %}
         {% if v.best %}<rect x="{{ v.best.x }}" y="14" width="{{ v.best.width }}" height="84" rx="6" class="mw-best"/>{% endif %}
+        {% if v.hourly.midnight %}{% set mid = v.hourly.midnight %}
+        <line x1="{{ mid.x }}" y1="2" x2="{{ mid.x }}" y2="{{ v.hourly.rain_base }}" class="mw-midnight"/>
+        <text x="{{ mid.x + (4 if mid.anchor == 'start' else -4) }}" y="11" text-anchor="{{ mid.anchor }}" class="mw-midnight-label">{{ mid.label }}</text>
+        {% endif %}
         <path d="{{ v.hourly.area }}" class="mw-area"/>
         {% for point in v.hourly.points %}{% if point.rain_height > 0 %}
         <rect x="{{ point.x - v.hourly.bar_width / 2 }}" y="{{ v.hourly.rain_base - point.rain_height }}" width="{{ v.hourly.bar_width }}" height="{{ point.rain_height }}" class="mw-rain"/>
         {% endif %}{% endfor %}
         <path d="{{ v.hourly.path }}" class="mw-curve"/>
         {% for point in v.hourly.points %}{% if point.label %}
-        <circle cx="{{ point.x }}" cy="{{ point.y }}" r="3" class="mw-point"/>
+        <circle cx="{{ point.x }}" cy="{{ point.y }}" r="{{ 4 if point.extreme else 3 }}" class="mw-point {{ point.extreme }}"/>
         <text x="{{ point.x }}" y="{{ point.y - 7 }}" class="mw-temp-label">{{ point.temperature }}°</text>
         <image href="{{ point.icon }}" x="{{ point.x - 9 }}" y="98" width="18" height="18"/>
         <text x="{{ point.x }}" y="{{ v.hourly.height - 2 }}" class="mw-time">{{ "现在" if loop.first else point.time }}</text>
