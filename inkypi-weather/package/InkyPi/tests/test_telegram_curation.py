@@ -103,6 +103,24 @@ def test_ai_verdicts_rank_messages_and_drop_ai_flagged_ads():
     assert ai.calls[0]["text"]["format"]["type"] == "json_schema"
 
 
+def test_the_current_model_is_asked_and_a_refusal_falls_back_to_the_previous_one():
+    class RefusingAI(FakeAI):
+        def create(self, **kwargs):
+            if kwargs["model"] == "gpt-6-luna":
+                self.calls.append(kwargs)
+                raise type("NotFound", (Exception,), {"status_code": 404})("model_not_found")
+            return super().create(**kwargs)
+
+    # A setting saved with the earlier default follows the current one.
+    assert curator({"aiModel": "gpt-5-mini"}).model == "gpt-6-luna"
+    assert curator({"aiModel": "gpt-5"}).model == "gpt-5"
+    ai = RefusingAI({"美联储维持利率不变": {"score": 88}})
+    ranked = curator(ai=ai).curate([message("fed", "美联储维持利率不变")])
+
+    assert [call["model"] for call in ai.calls] == ["gpt-6-luna", "gpt-5-mini"]
+    assert ranked[0]["curation"]["score"] == 88
+
+
 def test_cached_verdicts_are_reused_without_a_new_ai_call():
     ai = FakeAI({"美联储维持利率不变": {"score": 88}})
     first = curator(ai=ai)

@@ -29,7 +29,9 @@ STATE_SCHEMA_VERSION = 1
 DEFAULT_PET_NAME = "Mochi"
 DEFAULT_TICK_MINUTES = 15
 DEFAULT_AI_TEXT_MODEL = "gpt-4o-mini"
-DEFAULT_GROQ_TEXT_MODEL = "llama-3.3-70b-versatile"
+# Groq shut the Llama text models down for free use on 2026-08-16; a saved one follows this.
+DEFAULT_GROQ_TEXT_MODEL = "openai/gpt-oss-120b"
+RETIRED_GROQ_TEXT_MODELS = ("llama-3.3-70b-versatile", "llama-3.1-8b-instant")
 LOCAL_AI_TEXT_MODEL = "local-rules-v1"
 DEFAULT_AI_DAILY_LIMIT = 24
 DEFAULT_CONTEXT_MAX_ITEMS = 12
@@ -988,6 +990,12 @@ LOCALIZED_TEXT.setdefault("zh-Hans", {}).setdefault("message", {}).update({
 
 def _clamp(value: int | float, low: int = 0, high: int = 100) -> int:
     return max(low, min(high, int(round(value))))
+
+
+def _groq_text_model(value: Any) -> str:
+    """The Groq text model a setting asks for; a saved model Groq has shut down follows the default."""
+    model = str(value or "").strip()
+    return DEFAULT_GROQ_TEXT_MODEL if not model or model in RETIRED_GROQ_TEXT_MODELS else model
 
 
 def _blend_rgb(fg: tuple[int, int, int], bg: tuple[int, int, int], amount: float) -> tuple[int, int, int]:
@@ -2089,7 +2097,7 @@ class EpaperPet(BasePlugin):
                 backends.append({
                     "provider": "groq",
                     "api_key": groq_key,
-                    "model": settings.get("ai_groq_model") or DEFAULT_GROQ_TEXT_MODEL,
+                    "model": _groq_text_model(settings.get("ai_groq_model")),
                 })
                 backends.append(self._local_ai_backend())
             else:
@@ -2102,7 +2110,7 @@ class EpaperPet(BasePlugin):
                 return [{
                     "provider": "groq",
                     "api_key": groq_key,
-                    "model": settings.get("ai_groq_model") or settings.get("ai_text_model") or DEFAULT_GROQ_TEXT_MODEL,
+                    "model": _groq_text_model(settings.get("ai_groq_model") or settings.get("ai_text_model")),
                 }, self._local_ai_backend()]
             return [self._local_ai_backend("groq", "missing_groq_key")]
 

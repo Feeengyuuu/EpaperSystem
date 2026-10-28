@@ -1517,7 +1517,7 @@ def _translate_title(
                 "Groq",
                 GROQ_TRANSLATION_ENDPOINT,
                 groq_key,
-                "llama-3.3-70b-versatile",
+                "openai/gpt-oss-120b",
             )
         )
 

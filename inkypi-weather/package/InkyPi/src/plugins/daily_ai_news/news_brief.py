@@ -23,12 +23,22 @@ from .news_text import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gpt-5-mini"
+# OpenAI's current small model, in the small-model group of the free daily tokens for
+# shared traffic (as gpt-5-mini was).
+DEFAULT_MODEL = "gpt-6-luna"
 # Earlier defaults; a setting saved with one of them follows the current default.
-LEGACY_DEFAULT_MODELS = ("gpt-5-nano",)
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
-# gpt-5-mini reasons briefly before answering, so it gets more time than nano did.
-DEFAULT_AI_TIMEOUT_SECONDS = 60
+LEGACY_DEFAULT_MODELS = ("gpt-5-nano", "gpt-5-mini")
+# Asked once more when OpenAI refuses the default (an account it is not open to yet).
+PREVIOUS_MODEL = "gpt-5-mini"
+# How long each model family thinks: gpt-6 at its default, gpt-5 briefly.
+REASONING_EFFORTS = {"gpt-6": "medium", "gpt-5": "low"}
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
+# Groq shut llama-3.3-70b-versatile down for free use on 2026-08-16; a saved one follows the default.
+LEGACY_GROQ_MODELS = ("llama-3.3-70b-versatile", "llama-3.1-8b-instant")
+# Groq's free tier allows 8K tokens a minute, prompt and reply together: fewer items, a shorter reply.
+GROQ_MAX_ITEMS, GROQ_MAX_COMPLETION_TOKENS = 12, 2000
+# The models reason before answering.
+DEFAULT_AI_TIMEOUT_SECONDS = 90
 AI_MAX_OUTPUT_TOKENS = 6000
 # Each story is a short concrete title, a one-sentence fact and a 2-4 character tag.
 NEWS_TITLE_MAX_CHARS = 30
@@ -195,6 +205,24 @@ def summary_model(value: Any) -> str:
     return DEFAULT_MODEL if not model or model in LEGACY_DEFAULT_MODELS else model
 
 
+def groq_model(value: Any) -> str:
+    """The Groq model a setting asks for; a saved model Groq has shut down follows the default."""
+    model = str(value or "").strip()
+    return DEFAULT_GROQ_MODEL if not model or model in LEGACY_GROQ_MODELS else model
+
+
+def reasoning_effort(model: str) -> str | None:
+    """The reasoning effort for an OpenAI model family, None for a model without it."""
+    return next((effort for family, effort in REASONING_EFFORTS.items() if str(model).startswith(family)), None)
+
+
+def model_unavailable(exc: Exception) -> bool:
+    """Whether OpenAI refused the model itself (unknown or not open to this account)."""
+    status = getattr(exc, "status_code", None)
+    text = str(exc).casefold()
+    return status in (403, 404) or "model_not_found" in text or "does not have access to model" in text
+
+
 def news_request(items: list[dict[str, str]], recent_titles: list[str] | None, now: datetime,
                  style: Any = None) -> dict[str, Any]:
     """The user message: date, recent titles to avoid, the output shape, every rule and the
@@ -231,16 +259,27 @@ class NewsBriefMixin:
                 "model": model,
                 "base_url": None,
             })
+            if model != PREVIOUS_MODEL:
+                backends.append({
+                    "provider": "openai",
+                    "api_key": openai_key,
+                    "model": PREVIOUS_MODEL,
+                    "base_url": None,
+                    "only_after_refusal": True,
+                })
         if groq_key:
             backends.append({
                 "provider": "groq",
                 "api_key": groq_key,
-                "model": settings.get("groq_model") or settings.get("ai_groq_model") or DEFAULT_GROQ_MODEL,
+                "model": groq_model(settings.get("groq_model") or settings.get("ai_groq_model")),
                 "base_url": "https://api.groq.com/openai/v1",
             })
 
         errors = []
+        refused = False
         for backend in backends:
+            if backend.get("only_after_refusal") and not refused:
+                continue
             try:
                 brief = self._summarize_with_openai(
                     backend["api_key"],
@@ -257,6 +296,7 @@ class NewsBriefMixin:
                 brief["_used_ai"] = True
                 return brief
             except Exception as exc:
+                refused = backend["provider"] == "openai" and model_unavailable(exc)
                 reason = self._ai_error_reason(exc)
                 errors.append(f"{backend['provider']}: {reason}")
                 logger.warning("Daily AI news provider failed: %s", errors[-1])
@@ -283,6 +323,8 @@ class NewsBriefMixin:
         if base_url:
             client_kwargs["base_url"] = base_url
         client = OpenAI(**client_kwargs)
+        if provider == "groq":
+            items = list(items)[:GROQ_MAX_ITEMS]
         system = NEWS_SYSTEM_PROMPT
         user_text = json.dumps(news_request(items, recent_titles, now, settings.get("region_focus")),
                                ensure_ascii=False)
@@ -295,10 +337,11 @@ class NewsBriefMixin:
                 "text": {"format": {"type": "json_schema", "name": "news_brief", "strict": True,
                                     "schema": NEWS_JSON_SCHEMA}},
             }
-            if model.startswith("gpt-5"):
-                # Low, not minimal: a short think noticeably improves the lead choice,
-                # the two-sentence lead fact and the translations.
-                response_kwargs["reasoning"] = {"effort": "low"}
+            effort = reasoning_effort(model)
+            if effort:
+                # Never minimal: a think noticeably improves the lead choice, the
+                # two-sentence lead fact and the translations.
+                response_kwargs["reasoning"] = {"effort": effort}
                 response_kwargs["text"]["verbosity"] = "low"
             if provider == "openai":
                 response = client.responses.create(**response_kwargs)
@@ -314,10 +357,16 @@ class NewsBriefMixin:
                     {"role": "user", "content": user_text},
                 ],
             }
+            if provider == "groq":
+                # gpt-oss thinks briefly and answers in plain JSON within the free tier's budget.
+                chat_kwargs["response_format"] = {"type": "json_object"}
+                if "gpt-oss" in model:
+                    chat_kwargs["reasoning_effort"] = "low"
+            limit = GROQ_MAX_COMPLETION_TOKENS if provider == "groq" else 3000
             try:
-                response = client.chat.completions.create(max_completion_tokens=3000, **chat_kwargs)
+                response = client.chat.completions.create(max_completion_tokens=limit, **chat_kwargs)
             except TypeError:
-                response = client.chat.completions.create(max_tokens=3000, **chat_kwargs)
+                response = client.chat.completions.create(max_tokens=limit, **chat_kwargs)
             content = (response.choices[0].message.content or "").strip()
 
         if not content:

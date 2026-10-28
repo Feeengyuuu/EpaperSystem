@@ -18,7 +18,12 @@ logger = logging.getLogger(__name__)
 
 TAGS = ("时事", "财经", "科技", "游戏", "体育", "本地", "生活", "娱乐", "私聊", "群聊", "其他")
 KIND_TAGS = {"private": "私聊", "group": "群聊"}
-DEFAULT_AI_MODEL = "gpt-5-mini"
+# OpenAI's current small model (free daily tokens for shared traffic cover it, as they did
+# gpt-5-mini); a setting saved with an earlier default follows it, and the previous default is
+# asked once more when OpenAI refuses it.
+DEFAULT_AI_MODEL = "gpt-6-luna"
+LEGACY_AI_MODELS = ("gpt-5-mini", "gpt-5-nano")
+PREVIOUS_AI_MODEL = "gpt-5-mini"
 DEFAULT_AI_DAILY_LIMIT = 12
 AI_TIMEOUT_SECONDS = 45
 # What a refresh keeps after the AI call for media and the reply.
@@ -234,7 +239,8 @@ class Curator:
         self.now = now
         self.now_ts = int(now.timestamp())
         self.api_key = str(api_key or "").strip()
-        self.model = str(settings.get("aiModel") or DEFAULT_AI_MODEL).strip() or DEFAULT_AI_MODEL
+        model = str(settings.get("aiModel") or "").strip()
+        self.model = DEFAULT_AI_MODEL if not model or model in LEGACY_AI_MODELS else model
         try:
             self.daily_limit = max(0, min(48, int(settings.get("aiDailyLimit") or DEFAULT_AI_DAILY_LIMIT)))
         except (TypeError, ValueError):
@@ -373,15 +379,26 @@ class Curator:
         ids = {str(index): str(item.get("key")) for index, item in enumerate(items, 1)}
         request = {"items": [ai_item(index, item, self.now_ts) for index, item in zip(ids, items)]}
         client = self._client()
-        response = client.responses.create(
-            model=self.model,
-            instructions=SYSTEM_PROMPT,
-            input=json.dumps(request, ensure_ascii=False),
-            max_output_tokens=AI_MAX_OUTPUT_TOKENS,
-            reasoning={"effort": "low"},
-            text={"format": {"type": "json_schema", "name": "telegram_digest", "strict": True,
-                             "schema": AI_SCHEMA}, "verbosity": "low"},
-        )
+
+        def ask(model):
+            return client.responses.create(
+                model=model,
+                instructions=SYSTEM_PROMPT,
+                input=json.dumps(request, ensure_ascii=False),
+                max_output_tokens=AI_MAX_OUTPUT_TOKENS,
+                reasoning={"effort": "low"},
+                text={"format": {"type": "json_schema", "name": "telegram_digest", "strict": True,
+                                 "schema": AI_SCHEMA}, "verbosity": "low"},
+            )
+
+        try:
+            response = ask(self.model)
+        except Exception as exc:
+            refused = getattr(exc, "status_code", None) in (403, 404) or "model_not_found" in str(exc).casefold()
+            if not refused or self.model == PREVIOUS_AI_MODEL:
+                raise
+            logger.warning("Telegram Digest AI model %s refused; asking %s", self.model, PREVIOUS_AI_MODEL)
+            response = ask(PREVIOUS_AI_MODEL)
         content = (getattr(response, "output_text", "") or "").strip()
         if not content:
             raise RuntimeError("AI returned no ranking")

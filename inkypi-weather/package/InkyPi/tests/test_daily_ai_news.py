@@ -2416,12 +2416,92 @@ def test_openai_call_enforces_the_brief_schema_with_a_short_think(monkeypatch):
     assert news_brief.FALLBACK_NEWS_TAG in story["properties"]["tag"]["enum"]
     assert schema["properties"]["lead"]["properties"]["section"]["enum"] == ["mainland", "world"]
     assert captured["reasoning"] == {"effort": "low"}
+    captured.clear()
+    plugin._summarize_with_openai("key", "gpt-6-luna", {}, [], {}, datetime(2026, 10, 28, 7, 0))
+    assert captured["model"] == "gpt-6-luna" and captured["reasoning"] == {"effort": "medium"}
 
 
-@pytest.mark.parametrize(("saved", "used"), [(None, "gpt-5-mini"), ("", "gpt-5-mini"), ("gpt-5-nano", "gpt-5-mini"),
-                                             ("gpt-5", "gpt-5")])
+@pytest.mark.parametrize(("saved", "used"), [(None, "gpt-6-luna"), ("", "gpt-6-luna"), ("gpt-5-nano", "gpt-6-luna"),
+                                             ("gpt-5-mini", "gpt-6-luna"), ("gpt-5", "gpt-5")])
 def test_a_saved_earlier_default_model_follows_the_current_default(saved, used):
     assert news_brief.summary_model(saved) == used
+
+
+@pytest.mark.parametrize(("saved", "used"), [(None, "openai/gpt-oss-120b"), ("llama-3.3-70b-versatile", "openai/gpt-oss-120b"),
+                                             ("qwen/qwen3.8-27b", "qwen/qwen3.8-27b")])
+def test_a_saved_groq_model_groq_shut_down_follows_the_default(saved, used):
+    assert news_brief.groq_model(saved) == used
+
+
+class _Refusal(Exception):
+    status_code = 404
+
+
+def test_a_refused_default_model_asks_the_previous_one_then_groq_within_its_free_budget(monkeypatch):
+    plugin = _plugin()
+    asked = []
+
+    def summarize(api_key, model, settings, items, market, now, recent_titles=None, provider="openai", base_url=None):
+        asked.append((provider, model))
+        if provider == "openai":
+            raise _Refusal("The model `gpt-6-luna` does not exist or you do not have access to it. (model_not_found)")
+        return {"lead": None, "mainland": [], "world": []}
+
+    monkeypatch.setattr(plugin, "_summarize_with_openai", summarize)
+    brief = plugin._summarize_with_ai("sk", "gsk", "gpt-6-luna", {"groq_model": "llama-3.3-70b-versatile"}, [], {},
+                                      datetime(2026, 10, 28, 7, 0))
+
+    assert asked == [("openai", "gpt-6-luna"), ("openai", "gpt-5-mini"), ("groq", "openai/gpt-oss-120b")]
+    assert brief["_model"] == "groq:openai/gpt-oss-120b"
+    # A failure that is not a refusal (a timeout) goes straight on to Groq.
+    asked.clear()
+
+    def time_out(*_args, provider="openai", **_kwargs):
+        asked.append(provider)
+        if provider == "openai":
+            raise TimeoutError("timed out")
+        return {}
+
+    monkeypatch.setattr(plugin, "_summarize_with_openai", time_out)
+    plugin._summarize_with_ai("sk", "gsk", "gpt-6-luna", {}, [], {}, datetime(2026, 10, 28, 7, 0))
+    assert asked == ["openai", "groq"]
+
+
+def test_the_groq_request_fits_its_free_tier(monkeypatch):
+    plugin = _plugin()
+    captured = {}
+
+    class _Completions:
+        @staticmethod
+        def create(**kwargs):
+            captured.update(kwargs)
+
+            class _Message:
+                content = '{"lead":null,"mainland":[],"world":[],"sources":[]}'
+
+            class _Choice:
+                message = _Message()
+
+            class _Response:
+                choices = [_Choice()]
+
+            return _Response()
+
+    class _Chat:
+        completions = _Completions()
+
+    class _Client:
+        chat = _Chat()
+
+    monkeypatch.setattr(news_brief, "OpenAI", lambda **_kwargs: _Client())
+    items = [{"source": "中国新闻网", "section": "mainland", "title": f"标题{index}"} for index in range(22)]
+    plugin._summarize_with_openai("gsk", "openai/gpt-oss-120b", {}, items, {}, datetime(2026, 10, 28, 7, 0),
+                                  provider="groq", base_url="https://api.groq.com/openai/v1")
+
+    request = json.loads(captured["messages"][1]["content"])
+    assert len(request["items"]) == news_brief.GROQ_MAX_ITEMS
+    assert captured["max_completion_tokens"] == news_brief.GROQ_MAX_COMPLETION_TOKENS
+    assert captured["response_format"] == {"type": "json_object"} and captured["reasoning_effort"] == "low"
 
 
 def test_a_reply_with_a_raw_newline_inside_a_string_still_parses():

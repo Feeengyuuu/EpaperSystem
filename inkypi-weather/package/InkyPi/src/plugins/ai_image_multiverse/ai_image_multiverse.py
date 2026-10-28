@@ -119,11 +119,11 @@ MODEL_PIPELINE = {
     ],
 },
 
-    # AI Horde (image via Horde, LLM via Groq/Llama)
+    # AI Horde (image via Horde, LLM via Groq's gpt-oss)
     "ai-horde": {
         "label": "AI Horde - First available",
         "image": {"provider": "horde", "env": "AI_HORDE_KEY"},
-        "llm":   {"provider": "groq", "env": "GROQ_API_KEY", "model": "llama-3.3-70b-versatile"},
+        "llm":   {"provider": "groq", "env": "GROQ_API_KEY", "model": "openai/gpt-oss-120b"},
         "default_quality": "standard",
         "quality": [
             {"label": "Standard", "value": "standard"},
@@ -136,7 +136,7 @@ MODEL_PIPELINE = {
     "ai-horde-albedobase-xl": {
         "label": "AI Horde - AlbedoBase XL 3.1",
         "image": {"provider": "horde", "env": "AI_HORDE_KEY"},
-        "llm":   {"provider": "groq", "env": "GROQ_API_KEY", "model": "llama-3.3-70b-versatile"},
+        "llm":   {"provider": "groq", "env": "GROQ_API_KEY", "model": "openai/gpt-oss-120b"},
         "default_quality": "standard",
         "quality": [
             {"label": "Standard", "value": "standard"},
