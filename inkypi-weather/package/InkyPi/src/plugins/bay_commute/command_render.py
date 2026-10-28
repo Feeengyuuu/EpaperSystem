@@ -25,6 +25,9 @@ NIGHT = dict(paper="#080e14", ink="#eef4f9", muted="#b3c5d2", rule="#465562", bl
              pale="#102538", orange="#ffb67c", soft="#301e14", planned="#bac8d6", chart="#102a3d",
              water_mid="#1f4a66", water_deep="#275a7c", foam="#cfe8f7")
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+# The tide card's readouts in a display face (the bundled Space Grotesk, SIL OFL) and the weight
+# set on it as a variable font (None for a static one); Inter stands in without it.
+DISPLAY_FACE = (PLUGIN_ROOT.parent / "static" / "fonts" / "SpaceGrotesk-VF.ttf", 700)
 PLACE_MARKS = {"san jose": ("san-jose.png", 31, ""),
                "redwood city": ("redwood-city.png", 18, ""),
                "alamo": ("contra-costa-seal.png", 18, "Contra Costa")}
@@ -32,6 +35,15 @@ PLACE_MARKS = {"san jose": ("san-jose.png", 31, ""),
 
 @lru_cache(maxsize=128)
 def font(size, role="body", bold=True):
+    if role == "display":
+        path, weight = DISPLAY_FACE
+        try:
+            face = load_font(path, size)
+            if weight:
+                face.set_variation_by_axes([weight])
+            return face
+        except OSError:
+            role = "number"
     if role == "number":
         path = PLUGIN_ROOT / "flight_radar/assets/fonts" / ("Inter-Bold.ttf" if bold else "Inter-SemiBold.ttf")
         try:
@@ -321,7 +333,7 @@ def tide_chart(page, data, now):
     if found:
         height, rising = found
         page.text((512, 238), "预测此刻", 11, "muted")
-        page.text((575, 236), f"{height:.1f} ft", 15, "blue", role="number")
+        page.text((575, 235), f"{height:.1f} ft", 16, "blue", role="display")
         page.text((784, 238), "涨潮 ↑" if rising else "退潮 ↓", 11, "blue", align="right")
         x, y = xy({"time": now.isoformat(), "height": height})
         for yy in range(top, bottom, 4):
@@ -352,8 +364,8 @@ def tides(page, payload, settings, now):
         row = upcoming[key]
         if row:
             stamp = parse_time(row["time"]).astimezone(PACIFIC)
-            page.text((x, 151), stamp.strftime("%H:%M"), 32, "blue", role="number", width=132, min_size=27)
-            page.text((x, 189), f"{row['height']:.1f}", 21, "blue", role="number")
+            page.text((x, 151), stamp.strftime("%H:%M"), 32, "blue", role="display", width=132, min_size=27)
+            page.text((x, 189), f"{row['height']:.1f}", 21, "blue", role="display")
             page.text((x + 58, 197), "ft", 11, "muted", role="number", bold=False)
             page.text((x + (124 if key == "H" else 132), 199), stamp.strftime("%m/%d"), 10,
                       "muted", role="number", align="right", bold=False)

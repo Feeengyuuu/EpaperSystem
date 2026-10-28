@@ -400,3 +400,15 @@ def test_buoy_is_drawn_beside_the_tides_and_never_decides_provenance(plugin, mon
                             context=context())
     assert later["buoy"]["state"] == "unavailable"
     assert later["provenance"] != SourceProvenance.LOCAL_FALLBACK
+
+
+def test_the_tide_readouts_are_set_in_space_grotesk_with_inter_standing_in(monkeypatch, tmp_path):
+    from plugins.bay_commute import command_render
+
+    assert command_render.font(32, "display").getname()[0] == "Space Grotesk"
+    monkeypatch.setattr(command_render, "DISPLAY_FACE", (tmp_path / "missing.ttf", None))
+    command_render.font.cache_clear()
+    try:
+        assert command_render.font(32, "display").getname()[0] == command_render.font(32, "number").getname()[0]
+    finally:
+        command_render.font.cache_clear()
