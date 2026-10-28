@@ -1174,6 +1174,10 @@ class DailyWikiPage(BasePlugin):
         value = value.replace("\u2018", "'").replace("\u2019", "'")
         value = value.replace("\u2014", "-").replace("\u2013", "-").replace("\u2026", "...")
         value = re.sub(r"([\u3002\uff01\uff1f])\1+", r"\1", value)
+        # A malformed wiki link (an edit that writes "[[X[[") shows on the page as its raw
+        # brackets; only the link's text belongs on screen.
+        value = re.sub(r"\[\[(?:[^\[\]|]*\|)?([^\[\]]*)\]\]", r"\1", value)
+        value = re.sub(r"\[\[|\]\]|\{\{|\}\}", "", value)
         return re.sub(r"\s+", " ", value).strip()
 
     def _wrap(self, draw, text, font, max_width, max_lines=6):

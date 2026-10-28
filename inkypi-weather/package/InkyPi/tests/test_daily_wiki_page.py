@@ -1221,6 +1221,27 @@ def test_zh_date_page_events_keep_link_text(tmp_path, monkeypatch):
     assert events == [{"year": "1991", "text": "\u514b\u7f57\u5730\u4e9a\u548c\u65af\u6d1b\u6587\u5c3c\u4e9a\u5404\u81ea\u5ba3\u5e03\u8131\u79bb\u5357\u65af\u62c9\u592b\u72ec\u7acb\u3002"}]
 
 
+def test_zh_date_page_events_drop_a_broken_links_raw_brackets(tmp_path, monkeypatch):
+    # 2026-10-28: an edit wrote "[[赫魯雪夫[[", which the page shows as raw brackets.
+    plugin = make_plugin(tmp_path)
+    html = """
+    <h2 id="大事记">大事记</h2>
+    <ul><li><a href="/wiki/1962年">1962年</a>：<a href="/wiki/x">苏联共产党</a>第一书记[[赫鲁晓夫[[宣布自古巴撤回所有武器。</li>
+    <li>1963年：[[甲|乙]]与{{丙}}。</li></ul>
+    <h2 id="出生">出生</h2>
+    """
+    monkeypatch.setattr(plugin, "_get_json", lambda *_args, **_kwargs: {"parse": {"text": html}})
+
+    events = plugin._fetch_zh_date_page_events(datetime(2026, 10, 28, 10, 0))
+
+    assert events == [
+        {"year": "1962", "text": "苏联共产党第一书记赫鲁晓夫宣布自古巴撤回所有武器。"},
+        {"year": "1963", "text": "乙与丙。"},
+    ]
+    # Text already cached with the brackets is cleaned where it is wrapped for the page.
+    assert plugin._clean_text("第一书记[[赫鲁晓夫[[宣布") == "第一书记赫鲁晓夫宣布"
+
+
 def test_zh_date_page_text_restores_missing_link_text(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path)
     feed = sample_feed()
