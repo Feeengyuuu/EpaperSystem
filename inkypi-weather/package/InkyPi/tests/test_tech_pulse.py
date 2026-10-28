@@ -607,6 +607,30 @@ def test_title_wordmark_asset_exists_and_draws(tmp_path):
     assert len(crop.getcolors(maxcolors=1_000_000)) > 8
 
 
+@pytest.mark.parametrize("mode", ["day", "night"])
+def test_header_sources_are_linked_by_a_heartbeat_in_the_live_colour(tmp_path, mode):
+    plugin = _plugin(tmp_path)
+    palette = plugin._palette({"_inkypi_theme": canonical_theme(mode)})
+    image = Image.new("RGB", (800, 60), palette["background"])
+    left, right, middle = 360, 590, 30
+    plugin._draw_header_sources(image, left, right, middle, palette)
+
+    count = len(tech_pulse_module.HEADER_SOURCE_LOGOS)
+    step = (right - left - tech_pulse_module.HEADER_LOGO_SIZE) / (count - 1)
+    for index in range(count - 1):
+        gap = (round(left + index * step + tech_pulse_module.HEADER_LOGO_SIZE + tech_pulse_module.HEADER_PULSE_GAP),
+               middle - 12, round(left + (index + 1) * step - tech_pulse_module.HEADER_PULSE_GAP), middle + 12)
+        crop = image.crop(gap)
+        # The trace's core is the live colour (within the scale-down's rounding).
+        near = [(x, y) for y in range(crop.height) for x in range(crop.width)
+                if max(abs(a - b) for a, b in zip(crop.getpixel((x, y)), palette["up"])) <= 16]
+        assert len(near) > 20, index
+        # It spans the gap, and its spike stands well clear of the baseline.
+        xs, ys = [x for x, _y in near], [y for _x, y in near]
+        assert max(xs) - min(xs) >= crop.width - 6
+        assert max(ys) - min(ys) >= tech_pulse_module.HEADER_PULSE_HEIGHT
+
+
 def _comment(comment_id, text, by="bob", when=1782520200, **extra):
     return {"id": comment_id, "type": "comment", "by": by, "time": when, "text": text, **extra}
 

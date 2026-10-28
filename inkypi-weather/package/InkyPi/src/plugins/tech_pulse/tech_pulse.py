@@ -62,6 +62,14 @@ ASSET_DIR = Path(__file__).with_name("assets")
 # generated icon strip used to be.
 HEADER_SOURCE_LOGOS = ("hn", "skills", "huggingface", "github")
 HEADER_LOGO_SIZE = 26
+# A heartbeat trace runs from each source logo to the next in the live colour, so the four
+# read as one pulse: (share of the gap, height as a share of HEADER_PULSE_HEIGHT, up negative),
+# clear of the logos by HEADER_PULSE_GAP.
+HEADER_PULSE = ((0, 0), (0.2, 0), (0.28, -0.18), (0.35, 0), (0.42, 0.22), (0.5, -1), (0.58, 0.62), (0.65, 0),
+                (0.76, -0.26), (0.86, 0), (1, 0))
+HEADER_PULSE_HEIGHT = 9
+HEADER_PULSE_GAP = 5
+HEADER_PULSE_MIN_WIDTH = 14
 # Each panel's own quiet doodles in its colour, so the four read apart: discussion, tools,
 # models, repositories.
 PANEL_DOODLES = {"hn": "hn", "skills": "skills", "huggingface": "models", "github": "repos"}
@@ -555,7 +563,8 @@ class TechPulse(BasePlugin):
         draw.line((14, 55, 786, 55), fill=palette["rule"], width=2)
 
     def _draw_header_sources(self, image, left, right, middle, palette):
-        """The sources' official logos spread evenly between ``left`` and ``right``."""
+        """The sources' official logos spread evenly between ``left`` and ``right``, each linked
+        to the next by a heartbeat trace."""
         count = len(HEADER_SOURCE_LOGOS)
         step = (right - left - HEADER_LOGO_SIZE) / max(1, count - 1)
         if step < HEADER_LOGO_SIZE + 6:
@@ -563,6 +572,27 @@ class TechPulse(BasePlugin):
         for index, key in enumerate(HEADER_SOURCE_LOGOS):
             self._paste_logo(image, key, (left + index * step, middle - HEADER_LOGO_SIZE / 2), HEADER_LOGO_SIZE,
                              palette)
+            if index:
+                self._draw_pulse(image, (left + (index - 1) * step + HEADER_LOGO_SIZE + HEADER_PULSE_GAP, middle,
+                                         left + index * step - HEADER_PULSE_GAP), palette["up"])
+
+    @staticmethod
+    def _draw_pulse(image, span, colour):
+        """HEADER_PULSE from x1 to x2 on the line y of ``span``: a bright 2 px trace over a soft
+        5 px glow, drawn four times over and scaled down so its slopes stay smooth."""
+        x1, y, x2 = span
+        if x2 - x1 < HEADER_PULSE_MIN_WIDTH:
+            return
+        scale, pad = 4, 3
+        width, height = math.ceil(x2 - x1) + 2 * pad, 2 * (HEADER_PULSE_HEIGHT + pad)
+        layer = Image.new("RGBA", (width * scale, height * scale), (*colour, 0))
+        pen = ImageDraw.Draw(layer)
+        points = [((pad + share * (x2 - x1)) * scale, (height / 2 + rise * HEADER_PULSE_HEIGHT) * scale)
+                  for share, rise in HEADER_PULSE]
+        pen.line(points, fill=(*colour, 70), width=5 * scale, joint="curve")
+        pen.line(points, fill=(*colour, 255), width=2 * scale, joint="curve")
+        layer = layer.resize((width, height), Image.LANCZOS)
+        image.paste(layer.convert("RGB"), (round(x1) - pad, round(y - height / 2)), layer.getchannel("A"))
 
     def _status_label(self, payload, ai):
         hn = (payload.get("status") or {}).get("source_state")
