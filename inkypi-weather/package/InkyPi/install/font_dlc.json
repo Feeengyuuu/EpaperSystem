@@ -1,0 +1,138 @@
+{
+  "schema": 1,
+  "about": "Optional fonts the pages use when present (font DLC). None ships in the repository or a release. Open fonts install from the pinned source with `sudo inkypi fonts install --open`; any other font installs from a file you hold a licence for with `sudo inkypi fonts add <key> <file>`. Without a DLC font each page uses its bundled fallback.",
+  "fonts": [
+    {
+      "key": "esports-riot", "font": "Inter Bold", "use": "Riot esports (LoL) scores", "kind": "open",
+      "license": "SIL OFL 1.1", "source": "https://rsms.me/inter/",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/inter@5.3.0/files/inter-latin-700-normal.woff2",
+      "sha256": "6f56409fd3d64bb85f7d070bce20749db2d66b6d63cec586cc22d1c761be2491", "bytes": 24356
+    },
+    {
+      "key": "esports-riot-regular", "font": "Inter Regular", "use": "Riot esports (LoL) body", "kind": "open",
+      "license": "SIL OFL 1.1", "source": "https://rsms.me/inter/",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/inter@5.3.0/files/inter-latin-400-normal.woff2",
+      "sha256": "8909904ab6c872eb994093482a88a28eca2cd95912d7b6fecd72103b0dc07edc", "bytes": 23664
+    },
+    {
+      "key": "esports-cct-event", "font": "IBM Plex Sans SemiBold", "use": "CCT esports events", "kind": "open",
+      "license": "SIL OFL 1.1", "source": "https://github.com/IBM/plex",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.3.0/files/ibm-plex-sans-latin-600-normal.woff2",
+      "sha256": "8960851d691c054ed38e259bdcf1a6190d157b4203ed5bb32c632a863fb8ec2f", "bytes": 24252
+    },
+    {
+      "key": "esports-dust2-event", "font": "Blinker Bold", "use": "Dust2.dk / POWER Ligaen esports events", "kind": "open",
+      "license": "SIL OFL 1.1", "source": "https://fonts.google.com/specimen/Blinker",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/blinker@5.3.0/files/blinker-latin-700-normal.woff2",
+      "sha256": "a32f59a72f0768b903f95e553569dd5cac0583ffa6818dfc6e9b5fcadbc54364", "bytes": 19144
+    },
+    {
+      "key": "esports-montserrat-event", "font": "Montserrat (variable)", "use": "European Pro League and Nordic esports events", "kind": "open",
+      "license": "SIL OFL 1.1", "source": "https://github.com/JulietaUla/Montserrat",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource-variable/montserrat@5.3.0/files/montserrat-latin-wght-normal.woff2",
+      "sha256": "06b16db7a969135d48d38c49183be7fb88d4452e2a3011957c7851941f4e4879", "bytes": 37956
+    },
+    {
+      "key": "esports-roboto-event", "font": "Roboto Bold", "use": "StarLadder / Thunderpick esports events", "kind": "open",
+      "license": "SIL OFL 1.1", "source": "https://fonts.google.com/specimen/Roboto",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/roboto@5.3.0/files/roboto-latin-700-normal.woff2",
+      "sha256": "b9d66d1708156f765ada51939bc24ed259dafa69eb631b36e443680fe9e15879", "bytes": 22240
+    },
+    {
+      "key": "esports-tesla-event", "font": "Anek Latin Bold", "use": "Tesla Cup esports events", "kind": "open",
+      "license": "SIL OFL 1.1", "source": "https://fonts.google.com/specimen/Anek+Latin",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/anek-latin@5.3.0/files/anek-latin-latin-700-normal.woff2",
+      "sha256": "8a4b693ce2f03f82305e72219b17fd4f1df98c67d0c4fb34ffb18e5cab56103e", "bytes": 20020
+    },
+    {
+      "key": "seriea", "font": "Bai Jamjuree Bold", "use": "Serie A scores", "kind": "open",
+      "license": "SIL OFL 1.1", "source": "https://fonts.google.com/specimen/Bai+Jamjuree",
+      "url": "https://cdn.jsdelivr.net/npm/@fontsource/bai-jamjuree@5.3.0/files/bai-jamjuree-latin-700-normal.woff2",
+      "sha256": "01f179f3f3b1ae29e89409cfdc4665af5c775995dfb2c13f6c8f5d1907028119", "bytes": 11672
+    },
+    {
+      "key": "nba", "font": "Knockout 49 Liteweight", "use": "NBA scores", "kind": "commercial",
+      "license": "Hoefler&Co. (Monotype) font licence", "source": "https://myfonts.com/collections/knockout-font-hoefler-and-co"
+    },
+    {
+      "key": "esports-cs2", "font": "Stratum 2 Bold", "use": "CS2 headings and scores", "kind": "commercial",
+      "license": "Process Type Foundry font licence", "source": "https://processtypefoundry.com/fonts/stratum-1-and-2"
+    },
+    {
+      "key": "esports-cs2-regular", "font": "Stratum 2 Medium", "use": "CS2 body", "kind": "commercial",
+      "license": "Process Type Foundry font licence", "source": "https://processtypefoundry.com/fonts/stratum-1-and-2"
+    },
+    {
+      "key": "esports-blast", "font": "TT Norms Pro Bold", "use": "BLAST esports events", "kind": "commercial",
+      "license": "TypeType font licence", "source": "https://www.fontspring.com/fonts/typetype/tt-norms-pro"
+    },
+    {
+      "key": "esports-pgl-event", "font": "FF DIN Pro Bold", "use": "PGL esports events", "kind": "commercial",
+      "license": "FontFont (Monotype) font licence", "source": "https://www.myfonts.com/collections/albert-jan-pool/"
+    },
+    {
+      "key": "esports-industry-event", "font": "Industry Bold", "use": "CS Asia Championships / Perfect World Shanghai events", "kind": "commercial",
+      "license": "Fort Foundry font licence", "source": "https://www.youworkforthem.com/font/T5020/industry"
+    },
+    {
+      "key": "wnba", "font": "WNBA Condensed Bold", "use": "WNBA scores", "kind": "brand",
+      "license": "WNBA brand typeface, not offered for licence"
+    },
+    {
+      "key": "mls", "font": "MLS Tifo Bold", "use": "MLS scores", "kind": "brand",
+      "license": "Major League Soccer brand typeface, not offered for licence"
+    },
+    {
+      "key": "epl", "font": "Premier League Bold", "use": "Premier League scores", "kind": "brand",
+      "license": "Premier League brand typeface, not offered for licence"
+    },
+    {
+      "key": "laliga", "font": "LALIGA Headline Std Bold", "use": "LaLiga scores", "kind": "brand",
+      "license": "LALIGA brand typeface, not offered for licence"
+    },
+    {
+      "key": "bundesliga", "font": "DFL Web Bold", "use": "Bundesliga scores", "kind": "brand",
+      "license": "DFL (Bundesliga) brand typeface, not offered for licence"
+    },
+    {
+      "key": "f1", "font": "Formula1 Display Bold", "use": "F1 standings and timing", "kind": "brand",
+      "license": "Formula 1 brand typeface, not offered for licence"
+    },
+    {
+      "key": "esports-dota", "font": "Radiance Bold", "use": "Dota 2 headings and scores", "kind": "brand",
+      "license": "Valve (Dota 2) brand typeface, not offered for licence"
+    },
+    {
+      "key": "esports-dota-regular", "font": "Radiance Semibold", "use": "Dota 2 body", "kind": "brand",
+      "license": "Valve (Dota 2) brand typeface, not offered for licence"
+    },
+    {
+      "key": "esports-riot-heading", "font": "Riot Sans Bold", "use": "Riot esports (LoL) headings", "kind": "brand",
+      "license": "Riot Games brand typeface, not offered for licence"
+    },
+    {
+      "key": "esports-esl-heading", "font": "ESL Legendary Bold", "use": "ESL event headings", "kind": "brand",
+      "license": "ESL FACEIT Group brand typeface, not offered for licence"
+    },
+    {
+      "key": "esports-iem-heading", "font": "ESL Legend Bold", "use": "IEM event headings", "kind": "brand",
+      "license": "ESL FACEIT Group brand typeface, not offered for licence"
+    },
+    {
+      "key": "ligue1", "font": "Insatiable Display Bold Condensed", "use": "Ligue 1 scores", "kind": "unverified",
+      "license": "rights holder not confirmed; no public licence found"
+    },
+    {
+      "key": "esports-blast-heading", "font": "Radion A Black Italic", "use": "BLAST event headings", "kind": "unverified",
+      "license": "rights holder not confirmed; no public licence found"
+    },
+    {
+      "key": "esports-gear-event", "font": "Gear Bold", "use": "Esports World Cup / Nations Cup events", "kind": "unverified",
+      "license": "rights holder not confirmed; no public licence found"
+    },
+    {
+      "key": "game_deals_price", "font": "Banknote Regular", "use": "Game Deals price tags (TTF only)", "kind": "unverified",
+      "license": "rights holder not confirmed; no public licence found"
+    }
+  ]
+}

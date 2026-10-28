@@ -362,6 +362,26 @@ install_config
     assert document["display_type"] == "epd7in3e"
 
 
+@pytest.mark.parametrize("flag, status, called", [("", 0, True), ("", 1, True), ("--no-font-dlc", 0, False)])
+def test_the_open_font_pack_installs_by_default_and_never_stops_the_install(tmp_path, flag, status, called):
+    fake = tmp_path / "inkypi"
+    fake.write_text(f'#!/usr/bin/env bash\nprintf "FONTS:%s\\n" "$*"\nexit {status}\n', newline="\n")
+    result = shell(f"""
+source {quote(INSTALL / "bootstrap.sh")} --non-interactive --lang en {flag}
+chmod +x {quote(fake)}
+FONT_DLC_COMMAND={quote(fake)}
+install_font_dlc
+echo DONE
+""")
+    assert result.returncode == 0, result.stderr
+    assert ("FONTS:fonts install --open" in result.stdout) is called
+    assert ("Retry later: sudo inkypi fonts install --open" in result.stdout) is (called and status != 0)
+    assert "DONE" in result.stdout
+    # The step runs after the API keys and before the service starts.
+    script = (INSTALL / "bootstrap.sh").read_text(encoding="utf-8")
+    assert script.index("  configure_keys\n  STAGE=\"fonts") < script.index("  install_font_dlc\n  STAGE=\"startup")
+
+
 def test_bootstrap_passes_no_starter_to_the_base_installer(tmp_path):
     (tmp_path / "install.sh").write_text('printf "BASE:%s\\n" "$*"\n', newline="\n")
     result = shell(f"""

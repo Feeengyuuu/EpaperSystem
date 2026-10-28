@@ -24,6 +24,7 @@ Options / 选项:
   --non-interactive       Use defaults without prompts (required without a terminal)
   --skip-install          Configure keys and check an existing installation
   --no-starter            Start a fresh install with an empty playlist / 不预装入门轮播
+  --no-font-dlc           Skip the open-licensed font pack / 不安装开源字体包
   -h, --help              Show this help / 显示帮助
 
 The online installer downloads only the latest version of $BRANCH (no history) to

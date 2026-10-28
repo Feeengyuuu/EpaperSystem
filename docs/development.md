@@ -75,6 +75,18 @@ degraded refresh; `probe` saves the latest renders read-only, and
 `health-record` re-checks health later. See `AGENTS.md` for the storage and
 cleanup rules.
 
+### Font DLC on any device
+
+`install/font_dlc.json` lists every optional font a page reads from
+`/var/lib/inkypi/data/fonts`: what it is for, its licence, and for the
+open-licensed ones a version-pinned download with its SHA256. On the device,
+`inkypi fonts list` shows them; `sudo inkypi fonts install --open` downloads the
+open ones (the one-line installer runs it unless `--no-font-dlc`); `sudo inkypi
+fonts add <key> <file>` installs a font the user holds a licence for. Both go
+through `install/lib/private_score_fonts.py` under the updater's lock. Commercial
+and brand fonts are never downloaded or hosted; the manifest only names where a
+licence can be bought, or that none is offered.
+
 ### Owner-provided private fonts
 
 After a release containing this capability has successfully deployed, the owner

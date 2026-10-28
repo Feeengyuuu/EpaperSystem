@@ -34,6 +34,7 @@ usage() {
     echo "Usage:"
     echo "  inkypi run"
     echo "  inkypi plugin <subcommand> [args]"
+    echo "  inkypi fonts list | sudo inkypi fonts install --open | sudo inkypi fonts add <key> <file>"
     echo "  inkypi admin bootstrap"
     echo "  inkypi admin recover"
     echo "  sudo inkypi update --artifact <zip> --sha256 <hash> --release-id <id>"
@@ -65,12 +66,19 @@ run_update_cli() {
     exec /usr/local/sbin/inkypi-update "$@"
 }
 
+run_fonts_cli() {
+    exec "$VENV_PATH/bin/python" -I "$PROGRAM_PATH/install/lib/font_dlc.py" "$@"
+}
+
 case "$command" in
     run)
         run_app
         ;;
     plugin)
         run_plugin_cli "$@"
+        ;;
+    fonts)
+        run_fonts_cli "$@"
         ;;
     admin)
         run_admin_cli "$@"

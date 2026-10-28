@@ -25,6 +25,8 @@ CHECK_ONLY=false
 LIST_DISPLAYS=false
 KEYS_CHANGED=false
 NO_STARTER=false
+NO_FONT_DLC=false
+FONT_DLC_COMMAND=/usr/local/bin/inkypi
 FRESH_INSTALL=false
 STAGE="arguments"
 
@@ -83,6 +85,7 @@ Options:
   --check                 Check prerequisites without installing anything.
   --list-displays         List Waveshare drivers included in this checkout.
   --no-starter            Start a fresh install with an empty playlist instead of the starter rotation.
+  --no-font-dlc           Do not download the open-licensed optional fonts (font DLC).
   --lang <en|zh-CN>       Set installer language. Also supports INKYPI_LANG.
   --zh-cn                 Shortcut for --lang zh-CN.
   -h, --help              Show this help.
@@ -133,6 +136,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-starter)
       NO_STARTER=true
+      shift
+      ;;
+    --no-font-dlc)
+      NO_FONT_DLC=true
       shift
       ;;
     --lang)
@@ -333,6 +340,19 @@ configure_keys() {
   esac
 }
 
+# The open-licensed fonts of the font DLC come with the install: nothing to choose, and a
+# download that fails leaves the pages on their built-in fonts rather than stopping the install.
+install_font_dlc() {
+  if [[ "$NO_FONT_DLC" == true ]]; then
+    return
+  fi
+  echo
+  say "Installing the open-licensed font pack (about 180 KB)..." "正在安装开源字体包（约 180 KB）..."
+  if ! "$FONT_DLC_COMMAND" fonts install --open; then
+    say "Some fonts were not installed; pages use their built-in fonts. Retry later: sudo inkypi fonts install --open" \n      "部分字体没装上，页面会先用自带字体；之后可重试：sudo inkypi fonts install --open"
+  fi
+}
+
 restart_service() {
   echo
   say "Starting InkyPi service..." "正在启动 InkyPi 服务..."
@@ -405,6 +425,8 @@ main() {
   STAGE="API keys / 可选服务配置"
   ensure_env_file
   configure_keys
+  STAGE="fonts / 开源字体包"
+  install_font_dlc
   STAGE="startup / 启动服务"
   if [[ "$SKIP_INSTALL" == true || "$KEYS_CHANGED" == true ]]; then
     restart_service
