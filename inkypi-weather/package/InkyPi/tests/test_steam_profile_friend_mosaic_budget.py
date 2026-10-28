@@ -208,8 +208,9 @@ def test_entire_friend_panel_shares_one_budget_after_game_art_and_counts_real_mi
     assert subject.clock.now == 108 and len(subject.calls) == 4
     assert events == ["game"] * 4 + ["avatar"] * 4
     assert len(loads) == 1 and loads[0] == (rows, 46)
-    # Two playing rows, three named friends, one obtained miniature; the other seven are hidden.
-    assert "7 more…" in labels and "5 more…" not in labels
+    # Two playing rows and a six-person crowd (a portrait where one was obtained, a ringed
+    # place otherwise); only the five online friends beyond the listed eight remain a number.
+    assert "+5" in labels and not any(text.endswith("more…") for text in labels)
     assert all(client.closed for client in subject.clients)
     for image in acquired:
         with pytest.raises(ValueError, match="closed"):

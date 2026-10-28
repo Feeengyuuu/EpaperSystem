@@ -412,15 +412,84 @@ def test_playing_friend_name_is_outlined_but_game_name_is_plain_white(plugin):
 
 
 @pytest.mark.parametrize("playing", [{"gameid": "570"}, {"gameextrainfo": "Dota 2"}])
-def test_playing_ring_is_retained_when_the_avatar_shrinks_to_the_overflow_column(plugin, playing):
+def test_playing_ring_is_retained_when_the_avatar_joins_the_pile(plugin, playing, monkeypatch):
     console = _Console(plugin, {})
     friend = {"personaname": "Playing", "personastate": 3, **playing}
     avatar = Image.new("RGBA", (46, 46), (105, 120, 90, 255))
-    console._friend_overflow_column([(friend, "cached-avatar")], 1, 165, {id(friend): avatar})
-    # 30 px miniature, with its own 1 px playing ring rather than an away ring or square dot.
-    assert console.image.getpixel((758, 168)) == GREEN
-    assert console.image.getpixel((748, 190)) == (105, 120, 90)
+    rings = []
+    original = _Console._friend_ring
+    monkeypatch.setattr(_Console, "_friend_ring", lambda self, *args, **kwargs: (
+        rings.append(args[1:4]), original(self, *args, **kwargs)))
+    console._friend_pile([friend], 1, 165, {}, {id(friend): avatar})
+    (x, y, size), = rings
+    # A full-size pile portrait keeps its 2 px playing ring rather than an away ring.
+    assert size >= 24
+    assert console.image.getpixel((x + size // 2, y - 2)) == GREEN
+    assert console.image.getpixel((x + size // 2, y + size // 2)) == (105, 120, 90)
     avatar.close()
+
+
+def _crowd(data, playing, online, listed=None):
+    data["friends"] = [{"steamid": str(index), "personaname": f"Friend {index:02}",
+                        "personastate": 1 if index % 3 else 2, "avatarfull": f"cached-avatar-{index}"}
+                       for index in range(listed or online)]
+    data["online_friend_count"] = online
+    for friend in data["friends"][:playing]:
+        friend.update(gameid="730", gameextrainfo="Counter-Strike 2")
+    return data["friends"]
+
+
+@pytest.mark.parametrize("playing", [1, 2, 3])
+def test_crowd_beside_in_game_rows_is_drawn_as_portraits_not_counted(plugin, data, displayed, monkeypatch, playing):
+    friends = _crowd(data, playing, 15)
+    pasted = []
+    original = _Console._paste_friend_portrait
+    monkeypatch.setattr(_Console, "_paste_friend_portrait", lambda self, friend, x, y, size, portraits: (
+        pasted.append((friend["steamid"], size)), original(self, friend, x, y, size, portraits)))
+    render_console(plugin, data, (800, 480))
+    labels = [text for _box, text in displayed]
+    # Every online friend is a portrait: in-game rows, a full-size pile, then small ones.
+    assert {person for person, _size in pasted} == {friend["steamid"] for friend in friends}
+    assert not any(text.startswith("+") or text.endswith("more…") or text.startswith("另有") for text in labels)
+    pile = [size for person, size in pasted if int(person) >= playing]
+    assert max(pile) >= 24
+    # One in-game row leaves room for two full-size lines; beside more, the rest shrink.
+    assert (min(pile) == max(pile)) if playing == 1 else (min(pile) <= max(pile) // 2 + 1)
+    assert len([person for person, _size in pasted if int(person) < playing]) == playing
+
+
+def test_crowd_stays_inside_the_friends_panel(plugin, data, monkeypatch):
+    _crowd(data, 3, 15)
+    drawn = []
+    for name in ("ellipse", "rounded_rectangle"):
+        original = getattr(ImageDraw.ImageDraw, name)
+
+        def record(self, xy, *args, _original=original, **kwargs):
+            drawn.append(tuple(xy))
+            return _original(self, xy, *args, **kwargs)
+
+        monkeypatch.setattr(ImageDraw.ImageDraw, name, record)
+    pile = _Console._friend_pile
+    marks = []
+
+    def tracked(self, *args):
+        start = len(drawn)
+        pile(self, *args)
+        marks.extend(drawn[start:])
+
+    monkeypatch.setattr(_Console, "_friend_pile", tracked)
+    render_console(plugin, data, (800, 480))
+    assert marks
+    panel = console_renderer.FRIEND_PANEL
+    assert all(panel[0] < x0 and x1 < panel[2] and panel[1] < y0 and y1 < panel[3] for x0, y0, x1, y1 in marks)
+
+
+def test_people_beyond_the_loaded_crowd_are_counted_after_the_small_portraits(plugin, data, displayed):
+    # Eighteen listed (three in game) and twenty online: thirteen pile portraits at most,
+    # so the two listed beyond them and the two unlisted remain a number.
+    _crowd(data, 3, 20, listed=18)
+    render_console(plugin, data, (800, 480))
+    assert "+4" in [text for _box, text in displayed]
 
 
 def test_game_logos_sit_on_the_page_without_a_border(plugin, data):
@@ -564,9 +633,9 @@ def test_dense_grid_keeps_nine_named_friends_before_counting_hidden_people(plugi
     assert all(f"Friend {index:02}" not in labels for index in range(visible, count))
     assert "+3" not in labels and "更多在线" not in labels
     if count > visible:
-        assert f"{count - visible} more…" in labels
+        assert f"另有 {count - visible} 位在线" in labels
     else:
-        assert not any(text.endswith("more…") for text in labels)
+        assert not any(text.startswith("另有") for text in labels)
 
 
 def test_six_online_friends_share_a_two_column_three_row_grid_without_tiny_overflow(plugin, data, displayed, monkeypatch):
@@ -585,7 +654,7 @@ def test_six_online_friends_share_a_two_column_three_row_grid_without_tiny_overf
     assert min(size for _person, _x, _y, size in circles) >= 30
     labels = [text for _box, text in displayed]
     assert all(friend["personaname"] in labels for friend in data["friends"])
-    assert not any(text.endswith("more…") for text in labels)
+    assert not any(text.startswith("另有") for text in labels)
     assert max(y + size for _person, _x, y, size in circles) > 175
 
 
@@ -606,26 +675,27 @@ def test_long_friend_remarks_receive_full_width_rows_when_grid_names_would_be_cl
     assert len({box[1] for box in boxes}) == 6
 
 
-def test_busy_friend_panel_shares_one_portrait_budget_and_counts_missing_miniatures(plugin, data, displayed, monkeypatch):
-    data["friends"] = [{"steamid": str(index), "personaname": f"Friend {index:02}", "personastate": 1,
-                        "avatarfull": f"cached-avatar-{index}"} for index in range(13)]
-    data["online_friend_count"] = 13
-    for friend in data["friends"][:2]:
-        friend.update(gameid="730", gameextrainfo="Counter-Strike 2")
-    batches = []
+def test_busy_friend_panel_shares_one_portrait_budget_and_keeps_a_place_for_a_missing_portrait(
+        plugin, data, displayed, monkeypatch):
+    friends = _crowd(data, 2, 13)
+    batches, rings = [], []
     original = console_renderer.load_mosaic_avatars
 
     def limited(owner, records, size):
         batches.append(records)
-        # One of three miniature portraits is absent. Its person still belongs
-        # in the hidden count; named rows remain visible even without a portrait.
-        return original(owner, records[:-1], size)
+        # One crowd portrait is absent; its person keeps a ringed place instead of a count.
+        return original(owner, records[:5] + records[6:], size)
 
     monkeypatch.setattr(console_renderer, "load_mosaic_avatars", limited)
+    ring_colour = _Console._friend_ring_colour
+    monkeypatch.setattr(_Console, "_friend_ring_colour", staticmethod(
+        lambda friend: (rings.append(friend["steamid"]), ring_colour(friend))[1]))
     render_console(plugin, data, (800, 480))
-    assert len(batches) == 1 and len(batches[0]) == 8
-    assert len({id(friend) for friend, _url in batches[0]}) == 8
-    assert "6 more…" in [text for _box, text in displayed]
+    assert len(batches) == 1 and len(batches[0]) == 13
+    assert len({id(friend) for friend, _url in batches[0]}) == 13
+    assert {friend["steamid"] for friend in friends} <= set(rings)
+    assert "5" in rings
+    assert not any(text.startswith("+") for _box, text in displayed)
 
 
 def test_overflow_without_avatar_urls_keeps_a_count_instead_of_inventing_portraits(plugin, displayed):

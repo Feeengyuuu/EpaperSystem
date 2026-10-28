@@ -16,6 +16,8 @@ from utils.safe_image import ImageLimits, safe_open_image
 MOSAIC_BUDGET_SECONDS = 8
 AVATAR_REQUEST_SECONDS = 2.5
 RENDER_RESERVE_SECONDS = 2
+# Portraits one panel draws at most: three in-game rows and a crowd of small ones.
+MOSAIC_PORTRAITS = 16
 AVATAR_TTL = 7 * 24 * 3600
 AVATAR_LIMITS = ImageLimits(max_bytes=1024 * 1024, max_width=1024, max_height=1024, max_pixels=1_000_000)
 
@@ -50,7 +52,7 @@ def load_mosaic_avatars(plugin, records, size, *, clock=None):
         return image
 
     try:
-        for friend, url in records[:9]:
+        for friend, url in records[:MOSAIC_PORTRAITS]:
             if parent is not None:
                 parent.raise_if_cancelled()
             path = plugin._avatar_cache_path(url)
