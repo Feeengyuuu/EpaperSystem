@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import pytest
 
 from plugins.sports_dashboard.esports_font_runs import EsportsFont
@@ -40,6 +40,31 @@ def test_match_text_actual_ink_is_centered_without_double_bearing(private, align
         assert ink[0] - box[0] <= 3
     else:
         assert box[2] - ink[2] <= 3
+
+
+@pytest.mark.parametrize("anchor", [None, "la", "ls", "mm", "rs"])
+def test_plain_draw_text_puts_composite_ink_where_textbbox_says(anchor):
+    # Pillow applies getmask2()'s bearing only to FreeTypeFont; the composite face is one to it,
+    # so headings and pills drawn with a bare draw.text no longer sit high and left.
+    font = face(20, True)
+    assert isinstance(font, ImageFont.FreeTypeFont)
+    image = Image.new("L", (240, 100))
+    draw = ImageDraw.Draw(image)
+    draw.text((120, 50), "UPCOMING 0:1", font=font, fill=255, anchor=anchor)
+    expected = draw.textbbox((120, 50), "UPCOMING 0:1", font=font, anchor=anchor)
+    ink = image.getbbox()
+    assert all(abs(got - want) <= 1 for got, want in zip(ink, expected)), (ink, expected)
+
+
+def test_composite_font_variant_and_pickle_keep_the_pairing():
+    import pickle
+
+    font = face(20, True)
+    bigger = font.font_variant(size=30)
+    assert type(bigger) is EsportsFont and bigger.size == 30
+    assert bigger.primary.size == round(font.primary.size * 30 / 20)
+    copy = pickle.loads(pickle.dumps(font))
+    assert type(copy) is EsportsFont and copy.getbbox("0:1") == font.getbbox("0:1")
 
 
 def test_mixed_team_name_retains_one_shared_baseline():

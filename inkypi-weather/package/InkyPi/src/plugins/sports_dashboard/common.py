@@ -3917,11 +3917,6 @@ class SportsDashboardCommonMixin:
         value, value_font = self._fit_text(draw, text, 50, 13, bold=True, min_size=10)
         # The word centres in the room right of the colour block, not across the whole pill.
         box = (x + 15, y + 2, x + 71, y + 22)
-        if not isinstance(value_font, ImageFont.FreeTypeFont):
-            # Pillow draws a composite (esports) font's mask at the origin without its bearing
-            # (see _draw_esports_match_text), so the box moves by that bearing to centre the ink.
-            bearing = draw.textbbox((0, 0), value, font=value_font)
-            box = (box[0] + bearing[0], box[1] + bearing[1], box[2] + bearing[0], box[3] + bearing[1])
         self._draw_centered_in_box(draw, box, value, value_font, COLORS["text"])
 
     @esports_role("heading")

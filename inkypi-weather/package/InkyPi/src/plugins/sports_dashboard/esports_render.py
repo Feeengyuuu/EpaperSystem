@@ -7,7 +7,6 @@ from .common import *
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
 from .esports_fonts import esports_role, esports_sidebar
-from .esports_font_runs import EsportsFont
 
 # Provider names add words the bundled CS2 catalog leaves out ("Team Spirit",
 # "G2 Esports", "Aurora Gaming"); NAVI is the acronym of Natus Vincere.
@@ -23,16 +22,7 @@ SportsDashboard = None
 class EsportsRenderMixin:
     @staticmethod
     def _draw_esports_match_text(draw, box, text, font, color, align="center"):
-        """Align matchup ink, including Pillow's non-FreeType composite font path.
-
-        Pillow draws EsportsFont.getmask() at the supplied origin without applying
-        the bearing reported by getbbox(). Ordinary FreeType fonts do apply it.
-        Keep this correction local to matchups; headings retain their layout.
-        """
-        if isinstance(font, EsportsFont):
-            bearing = draw.textbbox((0, 0), str(text), font=font)
-            box = (box[0] + bearing[0], box[1] + bearing[1],
-                   box[2] + bearing[0], box[3] + bearing[1])
+        """Matchup text in ``box``; EsportsFont now lands where textbbox() says, like any face."""
         SportsDashboard._draw_text_in_box(draw, box, text, font, color, align=align)
 
     @staticmethod

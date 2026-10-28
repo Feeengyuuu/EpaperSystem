@@ -2,15 +2,36 @@
 
 import math
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 
-class EsportsFont:
-    """Keep unsupported original glyphs in the UI face before normalisation."""
+class EsportsFont(ImageFont.FreeTypeFont):
+    """Keep unsupported original glyphs in the UI face before normalisation.
+
+    To Pillow this is a FreeTypeFont: ImageDraw.text applies getmask2()'s offset (the ink's
+    bearing from the origin) only to FreeTypeFont, and pasted any other font's mask at the bare
+    origin, so composite text sat high and left of where textbbox() put it. It opens no face of
+    its own (no FreeTypeFont.__init__); everything goes through the primary and fallback faces.
+    """
 
     def __init__(self, primary, fallback):
         self.primary, self.fallback = primary, fallback
         self.path, self.size = primary.path, fallback.size
+        self.index, self.encoding, self.layout_engine = 0, "", ImageFont.Layout.BASIC
+
+    def __reduce__(self):
+        return type(self), (self.primary, self.fallback)
+
+    def getname(self):
+        return self.primary.getname()
+
+    def font_variant(self, font=None, size=None, index=None, encoding=None, layout_engine=None):
+        """The same pairing at ``size``, the primary keeping its size relative to the fallback."""
+        if font is not None:
+            raise ValueError("an esports font is a pairing of faces; vary its size only")
+        size = self.size if size is None else size
+        primary = self.primary.font_variant(size=max(1, round(self.primary.size * size / self.size)))
+        return type(self)(primary, self.fallback.font_variant(size=size))
 
     def covers(self, text):
         return all(self.primary.covers(c) or self.fallback.covers(c) for c in str(text))
