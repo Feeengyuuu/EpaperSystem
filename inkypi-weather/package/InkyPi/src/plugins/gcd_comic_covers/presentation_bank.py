@@ -21,6 +21,10 @@ from plugins.base_plugin import presentation_bank_kit as kit
 
 SCHEMA_VERSION = 1
 READY_TARGET = 18
+# A wide cover in the three leaves its column's top empty: the selection then carries up to this
+# many more regular covers for that room.
+GAP_FILLER_COVERS = 2
+MAX_SELECTION_KEYS = 3 + GAP_FILLER_COVERS
 REFILL_THRESHOLD = 6
 MAX_PROFILES = 64
 MAX_RECORDS_PER_PROFILE = READY_TARGET
@@ -416,6 +420,16 @@ class GcdPresentationBank(kit.SelectionBookkeeping):
             ]
             wide = [record for record in ordered if record not in regular]
             chosen = (regular + wide)[:3]
+            if any(record in wide for record in chosen):
+                # Seen covers may fill the room too: any of today's regular covers will do.
+                spare = [record for record in [*regular, *ready]
+                         if record not in chosen and record.get("render_kind") == "media"
+                         and record.get("width", 0) <= record.get("height", 0) * 1.15]
+                for record in spare:
+                    if len(chosen) >= MAX_SELECTION_KEYS:
+                        break
+                    if all(record["issue_id"] != other["issue_id"] for other in chosen):
+                        chosen.append(record)
         else:
             chosen = ordered[:1]
         if not chosen:
@@ -688,7 +702,7 @@ class GcdPresentationBank(kit.SelectionBookkeeping):
         if not (
             isinstance(keys, list)
             and bool(keys)
-            and len(keys) <= 3
+            and len(keys) <= MAX_SELECTION_KEYS
             and all(isinstance(key, str) and key in valid_keys for key in keys)
         ):
             return False

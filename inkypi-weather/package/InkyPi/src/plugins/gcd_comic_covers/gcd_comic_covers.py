@@ -29,6 +29,7 @@ from plugins.base_plugin.parallel_image_stage import prepare_local_bank_images
 from plugins.context_cache import write_context
 from runtime.refresh_contracts import TaskCancelled
 from plugins.gcd_comic_covers.presentation_bank import (
+    GAP_FILLER_COVERS,
     READY_TARGET,
     REFILL_THRESHOLD,
     GcdPresentationBank,
@@ -624,9 +625,13 @@ class GcdComicCovers(BasePlugin):
     def _gallery_page(self, covers, dimensions, settings):
         """The comic rack: each cover framed over its card (series and issue, date, publisher,
         cover artists by role, and the database it came from)."""
-        covers = [cover for cover in covers[:TRIPTYCH_COVER_COUNT] if isinstance(cover, dict)]
+        covers = [cover for cover in covers[:TRIPTYCH_COVER_COUNT + GAP_FILLER_COVERS] if isinstance(cover, dict)]
+        # Past the three, covers fill the room a wide cover leaves above it.
+        covers, extras = covers[:TRIPTYCH_COVER_COUNT], covers[TRIPTYCH_COVER_COUNT:]
         images = [ImageOps.exif_transpose(cover.get("image") or self._placeholder_cover(cover)).convert("RGB")
                   for cover in covers]
+        fillers = [(ImageOps.exif_transpose(cover["image"]).convert("RGB"), _comic_label(cover))
+                   for cover in extras if cover.get("image")]
         if not images:
             return self._fallback_image(dimensions, "GCD Comic Covers", "No usable cover image")
         sources = sorted({_comic_source(cover) for cover in covers})
@@ -637,7 +642,7 @@ class GcdComicCovers(BasePlugin):
             date_text=f"{now.month}月{now.day}日 周{'一二三四五六日'[now.weekday()]}",
             accent=COMIC_ACCENT, dark=_gallery_dark(settings),
             wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="comic",
-            header_art=cover_gallery.load_wordmark(HEADER_ART_PATH))
+            header_art=cover_gallery.load_wordmark(HEADER_ART_PATH), fillers=fillers, filler_heading="今日更多")
 
     def _placeholder_cover(self, cover):
         """A designed stand-in for a cover whose scan the source withholds: the series and issue
@@ -1845,7 +1850,8 @@ class GcdComicCovers(BasePlugin):
         return image.width > image.height * 1.15
 
     def _compose_triptych_display_image(self, covers, dimensions, settings):
-        covers = [cover if isinstance(cover, dict) else {"image": cover} for cover in covers[:TRIPTYCH_COVER_COUNT]]
+        covers = [cover if isinstance(cover, dict) else {"image": cover}
+                  for cover in covers[:TRIPTYCH_COVER_COUNT + GAP_FILLER_COVERS]]
         return self._gallery_page([cover for cover in covers if cover.get("image")] or covers, dimensions, settings)
 
     def _triptych_backdrop(self, images, dimensions, settings):

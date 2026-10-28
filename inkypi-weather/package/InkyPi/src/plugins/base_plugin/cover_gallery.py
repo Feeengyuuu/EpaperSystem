@@ -33,6 +33,9 @@ LABEL_H = TITLE_ROW + CHIP_ROW + FACT_ROW
 LABEL_MIN_W = 220
 TIMELINE_H = 30
 SHADOW = 4
+# A wide work standing on its foot leaves its column's top empty; a gap at least this tall
+# takes up to FILLER_PER_GAP more works, under a FILLER_HEAD row heading, each titled under it.
+FILLER_MIN_H, FILLER_PER_GAP, FILLER_HEAD, FILLER_CAPTION, FILLER_GAP = 120, 2, 18, 16, 10
 # A page's own wordmark stands this tall in its header.
 WORDMARK_H = 30
 # Header art keeps this far from the subtitle and the date.
@@ -179,7 +182,8 @@ def art_sizes(count, dimensions, *, timeline=False, fact_rows=1):
 
 
 def compose(images, labels, dimensions, *, title, subtitle="", date_text="", accent=(0, 70, 200), dark=False,
-            timeline=False, logo=None, wordmark=None, style="gallery", header_art=None, sources=(), fact_rows=1):
+            timeline=False, logo=None, wordmark=None, style="gallery", header_art=None, sources=(), fact_rows=1,
+            fillers=(), filler_heading=""):
     """The gallery page for ``images`` (already loaded) and their ``labels``.
 
     ``style`` sets the page's backdrop over the works' own colour wash: "gallery" lights each
@@ -188,6 +192,8 @@ def compose(images, labels, dimensions, *, title, subtitle="", date_text="", acc
     ``header_art`` (RGBA, transparent) fills the header between the subtitle and the date.
     ``sources`` are named after the subtitle by their logos (in text when one has none).
     ``fact_rows`` 2 gives each label a second fact line (the body, then its source facts).
+    ``fillers`` ((image, label), ...) are more works for the room a wide work leaves above it,
+    under ``filler_heading``.
     """
     colors = palette(dark)
     width, height = dimensions
@@ -201,8 +207,13 @@ def compose(images, labels, dimensions, *, title, subtitle="", date_text="", acc
         span = f"跨越 {_year_text(min(years))}–{_year_text(max(years))} · {max(years) - min(years)} 年"
     _header(page, draw, title, subtitle, date_text, accent, colors, width, logo, wordmark, header_art,
             sources=sources, span=span)
+    fillers = list(fillers)
     for index, (image, label, (image_box, label_box)) in enumerate(zip(images, labels, boxes), start=1):
         frame = _framed(page, image, image_box, colors)
+        gap = (image_box[0], image_box[1], image_box[2], frame[1] - FILLER_GAP)
+        if fillers and gap[3] - gap[1] >= FILLER_MIN_H:
+            taken, fillers = fillers[:FILLER_PER_GAP], fillers[FILLER_PER_GAP:]
+            _fill_gap(page, draw, gap, taken, filler_heading, accent, colors)
         label_box = _under(frame, label_box)
         swatch_w = _swatches(draw, image, (label_box[2], label_box[1] + TITLE_ROW + 4), colors)
         _label(draw, label, label_box, index, accent, colors, numbered=timeline, reserve=swatch_w + 6, page=page,
@@ -291,6 +302,28 @@ def _framed(page, image, box, colors):
     page.paste(art, (x, y))
     ImageDraw.Draw(page).rectangle((x - 1, y - 1, x + art.width, y + art.height), outline=colors["frame"], width=1)
     return x, y, x + art.width, y + art.height
+
+
+def _fill_gap(page, draw, box, works, heading, accent, colors):
+    """``works`` side by side in ``box``, under a short accent heading, each titled under its frame."""
+    left, top, right, bottom = box
+    if heading:
+        draw.rectangle((left, top + 3, left + 4, top + 15), fill=accent)
+        draw.text((left + 10, top + 1), heading, font=_font(12, True), fill=colors["ink"])
+        top += FILLER_HEAD
+    count = len(works)
+    slot_w = (right - left - (count - 1) * COLUMN_GAP) / count
+    caption_font = _font(11, True)
+    for index, (image, label) in enumerate(works):
+        slot_left = round(left + index * (slot_w + COLUMN_GAP))
+        slot = (slot_left, top, round(slot_left + slot_w), bottom - FILLER_CAPTION)
+        frame = _framed(page, image, slot, colors)
+        title = label.title or "-"
+        width = max(slot[2] - slot[0], frame[2] - frame[0])
+        shown = _clip(draw, title, caption_font, width)
+        middle = (frame[0] + frame[2]) / 2
+        x = max(slot[0], min(slot[2] - draw.textlength(shown, font=caption_font), middle - draw.textlength(shown, font=caption_font) / 2))
+        draw.text((x, bottom - FILLER_CAPTION + 2), shown, font=caption_font, fill=colors["ink"])
 
 
 def _under(frame, box, min_width=LABEL_MIN_W):

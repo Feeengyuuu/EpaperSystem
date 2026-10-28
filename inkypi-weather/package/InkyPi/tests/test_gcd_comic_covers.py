@@ -31,6 +31,7 @@ from plugins.gcd_comic_covers.gcd_comic_covers import (  # noqa: E402
 )
 from plugins.gcd_comic_covers import gcd_comic_covers as gcd_module  # noqa: E402
 from plugins.gcd_comic_covers.presentation_bank import (  # noqa: E402
+    MAX_SELECTION_KEYS,
     MAX_STATE_BYTES,
     MEDIA_MAX_DIMENSION,
     MEDIA_MAX_FILES,
@@ -1725,6 +1726,37 @@ def test_gcd_triptych_fills_priority_tiers_before_month_fallback(tmp_path, monke
     assert "month_fallback" not in qualities
 
 
+def test_gcd_triptych_with_a_wide_cover_carries_regular_covers_for_its_empty_top(tmp_path, monkeypatch):
+    records = [
+        (_priority_candidate(1, "comicvine_recent"), (220, 360)),
+        (_priority_candidate(2, "comicvine_recent"), (220, 360)),
+        (_priority_candidate(3, "exact_day"), (500, 240)),
+        (_priority_candidate(4, "exact_day"), (220, 360)),
+        (_priority_candidate(5, "exact_day"), (220, 360)),
+        (_priority_candidate(6, "exact_day"), (480, 230)),
+    ]
+    bank, document, profile = _priority_bank(tmp_path, monkeypatch, records)
+    document["date_buckets"]["07-12"] = {
+        "seen_issue_ids": ["exact_day:4", "exact_day:5", "exact_day:6"],
+        "last_issue_id": "exact_day:5",
+        "last_selection_issue_ids": ["exact_day:4"],
+        "last_displayed_at": "2026-07-12T10:00:00+00:00",
+    }
+
+    selection = bank.choose_selection(
+        document,
+        profile,
+        bank.ready_records(profile, prune=False),
+        "triptych",
+    )
+
+    selected = [record["issue_id"] for record, _image in bank.selection_records(profile, selection, load_media=False)]
+    assert len(selected) == MAX_SELECTION_KEYS
+    assert set(selected[:3]) == {"comicvine_recent:1", "comicvine_recent:2", "exact_day:3"}
+    # Only regular covers fill the room; the other wide one stays out.
+    assert set(selected[3:]) == {"exact_day:4", "exact_day:5"}
+
+
 def test_gcd_stateless_preview_leaves_entire_provider_cache_tree_unchanged(tmp_path, monkeypatch):
     plugin = make_plugin(tmp_path, monkeypatch)
     monkeypatch.setattr(plugin, "_current_date", lambda _device: date(2026, 7, 12))
@@ -2498,6 +2530,24 @@ def test_triptych_frames_each_cover_over_its_card(tmp_path, monkeypatch):
     assert {"Batman", "Spider-Man #42", "1975.03.12", "1966.08", "出版社不详", "Marvel"} <= set(drawn)
     assert any("Ernie Chan（铅笔·墨线）" in text for text in drawn)
     assert not any("comics.org/api" in text for text in drawn)
+
+
+def test_a_wide_cover_lends_its_empty_top_to_more_of_todays_covers(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    covers = [
+        {"image": Image.new("RGB", (200, 400), (220, 0, 0)), "series_name": "Batman", "issue_number": "1"},
+        {"image": Image.new("RGB", (200, 400), (0, 0, 220)), "series_name": "Spider-Man", "issue_number": "2"},
+        {"image": Image.new("RGB", (500, 240), (0, 160, 0)), "series_name": "Sigurd", "issue_number": "3"},
+        {"image": Image.new("RGB", (200, 300), (240, 200, 0)), "series_name": "Tarzan", "issue_number": "4"},
+        {"image": Image.new("RGB", (200, 300), (0, 200, 220)), "series_name": "Mickey", "issue_number": "5"},
+    ]
+
+    image = plugin._compose_triptych_display_image(covers, (800, 480), {"backgroundColor": "white"})
+
+    third, _label = cover_gallery.columns(3, (800, 480))[2]
+    colours = set(image.crop((third[0], third[1], third[2], (third[1] + third[3]) // 2)).get_flattened_data())
+    assert (240, 200, 0) in colours and (0, 200, 220) in colours
+    assert image.getpixel(((third[0] + third[2]) // 2, third[3] - 30)) == (0, 160, 0)
 
 
 def test_a_cover_without_its_scan_gets_a_placeholder_card(tmp_path, monkeypatch):
