@@ -65,26 +65,28 @@ def test_long_prices_keep_every_character_and_fit_without_touching_the_rim(amoun
     assert result.size == (width, 31)
     assert result.info["price_text"] == "$" + amount
     left, top, right, bottom = result.info["price_ink_bounds"]
-    assert 6 <= left < right <= width - 6
-    assert 5 <= top < bottom <= 26
+    assert 1 <= left < right <= width - 1
+    assert 2 <= top < bottom <= 29
     assert result.info["price_font_size"] > 0
 
 
-def test_corrupt_art_keeps_a_dark_gold_edged_tag_and_complete_price(tmp_path, monkeypatch):
-    bad_art = tmp_path / "broken.png"
-    bad_art.write_bytes(b"not an image")
-    monkeypatch.setattr(price_tag, "ASSET", bad_art)
-    renderer = price_tag.PriceTags()
-    result = renderer.render("199.99", (92, 31))
-    # Downsampling blends the dark surface slightly with the nearby gold rim.
-    assert max(result.getpixel((46, 2))[:3]) < 60
-    assert result.getpixel((46, 2))[3] == 255
-    assert result.info["price_text"] == "$199.99"
-
-
-def test_bundled_art_has_no_transparent_padding_and_repeated_prices_are_stable():
-    renderer = price_tag.PriceTags()
+@pytest.mark.parametrize("night", [False, True])
+def test_the_price_sits_on_the_page_without_a_tag_in_steam_orange(night):
+    renderer = price_tag.PriceTags(night)
     first, second = renderer.render("1.99", (92, 31)), renderer.render("1.99", (92, 31))
     assert ImageChops.difference(first, second).getbbox() is None
-    left, top, right, bottom = first.getchannel("A").getbbox()
-    assert left == top == 0 and right == 92 and bottom == 31
+    # No backing: the corners and the room round the type stay transparent.
+    assert all(first.getpixel(xy)[3] == 0 for xy in ((0, 0), (91, 0), (0, 30), (91, 30)))
+    left, _top, right, _bottom = first.getchannel("A").getbbox()
+    assert left <= 4 and right < 92
+    ink = [first.getpixel((x, y)) for x in range(92) for y in range(31) if first.getpixel((x, y))[3] == 255]
+    # Orange digits (red high, green middling, blue low) and the amber dollar sign.
+    assert sum(r > 200 and 50 < g < 170 and b < 90 for r, g, b, _a in ink) > 40
+    assert result_is_left_aligned(renderer)
+
+
+def result_is_left_aligned(renderer):
+    # A price narrower than its slot starts at the slot's left, beside the title above it.
+    narrow = renderer.render("0.99", (140, 31))
+    left, _top, right, _bottom = narrow.info["price_ink_bounds"]
+    return left <= 4 and right < 120

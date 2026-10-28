@@ -24,9 +24,8 @@ ART_SIZE = (150, 62)
 BADGE_SIZE = (58, 28)
 # Room between the emboldened dollar sign and the digits after it.
 DOLLAR_GAP = 2
-# Preserve the accepted sale/original/discount column positions while the
-# engraved type fits independently inside the sale-price slot.
-PRICE_TAG_PAD = (13, 6)
+# The sale price's slot: a little room round its type, now set straight on the page.
+PRICE_TAG_PAD = (4, 2)
 # Quiet discount doodles (percent tags, snipped price tags, falling arrows, sale stickers) in the
 # badges' green under each column's names and prices; the capsule art keeps the plain page around it.
 DEAL_DOODLES = Path(__file__).with_name("assets") / "doodles" / "deals.png"
@@ -111,7 +110,7 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         paint_doodles(image, prices, DEAL_DOODLES, green, offset=prices[:2])
 
     layout = []
-    price_tags = PriceTags() if snapshot.deals else None
+    price_tags = PriceTags(night) if snapshot.deals else None
     art_w, art_h = ART_SIZE
     badge_w, badge_h = BADGE_SIZE
     for index, deal in enumerate(snapshot.deals[:len(CARD_RECTS)]):

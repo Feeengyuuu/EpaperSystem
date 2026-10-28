@@ -173,16 +173,15 @@ def test_manifest_cadence_and_display_redraw_do_not_request_provider_refresh():
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
-def test_sale_price_has_gold_currency_and_green_digits_on_a_dark_tag(mode, monkeypatch, tmp_path):
+def test_sale_price_sits_on_the_page_in_steam_orange(mode, monkeypatch, tmp_path):
     monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path))
     page = render_page(DealSnapshot(offers()[:1], NOW, "live", "steam"), {}, theme={"mode": mode}, now=NOW)
     x0, y0, x1, y1 = page.info["game_deals_layout"][0]["price_tag_box"]
-    # Exclude the gold artwork rim: currency and digits carry their own colors.
-    middle = [page.getpixel((x, y)) for x in range(x0 + 4, x1 - 3) for y in range(y0 + 5, y1 - 4)]
-    assert sum(r > g + 8 and g > b + 30 for r, g, b in middle) > 10
-    assert sum(g > r + 15 and g > b + 10 and g > 90 for r, g, b in middle) > 30
-    assert sum(max(rgb) < 90 for rgb in middle) > 200
-    assert (255, 212, 0) not in middle
+    middle = [page.getpixel((x, y)) for x in range(x0, x1) for y in range(y0, y1)]
+    # Orange digits on the page's own ground: no dark tag behind them.
+    assert sum(r > 200 and 50 < g < 170 and b < 90 for r, g, b in middle) > 30
+    paper = page.getpixel((x1 - 1, y0 + 1))
+    assert (max(paper) < 40) if mode == "night" else (min(paper) > 230)
 
 
 @pytest.mark.parametrize("mode", ["day", "night"])
