@@ -250,16 +250,17 @@ def _bilibili(canvas, payload, images):
     cover_box = (left + 6, top + 2, right - 6, top + 2 + BILI_LEAD_HEIGHT)
     _paste_fade(canvas, images.get(sources.safe_image_url(lead.get("cover"))), cover_box, fade_from=BILI_LEAD_FADE)
     _rank_chip(canvas, (cover_box[0] + 6, cover_box[1] + 6), 1, BRANDS["bilibili"])
+    _move_badge(canvas, (cover_box[2] - 6, cover_box[1] + 15), moves.get(lead.get("title")), anchor_right=True)
+    size, lines = _fitted_title(canvas, lead.get("title"), right - left - 20, 44, largest=18, smallest=13)
+    y = cover_box[3] - 4 - len(lines) * (size + 5) + 5
+    # The views pill sits on the title, just above its first line.
     views = f"{count_text(lead.get('views'))}播放"
     gain = _view_gain(lead, previous_views)
     pill = views + (f" · +{gain}" if gain else "")
     pill_w = canvas.width(pill, 10) + 14
-    pill_y = cover_box[1] + round(BILI_LEAD_HEIGHT * BILI_LEAD_FADE) - 26
-    _glass(canvas, (cover_box[0] + 6, pill_y, cover_box[0] + 6 + pill_w, pill_y + 18), canvas.color("shade"), PILL_ALPHA, 9)
-    canvas.text((cover_box[0] + 6 + pill_w / 2, pill_y + 9), pill, 10, (255, 255, 255), anchor="mm")
-    _move_badge(canvas, (cover_box[2] - 6, cover_box[1] + 15), moves.get(lead.get("title")), anchor_right=True)
-    size, lines = _fitted_title(canvas, lead.get("title"), right - left - 20, 44, largest=18, smallest=13)
-    y = cover_box[3] - 4 - len(lines) * (size + 5) + 5
+    pill_y = round(y) - 22
+    _glass(canvas, (left + 9, pill_y, left + 9 + pill_w, pill_y + 18), canvas.color("shade"), PILL_ALPHA, 9)
+    canvas.text((left + 9 + pill_w / 2, pill_y + 9), pill, 10, (255, 255, 255), anchor="mm")
     for line in lines:
         canvas.text((left + 10, y), line, size, stroke="paper")
         y += size + 5
