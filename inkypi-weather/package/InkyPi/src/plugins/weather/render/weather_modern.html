@@ -3,6 +3,8 @@
 {% block content %}
 {% set v = view %}
 {% set deg = "°" if units != "standard" else "" %}
+{# A card's own line drawing behind its readings: the card's colour, masked by the drawing tiled from the card's corner. #}
+{% macro doodle(name, path, tile) %}{% if path %}<svg class="mw-doodle" aria-hidden="true"><defs><pattern id="mw-dp-{{ name }}" patternUnits="userSpaceOnUse" width="{{ tile }}" height="{{ tile }}"><image href="{{ path }}" width="{{ tile }}" height="{{ tile }}"/></pattern><mask id="mw-dm-{{ name }}"><rect width="100%" height="100%" fill="url(#mw-dp-{{ name }})"/></mask></defs><rect width="100%" height="100%" mask="url(#mw-dm-{{ name }})" class="mw-doodle-ink"/></svg>{% endif %}{% endmacro %}
 <div class="mw theme-{{ theme.mode|default('day') }}"
      style="--bg: {{ theme.css.background|default('#ffffff') }}; --panel: {{ theme.css.panel|default('#ffffff') }}; --ink: {{ theme.css.ink|default('#111418') }}; --muted: {{ theme.css.muted|default('#4a525c') }};">
   {% set page_scale = [(width or 800) / 800, (height or 480) / 480]|min %}
@@ -51,6 +53,7 @@
 
     <section class="mw-tiles">
       <div class="mw-tile {{ 'mw-t-moon' if v.sun.night and v.moon else 'mw-t-sun' }}">
+        {% set sky = 'moon' if v.sun.night and v.moon else 'sun' %}{{ doodle(sky, v.doodles[sky], v.doodle_tile) }}
         {% if v.sun.night and v.moon %}
         <div class="mw-tile-title">今夜月相</div>
         <div class="mw-moon">
@@ -71,6 +74,7 @@
       </div>
 
       <div class="mw-tile mw-t-wind">
+        {{ doodle("wind", v.doodles.wind, v.doodle_tile) }}
         <div class="mw-tile-title">{% if v.icons.wind %}<img class="mw-tile-icon" src="{{ v.icons.wind }}" alt="">{% endif %}风</div>
         {% if v.wind %}
         <div class="mw-wind">
@@ -90,6 +94,7 @@
       </div>
 
       <div class="mw-tile mw-t-air">
+        {{ doodle("air", v.doodles.air, v.doodle_tile) }}
         <div class="mw-tile-title">{% if v.icons.air %}<img class="mw-tile-icon" src="{{ v.icons.air }}" alt="">{% endif %}空气质量</div>
         {% if v.aqi %}
         <svg class="mw-gauge" viewBox="0 0 100 52">
@@ -102,6 +107,7 @@
       </div>
 
       <div class="mw-tile mw-t-uv">
+        {{ doodle("uv", v.doodles.uv, v.doodle_tile) }}
         <div class="mw-tile-title">{% if v.icons.uv %}<img class="mw-tile-icon" src="{{ v.icons.uv }}" alt="">{% endif %}紫外线</div>
         {% if v.uv %}
         <div class="mw-big">{{ v.uv.value }} <span class="mw-word">{{ v.uv.label }}</span></div>
@@ -111,6 +117,7 @@
       </div>
 
       <div class="mw-tile mw-t-humidity">
+        {{ doodle("humidity", v.doodles.humidity, v.doodle_tile) }}
         <div class="mw-tile-title">{% if v.icons.humidity %}<img class="mw-tile-icon" src="{{ v.icons.humidity }}" alt="">{% endif %}湿度</div>
         {% if v.humidity %}
         <div class="mw-humid">
@@ -126,6 +133,7 @@
       </div>
 
       <div class="mw-tile mw-t-life">
+        {{ doodle("life", v.doodles.life, v.doodle_tile) }}
         <div class="mw-tile-title">{% if v.icons.life %}<img class="mw-tile-icon" src="{{ v.icons.life }}" alt="">{% endif %}生活指数</div>
         <div class="mw-indices">
           {% for index in v.indices %}
@@ -136,6 +144,7 @@
     </section>
 
     <section class="mw-hours mw-t-hourly">
+      {{ doodle("hourly", v.doodles.hourly, v.doodle_tile) }}
       <div class="mw-section-title">{% if v.icons.hourly %}<img class="mw-tile-icon" src="{{ v.icons.hourly }}" alt="">{% endif %}24 小时<span class="mw-section-note">{{ v.summary }}</span>{% if v.best %}<span class="mw-best-chip">最佳出门 {{ v.best.day }}{{ v.best.start }}–{{ v.best.end }}</span>{% endif %}</div>
       {% if v.hourly.points %}
       <svg viewBox="0 0 {{ v.hourly.width }} {{ v.hourly.height }}" class="mw-chart">
@@ -162,6 +171,7 @@
     </section>
 
     <section class="mw-week mw-t-week">
+      {{ doodle("week", v.doodles.week, v.doodle_tile) }}
       <div class="mw-section-title">{% if v.icons.week %}<img class="mw-tile-icon" src="{{ v.icons.week }}" alt="">{% endif %}未来 7 天</div>
       {% for day in v.week %}
       <div class="mw-day">

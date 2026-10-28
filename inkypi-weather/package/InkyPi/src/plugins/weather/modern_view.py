@@ -71,6 +71,10 @@ COOLING_TIP_C = 6
 
 # Each card's generated icon heading its title (with the card's own colour in the CSS).
 TILE_ICONS = ("sun", "wind", "air", "uv", "humidity", "life", "hourly", "week")
+# Each card's own line drawing behind its readings (art/doodles/<card>.png, white ink on
+# transparent): the page masks the card's colour with it, tiled at DOODLE_TILE page pixels.
+CARD_DOODLES = ("sun", "moon", "wind", "air", "uv", "humidity", "life", "hourly", "week")
+DOODLE_TILE = 260
 
 
 def build_view(params, now, *, art_dir=None):
@@ -117,6 +121,8 @@ def build_view(params, now, *, art_dir=None):
                                  _celsius(_number(params.get("current_temperature")), units))
     view["effect"] = _page_effect(scene, now)
     view["icons"] = _tile_icons(art_dir)
+    view["doodles"] = _card_doodles(art_dir)
+    view["doodle_tile"] = DOODLE_TILE
     view["place_mark"] = _place_mark(art_dir, params.get("title"))
     return view
 
@@ -148,6 +154,15 @@ def _tile_icons(art_dir):
         return {}
     paths = {name: os.path.join(art_dir, f"icon-{name}.png") for name in TILE_ICONS}
     return {name: path for name, path in paths.items() if os.path.isfile(path)}
+
+
+def _card_doodles(art_dir):
+    """{card: its line drawing (art/doodles/<card>.png)} for the cards whose drawing is present,
+    with forward slashes for the svg image reference."""
+    if not art_dir:
+        return {}
+    paths = {name: os.path.join(art_dir, "doodles", f"{name}.png") for name in CARD_DOODLES}
+    return {name: path.replace("\\", "/") for name, path in paths.items() if os.path.isfile(path)}
 
 
 def _hero_art(art_dir, code, night, force, celsius):

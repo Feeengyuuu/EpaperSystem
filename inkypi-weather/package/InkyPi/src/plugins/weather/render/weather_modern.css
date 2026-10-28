@@ -39,12 +39,14 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 .mw-place-night { display: none; }
 .theme-night .mw-place-day { display: none; }
 .theme-night .mw-place-night { display: inline; }
-.mw-date { font-size: 16px; font-weight: 700; color: var(--muted); }
-/* On its own pill of the page colour, so it reads over any sky by day or night. */
-.mw-updated {
-  margin-left: auto; align-self: center; font-size: 12px; font-weight: 700; color: var(--ink);
-  padding: 1px 9px; border-radius: 999px; background: color-mix(in srgb, var(--bg) 86%, transparent);
+/* The date and the update time stand together at the right, each on its own pill of the page
+   colour, so they read over any sky by day or night and leave the place its own room. */
+.mw-date, .mw-updated {
+  align-self: center; font-weight: 700; color: var(--ink);
+  border-radius: 999px; background: color-mix(in srgb, var(--bg) 86%, transparent);
 }
+.mw-date { margin-left: auto; font-size: 15px; padding: 1px 12px; }
+.mw-updated { margin-left: -6px; font-size: 12px; padding: 1px 9px; }
 
 /* Hero ----------------------------------------------------------------------------- */
 .mw-hero {
@@ -54,7 +56,7 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
 .mw-backdrop { position: absolute; left: 0; top: 0; width: 800px; height: 480px; object-fit: cover; }
 /* The header reads over the sky on a soft band of the page colour. */
 .mw-top::before {
-  content: ""; position: absolute; left: -16px; top: -6px; width: 520px; height: 40px; z-index: -1;
+  content: ""; position: absolute; left: -16px; top: -6px; width: 380px; height: 40px; z-index: -1;
   background: linear-gradient(90deg, color-mix(in srgb, var(--bg) 88%, transparent) 60%, transparent);
 }
 .mw-hero-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 70% 50%; }
@@ -239,6 +241,15 @@ html, body { margin: 0 !important; padding: 0 !important; overflow: hidden; }
   background: color-mix(in srgb, var(--tile, var(--panel)) 8%, var(--panel));
 }
 .mw-tile { padding-top: 5px; }
+/* Each card's line drawing lies in its own colour under the readings: the card isolates a
+   stacking context so the drawing sits above the card's wash and below its text. */
+.mw-tile, .mw-hours, .mw-week { isolation: isolate; }
+.mw-doodle {
+  position: absolute; inset: 0; width: 100%; height: 100%; z-index: -1;
+  border-radius: 0 0 11px 11px; pointer-events: none;
+}
+.mw-doodle-ink { fill: var(--tile, var(--ink)); opacity: 0.2; }
+.theme-night .mw-doodle-ink { opacity: 0.3; }
 .mw-tile-title { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--ink); }
 .mw-section-title { align-items: center; }
 .mw-tile-icon { width: 20px; height: 20px; flex: none; }

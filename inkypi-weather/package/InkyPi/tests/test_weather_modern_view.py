@@ -206,6 +206,28 @@ def test_every_card_has_its_icon_and_colour_class():
         assert f"mw-t-{name}" in html and f"icon-{name}.png" in html, name
 
 
+def test_every_card_has_its_own_line_drawing_in_its_colour():
+    import json
+
+    record = json.loads((ART_DIR / "doodles" / "doodles.source.json").read_text(encoding="utf-8"))["assets"]
+    for name in modern_view.CARD_DOODLES:
+        assert (ART_DIR / "doodles" / f"{name}.png").is_file() and f"{name}.png" in record, name
+
+    now = LA.localize(datetime(2026, 10, 24, 12, 50))
+    params = _params(now)
+    view = build_view(params, now, art_dir=str(ART_DIR))
+    assert set(view["doodles"]) == set(modern_view.CARD_DOODLES)
+    assert all("\\" not in path for path in view["doodles"].values())
+    html = Weather({"id": "weather"}).env.get_template("weather_modern.html").render(
+        **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
+        plugin_settings={}, style_sheets=[], font_faces=[])
+    # By day the sun card carries the sunrise drawing; every other card its own.
+    for name in ("sun", "wind", "air", "uv", "humidity", "life", "hourly", "week"):
+        assert f'mask="url(#mw-dm-{name})"' in html and f"doodles/{name}.png" in html, name
+    assert "doodles/moon.png" not in html
+    assert build_view(params, now)["doodles"] == {}
+
+
 def test_the_hero_illustration_follows_the_weather_the_hour_wind_and_heat():
     def art(code, night=False, force=0, celsius=18):
         return Path(modern_view._hero_art(str(ART_DIR), code, night, force, celsius)).stem

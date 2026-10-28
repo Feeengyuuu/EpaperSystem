@@ -1,0 +1,98 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the page doodle tiles",
+  "generated": "2026-10-27",
+  "processing": "greyscale, MinFilter(3), 400 px square, LANCZOS, paper above 232 dropped; white ink, alpha = ink",
+  "rendering": "an svg mask tiled at DOODLE_TILE page px over each card, filled with the card's own colour",
+  "assets": {
+    "sun.png": {
+      "motifs": "a sun rising over a horizon, a half sun setting behind hills, rays, a sundial, the sun's dashed arc, birds, a lighthouse",
+      "job_id": "a1934d59-197a-4755-879d-be670d1460ae",
+      "source_sha256": "88b886d4bcc7fde0edc49ba38921d00ba592bd8415b178da656262d7c5fe842f",
+      "sha256": "b8a54f9462360b93c839264c36f8e009a202c4f726142c833244a5be6e4ce3b8",
+      "size": [
+        400,
+        400
+      ]
+    },
+    "moon.png": {
+      "motifs": "crescent moons, a row of moon phases, stars and sparkles, a telescope, an owl on a branch, a constellation",
+      "job_id": "d36bab3e-3ed4-41e2-8ac6-732f9f1f6f88",
+      "source_sha256": "ecdc2dc2d6f63b48708a8582f268580df17c03d9e96fb1bed4e332634268e731",
+      "sha256": "0a00a96311762d4e6c2083ec5cbd464480e82d44a2fd4c098524e03bfa3409a6",
+      "size": [
+        400,
+        400
+      ]
+    },
+    "wind.png": {
+      "motifs": "wind swirls, a windsock, a pinwheel, a wind turbine, a kite, blowing leaves, a weather vane",
+      "job_id": "8e4736b3-12c9-4a86-a85d-f2a01c3d7150",
+      "source_sha256": "451645cde993dd8dc39dec39f6aec2c3c6859948ce16bf7690f24b9046a642be",
+      "sha256": "008b6cd74e1a9cf21a340a92f6c3643ad533e198e14079f45077bba6dd94127d",
+      "size": [
+        400,
+        400
+      ]
+    },
+    "air.png": {
+      "motifs": "leaves and sprigs, a leafy tree, a potted plant, a dandelion, leaf lungs, air bubbles, a breeze line",
+      "job_id": "7c6dd93e-a2f5-477f-b324-e166a6733cf1",
+      "source_sha256": "2170a4ea526545aa786bde1a603e2e005c6a889beaff14b2e56d8ffcc0431f53",
+      "sha256": "46a0e4f5a75482966106ce007a33783f635c85c0f8c849fe418c65ff2c5a57ac",
+      "size": [
+        400,
+        400
+      ]
+    },
+    "uv.png": {
+      "motifs": "a small sun, sunglasses, a sunscreen tube, a beach umbrella, a sun hat, a cap, a visor",
+      "job_id": "db4c59e8-4019-4d56-a416-9389c5eb514b",
+      "source_sha256": "211dece1302f8c4d9797b0d60b8bf0d22f26fcc4301fbea74667bbba176f41f2",
+      "sha256": "7a138152b98263eaea1857c17fd6efab2dc015372c776af0f72b51ef5498bb2c",
+      "size": [
+        400,
+        400
+      ]
+    },
+    "humidity.png": {
+      "motifs": "droplets, a raindrop in ripples, a hygrometer dial, a cloud with drops, a steaming cup, mist lines, a spray bottle",
+      "job_id": "e8a9200c-4ca3-442a-b309-14a4e0d2a171",
+      "source_sha256": "8b4347014d3d5a09c4419c355f4e03cd000a389f54d33c6f38804b3a426421e1",
+      "sha256": "2e02ff0aecfbaa726ed9cf3e3ac13d124e89cca55386dab5570377f485f5a16c",
+      "size": [
+        400,
+        400
+      ]
+    },
+    "life.png": {
+      "motifs": "running shoes, a clothesline with laundry, a car with soap bubbles, a hiking boot, a bicycle, a tent, a backpack",
+      "job_id": "158dab10-f451-4c26-9835-b61482192fe8",
+      "source_sha256": "5bbd5554aee910cde161e57f0c5c3324ee3ded8b835022ecd8bfb2f630fbc697",
+      "sha256": "e4ceb902070cc386c3e0b2a7a9ae44b021a3dc392502ec3cfcdb1e58fdf36c46",
+      "size": [
+        400,
+        400
+      ]
+    },
+    "hourly.png": {
+      "motifs": "clock faces, an hourglass, a thermometer, a pocket watch, sun, cloud and moon symbols, a dashed timeline",
+      "job_id": "a308f951-bdeb-485f-93bc-98fe6d8498c3",
+      "source_sha256": "224b1f66393d7da76f584578c13d4d262b87ec4de2070009b74f933597e8bc7b",
+      "sha256": "9e0794dee6e9424f90e9f8102c8f67505ecffbe941512bab23a14c310a4bb572",
+      "size": [
+        400,
+        400
+      ]
+    },
+    "week.png": {
+      "motifs": "a tear-off calendar page, an umbrella, suns, clouds, snowflakes, raindrops, a rainbow",
+      "job_id": "f4500e6d-ee65-4e16-b170-d4c736be8307",
+      "source_sha256": "752168635bd8e3c86d385174921ba41f11d24d3dac881116245e0557f18e981e",
+      "sha256": "8ab6b9fee776e1a88f4e70edd7bbb3eea3e5918be87897629d5ff34f2f22087a",
+      "size": [
+        400,
+        400
+      ]
+    }
+  }
+}
