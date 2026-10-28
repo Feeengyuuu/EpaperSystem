@@ -1,5 +1,5 @@
 {
   "private_font": "Optional owner-provided Banknote Regular is loaded only from INKYPI_DATA_DIR/fonts/game-deals-price.ttf. No font bytes are included in this repository.",
   "fallback": "Existing OFL Bodoni Moda, then the base UI face if unavailable",
-  "colours": "No tag artwork since 2026-10-28: the price sits on the page, digits in Steam sale orange, the dollar sign in amber"
+  "colours": "No tag artwork since 2026-10-28: the price sits on the page, digits in classic greenback green, the dollar sign a deeper green (from 2026-10-28 evening; Steam sale orange before)"
 }
