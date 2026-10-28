@@ -697,7 +697,8 @@ def run_private_score_font(arguments):
         "esports-industry-event|esports-gear-event|esports-cct-event|"
         "esports-dust2-event|esports-montserrat-event"
     )
-    if name != "game-deals-price.ttf" and not re.fullmatch(r"sports-(?:" + registry + r")-score\.(?:ttf|otf|woff|woff2)", name):
+    purposes = {"game-deals-price.ttf", "lol-beaufort-heavy.ttf", "lol-beaufort-bold.ttf", "lol-beaufort-medium.ttf"}
+    if name not in purposes and not re.fullmatch(r"sports-(?:" + registry + r")-score\.(?:ttf|otf|woff|woff2)", name):
         raise ValueError("private font name is not allowed")
     if not all(re.fullmatch(r"[0-9a-f]{64}", value) for value in (font_sha, artifact_sha)):
         raise ValueError("private font hash is invalid")

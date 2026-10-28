@@ -50,6 +50,15 @@ INFO_LABEL_W = 34
 LEAGUE_MARK, SERVER_FLAG = (40, 18), (22, 15)
 # Leaguepedia's face for a player's ID (Rubik, SIL OFL).
 ID_FONT = "fonts/Rubik-Bold.ttf"
+# The LoL page's Latin and figures in Cinzel (SIL OFL), an open inscriptional face in the manner of
+# the client's own Beaufort; Chinese stays in the page's face. Weights by role.
+LOL_FACE = "fonts/Cinzel-VF.ttf"
+LOL_FACE_WEIGHTS = {"hero": 900, "big": 700, "section": 700, "body": 700, "small_bold": 700, "text": 600,
+                    "small": 600, "tiny": 600}
+LOL_ID_WEIGHT = 900
+# The client's own Beaufort for LOL by weight, when the owner installed it in the device's data
+# fonts (install/font_dlc.json lol_pro_*; never packaged); Cinzel stands in without it.
+LOL_BRAND_FILES = {900: "lol-beaufort-heavy.ttf", 700: "lol-beaufort-bold.ttf", 600: "lol-beaufort-medium.ttf"}
 # The splash keeps the band's framing and runs on down the page under the boards, dimmed,
 # fading into the page over the last LOL_SPLASH_TAIL rows it covers.
 LOL_PAGE_DIM, LOL_SPLASH_TAIL = 0.42, 96
@@ -155,6 +164,32 @@ def _bundled_team_logos():
     return index
 
 
+@lru_cache(maxsize=32)
+def _lol_face(path, size, weight):
+    """Cinzel at ``size`` and ``weight``."""
+    font = load_font(path, size)
+    font.set_variation_by_axes([weight])
+    return font
+
+
+@lru_cache(maxsize=32)
+def _brand_face(path, size):
+    return load_font(path, size)
+
+
+def _lol_type(plugin_dir, size, weight):
+    """The LoL page's face at ``size`` and ``weight``: the owner's Beaufort for LOL file for that
+    weight (LOL_BRAND_FILES) when installed, else the bundled Cinzel."""
+    data = os.environ.get("INKYPI_DATA_DIR", "").strip()
+    brand = os.path.join(data, "fonts", LOL_BRAND_FILES[weight]) if data else ""
+    if brand and os.path.isfile(brand):
+        try:
+            return _brand_face(brand, size)
+        except OSError:
+            pass
+    return _lol_face(os.path.join(plugin_dir, "assets", LOL_FACE), size, weight)
+
+
 @lru_cache(maxsize=48)
 def _match_face(kind, size):
     """``kind``'s Barlow face at ``size``, the page's own face standing in for what it lacks
@@ -253,6 +288,11 @@ class ProRenderMixin:
         self._wash(image, art, (box[2] - 1 - art.width, box[1] + 1), CARD_ART_ALPHA, box)
 
     def _id_font(self, size):
+        """The pro's ID in the LoL page's face at its heaviest, else Leaguepedia's Rubik."""
+        try:
+            return _lol_type(self.get_plugin_dir(), int(size), LOL_ID_WEIGHT)
+        except OSError:
+            pass
         path = os.path.join(self.get_plugin_dir(), "assets", ID_FONT)
         try:
             return _load_id_font(path, int(size))
@@ -303,9 +343,20 @@ class ProRenderMixin:
         self._text(draw, (right - self._text_width(draw, text, fonts["tiny"]), y), text, fonts["tiny"], colors["muted"])
 
     # -- LoL ----------------------------------------------------------------------------
+    def _lol_fonts(self):
+        """The page's fonts with their Latin and figures in the client's Beaufort (Cinzel without it,
+        see _lol_type), each paired with the page's own face for Chinese; the plain fonts when
+        neither file is there."""
+        fonts = self._pro_fonts()
+        try:
+            return {key: EsportsFont(_lol_type(self.get_plugin_dir(), font.size, LOL_FACE_WEIGHTS.get(key, 600)), font)
+                    for key, font in fonts.items()}
+        except OSError:
+            return fonts
+
     def _render_lol_pro(self, data, dimensions, theme_context, pick, board):
         colors = self._render_colors(theme_context)
-        fonts = self._pro_fonts()
+        fonts = self._lol_fonts()
         image = Image.new("RGB", (800, 480), colors["background"])
         draw = ImageDraw.Draw(image)
         account = (pick or {}).get("account") or {}

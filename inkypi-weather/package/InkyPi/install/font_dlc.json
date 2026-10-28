@@ -111,6 +111,18 @@
       "license": "Riot Games brand typeface, not offered for licence"
     },
     {
+      "key": "lol_pro_heavy", "font": "Beaufort for LOL Heavy", "use": "LoL pro page: the player's ID (TTF only)", "kind": "brand",
+      "license": "Riot Games brand typeface, not offered for licence"
+    },
+    {
+      "key": "lol_pro_bold", "font": "Beaufort for LOL Bold", "use": "LoL pro page: headings and figures (TTF only)", "kind": "brand",
+      "license": "Riot Games brand typeface, not offered for licence"
+    },
+    {
+      "key": "lol_pro_medium", "font": "Beaufort for LOL Medium", "use": "LoL pro page: small text (TTF only)", "kind": "brand",
+      "license": "Riot Games brand typeface, not offered for licence"
+    },
+    {
       "key": "esports-esl-heading", "font": "ESL Legendary Bold", "use": "ESL event headings", "kind": "brand",
       "license": "ESL FACEIT Group brand typeface, not offered for licence"
     },

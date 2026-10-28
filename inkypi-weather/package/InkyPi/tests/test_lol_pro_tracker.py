@@ -811,3 +811,32 @@ def test_the_cs2_rating_uses_cs2s_own_face_when_the_owner_installed_it(monkeypat
     assert primary.getname()[0] == ("Barlow Semi Condensed" if installed else "Barlow Condensed")
     box = face.getbbox("8")
     assert abs((box[3] - box[1]) - pro_render.CS2_RATING_DIGITS) <= 2
+
+
+def test_the_lol_page_sets_latin_and_figures_in_cinzel_and_chinese_in_its_own_face(plugin, monkeypatch, tmp_path):
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path))
+    fonts = plugin._lol_fonts()
+
+    assert set(fonts) == set(plugin._pro_fonts())
+    for key, font in fonts.items():
+        assert font.primary.getname()[0] == "Cinzel", key
+        assert font.size == plugin._pro_fonts()[key].size
+    # The pro's ID in Cinzel at its heaviest; Chinese text keeps the page's own face.
+    assert plugin._id_font(40).getname()[0] == "Cinzel"
+    assert [run_font for run_font, _run in fonts["body"]._runs("中单")] == [fonts["body"].fallback]
+    assert [run_font for run_font, _run in fonts["body"]._runs("T1")] == [fonts["body"].primary]
+
+
+def test_the_owners_beaufort_takes_the_lol_page_by_weight_when_installed(plugin, monkeypatch, tmp_path):
+    import shutil
+
+    rubik = Path(plugin.get_plugin_dir()) / "assets" / "fonts" / "Rubik-Bold.ttf"
+    (tmp_path / "fonts").mkdir()
+    # Any face under the bold file's private name stands in for Beaufort for LOL Bold.
+    shutil.copy(rubik, tmp_path / "fonts" / pro_render.LOL_BRAND_FILES[700])
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path))
+    fonts = plugin._lol_fonts()
+
+    assert fonts["body"].primary.getname()[0] == "Rubik" and fonts["section"].primary.getname()[0] == "Rubik"
+    # Weights whose file is missing keep Cinzel.
+    assert fonts["tiny"].primary.getname()[0] == "Cinzel" and plugin._id_font(40).getname()[0] == "Cinzel"

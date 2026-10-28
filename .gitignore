@@ -106,4 +106,7 @@ inkypi-weather/package/InkyPi/src/static/images/current_image.png
 **/sports-esports-*-score.woff2
 # Owner-supplied Banknote price face: both source and installed names stay private.
 **/game-deals-price.ttf
+# Owner-supplied Beaufort for LOL (Riot brand face): source and installed names stay private.
+**/lol-beaufort-*.ttf
+**/BeaufortforLOL-*.ttf
 **/[Bb][Aa][Nn][Kk][Nn][Oo][Tt][Ee] [Rr][Ee][Gg][Uu][Ll][Aa][Rr].[Tt][Tt][Ff]

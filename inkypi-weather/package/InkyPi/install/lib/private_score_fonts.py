@@ -32,6 +32,13 @@ EXTENSIONS = ("ttf", "otf", "woff", "woff2")
 PURPOSES = {
     "game_deals_price": {"basename": "game-deals-price.ttf", "family": "Banknote", "style": "Regular",
                          "glyphs": "0123456789$.,-"},
+    # The LoL pro page's type in the game client's own Beaufort for LOL, one file per weight.
+    "lol_pro_heavy": {"basename": "lol-beaufort-heavy.ttf", "family": "Beaufort for LOL", "style": "Heavy",
+                      "glyphs": "0123456789/.%"},
+    "lol_pro_bold": {"basename": "lol-beaufort-bold.ttf", "family": "Beaufort for LOL", "style": "Bold",
+                     "glyphs": "0123456789/.%"},
+    "lol_pro_medium": {"basename": "lol-beaufort-medium.ttf", "family": "Beaufort for LOL", "style": "Medium",
+                       "glyphs": "0123456789/.%"},
 }
 FONT_NAMES = frozenset(
     f"sports-{league}-score.{extension}"
