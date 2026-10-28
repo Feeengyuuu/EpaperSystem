@@ -20,6 +20,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from runtime.refresh_contracts import TaskCancelled
+from utils.doodle_backdrop import paint_doodles
 from utils.space_typography import MixedDraw, space_font, space_type_scope, scoped_space_font
 from utils.cache_manager import CacheBudget
 from utils.http_client import get_http_session
@@ -78,6 +79,12 @@ PERSON_HINT = re.compile(r"\(born \d{4}\)|footballer|player|politician|president
 # fact grid and launch timeline; the market side with three gauge columns.
 LAUNCH_SPLIT_X = 462
 PHOTO_BOX = (16, 72, 124, 272)
+# Quiet launch doodles (rockets, gantries, fairings, trajectories) in the page's blue under the
+# launch panel, and each coming launch's provider logo under its stop, this tall at most.
+LAUNCH_DOODLES = Path(__file__).with_name("assets") / "doodles" / "launch.png"
+# A wordmark stands TIMELINE_LOGO_HEIGHT tall; a badge (narrower than 3.5:1) TIMELINE_BADGE_HEIGHT,
+# with the provider's short name after it, since a badge says little alone at this size.
+TIMELINE_LOGO_HEIGHT, TIMELINE_BADGE_HEIGHT = 11, 13
 FLIP_CARD = (34, 58)
 # A market column from top to bottom, in px below the market panel's top: the event art, the
 # question (QUESTION_LINES lines at most), the league tag, the dial's centre, the leader, the
@@ -1146,6 +1153,8 @@ class OrbitalSignal(BasePlugin):
     def _draw_launch_content(self, image, draw, box, launches, now, palette, family):
         left, top, right, bottom = box
         draw.rectangle(box, fill=palette["paper"])
+        doodles = (left + 2, top + 2, right - 6, bottom - 2)
+        paint_doodles(image, doodles, LAUNCH_DOODLES, palette["blue"], offset=doodles[:2])
         draw.line((right - 2, top, right - 2, bottom), fill=palette["rule"], width=3)
         if not launches:
             draw.text((22, top + 24), "NO LAUNCH DATA", font=self._font(24, True, family), fill=palette["ink"])
@@ -1217,7 +1226,8 @@ class OrbitalSignal(BasePlugin):
         for column in (1, 2):
             divider = 16 + column * cell_w
             draw.line((divider, grid_top + 8, divider, grid_top + 68), fill=palette["rule"], width=1)
-        self._draw_timeline(draw, (16, grid_top + 76, right - 18, bottom - 6), launches, now, palette, family)
+        self._draw_timeline(draw, (16, grid_top + 76, right - 18, bottom - 6), launches, now, palette, family,
+                            image=image)
 
     @staticmethod
     def _gap_label(earlier, later):
@@ -1231,10 +1241,11 @@ class OrbitalSignal(BasePlugin):
             return f"+{hours}H {mins:02d}M"
         return f"+{mins}M"
 
-    def _draw_timeline(self, draw, box, launches, now, palette, family):
+    def _draw_timeline(self, draw, box, launches, now, palette, family, image=None):
         """The coming launches as evenly spaced stops on a line, so close and
         far launches read alike: each stop's local time above it, rocket and
-        mission below, and the time to the next stop on the line between."""
+        mission below, the provider's official logo under those (on ``image``),
+        and the time to the next stop on the line between."""
         left, top, right, bottom = box
         draw.line((left, top, right, top), fill=palette["rule"], width=2)
         title_font = self._font(10, True, family)
@@ -1277,6 +1288,33 @@ class OrbitalSignal(BasePlugin):
                     font = self._fit_font(draw, text, slot, size, 8, family)
                     centered(self._fit_text(draw, text, font, slot), x, line_y + 9 + row * 13, font,
                              palette["ink"] if row == 0 else palette["muted"])
+            if image is not None and bottom - (line_y + 35) >= TIMELINE_BADGE_HEIGHT:
+                self._paste_timeline_logo(image, draw, launch, x, line_y + 35, slot - 10, palette, family)
+
+    def _paste_timeline_logo(self, image, draw, launch, x, top, width, palette, family):
+        """The launch's provider logo centred on ``x`` under its stop, as the provider cell shows it."""
+        provider_id = launch.get("provider_id")
+        logo = _provider_logo(provider_id)
+        if logo is None:
+            return
+        badge = logo.width < logo.height * 3.5
+        height = TIMELINE_BADGE_HEIGHT if badge else TIMELINE_LOGO_HEIGHT
+        name = str(launch.get("provider_abbrev") or "").strip().upper() if badge else ""
+        font = self._font(9, True, family)
+        name_box = draw.textbbox((0, 0), name, font=font) if name else (0, 0, 0, 0)
+        name_w = name_box[2] + 4 if name else 0
+        fitted = logo.copy()
+        fitted.thumbnail((max(1, int(width) - name_w), height), Image.Resampling.LANCZOS)
+        paper = "night" if sum(palette["paper"]) < 300 else "day"
+        if provider_id in PROVIDER_LOGO_SILHOUETTE[paper]:
+            silhouette = Image.new("RGBA", fitted.size, (*palette["ink"], 0))
+            silhouette.putalpha(fitted.getchannel("A"))
+            fitted = silhouette
+        left = int(x - (fitted.width + name_w) / 2)
+        image.paste(fitted, (left, int(top + (height - fitted.height) / 2)), fitted)
+        if name:
+            name_top = top + (height - (name_box[3] - name_box[1])) / 2 - name_box[1]
+            draw.text((left + fitted.width + 4, name_top), name, font=font, fill=palette["ink"])
 
     def _heat_color(self, heat, palette):
         if heat >= 80:

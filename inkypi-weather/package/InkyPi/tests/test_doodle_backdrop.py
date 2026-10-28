@@ -14,7 +14,9 @@ DOODLE_DIRS = [PLUGINS / name / "assets" / "doodles"
                for name in ("daily_wiki_page", "daily_pop", "telegram_digest", "ticketmaster_events")]
 DOODLE_DIRS += [PLUGINS / "live_radar" / "platform_doodles", PLUGINS / "bambu_monitor" / "doodles",
                 PLUGINS / "box_office_top_movies" / "assets" / "two_markets" / "doodles"]
-DOODLE_DIRS += [PLUGINS / name / "assets" / "doodles" for name in ("planet_now", "bay_alerts", "nature_nearby", "stocktracker")]
+DOODLE_DIRS += [PLUGINS / name / "assets" / "doodles" for name in (
+    "planet_now", "bay_alerts", "nature_nearby", "stocktracker", "orbital_signal", "flight_radar", "money_radar",
+    "game_deals", "tech_pulse")]
 PATTERN = DOODLE_DIRS[0] / "photo.png"
 
 

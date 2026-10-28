@@ -1,0 +1,74 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the page doodle tiles",
+  "generated": "2026-10-27",
+  "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map (ink on white), tiled and tinted at draw time by utils.doodle_backdrop",
+  "assets": {
+    "fx.png": {
+      "motifs": "coins, banknotes, exchange arrows, a globe, a balance scale, a passport, a vault door",
+      "style": "engraving",
+      "job_id": "793268c8-95d6-4177-a805-e9c07bfd929c",
+      "source_sha256": "af675583de81e2b77035c69f59b624990e5174c9daadc6ce2c16b3abf689672b",
+      "sha256": "fe8135f39bc9dc2ae5567e686da9e9d795bd3f085f4ac40492828619ae4a3735",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "crypto.png": {
+      "motifs": "chained blocks, a circuit coin, a padlock, a key, a pickaxe, network nodes, a hardware wallet",
+      "style": "engraving",
+      "job_id": "3ea0b053-4be0-4f8a-871c-52cb5699e288",
+      "source_sha256": "5eaea2ab7b3f62b00655fd2cf85560114347fd43565a1b0555bf65256f168f6e",
+      "sha256": "362c2c81bc8d62362eeb349c5aa4a4c25b9bb74d0e86a857c6502531e27cd509",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "rates.png": {
+      "motifs": "a columned bank, a bond scroll, an hourglass, a rising curve, a pocket watch, a ledger, a quill",
+      "style": "engraving",
+      "job_id": "ebaf0a7f-1097-4cc1-ae90-d7729c8a0238",
+      "source_sha256": "23fb6a6fe1d42a5ff2457f2fa772da0aaa3be64cfaf65a6e21d41c6991d2a717",
+      "sha256": "9061738a925e51d0f48e4558cd420e5bf2b120e664e34c3a4a717f7068f25674",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "macro.png": {
+      "motifs": "a factory, a shopping cart, a briefcase, a house, gears, a bar chart, a cargo ship, a hard hat",
+      "style": "engraving",
+      "job_id": "0997f809-ce67-4018-9092-2ecdb6ef8f19",
+      "source_sha256": "f51061b4d02f72148f4b2cd474bc278214d48a402a99c140f84a43c005d8ad25",
+      "sha256": "d1cb97e1497a6a339e6003080bd4febb349a1c71116866bb3dd8419427efe7e1",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "commodities.png": {
+      "motifs": "gold bars, an oil barrel, a derrick, wheat, copper wire, a gas flame, corn, a mine cart",
+      "style": "engraving",
+      "job_id": "d72cee55-e7b5-4694-a313-47b551ed9a0c",
+      "source_sha256": "021ae553e4ea37a8efd58d05976e9273030a834883e95836d1d0540bb3afe148",
+      "sha256": "be18b155580b86185f974cbc4ad4b534ef81b115134f2ebb03d31a05451efc56",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "holdings.png": {
+      "motifs": "a newspaper, a desk calendar, a bell, a candlestick chart, a briefcase, an envelope, a pen",
+      "style": "engraving",
+      "job_id": "8565c68a-7dc0-45b0-91f4-6005aa2287ed",
+      "source_sha256": "8011a2ea89eb6f241357de8cc9b41ca5297c860d3ac2bc7a051789698c49487b",
+      "sha256": "64d727e2691361ec29dc18faca71e1a44283f92ead393a3db0202a27ca4805e6",
+      "size": [
+        480,
+        480
+      ]
+    }
+  }
+}

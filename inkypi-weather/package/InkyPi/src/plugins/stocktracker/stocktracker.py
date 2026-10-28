@@ -122,6 +122,9 @@ ACCENT_GOLD = (255, 196, 30)  # 100Y-25R PANTONE 123 family
 SUMMARY_FRAME, SUMMARY_CHART, SUMMARY_GRID, SUMMARY_FIGURE_SIZE = 7, (33, 92), 12, 38
 SUMMARY_FIGURE_FOOT, SUMMARY_HILL_GAP, SUMMARY_BLUR, SUMMARY_FADE = 17, 6, 1.2, 10
 SUMMARY_FIGURE_TRACKING = 3
+# The hill's chart reaches up to the frame's top, behind the card's title; its ridge keeps
+# SUMMARY_CURVE_TOP rows clear under the top so the title reads over the faded grid.
+SUMMARY_CURVE_TOP = 18
 SUMMARY_NIGHT_EDGE = (230, 225, 208)
 TOTAL_FIGURE_FONT = os.path.join(os.path.dirname(__file__), "assets", "fonts", "BodoniModa-Variable.ttf")
 COIN_GOLD = (232, 186, 62)
@@ -1698,19 +1701,23 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		colors = _active_stock_colors()
 		left, top, right, bottom = (int(edge) for edge in box)
 		self._draw_gold_frame(draw, box, colors["panel_gold"])
-		# The holdings' falling money carries on up through the portfolio card, under its chart.
+		# The holdings' falling money carries on up through the portfolio card, over its chart too.
 		doodles = (left + 4, top + 4, right - 4, bottom - 4)
 		paint_doodles(img, doodles, HOLDINGS_DOODLES_PATH, colors["malachite"], strength=HOLDINGS_DOODLES_STRENGTH,
 					  radius=3, offset=doodles[:2])
-		if not self._draw_section_wordmark(img, "PORTFOLIO", left + 10, top + 8):
-			draw.text((left + 13, top + 11), "PORTFOLIO", fill=colors["ink"], font=self._font(16, True))
 		today_ink = self._today_ink(day_percent)
-		# The chart runs out to the frame on the left, right and foot; the window's dates are the
+		# The chart runs out to the frame on the left, right and foot, and up to its top behind the
+		# title; the total still centres between SUMMARY_CHART rows. The window's dates are the
 		# trend card's to name.
 		plot = (left + SUMMARY_FRAME, top + SUMMARY_CHART[0], right - SUMMARY_FRAME + 1, top + SUMMARY_CHART[1])
+		chart = (plot[0], top + SUMMARY_FRAME - 2, plot[2], plot[3])
 		chart_bg = self._blend(colors["panel"], colors["panel_gold"], 0.6)
-		self._draw_summary_chart(img, draw, plot, curve_values, chart_bg, self._change_color(day_percent),
+		self._draw_summary_chart(img, draw, chart, curve_values, chart_bg, self._change_color(day_percent),
 								 colors["panel_gold"])
+		paint_doodles(img, (chart[0], chart[1], chart[2] - 1, chart[3] - 1), HOLDINGS_DOODLES_PATH, colors["malachite"],
+					  strength=HOLDINGS_DOODLES_STRENGTH, offset=chart[:2])
+		if not self._draw_section_wordmark(img, "PORTFOLIO", left + 10, top + 8):
+			draw.text((left + 13, top + 11), "PORTFOLIO", fill=colors["ink"], font=self._font(16, True))
 		self._draw_total_figure(img, draw, self._total_figure_layout(draw, plot, total_value), today_ink, chart_bg)
 
 		# Today's change, in today's colour by its solid arrow.
@@ -1808,7 +1815,7 @@ class StockTracker(RefreshOnDisplayPresentationMixin, BasePlugin):
 		if len(values) >= 2:
 			# Unpadded, the window's low nearly touches the foot and its high the top: the swings show.
 			vmin, vmax = trend_chart.value_bounds(values, 0.0)
-			points = trend_chart.plot_points((0, 3, width - 9, height - SUMMARY_HILL_GAP), values, vmin, vmax)
+			points = trend_chart.plot_points((0, SUMMARY_CURVE_TOP, width - 9, height - SUMMARY_HILL_GAP), values, vmin, vmax)
 			curve = trend_chart.monotone_curve(points)
 			# Today's value carries on flat to the right edge, past its sparkle.
 			ridge = [*curve, (width, curve[-1][1])]

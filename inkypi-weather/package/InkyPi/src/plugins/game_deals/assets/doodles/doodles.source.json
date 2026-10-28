@@ -1,0 +1,19 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the page doodle tiles",
+  "generated": "2026-10-27",
+  "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map (ink on white), tiled and tinted at draw time by utils.doodle_backdrop",
+  "assets": {
+    "deals.png": {
+      "motifs": "percent price tags, snipped tags, falling arrows, shopping bags, a tagged controller, sale stickers",
+      "style": "doodle",
+      "job_id": "d08ce2fc-c85c-462c-9021-19225d0d5b6e",
+      "source_sha256": "26b79cdb808896204f402800b5fc5bbed7d16dc18682935ec70831ea7c71e593",
+      "sha256": "c039b89c5307267f8e1bd0ea1cf7a7fda6c6f9939dd2a7476abc825a98979e20",
+      "size": [
+        480,
+        480
+      ]
+    }
+  }
+}

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from PIL import Image, ImageDraw
 
 from utils.app_utils import get_base_ui_font
+from utils.doodle_backdrop import paint_doodles
 from utils.local_wordmark import paste_local_wordmark
 
 from .price_tag import PriceTags
@@ -26,6 +27,9 @@ DOLLAR_GAP = 2
 # Preserve the accepted sale/original/discount column positions while the
 # engraved type fits independently inside the sale-price slot.
 PRICE_TAG_PAD = (13, 6)
+# Quiet discount doodles (percent tags, snipped price tags, falling arrows, sale stickers) in the
+# badges' green under each column's names and prices; the capsule art keeps the plain page around it.
+DEAL_DOODLES = Path(__file__).with_name("assets") / "doodles" / "deals.png"
 # The official marks' heights: Steam's logo in the header, CheapShark's shark and lettering in the footer.
 STEAM_LOGO_HEIGHT, CHEAPSHARK_MARK_HEIGHT, CHEAPSHARK_LETTERS_HEIGHT = 30, 22, 13
 
@@ -101,6 +105,10 @@ def render_page(snapshot, covers, *, dimensions=SIZE, theme=None, now=None):
         draw.text((626, 25), "USD", font=_font(24, True), fill=ink, anchor="lt")
     draw.text((694, 19), now.strftime("%m.%d"), font=_font(31, True), fill=ink, anchor="lt")
     draw.line((14, 67, 785, 67), fill=ink, width=2)
+    for column in range(2):
+        x0, _y0, x1, _y1 = CARD_RECTS[column]
+        prices = (x0 + ART_SIZE[0] + 4, 70, x1 + (10 if column == 0 else 3), CARD_RECTS[-1][3] + 3)
+        paint_doodles(image, prices, DEAL_DOODLES, green, offset=prices[:2])
 
     layout = []
     price_tags = PriceTags() if snapshot.deals else None

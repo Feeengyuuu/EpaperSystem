@@ -27,7 +27,7 @@ from utils.app_utils import DEFAULT_FONT_FAMILY, bounded_int, coerce_bool, get_a
 from utils.flat_icons import draw_icon
 from utils.http_client import get_http_session
 from utils.image_utils import text_width
-from utils.local_wordmark import paste_header_art
+from utils.doodle_backdrop import paint_doodles
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +58,14 @@ USER_AGENT = "InkyPi TechPulse/1.0 (+https://github.com/HackerNews/API)"
 # one fetch schedule and GitHub's star history.
 AI_PLUGIN_ID = "ai_ecosystem_pulse"
 ASSET_DIR = Path(__file__).with_name("assets")
+# The header names the page's four sources by their official logos, this tall, where the
+# generated icon strip used to be.
+HEADER_SOURCE_LOGOS = ("hn", "skills", "huggingface", "github")
+HEADER_LOGO_SIZE = 26
+# Each panel's own quiet doodles in its colour, so the four read apart: discussion, tools,
+# models, repositories.
+PANEL_DOODLES = {"hn": "hn", "skills": "skills", "huggingface": "models", "github": "repos"}
+PANEL_DOODLE_STRENGTH = 0.2
 TRENDS_FILE = "trends.json"
 PAGE_SIZE = (800, 480)
 HN_BOX = (14, 62, 404, 458)
@@ -543,8 +551,18 @@ class TechPulse(BasePlugin):
         dot = palette["up"] if status == "LIVE" else palette["amber"]
         draw.ellipse((chip_box[0] + 11, 25, chip_box[0] + 19, 33), fill=dot)
         self._draw_text(draw, (chip_box[0] + 25, 29), chip, fonts["chip"], palette["ink"], anchor="lm")
-        paste_header_art(image, ASSET_DIR / "header_art.png", subtitle_right, chip_box[0], top=4, bottom=52)
+        self._draw_header_sources(image, subtitle_right + 14, chip_box[0] - 14, 30, palette)
         draw.line((14, 55, 786, 55), fill=palette["rule"], width=2)
+
+    def _draw_header_sources(self, image, left, right, middle, palette):
+        """The sources' official logos spread evenly between ``left`` and ``right``."""
+        count = len(HEADER_SOURCE_LOGOS)
+        step = (right - left - HEADER_LOGO_SIZE) / max(1, count - 1)
+        if step < HEADER_LOGO_SIZE + 6:
+            return
+        for index, key in enumerate(HEADER_SOURCE_LOGOS):
+            self._paste_logo(image, key, (left + index * step, middle - HEADER_LOGO_SIZE / 2), HEADER_LOGO_SIZE,
+                             palette)
 
     def _status_label(self, payload, ai):
         hn = (payload.get("status") or {}).get("source_state")
@@ -557,8 +575,12 @@ class TechPulse(BasePlugin):
 
     def _section_title(self, image, draw, box, logo, title, detail, colour, palette, fonts):
         """The panel with a source logo, title and detail line; returns the title's centre line."""
-        x0, y0, _x1, _y1 = box
+        x0, y0, x1, y1 = box
         self._panel(draw, box, palette, 1.0)
+        if logo in PANEL_DOODLES:
+            inside = (x0 + 2, y0 + 2, x1 - 2, y1 - 2)
+            paint_doodles(image, inside, ASSET_DIR / "doodles" / f"{PANEL_DOODLES[logo]}.png", colour,
+                          strength=PANEL_DOODLE_STRENGTH, radius=12, offset=inside[:2])
         centre = y0 + 14
         self._paste_logo(image, logo, (x0 + 12, centre - 8), 16, palette)
         self._draw_text(draw, (x0 + 34, centre), title, fonts["section"], colour, anchor="lm")

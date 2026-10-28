@@ -1,0 +1,52 @@
+{
+  "generator": "image/gpt-image-2.5-sunburst (Creative Claw), 1024 px, styled on the page doodle tiles",
+  "generated": "2026-10-27",
+  "processing": "greyscale, 480 px square tile, LANCZOS, paper above 232 set to white",
+  "rendering": "density map (ink on white), tiled and tinted at draw time by utils.doodle_backdrop",
+  "assets": {
+    "hn.png": {
+      "motifs": "upvote triangles, chat bubbles, newspapers, laptops, coffee mugs, light bulbs, chain links",
+      "style": "doodle",
+      "job_id": "0427d7fb-32a5-4a8a-8034-bb592142d8ba",
+      "source_sha256": "767eb79f711adfbff85b936606d1847f359c9c2002c7b0d64a3d101d9af100f1",
+      "sha256": "8da3961b464366793446518368a8654c2ec9303bef466474112de076898a8040",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "skills.png": {
+      "motifs": "wrenches, puzzle pieces, gears, toolboxes, robot arms, plugs, packages, wands, checklists",
+      "style": "doodle",
+      "job_id": "e7d02a6d-68a2-4575-a957-2c3a2fadbe84",
+      "source_sha256": "8dcc359bf6e690a70b4f8ef4bec71a4f5a465205c9d4ab563db3b528773ce434",
+      "sha256": "00484a5a7ebe369015d5750e8182bbc79899de7ec87b61d242520339e21f2921",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "models.png": {
+      "motifs": "neural network diagrams, circuit brains, chips, cube stacks, robot faces, server racks",
+      "style": "doodle",
+      "job_id": "eabf1afd-bbaf-461d-a6a8-0fd3e7723174",
+      "source_sha256": "608d4ef433d2071028ea80473f4811e423aeaaf5e5bddac2aece7e10343d6642",
+      "sha256": "455fa3f8072608f8f5264358c86609c5e3e7a741d33e2051572a22239969ec4b",
+      "size": [
+        480,
+        480
+      ]
+    },
+    "repos.png": {
+      "motifs": "branch-and-merge diagrams, stars, forks, folders, tags, rubber ducks, commit timelines",
+      "style": "doodle",
+      "job_id": "002a1762-a97f-410a-86a0-28f119291af8",
+      "source_sha256": "537df16123dca6543251ed55c167b50815dee39ad5031d2fe87de3cb520f637d",
+      "sha256": "2ae768b1ba8f98e0c3c343e24cacbb4cf43f78118f1d72e5adbca736eb599233",
+      "size": [
+        480,
+        480
+      ]
+    }
+  }
+}

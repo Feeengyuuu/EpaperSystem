@@ -26,6 +26,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
+from utils.doodle_backdrop import paint_doodles
 from utils.fonts import load_font
 from utils.local_wordmark import paste_local_wordmark
 from utils.safe_image import ImageLimits, safe_open_image
@@ -65,6 +66,10 @@ MAX_DATA_BLOCKS = 10
 # a route end's airport logo or flag is STRIP_ROUTE_MARK tall. The aircraft sits on the route line
 # by its phase (STRIP_PROGRESS of the way along), and the phase chip reads PHASE_CODES.
 STRIP_H, STRIP_GAP = 66, 2
+# Quiet aviation doodles (airliners, towers, windsocks, runway marks) under the strips panel in its
+# muted ink, and in each strip in its phase's colour.
+STRIP_DOODLES = ASSETS / "doodles" / "aviation.png"
+STRIP_DOODLE_STRENGTH = 0.18
 STRIP_LOGO_HEIGHT = 14
 STRIP_ROUTE_MARK = 12
 STRIP_PROGRESS = {"departure": 0.18, "arrival": 0.86, "overflight": 0.5}
@@ -905,6 +910,8 @@ def _strips(plugin, image, snapshot, theme, now):
     draw = ImageDraw.Draw(image)
     x0, y0, x1, y1 = STRIPS
     draw.rounded_rectangle(STRIPS, radius=7, fill=theme["panel"], outline=theme["line"], width=1)
+    panel = (x0 + 2, y0 + 2, x1 - 2, y1 - 2)
+    paint_doodles(image, panel, STRIP_DOODLES, theme["muted"], radius=6, offset=panel[:2])
     draw.text((x0 + 10, y0 + 6), "FLIGHT STRIPS", font=_airport_font(plugin, 13, "bold"), fill=theme["ink"])
     planes, center = strip_order(plugin, snapshot)
     draw.text((x1 - 10, y0 + 9), "最近航班 · 航线 · 进度 · 时刻", font=plugin._font(9, "bold"), fill=theme["muted"],
@@ -916,6 +923,9 @@ def _strips(plugin, image, snapshot, theme, now):
         phase = _phase(plugin, plane, center)
         name, role = PHASES[phase]
         draw.rounded_rectangle((sx0, sy0, sx1, sy1), radius=6, fill=theme["panel2"], outline=theme["card_line"], width=1)
+        strip = (sx0 + 2, sy0 + 2, sx1 - 2, sy1 - 2)
+        paint_doodles(image, strip, STRIP_DOODLES, theme[role], strength=STRIP_DOODLE_STRENGTH, radius=5,
+                      offset=strip[:2])
         callsign = str(plane.get("callsign") or plane.get("hex") or "未知").strip()
         call_font = _airport_font(plugin, 12, text=callsign)
         # Line 1: the airline's wordmark and the callsign; the phase as a chip at the right.

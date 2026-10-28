@@ -7,6 +7,7 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
+from utils.doodle_backdrop import paint_doodles
 from utils.flat_icons import draw_icon
 from utils.local_wordmark import load_source_logo, paste_local_wordmark, paste_source_logos
 from utils.page_canvas import PageCanvas
@@ -106,6 +107,16 @@ CARD_ACCENTS = {
     "holdings": KIND_COLOURS["持仓"],
 }
 ACCENT_BAR = 6
+# Each card's kind as quiet engraving-style doodles in its colour under its figures: coins and
+# exchange arrows, chained blocks, bank columns and bonds, factories and carts, gold bars and
+# barrels, newspapers and calendars.
+DOODLE_DIR = Path(__file__).resolve().parent / "assets" / "doodles"
+DOODLE_KINDS = {
+    "fx": "fx", "dxy": "fx", "bitcoin": "crypto", "ethereum": "crypto", "solana": "crypto", "crypto": "crypto",
+    "yield": "rates", "fed_funds": "rates", "mortgage30": "rates", "cpi": "macro", "unemployment": "macro",
+    "gold": "commodities", "holdings": "holdings",
+}
+DOODLE_STRENGTH = 0.18
 # The market tiles' title row, clear of the colour bar along their top (60-66).
 TITLE_Y = 83
 TILES = ((12, 200), (206, 394), (400, 588), (594, 788))
@@ -216,9 +227,20 @@ def _accent_bar(canvas, box, accent, height=ACCENT_BAR):
     canvas.draw.rounded_rectangle((left, top, right, top + height), radius=6, fill=colour, corners=(True, True, False, False))
 
 
-def _tile_frame(canvas, left, right, title, mark=None, mark_text=None, accent=None):
+def _card_doodles(canvas, box, key, accent, bar=ACCENT_BAR):
+    """Lay ``key``'s kind of doodles in ``accent`` inside a card, under its colour bar."""
+    left, top, right, bottom = box
+    colour = canvas.color(accent) if isinstance(accent, str) else accent
+    inside = (left + 1, top + bar + 1, right - 1, bottom - 1)
+    paint_doodles(canvas.image, inside, DOODLE_DIR / f"{DOODLE_KINDS[key]}.png", colour, strength=DOODLE_STRENGTH,
+                  radius=5, offset=inside[:2])
+
+
+def _tile_frame(canvas, left, right, title, mark=None, mark_text=None, accent=None, doodles=None):
     canvas.draw.rounded_rectangle((left, 60, right, 196), radius=6, outline=canvas.color("rule"), width=1)
     _accent_bar(canvas, (left, 60, right, 196), accent)
+    if doodles:
+        _card_doodles(canvas, (left, 60, right, 196), doodles, accent or KIND_COLOURS["加密"])
     x = left + 10
     if mark is not None:
         x += _paste(canvas, mark, (x, TITLE_Y - 11)) + 6
@@ -234,7 +256,7 @@ def _fx_tile(canvas, payload, box):
     data = payload["fx"]["data"]
     series = (data.get("series") or {}).get("CNY") or []
     us, cn = _asset("flag-us", 14), _asset("flag-cn", 14)
-    _tile_frame(canvas, left, right, "美元/人民币", accent=CARD_ACCENTS["fx"])
+    _tile_frame(canvas, left, right, "美元/人民币", accent=CARD_ACCENTS["fx"], doodles="fx")
     flag_x = right - 10 - (us.width if us else 0) - (cn.width if cn else 0) - 4
     _paste(canvas, us, (flag_x, TITLE_Y - 7))
     _paste(canvas, cn, (flag_x + (us.width if us else 0) + 4, TITLE_Y - 7))
@@ -291,7 +313,7 @@ def _coin_tile(canvas, coin, box):
     left, right = box
     name = COIN_NAMES.get(coin["id"], coin.get("name") or coin["symbol"])
     _tile_frame(canvas, left, right, name, _asset(f"coin-{coin['id']}", 22), coin["symbol"][:2],
-                accent=CARD_ACCENTS.get(coin["id"], "ink"))
+                accent=CARD_ACCENTS.get(coin["id"], "ink"), doodles="crypto")
     canvas.text((right - 10, TITLE_Y), coin["symbol"], 12, "muted", anchor="rm", bold=False)
     day, week = coin.get("change_24h"), coin.get("change_7d")
     _number(canvas, (left + 10, 114), price_text(coin["price"]), 28, right - left - 20, _direction(day)[1])
@@ -308,7 +330,7 @@ def _yield_tile(canvas, payload, box):
     left, right = box
     quotes = payload["markets"]["data"].get("quotes") or {}
     ten = quotes.get("^TNX")
-    _tile_frame(canvas, left, right, "10 年期美债", mark_text="%", accent=CARD_ACCENTS["yield"])
+    _tile_frame(canvas, left, right, "10 年期美债", mark_text="%", accent=CARD_ACCENTS["yield"], doodles="yield")
     if not ten or finite(ten.get("last")) is None:
         canvas.text((left + 10, 120), "利率暂不可用", 15, "muted", anchor="lm")
         return
@@ -328,6 +350,7 @@ def _curve(canvas, payload):
     left, top, right, bottom = 12, 204, 392, 330
     canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
     _accent_bar(canvas, (left, top, right, bottom), CARD_ACCENTS["yield"])
+    _card_doodles(canvas, (left, top, right, bottom), "yield", CARD_ACCENTS["yield"])
     icon = _asset("macro-curve", MACRO_ICON_SIZE)
     title_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 18 - icon.height // 2)) + 6 if icon else 0)
     canvas.text((title_x, top + 18), "美债收益率曲线", 15, anchor="lm")
@@ -411,6 +434,7 @@ def _macro_tiles(canvas, payload):
         top = 204 + row * 64
         canvas.draw.rounded_rectangle((left, top, left + 191, top + 58), radius=6, outline=canvas.color("rule"))
         _accent_bar(canvas, (left, top, left + 191, top + 58), CARD_ACCENTS.get(key), 5)
+        _card_doodles(canvas, (left, top, left + 191, top + 58), key, CARD_ACCENTS.get(key, "ink"), 5)
         # Each indicator carries its own picture (cart, briefcase, dollar coin, gold bars, bank, house).
         icon = _asset(f"macro-{key}", MACRO_ICON_SIZE)
         label_x = left + 10 + (_paste(canvas, icon, (left + 9, top + 18 - icon.height // 2)) + 5 if icon else 0)
@@ -525,6 +549,7 @@ def _holdings(canvas, payload, now):
     left, top, right, bottom = 12, 336, 788, 468
     canvas.draw.rounded_rectangle((left, top, right, bottom), radius=6, outline=canvas.color("rule"), width=1)
     _accent_bar(canvas, (left, top, right, bottom), CARD_ACCENTS["holdings"], 4)
+    _card_doodles(canvas, (left, top, right, bottom), "holdings", CARD_ACCENTS["holdings"], 4)
     canvas.draw.rectangle((left + 8, top + 8, left + 12, top + 22), fill=canvas.color("accent"))
     draw_icon(canvas.draw, "paper", (left + 18, top + 7), 16, canvas.color("ink"), canvas.color("paper"))
     x = left + 40 + canvas.text((left + 40, top + 15), "持仓动态", 15, anchor="lm") + 10
@@ -627,7 +652,7 @@ def render_page(dimensions, payload, settings, now):
     for coin, box in zip(coins[:2], TILES[1:3]):
         _coin_tile(canvas, coin, box)
     for box in TILES[1 + len(coins[:2]):3]:
-        _tile_frame(canvas, box[0], box[1], "加密货币", mark_text="C")
+        _tile_frame(canvas, box[0], box[1], "加密货币", mark_text="C", doodles="crypto")
         canvas.text(((box[0] + box[1]) / 2, 130), "暂不可用", 15, "muted", anchor="mm")
     _yield_tile(canvas, payload, TILES[3])
     _curve(canvas, payload)
