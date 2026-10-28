@@ -770,6 +770,28 @@ def test_live_wall_decorates_empty_slots_with_league_art(monkeypatch):
     assert set(placeholders) <= {game["sport"] for game in games}
 
 
+def test_the_featured_wall_game_stands_in_its_sports_ground(monkeypatch):
+    from plugins.sports_dashboard import lower_wall_render
+
+    games, now = _wall_games(5)
+    painted = []
+    original = lower_wall_render.paint_card_backdrop
+
+    def spy(image, box, kind, panel, *args, **kwargs):
+        painted.append((box, kind))
+        return original(image, box, kind, panel, *args, **kwargs)
+
+    monkeypatch.setattr(lower_wall_render, "paint_card_backdrop", spy)
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_lower_live_wall(image, draw, (0, 0, 555, 267), games, now))
+
+    # The MLB game on top of the board takes the ballpark, inside its card's outline and stripe.
+    assert games[0]["sport"] == "MLB" and [kind for _box, kind in painted] == ["baseball"]
+    x1, y1, x2, y2 = painted[0][0]
+    assert 12 + 9 <= x1 and x2 <= 543 and lower_wall_render.WALL_HEADER_HEIGHT <= y1
+    assert y2 <= lower_wall_render.WALL_HEADER_HEIGHT + lower_wall_render.WALL_FEATURE_HEIGHT
+    assert len(set(image.crop((x1, y1, x2, y2)).get_flattened_data())) > 40
+
+
 def test_wall_slot_scenes_exist_for_every_wall_league():
     for sport, path in LOCAL_WALL_SLOT_FILLER_PATHS.items():
         with Image.open(path) as scene:

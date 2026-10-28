@@ -10,6 +10,7 @@ one along the card's bottom edge), and the leader's score is set in an ink box.
 Text stays in pure ink on the six-ink panel.
 """
 
+from .card_backdrops import SPORT_BACKDROP_KINDS, card_backdrop_box, paint_card_backdrop
 from .common import *
 
 SportsDashboard = None
@@ -424,6 +425,10 @@ class LowerWallRenderMixin:
             self._draw_wall_card(image, draw, box, game, now)
             return
         self._draw_hub_card_shell(draw, x1, y1, x2, y2, COLORS[spec.accent])
+        # The featured game stands in its sport's ground, like the league panels' own cards.
+        kind = SPORT_BACKDROP_KINDS.get(str(sport or "").upper())
+        if kind:
+            paint_card_backdrop(image, card_backdrop_box(x1, y1, x2, y2), kind, COLORS["panel"])
         self._draw_sport_logo(image, draw, sport, x1 + 14, y1 + 6, 40, 22)
         context = self._wall_context_label(sport, event) or sport
         context, font = self._fit_text_ellipsis(draw, context, 150, 11, bold=True, min_size=8)
