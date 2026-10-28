@@ -1480,3 +1480,18 @@ def test_the_heat_dial_fills_to_the_probability_in_its_heat_colour():
     right = image.getpixel((100 + 36, 78))
     assert sum(abs(a - b) for a, b in zip(left, color)) < 60
     assert right != color and sum(right) > sum(color)
+
+
+def test_the_market_art_spans_the_panel_edge_to_edge(monkeypatch):
+    plugin = OrbitalSignal({"id": PLUGIN_ID})
+    boxes = []
+    monkeypatch.setattr(plugin, "_paste_event_art", lambda image, key, box, palette: boxes.append(box))
+    image = Image.new("RGB", (800, 480), DAY_PALETTE["paper"])
+    markets = plugin._fixture_payload(NOW)["markets"][:3]
+    plugin._draw_markets(ImageDraw.Draw(image), (462, 58, 800, 448), markets, DAY_PALETTE, None, image=image)
+
+    assert len(boxes) == 3
+    # The pictures start just inside the panel's rule and end at its right edge, a pixel apart.
+    assert boxes[0][0] == 463 and boxes[-1][2] >= 798
+    assert all(right + 1 == following[0] for (_l, _t, right, _b), following in zip(boxes, boxes[1:]))
+    assert len({box[2] - box[0] for box in boxes}) <= 2

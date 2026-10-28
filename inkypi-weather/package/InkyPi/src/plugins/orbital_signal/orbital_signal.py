@@ -1451,19 +1451,23 @@ class OrbitalSignal(BasePlugin):
         columns = markets[:3]
         column_w = (right - left - 24) / 3
         columns_bottom = top + MARKET_COLUMNS_HEIGHT
+        # The event art spans the panel edge to edge, the three pictures a pixel apart.
+        art_w = (right - left - 2) / 3
         for index, market in enumerate(columns):
             col_left = left + 12 + index * column_w
             if index:
                 draw.line((col_left, top + 48, col_left, columns_bottom), fill=palette["rule"], width=1)
-            self._draw_market_column(draw, market, col_left, column_w, top, palette, family, image)
+            art_span = (round(left + 1 + index * art_w) + (1 if index else 0), round(left + 1 + (index + 1) * art_w))
+            self._draw_market_column(draw, market, col_left, column_w, top, palette, family, image, art_span)
 
-    def _draw_market_column(self, draw, market, col_left, column_w, top, palette, family, image=None):
+    def _draw_market_column(self, draw, market, col_left, column_w, top, palette, family, image=None, art_span=None):
         """One market: its event's art across the top fading into the paper (the matchup's two logos
         on it), the question under it, the league tag and the day's move, the gauge, the leading
         option with its picture, its probability, then a facts table of volume, heat and end."""
         cx = col_left + column_w / 2
         width = column_w - 8
-        art_box = (round(col_left) + 1, top + ART_TOP, round(col_left + column_w) - 1, top + ART_TOP + ART_H)
+        art_left, art_right = art_span or (round(col_left) + 1, round(col_left + column_w) - 1)
+        art_box = (art_left, top + ART_TOP, art_right, top + ART_TOP + ART_H)
         if image is not None:
             self._paste_event_art(image, market.get("event_art") or market.get("event_mark"), art_box, palette)
         teams = [team for team in market.get("teams") or [] if isinstance(team, dict)]
