@@ -40,12 +40,18 @@
           <div class="mw-temp">{{ current_temperature }}<span class="mw-temp-unit">{{ temperature_unit }}</span></div>
           <img class="mw-hero-icon{% if v.hero_art %} mw-hero-drawing{% endif %}" src="{{ v.hero_art or current_day_icon }}" alt="">
         </div>
+        {# Each reading led by its icon: the sky now, a thermometer, a warm up and a cool down arrow. #}
         <div class="mw-condition">
+          {% if current_day_icon %}<img class="mw-cond-icon" src="{{ current_day_icon }}" alt="">{% endif %}
           <span>{{ v.condition }}</span>
           <span class="mw-dot" aria-hidden="true"></span>
+          <svg class="mw-mini mw-mini-feels" viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 14.2V5a2.5 2.5 0 0 1 5 0v9.2a4.6 4.6 0 1 1-5 0z" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M12 8.5v8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="17.9" r="2.6" fill="currentColor"/></svg>
           <span>体感 {{ feels_like }}{{ deg }}</span>
         </div>
-        <div class="mw-range">最高 {{ v.high }}{{ deg }}　最低 {{ v.low }}{{ deg }}</div>
+        <div class="mw-range">
+          <span class="mw-range-item"><svg class="mw-mini mw-mini-high" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l7 8h-4.5V21h-5v-9.5H5z" fill="currentColor"/></svg>最高 {{ v.high }}{{ deg }}</span>
+          <span class="mw-range-item"><svg class="mw-mini mw-mini-low" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5l-7-8h4.5V3h5v9.5H19z" fill="currentColor"/></svg>最低 {{ v.low }}{{ deg }}</span>
+        </div>
         {% if v.mascot.line %}<div class="mw-bubble">{{ v.mascot.line }}</div>{% endif %}
         <div class="mw-tips">{% for tip in v.tips %}<span class="mw-tip">{{ tip }}</span>{% endfor %}</div>
       </div>

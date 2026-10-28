@@ -257,6 +257,21 @@ def test_the_night_hours_are_a_window_onto_a_night_sky():
     assert plain["night_sky"] == ""
 
 
+def test_the_heros_readings_are_each_led_by_an_icon():
+    now = LA.localize(datetime(2026, 10, 24, 12, 50))
+    params = _params(now)
+    view = build_view(params, now, art_dir=str(ART_DIR))
+    html = Weather({"id": "weather"}).env.get_template("weather_modern.html").render(
+        **params, view=view, width=800, height=480, theme={"mode": "day", "css": {}},
+        plugin_settings={}, style_sheets=[], font_faces=[])
+    condition = html.split('<div class="mw-condition">', 1)[1].split("</div>", 1)[0]
+    # The sky now before the condition, a thermometer before the feel; arrows before high and low.
+    assert 'class="mw-cond-icon"' in condition and condition.index("mw-cond-icon") < condition.index(view["condition"])
+    assert condition.index("mw-mini-feels") < condition.index("体感")
+    readings = html.split('<div class="mw-range">', 1)[1].split("</div>", 1)[0]
+    assert readings.index("mw-mini-high") < readings.index("最高") < readings.index("mw-mini-low") < readings.index("最低")
+
+
 def test_the_hero_illustration_follows_the_weather_the_hour_wind_and_heat():
     def art(code, night=False, force=0, celsius=18):
         return Path(modern_view._hero_art(str(ART_DIR), code, night, force, celsius)).stem
