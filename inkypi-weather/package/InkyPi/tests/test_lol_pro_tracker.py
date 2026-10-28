@@ -766,3 +766,29 @@ def test_the_role_card_is_a_tactical_screen_with_the_career_in_chips(plugin):
     # The chart is drawn larger and scaled down, so its lines come out with smooth, blended edges.
     cx, cy = x0 + 103, y0 + pro_render.RADAR_TOP
     assert len(image.crop((cx - 60, cy - 60, cx + 60, cy + 60)).getcolors(maxcolors=100_000)) > 300
+
+
+def test_cs2_matches_set_scores_and_names_in_one_scoreboard_family(plugin, monkeypatch):
+    drawn = []
+    original = ImageDraw.ImageDraw.text
+
+    def record(self, xy, text, *args, font=None, **kwargs):
+        drawn.append((str(text), font))
+        return original(self, xy, text, *args, font=font, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record)
+    colors = plugin._render_colors({"mode": "night"})
+    image = Image.new("RGB", (800, 480), colors["background"])
+    player = {"upcoming": [{"opponent": "Alliance", "event": "RLG Tesla Cup 2026", "unix_ms": 1793098800000}],
+              "recent": [{"opponent": "K27", "score": "2 : 0", "won": True},
+                         {"opponent": "BC.Game", "score": "0 : 2", "won": False}]}
+    plugin._draw_cs2_matches(image, ImageDraw.Draw(image), player, (228, 168, 388, 462), colors, plugin._pro_fonts())
+
+    faces = {text: font.getname()[0] for text, font in drawn}
+    # Scores and times in Barlow Condensed, team and event names in Barlow Semi Condensed.
+    assert {faces["2"], faces["0"], faces[":"]} == {"Barlow Condensed"}
+    assert any(text.startswith("11/") or text[:2].isdigit() for text in faces if faces[text] == "Barlow Condensed")
+    assert faces["K27"] == faces["BC.Game"] == faces["Alliance"] == "Barlow Semi Condensed"
+    assert faces["RLG Tesla Cup 2026"] == "Barlow Semi Condensed"
+    # Chinese still falls back to the page's own face through the pairing.
+    assert pro_render._match_face("name", 14).covers("中")

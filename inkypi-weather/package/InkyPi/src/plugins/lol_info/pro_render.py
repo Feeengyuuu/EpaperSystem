@@ -26,6 +26,9 @@ from plugins.sports_dashboard.common import (
     LOCAL_WORLDS_LOGO_PATH,
     LOCAL_WORLDS_WORDMARK_PATHS,
 )
+from plugins.sports_dashboard.esports_font_runs import EsportsFont
+from plugins.sports_dashboard.score_fonts import FONT_DIR as SCORE_FONT_DIR
+from utils.app_utils import get_base_ui_font
 from utils.safe_image import safe_open_image
 from utils.fonts import load_font
 
@@ -83,6 +86,10 @@ LOL_STAGE_DAYS = 45
 # A match's event logo fits this box before an upcoming match's event name, and the narrower
 # one at a result's end, which leaves the opponent's name its room.
 CS2_EVENT_LOGO, CS2_RESULT_EVENT_LOGO = (30, 15), (24, 15)
+# The CS2 page's matches in one scoreboard family (the sports dashboard's open Barlow faces):
+# Condensed for scores, times and figures, Semi Condensed for team names and labels.
+MATCH_FACES = {"score": "BarlowCondensed-Bold.ttf", "figure": "BarlowCondensed-SemiBold.ttf",
+               "name": "BarlowSemiCondensed-Bold.ttf", "label": "BarlowSemiCondensed-SemiBold.ttf"}
 # HLTV's own mark leads the Top 20 board's title.
 HLTV_LOGO, BOARD_LOGO_SIZE = "hltv-logo.png", 22
 # The CS2 page's middle carries the loadout, so its game logo keeps the band's top-left corner
@@ -145,8 +152,27 @@ def _bundled_team_logos():
     return index
 
 
+@lru_cache(maxsize=48)
+def _match_face(kind, size):
+    """``kind``'s Barlow face at ``size``, the page's own face standing in for what it lacks
+    (Chinese)."""
+    fallback = get_base_ui_font(size, bold=kind in ("score", "name"))
+    return EsportsFont(load_font(str(SCORE_FONT_DIR / MATCH_FACES[kind]), size), fallback)
+
+
 class ProRenderMixin:
     # -- shared pieces -------------------------------------------------------------------
+    def _match_text(self, draw, xy, text, kind, size, fill, *, width=None, min_size=None, anchor="lm"):
+        """``text`` in the matches' scoreboard type (MATCH_FACES), a point smaller at a time down
+        to ``min_size`` while wider than ``width``; returns the width it took."""
+        text = str(text or "")
+        font = _match_face(kind, size)
+        while width is not None and size > (min_size or size) and font.getlength(text) > width:
+            size -= 1
+            font = _match_face(kind, size)
+        draw.text(xy, text, font=font, fill=fill, anchor=anchor)
+        return font.getlength(text)
+
     def _pro_fonts(self):
         return {"hero": self._font(38, bold=True), "big": self._font(26, bold=True), "section": self._font(16, bold=True),
                 "body": self._font(14, bold=True), "text": self._font(13), "small": self._font(11),
@@ -1204,22 +1230,22 @@ class ProRenderMixin:
         # With the slot below to fill, the next match is enough; without it, the next two.
         for match in (player.get("upcoming") or [])[:1 if pool or slot else 2]:
             when = datetime.fromtimestamp(match["unix_ms"] / 1000)
-            self._text(draw, (x0, y), f"{when:%m/%d %H:%M}", fonts["tiny"], colors["cyan"])
+            self._match_text(draw, (x0, y + 6), f"{when:%m/%d %H:%M}", "figure", 13, colors["cyan"])
             # "vs", then the opponent's logo right before its name; the event's own logo leads its title.
-            self._text(draw, (x0, y + 12), "vs", fonts["small_bold"], colors["ink"])
-            name_x = x0 + self._text_width(draw, "vs", fonts["small_bold"]) + 5
+            name_x = x0 + round(self._match_text(draw, (x0, y + 21), "vs", "label", 12, colors["muted"])) + 5
             team = self._cs2_team_logo(match.get("opponent_logo"), match.get("opponent"), 16)
             if team is not None:
                 image.paste(team, (name_x + (16 - team.width) // 2, y + 13 + (16 - team.height) // 2), team)
                 name_x += 20
-            self._single(draw, (name_x, y + 12), match.get("opponent"), fonts["small_bold"], colors["ink"],
-                         x1 - name_x, 8)
+            self._match_text(draw, (name_x, y + 21), match.get("opponent"), "name", 15, colors["ink"],
+                             width=x1 - name_x, min_size=10)
             event_x = x0
             mark = self._cs2_event_logo(match.get("event"), when, links)
             if mark is not None:
                 image.paste(mark, (x0, y + 27 + (CS2_EVENT_LOGO[1] - mark.height) // 2), mark)
                 event_x += mark.width + 4
-            self._single(draw, (event_x, y + 27), match.get("event"), fonts["tiny"], colors["muted"], x1 - event_x, 7)
+            self._match_text(draw, (event_x, y + 27 + CS2_EVENT_LOGO[1] // 2), match.get("event"), "label", 12,
+                             colors["muted"], width=x1 - event_x, min_size=9)
             y += 44
         own_logo = self._cs2_team_logo(player.get("team_logo_night") or player.get("team_logo"), player.get("team"), 16)
         # The latest win takes the slot's room, so one result fewer is listed above it.
@@ -1332,18 +1358,17 @@ class ProRenderMixin:
             draw.rectangle((x1 - 5 - day_w, y0 + 6, x1 - 5, y0 + 20), fill=colors["background"])
             self._text(draw, (x1 - 1 - day_w, y0 + 7), day, fonts["tiny"], colors["ink"])
         y = y0 + text_top
-        self._text(draw, (x0 + 6, y), "vs", fonts["small_bold"], colors["ink"])
-        name_x = x0 + 11 + self._text_width(draw, "vs", fonts["small_bold"])
+        middle = y + 9
+        name_x = x0 + 11 + round(self._match_text(draw, (x0 + 6, middle), "vs", "label", 12, colors["muted"]))
         logo = self._cs2_team_logo(win.get("opponent_logo"), win.get("opponent"), 16)
         if logo is not None:
             image.paste(logo, (name_x + (16 - logo.width) // 2, y + 1 + (16 - logo.height) // 2), logo)
             name_x += 20
-        score = str(win.get("score") or "")
-        score_w = self._text_width(draw, score, fonts["body"])
-        self._single(draw, (name_x, y), self._fitted_name(draw, win.get("opponent") or "-", fonts["small_bold"],
-                                                          x1 - 12 - score_w - name_x),
-                     fonts["small_bold"], colors["ink"], x1 - 12 - score_w - name_x, 8)
-        self._text(draw, (x1 - 6 - score_w, y - 2), score, fonts["body"], colors["gold"])
+        score = " : ".join(part.strip() for part in str(win.get("score") or "").split(":"))
+        score_w = self._match_text(draw, (x1 - 6, middle), score, "score", 20, colors["gold"], anchor="rm")
+        self._match_text(draw, (name_x, middle), self._fitted_name(draw, win.get("opponent") or "-", fonts["small_bold"],
+                                                                  x1 - 12 - score_w - name_x),
+                         "name", 15, colors["ink"], width=x1 - 12 - score_w - name_x, min_size=10)
         y += WIN_HEADER_H
         for row in rows:
             self._draw_win_map(image, draw, row, (x0 + 6, y, x1 - 6), colors, fonts)
@@ -1351,7 +1376,7 @@ class ProRenderMixin:
         if line_h:
             line = (f"{player.get('nick') or ''} 本场 {win['kills']}-{win['deaths']}"
                     + (f" · ADR {win['adr']:.0f}" if isinstance(win.get("adr"), (int, float)) else ""))
-            self._single(draw, (x0 + 6, y + 1), line.strip(), fonts["tiny"], colors["gold"], width - 12, 7)
+            self._match_text(draw, (x0 + 6, y + 7), line.strip(), "label", 12, colors["gold"], width=width - 12, min_size=9)
         return True
 
     def _top_picture(self, art, size, text_top, colors):
@@ -1381,14 +1406,13 @@ class ProRenderMixin:
         else:
             draw.rectangle((x0, y + 1, x0 + chip_w, y + 1 + chip_h), fill=colors["panel"])
         draw.rectangle((x0, y + 1, x0 + chip_w, y + 1 + chip_h), outline=colors["green"] if won else colors["red"])
-        score = f"{row.get('ours')}:{row.get('theirs')}"
-        self._text(draw, (x1 - self._text_width(draw, score, fonts["small_bold"]), y), score, fonts["small_bold"],
-                   colors["green"] if won else colors["red"])
+        middle = y + 1 + chip_h // 2
+        self._match_text(draw, (x1, middle), f"{row.get('ours')}:{row.get('theirs')}", "score", 15,
+                         colors["green"] if won else colors["red"], anchor="rm")
         kd_right = x1 - 33
         if row.get("kills") is not None:
-            kd = f"{row['kills']}-{row.get('deaths', 0)}"
-            self._text(draw, (kd_right - self._text_width(draw, kd, fonts["tiny"]), y + 2), kd, fonts["tiny"],
-                       colors["muted"])
+            self._match_text(draw, (kd_right, middle), f"{row['kills']}-{row.get('deaths', 0)}", "figure", 13,
+                             colors["muted"], anchor="rm")
         name_x = x0 + chip_w + 5
         self._single(draw, (name_x, y), row.get("name") or row.get("english") or "", fonts["small_bold"],
                      colors["ink"] if won else colors["muted"], kd_right - 30 - name_x, 8)
@@ -1442,17 +1466,21 @@ class ProRenderMixin:
             image.paste(own_logo, (x + (16 - own_logo.width) // 2, y + 3 + (16 - own_logo.height) // 2), own_logo)
         x += 20
         ours, theirs = ([part.strip() for part in str(match.get("score") or "").split(":")] + ["-", "-"])[:2]
-        for text, bright in ((ours, won), (":", False), (theirs, not won)):
-            self._text(draw, (x, y + 2), text, fonts["body"], colors["ink"] if bright else colors["muted"])
-            x += self._text_width(draw, text, fonts["body"]) + 3
-        x += 2
+        # The score in a fixed slot, its colon centred, so every row's score lines up.
+        colon_x = x + 22
+        self._match_text(draw, (colon_x, y + 11), ":", "score", 18, colors["muted"], anchor="mm")
+        self._match_text(draw, (colon_x - 5, y + 11), ours, "score", 18, colors["ink"] if won else colors["muted"],
+                         anchor="rm")
+        self._match_text(draw, (colon_x + 5, y + 11), theirs, "score", 18, colors["muted"] if won else colors["ink"],
+                         anchor="lm")
+        x = colon_x + 27
         # The opponent's logo keeps its slot when it does not load, so the names stay in a column.
         logo = (team_logo or self._cs2_team_logo)(match.get("opponent_logo"), match.get("opponent"), 16)
         if logo is not None:
             image.paste(logo, (int(x) + (16 - logo.width) // 2, y + 3 + (16 - logo.height) // 2), logo)
-        x += 20
-        self._single(draw, (x, y + 3), self._fitted_name(draw, match.get("opponent") or "-", fonts["small_bold"], x1 - x),
-                     fonts["small_bold"], colors["ink"] if won else colors["muted"], x1 - x, 8)
+        x += 21
+        self._match_text(draw, (x, y + 11), self._fitted_name(draw, match.get("opponent") or "-", fonts["small_bold"], x1 - x),
+                         "name", 15, colors["ink"] if won else colors["muted"], width=x1 - x, min_size=10)
 
     def _fitted_name(self, draw, name, font, max_width, min_size=8):
         """``name`` when it fits ``max_width`` at ``min_size`` or larger; else a long team name's
