@@ -295,32 +295,35 @@ def _grid(canvas, payload):
     share = float(grid.get("renewable_share") or 0)
     x, x1 = left + 10, left + 186
     y = top + HEADER + 6
-    width = canvas.text((x, y - 2), f"{share:.0%}", 30, "grid", anchor="la")
-    canvas.text((x + width + 6, y + 6), "可再生能源", 11, anchor="la")
-    canvas.text((x + width + 6, y + 21), f"{share * supply / 1000:.1f} / {supply / 1000:.1f} GW", 9, "muted",
+    width = canvas.text((x, y - 4), f"{share:.0%}", 38, "grid", anchor="la")
+    canvas.text((x + width + 7, y + 5), "可再生能源", 14, anchor="la")
+    canvas.text((x + width + 7, y + 24), f"{share * supply / 1000:.1f} / {supply / 1000:.1f} GW", 11, "muted",
                 anchor="la", bold=False)
-    # The mix as one bar, then as a table that is also the chart's legend.
+    # The mix as one bar, then as a table that is also the chart's legend, its rows spread to
+    # the card's foot.
     rows = sorted(((name, float(now.get(name) or 0)) for name in FUEL_ORDER), key=lambda row: -row[1])
-    bar_y, cursor = y + 38, float(x)
+    bar_y, cursor = y + 45, float(x)
     for name in MIX_ORDER:
         part = (x1 - x) * float(now.get(name) or 0) / supply
         if part > 0:
-            canvas.draw.rectangle((cursor, bar_y, cursor + part, bar_y + 7), fill=canvas.palette["fuels"][name])
+            canvas.draw.rectangle((cursor, bar_y, cursor + part, bar_y + 10), fill=canvas.palette["fuels"][name])
             cursor += part
-    canvas.draw.rectangle((x, bar_y, x1, bar_y + 7), outline=canvas.color("ink"), width=1)
+    canvas.draw.rectangle((x, bar_y, x1, bar_y + 10), outline=canvas.color("ink"), width=1)
     top_share = max((mw for _name, mw in rows), default=1) / supply or 1
-    row_y = bar_y + 15
-    for name, mw in [row for row in rows if row[1] > 0][:6]:
-        portion = mw / supply
-        canvas.draw.rectangle((x, row_y + 1, x + 8, row_y + 9), fill=canvas.palette["fuels"][name])
-        canvas.text((x + 12, row_y + 5), FUEL_LABELS[name], 10, anchor="lm")
-        bar_x0, bar_x1 = x + 48, x + 100
-        canvas.draw.rectangle((bar_x0, row_y + 3, bar_x1, row_y + 7), fill=canvas.color("panel"))
-        canvas.draw.rectangle((bar_x0, row_y + 3, bar_x0 + (bar_x1 - bar_x0) * portion / top_share, row_y + 7),
+    shown = [row for row in rows if row[1] > 0]
+    row_y = bar_y + 16
+    pitch = min(19.0, (bottom - 6 - row_y) / max(1, len(shown)))
+    for name, mw in shown:
+        portion, middle = mw / supply, round(row_y + pitch / 2)
+        canvas.draw.rectangle((x, middle - 5, x + 10, middle + 5), fill=canvas.palette["fuels"][name])
+        canvas.text((x + 15, middle), FUEL_LABELS[name], 12 if pitch >= 15 else 11, anchor="lm")
+        bar_x0, bar_x1 = x + 56, x + 104
+        canvas.draw.rectangle((bar_x0, middle - 3, bar_x1, middle + 3), fill=canvas.color("panel"))
+        canvas.draw.rectangle((bar_x0, middle - 3, bar_x0 + (bar_x1 - bar_x0) * portion / top_share, middle + 3),
                               fill=canvas.palette["fuels"][name])
-        canvas.text((x + 140, row_y + 5), f"{mw / 1000:.1f}", 10, anchor="rm")
-        canvas.text((x1, row_y + 5), f"{portion:.0%}", 9, "muted", anchor="rm", bold=False)
-        row_y += 15
+        canvas.text((x + 144, middle), f"{mw / 1000:.1f}", 12 if pitch >= 15 else 11, anchor="rm")
+        canvas.text((x1, middle), f"{portion:.0%}", 10, "muted", anchor="rm", bold=False)
+        row_y += pitch
     canvas.draw.line((x1 + 8, top + HEADER + 8, x1 + 8, bottom - 8), fill=canvas.color("rule"), width=1)
     _supply_chart(canvas, grid, (x1 + 18, top + HEADER + 10, right - 10, bottom - 22))
 

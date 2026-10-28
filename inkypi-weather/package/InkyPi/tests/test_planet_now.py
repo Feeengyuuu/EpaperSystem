@@ -209,6 +209,24 @@ def test_the_page_draws_four_cards_in_their_own_colours(mode):
     assert palette["gold"] in ring
 
 
+def test_the_grid_table_fills_its_column_to_the_card_foot(monkeypatch):
+    canvas = render.PageCanvas(render._palette({}))
+    labels = []
+    original = canvas.text
+    monkeypatch.setattr(canvas, "text", lambda xy, text, *args, **kwargs: (
+        labels.append((xy, text, args[0] if args else kwargs.get("size"))), original(xy, text, *args, **kwargs))[1])
+
+    render._grid(canvas, _payload())
+
+    left, top, _right, bottom = render.CARDS["grid"]
+    rows = [(xy, size) for xy, text, size in labels if text in render.FUEL_LABELS.values()]
+    share = next(size for _xy, text, size in labels if text.endswith("%") and size > 20)
+    assert share >= 36 and len(rows) >= 5
+    # The source rows share the column down to the card's foot, at a legible size.
+    assert bottom - 16 <= rows[-1][0][1] <= bottom - 6
+    assert all(size >= 11 for _xy, size in rows)
+
+
 def test_the_whole_earth_is_cut_from_the_black_of_space():
     shot = Image.new("RGB", (200, 200), (0, 0, 0))
     ImageDraw.Draw(shot).ellipse((40, 30, 160, 150), fill=(30, 90, 170))
