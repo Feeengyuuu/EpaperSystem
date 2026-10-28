@@ -792,3 +792,22 @@ def test_cs2_matches_set_scores_and_names_in_one_scoreboard_family(plugin, monke
     assert faces["RLG Tesla Cup 2026"] == "Barlow Semi Condensed"
     # Chinese still falls back to the page's own face through the pairing.
     assert pro_render._match_face("name", 14).covers("中")
+
+
+@pytest.mark.parametrize("installed", [False, True])
+def test_the_cs2_rating_uses_cs2s_own_face_when_the_owner_installed_it(monkeypatch, tmp_path, installed):
+    import shutil
+
+    from plugins.sports_dashboard.score_fonts import FONT_DIR
+
+    monkeypatch.setenv("INKYPI_DATA_DIR", str(tmp_path))
+    if installed:
+        # Any font file under the private name stands in for the owner's Stratum2.
+        (tmp_path / "fonts").mkdir()
+        shutil.copy(FONT_DIR / "BarlowSemiCondensed-Bold.ttf", tmp_path / "fonts" / "sports-esports-cs2-score.ttf")
+    face = LoLInfo._cs2_rating_face(pro_render.CS2_RATING_DIGITS)
+    primary = getattr(face, "primary", face)
+
+    assert primary.getname()[0] == ("Barlow Semi Condensed" if installed else "Barlow Condensed")
+    box = face.getbbox("8")
+    assert abs((box[3] - box[1]) - pro_render.CS2_RATING_DIGITS) <= 2

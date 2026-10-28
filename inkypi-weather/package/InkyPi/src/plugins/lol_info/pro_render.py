@@ -14,7 +14,7 @@ import os
 import re
 import unicodedata
 from datetime import datetime
-from functools import lru_cache
+from functools import lru_cache, partial
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
@@ -27,6 +27,7 @@ from plugins.sports_dashboard.common import (
     LOCAL_WORLDS_WORDMARK_PATHS,
 )
 from plugins.sports_dashboard.esports_font_runs import EsportsFont
+from plugins.sports_dashboard.esports_fonts import active_font, type_scope
 from plugins.sports_dashboard.score_fonts import FONT_DIR as SCORE_FONT_DIR
 from utils.app_utils import get_base_ui_font
 from utils.safe_image import safe_open_image
@@ -90,6 +91,8 @@ CS2_EVENT_LOGO, CS2_RESULT_EVENT_LOGO = (30, 15), (24, 15)
 # Condensed for scores, times and figures, Semi Condensed for team names and labels.
 MATCH_FACES = {"score": "BarlowCondensed-Bold.ttf", "figure": "BarlowCondensed-SemiBold.ttf",
                "name": "BarlowSemiCondensed-Bold.ttf", "label": "BarlowSemiCondensed-SemiBold.ttf"}
+# The rating's digits: their height and the baseline and left edge they stand on.
+CS2_RATING_DIGITS, CS2_RATING_AT = 35, (620, 83)
 # HLTV's own mark leads the Top 20 board's title.
 HLTV_LOGO, BOARD_LOGO_SIZE = "hltv-logo.png", 22
 # The CS2 page's middle carries the loadout, so its game logo keeps the band's top-left corner
@@ -823,8 +826,8 @@ class ProRenderMixin:
             self._paste_asset_logo(image, "art-cs2-hero.png", (guns_box[0], 18, 600, 132))
         self._text(draw, (620, 22), "RATING 3.0", fonts["small_bold"], colors["muted"])
         rating = player.get("rating")
-        self._text(draw, (618, 38), f"{rating:.2f}" if isinstance(rating, (int, float)) else "-", self._font(46, bold=True),
-                   colors["gold"])
+        draw.text(CS2_RATING_AT, f"{rating:.2f}" if isinstance(rating, (int, float)) else "-",
+                  font=self._cs2_rating_face(CS2_RATING_DIGITS), fill=colors["gold"], anchor="ls")
         self._single(draw, (620, 98), self._cs2_window(player), fonts["small"], colors["muted"], 166, 8)
         self._tracker_badge(draw, pick, colors, fonts)
 
@@ -836,6 +839,17 @@ class ProRenderMixin:
                                                    player.get("team"), 150), RIGHT)
         self._draw_cs2_board(image, draw, data.get("board") or [], RIGHT, player, data, colors, fonts)
         return image if tuple(dimensions) == (800, 480) else image.resize(tuple(dimensions), Image.Resampling.LANCZOS)
+
+    @staticmethod
+    def _cs2_rating_face(digits):
+        """CS2's own display face for the rating, its digits ``digits`` px tall: Stratum2 when the
+        owner has installed it on the device (sports-esports-cs2-score in the data fonts, see
+        sports_dashboard/assets/fonts/ESPORTS.md), else the matches' Barlow Condensed."""
+        with type_scope("cs2"):
+            private = active_font(digits, True)
+        face = (private.font_variant if isinstance(private, EsportsFont) else partial(_match_face, "score"))
+        probe = face(size=digits).getbbox("8")
+        return face(size=max(8, round(digits * digits / max(1, probe[3] - probe[1]))))
 
     def _map_art(self, map_key):
         """The official loading art of a competitive map (assets/maps/<map>.jpg), or None."""
