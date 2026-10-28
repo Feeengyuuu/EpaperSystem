@@ -365,6 +365,29 @@ def test_the_dollar_card_shows_each_currency_by_its_flag_and_sign():
     assert any(blue > 120 and red < 60 for red, _green, blue in foot)  # the EU flag's blue
 
 
+def test_holdings_are_shown_by_their_logos_alone_and_a_chip_only_without_one(monkeypatch):
+    from plugins.money_radar import news_rows
+
+    canvas = PageCanvas(money_render._palette({}), family="Microsoft YaHei")
+    chips = []
+    monkeypatch.setattr(news_rows, "chip", lambda _canvas, x, y, symbol, width=64: chips.append(symbol) or width)
+    monkeypatch.setattr(money_render, "_draw_chip", lambda _canvas, box, symbol, radius: chips.append(symbol))
+    news = [{"symbol": symbol, "title": f"{symbol} story", "time": "2026-10-21T20:05:00+00:00"}
+            for symbol in ("NTDOY", "SPY", "ZZZZ")]
+    payload = {"earnings": {"state": "disabled", "data": {}}, "filings": {"state": "disabled", "data": {}},
+               "news": {"data": {"items": news}}, "symbols": ["NTDOY", "SPY", "ZZZZ"], "symbols_from_portfolio": True}
+
+    money_render._holdings(canvas, payload, NOW)
+
+    # Nintendo and SPDR show as their logos in the header and the rows; a ticker with no logo
+    # keeps its chip in both.
+    assert chips == ["ZZZZ", "ZZZZ"]
+    nintendo = money_render._holding_logo(canvas, "NTDOY", money_render.HEADER_HOLDING_LOGO_SIZE,
+                                          money_render.HEADER_HOLDING_LOGO_WIDTH)
+    assert nintendo.width > money_render.HOLDING_LOGO_SLOT  # the wordmark keeps a readable width
+    assert news_rows.mark(canvas, 30, 400, "NTDOY") == news_rows.MARK_SLOT
+
+
 def test_earnings_rows_lead_with_the_holdings_mark():
     day = PageCanvas(money_render._palette({}))
     night = PageCanvas(money_render._palette({"_inkypi_theme": {"mode": "night"}}))

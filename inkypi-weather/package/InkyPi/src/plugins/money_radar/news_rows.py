@@ -97,6 +97,18 @@ def chip(canvas,x,y,symbol,width=64):
     text(canvas,((compartment[0]+compartment[2])/2,y),symbol,'ticker',selected,foreground,'center',width=code_width)
     return width
 
+# A holding's own logo leads its news row, centred in a column this wide (enough for a wordmark
+# such as Nintendo's to read); the ticker chip stands in only where there is no logo.
+MARK_SLOT=34
+
+def mark(canvas,x,y,symbol,slot=MARK_SLOT):
+    symbol=str(symbol or '').upper()
+    logo=render._holding_logo(canvas,symbol,render.HOLDING_LOGO_SIZE,slot)
+    if logo is None:
+        return chip(canvas,x,y,symbol,width=max(slot,round(measure(canvas,symbol,'ticker',10))+8))
+    canvas.image.paste(logo,(round(x+(slot-logo.width)/2),round(y-logo.height/2)),logo)
+    return slot
+
 def news(canvas,items,now,left,right,top,rows):
     if not items:
         text(canvas,(left,top+4),'暂无持仓相关新闻',size=13,color='muted')
@@ -110,7 +122,7 @@ def news(canvas,items,now,left,right,top,rows):
     time_width=max((measure(canvas,item,'time',10) for item in metadata),default=0)
     for index,(item,meta) in enumerate(zip(visible,metadata)):
         y=top+index*19
-        tag_width=chip(canvas,left,y,item.get('symbol'))
+        tag_width=mark(canvas,left,y,item.get('symbol'))
         title_left=left+tag_width+7
         title_right=right-time_width-8
         text(canvas,(title_left,y),item['title'],size=13,width=max(8,title_right-title_left))

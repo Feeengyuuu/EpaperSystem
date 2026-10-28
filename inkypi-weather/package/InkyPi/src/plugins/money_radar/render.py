@@ -52,6 +52,9 @@ EARNINGS_ROWS = 2
 # holdings list shows (stocktracker/assets/logos/<symbol>.png), in a HOLDING_LOGO_SLOT-wide slot.
 HOLDING_LOGOS = Path(__file__).resolve().parents[1] / "stocktracker" / "assets" / "logos"
 HOLDING_LOGO_SIZE, HOLDING_LOGO_SLOT = 14, 20
+# The holdings header lists each holding by its logo, this tall and at most this wide (a wordmark
+# such as Nintendo's needs the width to read), this far apart.
+HEADER_HOLDING_LOGO_SIZE, HEADER_HOLDING_LOGO_WIDTH, HEADER_HOLDING_GAP = 15, 40, 9
 # Ticker chips in each brand's own published colour, as is (no snapping to the panel's
 # inks): (fill, text, outline). Brands whose colours are close keep apart by the shape of
 # their mark: Nintendo is a red outlined pill, SpaceX black on white, Apple plain black.
@@ -509,14 +512,14 @@ def _earnings(canvas, payload, now, left, right, top, rows):
     return len(items)
 
 
-def _holding_logo(canvas, symbol, size):
+def _holding_logo(canvas, symbol, size, width=HOLDING_LOGO_SLOT):
     """The company's mark as the Robinhood holdings page shows it, at most ``size`` tall and
-    HOLDING_LOGO_SLOT wide, its black parts in the night ink; None without one."""
+    ``width`` wide, its black parts in the night ink; None without one."""
     path = HOLDING_LOGOS / f"{str(symbol or '').strip().lower()}.png"
     ink = canvas.color("ink") if canvas.color("paper") == _rgb(NIGHT["paper"]) else None
     logo = load_source_logo(path, size, ink)
-    if logo is not None and logo.width > HOLDING_LOGO_SLOT:
-        logo = load_source_logo(path, max(1, round(size * HOLDING_LOGO_SLOT / logo.width)), ink)
+    if logo is not None and logo.width > width:
+        logo = load_source_logo(path, max(1, round(size * width / logo.width)), ink)
     return logo
 
 
@@ -564,12 +567,16 @@ def _holdings(canvas, payload, now):
     detail = " · ".join([origin, *hint]) if hint else f"{origin} · Yahoo · Finnhub · SEC"
     detail_width = canvas.text((right - 8, top + 15), detail, 11, "muted", anchor="rm", bold=False)
     for symbol in payload["symbols"]:
-        width = canvas.width(symbol, 10) + 10
+        # Each holding by its company's logo alone; a ticker chip only where there is no logo.
+        logo = _holding_logo(canvas, symbol, HEADER_HOLDING_LOGO_SIZE, HEADER_HOLDING_LOGO_WIDTH)
+        width = logo.width if logo is not None else canvas.width(symbol, 10) + 10
         if x + width > right - 16 - detail_width:
             break
-        # The holdings row doubles as the colour key for the chips below.
-        _draw_chip(canvas, (x, top + 8, x + width, top + 22), symbol, 7)
-        x += width + 4
+        if logo is not None:
+            canvas.image.paste(logo, (round(x), round(top + 15 - logo.height / 2)), logo)
+        else:
+            _draw_chip(canvas, (x, top + 8, x + width, top + 22), symbol, 7)
+        x += width + HEADER_HOLDING_GAP
     canvas.rule((left + 8, top + 28, right - 8, top + 28))
     body, rows = top + 42, 5
     news = payload["news"]["data"].get("items", [])
