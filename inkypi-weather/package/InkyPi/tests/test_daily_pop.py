@@ -142,6 +142,29 @@ def test_page_renders_long_text_without_any_images(mode):
     assert len(image.getcolors(800 * 480)) > 4
 
 
+def test_bilibili_covers_fade_into_the_page_under_their_titles_with_translucent_chips():
+    from plugins.daily_pop import render
+
+    payload = _payload()
+    for index, video in enumerate(payload["bilibili"]["data"]["videos"]):
+        video["cover"] = f"https://i0.hdslb.com/{index}.jpg"
+    red = Image.new("RGB", (320, 180), (200, 30, 30))
+    images = {sources.safe_image_url(video["cover"]): red for video in payload["bilibili"]["data"]["videos"]}
+    image = render_page((800, 480), payload, {"_inkypi_theme": {"mode": "day"}}, NOW, images)
+
+    left, top, right, _bottom = render.CARDS["bilibili"]
+    cover_top = top + render.BAR + 24 + 2
+    middle = (left + right) // 2
+    fade = cover_top + round(render.BILI_LEAD_HEIGHT * render.BILI_LEAD_FADE)
+    # Solid cover above the fade, then easing to the page by the cover's foot, under the title.
+    assert image.getpixel((middle, fade - 30)) == (200, 30, 30)
+    foot = image.getpixel((right - 12, cover_top + render.BILI_LEAD_HEIGHT - 2))
+    assert foot[1] > 200 and foot[2] > 200
+    # The rank chip lets the cover show through: neither the solid brand blue nor the cover.
+    chip = image.getpixel((left + 6 + 6 + 3, cover_top + 6 + 9))
+    assert chip not in (render.BRANDS["bilibili"], (200, 30, 30)) and chip[0] > 30
+
+
 def test_wiki_globe_is_a_lit_sphere_with_a_glow():
     from plugins.daily_pop.render import WIKI_GLOW_PAD, wiki_globe
 

@@ -68,10 +68,16 @@ WIKI_LIGHT = (0.32, 0.28)
 WIKI_SHADE = 0.5
 WIKI_NODE_RADII = (8, 7, 7, 6, 6)
 WIKI_TITLE_SIZES = (14, 13, 13, 12, 12)
-# Bilibili: the lead video's cover height and the rows' thumbnail height at most.
-BILI_LEAD_HEIGHT = 120
-BILI_THUMB_HEIGHT = 50
+# Bilibili: the lead video's cover runs down behind its title, fading into the page from
+# BILI_LEAD_FADE of its height; each row's thumbnail fills the row's height and fades into the
+# page across its right side from BILI_THUMB_FADE of its width, the title starting over the fade.
+BILI_LEAD_HEIGHT = 176
+BILI_LEAD_FADE = 0.56
+BILI_THUMB_FADE = 0.58
+BILI_THUMB_TITLE = 0.8
 BILI_TWO_LINE_SIZE = 14
+# The translucent chips over the covers: how much of their fill covers the picture.
+CHIP_ALPHA, PILL_ALPHA = 0.8, 0.58
 
 
 def _rgb(value):
@@ -167,6 +173,35 @@ def _paste_fit(canvas, picture, box, *, centering=(0.5, 0.5), radius=5):
     canvas.image.paste(tile, (x0, y0), mask)
 
 
+def _paste_fade(canvas, picture, box, *, fade_from, across=False, radius=5, centering=(0.5, 0.4)):
+    """``picture`` fitted to ``box``, its near corners rounded, fading into the page from
+    ``fade_from`` of its height (of its width when ``across``) to its far edge."""
+    x0, y0, x1, y1 = [int(value) for value in box]
+    size = (max(1, x1 - x0), max(1, y1 - y0))
+    if picture is None:
+        picture = Image.new("RGB", size, canvas.color("rule"))
+    tile = ImageOps.fit(picture.convert("RGB"), size, method=Image.Resampling.LANCZOS, centering=centering)
+    mask = Image.new("L", size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, size[0] - 1 + radius * across, size[1] - 1 + radius * (not across)),
+                                           radius=radius, fill=255)
+    length = size[0] if across else size[1]
+    start = round(length * fade_from)
+    ramp = Image.new("L", (length, 1), 255)
+    for index in range(start, length):
+        t = (index - start) / max(1, length - 1 - start)
+        ramp.putpixel((index, 0), round(255 * (1 - t * t * (3 - 2 * t))))
+    ramp = ramp.resize(size) if across else ramp.rotate(-90, expand=True).resize(size)
+    canvas.image.paste(tile, (x0, y0), ImageChops.multiply(mask, ramp))
+
+
+def _glass(canvas, box, fill, alpha, radius):
+    """A translucent rounded chip, borderless: ``fill`` over whatever lies beneath at ``alpha``."""
+    x0, y0, x1, y1 = [round(value) for value in box]
+    mask = Image.new("L", (x1 - x0 + 1, y1 - y0 + 1), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, x1 - x0, y1 - y0), radius=radius, fill=round(255 * alpha))
+    canvas.image.paste(fill, (x0, y0, x1 + 1, y1 + 1), mask)
+
+
 def _move_badge(canvas, xy, move, *, anchor_right=False):
     """NEW in a red pill, or a small triangle and the places gained or lost; returns its width."""
     x, y = xy
@@ -190,8 +225,9 @@ def _move_badge(canvas, xy, move, *, anchor_right=False):
 
 
 def _rank_chip(canvas, xy, rank, fill):
+    """The rank as a translucent chip of the source's colour over the cover."""
     x, y = xy
-    canvas.draw.rounded_rectangle((x, y, x + 20, y + 18), radius=4, fill=fill)
+    _glass(canvas, (x, y, x + 20, y + 18), fill, CHIP_ALPHA, 6)
     canvas.text((x + 10, y + 9), str(rank), 11, (255, 255, 255), anchor="mm")
 
 
@@ -210,53 +246,55 @@ def _bilibili(canvas, payload, images):
         canvas.text(((left + right) / 2, (top + bottom) / 2), "B站数据暂不可用", 14, "muted", anchor="mm")
         return
     lead = videos[0]
-    # A little shorter than 16:9, so the three rows under it each get room for every line.
-    cover_box = (left + 8, top + 4, right - 8, top + 4 + BILI_LEAD_HEIGHT)
-    _paste_fit(canvas, images.get(sources.safe_image_url(lead.get("cover"))), cover_box)
+    # The cover runs on down behind the title, fading into the page under it.
+    cover_box = (left + 6, top + 2, right - 6, top + 2 + BILI_LEAD_HEIGHT)
+    _paste_fade(canvas, images.get(sources.safe_image_url(lead.get("cover"))), cover_box, fade_from=BILI_LEAD_FADE)
     _rank_chip(canvas, (cover_box[0] + 6, cover_box[1] + 6), 1, BRANDS["bilibili"])
     views = f"{count_text(lead.get('views'))}播放"
     gain = _view_gain(lead, previous_views)
     pill = views + (f" · +{gain}" if gain else "")
     pill_w = canvas.width(pill, 10) + 14
-    canvas.draw.rounded_rectangle((cover_box[0] + 6, cover_box[3] - 24, cover_box[0] + 6 + pill_w, cover_box[3] - 6),
-                                  radius=9, fill=canvas.color("shade"))
-    canvas.text((cover_box[0] + 6 + pill_w / 2, cover_box[3] - 15), pill, 10, (255, 255, 255), anchor="mm")
+    pill_y = cover_box[1] + round(BILI_LEAD_HEIGHT * BILI_LEAD_FADE) - 26
+    _glass(canvas, (cover_box[0] + 6, pill_y, cover_box[0] + 6 + pill_w, pill_y + 18), canvas.color("shade"), PILL_ALPHA, 9)
+    canvas.text((cover_box[0] + 6 + pill_w / 2, pill_y + 9), pill, 10, (255, 255, 255), anchor="mm")
     _move_badge(canvas, (cover_box[2] - 6, cover_box[1] + 15), moves.get(lead.get("title")), anchor_right=True)
-    y = cover_box[3] + 6
-    size, lines = _fitted_title(canvas, lead.get("title"), right - left - 20, 34, largest=18, smallest=13)
+    size, lines = _fitted_title(canvas, lead.get("title"), right - left - 20, 44, largest=18, smallest=13)
+    y = cover_box[3] - 4 - len(lines) * (size + 5) + 5
     for line in lines:
-        canvas.text((left + 10, y), line, size)
+        canvas.text((left + 10, y), line, size, stroke="paper")
         y += size + 5
     meta = " · ".join(part for part in (lead.get("owner"), lead.get("section"), lead.get("reason")) if part)
-    canvas.text((left + 10, y + 2), meta, 10, "muted", bold=False, width=right - left - 20)
-    row_top = y + 22
+    canvas.text((left + 10, cover_box[3] + 3), meta, 10, "muted", bold=False, width=right - left - 20)
+    row_top = cover_box[3] + 23
     row_h = (bottom - 6 - row_top) / 3
     for index, video in enumerate(videos[1:4], start=2):
         y0 = row_top + (index - 2) * row_h
         canvas.rule((left + 8, y0 - 3, right - 8, y0 - 3))
-        # Everything stays inside the row, clear of the next rule: the 16:9 thumbnail, the
-        # views line at the row's foot and the title fitted into the room above it.
-        thumb_h = int(min(BILI_THUMB_HEIGHT, row_h - 8))
+        # The thumbnail fills the row and fades into the page across its right side; the title
+        # starts over the fade, the views line at the row's foot, all clear of the next rule.
+        thumb_h = int(row_h - 6)
         thumb = (left + 8, int(y0 + 1), left + 8 + round(thumb_h * 16 / 9), int(y0 + 1) + thumb_h)
-        _paste_fit(canvas, images.get(sources.safe_image_url(video.get("cover"))), thumb, radius=4)
-        _rank_chip(canvas, (thumb[0] + 2, thumb[1] + 2), index, BRANDS["bilibili"])
+        _paste_fade(canvas, images.get(sources.safe_image_url(video.get("cover"))), thumb, fade_from=BILI_THUMB_FADE,
+                    across=True, radius=4)
+        _rank_chip(canvas, (thumb[0] + 3, thumb[1] + 3), index, BRANDS["bilibili"])
+        text_x = thumb[0] + round((thumb[2] - thumb[0]) * BILI_THUMB_TITLE)
         meta_y = y0 + row_h - 19
         # The glyphs of a title's last line reach a fifth of its size below its pitch.
         title_h = meta_y - 7 - y0
         # A short title is set larger and centred over its views line; a long one wraps smaller.
-        size, lines = _fitted_title(canvas, video.get("title"), right - thumb[2] - 16, title_h, largest=16, smallest=11)
+        size, lines = _fitted_title(canvas, video.get("title"), right - text_x - 10, title_h, largest=16, smallest=11)
         if len(lines) > 1 and size > BILI_TWO_LINE_SIZE:
             # Two-line titles share one size, so the rows keep one rhythm.
-            size, lines = _fitted_title(canvas, video.get("title"), right - thumb[2] - 16, title_h,
+            size, lines = _fitted_title(canvas, video.get("title"), right - text_x - 10, title_h,
                                         largest=BILI_TWO_LINE_SIZE, smallest=11)
         block = len(lines) * (size + 4) - 4
         for number, line in enumerate(lines):
-            canvas.text((thumb[2] + 8, y0 + (title_h - block) / 2 + number * (size + 4)), line, size)
-        x = thumb[2] + 8
-        x += canvas.text((x, meta_y), f"{count_text(video.get('views'))}播放", 10, "muted", bold=False) + 6
+            canvas.text((text_x, y0 + (title_h - block) / 2 + number * (size + 4)), line, size, stroke="paper")
+        x = text_x
+        x += canvas.text((x, meta_y), f"{count_text(video.get('views'))}播放", 10, "muted", bold=False, stroke="paper") + 6
         gain = _view_gain(video, previous_views)
         if gain:
-            x += canvas.text((x, meta_y), f"+{gain}", 10, "up") + 6
+            x += canvas.text((x, meta_y), f"+{gain}", 10, "up", stroke="paper") + 6
         _move_badge(canvas, (right - 10, meta_y + 6), moves.get(video.get("title")), anchor_right=True)
 
 
