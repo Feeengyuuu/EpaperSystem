@@ -14,7 +14,12 @@ index's own mark. No colour is ever a filled block except the 头条 seal.
 
 from __future__ import annotations
 
+from functools import lru_cache
+from pathlib import Path
+
 from PIL import ImageDraw
+
+from utils.fonts import load_font
 
 from . import news_art
 
@@ -44,6 +49,11 @@ COMPACT_ITEM_GAP = 3
 # A story is its title lines plus a footer row with the tag chip and the one-line fact.
 TITLE_LINE = 18
 ITEM_FOOTER = 16
+# The stories' titles and facts are set in Noto Sans SC (open, even strokes that read easily small
+# on the panel) at these weights and sizes; the page's other type stays in its own face.
+STORY_FACE = Path(__file__).resolve().parents[2] / "static" / "fonts" / "NotoSansSC-VF.ttf"
+STORY_TITLE_SIZE, STORY_TITLE_WEIGHT = 15, 500
+STORY_FACT_SIZE, STORY_FACT_WEIGHT = 12, 400
 # Each story ends in a topic ring; its text stops short of this right-hand slot.
 STORY_ICON_SLOT = 40
 STORY_ICON_RADIUS = 15
@@ -85,7 +95,13 @@ class NewsPage:
         self.family = font_family
 
     # -- text helpers -------------------------------------------------------
+    # ``bold`` is True or False for the page's face, or a weight (an int) for the stories' face.
     def font(self, size, bold=True):
+        if not isinstance(bold, bool):
+            face = _story_font(int(size), int(bold))
+            if face is not None:
+                return face
+            bold = bold >= 600
         return self.p._font(self.family, int(size), "bold" if bold else "normal")
 
     def width(self, text, size, bold=True):
@@ -368,7 +384,8 @@ class NewsPage:
         as many leading stories as possible, then clipped titles get a second line in
         order while room is left. The compact gap is used when it shows more.
         """
-        clipped = [len(self.wrap(item["title"], 15, text_width, 2)) == 2 for item in items]
+        clipped = [len(self.wrap(item["title"], STORY_TITLE_SIZE, text_width, 2, STORY_TITLE_WEIGHT)) == 2
+                   for item in items]
         has_fact = [bool(str(item.get("why") or "").strip()) for item in items]
 
         def height(count, full, gap):
@@ -402,16 +419,17 @@ class NewsPage:
         self.text((x, y + 1), f"{number:02d}", 13, True, number_colour)
         text_x, text_w = x + 26, width - 26 - STORY_ICON_SLOT
         text_right = x + width - STORY_ICON_SLOT
-        lines = self.wrap(item["title"], 15, text_w, title_lines)
+        lines = self.wrap(item["title"], STORY_TITLE_SIZE, text_w, title_lines, STORY_TITLE_WEIGHT)
         for index, line in enumerate(lines):
-            self.text((text_x, y + index * TITLE_LINE), line, 15, True)
+            self.text((text_x, y + index * TITLE_LINE + (TITLE_LINE - STORY_TITLE_SIZE) // 2 - 1), line,
+                      STORY_TITLE_SIZE, STORY_TITLE_WEIGHT)
         row_y = y + len(lines) * TITLE_LINE + 1
         tag = item.get("tag") or ""
         kind, accent = self.topic_accent(tag, item["title"])
         # The topic shows only as the icon at the right; the fact runs under the title.
-        why = self.clip(item.get("why"), 11, text_right - text_x, False) if with_fact else ""
+        why = self.clip(item.get("why"), STORY_FACT_SIZE, text_right - text_x, STORY_FACT_WEIGHT) if with_fact else ""
         if why:
-            self.text((text_x, row_y + 7), why, 11, False, c["ink"], "lm")
+            self.text((text_x, row_y + 7), why, STORY_FACT_SIZE, STORY_FACT_WEIGHT, c["ink"], "lm")
         height = len(lines) * TITLE_LINE + (ITEM_FOOTER if why else 0)
         radius = min(STORY_ICON_RADIUS, height // 2 - 1)
         news_art.draw_story_icon(self.d, x + width - STORY_ICON_RADIUS - 2, y + height // 2 - 1,
@@ -558,3 +576,15 @@ def pack_logo_rows(aspects, width, height, max_height=SOURCE_LOGO_MAX_HEIGHT, ga
             rows = sorted((sorted(row) for row in rows), key=lambda row: row[0])
             best = (rows, logo_height)
     return best if best else ([], 0)
+
+
+@lru_cache(maxsize=16)
+def _story_font(size, weight):
+    """Noto Sans SC at ``size`` and ``weight`` (its variable axis), or None without the file."""
+    try:
+        face = load_font(str(STORY_FACE), size)
+        axes = face.get_variation_axes()
+        face.set_variation_by_axes([weight if axis.get("name") == b"Weight" else axis["default"] for axis in axes])
+        return face
+    except (OSError, ValueError, AttributeError):
+        return None

@@ -3042,3 +3042,13 @@ def test_the_lead_fact_is_shown_whole_by_stepping_the_sizes_down():
     # Whatever is chosen fits the lead band above the columns.
     assert news_layout.LEAD_BOX[0] + size + 6 + lines * _line <= news_layout.LEAD_BOX[1]
     assert whole is (len(page.wrap_after(long_fact, fact_size, 450, 60, lines + 1)) <= lines)
+
+
+def test_story_titles_and_facts_are_set_in_noto_sans_sc():
+    from plugins.daily_ai_news import news_layout
+
+    assert news_layout.STORY_FACE.is_file()
+    title = news_layout._story_font(news_layout.STORY_TITLE_SIZE, news_layout.STORY_TITLE_WEIGHT)
+    fact = news_layout._story_font(news_layout.STORY_FACT_SIZE, news_layout.STORY_FACT_WEIGHT)
+    assert title is not None and fact is not None and fact.size >= 12
+    assert "Noto" in " ".join(title.getname())
