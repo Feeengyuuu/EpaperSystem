@@ -1567,3 +1567,28 @@ def test_a_baseball_wall_band_is_the_long_game_strip_with_no_frame():
     assert filled is not None and filled[2] - filled[0] >= 0.8 * 531
     # No frame: the band's corners stay the page's colour.
     assert band.getpixel((0, 0)) == band.getpixel((531, 33)) == tuple(COLORS["paper"])
+
+
+def test_a_live_wall_card_carries_its_venue_logo_straight_on_its_top_band():
+    games, now = _wall_games(8)
+    nba = next(game for game in games if game["sport"] == "NBA")
+    placed = []
+    original = SportsDashboard._draw_wall_venue_chip
+
+    def record(self, image, draw, box, event, align="left"):
+        result = original(self, image, draw, box, event, align)
+        placed.append((align, result, tuple(box)))
+        return result
+
+    pair = [{**nba, "event": {**nba["event"], "venue": "Intuit Dome"}},
+            {**nba, "event": {**nba["event"], "venue": "Accor Arena", "series_game": "Finals Game 3"}}]
+    original_draw = SportsDashboard._draw_wall_venue_chip
+    SportsDashboard._draw_wall_venue_chip = record
+    try:
+        _render(lambda plugin, image, draw: plugin._draw_lower_live_wall(image, draw, (0, 0, 555, 267), pair, now))
+    finally:
+        SportsDashboard._draw_wall_venue_chip = original_draw
+    (align_a, logo_a, box_a), (align_b, logo_b, _box_b) = placed
+    # No context label: at the band's right end; a venue without a logo draws nothing.
+    assert align_a == "right" and logo_a is not None and abs(logo_a[2] - (box_a[2] + 4)) <= 1
+    assert align_b == "left" and logo_b is None

@@ -11,7 +11,10 @@ Text stays in pure ink on the six-ink panel.
 """
 
 from .card_backdrops import SPORT_BACKDROP_KINDS, card_backdrop_box, paint_card_backdrop
+from PIL import ImageStat
+
 from .common import *
+from .scorebug_kit import _kit_luminance
 
 SportsDashboard = None
 
@@ -25,6 +28,10 @@ WALL_BAND_MIN_SCALE = 0.72
 # A league's long scene strip takes the band when, fitted to it, it spans at least this share of
 # the band's width (a much taller band keeps the mascot scenes).
 WALL_BAND_STRIP_MIN_SPAN = 0.8
+# A game card's venue logo starts this far right of the league logo's left edge, in the top band,
+# its faint parts lifted until they reach this contrast with the band.
+WALL_VENUE_CHIP_LEFT = 46
+WALL_VENUE_MIN_CONTRAST = 2.6
 # Below this width the control-room strip in the header is left out rather than shrunk.
 WALL_CONTROL_ROOM_MIN_WIDTH = 170
 # Up to six remaining games get a small card each (three per row); more use rows.
@@ -195,12 +202,19 @@ class LowerWallRenderMixin:
             colours = self._draw_wall_team_colours(draw, (x1, y1, x2, y2), event, accent, y1 + 30, rows)
         # The league's logo is the card's title: bare on the card's colours, at its left edge.
         self._draw_sport_logo(image, draw, sport, inner_x1, y1 + 4, 40, 24, align="left")
+        context_left = inner_x2
         if context:
             context, font = self._fit_text_ellipsis(draw, context, inner_x2 - inner_x1 - 46, 11, bold=True, min_size=8)
             if spec is not None:
                 context_w = self._text_width(draw, context, font)
-                draw.rounded_rectangle((inner_x2 - context_w - 6, y1 + 7, inner_x2 + 4, y1 + 25), radius=4, fill=COLORS["panel"])
+                context_left = inner_x2 - context_w - 6
+                draw.rounded_rectangle((context_left, y1 + 7, inner_x2 + 4, y1 + 25), radius=4, fill=COLORS["panel"])
             self._draw_text_in_box(draw, (inner_x1 + 40, y1 + 6, inner_x2, y1 + 26), context, font, COLORS["text"], align="right")
+        if spec is not None:
+            # The venue sits at the band's right end, or after the league logo when a context label
+            # ("WORLD SERIES G5") holds the right.
+            self._draw_wall_venue_chip(image, draw, (inner_x1 + WALL_VENUE_CHIP_LEFT, y1 + 7, context_left - 8, y1 + 25),
+                                       event, align="left" if context else "right")
         if spec is None:
             self._draw_wall_golf_card(draw, (inner_x1, y1 + 32, inner_x2, y2 - 6), event)
             return
@@ -223,6 +237,37 @@ class LowerWallRenderMixin:
         if footer:
             # The networks' own logos, centred; a network without one keeps its name in type.
             self._draw_kit_broadcast_logos(image, draw, (inner_x1, y2 - 21, inner_x2, y2 - 5), footer, WALL_TV_LOGO_HEIGHT)
+
+    def _draw_wall_venue_chip(self, image, draw, box, event, align="left"):
+        """The game's venue as its official logo set straight on the card's top band (no chip), at
+        ``box``'s left or right end: the parts of it that would vanish into the band's colour there
+        turn white on a dark band or ink on a light one, its brand colours stay. Its box, or None
+        without a logo or the room for one."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        venue = str((event or {}).get("venue") or "").strip()
+        key = VENUE_LOGO_KEYS.get(re.sub(r"[^a-z0-9]", "", venue.lower())) if venue else None
+        if not key or x2 - x1 < 24:
+            return None
+        logo = self._load_local_logo(os.path.join(LOCAL_VENUE_LOGO_DIR, f"{key}.png"), (x2 - x1, y2 - y1 - 2),
+                                     alpha_threshold=8)
+        if logo is None:
+            return None
+        left = x2 + 4 - logo.width if align == "right" else x1
+        top = y1 + (y2 - y1 - logo.height) // 2
+        ground = ImageStat.Stat(image.convert("RGB").crop((left, top, left + logo.width, top + logo.height))).median
+        ink = (255, 255, 255) if _kit_luminance(ground) < 0.4 else (20, 22, 28)
+        logo = logo.copy()
+        pixels = logo.load()
+        for y in range(logo.height):
+            for x in range(logo.width):
+                pixel = pixels[x, y]
+                if pixel[3] < 8:
+                    continue
+                lighter, darker = sorted((_kit_luminance(pixel), _kit_luminance(ground)), reverse=True)
+                if (lighter + 0.05) / (darker + 0.05) < WALL_VENUE_MIN_CONTRAST:
+                    pixels[x, y] = (*ink, pixel[3])
+        image.paste(logo, (left, top), logo)
+        return left, top, left + logo.width, top + logo.height
 
     def _draw_wall_series_line(self, image, draw, box, event, spec):
         """The series state in words and the leader's logo: '[logo] 密尔沃基酿酒人 3-0 领先',
