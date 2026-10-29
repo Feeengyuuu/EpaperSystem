@@ -82,6 +82,12 @@ STATION_LOGO_HEIGHT = 14
 # this tall, in place of a plain colour swatch.
 FUEL_ICON_DIR = Path(__file__).resolve().parent / "assets" / "fuel_icons"
 FUEL_ICON_HEIGHT = 13
+RENEWABLES_ICON_HEIGHT = 17
+# The Mars photo's fact lines each led by an icon (assets/fuel_icons, white masks): the distance,
+# the light time, the sol, the rover and its camera; this tall, the text this far after each.
+MARS_ICONS = {"distance": "mars_distance", "light": "mars_light", "sol": "mars_sol", "rover": "mars_rover",
+              "camera": "mars_camera"}
+MARS_ICON_HEIGHT, MARS_ICON_GAP = 10, 4
 # An icon whose source colour is this close to the page is moved toward the ink until it reads.
 FUEL_ICON_MIN_CONTRAST = 2.4
 COUNTRY_NAMES = {
@@ -344,7 +350,11 @@ def _grid(canvas, payload):
     x, x1 = left + 10, left + 186
     y = top + HEADER + 6
     width = canvas.text((x, y - 4), f"{share:.0%}", 38, "grid", anchor="la")
-    canvas.text((x + width + 7, y + 5), "可再生能源", 14, anchor="la")
+    label_w = canvas.text((x + width + 7, y + 5), "可再生能源", 14, anchor="la")
+    # The renewables' own icon (a leaf with a bolt in recycling arrows) after the label, in the card's green.
+    icon = _fuel_icon("renewables", canvas.color("grid"), RENEWABLES_ICON_HEIGHT)
+    if icon is not None:
+        _paste(canvas, icon, (x + width + 7 + label_w + 5, y + 13 - icon.height // 2))
     canvas.text((x + width + 7, y + 24), f"{share * supply / 1000:.1f} / {supply / 1000:.1f} GW", 11, "muted",
                 anchor="la", bold=False)
     # The mix as one bar, then as a table that is also the chart's legend, its rows spread to
@@ -585,18 +595,32 @@ def _mars_facts(canvas, mars, now, box, *, shade=True):
     if shade:
         _photo_shade(canvas, (x0, y0, x1, y0 + 40), top=True)
         _photo_shade(canvas, (x0, y1 - 62, x1, y1), top=False)
-    canvas.text((x0 + 7, y0 + 6), f"距地球 {distance / 1e8:.2f} 亿km", 10, white, anchor="la")
-    canvas.text((x0 + 7, y0 + 21), f"光行 {distance / LIGHT_KM_S / 60:.0f} 分钟", 9, soft, anchor="la", bold=False)
+    def lead(kind, x, top, size, colour):
+        """The line's icon at ``x`` beside a line ``size`` px tall at ``top``; where its text starts."""
+        icon = _fuel_icon(MARS_ICONS[kind], colour, MARS_ICON_HEIGHT + (2 if size >= 13 else 0))
+        if icon is None:
+            return x
+        _paste(canvas, icon, (x, top + (size + 3 - icon.height) // 2))
+        return x + icon.width + MARS_ICON_GAP
+
+    text_x = lead("distance", x0 + 7, y0 + 6, 10, white)
+    canvas.text((text_x, y0 + 6), f"距地球 {distance / 1e8:.2f} 亿km", 10, white, anchor="la", width=x1 - text_x - 4)
+    text_x = lead("light", x0 + 7, y0 + 21, 9, soft)
+    canvas.text((text_x, y0 + 21), f"光行 {distance / LIGHT_KM_S / 60:.0f} 分钟", 9, soft, anchor="la", bold=False,
+                width=x1 - text_x - 4)
     canvas.draw.rounded_rectangle((x0 + 7, y1 - 47, x0 + 10, y1 - 8), radius=1, fill=canvas.color("space"))
-    canvas.text((x0 + 15, y1 - 48), f"火星日 {mars.get('sol')}", 13, white, anchor="la", width=x1 - x0 - 20)
-    canvas.text((x0 + 15, y1 - 30), "毅力号 · 杰泽罗", 9, soft, anchor="la", bold=False, width=x1 - x0 - 20)
+    text_x = lead("sol", x0 + 15, y1 - 48, 13, white)
+    canvas.text((text_x, y1 - 48), f"火星日 {mars.get('sol')}", 13, white, anchor="la", width=x1 - text_x - 5)
+    text_x = lead("rover", x0 + 15, y1 - 30, 9, soft)
+    canvas.text((text_x, y1 - 30), "毅力号 · 杰泽罗", 9, soft, anchor="la", bold=False, width=x1 - text_x - 5)
     raw_taken = str(mars.get("taken_utc") or "").replace("Z", "+00:00")
     if raw_taken and not re.search(r"[+-]\d\d:\d\d$", raw_taken):
         raw_taken += "+00:00"
     taken = _local_time(raw_taken)
     camera = str(mars.get("camera") or "").split(" ")[0]
-    canvas.text((x0 + 15, y1 - 17), " · ".join(part for part in (camera, f"{taken:%m/%d}" if taken else "") if part), 9,
-                soft, anchor="la", bold=False, width=x1 - x0 - 20)
+    text_x = lead("camera", x0 + 15, y1 - 17, 9, soft)
+    canvas.text((text_x, y1 - 17), " · ".join(part for part in (camera, f"{taken:%m/%d}" if taken else "") if part), 9,
+                soft, anchor="la", bold=False, width=x1 - text_x - 5)
 
 
 def _space(canvas, payload, images, now):

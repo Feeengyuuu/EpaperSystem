@@ -3,7 +3,7 @@
  "generated": "2026-10-28",
  "job_id": "279af57c-95c3-44be-972f-28852ed37269",
  "source_sha256": "56d199227e9fb56faf3ebc49a1e77b1c3cb86f94eb360a1acf193bb0ad858a27",
- "processing": "a 1728x864 transparent sheet of 8 white silhouettes (4 x 2): each cell cropped to its alpha bounds and scaled to 64 px high; kept as white masks the page tints with the source colour",
+ "processing": "a 1728x864 transparent sheet of 8 white silhouettes (4 x 2): each cell cropped to its alpha bounds and scaled to 64 px high; kept as white masks the page tints with the source colour; later (same day) a renewables mark and five Mars fact icons (distance, light time, sol, rover, camera; GPT Image 2.5 Flare / Sunburst sheets), each with its own job_id",
  "icons": {
   "gas": {
    "size": [
@@ -60,6 +60,60 @@
     64
    ],
    "sha256": "8fde30b0141e73334ae2b41b3ece0aa82da6fc1386a79045f6f8a3ff04895596"
+  },
+  "mars_distance": {
+   "size": [
+    120,
+    64
+   ],
+   "sha256": "8feaa2237974f4c9f1de4964b9a268ae1015709450e92ee8ec7a954552c0cf12",
+   "job_id": "966ea1bf-3d46-41e2-ad34-7421fc39f167",
+   "source_sha256": "4164072b4c05ec9eace5b88781bb92e001729fe8b9b7fdac80bd9e35378b1daf"
+  },
+  "mars_light": {
+   "size": [
+    91,
+    64
+   ],
+   "sha256": "28457ef193d9bbc964bc545c444a8e84a513aebd80f2dc971cb0b7f5c24e7322",
+   "job_id": "966ea1bf-3d46-41e2-ad34-7421fc39f167",
+   "source_sha256": "4164072b4c05ec9eace5b88781bb92e001729fe8b9b7fdac80bd9e35378b1daf"
+  },
+  "mars_sol": {
+   "size": [
+    61,
+    64
+   ],
+   "sha256": "bd6181e69051c942130102d495c73c4441f3f216e56531f58bd8a2fc067d0894",
+   "job_id": "966ea1bf-3d46-41e2-ad34-7421fc39f167",
+   "source_sha256": "4164072b4c05ec9eace5b88781bb92e001729fe8b9b7fdac80bd9e35378b1daf"
+  },
+  "mars_rover": {
+   "size": [
+    81,
+    64
+   ],
+   "sha256": "b25b8e4e69a87aa25cd568e1d4248f1aee070ddaa7448b161fd5b5c594e62911",
+   "job_id": "966ea1bf-3d46-41e2-ad34-7421fc39f167",
+   "source_sha256": "4164072b4c05ec9eace5b88781bb92e001729fe8b9b7fdac80bd9e35378b1daf"
+  },
+  "mars_camera": {
+   "size": [
+    78,
+    64
+   ],
+   "sha256": "e96a005bd41a587ec8841017ec41339df13355378d0ef867a57ded53362bbcd9",
+   "job_id": "966ea1bf-3d46-41e2-ad34-7421fc39f167",
+   "source_sha256": "4164072b4c05ec9eace5b88781bb92e001729fe8b9b7fdac80bd9e35378b1daf"
+  },
+  "renewables": {
+   "size": [
+    58,
+    64
+   ],
+   "sha256": "3dfba606f4cb884dc4ff90aa5c0ae80b5306fb3e2d5ceeef8f3a54b500736f7a",
+   "job_id": "0cd58156-98cb-4557-ba9a-f949cf300c56",
+   "source_sha256": "3c9c59470fb3ba204c2a41f63fc15f70e4bf49127cd98254431ac4f7a7df51e1"
   }
  }
 }

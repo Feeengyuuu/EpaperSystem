@@ -311,7 +311,7 @@ def test_mars_distance_the_sun_and_the_iss_orbit():
 
 
 def test_each_grid_source_has_an_icon_in_its_colour_and_each_station_its_mark():
-    for name in render.FUEL_ORDER:
+    for name in (*render.FUEL_ORDER, "renewables", *render.MARS_ICONS.values()):
         icon = render._fuel_icon(name, (37, 99, 235), 13)
         assert icon is not None and icon.height == 13, name
         opaque = [pixel for pixel in icon.get_flattened_data() if pixel[3] > 200]
