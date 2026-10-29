@@ -27,6 +27,8 @@ WORDMARK_PATH = (
     / "nasapics_space_weather_wordmark.png"
 )
 WORDMARK_FALLBACK_TEXT = "NASAPics × SPACE WEATHER"
+# The caption's kicker when the day's APOD is a video shown by its still frame.
+VIDEO_STILL_KICKER = "TODAY'S VIDEO | STILL FRAME"
 # NASA's insignia at the caption's lower right (px tall).
 NASA_INSIGNIA_PATH = Path(__file__).resolve().parent / "nasa_logo.png"
 NASA_INSIGNIA_HEIGHT = 46
@@ -140,6 +142,7 @@ def _measurement_signature(
         str(apod.copyright or ""),
         str(apod.date),
         str(apod.warning or ""),
+        "still" if getattr(apod, "video_still", False) else "",
         f"{int(dimensions[0])}x{int(dimensions[1])}",
     )
 
@@ -494,7 +497,7 @@ def measure_apod_page(
         translation_unavailable=translation_unavailable,
         copyright=apod.copyright,
         apod_date=apod.date,
-        warning=apod.warning,
+        warning=apod.warning or (VIDEO_STILL_KICKER if getattr(apod, "video_still", False) else None),
     )
     photo_rect = PHOTO_RECT
     photo_size = (

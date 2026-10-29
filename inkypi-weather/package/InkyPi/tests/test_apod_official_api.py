@@ -246,3 +246,36 @@ def test_iframe_fallback_round_trips_through_existing_state_schema(tmp_path):
     assert loaded is not None
     assert loaded.requested_record.media_type == "video"
     assert loaded.display_record.date == "2026-09-29"
+
+
+def test_a_video_day_with_a_still_frame_is_shown_by_that_still():
+    # 2026-10-28: "The Mutual Occultation of Ganymede and Io", a video whose hdurl is its still.
+    still = ("https://assets.science.nasa.gov/dynamicimage/assets/science/cds/apod/apod/"
+             "2026/october/occultation.jpeg?w=1600")
+    record, _ = _fetch(_payload(media_type="video", hdurl=still))
+    assert record.media_type == "image" and record.video_still is True
+    assert record.hdurl == still and record.warning is None
+    # It survives the state cache, and a plain image is never marked as a still.
+    assert apod._record_from_document(apod._record_document(record)).video_still is True
+    plain, _ = _fetch(_payload())
+    assert plain.video_still is False
+    assert apod._record_from_document(apod._record_document(plain)).video_still is False
+    # A still named by the clip itself is not a picture: the day keeps the video fallback.
+    clip = still.replace("occultation.jpeg?w=1600", "occultation.mp4")
+    record, _ = _fetch(_payload(media_type="video", hdurl=clip))
+    assert record.media_type == "video" and record.video_still is False
+
+
+def test_the_page_marks_a_video_still_in_its_kicker():
+    from PIL import Image, ImageDraw
+
+    from plugins.apod import apod_page
+
+    record, _ = _fetch(_payload(media_type="video", hdurl=(
+        "https://assets.science.nasa.gov/dynamicimage/assets/science/cds/apod/apod/2026/october/occultation.jpeg")))
+    draw = apod_page.MixedDraw(ImageDraw.Draw(Image.new("RGB", (1, 1))))
+    layout = apod_page._layout_caption(
+        draw=draw, title_en=record.title_en, title_zh="木卫三与木卫一的互掩", translation_unavailable=False,
+        copyright=record.copyright, apod_date=record.date,
+        warning=record.warning or (apod_page.VIDEO_STILL_KICKER if record.video_still else None))
+    assert layout.kicker_copy == apod_page.VIDEO_STILL_KICKER

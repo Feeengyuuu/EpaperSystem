@@ -171,6 +171,8 @@ class ApodRecord:
     fetched_at_utc: datetime
     source_state: Literal["live", "fresh_cache", "stale_cache", "unavailable"]
     warning: str | None
+    # A video day shown by the still frame NASA gives it (its hdurl), as that day's picture.
+    video_still: bool = False
 
 
 @dataclass(frozen=True)
@@ -631,6 +633,14 @@ def _format_utc(value: datetime) -> str:
 
 def _fallback_warning(apod_date: str) -> str:
     return f"LATEST AVAILABLE \N{MIDDLE DOT} APOD {apod_date}"
+
+
+STILL_IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+
+
+def _is_still_image(url: str | None) -> bool:
+    """Whether a trusted media URL names a picture (a video's still frame), not the video."""
+    return bool(url) and urlsplit(str(url)).path.casefold().endswith(STILL_IMAGE_SUFFIXES)
 
 
 def _canonical_date_text(value: Any, *, label: str) -> str:
@@ -1106,6 +1116,11 @@ def _fetch_apod_record(
             raise ValueError("APOD explanation is too long")
         url = _safe_media_candidate(raw.get("url"))
         hdurl = _safe_media_candidate(raw.get("hdurl"))
+        # NASA's site gives a video day a still frame as its hdurl: that still is the day's
+        # picture (marked as such), so the page does not fall back to an earlier day.
+        video_still = media_type == "video" and _is_still_image(hdurl)
+        if video_still:
+            media_type = "image"
         if media_type == "image" and url is None and hdurl is None:
             reason = "missing_safe_media"
             if not allow_missing_media:
@@ -1148,6 +1163,7 @@ def _fetch_apod_record(
         fetched_at_utc=_utc_now(),
         source_state="live",
         warning=None,
+        video_still=video_still,
     )
 
 
@@ -1595,6 +1611,7 @@ def _record_document(record: ApodRecord) -> dict[str, Any]:
         "fetched_at_utc": _format_utc(record.fetched_at_utc),
         "source_state": record.source_state,
         "warning": record.warning,
+        "video_still": record.video_still,
     }
 
 
@@ -1651,6 +1668,7 @@ def _record_from_document(raw: Any) -> ApodRecord:
         fetched_at_utc=_parse_utc(raw.get("fetched_at_utc")),
         source_state=source_state,
         warning=_optional_text(raw.get("warning"), maximum=300),
+        video_still=raw.get("video_still") is True and media_type == "image",
     )
 
 
