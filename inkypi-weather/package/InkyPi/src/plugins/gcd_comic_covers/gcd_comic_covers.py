@@ -75,7 +75,18 @@ TRIPTYCH_COVER_COUNT = 3
 COMIC_ACCENT = (214, 52, 28)
 # GCD's own words for credit roles, in Chinese on the cards.
 CREDIT_ROLES = {"pencils": "铅笔", "inks": "墨线", "colors": "上色", "letters": "字体", "script": "编剧",
-                "art": "绘制", "painting": "绘画", "editing": "编辑"}
+                "art": "绘制", "painting": "绘画", "editing": "编辑", "cover": "封面"}
+# Comic Vine's credit roles in GCD's words, in the order the card names them; its letterers,
+# editors and other roles are left off.
+COMIC_VINE_ROLES = {"writer": "script", "artist": "art", "penciler": "pencils", "penciller": "pencils",
+                    "inker": "inks", "colorist": "colors", "cover": "cover"}
+COMIC_VINE_ISSUE_FIELDS = ("id,api_detail_url,site_detail_url,name,issue_number,cover_date,store_date,date_added,"
+                           "image,volume,person_credits,story_arc_credits")
+# A card's label has two fact lines: its title and creators beside the source's logo, then the
+# series' run, story arc, price and pages.
+LABEL_FACT_ROWS = 2
+# Currencies GCD prices name, by their signs.
+CURRENCY_SIGNS = {"USD": "$", "CAD": "C$", "GBP": "£", "EUR": "€", "JPY": "¥", "AUD": "A$"}
 TRIPTYCH_FIT_MODES = {"triptych", "three_vertical", "three_covers", "three_posters", "gallery"}
 TRIPTYCH_BACKGROUND_PATH = Path(__file__).with_name("assets") / "triptych_background_800x480.png"
 TRIPTYCH_TITLE = "COMIC COVERS"
@@ -603,7 +614,8 @@ class GcdComicCovers(BasePlugin):
         ]
         if len(records) > 1:
             # Each cover is resized once, to exactly the frame the gallery page gives it.
-            sizes = cover_gallery.art_sizes(min(len(records), TRIPTYCH_COVER_COUNT), dimensions)
+            sizes = cover_gallery.art_sizes(min(len(records), TRIPTYCH_COVER_COUNT), dimensions,
+                                            fact_rows=LABEL_FACT_ROWS)
             targets = [sizes[min(index, len(sizes) - 1)] for index in range(len(records))]
             paths.append(paths[0])
             targets.append(None)
@@ -642,7 +654,8 @@ class GcdComicCovers(BasePlugin):
             date_text=f"{now.month}月{now.day}日 周{'一二三四五六日'[now.weekday()]}",
             accent=COMIC_ACCENT, dark=_gallery_dark(settings),
             wordmark=cover_gallery.load_wordmark(GALLERY_WORDMARK_PATH), style="comic",
-            header_art=cover_gallery.load_wordmark(HEADER_ART_PATH), fillers=fillers, filler_heading="今日更多")
+            header_art=cover_gallery.load_wordmark(HEADER_ART_PATH), fillers=fillers, filler_heading="今日更多",
+            fact_rows=LABEL_FACT_ROWS)
 
     def _placeholder_cover(self, cover):
         """A designed stand-in for a cover whose scan the source withholds: the series and issue
@@ -1390,6 +1403,13 @@ class GcdComicCovers(BasePlugin):
                     if publisher.startswith(("http://", "https://")):
                         publisher = self._publisher_name(publisher)
                     detail["publisher"] = publisher or detail.get("publisher")
+                    detail["series_began"] = _first_text(series_data, ["year_began"])
+                    detail["series_ended"] = _first_text(series_data, ["year_ended"])
+                    # The series' own numbers, not its variants ("1 [British]") or reprint packs.
+                    numbers = series_data.get("issue_descriptors")
+                    numbers = {str(number) for number in numbers if "[" not in str(number)} \
+                        if isinstance(numbers, list) else set()
+                    detail["series_issues"] = str(len(numbers)) if numbers else ""
             except Exception as exc:
                 logger.warning("Could not fetch GCD series detail for issue %s: %s", issue_id, exc)
 
@@ -1425,6 +1445,8 @@ class GcdComicCovers(BasePlugin):
             "key_date": _first_text(data, ["key_date"]) or candidate.get("key_date") or "",
             "cover_url": self._normalize_cover_url(_first_text(data, ["cover", "cover_url", "image_url"]) or candidate.get("cover_url") or ""),
             "cover_credits": _cover_credit_summary(data),
+            "price": _first_text(data, ["price"]),
+            "page_count": _first_text(data, ["page_count"]),
             "page_url": candidate.get("page_url") or f"{GCD_BASE_URL}/issue/{issue_id}/",
         }
 
@@ -1501,15 +1523,12 @@ class GcdComicCovers(BasePlugin):
         }
 
     def _comic_vine_issue_detail(self, candidate):
+        """The issue with its creators and story arc, and its volume's publisher and run (the
+        issue list names none of them); cached once both were asked about."""
         issue_id = str(candidate.get("issue_id") or "").strip()
         cached = self._read_issue_cache(issue_id)
-        if cached:
+        if cached and cached.get("volume_checked"):
             return cached
-
-        if candidate.get("cover_url"):
-            detail = self._normalize_comic_vine_issue_detail({}, candidate)
-            self._write_issue_cache(issue_id, detail)
-            return detail
 
         api_key = self._comic_vine_api_key({})
         api_url = str(candidate.get("api_url") or "").strip()
@@ -1517,19 +1536,44 @@ class GcdComicCovers(BasePlugin):
         if not api_url and raw_id:
             api_url = f"{COMIC_VINE_BASE_URL}/issue/4000-{raw_id}/"
         if not api_key or not api_url:
-            return self._normalize_comic_vine_issue_detail({}, candidate)
+            return cached or self._normalize_comic_vine_issue_detail({}, candidate)
 
-        payload = self._comic_vine_get(
-            api_url,
-            api_key,
-            {
-                "field_list": "id,api_detail_url,site_detail_url,name,issue_number,cover_date,store_date,date_added,image,volume",
-            },
-        )
-        record = payload.get("results") if isinstance(payload, dict) else {}
-        detail = self._normalize_comic_vine_issue_detail(record if isinstance(record, dict) else {}, candidate)
+        try:
+            payload = self._comic_vine_get(api_url, api_key, {"field_list": COMIC_VINE_ISSUE_FIELDS})
+            record = payload.get("results") if isinstance(payload, dict) else {}
+            record = record if isinstance(record, dict) else {}
+            detail = self._normalize_comic_vine_issue_detail(record, candidate)
+            detail.update(self._comic_vine_volume(record.get("volume"), api_key))
+            detail["volume_checked"] = True
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            # The list already gave the cover: the card goes without the rest this time.
+            if not candidate.get("cover_url"):
+                raise
+            logger.warning("Comic Vine detail unavailable for issue %s: %s", issue_id, exc)
+            return cached or self._normalize_comic_vine_issue_detail({}, candidate)
         self._write_issue_cache(issue_id, detail)
         return detail
+
+    def _comic_vine_volume(self, volume, api_key):
+        """The publisher, first year and length of a Comic Vine volume (remembered per run); {}
+        when the issue names none."""
+        volume = volume if isinstance(volume, dict) else {}
+        url = _first_url(volume, ["api_detail_url"])
+        raw_id = str(volume.get("id") or "").strip()
+        if not url and raw_id.isdigit():
+            url = f"{COMIC_VINE_BASE_URL}/volume/4050-{raw_id}/"
+        if not url:
+            return {}
+        volumes = self.__dict__.setdefault("_comic_vine_volumes", {})
+        if url not in volumes:
+            payload = self._comic_vine_get(url, api_key, {"field_list": "publisher,start_year,count_of_issues"})
+            record = payload.get("results") if isinstance(payload, dict) else {}
+            volumes[url] = {"publisher": _first_text(record, ["publisher"]),
+                            "series_began": _first_text(record, ["start_year"]),
+                            "series_issues": _first_text(record, ["count_of_issues"])}
+        return {key: value for key, value in volumes[url].items() if value}
 
     def _normalize_comic_vine_issue_detail(self, record, candidate):
         record = record if isinstance(record, dict) else {}
@@ -1557,7 +1601,8 @@ class GcdComicCovers(BasePlugin):
             "cover_date": cover_date or candidate.get("cover_date") or "",
             "date_added": date_added or candidate.get("date_added") or "",
             "cover_url": self._normalize_cover_url(self._comic_vine_image_url(merged.get("image")) or candidate.get("cover_url") or ""),
-            "cover_credits": "",
+            "cover_credits": _comic_vine_credits(merged.get("person_credits")),
+            "story_arc": _first_text(next(iter(merged.get("story_arc_credits") or []), {}), ["name"]),
             "page_url": _first_url(merged, ["site_detail_url"]) or candidate.get("page_url") or "",
             "api_url": _first_url(merged, ["api_detail_url"]) or candidate.get("api_url") or "",
         }
@@ -2464,8 +2509,46 @@ def _comic_label(cover):
     first = publisher or (cover_month if cover_month and not chip.startswith(cover_month[3:]) else "") or "出版社不详"
     lines = tuple(part for part in (first, title if title and title != series else "") if part)
     return cover_gallery.Label(title=f"{series} #{number}" if number else series, chip=chip, lines=lines,
-                               body=_credit_people(cover.get("cover_credits")),
-                               source_logo="Grand Comics Database" if _comic_source(cover) == "GCD" else "Comic Vine")
+                               body=_credit_people(cover.get("cover_credits")), source=_series_facts(cover),
+                               source_logo="Grand Comics Database" if _comic_source(cover) == "GCD" else "Comic Vine",
+                               publisher_logo=publisher)
+
+
+def _series_facts(cover):
+    """The series' run ("1963–1998 · 共 441 期", "2024 年起 · 已出 6 期"), the issue's story arc,
+    then its price and pages, as far as the source gives them."""
+    began, ended = (_clean_text(cover.get(key) or "") for key in ("series_began", "series_ended"))
+    issues = _clean_text(cover.get("series_issues") or "")
+    facts = []
+    if began.isdigit():
+        facts.append(f"{began} 年" if ended == began else f"{began}–{ended}" if ended.isdigit() else f"{began} 年起")
+    if issues.isdigit() and int(issues) > 1:
+        facts.append(f"{'共' if ended.isdigit() else '已出'} {issues} 期")
+    arc = _clean_text(cover.get("story_arc") or "")
+    if arc:
+        facts.append(f"故事线 {arc}")
+    price = re.match(r"^(\d+(?:\.\d+)?)\s*([A-Z]{3})\b", _clean_text(cover.get("price") or ""))
+    if price:
+        amount, currency = price.groups()
+        facts.append(f"定价 {CURRENCY_SIGNS[currency]}{amount}" if currency in CURRENCY_SIGNS
+                     else f"定价 {amount} {currency}")
+    pages = re.match(r"^(\d+)(?:\.0+)?$", _clean_text(cover.get("page_count") or ""))
+    if pages and int(pages.group(1)) > 0:
+        facts.append(f"{pages.group(1)} 页")
+    return " · ".join(facts)
+
+
+def _comic_vine_credits(people):
+    """Comic Vine's person credits as GCD writes cover credits ("script: A; art: B, C")."""
+    roles = {}
+    for person in people if isinstance(people, list) else []:
+        name = _clean_text((person or {}).get("name") or "") if isinstance(person, dict) else ""
+        for role in str((person or {}).get("role") or "").split(",") if name else ():
+            role = COMIC_VINE_ROLES.get(role.strip().lower())
+            if role and name not in roles.setdefault(role, []):
+                roles[role].append(name)
+    order = list(dict.fromkeys(COMIC_VINE_ROLES.values()))
+    return "; ".join(f"{role}: {', '.join(roles[role])}" for role in order if roles.get(role))
 
 
 def _gallery_dark(settings):

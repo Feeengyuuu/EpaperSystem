@@ -2558,3 +2558,64 @@ def test_a_cover_without_its_scan_gets_a_placeholder_card(tmp_path, monkeypatch)
     assert page.size == (800, 480)
     tile = plugin._placeholder_cover({"series_name": "Cthulhu Jr.", "issue_number": "3"})
     assert tile.size[1] > tile.size[0]
+
+
+def test_a_comic_vine_issue_reads_its_volume_publisher_run_and_creators(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    calls = []
+
+    def comic_vine_get(url, _key, params=None):
+        calls.append(url)
+        if "/volume/" in url:
+            return {"results": {"publisher": {"id": 1, "name": "DC Thomson"}, "start_year": "1991",
+                                "count_of_issues": 13}}
+        return {"results": {"id": 7, "name": "Wish You Were Here!", "issue_number": "13",
+                            "volume": {"id": 9, "name": "Mandy & Judy"},
+                            "person_credits": [{"name": "A Writer", "role": "writer"},
+                                               {"name": "B Artist", "role": "artist, cover"},
+                                               {"name": "C Letterer", "role": "letterer"}],
+                            "story_arc_credits": [{"name": "Summer Special"}]}}
+
+    monkeypatch.setattr(plugin, "_comic_vine_get", comic_vine_get)
+    monkeypatch.setattr(plugin, "_comic_vine_api_key", lambda _settings: "api-key")
+    candidate = {"source": "comicvine", "issue_id": "comicvine:7", "comic_vine_id": "7", "series_name": "Mandy & Judy",
+                 "issue_number": "13", "cover_url": "https://comicvine.gamespot.com/a/uploads/scale_large/1/7.jpg"}
+
+    detail = plugin._comic_vine_issue_detail(candidate)
+
+    assert calls == ["https://comicvine.gamespot.com/api/issue/4000-7/",
+                     "https://comicvine.gamespot.com/api/volume/4050-9/"]
+    assert (detail["publisher"], detail["series_began"], detail["series_issues"]) == ("DC Thomson", "1991", "13")
+    assert detail["cover_credits"] == "script: A Writer; art: B Artist; cover: B Artist"
+    assert detail["story_arc"] == "Summer Special"
+    # Asked once: the cached detail answers from then on.
+    assert plugin._comic_vine_issue_detail(candidate)["publisher"] == "DC Thomson" and len(calls) == 2
+    label = gcd_module._comic_label({**candidate, **detail, "on_sale_date": "1991-08-10"})
+    assert (label.lines[0], label.publisher_logo) == ("DC Thomson", "DC Thomson")
+    assert label.body == "A Writer（编剧） · B Artist（绘制·封面）"
+    assert label.source == "1991 年起 · 已出 13 期 · 故事线 Summer Special"
+
+
+def test_a_comic_vine_outage_keeps_the_cover_with_the_list_facts(tmp_path, monkeypatch):
+    plugin = make_plugin(tmp_path, monkeypatch)
+    monkeypatch.setattr(plugin, "_comic_vine_get", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("420")))
+    monkeypatch.setattr(plugin, "_comic_vine_api_key", lambda _settings: "api-key")
+    candidate = {"source": "comicvine", "issue_id": "comicvine:8", "comic_vine_id": "8", "series_name": "Saga",
+                 "cover_url": "https://comicvine.gamespot.com/a/uploads/scale_large/1/8.jpg"}
+
+    detail = plugin._comic_vine_issue_detail(candidate)
+
+    assert detail["series_name"] == "Saga" and not detail.get("publisher") and "volume_checked" not in detail
+    with pytest.raises(RuntimeError):
+        plugin._comic_vine_issue_detail({**candidate, "cover_url": ""})
+
+
+def test_a_gcd_card_tells_the_run_price_and_pages():
+    facts = gcd_module._series_facts
+
+    assert facts({"series_began": "1963", "series_ended": "1998", "series_issues": "441", "price": "0.12 USD",
+                  "page_count": "36.000"}) == "1963–1998 · 共 441 期 · 定价 $0.12 · 36 页"
+    assert facts({"series_began": "1988", "series_ended": "1988", "series_issues": "3",
+                  "price": "1.95 USD; 2.45 CAD"}) == "1988 年 · 共 3 期 · 定价 $1.95"
+    assert facts({"series_began": "2024", "series_issues": "1", "price": "500 JPY"}) == "2024 年起 · 定价 ¥500"
+    assert facts({"price": "[none]", "page_count": "0.000"}) == ""

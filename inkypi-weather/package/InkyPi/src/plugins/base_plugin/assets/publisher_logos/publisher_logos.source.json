@@ -1,0 +1,1732 @@
+{
+  "logos": {
+    "abril": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/7/70/Logo_editora_abril.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_editora_abril.jpg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "efb6461785901f35ed9f40a1930254d5bdf39dae525e52677c7bd7bcdbf5e253",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        199,
+        57
+      ],
+      "sha256": "d1a29328cfe5b481932742ce6baae3b00d8fc92d1938b95b9024a873ca726b61"
+    },
+    "ahoy": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/7/71/AhoyComicsLogo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:AhoyComicsLogo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "bab809c36b481a8c1dc174bf9360c3fbbf22d952dd7949861de4e469915ea76c",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "c50761f7c383e084791e262fea1ceab55ab67bdec7f619d45473d75939576015"
+    },
+    "akita_shoten": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/67/Akita_Shoten_Logo.svg/960px-Akita_Shoten_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Akita_Shoten_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "6481753a1ac6255a7b183bb8f0b075bcce41733495b6ac13b77388f3534fba6c",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        209,
+        64
+      ],
+      "sha256": "541a1c647f70be475266a1aed5091006427b64103d783eae7cb10d7b2aa63cf7"
+    },
+    "allure": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/70/Allure_logo.svg/960px-Allure_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Allure_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "6411966be68efeeb1a0eda8b1dcf6c1ca26e5435e0411d0877e88555bcad4289",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        222,
+        64
+      ],
+      "sha256": "f69e2f681088b190980708ea168ae5ae3ba67eba91c6fe28d90b4a73dc4a4215"
+    },
+    "amazing_stories": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/f/f4/Amazing_Stories_interior_title.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Amazing_Stories_interior_title.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "aa6455155451a601ba41cca4dbc19610776b0c3e497a05d57ed5c334cb7e5067",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        104,
+        64
+      ],
+      "sha256": "8322e8e1daec1b9886efad2c0d2e7b964479cbd0906a0002c80eccc82db850a9"
+    },
+    "aperture": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d0/Aperture_magazine_logo.svg/960px-Aperture_magazine_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Aperture_magazine_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "1008f34b25cef1a01e3b018b8b31a86b65f3bda342beefc36424ebc99c930e84",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        299,
+        64
+      ],
+      "sha256": "f4ccca00a6b017be978f95b034a369570c8fdd737dc57f5a43556dbd2f147201"
+    },
+    "archie": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/99/Archie_Comics_logo_1987.svg/960px-Archie_Comics_logo_1987.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Archie_Comics_logo_1987.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "3a003f21c1b40abea6835e38f539aea727fadf43124777b4f03a595208b9a4fb",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        111,
+        64
+      ],
+      "sha256": "dd27e8a6556f0bacc0ffb12d284888b74441795aa9b68569034a6486f0929b59"
+    },
+    "architectural_digest": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/13/Architectural_Digest_logo.svg/960px-Architectural_Digest_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Architectural_Digest_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "63659d19ca8d68f16642055d23e186800beda8fcef2fd4047c67b6df76f28835",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        959,
+        61
+      ],
+      "sha256": "eeba10c6dc96b794b78c01a155cc0b8e3a1b30d1900c5b8068e4fc8a54111aa2"
+    },
+    "art_in_america": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cf/Logo_Art_in_America.svg/960px-Logo_Art_in_America.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_Art_in_America.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "945f38b04d6e72a01e83ebb6cd2e8a1aaebc56a58a8ad30b71ae720bba188919",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        521,
+        64
+      ],
+      "sha256": "718bc102abd21244a7b30413091c6004dd09dfd75c6388b2ae2af80ebb6fd3ef"
+    },
+    "artforum": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/14/Artforum_logo.svg/960px-Artforum_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Artforum_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "890a41fcfa93fc8ca90eb89e96dc5fe8d22430f1c812f1b680239b71f563764d",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        282,
+        64
+      ],
+      "sha256": "31edb34bf5b482c96d5a16da84023c869afa9fdea5eae0724eae964387ca177f"
+    },
+    "atlas": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4a/Atlas_Comics_logo.svg/960px-Atlas_Comics_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Atlas_Comics_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "9ec86820a3e7e034f7656d7ddb8bd7b04fea661142d6617829a17ef1f694ac60",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        70,
+        64
+      ],
+      "sha256": "49cec41ae28107e63610c495bd5473087e3d4d5f1c841f30497614e7dd021596"
+    },
+    "awa": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/f/f3/AWA_Studios_logo%2C_Nov_2018.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:AWA_Studios_logo,_Nov_2018.jpg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "95d52c5e56483b6ab1bceee946c2b011be4333ba991a13cf4c59b887f43f3479",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        77,
+        64
+      ],
+      "sha256": "7f8ad3161a40b7992bc44eb7723f2f2f4e6ba5637173e8cf8183857c86872b7a"
+    },
+    "billboard": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/95/Billboard_logo.svg/960px-Billboard_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Billboard_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "b9a3941726da3296dfe2033d564282816f4200c8695575b2ff4d956625b82f42",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        303,
+        64
+      ],
+      "sha256": "8d302a609e837098ed358e7554796cbcd53248b6cb67176ad80dc6f197784a69"
+    },
+    "bonelli": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f5/Sergio_Bonelli_Editore_Logo.svg/960px-Sergio_Bonelli_Editore_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Sergio_Bonelli_Editore_Logo.svg",
+      "licence": "CC BY-SA 4.0 (Wikimedia Commons)",
+      "source_sha256": "282c65074f702320788e91402d68b19594cb3c69209dc212faa35587808ff049",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        199,
+        64
+      ],
+      "sha256": "9daaa31e005af7fcf20cd37194473561ae1124bdea2948bd98d995bc4eb46a67"
+    },
+    "boys_life": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/6/66/Boys%27_Life_Header.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Boys%27_Life_Header.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5e8f53ab684c398db6f8091ebbf9fb0466960db0fb79e8572fc6418d4e032844",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        225,
+        64
+      ],
+      "sha256": "926a5bad3de421109da0acac7c61b6c84828b07c6a6c6bdfdaa79e1297411fe8"
+    },
+    "businessweek": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ef/Bloomberg_Businessweek_logo.svg/960px-Bloomberg_Businessweek_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Bloomberg_Businessweek_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "517e5db71f9b2376b66df7775fa22e21884f31013bee1bc43fd0a016d92d51d7",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        256,
+        64
+      ],
+      "sha256": "391c2b5e2a48c15fa50045022aae2d213b68bc851319904a68de53752db0c21c"
+    },
+    "car_and_driver": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ec/Car_and_Driver_logo.svg/960px-Car_and_Driver_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Car_and_Driver_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "ce9c62dbbe7896ba7401d99515848a23076b4921fc670500a2fe5a022df415c3",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        332,
+        64
+      ],
+      "sha256": "4334139c473410d61435a9150ba82b92ad84fbf344f013e607b562f2cc7b2191"
+    },
+    "carlsen": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/80/Carlsen-verlag-logo-2012.svg/960px-Carlsen-verlag-logo-2012.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Carlsen-verlag-logo-2012.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "190f729f67a7b11b2b4b13131ec8160542a9a7ea7cda6b56dd37e42d1a40468f",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        309,
+        64
+      ],
+      "sha256": "8007377a6ae3654da4f24c637afa8e1e557f3bd0cfb7b9f8f3c9313569cefc75"
+    },
+    "casterman": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/8/87/Logo_Casterman.gif?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_Casterman.gif",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "92d993e43f512bed1ea81dae55c365bbff20810b99637bd4f5fbe8cddf468adf",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        206,
+        64
+      ],
+      "sha256": "bfdab938b75685cbee4df6ee7f1e065f1a26eb6ac88fbac6fd8ec6d9c15c9e87"
+    },
+    "charlton": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/4/4c/Charlton_Comics_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Charlton_Comics_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "9ccf5638ff429413084fd0bf61420b12e0df0f1eac788e8ab82d4234ae6aae86",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        51,
+        64
+      ],
+      "sha256": "3db05473899781edfd13a473f9a8c7e2257e6ee01c4560d57c83279657d99d8b"
+    },
+    "closer_weekly": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5c/Closer_logo.svg/960px-Closer_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Closer_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "9f36e90dea2fb3f91f8e1b03d5610b8992e5b64a5667c46d1c65fab56ab283b5",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        231,
+        64
+      ],
+      "sha256": "c654ba46fb6ba69bcf646e64d952a8ca4f6e365118752913ec49a98bb2234bdb"
+    },
+    "cosmopolitan": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1a/Comopolitan_Magazine_Logo.svg/960px-Comopolitan_Magazine_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Comopolitan_Magazine_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "73abe9c6668002c4eabc7e031311b1c5db73df70260f3a34ddbdb7131b84e50b",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        353,
+        64
+      ],
+      "sha256": "6299db7d96f76399dbea605b9cc35c7b275fc72062a5aae62d4c1b4dd83a04c1"
+    },
+    "dargaud": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c9/Dargaud_Logo.png/960px-Dargaud_Logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Dargaud_Logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "dde2ceede520362ddd412631bf31e4004372fa6db61891fbc71e88728a28183c",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        386,
+        64
+      ],
+      "sha256": "1c3d26e0066bf9625533107be4677c435061c3b6c788ca329d9c05b137b8a1db"
+    },
+    "dark_horse": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a8/Dark_Horse_Comics_wordmark.svg/960px-Dark_Horse_Comics_wordmark.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Dark_Horse_Comics_wordmark.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "d1e45fe4e980e5234a4fa609a510724c3bd86da6cdb7c3454f5a600fec4fce59",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        115,
+        64
+      ],
+      "sha256": "b3b138ca584bcaa7eeea78c68ce3904d6ea9aeff0fd50f585636d9bf091fb3bd"
+    },
+    "dc": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/71/DC_Comics_2024.svg/960px-DC_Comics_2024.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:DC_Comics_2024.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "3588b72e9d08dc7cb174bae927d626363dbdf4805d3d0aabdd4c27a4938cb891",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "ad41a26dfeab8f3cbcb27e0a81f1d5843c8557e610a58d6c19f2a76270e0419f"
+    },
+    "delcourt": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/8/84/Delcourt_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Delcourt_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "3638daedf82f2f6145f0082cfec88378f81841b9d73819e159cb7b8a66f7c75a",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        228,
+        64
+      ],
+      "sha256": "2e0f846410588c56d3605ed1a36fc8aab347ad0408f8123fdc81db9d697d73bb"
+    },
+    "dell": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/b/b0/Dellcomicslogo.jpeg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Dellcomicslogo.jpeg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "9bb942dbf32e912174359cd9b04afb78037d923084585c45b56710359c9ed7f3",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        42,
+        64
+      ],
+      "sha256": "7818385408aaecf36fbe1177329b656e6e06b95b94c5a9ce0339400779e0d4f9"
+    },
+    "der_spiegel": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3e/Logo-der_spiegel.svg/960px-Logo-der_spiegel.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo-der_spiegel.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "111317f871a06f0b5bf3257f2eef59887bb2a31ed911ac3a26eb7c4850924285",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        339,
+        64
+      ],
+      "sha256": "7adab776ae1e11b7074f299f972a69282dcb3243cffa18db458f1ead3cd70135"
+    },
+    "dupuis": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/61/DUPUIS-EDITION_ET_AUDIOVISUEL-ROUGE_Print_Transparence.png/960px-DUPUIS-EDITION_ET_AUDIOVISUEL-ROUGE_Print_Transparence.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:DUPUIS-EDITION_ET_AUDIOVISUEL-ROUGE_Print_Transparence.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "47f8e7b8cda41c6db676dc233ae0e5a291534b0fe713138c64db97c8ab413e2d",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        263,
+        64
+      ],
+      "sha256": "16a1a201013f87d3c28294d15c9fe4d975d527a301e8ed70f45b73473761fec8"
+    },
+    "dynamite": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/7/70/Dynamite_Entertainment_Logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Dynamite_Entertainment_Logo.png",
+      "licence": "CC BY-SA 4.0 (Wikimedia Commons)",
+      "source_sha256": "bb74f084fe2a330082040e9c6d9d0304619a9ccb498f8af65c62f081c693064f",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        250,
+        40
+      ],
+      "sha256": "4f73261dd45c2882aaffe3393db5557bcc7f874967453114a0ffc5fca72535f8"
+    },
+    "ec": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/9/92/Eclogo.jpeg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Eclogo.jpeg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "cc55d520f46994724e8c3600247cad68a6fdaa3efd94e49f72b5d68691768d83",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "1c2c9ec518a966a916044f7d1b46df672bec029e30e6fd4e0392cfdf4ce6e4ba"
+    },
+    "eclipse": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/1/1f/Eclipse_Comics_logo.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Eclipse_Comics_logo.jpg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "974ed492a856f2f03ab6be16f3da37589332ade11493a96373b620be16060521",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        190,
+        64
+      ],
+      "sha256": "b10d47e5bb7ac35763945753fb0f8646d3345d0313dc3db65752c19abab9851b"
+    },
+    "economist": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/65/The_Economist_Logo.svg/960px-The_Economist_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:The_Economist_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "2fe926310eb7dacb3f58ac7e533bf80bfebd5e63d444f16eb998269f7b6d7182",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        127,
+        64
+      ],
+      "sha256": "faf4802099f6573878fd1fc6f254290c612d769e72c8f55e359784757f83cc03"
+    },
+    "egmont": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2a/Egmont_Group_logo.svg/960px-Egmont_Group_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Egmont_Group_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "74f20bfc368657c45be3c13c6f410bd614c120dd60d88091ba61ffb87df26628",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        492,
+        64
+      ],
+      "sha256": "e046152d773ca785189f4dfe9447343b173b548fbe96858e6f5d1afb165faae3"
+    },
+    "ehapa": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/86/Egmont-Ehapa-Media-Logo.png/960px-Egmont-Ehapa-Media-Logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Egmont-Ehapa-Media-Logo.png",
+      "licence": "CC BY-SA 4.0 (Wikimedia Commons)",
+      "source_sha256": "5ce557b1b7421c5ebe4eda529537f55cd2dc05a5d1990073e03a9c3de66ce0be",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        265,
+        64
+      ],
+      "sha256": "368b3e82800798e0a51a04a8226bd5cf45a6db374cfa4107241b84854e8d384b"
+    },
+    "elle": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2a/Elle_logo.svg/960px-Elle_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Elle_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "3fe844be0ea757e236200608ca09ff29473f59dd9e3c949c78168edc42a43d7d",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        199,
+        64
+      ],
+      "sha256": "baf1aecc43e5b14229d0c7af32014c09cd25397b35aeb5f59889988168db7628"
+    },
+    "empire": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0c/Empire_%28magazine%29_logo.svg/960px-Empire_%28magazine%29_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Empire_(magazine)_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "76073a85603b8d922b2fa00a9ee5a66fddf81197feb2f6109bc9a6c14df5826e",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        243,
+        64
+      ],
+      "sha256": "56f8897d026cd28a436eb4f90b86969bfd8ba0d2586d2343c22aa5c8d7767829"
+    },
+    "entertainment_weekly": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ac/Entertainment_Weekly_logo.svg/960px-Entertainment_Weekly_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Entertainment_Weekly_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "ebbe6e117ea55037670d4e475b1cd652c68574e9ae41df5d315050b2cdec4ed7",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        309,
+        64
+      ],
+      "sha256": "c580b78ab53138d50e0cdec26d3effef001a878ff96902b9817952a67c17db50"
+    },
+    "esquire": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/25/Esquire_logo_%282017%29.svg/960px-Esquire_logo_%282017%29.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Esquire_logo_(2017).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "74b928a1ace5f2d209ede850619d65de0c0317b784389e248370a2fc50885cc1",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        436,
+        64
+      ],
+      "sha256": "9d164dc58624df0fa865740f5f05691ed57a82ce9f6917fc06b434c42eb54c6e"
+    },
+    "fantagraphics": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c9/Fantagraphics_logo.png/960px-Fantagraphics_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Fantagraphics_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c6f06a1754cf4548da4fb76cd63283aba802e0c4c01c5955e00c957ef40911d0",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        569,
+        64
+      ],
+      "sha256": "f6a4ddbdfd5b93dd6f06cf4792064b96f59307e29a4ee23736c6dfc6e6b11f9b"
+    },
+    "fawcett": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/2/2d/FawcettIcon2.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:FawcettIcon2.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "41966060e6a395d254ef5ad92c0623eb4a0a5cc63c00c3132f090db956998db2",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        67,
+        64
+      ],
+      "sha256": "19bdd05eca481d45e07853fd61919f34421ff9eb749da1c907840f3299adcc8e"
+    },
+    "forbes": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/db/Forbes_logo.svg/960px-Forbes_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Forbes_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "d2edc725de83d8c09d40d041c16b5db6edca6269a529badb1d245de746d82608",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        254,
+        64
+      ],
+      "sha256": "631e6ccabfdd3a7d185653db17fff1ccc63cae1bc337758c775f4143f61d0844"
+    },
+    "fortune": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/74/Fortune_magazine_logo_2016.svg/960px-Fortune_magazine_logo_2016.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Fortune_magazine_logo_2016.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5a2de4442a3b7dcefcf83cada6caca6bf81b15aad0febb8e2ae8ea354c36bd18",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        278,
+        64
+      ],
+      "sha256": "cc593877e8eda2477151a33f641794b66fcf3b186aa284944b90d99d723aaf27"
+    },
+    "futabasha": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/d/db/Futabasha_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Futabasha_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "6d85f2e2e8888b707fc19ef06bcaacfba71d2483c038cad242a2825594cb1c2a",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        108,
+        20
+      ],
+      "sha256": "d59554c1d79d6317af14a6ee43781175e32e352f1370d3fe77828a0a7c84bd34"
+    },
+    "glamour": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/ba/Glamour_logo.svg/960px-Glamour_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Glamour_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "1a870760afb23b918e3c99a349cff9c60a824fcbcdfaa9b6c57ba40e9e62af64",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        282,
+        64
+      ],
+      "sha256": "28adabe13e6b0cc7bb0356102ca856b6a24c56cf24dbb73983e223e79134dddc"
+    },
+    "golf_digest": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2e/Golf_Digest_logo.svg/960px-Golf_Digest_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Golf_Digest_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "e32b2903c35ef1c7b720107f6052fe636d1de7e6dfd68c7b68aa0776eb3d8b0b",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        313,
+        64
+      ],
+      "sha256": "957918749d453555658918f16acbcedff2eb8214d6cfa6be25cad9d2cec82b4b"
+    },
+    "gq": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e9/GQ_Logo.svg/960px-GQ_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:GQ_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c128440a65354c99f1382c5b8130e89e2fe836408544bfeb927dc1e569cf1b99",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        121,
+        64
+      ],
+      "sha256": "ec0868889d7fd83e3e8b670e866a688ddefac1917d6944c236acc03eedea727f"
+    },
+    "hakusensha": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/2/2c/Hakusensha_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Hakusensha_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "697a68fa369ea3a59c68c550324a5a0b7bb1af94d585eae7e2bd4452c35c3563",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        162,
+        64
+      ],
+      "sha256": "121c6db76d0cf5f03de6919f154a613251b0a4bb0b157d8c30e3eb4a4cf4570b"
+    },
+    "harpers": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b7/Harper%27s_Magazine_logo.svg/960px-Harper%27s_Magazine_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Harper%27s_Magazine_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "015fc83e5599a85e6bdd220ad939023e5af90adf499b8f7cb35e9a78d2bab368",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        227,
+        64
+      ],
+      "sha256": "2b1f34dbdafe88dea2e5550eeba893b232f53620cdb89cf0bb4aab461fa01bc6"
+    },
+    "harpers_bazaar": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b1/Harper%27s_Bazaar_Logo.svg/960px-Harper%27s_Bazaar_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Harper%27s_Bazaar_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "ee919709595164e5e6a142406463a80a702fe80231e26e95a2149f054974ad1b",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        261,
+        64
+      ],
+      "sha256": "4b7116f7b73588f5fa3fc8cacc68afdb5d01263f5f740309d2c46332fc6a70b4"
+    },
+    "hollywood_reporter": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/42/The_Hollywood_Reporter_logo.svg/960px-The_Hollywood_Reporter_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:The_Hollywood_Reporter_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "7900c22c2efa2c96cdb81dc1c76e149e61e8e2a72eae51e808474ae47fd7bbdc",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        273,
+        64
+      ],
+      "sha256": "121aaf1d2fecc7308a0568717481f1535d1da474f2bc33268f62591a6d9574b8"
+    },
+    "humanoids": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/63/Humanoids_logo.png/960px-Humanoids_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Humanoids_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "ef839d400fbeec9f792d77ffa9b02a0436f9440ad0783055988a694d172935a8",
+      "processing": "a white ground reaching the edge cleared; white lettering (for a dark header) set near-black",
+      "size": [
+        626,
+        64
+      ],
+      "sha256": "9fc18a317f70ddc0e7649200bf948f47562d9d158df1acbeee27e60e7db63c86"
+    },
+    "i_d": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3a/I-D_Magazine_Logo.svg/960px-I-D_Magazine_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:I-D_Magazine_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "a6add13a6b4d83ee6748a3d5ae634a449482d24257303e927c4d2bc3121787fb",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        104,
+        64
+      ],
+      "sha256": "8f6b4f2807eee59ebb9d18e9d525da1e70f0620afe5d3d35e8697136ef4a822a"
+    },
+    "idw": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4b/IDW_Publishing_logo.svg/960px-IDW_Publishing_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:IDW_Publishing_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "9dca0dab5ec08b0711ceb3caae1e523d3fa0ccdb18b4cf92bc1efe3bdcacd48f",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        132,
+        64
+      ],
+      "sha256": "0fbdd8e3b796d473fd3b291366fed5cde306e7a9a6d04f6aa03ef07754b4d1ea"
+    },
+    "image": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/96/Image_Comics_logo.svg/960px-Image_Comics_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Image_Comics_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "b7d9e578914e885c0cf3d7624a8738b04aab20764cbec0773235209ba75d2f28",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        28,
+        64
+      ],
+      "sha256": "334215b0f2cc358196b5910187f6e050f58ea6f14fd28eda79e14cf695e20e8c"
+    },
+    "instyle": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/62/InStyle.svg/960px-InStyle.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:InStyle.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "a6ab4c8d128751da732039300188a20ac6eeac1d5e73b41918bf3af856464d5a",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        288,
+        64
+      ],
+      "sha256": "301079ebf67098a0426a5d1be58d57afe1be31f8c37a50a31bf9d359c309cdba"
+    },
+    "interview": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/74/Interview_mag_logo.svg/960px-Interview_mag_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Interview_mag_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "0ba56554070e1db38d040852c80008d243971f9d2726d4616207bb5627835ce9",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        174,
+        64
+      ],
+      "sha256": "bb2ff5a611d2aec3d46c9f3752713ccdbb5ad1a040b7eaa2c12091bce332e65a"
+    },
+    "jet": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e3/Jet_Magazine.png/960px-Jet_Magazine.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Jet_Magazine.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "135e61621a2f3d59c20973c5ccb989779f74927b9495e3d112fa8f3f90e9fbfd",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        119,
+        64
+      ],
+      "sha256": "babcabec9004685c3f544b6b4a375a70173709146565c0f957797a61b302ca84"
+    },
+    "kadokawa": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/39/Kadokawa_logo.svg/960px-Kadokawa_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Kadokawa_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "b57ea1573ba7a6c67922931969f4e75da39746c03b49fda1b2642f4775040c98",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        559,
+        64
+      ],
+      "sha256": "51e6fca1885ef576c1cfd6fdef49f97570247abb4d6a8edf1dc2d377050b9136"
+    },
+    "kodansha": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f0/K%C5%8Ddansha_logo.svg/960px-K%C5%8Ddansha_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:K%C5%8Ddansha_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "3e6f038b3450709136f04cca7c9e227ecd90f09fdd61d890ac519caff2f919af",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        248,
+        64
+      ],
+      "sha256": "e740f6130b20991e2ec5ba4f2b9979848d127adf54d51c01b0dcad7cd19265ae"
+    },
+    "life": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7f/LIFE_magazine_logo.svg/960px-LIFE_magazine_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:LIFE_magazine_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "4cff0b7c6f52bd005763152a8d6ed4278bfcc7a4d01c08d85b92c91181a1080d",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        114,
+        64
+      ],
+      "sha256": "8b0860147bb5c6a07f3f9f3fde8cc83d0939bbaedd2c69ac86838db1bfa54dbb"
+    },
+    "lombard": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3e/Le_Lombard_logo_%282010%29.svg/960px-Le_Lombard_logo_%282010%29.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Le_Lombard_logo_(2010).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "d60e8b3c6b240c15105e2a1ff6e9e21a98bc6cdb9d9f55f3a71dda6506dcf45d",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        498,
+        64
+      ],
+      "sha256": "bf30505582841ade4da6e5a702f12dd7222edf5d59912e92c577d66e5977095f"
+    },
+    "mad": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/c/c3/Madlogo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Madlogo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "1892267a36413e368c89d7b41b56b604f7816c81c545a8107e9f613184447531",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        208,
+        56
+      ],
+      "sha256": "529894d3005a775c00ff659f6dd6ba19fd643a03fa7019cb8b8bdb15932e97e5"
+    },
+    "marie_claire": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d0/Marie_Claire_Magazine_logo.svg/960px-Marie_Claire_Magazine_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Marie_Claire_Magazine_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "4cedd8c59bb81bf77951988a511e57004f471fe14fa4bbc1ae62ca2bd8fb24bf",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        439,
+        64
+      ],
+      "sha256": "2a41d87b207c7d278db2558569ebb879062a51ebf70b94081ca2181d8ced0fe1"
+    },
+    "marvel": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/ba/Marvel_Comics_2024_logo.svg/960px-Marvel_Comics_2024_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Marvel_Comics_2024_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5dc16750f28f12a003354eb63637c6a0fa0d1fe2ad4e2bf46596d7fa65208bac",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        287,
+        64
+      ],
+      "sha256": "d3a1f91bac8b0f7c61e4ab131e940515c4bdb8b1a70c575a40efe23d44fe5e84"
+    },
+    "maxim": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7b/Maxim_Magazine_Logo.svg/960px-Maxim_Magazine_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Maxim_Magazine_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5ca7fe4476bb539e8f000c0f4fce1d63b18a4842f0335e1665eb41731b4a940c",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        296,
+        64
+      ],
+      "sha256": "6e6c5561ecab772b40c3e4a903c8695ea917e1bb10dfd006b69a13e30c1dd485"
+    },
+    "mens_health": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8b/Men%27s_Health.svg/960px-Men%27s_Health.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Men%27s_Health.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5d1a99af53dc90784c088e8eb4cc7d5f8d4bd992e7ef57099206644137cb3cf9",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        286,
+        64
+      ],
+      "sha256": "c314491d9754ca5b01a185ab2e75094606c25b93073d457f709921064c3b982e"
+    },
+    "milestone": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/0/0a/Milestone_Media_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Milestone_Media_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "42009a6fa75649e6a0d86de94b5cf7925a517d54af2ca0576d42307dc939be37",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        251,
+        64
+      ],
+      "sha256": "7ffd7533e8b94737833633ba9337023ede939e0b5a0c8a80adf8062dffa167be"
+    },
+    "mojo": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bc/Mojo_%28magazine%29_Logo.svg/960px-Mojo_%28magazine%29_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Mojo_(magazine)_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "9bf27585caa22ecf76380234cd1e661c0363f4d141b873aa1425612a2c2b0d51",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        213,
+        64
+      ],
+      "sha256": "d0820ac4ebe31e064dbcacab44253b4bc06592eb2a51b95af2148af8f8597965"
+    },
+    "motor_trend": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/39/Motor_Trend_logo.svg/960px-Motor_Trend_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Motor_Trend_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "e8406af26b1e74317b83dd6f8e4f9f5b9eb730931e7ee8d461bfa6de3f17feaf",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        330,
+        64
+      ],
+      "sha256": "e8af763646544684bfe899b50d486d92b65229d8eccde8afb37ea643a767b806"
+    },
+    "national_geographic": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fc/Natgeologo.svg/960px-Natgeologo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Natgeologo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "9787c82827316275fa3eb0cf106423e3229c21cc75f35ae5a91bf6681b6d5ac5",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        217,
+        64
+      ],
+      "sha256": "c2249322186ab209be3a371530ac2910eb352270c0361ee53aef8f982a7c503a"
+    },
+    "nature": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/db/Nature_journal_logo.svg/960px-Nature_journal_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Nature_journal_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "282a7306b47dac3420060f29a28593fcb8607ec88c873bb679039e1ba2406415",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        261,
+        64
+      ],
+      "sha256": "8e7a34f87517a3ba65fba69ff18ef1da26e14e8c0b9735fd39fd80295c0d61cc"
+    },
+    "new_republic": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/86/The_New_Republic_wordmark_horizontal.svg/960px-The_New_Republic_wordmark_horizontal.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:The_New_Republic_wordmark_horizontal.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c4821c57d792bc587a6624fa75b14e9649ce79892848d2a165e574e0ca0e6177",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        890,
+        64
+      ],
+      "sha256": "98839dd2db528265fb4e7fcee69e9e4d8da7f5cdb667899ca5c860fc478b13ed"
+    },
+    "new_yorker": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e3/The_New_Yorker.svg/960px-The_New_Yorker.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:The_New_Yorker.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "2bdabab4ae5032a255aa23c89bc9a75528ad01d59acfb76809871f828b5eacbd",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        565,
+        64
+      ],
+      "sha256": "8ee8fb664b39d364fdbaa5cfb86423a9ecc688ef0468e4974e5aab474e79753a"
+    },
+    "newsweek": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/db/Newsweek_Logo.svg/960px-Newsweek_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Newsweek_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "921715146bed256a2401d094d0daac47f67c7e357bc1ee44d0d597f41705a2a5",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        250,
+        64
+      ],
+      "sha256": "ebbc1f3767cb2961c9e53680f882f963cdaa7692a29b02f56d139369545b7808"
+    },
+    "nme": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a3/NME_-_New_Musical_Express_-_Logo.svg/960px-NME_-_New_Musical_Express_-_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:NME_-_New_Musical_Express_-_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "80996b546bb6ef71033ef61d8c50253534aa138672b61ddb86bbcc61139bbc84",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        179,
+        64
+      ],
+      "sha256": "74ba650ee53bec8dfe08c060ecaf7569ebef7384a90388cb27c3e49cf4758813"
+    },
+    "outside": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/96/Outside_logo_2020.png/960px-Outside_logo_2020.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Outside_logo_2020.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "71df106ed1b1732747fa1f558e22b4683b0b32a8e5b23435c1a885210a28e237",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        251,
+        64
+      ],
+      "sha256": "72bd3e46ea662d1e138b344f56ec9bf8dedf57ea31f2d2f68d2d986daf3212cb"
+    },
+    "panini": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3b/Panini_group_logo.png/960px-Panini_group_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Panini_group_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "043a372238f6c1a6975f804f3a9310ca369164e375076c9ab7c1789943f74cf6",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        254,
+        64
+      ],
+      "sha256": "45e8799925dc8e56c99cc45bfdbe4885fb062380212f3019128352bff602a2ec"
+    },
+    "paris_match": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ee/Paris_Match_1981_logo.svg/960px-Paris_Match_1981_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Paris_Match_1981_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "e3754454c2dd811fedf351eff269e27ba570393bec91e94a19196d8e5cf01b9b",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        107,
+        64
+      ],
+      "sha256": "1bb857ae34913fefc1ef07e43148d6db0b860176ad42d0ec66637f1b39a49165"
+    },
+    "penthouse": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3b/Penthouse_text_logo.svg/960px-Penthouse_text_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Penthouse_text_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5a6c25b137f81a79ee722a17352da96b312c3bb97d1a3b636529cbb5e52a765b",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        439,
+        64
+      ],
+      "sha256": "62c74c310d0f7cc70b8155533b4e485e074b12cec9f321997afb72d01f7ff61f"
+    },
+    "people": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/06/People_Magazine_logo.svg/960px-People_Magazine_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:People_Magazine_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "118098abc8bc0ee4e7abe501cd5e5c35fbe9aa6a7091f9cabff0f42f108b4bf0",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        154,
+        64
+      ],
+      "sha256": "4567d62a7391dd978ff9e3c14f7051b76ad0b170ef754d17c5245b001531d495"
+    },
+    "planeta": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/63/Planeta_DeAgostini_logo.svg/960px-Planeta_DeAgostini_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Planeta_DeAgostini_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5fed68e4818baea5c2b48b857b14a38ff30a45d135bcfa50055cceca67965cd1",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        588,
+        64
+      ],
+      "sha256": "b8380482d909023e17eff5c9d9368369781f312ae774d514f086eab182055f33"
+    },
+    "playboy": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6b/Playboy_logo.svg/960px-Playboy_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Playboy_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "32e0d215bcdc671757a452d432044e6b10a10095525e002c2eba66ad31debe99",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        427,
+        64
+      ],
+      "sha256": "f6ff0f363d53168448adb27153f8cfe4439a8244aff3afc7632d3898aa5df242"
+    },
+    "popular_mechanics": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/de/Popular_Mechanics_logo.svg/960px-Popular_Mechanics_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Popular_Mechanics_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "7621a8aa452e5e1c4d04be9fdeb4f50ef4593bfc2f0f531151bf5b61252a19b1",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        235,
+        64
+      ],
+      "sha256": "3ec0722ca3ce213af6c305156adb19b8b231aa495ab24db3292c7476c815ea71"
+    },
+    "popular_science": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5a/Popular_Science.svg/960px-Popular_Science.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Popular_Science.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c8d4cc5dfd6770dba78d5ff8abf057a409c2d0983eaa43ad0ec31b3081765b4f",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        178,
+        64
+      ],
+      "sha256": "2d74b594e07c2fa1232b20d24f60ff89499b6447857a844e964701120b4a024f"
+    },
+    "quality": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6d/Quality_Comic_Group_logo.svg/960px-Quality_Comic_Group_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Quality_Comic_Group_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "0e5319560830af77b07f944d43533f2ae3e35ec92f92f070ff084ff738c18c47",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        66,
+        64
+      ],
+      "sha256": "5dc931c5ce2acda6f0a1780eedb6c4e2adc1aa5a325ffa304bdafc10a1c9b735"
+    },
+    "readers_digest": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5b/Reader%27s_Digest_logo.svg/960px-Reader%27s_Digest_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Reader%27s_Digest_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c0098c6ed4af1784057d4a59e296cfbebc39f8b202d12ce4f7cfe35646641781",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        458,
+        64
+      ],
+      "sha256": "51e5c0717ab40cac9aa32e747a0164decddb6ab2af9594f83b5c0213a87e195f"
+    },
+    "road_track": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/84/Road_and_Track_Logo.svg/960px-Road_and_Track_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Road_and_Track_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "8b2e56685979a54f045f899e442df2709fc4dd71b43196f2e8c1a5433a3aa689",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        298,
+        64
+      ],
+      "sha256": "0ff34a4881a5c1bb317f40dd982f457aa72d511b0678d98fef3267d5b5b89d24"
+    },
+    "rolling_stone": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b3/Rolling_Stone_2022.svg/960px-Rolling_Stone_2022.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Rolling_Stone_2022.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c346f33af780b1b99344245d6b51440266674cbb922543ac7c761cccc852bef0",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        330,
+        64
+      ],
+      "sha256": "a84a4c02d00ecf7f36f7254df77fc6c892ad478e32cb6ab4e02ea9a7bfc59300"
+    },
+    "saturday_evening_post": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4b/The_Saturday_Evening_Post_logo.svg/960px-The_Saturday_Evening_Post_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:The_Saturday_Evening_Post_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "39010864d765b0357027c714f9b83230d331df9f9155a29231adce1d9deaafe8",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        203,
+        64
+      ],
+      "sha256": "a5122a2fb339a1930f08467eb24633318a9769a7c46389a76e1987bf764e6c7c"
+    },
+    "scholastic": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/73/Logo_Scholastic.svg/960px-Logo_Scholastic.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Logo_Scholastic.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "852574c5f1b26a485ef260bb99db38a251b571f95c1b670b7637222cbc531523",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        530,
+        64
+      ],
+      "sha256": "995c3e4c72cfa891b0173b08b27fbc05cbed523291654e54125b3f2bcf8ffb42"
+    },
+    "science": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f9/Science_AAAS_logo.svg/960px-Science_AAAS_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Science_AAAS_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "3087f5930cbe4939caeb53083226ff300226869b734609687c02c9cc47de7649",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        233,
+        64
+      ],
+      "sha256": "fd0095bbf8992c24e7b289de47a4080331c074e6ef3fe3585745434ff3391f06"
+    },
+    "scientific_american": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Scientific_American_logo.svg/960px-Scientific_American_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Scientific_American_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "548ef1086cc146e05009feb7ec599fd835dcecda1067d7b3309cb4877dc45634",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        232,
+        64
+      ],
+      "sha256": "25368b89bac12ad780d09a184386ea8a89ad052aac4eef68f78aa25688effedc"
+    },
+    "shogakukan": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e7/Shogakukan_logo.svg/960px-Shogakukan_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Shogakukan_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "2f47136d1490f52c9ba3367c175e6acb51d9b55784be3cb475120cfd041b3956",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        152,
+        64
+      ],
+      "sha256": "345f4e29eb74597e2e1f45c894d68dad6f7895581f67b476af62a163bf4f3692"
+    },
+    "shueisha": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/04/Shueisha_Logo.svg/960px-Shueisha_Logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Shueisha_Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "6eb7d4c877fcea011d38c51e820e17a90d47a084b802114129de27419c2ea0d3",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        114,
+        64
+      ],
+      "sha256": "52f65258040ab88437ebea739659b55ea756117f509b2730f2727001858e24af"
+    },
+    "spin": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f2/Spin-logo.svg/960px-Spin-logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Spin-logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "f570a7d6e94be39d226cddf4feacdd52b6357c807ad13217bc134817ce1d7595",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        126,
+        64
+      ],
+      "sha256": "6c39526410b6f76a44fdf727d611876b0184080e56a7a0bf2efde5e11bdb1ae5"
+    },
+    "sporting_news": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6a/SPORTINGNEWS_-_Master_Logo_.jpg/960px-SPORTINGNEWS_-_Master_Logo_.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:SPORTINGNEWS_-_Master_Logo_.jpg",
+      "licence": "CC BY-SA 4.0 (Wikimedia Commons)",
+      "source_sha256": "adc83ded2f68ea6891743176981ac5c2a27778573bec6a8fa6dc8c550a8de2da",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        220,
+        64
+      ],
+      "sha256": "2953eb6c8d8ccc83ec541b7a2fb71e929654e975a2a10e3d44faec3a3f4dd83a"
+    },
+    "sports_illustrated": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Sports_Illustrated_-_official_red_text_logo.svg/960px-Sports_Illustrated_-_official_red_text_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Sports_Illustrated_-_official_red_text_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "ae2bbb1ae18f8ebff4fcbefac9267bf5ce4a0996aedd4a6b93ae60afbf3875fe",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        249,
+        64
+      ],
+      "sha256": "e82e5d93f2b96bdc60f49a24108023a0bc015b0d5eab98922766dd022316d17d"
+    },
+    "square_enix": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/af/Square_Enix_logo.svg/960px-Square_Enix_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Square_Enix_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "d7447022a6d8274ff4f4fc326e6fb31689fe2f444273d1c536352359d64ab9d3",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        608,
+        64
+      ],
+      "sha256": "d432d09d75052b29a34465d31f0b44a1fcccaed27506da27b852ef6e977a1e7d"
+    },
+    "stern": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bb/Stern_Logo_2020.svg/960px-Stern_Logo_2020.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Stern_Logo_2020.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "04d3fd3504f6155d5fc399a785af127c89f4bd348730f8d9e5ab65044da37690",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        167,
+        64
+      ],
+      "sha256": "45091424e8d5c069af720fbdde620b4b5cdd18a53141a7254c8f8917b96ca704"
+    },
+    "teen_vogue": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Teen_Vogue.svg/960px-Teen_Vogue.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Teen_Vogue.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "913834071aa567ab9b338f68e83e78ebd49f6c15bcac5cbf09b91dc2a2588029",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        427,
+        64
+      ],
+      "sha256": "54faa148ed413ab098f6342dce62aaddb03c563ccd4b1ae525eccd5b40f8bbd3"
+    },
+    "the_atlantic": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/da/The_Atlantic_Logo_11.2019.svg/960px-The_Atlantic_Logo_11.2019.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:The_Atlantic_Logo_11.2019.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "183d93eb5c6ad91028cc3efd1742a579fdeb738a271816620c1c6c2e4ba6c0be",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        410,
+        64
+      ],
+      "sha256": "dbb448ed9686992cc7a032da6c1a7c9ebfb2e052c3143d745be68dd72619ffb1"
+    },
+    "the_face": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/26/The_Face_logo.svg/960px-The_Face_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:The_Face_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "954ef50e9667c72c4acbc5e8addb3a3cad3a9a88bf7164e6f5f287710ac1550f",
+      "processing": "a white ground reaching the edge cleared; white lettering (for a dark header) set near-black",
+      "size": [
+        455,
+        64
+      ],
+      "sha256": "ba0015bcd26c013709a3e8abc51c9678189c3059b6a358aacbc832faceb8c7dc"
+    },
+    "the_nation": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0a/The_Nation_logo.svg/960px-The_Nation_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:The_Nation_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5791d259b5c7106ef57ebfe51c11228c05da6d45a10afe5e71b260089eb3aacb",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        213,
+        64
+      ],
+      "sha256": "165ba1cbbf1b978a80a1deef8591b43cc41c394e9f90c32257a5c49679d802b6"
+    },
+    "the_spectator": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c7/The_Spectator_logo.svg/960px-The_Spectator_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:The_Spectator_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "97a48bd6767c6a20b5bfe9432130c4457ab34e4c3d4bde842d52d564bf10b502",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        282,
+        64
+      ],
+      "sha256": "8a9ff9855aaba18ae6c5bfb66c107cfd9a7708158cb98c170ad25cd0fe50820b"
+    },
+    "time": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b3/Time_Magazine_logo.svg/960px-Time_Magazine_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Time_Magazine_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "bd57a58d2ef0b654f37e978ab9aafa3246d886ec6e5df19d1f5bcea5b3242fc1",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        210,
+        64
+      ],
+      "sha256": "883cb94f41933d976e210d99ba1c3a7d51ee30e4aee902db52ced30bc2b6bbe4"
+    },
+    "timely": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/3/32/TimelyShield2.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:TimelyShield2.png",
+      "licence": "CC0 (Wikimedia Commons)",
+      "source_sha256": "fdbffd019f3faba6bb67cd11500e764cd9989ef4e701babf3a2aff99498b6778",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        43,
+        64
+      ],
+      "sha256": "5cbaa7753240d16668b1272ada846230b85de4a961846e5a669ed274749c30d1"
+    },
+    "tokyopop": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/6/65/TOKYOPOP_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:TOKYOPOP_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "fa2d0ce814bdd72033004edc0a0251db28b443b38d82b9e9cb2634e8f8cf7fa0",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        267,
+        64
+      ],
+      "sha256": "7b1bed90767caa3072165e356fa86611a66b6acc20c1831e8b48db6b56fb61ba"
+    },
+    "top_shelf": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/4/47/Topshelf_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Topshelf_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "9ce955f0d0db3a4aa6a5549f172b0cb48bf9265efa308740bddb70d67d5d6b54",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        56,
+        64
+      ],
+      "sha256": "0b83a0d323d78217d4bff9f1a79b8437badbf043fd2f405e0b17792fcaf8f70f"
+    },
+    "topps": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/e/ec/Topps_comics_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Topps_comics_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "fa6bab17101c617a9d6ea6620be8db06b2fe45547437db78c2e9900d5e965d6c",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        122,
+        64
+      ],
+      "sha256": "43282011d0ce0e5dcf922246e24a2ccf6e4a23c1c69616e560cdd2420ece7828"
+    },
+    "town_country": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3e/Town%26Country_wordmark.svg/960px-Town%26Country_wordmark.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Town%26Country_wordmark.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "40612aaf695e74e0c9cddbf626d1e5d2e29a016b03f203d7fc43e5127e8830fb",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        548,
+        64
+      ],
+      "sha256": "f7bd3bad09888a82048aa10a91877b20443a7daafa936532b74e9d1f5b229c76"
+    },
+    "tv_guide": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/c/c6/TV_Guide_logo_2016.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:TV_Guide_logo_2016.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "500a0be8611ec0ee56845c85a959da8d244e4c6c7eaf0731019883f99b72e7b0",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        84,
+        64
+      ],
+      "sha256": "b651eadf52b7921224f700b7a4299e8b5bcabc0d15e33042eb688d966573f461"
+    },
+    "us_weekly": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/4/44/Us_Weekly_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:Us_Weekly_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "7c626a3568241a064de7615b013af29e557b1671237ecc81765e7bed658fcea7",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        83,
+        64
+      ],
+      "sha256": "23acdaa8870d367a3774e0519f51f2cbcedff9ed27c6ae36ffbda55ab115d330"
+    },
+    "valiant": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f3/Valiant_Comics_logo_%28April_2012%29.svg/960px-Valiant_Comics_logo_%28April_2012%29.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Valiant_Comics_logo_(April_2012).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "f6d3ecb70b250b1ffce35d2219e944442862a39c4d336d961c96b9559067ef9b",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        44,
+        64
+      ],
+      "sha256": "4871902833d282668c9fc1995133eaff436bbb6c35d054d5526f0843921b0ac7"
+    },
+    "vanity_fair": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/43/Vanity_Fair_logo_%282025%2C_black%29.svg/960px-Vanity_Fair_logo_%282025%2C_black%29.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Vanity_Fair_logo_(2025,_black).svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "be06790c670a3fcf48a99cb6db779cf7c27de697d771b1fd1a4da24c111e19fa",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        320,
+        64
+      ],
+      "sha256": "547bb4f3230685273a61f33be50b38657c0a3ace7e499ef3f51570e912ca8e3a"
+    },
+    "variety": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/ca/Variety_logo.svg/960px-Variety_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Variety_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "87d0d07c5cd7138e7b766826d4ea62a6a9f70bd63c73b142cb8d1d2f2010b9c3",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        225,
+        64
+      ],
+      "sha256": "7bed09c7ab2f86f9fab9b8def13ab55ce43fc2cd06dbb510af449c389786c441"
+    },
+    "vertigo": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d8/DC_Vertigo_2024.svg/960px-DC_Vertigo_2024.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:DC_Vertigo_2024.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "7accb1fd5c88727d42884be4de82e1e1f938edee1eb9a2858080b6ac6c3de81d",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        218,
+        64
+      ],
+      "sha256": "b2879f01f4ee1a6f514c237c2de58c110f5135e6a610b6360d4f8a3b52208259"
+    },
+    "viz": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/48/Viz_Media_2017_logo.svg/960px-Viz_Media_2017_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Viz_Media_2017_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "2bf00b7ecae17d41a902a1e9fa489091f9d549d108170e0d385fed05b6303429",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        334,
+        64
+      ],
+      "sha256": "2e0a16d3db084c8fb662097bb7dc1ec723f8023764c76459f2e001750f14abc8"
+    },
+    "vogue": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f8/VOGUE_LOGO.svg/960px-VOGUE_LOGO.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:VOGUE_LOGO.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5e69ce12f3afd5677df99863d046f1112f0926d6af9411a4947af606413d81aa",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        250,
+        64
+      ],
+      "sha256": "138769e95c51575f551dc82f0555a63f14a9e168bcb65d7c91080b3655b810bb"
+    },
+    "w": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b7/W_magazine_logo.jpg/960px-W_magazine_logo.jpg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:W_magazine_logo.jpg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "09051646ac10b020b3f7af1038b5edbc8cbb72a51454bfaac6edab04bcd66286",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        54,
+        64
+      ],
+      "sha256": "6ed7408623fd43927101aef5bf14d3372788039a4a93b12f5a586b7e41bcc19f"
+    },
+    "weird_tales": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b5/Weird_Tales_Logo.png/960px-Weird_Tales_Logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Weird_Tales_Logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "4e32b4574af4acc05d41c58d327ed7e1f687374cd4be69ec1f38c926e9697402",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        168,
+        64
+      ],
+      "sha256": "2e0e99f31d0311eb51b46c70024c1b835ec10e62c2c7bc9d693aa573a7e8c960"
+    },
+    "wildstorm": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/5/52/WildStorm_logo.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail_unscaled",
+      "page": "https://commons.wikimedia.org/wiki/File:WildStorm_logo.png",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "c733f75b84e26637f894133ecb6e189fc3d05434c8817e5fdbc3620657c79710",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        250,
+        52
+      ],
+      "sha256": "fcadc07d611d1c9de9b7e2f3dc91f6b785c2a9dac1ae28399fe82a28fabfb8ee"
+    },
+    "wired": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/95/Wired_logo.svg/960px-Wired_logo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Wired_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "9f44f6a4b5a472d470ce4d660e2ee64285173a2abf541384780a192bf5bf7393",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        320,
+        64
+      ],
+      "sha256": "93b3bce668b502d3fc4f2c279fedd011ff756a144a35eecb5eb4ed6bb5934dec"
+    },
+    "womens_health": {
+      "source": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/65/Womenshealthlogo.svg/960px-Womenshealthlogo.svg.png?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=thumbnail",
+      "page": "https://commons.wikimedia.org/wiki/File:Womenshealthlogo.svg",
+      "licence": "CC BY-SA 4.0 (Wikimedia Commons)",
+      "source_sha256": "6f951ba1036dbab1dba7754ae57bc0373ddf397918859f689574f6747eb41c20",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        312,
+        64
+      ],
+      "sha256": "ac86ebdb9f3a4b276b8deb63364d1a1782c5dddec1207143a6ce79576f1cf2e1"
+    },
+    "boom": {
+      "source": "https://www.boom-studios.com/wp-content/uploads/2023/02/boom-logo-header.webp",
+      "page": "https://www.boom-studios.com/",
+      "licence": "boom's logo from its own site, shown to name the publisher",
+      "source_sha256": "9b3d358b4aaa52331fbfd974402a717b61193bdba9b58d7a08f0d9dddcacf84b",
+      "processing": "a white ground reaching the edge cleared; white lettering (for a dark header) set near-black",
+      "size": [
+        102,
+        48
+      ],
+      "sha256": "7a3ebdd36d23733cff4d499211bbc5a1f45e5cca0d5b66f55e703273b40dc5fa"
+    },
+    "oni": {
+      "source": "https://images.squarespace-cdn.com/content/v1/651302f86c2c335a35c606d6/9686d5fc-d2c4-4a58-b0ea-43a22784db28/Standard+Coin+W300dpi.png?format=1500w",
+      "page": "https://images.squarespace-cdn.com/",
+      "licence": "oni's logo from its own site, shown to name the publisher",
+      "source_sha256": "3f47ca906bde245d7074053ee14bd8a4db5edabcae47060282e17d35299f15f8",
+      "processing": "a white ground reaching the edge cleared; white lettering (for a dark header) set near-black",
+      "size": [
+        134,
+        64
+      ],
+      "sha256": "4da84925aa65e4a94b825ff8aa5117b627891ff5350d28aa36c8accaf84ab36f"
+    },
+    "yen_press": {
+      "source": "https://yenpress.com/images/header/logo.svg",
+      "page": "https://yenpress.com/",
+      "licence": "yen_press's logo from its own site, shown to name the publisher",
+      "source_sha256": "345fa4de8cf5da37da84c08d5d580778c75f7edcab77d9e229cc0c6db150830e",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        88,
+        64
+      ],
+      "sha256": "38d3ce504b0e7befb9be756e7ad7c34777b50372dabbeecc2e581cf45b7c3412"
+    },
+    "seven_seas": {
+      "source": "https://sevenseasentertainment.com/wp-content/themes/gomanga2025/images/SevenSeas-logo-sm.png",
+      "page": "https://sevenseasentertainment.com/",
+      "licence": "seven_seas's logo from its own site, shown to name the publisher",
+      "source_sha256": "f8c58fd7c28d7b45a5e97fbd126f7287d46c9e339aed3ec996cbecde4a18812e",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        42,
+        64
+      ],
+      "sha256": "5bd9d082d630cb7e822f870130d1e408580cc5a742a9c3beaac69eea109a4c52"
+    },
+    "dc_thomson": {
+      "source": "https://www.dcthomson.co.uk/hubfs/raw_assets/public/dc-thomson/images/logo.svg",
+      "page": "https://www.dcthomson.co.uk/",
+      "licence": "dc_thomson's logo from its own site, shown to name the publisher",
+      "source_sha256": "1f1c9ad621f179d1911147ede1dfc6c63b19f1e39e733ab2d246a835dc43c57a",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        276,
+        64
+      ],
+      "sha256": "0b22643d4110f1e80297a4916d2e0b1b96a41bf5e349c16b5f86eee2ec6538ad"
+    },
+    "glenat": {
+      "source": "https://media.hachette.fr/17/2025-05/logo-glenat.png",
+      "page": "https://media.hachette.fr/",
+      "licence": "glenat's logo from its own site, shown to name the publisher",
+      "source_sha256": "6bded721e5b2f65271887a3fc16205cd7a88ce41be30c23b43f281ece7f826ba",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        210,
+        64
+      ],
+      "sha256": "039a5a46aedd333bc88173231cc9b377ac5b81e98aaed26276ea9876b6497699"
+    },
+    "aftershock": {
+      "source": "https://aftershockcomics.com/cdn/shop/files/logo-white2_340x.png?v=1629327231",
+      "page": "https://aftershockcomics.com/",
+      "licence": "aftershock's logo from its own site, shown to name the publisher",
+      "source_sha256": "0c79abfd75fc1e5d94ffcbf24d9915a3625676d137ce4ce57b18b69347e0659c",
+      "processing": "a white ground reaching the edge cleared; white lettering (for a dark header) set near-black",
+      "size": [
+        196,
+        64
+      ],
+      "sha256": "9d5b2032d798e11411f2bdb7915063c244d6d62ebb85d9297764bd87514d6f6a"
+    },
+    "vault": {
+      "source": "https://vaultcomics.com/cdn/shop/t/15/assets/logo.svg?v=91623706365843156311709921395",
+      "page": "https://vaultcomics.com/",
+      "licence": "vault's logo from its own site, shown to name the publisher",
+      "source_sha256": "7976664820a7748f82b71bf45fcf01f9052ba6df00d21a65b12d928a39e79945",
+      "processing": "a white ground reaching the edge cleared; white lettering (for a dark header) set near-black",
+      "size": [
+        135,
+        64
+      ],
+      "sha256": "65711e68a1f8486954ea73714e6088cf0d0bf7fa037d8c6c10f9da8cf70364a3"
+    },
+    "zenescope": {
+      "source": "https://zenescope.com/cdn/shop/files/Zenescope_logo_final_2019_white_copy.png?v=1614370979&width=360",
+      "page": "https://zenescope.com/",
+      "licence": "zenescope's logo from its own site, shown to name the publisher",
+      "source_sha256": "c5faf9271cec8f73d31b1e4a304335607a47316eea997a5fcaa8952f9ccb3f94",
+      "processing": "a white ground reaching the edge cleared; white lettering (for a dark header) set near-black",
+      "size": [
+        163,
+        64
+      ],
+      "sha256": "ac39b0f5fed3e63893af27aac26760d84a4d6e95d1d3bec647007b0d0e483b7f"
+    },
+    "first_second": {
+      "source": "https://firstsecondbooks.com/wp-content/uploads/2019/04/FirstSecond_logo_100x117.png",
+      "page": "https://firstsecondbooks.com/",
+      "licence": "first_second's logo from its own site, shown to name the publisher",
+      "source_sha256": "6e938ba0000fb6cca967d0d6fe6ef2601c511f2b92124348bba362e0cee7ed10",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        55,
+        64
+      ],
+      "sha256": "0aaa87cba2fca632cb937901d417bc35f86e92dbdbbf2b139eecd9e282da176b"
+    },
+    "taste_of_home": {
+      "source": "https://www.tasteofhome.com/wp-content/uploads/2021/09/toh-interior-logo.svg",
+      "page": "https://www.tasteofhome.com/",
+      "licence": "taste_of_home's logo from its own site, shown to name the publisher",
+      "source_sha256": "e1430aafb1ab7fa0a7b486e3382a8007c0a9b8e3ed1294db89cd95a5cbb71db6",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        458,
+        64
+      ],
+      "sha256": "63381669c13109ab309b05001f4c9b924fe7651c37e81040a41129a0e6632c72"
+    },
+    "hustler": {
+      "source": "https://hustlermagazine.com/file/hustlermag_logo_sm.png",
+      "page": "https://hustlermagazine.com/",
+      "licence": "hustler's logo from its own site, shown to name the publisher",
+      "source_sha256": "c843edc88805585d0b8474f479c61da604364bcef3e0999aa77a2bfee7078274",
+      "processing": "a white ground reaching the edge cleared; white lettering (for a dark header) set near-black",
+      "size": [
+        191,
+        64
+      ],
+      "sha256": "d8a913e1587d1bab3d0ded2ec403f9753e4a7809b2316879deefe760b997879c"
+    },
+    "first_for_women": {
+      "source": "https://firstforwomen.com/wp-content/uploads/2024/11/logo.png",
+      "page": "https://firstforwomen.com/",
+      "licence": "first_for_women's logo from its own site, shown to name the publisher",
+      "source_sha256": "24e6ef124541fdd235cef25d6a29cb686d3dff515eb7a88ef478533d915250f6",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        203,
+        64
+      ],
+      "sha256": "45794c0176636d4fc5180d453e97a41b02edecffa8f019db59880f69a481e59d"
+    },
+    "smithsonian": {
+      "source": "https://www.smithsonianmag.com/static/smithsonianmag/img/smithmag-logo-horizontal-white.98dddd9f3f4d.svg",
+      "page": "https://www.smithsonianmag.com/",
+      "licence": "smithsonian's logo from its own site, shown to name the publisher",
+      "source_sha256": "8e0c0be18804300764c49dcf1341953b866269e5fd86f8d9752ef4a8ceb8686c",
+      "processing": "a white ground reaching the edge cleared; white lettering (for a dark header) set near-black",
+      "size": [
+        540,
+        64
+      ],
+      "sha256": "8220d5ff9a2908157dbc7e5622478f7370d5b22e738b4ee4ae453a7e27285400"
+    },
+    "essence": {
+      "source": "https://media.essence.com/essence_pubp/uploads/2026/04/02/logo.svg",
+      "page": "https://media.essence.com/",
+      "licence": "essence's logo from its own site, shown to name the publisher",
+      "source_sha256": "ef2f3a515d7cae075bb362e805d3d919311aa9c9c8846432128d6b4ae612d6dc",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        345,
+        64
+      ],
+      "sha256": "fef199e7c7f43bfacbf3dc106b51afb812285f3d165eb2568b093b53f01e017e"
+    },
+    "ebony": {
+      "source": "https://media.ebony.com/sytwmfsyue/uploads/2026/04/01/ebony-logo-1.svg",
+      "page": "https://media.ebony.com/",
+      "licence": "ebony's logo from its own site, shown to name the publisher",
+      "source_sha256": "919691bba99450a642798c5420dc9ba02becfc8d7917f99eaafd9b7add22bdfd",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        183,
+        64
+      ],
+      "sha256": "e3aff897a42007a14f5c594aa2df998b59baa924f5239a6fbffa1ae460779952"
+    },
+    "field_stream": {
+      "source": "https://fieldandstream.com/wp-content/uploads/2025/10/FS_Logo_Estb1871_Cream_Horiz-e1760450600626.png",
+      "page": "https://fieldandstream.com/",
+      "licence": "field_stream's logo from its own site, shown to name the publisher",
+      "source_sha256": "0fc2b715a229d4a8e4cb0dbc787dfd0dbe6f57382f4e789c829f3adff7f05341",
+      "processing": "a white ground reaching the edge cleared; white lettering (for a dark header) set near-black",
+      "size": [
+        468,
+        64
+      ],
+      "sha256": "c1c77c26e6f6194849f1852e809dd80ec1dbc8f72da059e864d515332a10cb53"
+    },
+    "better_homes": {
+      "source": "https://www.bhg.com/ (the page's inline SVG logo)",
+      "page": "https://www.bhg.com/",
+      "licence": "better_homes's logo from its own site's header",
+      "source_sha256": "c10d9282dd16251d2e2e3b72f5eb077011ca88f534a5ac1b1d9d0744cb8724f9",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        882,
+        64
+      ],
+      "sha256": "b2eb5ca161927bf84a4fb024b5251723fdecee4e51796358103a15b6bb9bf1cb"
+    },
+    "womans_world": {
+      "source": "https://www.womansworld.com/ (the page's inline SVG logo)",
+      "page": "https://www.womansworld.com/",
+      "licence": "womans_world's logo from its own site's header",
+      "source_sha256": "170a71bcc03cafc1b92b50882403adee58c0ef5bad2b333e3cd361608d5bdbd6",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        582,
+        64
+      ],
+      "sha256": "1657c7c3a93cc6d94a2ad4d8008b25aa1686c6f5d85be684ce0c10c2299c893d"
+    },
+    "robb_report": {
+      "source": "https://robbreport.com/ (the page's inline SVG logo)",
+      "page": "https://robbreport.com/",
+      "licence": "robb_report's logo from its own site's header",
+      "source_sha256": "33a4c6e6de0dc1fbde15c8a7e02f7a13080d2362b751ad69cc82bf9c9e962429",
+      "processing": "a white ground reaching the edge cleared",
+      "size": [
+        343,
+        64
+      ],
+      "sha256": "888ee661dba8ea270e09c8aab0b3889b9425bbb12d09b764b744844e6d274772"
+    }
+  }
+}

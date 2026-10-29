@@ -18,6 +18,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 
+from plugins.base_plugin.publisher_logos import publisher_logo
 from utils.app_utils import get_base_ui_font
 from utils.safe_image import safe_open_image
 
@@ -52,6 +53,8 @@ SOURCE_LOGOS = {
     "smk – statens museum for kunst": "smk", "statens museum for kunst": "smk",
 }
 HEADER_SOURCE_H, LABEL_SOURCE_H = 18, 13
+# A masthead before a title fits this box; a publisher's logo before the first fact, the smaller one.
+TITLE_LOGO_BOX, PUBLISHER_LOGO_BOX = (78, 15), (64, 13)
 DAY = {"paper": (249, 246, 239), "ink": (24, 24, 28), "muted": (104, 100, 94), "rule": (206, 200, 189),
        "card": (255, 255, 255), "frame": (40, 38, 36)}
 NIGHT = {"paper": (20, 21, 25), "ink": (238, 236, 230), "muted": (160, 156, 148), "rule": (70, 70, 76),
@@ -75,6 +78,10 @@ class Label:
     # Where the work comes from, shown by its logo at the head of the last line (its name in text
     # when there is no logo for it).
     source_logo: str = ""
+    # The magazine whose masthead stands before the title, and the publisher whose logo stands
+    # before the first fact (publisher_logos.py); nothing when there is no logo for them.
+    title_logo: str = ""
+    publisher_logo: str = ""
 
 
 def year_of(text):
@@ -362,6 +369,11 @@ def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=No
         draw.text((x + 8 - draw.textlength(number, font=number_font) / 2, top + 2), number, font=number_font,
                   fill=(255, 255, 255))
         x += 22
+    ink = colors["ink"] if colors is NIGHT else None
+    masthead = publisher_logo(label.title_logo, TITLE_LOGO_BOX, ink) if label.title_logo and page is not None else None
+    if masthead is not None:
+        page.paste(masthead, (round(x), top + 7 - masthead.height // 2), masthead)
+        x += masthead.width + 6
     title_font = _font(14, True)
     draw.text((x, top - 1), _clip(draw, label.title or "-", title_font, right - x), font=title_font, fill=colors["ink"])
     y = top + TITLE_ROW
@@ -374,7 +386,14 @@ def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=No
         draw.text((left + 5, y + 2), label.chip, font=chip_font, fill=(255, 255, 255))
         x += chip_w + 6
     first = label.lines[0] if label.lines else ""
-    if first:
+    mark = None
+    if label.publisher_logo and page is not None:
+        mark = publisher_logo(label.publisher_logo, PUBLISHER_LOGO_BOX, ink)
+    if mark is not None and right - reserve - x > mark.width + 30:
+        page.paste(mark, (round(x), y + 9 - mark.height // 2), mark)
+        x += mark.width + 4
+    # Beside a publisher's logo its name shows whole or not at all: the logo already names it.
+    if first and (mark is None or draw.textlength(first, font=fact_font) <= right - reserve - x):
         draw.text((x, y + 1), _clip(draw, first, fact_font, right - reserve - x), font=fact_font, fill=colors["ink"])
     y += CHIP_ROW
     # The source's logo leads the line (its name in text when it has none).
@@ -389,8 +408,9 @@ def _label(draw, label, box, index, accent, colors, numbered, reserve=0, page=No
         # Two fact lines: the body beside the logo, the source facts under it.
         rows = (" · ".join(str(part) for part in (*label.lines[1:], label.body, named) if part), label.source)
     elif fact_rows > 1:
-        # No body: the facts run on from beside the logo onto the second line, whole facts at a time.
-        facts = [str(part) for part in (*label.lines[1:], label.source, named) if part]
+        # A body or source facts alone: they run on from beside the logo onto the second line, whole
+        # facts at a time.
+        facts = [str(part) for part in (*label.lines[1:], label.body, label.source, named) if part]
         facts = [fact for text in facts for fact in text.split(" · ")]
         first = []
         while facts and draw.textlength(" · ".join([*first, facts[0]]), font=fact_font) <= right - x:

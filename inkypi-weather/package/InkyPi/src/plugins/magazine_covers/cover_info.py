@@ -130,9 +130,10 @@ def gallery_label(record, this_year):
     category = CATEGORY_LABELS.get(info["category"], "")
     rights = "公有领域" if "public domain" in str(record.get("rights") or "").lower() else ""
     facts = " · ".join(part for part in (publisher, category, rights) if part)
-    # Where the scan came from leads the last line by its logo; the headline and facts follow it.
+    # The magazine's own masthead stands before its name; where the scan came from leads the last
+    # line by its logo, the headline and facts following it.
     return Label(title=publication, chip=chip, lines=(" · ".join(part for part in (beside, number) if part),),
-                 body=headline, source=facts, source_logo=provider_label(record))
+                 body=headline, source=facts, source_logo=provider_label(record), title_logo=publication)
 
 
 # A date or year the chip already gives, at the end of a scan's file title: "1966-03-24",

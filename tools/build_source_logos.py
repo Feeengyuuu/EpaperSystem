@@ -37,6 +37,10 @@
 - The sports page's NHL panel: the league's shield from Commons (public domain).
 - Tech Pulse: OpenRouter's logo and icon from Commons (public domain), for the newest models, and
   their makers' marks: Commons where it has one, else the maker's own site icon.
+- The cover pages' publishers and magazines (base_plugin/assets/publisher_logos, PUBLISHER_LOGOS):
+  each one's logo as Wikidata names it on Commons (Marvel, DC, Kodansha, Rolling Stone, TIME, ...),
+  else the one its own site's header serves (BOOM!, Oni, Yen Press, DC Thomson, ...), white lettering
+  made for dark headers set dark for the page to ink, and a white ground cleared from the edge.
 
 SVGs are drawn by a headless Chrome or Edge (tools/build_planet_now_logos.py). Each is cropped
 to its visible pixels and scaled to at most 64 px tall into the plugin's assets;
@@ -56,7 +60,7 @@ import sys
 from pathlib import Path
 
 import requests
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw
 
 from build_planet_now_logos import _rasterize
 
@@ -222,6 +226,94 @@ LOGOS = {
                     COMMONS_FILE.format(name="OpenRouter_Logo.svg"), PUBLIC_DOMAIN),
                    [PLUGINS / "tech_pulse" / "assets" / "logos"], 1.0),
 }
+PUBLISHERS = PLUGINS / "base_plugin" / "assets" / "publisher_logos"
+# The cover pages' publishers and magazines (base_plugin/publisher_logos.py knows their names): key ->
+# its logo's Commons file (Wikidata's "logo image" for it, drawn 600 px wide), an https file its own
+# site's header serves, or "inline:<site>|<text>", the inline SVG in that site's page holding <text>;
+# alone or with a processing step. A white ground reaching the logo's edge is cleared either way.
+PUBLISHER_LOGOS = {
+    "abril": "Logo editora abril.jpg", "ahoy": "AhoyComicsLogo.png", "akita_shoten": "Akita Shoten Logo.svg",
+    "allure": "Allure logo.svg", "amazing_stories": "Amazing Stories interior title.png",
+    "aperture": "Aperture magazine logo.svg", "archie": "Archie Comics logo 1987.svg",
+    "architectural_digest": "Architectural Digest logo.svg", "art_in_america": "Logo Art in America.svg",
+    "artforum": "Artforum logo.svg", "atlas": "Atlas Comics logo.svg", "awa": "AWA Studios logo, Nov 2018.jpg",
+    "billboard": "Billboard logo.svg", "bonelli": "Sergio Bonelli Editore Logo.svg",
+    "boys_life": "Boys' Life Header.png", "businessweek": "Bloomberg Businessweek logo.svg",
+    "car_and_driver": "Car and Driver logo.svg", "carlsen": "Carlsen-verlag-logo-2012.svg",
+    "casterman": "Logo Casterman.gif", "charlton": "Charlton Comics logo.png", "closer_weekly": "Closer logo.svg",
+    "cosmopolitan": "Comopolitan Magazine Logo.svg", "dargaud": "Dargaud Logo.png",
+    "dark_horse": "Dark Horse Comics wordmark.svg", "dc": "DC Comics 2024.svg", "delcourt": "Delcourt logo.png",
+    "dell": "Dellcomicslogo.jpeg", "der_spiegel": "Logo-der spiegel.svg",
+    "dupuis": "DUPUIS-EDITION ET AUDIOVISUEL-ROUGE Print Transparence.png",
+    "dynamite": "Dynamite Entertainment Logo.png", "ec": "Eclogo.jpeg", "eclipse": "Eclipse Comics logo.jpg",
+    "economist": "The Economist Logo.svg", "egmont": "Egmont Group logo.svg", "ehapa": "Egmont-Ehapa-Media-Logo.png",
+    "elle": "Elle logo.svg", "empire": "Empire (magazine) logo.svg",
+    "entertainment_weekly": "Entertainment Weekly logo.svg", "esquire": "Esquire logo (2017).svg",
+    "fantagraphics": "Fantagraphics logo.png", "fawcett": "FawcettIcon2.png", "forbes": "Forbes logo.svg",
+    "fortune": "Fortune magazine logo 2016.svg", "futabasha": "Futabasha logo.png", "glamour": "Glamour logo.svg",
+    "golf_digest": "Golf Digest logo.svg", "gq": "GQ Logo.svg", "hakusensha": "Hakusensha logo.png",
+    "harpers": "Harper's Magazine logo.svg", "harpers_bazaar": "Harper's Bazaar Logo.svg",
+    "hollywood_reporter": "The Hollywood Reporter logo.svg", "humanoids": ("Humanoids logo.png", "white_lettering"),
+    "i_d": "I-D Magazine Logo.svg", "idw": "IDW Publishing logo.svg", "image": "Image Comics logo.svg",
+    "instyle": "InStyle.svg", "interview": "Interview mag logo.svg", "jet": "Jet Magazine.png",
+    "kadokawa": "Kadokawa logo.svg", "kodansha": "Kōdansha logo.svg", "life": "LIFE magazine logo.svg",
+    "lombard": "Le Lombard logo (2010).svg", "mad": "Madlogo.png", "marie_claire": "Marie Claire Magazine logo.svg",
+    "marvel": "Marvel Comics 2024 logo.svg", "maxim": "Maxim Magazine Logo.svg", "mens_health": "Men's Health.svg",
+    "milestone": "Milestone Media logo.png", "mojo": "Mojo (magazine) Logo.svg",
+    "motor_trend": "Motor Trend logo.svg", "national_geographic": "Natgeologo.svg",
+    "nature": "Nature journal logo.svg", "new_republic": "The New Republic wordmark horizontal.svg",
+    "new_yorker": "The New Yorker.svg", "newsweek": "Newsweek Logo.svg",
+    "nme": "NME - New Musical Express - Logo.svg", "outside": "Outside logo 2020.png",
+    "panini": "Panini group logo.png", "paris_match": "Paris Match 1981 logo.svg",
+    "penthouse": "Penthouse text logo.svg", "people": "People Magazine logo.svg",
+    "planeta": "Planeta DeAgostini logo.svg", "playboy": "Playboy logo.svg",
+    "popular_mechanics": "Popular Mechanics logo.svg", "popular_science": "Popular Science.svg",
+    "quality": "Quality Comic Group logo.svg", "readers_digest": "Reader's Digest logo.svg",
+    "road_track": "Road and Track Logo.svg", "rolling_stone": "Rolling Stone 2022.svg",
+    "saturday_evening_post": "The Saturday Evening Post logo.svg", "scholastic": "Logo Scholastic.svg",
+    "science": "Science AAAS logo.svg", "scientific_american": "Scientific American logo.svg",
+    "shogakukan": "Shogakukan logo.svg", "shueisha": "Shueisha Logo.svg", "spin": "Spin-logo.svg",
+    "sporting_news": "SPORTINGNEWS - Master Logo .jpg",
+    "sports_illustrated": "Sports Illustrated - official red text logo.svg", "square_enix": "Square Enix logo.svg",
+    "stern": "Stern Logo 2020.svg", "teen_vogue": "Teen Vogue.svg", "the_atlantic": "The Atlantic Logo 11.2019.svg",
+    "the_face": ("The Face logo.svg", "white_lettering"), "the_nation": "The Nation logo.svg",
+    "the_spectator": "The Spectator logo.svg", "time": "Time Magazine logo.svg", "timely": "TimelyShield2.png",
+    "tokyopop": "TOKYOPOP logo.png", "top_shelf": "Topshelf logo.png", "topps": "Topps comics logo.png",
+    "town_country": "Town&Country wordmark.svg", "tv_guide": "TV Guide logo 2016.png",
+    "us_weekly": "Us Weekly logo.png", "valiant": "Valiant Comics logo (April 2012).svg",
+    "vanity_fair": "Vanity Fair logo (2025, black).svg", "variety": "Variety logo.svg",
+    "vertigo": "DC Vertigo 2024.svg", "viz": "Viz Media 2017 logo.svg", "vogue": "VOGUE LOGO.svg",
+    "w": "W magazine logo.jpg", "weird_tales": "Weird Tales Logo.png", "wildstorm": "WildStorm logo.png",
+    "wired": "Wired logo.svg", "womens_health": "Womenshealthlogo.svg",
+    "boom": ("https://www.boom-studios.com/wp-content/uploads/2023/02/boom-logo-header.webp", "white_lettering"),
+    "oni": ("https://images.squarespace-cdn.com/content/v1/651302f86c2c335a35c606d6/9686d5fc-d2c4-4a58-b0ea-"
+            "43a22784db28/Standard+Coin+W300dpi.png?format=1500w", "white_lettering"),
+    "yen_press": "https://yenpress.com/images/header/logo.svg",
+    "seven_seas": "https://sevenseasentertainment.com/wp-content/themes/gomanga2025/images/SevenSeas-logo-sm.png",
+    "dc_thomson": "https://www.dcthomson.co.uk/hubfs/raw_assets/public/dc-thomson/images/logo.svg",
+    "glenat": "https://media.hachette.fr/17/2025-05/logo-glenat.png",
+    "aftershock": ("https://aftershockcomics.com/cdn/shop/files/logo-white2_340x.png?v=1629327231", "white_lettering"),
+    "vault": ("https://vaultcomics.com/cdn/shop/t/15/assets/logo.svg?v=91623706365843156311709921395",
+              "white_lettering"),
+    "zenescope": ("https://zenescope.com/cdn/shop/files/Zenescope_logo_final_2019_white_copy.png?v=1614370979"
+                  "&width=360", "white_lettering"),
+    "first_second": "https://firstsecondbooks.com/wp-content/uploads/2019/04/FirstSecond_logo_100x117.png",
+    "taste_of_home": "https://www.tasteofhome.com/wp-content/uploads/2021/09/toh-interior-logo.svg",
+    "hustler": ("https://hustlermagazine.com/file/hustlermag_logo_sm.png", "white_lettering"),
+    "first_for_women": "https://firstforwomen.com/wp-content/uploads/2024/11/logo.png",
+    "smithsonian": ("https://www.smithsonianmag.com/static/smithsonianmag/img/"
+                    "smithmag-logo-horizontal-white.98dddd9f3f4d.svg", "white_lettering"),
+    "essence": "https://media.essence.com/essence_pubp/uploads/2026/04/02/logo.svg",
+    "ebony": "https://media.ebony.com/sytwmfsyue/uploads/2026/04/01/ebony-logo-1.svg",
+    "field_stream": ("https://fieldandstream.com/wp-content/uploads/2025/10/"
+                     "FS_Logo_Estb1871_Cream_Horiz-e1760450600626.png", "white_lettering"),
+    "better_homes": 'inline:https://www.bhg.com/|viewBox="0 0 444 32"',
+    "womans_world": "inline:https://www.womansworld.com/|aria-label=\"Woman's World\"",
+    "robb_report": "inline:https://robbreport.com/|<title>Robb Report</title>",
+}
+COMMONS_API = "https://commons.wikimedia.org/w/api.php"
+SITE_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                              "Chrome/130.0 Safari/537.36"}
 WIKIPEDIA_GLOBE = ("https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Wikipedia-logo-v2-zh-hans.svg/"
                    "500px-Wikipedia-logo-v2-zh-hans.svg.png", COMMONS_FILE.format(name="Wikipedia-logo-v2-zh-hans.svg"),
                    "CC BY-SA 3.0 (Wikimedia Commons)")
@@ -358,6 +450,70 @@ def _smk(records):
 COMPOSED = {"wikipedia_zh": _wikipedia_zh, "chineseposters": _chineseposters, "smk": _smk}
 
 
+def _edge_ground(image):
+    """The near-white ground reaching the logo's edge cleared (a JPEG's or a boxed file's), the
+    white inside its mark kept. A logo already on transparency (its corners clear) has none: its
+    white lettering may touch the edge."""
+    alpha = image.getchannel("A")
+    width, height = image.size
+    if min(alpha.getpixel(corner) for corner in ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1))) < 200:
+        return image
+    light = image.convert("L").point(lambda value: 255 if value > 235 else 0)
+    near = ImageChops.multiply(light, alpha.point(lambda value: 255 if value > 200 else 0))
+    edge = [(x, y) for x in range(width) for y in (0, height - 1)] + [(x, y) for y in range(height) for x in (0, width - 1)]
+    for point in edge:
+        if near.getpixel(point) == 255:
+            ImageDraw.floodfill(near, point, 128)
+    ground = near.point(lambda value: 255 if value == 128 else 0)
+    if ground.getbbox():
+        image.putalpha(ImageChops.subtract(alpha, ground))
+    return image
+
+
+def _publisher_source(key, spec):
+    """(url, page, licence, content) for one PUBLISHER_LOGOS entry."""
+    if spec.startswith("inline:"):
+        site, text = spec[len("inline:"):].split("|", 1)
+        page = _fetch_site(site)
+        svg = next(match.group(0) for match in re.finditer(rb"<svg\b.*?</svg>", page, re.S)
+                   if text.encode("utf-8") in match.group(0))
+        if b"xmlns" not in svg[:200]:
+            svg = svg.replace(b"<svg", b'<svg xmlns="http://www.w3.org/2000/svg"', 1)
+        return site + " (the page's inline SVG logo)", site, f"{key}'s logo from its own site's header", svg
+    if spec.startswith("https://"):
+        site = "https://" + spec.split("/")[2] + "/"
+        return spec, site, f"{key}'s logo from its own site, shown to name the publisher", _fetch_site(spec)
+    response = requests.get(COMMONS_API, params={"action": "query", "titles": f"File:{spec}", "prop": "imageinfo",
+                                                 "iiprop": "url|extmetadata", "iiurlwidth": 600, "format": "json"},
+                            headers=HEADERS, timeout=30)
+    info = next(iter(response.json()["query"]["pages"].values()))["imageinfo"][0]
+    licence = (info.get("extmetadata", {}).get("LicenseShortName") or {}).get("value") or "see the file page"
+    url = info.get("thumburl") or info["url"]
+    return url, info["descriptionurl"], f"{licence} (Wikimedia Commons)", _fetch(url)
+
+
+def _fetch_site(url):
+    response = requests.get(url, headers=SITE_HEADERS, timeout=30)
+    response.raise_for_status()
+    return response.content
+
+
+def _publisher(records, key, spec):
+    """One publisher's or magazine's logo into PUBLISHERS."""
+    spec, step = spec if isinstance(spec, tuple) else (spec, None)
+    url, page, licence, content = _publisher_source(key, spec)
+    vector = spec.startswith("inline:") or url.split("?")[0].endswith(".svg")
+    art = _visible(_edge_ground(_rasterize(content) if vector else _art(url, content)))
+    steps = ["a white ground reaching the edge cleared"]
+    if step:
+        process, note = PROCESSING[step]
+        art = _visible(process(art))
+        steps.append(note)
+    _write(records, PUBLISHERS, key, _fit(art), {"source": url, "page": page, "licence": licence,
+                                                  "source_sha256": hashlib.sha256(content).hexdigest(),
+                                                  "processing": "; ".join(steps)})
+
+
 def main(keys=()):
     records = {}
     for key, ((url, page, licence), folders, keep) in LOGOS.items():
@@ -378,8 +534,11 @@ def main(keys=()):
     for key, build in COMPOSED.items():
         if not keys or key in keys:
             build(records)
+    for key, spec in PUBLISHER_LOGOS.items():
+        if not keys or key in keys:
+            _publisher(records, key, spec)
     for folder, logos in records.items():
-        path = folder / ("logos.source.json" if folder.name == "logos" else "source_logos.source.json")
+        path = folder / ("logos.source.json" if folder.name == "logos" else f"{folder.name}.source.json")
         existing = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
         existing.setdefault("logos", {}).update(logos)
         path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8", newline="\n")

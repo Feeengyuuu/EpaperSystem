@@ -82,6 +82,13 @@ _TEXT_LIMITS = {
     "date_added": 100,
     "cover_credits": 1000,
     "country": 100,
+    "title": 500,
+    "story_arc": 300,
+    "series_began": 16,
+    "series_ended": 16,
+    "series_issues": 16,
+    "price": 100,
+    "page_count": 32,
 }
 
 
