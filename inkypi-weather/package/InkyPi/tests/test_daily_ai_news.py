@@ -2,6 +2,7 @@ import hashlib
 import json
 import sys
 import threading
+from types import SimpleNamespace
 from datetime import datetime
 from pathlib import Path
 
@@ -2417,12 +2418,13 @@ def test_openai_call_enforces_the_brief_schema_with_a_short_think(monkeypatch):
     assert schema["properties"]["lead"]["properties"]["section"]["enum"] == ["mainland", "world"]
     assert captured["reasoning"] == {"effort": "low"}
     captured.clear()
-    plugin._summarize_with_openai("key", "gpt-6-luna", {}, [], {}, datetime(2026, 10, 28, 7, 0))
-    assert captured["model"] == "gpt-6-luna" and captured["reasoning"] == {"effort": "medium"}
+    plugin._summarize_with_openai("key", "gpt-6.1-sol", {}, [], {}, datetime(2026, 10, 28, 7, 0))
+    assert captured["model"] == "gpt-6.1-sol" and captured["reasoning"] == {"effort": "medium"}
 
 
-@pytest.mark.parametrize(("saved", "used"), [(None, "gpt-6-luna"), ("", "gpt-6-luna"), ("gpt-5-nano", "gpt-6-luna"),
-                                             ("gpt-5-mini", "gpt-6-luna"), ("gpt-5", "gpt-5")])
+@pytest.mark.parametrize(("saved", "used"), [(None, "gpt-6.1-sol"), ("", "gpt-6.1-sol"), ("gpt-5-nano", "gpt-6.1-sol"),
+                                             ("gpt-5-mini", "gpt-6.1-sol"), ("gpt-6-luna", "gpt-6.1-sol"),
+                                             ("gpt-5", "gpt-5")])
 def test_a_saved_earlier_default_model_follows_the_current_default(saved, used):
     assert news_brief.summary_model(saved) == used
 
@@ -2444,14 +2446,14 @@ def test_a_refused_default_model_asks_the_previous_one_then_groq_within_its_free
     def summarize(api_key, model, settings, items, market, now, recent_titles=None, provider="openai", base_url=None):
         asked.append((provider, model))
         if provider == "openai":
-            raise _Refusal("The model `gpt-6-luna` does not exist or you do not have access to it. (model_not_found)")
+            raise _Refusal("The model `gpt-6.1-sol` does not exist or you do not have access to it. (model_not_found)")
         return {"lead": None, "mainland": [], "world": []}
 
     monkeypatch.setattr(plugin, "_summarize_with_openai", summarize)
-    brief = plugin._summarize_with_ai("sk", "gsk", "gpt-6-luna", {"groq_model": "llama-3.3-70b-versatile"}, [], {},
+    brief = plugin._summarize_with_ai("sk", "gsk", "gpt-6.1-sol", {"groq_model": "llama-3.3-70b-versatile"}, [], {},
                                       datetime(2026, 10, 28, 7, 0))
 
-    assert asked == [("openai", "gpt-6-luna"), ("openai", "gpt-5-mini"), ("groq", "openai/gpt-oss-120b")]
+    assert asked == [("openai", "gpt-6.1-sol"), ("openai", "gpt-6-luna"), ("groq", "openai/gpt-oss-120b")]
     assert brief["_model"] == "groq:openai/gpt-oss-120b"
     # A failure that is not a refusal (a timeout) goes straight on to Groq.
     asked.clear()
@@ -2463,8 +2465,27 @@ def test_a_refused_default_model_asks_the_previous_one_then_groq_within_its_free
         return {}
 
     monkeypatch.setattr(plugin, "_summarize_with_openai", time_out)
-    plugin._summarize_with_ai("sk", "gsk", "gpt-6-luna", {}, [], {}, datetime(2026, 10, 28, 7, 0))
+    plugin._summarize_with_ai("sk", "gsk", "gpt-6.1-sol", {}, [], {}, datetime(2026, 10, 28, 7, 0))
     assert asked == ["openai", "groq"]
+
+
+def test_a_briefs_token_usage_is_logged_and_kept_with_it(monkeypatch, caplog):
+    plugin = _plugin()
+
+    class _Responses:
+        @staticmethod
+        def create(**_kwargs):
+            usage = SimpleNamespace(input_tokens=7120, output_tokens=2340,
+                                    output_tokens_details=SimpleNamespace(reasoning_tokens=1180))
+            return SimpleNamespace(output_text='{"lead":null,"mainland":[],"world":[],"sources":[]}', usage=usage)
+
+    monkeypatch.setattr(news_brief, "OpenAI", lambda **_kwargs: SimpleNamespace(responses=_Responses()))
+    with caplog.at_level("INFO", logger=news_brief.logger.name):
+        brief = plugin._summarize_with_openai("key", "gpt-6.1-sol", {}, [], {}, datetime(2026, 10, 28, 7, 0))
+
+    assert brief["_usage"] == {"input": 7120, "output": 2340, "reasoning": 1180}
+    assert "gpt-6.1-sol used 7120 input + 2340 output tokens (1180 reasoning)" in caplog.text
+    assert news_brief.token_usage(None) is None and news_brief.token_usage(SimpleNamespace()) is None
 
 
 def test_the_groq_request_fits_its_free_tier(monkeypatch):

@@ -23,13 +23,13 @@ from .news_text import (
 
 logger = logging.getLogger(__name__)
 
-# OpenAI's current small model, in the small-model group of the free daily tokens for
-# shared traffic (as gpt-5-mini was).
-DEFAULT_MODEL = "gpt-6-luna"
+# OpenAI's flagship of 2026-10, for the few briefs a day: on trial (2026-10-28) to see what it
+# costs against the flagship group of the free daily tokens for shared traffic.
+DEFAULT_MODEL = "gpt-6.1-sol"
 # Earlier defaults; a setting saved with one of them follows the current default.
-LEGACY_DEFAULT_MODELS = ("gpt-5-nano", "gpt-5-mini")
-# Asked once more when OpenAI refuses the default (an account it is not open to yet).
-PREVIOUS_MODEL = "gpt-5-mini"
+LEGACY_DEFAULT_MODELS = ("gpt-5-nano", "gpt-5-mini", "gpt-6-luna")
+# Asked once more when OpenAI refuses the default: the small model (free small-model group).
+PREVIOUS_MODEL = "gpt-6-luna"
 # How long each model family thinks: gpt-6 at its default, gpt-5 briefly.
 REASONING_EFFORTS = {"gpt-6": "medium", "gpt-5": "low"}
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
@@ -216,6 +216,18 @@ def reasoning_effort(model: str) -> str | None:
     return next((effort for family, effort in REASONING_EFFORTS.items() if str(model).startswith(family)), None)
 
 
+def token_usage(usage: Any) -> dict[str, int] | None:
+    """A Responses API reply's tokens (input, output, the output's reasoning share), or None."""
+    if usage is None:
+        return None
+    details = getattr(usage, "output_tokens_details", None)
+    counts = {"input": getattr(usage, "input_tokens", None), "output": getattr(usage, "output_tokens", None),
+              "reasoning": getattr(details, "reasoning_tokens", 0) if details is not None else 0}
+    if not all(isinstance(value, int) for value in counts.values()):
+        return None
+    return counts
+
+
 def model_unavailable(exc: Exception) -> bool:
     """Whether OpenAI refused the model itself (unknown or not open to this account)."""
     status = getattr(exc, "status_code", None)
@@ -323,6 +335,7 @@ class NewsBriefMixin:
         if base_url:
             client_kwargs["base_url"] = base_url
         client = OpenAI(**client_kwargs)
+        usage = None
         if provider == "groq":
             items = list(items)[:GROQ_MAX_ITEMS]
         system = NEWS_SYSTEM_PROMPT
@@ -346,6 +359,10 @@ class NewsBriefMixin:
             if provider == "openai":
                 response = client.responses.create(**response_kwargs)
                 content = (getattr(response, "output_text", "") or "").strip()
+                usage = token_usage(getattr(response, "usage", None))
+                if usage:
+                    logger.info("Daily AI news %s used %s input + %s output tokens (%s reasoning)", model,
+                                usage["input"], usage["output"], usage["reasoning"])
             else:
                 raise RuntimeError(f"{provider} does not support Responses API in this plugin")
         except Exception as exc:
@@ -371,7 +388,10 @@ class NewsBriefMixin:
 
         if not content:
             raise RuntimeError("OpenAI returned an empty summary.")
-        return self._checked_brief(content, items, recent_titles)
+        brief = self._checked_brief(content, items, recent_titles)
+        if provider == "openai" and usage:
+            brief["_usage"] = usage
+        return brief
 
     def _checked_brief(self, content: str, items: list[dict[str, str]],
                        recent_titles: list[str] | None) -> dict[str, Any]:

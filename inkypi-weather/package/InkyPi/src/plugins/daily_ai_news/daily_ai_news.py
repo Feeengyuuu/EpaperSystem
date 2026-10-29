@@ -316,6 +316,7 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
             brief = self._rss_only_brief(items, "未配置 AI 密钥，使用 RSS 兜底。", recent_titles)
 
         payload_model = brief.pop("_model", model)
+        usage = brief.pop("_usage", None)
         used_ai = bool(brief.pop("_used_ai", False))
         payload_warning = brief.pop("_fallback_warning", "")
         payload = {
@@ -330,6 +331,9 @@ class DailyAINews(NewsSourcesMixin, NewsMarketMixin, NewsBriefMixin, BasePlugin)
         }
         if payload_warning:
             payload["warning"] = payload_warning
+        if usage:
+            # The brief's tokens, to weigh the model's cost.
+            payload["ai_usage"] = usage
         payload = self._simplify_chinese_payload(payload)
         common._safe_json_write(cache_file, payload)
         self._record_recent_news_titles(payload, now)
