@@ -1,0 +1,20 @@
+{
+  "goals.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job ff1ab1e1-afb1-44c6-9768-b64f7faa82f7",
+    "source_sha256": "61ca5b352beb41f09055ffc260c407fed9173054e8ba563bac04c2ec6c99d23e",
+    "processing": "cut at clear columns, squared, 64 px",
+    "sha256": "6a7b93512590ad297b75e8f6508039c906fc2c2408804e0b1130a11635a43c08"
+  },
+  "assists.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job ff1ab1e1-afb1-44c6-9768-b64f7faa82f7",
+    "source_sha256": "61ca5b352beb41f09055ffc260c407fed9173054e8ba563bac04c2ec6c99d23e",
+    "processing": "cut at clear columns, squared, 64 px",
+    "sha256": "d0f678f0ad1b81f2c66bea6c983ff1fb420129ad602ec8bba0c81254ca576f19"
+  },
+  "points.png": {
+    "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job ff1ab1e1-afb1-44c6-9768-b64f7faa82f7",
+    "source_sha256": "61ca5b352beb41f09055ffc260c407fed9173054e8ba563bac04c2ec6c99d23e",
+    "processing": "cut at clear columns, squared, 64 px",
+    "sha256": "1d2c94dfb14a6099fc2fb230c98973f24549c05a8141b062fd6428cd9bbc8681"
+  }
+}

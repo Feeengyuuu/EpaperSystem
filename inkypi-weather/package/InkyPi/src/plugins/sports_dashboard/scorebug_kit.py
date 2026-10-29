@@ -435,6 +435,15 @@ class ScorebugKitMixin:
                         pixels[x, y] = (*COLORS["text"], alpha)
         return logo
 
+    def _kit_city_logo(self, city, size):
+        """The home city's official emblem fitted to ``size`` and inked for the theme's card, else None."""
+        key = CITY_LOGO_KEYS.get(re.sub(r"[^a-z0-9]", "", str(city or "").lower()))
+        logo = self._load_local_logo(os.path.join(LOCAL_CITY_LOGO_DIR, f"{key}.png"), size, alpha_threshold=8) if key else None
+        if logo and _kit_luminance(COLORS["panel"]) < 0.2:
+            # A seal's line art is printed dark for a white ground: on a dark card it takes the ink.
+            logo = _kit_inked_where_faint(logo, COLORS["panel"])
+        return logo or None
+
     def _draw_kit_venue(self, image, draw, box, venue):
         """The venue as its arena's official logo centred in ``box``, else its name as a footer line."""
         if not venue:
@@ -460,7 +469,11 @@ class ScorebugKitMixin:
         fill = COLORS["text"] if fill is None else fill
         join_font = self._font(size, bold)
         join_w = self._text_width(draw, separator, join_font) + 12
-        room = x2 - x1 - logo.width
+        # The home city after the venue, as its official emblem when it has one.
+        city = self._kit_city_logo(after, (height * 3, height + 2)) if after else None
+        if city is not None:
+            after = ""
+        room = x2 - x1 - logo.width - (join_w + city.width if city is not None else 0)
         # (text, font, width) for the text before the logo and the text after it.
         pieces = []
         for text in (before, after):
@@ -471,7 +484,7 @@ class ScorebugKitMixin:
             width = self._text_width(draw, text, font)
             pieces.append((text, font, width))
             room -= width + join_w
-        total = logo.width + sum(piece[2] + join_w for piece in pieces if piece)
+        total = logo.width + sum(piece[2] + join_w for piece in pieces if piece) + (join_w + city.width if city is not None else 0)
         x = x1 if align == "left" else x1 + (x2 - x1 - total) // 2
         for index, piece in enumerate(pieces):
             if index == 1:
@@ -488,6 +501,10 @@ class ScorebugKitMixin:
             if index == 0:
                 self._draw_centered_in_box(draw, (x, y1, x + join_w, y2), separator, join_font, fill)
                 x += join_w
+        if city is not None:
+            self._draw_centered_in_box(draw, (x, y1, x + join_w, y2), separator, join_font, fill)
+            x += join_w
+            image.paste(city, (x, y1 + (y2 - y1 - city.height) // 2), city)
         return True
 
     def _draw_series_row_winner_logo(self, image, draw, event, side, x, y1, y2, spec):

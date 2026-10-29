@@ -2352,6 +2352,305 @@
         48
       ],
       "use": "Worlds 2026 Swiss stage and knockouts (Allen, Texas)"
+    },
+    "honda_center": {
+      "file": "Honda_Center.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Honda_Center.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/Honda_Center.svg/960px-Honda_Center.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "83017e099be215119630377ab913b9f6393c2063",
+      "source_png_sha256": "c966863a35bd26bd4d2fc95c6c82d991bfececcbad90dc76956f9cf637840d8d",
+      "sha256": "27398fe1c38c46bfd04f6036830f4b5e402d5c7ae37dcd1b3555d89bf78982d2",
+      "size": [
+        172,
+        48
+      ]
+    },
+    "keybank_center": {
+      "file": "KeyBank_Center_logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:KeyBank_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/9/92/KeyBank_Center_logo.svg/960px-KeyBank_Center_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "1f855c6d3cef03dd65cb4291efa8e60debfdee35",
+      "source_png_sha256": "b7dc0b7c011e406c3ebf9958a9faec2580490493a1d258da01c4850b9c6e4960",
+      "sha256": "abcc8fbb565a69b776506bc5dea0c470f8c435403b577161a93f9d472a088682",
+      "size": [
+        154,
+        48
+      ]
+    },
+    "first_horizon_coliseum": {
+      "file": "First Horizon Coliseum.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:First_Horizon_Coliseum.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7f/First_Horizon_Coliseum.svg/960px-First_Horizon_Coliseum.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "556bfcd370427edc94b14b70f13932f44779e64a",
+      "source_png_sha256": "d2ed0d3a572e0c9d3dd2e492d77add94184e7e65d80eeb044c38e6630d2acaea",
+      "sha256": "0f5cba74ebfd05a81c410f19a013a10ca6a8fa1e4b04e37cc3d1f6947711a240",
+      "size": [
+        276,
+        48
+      ]
+    },
+    "lenovo_center": {
+      "file": "Lenovo_Center_logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Lenovo_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cd/Lenovo_Center_logo.svg/960px-Lenovo_Center_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "fd401386c61f6a5e6571a27562f01d4072a38626",
+      "source_png_sha256": "0690af01cdb980f153dfacbc9d3490731ace84b07b69e1fe3c1b31b5cb1bf9ea",
+      "sha256": "16b4d4878156ab27a31c941c506d881520606a7d9b42429747d57c1d65fc95d6",
+      "size": [
+        260,
+        48
+      ]
+    },
+    "nationwide_arena": {
+      "file": "Nationwide Arena Logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Nationwide_Arena_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/c/c1/Nationwide_Arena_Logo.svg/960px-Nationwide_Arena_Logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "00fc6b005a4d334f6e35b706aa4a4e32f0913d13",
+      "source_png_sha256": "62216699e153acfa772a7198ddce54cf0be419189c207cb79ebd70c249314c8c",
+      "sha256": "c53d9c2aa18e3e1a48f5022daf55af717084eb77fa93f63f8deb906607dea17a",
+      "size": [
+        37,
+        48
+      ]
+    },
+    "scotiabank_saddledome": {
+      "file": "Scotiabank Saddledome logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Scotiabank_Saddledome_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/d/dc/Scotiabank_Saddledome_logo.svg/960px-Scotiabank_Saddledome_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "cbb960745d0b5d60ba036067203d505e5060256f",
+      "source_png_sha256": "3d6115ac26e33a3d73350bf20308a4d9cf2763d893cb4c83d4ea6080e1a2b6e5",
+      "sha256": "776e963ee29061fdcfdaabcd357297dad641c0be2f78c0144869ab7beddca029",
+      "size": [
+        131,
+        48
+      ]
+    },
+    "rogers_place": {
+      "file": "Rogers Place logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Rogers_Place_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/0/0e/Rogers_Place_logo.svg/960px-Rogers_Place_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "96ae1cc0b9549786ae2fffd7d2a238c9bcc6726c",
+      "source_png_sha256": "02b6d34a2b8c90d1955cbca3f169df127cf87db0d0abd5d921a9c636d765076a",
+      "sha256": "f8b51a35dbd7b54d826fcf719973bda33872d3043bb3c90d49273361d88ee72f",
+      "size": [
+        439,
+        48
+      ]
+    },
+    "amerant_bank_arena": {
+      "file": "Amerant Bank Arena logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Amerant_Bank_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/d/de/Amerant_Bank_Arena_logo.svg/960px-Amerant_Bank_Arena_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "3a4fd40acee7e9b6569d7a1505ea2ce921e0c195",
+      "source_png_sha256": "e5f52121d3d6908ec149155bb96fb3bbf6cc0aa7b2bfdfc97a37ce18fbad798f",
+      "sha256": "d36eb0d48971115a24f6d083a658d4cd245d1af7cea9457df8e125fa5fa7241e",
+      "size": [
+        125,
+        48
+      ]
+    },
+    "toyota_arena": {
+      "file": "Toyota Arena logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Toyota_Arena_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/0/0f/Toyota_Arena_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "16e4272944b8a9901d76cdbf626ffc3ffd51612d",
+      "source_png_sha256": "d970b30274552196e13ef39543e16e97a89f8e0aa78b1f638b8b1c65cdf3660c",
+      "sha256": "eba28fcb230e6c5b16fafe479a7488667c8e992529f58b31f6c695748342e3fc",
+      "size": [
+        154,
+        48
+      ]
+    },
+    "grand_casino_arena": {
+      "file": "Grand Casino Arena logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Grand_Casino_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/54/Grand_Casino_Arena_logo.svg/960px-Grand_Casino_Arena_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "4809bd191d5f3d1007e274dd41e26c8c8cde320e",
+      "source_png_sha256": "07bec39f8e76ca16cc2db89031ac6695971a245988a1c42e7785b4c10ce16c0f",
+      "sha256": "10dde8f81a9abdf20d4c2224a955f890fef0bbb26e47d40cd624a1c33ce33b7e",
+      "size": [
+        161,
+        48
+      ]
+    },
+    "bell_centre": {
+      "file": "Centre Bell.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Centre_Bell.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/ce/Centre_Bell.svg/960px-Centre_Bell.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "1d1d97b73c8d703819d3792323ae4e061d0b61cc",
+      "source_png_sha256": "24e560e2d4dd106ed1ae561e03aa49c67d5242aec31e3f3349177ab38f366468",
+      "sha256": "4013a1485e48a2e95f924d77c8d3c44f88660d3a350d52eb01e6da4abadef754",
+      "size": [
+        52,
+        48
+      ]
+    },
+    "prudential_center": {
+      "file": "Prudential Center logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Prudential_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/9/9b/Prudential_Center_logo.svg/960px-Prudential_Center_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "ee45c3fb93f7038722280de83b81ffe85d4ceefe",
+      "source_png_sha256": "0e1ff8bf9c814e372f3f0440b9fdfc64b4340cee4abedff5ba67592613515c00",
+      "sha256": "20923ec56ffda39edcecc6f1b8a643a493d1802437d2792f582c92c595028ead",
+      "size": [
+        343,
+        48
+      ]
+    },
+    "bridgestone_arena": {
+      "file": "Bridgestone Arena Logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Bridgestone_Arena_Logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/f/f4/Bridgestone_Arena_Logo.svg/960px-Bridgestone_Arena_Logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "febec9286b9bee6e8fe36d4b5283e636a7d63ff9",
+      "source_png_sha256": "c960e5087f5c44ccc59686e1377fdbef5170a84fb907d802a2236e3b2a4d892d",
+      "sha256": "37107f0cf6f33394a0a7249c3aad6a23f60999508292f04f8620c23c2cc3c251",
+      "size": [
+        61,
+        48
+      ]
+    },
+    "ubs_arena": {
+      "file": "UBS Arena logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:UBS_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/c/c0/UBS_Arena_logo.svg/960px-UBS_Arena_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "d336e7a937a1ea91c9d2b6b771f5c900029f8be2",
+      "source_png_sha256": "d921a30967b539d46b45ed79e93833db96efb29059255084b619d5066271c9df",
+      "sha256": "c95a94522a754aafc3be4057b40d878f8e2e57107bbb5b41017a38af4b50928f",
+      "size": [
+        234,
+        48
+      ]
+    },
+    "canadian_tire_centre": {
+      "file": "Canadian Tire centre logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Canadian_Tire_centre_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/1/18/Canadian_Tire_centre_logo.svg/960px-Canadian_Tire_centre_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "8eaa1c7600595483732ebdf32a5cf9ede64e766f",
+      "source_png_sha256": "923af8252a1f5bc642b9847b75ba5a6e7775f0063ad89e81783fff4dfe589dfe",
+      "sha256": "a075dc32ea86d631e4a3265e4ddc56134183dcebc4f33876359e52bf4948a948",
+      "size": [
+        381,
+        48
+      ]
+    },
+    "ppg_paints_arena": {
+      "file": "PPG Paints Arena logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:PPG_Paints_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/8/8f/PPG_Paints_Arena_logo.svg/960px-PPG_Paints_Arena_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "5f97db9610cbc32f31d06e5299536455ff976277",
+      "source_png_sha256": "78205d1f1a12ed92d622d6f0c005f745cbd4fc796abd465d984f607a76e6c582",
+      "sha256": "109fc31e1e807b057b0c252b4ea06dd957b08333ecf4d0649944b9539de561b9",
+      "size": [
+        44,
+        48
+      ]
+    },
+    "sap_center_at_san_jose": {
+      "file": "SAP Center logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:SAP_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/00/SAP_Center_logo.svg/960px-SAP_Center_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "c48b863f0437e505e5f383f8a23860da42e8a37b",
+      "source_png_sha256": "0938560c6eb41878272b300a74f3b5f570683f9293aaad5ac431762f4bc34bc0",
+      "sha256": "3bfa3efb52a111671f4cf401875a681529320a3108b10a4608ad7628b4caee71",
+      "size": [
+        175,
+        48
+      ]
+    },
+    "enterprise_center": {
+      "file": "Enterprise Center logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Enterprise_Center_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/8/82/Enterprise_Center_logo.svg/960px-Enterprise_Center_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "a7eedd4cc1ddbd776a92dbe5ab262a7ec702bade",
+      "source_png_sha256": "3be6c595c7555b53eaee58c2462165cb69c693b4259d1e3c4e8fc10174b4ff4e",
+      "sha256": "32cfa4669b6ead63e0873585f53c848ba0df3b2b685b2f2bfc62fb1212fd2bf1",
+      "size": [
+        354,
+        48
+      ]
+    },
+    "benchmark_international_arena": {
+      "file": "Benchmark International Arena logo.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Benchmark_International_Arena_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5d/Benchmark_International_Arena_logo.svg/960px-Benchmark_International_Arena_logo.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "c048e210e9580d31fb2bd8780380dc192191641d",
+      "source_png_sha256": "519ab377fab6be10c462b4a473986534d77c18c3d42cf8290277244b9b70592c",
+      "sha256": "a4b509e3c0f7813aef55d3f430c5e1e14fd9bf1a78f1d31c0e529d8041ded5c0",
+      "size": [
+        256,
+        48
+      ]
+    },
+    "rogers_arena": {
+      "file": "Rogers Arena Logo 3.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Rogers_Arena_Logo_3.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/f/f1/Rogers_Arena_Logo_3.png",
+      "licence": "Public domain",
+      "original_sha1": "f040ccbf911735932882a0966abbf226848c3d5f",
+      "source_png_sha256": "0b7c73fdd1a011d30283a431698b2d59aae695e7ab4799a1cc609724140442f2",
+      "sha256": "0f04d3f3dd9b405b128a30c0b2ae62fe5771e2d8da5e7a7ca64b5a73ebe34376",
+      "size": [
+        453,
+        48
+      ]
+    },
+    "t_mobile_arena": {
+      "file": "T-Mobile Arena logo 2022.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:T-Mobile_Arena_logo_2022.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f4/T-Mobile_Arena_logo_2022.svg/960px-T-Mobile_Arena_logo_2022.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "8ea479da822b963125fbb0544d0cf72623b6bb56",
+      "source_png_sha256": "270d1f39d581eb68313f27ff21ead1f2a52c42e5dc5c542d17fb96d0e4c89d02",
+      "sha256": "78463f11b6f82f62e5fe88e1571d7d1014a2de1b70974d5a2fd048581a93a119",
+      "size": [
+        238,
+        48
+      ]
+    },
+    "canada_life_centre": {
+      "file": "Canada Life Centre logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Canada_Life_Centre_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/f/f3/Canada_Life_Centre_logo.svg/960px-Canada_Life_Centre_logo.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "acb474ad7c44eb31f3d69d19086c2d3918f3a568",
+      "source_png_sha256": "743dcb952352bd236a7f7d4c05c44dc1512950ed983b11a99068442ddbc0291b",
+      "sha256": "117383c4808053fc651a1d8d32baf418beb997e58372ae5bac199ff20bdd5b9a",
+      "size": [
+        196,
+        48
+      ]
+    },
+    "giant_center": {
+      "file": "Giant Center.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Giant_Center.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/0/09/Giant_Center.svg/960px-Giant_Center.svg.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "285ce8c03e76c1344fd2c1a5148a97d88b8417a0",
+      "source_png_sha256": "6d062dda736173ed7ae434786e718b9d5510306c9c780bd93f2d5be8270dc950",
+      "sha256": "47fb0d0843b5dedead71f101b2cf4421439c8a5d31a74801f243553f1f0d8a75",
+      "size": [
+        480,
+        34
+      ]
     }
   }
 }

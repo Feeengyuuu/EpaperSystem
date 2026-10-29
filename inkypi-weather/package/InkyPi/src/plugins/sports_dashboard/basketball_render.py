@@ -1,4 +1,4 @@
-"""NBA and WNBA panels, each with its own layout.
+"""NBA, WNBA and NHL panels.
 
 NBA ("face-off"): a full-width matchup hero with the two teams facing each
 other around the score and clock, a quarter strip, the two teams' scoring /
@@ -10,19 +10,34 @@ best-of-N game tracker and the list of series games on the left, and the
 current or next game on the right. Outside a series the WNBA uses the
 face-off layout.
 
+The NHL uses the face-off layout on its own ice art, with periods (P1-P3, OT) in place of
+quarters and goals / assists / points leaders (hockey.py reads the games).
+
 The NBA offseason page is drawn by nba.py and is unchanged.
 """
 
 from .common import *
 from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
 from .scorebug_kit import KIT_TILE_HEIGHT, ScorebugSpec, _kit_inked_where_faint
+from . import hockey
 
 SportsDashboard = None
 
 BASKETBALL_SPEC_KEYS = {
     "NBA": ("nba_accent", "nba_live", "nba_tag", "panel_blue"),
     "WNBA": ("wnba_accent", "wnba_live", "wnba_tag", "wnba_court"),
+    "NHL": ("nhl_accent", "nhl_live", "nhl_tag", "nhl_ice"),
 }
+# Each sport's card art, and the leader categories its duel shows.
+FACEOFF_BACKDROPS = {"NHL": "hockey"}
+LEADER_DUEL_LABELS = {"NHL": hockey.LEADER_LABELS}
+# The NHL's duel names its categories by icon (assets/decor/nhl_stat_icons) and heads each side
+# with the team's logo and Chinese name; each leader carries the team's small logo on the outside.
+LEADER_DUEL_ICONS = {"NHL": {"G": "goals", "A": "assists", "PTS": "points"}}
+STAT_ICON_DIR = os.path.join(LOCAL_DECOR_DIR, "nhl_stat_icons")
+DUEL_ICON_SIZE, DUEL_TEAM_LOGO_SIZE, DUEL_ROW_LOGO_SIZE = 17, 13, 11
+# A face-off's networks under its clock, as their logos this tall.
+FACEOFF_TV_LOGO_HEIGHT = 11
 # A live game this close in the fourth quarter or overtime is flagged.
 BASKETBALL_CLUTCH_MARGIN = 5
 FACEOFF_HERO_HEIGHT = 88
@@ -89,6 +104,18 @@ class BasketballRenderMixin:
         others = SportsDashboard._kit_scoreboard_order(card.get("events"), main)
         self._draw_basketball_faceoff(image, draw, content, main, others, now, spec)
 
+    def _draw_nhl_standalone_panel(self, image, draw, bounds, card, source_state, now):
+        """The NHL's game in the face-off layout, the other games of these days in its ticker."""
+        spec = self._basketball_spec("NHL")
+        x1, y1, x2, y2 = [int(value) for value in bounds]
+        draw.rectangle((x1, y1, x2, y2), fill=COLORS["panel"])
+        self._draw_halftone(draw, (x1, y1, x2, y2), COLORS[spec.accent], COLORS["panel"], 22, 1)
+        self._draw_standalone_sport_header(image, draw, x1, y1, x2, "NHL", card, source_state)
+        card = card or {}
+        main = card.get("main") or {}
+        others = SportsDashboard._kit_scoreboard_order(card.get("events"), main)
+        self._draw_basketball_faceoff(image, draw, (x1 + 12, y1 + 57, x2 - 12, y2 - 7), main, others, now, spec)
+
     def _draw_nba_compact_header(self, image, draw, bounds, source_state, pill, is_live):
         x1, y1, x2, _y2 = [int(value) for value in bounds]
         header_y = y1 + 8
@@ -105,11 +132,13 @@ class BasketballRenderMixin:
         draw.line((x1 + 12, y1 + 48, x2 - 12, y1 + 48), fill=COLORS["border"], width=1)
 
     def _basketball_spec(self, sport):
-        sport = "WNBA" if str(sport or "").upper() == "WNBA" else "NBA"
+        sport = str(sport or "").upper() if str(sport or "").upper() in {"WNBA", "NHL"} else "NBA"
         accent, live, tag, tint = BASKETBALL_SPEC_KEYS[sport]
         basketball = SportsDashboard
 
         def team_name(event, side, full):
+            if sport == "NHL":
+                return hockey.display_team(event, side, full=full)
             if sport == "WNBA":
                 return basketball._wnba_display_team_from_event(event, side, full=full)
             return basketball._nba_display_team_from_event(event, side, full=full)
@@ -144,7 +173,8 @@ class BasketballRenderMixin:
         state = SportsDashboard._hub_event_state(event)
         hero_y2 = y1 + FACEOFF_HERO_HEIGHT
         self._draw_hub_card_shell(draw, x1, y1, x2, hero_y2, COLORS[spec.live] if state == "live" else COLORS[spec.accent])
-        paint_card_backdrop(image, card_backdrop_box(x1, y1, x2, hero_y2), "basketball", COLORS["panel"])
+        paint_card_backdrop(image, card_backdrop_box(x1, y1, x2, hero_y2), FACEOFF_BACKDROPS.get(spec.sport, "basketball"),
+                            COLORS["panel"])
         center_x = (x1 + 8 + x2) // 2
         self._draw_faceoff_team(image, draw, (x1 + 14, y1 + 4, center_x - FACEOFF_CENTER_HALF_WIDTH, hero_y2 - 4), event, "a", state, spec)
         self._draw_faceoff_team(image, draw, (center_x + FACEOFF_CENTER_HALF_WIDTH, y1 + 4, x2 - 8, hero_y2 - 4), event, "b", state, spec)
@@ -159,16 +189,17 @@ class BasketballRenderMixin:
         self._draw_vertical_split(draw, split_x + 6, lower_y1, y2)
         if state == "scheduled":
             tiles = [
-                ("TIP-OFF", SportsDashboard._kit_countdown_label(event.get("start"), now)),
+                ("FACE-OFF" if spec.sport == "NHL" else "TIP-OFF", SportsDashboard._kit_countdown_label(event.get("start"), now)),
                 ("TV", str(event.get("broadcast") or "").strip() or "TBD"),
                 ("O/U", str(event.get("over_under") or "").replace("O/U", "").strip() or "--"),
             ]
             # The venue already sits on the strip above the tiles.
             self._draw_kit_tiles(draw, (x1, lower_y1 + 4, split_x, y2), tiles, spec, tile_h=min(KIT_TILE_HEIGHT + 10, y2 - lower_y1 - 8), image=image)
         else:
-            self._draw_basketball_leader_duel(draw, (x1, lower_y1, split_x, y2), event, spec)
+            self._draw_basketball_leader_duel(draw, (x1, lower_y1, split_x, y2), event, spec, image=image)
         self._draw_kit_ticker(image, draw, (split_x + 14, lower_y1 - 2, x2, y2), others, now, spec)
-        paint_list_backdrop(image, (split_x + 14, lower_y1 - 2, x2, y2), "basketball", COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
+        paint_list_backdrop(image, (split_x + 14, lower_y1 - 2, x2, y2), FACEOFF_BACKDROPS.get(spec.sport, "basketball"),
+                            COLORS["panel"], (COLORS["paper"], COLORS["panel"]))
 
     def _draw_faceoff_team(self, image, draw, box, event, side, state, spec):
         x1, y1, x2, y2 = [int(value) for value in box]
@@ -221,6 +252,7 @@ class BasketballRenderMixin:
             time_text, time_font = self._fit_text(draw, time_text, x2 - x1, 24, bold=True, min_size=14)
             self._draw_centered_in_box(draw, (x1, y1 + 20, x2, y1 + 50), time_text, time_font, COLORS["text"])
             sub = str(event.get("broadcast") or "").strip()
+            networks = sub
         else:
             winner = SportsDashboard._nba_winner_side(event) if state == "final" else ""
             for side, (left, right, align) in (("a", (x1, center_x - 9, "right")), ("b", (center_x + 9, x2, "left"))):
@@ -229,15 +261,31 @@ class BasketballRenderMixin:
                                              bold=winner in ("", side), min_size=16, sport=spec.sport, max_height=32)
                 self._draw_text_in_box(draw, (left, y1 + 20, right, y1 + 52), text, font, COLORS["text"], align=align)
             draw.line((center_x - 4, y1 + 36, center_x + 4, y1 + 36), fill=COLORS["border"], width=2)
-            sub = SportsDashboard._basketball_series_label(event) or (
-                str(event.get("broadcast") or "").strip() if state == "live" else SportsDashboard._basketball_context_label(event, state)
-            )
+            series = SportsDashboard._basketball_series_label(event)
+            networks = "" if series or state != "live" else str(event.get("broadcast") or "").strip()
+            sub = series or (networks if state == "live" else SportsDashboard._basketball_context_label(event, state))
         cup = SportsDashboard._nba_event_mark_path(event) if spec.sport == "NBA" else None
         if cup and self._draw_event_mark(image, cup, (x1 + 8, y1 + 53, x2 - 8, y2), align="center"):
+            return
+        if networks and sub == networks and self._draw_centered_tv_logos(image, draw, (x1, y1 + 56, x2, y1 + 68), networks):
             return
         if sub:
             sub, sub_font = self._fit_text_ellipsis(draw, sub, x2 - x1, 9, bold=False, min_size=8)
             self._draw_centered_in_box(draw, (x1, y1 + 56, x2, y1 + 68), sub, sub_font, COLORS["text"])
+
+    def _draw_centered_tv_logos(self, image, draw, box, label):
+        """A broadcast's networks as their logos, centred in ``box``; False when none has a logo."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        height = min(FACEOFF_TV_LOGO_HEIGHT, y2 - y1)
+        strip = Image.new("RGBA", (x2 - x1, height), (0, 0, 0, 0))
+        if not self._draw_kit_tv_logos(strip, ImageDraw.Draw(strip), (0, 0, strip.width, height), label, COLORS["panel"]):
+            return False
+        bounds = strip.getchannel("A").getbbox()
+        if not bounds:
+            return False
+        used = strip.crop((bounds[0], 0, bounds[2], height))
+        image.paste(used, (x1 + (x2 - x1 - used.width) // 2, y1 + (y2 - y1 - height) // 2), used)
+        return True
 
     def _draw_basketball_period_strip(self, draw, box, event, state, spec, image=None):
         x1, y1, x2, y2 = [int(value) for value in box]
@@ -260,7 +308,9 @@ class BasketballRenderMixin:
             return
         scores_a = list(event.get("period_scores_a") or [])
         scores_b = list(event.get("period_scores_b") or [])
-        count = SportsDashboard._kit_period_count(scores_a, scores_b, maximum=7) or 4
+        hockey_game = spec.sport == "NHL"
+        regulation = hockey.REGULATION_PERIODS if hockey_game else 4
+        count = SportsDashboard._kit_period_count(scores_a, scores_b, regulation=regulation, maximum=7) or regulation
         current = SportsDashboard._lpl_int_value(event.get("period")) if state == "live" else None
         gap = 4
         cell_w = (x2 - x1 - gap * (count - 1)) / count
@@ -270,7 +320,7 @@ class BasketballRenderMixin:
             active = current == index + 1
             fill = COLORS[spec.tag] if active else COLORS["panel"]
             draw.rounded_rectangle((left, y1, right, y2), radius=3, fill=fill, outline=COLORS["border"], width=2 if active else 1)
-            label = SportsDashboard._kit_quarter_label(index + 1)
+            label = hockey.period_label(index + 1) if hockey_game else SportsDashboard._kit_quarter_label(index + 1)
             a = scores_a[index] if index < len(scores_a) else None
             b = scores_b[index] if index < len(scores_b) else None
             value = f"{a}-{b}" if a is not None and b is not None else "—"
@@ -280,12 +330,23 @@ class BasketballRenderMixin:
                                                sport=spec.sport, max_height=y2 - y1 - 2)
             self._draw_text_in_box(draw, (left + 26, y1, right - 5, y2), value, value_font, COLORS["text"], align="right")
 
-    def _draw_basketball_leader_duel(self, draw, box, event, spec):
+    def _draw_basketball_leader_duel(self, draw, box, event, spec, image=None):
         """Each category's leader for both teams, facing each other."""
         x1, y1, x2, y2 = [int(value) for value in box]
         middle = (x1 + x2) // 2
         header_font = self._font(9, True)
+        icons = LEADER_DUEL_ICONS.get(spec.sport) if image is not None else None
         for side, align, left, right in (("a", "left", x1 + 2, middle - 20), ("b", "right", middle + 20, x2 - 2)):
+            if icons:
+                # The team's logo at the outer edge, its Chinese name beside it.
+                logo_x = left if side == "a" else right - DUEL_TEAM_LOGO_SIZE
+                self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), logo_x, y1 - 1, DUEL_TEAM_LOGO_SIZE,
+                                     spec.hook("logo_fallback", event, side))
+                name = spec.hook("team_name", event, side, False, default=event.get(f"team_{side}") or "")
+                name_box = ((left + DUEL_TEAM_LOGO_SIZE + 4, y1, right, y1 + 12) if side == "a"
+                            else (left, y1, right - DUEL_TEAM_LOGO_SIZE - 4, y1 + 12))
+                self._draw_text_in_box(draw, name_box, name, self._font(10, True), COLORS["text"], align=align)
+                continue
             code = str(event.get(f"team_{side}_code") or "").upper()
             self._draw_text_in_box(draw, (left, y1, right, y1 + 12), code, header_font, COLORS["text"], align=align)
         self._draw_centered_in_box(draw, (middle - 20, y1, middle + 20, y1 + 12), "LEADERS", self._font(8, False), COLORS["text"])
@@ -295,15 +356,22 @@ class BasketballRenderMixin:
             for side in ("a", "b")
         }
         y = y1 + 18
-        for label in ("PTS", "REB", "AST"):
+        for label in LEADER_DUEL_LABELS.get(spec.sport, ("PTS", "REB", "AST")):
             if y + 16 > y2:
                 break
             a = leaders["a"].get(label) or {}
             b = leaders["b"].get(label) or {}
             if not a and not b:
                 continue
-            draw.rounded_rectangle((middle - 15, y + 1, middle + 15, y + 14), radius=3, fill=COLORS[spec.tag], outline=COLORS["border"], width=1)
-            self._draw_centered_in_box(draw, (middle - 15, y + 1, middle + 15, y + 14), label, self._font(8, True), COLORS["text"])
+            icon = self._load_local_logo(os.path.join(STAT_ICON_DIR, f"{icons[label]}.png"), (DUEL_ICON_SIZE, DUEL_ICON_SIZE),
+                                         alpha_threshold=8) if icons and label in icons else None
+            if icon:
+                image.paste(icon, (middle - icon.width // 2, y + 8 - icon.height // 2), icon)
+            else:
+                draw.rounded_rectangle((middle - 15, y + 1, middle + 15, y + 14), radius=3, fill=COLORS[spec.tag],
+                                       outline=COLORS["border"], width=1)
+                self._draw_centered_in_box(draw, (middle - 15, y + 1, middle + 15, y + 14), label, self._font(8, True),
+                                           COLORS["text"])
             values = (SportsDashboard._lpl_int_value(a.get("value")), SportsDashboard._lpl_int_value(b.get("value")))
             for side, item, align in (("a", a, "right"), ("b", b, "left")):
                 if not item:
@@ -313,12 +381,18 @@ class BasketballRenderMixin:
                 own = values[0] if side == "a" else values[1]
                 value_font = self._font(12, own is not None and (other is None or own >= other))
                 value_w = self._text_width(draw, value, value_font)
+                # With icons, each leader carries the team's small logo at the outer edge.
+                outer = DUEL_ROW_LOGO_SIZE + 4 if icons else 0
                 if side == "a":
                     value_box = (middle - 21 - value_w, y, middle - 21, y + 15)
-                    name_box = (x1 + 2, y, value_box[0] - 6, y + 15)
+                    name_box = (x1 + 2 + outer, y, value_box[0] - 6, y + 15)
                 else:
                     value_box = (middle + 21, y, middle + 21 + value_w, y + 15)
-                    name_box = (value_box[2] + 6, y, x2 - 2, y + 15)
+                    name_box = (value_box[2] + 6, y, x2 - 2 - outer, y + 15)
+                if outer:
+                    logo_x = x1 + 2 if side == "a" else x2 - 2 - DUEL_ROW_LOGO_SIZE
+                    self._draw_team_logo(image, draw, event.get(f"team_{side}_logo"), logo_x, y + 2, DUEL_ROW_LOGO_SIZE,
+                                         spec.hook("logo_fallback", event, side))
                 self._draw_text_in_box(draw, value_box, value, value_font, COLORS["text"], align=align)
                 name, name_font = self._fit_text_ellipsis(draw, item.get("name") or "", name_box[2] - name_box[0], 10, bold=False, min_size=8)
                 self._draw_text_in_box(draw, name_box, name, name_font, COLORS["text"], align=align)
@@ -803,5 +877,5 @@ class BasketballRenderMixin:
             detail = str(final_event.get("status_detail") or final_event.get("status_text") or "").upper()
             return "OT" if "OT" in detail else ""
 
-        live_key = "wnba_live" if str((event or {}).get("sport") or "").upper() == "WNBA" else "nba_live"
+        live_key = {"WNBA": "wnba_live", "NHL": "nhl_live"}.get(str((event or {}).get("sport") or "").upper(), "nba_live")
         return SportsDashboard._kit_schedule_state_labels(event, now, live_labels, live_key, final_bottom)

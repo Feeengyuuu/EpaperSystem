@@ -117,7 +117,7 @@ class LowerWallRenderMixin:
         settings = settings or {}
         sources = []
         for sport in dict.fromkeys(game.get("sport") for game in games):
-            if sport not in {"MLB", "NBA", "WNBA", "NFL", "NCAA", "PGA"}:
+            if sport not in {"MLB", "NBA", "WNBA", "NHL", "NFL", "NCAA", "PGA"}:
                 continue
             try:
                 url = getattr(SportsDashboard, f"_{sport.lower()}_scoreboard_url")(settings)
@@ -670,7 +670,7 @@ class LowerWallRenderMixin:
 
     def _wall_spec(self, sport):
         sport = str(sport or "").upper()
-        if sport in {"NBA", "WNBA"}:
+        if sport in {"NBA", "WNBA", "NHL"}:
             return self._basketball_spec(sport)
         if sport in {"NFL", "NCAA"}:
             return self._football_spec(sport)

@@ -1,0 +1,1309 @@
+{
+  "source": "Each home city's official emblem as its English Wikipedia infobox shows it: the seal, else the coat of arms, logo or flag (Wikimedia Commons or English Wikipedia, rendered to PNG by Wikimedia)",
+  "processing": "white ground to alpha when opaque, cropped to the alpha bounding box, fitted in 240 x 64 with LANCZOS",
+  "logos": {
+    "anaheim_california": {
+      "city": "Anaheim, California",
+      "labels": [
+        "Anaheim, CA",
+        "Anaheim, California"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Anaheim, California.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Anaheim,_California.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1c/Seal_of_Anaheim%2C_California.svg/500px-Seal_of_Anaheim%2C_California.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "5876bd322a337e4737eeb856d370c5ccc54c9eef",
+      "source_sha256": "9b729861eef9074ed52d32ea93a2ab871ae20c61d7210c90924deff472c8c36a",
+      "sha256": "3510446160c3d39ac8542f9edbe5d7f5171911d9fd65ee1055f5e2be583b1d34"
+    },
+    "arlington_texas": {
+      "city": "Arlington, Texas",
+      "labels": [
+        "Arlington, TX",
+        "Arlington, Texas"
+      ],
+      "field": "image_flag",
+      "file": "Flag of Arlington, Texas.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Flag_of_Arlington,_Texas.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Flag_of_Arlington%2C_Texas.svg/500px-Flag_of_Arlington%2C_Texas.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "899e065143b95f58a15e017c5f04d999e1513600",
+      "source_sha256": "ebe5977268ad57ac8aa09d54cf6d1d5a87263191a079a486c7c13e4edfd03d41",
+      "sha256": "8c1f9cab3dddd204007951875e5e53302c00ff51925858158656170c696a50b8"
+    },
+    "atlanta": {
+      "city": "Atlanta",
+      "labels": [
+        "Atlanta, GA",
+        "Atlanta, Georgia"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Atlanta.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Atlanta.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/63/Seal_of_Atlanta.svg/500px-Seal_of_Atlanta.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "d66d30c714b04b40ad9757283c96a8b13e3060fc",
+      "source_sha256": "1996553030f32e452635c268938872521db73294cf131fed8e9f52703b5814fa",
+      "sha256": "023cc2683cd9e7042d4e7003590d6dc67139095deecb09b29db32140870840ab"
+    },
+    "austin_texas": {
+      "city": "Austin, Texas",
+      "labels": [
+        "Austin, TX"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Austin, TX.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Seal_of_Austin,_TX.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/a/a0/Seal_of_Austin%2C_TX.svg/500px-Seal_of_Austin%2C_TX.svg.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "a745adddd576b6a393840ae4e63635b4c46d0994",
+      "source_sha256": "77c42b9ede7b41d7cedacb6334582ffd3bc2a98799e1c1c2c09ea4a8be15823b",
+      "sha256": "f3b0e45f803348429ceb04e5dedbe1117bfbb41627b556f9fadbf2d0c34e6229"
+    },
+    "baltimore": {
+      "city": "Baltimore",
+      "labels": [
+        "Baltimore, MD",
+        "Baltimore, Maryland"
+      ],
+      "field": "image_seal",
+      "file": "Seal_of_Baltimore,_Maryland.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Baltimore,_Maryland.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/04/Seal_of_Baltimore%2C_Maryland.svg/500px-Seal_of_Baltimore%2C_Maryland.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "c1cafc44410c589e01616aee5ddaebfd973030dc",
+      "source_sha256": "04c241af18b83e1e0968bfefa325cf13da635e49f274478bddbcf6258ca7a932",
+      "sha256": "d1700b5b81c4af26561784dc7580c73cf0aea83e768bc07d8a350d6b5d783304"
+    },
+    "boston": {
+      "city": "Boston",
+      "labels": [
+        "Boston, MA",
+        "Boston, Massachusetts"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Boston, Massachusetts.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Boston,_Massachusetts.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0d/Seal_of_Boston%2C_Massachusetts.svg/500px-Seal_of_Boston%2C_Massachusetts.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "6efde2283cee91b5a9001ecbe3110c5235ab49d5",
+      "source_sha256": "b391e710a52f01d5cb70bba83fcddf552de19afd44e14ca389d8ebe7ff4ea903",
+      "sha256": "2423c9b74730817bb03034fe435a6f7f1c0dcc0190115228c6f96b131184ad19"
+    },
+    "boulder_colorado": {
+      "city": "Boulder, Colorado",
+      "labels": [
+        "Boulder, CO"
+      ],
+      "field": "image_seal",
+      "file": "Boulder, Colorado logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Boulder,_Colorado_logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/c/c2/Boulder%2C_Colorado_logo.svg/500px-Boulder%2C_Colorado_logo.svg.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "3744ee8eacd0a3dc770ee9cce20a52a590b9456b",
+      "source_sha256": "02f8e1875eab074d63f575baa0611b90850a3dbcff4e5061dbf43da7a2dcb6d5",
+      "sha256": "89c45d7f685a96d836ff9240cc8bb390442c16b779e7fb24e296b66037f54172"
+    },
+    "bradenton_florida": {
+      "city": "Bradenton, Florida",
+      "labels": [
+        "Bradenton, Florida"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Bradenton, Florida.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Bradenton,_Florida.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/07/Seal_of_Bradenton%2C_Florida.png/500px-Seal_of_Bradenton%2C_Florida.png",
+      "licence": "Public domain",
+      "original_sha1": "34cec80cf0ca2df3d045196e43a924c0122040e1",
+      "source_sha256": "bec45651a52597f3c0597140f0fe1da51a6cee6ecbce23f5d3d14b260e72f344",
+      "sha256": "094df33681dc1c94627e40defb4492cac5ef9dcebb57b3d9aedb7977e08f821a"
+    },
+    "brooklyn": {
+      "city": "Brooklyn",
+      "labels": [
+        "Brooklyn, NY"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Brooklyn, New York.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Brooklyn,_New_York.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/75/Seal_of_Brooklyn%2C_New_York.svg/500px-Seal_of_Brooklyn%2C_New_York.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "b84af2ae51113ef3ec066048690cc22604415d1c",
+      "source_sha256": "22bd2b720b8eb2e54cfcb4dd80879fbbab4d1399f724257e7dc52d1a0d07f0f1",
+      "sha256": "8517fcae23309dc09411118a3c5df7526ead14cd2267503d231c67ba6d3654cd"
+    },
+    "buffalo_new_york": {
+      "city": "Buffalo, New York",
+      "labels": [
+        "Buffalo, NY"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Buffalo, New York.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Buffalo,_New_York.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/51/Seal_of_Buffalo%2C_New_York.svg/500px-Seal_of_Buffalo%2C_New_York.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "4800f0e0a93bfc8b512d3a04ab2fe45e497381db",
+      "source_sha256": "e3cc560d1e237d83a9e2bd6c0304b4788560b3d37a8a49b3e0811e194d90d0f3",
+      "sha256": "50f31be0c1f5a69a3c86715bd33615b6d4c6013cb53c7efaaded699afba0e8ec"
+    },
+    "calgary": {
+      "city": "Calgary",
+      "labels": [
+        "Calgary, AB"
+      ],
+      "field": "image_shield",
+      "file": "COA of Calgary.svg",
+      "page": "https://en.wikipedia.org/wiki/File:COA_of_Calgary.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/4/4d/COA_of_Calgary.svg/500px-COA_of_Calgary.svg.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "1d668a217eda6e63bc70b3efc7874696c398d2ff",
+      "source_sha256": "3158c9bcd4e044fd657ebf0d7bb868141ab4a396131f3a77bde4592b06bc230d",
+      "sha256": "4afbf367be5e28f5b29823f0dea1676f9cefb485baf5f990cbc8286183ab44c6"
+    },
+    "canton_ohio": {
+      "city": "Canton, Ohio",
+      "labels": [
+        "Canton, OH"
+      ],
+      "field": "image_seal",
+      "file": "City of canton oh seal.png",
+      "page": "https://commons.wikimedia.org/wiki/File:City_of_canton_oh_seal.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/22/City_of_canton_oh_seal.png/500px-City_of_canton_oh_seal.png",
+      "licence": "Public domain",
+      "original_sha1": "f4b7e5e1466eeea3d33af7c8e7a6772955876ea6",
+      "source_sha256": "c851c2824dc07ae7dd04afc603c281d6e9495a4ce3023244113aad3bdbf5c40e",
+      "sha256": "269c932bc1a2dda0b6a2f360e67291e73d944cbeb872dfd5a8fcdbd35e64fc7c"
+    },
+    "charlotte_north_carolina": {
+      "city": "Charlotte, North Carolina",
+      "labels": [
+        "Charlotte, NC"
+      ],
+      "field": "image_seal",
+      "file": "New seal of Charlotte, North Carolina.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:New_seal_of_Charlotte,_North_Carolina.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/03/New_seal_of_Charlotte%2C_North_Carolina.svg/500px-New_seal_of_Charlotte%2C_North_Carolina.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "99d5f5de706b91b6a87e05914bd4e63929bb8db8",
+      "source_sha256": "2b4193a24d1d2302a84a13fa3a094dd1f318fba73b2574f3c8888bae79b33c26",
+      "sha256": "6457c9e8a730a740093e09d4b7b960890497082d7be47ed8665ff811985ff17f"
+    },
+    "chicago": {
+      "city": "Chicago",
+      "labels": [
+        "Chicago, IL",
+        "Chicago, Illinois"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Chicago, Illinois.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Chicago,_Illinois.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Seal_of_Chicago%2C_Illinois.svg/500px-Seal_of_Chicago%2C_Illinois.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "ba07fbdbbbf264dd4de1563fa43709ba86dbc6ba",
+      "source_sha256": "4ce94ff11f4f4b8d67f0b076d6d0bf740892dd3c48e5e5a9c228fda4fbf0b963",
+      "sha256": "ec8129522b63b285dd664436c7f9052d160f53efbd6bbc613582118499cc7e11"
+    },
+    "cincinnati": {
+      "city": "Cincinnati",
+      "labels": [
+        "Cincinnati, OH",
+        "Cincinnati, Ohio"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Cincinnati, Ohio.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Cincinnati,_Ohio.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Seal_of_Cincinnati%2C_Ohio.svg/500px-Seal_of_Cincinnati%2C_Ohio.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "765f149975dfcfa859b91bb292b6e406e7198f60",
+      "source_sha256": "02e1bc5fc61a8d935c69a36369a5311f3e5f2f1259592ee9d51fafba8b49553a",
+      "sha256": "a4c7ccce718c6c3e3f85e3107b80233e453a97adaf87df894a2e949ca243bbbe"
+    },
+    "clearwater_florida": {
+      "city": "Clearwater, Florida",
+      "labels": [
+        "Clearwater, Florida"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Clearwater, Florida.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Clearwater,_Florida.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/a/ac/Seal_of_Clearwater%2C_Florida.png",
+      "licence": "Public domain",
+      "original_sha1": "fb16906af7410cc7b7f120d35978f813df62f6ae",
+      "source_sha256": "3e96749ba8e8edb125f64a6fe88bf827f8c0044843bd458a91b3fa7516e34a63",
+      "sha256": "ef493050df6f7382ed6dc82512a1144f1c04bb30169491e76a6fe5dcf865d8da"
+    },
+    "cleveland": {
+      "city": "Cleveland",
+      "labels": [
+        "Cleveland, OH",
+        "Cleveland, Ohio"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Cleveland, Ohio.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Cleveland,_Ohio.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6c/Seal_of_Cleveland%2C_Ohio.svg/500px-Seal_of_Cleveland%2C_Ohio.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "cb042c4c838706122221b0257557cef1b8de41d2",
+      "source_sha256": "c5f829eb732708ee8770b76d3210e1f598635233ae70f95b1180edb37fea2249",
+      "sha256": "174f568053cc09011f158c805ab5067079d181d75f264cda5bc10733678addbd"
+    },
+    "college_park_georgia": {
+      "city": "College Park, Georgia",
+      "labels": [
+        "College Park, GA"
+      ],
+      "field": "image_seal",
+      "file": "Seal of College Park, Georgia.png",
+      "page": "https://en.wikipedia.org/wiki/File:Seal_of_College_Park,_Georgia.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/5/5d/Seal_of_College_Park%2C_Georgia.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "1a8fb930ea3eabe809561f2f4d0a9c6fa800cd7a",
+      "source_sha256": "6a4face4b9ef7d22f0992ae4381e5b47ef24551facd8e2965c1951dc5a82709d",
+      "sha256": "2a1b4fc0968e999902d544529a79a9d4bc9013907a3b37f5faa3238683ec13a8"
+    },
+    "columbus_ohio": {
+      "city": "Columbus, Ohio",
+      "labels": [
+        "Columbus, OH"
+      ],
+      "field": "image_seal",
+      "file": "Columbus seal.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Columbus_seal.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7f/Columbus_seal.png/500px-Columbus_seal.png",
+      "licence": "Public domain",
+      "original_sha1": "4c9e77f5ee2a4e0ca3dab54ad7ccf04bce1eaf87",
+      "source_sha256": "391e64845232b8353e537b05058e99fa935775e4edd47e7fa3d8d483bf03ffd8",
+      "sha256": "65b5a2eeae4065d81d7eaf69c44faa97b6d12a5f5c6989a84f1b74f15d75fe43"
+    },
+    "dallas": {
+      "city": "Dallas",
+      "labels": [
+        "Dallas, TX"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Dallas.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Dallas.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/8d/Seal_of_Dallas.svg/500px-Seal_of_Dallas.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "0c5c82c980faacccec38f2f9fe4491ff838e3b96",
+      "source_sha256": "b81d0d7511b4d1a3b7c3d1703e4c079a0f6edcaab9f1eab986a06b16f70854d4",
+      "sha256": "2ae360cda71847b8278a2086fe8caa486f9f577e6e88c20027a3e3bf35935340"
+    },
+    "denver": {
+      "city": "Denver",
+      "labels": [
+        "Denver, CO",
+        "Denver, Colorado"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Denver, Colorado.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Denver,_Colorado.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/50/Seal_of_Denver%2C_Colorado.svg/500px-Seal_of_Denver%2C_Colorado.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "c0a776dd6cc1cbae7608d1a00c0d9be073ab5828",
+      "source_sha256": "0cdc797088a11ff1a49012ab3699782432da55c37c45b02c83cc52fe48900e05",
+      "sha256": "dcad05c6d93fa9e3ee1b1c8b86cf3358f31e92870d9f484c6c73830b9454f3be"
+    },
+    "detroit": {
+      "city": "Detroit",
+      "labels": [
+        "Detroit, MI",
+        "Detroit, Michigan"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Detroit (B&W).svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Detroit_(B%26W).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5a/Seal_of_Detroit_%28B%26W%29.svg/500px-Seal_of_Detroit_%28B%26W%29.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "d2a173e1e6cf45ac6838c442ec76700de07c4228",
+      "source_sha256": "defddb6bf894af55dae71e94ff7443feb62ae91df87969615a8f387f9f1d6677",
+      "sha256": "30533cec8636a89a7e5b7a4d8554970b3c9363b672de47ab2bc6532a2f35c67c"
+    },
+    "dunedin_florida": {
+      "city": "Dunedin, Florida",
+      "labels": [
+        "Dunedin, Florida"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Dunedin, Florida.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Dunedin,_Florida.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/6/68/Seal_of_Dunedin%2C_Florida.png",
+      "licence": "Public domain",
+      "original_sha1": "b1b6a78fe67a4785d066893bf76685b97002595c",
+      "source_sha256": "224d51f4ebb36cc43ef9f8dea97973ac63e7ae3fa41d12b509d96b3f93aeb6a1",
+      "sha256": "64cbe26aaf0c35f32bc892e616dd140e636b45e4067720300ee124bbb7a37d14"
+    },
+    "east_rutherford_new_jersey": {
+      "city": "East Rutherford, New Jersey",
+      "labels": [
+        "East Rutherford, NJ"
+      ],
+      "field": "image_seal",
+      "file": "EastRutherfordSeal.JPG",
+      "page": "https://en.wikipedia.org/wiki/File:EastRutherfordSeal.JPG",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/f/f3/EastRutherfordSeal.JPG",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "d7cb87878ecb139373744a7ec5b309e14b643f7f",
+      "source_sha256": "727cdda283b03971525e7019c32bcbb02c1e70f53a8a3a92e87043289046ac55",
+      "sha256": "3a70eb07ede8d3420a953359829f948a815f922a30314d07c01767fa16b9151c"
+    },
+    "edmonton": {
+      "city": "Edmonton",
+      "labels": [
+        "Edmonton, AB"
+      ],
+      "field": "image_shield",
+      "file": "EdmontonCOA.svg",
+      "page": "https://en.wikipedia.org/wiki/File:EdmontonCOA.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/b/bf/EdmontonCOA.svg/500px-EdmontonCOA.svg.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "78a2903e4280a66a9d855e1acc1f2e59f8ea307c",
+      "source_sha256": "f74a18a22202accb8dd65a6777d1b0f73c478619097ef836e3745de00daddef0",
+      "sha256": "501cf2caa9a2570726c0666ed7a5911bfb4f3bde318abb86394987b7397817ab"
+    },
+    "fort_myers_florida": {
+      "city": "Fort Myers, Florida",
+      "labels": [
+        "Fort Myers, Florida"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Fort Myers, Florida.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Fort_Myers,_Florida.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/60/Seal_of_Fort_Myers%2C_Florida.svg/500px-Seal_of_Fort_Myers%2C_Florida.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "6bb437b51a5bcfb610839a4851510654137edca9",
+      "source_sha256": "e6c855cb54a802e388ee1e9393e29c3a0c0dcdd1370537010af03345a09c32b0",
+      "sha256": "91892af9337664ee26b7b29854848c44032c9cd2501a0504adfc0a78931602a7"
+    },
+    "foxborough_massachusetts": {
+      "city": "Foxborough, Massachusetts",
+      "labels": [
+        "Foxborough, MA"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Foxborough, Massachusetts.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Foxborough,_Massachusetts.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e2/Seal_of_Foxborough%2C_Massachusetts.png/500px-Seal_of_Foxborough%2C_Massachusetts.png",
+      "licence": "Public domain",
+      "original_sha1": "75c8b8e184b3d3dc22bb93b6bf29e1962d0fa409",
+      "source_sha256": "5d862a8feb344ec6cacedbc92cb88394767e498192fe7d8678fc229db5a53ea0",
+      "sha256": "9ebbc74cc5eef6a5f8d444590c842a7f44864fdbb07114c9b6e2221eb6c53eb3"
+    },
+    "goodyear_arizona": {
+      "city": "Goodyear, Arizona",
+      "labels": [
+        "Goodyear, Arizona"
+      ],
+      "field": "image_seal",
+      "file": "City-of-goodyear-logo.png",
+      "page": "https://commons.wikimedia.org/wiki/File:City-of-goodyear-logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/5/5a/City-of-goodyear-logo.png",
+      "licence": "CC BY-SA 2.5",
+      "original_sha1": "cf35fe3cde92c7ed6deebf85b10302a3bfa9f2f4",
+      "source_sha256": "adf69ee4902eaff223ac407fde4d4f9e6f3db78706f49ec92906c7a1da29f3c9",
+      "sha256": "6b4dffb943927a7a3870e28540bfeea01673238124ebc16f41a1a54a0a9eec6c"
+    },
+    "green_bay_wisconsin": {
+      "city": "Green Bay, Wisconsin",
+      "labels": [
+        "Green Bay, WI"
+      ],
+      "field": "image_seal",
+      "file": "City logo of Green Bay, Wisconsin.png",
+      "page": "https://en.wikipedia.org/wiki/File:City_logo_of_Green_Bay,_Wisconsin.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/b/b0/City_logo_of_Green_Bay%2C_Wisconsin.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "74b8b29cdbaf36f3c04315818c32bee726b40b1b",
+      "source_sha256": "cdc92e467876b6f60735aa3bbce4b1798d07919ea0d8b55acc0bed47424c4b61",
+      "sha256": "4a6dfe9a2c63d63474da63298eef8eb5e5c2bf9e1e15a8fb8b114a3f844f0a1d"
+    },
+    "greensboro_north_carolina": {
+      "city": "Greensboro, North Carolina",
+      "labels": [
+        "Greensboro, NC"
+      ],
+      "field": "image_seal",
+      "file": "Greensboro Seal.jpg",
+      "page": "https://en.wikipedia.org/wiki/File:Greensboro_Seal.jpg",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/3/35/Greensboro_Seal.jpg",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "d1de496df1eb7d50e0ff128cc8f9b1f100b130cd",
+      "source_sha256": "9f2be55efe338819efcb46741449e591d472fdca4308ad32df9f1104316af61d",
+      "sha256": "bd0fb11ad3d6d4539f88bbf23f9c41fccae1128393bfbb81af798cc07cad3b26"
+    },
+    "hartford_connecticut": {
+      "city": "Hartford, Connecticut",
+      "labels": [
+        "Hartford, CT"
+      ],
+      "field": "image_seal",
+      "file": "HartfordCTseal.png",
+      "page": "https://en.wikipedia.org/wiki/File:HartfordCTseal.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/a/a5/HartfordCTseal.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "1b660438cd6665590091cc381e3d6fbd85af5bbc",
+      "source_sha256": "687e79ebf54c18805fa985ac785a4010ee5255db9e04afab5dadea50211494e1",
+      "sha256": "c9fce47ee2c2cc46d838907a86bc1215cf313d73b905014046032a395cc3e3c8"
+    },
+    "honolulu": {
+      "city": "Honolulu",
+      "labels": [
+        "Honolulu, HI"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Honolulu, Hawaii.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Honolulu,_Hawaii.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/80/Seal_of_Honolulu%2C_Hawaii.svg/500px-Seal_of_Honolulu%2C_Hawaii.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "1c83fc30da9ea03a3085e6686a776b357c872aa0",
+      "source_sha256": "d1f85393acce62217ade16ffc47fd0e87fddd686be8eac1e56e83054e460677b",
+      "sha256": "9a0f2b96f20cecd41baea3dab0c89723bed48707f968cec979421749f92d9dd3"
+    },
+    "houston": {
+      "city": "Houston",
+      "labels": [
+        "Houston, TX",
+        "Houston, Texas"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Houston, Texas.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Houston,_Texas.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7b/Seal_of_Houston%2C_Texas.svg/500px-Seal_of_Houston%2C_Texas.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "82f0312eb478534685b6f52dbbc130e47e4d337d",
+      "source_sha256": "207dcbda68cb6efb3570d95253f0c5aa4d0d70f6e76f975228bce70a02b559b8",
+      "sha256": "17ad9068727ce32d11251ad8ee78117acc1a270dbd92461de67d0390089c0fd5"
+    },
+    "indianapolis": {
+      "city": "Indianapolis",
+      "labels": [
+        "Indianapolis, IN"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Indianapolis.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Indianapolis.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2d/Seal_of_Indianapolis.svg/500px-Seal_of_Indianapolis.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "fc901f084833fbcb785ad01092b1f35fd3f343d7",
+      "source_sha256": "13aab2c72ebf91b9d67bf042699e7195d71fafc4602073704d3fa798424aa194",
+      "sha256": "345912974df4c843f816d0ed45f039878c65c482cfb7e72cc3cd8dbf17419345"
+    },
+    "inglewood_california": {
+      "city": "Inglewood, California",
+      "labels": [
+        "Inglewood, CA"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Inglewood, California.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Inglewood,_California.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/09/Seal_of_Inglewood%2C_California.svg/500px-Seal_of_Inglewood%2C_California.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "5bb5be70d013007293e063de251f4dd3e0419420",
+      "source_sha256": "2ab3da271c8d8c92544aaab8888afa72bb9cad0259ee1d7045b72cd745d70105",
+      "sha256": "874d1d90b1ed14d769cbf9e869e10d3b5b3d2fa57a3c57fbf957730bf07cbaa6"
+    },
+    "jacksonville_florida": {
+      "city": "Jacksonville, Florida",
+      "labels": [
+        "Jacksonville, FL"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Jacksonville, Florida.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Jacksonville,_Florida.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/9/90/Seal_of_Jacksonville%2C_Florida.png",
+      "licence": "Public domain",
+      "original_sha1": "1bfb410cdfdea962655d78557ac7c411d37540ee",
+      "source_sha256": "b68d731a2ad3beb0f4c97cc65e391bb8afdf41f7665c83ccecf41438572fb686",
+      "sha256": "8aedc712d098bac78e3f891876f4d34bd27eb98f78d8be7615631c2cefdd27cd"
+    },
+    "jupiter_florida": {
+      "city": "Jupiter, Florida",
+      "labels": [
+        "Jupiter, Florida"
+      ],
+      "field": "image_seal",
+      "file": "Jupiter, FL Seal.png",
+      "page": "https://en.wikipedia.org/wiki/File:Jupiter,_FL_Seal.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/f/f6/Jupiter%2C_FL_Seal.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "a710c33e7f69a9c33aee0b32117ecba1584e36aa",
+      "source_sha256": "330920ebe41a4966ae770f69c65bfec563142b88dc1d9ff295525736f0d6f849",
+      "sha256": "9b568c52660866eb2705560752d3e7389da8344a371a2ebd9cd61811653d3a0e"
+    },
+    "kansas_city_missouri": {
+      "city": "Kansas City, Missouri",
+      "labels": [
+        "Kansas City, MO",
+        "Kansas City, Missouri"
+      ],
+      "field": "image_flag",
+      "file": "Flag of Kansas City, Missouri.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Flag_of_Kansas_City,_Missouri.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/49/Flag_of_Kansas_City%2C_Missouri.svg/500px-Flag_of_Kansas_City%2C_Missouri.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "dad5fbd327dd05de591f2b64790eb94f945babab",
+      "source_sha256": "a83cee1cdee6026ddf4643f7336199e3d7f678d8eb422d8eefe04e58a8eb10d1",
+      "sha256": "2a12a645ad01939d27e14aef372a1f835136457b675da9f862baab38e46d580a"
+    },
+    "lakeland_florida": {
+      "city": "Lakeland, Florida",
+      "labels": [
+        "Lakeland, Florida"
+      ],
+      "field": "image_flag",
+      "file": "Lakeland Flag.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Lakeland_Flag.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Lakeland_Flag.png/500px-Lakeland_Flag.png",
+      "licence": "Public domain",
+      "original_sha1": "fb65c2892a51ba2411ca0375a14f6706f569db9c",
+      "source_sha256": "c586796581831df0b293a2e4ee4fb85b97f216ecbd3b9f3c0ccfe6c1afd55f06",
+      "sha256": "66e56e2f7c57d7d3577b295d86acbb33b3c8f3b6d1f3bba4482b9df6cb2b6b73"
+    },
+    "las_vegas": {
+      "city": "Las Vegas",
+      "labels": [
+        "Las Vegas, NV",
+        "Las Vegas, Nevada"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Las Vegas, Nevada.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Las_Vegas,_Nevada.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e1/Seal_of_Las_Vegas%2C_Nevada.svg/500px-Seal_of_Las_Vegas%2C_Nevada.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "8e69f9e95565007e2de6e7d014d459884b9f01e3",
+      "source_sha256": "44011f91f478a1b3135f71e5fa0a6739bc231b5c976f65fe711e37b7a689588a",
+      "sha256": "ad73c0664aa3acddbcd1facc1fba91d118533c7cdd8e7782b608cac5eab9c863"
+    },
+    "los_angeles": {
+      "city": "Los Angeles",
+      "labels": [
+        "Los Angeles, CA",
+        "Los Angeles, California"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Los Angeles.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Los_Angeles.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f3/Seal_of_Los_Angeles.svg/500px-Seal_of_Los_Angeles.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "406935c98445116be7075fe42f706b6d381a3e2d",
+      "source_sha256": "bdce440e601a1f1ff7061cc2ef76fbfa3650d3e36adeda8ae2fd3578005374e4",
+      "sha256": "a80aa14c24fe19607faf4151b37e166c4b0ff62cd5c17ec74a50de71fe896ec7"
+    },
+    "memphis_tennessee": {
+      "city": "Memphis, Tennessee",
+      "labels": [
+        "Memphis, TN"
+      ],
+      "field": "image_seal",
+      "file": "Memphis TE Seal-.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Memphis_TE_Seal-.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/0/0e/Memphis_TE_Seal-.svg/500px-Memphis_TE_Seal-.svg.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "89ac0e4c38154fd53579dee7d568579b886b942a",
+      "source_sha256": "7141d032e2e8e62dd598ab0529bc2f734373b43d3703d23a63aef3e10135293b",
+      "sha256": "a6f4e6bc876949a0c63c0dedd4a7be129a6709ca63e683053a36723e7e6eead4"
+    },
+    "mesa_arizona": {
+      "city": "Mesa, Arizona",
+      "labels": [
+        "Mesa, Arizona"
+      ],
+      "field": "image_seal",
+      "file": "Logo of City of Mesa.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Logo_of_City_of_Mesa.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/3/33/Logo_of_City_of_Mesa.svg/500px-Logo_of_City_of_Mesa.svg.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "03d43514ab6e9b12cf34305a72f413f51750082d",
+      "source_sha256": "07de09c806cb52513345aa38c700dbb8421ed15cea8616849578c417e0d3ee78",
+      "sha256": "900f4bd1f80913a84bdd1d1e552d65679a2e7e097e1a56189e97672781475de7"
+    },
+    "miami": {
+      "city": "Miami",
+      "labels": [
+        "Miami, FL",
+        "Miami, Florida"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Miami, Florida.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Miami,_Florida.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0c/Seal_of_Miami%2C_Florida.svg/500px-Seal_of_Miami%2C_Florida.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "44415afc8ac49204b70f7440c7364f9b7c3e9f33",
+      "source_sha256": "ca2d087c3effa5b4bb94b6b5afdd52e9a1f912aef6eb6dac25cce13427b34a14",
+      "sha256": "7bab236d1870b533fcdc37c41104059fe60a6d20caf44e989d6dc4917934d244"
+    },
+    "miami_gardens_florida": {
+      "city": "Miami Gardens, Florida",
+      "labels": [
+        "Miami Gardens, FL"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Miami Gardens, Florida.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Miami_Gardens,_Florida.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/28/Seal_of_Miami_Gardens%2C_Florida.svg/500px-Seal_of_Miami_Gardens%2C_Florida.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "5b7c55d0eb5524a4f7ee224051cbca0a2319bdad",
+      "source_sha256": "cd522426238f64fde28231f5d792292a23849d5674bf153ee5641f3d2bc91689",
+      "sha256": "15557791f807ba0261e09943484ad20f3d99ec0ce6ab16c4fe3368ce18a7259d"
+    },
+    "milwaukee": {
+      "city": "Milwaukee",
+      "labels": [
+        "Milwaukee, WI",
+        "Milwaukee, Wisconsin"
+      ],
+      "field": "image_seal",
+      "file": "MKESeal.png",
+      "page": "https://commons.wikimedia.org/wiki/File:MKESeal.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/MKESeal.png/500px-MKESeal.png",
+      "licence": "Public domain",
+      "original_sha1": "14f09944c87fe5af4cac73fedf9e214c3cf382dc",
+      "source_sha256": "0e3f786209cfcd4e16d986326e9789df0f3fb857876ddacc2586c930af108b0d",
+      "sha256": "e0c4f12048527a170782f219a95ba4361e9c7b9e9f4d0a890f7c9d21d6edb802"
+    },
+    "minneapolis": {
+      "city": "Minneapolis",
+      "labels": [
+        "Minneapolis, MN",
+        "Minneapolis, Minnesota"
+      ],
+      "field": "image_seal",
+      "file": "Minneapolis seal.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Minneapolis_seal.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/85/Minneapolis_seal.svg/500px-Minneapolis_seal.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "5330403a64a7c0ac2fce61bc5baf2f898f03bfdd",
+      "source_sha256": "8f9da46b9ed5e94e8c3b9f87232a719b8624ac21fc530a5d5a325c5d112bf191",
+      "sha256": "143dd435e3692522353ad006670ff432b8e2c0bb0cc30329d8b8dcd4d59de747"
+    },
+    "montreal": {
+      "city": "Montreal",
+      "labels": [
+        "Montreal, PQ",
+        "Montreal, QC"
+      ],
+      "field": "image_seal",
+      "file": "Coat of arms of Montreal.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Coat_of_arms_of_Montreal.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/47/Coat_of_arms_of_Montreal.svg/500px-Coat_of_arms_of_Montreal.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "fad889f778c67956b1d6af4429d8c3d1fccd7858",
+      "source_sha256": "7915e79633734dd052927f24d43b28d49beebc27a82983020066e49cb55add69",
+      "sha256": "0e7be461a91c9dc14e08ffa6c8b6a2b24925d13ad9d3b421c54642d8ea30ed4d"
+    },
+    "nashville_tennessee": {
+      "city": "Nashville, Tennessee",
+      "labels": [
+        "Nashville, TN"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Nashville, Tennessee.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Nashville,_Tennessee.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3d/Seal_of_Nashville%2C_Tennessee.png/500px-Seal_of_Nashville%2C_Tennessee.png",
+      "licence": "Public domain",
+      "original_sha1": "8380e1ee1339f043208104840e18a3bcef42c623",
+      "source_sha256": "733b198fa4daffe72df6390a71f641c5c7f2b5dcbfdbb2653e0c2fb42b6b4d67",
+      "sha256": "20cbd1277ef789cc351e47fe1b337dc971177c3da0a2c09c4b5db02bfb1b8dd3"
+    },
+    "new_orleans": {
+      "city": "New Orleans",
+      "labels": [
+        "New Orleans, LA"
+      ],
+      "field": "image_seal",
+      "file": "City seal of New Orleans.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Seal_of_New_Orleans,_Louisiana.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/d/da/Seal_of_New_Orleans%2C_Louisiana.svg/500px-Seal_of_New_Orleans%2C_Louisiana.svg.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "04d39a4cf2fa2d5e302d3587ac684dca430df2c1",
+      "source_sha256": "fa29cb166f086852452832d67eae111e79987922681d9cf181c5d31f6939d21d",
+      "sha256": "537ae93dc24ebf0166a29f0c208bdd36ec988d4d52c03e3569f62dfcdb1d4b31"
+    },
+    "new_york_city": {
+      "city": "New York City",
+      "labels": [
+        "New York, NY"
+      ],
+      "field": "image_seal",
+      "file": "Seal_of_New_York_City.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_New_York_City.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/39/Seal_of_New_York_City.svg/500px-Seal_of_New_York_City.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "2d08a6e3ee9a716d613ff13852f03963d848bff7",
+      "source_sha256": "66f9726cc58a40ad033b5ba54bf435a51cd8e104cf0f6b137fa0c4979989d4b3",
+      "sha256": "bc48d4afa01dd7ccb09d04893f1a52a9d4efd48901a5bc6c96c11bc8c0a41d50"
+    },
+    "newark_new_jersey": {
+      "city": "Newark, New Jersey",
+      "labels": [
+        "Newark, NJ"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Newark, New Jersey.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Newark,_New_Jersey.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f5/Seal_of_Newark%2C_New_Jersey.png/500px-Seal_of_Newark%2C_New_Jersey.png",
+      "licence": "Public domain",
+      "original_sha1": "7328a748af68b85919f806832e745d5b5c79b3e9",
+      "source_sha256": "588bc33dcf75a4f64d6584c8bb82c5252cae14a89f9cc112f22fab513e3e3935",
+      "sha256": "bfc2a0cb0003ba5defb6416db1510f31b3400d054997156a46cb550030f25069"
+    },
+    "north_port_florida": {
+      "city": "North Port, Florida",
+      "labels": [
+        "North Port, Florida"
+      ],
+      "field": "image_seal",
+      "file": "Seal of North Port.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_North_Port.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/4/47/Seal_of_North_Port.png",
+      "licence": "Public domain",
+      "original_sha1": "7ffd97940986e39b417238781ded2b34ed45b447",
+      "source_sha256": "d2c3c7b27f84efe93c7d3954f27b48ec7ad55463075b459188ba98e8229f72e0",
+      "sha256": "168fdbd810bf04ee76fce3ae8f05aba6487a202a2cfb24970e5bd8cb7fff9746"
+    },
+    "oklahoma_city": {
+      "city": "Oklahoma City",
+      "labels": [
+        "Oklahoma City, OK"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Oklahoma City, Oklahoma.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Oklahoma_City,_Oklahoma.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/9/93/Seal_of_Oklahoma_City%2C_Oklahoma.png",
+      "licence": "Public domain",
+      "original_sha1": "d28fa9367723caec9cad3cbc2a9b89ffe19f47e0",
+      "source_sha256": "cb64900d496673b343d55cf16aed8b24635465929699f05ba2d7c22bbf3b2593",
+      "sha256": "85c0d95d4d5971078047471ef460421e70849a4610b58cd588a4ef3db253ac90"
+    },
+    "ontario_california": {
+      "city": "Ontario, California",
+      "labels": [
+        "Ontario, CA"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Ontario, California.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Ontario,_California.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/9/98/Seal_of_Ontario%2C_California.png",
+      "licence": "Public domain",
+      "original_sha1": "f7d92708593ee831c53d6a75d94c9f9c43dc93d0",
+      "source_sha256": "542494cf22dcdef73d25a0f48eb8471e61be9d427332e30050eb630486cd3c2f",
+      "sha256": "338e36f7bbef67c7d28daa04a0053da19b32d7afe5d25cf4fccf20c7b583372b"
+    },
+    "orchard_park_new_york": {
+      "city": "Orchard Park, New York",
+      "labels": [
+        "Orchard Park, NY"
+      ],
+      "field": "image_seal",
+      "file": "OrchardParkNYseal.png",
+      "page": "https://en.wikipedia.org/wiki/File:OrchardParkNYseal.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/d/d4/OrchardParkNYseal.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "4fca1e0863f6bb37c22b426b6b6129b68782f1d0",
+      "source_sha256": "f77ca308b6dd4d323aec521cf4a5083a96d97e9f80676bd0d35b27d1050430f6",
+      "sha256": "ac6e1f36431644f67dee6e23cefa5bf92f80dafd88c4ea772491cd475820f6a6"
+    },
+    "ottawa": {
+      "city": "Ottawa",
+      "labels": [
+        "Ottawa, ON"
+      ],
+      "field": "image_shield",
+      "file": "Coat of arms of Ottawa, Ontario.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Coat_of_arms_of_Ottawa,_Ontario.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2d/Coat_of_arms_of_Ottawa%2C_Ontario.svg/500px-Coat_of_arms_of_Ottawa%2C_Ontario.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "5997484e95778c9df8224f6d614bd609b84c7a56",
+      "source_sha256": "ad66581beb2ea56abf36bb78bbce921c0f6493cea6e0772eadab7f5ca965c6cc",
+      "sha256": "94ff344e426a8d0c65c45448db67f144e11d1df94621734572ab2adb4e209137"
+    },
+    "palm_beach_florida": {
+      "city": "Palm Beach, Florida",
+      "labels": [
+        "Palm Beach, Florida"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Palm Beach, Florida.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Palm_Beach,_Florida.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ed/Seal_of_Palm_Beach%2C_Florida.svg/500px-Seal_of_Palm_Beach%2C_Florida.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "918576361ee45e3a51623ced1480be2a79a287d3",
+      "source_sha256": "1b736d0e9550565a7fd747335825907885b1f6c2eccfae992d4adc5e5eceac91",
+      "sha256": "022386282025ef6df738b1a4470c362cd5ef1da4b0e8e4ea02460b4728b77a97"
+    },
+    "peoria_arizona": {
+      "city": "Peoria, Arizona",
+      "labels": [
+        "Peoria, Arizona"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Peoria, Arizona.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Peoria,_Arizona.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/71/Seal_of_Peoria%2C_Arizona.svg/500px-Seal_of_Peoria%2C_Arizona.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "0f55059426394df4fd312aedc7e805771cd253e4",
+      "source_sha256": "1da1daafeebcc81efebbf8fa6989ddf62f560eea8a5d508eb8b21156c3975129",
+      "sha256": "594124fe069ef5e0874dcae6b8c16afb75f5dc57210818d0981ab451c09f14a9"
+    },
+    "philadelphia": {
+      "city": "Philadelphia",
+      "labels": [
+        "Philadelphia, PA",
+        "Philadelphia, Pennsylvania"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Philadelphia, Pennsylvania.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Philadelphia,_Pennsylvania.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/dd/Seal_of_Philadelphia%2C_Pennsylvania.svg/500px-Seal_of_Philadelphia%2C_Pennsylvania.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "2e4020794bceea7f1904fa1059bc3097f77cc8ba",
+      "source_sha256": "71159ab271fc8bb43f4f6cd3481fe1d0224402dcf59b8a7557722d6deeec0174",
+      "sha256": "000e69d6461d6d61eb7d17aac12076baf1e2bc847da841359ffb02980c0748d5"
+    },
+    "phoenix_arizona": {
+      "city": "Phoenix, Arizona",
+      "labels": [
+        "Phoenix, AZ",
+        "Phoenix, Arizona"
+      ],
+      "field": "image_seal",
+      "file": "Phoenix-logo.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Phoenix-logo.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/b/b1/Phoenix-logo.svg/500px-Phoenix-logo.svg.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "8e9ce89daf04004d02b2adfbc9917e069083cde8",
+      "source_sha256": "bb332aa2f78591f97aebdc8fe4b05aa618530231745cf1395ddc916a5579f69a",
+      "sha256": "40bac8f5dcea86c50af42770aa3f15e76def1e49cd1a47acd94dbbb934a4894b"
+    },
+    "pittsburgh": {
+      "city": "Pittsburgh",
+      "labels": [
+        "Pittsburgh, PA",
+        "Pittsburgh, Pennsylvania"
+      ],
+      "field": "image_seal",
+      "file": "Great Seal of Pittsburgh, Pennsylvania.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Great_Seal_of_Pittsburgh,_Pennsylvania.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/8/87/Great_Seal_of_Pittsburgh%2C_Pennsylvania.svg/500px-Great_Seal_of_Pittsburgh%2C_Pennsylvania.svg.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "dd15cc1a36377f031806ea638728b61a2ea809ac",
+      "source_sha256": "58d0b7f3c30654922b4cadd49153a7789e8571bc25438acff3961f50091657bf",
+      "sha256": "a8d15ec49b1158589e2d929e2a93ae0dc2fc2afc01993a263d358205fc3b4035"
+    },
+    "portland_oregon": {
+      "city": "Portland, Oregon",
+      "labels": [
+        "Portland, OR"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Portland, Oregon.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Portland,_Oregon.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/7f/Seal_of_Portland%2C_Oregon.svg/500px-Seal_of_Portland%2C_Oregon.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "6a8aea5e4bf64e98c566f49bc8d91246c2fa7fdc",
+      "source_sha256": "14039e7b5cbab6139341de93fd181832c2c69e2fe7831329ce039c6339545993",
+      "sha256": "93a404edce3bf676eaa948d85937acd04840fd6556882357db51aa2cde358f96"
+    },
+    "quebec_city": {
+      "city": "Quebec City",
+      "labels": [
+        "Quebec City, PQ"
+      ],
+      "field": "image_shield",
+      "file": "Quebec City Coat of Arms.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Quebec_City_Coat_of_Arms.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/06/Quebec_City_Coat_of_Arms.svg/500px-Quebec_City_Coat_of_Arms.svg.png",
+      "licence": "CC BY-SA 4.0",
+      "original_sha1": "64b9e2a311559b7ec4a70c8a1107d586b7d8aa56",
+      "source_sha256": "4467a4da35a1f967a4d2c87ccb7bf805614deb9f2d57b7a713d3f9ff7638c1f0",
+      "sha256": "2813f35ae2c5b7b4b430e1afafa79231b71de86a647d7d428a6195cf7ed17805"
+    },
+    "queens": {
+      "city": "Queens",
+      "labels": [
+        "Queens, New York"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Queens rerendered.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Borough_of_Queens.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/32/Seal_of_Borough_of_Queens.svg/500px-Seal_of_Borough_of_Queens.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "809b062c26aa3f891dbe6ecd89e42e7b59acca7d",
+      "source_sha256": "6245634ccef694069217867b4435b36a5189ac208eee97f0687d5a5e691412d7",
+      "sha256": "07128744a7ce68db557186a409c1f68c802637192bc8bd6d7685d897b7fd76cf"
+    },
+    "raleigh_north_carolina": {
+      "city": "Raleigh, North Carolina",
+      "labels": [
+        "Raleigh, NC"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Raleigh, North Carolina.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Raleigh,_North_Carolina.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/44/Seal_of_Raleigh%2C_North_Carolina.svg/500px-Seal_of_Raleigh%2C_North_Carolina.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "3cfe8b3e482d442354e962cfa4412b2b82266fd4",
+      "source_sha256": "754b520d9818592ece56923856e7cca22c624ec15c2977679e8674569e2aa02b",
+      "sha256": "f87131f3dd30621f86bbde9e7f57b6eb9df8bd39d55fddf0d6a02694a3798920"
+    },
+    "sacramento_california": {
+      "city": "Sacramento, California",
+      "labels": [
+        "Sacramento, CA",
+        "Sacramento, California"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Sacramento, California.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Sacramento,_California.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cd/Seal_of_Sacramento%2C_California.png/500px-Seal_of_Sacramento%2C_California.png",
+      "licence": "Public domain",
+      "original_sha1": "acb23b54e4708ce158c8a7e9dcefd194b35870e9",
+      "source_sha256": "4d4a2242fa7e60368b48dd09be72eacf6b7589ba004950b37b90c9ca4c8fa449",
+      "sha256": "113b1b185c3994f6c31c35690640aac24787f72ae84985ff2ff5f2e45c5f2cf7"
+    },
+    "saint_paul_minnesota": {
+      "city": "Saint Paul, Minnesota",
+      "labels": [
+        "Saint Paul, MN"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Saint Paul, Minnesota.gif",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Saint_Paul,_Minnesota.gif",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/b/bf/Seal_of_Saint_Paul%2C_Minnesota.gif",
+      "licence": "Public domain",
+      "original_sha1": "9f248777dc3bdc52eb21fd7d9712dc2f311a979a",
+      "source_sha256": "7fbd4d8cfbf831968fe07acfc0534c1449dffd2238a5569f0efe77d13b009ad2",
+      "sha256": "5d576b7fe906dc922c5a302b17a02519149197c0645e8054dfa9251110438816"
+    },
+    "salt_lake_city": {
+      "city": "Salt Lake City",
+      "labels": [
+        "Salt Lake City, UT"
+      ],
+      "field": "image_seal",
+      "file": "Seal utah.png",
+      "page": "https://en.wikipedia.org/wiki/File:Seal_utah.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/a/a3/Seal_utah.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "874283b28fd30c34d805fc2d6d89b8774b83f710",
+      "source_sha256": "aea1819ab0eb271c73bb6667b3456d25c26e686ee399385597e747513ce4232e",
+      "sha256": "233305b6c6cd7dc30578a81071f72e8cbc5ae8edb05bc813be0e7a5a814bb02d"
+    },
+    "san_antonio": {
+      "city": "San Antonio",
+      "labels": [
+        "San Antonio, TX"
+      ],
+      "field": "image_seal",
+      "file": "Seal of San Antonio, Texas.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_San_Antonio,_Texas.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/e/ef/Seal_of_San_Antonio%2C_Texas.png",
+      "licence": "Public domain",
+      "original_sha1": "4fbfec5f255d1dfc9edf6a0fea071b7d9d2c2c81",
+      "source_sha256": "d0823474e744e9a88a63e474bd2e663f379180ce7246d1db5835c3924630c4e9",
+      "sha256": "17865cba3749af74f3dfd6139c22c9a8b2896719f57c2c2fa740d174a48087ba"
+    },
+    "san_diego": {
+      "city": "San Diego",
+      "labels": [
+        "San Diego, CA",
+        "San Diego, California"
+      ],
+      "field": "image_seal",
+      "file": "Seal of San Diego, California.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_San_Diego,_California.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cf/Seal_of_San_Diego%2C_California.svg/500px-Seal_of_San_Diego%2C_California.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "f2ed4d4686b556ad6a6d72b468e41b1c1cf50acb",
+      "source_sha256": "0d22b3ced83e67a6a7b852fa3f1bc941c386c97f2e44226ac7b5c16ebd264840",
+      "sha256": "af49b40ad55a26052f2feb8056e4b189bccd96862b4f38c2c4318aee0bd6692c"
+    },
+    "san_francisco": {
+      "city": "San Francisco",
+      "labels": [
+        "San Francisco, CA",
+        "San Francisco, California"
+      ],
+      "field": "image_seal",
+      "file": "Seal of San Francisco.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_San_Francisco.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/91/Seal_of_San_Francisco.svg/500px-Seal_of_San_Francisco.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "97ab2fcae9e5d84498fce1c0a52e9fff55f0a04c",
+      "source_sha256": "97560bf5a8ba787deb8f0f0f02540c089a16575bf530eccb4541cdc66f34bd10",
+      "sha256": "6cfbe4217a3c139069a74a999124479cbdf207fe83ca00954f8c956a4564e753"
+    },
+    "san_jose_california": {
+      "city": "San Jose, California",
+      "labels": [
+        "San Jose, CA"
+      ],
+      "field": "image_seal",
+      "file": "Seal of San José, California (alternate).svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_San_Jos%C3%A9,_California_(alternate).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c7/Seal_of_San_Jos%C3%A9%2C_California_%28alternate%29.svg/500px-Seal_of_San_Jos%C3%A9%2C_California_%28alternate%29.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "2430e4c99a00df1d686c79b2bfecd265c46689dd",
+      "source_sha256": "3f6735b3f4ec14ab714b56d3a914e102ac586bc49e9bb982fa5139aa6b6eb1f5",
+      "sha256": "303cbcdf172a4f4bf77958c7d74f5de0115ab7425a1a2ae83361de2ed03e2aa1"
+    },
+    "santa_clara_california": {
+      "city": "Santa Clara, California",
+      "labels": [
+        "Santa Clara, CA"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Santa Clara, California.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Santa_Clara,_California.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/d/d7/Seal_of_Santa_Clara%2C_California.png",
+      "licence": "Public domain",
+      "original_sha1": "b10ea8cdebe12956520d03be5a7544992e1c2dd2",
+      "source_sha256": "d5cd22865c524bf67e474ffce85df2f8306ecc4aa2dbcfa483eaade8aae9ae2f",
+      "sha256": "0c4a1ba4cdb72f4917a18dace7bfad2fe03f74c95defd5096701c7bbcc0e25ac"
+    },
+    "sarasota_florida": {
+      "city": "Sarasota, Florida",
+      "labels": [
+        "Sarasota, Florida"
+      ],
+      "field": "image_seal",
+      "file": "Seal of the City of Sarasota.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_the_City_of_Sarasota.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/3/3b/Seal_of_the_City_of_Sarasota.png",
+      "licence": "Public domain",
+      "original_sha1": "87e13cd103eab6420fc7c12cb1a9f64d69b18236",
+      "source_sha256": "019c70065dd27e7606e86ec6117d0992a41a1bbc72a63ca00111b32deddfb099",
+      "sha256": "2c3e44b067103d5c9c7815abdf6eaa2f2039420d9b095d7de7ce010736697714"
+    },
+    "scottsdale_arizona": {
+      "city": "Scottsdale, Arizona",
+      "labels": [
+        "Scottsdale, Arizona"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Scottsdale (Arizona).svg",
+      "page": "https://en.wikipedia.org/wiki/File:Seal_of_Scottsdale_(Arizona).svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/c/c6/Seal_of_Scottsdale_%28Arizona%29.svg/500px-Seal_of_Scottsdale_%28Arizona%29.svg.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "f60d5926929286d90be1fb02a01cafee28805a9f",
+      "source_sha256": "3c981d5b7c58757125bb45f5544d49a2411243f431740e0c315a22a02a5ae032",
+      "sha256": "d4e3f19a9ba9424d21e2d86e40f711fbbbccefc12860509bc976ecdc1f56fbbd"
+    },
+    "seattle": {
+      "city": "Seattle",
+      "labels": [
+        "Seattle, WA",
+        "Seattle, Washington"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Seattle, Washington.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Seattle,_Washington.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/b/b3/Seal_of_Seattle%2C_Washington.png",
+      "licence": "Public domain",
+      "original_sha1": "1e42f4e31255b5b1ae45be309cdb874495943bed",
+      "source_sha256": "bfb23db0855ca6b1d408d1485d6ccc095a3ddcf4c3262affd790c326818c02cc",
+      "sha256": "70491caf1c7ddc5df5ed09cdc6e33b83c8232646e39ce7d71330bfcaeba3c24b"
+    },
+    "sioux_falls_south_dakota": {
+      "city": "Sioux Falls, South Dakota",
+      "labels": [
+        "Sioux Falls, SD"
+      ],
+      "field": "image_seal",
+      "file": "SiouxFallsSeal1.png",
+      "page": "https://en.wikipedia.org/wiki/File:SiouxFallsSeal1.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/0/04/SiouxFallsSeal1.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "c1c9608dd47be3a751f470ed0c4a30e810d6da90",
+      "source_sha256": "c86c63251e452ea71344785e825342f082cc868cd69fb933de9e3f2ccba17ca8",
+      "sha256": "08b3bc3db54583b1b312f49d74d3350b3d72b9167e25d0e46939f7abf01d82fb"
+    },
+    "st_louis": {
+      "city": "St. Louis",
+      "labels": [
+        "St. Louis, MO",
+        "St. Louis, Missouri"
+      ],
+      "field": "image_seal",
+      "file": "Seal of St. Louis, Missouri.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_St._Louis,_Missouri.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/84/Seal_of_St._Louis%2C_Missouri.svg/500px-Seal_of_St._Louis%2C_Missouri.svg.png",
+      "licence": "CC BY-SA 4.0",
+      "original_sha1": "ee3fdc9c5e654a280b1b1c4e9d5e8f0b3f6ae75f",
+      "source_sha256": "8f0a16b528698edd48b4bd468c2c0648baae49f16c73a4b8b15facb6c406f19f",
+      "sha256": "de72222d931003c5af9a089287fd9992fe8222254693719295488eb84a766cc9"
+    },
+    "st_petersburg_florida": {
+      "city": "St. Petersburg, Florida",
+      "labels": [
+        "St. Petersburg, Florida"
+      ],
+      "field": "image_seal",
+      "file": "Seal of St. Petersburg, Florida.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_St._Petersburg,_Florida.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e5/Seal_of_St._Petersburg%2C_Florida.svg/500px-Seal_of_St._Petersburg%2C_Florida.svg.png",
+      "licence": "CC BY-SA 4.0",
+      "original_sha1": "75331149dd8d4abf788f3be72306792274d5c38e",
+      "source_sha256": "6ff5e075031e388f807471afcdf0c812e20626f4bf56b7e2df1d0eb189c8d15d",
+      "sha256": "558d697f18f4c9a7ad876203876f8c9b4a0a2a827458ad4b681cab3d6bf16402"
+    },
+    "sunrise_florida": {
+      "city": "Sunrise, Florida",
+      "labels": [
+        "Sunrise, FL"
+      ],
+      "field": "image_seal",
+      "file": "Sunrise, Florida Seal.jpg",
+      "page": "https://commons.wikimedia.org/wiki/File:Sunrise,_Florida_Seal.jpg",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/commons/9/9c/Sunrise%2C_Florida_Seal.jpg",
+      "licence": "Public domain",
+      "original_sha1": "0a19010fe3f585de31cfb3373418baab0fa6cdcf",
+      "source_sha256": "e95f5d3caa6dfb5b27a40823ab61c9a84cdaf899e10c9cca4df4ac4ce26795d4",
+      "sha256": "9d7ed9f27f19323e8893aa2bae753137c67300c5c2f1680a40c3d7f8d770a388"
+    },
+    "surprise_arizona": {
+      "city": "Surprise, Arizona",
+      "labels": [
+        "Surprise, Arizona"
+      ],
+      "field": "image_seal",
+      "file": "Surprise AZ seal.png",
+      "page": "https://en.wikipedia.org/wiki/File:Surprise_AZ_seal.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/7/76/Surprise_AZ_seal.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "15c49b52ef5c0cadc58be6016f4b5f5177a864e5",
+      "source_sha256": "715b9453f399f4dd80957199574c8c4d8b708a11d75c01177cc5620b528fa97f",
+      "sha256": "f03f7cd7bc88317ab4dcfba6f983f38ac43565ebccd6116709d23ef627c99138"
+    },
+    "tampa_florida": {
+      "city": "Tampa, Florida",
+      "labels": [
+        "Tampa, FL",
+        "Tampa, Florida"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Tampa, Florida.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Tampa,_Florida.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5c/Seal_of_Tampa%2C_Florida.svg/500px-Seal_of_Tampa%2C_Florida.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "c6d3e4ace728cd590c5a38255cc5401f62aff1d1",
+      "source_sha256": "88056098b29a47cf8bc3e95dca9f453347d58f5a78c09daedca636d84530e9e3",
+      "sha256": "6bdd9637e3f12de47657296f38fc716b5fae3915984f57551448a682ff6c3d4b"
+    },
+    "tempe_arizona": {
+      "city": "Tempe, Arizona",
+      "labels": [
+        "Tempe, Arizona"
+      ],
+      "field": "image_flag",
+      "file": "TempeAZflag.gif",
+      "page": "https://en.wikipedia.org/wiki/File:TempeAZflag.gif",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/7/79/TempeAZflag.gif",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "86c94539af3e7a28f89d8f0370ca1b8d9549ec4e",
+      "source_sha256": "eca516f818bd75e50ead2027bceb7825fac1eee55199d6be4a4b80da8c3202cd",
+      "sha256": "2825ad3145cc5ba8ca5e6288401d849a9fe158def283c8d27bbbdb1ea4ed3d98"
+    },
+    "the_bronx": {
+      "city": "The Bronx",
+      "labels": [
+        "Bronx, New York"
+      ],
+      "field": "image_seal",
+      "file": "Seal of the Bronx.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Borough_of_the_Bronx.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/97/Seal_of_Borough_of_the_Bronx.svg/500px-Seal_of_Borough_of_the_Bronx.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "f1deb18008231a92a2043a45e6ae5cac182fb78c",
+      "source_sha256": "55d4264efbe33c15fb0f91aeee87845c6ceaa8b905ff1c6dbc70eb6f2646f1b1",
+      "sha256": "e20e56d29b9b254f3ccdba5ca9ceed748adc85ff6dd504b8f0a7421ba9ab2440"
+    },
+    "toronto": {
+      "city": "Toronto",
+      "labels": [
+        "Toronto, ON",
+        "Toronto, Ontario"
+      ],
+      "field": "image_seal",
+      "file": "Coat of arms of Toronto.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Coat_of_arms_of_Toronto.png",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fe/Coat_of_arms_of_Toronto.png/500px-Coat_of_arms_of_Toronto.png",
+      "licence": "CC BY 4.0",
+      "original_sha1": "4fbfb5dfc9dc323bcb828d9ec879acdb5f9aed47",
+      "source_sha256": "5ef5f18c2dcc56c725f219b4e0198d845fcf7cbf88126537d3ae451b5061119b",
+      "sha256": "5a253f536087e488839a77d94576549196ed3350aa7cffe1989361dda29ac2af"
+    },
+    "trois_rivi_res": {
+      "city": "Trois-Rivières",
+      "labels": [
+        "Trois Rivieres, QC"
+      ],
+      "field": "image_shield",
+      "file": "Blason ville ca Trois-Rivieres.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Blason_ville_ca_Trois-Rivieres.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f8/Blason_ville_ca_Trois-Rivieres.svg/500px-Blason_ville_ca_Trois-Rivieres.svg.png",
+      "licence": "CC BY-SA 3.0",
+      "original_sha1": "b9acf6a84919a83d5286ab1d8cb3d708c9dc50d0",
+      "source_sha256": "87dec37f0a276ee16743efe9b9653f2d39ff616462a772f74b0b61c5d011d0a9",
+      "sha256": "02f2fb0773cb1f3457a265aacf10b99400c94e72de3369cae19d73c3e5dd9179"
+    },
+    "tulsa_oklahoma": {
+      "city": "Tulsa, Oklahoma",
+      "labels": [
+        "Tulsa, OK"
+      ],
+      "field": "image_seal",
+      "file": "Seal of Tulsa, Oklahoma.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_Tulsa,_Oklahoma.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/Seal_of_Tulsa%2C_Oklahoma.svg/500px-Seal_of_Tulsa%2C_Oklahoma.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "19036fab64860924bd4647db53b29244bb21e254",
+      "source_sha256": "26d273d4258dbaaaf21a4a3d1ef1b69aea5510bdabb5c72f94b9398855e960b9",
+      "sha256": "6feb358a53037bc89907544733a2d380aa6fa18fdaac0445d8645b8818064fb8"
+    },
+    "vancouver": {
+      "city": "Vancouver",
+      "labels": [
+        "Vancouver, BC"
+      ],
+      "field": "image_shield",
+      "file": "Coat of arms of Vancouver.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Coat_of_arms_of_Vancouver.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a3/Coat_of_arms_of_Vancouver.svg/500px-Coat_of_arms_of_Vancouver.svg.png",
+      "licence": "CC BY-SA 4.0",
+      "original_sha1": "8fc838a9c852175ce3693db9924db7098e44a665",
+      "source_sha256": "7547b84009bec8bb7d8dcb5c3974449f724cebf3a6049212fefd5aa3f3befe3c",
+      "sha256": "9a7c04fff189f52c5f3a3d00ae6071e16d2e0d5d14e4409ad21d03d08646a681"
+    },
+    "washington_d_c": {
+      "city": "Washington, D.C.",
+      "labels": [
+        "Washington, DC",
+        "Washington, District of Columbia"
+      ],
+      "field": "image_seal",
+      "file": "Seal of the District of Columbia.svg",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_the_District_of_Columbia.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1f/Seal_of_the_District_of_Columbia.svg/500px-Seal_of_the_District_of_Columbia.svg.png",
+      "licence": "Public domain",
+      "original_sha1": "7fc74346c2bf58a7b5b328472df6f654fc8fca29",
+      "source_sha256": "acec80787ba280a480a15114a5ad1bd1dbbd5edfde15f143be9099f3815112c0",
+      "sha256": "19e5d2b258085dc5b75a4834c5ceb10500129bcf6aa4c97ad4edb9e5412b05b8"
+    },
+    "winnipeg": {
+      "city": "Winnipeg",
+      "labels": [
+        "Winnipeg, MB"
+      ],
+      "field": "image_seal",
+      "file": "Crest of Winnipeg fair.svg",
+      "page": "https://en.wikipedia.org/wiki/File:Crest_of_Winnipeg_fair.svg",
+      "thumbnail": "https://thumb.wikimedia.org/wikipedia/en/thumb/8/87/Crest_of_Winnipeg_fair.svg/500px-Crest_of_Winnipeg_fair.svg.png",
+      "licence": "Non-free emblem on English Wikipedia; shown to name the city",
+      "original_sha1": "1b8d7120666cfad0f87dba1fd32c3cedc18b0470",
+      "source_sha256": "5c2374be7f717b4f9088a7e5390aa6da245c80a6dfeceac03bca4963d15bef5d",
+      "sha256": "46d27cb84df211bdd54ccf0459e6a61fa3c4aedb2fe8184394f2eb6da36ff9f0"
+    }
+  }
+}

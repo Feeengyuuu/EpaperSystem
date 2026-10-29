@@ -157,6 +157,18 @@
         320,
         320
       ]
+    },
+    "hockey.png": {
+      "scene": "ice-blue arena: stands, floodlights and goal nets at the edges, the rink's boards, lines and a face-off circle at the foot",
+      "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job f6bfb1a1-71b6-49db-81b7-651ed3062198",
+      "source_sha256": "c5e4fbb55a41b236ee78a94e4bbf6da9bf44c4c28c03911991a45fc654b7874a",
+      "sha256": "c723c9cf684fd271114d5df48d1f312d079c5f4ece222518ab88b71cb4585821"
+    },
+    "list_hockey.png": {
+      "scene": "sparse ice-blue line doodles: sticks, pucks, skates, a net, a helmet, a whistle",
+      "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 85acf42e-cd86-4160-9c45-3f558351dd51",
+      "source_sha256": "8690b5171f4ea94139205098c26cb7d7dd7f7433469ab54a714c7c7de8cd9f3b",
+      "sha256": "e332e037c3feba7386cef3df7ee787c9b9cf94c4fc1b005eede1abd4ebb304f0"
     }
   }
 }

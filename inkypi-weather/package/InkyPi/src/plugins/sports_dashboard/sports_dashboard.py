@@ -873,6 +873,7 @@ class SportsDashboard(
         paths = {
             "MLB": LOCAL_MLB_HEADER_CUTOUT_PATH,
             "WNBA": LOCAL_WNBA_HEADER_CUTOUT_PATH,
+            "NHL": LOCAL_NHL_HEADER_CUTOUT_PATH,
             "PGA": LOCAL_PGA_HEADER_CUTOUT_PATH,
             "NFL": LOCAL_NFL_HEADER_CUTOUT_PATH,
             "NCAA": LOCAL_NCAA_HEADER_CUTOUT_PATH,
@@ -955,6 +956,7 @@ class SportsDashboard(
         labels = {
             "MLB": {"LIVE": "LIVE BOX", "NEXT": "FIRST PITCH", "RECENT": "BOX SCORE", "BREAK": "SEASON WATCH"},
             "WNBA": {"LIVE": "LIVE GAME", "NEXT": "TIPOFF", "RECENT": "FINAL SCORE", "BREAK": "SEASON WATCH"},
+            "NHL": {"LIVE": "LIVE ICE", "NEXT": "FACE-OFF", "RECENT": "FINAL SCORE", "BREAK": "SEASON WATCH"},
             "PGA": {"LIVE": "LEADERBOARD", "NEXT": "TEE TIMES", "RECENT": "RESULTS", "BREAK": "TOUR WATCH"},
             "NFL": {"LIVE": "DRIVE CAST", "NEXT": "KICKOFF", "RECENT": "FINAL SNAP", "BREAK": "SEASON WATCH"},
             "NCAA": {"LIVE": "COLLEGE LIVE", "NEXT": "RANKED WATCH", "RECENT": "FINAL BOARD", "BREAK": "RANKED WATCH"},
@@ -968,6 +970,7 @@ class SportsDashboard(
             "NBA": LOCAL_NBA_LOGO_PATH,
             "MLB": LOCAL_MLB_LOGO_PATH,
             "WNBA": LOCAL_WNBA_LOGO_PATH,
+            "NHL": LOCAL_NHL_LOGO_PATH,
             "PGA": LOCAL_PGA_LOGO_PATH,
             "NFL": LOCAL_NFL_LOGO_PATH,
             "NCAA": LOCAL_NCAA_LOGO_PATH,

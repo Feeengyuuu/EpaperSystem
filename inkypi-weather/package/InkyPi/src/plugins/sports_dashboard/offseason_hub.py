@@ -2,6 +2,7 @@ from runtime.refresh_contracts import TaskCancelled
 
 from .common import *
 from .espn_date_range import fetch_scoreboard
+from . import hockey
 from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_alias
 
 SportsDashboard = None
@@ -145,6 +146,16 @@ class OffseasonHubMixin:
                     raise
                 except Exception as exc:
                     errors["wnba_series"] = _safe_exception_text(exc)
+            # ESPN's hockey board answers one day at a time: the days around today, merged.
+            boards = []
+            for day in hockey.scoreboard_days(local_date):
+                try:
+                    boards.append(fetch_scoreboard(session, hockey.scoreboard_url(settings), {"dates": day, "limit": "100"}))
+                except TaskCancelled:
+                    raise
+                except Exception as exc:
+                    errors["nhl"] = _safe_exception_text(exc)
+            payloads["nhl"] = hockey.merge_scoreboards(boards)
             pitchers = SportsDashboard._mlb_probable_ids(payloads.get("mlb"))
             if pitchers:
                 try:
@@ -303,6 +314,7 @@ class OffseasonHubMixin:
             "wnba": {**SportsDashboard._parse_wnba_scoreboard(payloads.get("wnba"), timezone_info),
                      "series_history": SportsDashboard._parse_wnba_series(payloads.get("wnba_series"), timezone_info)},
             "pga": SportsDashboard._parse_pga_scoreboard(payloads.get("pga"), timezone_info, now),
+            "nhl": hockey.parse_scoreboard(SportsDashboard, payloads.get("nhl"), timezone_info),
             "nfl": SportsDashboard._parse_football_scoreboard(payloads.get("nfl"), timezone_info, "NFL"),
             "ncaa": SportsDashboard._parse_football_scoreboard(payloads.get("ncaa"), timezone_info, "NCAA"),
         }
@@ -1281,6 +1293,9 @@ class OffseasonHubMixin:
         cards = [
             SportsDashboard._offseason_hub_card("MLB", (parsed or {}).get("mlb"), now),
             SportsDashboard._offseason_hub_card("WNBA", (parsed or {}).get("wnba"), now),
+            # The NHL joins only with games on its board (no idle card in its off-season).
+            SportsDashboard._offseason_hub_card("NHL", (parsed or {}).get("nhl"), now)
+            if ((parsed or {}).get("nhl") or {}).get("events") else None,
             SportsDashboard._offseason_hub_card("PGA", (parsed or {}).get("pga"), now),
             SportsDashboard._offseason_hub_card("NFL", (parsed or {}).get("nfl"), now),
             SportsDashboard._offseason_hub_card("NCAA", (parsed or {}).get("ncaa"), now),
@@ -1314,7 +1329,7 @@ class OffseasonHubMixin:
     @staticmethod
     def _offseason_hub_card(sport, parsed, now):
         events = list(((parsed or {}).get("events") or []))
-        if sport in {"MLB", "WNBA", "NFL", "NCAA"}:
+        if sport in {"MLB", "WNBA", "NHL", "NFL", "NCAA"}:
             live = sorted(
                 [event for event in events if SportsDashboard._hub_event_state(event) == "live"],
                 key=lambda item: item.get("start") or datetime.min.replace(tzinfo=timezone.utc),

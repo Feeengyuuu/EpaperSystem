@@ -21,12 +21,14 @@ from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 from utils.doodle_backdrop import exact_colour_mask
 
 CARD_BACKDROP_DIR = Path(__file__).resolve().parent / "assets" / "decor" / "card_backdrops"
-CARD_BACKDROP_KINDS = ("football", "basketball", "esports", "baseball", "gridiron", "golf", "motorsport", "tactical")
-LIST_BACKDROP_KINDS = ("football", "basketball", "esports", "baseball", "gridiron", "golf", "motorsport")
+CARD_BACKDROP_KINDS = ("football", "basketball", "esports", "baseball", "gridiron", "golf", "motorsport", "tactical",
+                       "hockey")
+LIST_BACKDROP_KINDS = ("football", "basketball", "esports", "baseball", "gridiron", "golf", "motorsport", "hockey")
 # The art for each lower-left sport, by its scorebug spec name.
 SPORT_BACKDROP_KINDS = {
     "NBA": "basketball",
     "WNBA": "basketball",
+    "NHL": "hockey",
     "MLB": "baseball",
     "NFL": "gridiron",
     "NCAA": "gridiron",

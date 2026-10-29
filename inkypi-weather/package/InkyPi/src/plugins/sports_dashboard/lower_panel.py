@@ -1,7 +1,7 @@
 """Which content owns the lower-left panel.
 
-Every league with something to show (NBA, the hub leagues MLB, WNBA, PGA, NFL
-and college football, and F1) is scored by event_ranking: live first, then
+Every league with something to show (NBA, the hub leagues MLB, WNBA, NHL, PGA,
+NFL and college football, and F1) is scored by event_ranking: live first, then
 how soon a game starts or how recently it ended, with finals and the
 postseason above the regular season. So the World Series opener a day away
 outranks tonight's regular-season NBA game.
@@ -27,7 +27,7 @@ SportsDashboard = None
 
 _NBA_ONLY_MODES = {"off", "false", "disabled", "disable", "none", "nba"}
 _HUB_ALWAYS_MODES = {"always", "on", "true", "hub", "live-hub", "offseason"}
-_HUB_TEAM_SPORTS = ("MLB", "WNBA", "NFL", "NCAA")
+_HUB_TEAM_SPORTS = ("MLB", "WNBA", "NHL", "NFL", "NCAA")
 # An F1 weekend whose session times are unknown still sits within hours of running.
 _F1_WEEKEND_FALLBACK_POINTS = 50.0
 
@@ -182,7 +182,7 @@ class LowerPanelMixin:
                 score, state, tier = SportsDashboard._lower_event_score(sport, event, now)
                 if state == "live":
                     games.append({"sport": sport, "event": event, "score": score, "tier": tier})
-        order = {"NBA": 0, "NFL": 1, "MLB": 2, "WNBA": 3, "NCAA": 4, "PGA": 5}
+        order = {"NBA": 0, "NFL": 1, "MLB": 2, "WNBA": 3, "NHL": 4, "NCAA": 5, "PGA": 6}
 
         def start_value(game):
             start = game["event"].get("start")

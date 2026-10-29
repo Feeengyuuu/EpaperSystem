@@ -11,6 +11,8 @@ class OffseasonRenderMixin:
         sport = str(primary.get("sport") or "MLB").upper()
         if sport == "WNBA":
             self._draw_wnba_standalone_panel(image, draw, (x1, y1, x2, y2), primary, source_state, now)
+        elif sport == "NHL":
+            self._draw_nhl_standalone_panel(image, draw, (x1, y1, x2, y2), primary, source_state, now)
         elif sport == "PGA":
             self._draw_pga_standalone_panel(image, draw, (x1, y1, x2, y2), primary, source_state, now)
         elif sport == "NFL":
@@ -40,6 +42,8 @@ class OffseasonRenderMixin:
         sport = str(sport or "").upper()
         if sport == "WNBA":
             return COLORS["wnba_accent"]
+        if sport == "NHL":
+            return COLORS["nhl_accent"]
         if sport == "PGA":
             return COLORS["pga_accent"]
         if sport == "NFL":

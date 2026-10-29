@@ -195,6 +195,24 @@
         1293,
         72
       ]
+    },
+    "nhl_header_cutout.png": {
+      "scene": "skating, slapshot, stickhandling and goalie silhouettes with a net, on one ground line",
+      "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 356700d8-6b6d-4954-a6f5-f3f3b2867203",
+      "source_sha256": "28c30e6b532ae7c443455ad4bdade0fadc518a7aa1a40c5b08346549001650c2",
+      "size": [
+        266,
+        38
+      ]
+    },
+    "nhl_title_wordmark.png": {
+      "scene": "NHL title wordmark: off-white italic letters, navy outline, ice-blue puck swoosh",
+      "generator": "image/gpt-image-2.5-sunburst (Creative Claw), job 5326f5df-2571-4789-8c20-0aa8e7a3af74",
+      "source_sha256": "f61db051ad7d92e6f81a300e59d94ad3ce313b64a5ee51a22d6012e84943e42d",
+      "size": [
+        2972,
+        774
+      ]
     }
   },
   "live_now_wordmark.png": {

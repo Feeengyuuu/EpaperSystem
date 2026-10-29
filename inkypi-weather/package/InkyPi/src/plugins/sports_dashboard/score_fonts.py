@@ -11,7 +11,7 @@ from .render_fonts import render_font
 
 
 FONT_DIR = Path(__file__).resolve().parent / "assets" / "fonts"
-SCORE_SPORTS = frozenset({"NBA", "WNBA", "MLB", "NFL", "NCAA", "SOCCER", "PGA", "F1"})
+SCORE_SPORTS = frozenset({"NBA", "WNBA", "NHL", "MLB", "NFL", "NCAA", "SOCCER", "PGA", "F1"})
 CLUB_PRIVATE_FONT_KEYS = {
     "MLS": "mls", "PL": "epl", "PD": "laliga", "BL1": "bundesliga",
     "SA": "seriea", "FL1": "ligue1",
@@ -41,7 +41,7 @@ def _load_score_font(size, bold=False, *, sport, private_key=None):
         existing = [path for path in candidates if path.is_file()]
         # Keep the original file format and avoid choosing between conflicting copies.
         paths = existing if len(existing) == 1 else []
-    family = "BarlowCondensed" if sport in {"NBA", "WNBA"} else "BarlowSemiCondensed"
+    family = "BarlowCondensed" if sport in {"NBA", "WNBA", "NHL"} else "BarlowSemiCondensed"
     if sport != "F1":
         paths.append(FONT_DIR / f"{family}-{'Bold' if bold else 'SemiBold'}.ttf")
     target = reference.getbbox("8")

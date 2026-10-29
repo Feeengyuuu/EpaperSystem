@@ -1,0 +1,15 @@
+{
+  "logos": {
+    "nhl": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e5/National_Hockey_League_shield.svg/500px-National_Hockey_League_shield.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:National_Hockey_League_shield.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "efb97f0a31180c06b4403168b8f5c351f7e13d0daabfe7e692ebb81a5d4bdfdb",
+      "size": [
+        57,
+        64
+      ],
+      "sha256": "68062ba009c63ffcaab115503c4a6407ccabe760420a1a5f5c8a18af206d69a0"
+    }
+  }
+}
