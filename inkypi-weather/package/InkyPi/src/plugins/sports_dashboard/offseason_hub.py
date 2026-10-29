@@ -247,6 +247,10 @@ class OffseasonHubMixin:
         return normalize_espn_site_api_url(value or DEFAULT_NFL_SCOREBOARD_URL)
 
     @staticmethod
+    def _nhl_scoreboard_url(settings):
+        return normalize_espn_site_api_url(hockey.scoreboard_url(settings))
+
+    @staticmethod
     def _ncaa_scoreboard_url(settings):
         value = str((settings or {}).get("ncaaScoreboardUrl") or DEFAULT_NCAA_SCOREBOARD_URL).strip()
         return normalize_espn_site_api_url(value or DEFAULT_NCAA_SCOREBOARD_URL)

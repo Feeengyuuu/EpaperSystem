@@ -117,10 +117,12 @@ class LowerWallRenderMixin:
         settings = settings or {}
         sources = []
         for sport in dict.fromkeys(game.get("sport") for game in games):
-            if sport not in {"MLB", "NBA", "WNBA", "NHL", "NFL", "NCAA", "PGA"}:
+            # A league without its own scoreboard address goes uncredited rather than failing the wall.
+            scoreboard_url = getattr(SportsDashboard, f"_{str(sport).lower()}_scoreboard_url", None)
+            if sport not in {"MLB", "NBA", "WNBA", "NHL", "NFL", "NCAA", "PGA"} or scoreboard_url is None:
                 continue
             try:
-                url = getattr(SportsDashboard, f"_{sport.lower()}_scoreboard_url")(settings)
+                url = scoreboard_url(settings)
                 host = (urlparse(url).hostname or "").lower()
             except ValueError:
                 host = ""

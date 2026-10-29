@@ -20,6 +20,8 @@ from tests.test_sports_dashboard import _plugin
         (["MLB", "MLB"], {}, ["MLB"]),
         (["NFL", "NBA", "WNBA", "NCAA", "PGA"], {}, ["ESPN"]),
         (["MLB", "NFL", "NBA"], {}, ["MLB", "ESPN"]),
+        (["NHL", "MLB"], {}, ["ESPN", "MLB"]),
+        (["NHL"], {"nhlScoreboardUrl": "https://scores.example.test/scoreboard"}, ["自定义"]),
         (["NBA"], {"nbaScoreboardUrl": "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"}, ["ESPN"]),
         (["NBA", "MLB"], {"nbaScoreboardUrl": "https://scores.example.test/scoreboard"}, ["自定义", "MLB"]),
         (["NBA"], {"nbaScoreboardUrl": "https://site.web.api.espn.com.example.test/scoreboard"}, ["自定义"]),
@@ -91,3 +93,13 @@ def test_source_assets_keep_official_provenance_and_alpha():
         with Image.open(path) as logo:
             assert logo.mode == "RGBA"
             assert logo.getchannel("A").getextrema() == (0, 255)
+
+
+def test_a_live_wall_with_an_nhl_game_draws_instead_of_falling_back():
+    games, now = _wall_games(3)
+    games[1] = {**games[1], "sport": "NHL"}
+
+    image, _draw = _render(lambda plugin, image, draw: plugin._draw_lower_live_wall(image, draw, (0, 0, 555, 267),
+                                                                                    games, now))
+
+    assert image.size[0] >= 555
