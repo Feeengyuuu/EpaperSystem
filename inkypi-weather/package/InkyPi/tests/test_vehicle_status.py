@@ -337,9 +337,9 @@ def _summary_v2(*, freshness="live", connectivity="online"):
     }
 
 
-# The page's regions: the verdict in the header, the status lamps under it, three columns, the
-# vehicle strip and the footer.
-VERDICT_REGION = (520, 20, 765, 58)
+# The page's regions: the verdict in the header (with the model badge set against it), the status
+# lamps under it, three columns, the vehicle strip and the footer.
+VERDICT_REGION = (300, 20, 765, 58)
 LAMP_REGION = (36, 66, 765, 124)
 ENERGY_REGION = (36, 126, 320, 396)
 BODY_COLUMN_REGION = (338, 126, 518, 392)
@@ -2237,17 +2237,17 @@ def test_night_vehicle_keeps_a_visible_outline_after_epd7in3e_quantization(
     tmp_path,
     monkeypatch,
 ):
-    dark_vehicle = Image.new("RGBA", (160, 60), (0, 0, 0, 0))
-    dark_draw = ImageDraw.Draw(dark_vehicle)
-    dark_draw.rounded_rectangle((8, 10, 152, 50), radius=14, fill=(0, 0, 0, 255))
-    real_safe_open_image = vehicle_module.safe_open_image
+    # The car art is pasted as it is by day and night (the white police car): after the panel's
+    # six-colour quantization it still reads on the dark card where it lands (the first art pasted,
+    # in the energy column).
+    pasted = []
+    real_paste = vehicle_module._paste_vehicle_art
 
-    def load_dark_vehicle(path, *args, **kwargs):
-        if Path(path).name in {"vehicle.png", "vehicle_charging.png"}:
-            return dark_vehicle.copy()
-        return real_safe_open_image(path, *args, **kwargs)
+    def record_paste(canvas, art, box):
+        pasted.append(tuple(box))
+        return real_paste(canvas, art, box)
 
-    monkeypatch.setattr(vehicle_module, "safe_open_image", load_dark_vehicle)
+    monkeypatch.setattr(vehicle_module, "_paste_vehicle_art", record_paste)
     image = _render_payload(
         tmp_path,
         monkeypatch,
@@ -2289,7 +2289,7 @@ def test_night_vehicle_keeps_a_visible_outline_after_epd7in3e_quantization(
         palette=palette,
         dither=Image.Dither.NONE,
     ).convert("RGB")
-    vehicle_box = (246, 26, 376, 92)
+    vehicle_box = pasted[0]
     visible = _visible_non_background_bbox(panel_image, vehicle_box, (0, 0, 0))
 
     assert visible is not None

@@ -27,7 +27,7 @@ from plugins.base_plugin.render_provenance import (
     attach_source_provenance,
 )
 from security.ssrf import get_ssrf_policy
-from utils.app_utils import get_base_ui_font
+from utils.app_utils import get_base_ui_font, get_font
 from utils.atomic_file import atomic_write_json
 from utils.http_client import HttpStatusError, get_http_client
 from utils.local_wordmark import load_source_logo
@@ -83,6 +83,9 @@ VEHICLE_IMAGE_NAME = "vehicle.png"
 VEHICLE_CHARGING_IMAGE_NAME = "vehicle_charging.png"
 VEHICLE_CHARGING_ART_STATES = frozenset({"charging", "starting"})
 VEHICLE_WORDMARK_NAME = "grey_bullet_wordmark.png"
+# The header's model badge: the model in spaced capitals (Jost SemiBold, the geometric sans nearest
+# Tesla's own lettering) this tall and this far apart, and the room either side of its trim's rule.
+MODEL_BADGE_SIZE, MODEL_BADGE_TRACKING, MODEL_BADGE_GAP = 17, 3, 9
 DASHBOARD_ICON_DIR_NAME = "dashboard_icons"
 DASHBOARD_ICON_FILES = {
     "energy": "energy.png",
@@ -3502,14 +3505,42 @@ def _draw_dashboard_header(canvas, draw, vehicle, lamps, colors, language):
         draw.text((PAGE_LEFT, 22), name, font=name_font, fill=colors["ink"])
         wordmark_right = PAGE_LEFT + draw.textbbox((0, 0), name, font=name_font)[2]
     verdict_left = _draw_verdict_pill(canvas, draw, lamps, colors, language)
-    model_line = " / ".join(
-        _enum_text(language, "provider", item) for item in (vehicle["model"], vehicle["trim"]) if item
-    ) or _t(language, "vehicle_fallback")
-    model_font = _font(15)
-    model_left = wordmark_right + 12
-    draw.text((model_left, 33), _ellipsize_text(draw, model_line, model_font, min(520, verdict_left - 16) - model_left),
-              font=model_font, fill=colors["muted"])
+    _draw_model_badge(draw, vehicle, wordmark_right + 16, verdict_left - 16, colors, language)
     draw.line((PAGE_LEFT, HEADER_RULE_Y, PAGE_RIGHT, HEADER_RULE_Y), fill=colors["ink"], width=1)
+
+
+def _draw_model_badge(draw, vehicle, left, right, colors, language):
+    """The model in Tesla's spaced capitals ("M O D E L  Y") and its trim after a short rule, set
+    against the warning pill at the header's right so the name balances the wordmark."""
+    model = _enum_text(language, "provider", vehicle["model"]) if vehicle["model"] else ""
+    trim = _enum_text(language, "provider", vehicle["trim"]) if vehicle["trim"] else ""
+    if not model and not trim:
+        model = _t(language, "vehicle_fallback")
+    middle = 39
+    model_font, trim_font = get_font("Jost", MODEL_BADGE_SIZE, "bold"), _font(14)
+    letters = str(model).upper()
+    widths = [draw.textbbox((0, 0), letter, font=model_font)[2] for letter in letters]
+    model_width = sum(widths) + MODEL_BADGE_TRACKING * max(0, len(letters) - 1) if letters else 0
+    trim_width = draw.textbbox((0, 0), trim, font=trim_font)[2] if trim else 0
+    rule = MODEL_BADGE_GAP * 2 + 1 if model and trim else 0
+    if model_width + rule + trim_width > right - left:
+        # No room for the spaced capitals: the plain line, shortened to the room left.
+        line = " / ".join(part for part in (model, trim) if part)
+        draw.text((left, middle), _ellipsize_text(draw, line, _font(15), right - left), font=_font(15),
+                  fill=colors["muted"], anchor="lm")
+        return
+    x = right - (model_width + rule + trim_width)
+    for letter, width in zip(letters, widths):
+        draw.text((x, middle), letter, font=model_font, fill=colors["ink"], anchor="lm")
+        x += width + MODEL_BADGE_TRACKING
+    if letters:
+        x -= MODEL_BADGE_TRACKING
+    if rule:
+        x += MODEL_BADGE_GAP
+        draw.line((x, middle - 8, x, middle + 8), fill=colors["rule"], width=1)
+        x += MODEL_BADGE_GAP + 1
+    if trim:
+        draw.text((x, middle), trim, font=trim_font, fill=colors["muted"], anchor="lm")
 
 
 def _draw_verdict_pill(canvas, draw, lamps, colors, language):
