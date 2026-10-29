@@ -39,3 +39,16 @@ def test_uniform_or_tiny_sources_fall_back_safely(size):
     assert fitted.size == (595, 28)
     assert fitted.getpixel((297, 14)) == (30, 40, 50)
     assert detail.get("focus_y", 0.5) == 0.5
+
+
+def test_a_title_near_the_foot_wins_over_busy_art_in_the_middle():
+    # Soft, busy art across the middle (blobs: detail but no lettering) and a title at the foot.
+    source = Image.new("RGB", (460, 215), (40, 30, 30))
+    draw = ImageDraw.Draw(source)
+    for x in range(0, 460, 46):
+        draw.ellipse((x, 70, x + 40, 130), fill=(150, 90, 60))
+    for x in range(120, 340, 14):
+        draw.rectangle((x, 182, x + 6, 200), fill="white")
+    _fitted, detail = focused_cover_fit(source, (184, 36), "999000003")
+    assert detail["mode"] == "detail-focus"
+    assert detail["source_box"][1] < 182 and detail["source_box"][3] > 200

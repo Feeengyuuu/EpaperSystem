@@ -21,11 +21,35 @@ _REVIEWED_FOCUS = {
     "3751260": ("6834ff91534a18fc620a89a66d0d413e9960b83ba8fa47bdd697ba6942933966", 82 / 215, "eyes"),
     "431960": ("1ca15c6211fd0bd5323d86177fc16a27a7e1a1879026f1b95c5371346afcd920", 97 / 215, "title"),
     "730": ("0a831b89e52aa1c50b1e8ef5976b01f353c630b71e342aa8ba91da5692ff4f47", 44 / 215, "eyes"),
+    # Reviewed 2026-10-28 for the in-game friend strips: Dota 2's title at the foot, EA FC 26's two
+    # players' eyes (its title sits at the far left, under the friend's portrait), Phantom Blade
+    # Zero's spaced title across the middle.
+    "570": ("6188a85ed7e3e906ed6fe96dea800db8ed80dd43260bf0bddaebeb431527d736", 190 / 215, "title"),
+    "3405690": ("7ec6d0cbe6c5aded6928c2bec12c101dbe8604522e197d7ca315b4d2f829a4f6", 40 / 215, "eyes"),
+    "4115450": ("98f70df50f31bd1abac6c976ea88a32125125d660031d84d2d88c718fb49fa28", 110 / 215, "title"),
 }
+# A new cover's band is chosen by its edge detail plus how much it reads as lettering (sharp
+# light/dark alternations along a row, as a game's title makes), with a light pull to the middle
+# so a title near the top or foot can still win.
+LETTERING_WEIGHT, LETTERING_STEP, CENTRE_PULL = 1.0, 38, 0.04
+
+
+def _lettering(row):
+    """How much a row of grey values reads as lettering: its sharp light/dark alternations."""
+    sign, count = 0, 0
+    for x in range(3, len(row) - 2):
+        step = row[x] - row[x - 2]
+        if abs(step) >= LETTERING_STEP:
+            direction = 1 if step > 0 else -1
+            if direction != sign:
+                count += 1
+                sign = direction
+    return count
 
 
 def _detail_focus(source, crop_fraction):
-    """Find a high-contrast horizontal band, favouring the centre on ties."""
+    """Find the horizontal band with the most detail and lettering (a title, a face's features),
+    favouring the centre lightly and on ties."""
     thumb = source.convert("L")
     thumb.thumbnail((192, 192), Image.Resampling.LANCZOS)
     width, height = thumb.size
@@ -33,21 +57,28 @@ def _detail_focus(source, crop_fraction):
         return 0.5
     # Suppress fine texture, then favour strong local edges (often lettering or
     # facial detail). Exclude the filter's artificial outer image boundary.
-    edges = thumb.filter(ImageFilter.GaussianBlur(0.6)).filter(ImageFilter.FIND_EDGES)
-    values = edges.tobytes()
-    scores = [0.0] * height
+    soft = thumb.filter(ImageFilter.GaussianBlur(0.6))
+    values, pixels = soft.filter(ImageFilter.FIND_EDGES).tobytes(), soft.tobytes()
+    scores, letters = [0.0] * height, [0.0] * height
     for y in range(2, height - 2):
         scores[y] = sum((value / 255) ** 2 for value in values[y * width + 2:(y + 1) * width - 2])
+        letters[y] = _lettering(pixels[y * width:(y + 1) * width])
     band = max(3, min(height - 4, round(height * crop_fraction)))
-    integral = [0.0]
-    for score in scores:
-        integral.append(integral[-1] + score)
-    candidates = [(integral[start + band] - integral[start], (start + band / 2) / height)
-                  for start in range(2, height - band - 1)]
-    maximum = max((score for score, _ in candidates), default=0)
+
+    def windows(series):
+        integral = [0.0]
+        for value in series:
+            integral.append(integral[-1] + value)
+        return [integral[start + band] - integral[start] for start in range(2, height - band - 1)]
+
+    detail, lettering = windows(scores), windows(letters)
+    maximum = max(detail, default=0)
     if maximum <= 1e-6:
         return 0.5
-    return max(candidates, key=lambda item: (item[0] / maximum - 0.12 * abs(item[1] - 0.5),
+    most_letters = max(lettering) or 1
+    candidates = [(detail[index] / maximum + LETTERING_WEIGHT * lettering[index] / most_letters,
+                   (index + 2 + band / 2) / height) for index in range(len(detail))]
+    return max(candidates, key=lambda item: (item[0] - CENTRE_PULL * abs(item[1] - 0.5),
                                             -abs(item[1] - 0.5)))[1]
 
 
