@@ -1,0 +1,26 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <small>一页看国内全网热搜：百度实时热搜、今日头条热榜、知乎热榜和抖音热榜并排，几个平台同时在榜的话题放在顶部头条。全部来自各平台热榜页面公开读取的数据，无需密钥。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取全部榜单</label>
+  <small>榜单每 20 分钟以上才重新获取；排名升降与上一次获取的榜单比较。某个平台暂时取不到时显示它最近一次的榜单。轮播使用本地缓存，不请求网络。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  for (const key of ['fontFamily', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    const value = typeof pluginSettings !== 'undefined' ? pluginSettings[key] : undefined;
+    if (value !== undefined) {
+      if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(value);
+      else el.value = value;
+    } else if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+  }
+});
+</script>

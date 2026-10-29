@@ -1,0 +1,12 @@
+{
+  "title_wordmark.png": {
+    "text": "世界赔率榜",
+    "generator": "OpenAI GPT Image 2.5 Sunburst via Creative Claw (transparent PNG)",
+    "source_sha256": "5861947c44dd676607fad8627cfb6ef3bd14112a057a96a09b5977ada8963448",
+    "size": [
+      420,
+      96
+    ],
+    "processing": "cropped to its visible pixels, 96 px tall"
+  }
+}

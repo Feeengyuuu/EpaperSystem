@@ -89,6 +89,7 @@ INLINE_PLUGINS = frozenset(
         "bay_traffic_cams",
         "chinese_literature_clock",
         "clock",
+        "cn_hot_search",
         "daily_pop",
         "flow_progress",
         "game_deals",
@@ -99,6 +100,7 @@ INLINE_PLUGINS = frozenset(
         "simple_calendar",
         "species_radar",
         "tech_play",
+        "world_odds",
     }
 )
 

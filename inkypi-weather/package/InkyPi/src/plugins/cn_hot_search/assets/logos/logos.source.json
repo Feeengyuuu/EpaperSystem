@@ -1,0 +1,59 @@
+{
+  "logos": {
+    "baidu": {
+      "source": "https://www.baidu.com/img/flexible/logo/pc/result@2.png",
+      "page": "https://www.baidu.com/",
+      "licence": "Baidu's logo from its own home page, shown to name the source",
+      "source_sha256": "1868167d3777607f62a02a2384a35b95b736c06c5b909421cd5bae5842b2428c",
+      "size": [
+        207,
+        64
+      ],
+      "sha256": "b8543aec6475f81ecd562d8581b97991b195a34dfba54d1bf6bdd2933eeeae6f"
+    },
+    "toutiao": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/7b/Toutiao_logo.svg/500px-Toutiao_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Toutiao_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "2e0f6c8619dc6619445778faf08f4351374fbf4c72562b394bb924dc35ea6d1b",
+      "size": [
+        249,
+        64
+      ],
+      "sha256": "66f54e704465b94d138149a5e07168d4a1deeb0806db5612ec6722cc88621a75"
+    },
+    "zhihu": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/a/ad/Zhihu_logo.svg/500px-Zhihu_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Zhihu_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "41f14bdd7ef7c8480c1bc964be05173df70fbbb363fd0297e81bc1ea8c97fdd1",
+      "size": [
+        141,
+        64
+      ],
+      "sha256": "9dfe020b783c8dc77bc33dc9502aeb148d9ebf3553bdfc501321d8b903fa9373"
+    },
+    "douyin": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/Douyin_wordmark.svg/500px-Douyin_wordmark.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Douyin_wordmark.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "3a70c3a08972b0f3df9cf80cec436bbd6f16874d151f773d821edcd31b5a5839",
+      "size": [
+        140,
+        64
+      ],
+      "sha256": "e01197c640e178608e07843f711778c75e21e40dc642f56bbc522c95ef42b2b4"
+    },
+    "weibo": {
+      "source": "https://img.t.sinajs.cn/t6/style/images/global_nav/WB_logo.png",
+      "page": "https://weibo.com/",
+      "licence": "Weibo's logo from its own site navigation, shown to name the source",
+      "source_sha256": "ed87dc8ec0c6de11f294331a509250c69238210139988a6827a5504c9bcf2c1d",
+      "size": [
+        80,
+        27
+      ],
+      "sha256": "5fedf6f5291fdee44ea1facb93e691eac18a102bc70996ea361cfc1e332d413b"
+    }
+  }
+}

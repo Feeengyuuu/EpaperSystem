@@ -80,6 +80,7 @@ These are all the keys the installer and the web UI know about, matching
 | `HARVARD_ART_MUSEUMS_API_KEY` | Harvard Art Museums | Daily Art | <https://harvardartmuseums.org/collections/api> |
 | `COMIC_VINE_API_KEY` | Comic Vine | GCD Comic Covers | <https://comicvine.gamespot.com/api/> |
 | `PIXIV_PHPSESSID` | Pixiv | Pixiv R-18 Ranking (the general ranking needs none) | <https://www.pixiv.net/settings/viewing> |
+| `WEIBO_COOKIE` | Weibo | 全网热搜 (optional: adds Weibo's hot search; the `SUB` cookie of a signed-in weibo.com session) | <https://weibo.com/> |
 
 ### Sports and esports
 

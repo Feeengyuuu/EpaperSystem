@@ -30,6 +30,13 @@
 - BacktotheDate: Chinese Wikipedia's globe with its 维基百科 wordmark, both from Commons, and
   chineseposters.net's masthead (the site has no logo: its name in capitals, Montserrat SemiBold
   in white on its red header), redrawn with the site's own web font.
+- 全网热搜 (cn_hot_search): Baidu's logo from its own home page and Weibo's from its site
+  navigation; Toutiao's, Zhihu's and Douyin's from Commons (public domain).
+- 世界赔率榜 (world_odds): Kalshi's and Polymarket's logos from Commons (public domain).
+- NASA Pics × Space Weather: JPL's logo from Commons (public domain), for the near-Earth objects.
+- The sports page's NHL panel: the league's shield from Commons (public domain).
+- Tech Pulse: OpenRouter's logo and icon from Commons (public domain), for the newest models, and
+  their makers' marks: Commons where it has one, else the maker's own site icon.
 
 SVGs are drawn by a headless Chrome or Edge (tools/build_planet_now_logos.py). Each is cropped
 to its visible pixels and scaled to at most 64 px tall into the plugin's assets;
@@ -62,6 +69,9 @@ COVERS = PLUGINS / "base_plugin" / "assets" / "source_logos"
 MONEY = PLUGINS / "money_radar" / "assets" / "logos"
 BOX_OFFICE = PLUGINS / "box_office_top_movies" / "assets" / "logos"
 POSTERS = PLUGINS / "backtothedate" / "assets" / "logos"
+HOT_SEARCH = PLUGINS / "cn_hot_search" / "assets" / "logos"
+ODDS = PLUGINS / "world_odds" / "assets" / "logos"
+TECH_LOGOS = PLUGINS / "tech_pulse" / "assets" / "logos"
 COMMONS_FILE = "https://commons.wikimedia.org/wiki/File:{name}"
 CALTRANS = ("https://dot.ca.gov/-/media/dot-media/images/logos/caltrans/caltranslogo.png", "https://dot.ca.gov/",
             "Caltrans' official logo from its own site header, shown to name the source")
@@ -142,6 +152,75 @@ LOGOS = {
     "tmdb": (("https://www.themoviedb.org/assets/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg",
               "https://www.themoviedb.org/about/logos-attribution", "TMDB's attribution logo, as its terms ask"),
              [BOX_OFFICE], 1.0),
+    "baidu": (("https://www.baidu.com/img/flexible/logo/pc/result@2.png", "https://www.baidu.com/",
+               "Baidu's logo from its own home page, shown to name the source"), [HOT_SEARCH], 1.0),
+    "weibo": (("https://img.t.sinajs.cn/t6/style/images/global_nav/WB_logo.png", "https://weibo.com/",
+               "Weibo's logo from its own site navigation, shown to name the source"), [HOT_SEARCH], 1.0),
+    "toutiao": ((COMMONS.format(path="7/7b/Toutiao_logo.svg", name="Toutiao_logo.svg"),
+                 COMMONS_FILE.format(name="Toutiao_logo.svg"), PUBLIC_DOMAIN), [HOT_SEARCH], 1.0),
+    "zhihu": ((COMMONS.format(path="a/ad/Zhihu_logo.svg", name="Zhihu_logo.svg"),
+               COMMONS_FILE.format(name="Zhihu_logo.svg"), PUBLIC_DOMAIN), [HOT_SEARCH], 1.0),
+    "douyin": ((COMMONS.format(path="1/1a/Douyin_wordmark.svg", name="Douyin_wordmark.svg"),
+                COMMONS_FILE.format(name="Douyin_wordmark.svg"), PUBLIC_DOMAIN), [HOT_SEARCH], 1.0),
+    "kalshi": ((COMMONS.format(path="b/b8/Kalshi-logo-2026.svg", name="Kalshi-logo-2026.svg"),
+                COMMONS_FILE.format(name="Kalshi-logo-2026.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
+    "polymarket": ((COMMONS.format(path="e/ec/Polymarket.svg", name="Polymarket.svg"),
+                    COMMONS_FILE.format(name="Polymarket.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
+    # The marks of the sources Kalshi's US-economy markets settle on, one beside each board row.
+    "fed": ((COMMONS.format(path="1/1a/Seal_of_the_United_States_Federal_Reserve_System.svg",
+                            name="Seal_of_the_United_States_Federal_Reserve_System.svg"),
+             COMMONS_FILE.format(name="Seal_of_the_United_States_Federal_Reserve_System.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
+    "nber": (("https://upload.wikimedia.org/wikipedia/commons/2/2f/NBER_Logo.gif",
+              COMMONS_FILE.format(name="NBER_Logo.gif"), PUBLIC_DOMAIN), [ODDS], "white_ground"),
+    "bls": ((COMMONS.format(path="7/76/Bureau_of_Labor_Statistics_logo.svg", name="Bureau_of_Labor_Statistics_logo.svg"),
+             COMMONS_FILE.format(name="Bureau_of_Labor_Statistics_logo.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
+    "bea": ((COMMONS.format(path="e/ef/US-BureauOfEconomicAnalysis-Logo.svg", name="US-BureauOfEconomicAnalysis-Logo.svg"),
+             COMMONS_FILE.format(name="US-BureauOfEconomicAnalysis-Logo.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
+    "aaa": ((COMMONS.format(path="d/d4/American-Automobile-Association-Logo.svg",
+                            name="American-Automobile-Association-Logo.svg"),
+             COMMONS_FILE.format(name="American-Automobile-Association-Logo.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
+    "spdji": ((COMMONS.format(path="c/c4/S%26P_Dow_Jones_Indices_logo.svg", name="S%26P_Dow_Jones_Indices_logo.svg"),
+               COMMONS_FILE.format(name="S&P_Dow_Jones_Indices_logo.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
+    "bitcoin": ((COMMONS.format(path="4/46/Bitcoin.svg", name="Bitcoin.svg"),
+                 COMMONS_FILE.format(name="Bitcoin.svg"), PUBLIC_DOMAIN), [ODDS], 1.0),
+    "nhl": ((COMMONS.format(path="e/e5/National_Hockey_League_shield.svg", name="National_Hockey_League_shield.svg"),
+             COMMONS_FILE.format(name="National_Hockey_League_shield.svg"), PUBLIC_DOMAIN),
+            [PLUGINS / "sports_dashboard" / "assets" / "logos"], 1.0),
+    "jpl": ((COMMONS.format(path="c/c6/Jet_Propulsion_Laboratory_logo.svg", name="Jet_Propulsion_Laboratory_logo.svg"),
+             COMMONS_FILE.format(name="Jet_Propulsion_Laboratory_logo.svg"), PUBLIC_DOMAIN),
+            [PLUGINS / "apod" / "assets" / "logos"], 0.56),
+    # The makers of the models on Tech Pulse's OpenRouter strip, one mark beside each card.
+    "provider-openai": (("https://status.openai.com/favicon.ico", "https://status.openai.com/",
+                         "OpenAI's site icon, shown to name the model's maker"), [TECH_LOGOS], 1.0),
+    "provider-anthropic": (("https://www.anthropic.com/images/icons/apple-touch-icon.png", "https://www.anthropic.com/",
+                            "Anthropic's site icon, shown to name the model's maker"), [TECH_LOGOS], 1.0),
+    "provider-moonshotai": (("https://statics.moonshot.cn/kimi-chat/favicon.ico", "https://www.kimi.com/",
+                             "Moonshot AI's Kimi site icon, shown to name the model's maker"), [TECH_LOGOS], 1.0),
+    "provider-google": ((COMMONS.format(path="3/3c/Google_Favicon_2025.svg", name="Google_Favicon_2025.svg"),
+                         COMMONS_FILE.format(name="Google_Favicon_2025.svg"), PUBLIC_DOMAIN), [TECH_LOGOS], 1.0),
+    "provider-meta-llama": ((COMMONS.format(path="0/05/Meta_Platforms_Inc._logo_%28cropped%29.svg",
+                                            name="Meta_Platforms_Inc._logo_%28cropped%29.svg"),
+                             COMMONS_FILE.format(name="Meta_Platforms_Inc._logo_(cropped).svg"), PUBLIC_DOMAIN),
+                            [TECH_LOGOS], 1.0),
+    "provider-mistralai": ((COMMONS.format(path="e/e6/Mistral_AI_logo_%282025%E2%80%93%29.svg",
+                                           name="Mistral_AI_logo_%282025%E2%80%93%29.svg"),
+                            COMMONS_FILE.format(name="Mistral_AI_logo_(2025–).svg"), PUBLIC_DOMAIN), [TECH_LOGOS], 1.0),
+    "provider-deepseek": ((COMMONS.format(path="9/95/DeepSeek-icon.svg", name="DeepSeek-icon.svg"),
+                           COMMONS_FILE.format(name="DeepSeek-icon.svg"), "MIT (Wikimedia Commons)"), [TECH_LOGOS], 1.0),
+    "provider-qwen": ((COMMONS.format(path="6/69/Qwen_logo.svg", name="Qwen_logo.svg"),
+                       COMMONS_FILE.format(name="Qwen_logo.svg"), "CC0 (Wikimedia Commons)"), [TECH_LOGOS], 1.0),
+    "provider-x-ai": ((COMMONS.format(path="9/93/XAI_Logo.svg", name="XAI_Logo.svg"),
+                       COMMONS_FILE.format(name="XAI_Logo.svg"), "CC BY-SA 4.0 (Wikimedia Commons)"), [TECH_LOGOS], 1.0),
+    "provider-minimax": ((COMMONS.format(path="0/08/Minimax_Logo.svg", name="Minimax_Logo.svg"),
+                          COMMONS_FILE.format(name="Minimax_Logo.svg"), PUBLIC_DOMAIN), [TECH_LOGOS], 1.0),
+    "provider-z-ai": (("https://upload.wikimedia.org/wikipedia/commons/6/62/Zhipu_AI.png",
+                       COMMONS_FILE.format(name="Zhipu_AI.png"), PUBLIC_DOMAIN), [TECH_LOGOS], "white_ground"),
+    "openrouter_icon": ((COMMONS.format(path="f/f8/OpenRouter_icon.svg", name="OpenRouter_icon.svg"),
+                         COMMONS_FILE.format(name="OpenRouter_icon.svg"), PUBLIC_DOMAIN),
+                        [PLUGINS / "tech_pulse" / "assets" / "logos"], 1.0),
+    "openrouter": ((COMMONS.format(path="c/ca/OpenRouter_Logo.svg", name="OpenRouter_Logo.svg"),
+                    COMMONS_FILE.format(name="OpenRouter_Logo.svg"), PUBLIC_DOMAIN),
+                   [PLUGINS / "tech_pulse" / "assets" / "logos"], 1.0),
 }
 WIKIPEDIA_GLOBE = ("https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Wikipedia-logo-v2-zh-hans.svg/"
                    "500px-Wikipedia-logo-v2-zh-hans.svg.png", COMMONS_FILE.format(name="Wikipedia-logo-v2-zh-hans.svg"),

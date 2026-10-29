@@ -1,0 +1,26 @@
+<input type="hidden" name="refreshOnDisplay" id="refreshOnDisplay" value="false">
+<div class="form-group">
+  <small>一页看预测市场在押什么：Polymarket 当天成交最多的事件与政治、地缘、经济、科技、加密各类最热事件，以及 Kalshi 的美国经济晴雨表（美联储议息、衰退、CPI、GDP、非农、油价、标普年末）。全部来自两家的公开接口，无需密钥；概率即市场成交价，不构成投资建议。</small>
+</div>
+<div class="form-group">
+  <label class="form-label" for="fontFamily">字体</label>
+  <select name="fontFamily" id="fontFamily">
+    {% for font_name in available_fonts %}<option value="{{ font_name }}">{{ font_name }}</option>{% endfor %}
+  </select>
+</div>
+<div class="form-group">
+  <label><input type="checkbox" name="forceRefresh" id="forceRefresh"> 下次刷新重新获取全部赔率</label>
+  <small>赔率每 30 分钟以上才重新获取；涨跌为 24 小时变化（百分点）。某家暂时取不到时显示它最近一次的数据。轮播使用本地缓存，不请求网络。</small>
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  for (const key of ['fontFamily', 'forceRefresh']) {
+    const el = document.getElementById(key);
+    const value = typeof pluginSettings !== 'undefined' ? pluginSettings[key] : undefined;
+    if (value !== undefined) {
+      if (el.type === 'checkbox') el.checked = [true, 'true', 'on', '1'].includes(value);
+      else el.value = value;
+    } else if (key === 'fontFamily') el.value = 'Microsoft YaHei';
+  }
+});
+</script>

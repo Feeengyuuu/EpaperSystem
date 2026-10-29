@@ -121,6 +121,7 @@
         china_box_office_top_movies: "北美周票房",
         chinese_literature_clock: "中文文学报时",
         clock: "时钟",
+        cn_hot_search: "全网热搜",
         comic: "每日漫画",
         countdown: "倒计时",
         daily_ai_news: "AI每日新闻",
@@ -172,6 +173,7 @@
         us_tv_hot_shows: "美剧热榜",
         vehicle_status: "车辆状态",
         weather: "天气",
+        world_odds: "世界赔率榜",
         wow_profile_dashboard: "魔兽世界战绩",
         wpotd: "维基每日图片",
         year_progress: "年度进度"

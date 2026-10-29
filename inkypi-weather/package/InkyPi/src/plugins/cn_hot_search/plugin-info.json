@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "id": "cn_hot_search",
+  "class": "CnHotSearch",
+  "display_name": "全网热搜",
+  "refresh_on_display": false,
+  "recommended_refresh": {"interval": 1800},
+  "capabilities": {
+    "supports_live_refresh": false,
+    "supports_presentation_refresh": false,
+    "supports_day_night_theme": true,
+    "supports_cached_display_redraw": true
+  },
+  "theme": {
+    "presentation": "ui",
+    "day": {"background": "#ffffff", "accent": "#e1251b"},
+    "night": {"background": "#000000", "accent": "#ff5a4f"}
+  }
+}

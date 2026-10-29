@@ -1,0 +1,104 @@
+{
+  "logos": {
+    "kalshi": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Kalshi-logo-2026.svg/500px-Kalshi-logo-2026.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Kalshi-logo-2026.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "aaab336c11ca83f686154ae6046cf545fa55389745e07467371c798bc08fc217",
+      "size": [
+        218,
+        64
+      ],
+      "sha256": "14dc636dacf929f5e3d6e58fe991b299c11d96b6e6e593702d07bbd41f38eec3"
+    },
+    "polymarket": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Polymarket.svg/500px-Polymarket.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Polymarket.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "5ab65803c6b1484d18203711c703db697b8859de4b269795d00401f097c91e7f",
+      "size": [
+        352,
+        64
+      ],
+      "sha256": "51c592a92dbcbff18c327d50815eaa0744f74fef15a65a0145a63bd223826ecc"
+    },
+    "bls": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/76/Bureau_of_Labor_Statistics_logo.svg/500px-Bureau_of_Labor_Statistics_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Bureau_of_Labor_Statistics_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "1d8f34b90545118768c41579298f89b933e2b016d4740d96bcc287e9528f40bd",
+      "size": [
+        73,
+        64
+      ],
+      "sha256": "67e77edd78d23ed5731941f9ea93999ef11e49a619827e1401612cf1599c02ec"
+    },
+    "fed": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1a/Seal_of_the_United_States_Federal_Reserve_System.svg/500px-Seal_of_the_United_States_Federal_Reserve_System.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Seal_of_the_United_States_Federal_Reserve_System.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "22ea3a9af96b6b41e35e025f203cc88c4e373632debf09ef18e3213810f048ea",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "7576730dc5c4129433a6e8cd45a6a6d79115960a058a0af100f6b1d9e17408d6"
+    },
+    "nber": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/2/2f/NBER_Logo.gif",
+      "page": "https://commons.wikimedia.org/wiki/File:NBER_Logo.gif",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "919dfbe70bb2b28876dccd98460f6e1c17e4c435db371bbf0ac1fec09c827792",
+      "processing": "the white ground cleared",
+      "size": [
+        48,
+        64
+      ],
+      "sha256": "07b9486cf7b8770aea500eba65dacb366e5a253da7f3f4a46923f547fae9d231"
+    },
+    "bea": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/US-BureauOfEconomicAnalysis-Logo.svg/500px-US-BureauOfEconomicAnalysis-Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:US-BureauOfEconomicAnalysis-Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "b994a48c729dd25bf3f0f90abcb6fbcded70e0a9e3cfd62fac7be8bfb432280d",
+      "size": [
+        169,
+        64
+      ],
+      "sha256": "45e5cecb4011c37e8dcd4cd9072f56da1e2192dfa49cf30bcc88f4473f00b990"
+    },
+    "aaa": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/American-Automobile-Association-Logo.svg/500px-American-Automobile-Association-Logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:American-Automobile-Association-Logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "abba92d403844ffe5a3e449f639485d7bf7a13f1be5ba75a44d28175c280f687",
+      "size": [
+        106,
+        64
+      ],
+      "sha256": "961d804bdce0142bc7ef94daa0a844c585cf1d1d5ab0e3f3c82c8247a0f7ad78"
+    },
+    "spdji": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/S%26P_Dow_Jones_Indices_logo.svg/500px-S%26P_Dow_Jones_Indices_logo.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:S&P_Dow_Jones_Indices_logo.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "8daf4a02a0551112441d4c589b39cd326dd9b077344c1bb68d6d85b3d32eebc3",
+      "size": [
+        162,
+        64
+      ],
+      "sha256": "0e9b9bec3134abc5b13b96e54569c73f6f535b733549c78c80a0c6c9fbce8896"
+    },
+    "bitcoin": {
+      "source": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/46/Bitcoin.svg/500px-Bitcoin.svg.png",
+      "page": "https://commons.wikimedia.org/wiki/File:Bitcoin.svg",
+      "licence": "Public domain (Wikimedia Commons)",
+      "source_sha256": "caf8fae117ada08351b10081ed5432678580e3dc48beb268e2b22e893f327a42",
+      "size": [
+        64,
+        64
+      ],
+      "sha256": "9cccf96d83d3e6304d9eb1a68f6169d51eeefd1028122d6eebe159e2b813c80e"
+    }
+  }
+}

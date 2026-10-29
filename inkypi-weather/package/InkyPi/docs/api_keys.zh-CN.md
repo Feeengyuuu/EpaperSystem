@@ -66,6 +66,7 @@ sudo systemctl restart inkypi
 | `HARVARD_ART_MUSEUMS_API_KEY` | Harvard Art Museums | Daily Art | <https://harvardartmuseums.org/collections/api> |
 | `COMIC_VINE_API_KEY` | Comic Vine | GCD Comic Covers | <https://comicvine.gamespot.com/api/> |
 | `PIXIV_PHPSESSID` | Pixiv | Pixiv R-18 Ranking（普通榜单不需要） | <https://www.pixiv.net/settings/viewing> |
+| `WEIBO_COOKIE` | 微博 | 全网热搜（可选，加入微博热搜；填登录后浏览器里 weibo.com 的 `SUB` Cookie） | <https://weibo.com/> |
 
 ### 体育与电竞
 

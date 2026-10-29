@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "id": "world_odds",
+  "class": "WorldOdds",
+  "display_name": "世界赔率榜",
+  "refresh_on_display": false,
+  "recommended_refresh": {"interval": 3600},
+  "capabilities": {
+    "supports_live_refresh": false,
+    "supports_presentation_refresh": false,
+    "supports_day_night_theme": true,
+    "supports_cached_display_redraw": true
+  },
+  "theme": {
+    "presentation": "ui",
+    "day": {"background": "#ffffff", "accent": "#2e5cff"},
+    "night": {"background": "#000000", "accent": "#5b82ff"}
+  }
+}

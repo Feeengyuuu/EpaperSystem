@@ -1,0 +1,12 @@
+{
+  "title_wordmark.png": {
+    "text": "全网热搜",
+    "generator": "OpenAI GPT Image 2.5 Sunburst via Creative Claw (transparent PNG)",
+    "source_sha256": "ce892fe9684c525e948fd7b2965c0dcbd1ae269f3d66e50443e8b2296cdc54ae",
+    "size": [
+      321,
+      96
+    ],
+    "processing": "cropped to its visible pixels, 96 px tall"
+  }
+}
