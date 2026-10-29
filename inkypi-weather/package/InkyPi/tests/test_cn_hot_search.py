@@ -8,7 +8,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from plugins.cn_hot_search import sources  # noqa: E402
 from plugins.cn_hot_search.cn_hot_search import list_moves  # noqa: E402
-from plugins.cn_hot_search.render import _slots, ago_text, heat_text, render_page, row_note  # noqa: E402
+from plugins.cn_hot_search.render import (  # noqa: E402
+    _slots, ago_text, heat_text, lead_facts, lead_moves, render_page, row_note, span_text, story_since,
+)
 
 NOW = datetime(2026, 10, 28, 21, 30, tzinfo=sources.PACIFIC)
 
@@ -59,6 +61,26 @@ def test_weibo_needs_the_owners_cookie_and_skips_ads():
         {"word": "广告", "is_ad": 1}, {"word": "西班牙全国哀悼", "num": 861234, "label_name": "沸", "category": "社会"}]}})["rows"]
 
     assert [(row["rank"], row["title"], row["tag"]) for row in rows] == [(1, "西班牙全国哀悼", "沸")]
+    assert rows[0]["since"] == 0
+    timed = sources.normalize_weibo({"data": {"realtime": [{"word": "哀悼", "onboard_time": 1793260000}]}})["rows"]
+    assert timed[0]["since"] == 1793260000
+
+
+def test_the_lead_says_how_long_it_has_run_how_it_moved_and_what_the_platforms_add():
+    started = int(NOW.timestamp()) - 8 * 3600
+    story = {"title": "发布会", "ranks": {"douyin": 1, "zhihu": 3, "weibo": 2},
+             "rows": {"douyin": {"title": "发布会", "videos": 7, "since": started},
+                      "zhihu": {"title": "如何看待发布会", "answers": 148},
+                      "weibo": {"title": "发布会", "category": "社会", "since": started + 3600}}}
+
+    assert story_since(story) == started
+    assert lead_facts(story, NOW) == "发酵 8小时 · 抖音 7 个视频 · 知乎 148 回答 · 微博 · 社会"
+    assert lead_facts(story, NOW, since=False) == "抖音 7 个视频 · 知乎 148 回答 · 微博 · 社会"
+    assert (span_text(0, NOW), ago_text(started, NOW)) == ("", "8小时前")
+    payload = {"lists": {"douyin": [{"title": "发布会", "rank": 1}], "zhihu": [{"title": "如何看待发布会", "rank": 3}]},
+               "history": {"douyin": {"previous": [{"title": "发布会", "rank": 4}]},
+                           "zhihu": {"previous": [{"title": "别的", "rank": 1}]}}}
+    assert lead_moves(payload, story) == {"douyin": 3, "zhihu": "new"}
 
 
 def test_the_same_story_on_several_lists_is_found_once():

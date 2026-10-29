@@ -82,16 +82,22 @@ def heat_text(value):
     return str(value) if value else ""
 
 
-def ago_text(epoch, now):
-    """How long ago a Douyin topic started: "35分钟前", "3小时前", "2天前"."""
+def span_text(epoch, now):
+    """How long since ``epoch``: "35分钟", "3小时", "2天"; "" without one."""
     if not epoch:
         return ""
     minutes = max(0, int((now.astimezone(timezone.utc) - datetime.fromtimestamp(epoch, timezone.utc)).total_seconds() // 60))
     if minutes < 60:
-        return f"{max(1, minutes)}分钟前"
+        return f"{max(1, minutes)}分钟"
     if minutes < 48 * 60:
-        return f"{minutes // 60}小时前"
-    return f"{minutes // 1440}天前"
+        return f"{minutes // 60}小时"
+    return f"{minutes // 1440}天"
+
+
+def ago_text(epoch, now):
+    """How long ago a Douyin topic started: "35分钟前", "3小时前", "2天前"."""
+    span = span_text(epoch, now)
+    return f"{span}前" if span else ""
 
 
 def row_note(platform, row, now):
@@ -216,6 +222,39 @@ def _lead_story(payload):
     return None
 
 
+def story_since(story):
+    """When the story began, as the platforms that say date it (Douyin's event, Weibo's time on
+    its list): the earliest, or 0."""
+    times = [row.get("since") for row in story["rows"].values() if row.get("since")]
+    return min(times) if times else 0
+
+
+def lead_facts(story, now, *, since=True):
+    """The lead's line of what the platforms say about it: how long it has run (unless ``since`` is
+    False, when the grid shows it), Douyin's videos, Zhihu's answers, Weibo's category."""
+    rows = story["rows"]
+    facts = []
+    if since and story_since(story):
+        facts.append(f"发酵 {span_text(story_since(story), now)}")
+    if (rows.get("douyin") or {}).get("videos"):
+        facts.append(f"抖音 {rows['douyin']['videos']} 个视频")
+    if (rows.get("zhihu") or {}).get("answers"):
+        facts.append(f"知乎 {rows['zhihu']['answers']} 回答")
+    if (rows.get("weibo") or {}).get("category"):
+        facts.append(f"微博 · {rows['weibo']['category']}")
+    return " · ".join(facts)
+
+
+def lead_moves(payload, story):
+    """{platform: move} of the lead story on each list it is on, against that list's previous reading."""
+    moves = {}
+    for platform, row in story["rows"].items():
+        history = ((payload.get("history") or {}).get(platform) or {})
+        if history.get("previous"):
+            moves[platform] = list_moves((payload.get("lists") or {}).get(platform), history["previous"]).get(row["title"])
+    return moves
+
+
 def _picture_for(images, rows):
     """The first of ``rows``' pictures that is at hand."""
     for row in rows:
@@ -225,7 +264,7 @@ def _picture_for(images, rows):
     return None
 
 
-def _lead(canvas, payload, images, platforms):
+def _lead(canvas, payload, images, platforms, now):
     left, top, right, bottom = LEAD
     canvas.draw.rounded_rectangle(LEAD, radius=8, fill=canvas.color("lead"))
     story = _lead_story(payload)
@@ -263,24 +302,41 @@ def _lead(canvas, payload, images, platforms):
     for line in canvas.wrap(summary, 11, width, 2 if len(lines) == 1 else 1, bold=False) if summary else []:
         canvas.text((x, y + 1), line, 11, "muted", bold=False, stroke="lead")
         y += 15
-    # Where the story stands on each list: the platform's logo and its place.
+    # A grid with a cell to spare shows how long the story has run there; the facts line otherwise.
+    spare = len(platforms) % columns and story_since(story)
+    facts = lead_facts(story, now, since=not spare)
+    if facts and y <= bottom - 16:
+        canvas.text((x, bottom - 11), facts, 10, "ink", anchor="lm", bold=False, width=width, stroke="lead")
+    # Where the story stands on each list: the platform's logo and its place, its heat there and
+    # how it moved since the list's previous reading.
+    moves = lead_moves(payload, story)
     cell_h = (bottom - top - 14) / 2
-    for index, platform in enumerate(platforms):
+    for index, platform in enumerate(platforms + (["since"] if spare else [])):
         cx = grid_left + (index % columns) * (cell_w + 6)
         cy = top + 7 + (index // columns) * cell_h
-        rank = story["ranks"].get(platform)
         box = (cx, cy + 1, cx + cell_w, cy + cell_h - 3)
+        upper, lower = box[1] + 11, box[3] - 9
+        if platform == "since":
+            _glass(canvas, box, SHARED, fill_alpha=0.2 if _night(canvas) else 0.12, edge_alpha=0.85)
+            canvas.text((cx + 6, upper), "已发酵", 10, "muted", anchor="lm", bold=False)
+            canvas.text((box[2] - 5, lower - 2), span_text(story_since(story), now), rank_size, "ink", anchor="rm")
+            continue
+        rank = story["ranks"].get(platform)
         # Glass tiles: a list the story is on is tinted its platform's colour, the others barely there.
         if rank:
             _glass(canvas, box, BRANDS[platform], fill_alpha=0.24 if _night(canvas) else 0.13, edge_alpha=0.85)
         else:
             _glass(canvas, box, canvas.color("muted"), fill_alpha=0.08 if _night(canvas) else 0.05, edge_alpha=0.45)
-        middle = (box[1] + box[3]) / 2
-        _paste_logo(canvas, platform, cx + 5, middle, logo_h[0] if platform == "baidu" else logo_h[1])
+        _paste_logo(canvas, platform, cx + 5, upper, logo_h[0] if platform == "baidu" else logo_h[1])
         if rank:
-            canvas.text((box[2] - 5, middle + 1), f"#{rank}", rank_size, BRANDS[platform], anchor="rm")
+            canvas.text((box[2] - 5, upper + 1), f"#{rank}", rank_size, BRANDS[platform], anchor="rm")
+            heat = heat_text(rows[platform].get("heat"))
+            if heat:
+                canvas.text((cx + 6, lower), heat, 9, "ink", anchor="lm", bold=False)
+            _move(canvas, box[2] - 5, lower, moves.get(platform))
         else:
-            canvas.text((box[2] - 8, middle), "—", 13, "rule", anchor="rm")
+            canvas.text((box[2] - 8, upper), "—", 13, "rule", anchor="rm")
+            canvas.text((cx + 6, lower), "未上榜", 9, "muted", anchor="lm", bold=False)
 
 
 # --- the cards ------------------------------------------------------------------------------------
@@ -447,7 +503,7 @@ def render_page(dimensions, payload, settings, now, images):
     platforms = [slot for slot in slots if slot != "shared"]
     _key(canvas, platforms, title_right + 16, stamp_left - 14)
     canvas.rule((12, 52, 788, 52), "ink", 2)
-    _lead(canvas, payload, images, platforms)
+    _lead(canvas, payload, images, platforms, now)
     marks = _shared_marks(payload)
     for slot, box in zip(slots, _card_boxes(len(slots))):
         if slot == "shared":

@@ -231,7 +231,8 @@ def normalize_weibo(payload):
             continue
         rows.append({"title": title, "heat": _count(row.get("num")),
                      "tag": WEIBO_TAGS.get(str(row.get("label_name") or row.get("icon_desc") or "")),
-                     "summary": "", "image": None, "category": _clean(row.get("category"), 12)})
+                     "summary": "", "image": None, "category": _clean(row.get("category"), 12),
+                     "since": _count(row.get("onboard_time"))})
     return _rows(rows, "Weibo")
 
 
