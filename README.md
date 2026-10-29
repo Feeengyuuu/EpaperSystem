@@ -10,7 +10,7 @@ Raspberry Pi + 六色墨水屏 · 69 个插件自动轮播 · 局域网网页管
 
 </div>
 
-![设备在 2026 年 10 月 28 日的实机画面：体育看板（美职联、WNBA 总决赛、英雄联盟世界赛）、现代天气、技术圈与 AI 脉搏、轨道信号、今日热榜、环球此刻、LiveRadar 直播雷达、Sky Radar 航班雷达、游戏优惠、全球票房双城榜、NASA 天文图、每日名画。](docs/images/epaper-system-screens-20261028.jpg)
+![设备在 2026 年 10 月 28 日的实机画面：体育看板（美职联、WNBA 总决赛、英雄联盟世界赛）、现代天气、技术圈与 AI 脉搏、轨道信号、今日热榜、环球此刻、LiveRadar 直播雷达、Sky Radar 航班雷达、游戏优惠、全球票房双城榜、NASA 天文图、每日名画。](docs/images/epaper-system-screens-20261028-night.jpg)
 
 <p align="center"><sub>以上都是设备 2026 年 10 月 28 日刚刷新的实机画面（800 × 480，六色墨水屏），个人信息已打码。</sub></p>
 
