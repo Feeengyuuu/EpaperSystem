@@ -62,6 +62,8 @@ FRIEND_GRID_MAX_PER_LINE, FRIEND_GRID_AVATAR, FRIEND_GRID_NAME = 5, 26, 11
 # Under a single overlapping line each name sits under its own portrait in this small type; the
 # names of the small portraits after it run on to the right until the line is full.
 FRIEND_PILE_NAME_SIZE, FRIEND_PILE_NAME_MIN = 9, 7
+# A friend's name under the portraits is white with a dark stroke this many pixels wide.
+NAME_OUTLINE = 2
 FRIEND_COLUMNS = 3
 FRIEND_TILE = (58, 55)
 FRIEND_GAP = 3
@@ -245,7 +247,7 @@ class _Console:
         return self.fonts[key]
 
     def text(self, box, value, size=14, color=WHITE, bold=False,
-             lines=1, min_size=None, align="left", prepared=None):
+             lines=1, min_size=None, align="left", prepared=None, outline=0):
         """Center visible glyphs in their box, including mixed Latin/CJK titles.
 
         Cropping the actual glyph alpha bounds removes font ascender/descent
@@ -258,7 +260,7 @@ class _Console:
         if not text or width <= 0 or height <= 0:
             return
         block = prepared if prepared is not None else self._text_bitmap(
-            text, width, height, size, color, bold, lines, min_size, align)
+            text, width, height, size, color, bold, lines, min_size, align, outline=outline)
         top = y + max(0, (height - block.height) // 2)
         self.image.paste(block, (x, top), block)
 
@@ -768,7 +770,7 @@ class _Console:
                 self._pile_names(big, small, left, right, name_top, names_h, step, size)
                 return
             names = "、".join(self.plugin._friend_display_id(friend) for friend in friends)
-            self.text((left, name_top, right, name_top + names_h), names, 10, self.c["muted"], min_size=9)
+            self._outlined_name(None, name_top, name_top + names_h, right - left, names, left=left, size=10, min_size=9)
 
     def _pile_names(self, big, small, left, right, top, height, step, size):
         """Each portrait's name centred under it in a slot as wide as the portraits' spacing, then
@@ -776,14 +778,21 @@ class _Console:
         bottom = top + height
         for index, friend in enumerate(big):
             centre = left + index * step + size / 2
-            half = (min(step, size + 4) - 1) / 2
-            self.text((round(centre - half), top, round(centre + half), bottom), self.plugin._friend_display_id(friend),
-                      FRIEND_PILE_NAME_SIZE, self.c["muted"], min_size=FRIEND_PILE_NAME_MIN, align="center")
+            self._outlined_name(centre, top, bottom, min(step, size + 4) - 1, self.plugin._friend_display_id(friend))
         rest = round(left + (len(big) - 1) * step + size / 2 + min(step, size + 4) / 2 + 3)
         if small and right - rest >= 14:
             names = "、".join(self.plugin._friend_display_id(friend) for friend in small)
-            self.text((rest, top, right, bottom), names, FRIEND_PILE_NAME_SIZE, self.c["muted"],
-                      min_size=FRIEND_PILE_NAME_MIN)
+            self._outlined_name(None, top, bottom, right - rest, names, left=rest)
+
+    def _outlined_name(self, centre, top, bottom, max_width, name, *, left=None,
+                       size=FRIEND_PILE_NAME_SIZE, min_size=FRIEND_PILE_NAME_MIN, bold=False):
+        """A friend's name in white with a dark stroke round each glyph, so it stands out over the
+        portraits' backdrop: centred on ``centre`` (or from ``left``) in ``max_width``, shrinking
+        from ``size`` before it is cut."""
+        width = int(max_width)
+        x = round(left if left is not None else centre - width / 2)
+        self.text((x, round(top), x + width, round(bottom)), name, size, WHITE, bold=bold, min_size=min_size,
+                  align="left" if left is not None else "center", outline=NAME_OUTLINE)
 
     def _pile_portrait(self, friend, x, y, size, game_icons, portraits):
         """One pile portrait at (x, y): cut out by a dark collar, ringed in its presence colour, an
@@ -814,8 +823,8 @@ class _Console:
             centre = left + (right - left - count * slot) / 2 + (column + 0.5) * slot
             x, y = round(centre - size / 2), start + line * (line_h + FRIEND_PILE_LINE_GAP)
             self._pile_portrait(friend, x, y, size, game_icons, portraits)
-            self.text((round(centre - slot / 2) + 1, y + size + 3, round(centre + slot / 2) - 1, y + line_h),
-                      self.plugin._friend_display_id(friend), 9, min_size=8, align="center")
+            self._outlined_name(centre, y + size + 3, y + line_h, slot - 2, self.plugin._friend_display_id(friend),
+                                size=9, min_size=8)
 
     def _friend_backdrop(self, size):
         """This hour's placeholder scene fitted to ``size`` under the navy veil; None when missing."""
@@ -880,8 +889,9 @@ class _Console:
         size = min(46, max(18, height - 19))
         x, y = (left + right - size) // 2, top + max(3, (height - size - 14) // 2)
         self._friend_ring(friend, x, y, size, portraits=portraits)
-        self.text((left + 2, y + size + 3, right - 1, bottom), self.plugin._friend_display_id(friend),
-                  11 if right - left >= 80 else 10, WHITE, bold=True, min_size=9, align="center")
+        self._outlined_name((left + right) / 2, y + size + 3, bottom, right - left - 3,
+                            self.plugin._friend_display_id(friend), size=11 if right - left >= 80 else 10, min_size=9,
+                            bold=True)
 
     @staticmethod
     def _friend_ring_colour(friend):
