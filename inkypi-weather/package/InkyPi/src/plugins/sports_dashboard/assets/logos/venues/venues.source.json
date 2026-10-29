@@ -2338,6 +2338,20 @@
         67,
         48
       ]
+    },
+    "credit_union_of_texas_event_center": {
+      "file": "Credit Union of Texas Event Center logo.png",
+      "page": "https://en.wikipedia.org/wiki/File:Credit_Union_of_Texas_Event_Center_logo.png",
+      "thumbnail": "https://upload.wikimedia.org/wikipedia/en/1/1c/Credit_Union_of_Texas_Event_Center_logo.png",
+      "licence": "Non-free logo on English Wikipedia (the venue's trademark); shown to name the venue",
+      "original_sha1": "3b05fedc59a6f28d0ac6ee9fdd539d95b715ae4a",
+      "source_png_sha256": "cbf7e8a116c2eb4f9f2d3c1cc683988807e2458aa6f711910c192389ac173fc5",
+      "sha256": "95a84832def26abf2e801ee54bf225950f104c5e09640187eaccedc3cccc3e62",
+      "size": [
+        89,
+        48
+      ],
+      "use": "Worlds 2026 Swiss stage and knockouts (Allen, Texas)"
     }
   }
 }

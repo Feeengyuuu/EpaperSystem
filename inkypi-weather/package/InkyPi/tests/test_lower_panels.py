@@ -1530,3 +1530,24 @@ def test_every_league_home_venue_has_its_logo():
         assert VENUE_LOGO_KEYS[re.sub(r"[^a-z0-9]", "", venue.lower())] == key
         assert (Path(LOCAL_VENUE_LOGO_DIR) / f"{key}.png").is_file()
     assert len(set(VENUE_LOGO_KEYS.values())) >= 68
+
+
+def test_worlds_matches_are_billed_by_their_stages_venue_logo():
+    from plugins.sports_dashboard import esports_render
+
+    def at(day):
+        return {"start": datetime.fromisoformat(f"{day}T13:00:00").replace(tzinfo=LA)}
+
+    venue = SportsDashboard._worlds_venue
+    assert venue(at("2026-10-16")) == "Riot Games Arena"
+    assert venue(at("2026-10-29")) == venue(at("2026-11-08")) == "Credit Union of Texas Event Center"
+    assert venue(at("2026-11-14")) == "Barclays Center"
+    assert venue(at("2026-11-10")) is None and venue({}) is None
+    # The Swiss stage's ground is drawn by its logo (its red frame and blue box); the Play-In's has none.
+    image, _draw = _render(lambda plugin, image, draw: image.info.update(
+        texas=plugin._draw_worlds_venue(image, (20, 20, 140, 44), at("2026-10-29")),
+        riot=plugin._draw_worlds_venue(image, (20, 60, 140, 84), at("2026-10-16"))))
+    assert image.info["texas"] is not None and image.info["riot"] is None
+    pixels = image.crop(image.info["texas"]).get_flattened_data()
+    assert any(red > 180 and green < 80 and blue < 80 for red, green, blue in pixels)
+    assert set(esports_render.WORLDS_VENUES) == {2026}

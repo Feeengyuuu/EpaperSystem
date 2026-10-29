@@ -8,6 +8,18 @@ from .common import _ACTIVE_COLORS, _safe_exception_text, _normalize_country_ali
 from .card_backdrops import card_backdrop_box, paint_card_backdrop, paint_list_backdrop
 from .esports_fonts import esports_role, esports_sidebar
 
+# Where each Worlds stage is played, by its days (first, last, venue): the sidebar bills a match's
+# ground by the venue's logo (assets/logos/venues). 2026: the Play-In at Riot Games Arena in Los
+# Angeles (no bundled logo, so unbilled), the Swiss stage and knockouts at Allen's Credit Union of
+# Texas Event Center, the final at Brooklyn's Barclays Center.
+WORLDS_VENUES = {
+    2026: (
+        ("2026-10-15", "2026-10-18", "Riot Games Arena"),
+        ("2026-10-23", "2026-11-08", "Credit Union of Texas Event Center"),
+        ("2026-11-14", "2026-11-14", "Barclays Center"),
+    ),
+}
+
 # Provider names add words the bundled CS2 catalog leaves out ("Team Spirit",
 # "G2 Esports", "Aurora Gaming"); NAVI is the acronym of Natus Vincere.
 CS2_TEAM_NAME_NOISE = frozenset({"team", "esports", "esport", "gaming", "club", "gg"})
@@ -2167,6 +2179,10 @@ class EsportsRenderMixin:
         date_text = event["start"].strftime("%m/%d")
         date_text, date_font = self._fit_text(draw, date_text, 54, 12, bold=True, min_size=9)
         self._draw_right_aligned(draw, (card_x2 - 12, y + 17), date_text, date_font, COLORS["muted"])
+        if league_key == "WORLDS":
+            # The match's ground by its venue's logo between the pill and the date.
+            date_left = card_x2 - 12 - self._text_width(draw, date_text, date_font)
+            self._draw_worlds_venue(image, (pill[2] + 8, pill[1] - 4, date_left - 8, pill[3] + 4), event)
 
         # Under the pill, the logos stand at the card's edges; between them, the one thing that matters
         # most in large type (the start time, or the series score once it starts) with a small line
@@ -2438,6 +2454,11 @@ class EsportsRenderMixin:
         draw.text((row_x1 + 12, y + 1), date_text, font=date_font, fill=COLORS["muted"])
         time_text, time_font = self._fit_text(draw, self._format_time(event["start"]), 76, 12, bold=True, min_size=9)
         self._draw_esports_match_text(draw, (row_x2 - 86, y + 1, row_x2 - 10, y + 14), time_text, time_font, COLORS["text"], align="right")
+        if league_key == "WORLDS":
+            # The ground's logo between the date and the time.
+            date_right = row_x1 + 12 + self._text_width(draw, date_text, date_font)
+            time_left = row_x2 - 10 - self._text_width(draw, time_text, time_font)
+            self._draw_worlds_venue(image, (date_right + 8, y + 1, time_left - 8, y + 15), event)
 
         # The logos stand 26 px tall beside the names and odds, under the date.
         logo_size = 26
@@ -2467,6 +2488,28 @@ class EsportsRenderMixin:
             ):
                 value, font = self._fit_text(draw, str(odds[side]).strip(), max(1, right - left), 9, bold=True, min_size=7)
                 self._draw_esports_match_text(draw, (left, y + 34, right, y + 42), value, font, COLORS["text"], align=align)
+
+    @staticmethod
+    def _worlds_venue(event):
+        """The venue of a Worlds match, by its start's day, or None."""
+        start = (event or {}).get("start")
+        if not isinstance(start, datetime):
+            return None
+        day = start.date().isoformat()
+        return next((venue for first, last, venue in WORLDS_VENUES.get(start.year, ()) if first <= day <= last), None)
+
+    def _draw_worlds_venue(self, image, box, event):
+        """A Worlds match's venue logo centred in ``box``; the logo's box, or None without one."""
+        x1, y1, x2, y2 = [int(value) for value in box]
+        venue = self._worlds_venue(event)
+        if not venue or x2 - x1 < 20 or y2 - y1 < 8:
+            return None
+        logo = self._kit_venue_logo(venue, (x2 - x1, y2 - y1))
+        if logo is None:
+            return None
+        x, top = x1 + (x2 - x1 - logo.width) // 2, y1 + (y2 - y1 - logo.height) // 2
+        image.paste(logo, (x, top), logo)
+        return x, top, x + logo.width, top + logo.height
 
     def _draw_lpl_recent_rows(self, image, draw, right_x, right_w, y, events, league_key="LPL"):
         self._draw_section_header(draw, right_x, right_w, y, "RECENT", self._lol_sidebar_color(league_key, "accent"))
