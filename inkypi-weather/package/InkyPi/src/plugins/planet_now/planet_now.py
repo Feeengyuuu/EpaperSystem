@@ -26,6 +26,9 @@ CACHE_BUDGET = CacheBudget(30 * 86400, 24, 2 * 1024 * 1024)
 DEFAULT_FONT = "Microsoft YaHei"
 TASK_SECONDS = 50
 MINUTE, HOUR, DAY = 60, 3600, 86400
+# Perseverance's raw-image feed is asked again this often, so photos downlinked during the day
+# (once or twice a sol) reach the page within a couple of hours.
+MARS_REFRESH = 2 * HOUR
 # The page counts as live from its three main feeds; the rest (rain, Earth, Wikipedia, Apple,
 # Mars, the ISS, the crews in orbit) only fill in, so one of them lagging does not mark the page stale.
 CORE_FEEDS = ("grid", "goes", "trends")
@@ -67,7 +70,7 @@ class PlanetNow(BasePlugin):
             "trends": load("trends", sources.fetch_trends, HOUR, DAY, sources.valid_trends),
             "wiki": load("wiki", lambda ctx: sources.fetch_wiki(now, ctx), 6 * HOUR, 4 * DAY, sources.valid_wiki),
             "apple": load("apple", sources.fetch_apple, 12 * HOUR, 4 * DAY, sources.valid_apple),
-            "mars": load("mars", sources.fetch_mars, 6 * HOUR, 4 * DAY, sources.valid_mars, timeout=18),
+            "mars": load("mars", sources.fetch_mars, MARS_REFRESH, 4 * DAY, sources.valid_mars, timeout=18),
             "iss": load("iss", lambda ctx: sources.fetch_iss(now, ctx), 4 * MINUTE, 3 * HOUR, sources.valid_iss),
             "people": load("people", sources.fetch_people, 6 * HOUR, 7 * DAY, sources.valid_people),
         }
@@ -75,7 +78,7 @@ class PlanetNow(BasePlugin):
         if allow_network and old_mars.get("image") and not isinstance(old_mars.get("photos"), list):
             # Upgrade an existing single-photo cache on the next real refresh,
             # keeping SourceBook's old-photo fallback if NASA is unavailable.
-            payload["mars"] = load("mars", sources.fetch_mars, 6 * HOUR, 4 * DAY, sources.valid_mars,
+            payload["mars"] = load("mars", sources.fetch_mars, MARS_REFRESH, 4 * DAY, sources.valid_mars,
                                    timeout=18, upgrade=True)
         trends = (payload["trends"]["data"] or {}).get("items") or []
         wiki = (payload["wiki"]["data"] or {}).get("articles") or []

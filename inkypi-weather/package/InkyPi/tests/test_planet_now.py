@@ -323,3 +323,11 @@ def test_each_grid_source_has_an_icon_in_its_colour_and_each_station_its_mark():
         logo = render._station_logo(station)
         assert logo is not None and logo.height == render.STATION_LOGO_HEIGHT
     assert render._station_logo("mir") is None
+
+
+def test_the_mars_feed_is_asked_again_every_two_hours():
+    from plugins.planet_now import planet_now
+
+    assert planet_now.MARS_REFRESH == 2 * planet_now.HOUR
+    # Both the regular load and the single-photo cache upgrade use it; the photos stay usable 4 days.
+    assert Path(planet_now.__file__).read_text(encoding="utf-8").count("MARS_REFRESH, 4 * DAY") == 2
