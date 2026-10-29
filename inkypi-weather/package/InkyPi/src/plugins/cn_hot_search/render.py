@@ -155,6 +155,19 @@ def _thumb(canvas, picture, box, tint, rank):
     return False
 
 
+def _glass(canvas, box, tint, *, fill_alpha, edge_alpha, radius=6):
+    """A frosted tile over what is already drawn: ``tint`` laid on at ``fill_alpha``, a one-pixel
+    edge of it at ``edge_alpha`` and a faint light line along the top, like glass catching light."""
+    x0, y0, x1, y1 = [round(value) for value in box]
+    size = (x1 - x0 + 1, y1 - y0 + 1)
+    layer = Image.new("RGBA", size, (0, 0, 0, 0))
+    pen = ImageDraw.Draw(layer)
+    pen.rounded_rectangle((0, 0, size[0] - 1, size[1] - 1), radius=radius, fill=(*tint, round(255 * fill_alpha)),
+                          outline=(*tint, round(255 * edge_alpha)), width=1)
+    pen.line((radius, 1, size[0] - 1 - radius, 1), fill=(255, 255, 255, 46 if _night(canvas) else 140), width=1)
+    canvas.image.paste(layer, (x0, y0), layer)
+
+
 def _chip(canvas, x, middle, text, fill, *, outline=False):
     """A small label chip from ``x``; returns its width."""
     width = canvas.width(text, 9) + 8
@@ -254,8 +267,11 @@ def _lead(canvas, payload, images, platforms):
         cy = top + 7 + (index // columns) * cell_h
         rank = story["ranks"].get(platform)
         box = (cx, cy + 1, cx + cell_w, cy + cell_h - 3)
-        canvas.draw.rounded_rectangle(box, radius=6, fill=canvas.color("paper"),
-                                      outline=BRANDS[platform] if rank else canvas.color("rule"), width=2 if rank else 1)
+        # Glass tiles: a list the story is on is tinted its platform's colour, the others barely there.
+        if rank:
+            _glass(canvas, box, BRANDS[platform], fill_alpha=0.24 if _night(canvas) else 0.13, edge_alpha=0.85)
+        else:
+            _glass(canvas, box, canvas.color("muted"), fill_alpha=0.08 if _night(canvas) else 0.05, edge_alpha=0.45)
         middle = (box[1] + box[3]) / 2
         _paste_logo(canvas, platform, cx + 5, middle, logo_h[0] if platform == "baidu" else logo_h[1])
         if rank:
