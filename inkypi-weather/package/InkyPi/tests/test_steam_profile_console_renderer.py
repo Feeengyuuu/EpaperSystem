@@ -429,6 +429,35 @@ def test_playing_ring_is_retained_when_the_avatar_joins_the_pile(plugin, playing
     avatar.close()
 
 
+
+@pytest.mark.parametrize("count, lines", [(3, [3]), (7, [4, 3]), (8, [4, 4])])
+def test_a_short_pile_takes_two_centred_lines_when_there_is_room(plugin, monkeypatch, count, lines):
+    console = _Console(plugin, {})
+    friends = [{"personaname": f"F{index}", "personastate": 1} for index in range(count)]
+    rings = []
+    original = _Console._friend_ring
+    monkeypatch.setattr(_Console, "_friend_ring", lambda self, *args, **kwargs: (
+        rings.append(args[1:4]), original(self, *args, **kwargs)))
+    # Below one in-game card (1 + 7 on 2026-10-28): room for two lines of full portraits.
+    top = console_renderer.FRIEND_LIST[1] + console_renderer.FRIEND_PLAYING_H + console_renderer.FRIEND_GAP
+    console._friend_pile(friends, count, top, {}, {})
+    rows = {}
+    for x, y, size in rings:
+        rows.setdefault(y, []).append(x)
+    assert [len(xs) for _y, xs in sorted(rows.items())] == lines
+    if len(lines) == 2:
+        left, right = console_renderer.FRIEND_LIST[0] + 3, console_renderer.FRIEND_LIST[2] - 3
+        size = rings[0][2]
+        for xs in rows.values():
+            # Each line is centred, its portraits apart (no overlap).
+            assert abs((min(xs) - left) - (right - (max(xs) + size))) <= 1
+            assert all(b - a >= size for a, b in zip(sorted(xs), sorted(xs)[1:]))
+        # Each friend's name sits under their own portrait, a little smaller than the pile's.
+        assert size <= console_renderer.FRIEND_GRID_AVATAR
+        for x, y, size in rings:
+            below = console.image.crop((x - 4, y + size + 3, x + size + 4, y + size + 14)).convert("L")
+            assert below.getextrema()[1] > 200
+
 def _crowd(data, playing, online, listed=None):
     data["friends"] = [{"steamid": str(index), "personaname": f"Friend {index:02}",
                         "personastate": 1 if index % 3 else 2, "avatarfull": f"cached-avatar-{index}"}

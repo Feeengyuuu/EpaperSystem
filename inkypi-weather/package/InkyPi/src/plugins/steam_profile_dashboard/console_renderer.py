@@ -54,6 +54,11 @@ FRIEND_PILE_AVATAR = 30
 FRIEND_PILE_OVERLAP = 0.28
 FRIEND_PILE_LINE_GAP = 6
 FRIEND_PILE_NAMES = 14
+# A pile of at least this many takes two even lines when there is room for them, so the room under
+# a lone line is not left empty and a full line never leaves one straggler. Up to this many a line,
+# each friend has a slot: a portrait this size with the name (this tall) under it.
+FRIEND_PILE_TWO_LINES = 4
+FRIEND_GRID_MAX_PER_LINE, FRIEND_GRID_AVATAR, FRIEND_GRID_NAME = 5, 26, 11
 FRIEND_COLUMNS = 3
 FRIEND_TILE = (58, 55)
 FRIEND_GAP = 3
@@ -711,8 +716,25 @@ class _Console:
         large = next((count for count in range(min(len(friends), per_line * lines), -1, -1) if fits(count)), 0)
         big, small = friends[:large], friends[large:]
         used_lines = max(1, math.ceil(len(big) / per_line))
+        # With nothing after it, a pile splits evenly over two lines (never a full line and a
+        # straggler): a few a line each named under their own portrait, more as centred lines of
+        # overlapping portraits a small gap apart where they fit.
+        balanced = lines == 2 and not small and not hidden and len(big) >= FRIEND_PILE_TWO_LINES
+        if balanced and math.ceil(len(big) / 2) <= FRIEND_GRID_MAX_PER_LINE:
+            self._friend_grid(big, top, game_icons, portraits)
+            return
+        if balanced:
+            per_line, used_lines = math.ceil(len(big) / 2), 2
+            step = min(size + 4, (right - left - size) / (per_line - 1))
         block = used_lines * size + (used_lines - 1) * FRIEND_PILE_LINE_GAP + (names_h + 4 if names_h else 0)
         start = top + max(2, (height - block) // 2)
+
+        def line_left(line):
+            if not balanced:
+                return left
+            count = min(per_line, len(big) - line * per_line)
+            return left + (right - left - ((count - 1) * step + size)) / 2
+
         if used_lines == 1 and len(big) > 1:
             # A short line opens up to span the column, never further apart than a small gap.
             tail = (5 + cluster_width(len(small)) if small else 0) + (22 if hidden else 0)
@@ -722,18 +744,8 @@ class _Console:
         for index in reversed(range(len(big))):
             friend = big[index]
             line, column = divmod(index, per_line)
-            x, y = round(left + column * step), start + line * (size + FRIEND_PILE_LINE_GAP)
-            # A dark collar cuts each portrait cleanly out of the one it overlaps.
-            self.draw.ellipse((x - 3, y - 3, x + size + 2, y + size + 2), fill=self.c["navy"])
-            self._friend_ring(friend, x, y, size, portraits=portraits)
-            icon = game_icons.get(_appid(friend.get("gameid")))
-            if icon is not None:
-                badge = max(9, round(size * 0.42))
-                bx, by = x + size - badge + 2, y + size - badge + 2
-                self.draw.rounded_rectangle((bx - 1, by - 1, bx + badge, by + badge), radius=2,
-                                            fill=self.c["navy"], outline=GREEN, width=1)
-                with icon.resize((badge, badge), Image.Resampling.LANCZOS) as small_icon:
-                    self.image.paste(small_icon, (bx, by), small_icon if small_icon.mode == "RGBA" else None)
+            x, y = round(line_left(line) + column * step), start + line * (size + FRIEND_PILE_LINE_GAP)
+            self._pile_portrait(friend, x, y, size, game_icons, portraits)
         last = len(big) - (used_lines - 1) * per_line
         x = left + ((last - 1) * step + size + 5 if big else 0)
         y = start + (used_lines - 1) * (size + FRIEND_PILE_LINE_GAP) + (size - 2 * mini - 2) // 2
@@ -751,6 +763,38 @@ class _Console:
             names = "、".join(self.plugin._friend_display_id(friend) for friend in friends)
             name_top = start + used_lines * size + (used_lines - 1) * FRIEND_PILE_LINE_GAP + 4
             self.text((left, name_top, right, name_top + names_h), names, 10, self.c["muted"], min_size=9)
+
+    def _pile_portrait(self, friend, x, y, size, game_icons, portraits):
+        """One pile portrait at (x, y): cut out by a dark collar, ringed in its presence colour, an
+        in-game friend's game icon at its lower right."""
+        self.draw.ellipse((x - 3, y - 3, x + size + 2, y + size + 2), fill=self.c["navy"])
+        self._friend_ring(friend, x, y, size, portraits=portraits)
+        icon = game_icons.get(_appid(friend.get("gameid")))
+        if icon is not None:
+            badge = max(9, round(size * 0.42))
+            bx, by = x + size - badge + 2, y + size - badge + 2
+            self.draw.rounded_rectangle((bx - 1, by - 1, bx + badge, by + badge), radius=2,
+                                        fill=self.c["navy"], outline=GREEN, width=1)
+            with icon.resize((badge, badge), Image.Resampling.LANCZOS) as small_icon:
+                self.image.paste(small_icon, (bx, by), small_icon if small_icon.mode == "RGBA" else None)
+
+    def _friend_grid(self, friends, top, game_icons, portraits):
+        """A short pile as two even lines centred in the column: each friend's portrait (a little
+        smaller than the pile's) in its own slot, the friend's name under it."""
+        left, right, bottom = FRIEND_LIST[0] + 3, FRIEND_LIST[2] - 3, FRIEND_LIST[3] - 2
+        per_line = math.ceil(len(friends) / 2)
+        slot = (right - left) / per_line
+        size = max(16, min(FRIEND_GRID_AVATAR, round(slot) - 8))
+        line_h = size + 3 + FRIEND_GRID_NAME
+        start = top + max(2, (bottom - top - (2 * line_h + FRIEND_PILE_LINE_GAP)) // 2)
+        for index, friend in enumerate(friends):
+            line, column = divmod(index, per_line)
+            count = min(per_line, len(friends) - line * per_line)
+            centre = left + (right - left - count * slot) / 2 + (column + 0.5) * slot
+            x, y = round(centre - size / 2), start + line * (line_h + FRIEND_PILE_LINE_GAP)
+            self._pile_portrait(friend, x, y, size, game_icons, portraits)
+            self.text((round(centre - slot / 2) + 1, y + size + 3, round(centre + slot / 2) - 1, y + line_h),
+                      self.plugin._friend_display_id(friend), 9, min_size=8, align="center")
 
     def _friend_backdrop(self, size):
         """This hour's placeholder scene fitted to ``size`` under the navy veil; None when missing."""
