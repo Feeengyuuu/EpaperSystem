@@ -22,26 +22,29 @@ BUDGET = CacheBudget(max_bytes=6 * 1024 * 1024, max_files=64, max_age_seconds=21
 MIN_SECONDS_PER_IMAGE = 4.0
 
 
-def _key(url):
-    return "v1-" + sha256(url.encode("utf-8")).hexdigest() + ".png"
+def _key(url, keep_alpha=False):
+    # A picture kept with its transparency is cached apart from one flattened before.
+    return ("v1a-" if keep_alpha else "v1-") + sha256(url.encode("utf-8")).hexdigest() + ".png"
 
 
 def load_thumbnails(urls, cache_dir, *, http, context, cached_only, safe_url, user_agent,
-                    size=(480, 270), budget=BUDGET):
-    """Return {url: RGB thumbnail} for URLs that are cached or could be fetched in time."""
+                    size=(480, 270), budget=BUDGET, keep_alpha=False):
+    """Return {url: RGB thumbnail} for URLs that are cached or could be fetched in time; RGBA
+    with ``keep_alpha``, so a transparent seal or logo keeps its transparency."""
     directory = Path(cache_dir)
+    mode = "RGBA" if keep_alpha else "RGB"
     images, namespace = {}, None
     for raw in urls:
         url = safe_url(raw)
         if not url or url in images:
             continue
-        path = directory / _key(url)
+        path = directory / _key(url, keep_alpha)
         try:
             if path.is_symlink():
                 continue
             if path.is_file():
                 with safe_open_image(path, limits=LIMITS) as cached:
-                    images[url] = cached.convert("RGB")
+                    images[url] = cached.convert(mode)
                 continue
             if cached_only or context.remaining_seconds() < MIN_SECONDS_PER_IMAGE:
                 continue
@@ -49,7 +52,7 @@ def load_thumbnails(urls, cache_dir, *, http, context, cached_only, safe_url, us
                                           headers={"User-Agent": user_agent}, allow_redirects=False)
             with safe_open_image(response.data, limits=LIMITS) as original:
                 original.thumbnail(size, Image.Resampling.LANCZOS)
-                thumb = original.convert("RGB")
+                thumb = original.convert(mode)
             output = BytesIO()
             thumb.save(output, format="PNG", optimize=True)
             context.raise_if_cancelled()

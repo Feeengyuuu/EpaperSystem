@@ -15,7 +15,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 from utils.doodle_backdrop import paint_doodles
 from utils.local_wordmark import load_source_logo, paste_local_wordmark
@@ -62,6 +62,10 @@ ICON = 22
 # lead the forecasting itself, each tile its category's.
 CATEGORY_DOODLES = {"政治": "politics", "地缘": "geopolitics", "经济": "economy", "科技": "tech", "加密": "crypto"}
 DOODLE_STRENGTH = 0.24
+# The lead's picture loses the flat ground a seal or logo stands on: the colour at least
+# GROUND_SHARE of its edge is within GROUND_TOLERANCE of, flooded in from the edge. A photo keeps
+# its frame.
+GROUND_TOLERANCE, GROUND_SHARE = 36, 0.9
 
 
 def _rgb(value):
@@ -184,8 +188,61 @@ def _picture(canvas, picture, box, radius=6):
     if picture is None:
         canvas.image.paste(canvas.color("track"), (x0, y0, x1, y1), mask)
         return False
-    canvas.image.paste(ImageOps.fit(picture.convert("RGB"), size, method=Image.Resampling.LANCZOS,
+    # A transparent picture stands on the paper, not on whatever colour its palette hides there.
+    ground = Image.new("RGBA", picture.size, canvas.color("paper"))
+    ground.alpha_composite(picture.convert("RGBA"))
+    canvas.image.paste(ImageOps.fit(ground.convert("RGB"), size, method=Image.Resampling.LANCZOS,
                                     centering=(0.5, 0.3)), (x0, y0), mask)
+    return True
+
+
+def cutout(picture, side):
+    """``picture`` (at most ``side`` * 3 px) without the flat ground its edge shows, cropped to
+    what stands on it (RGBA); None when its edge is not one colour, as a photo's is."""
+    art = picture.convert("RGBA")
+    art.thumbnail((side * 3, side * 3), Image.Resampling.LANCZOS)
+    alpha = art.getchannel("A")
+    width, height = art.size
+    edge = [(x, y) for x in range(width) for y in (0, height - 1)] + \
+        [(x, y) for y in range(1, height - 1) for x in (0, width - 1)]
+    if any(alpha.getpixel(corner) < 128 for corner in ((0, 0), (width - 1, 0), (0, height - 1),
+                                                         (width - 1, height - 1))):
+        # Already cut out (a round seal leaves its corners clear): only its margins go.
+        box = alpha.point(lambda value: 255 if value > 16 else 0).getbbox()
+        return art.crop(box) if box else None
+    rgb = art.convert("RGB")
+    colours = [rgb.getpixel(point) for point in edge]
+    ground = tuple(sorted(channel)[len(channel) // 2] for channel in zip(*colours))
+    if sum(max(abs(a - b) for a, b in zip(colour, ground)) <= GROUND_TOLERANCE
+           for colour in colours) < GROUND_SHARE * len(colours):
+        return None
+    red, green, blue = ImageChops.difference(rgb, Image.new("RGB", rgb.size, ground)).split()
+    distance = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+    near = distance.point(lambda value: 255 if value <= GROUND_TOLERANCE else 0)
+    # Only the ground that reaches the edge goes: the same colour inside the mark stays.
+    for point in edge:
+        if near.getpixel(point) == 255:
+            ImageDraw.floodfill(near, point, 128)
+    flooded = near.point(lambda value: 255 if value == 128 else 0)
+    # Where the mark's antialiased rim meets the ground, it fades by how far from the ground it is.
+    rim = ImageChops.subtract(flooded.filter(ImageFilter.MaxFilter(3)), flooded)
+    graded = distance.point(lambda value: min(255, value * 255 // (2 * GROUND_TOLERANCE)))
+    kept = ImageChops.invert(flooded)
+    kept.paste(graded, (0, 0), rim)
+    art.putalpha(ImageChops.multiply(kept, alpha))
+    box = art.getchannel("A").point(lambda value: 255 if value > 16 else 0).getbbox()
+    return art.crop(box) if box else None
+
+
+def _emblem(canvas, picture, box, radius=6):
+    """The lead's picture: a seal or logo cut from its ground and contained in ``box``, else the
+    picture framed as ``_picture`` frames it."""
+    x0, y0, x1, y1 = [int(value) for value in box]
+    art = cutout(picture, max(x1 - x0, y1 - y0)) if picture is not None else None
+    if art is None:
+        return _picture(canvas, picture, box, radius)
+    art = ImageOps.contain(art, (x1 - x0, y1 - y0), Image.Resampling.LANCZOS)
+    canvas.image.paste(art, (x0 + (x1 - x0 - art.width) // 2, y0 + (y1 - y0 - art.height) // 2), art)
     return True
 
 
@@ -264,7 +321,7 @@ def _lead(canvas, payload, images):
         (images.get(sources.safe_image_url(outcome.get("image"))) for outcome in outcomes
          if images.get(sources.safe_image_url(outcome.get("image"))) is not None), None)
     picture_box = (left + 10, top + 10, left + 70, top + 70)
-    _picture(canvas, picture, picture_box, radius=8)
+    _emblem(canvas, picture, picture_box, radius=8)
     x = picture_box[2] + 10
     color = CATEGORY_COLORS.get(event["category"], POLYMARKET)
     _chip(canvas, x, top + 18, f"今日最热 · {event['category']}", color)

@@ -118,3 +118,49 @@ def test_the_lead_card_is_framed_in_polymarket_blue_under_a_band(mode):
     assert image.getpixel(((left + right) // 2, top + 3)) == POLYMARKET
     assert image.getpixel((left, middle)) == image.getpixel((right, middle)) == POLYMARKET
     assert image.getpixel(((left + right) // 2, bottom)) == POLYMARKET
+
+
+def test_the_lead_picture_loses_its_flat_ground_but_a_photo_keeps_its_frame():
+    from PIL import Image, ImageDraw
+
+    from plugins.world_odds.render import cutout
+
+    seal = Image.new("RGB", (120, 120), (76, 105, 113))
+    ImageDraw.Draw(seal).ellipse((10, 10, 110, 110), fill=(250, 250, 250))
+    ImageDraw.Draw(seal).ellipse((50, 50, 70, 70), fill=(76, 105, 113))
+    art = cutout(seal, 60)
+    # The ground goes; the same colour inside the seal stays.
+    assert art.size == (101, 101) and art.getpixel((0, 0))[3] == 0
+    assert art.getpixel((50, 50)) == (76, 105, 113, 255)
+    # A picture already cut out keeps its transparency, cropped to the seal.
+    round_png = Image.new("RGBA", (120, 120), (76, 105, 113, 0))
+    ImageDraw.Draw(round_png).ellipse((20, 0, 100, 119), fill=(250, 250, 250, 255))
+    assert cutout(round_png, 60).size == (81, 120)
+    assert cutout(Image.effect_noise((120, 120), 80).convert("RGB"), 60) is None
+
+
+def test_pictures_keep_their_transparency_in_their_own_cache(tmp_path):
+    import io
+    import time
+
+    from PIL import Image
+
+    from runtime.refresh_contracts import TaskContext
+    from utils.remote_thumbnails import load_thumbnails
+
+    buffer = io.BytesIO()
+    Image.new("RGBA", (40, 40), (76, 105, 113, 0)).save(buffer, format="PNG")
+    url = "https://polymarket-upload.s3.us-east-2.amazonaws.com/seal.png"
+
+    class Http:
+        def request_bytes(self, _method, _url, **_kwargs):
+            return type("Response", (), {"data": buffer.getvalue()})()
+
+    kwargs = {"http": Http(), "context": TaskContext.never_cancelled(deadline_monotonic=time.monotonic() + 30),
+              "safe_url": sources.safe_image_url, "user_agent": "test"}
+    kept = load_thumbnails([url], tmp_path, cached_only=False, keep_alpha=True, **kwargs)[url]
+    flat = load_thumbnails([url], tmp_path, cached_only=False, **kwargs)[url]
+    cached = load_thumbnails([url], tmp_path, cached_only=True, keep_alpha=True, **kwargs)[url]
+
+    assert (kept.mode, flat.mode, cached.mode) == ("RGBA", "RGB", "RGBA")
+    assert cached.getpixel((0, 0))[3] == 0 and len(list(tmp_path.iterdir())) == 2

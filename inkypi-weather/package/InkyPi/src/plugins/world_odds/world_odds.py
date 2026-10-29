@@ -96,7 +96,8 @@ class WorldOdds(BasePlugin):
         urls += [outcome.get("image") for tile in payload["tiles"] for outcome in tile["outcomes"][:2]]
         return load_thumbnails([url for url in urls if url], self._cache_subdir("pictures"),
                                cached_only=not allow_network, size=THUMB_PIXELS, http=get_http_client(),
-                               context=context, safe_url=sources.safe_image_url, user_agent=sources.USER_AGENT)
+                               context=context, safe_url=sources.safe_image_url, user_agent=sources.USER_AGENT,
+                               keep_alpha=True)
 
     def render_cached_display(self, settings, device_config, *, resolved_theme_context):
         return self.render_themed_image(settings, device_config, theme_render_only=True,
